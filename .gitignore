@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+venv/
+venv*/
+.pydeps/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database & Logs
+*.db
+*.db-shm
+*.db-wal
+*.log
+backend/event_error.txt
+
+# Secrets & Local Env
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local-manual
+.env.local-openclaw
+backend/.env
+backend/.env.local-manual
+backend/.env.local-openclaw
+!backend/.env.example
+!backend/.env.local-openclaw.example
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+.macos
+Thumbs.db
+
+# Build Artifacts
+frontend_dist/
+webapp/dist/
+backend/uploads/
+
+# Backup & Temp
+*.bak.*
+*.bak
+/tmp/

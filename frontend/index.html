@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>客服工作台</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="login-screen" class="login-screen">
+    <form id="login-form" class="login-card">
+      <div class="brand-lockup brand-lockup--login">
+        <div class="brand-mark">SPEEDAF</div>
+        <div>
+          <div class="brand-title">客服工作台</div>
+          <div class="brand-subtitle">面向客服与运营同事的统一处理界面</div>
+        </div>
+      </div>
+      <label>账号</label>
+      <input id="login-username" autocomplete="username" required />
+      <label>密码</label>
+      <input id="login-password" type="password" autocomplete="current-password" required />
+      <button type="submit" class="btn btn-primary btn-block">登录</button>
+      <p id="login-error" class="error-text hidden"></p>
+      <div class="login-help">
+        <span>请使用已开通的内部账号登录。</span>
+        <span>系统会自动连接当前站点的服务地址，客服无需手动配置。</span>
+      </div>
+    </form>
+  </div>
+
+  <div id="app" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark">SPEEDAF</div>
+        <div>
+          <div class="sidebar-title">客服工作台</div>
+          <div class="sidebar-subtitle">客服运营</div>
+        </div>
+      </div>
+      <nav class="nav-stack">
+        <button class="nav-btn active" data-view="overview">首页总览</button>
+        <button class="nav-btn" data-view="cases">工单处理</button>
+        <button class="nav-btn" data-view="bulletins">通知公告</button>
+        <button class="nav-btn" data-view="accounts">渠道设置</button>
+        <button class="nav-btn" data-view="signoff">运营保障</button>
+      </nav>
+      <section id="sidebar-account-panel" class="sidebar-panel">
+        <div class="sidebar-label">当前账号</div>
+        <div id="current-user" class="sidebar-user">-</div>
+        <div id="sidebar-market-summary" class="sidebar-note">全部市场</div>
+        <div id="sidebar-role-hint" class="sidebar-note">-</div>
+      </section>
+      <section id="sidebar-runtime-panel" class="sidebar-panel">
+        <div class="sidebar-label">运营保障</div>
+        <div id="sidebar-runtime" class="sidebar-runtime">等待运营保障数据…</div>
+      </section>
+      <div class="sidebar-footer">
+        <button id="command-btn" class="btn btn-ghost btn-block">快捷操作</button>
+        <button id="logout-btn" class="btn btn-ghost btn-block">退出登录</button>
+      </div>
+    </aside>
+
+    <main class="shell-main">
+      <header class="shell-topbar">
+        <div>
+          <div id="page-eyebrow" class="eyebrow">首页总览</div>
+          <h1 id="page-title">客服工作台</h1>
+          <p id="page-description" class="panel-subtitle">面向客服与运营同事的统一处理界面。</p>
+        </div>
+        <div class="topbar-actions">
+          <button id="refresh-btn" class="btn btn-ghost">刷新</button>
+          <button id="new-case-btn" class="btn btn-primary">新建工单</button>
+        </div>
+      </header>
+
+      <section class="headline-strip">
+        <article class="headline-card"><span class="headline-label">工单总数</span><strong id="global-total">0</strong></article>
+        <article class="headline-card"><span class="headline-label">处理中</span><strong id="global-open">0</strong></article>
+        <article class="headline-card"><span class="headline-label">待客户回复</span><strong id="global-waiting">0</strong></article>
+        <article class="headline-card"><span class="headline-label">高优先级</span><strong id="global-high-priority">0</strong></article>
+      </section>
+
+      <section id="view-overview" class="view-grid">
+        <section class="card span-2">
+          <div class="section-head"><div><h3>今日概览</h3><p class="section-copy">跨市场工单、公告和运营保障总览。</p></div></div>
+          <div id="overview-supervisor-grid" class="overview-grid">
+            <div class="metric-block"><span id="overview-metric-label-1" class="field-label">待发送消息</span><strong id="overview-pending-outbound">0</strong></div>
+            <div class="metric-block"><span id="overview-metric-label-2" class="field-label">待处理任务</span><strong id="overview-pending-jobs">0</strong></div>
+            <div class="metric-block"><span id="overview-metric-label-3" class="field-label">异常任务</span><strong id="overview-dead-jobs">0</strong></div>
+            <div class="metric-block"><span id="overview-metric-label-4" class="field-label">已绑定会话</span><strong id="overview-openclaw-links">0</strong></div>
+            <div class="metric-block"><span id="overview-metric-label-5" class="field-label">待补同步</span><strong id="overview-stale-links">0</strong></div>
+            <div class="metric-block"><span id="overview-metric-label-6" class="field-label">待执行同步任务</span><strong id="overview-pending-sync">0</strong></div>
+            <div class="metric-block"><span id="overview-metric-label-7" class="field-label">附件任务</span><strong id="overview-pending-attachments">0</strong></div>
+            <div class="metric-block"><span id="overview-metric-label-8" class="field-label">渠道设置</span><strong id="overview-channel-accounts">0</strong></div>
+          </div>
+        </section>
+        <section id="overview-signoff-card" class="card">
+          <div class="section-head"><div><h3>上线检查</h3><p class="section-copy">查看当前环境和上线前检查状态。</p></div></div>
+          <div id="overview-signoff" class="ops-list"></div>
+        </section>
+        <section id="overview-runtime-card" class="card">
+          <div class="section-head"><div><h3>运营保障</h3><p class="section-copy">查看消息处理、健康状态和提醒项。</p></div></div>
+          <div id="overview-runtime" class="ops-list"></div>
+        </section>
+        <section class="card span-2">
+          <div class="section-head"><div><h3>当前生效公告</h3><p class="section-copy">影响客服回复口径的公告。</p></div></div>
+          <div id="overview-bulletins" class="notice-list"></div>
+        </section>
+        <section id="overview-accounts-card" class="card">
+          <div class="section-head"><div><h3>渠道设置</h3><p class="section-copy">渠道账号与可用状态。</p></div></div>
+          <div id="overview-accounts" class="ops-list"></div>
+        </section>
+      </section>
+
+      <section id="view-cases" class="workspace hidden">
+        <aside class="panel queue-panel">
+          <div class="panel-head compact-head">
+            <div>
+              <h2>工单列表</h2>
+              <p class="panel-subtitle">搜索、筛选并打开工单。</p>
+            </div>
+            <span id="queue-count" class="muted-pill">0</span>
+          </div>
+          <div class="queue-tools">
+            <input id="search-input" type="text" placeholder="搜索工单 / 客户 / 运单号" />
+            <div id="queue-market" class="toolbar-note">全部市场</div>
+          </div>
+          <div class="status-filters">
+            <button class="filter-btn active" data-status="">全部</button>
+            <button class="filter-btn" data-status="new">新建</button>
+            <button class="filter-btn" data-status="pending_human">待人工处理</button>
+            <button class="filter-btn" data-status="in_progress">处理中</button>
+            <button class="filter-btn" data-status="waiting_customer">待客户回复</button>
+            <button class="filter-btn" data-status="resolved">已解决</button>
+            <button class="filter-btn" data-status="closed">已关闭</button>
+          </div>
+          <div id="case-list" class="case-list"></div>
+          <div id="case-list-empty" class="empty-state hidden">没有找到工单</div>
+        </aside>
+
+        <main class="detail-column">
+          <div id="detail-empty" class="empty-state large-empty">请先选择一条工单。</div>
+          <div id="case-detail" class="hidden detail-stack">
+            <section class="hero-card">
+              <div class="hero-main">
+                <div>
+                  <div class="eyebrow">工单详情</div>
+                  <h2 id="detail-case">-</h2>
+                  <p id="detail-meta" class="panel-subtitle">-</p>
+                </div>
+                <div class="hero-chips">
+                  <span id="detail-status" class="chip"></span>
+                  <span id="detail-priority" class="chip chip-brand"></span>
+                  <span id="detail-market" class="chip"></span>
+                  <span id="detail-conversation-state" class="chip chip-accent"></span>
+                </div>
+              </div>
+              <div class="hero-grid">
+                <div><span class="field-label">客户</span><span id="detail-customer-name" class="field-value">-</span></div>
+                <div><span class="field-label">联系方式</span><span id="detail-customer-contact" class="field-value">-</span></div>
+                <div><span class="field-label">运单号</span><span id="detail-tracking" class="field-value">-</span></div>
+                <div><span class="field-label">渠道</span><span id="detail-channel" class="field-value">-</span></div>
+                <div><span class="field-label">目的地</span><span id="detail-destination" class="field-value">-</span></div>
+                <div><span class="field-label">请求时间</span><span id="detail-requested-time" class="field-value">-</span></div>
+                <div><span class="field-label">回复路径</span><span id="detail-reply-path" class="field-value">-</span></div>
+                <div><span class="field-label">来源备注</span><span id="detail-source-chat-id" class="field-value">-</span></div>
+              </div>
+            </section>
+            <section class="content-grid">
+              <section class="card span-2">
+                <div class="section-head"><div><h3>问题与客户背景</h3><p class="section-copy">发生了什么、客户要什么、最新来信是什么。</p></div></div>
+                <div class="stack-blocks">
+                  <div><div class="field-label">问题摘要</div><div id="detail-issue-summary" class="text-block"></div></div>
+                  <div><div class="field-label">客户诉求</div><div id="detail-customer-request" class="text-block"></div></div>
+                  <div><div class="field-label">客户最新消息</div><div id="detail-last-customer-message" class="text-block"></div></div>
+                </div>
+              </section>
+              <section class="card">
+                <div class="section-head"><div><h3>来源信息</h3><p class="section-copy">当前来信来源与最近同步状态。</p></div></div>
+                <div id="detail-openclaw-route" class="info-list"></div>
+              </section>
+              <section class="card span-2">
+                <div class="section-head"><div><h3>客户消息记录</h3><p class="section-copy">供客服查看的最近客户消息。</p></div></div>
+                <div id="detail-transcript" class="transcript-list"></div>
+              </section>
+              <section class="card">
+                <div class="section-head"><div><h3>当前生效公告</h3><p class="section-copy">影响回复口径的公告与通知。</p></div></div>
+                <div id="detail-bulletins" class="notice-list"></div>
+              </section>
+              <section class="card">
+                <div class="section-head"><div><h3>附件与证据</h3><p class="section-copy">系统附件与聊天证据。</p></div><span id="detail-attachments-count" class="muted-pill">0</span></div>
+                <div id="detail-evidence" class="evidence-list"></div>
+              </section>
+              <section class="card span-2">
+                <div class="section-head"><div><h3>处理工作台</h3><p class="section-copy">填写内部处理动作和客户可见更新。</p></div></div>
+                <div class="form-grid">
+                  <div><label>缺失信息</label><textarea id="edit-missing-fields" class="text-input" placeholder="缺失信息 to collect..."></textarea></div>
+                  <div><label>下一步动作</label><textarea id="edit-required-action" class="text-input" placeholder="What should human do next?"></textarea></div>
+                  <div><label>客户更新</label><textarea id="edit-customer-update" class="text-input" placeholder="Safe customer-facing update..."></textarea></div>
+                  <div><label>处理总结</label><textarea id="edit-resolution-summary" class="text-input" placeholder="Internal resolution summary..."></textarea></div>
+                </div>
+              </section>
+            </section>
+          </div>
+        </main>
+
+        <aside class="panel action-panel">
+          <section class="card sticky-card">
+            <div class="section-head"><div><h3>处理动作</h3><p class="section-copy">推进工单状态并保持交接清晰。</p></div><span id="save-hint" class="muted-pill">就绪</span></div>
+            <label>工单状态</label>
+            <select id="status-select">
+              <option value="new">新建</option>
+              <option value="pending_human">待人工处理</option>
+              <option value="in_progress">处理中</option>
+              <option value="waiting_customer">待客户回复</option>
+              <option value="resolved">已解决</option>
+              <option value="closed">已关闭</option>
+            </select>
+            <label>处理人</label>
+            <select id="assign-user"></select>
+            <label>内部备注</label>
+            <textarea id="human-note" class="text-input" placeholder="填写交接说明、回访安排或内部补充说明…"></textarea>
+            <button id="save-case-btn" class="btn btn-primary btn-block">保存处理结果</button>
+          </section>
+          <section class="card">
+            <div class="section-head"><div><h3>智能提炼</h3><p class="section-copy">保存智能判断，方便人工复核与交接。</p></div></div>
+            <label>智能摘要</label><textarea id="ai-summary" class="text-input" placeholder="填写智能摘要…"></textarea>
+            <label>工单类型</label><input id="ai-case-type" class="text-input single-line" placeholder="例如：派送延误" />
+            <label>建议处理动作</label><textarea id="ai-required-action" class="text-input" placeholder="填写下一步建议动作…"></textarea>
+            <label>缺失信息</label><textarea id="ai-missing-fields" class="text-input" placeholder="如：电话、截图、地址、签收证明…"></textarea>
+            <button id="save-ai-btn" class="btn btn-ghost btn-block">保存智能提炼</button>
+          </section>
+          <section id="workspace-ops-card" class="card">
+            <div class="section-head"><div><h3>运营视图</h3><p class="section-copy">给管理与运营查看的综合视图。</p></div></div>
+            <div id="ops-queue-summary" class="ops-list"></div>
+            <div id="ops-runtime-health" class="ops-list"></div>
+            <div id="ops-signoff" class="ops-list"></div>
+            <div id="ops-bulletins" class="ops-list"></div>
+            <div id="ops-channel-accounts" class="ops-list"></div>
+          </section>
+        </aside>
+      </section>
+
+      <section id="view-bulletins" class="view-grid hidden">
+        <section class="card span-2">
+          <div class="section-head"><div><h3>公告中心</h3><p class="section-copy">客户口径公告与客服指引。</p></div><div id="bulletin-edit-actions" class="section-actions"><button id="new-bulletin-btn" class="btn btn-primary">新建公告</button></div></div>
+          <div id="bulletin-readonly-note" class="empty-inline hidden">你当前可以查看公告，但不能修改公告；如需调整口径，请联系主管。</div>
+          <div id="bulletin-list" class="grid-list"></div>
+        </section>
+        <section class="card">
+          <div class="section-head"><div><h3>公告编辑</h3><p class="section-copy">为选定市场创建或编辑公告。</p></div></div>
+          <div id="bulletin-editor-form" class="form-grid single-col">
+            <input type="hidden" id="bulletin-id" />
+            <div><label>公告标题</label><input id="bulletin-title" class="text-input single-line" /></div>
+            <div><label>简短摘要</label><input id="bulletin-summary" class="text-input single-line" /></div>
+            <div><label>详细内容</label><textarea id="bulletin-body" class="text-input" placeholder="填写完整公告内容..."></textarea></div>
+            <div><label>适用市场</label><select id="bulletin-market"></select></div>
+            <div><label>国家代码</label><input id="bulletin-country-code" class="text-input single-line" placeholder="PH" /></div>
+            <div><label>公告类型</label><input id="bulletin-category" class="text-input single-line" value="notice" /></div>
+            <div><label>适用对象</label><select id="bulletin-audience"><option value="customer">客户</option><option value="operator">客服</option><option value="both">客户与客服</option></select></div>
+            <div><label>紧急程度</label><select id="bulletin-severity"><option value="info">普通</option><option value="warning">提醒</option><option value="critical">紧急</option></select></div>
+            <div><label>适用渠道</label><input id="bulletin-channels" class="text-input single-line" placeholder="例如：whatsapp,email" /></div>
+            <div class="inline-checks"><label><input id="bulletin-auto-inject" type="checkbox" checked /> 允许智能助手引用</label><label><input id="bulletin-active" type="checkbox" checked /> 生效中</label></div>
+            <div class="form-actions"><button id="save-bulletin-btn" class="btn btn-primary">保存公告</button><button id="clear-bulletin-btn" class="btn btn-ghost">清空</button></div>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-accounts" class="view-grid hidden">
+        <section class="card span-2">
+          <div class="section-head"><div><h3>发送线路管理</h3><p class="section-copy">主账号与备用账号配置。</p></div><div id="accounts-edit-actions" class="section-actions"><button id="new-account-btn" class="btn btn-primary">新建线路</button></div></div>
+          <div id="account-readonly-note" class="empty-inline hidden">你当前只能查看线路信息，不能修改发送线路。</div>
+          <div id="account-list" class="grid-list"></div>
+        </section>
+        <section class="card">
+          <div class="section-head"><div><h3>账号编辑</h3><p class="section-copy">管理绑定市场、优先级、状态和备用账号。</p></div></div>
+          <div id="account-editor-form" class="form-grid single-col">
+            <input type="hidden" id="account-id" />
+            <div><label>渠道类型</label><input id="account-provider" class="text-input single-line" value="whatsapp" /></div>
+            <div><label>账号编号</label><input id="account-account-id" class="text-input single-line" /></div>
+            <div><label>账号名称</label><input id="account-display-name" class="text-input single-line" /></div>
+            <div><label>适用市场</label><select id="account-market"></select></div>
+            <div><label>优先级</label><input id="account-priority" class="text-input single-line" type="number" value="100" /></div>
+            <div><label>账号状态</label><select id="account-health-status"><option value="unknown">未知</option><option value="healthy">正常</option><option value="degraded">受限</option><option value="offline">离线</option></select></div>
+            <div><label>备用账号编号</label><input id="account-fallback-id" class="text-input single-line" /></div>
+            <div class="inline-checks"><label><input id="account-active" type="checkbox" checked /> 生效中</label></div>
+            <div class="form-actions"><button id="save-account-btn" class="btn btn-primary">保存线路</button><button id="clear-account-btn" class="btn btn-ghost">清空</button></div>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-signoff" class="view-grid hidden">
+        <section class="card span-2">
+          <div class="section-head"><div><h3>上线检查</h3><p class="section-copy">云上部署和正式上线前的环境与运营检查。</p></div></div>
+          <div id="signoff-summary" class="signoff-summary"></div>
+          <div id="signoff-checks" class="grid-list compact"></div>
+        </section>
+        <section class="card">
+          <div class="section-head"><div><h3>检查提醒</h3><p class="section-copy">后端检查发现的最新阻塞项。</p></div></div>
+          <div id="signoff-warnings" class="notice-list"></div>
+        </section>
+        <section class="card">
+          <div class="section-head"><div><h3>消息同步状态</h3><p class="section-copy">同步游标、积压和健康状态。</p></div></div>
+          <div id="signoff-runtime" class="ops-list"></div>
+        </section>
+        <section class="card">
+          <div class="section-head"><div><h3>后台任务</h3><p class="section-copy">查看最新排队任务和异常任务。</p></div></div>
+          <div id="jobs-list" class="grid-list compact"></div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <div id="new-case-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <h3>新建工单</h3>
+          <p class="section-copy">快速录入客户问题，交给客服与智能协同处理。</p>
+        </div>
+        <button id="close-modal-btn" class="btn btn-ghost">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-grid">
+          <div><label>工单类型</label><input id="new-case-type" class="text-input single-line" placeholder="例如：派送延误" /></div>
+          <div><label>问题摘要</label><input id="new-issue-summary" class="text-input single-line" placeholder="例如：客户催问包裹何时送达" /></div>
+          <div class="span-2"><label>客户诉求</label><textarea id="new-customer-request" class="text-input" placeholder="填写客户原始诉求或摘要…"></textarea></div>
+          <div><label>客户姓名</label><input id="new-customer-name" class="text-input single-line" /></div>
+          <div><label>客户联系方式</label><input id="new-customer-contact" class="text-input single-line" /></div>
+          <div><label>运单号</label><input id="new-tracking-number" class="text-input single-line" /></div>
+          <div><label>渠道</label><select id="new-channel"><option value="whatsapp">WhatsApp</option><option value="email">邮箱</option><option value="web_chat">网页聊天</option></select></div>
+          <div><label>来源标识（选填）</label><input id="new-source-chat-id" class="text-input single-line" placeholder="wa-123" /></div>
+          <div class="span-2"><label>智能摘要（选填）</label><textarea id="new-ai-summary" class="text-input" placeholder="填写智能摘要…"></textarea></div>
+        </div>
+        <button id="create-case-btn" class="btn btn-primary btn-block">创建工单</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="command-palette" class="modal hidden">
+    <div class="modal-card command-card">
+      <div class="modal-head"><div><h3>快捷操作</h3><p class="section-copy">快速跳转常用操作，按 Esc 关闭。</p></div><button id="close-command-btn" class="btn btn-ghost">关闭</button></div>
+      <input id="command-search" class="text-input single-line" placeholder="搜索操作…" />
+      <div id="command-list" class="command-list"></div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

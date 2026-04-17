@@ -1,0 +1,111 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: helpdesk
+      POSTGRES_USER: helpdesk
+      POSTGRES_PASSWORD: helpdesk
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U helpdesk -d helpdesk"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: nexusdesk/helpdesk:local-openclaw
+    env_file:
+      - ../backend/.env.local-openclaw.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://helpdesk:helpdesk@postgres:5432/helpdesk
+      APP_ENV: development
+      OPENCLAW_DEPLOYMENT_MODE: local_gateway
+      OPENCLAW_TRANSPORT: mcp
+      OPENCLAW_CLI_FALLBACK_ENABLED: "false"
+      OPENCLAW_BRIDGE_ENABLED: "true"
+      OPENCLAW_BRIDGE_URL: http://host.docker.internal:18792
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+    volumes:
+      - ../backend:/app/backend
+      - ../webapp:/app/webapp
+      - ../frontend:/app/frontend
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  worker:
+    image: nexusdesk/helpdesk:local-openclaw
+    env_file:
+      - ../backend/.env.local-openclaw.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://helpdesk:helpdesk@postgres:5432/helpdesk
+      APP_ENV: development
+      OPENCLAW_DEPLOYMENT_MODE: local_gateway
+      OPENCLAW_TRANSPORT: mcp
+      OPENCLAW_CLI_FALLBACK_ENABLED: "false"
+      OPENCLAW_BRIDGE_ENABLED: "true"
+      OPENCLAW_BRIDGE_URL: http://host.docker.internal:18792
+    command: python scripts/run_worker.py --worker-id worker-local-main
+    volumes:
+      - ../backend:/app/backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  sync-daemon:
+    image: nexusdesk/helpdesk:local-openclaw
+    env_file:
+      - ../backend/.env.local-openclaw.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://helpdesk:helpdesk@postgres:5432/helpdesk
+      APP_ENV: development
+      OPENCLAW_DEPLOYMENT_MODE: local_gateway
+      OPENCLAW_TRANSPORT: mcp
+      OPENCLAW_CLI_FALLBACK_ENABLED: "false"
+      OPENCLAW_BRIDGE_ENABLED: "true"
+      OPENCLAW_BRIDGE_URL: http://host.docker.internal:18792
+    command: python scripts/run_openclaw_sync_daemon.py --worker-id worker-local-sync
+    volumes:
+      - ../backend:/app/backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  event-daemon:
+    image: nexusdesk/helpdesk:local-openclaw
+    env_file:
+      - ../backend/.env.local-openclaw.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://helpdesk:helpdesk@postgres:5432/helpdesk
+      APP_ENV: development
+      OPENCLAW_DEPLOYMENT_MODE: local_gateway
+      OPENCLAW_TRANSPORT: mcp
+      OPENCLAW_CLI_FALLBACK_ENABLED: "false"
+      OPENCLAW_BRIDGE_ENABLED: "true"
+      OPENCLAW_BRIDGE_URL: http://host.docker.internal:18792
+      OPENCLAW_EVENT_DRIVER_ENABLED: "true"
+    command: python scripts/run_openclaw_event_daemon.py
+    volumes:
+      - ../backend:/app/backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  postgres_data:
