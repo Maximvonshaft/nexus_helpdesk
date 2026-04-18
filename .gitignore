@@ -72,3 +72,4 @@ backend/uploads/
 *.bak.*
 *.bak
 /tmp/
+*.tsbuildinfo
