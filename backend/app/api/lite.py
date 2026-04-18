@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..enums import UserRole
 from ..models import Team, User
+from ..multi_tenant_models import TeamTenantLink, TenantMembership
 from ..schemas import (
     LiteAIIntakeRequest,
     LiteAssignRequest,
@@ -24,15 +25,14 @@ from ..services.lite_service import (
     LITE_STATUS_ORDER,
     assign_lite_case,
     change_lite_status,
-    create_lite_case,
-    get_lite_case,
-    list_lite_cases,
     save_ai_intake_lite,
     save_human_note_lite,
     update_lite_case,
     workflow_update_lite_case,
 )
-from .deps import get_current_user
+from ..services.tenant_lite_service import create_tenant_lite_case, get_tenant_lite_case, list_tenant_lite_cases
+from ..services.tenant_ticket_service import ensure_ticket_visible_in_tenant
+from .deps import get_current_tenant, get_current_user
 from ..unit_of_work import managed_session
 
 router = APIRouter(prefix="/api/lite", tags=["lite"])
@@ -44,15 +44,17 @@ def lite_stream(current_user=Depends(get_current_user)):
 
 
 @router.get("/meta", response_model=LiteMetaRead)
-def get_lite_meta(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def get_lite_meta(db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    tenant_user_ids = [row.user_id for row in db.query(TenantMembership.user_id).filter(TenantMembership.tenant_id == current_tenant.id, TenantMembership.is_active.is_(True)).all()]
+    tenant_team_ids = [row.team_id for row in db.query(TeamTenantLink.team_id).filter(TeamTenantLink.tenant_id == current_tenant.id).all()]
     if current_user.role in {UserRole.admin, UserRole.manager, UserRole.auditor}:
-        users = db.query(User).filter(User.is_active.is_(True)).order_by(User.display_name.asc()).all()
-        teams = db.query(Team).filter(Team.is_active.is_(True)).order_by(Team.name.asc()).all()
+        users = db.query(User).filter(User.is_active.is_(True), User.id.in_(tenant_user_ids or [-1])).order_by(User.display_name.asc()).all()
+        teams = db.query(Team).filter(Team.is_active.is_(True), Team.id.in_(tenant_team_ids or [-1])).order_by(Team.name.asc()).all()
     else:
-        users = db.query(User).filter(User.is_active.is_(True), User.team_id == current_user.team_id).order_by(User.display_name.asc()).all()
+        users = db.query(User).filter(User.is_active.is_(True), User.id.in_(tenant_user_ids or [-1]), User.team_id == current_user.team_id).order_by(User.display_name.asc()).all()
         if current_user.id and all(user.id != current_user.id for user in users):
             users.append(current_user)
-        teams = db.query(Team).filter(Team.is_active.is_(True), Team.id == current_user.team_id).order_by(Team.name.asc()).all()
+        teams = db.query(Team).filter(Team.is_active.is_(True), Team.id.in_(tenant_team_ids or [-1]), Team.id == current_user.team_id).order_by(Team.name.asc()).all()
     return LiteMetaRead(
         users=[UserRead.model_validate(x) for x in users],
         teams=[TeamRead.model_validate(x) for x in teams],
@@ -67,25 +69,27 @@ def list_cases(
     status: str | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    current_tenant=Depends(get_current_tenant),
 ):
-    return list_lite_cases(db, current_user, q=q, status=status)
+    return list_tenant_lite_cases(db, current_user, current_tenant, q=q, status=status)
 
 
 @router.get("/cases/{ticket_id}", response_model=LiteCaseDetail)
-def get_case(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    return get_lite_case(db, ticket_id, current_user)
+def get_case(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    return get_tenant_lite_case(db, ticket_id, current_user, current_tenant)
 
 
 @router.post("/cases")
-def create_case(payload: LiteCaseCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def create_case(payload: LiteCaseCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
     with managed_session(db):
-        case, action = create_lite_case(db, payload, current_user)
+        case, action = create_tenant_lite_case(db, payload, current_user, current_tenant)
         db.flush()
     return {"action": action, "case": case}
 
 
 @router.patch("/cases/{ticket_id}", response_model=LiteCaseDetail)
-def update_case(ticket_id: int, payload: LiteCaseUpdate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def update_case(ticket_id: int, payload: LiteCaseUpdate, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         case = update_lite_case(db, ticket_id, payload, current_user)
         db.flush()
@@ -93,7 +97,8 @@ def update_case(ticket_id: int, payload: LiteCaseUpdate, db: Session = Depends(g
 
 
 @router.post("/cases/{ticket_id}/workflow-update", response_model=LiteCaseDetail)
-def workflow_update_case(ticket_id: int, payload: LiteWorkflowUpdateRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def workflow_update_case(ticket_id: int, payload: LiteWorkflowUpdateRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         case = workflow_update_lite_case(db, ticket_id, payload, current_user)
         db.flush()
@@ -104,7 +109,8 @@ def workflow_update_case(ticket_id: int, payload: LiteWorkflowUpdateRequest, db:
 
 
 @router.post("/cases/{ticket_id}/assign", response_model=LiteCaseDetail)
-def assign_case(ticket_id: int, payload: LiteAssignRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def assign_case(ticket_id: int, payload: LiteAssignRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         case = assign_lite_case(db, ticket_id, payload, current_user)
         db.flush()
@@ -112,7 +118,8 @@ def assign_case(ticket_id: int, payload: LiteAssignRequest, db: Session = Depend
 
 
 @router.post("/cases/{ticket_id}/status", response_model=LiteCaseDetail)
-def set_status(ticket_id: int, payload: LiteStatusRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def set_status(ticket_id: int, payload: LiteStatusRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         case = change_lite_status(db, ticket_id, payload, current_user)
         db.flush()
@@ -123,7 +130,8 @@ def set_status(ticket_id: int, payload: LiteStatusRequest, db: Session = Depends
 
 
 @router.post("/cases/{ticket_id}/human-note", response_model=LiteCaseDetail)
-def save_human_note(ticket_id: int, payload: LiteHumanNoteRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def save_human_note(ticket_id: int, payload: LiteHumanNoteRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         case = save_human_note_lite(db, ticket_id, payload, current_user)
         db.flush()
@@ -134,7 +142,8 @@ def save_human_note(ticket_id: int, payload: LiteHumanNoteRequest, db: Session =
 
 
 @router.post("/cases/{ticket_id}/ai-intake", response_model=LiteCaseDetail)
-def save_ai_intake(ticket_id: int, payload: LiteAIIntakeRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def save_ai_intake(ticket_id: int, payload: LiteAIIntakeRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         case = save_ai_intake_lite(db, ticket_id, payload, current_user)
         db.flush()
