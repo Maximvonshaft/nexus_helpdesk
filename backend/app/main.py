@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
+from . import multi_tenant_models  # noqa: F401 - ensure tenant ORM models are registered
 from .api.admin import router as admin_router
 from .api.auth import router as auth_router
 from .api.customers import router as customers_router
@@ -16,6 +17,7 @@ from .api.integration import router as integration_router
 from .api.lookups import router as lookups_router
 from .api.lite import router as lite_router
 from .api.stats import router as stats_router
+from .api.tenants import router as tenants_router
 from .api.tickets import router as tickets_router
 from .db import Base, SessionLocal, engine
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
@@ -30,7 +32,7 @@ app.add_middleware(
     allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allow_headers=['Authorization', 'Content-Type', 'X-API-Key', 'X-Client-Key-Id', 'X-Client-Key', 'Idempotency-Key', settings.request_id_header],
+    allow_headers=['Authorization', 'Content-Type', 'X-API-Key', 'X-Client-Key-Id', 'X-Client-Key', 'Idempotency-Key', 'X-Tenant-Id', settings.request_id_header],
     expose_headers=[settings.request_id_header],
 )
 
@@ -93,12 +95,11 @@ app.include_router(auth_router)
 app.include_router(files_router)
 app.include_router(integration_router)
 app.include_router(lookups_router)
+app.include_router(tenants_router)
 app.include_router(lite_router)
 app.include_router(customers_router)
 app.include_router(stats_router)
 app.include_router(tickets_router)
-
-
 
 
 from fastapi.responses import FileResponse
@@ -106,7 +107,7 @@ from fastapi.responses import FileResponse
 frontend_dir = settings.frontend_root
 if frontend_dir.exists():
     app.mount('/assets', StaticFiles(directory=str(frontend_dir / "assets")), name='frontend_assets')
-    
+
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         if full_path.startswith("api/"):
@@ -115,4 +116,3 @@ if frontend_dir.exists():
         if file_path.is_file():
             return FileResponse(str(file_path))
         return FileResponse(str(frontend_dir / "index.html"))
-
