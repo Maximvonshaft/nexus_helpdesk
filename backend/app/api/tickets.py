@@ -43,20 +43,19 @@ from ..services.ticket_service import (
     add_internal_note,
     assign_ticket,
     change_status,
-    create_ticket,
     escalate_ticket,
     get_ticket_events,
     get_ticket_or_404,
-    list_tickets,
     reopen_ticket,
     save_outbound_draft,
     send_outbound_message,
     update_ticket,
 )
+from ..services.tenant_ticket_service import create_tenant_ticket, ensure_ticket_visible_in_tenant, list_tenant_tickets
 from ..services.timeline_service import build_unified_timeline
 from ..services.permissions import ensure_ticket_visible
 from ..services.sla_service import compute_sla_snapshot
-from .deps import get_current_user
+from .deps import get_current_tenant, get_current_user
 from ..utils.time import ensure_utc, format_utc, utc_now
 from ..unit_of_work import managed_session
 from ..services.bulletin_service import list_active_bulletins
@@ -126,9 +125,9 @@ def _serialize_ticket(ticket: Ticket, db: Session) -> TicketRead:
 
 
 @router.post("", response_model=TicketRead)
-def create_ticket_endpoint(payload: TicketCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def create_ticket_endpoint(payload: TicketCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
     with managed_session(db):
-        ticket = create_ticket(db, payload, current_user)
+        ticket = create_tenant_ticket(db, current_user, current_tenant, payload)
         db.flush()
     return _serialize_ticket(ticket, db)
 
@@ -145,10 +144,12 @@ def list_tickets_endpoint(
     skip: int = 0,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    current_tenant=Depends(get_current_tenant),
 ):
-    tickets = list_tickets(
+    tickets = list_tenant_tickets(
         db,
         current_user,
+        current_tenant,
         q=q,
         status_value=status,
         priority_value=priority,
@@ -183,14 +184,14 @@ def list_tickets_endpoint(
 
 
 @router.get("/{ticket_id}", response_model=TicketRead)
-def get_ticket_endpoint(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ticket = get_ticket_or_404(db, ticket_id)
-    ensure_ticket_visible(current_user, ticket, db)
+def get_ticket_endpoint(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ticket = ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     return _serialize_ticket(ticket, db)
 
 
 @router.patch("/{ticket_id}", response_model=TicketRead)
-def update_ticket_endpoint(ticket_id: int, payload: TicketUpdate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def update_ticket_endpoint(ticket_id: int, payload: TicketUpdate, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         ticket = update_ticket(db, ticket_id, payload, current_user)
         db.flush()
@@ -198,7 +199,8 @@ def update_ticket_endpoint(ticket_id: int, payload: TicketUpdate, db: Session = 
 
 
 @router.post("/{ticket_id}/assign", response_model=TicketRead)
-def assign_ticket_endpoint(ticket_id: int, payload: TicketAssignRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def assign_ticket_endpoint(ticket_id: int, payload: TicketAssignRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         ticket = assign_ticket(db, ticket_id, payload, current_user)
         db.flush()
@@ -206,7 +208,8 @@ def assign_ticket_endpoint(ticket_id: int, payload: TicketAssignRequest, db: Ses
 
 
 @router.post("/{ticket_id}/status", response_model=TicketRead)
-def change_status_endpoint(ticket_id: int, payload: TicketStatusChangeRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def change_status_endpoint(ticket_id: int, payload: TicketStatusChangeRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         ticket = change_status(db, ticket_id, payload, current_user)
         db.flush()
@@ -214,7 +217,8 @@ def change_status_endpoint(ticket_id: int, payload: TicketStatusChangeRequest, d
 
 
 @router.post("/{ticket_id}/escalate", response_model=TicketRead)
-def escalate_ticket_endpoint(ticket_id: int, payload: TicketEscalateRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def escalate_ticket_endpoint(ticket_id: int, payload: TicketEscalateRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         ticket = escalate_ticket(db, ticket_id, payload, current_user)
         db.flush()
@@ -222,7 +226,8 @@ def escalate_ticket_endpoint(ticket_id: int, payload: TicketEscalateRequest, db:
 
 
 @router.post("/{ticket_id}/reopen", response_model=TicketRead)
-def reopen_ticket_endpoint(ticket_id: int, payload: TicketReopenRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def reopen_ticket_endpoint(ticket_id: int, payload: TicketReopenRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         ticket = reopen_ticket(db, ticket_id, payload, current_user)
         db.flush()
@@ -230,7 +235,8 @@ def reopen_ticket_endpoint(ticket_id: int, payload: TicketReopenRequest, db: Ses
 
 
 @router.post("/{ticket_id}/comments", response_model=CommentRead)
-def add_comment_endpoint(ticket_id: int, payload: CommentCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def add_comment_endpoint(ticket_id: int, payload: CommentCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         row = add_comment(db, ticket_id, payload, current_user)
         db.flush()
@@ -238,7 +244,8 @@ def add_comment_endpoint(ticket_id: int, payload: CommentCreate, db: Session = D
 
 
 @router.post("/{ticket_id}/internal-notes", response_model=InternalNoteRead)
-def add_internal_note_endpoint(ticket_id: int, payload: InternalNoteCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def add_internal_note_endpoint(ticket_id: int, payload: InternalNoteCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         row = add_internal_note(db, ticket_id, payload, current_user)
         db.flush()
@@ -252,7 +259,9 @@ def upload_attachment_endpoint(
     visibility: str = Form("external"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    current_tenant=Depends(get_current_tenant),
 ):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         item = add_attachment(
             db,
@@ -266,7 +275,8 @@ def upload_attachment_endpoint(
 
 
 @router.post("/{ticket_id}/outbound/draft", response_model=OutboundMessageRead)
-def save_draft_endpoint(ticket_id: int, payload: OutboundDraftCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def save_draft_endpoint(ticket_id: int, payload: OutboundDraftCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         row = save_outbound_draft(db, ticket_id, payload, current_user)
         db.flush()
@@ -274,7 +284,8 @@ def save_draft_endpoint(ticket_id: int, payload: OutboundDraftCreate, db: Sessio
 
 
 @router.post("/{ticket_id}/outbound/send", response_model=OutboundMessageRead)
-def send_message_endpoint(ticket_id: int, payload: OutboundSendRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def send_message_endpoint(ticket_id: int, payload: OutboundSendRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         row = send_outbound_message(db, ticket_id, payload, current_user)
         db.flush()
@@ -282,7 +293,8 @@ def send_message_endpoint(ticket_id: int, payload: OutboundSendRequest, db: Sess
 
 
 @router.post("/{ticket_id}/ai-intakes", response_model=AIIntakeRead)
-def add_ai_intake_endpoint(ticket_id: int, payload: AIIntakeCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def add_ai_intake_endpoint(ticket_id: int, payload: AIIntakeCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     with managed_session(db):
         row = add_ai_intake(db, ticket_id, payload, current_user)
         db.flush()
@@ -290,22 +302,21 @@ def add_ai_intake_endpoint(ticket_id: int, payload: AIIntakeCreate, db: Session 
 
 
 @router.get("/{ticket_id}/ai-intakes", response_model=list[AIIntakeRead])
-def list_ai_intakes(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ticket = get_ticket_or_404(db, ticket_id)
-    ensure_ticket_visible(current_user, ticket, db)
+def list_ai_intakes(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ticket = ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     return [AIIntakeRead.model_validate(x) for x in ticket.ai_intakes]
 
 
 @router.get("/{ticket_id}/timeline", response_model=list[TimelineItemRead])
-def get_ticket_timeline(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ticket = get_ticket_or_404(db, ticket_id)
-    ensure_ticket_visible(current_user, ticket, db)
+def get_ticket_timeline(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     items = build_unified_timeline(db, ticket_id)
     return [TimelineItemRead(**item) for item in items]
 
 
 @router.get("/{ticket_id}/events")
-def get_ticket_events_endpoint(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def get_ticket_events_endpoint(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_ticket_visible_in_tenant(db, current_user, current_tenant, ticket_id)
     events = get_ticket_events(db, ticket_id, current_user)
     return [
         {
