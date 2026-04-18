@@ -1,0 +1,362 @@
+# NexusDesk / Helpdesk Suite Lite — Production Continuation Brief
+
+## System purpose
+This project is a case-centric customer operations runtime for logistics support and exception handling. It unifies customer conversations, manual operations, AI intake, attachments, outbound replies, and audit history into a single ticket workflow.
+
+## Current status (round14)
+The system is now a **production-grade code baseline with OpenClaw collaboration hardening underway**. The current highest-value work is no longer generic ticket features; it is maximizing OpenClaw collaboration in production: event-driven sync, media evidence capture, multi-account routing, operator runtime health, and final environment sign-off.
+
+
+## Current architecture
+- `backend/app/api` — HTTP surface for auth, tickets, lite UI, files, integration, admin, stats, customers
+- `backend/app/services` — ticket orchestration, permissions, storage, integration auth, outbox dispatch, background jobs, observability, OpenClaw bridge + MCP client
+- `backend/app/models.py` — SQLAlchemy domain model
+- `backend/alembic` — schema migration entrypoint and revisions
+- `backend/scripts/run_worker.py` — queue worker for outbound messages and background jobs
+- `frontend/` — lightweight operator console
+
+## What is already achieved
+- Integration endpoints require authenticated clients; anonymous reads/writes are removed.
+- Ticket attachments are private and checked against ticket visibility.
+- Lite workflow updates are atomic and no longer clear assignee/team unexpectedly.
+- Explicit workflow status updates are not silently overridden by automatic assignment progression.
+- Background auto-reply is durable-job based instead of in-process thread execution.
+- Outbound messaging is queue-first and no longer blocks the request path with shell dispatch.
+- Capability-based authorization exists and user-specific overrides are supported.
+- Local and S3-compatible storage backends are both available behind one storage abstraction.
+- `/healthz`, `/readyz`, request IDs, structured logs, and `/metrics` are present.
+- Alembic is present and round6 adds operational indexes for queue-heavy tables.
+
+## What round6 changed
+- Added admin API to inspect and manage capability overrides.
+- Tightened production settings: production now requires PostgreSQL and forbids legacy / dev shortcuts.
+- Removed application startup auto-init from the production path; database initialization belongs to migration/scripts.
+- Improved worker claim logic with PostgreSQL `FOR UPDATE SKIP LOCKED` when PostgreSQL is used.
+- Added operational indexes for outbox/job queues and integration request windows.
+- Upgraded observability to Prometheus client metrics when available, with fallback-safe rendering.
+- Reworked worker logging and metrics hooks.
+
+## Current runtime model
+### App
+- Run API with `uvicorn app.main:app`
+- Use Alembic for schema migrations
+- Use `backend/scripts/init_dev_db.py` only for local development seeding
+
+### Worker
+- Run `backend/scripts/run_worker.py`
+- This processes:
+  - queued outbound messages
+  - durable background jobs (for example auto reply)
+
+### Storage
+- `STORAGE_BACKEND=local` for local dev
+- `STORAGE_BACKEND=s3` for production-compatible remote object storage
+
+## Current hard blockers before final production sign-off
+1. PostgreSQL must become the only non-local deployment database path used in real environments.
+2. The Alembic baseline should be replaced by explicit, immutable DDL revisions rather than metadata-wide `create_all/drop_all` semantics.
+3. Capability override management needs a formal operator workflow / admin UI, not only API/script access.
+4. Observability still needs external sink integration (central logs, tracing, error reporting).
+5. Attachment persistence should eventually complete the move from compatibility fields (`file_path`, `file_url`) to `storage_key` only.
+6. Transaction boundaries are still mixed between API/request scope and service-level commits; this should be simplified in a future release.
+
+## Recommended next iteration
+The next best iteration should be the **final production sign-off / cutover** phase:
+- PostgreSQL-only stage/prod deployment path
+- explicit Alembic DDL baseline replacement
+- worker deployment topology + lock/lease policy validation under PostgreSQL
+- admin/operator workflow for capability overrides and integration client lifecycle
+- external observability wiring (log aggregation, tracing, error reporting)
+- final package hygiene and deployment runbook
+
+## How to resume work in the next conversation
+Use this document as the sole technical briefing. The highest-value continuation point is:
+1. inspect `backend/alembic/versions/`
+2. inspect `backend/app/services/message_dispatch.py` and `background_jobs.py`
+3. inspect `backend/app/services/permissions.py` and `backend/app/api/admin.py`
+4. continue from the production cutover blockers listed above
+
+
+## Round 7 Status
+
+Current maturity: **production-candidate approaching sign-off**.
+
+### What changed in Round 7
+- Request-scoped SQLAlchemy sessions no longer auto-commit at the dependency layer.
+- A shared `managed_session()` helper was added to standardize commit/rollback boundaries for new use-cases.
+- A new Alembic revision (`20260410_0004`) adds explicit operational indexes instead of relying on runtime metadata behavior.
+- The project README now acts as the single continuation brief for future rounds.
+
+### What still blocks final production sign-off
+1. Complete migration away from legacy service-level scattered commits to clear use-case transaction boundaries.
+2. PostgreSQL cutover validation against a real target environment.
+3. External observability hookup (log sink / tracing / error reporting).
+4. Final operational runbook for deploy / rollback / backup / worker supervision.
+
+### Why package size can shrink while quality improves
+A cleaner **pure-source** delivery may become smaller because it removes:
+- `__pycache__/` and `*.pyc`
+- sample uploads / sqlite files / runtime artifacts
+- duplicate historical reports
+- generated assets that do not belong in source control
+
+So a production push can make the codebase **better and smaller at the same time** if the package is a clean source distribution.
+
+
+## Round 8 additions
+- Added market-aware routing primitives (`Market`, `Team.market_id`, `Ticket.market_id`, `Ticket.country_code`).
+- Added OpenClaw-native conversation link and transcript persistence models.
+- Added an MCP stdio client for OpenClaw (`openclaw mcp serve`) with tool calls for conversation reads and same-route sends.
+- Added admin APIs for markets and OpenClaw ticket/session linking + transcript sync.
+- Outbound dispatch now prefers OpenClaw MCP same-route replies when a ticket has a linked session.
+- Auto-reply jobs now use recent OpenClaw transcript history as polishing context when available.
+
+## Current production blockers after Round 8
+1. Stage/prod PostgreSQL cutover still needs a real target-environment validation run.
+2. Transaction boundaries are improved but not yet fully unified under explicit use-case/session management.
+3. OpenClaw MCP live event ingestion is not yet daemonized as a durable sync worker; sync is currently explicit/admin-driven.
+4. External observability sinks (central logs, tracing, error reporting) still need to be connected.
+5. Pure-source package hygiene still must be enforced on every release build.
+
+## OpenClaw integration decision
+OpenClaw MCP is the preferred primary integration path for conversation history, transcript reads, attachment metadata reads, and same-route replies. The OpenClaw CLI remains the fallback path for operational send recovery when MCP is unavailable.
+
+
+## What round9 changed
+- Added durable OpenClaw sync jobs (`openclaw.sync_session`) on top of the existing background job system.
+- Added dedupe support for background jobs so repeated sync requests collapse into one pending/processing unit.
+- Added operator APIs for:
+  - enqueueing OpenClaw sync for one ticket
+  - enqueueing stale OpenClaw sync in bulk
+  - queue summary
+  - background job inspection
+  - production readiness inspection
+- Added a production-readiness validation script.
+- Added round9 operational indexes for queue and OpenClaw transcript lookup paths.
+- Extended OpenClaw MCP client with `events_wait`.
+- Kept the source package clean: one README only, no docs/, no pycache, no runtime artifacts.
+
+## Current hard blockers before final production sign-off
+1. Real PostgreSQL cutover rehearsal against a target environment is still required.
+2. Service-layer transaction boundaries still need another cleanup pass to reduce scattered commits.
+3. OpenClaw sync is now durable, but a dedicated long-lived sync daemon / deployment topology should still be finalized.
+4. External observability sinks (centralized logs, tracing, error reporting) still need real integration.
+5. Attachment persistence should eventually complete the move from compatibility fields (`file_path`, `file_url`) to `storage_key` only.
+
+
+## What round10 changed
+- Added a dedicated OpenClaw sync daemon script (`backend/scripts/run_openclaw_sync_daemon.py`) so transcript synchronization can run independently from the generic worker.
+- Added a PostgreSQL cutover rehearsal script (`backend/scripts/postgres_cutover_rehearsal.py`) to validate deployment-critical preconditions.
+- Converted OpenClaw link/sync admin writes to explicit `managed_session()` transactions.
+- Removed legacy dead seed/demo code from the main application runtime path.
+- Reduced nested transaction behavior in the OpenClaw bridge by replacing internal commits with flush-based persistence.
+- Added a production sign-off checklist endpoint (`/api/admin/signoff-checklist`).
+
+## Current hard blockers before final production sign-off
+1. A real PostgreSQL target environment still needs one successful cutover rehearsal using the provided script and migration chain.
+2. Remaining service-level scattered commits should be reduced further over time, especially in ticket mutation flows.
+3. External observability sinks (central logs, tracing, error reporting) still need deployment integration.
+4. Final operator runbooks and rollback drills still need to be executed in the target environment.
+
+## Deployment topology recommendation
+- API process: `uvicorn app.main:app`
+- Generic worker: `backend/scripts/run_worker.py`
+- OpenClaw sync daemon: `backend/scripts/run_openclaw_sync_daemon.py`
+- Migrations: `alembic upgrade head`
+- Production cutover rehearsal: `backend/scripts/postgres_cutover_rehearsal.py`
+
+
+
+## Round 12 status
+The system is now in **final production-hardening focused on OpenClaw collaboration maximization**.
+
+### What changed in round12
+- Added conversation ownership state on tickets.
+- Added channel account model for market/account routing and fallback groundwork.
+- Added OpenClaw attachment reference model so media evidence can enter the ticket domain instead of staying transcript-only.
+- Added event-consumption path (`consume_openclaw_events_once`) and a dedicated event daemon script.
+- Added admin runtime-health and channel-account management endpoints.
+- Added readiness improvements around event-driver and runtime backlog visibility.
+
+### What still remains before final sign-off
+1. Wire true OpenClaw `events_wait/events_poll` against a live remote gateway in target environment.
+2. Persist remote media blobs into object storage instead of only tracking attachment references.
+3. Finish transaction-boundary cleanup across ticket/lite/message services.
+4. Add external observability sinks and final operational runbooks.
+
+
+## Round 13 status
+The system is now focused on **OpenClaw collaboration maximization** rather than generic ticket feature expansion.
+
+### What changed in round13
+- Added channel-account routing model for market/account strategy.
+- Added conversation ownership state to tickets.
+- Added OpenClaw event cursor tracking and event-consumption path.
+- Added attachment reference capture from OpenClaw transcript metadata and durable persistence into local/S3-backed system storage.
+- Added OpenClaw event daemon heartbeat and richer runtime-health visibility.
+- Added ticket-level exposure of OpenClaw attachment references.
+
+### What still remains
+1. Real remote OpenClaw gateway event streaming validation in staging/production.
+2. Replace metadata-only attachment capture with true remote blob persistence if/when OpenClaw or channel-native APIs expose durable binary fetch.
+3. Final service transaction cleanup.
+4. External observability sinks and operator runbook finalization.
+
+
+## What round13 changed
+- Added `ChannelAccount` so a market can be mapped to a concrete OpenClaw account strategy.
+- Added `conversation_state` on tickets so AI/human ownership can be tracked explicitly.
+- Added `OpenClawAttachmentReference` and durable persistence of attachment metadata into system storage.
+- Added `OpenClawSyncCursor` and an event-consumption path for OpenClaw live events.
+- Added `ServiceHeartbeat` plus runtime-health reporting for the OpenClaw event daemon.
+- Added `run_openclaw_event_daemon.py` as a dedicated event-consumption entrypoint.
+- Extended admin APIs with channel-account management and OpenClaw runtime-health visibility.
+
+## What still remains before final sign-off
+1. Validate the event-driven OpenClaw path against a live remote gateway in staging/production.
+2. If future channel/OpenClaw APIs expose durable binary fetch, replace metadata-only capture with full media persistence.
+3. Finish the last pass of service transaction cleanup.
+4. Wire logs/traces/errors into external observability systems and complete production runbooks.
+
+
+## Round 14 status
+This version fixes the last blocking implementation defects identified in the round13 audit and strengthens delivery discipline.
+
+### What changed in round14
+- Restored the actual outbound dispatch execution path in `message_dispatch.py`.
+- Unified `attachments_fetch()` call signature between the MCP client and OpenClaw bridge.
+- Fixed the OpenClaw event daemon worker metric call so the daemon can run without runtime argument errors.
+- Enabled stale transcript reconciliation even when the event driver is enabled, so event loss windows have a compensating path.
+- Runtime health now reports the full stale OpenClaw backlog count instead of one limited batch length.
+- Frontend token storage moved from `localStorage` to `sessionStorage`.
+- Package cleanup excludes smoke runtime artifacts.
+
+### Remaining work after round14
+- Media persistence is still metadata-first because current OpenClaw MCP attachment fetch is a metadata/content-block view, not a durable blob store.
+- A final real-environment cutover rehearsal is still required before sign-off.
+
+
+## Round 15 status
+The system is now focused on **finalizing production transaction boundaries and enriching country/market operating context**.
+
+### What changed in round15
+- Added market bulletins / notices so each market can maintain active customer-facing announcements.
+- Active bulletins can now be injected into AI-polished customer replies when relevant.
+- Ticket detail now includes active bulletins for the ticket market/country.
+- OpenClaw attachment persistence now attempts to capture inline/base64/downloadable content before falling back to metadata-only JSON.
+- Ticket write APIs now use explicit managed transaction blocks for the main write paths.
+- Continued cleanup of production packaging (source-only, one README).
+
+## Deployment bundle
+This repository now includes a minimal production delivery bundle:
+
+- `Dockerfile` — single image for API / worker / sync daemons
+- `deploy/docker-compose.cloud.yml` — cloud-friendly stack using external PostgreSQL/S3/OpenClaw Gateway
+- `deploy/nginx/default.conf` — reverse proxy example
+- `deploy/systemd/*.service` — systemd unit samples for VM deployments
+- `scripts/deploy/preflight.sh` — deployment preflight validation
+- `scripts/deploy/run_migrations.sh` — Alembic migration runner
+- `scripts/deploy/backup_postgres.sh` — PostgreSQL backup helper
+- `scripts/deploy/restore_postgres.sh` — PostgreSQL restore helper
+
+Recommended production topology:
+- Helpdesk app + workers in cloud
+- PostgreSQL in managed cloud database
+- S3-compatible object storage in cloud
+- OpenClaw Gateway on local or edge environment
+- MCP over secure remote Gateway URL (`wss://...`) as primary route
+
+## Strategic extension beyond customer support
+With broader capabilities and stronger operator controls, this system can evolve from a customer-support runtime into a dispatch / operations control layer:
+- market bulletins already provide country-level context for AI replies
+- channel-account routing creates a base for per-market execution lanes
+- durable jobs + runtime health provide the base for controlled operational actions
+- OpenClaw session routing can be extended from customer replies to operator workflows, approvals, and dispatch actions
+
+That extension should only happen after:
+1. strict capability boundaries for operational actions
+2. auditable approval workflows
+3. environment-grade observability and rollback
+4. explicit separation between customer-support actions and dispatch/operations actions
+
+
+## Round 17 frontend refresh
+- Reworked the lite frontend into a richer operations workspace without changing the underlying static delivery model.
+- Added stronger information hierarchy: queue intelligence, case hero, OpenClaw route, transcript, evidence, market notices, and operator health blocks.
+- Kept a single static frontend (`index.html`, `app.js`, `style.css`) so deployment remains simple.
+
+
+## Final frontend blueprint
+
+### Product goal
+Build a control-tower frontend that fully represents the current backend capabilities: queue operations, case workspace, OpenClaw transcript and route context, evidence handling, market bulletins, channel-account control, and production sign-off visibility.
+
+### Recommended long-term stack
+- React 19
+- TypeScript
+- Vite
+- TanStack Router
+- TanStack Query
+- Tailwind CSS v4
+- shadcn/ui
+
+### Information architecture
+- Overview cockpit
+- Case workspace
+- Market bulletin center
+- Channel account control
+- Runtime and production sign-off dashboard
+
+### This source package
+This package still ships a static frontend for immediate compatibility, but the structure, sections, and data model are aligned to the long-term blueprint above.
+
+
+## React 19 / TypeScript / Vite migration blueprint
+
+This repository now includes a formal next-generation frontend scaffold in `webapp/` for the final control-console architecture.
+
+### Target stack
+- React 19
+- TypeScript
+- Vite
+- TanStack Router
+- TanStack Query
+- Tailwind CSS v4
+- shadcn/ui-style component architecture
+
+### Why this stack
+The system is an authenticated, data-dense operations console, not an SEO-first marketing site. This stack optimizes for:
+- type-safe routing
+- server-state orchestration
+- fast iterative UI delivery
+- a durable control-console component system
+- eventual replacement of the legacy static frontend without disrupting backend APIs
+
+### Migration shape
+- Keep `frontend/` as legacy fallback.
+- Build the new React app from `webapp/` into `frontend_dist/`.
+- Backend serves `frontend_dist/` if present, otherwise falls back to `frontend/`.
+- Migrate feature-by-feature: overview, workspace, bulletins, channel accounts, runtime.
+
+
+## Round 24 status
+The project now includes a significantly more complete React 19 / TypeScript / Vite control-console frontend in `webapp/`, with authenticated multi-view workflows for Overview, Case Workspace, Bulletins, Channel Accounts, and Runtime & Sign-off.
+
+
+## Local OpenClaw-first operator deployment
+
+For the next phase, the preferred local workflow is:
+1. keep OpenClaw running on the same workstation or a nearby gateway host
+2. run this system against PostgreSQL locally
+3. verify MCP bridge reachability before testing same-route reads/replies
+
+Artifacts added for this workflow:
+- `backend/.env.local-openclaw.example`
+- `deploy/docker-compose.local-openclaw.yml`
+- `backend/scripts/check_openclaw_connectivity.py`
+- `scripts/deploy/bootstrap_local_openclaw.sh`
+
+Operational notes:
+- `OPENCLAW_DEPLOYMENT_MODE=local_gateway` is for a local paired OpenClaw install. In this mode, `openclaw mcp serve` can talk to the local Gateway directly and `OPENCLAW_MCP_URL` may stay empty.
+- `OPENCLAW_DEPLOYMENT_MODE=remote_gateway` is for cloud or remote gateway use and should provide `OPENCLAW_MCP_URL` plus token/password auth.
+- The admin runtime screen now has an active **OpenClaw connectivity check** so supervisors can verify bridge startup and `conversations_list` reachability before deeper联调.

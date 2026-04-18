@@ -1,0 +1,13 @@
+[Unit]
+Description=NexusDesk OpenClaw Sync Daemon
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/nexusdesk/backend
+EnvironmentFile=/opt/nexusdesk/backend/.env.production
+ExecStart=/opt/nexusdesk/venv/bin/python scripts/run_openclaw_sync_daemon.py --worker-id worker-openclaw-sync
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
