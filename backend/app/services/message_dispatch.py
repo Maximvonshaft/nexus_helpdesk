@@ -13,6 +13,8 @@ from ..utils.time import utc_now
 from .audit_service import log_event
 from .observability import LOGGER
 from .openclaw_bridge import dispatch_via_openclaw_bridge, dispatch_via_openclaw_cli, dispatch_via_openclaw_mcp
+from .tenant_openclaw_projection_service import build_ticket_openclaw_route_context
+from .tenant_service import tenant_id_for_channel_account, tenant_id_for_ticket
 
 settings = get_settings()
 
@@ -38,7 +40,6 @@ def queue_outbound_message(
     db.add(message)
     db.flush()
     return message
-
 
 
 def _mark_retry(message: TicketOutboundMessage, reason: str) -> None:
@@ -162,6 +163,9 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
     target = None
     session_key = None
     link = None
+    ticket_tenant_id = tenant_id_for_ticket(db, message.ticket_id)
+    route_context = build_ticket_openclaw_route_context(db, ticket_tenant_id)
+
     if ticket is not None:
         target = ticket.source_chat_id or ticket.preferred_reply_contact or (ticket.customer.phone if ticket.customer else None)
         if ticket.openclaw_link is not None:
@@ -185,6 +189,17 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
     account_id = link.account_id if link is not None else None
     thread_id = link.thread_id if link is not None else None
 
+    if account_id is None:
+        account_id = route_context.get('default_account_id')
+    if not channel_value and route_context.get('default_channel'):
+        channel_value = route_context['default_channel']
+
+    route_account_tenant_id = tenant_id_for_channel_account(db, account_id=account_id) if account_id else None
+    if ticket_tenant_id is not None and route_account_tenant_id is not None and route_account_tenant_id != ticket_tenant_id:
+        _mark_dead(message, f'Outbound route tenant mismatch: ticket tenant {ticket_tenant_id}, account tenant {route_account_tenant_id}', failure_code='tenant_route_mismatch')
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Outbound message blocked because route tenant mismatched the ticket tenant', payload={'message_id': message.id, 'ticket_tenant_id': ticket_tenant_id, 'route_account_tenant_id': route_account_tenant_id})
+        return message
+
     if target:
         status, provider_status, sent_at = dispatch_via_openclaw_bridge(
             channel=channel_value,
@@ -203,6 +218,8 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
                     'channel': channel_value,
                     'target': target,
                     'provider_status': provider_status,
+                    'tenant_id': ticket_tenant_id,
+                    'projection_agent_id': getattr(route_context.get('projection'), 'openclaw_agent_id', None),
                 }},
             )
             status, provider_status, sent_at = dispatch_via_openclaw_cli(
@@ -228,7 +245,7 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
                 actor_id=message.created_by,
                 event_type=EventType.openclaw_reply_sent,
                 note='OpenClaw same-route reply sent',
-                payload={'message_id': message.id, 'session_key': session_key, 'provider_status': provider_status},
+                payload={'message_id': message.id, 'session_key': session_key, 'provider_status': provider_status, 'tenant_id': ticket_tenant_id, 'projection_agent_id': getattr(route_context.get('projection'), 'openclaw_agent_id', None)},
             )
         log_event(
             db,
@@ -236,7 +253,7 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
             actor_id=message.created_by,
             event_type=EventType.outbound_sent,
             note='Queued outbound message sent',
-            payload={'message_id': message.id, 'provider_status': provider_status},
+            payload={'message_id': message.id, 'provider_status': provider_status, 'tenant_id': ticket_tenant_id, 'projection_agent_id': getattr(route_context.get('projection'), 'openclaw_agent_id', None)},
         )
         return message
 
