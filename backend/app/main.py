@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from . import multi_tenant_models  # noqa: F401 - ensure tenant ORM models are registered
 from . import openclaw_projection_models  # noqa: F401 - ensure openclaw projection ORM models are registered
+from . import openclaw_quarantine_models  # noqa: F401 - ensure openclaw quarantine ORM models are registered
 from .api.admin import router as admin_router
 from .api.auth import router as auth_router
 from .api.customers import router as customers_router
@@ -107,13 +108,13 @@ from fastapi.responses import FileResponse
 
 frontend_dir = settings.frontend_root
 if frontend_dir.exists():
-    app.mount('/assets', StaticFiles(directory=str(frontend_dir / "assets")), name='frontend_assets')
+    app.mount('/assets', StaticFiles(directory=str(frontend_dir / 'assets')), name='frontend_assets')
 
-    @app.get("/{full_path:path}")
+    @app.get('/{full_path:path}')
     async def serve_spa(full_path: str):
-        if full_path.startswith("api/"):
-            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        if full_path.startswith('api/'):
+            return JSONResponse(status_code=404, content={'detail': 'Not Found'})
         file_path = frontend_dir / full_path
         if file_path.is_file():
             return FileResponse(str(file_path))
-        return FileResponse(str(frontend_dir / "index.html"))
+        return FileResponse(str(frontend_dir / 'index.html'))
