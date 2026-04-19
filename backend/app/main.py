@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from . import multi_tenant_models  # noqa: F401 - ensure tenant ORM models are registered
+from . import openclaw_projection_models  # noqa: F401 - ensure openclaw projection ORM models are registered
 from .api.admin import router as admin_router
 from .api.auth import router as auth_router
 from .api.customers import router as customers_router
