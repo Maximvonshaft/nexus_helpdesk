@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..openclaw_projection_schemas import TenantOpenClawProjectionRead
 from ..tenant_schemas import (
     TenantAIProfileRead,
     TenantAIProfileUpsert,
@@ -16,6 +17,7 @@ from ..tenant_schemas import (
     TenantRead,
 )
 from ..services.permissions import ensure_can_manage_capabilities
+from ..services.tenant_openclaw_projection_service import get_or_create_tenant_openclaw_projection, project_tenant_to_openclaw_runtime
 from ..services.tenant_service import (
     build_tenant_ai_runtime_context,
     create_tenant,
@@ -23,7 +25,6 @@ from ..services.tenant_service import (
     get_or_create_tenant_ai_profile,
     list_tenant_knowledge_entries,
     list_user_tenant_options,
-    resolve_current_tenant,
     tenant_summary,
     update_tenant_knowledge_entry,
     upsert_tenant_ai_profile,
@@ -45,6 +46,7 @@ def create_tenant_endpoint(payload: TenantCreate, db: Session = Depends(get_db),
     ensure_can_manage_capabilities(current_user, db)
     with managed_session(db):
         tenant = create_tenant(db, slug=payload.slug, name=payload.name, external_ref=payload.external_ref, owner_user_id=current_user.id)
+        project_tenant_to_openclaw_runtime(db, tenant.id)
         db.flush()
     db.refresh(tenant)
     return TenantRead.model_validate(tenant)
@@ -78,6 +80,7 @@ def update_current_tenant_ai_profile(payload: TenantAIProfileUpsert, db: Session
     ensure_can_manage_capabilities(current_user, db)
     with managed_session(db):
         row = upsert_tenant_ai_profile(db, current_tenant.id, payload.model_dump())
+        project_tenant_to_openclaw_runtime(db, current_tenant.id)
         db.flush()
     db.refresh(row)
     return TenantAIProfileRead.model_validate(row)
@@ -94,6 +97,7 @@ def create_current_tenant_knowledge(payload: TenantKnowledgeEntryCreate, db: Ses
     ensure_can_manage_capabilities(current_user, db)
     with managed_session(db):
         row = create_tenant_knowledge_entry(db, current_tenant.id, payload.model_dump())
+        project_tenant_to_openclaw_runtime(db, current_tenant.id)
         db.flush()
     db.refresh(row)
     return TenantKnowledgeEntryRead.model_validate(row)
@@ -104,6 +108,17 @@ def update_current_tenant_knowledge(entry_id: int, payload: TenantKnowledgeEntry
     ensure_can_manage_capabilities(current_user, db)
     with managed_session(db):
         row = update_tenant_knowledge_entry(db, current_tenant.id, entry_id, payload.model_dump(exclude_unset=True))
+        project_tenant_to_openclaw_runtime(db, current_tenant.id)
         db.flush()
     db.refresh(row)
     return TenantKnowledgeEntryRead.model_validate(row)
+
+
+@router.get('/current/openclaw-projection', response_model=TenantOpenClawProjectionRead)
+def get_current_tenant_openclaw_projection(db: Session = Depends(get_db), current_user=Depends(get_current_user), current_tenant=Depends(get_current_tenant)):
+    ensure_can_manage_capabilities(current_user, db)
+    with managed_session(db):
+        row = project_tenant_to_openclaw_runtime(db, current_tenant.id)
+        db.flush()
+    db.refresh(row)
+    return TenantOpenClawProjectionRead.model_validate(row)
