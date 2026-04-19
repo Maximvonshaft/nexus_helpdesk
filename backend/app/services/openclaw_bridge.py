@@ -23,6 +23,7 @@ from .audit_service import log_event
 from .observability import LOGGER
 from .openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
 from .storage import get_storage_backend
+from .tenant_service import attach_openclaw_conversation_to_tenant, tenant_id_for_channel_account, tenant_id_for_ticket
 
 
 settings = get_settings()
@@ -103,33 +104,33 @@ def _try_fetch_remote_attachment(url: str, metadata: dict[str, Any]) -> tuple[by
 def _try_extract_attachment_bytes(metadata: dict | None) -> tuple[bytes | None, str | None, str | None]:
     if not isinstance(metadata, dict):
         return None, None, None
-    for key in ("base64", "data", "contentBase64"):
+    for key in ('base64', 'data', 'contentBase64'):
         raw = metadata.get(key)
         if isinstance(raw, str) and raw:
             try:
-                return base64.b64decode(raw), metadata.get("contentType") or metadata.get("mimeType"), metadata.get("filename") or metadata.get("name")
+                return base64.b64decode(raw), metadata.get('contentType') or metadata.get('mimeType'), metadata.get('filename') or metadata.get('name')
             except Exception:
                 pass
-    for key in ("downloadUrl", "url"):
+    for key in ('downloadUrl', 'url'):
         url = metadata.get(key)
-        if isinstance(url, str) and url.startswith(("http://", "https://")):
+        if isinstance(url, str) and url.startswith(('http://', 'https://')):
             fetched = _try_fetch_remote_attachment(url, metadata)
             if fetched[0] is not None:
                 return fetched
-    text_value = metadata.get("text") or metadata.get("caption")
+    text_value = metadata.get('text') or metadata.get('caption')
     if isinstance(text_value, str) and text_value:
-        return text_value.encode("utf-8"), "text/plain", metadata.get("filename") or metadata.get("name") or "attachment.txt"
+        return text_value.encode('utf-8'), 'text/plain', metadata.get('filename') or metadata.get('name') or 'attachment.txt'
     return None, None, None
 
 
 def _extract_event_session_key(event: dict[str, Any]) -> str | None:
-    for key in ("sessionKey", "session_key"):
+    for key in ('sessionKey', 'session_key'):
         value = event.get(key)
         if isinstance(value, str) and value:
             return value
-    message = event.get("message")
+    message = event.get('message')
     if isinstance(message, dict):
-        for key in ("sessionKey", "session_key"):
+        for key in ('sessionKey', 'session_key'):
             value = message.get(key)
             if isinstance(value, str) and value:
                 return value
@@ -140,32 +141,29 @@ def persist_openclaw_attachment_reference(db: Session, *, attachment_ref: OpenCl
     storage = get_storage_backend()
     ticket = db.query(Ticket).filter(Ticket.id == attachment_ref.ticket_id).first()
     if ticket is None:
-        attachment_ref.storage_status = "ticket_missing"
+        attachment_ref.storage_status = 'ticket_missing'
         return None
     raw_bytes, media_type, filename = _try_extract_attachment_bytes(attachment_ref.metadata_json)
     if raw_bytes is None:
         payload = json.dumps(
             {
-                "remote_attachment_id": attachment_ref.remote_attachment_id,
-                "content_type": attachment_ref.content_type,
-                "filename": attachment_ref.filename,
-                "metadata": attachment_ref.metadata_json,
+                'remote_attachment_id': attachment_ref.remote_attachment_id,
+                'content_type': attachment_ref.content_type,
+                'filename': attachment_ref.filename,
+                'metadata': attachment_ref.metadata_json,
             },
             ensure_ascii=False,
             indent=2,
-        ).encode("utf-8")
-        filename = (attachment_ref.filename or f"openclaw-{attachment_ref.remote_attachment_id}") + ".json"
-        media_type = "application/json"
+        ).encode('utf-8')
+        filename = (attachment_ref.filename or f'openclaw-{attachment_ref.remote_attachment_id}') + '.json'
+        media_type = 'application/json'
         raw_bytes = payload
-    stored = storage.persist_bytes(content=raw_bytes, filename=filename or (attachment_ref.filename or f"openclaw-{attachment_ref.remote_attachment_id}"), media_type=media_type or attachment_ref.content_type or "application/octet-stream")
+    stored = storage.persist_bytes(content=raw_bytes, filename=filename or (attachment_ref.filename or f'openclaw-{attachment_ref.remote_attachment_id}'), media_type=media_type or attachment_ref.content_type or 'application/octet-stream')
     attachment_ref.storage_key = stored.storage_key
-    attachment_ref.storage_status = "captured"
-    existing = db.query(TicketAttachment).filter(
-        TicketAttachment.ticket_id == ticket.id,
-        TicketAttachment.storage_key == stored.storage_key,
-    ).first()
+    attachment_ref.storage_status = 'captured'
+    existing = db.query(TicketAttachment).filter(TicketAttachment.ticket_id == ticket.id, TicketAttachment.storage_key == stored.storage_key).first()
     if existing is None:
-        file_name = attachment_ref.filename or f"openclaw-{attachment_ref.remote_attachment_id}.json"
+        file_name = attachment_ref.filename or f'openclaw-{attachment_ref.remote_attachment_id}.json'
         ticket_attachment = TicketAttachment(
             ticket_id=ticket.id,
             uploaded_by=ticket.created_by,
@@ -173,19 +171,12 @@ def persist_openclaw_attachment_reference(db: Session, *, attachment_ref: OpenCl
             storage_key=stored.storage_key,
             file_path=str(stored.absolute_path) if stored.absolute_path else None,
             file_url=None,
-            mime_type=media_type or attachment_ref.content_type or "application/octet-stream",
+            mime_type=media_type or attachment_ref.content_type or 'application/octet-stream',
             file_size=stored.size_bytes,
             visibility=NoteVisibility.internal,
         )
         db.add(ticket_attachment)
-    log_event(
-        db,
-        ticket_id=ticket.id,
-        actor_id=ticket.created_by,
-        event_type=EventType.openclaw_attachment_persisted,
-        note="OpenClaw attachment metadata captured into ticket storage",
-        payload={"attachment_id": attachment_ref.remote_attachment_id, "storage_key": attachment_ref.storage_key},
-    )
+    log_event(db, ticket_id=ticket.id, actor_id=ticket.created_by, event_type=EventType.openclaw_attachment_persisted, note='OpenClaw attachment metadata captured into ticket storage', payload={'attachment_id': attachment_ref.remote_attachment_id, 'storage_key': attachment_ref.storage_key})
     return ticket
 
 
@@ -194,7 +185,7 @@ def _extract_attachment_refs(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         items = payload
     elif isinstance(payload, dict):
-        for key in ("attachments", "items", "results", "content"):
+        for key in ('attachments', 'items', 'results', 'content'):
             value = payload.get(key)
             if isinstance(value, list):
                 items = value
@@ -206,15 +197,10 @@ def _extract_attachment_refs(payload: Any) -> list[dict[str, Any]]:
     for item in items:
         if not isinstance(item, dict):
             continue
-        attachment_id = item.get("attachmentId") or item.get("id") or item.get("blobId")
+        attachment_id = item.get('attachmentId') or item.get('id') or item.get('blobId')
         if not attachment_id:
             continue
-        refs.append({
-            "remote_attachment_id": str(attachment_id),
-            "content_type": item.get("contentType") or item.get("mimeType") or item.get("type"),
-            "filename": item.get("filename") or item.get("name"),
-            "metadata_json": item,
-        })
+        refs.append({'remote_attachment_id': str(attachment_id), 'content_type': item.get('contentType') or item.get('mimeType') or item.get('type'), 'filename': item.get('filename') or item.get('name'), 'metadata_json': item})
     return refs
 
 
@@ -236,15 +222,7 @@ def set_conversation_state(db: Session, *, ticket: Ticket, new_state, actor_id: 
         return
     old = ticket.conversation_state
     ticket.conversation_state = new_state
-    log_event(
-        db,
-        ticket_id=ticket.id,
-        actor_id=actor_id,
-        event_type=EventType.conversation_state_changed,
-        old_value=old.value if old else None,
-        new_value=new_state.value if hasattr(new_state, "value") else str(new_state),
-        note=note,
-    )
+    log_event(db, ticket_id=ticket.id, actor_id=actor_id, event_type=EventType.conversation_state_changed, old_value=old.value if old else None, new_value=new_state.value if hasattr(new_state, 'value') else str(new_state), note=note)
 
 
 def upsert_openclaw_sync_cursor(db: Session, *, source: str, cursor_value: str | None) -> OpenClawSyncCursor:
@@ -332,7 +310,22 @@ def _should_sync_transcript_message(*, role: Any, body_text: str | None, attachm
     return bool(body_text or attachment_refs)
 
 
+def _route_tenant_id(db: Session, route: dict[str, Any] | None, account_id: str | None) -> int | None:
+    route_account_id = account_id
+    if route:
+        route_account_id = route.get('accountId') or route_account_id
+    if not route_account_id:
+        return None
+    return tenant_id_for_channel_account(db, account_id=route_account_id)
+
+
 def ensure_openclaw_conversation_link(db: Session, *, ticket: Ticket, session_key: str, channel: str | None = None, recipient: str | None = None, account_id: str | None = None, thread_id: str | None = None, route: dict[str, Any] | None = None) -> OpenClawConversationLink:
+    ticket_tenant_id = tenant_id_for_ticket(db, ticket.id)
+    route_tenant_id = _route_tenant_id(db, route, account_id)
+    if ticket_tenant_id is not None and route_tenant_id is not None and ticket_tenant_id != route_tenant_id:
+        LOGGER.warning('openclaw_bridge_tenant_mismatch', extra={'event_payload': {'session_key': session_key, 'ticket_id': ticket.id, 'ticket_tenant_id': ticket_tenant_id, 'route_tenant_id': route_tenant_id, 'route': route or {}}})
+        raise RuntimeError(f'route tenant mismatch: ticket={ticket_tenant_id}, route={route_tenant_id}')
+
     link = db.query(OpenClawConversationLink).filter(OpenClawConversationLink.ticket_id == ticket.id).first()
     if link is None:
         link = OpenClawConversationLink(ticket_id=ticket.id, session_key=session_key)
@@ -353,6 +346,9 @@ def ensure_openclaw_conversation_link(db: Session, *, ticket: Ticket, session_ke
     if channel_account is not None:
         link.channel_account_id = channel_account.id
         ticket.channel_account_id = channel_account.id
+    if ticket_tenant_id is not None:
+        attach_openclaw_conversation_to_tenant(db, conversation_id=link.id, tenant_id=ticket_tenant_id)
+        LOGGER.info('openclaw_conversation_tenant_attached', extra={'event_payload': {'ticket_id': ticket.id, 'conversation_id': link.id, 'tenant_id': ticket_tenant_id, 'session_key': session_key}})
     link.updated_at = utc_now()
     if link.channel and not ticket.preferred_reply_channel:
         ticket.preferred_reply_channel = link.channel
@@ -380,7 +376,7 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
 
     def _run_sync(active_client: OpenClawMCPClient | None):
         nonlocal synced_rows
-        
+
         conversation_payload = None
         messages_payload = None
         bridge_success = False
@@ -392,10 +388,10 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
                 LOGGER.info('openclaw_bridge_read_success', extra={'event_payload': {'session_key': session_key, 'messages_count': len(messages_payload)}})
             else:
                 LOGGER.warning('openclaw_bridge_read_fallback', extra={'event_payload': {'session_key': session_key, 'reason': 'bridge_failed_or_missing_data'}})
-        
+
         if not bridge_success:
             if not active_client:
-                raise RuntimeError("bridge read failed and no active MCP client provided for fallback")
+                raise RuntimeError('bridge read failed and no active MCP client provided for fallback')
             LOGGER.info('openclaw_mcp_read_invoked', extra={'event_payload': {'session_key': session_key}})
             try:
                 conversation_payload = active_client.conversation_get(session_key)
@@ -406,7 +402,11 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
 
         conversation = conversation_payload if isinstance(conversation_payload, dict) else {}
         route = _extract_route(conversation)
-        link = ensure_openclaw_conversation_link(db, ticket=ticket, session_key=session_key, route=route)
+        try:
+            link = ensure_openclaw_conversation_link(db, ticket=ticket, session_key=session_key, route=route)
+        except Exception as exc:
+            LOGGER.warning('openclaw_conversation_sync_tenant_guard_failed', extra={'event_payload': {'ticket_id': ticket.id, 'session_key': session_key, 'route': route or {}, 'error': str(exc)}})
+            raise
 
         for message in _as_items(messages_payload):
             message_id = _extract_message_id(message)
@@ -416,8 +416,7 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
             role = message.get('role') or message.get('senderRole') or message.get('authorRole')
             author_name = message.get('author_name') or message.get('author') or message.get('sender')
             attachments_payload = None
-            
-            # Bridge primary path
+
             if bridge_success and settings.openclaw_bridge_enabled:
                 fetched = fetch_openclaw_bridge_attachments(session_key, message_id)
                 if fetched is not None:
@@ -426,7 +425,6 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
                 else:
                     LOGGER.warning('openclaw_bridge_read_fallback', extra={'event_payload': {'action': 'attachments_fetch', 'session_key': session_key, 'message_id': message_id}})
 
-            # Fallback to MCP
             if attachments_payload is None and active_client:
                 LOGGER.info('openclaw_mcp_read_invoked', extra={'event_payload': {'action': 'attachments_fetch', 'session_key': session_key, 'message_id': message_id}})
                 try:
@@ -434,26 +432,13 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
                 except Exception as e:
                     LOGGER.warning('openclaw_mcp_read_failed', extra={'event_payload': {'action': 'attachments_fetch', 'session_key': session_key, 'message_id': message_id, 'error': str(e)}})
                     attachments_payload = None
-                    
+
             attachment_refs = _extract_attachment_refs(attachments_payload)
             if not _should_sync_transcript_message(role=role, body_text=body_text, attachment_refs=attachment_refs):
                 continue
-            row = db.query(OpenClawTranscriptMessage).filter(
-                OpenClawTranscriptMessage.conversation_id == link.id,
-                OpenClawTranscriptMessage.message_id == message_id,
-            ).first()
+            row = db.query(OpenClawTranscriptMessage).filter(OpenClawTranscriptMessage.conversation_id == link.id, OpenClawTranscriptMessage.message_id == message_id).first()
             if row is None:
-                row = OpenClawTranscriptMessage(
-                    conversation_id=link.id,
-                    ticket_id=ticket.id,
-                    session_key=session_key,
-                    message_id=message_id,
-                    role=role,
-                    author_name=author_name,
-                    body_text=body_text,
-                    content_json=message,
-                    received_at=utc_now(),
-                )
+                row = OpenClawTranscriptMessage(conversation_id=link.id, ticket_id=ticket.id, session_key=session_key, message_id=message_id, role=role, author_name=author_name, body_text=body_text, content_json=message, received_at=utc_now())
                 db.add(row)
                 db.flush()
             else:
@@ -470,33 +455,14 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
                     set_conversation_state(db, ticket=ticket, new_state=type(ticket.conversation_state).ai_active, note='Customer message synchronized from OpenClaw')
 
             for ref in attachment_refs:
-                existing = db.query(OpenClawAttachmentReference).filter(
-                    OpenClawAttachmentReference.transcript_message_id == row.id,
-                    OpenClawAttachmentReference.remote_attachment_id == ref['remote_attachment_id'],
-                ).first()
+                existing = db.query(OpenClawAttachmentReference).filter(OpenClawAttachmentReference.transcript_message_id == row.id, OpenClawAttachmentReference.remote_attachment_id == ref['remote_attachment_id']).first()
                 if existing is None:
-                    attachment_ref = OpenClawAttachmentReference(
-                        ticket_id=ticket.id,
-                        conversation_id=link.id,
-                        transcript_message_id=row.id,
-                        remote_attachment_id=ref['remote_attachment_id'],
-                        content_type=ref.get('content_type'),
-                        filename=ref.get('filename'),
-                        metadata_json=ref.get('metadata_json'),
-                        storage_status='referenced',
-                    )
+                    attachment_ref = OpenClawAttachmentReference(ticket_id=ticket.id, conversation_id=link.id, transcript_message_id=row.id, remote_attachment_id=ref['remote_attachment_id'], content_type=ref.get('content_type'), filename=ref.get('filename'), metadata_json=ref.get('metadata_json'), storage_status='referenced')
                     db.add(attachment_ref)
                     db.flush()
                     from .background_jobs import enqueue_attachment_persist_job
                     enqueue_attachment_persist_job(db, attachment_ref_id=attachment_ref.id, dedupe=True)
-                    log_event(
-                        db,
-                        ticket_id=ticket.id,
-                        actor_id=ticket.created_by,
-                        event_type=EventType.openclaw_attachment_synced,
-                        note='OpenClaw attachment reference synchronized',
-                        payload={'message_id': message_id, 'attachment_id': ref['remote_attachment_id']},
-                    )
+                    log_event(db, ticket_id=ticket.id, actor_id=ticket.created_by, event_type=EventType.openclaw_attachment_synced, note='OpenClaw attachment reference synchronized', payload={'message_id': message_id, 'attachment_id': ref['remote_attachment_id']})
         return link
 
     if client is None:
@@ -508,42 +474,24 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
     if synced_rows:
         link.last_message_id = synced_rows[-1].message_id
     link.last_synced_at = utc_now()
-    log_event(
-        db,
-        ticket_id=ticket.id,
-        actor_id=ticket.created_by,
-        event_type=EventType.openclaw_synced,
-        note='OpenClaw conversation synchronized',
-        payload={'session_key': session_key, 'messages_synced': len(synced_rows)},
-    )
+    log_event(db, ticket_id=ticket.id, actor_id=ticket.created_by, event_type=EventType.openclaw_synced, note='OpenClaw conversation synchronized', payload={'session_key': session_key, 'messages_synced': len(synced_rows)})
     db.flush()
     db.refresh(link)
-    return OpenClawSyncResult(
-        conversation=OpenClawConversationRead.model_validate(link),
-        messages=[OpenClawTranscriptRead.model_validate(item) for item in synced_rows],
-        linked_ticket_id=ticket.id,
-    )
+    return OpenClawSyncResult(conversation=OpenClawConversationRead.model_validate(link), messages=[OpenClawTranscriptRead.model_validate(item) for item in synced_rows], linked_ticket_id=ticket.id)
+
 
 def count_stale_openclaw_links(db: Session) -> int:
     cutoff = utc_now() - timedelta(seconds=settings.openclaw_sync_stale_seconds)
-    query = db.query(OpenClawConversationLink).join(OpenClawConversationLink.ticket).filter(
-        Ticket.status.notin_(['closed', 'canceled']),
-    )
-    query = query.filter(
-        (OpenClawConversationLink.last_synced_at.is_(None)) | (OpenClawConversationLink.last_synced_at < cutoff)
-    )
+    query = db.query(OpenClawConversationLink).join(OpenClawConversationLink.ticket).filter(Ticket.status.notin_(['closed', 'canceled']))
+    query = query.filter((OpenClawConversationLink.last_synced_at.is_(None)) | (OpenClawConversationLink.last_synced_at < cutoff))
     return query.count()
 
 
 def list_stale_openclaw_links(db: Session, *, limit: int | None = None) -> list[OpenClawConversationLink]:
     limit = limit or settings.openclaw_sync_batch_size
     cutoff = utc_now() - timedelta(seconds=settings.openclaw_sync_stale_seconds)
-    query = db.query(OpenClawConversationLink).join(OpenClawConversationLink.ticket).filter(
-        Ticket.status.notin_(['closed', 'canceled']),
-    )
-    query = query.filter(
-        (OpenClawConversationLink.last_synced_at.is_(None)) | (OpenClawConversationLink.last_synced_at < cutoff)
-    )
+    query = db.query(OpenClawConversationLink).join(OpenClawConversationLink.ticket).filter(Ticket.status.notin_(['closed', 'canceled']))
+    query = query.filter((OpenClawConversationLink.last_synced_at.is_(None)) | (OpenClawConversationLink.last_synced_at < cutoff))
     return query.order_by(OpenClawConversationLink.last_synced_at.asc().nullsfirst(), OpenClawConversationLink.id.asc()).limit(limit).all()
 
 
@@ -555,18 +503,12 @@ def read_openclaw_bridge_conversation(session_key: str, limit: int = 50) -> tupl
     if not settings.openclaw_bridge_enabled:
         return None, None
     bridge_url = settings.openclaw_bridge_url.rstrip('/')
-    
+
     conversation = None
     messages = None
-    
-    # fetch conversation
+
     try:
-        req_conv = urllib.request.Request(
-            f'{bridge_url}/conversation-get',
-            data=json.dumps({'sessionKey': session_key}).encode('utf-8'),
-            headers={'Content-Type': 'application/json'},
-            method='POST',
-        )
+        req_conv = urllib.request.Request(f'{bridge_url}/conversation-get', data=json.dumps({'sessionKey': session_key}).encode('utf-8'), headers={'Content-Type': 'application/json'}, method='POST')
         with urllib.request.urlopen(req_conv, timeout=settings.openclaw_bridge_timeout_seconds) as resp:
             parsed = json.loads(resp.read().decode('utf-8'))
             if parsed.get('ok'):
@@ -575,14 +517,8 @@ def read_openclaw_bridge_conversation(session_key: str, limit: int = 50) -> tupl
         LOGGER.warning('openclaw_bridge_read_failed', extra={'event_payload': {'action': 'conversation_get', 'session_key': session_key, 'error': str(exc)}})
         return None, None
 
-    # fetch messages
     try:
-        req_msg = urllib.request.Request(
-            f'{bridge_url}/read-messages',
-            data=json.dumps({'sessionKey': session_key, 'limit': limit}).encode('utf-8'),
-            headers={'Content-Type': 'application/json'},
-            method='POST',
-        )
+        req_msg = urllib.request.Request(f'{bridge_url}/read-messages', data=json.dumps({'sessionKey': session_key, 'limit': limit}).encode('utf-8'), headers={'Content-Type': 'application/json'}, method='POST')
         with urllib.request.urlopen(req_msg, timeout=settings.openclaw_bridge_timeout_seconds) as resp:
             parsed = json.loads(resp.read().decode('utf-8'))
             if parsed.get('ok'):
@@ -590,7 +526,7 @@ def read_openclaw_bridge_conversation(session_key: str, limit: int = 50) -> tupl
     except Exception as exc:
         LOGGER.warning('openclaw_bridge_read_failed', extra={'event_payload': {'action': 'messages_read', 'session_key': session_key, 'error': str(exc)}})
         return None, None
-        
+
     return conversation, messages
 
 
@@ -599,12 +535,7 @@ def fetch_openclaw_bridge_attachments(session_key: str, message_id: str) -> list
         return None
     bridge_url = settings.openclaw_bridge_url.rstrip('/')
     try:
-        req = urllib.request.Request(
-            f'{bridge_url}/attachments-fetch',
-            data=json.dumps({'sessionKey': session_key, 'messageId': message_id}).encode('utf-8'),
-            headers={'Content-Type': 'application/json'},
-            method='POST',
-        )
+        req = urllib.request.Request(f'{bridge_url}/attachments-fetch', data=json.dumps({'sessionKey': session_key, 'messageId': message_id}).encode('utf-8'), headers={'Content-Type': 'application/json'}, method='POST')
         with urllib.request.urlopen(req, timeout=settings.openclaw_bridge_timeout_seconds) as resp:
             parsed = json.loads(resp.read().decode('utf-8'))
             if parsed.get('ok'):
@@ -613,23 +544,12 @@ def fetch_openclaw_bridge_attachments(session_key: str, message_id: str) -> list
         LOGGER.warning('openclaw_bridge_read_failed', extra={'event_payload': {'action': 'attachments_fetch', 'session_key': session_key, 'message_id': message_id, 'error': str(exc)}})
     return None
 
-def dispatch_via_openclaw_bridge(
-    *,
-    channel: str,
-    target: str,
-    body: str,
-    account_id: str | None = None,
-    thread_id: str | None = None,
-    session_key: str | None = None,
-) -> tuple[MessageStatus, str | None, object | None]:
+
+def dispatch_via_openclaw_bridge(*, channel: str, target: str, body: str, account_id: str | None = None, thread_id: str | None = None, session_key: str | None = None) -> tuple[MessageStatus, str | None, object | None]:
     if not settings.openclaw_bridge_enabled:
         return MessageStatus.failed, 'OPENCLAW_BRIDGE_ENABLED is false', None
     bridge_url = settings.openclaw_bridge_url.rstrip('/')
-    payload: dict[str, Any] = {
-        'channel': channel,
-        'target': target,
-        'body': body,
-    }
+    payload: dict[str, Any] = {'channel': channel, 'target': target, 'body': body}
     if account_id:
         payload['accountId'] = account_id
     if thread_id:
@@ -637,12 +557,7 @@ def dispatch_via_openclaw_bridge(
     if session_key:
         payload['sessionKey'] = session_key
     data = json.dumps(payload).encode('utf-8')
-    request = urllib.request.Request(
-        f'{bridge_url}/send-message',
-        data=data,
-        headers={'Content-Type': 'application/json'},
-        method='POST',
-    )
+    request = urllib.request.Request(f'{bridge_url}/send-message', data=data, headers={'Content-Type': 'application/json'}, method='POST')
     try:
         with urllib.request.urlopen(request, timeout=settings.openclaw_bridge_timeout_seconds) as resp:
             raw = resp.read().decode('utf-8')
@@ -653,54 +568,20 @@ def dispatch_via_openclaw_bridge(
             response_body = exc.read().decode('utf-8', errors='replace')
         except Exception:
             response_body = ''
-        LOGGER.warning(
-            'openclaw_bridge_dispatch_failed',
-            extra={'event_payload': {
-                'dispatch': 'bridge',
-                'channel': channel,
-                'target': target,
-                'status_code': exc.code,
-                'response_body': response_body[:500],
-            }},
-        )
+        LOGGER.warning('openclaw_bridge_dispatch_failed', extra={'event_payload': {'dispatch': 'bridge', 'channel': channel, 'target': target, 'status_code': exc.code, 'response_body': response_body[:500]}})
         return MessageStatus.failed, f'openclaw_bridge_http_{exc.code}', None
     except Exception as exc:
-        LOGGER.warning(
-            'openclaw_bridge_dispatch_failed',
-            extra={'event_payload': {
-                'dispatch': 'bridge',
-                'channel': channel,
-                'target': target,
-                'error': str(exc),
-            }},
-        )
+        LOGGER.warning('openclaw_bridge_dispatch_failed', extra={'event_payload': {'dispatch': 'bridge', 'channel': channel, 'target': target, 'error': str(exc)}})
         return MessageStatus.failed, f'openclaw_bridge_error: {exc}', None
 
     if not isinstance(parsed, dict) or not parsed.get('ok'):
         error_message = None
         if isinstance(parsed, dict):
             error_message = parsed.get('error') or parsed.get('message')
-        LOGGER.warning(
-            'openclaw_bridge_dispatch_rejected',
-            extra={'event_payload': {
-                'dispatch': 'bridge',
-                'channel': channel,
-                'target': target,
-                'response': parsed if isinstance(parsed, dict) else {'raw': str(parsed)},
-            }},
-        )
+        LOGGER.warning('openclaw_bridge_dispatch_rejected', extra={'event_payload': {'dispatch': 'bridge', 'channel': channel, 'target': target, 'response': parsed if isinstance(parsed, dict) else {'raw': str(parsed)}}})
         return MessageStatus.failed, f'openclaw_bridge_gateway_error: {error_message or "unknown"}', None
 
-    LOGGER.info(
-        'openclaw_bridge_dispatch_success',
-        extra={'event_payload': {
-            'dispatch': 'bridge',
-            'channel': channel,
-            'target': target,
-            'bridge_request_id': parsed.get('bridgeRequestId'),
-            'gateway_message_id': (parsed.get('result') or {}).get('messageId') if isinstance(parsed.get('result'), dict) else None,
-        }},
-    )
+    LOGGER.info('openclaw_bridge_dispatch_success', extra={'event_payload': {'dispatch': 'bridge', 'channel': channel, 'target': target, 'bridge_request_id': parsed.get('bridgeRequestId'), 'gateway_message_id': (parsed.get('result') or {}).get('messageId') if isinstance(parsed.get('result'), dict) else None}})
     return MessageStatus.sent, 'sent_via_openclaw_bridge', utc_now()
 
 
@@ -722,59 +603,22 @@ def dispatch_via_openclaw_cli(*, channel: str, target: str, body: str, account_i
         cmd.extend(['--account', account_id])
     if thread_id:
         cmd.extend(['--thread-id', thread_id])
-    LOGGER.warning(
-        'openclaw_cli_fallback_invoked',
-        extra={'event_payload': {
-            'dispatch': 'cli_fallback',
-            'channel': channel,
-            'target': target,
-            'command': cmd,
-        }},
-    )
+    LOGGER.warning('openclaw_cli_fallback_invoked', extra={'event_payload': {'dispatch': 'cli_fallback', 'channel': channel, 'target': target, 'command': cmd}})
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
-        LOGGER.info(
-            'openclaw_cli_fallback_success',
-            extra={'event_payload': {
-                'dispatch': 'cli_fallback',
-                'channel': channel,
-                'target': target,
-            }},
-        )
+        LOGGER.info('openclaw_cli_fallback_success', extra={'event_payload': {'dispatch': 'cli_fallback', 'channel': channel, 'target': target}})
         return MessageStatus.sent, 'sent_via_openclaw_cli_fallback', utc_now()
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.strip()[:500] if exc.stderr else 'openclaw send failed'
-        LOGGER.warning(
-            'openclaw_cli_fallback_failed',
-            extra={'event_payload': {
-                'dispatch': 'cli_fallback',
-                'channel': channel,
-                'target': target,
-                'error': stderr,
-            }},
-        )
+        LOGGER.warning('openclaw_cli_fallback_failed', extra={'event_payload': {'dispatch': 'cli_fallback', 'channel': channel, 'target': target, 'error': stderr}})
         return MessageStatus.failed, stderr, None
     except Exception as exc:
-        LOGGER.warning(
-            'openclaw_cli_fallback_failed',
-            extra={'event_payload': {
-                'dispatch': 'cli_fallback',
-                'channel': channel,
-                'target': target,
-                'error': str(exc),
-            }},
-        )
+        LOGGER.warning('openclaw_cli_fallback_failed', extra={'event_payload': {'dispatch': 'cli_fallback', 'channel': channel, 'target': target, 'error': str(exc)}})
         return MessageStatus.failed, str(exc), None
 
 
 def sync_openclaw_session_once(db: Session, *, link: OpenClawConversationLink, limit: int | None = None, client: OpenClawMCPClient | None = None) -> OpenClawSyncResult:
-    return sync_openclaw_conversation(
-        db,
-        ticket_id=link.ticket_id,
-        session_key=link.session_key,
-        limit=limit or settings.openclaw_sync_transcript_limit,
-        client=client,
-    )
+    return sync_openclaw_conversation(db, ticket_id=link.ticket_id, session_key=link.session_key, limit=limit or settings.openclaw_sync_transcript_limit, client=client)
 
 
 def wait_openclaw_bridge_events(after_cursor: int, session_key: str | None = None, timeout_seconds: int = 30) -> dict[str, Any] | None:
@@ -785,12 +629,7 @@ def wait_openclaw_bridge_events(after_cursor: int, session_key: str | None = Non
         payload = {'afterCursor': after_cursor, 'timeoutMs': timeout_seconds * 1000}
         if session_key:
             payload['sessionKey'] = session_key
-        req = urllib.request.Request(
-            f'{bridge_url}/wait-events',
-            data=json.dumps(payload).encode('utf-8'),
-            headers={'Content-Type': 'application/json'},
-            method='POST',
-        )
+        req = urllib.request.Request(f'{bridge_url}/wait-events', data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'}, method='POST')
         with urllib.request.urlopen(req, timeout=timeout_seconds + 5) as resp:
             parsed = json.loads(resp.read().decode('utf-8'))
             if parsed.get('ok'):
@@ -798,6 +637,7 @@ def wait_openclaw_bridge_events(after_cursor: int, session_key: str | None = Non
     except Exception as exc:
         LOGGER.warning('openclaw_bridge_event_read_failed', extra={'event_payload': {'action': 'events_wait', 'error': str(exc)}})
     return None
+
 
 def poll_openclaw_bridge_events(after_cursor: int, session_key: str | None = None) -> dict[str, Any] | None:
     if not settings.openclaw_bridge_enabled:
@@ -807,12 +647,7 @@ def poll_openclaw_bridge_events(after_cursor: int, session_key: str | None = Non
         payload = {'afterCursor': after_cursor}
         if session_key:
             payload['sessionKey'] = session_key
-        req = urllib.request.Request(
-            f'{bridge_url}/poll-events',
-            data=json.dumps(payload).encode('utf-8'),
-            headers={'Content-Type': 'application/json'},
-            method='POST',
-        )
+        req = urllib.request.Request(f'{bridge_url}/poll-events', data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'}, method='POST')
         with urllib.request.urlopen(req, timeout=settings.openclaw_bridge_timeout_seconds) as resp:
             parsed = json.loads(resp.read().decode('utf-8'))
             if parsed.get('ok'):
@@ -821,11 +656,12 @@ def poll_openclaw_bridge_events(after_cursor: int, session_key: str | None = Non
         LOGGER.warning('openclaw_bridge_event_read_failed', extra={'event_payload': {'action': 'events_poll', 'error': str(exc)}})
     return None
 
-def consume_openclaw_events_once(db: Session, *, source: str = "default", timeout_seconds: int | None = None) -> int:
+
+def consume_openclaw_events_once(db: Session, *, source: str = 'default', timeout_seconds: int | None = None) -> int:
     timeout_seconds = timeout_seconds or settings.openclaw_sync_poll_timeout_seconds
     cursor_row = db.query(OpenClawSyncCursor).filter(OpenClawSyncCursor.source == source).first()
     cursor_str = cursor_row.cursor_value if cursor_row else None
-    
+
     try:
         after_cursor = int(cursor_str) if cursor_str is not None else 0
     except ValueError:
@@ -836,32 +672,26 @@ def consume_openclaw_events_once(db: Session, *, source: str = "default", timeou
     payload = None
 
     if settings.openclaw_bridge_enabled:
-        # First wait for event
         wait_res = wait_openclaw_bridge_events(after_cursor=after_cursor, timeout_seconds=timeout_seconds)
         if wait_res is not None:
             bridge_success = True
             if wait_res.get('event'):
-                # Event arrived, poll the rest to grab a batch
                 poll_res = poll_openclaw_bridge_events(after_cursor=after_cursor)
                 if poll_res is not None:
                     payload = poll_res
                     LOGGER.info('openclaw_bridge_event_read_success', extra={'event_payload': {'action': 'events_poll', 'events_count': len(payload.get('events', []))}})
                 else:
-                    # Fallback to just the single event
                     payload = {'events': [wait_res['event']], 'nextCursor': wait_res['event'].get('cursor', after_cursor)}
                     LOGGER.info('openclaw_bridge_event_read_success', extra={'event_payload': {'action': 'events_wait', 'events_count': 1}})
             else:
-                # Timeout, no new events
                 payload = {'events': [], 'nextCursor': after_cursor}
         else:
             LOGGER.warning('openclaw_bridge_event_fallback', extra={'event_payload': {'reason': 'bridge_failed_or_missing_data'}})
 
-    # Fallback to MCP
     if not bridge_success:
         LOGGER.info('openclaw_mcp_event_invoked', extra={'event_payload': {'after_cursor': after_cursor}})
         with OpenClawMCPClient() as client:
             try:
-                # pass after_cursor instead of just cursor for better compatibility
                 payload = client.events_wait(cursor=after_cursor, timeout_seconds=timeout_seconds)
                 if not isinstance(payload, dict):
                     payload = client.events_poll(cursor=after_cursor)
@@ -872,20 +702,18 @@ def consume_openclaw_events_once(db: Session, *, source: str = "default", timeou
     if not isinstance(payload, dict):
         return 0
 
-    # Normal MCP returns {"event": ...} or {"events": ...} or nextCursor or cursor
-    next_cursor = payload.get("cursor") or payload.get("nextCursor")
-    events = payload.get("events") or payload.get("items") or []
-    
-    # Handle MCP's events_wait single-event return structure: {"event": {...}}
-    if not events and payload.get("event"):
-        events = [payload.get("event")]
+    next_cursor = payload.get('cursor') or payload.get('nextCursor')
+    events = payload.get('events') or payload.get('items') or []
+
+    if not events and payload.get('event'):
+        events = [payload.get('event')]
         if next_cursor is None:
-            next_cursor = events[0].get("cursor")
+            next_cursor = events[0].get('cursor')
 
     for event in events:
         if not isinstance(event, dict):
             continue
-        if str(event.get("type") or event.get("eventType") or "message") not in {"message", "inbound_message"}:
+        if str(event.get('type') or event.get('eventType') or 'message') not in {'message', 'inbound_message'}:
             continue
         session_key = _extract_event_session_key(event)
         if not session_key:
@@ -897,39 +725,37 @@ def consume_openclaw_events_once(db: Session, *, source: str = "default", timeou
                 if settings.openclaw_bridge_enabled:
                     payload_conv, _ = read_openclaw_bridge_conversation(session_key, limit=1)
                 if payload_conv is None:
-                    # In fallback we need to open client again, or use a new one
                     with OpenClawMCPClient() as mcp_client:
                         payload_conv = mcp_client.conversation_get(session_key)
                 route = _extract_route(payload_conv) if isinstance(payload_conv, dict) else None
-                if route and route.get("recipient"):
-                    from ..models import Ticket
-                    from ..enums import TicketStatus
-                    contact_id = route.get("recipient")
-                    ticket = db.query(Ticket).filter(
-                        (Ticket.source_chat_id == contact_id) | (Ticket.preferred_reply_contact == contact_id),
-                        Ticket.status.notin_([TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled])
-                    ).order_by(Ticket.updated_at.desc()).first()
+                contact_id = route.get('recipient') if isinstance(route, dict) else None
+                route_tenant_id = _route_tenant_id(db, route, None)
+                if route_tenant_id is not None and contact_id:
+                    from ..multi_tenant_models import TicketTenantLink
+                    ticket = db.query(Ticket).join(TicketTenantLink, TicketTenantLink.ticket_id == Ticket.id).filter(TicketTenantLink.tenant_id == route_tenant_id, ((Ticket.source_chat_id == contact_id) | (Ticket.preferred_reply_contact == contact_id)), Ticket.status.notin_(['resolved', 'closed', 'canceled'])).order_by(Ticket.updated_at.desc()).first()
                     if ticket:
                         link = ensure_openclaw_conversation_link(db, ticket=ticket, session_key=session_key, route=route)
                         db.flush()
+                    else:
+                        LOGGER.warning('openclaw_event_unresolved_tenant_context', extra={'event_payload': {'session_key': session_key, 'route_tenant_id': route_tenant_id, 'recipient': contact_id}})
+                elif contact_id:
+                    LOGGER.warning('openclaw_event_compat_fallback', extra={'event_payload': {'session_key': session_key, 'recipient': contact_id, 'reason': 'missing_route_tenant_context'}})
+                    ticket = db.query(Ticket).filter(((Ticket.source_chat_id == contact_id) | (Ticket.preferred_reply_contact == contact_id)), Ticket.status.notin_(['resolved', 'closed', 'canceled'])).order_by(Ticket.updated_at.desc()).first()
+                    if ticket:
+                        link = ensure_openclaw_conversation_link(db, ticket=ticket, session_key=session_key, route=route)
+                        db.flush()
+                else:
+                    LOGGER.warning('openclaw_event_unresolved_tenant_context', extra={'event_payload': {'session_key': session_key, 'route': route}})
             except Exception as e:
-                import logging
-                logging.getLogger("nexusdesk").warning(f"Auto-link failed for {session_key}: {e}")
+                LOGGER.warning('openclaw_event_unresolved_tenant_context', extra={'event_payload': {'session_key': session_key, 'error': str(e)}})
         if link is None:
             continue
-            
-        sync_openclaw_conversation(
-            db,
-            ticket_id=link.ticket_id,
-            session_key=session_key,
-            limit=settings.openclaw_sync_transcript_limit,
-            client=None, # will fallback/bridge inside
-        )
+
+        sync_openclaw_conversation(db, ticket_id=link.ticket_id, session_key=session_key, limit=settings.openclaw_sync_transcript_limit, client=None)
         processed += 1
 
     if next_cursor is not None:
         upsert_openclaw_sync_cursor(db, source=source, cursor_value=str(next_cursor))
         db.flush()
-        
-    return processed
 
+    return processed
