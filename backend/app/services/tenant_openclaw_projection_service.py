@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..models import ChannelAccount
-from ..multi_tenant_models import Tenant, TenantAIProfile, TenantKnowledgeEntry
+from ..multi_tenant_models import ChannelAccountTenantLink, Tenant, TenantAIProfile, TenantKnowledgeEntry
 from ..openclaw_projection_models import TenantOpenClawAgent
 from ..utils.time import utc_now
 from .tenant_service import get_or_create_tenant_ai_profile, list_tenant_knowledge_entries
@@ -59,9 +59,8 @@ def render_bootstrap_preview(profile: TenantAIProfile, entries: list[TenantKnowl
 def _resolve_binding_summary(db: Session, tenant_id: int) -> dict[str, Any]:
     rows = (
         db.query(ChannelAccount)
-        .join(ChannelAccount.market, isouter=True)
-        .join(ChannelAccount.tenant_link)
-        .filter(ChannelAccount.tenant_link.has(tenant_id=tenant_id), ChannelAccount.is_active.is_(True))
+        .join(ChannelAccountTenantLink, ChannelAccountTenantLink.channel_account_id == ChannelAccount.id)
+        .filter(ChannelAccountTenantLink.tenant_id == tenant_id, ChannelAccount.is_active.is_(True))
         .order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc())
         .all()
     )
