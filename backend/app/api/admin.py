@@ -7,12 +7,15 @@ from sqlalchemy.orm import Session
 from ..db import get_db, engine
 from ..enums import JobStatus, MessageStatus
 from ..models import AIConfigResource, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
+from ..openclaw_quarantine_models import OpenClawUnresolvedEvent
 from ..schemas import AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, OpenClawConnectivityProbeRead, OpenClawConversationRead, OpenClawLinkRequest, OpenClawRuntimeHealthRead, OpenClawSyncEnqueueRequest, OpenClawSyncResult, ProductionReadinessRead, QueueSummaryRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead
 from ..settings import get_settings
 from ..utils.time import utc_now
 from ..services.permissions import ALL_CAPABILITIES, ensure_can_manage_capabilities, resolve_capabilities
 from ..services.ai_config_service import create_resource as create_ai_config_resource, list_admin_resources, list_versions as list_ai_config_versions, publish_resource, rollback_resource, update_resource as update_ai_config_resource
 from ..services.background_jobs import enqueue_openclaw_sync_job, enqueue_stale_openclaw_sync_jobs
+from ..services.observability import LOGGER
+from ..services.openclaw_quarantine_service import mark_quarantine_event_dropped, replay_quarantined_event
 from ..unit_of_work import managed_session
 from ..services.openclaw_bridge import consume_openclaw_events_once, count_stale_openclaw_links, link_ticket_to_openclaw_session, list_stale_openclaw_links, sync_openclaw_conversation
 from ..services.openclaw_runtime_service import probe_openclaw_connectivity
@@ -183,6 +186,90 @@ def enqueue_stale_openclaw_sync(limit: int = 25, db: Session = Depends(get_db), 
     for row in rows:
         db.refresh(row)
     return [BackgroundJobRead.model_validate(x) for x in rows]
+
+
+@router.get('/openclaw/unresolved-events')
+def list_openclaw_unresolved_events(status: str | None = 'quarantined', limit: int = 100, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_can_manage_capabilities(current_user, db)
+    query = db.query(OpenClawUnresolvedEvent).order_by(OpenClawUnresolvedEvent.created_at.desc())
+    if status:
+        query = query.filter(OpenClawUnresolvedEvent.resolution_status == status)
+    rows = query.limit(limit).all()
+    return {
+        'items': [
+            {
+                'id': row.id,
+                'source': row.source,
+                'session_key': row.session_key,
+                'channel': row.channel,
+                'account_id': row.account_id,
+                'thread_id': row.thread_id,
+                'recipient': row.recipient,
+                'inferred_tenant_id': row.inferred_tenant_id,
+                'cursor_value': row.cursor_value,
+                'event_type': row.event_type,
+                'resolution_status': row.resolution_status,
+                'resolution_reason': row.resolution_reason,
+                'replay_count': row.replay_count,
+                'last_replayed_at': row.last_replayed_at,
+                'created_at': row.created_at,
+                'updated_at': row.updated_at,
+            }
+            for row in rows
+        ],
+        'count': len(rows),
+    }
+
+
+@router.post('/openclaw/unresolved-events/{event_id}/replay')
+def replay_openclaw_unresolved_event(event_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_can_manage_capabilities(current_user, db)
+    row = db.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == event_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail='Unresolved OpenClaw event not found')
+    LOGGER.info('openclaw_event_quarantine_replay_started', extra={'event_payload': {'event_id': event_id, 'session_key': row.session_key, 'status': row.resolution_status}})
+    with managed_session(db):
+        ok, reason = replay_quarantined_event(db, event_id=event_id)
+        db.flush()
+    db.expire_all()
+    updated = db.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == event_id).first()
+    if ok:
+        LOGGER.info('openclaw_event_quarantine_replay_succeeded', extra={'event_payload': {'event_id': event_id, 'reason': reason}})
+    else:
+        LOGGER.warning('openclaw_event_quarantine_replay_failed', extra={'event_payload': {'event_id': event_id, 'reason': reason}})
+    return {
+        'ok': ok,
+        'reason': reason,
+        'event': {
+            'id': updated.id if updated else event_id,
+            'resolution_status': updated.resolution_status if updated else None,
+            'resolution_reason': updated.resolution_reason if updated else None,
+            'replay_count': updated.replay_count if updated else None,
+            'last_replayed_at': updated.last_replayed_at if updated else None,
+        },
+    }
+
+
+@router.post('/openclaw/unresolved-events/{event_id}/drop')
+def drop_openclaw_unresolved_event(event_id: int, reason: str = 'operator_dropped', db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_can_manage_capabilities(current_user, db)
+    with managed_session(db):
+        row = mark_quarantine_event_dropped(db, event_id=event_id, reason=reason)
+        if row is None:
+            raise HTTPException(status_code=404, detail='Unresolved OpenClaw event not found')
+        db.flush()
+    LOGGER.info('openclaw_event_quarantine_dropped', extra={'event_payload': {'event_id': event_id, 'reason': reason}})
+    db.refresh(row)
+    return {
+        'ok': True,
+        'event': {
+            'id': row.id,
+            'resolution_status': row.resolution_status,
+            'resolution_reason': row.resolution_reason,
+            'replay_count': row.replay_count,
+            'last_replayed_at': row.last_replayed_at,
+        },
+    }
 
 
 @router.get('/queues/summary', response_model=QueueSummaryRead)
@@ -368,8 +455,6 @@ def consume_openclaw_events(db: Session = Depends(get_db), current_user=Depends(
     return {'processed': processed}
 
 
-
-
 @router.get('/ai-configs', response_model=list[AIConfigResourceRead])
 def list_ai_configs(config_type: str | None = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_capabilities(current_user, db)
@@ -429,6 +514,7 @@ def rollback_ai_config(resource_id: int, version: int, payload: AIConfigPublishR
         version_row = rollback_resource(db, row, version, current_user, notes=payload.notes)
     db.refresh(version_row)
     return AIConfigVersionRead.model_validate(version_row)
+
 
 @router.get('/bulletins', response_model=list[MarketBulletinRead])
 def list_bulletins(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
