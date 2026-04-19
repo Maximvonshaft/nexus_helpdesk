@@ -270,6 +270,25 @@ def tenant_id_for_team(db: Session, team_id: int | None) -> int | None:
     return row.tenant_id if row else None
 
 
+def tenant_id_for_channel_account(db: Session, channel_account_id: int | None = None, account_id: str | None = None) -> int | None:
+    if channel_account_id is not None:
+        row = db.query(ChannelAccountTenantLink).filter(ChannelAccountTenantLink.channel_account_id == channel_account_id).first()
+        if row is not None:
+            return row.tenant_id
+    if account_id:
+        channel_account = db.query(ChannelAccount).filter(ChannelAccount.account_id == account_id, ChannelAccount.is_active.is_(True)).first()
+        if channel_account is not None:
+            row = db.query(ChannelAccountTenantLink).filter(ChannelAccountTenantLink.channel_account_id == channel_account.id).first()
+            if row is not None:
+                return row.tenant_id
+    return None
+
+
+def tenant_id_for_conversation(db: Session, conversation_id: int) -> int | None:
+    row = db.query(OpenClawConversationTenantLink).filter(OpenClawConversationTenantLink.conversation_id == conversation_id).first()
+    return row.tenant_id if row else None
+
+
 def tenant_summary(db: Session, tenant_id: int) -> dict:
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if tenant is None:
