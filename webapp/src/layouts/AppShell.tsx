@@ -15,6 +15,7 @@ const nav = [
   { to: '/workspace', label: '工单处理' },
   { to: '/bulletins', label: '通知公告' },
   { to: '/ai-control', label: 'AI规则', permission: 'ai' },
+  { to: '/tenant-control', label: '租户配置', permission: 'ai' },
   { to: '/accounts', label: '发送线路', permission: 'channels' },
   { to: '/runtime', label: '运营保障', permission: 'ops' },
 ]
