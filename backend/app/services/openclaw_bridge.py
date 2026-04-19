@@ -22,6 +22,7 @@ from ..utils.time import utc_now
 from .audit_service import log_event
 from .observability import LOGGER
 from .openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
+from .openclaw_quarantine_service import quarantine_openclaw_event
 from .storage import get_storage_backend
 from .tenant_service import attach_openclaw_conversation_to_tenant, tenant_id_for_channel_account, tenant_id_for_ticket
 
@@ -713,10 +714,27 @@ def consume_openclaw_events_once(db: Session, *, source: str = 'default', timeou
     for event in events:
         if not isinstance(event, dict):
             continue
-        if str(event.get('type') or event.get('eventType') or 'message') not in {'message', 'inbound_message'}:
+        event_type = str(event.get('type') or event.get('eventType') or 'message')
+        if event_type not in {'message', 'inbound_message'}:
             continue
         session_key = _extract_event_session_key(event)
         if not session_key:
+            quarantine_openclaw_event(
+                db,
+                source=source,
+                session_key=None,
+                channel=None,
+                account_id=None,
+                thread_id=None,
+                recipient=None,
+                inferred_tenant_id=None,
+                cursor_value=str(next_cursor or after_cursor),
+                event_type=event_type,
+                raw_event_json=event,
+                route_json=None,
+                resolution_reason='missing_session_key',
+            )
+            LOGGER.warning('openclaw_event_quarantined', extra={'event_payload': {'reason': 'missing_session_key', 'cursor_value': str(next_cursor or after_cursor)}})
             continue
         link = db.query(OpenClawConversationLink).filter(OpenClawConversationLink.session_key == session_key).first()
         if link is None:
@@ -729,6 +747,9 @@ def consume_openclaw_events_once(db: Session, *, source: str = 'default', timeou
                         payload_conv = mcp_client.conversation_get(session_key)
                 route = _extract_route(payload_conv) if isinstance(payload_conv, dict) else None
                 contact_id = route.get('recipient') if isinstance(route, dict) else None
+                account_id = route.get('accountId') if isinstance(route, dict) else None
+                thread_id = route.get('threadId') if isinstance(route, dict) else None
+                channel = route.get('channel') if isinstance(route, dict) else None
                 route_tenant_id = _route_tenant_id(db, route, None)
                 if route_tenant_id is not None and contact_id:
                     from ..multi_tenant_models import TicketTenantLink
@@ -737,17 +758,58 @@ def consume_openclaw_events_once(db: Session, *, source: str = 'default', timeou
                         link = ensure_openclaw_conversation_link(db, ticket=ticket, session_key=session_key, route=route)
                         db.flush()
                     else:
-                        LOGGER.warning('openclaw_event_unresolved_tenant_context', extra={'event_payload': {'session_key': session_key, 'route_tenant_id': route_tenant_id, 'recipient': contact_id}})
-                elif contact_id:
-                    LOGGER.warning('openclaw_event_compat_fallback', extra={'event_payload': {'session_key': session_key, 'recipient': contact_id, 'reason': 'missing_route_tenant_context'}})
-                    ticket = db.query(Ticket).filter(((Ticket.source_chat_id == contact_id) | (Ticket.preferred_reply_contact == contact_id)), Ticket.status.notin_(['resolved', 'closed', 'canceled'])).order_by(Ticket.updated_at.desc()).first()
-                    if ticket:
-                        link = ensure_openclaw_conversation_link(db, ticket=ticket, session_key=session_key, route=route)
-                        db.flush()
+                        quarantine_openclaw_event(
+                            db,
+                            source=source,
+                            session_key=session_key,
+                            channel=channel,
+                            account_id=account_id,
+                            thread_id=thread_id,
+                            recipient=contact_id,
+                            inferred_tenant_id=route_tenant_id,
+                            cursor_value=str(next_cursor or after_cursor),
+                            event_type=event_type,
+                            raw_event_json=event,
+                            route_json=route,
+                            resolution_reason='tenant_context_resolved_but_ticket_not_found',
+                        )
+                        LOGGER.warning('openclaw_event_quarantined', extra={'event_payload': {'session_key': session_key, 'route_tenant_id': route_tenant_id, 'recipient': contact_id, 'reason': 'tenant_context_resolved_but_ticket_not_found'}})
                 else:
-                    LOGGER.warning('openclaw_event_unresolved_tenant_context', extra={'event_payload': {'session_key': session_key, 'route': route}})
+                    quarantine_openclaw_event(
+                        db,
+                        source=source,
+                        session_key=session_key,
+                        channel=channel,
+                        account_id=account_id,
+                        thread_id=thread_id,
+                        recipient=contact_id,
+                        inferred_tenant_id=route_tenant_id,
+                        cursor_value=str(next_cursor or after_cursor),
+                        event_type=event_type,
+                        raw_event_json=event,
+                        route_json=route,
+                        resolution_reason='unresolved_tenant_context',
+                    )
+                    LOGGER.warning('openclaw_event_unresolved_tenant_context', extra={'event_payload': {'session_key': session_key, 'route': route or {}, 'reason': 'unresolved_tenant_context'}})
+                    LOGGER.warning('openclaw_event_quarantined', extra={'event_payload': {'session_key': session_key, 'reason': 'unresolved_tenant_context'}})
             except Exception as e:
+                quarantine_openclaw_event(
+                    db,
+                    source=source,
+                    session_key=session_key,
+                    channel=None,
+                    account_id=None,
+                    thread_id=None,
+                    recipient=None,
+                    inferred_tenant_id=None,
+                    cursor_value=str(next_cursor or after_cursor),
+                    event_type=event_type,
+                    raw_event_json=event,
+                    route_json=None,
+                    resolution_reason=f'exception:{e}',
+                )
                 LOGGER.warning('openclaw_event_unresolved_tenant_context', extra={'event_payload': {'session_key': session_key, 'error': str(e)}})
+                LOGGER.warning('openclaw_event_quarantined', extra={'event_payload': {'session_key': session_key, 'reason': f'exception:{e}'}})
         if link is None:
             continue
 
