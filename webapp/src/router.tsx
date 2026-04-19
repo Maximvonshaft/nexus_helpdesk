@@ -7,6 +7,7 @@ import { Route as BulletinsRoute } from '@/routes/bulletins'
 import { Route as AIControlRoute } from '@/routes/ai-control'
 import { Route as AccountsRoute } from '@/routes/accounts'
 import { Route as RuntimeRoute } from '@/routes/runtime'
+import { Route as TenantControlRoute } from '@/routes/tenant-control'
 
 const routeTree = RootRoute.addChildren([
   LoginRoute,
@@ -14,6 +15,7 @@ const routeTree = RootRoute.addChildren([
   WorkspaceRoute,
   BulletinsRoute,
   AIControlRoute,
+  TenantControlRoute,
   AccountsRoute,
   RuntimeRoute,
 ])
