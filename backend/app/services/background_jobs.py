@@ -216,6 +216,22 @@ def _mark_retry(job: BackgroundJob, reason: str) -> None:
     job.updated_at = utc_now()
 
 
+def _serialize_profile(profile) -> dict | None:
+    if profile is None:
+        return None
+    return {
+        'display_name': getattr(profile, 'display_name', None),
+        'brand_name': getattr(profile, 'brand_name', None),
+        'role_prompt': getattr(profile, 'role_prompt', None),
+        'tone_style': getattr(profile, 'tone_style', None),
+        'forbidden_claims': getattr(profile, 'forbidden_claims', None) or [],
+        'escalation_policy': getattr(profile, 'escalation_policy', None),
+        'signature_style': getattr(profile, 'signature_style', None),
+        'language_policy': getattr(profile, 'language_policy', None),
+        'system_prompt_overrides': getattr(profile, 'system_prompt_overrides', None),
+    }
+
+
 def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
     payload = json.loads(job.payload_json or '{}')
     try:
@@ -224,6 +240,7 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             from ..schemas import OutboundSendRequest
             from .llm_service import polish_reply_text
             from .bulletin_service import build_bulletin_context
+            from .tenant_runtime_service import get_ticket_tenant_runtime_context
 
             ticket = get_ticket_or_404(db, int(payload['ticket_id']))
             user = get_user_or_404(db, int(payload['user_id']))
@@ -238,7 +255,14 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             transcript_context = '\n'.join(reversed([row.body_text for row in transcript_rows if row.body_text]))
             customer_request = transcript_context or ticket.customer_request or ticket.description or ''
             bulletin_context = build_bulletin_context(db, ticket=ticket)
-            polished_text = polish_reply_text(customer_request, human_note, bulletin_context=bulletin_context)
+            tenant_runtime = get_ticket_tenant_runtime_context(db, ticket.id)
+            polished_text = polish_reply_text(
+                customer_request,
+                human_note,
+                bulletin_context=bulletin_context,
+                tenant_profile=_serialize_profile(tenant_runtime.get('profile')),
+                tenant_knowledge_context=tenant_runtime.get('knowledge_context', ''),
+            )
             channel_value = (ticket.preferred_reply_channel or 'whatsapp').lower().strip()
             try:
                 channel = SourceChannel(channel_value)
