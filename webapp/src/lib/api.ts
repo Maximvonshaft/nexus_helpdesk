@@ -1,5 +1,4 @@
 import type {
-  AdminUser,
   AuthUser,
   BackgroundJob,
   Bulletin,
@@ -56,20 +55,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   users: () => request<AuthUser[]>('/api/lookups/users'),
-  adminUsers: () => request<AdminUser[]>('/api/admin/users'),
   teams: () => request<any[]>('/api/lookups/teams'),
   capabilityCatalog: () => request<string[]>('/api/admin/capabilities/catalog'),
-  createUser: (payload: Record<string, unknown>) => request<AdminUser>('/api/admin/users', {
+  createUser: (payload: Record<string, unknown>) => request<AuthUser>('/api/admin/users', {
     method: 'POST',
     body: JSON.stringify(payload),
-  }),
-  updateUser: (userId: number, payload: Record<string, unknown>) => request<AdminUser>(`/api/admin/users/${userId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  }),
-  resetUserPassword: (userId: number, password: string) => request<{ ok: boolean }>(`/api/admin/users/${userId}/reset-password`, {
-    method: 'POST',
-    body: JSON.stringify({ password }),
   }),
   login: (username: string, password: string) => request<{access_token: string; user: AuthUser}>('/api/auth/login', {
     method: 'POST',
