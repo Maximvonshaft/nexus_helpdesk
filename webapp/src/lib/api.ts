@@ -57,6 +57,10 @@ export const api = {
   users: () => request<AuthUser[]>('/api/lookups/users'),
   teams: () => request<any[]>('/api/lookups/teams'),
   capabilityCatalog: () => request<string[]>('/api/admin/capabilities/catalog'),
+  createUser: (payload: Record<string, unknown>) => request<AuthUser>('/api/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   login: (username: string, password: string) => request<{access_token: string; user: AuthUser}>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
