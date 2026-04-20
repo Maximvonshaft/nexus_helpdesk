@@ -10,13 +10,6 @@ export interface AuthUser {
   capabilities?: string[]
 }
 
-export interface AdminUser extends AuthUser {
-  is_active: boolean
-  capabilities: string[]
-  created_at: string
-  updated_at: string
-}
-
 export interface Market {
   id: number
   code: string
@@ -225,6 +218,7 @@ export interface BackgroundJob {
   created_at: string
   updated_at: string
 }
+
 
 export interface AIConfigResource {
   id: number
