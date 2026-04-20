@@ -8,7 +8,7 @@ import { CommandPalette } from '@/components/ui/CommandPalette'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { labelize } from '@/lib/format'
-import { canManageAIConfig, canManageChannels, canViewOps, roleWorkspaceHint } from '@/lib/access'
+import { canManageAIConfig, canManageChannels, canManageUsers, canViewOps, roleWorkspaceHint } from '@/lib/access'
 
 const nav = [
   { to: '/', label: '首页总览' },
@@ -55,8 +55,9 @@ export function AppShell({ children }: PropsWithChildren) {
     if (item.permission === 'ops') return canViewOps(session.data?.role)
     if (item.permission === 'channels') return canManageChannels(session.data?.role)
     if (item.permission === 'ai') return canManageAIConfig(session.data?.role)
+    if (item.permission === 'users') return canManageUsers(session.data)
     return true
-  }), [session.data?.role])
+  }), [session.data])
 
   if (!session.data) {
     navigate({ to: '/login' })
