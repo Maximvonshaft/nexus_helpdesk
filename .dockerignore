@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite
+.smoke_tmp/
+backend/uploads/
+.git/
+.env
+.env.*
+node_modules/
+backend/.venv/
+backend/.pytest_cache/
+webapp/dist/

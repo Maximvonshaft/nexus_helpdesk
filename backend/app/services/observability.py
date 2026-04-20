@@ -1,0 +1,128 @@
+from __future__ import annotations
+
+import json
+import logging
+from time import perf_counter
+
+LOGGER = logging.getLogger("nexusdesk")
+
+try:
+    from prometheus_client import CollectorRegistry, CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest, multiprocess
+except Exception:  # pragma: no cover
+    CollectorRegistry = None
+    CONTENT_TYPE_LATEST = 'text/plain; version=0.0.4'
+    Counter = None
+    Histogram = None
+    generate_latest = None
+    multiprocess = None
+
+
+class _JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        extra = getattr(record, "event_payload", None)
+        if isinstance(extra, dict):
+            payload.update(extra)
+        return json.dumps(payload, ensure_ascii=False)
+
+
+_PROM_REGISTRY = CollectorRegistry() if CollectorRegistry else None
+if _PROM_REGISTRY and multiprocess:
+    try:
+        multiprocess.MultiProcessCollector(_PROM_REGISTRY)
+    except ValueError:
+        pass
+
+_HTTP_COUNTER = Counter(
+    'nexusdesk_http_requests_total',
+    'Total HTTP requests processed',
+    ['method', 'path', 'status_code'],
+    registry=_PROM_REGISTRY,
+) if Counter else None
+_HTTP_DURATION = Histogram(
+    'nexusdesk_http_request_duration_ms',
+    'HTTP request duration in milliseconds',
+    ['method', 'path'],
+    registry=_PROM_REGISTRY,
+    buckets=(5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000),
+) if Histogram else None
+_WORKER_RUNS = Counter(
+    'nexusdesk_worker_runs_total',
+    'Number of worker polling cycles',
+    ['worker_id'],
+    registry=_PROM_REGISTRY,
+) if Counter else None
+_JOB_COUNTER = Counter(
+    'nexusdesk_worker_processed_total',
+    'Processed queued jobs/messages',
+    ['worker_id', 'kind', 'result'],
+    registry=_PROM_REGISTRY,
+) if Counter else None
+_QUEUE_DEPTH = Counter(
+    'nexusdesk_queue_snapshots_total',
+    'Queue snapshot observations',
+    ['name', 'kind'],
+    registry=_PROM_REGISTRY,
+) if Counter else None
+
+
+def configure_logging(log_json: bool = True) -> None:
+    if getattr(configure_logging, "_configured", False):
+        return
+    handler = logging.StreamHandler()
+    if log_json:
+        handler.setFormatter(_JsonFormatter())
+    else:
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    root = logging.getLogger()
+    if not root.handlers:
+        root.addHandler(handler)
+    else:
+        root.handlers = [handler]
+    root.setLevel(logging.INFO)
+    configure_logging._configured = True
+
+
+def log_event(level: int, message: str, **payload) -> None:
+    LOGGER.log(level, message, extra={"event_payload": payload})
+
+
+def record_request_metric(path: str, method: str, status_code: int, duration_ms: float) -> None:
+    if _HTTP_COUNTER:
+        _HTTP_COUNTER.labels(method=method, path=path, status_code=str(status_code)).inc()
+    if _HTTP_DURATION:
+        _HTTP_DURATION.labels(method=method, path=path).observe(duration_ms)
+
+
+def record_worker_poll(worker_id: str) -> None:
+    if _WORKER_RUNS:
+        _WORKER_RUNS.labels(worker_id=worker_id).inc()
+
+
+def record_worker_result(worker_id: str, kind: str, result: str, count: int = 1) -> None:
+    if _JOB_COUNTER:
+        _JOB_COUNTER.labels(worker_id=worker_id, kind=kind, result=result).inc(count)
+
+
+def render_prometheus_metrics() -> str:
+    if generate_latest and _PROM_REGISTRY:
+        return generate_latest(_PROM_REGISTRY).decode('utf-8')
+    return "# metrics disabled\n"
+
+
+def timed_request():
+    start = perf_counter()
+    return lambda: (perf_counter() - start) * 1000.0
+
+
+def record_queue_snapshot(name: str, kind: str, value: int = 1) -> None:
+    if _QUEUE_DEPTH:
+        _QUEUE_DEPTH.labels(name=name, kind=kind).inc(value)
+
+
+def log_signoff_state(state: str, **fields) -> None:
+    log_event(20, "production_signoff_state", state=state, **fields)
