@@ -13,7 +13,7 @@ import { canManageAIConfig, canManageChannels, canManageUsers, canViewOps, roleW
 const nav = [
   { to: '/', label: '首页总览' },
   { to: '/workspace', label: '工单处理' },
-  { to: '/bulletins', label: '通知公告' },
+  { to: '/bulletins', label: '通知公告', permission: 'bulletins' },
   { to: '/ai-control', label: 'AI规则', permission: 'ai' },
   { to: '/accounts', label: '发送线路', permission: 'channels' },
   { to: '/users', label: '账号管理', permission: 'users' },
@@ -27,7 +27,7 @@ export function AppShell({ children }: PropsWithChildren) {
   const logout = useLogout()
   const [commandOpen, setCommandOpen] = useState(false)
   const autoRefresh = useAutoRefresh(true)
-  const canSeeOps = canViewOps(session.data?.role)
+  const canSeeOps = canViewOps(session.data)
   const runtime = useQuery({
     queryKey: ['runtimeHealth-shell'],
     queryFn: api.runtimeHealth,
@@ -52,10 +52,11 @@ export function AppShell({ children }: PropsWithChildren) {
   }, [session.data])
 
   const availableNav = useMemo(() => nav.filter((item) => {
-    if (item.permission === 'ops') return canViewOps(session.data?.role)
-    if (item.permission === 'channels') return canManageChannels(session.data?.role)
-    if (item.permission === 'ai') return canManageAIConfig(session.data?.role)
+    if (item.permission === 'ops') return canViewOps(session.data)
+    if (item.permission === 'channels') return canManageChannels(session.data)
+    if (item.permission === 'ai') return canManageAIConfig(session.data)
     if (item.permission === 'users') return canManageUsers(session.data)
+    if (item.permission === 'bulletins') return true
     return true
   }), [session.data])
 
@@ -82,7 +83,7 @@ export function AppShell({ children }: PropsWithChildren) {
         <div className="card soft sidebar-card">
           <div className="section-title">当前账号</div>
           <div className="section-subtitle">{userLabel}</div>
-          <div className="sidebar-helper">{roleWorkspaceHint(session.data?.role)}</div>
+          <div className="sidebar-helper">{roleWorkspaceHint(session.data)}</div>
           <div className="button-row" style={{ marginTop: 12 }}>
             <Button variant="secondary" onClick={() => setCommandOpen(true)}>快捷操作</Button>
             <Button variant="ghost" onClick={() => { logout(); navigate({ to: '/login' }) }}>退出登录</Button>

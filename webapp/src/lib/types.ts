@@ -23,6 +23,7 @@ export interface Market {
   name: string
   country_code?: string | null
   language_code?: string | null
+  timezone?: string | null
 }
 
 export interface Team {
@@ -226,7 +227,6 @@ export interface BackgroundJob {
   updated_at: string
 }
 
-
 export interface AIConfigResource {
   id: number
   resource_key: string
@@ -256,4 +256,19 @@ export interface AIConfigVersion {
   notes?: string | null
   published_by?: number | null
   published_at: string
+}
+
+export interface OpenClawUnresolvedEvent {
+  id: number
+  source: string
+  session_key?: string | null
+  event_type?: string | null
+  recipient?: string | null
+  source_chat_id?: string | null
+  preferred_reply_contact?: string | null
+  status: string
+  replay_count: number
+  last_error?: string | null
+  created_at: string
+  updated_at: string
 }

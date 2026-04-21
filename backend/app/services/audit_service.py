@@ -4,7 +4,8 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from ..enums import EventType
-from ..models import TicketEvent
+from ..models import AdminAuditLog, TicketEvent
+from ..utils.time import utc_now
 
 
 def log_event(
@@ -32,3 +33,27 @@ def log_event(
     db.add(event)
     db.flush()
     return event
+
+
+def log_admin_audit(
+    db: Session,
+    *,
+    actor_id: Optional[int],
+    action: str,
+    target_type: str,
+    target_id: Optional[int] = None,
+    old_value: Optional[dict[str, Any]] = None,
+    new_value: Optional[dict[str, Any]] = None,
+) -> AdminAuditLog:
+    row = AdminAuditLog(
+        actor_id=actor_id,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        old_value_json=json.dumps(old_value, ensure_ascii=False) if old_value is not None else None,
+        new_value_json=json.dumps(new_value, ensure_ascii=False) if new_value is not None else None,
+        created_at=utc_now(),
+    )
+    db.add(row)
+    db.flush()
+    return row

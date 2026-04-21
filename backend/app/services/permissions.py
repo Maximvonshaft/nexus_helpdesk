@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from functools import lru_cache
-from typing import Iterable
-
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -25,42 +22,63 @@ CAP_AI_INTAKE_WRITE = "ai_intake.write"
 CAP_NOTE_WRITE_INTERNAL = "note.write.internal"
 CAP_NOTE_WRITE_EXTERNAL = "note.write.external"
 CAP_USER_MANAGE = "user.manage"
+CAP_CHANNEL_ACCOUNT_MANAGE = "channel_account.manage"
+CAP_BULLETIN_MANAGE = "bulletin.manage"
+CAP_AI_CONFIG_MANAGE = "ai_config.manage"
+CAP_RUNTIME_MANAGE = "runtime.manage"
+CAP_MARKET_MANAGE = "market.manage"
 
 ALL_CAPABILITIES = [
-    CAP_TICKET_READ, CAP_TICKET_ASSIGN, CAP_TICKET_ESCALATE, CAP_TICKET_UPDATE_CORE,
-    CAP_TICKET_STATUS_CHANGE, CAP_TICKET_CLOSE, CAP_ATTACHMENT_READ_EXTERNAL,
-    CAP_ATTACHMENT_READ_INTERNAL, CAP_ATTACHMENT_UPLOAD, CAP_CUSTOMER_PROFILE_READ,
-    CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND, CAP_AI_INTAKE_WRITE, CAP_NOTE_WRITE_INTERNAL,
-    CAP_NOTE_WRITE_EXTERNAL, CAP_USER_MANAGE,
+    CAP_TICKET_READ,
+    CAP_TICKET_ASSIGN,
+    CAP_TICKET_ESCALATE,
+    CAP_TICKET_UPDATE_CORE,
+    CAP_TICKET_STATUS_CHANGE,
+    CAP_TICKET_CLOSE,
+    CAP_ATTACHMENT_READ_EXTERNAL,
+    CAP_ATTACHMENT_READ_INTERNAL,
+    CAP_ATTACHMENT_UPLOAD,
+    CAP_CUSTOMER_PROFILE_READ,
+    CAP_OUTBOUND_DRAFT_SAVE,
+    CAP_OUTBOUND_SEND,
+    CAP_AI_INTAKE_WRITE,
+    CAP_NOTE_WRITE_INTERNAL,
+    CAP_NOTE_WRITE_EXTERNAL,
+    CAP_USER_MANAGE,
+    CAP_CHANNEL_ACCOUNT_MANAGE,
+    CAP_BULLETIN_MANAGE,
+    CAP_AI_CONFIG_MANAGE,
+    CAP_RUNTIME_MANAGE,
+    CAP_MARKET_MANAGE,
 ]
 
-
 ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
-    UserRole.admin: {
-        CAP_TICKET_READ, CAP_TICKET_ASSIGN, CAP_TICKET_ESCALATE, CAP_TICKET_UPDATE_CORE,
-        CAP_TICKET_STATUS_CHANGE, CAP_TICKET_CLOSE, CAP_ATTACHMENT_READ_EXTERNAL,
-        CAP_ATTACHMENT_READ_INTERNAL, CAP_ATTACHMENT_UPLOAD, CAP_CUSTOMER_PROFILE_READ,
-        CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND, CAP_AI_INTAKE_WRITE, CAP_NOTE_WRITE_INTERNAL, CAP_NOTE_WRITE_EXTERNAL, CAP_USER_MANAGE,
-    },
+    UserRole.admin: set(ALL_CAPABILITIES),
     UserRole.manager: {
         CAP_TICKET_READ, CAP_TICKET_ASSIGN, CAP_TICKET_ESCALATE, CAP_TICKET_UPDATE_CORE,
         CAP_TICKET_STATUS_CHANGE, CAP_TICKET_CLOSE, CAP_ATTACHMENT_READ_EXTERNAL,
         CAP_ATTACHMENT_READ_INTERNAL, CAP_ATTACHMENT_UPLOAD, CAP_CUSTOMER_PROFILE_READ,
-        CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND, CAP_AI_INTAKE_WRITE, CAP_NOTE_WRITE_INTERNAL, CAP_NOTE_WRITE_EXTERNAL,
+        CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND, CAP_AI_INTAKE_WRITE,
+        CAP_NOTE_WRITE_INTERNAL, CAP_NOTE_WRITE_EXTERNAL,
+        CAP_USER_MANAGE, CAP_CHANNEL_ACCOUNT_MANAGE, CAP_BULLETIN_MANAGE,
+        CAP_AI_CONFIG_MANAGE, CAP_RUNTIME_MANAGE, CAP_MARKET_MANAGE,
     },
     UserRole.lead: {
         CAP_TICKET_READ, CAP_TICKET_ASSIGN, CAP_TICKET_ESCALATE, CAP_TICKET_UPDATE_CORE,
         CAP_TICKET_STATUS_CHANGE, CAP_TICKET_CLOSE, CAP_ATTACHMENT_READ_EXTERNAL,
         CAP_ATTACHMENT_READ_INTERNAL, CAP_ATTACHMENT_UPLOAD, CAP_CUSTOMER_PROFILE_READ,
-        CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND, CAP_AI_INTAKE_WRITE, CAP_NOTE_WRITE_INTERNAL, CAP_NOTE_WRITE_EXTERNAL,
+        CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND, CAP_AI_INTAKE_WRITE,
+        CAP_NOTE_WRITE_INTERNAL, CAP_NOTE_WRITE_EXTERNAL,
     },
     UserRole.agent: {
         CAP_TICKET_READ, CAP_ATTACHMENT_READ_EXTERNAL, CAP_ATTACHMENT_READ_INTERNAL,
         CAP_ATTACHMENT_UPLOAD, CAP_TICKET_STATUS_CHANGE, CAP_OUTBOUND_DRAFT_SAVE,
-        CAP_OUTBOUND_SEND, CAP_AI_INTAKE_WRITE, CAP_NOTE_WRITE_INTERNAL, CAP_NOTE_WRITE_EXTERNAL, CAP_CUSTOMER_PROFILE_READ,
+        CAP_OUTBOUND_SEND, CAP_AI_INTAKE_WRITE, CAP_NOTE_WRITE_INTERNAL,
+        CAP_NOTE_WRITE_EXTERNAL, CAP_CUSTOMER_PROFILE_READ,
     },
     UserRole.auditor: {
-        CAP_TICKET_READ, CAP_ATTACHMENT_READ_EXTERNAL, CAP_ATTACHMENT_READ_INTERNAL, CAP_CUSTOMER_PROFILE_READ,
+        CAP_TICKET_READ, CAP_ATTACHMENT_READ_EXTERNAL,
+        CAP_ATTACHMENT_READ_INTERNAL, CAP_CUSTOMER_PROFILE_READ,
     },
 }
 
@@ -170,10 +188,25 @@ def ensure_can_write_comment(user, visibility: NoteVisibility, db: Session | Non
     ensure_can_write_external_comment(user, db)
 
 
-def ensure_can_manage_capabilities(user, db: Session | None = None):
-    ensure_capability(user, CAP_TICKET_ASSIGN, db, message="Only admin or manager can manage capability overrides")
-    if user.role not in {UserRole.admin, UserRole.manager}:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admin or manager can manage capability overrides")
-
 def ensure_can_manage_users(user, db: Session | None = None):
     ensure_capability(user, CAP_USER_MANAGE, db, message="Not authorized to manage users")
+
+
+def ensure_can_manage_channel_accounts(user, db: Session | None = None):
+    ensure_capability(user, CAP_CHANNEL_ACCOUNT_MANAGE, db, message="Not authorized to manage channel accounts")
+
+
+def ensure_can_manage_bulletins(user, db: Session | None = None):
+    ensure_capability(user, CAP_BULLETIN_MANAGE, db, message="Not authorized to manage bulletins")
+
+
+def ensure_can_manage_ai_configs(user, db: Session | None = None):
+    ensure_capability(user, CAP_AI_CONFIG_MANAGE, db, message="Not authorized to manage AI config")
+
+
+def ensure_can_manage_runtime(user, db: Session | None = None):
+    ensure_capability(user, CAP_RUNTIME_MANAGE, db, message="Not authorized to manage runtime")
+
+
+def ensure_can_manage_markets(user, db: Session | None = None):
+    ensure_capability(user, CAP_MARKET_MANAGE, db, message="Not authorized to manage markets")

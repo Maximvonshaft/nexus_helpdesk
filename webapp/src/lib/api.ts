@@ -1,4 +1,5 @@
 import type {
+  AdminUser,
   AuthUser,
   BackgroundJob,
   Bulletin,
@@ -14,6 +15,8 @@ import type {
   SignoffChecklist,
   AIConfigResource,
   AIConfigVersion,
+  OpenClawUnresolvedEvent,
+  Team,
 } from '@/lib/types'
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
@@ -54,19 +57,32 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  users: () => request<AuthUser[]>('/api/lookups/users'),
-  teams: () => request<any[]>('/api/lookups/teams'),
-  capabilityCatalog: () => request<string[]>('/api/admin/capabilities/catalog'),
-  createUser: (payload: Record<string, unknown>) => request<AuthUser>('/api/admin/users', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  }),
   login: (username: string, password: string) => request<{access_token: string; user: AuthUser}>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
   }),
   me: () => request<AuthUser>('/api/auth/me'),
 
+  // user governance
+  adminUsers: () => request<AdminUser[]>('/api/admin/users'),
+  createUser: (payload: Record<string, unknown>) => request<AdminUser>('/api/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateUser: (userId: number, payload: Record<string, unknown>) => request<AdminUser>(`/api/admin/users/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  activateUser: (userId: number) => request<AdminUser>(`/api/admin/users/${userId}/activate`, { method: 'POST' }),
+  deactivateUser: (userId: number) => request<AdminUser>(`/api/admin/users/${userId}/deactivate`, { method: 'POST' }),
+  resetUserPassword: (userId: number, password: string) => request<{ ok: boolean }>(`/api/admin/users/${userId}/reset-password`, {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  }),
+  teams: () => request<Team[]>('/api/lookups/teams'),
+  capabilityCatalog: () => request<string[]>('/api/admin/capabilities/catalog'),
+
+  // lite workspace
   liteMeta: () => request<LiteMeta>('/api/lite/meta'),
   cases: (params?: { q?: string; status?: string }) => {
     const search = new URLSearchParams()
@@ -84,8 +100,17 @@ export const api = {
     body: JSON.stringify(payload),
   }),
 
+  // market / bulletin / AI config
   markets: () => request<Market[]>('/api/lookups/markets'),
-
+  bulletins: () => request<Bulletin[]>('/api/lookups/bulletins'),
+  createBulletin: (payload: Partial<Bulletin>) => request<Bulletin>('/api/admin/bulletins', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateBulletin: (bulletinId: number, payload: Partial<Bulletin>) => request<Bulletin>(`/api/admin/bulletins/${bulletinId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
   aiConfigs: (configType?: string) => request<AIConfigResource[]>(`/api/admin/ai-configs${configType ? `?config_type=${encodeURIComponent(configType)}` : ''}`),
   publishedAIConfigs: (configType?: string, marketId?: number) => {
     const search = new URLSearchParams()
@@ -111,16 +136,7 @@ export const api = {
     body: JSON.stringify({ notes: notes || null }),
   }),
 
-  bulletins: () => request<Bulletin[]>('/api/lookups/bulletins'),
-  createBulletin: (payload: Partial<Bulletin>) => request<Bulletin>('/api/admin/bulletins', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  }),
-  updateBulletin: (bulletinId: number, payload: Partial<Bulletin>) => request<Bulletin>(`/api/admin/bulletins/${bulletinId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  }),
-
+  // channel routing
   channelAccounts: () => request<ChannelAccount[]>('/api/admin/channel-accounts'),
   createChannelAccount: (payload: Partial<ChannelAccount>) => request<ChannelAccount>('/api/admin/channel-accounts', {
     method: 'POST',
@@ -131,6 +147,7 @@ export const api = {
     body: JSON.stringify(payload),
   }),
 
+  // runtime / diagnostics
   queueSummary: () => request<QueueSummary>('/api/admin/queues/summary'),
   runtimeHealth: () => request<RuntimeHealth>('/api/admin/openclaw/runtime-health'),
   openclawConnectivityCheck: () => request<OpenClawConnectivityProbe>('/api/admin/openclaw/connectivity-check'),
@@ -138,4 +155,13 @@ export const api = {
   signoff: () => request<SignoffChecklist>('/api/admin/signoff-checklist'),
   jobs: () => request<BackgroundJob[]>('/api/admin/jobs?limit=50'),
   consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
+
+  // unresolved events governance
+  unresolvedEvents: () => request<OpenClawUnresolvedEvent[]>('/api/admin/openclaw/unresolved-events'),
+  replayUnresolvedEvent: (eventId: number) => request<{ ok: boolean; linked_ticket_id?: number | null }>(`/api/admin/openclaw/unresolved-events/${eventId}/replay`, {
+    method: 'POST',
+  }),
+  dropUnresolvedEvent: (eventId: number) => request<{ ok: boolean }>(`/api/admin/openclaw/unresolved-events/${eventId}/drop`, {
+    method: 'POST',
+  }),
 }

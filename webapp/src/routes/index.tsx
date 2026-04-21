@@ -20,8 +20,8 @@ function OverviewPage() {
   const client = useQueryClient()
   const autoRefresh = useAutoRefresh(true)
   const session = useSession()
-  const canSeeOps = canViewOps(session.data?.role)
-  const canSeeChannels = canManageChannels(session.data?.role)
+  const canSeeOps = canViewOps(session.data)
+  const canSeeChannels = canManageChannels(session.data)
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
   const [queue, runtime, readiness, signoff] = useQueries({
     queries: [

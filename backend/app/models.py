@@ -226,6 +226,37 @@ class UserCapabilityOverride(Base):
     user: Mapped["User"] = relationship()
 
 
+class AdminAuditLog(Base):
+    __tablename__ = "admin_audit_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(120), index=True)
+    target_type: Mapped[str] = mapped_column(String(80), index=True)
+    target_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    old_value_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    new_value_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+
+
+class OpenClawUnresolvedEvent(Base):
+    __tablename__ = "openclaw_unresolved_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(80), index=True)
+    session_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    event_type: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    recipient: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    source_chat_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    preferred_reply_contact: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    replay_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, index=True)
+
+
 class Customer(Base):
     __tablename__ = "customers"
 

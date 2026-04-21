@@ -23,11 +23,11 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const queryClient = useQueryClient()
   const session = useSession()
   const visibleActions = useMemo(() => actions.filter((item) => {
-    if (item.permission === 'ops') return canViewOps(session.data?.role)
-    if (item.permission === 'channels') return canManageChannels(session.data?.role)
+    if (item.permission === 'ops') return canViewOps(session.data)
+    if (item.permission === 'channels') return canManageChannels(session.data)
     if (item.permission === 'bulletinsManage') return canEditBulletins(session.data)
     return true
-  }), [session.data?.role])
+  }), [session.data])
   const filtered = useMemo(() => visibleActions.filter((item) => item.label.toLowerCase().includes(query.toLowerCase())), [visibleActions, query])
 
   if (!open) return null

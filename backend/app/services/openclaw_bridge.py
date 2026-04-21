@@ -15,17 +15,19 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility
-from ..models import ChannelAccount, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, Team, Ticket, TicketAttachment
+from ..models import ChannelAccount, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, Team, Ticket, TicketAttachment
 from ..schemas import OpenClawConversationRead, OpenClawSyncResult, OpenClawTranscriptRead
 from ..settings import get_settings
 from ..utils.time import utc_now
-from .audit_service import log_event
+from .audit_service import log_event, log_admin_audit
 from .observability import LOGGER
 from .openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
 from .storage import get_storage_backend
 
 
 settings = get_settings()
+
+ALLOWED_CHANNEL_ACCOUNT_PROVIDERS = {'whatsapp', 'telegram', 'sms'}
 
 
 def _is_public_ip_address(value: str) -> bool:
@@ -229,6 +231,33 @@ def resolve_channel_account(db: Session, *, market_id: int | None, account_id: s
         if row:
             return row
     return q.order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
+
+
+def persist_unresolved_openclaw_event(
+    db: Session,
+    *,
+    source: str,
+    session_key: str | None,
+    event_type: str | None,
+    recipient: str | None,
+    source_chat_id: str | None,
+    preferred_reply_contact: str | None,
+    payload: dict[str, Any],
+) -> OpenClawUnresolvedEvent:
+    row = OpenClawUnresolvedEvent(
+        source=source,
+        session_key=session_key,
+        event_type=event_type,
+        recipient=recipient,
+        source_chat_id=source_chat_id,
+        preferred_reply_contact=preferred_reply_contact,
+        payload_json=json.dumps(payload, ensure_ascii=False),
+        status='pending',
+        replay_count=0,
+    )
+    db.add(row)
+    db.flush()
+    return row
 
 
 def set_conversation_state(db: Session, *, ticket: Ticket, new_state, actor_id: int | None = None, note: str | None = None) -> None:
@@ -905,13 +934,26 @@ def consume_openclaw_events_once(db: Session, *, source: str = "default", timeou
                     from ..models import Ticket
                     from ..enums import TicketStatus
                     contact_id = route.get("recipient")
-                    ticket = db.query(Ticket).filter(
+                    matching = db.query(Ticket).filter(
                         (Ticket.source_chat_id == contact_id) | (Ticket.preferred_reply_contact == contact_id),
                         Ticket.status.notin_([TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled])
-                    ).order_by(Ticket.updated_at.desc()).first()
-                    if ticket:
+                    ).order_by(Ticket.updated_at.desc()).all()
+                    if len(matching) == 1:
+                        ticket = matching[0]
                         link = ensure_openclaw_conversation_link(db, ticket=ticket, session_key=session_key, route=route)
                         db.flush()
+                    else:
+                        persist_unresolved_openclaw_event(
+                            db,
+                            source=source,
+                            session_key=session_key,
+                            event_type=str(event.get('type') or event.get('eventType') or 'message'),
+                            recipient=route.get('recipient') if route else None,
+                            source_chat_id=route.get('recipient') if route else None,
+                            preferred_reply_contact=route.get('recipient') if route else None,
+                            payload=event,
+                        )
+                        continue
             except Exception as e:
                 import logging
                 logging.getLogger("nexusdesk").warning(f"Auto-link failed for {session_key}: {e}")

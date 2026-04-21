@@ -7,14 +7,25 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from ..enums import ConversationState, EventType, MessageStatus
-from ..models import OpenClawConversationLink, Ticket, TicketOutboundMessage
+from ..models import ChannelAccount, OpenClawConversationLink, Ticket, TicketOutboundMessage
 from ..settings import get_settings
 from ..utils.time import utc_now
 from .audit_service import log_event
 from .observability import LOGGER
-from .openclaw_bridge import dispatch_via_openclaw_bridge, dispatch_via_openclaw_cli, dispatch_via_openclaw_mcp
+from .openclaw_bridge import dispatch_via_openclaw_bridge, dispatch_via_openclaw_cli, dispatch_via_openclaw_mcp, resolve_channel_account
 
 settings = get_settings()
+
+def _resolve_first_send_channel_account(db: Session, ticket: Ticket | None, link: OpenClawConversationLink | None) -> ChannelAccount | None:
+    if link is not None and getattr(link, 'channel_account_id', None):
+        return db.query(ChannelAccount).filter(ChannelAccount.id == link.channel_account_id, ChannelAccount.is_active.is_(True)).first()
+    if ticket is not None and getattr(ticket, 'channel_account_id', None):
+        row = db.query(ChannelAccount).filter(ChannelAccount.id == ticket.channel_account_id, ChannelAccount.is_active.is_(True)).first()
+        if row:
+            return row
+    if ticket is not None:
+        return resolve_channel_account(db, market_id=ticket.market_id, account_id=None)
+    return None
 
 
 def queue_outbound_message(
@@ -182,7 +193,8 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
     sent_at = None
 
     channel_value = link.channel if link is not None and link.channel else message.channel.value
-    account_id = link.account_id if link is not None else None
+    resolved_channel_account = _resolve_first_send_channel_account(db, ticket, link)
+    account_id = link.account_id if link is not None and link.account_id else (resolved_channel_account.account_id if resolved_channel_account else None)
     thread_id = link.thread_id if link is not None else None
 
     if target:
@@ -236,7 +248,7 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
             actor_id=message.created_by,
             event_type=EventType.outbound_sent,
             note='Queued outbound message sent',
-            payload={'message_id': message.id, 'provider_status': provider_status},
+            payload={'message_id': message.id, 'provider_status': provider_status, 'route': {'channel': channel_value, 'account_id': account_id, 'source': 'ticket_or_market_or_fallback'}},
         )
         return message
 
@@ -249,7 +261,7 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
             actor_id=message.created_by,
             event_type=EventType.outbound_dead,
             note='Queued outbound message permanently failed',
-            payload={'message_id': message.id, 'error': message.failure_reason},
+            payload={'message_id': message.id, 'error': message.failure_reason, 'route': {'channel': channel_value, 'account_id': account_id, 'source': 'ticket_or_market_or_fallback'}},
         )
     else:
         log_event(
@@ -258,7 +270,7 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
             actor_id=message.created_by,
             event_type=EventType.outbound_retry_scheduled,
             note='Queued outbound message scheduled for retry',
-            payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count},
+            payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count, 'route': {'channel': channel_value, 'account_id': account_id, 'source': 'ticket_or_market_or_fallback'}},
         )
     return message
 

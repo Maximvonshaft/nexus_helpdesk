@@ -58,6 +58,34 @@ class UserRead(APIModel):
     email: Optional[str] = None
     role: UserRole
     team_id: Optional[int] = None
+    is_active: bool = True
+    capabilities: list[str] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+class UserUpdate(BaseModel):
+    display_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    role: Optional[UserRole] = None
+    team_id: Optional[int] = None
+    capabilities: Optional[list[str]] = None
+
+class PasswordResetRequest(BaseModel):
+    password: str = Field(min_length=6)
+
+class OpenClawUnresolvedEventRead(APIModel):
+    id: int
+    source: str
+    session_key: Optional[str] = None
+    event_type: Optional[str] = None
+    recipient: Optional[str] = None
+    source_chat_id: Optional[str] = None
+    preferred_reply_contact: Optional[str] = None
+    status: str
+    replay_count: int
+    last_error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class TagRead(APIModel):
