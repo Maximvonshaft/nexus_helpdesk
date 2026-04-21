@@ -5,15 +5,14 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..db import get_db, engine
-from ..enums import JobStatus, MessageStatus
-from ..models import AIConfigResource, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
+from ..enums import JobStatus, MessageStatus, UserRole
+from ..models import AIConfigResource, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawUnresolvedEvent, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
 from ..schemas import UserUpdate, PasswordResetRequest, OpenClawUnresolvedEventRead, AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, OpenClawConnectivityProbeRead, OpenClawConversationRead, OpenClawLinkRequest, OpenClawRuntimeHealthRead, OpenClawSyncEnqueueRequest, OpenClawSyncResult, ProductionReadinessRead, QueueSummaryRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead, UserCreate
 from ..settings import get_settings
 from ..auth_service import hash_password
 from ..utils.time import utc_now
 from ..services.permissions import (
     ALL_CAPABILITIES,
-    ensure_can_manage_capabilities,
     ensure_can_manage_users,
     ensure_can_manage_channel_accounts,
     ensure_can_manage_bulletins,
@@ -27,7 +26,7 @@ from ..services.audit_service import log_admin_audit
 from ..services.ai_config_service import create_resource as create_ai_config_resource, list_admin_resources, list_versions as list_ai_config_versions, publish_resource, rollback_resource, update_resource as update_ai_config_resource
 from ..services.background_jobs import enqueue_openclaw_sync_job, enqueue_stale_openclaw_sync_jobs
 from ..unit_of_work import managed_session
-from ..services.openclaw_bridge import consume_openclaw_events_once, count_stale_openclaw_links, link_ticket_to_openclaw_session, list_stale_openclaw_links, sync_openclaw_conversation
+from ..services.openclaw_bridge import ALLOWED_CHANNEL_ACCOUNT_PROVIDERS, consume_openclaw_events_once, count_stale_openclaw_links, link_ticket_to_openclaw_session, list_stale_openclaw_links, replay_unresolved_openclaw_event as replay_unresolved_openclaw_event_payload, sync_openclaw_conversation
 from ..services.openclaw_runtime_service import probe_openclaw_connectivity
 from .deps import get_current_user
 
@@ -48,20 +47,108 @@ def _normalize_email(value: str | None) -> str | None:
     return cleaned or None
 
 def _is_last_active_admin(db: Session, user_id: int) -> bool:
-    from ..models import User, UserRole
     return db.query(User).filter(User.role == UserRole.admin, User.is_active.is_(True)).count() == 1 and db.query(User).filter(User.id == user_id, User.role == UserRole.admin, User.is_active.is_(True)).first() is not None
+
+
+def _validate_password_length(password: str) -> None:
+    if len(password) < 6:
+        raise HTTPException(status_code=400, detail='Password must be at least 6 characters')
+
+
+def _ensure_user_uniqueness(db: Session, *, username: str, email: str | None, exclude_user_id: int | None = None) -> None:
+    username_query = db.query(User).filter(User.username == username)
+    if exclude_user_id is not None:
+        username_query = username_query.filter(User.id != exclude_user_id)
+    if username_query.first() is not None:
+        raise HTTPException(status_code=400, detail='Username already exists')
+
+    if email is None:
+        return
+    email_query = db.query(User).filter(User.email == email)
+    if exclude_user_id is not None:
+        email_query = email_query.filter(User.id != exclude_user_id)
+    if email_query.first() is not None:
+        raise HTTPException(status_code=400, detail='Email already exists')
+
+
+def _serialize_user(row: User, db: Session) -> UserRead:
+    return UserRead.model_validate(row).model_copy(update={
+        'is_active': row.is_active,
+        'capabilities': sorted(resolve_capabilities(row, db)),
+        'created_at': row.created_at,
+        'updated_at': row.updated_at,
+    })
+
+
+def _apply_user_capability_overrides(db: Session, *, user_id: int, role, requested_capabilities: list[str]) -> None:
+    db.query(UserCapabilityOverride).filter(UserCapabilityOverride.user_id == user_id).delete()
+    base_caps = _base_capabilities(role)
+    requested_caps = set(requested_capabilities)
+    for cap in ALL_CAPABILITIES:
+        if cap in requested_caps and cap not in base_caps:
+            db.add(UserCapabilityOverride(user_id=user_id, capability=cap, allowed=True))
+        elif cap not in requested_caps and cap in base_caps:
+            db.add(UserCapabilityOverride(user_id=user_id, capability=cap, allowed=False))
+
+
+def _validate_channel_account_payload(
+    db: Session,
+    *,
+    provider: str,
+    account_id: str,
+    market_id: int | None,
+    fallback_account_id: str | None,
+    current_row: ChannelAccount | None = None,
+) -> tuple[str, str, str | None]:
+    normalized_provider = provider.strip().lower()
+    normalized_account_id = account_id.strip()
+    normalized_fallback = fallback_account_id.strip() if fallback_account_id else None
+
+    if normalized_provider not in ALLOWED_CHANNEL_ACCOUNT_PROVIDERS:
+        raise HTTPException(status_code=400, detail='Unsupported channel provider')
+    if not normalized_account_id:
+        raise HTTPException(status_code=400, detail='account_id is required')
+
+    duplicate_query = db.query(ChannelAccount).filter(ChannelAccount.account_id == normalized_account_id)
+    if current_row is not None:
+        duplicate_query = duplicate_query.filter(ChannelAccount.id != current_row.id)
+    if duplicate_query.first() is not None:
+        raise HTTPException(status_code=400, detail='Channel account already exists')
+
+    market = None
+    if market_id is not None:
+        market = db.query(Market).filter(Market.id == market_id, Market.is_active.is_(True)).first()
+        if market is None:
+            raise HTTPException(status_code=400, detail='Market not found or inactive')
+
+    if normalized_fallback:
+        if normalized_fallback == normalized_account_id:
+            raise HTTPException(status_code=400, detail='Fallback cannot point to itself')
+        fallback_row = db.query(ChannelAccount).filter(ChannelAccount.account_id == normalized_fallback).first()
+        if fallback_row is None:
+            raise HTTPException(status_code=400, detail='Fallback channel account not found')
+        if current_row is not None and fallback_row.id == current_row.id:
+            raise HTTPException(status_code=400, detail='Fallback cannot point to itself')
+        if fallback_row.provider.strip().lower() != normalized_provider:
+            raise HTTPException(status_code=400, detail='Fallback provider must match primary provider')
+        if market_id is None and fallback_row.market_id is not None:
+            raise HTTPException(status_code=400, detail='Global primary account cannot fallback to market-specific account')
+        if market_id is not None and fallback_row.market_id not in (None, market_id):
+            raise HTTPException(status_code=400, detail='Fallback market must be global or match primary market')
+
+    return normalized_provider, normalized_account_id, normalized_fallback
 
 
 
 @router.get('/capabilities/catalog', response_model=list[str])
 def list_capability_catalog(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_users(current_user, db)
     return sorted(ALL_CAPABILITIES)
 
 
 @router.get('/users/{user_id}/capabilities', response_model=UserCapabilityMatrixRead)
 def get_user_capabilities(user_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_users(current_user, db)
     user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
     if not user:
         raise HTTPException(status_code=404, detail='User not found')
@@ -75,7 +162,7 @@ def get_user_capabilities(user_id: int, db: Session = Depends(get_db), current_u
 
 @router.put('/users/{user_id}/capabilities/{capability}', response_model=CapabilityOverrideRead)
 def upsert_user_capability(user_id: int, capability: str, payload: CapabilityOverrideUpsertRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_users(current_user, db)
     if capability != payload.capability:
         raise HTTPException(status_code=400, detail='Capability path and body mismatch')
     if capability not in ALL_CAPABILITIES:
@@ -98,7 +185,7 @@ def upsert_user_capability(user_id: int, capability: str, payload: CapabilityOve
 
 @router.delete('/users/{user_id}/capabilities/{capability}')
 def delete_user_capability(user_id: int, capability: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_users(current_user, db)
     row = db.query(UserCapabilityOverride).filter(UserCapabilityOverride.user_id == user_id, UserCapabilityOverride.capability == capability).first()
     if not row:
         raise HTTPException(status_code=404, detail='Capability override not found')
@@ -109,21 +196,21 @@ def delete_user_capability(user_id: int, capability: str, db: Session = Depends(
 
 @router.get('/integration-clients', response_model=list[IntegrationClientRead])
 def list_integration_clients(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     rows = db.query(IntegrationClient).order_by(IntegrationClient.name.asc()).all()
     return [IntegrationClientRead.model_validate(x) for x in rows]
 
 
 @router.get('/markets', response_model=list[MarketRead])
 def list_markets(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_markets(current_user, db)
     rows = db.query(Market).order_by(Market.country_code.asc(), Market.name.asc()).all()
     return [MarketRead.model_validate(x) for x in rows]
 
 
 @router.post('/markets', response_model=MarketRead)
 def create_market(payload: MarketCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_markets(current_user, db)
     row = Market(
         code=payload.code.upper(),
         name=payload.name,
@@ -140,7 +227,7 @@ def create_market(payload: MarketCreate, db: Session = Depends(get_db), current_
 
 @router.put('/teams/{team_id}/market', response_model=TeamRead)
 def assign_team_market(team_id: int, payload: TeamMarketAssignRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_markets(current_user, db)
     team = db.query(Team).filter(Team.id == team_id, Team.is_active.is_(True)).first()
     if not team:
         raise HTTPException(status_code=404, detail='Team not found')
@@ -157,7 +244,7 @@ def assign_team_market(team_id: int, payload: TeamMarketAssignRequest, db: Sessi
 
 @router.post('/openclaw/link', response_model=OpenClawConversationRead)
 def link_openclaw_ticket(payload: OpenClawLinkRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     with managed_session(db):
         row = link_ticket_to_openclaw_session(
             db,
@@ -175,7 +262,7 @@ def link_openclaw_ticket(payload: OpenClawLinkRequest, db: Session = Depends(get
 
 @router.post('/openclaw/tickets/{ticket_id}/sync', response_model=OpenClawSyncResult)
 def sync_openclaw_ticket(ticket_id: int, session_key: str, limit: int = 50, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     with managed_session(db):
         result = sync_openclaw_conversation(db, ticket_id=ticket_id, session_key=session_key, limit=limit)
     return result
@@ -183,14 +270,14 @@ def sync_openclaw_ticket(ticket_id: int, session_key: str, limit: int = 50, db: 
 
 @router.get('/openclaw/links', response_model=list[OpenClawConversationRead])
 def list_openclaw_links(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     rows = db.query(OpenClawConversationLink).order_by(OpenClawConversationLink.updated_at.desc()).all()
     return [OpenClawConversationRead.model_validate(x) for x in rows]
 
 
 @router.post('/openclaw/sync/enqueue', response_model=BackgroundJobRead)
 def enqueue_openclaw_sync(payload: OpenClawSyncEnqueueRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     with managed_session(db):
         job = enqueue_openclaw_sync_job(
             db,
@@ -206,7 +293,7 @@ def enqueue_openclaw_sync(payload: OpenClawSyncEnqueueRequest, db: Session = Dep
 
 @router.post('/openclaw/sync/enqueue-stale', response_model=list[BackgroundJobRead])
 def enqueue_stale_openclaw_sync(limit: int = 25, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     with managed_session(db):
         rows = enqueue_stale_openclaw_sync_jobs(db, limit=limit)
         db.flush()
@@ -217,7 +304,7 @@ def enqueue_stale_openclaw_sync(limit: int = 25, db: Session = Depends(get_db), 
 
 @router.get('/queues/summary', response_model=QueueSummaryRead)
 def get_queue_summary(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     return QueueSummaryRead(
         pending_outbound=db.query(TicketOutboundMessage).filter(TicketOutboundMessage.status == MessageStatus.pending).count(),
         dead_outbound=db.query(TicketOutboundMessage).filter(TicketOutboundMessage.status == MessageStatus.dead).count(),
@@ -229,7 +316,7 @@ def get_queue_summary(db: Session = Depends(get_db), current_user=Depends(get_cu
 
 @router.get('/jobs', response_model=list[BackgroundJobRead])
 def list_background_jobs(status: str | None = None, limit: int = 100, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     query = db.query(BackgroundJob).order_by(BackgroundJob.created_at.desc())
     if status:
         query = query.filter(BackgroundJob.status == status)
@@ -239,7 +326,7 @@ def list_background_jobs(status: str | None = None, limit: int = 100, db: Sessio
 
 @router.get('/production-readiness', response_model=ProductionReadinessRead)
 def production_readiness(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     warnings: list[str] = []
     if not settings.is_postgres:
         warnings.append('DATABASE_URL is not PostgreSQL; stage/prod cutover is still pending')
@@ -265,7 +352,7 @@ def production_readiness(db: Session = Depends(get_db), current_user=Depends(get
 
 @router.get('/signoff-checklist')
 def signoff_checklist(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     warnings: list[str] = []
     checks: dict[str, bool] = {}
 
@@ -304,22 +391,29 @@ def signoff_checklist(db: Session = Depends(get_db), current_user=Depends(get_cu
 
 @router.get('/channel-accounts', response_model=list[ChannelAccountRead])
 def list_channel_accounts(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_channel_accounts(current_user, db)
     rows = db.query(ChannelAccount).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).all()
     return [ChannelAccountRead.model_validate(x) for x in rows]
 
 
 @router.post('/channel-accounts', response_model=ChannelAccountRead)
 def create_channel_account(payload: ChannelAccountCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_channel_accounts(current_user, db)
+    normalized_provider, normalized_account_id, normalized_fallback = _validate_channel_account_payload(
+        db,
+        provider=payload.provider,
+        account_id=payload.account_id,
+        market_id=payload.market_id,
+        fallback_account_id=payload.fallback_account_id,
+    )
     with managed_session(db):
         row = ChannelAccount(
-            provider=payload.provider,
-            account_id=payload.account_id,
-            display_name=payload.display_name,
+            provider=normalized_provider,
+            account_id=normalized_account_id,
+            display_name=payload.display_name.strip() if payload.display_name else None,
             market_id=payload.market_id,
             priority=payload.priority,
-            fallback_account_id=payload.fallback_account_id,
+            fallback_account_id=normalized_fallback,
             health_status='unknown',
         )
         db.add(row)
@@ -330,12 +424,26 @@ def create_channel_account(payload: ChannelAccountCreate, db: Session = Depends(
 
 @router.patch('/channel-accounts/{account_id}', response_model=ChannelAccountRead)
 def update_channel_account(account_id: int, payload: ChannelAccountUpdate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_channel_accounts(current_user, db)
     row = db.query(ChannelAccount).filter(ChannelAccount.id == account_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail='Channel account not found')
+    target_market_id = payload.market_id if payload.market_id is not None else row.market_id
+    target_fallback_account_id = payload.fallback_account_id if payload.fallback_account_id is not None else row.fallback_account_id
+    _, _, normalized_fallback = _validate_channel_account_payload(
+        db,
+        provider=row.provider,
+        account_id=row.account_id,
+        market_id=target_market_id,
+        fallback_account_id=target_fallback_account_id,
+        current_row=row,
+    )
     with managed_session(db):
         data = payload.model_dump(exclude_unset=True)
+        if 'display_name' in data and data['display_name'] is not None:
+            data['display_name'] = data['display_name'].strip()
+        if 'fallback_account_id' in data:
+            data['fallback_account_id'] = normalized_fallback
         for key, value in data.items():
             setattr(row, key, value)
         db.flush()
@@ -345,7 +453,7 @@ def update_channel_account(account_id: int, payload: ChannelAccountUpdate, db: S
 
 @router.get('/openclaw/runtime-health', response_model=OpenClawRuntimeHealthRead)
 def openclaw_runtime_health(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     cursor = db.query(OpenClawSyncCursor).filter(OpenClawSyncCursor.source == 'default').first()
     heartbeat = db.query(ServiceHeartbeat).filter(ServiceHeartbeat.service_name == 'openclaw_event_daemon').first()
     stale_link_count = count_stale_openclaw_links(db)
@@ -385,13 +493,13 @@ def openclaw_runtime_health(db: Session = Depends(get_db), current_user=Depends(
 
 @router.get('/openclaw/connectivity-check', response_model=OpenClawConnectivityProbeRead)
 def openclaw_connectivity_check(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     return probe_openclaw_connectivity()
 
 
 @router.post('/openclaw/events/consume-once')
 def consume_openclaw_events(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_runtime(current_user, db)
     with managed_session(db):
         processed = consume_openclaw_events_once(db)
         db.flush()
@@ -402,14 +510,14 @@ def consume_openclaw_events(db: Session = Depends(get_db), current_user=Depends(
 
 @router.get('/ai-configs', response_model=list[AIConfigResourceRead])
 def list_ai_configs(config_type: str | None = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_ai_configs(current_user, db)
     rows = list_admin_resources(db, config_type=config_type)
     return [AIConfigResourceRead.model_validate(row) for row in rows]
 
 
 @router.post('/ai-configs', response_model=AIConfigResourceRead)
 def create_ai_config(payload: AIConfigResourceCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_ai_configs(current_user, db)
     with managed_session(db):
         row = create_ai_config_resource(db, payload, current_user)
     db.refresh(row)
@@ -418,7 +526,7 @@ def create_ai_config(payload: AIConfigResourceCreate, db: Session = Depends(get_
 
 @router.patch('/ai-configs/{resource_id}', response_model=AIConfigResourceRead)
 def update_ai_config(resource_id: int, payload: AIConfigResourceUpdate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_ai_configs(current_user, db)
     row = db.query(AIConfigResource).filter(AIConfigResource.id == resource_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail='AI config not found')
@@ -430,7 +538,7 @@ def update_ai_config(resource_id: int, payload: AIConfigResourceUpdate, db: Sess
 
 @router.post('/ai-configs/{resource_id}/publish', response_model=AIConfigVersionRead)
 def publish_ai_config(resource_id: int, payload: AIConfigPublishRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_ai_configs(current_user, db)
     row = db.query(AIConfigResource).filter(AIConfigResource.id == resource_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail='AI config not found')
@@ -442,7 +550,7 @@ def publish_ai_config(resource_id: int, payload: AIConfigPublishRequest, db: Ses
 
 @router.get('/ai-configs/{resource_id}/versions', response_model=list[AIConfigVersionRead])
 def get_ai_config_versions(resource_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_ai_configs(current_user, db)
     row = db.query(AIConfigResource).filter(AIConfigResource.id == resource_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail='AI config not found')
@@ -451,7 +559,7 @@ def get_ai_config_versions(resource_id: int, db: Session = Depends(get_db), curr
 
 @router.post('/ai-configs/{resource_id}/rollback/{version}', response_model=AIConfigVersionRead)
 def rollback_ai_config(resource_id: int, version: int, payload: AIConfigPublishRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_ai_configs(current_user, db)
     row = db.query(AIConfigResource).filter(AIConfigResource.id == resource_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail='AI config not found')
@@ -462,14 +570,14 @@ def rollback_ai_config(resource_id: int, version: int, payload: AIConfigPublishR
 
 @router.get('/bulletins', response_model=list[MarketBulletinRead])
 def list_bulletins(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_bulletins(current_user, db)
     rows = db.query(MarketBulletin).order_by(MarketBulletin.updated_at.desc()).all()
     return [MarketBulletinRead.model_validate(x) for x in rows]
 
 
 @router.post('/bulletins', response_model=MarketBulletinRead)
 def create_bulletin(payload: MarketBulletinCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_bulletins(current_user, db)
     with managed_session(db):
         row = MarketBulletin(
             market_id=payload.market_id,
@@ -495,7 +603,7 @@ def create_bulletin(payload: MarketBulletinCreate, db: Session = Depends(get_db)
 
 @router.patch('/bulletins/{bulletin_id}', response_model=MarketBulletinRead)
 def update_bulletin(bulletin_id: int, payload: MarketBulletinUpdate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ensure_can_manage_capabilities(current_user, db)
+    ensure_can_manage_bulletins(current_user, db)
     row = db.query(MarketBulletin).filter(MarketBulletin.id == bulletin_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail='Bulletin not found')
@@ -512,69 +620,47 @@ def update_bulletin(bulletin_id: int, payload: MarketBulletinUpdate, db: Session
 @router.post('/users', response_model=UserRead)
 def create_user(payload: UserCreate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_users(current_user, db)
-    
-    # Check if username exists
-    existing = db.query(User).filter(User.username == payload.username).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Username already exists")
-        
-    if payload.email:
-        existing_email = db.query(User).filter(User.email == payload.email).first()
-        if existing_email:
-            raise HTTPException(status_code=400, detail="Email already exists")
+    normalized_username = _normalize_username(payload.username)
+    normalized_display_name = _normalize_display_name(payload.display_name)
+    normalized_email = _normalize_email(payload.email)
+    _validate_password_length(payload.password)
+    _ensure_user_uniqueness(db, username=normalized_username, email=normalized_email)
 
-    hashed = hash_password(payload.password)
-    
-    new_user = User(
-        username=payload.username,
-        display_name=payload.display_name,
-        email=payload.email,
-        password_hash=hashed,
-        role=payload.role,
-        team_id=payload.team_id,
-        is_active=True
-    )
-    
-    db.add(new_user)
-    db.flush()
-    
-    # Process explicit capabilities (overrides against base role)
-    if payload.capabilities is not None:
-        base_caps = _base_capabilities(new_user.role)
-        requested_caps = set(payload.capabilities)
-        for cap in ALL_CAPABILITIES:
-            if cap in requested_caps and cap not in base_caps:
-                db.add(UserCapabilityOverride(user_id=new_user.id, capability=cap, allowed=True))
-            elif cap not in requested_caps and cap in base_caps:
-                db.add(UserCapabilityOverride(user_id=new_user.id, capability=cap, allowed=False))
-
-    db.commit()
+    with managed_session(db):
+        new_user = User(
+            username=normalized_username,
+            display_name=normalized_display_name,
+            email=normalized_email,
+            password_hash=hash_password(payload.password),
+            role=payload.role,
+            team_id=payload.team_id,
+            is_active=True,
+        )
+        db.add(new_user)
+        db.flush()
+        _apply_user_capability_overrides(db, user_id=new_user.id, role=new_user.role, requested_capabilities=payload.capabilities or [])
+        log_admin_audit(
+            db,
+            actor_id=current_user.id,
+            action='user.create',
+            target_type='user',
+            target_id=new_user.id,
+            old_value=None,
+            new_value={'username': new_user.username, 'email': new_user.email, 'role': new_user.role.value, 'team_id': new_user.team_id},
+        )
     db.refresh(new_user)
-    
-    return new_user
+    return _serialize_user(new_user, db)
 
 
 @router.get('/users', response_model=list[UserRead])
 def list_admin_users(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_users(current_user, db)
-    from ..models import User
     rows = db.query(User).order_by(User.is_active.desc(), User.role.asc(), User.username.asc()).all()
-    result = []
-    for row in rows:
-        payload = UserRead.model_validate(row).model_copy(update={
-            'is_active': row.is_active,
-            'capabilities': sorted(resolve_capabilities(row, db)),
-            'created_at': row.created_at,
-            'updated_at': row.updated_at,
-        })
-        result.append(payload)
-    return result
+    return [_serialize_user(row, db) for row in rows]
 
 @router.patch('/users/{user_id}', response_model=UserRead)
 def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_users(current_user, db)
-    from ..models import User, UserCapabilityOverride, UserRole
-    from ..schemas import UserUpdate, PasswordResetRequest, OpenClawUnresolvedEventRead, UserUpdate
     row = db.query(User).filter(User.id == user_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail='User not found')
@@ -582,38 +668,29 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
         raise HTTPException(status_code=400, detail='当前管理员不能把自己降权到无治理能力')
     if row.role == UserRole.admin and payload.role is not None and payload.role != UserRole.admin and _is_last_active_admin(db, row.id):
         raise HTTPException(status_code=400, detail='不能降权最后一个 active admin')
-    old_value = {'display_name': row.display_name, 'email': row.email, 'role': row.role.value, 'team_id': row.team_id}
+    next_username = row.username
+    next_email = _normalize_email(payload.email) if payload.email is not None else row.email
+    _ensure_user_uniqueness(db, username=next_username, email=next_email, exclude_user_id=row.id)
+    old_value = {'username': row.username, 'display_name': row.display_name, 'email': row.email, 'role': row.role.value, 'team_id': row.team_id, 'is_active': row.is_active}
     with managed_session(db):
         if payload.display_name is not None:
             row.display_name = _normalize_display_name(payload.display_name)
         if payload.email is not None:
-            normalized_email = _normalize_email(payload.email)
-            duplicate = db.query(User).filter(User.id != row.id, User.email == normalized_email).first()
-            if duplicate:
-                raise HTTPException(status_code=400, detail='Email already exists')
-            row.email = normalized_email
+            row.email = next_email
         if payload.role is not None:
             row.role = payload.role
         if payload.team_id is not None:
             row.team_id = payload.team_id
         if payload.capabilities is not None:
-            db.query(UserCapabilityOverride).filter(UserCapabilityOverride.user_id == row.id).delete()
-            base_caps = _base_capabilities(row.role)
-            requested_caps = set(payload.capabilities)
-            for cap in ALL_CAPABILITIES:
-                if cap in requested_caps and cap not in base_caps:
-                    db.add(UserCapabilityOverride(user_id=row.id, capability=cap, allowed=True))
-                elif cap not in requested_caps and cap in base_caps:
-                    db.add(UserCapabilityOverride(user_id=row.id, capability=cap, allowed=False))
+            _apply_user_capability_overrides(db, user_id=row.id, role=row.role, requested_capabilities=payload.capabilities)
         db.flush()
-        log_admin_audit(db, actor_id=current_user.id, action='user.update', target_type='user', target_id=row.id, old_value=old_value, new_value={'display_name': row.display_name, 'email': row.email, 'role': row.role.value, 'team_id': row.team_id})
+        log_admin_audit(db, actor_id=current_user.id, action='user.update', target_type='user', target_id=row.id, old_value=old_value, new_value={'username': row.username, 'display_name': row.display_name, 'email': row.email, 'role': row.role.value, 'team_id': row.team_id, 'is_active': row.is_active})
     db.refresh(row)
-    return UserRead.model_validate(row).model_copy(update={'is_active': row.is_active, 'capabilities': sorted(resolve_capabilities(row, db)), 'created_at': row.created_at, 'updated_at': row.updated_at})
+    return _serialize_user(row, db)
 
 @router.post('/users/{user_id}/activate', response_model=UserRead)
 def activate_user(user_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_users(current_user, db)
-    from ..models import User
     row = db.query(User).filter(User.id == user_id).first()
     if not row: raise HTTPException(404, "User not found")
     with managed_session(db):
@@ -621,12 +698,11 @@ def activate_user(user_id: int, db: Session = Depends(get_db), current_user=Depe
         db.flush()
         log_admin_audit(db, actor_id=current_user.id, action='user.activate', target_type='user', target_id=row.id, old_value={'is_active': False}, new_value={'is_active': True})
     db.refresh(row)
-    return UserRead.model_validate(row).model_copy(update={'is_active': row.is_active, 'capabilities': sorted(resolve_capabilities(row, db)), 'created_at': row.created_at, 'updated_at': row.updated_at})
+    return _serialize_user(row, db)
 
 @router.post('/users/{user_id}/deactivate', response_model=UserRead)
 def deactivate_user(user_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_users(current_user, db)
-    from ..models import User, UserRole
     row = db.query(User).filter(User.id == user_id).first()
     if not row: raise HTTPException(404, "User not found")
     if row.id == current_user.id: raise HTTPException(400, "Cannot deactivate self")
@@ -636,14 +712,14 @@ def deactivate_user(user_id: int, db: Session = Depends(get_db), current_user=De
         db.flush()
         log_admin_audit(db, actor_id=current_user.id, action='user.deactivate', target_type='user', target_id=row.id, old_value={'is_active': True}, new_value={'is_active': False})
     db.refresh(row)
-    return UserRead.model_validate(row).model_copy(update={'is_active': row.is_active, 'capabilities': sorted(resolve_capabilities(row, db)), 'created_at': row.created_at, 'updated_at': row.updated_at})
+    return _serialize_user(row, db)
 
 @router.post('/users/{user_id}/reset-password')
 def reset_user_password(user_id: int, payload: PasswordResetRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_users(current_user, db)
-    from ..models import User
     row = db.query(User).filter(User.id == user_id).first()
     if not row: raise HTTPException(404, "User not found")
+    _validate_password_length(payload.password)
     with managed_session(db):
         row.password_hash = hash_password(payload.password)
         db.flush()
@@ -653,30 +729,30 @@ def reset_user_password(user_id: int, payload: PasswordResetRequest, db: Session
 @router.get('/openclaw/unresolved-events', response_model=list[OpenClawUnresolvedEventRead])
 def list_unresolved_events(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
-    from ..models import OpenClawUnresolvedEvent
     rows = db.query(OpenClawUnresolvedEvent).order_by(OpenClawUnresolvedEvent.created_at.desc()).all()
     return [OpenClawUnresolvedEventRead.model_validate(x) for x in rows]
 
 @router.post('/openclaw/unresolved-events/{event_id}/replay')
 def replay_unresolved_event(event_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
-    from ..models import OpenClawUnresolvedEvent
     row = db.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == event_id).first()
     if not row: raise HTTPException(404, "Event not found")
     with managed_session(db):
-        row.replay_count += 1
+        before = {'status': row.status, 'replay_count': row.replay_count, 'last_error': row.last_error}
+        processed = replay_unresolved_openclaw_event_payload(db, row=row)
         db.flush()
-        log_admin_audit(db, actor_id=current_user.id, action='unresolved_event.replay', target_type='unresolved_event', target_id=row.id, old_value={}, new_value={'replay_count': row.replay_count})
-    return {"ok": True}
+        log_admin_audit(db, actor_id=current_user.id, action='unresolved_event.replay', target_type='unresolved_event', target_id=row.id, old_value=before, new_value={'status': row.status, 'replay_count': row.replay_count, 'last_error': row.last_error})
+    return {"ok": processed, 'status': row.status, 'replay_count': row.replay_count, 'last_error': row.last_error}
 
 @router.post('/openclaw/unresolved-events/{event_id}/drop')
 def drop_unresolved_event(event_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
-    from ..models import OpenClawUnresolvedEvent
     row = db.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == event_id).first()
     if not row: raise HTTPException(404, "Event not found")
     with managed_session(db):
+        before = {'status': row.status, 'replay_count': row.replay_count, 'last_error': row.last_error}
         row.status = 'dropped'
+        row.last_error = None
         db.flush()
-        log_admin_audit(db, actor_id=current_user.id, action='unresolved_event.drop', target_type='unresolved_event', target_id=row.id, old_value={}, new_value={'status': 'dropped'})
+        log_admin_audit(db, actor_id=current_user.id, action='unresolved_event.drop', target_type='unresolved_event', target_id=row.id, old_value=before, new_value={'status': 'dropped', 'replay_count': row.replay_count, 'last_error': row.last_error})
     return {"ok": True}

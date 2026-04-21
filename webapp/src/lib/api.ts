@@ -49,7 +49,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       const data = await res.json()
       msg = data?.detail || JSON.stringify(data)
-    } catch {}
+    } catch {
+      // ignore non-JSON error bodies and fall back to status text
+    }
     throw new Error(msg)
   }
   if (res.status === 204) return undefined as T

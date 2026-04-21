@@ -19,7 +19,7 @@ from ..models import ChannelAccount, OpenClawAttachmentReference, OpenClawConver
 from ..schemas import OpenClawConversationRead, OpenClawSyncResult, OpenClawTranscriptRead
 from ..settings import get_settings
 from ..utils.time import utc_now
-from .audit_service import log_event, log_admin_audit
+from .audit_service import log_event
 from .observability import LOGGER
 from .openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
 from .storage import get_storage_backend
@@ -138,6 +138,27 @@ def _extract_event_session_key(event: dict[str, Any]) -> str | None:
     return None
 
 
+def _extract_event_route(event: dict[str, Any]) -> dict[str, Any]:
+    route: dict[str, Any] = {}
+    for container in (event, event.get('message')):
+        if not isinstance(container, dict):
+            continue
+        direct_route = container.get('route')
+        if isinstance(direct_route, dict):
+            route.update({k: v for k, v in direct_route.items() if v not in (None, '')})
+        for src_key, dest_key in (
+            ('channel', 'channel'),
+            ('recipient', 'recipient'),
+            ('to', 'recipient'),
+            ('accountId', 'accountId'),
+            ('threadId', 'threadId'),
+        ):
+            value = container.get(src_key)
+            if value not in (None, '') and dest_key not in route:
+                route[dest_key] = value
+    return route
+
+
 def persist_openclaw_attachment_reference(db: Session, *, attachment_ref: OpenClawAttachmentReference) -> Ticket | None:
     storage = get_storage_backend()
     ticket = db.query(Ticket).filter(Ticket.id == attachment_ref.ticket_id).first()
@@ -230,7 +251,7 @@ def resolve_channel_account(db: Session, *, market_id: int | None, account_id: s
         row = q.filter(ChannelAccount.market_id == market_id).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
         if row:
             return row
-    return q.order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
+    return q.filter(ChannelAccount.market_id.is_(None)).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
 
 
 def persist_unresolved_openclaw_event(
@@ -244,6 +265,20 @@ def persist_unresolved_openclaw_event(
     preferred_reply_contact: str | None,
     payload: dict[str, Any],
 ) -> OpenClawUnresolvedEvent:
+    payload_json = json.dumps(payload, ensure_ascii=False)
+    existing = db.query(OpenClawUnresolvedEvent).filter(
+        OpenClawUnresolvedEvent.source == source,
+        OpenClawUnresolvedEvent.session_key == session_key,
+        OpenClawUnresolvedEvent.payload_json == payload_json,
+        OpenClawUnresolvedEvent.status.in_(['pending', 'failed', 'replaying']),
+    ).order_by(OpenClawUnresolvedEvent.id.desc()).first()
+    if existing is not None:
+        existing.event_type = event_type
+        existing.recipient = recipient
+        existing.source_chat_id = source_chat_id
+        existing.preferred_reply_contact = preferred_reply_contact
+        existing.updated_at = utc_now()
+        return existing
     row = OpenClawUnresolvedEvent(
         source=source,
         session_key=session_key,
@@ -251,13 +286,167 @@ def persist_unresolved_openclaw_event(
         recipient=recipient,
         source_chat_id=source_chat_id,
         preferred_reply_contact=preferred_reply_contact,
-        payload_json=json.dumps(payload, ensure_ascii=False),
+        payload_json=payload_json,
         status='pending',
         replay_count=0,
     )
     db.add(row)
     db.flush()
     return row
+
+
+def _find_matching_open_tickets(db: Session, contact_id: str | None) -> list[Ticket]:
+    if not contact_id:
+        return []
+    from ..enums import TicketStatus
+
+    return db.query(Ticket).filter(
+        (Ticket.source_chat_id == contact_id) | (Ticket.preferred_reply_contact == contact_id),
+        Ticket.status.notin_([TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled]),
+    ).order_by(Ticket.updated_at.desc()).all()
+
+
+def _fetch_session_route(session_key: str, *, limit: int = 1) -> dict[str, Any] | None:
+    payload_conv = None
+    if settings.openclaw_bridge_enabled:
+        payload_conv, _ = read_openclaw_bridge_conversation(session_key, limit=limit)
+    if payload_conv is None:
+        with OpenClawMCPClient() as mcp_client:
+            payload_conv = mcp_client.conversation_get(session_key)
+    if not isinstance(payload_conv, dict):
+        return None
+    return _extract_route(payload_conv)
+
+
+def process_openclaw_inbound_event(
+    db: Session,
+    *,
+    event: dict[str, Any],
+    source: str = 'default',
+    unresolved_event: OpenClawUnresolvedEvent | None = None,
+) -> bool:
+    if str(event.get('type') or event.get('eventType') or 'message') not in {'message', 'inbound_message'}:
+        return False
+
+    session_key = _extract_event_session_key(event)
+    if not session_key:
+        if unresolved_event is not None:
+            unresolved_event.status = 'failed'
+            unresolved_event.last_error = 'Missing session_key in unresolved payload'
+            unresolved_event.updated_at = utc_now()
+        return False
+
+    route = _extract_event_route(event)
+    if not route.get('recipient'):
+        try:
+            fetched_route = _fetch_session_route(session_key)
+            if fetched_route:
+                route = {**fetched_route, **route}
+        except Exception as exc:
+            if unresolved_event is not None:
+                unresolved_event.status = 'failed'
+                unresolved_event.last_error = f'Failed to fetch route: {exc}'
+                unresolved_event.updated_at = utc_now()
+            else:
+                persist_unresolved_openclaw_event(
+                    db,
+                    source=source,
+                    session_key=session_key,
+                    event_type=str(event.get('type') or event.get('eventType') or 'message'),
+                    recipient=route.get('recipient'),
+                    source_chat_id=route.get('recipient'),
+                    preferred_reply_contact=route.get('recipient'),
+                    payload=event,
+                ).last_error = f'Failed to fetch route: {exc}'
+            return False
+
+    link = db.query(OpenClawConversationLink).filter(OpenClawConversationLink.session_key == session_key).first()
+    if link is None:
+        matching = _find_matching_open_tickets(db, route.get('recipient'))
+        if len(matching) == 1:
+            ticket = matching[0]
+            link = ensure_openclaw_conversation_link(db, ticket=ticket, session_key=session_key, route=route)
+            db.flush()
+        else:
+            reason = 'No unique ticket match for auto-link'
+            if unresolved_event is not None:
+                unresolved_event.session_key = session_key
+                unresolved_event.event_type = str(event.get('type') or event.get('eventType') or 'message')
+                unresolved_event.recipient = route.get('recipient')
+                unresolved_event.source_chat_id = route.get('recipient')
+                unresolved_event.preferred_reply_contact = route.get('recipient')
+                unresolved_event.status = 'pending'
+                unresolved_event.last_error = reason
+                unresolved_event.updated_at = utc_now()
+            else:
+                pending = persist_unresolved_openclaw_event(
+                    db,
+                    source=source,
+                    session_key=session_key,
+                    event_type=str(event.get('type') or event.get('eventType') or 'message'),
+                    recipient=route.get('recipient'),
+                    source_chat_id=route.get('recipient'),
+                    preferred_reply_contact=route.get('recipient'),
+                    payload=event,
+                )
+                pending.last_error = reason
+            return False
+
+    try:
+        sync_openclaw_conversation(
+            db,
+            ticket_id=link.ticket_id,
+            session_key=session_key,
+            limit=settings.openclaw_sync_transcript_limit,
+            client=None,
+        )
+    except Exception as exc:
+        if unresolved_event is not None:
+            unresolved_event.status = 'failed'
+            unresolved_event.last_error = str(exc)
+            unresolved_event.updated_at = utc_now()
+        else:
+            failed = persist_unresolved_openclaw_event(
+                db,
+                source=source,
+                session_key=session_key,
+                event_type=str(event.get('type') or event.get('eventType') or 'message'),
+                recipient=route.get('recipient'),
+                source_chat_id=route.get('recipient'),
+                preferred_reply_contact=route.get('recipient'),
+                payload=event,
+            )
+            failed.status = 'failed'
+            failed.last_error = str(exc)
+        return False
+
+    if unresolved_event is not None:
+        unresolved_event.session_key = session_key
+        unresolved_event.event_type = str(event.get('type') or event.get('eventType') or 'message')
+        unresolved_event.recipient = route.get('recipient')
+        unresolved_event.source_chat_id = route.get('recipient')
+        unresolved_event.preferred_reply_contact = route.get('recipient')
+        unresolved_event.status = 'resolved'
+        unresolved_event.last_error = None
+        unresolved_event.updated_at = utc_now()
+    return True
+
+
+def replay_unresolved_openclaw_event(db: Session, *, row: OpenClawUnresolvedEvent) -> bool:
+    payload = json.loads(row.payload_json or '{}')
+    if not isinstance(payload, dict):
+        row.replay_count += 1
+        row.status = 'failed'
+        row.last_error = 'Unresolved payload is not a JSON object'
+        row.updated_at = utc_now()
+        db.flush()
+        return False
+    row.replay_count += 1
+    row.status = 'replaying'
+    row.last_error = None
+    row.updated_at = utc_now()
+    db.flush()
+    return process_openclaw_inbound_event(db, event=payload, source=row.source, unresolved_event=row)
 
 
 def set_conversation_state(db: Session, *, ticket: Ticket, new_state, actor_id: int | None = None, note: str | None = None) -> None:
@@ -914,64 +1103,11 @@ def consume_openclaw_events_once(db: Session, *, source: str = "default", timeou
     for event in events:
         if not isinstance(event, dict):
             continue
-        if str(event.get("type") or event.get("eventType") or "message") not in {"message", "inbound_message"}:
-            continue
-        session_key = _extract_event_session_key(event)
-        if not session_key:
-            continue
-        link = db.query(OpenClawConversationLink).filter(OpenClawConversationLink.session_key == session_key).first()
-        if link is None:
-            try:
-                payload_conv = None
-                if settings.openclaw_bridge_enabled:
-                    payload_conv, _ = read_openclaw_bridge_conversation(session_key, limit=1)
-                if payload_conv is None:
-                    # In fallback we need to open client again, or use a new one
-                    with OpenClawMCPClient() as mcp_client:
-                        payload_conv = mcp_client.conversation_get(session_key)
-                route = _extract_route(payload_conv) if isinstance(payload_conv, dict) else None
-                if route and route.get("recipient"):
-                    from ..models import Ticket
-                    from ..enums import TicketStatus
-                    contact_id = route.get("recipient")
-                    matching = db.query(Ticket).filter(
-                        (Ticket.source_chat_id == contact_id) | (Ticket.preferred_reply_contact == contact_id),
-                        Ticket.status.notin_([TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled])
-                    ).order_by(Ticket.updated_at.desc()).all()
-                    if len(matching) == 1:
-                        ticket = matching[0]
-                        link = ensure_openclaw_conversation_link(db, ticket=ticket, session_key=session_key, route=route)
-                        db.flush()
-                    else:
-                        persist_unresolved_openclaw_event(
-                            db,
-                            source=source,
-                            session_key=session_key,
-                            event_type=str(event.get('type') or event.get('eventType') or 'message'),
-                            recipient=route.get('recipient') if route else None,
-                            source_chat_id=route.get('recipient') if route else None,
-                            preferred_reply_contact=route.get('recipient') if route else None,
-                            payload=event,
-                        )
-                        continue
-            except Exception as e:
-                import logging
-                logging.getLogger("nexusdesk").warning(f"Auto-link failed for {session_key}: {e}")
-        if link is None:
-            continue
-            
-        sync_openclaw_conversation(
-            db,
-            ticket_id=link.ticket_id,
-            session_key=session_key,
-            limit=settings.openclaw_sync_transcript_limit,
-            client=None, # will fallback/bridge inside
-        )
-        processed += 1
+        if process_openclaw_inbound_event(db, event=event, source=source):
+            processed += 1
 
     if next_cursor is not None:
         upsert_openclaw_sync_cursor(db, source=source, cursor_value=str(next_cursor))
         db.flush()
         
     return processed
-

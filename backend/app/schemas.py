@@ -857,7 +857,7 @@ class AIConfigVersionRead(APIModel):
 
 class UserCreate(APIModel):
     username: str
-    password: str
+    password: str = Field(min_length=6)
     display_name: str
     email: Optional[str] = None
     role: UserRole
