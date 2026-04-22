@@ -20,8 +20,8 @@ function OverviewPage() {
   const client = useQueryClient()
   const autoRefresh = useAutoRefresh(true)
   const session = useSession()
-  const canSeeOps = canViewOps(session.data)
-  const canSeeChannels = canManageChannels(session.data)
+  const canSeeOps = canViewOps(session.data?.role)
+  const canSeeChannels = canManageChannels(session.data?.role)
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
   const [queue, runtime, readiness, signoff] = useQueries({
     queries: [
@@ -33,7 +33,7 @@ function OverviewPage() {
   })
   const bulletins = useQuery({ queryKey: ['bulletins'], queryFn: api.bulletins, refetchInterval: autoRefresh.enabled ? 30000 : false })
   const caseFeed = useQuery({ queryKey: ['overviewCases'], queryFn: () => api.cases(), refetchInterval: autoRefresh.enabled ? 30000 : false })
-  const accounts = useQuery({ queryKey: ['channelAccounts'], queryFn: api.channelAccounts, refetchInterval: autoRefresh.enabled ? 30000 : false, enabled: canSeeChannels })
+  const accounts = useQuery({ queryKey: ['channelAccounts'], queryFn: api.channelControlAccounts, refetchInterval: autoRefresh.enabled ? 30000 : false, enabled: canSeeChannels })
 
   const q = queue.data
   const rt = runtime.data

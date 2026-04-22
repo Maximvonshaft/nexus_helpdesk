@@ -112,7 +112,120 @@ export interface ChannelAccount {
   priority: number
   health_status: string
   fallback_account_id?: string | null
+  last_health_check_at?: string | null
+  created_at?: string
   updated_at: string
+}
+
+export interface ChannelRouteExplanation {
+  selected_account?: ChannelAccount | null
+  fallback_account?: ChannelAccount | null
+  debug_steps: string[]
+  context: Record<string, unknown>
+}
+
+export interface ChannelOnboardingTask {
+  id: number
+  provider: string
+  status: string
+  requested_by?: number | null
+  market_id?: number | null
+  target_slot?: string | null
+  desired_display_name?: string | null
+  desired_channel_account_binding?: string | null
+  openclaw_account_id?: string | null
+  last_error?: string | null
+  created_at: string
+  updated_at: string
+  started_at?: string | null
+  completed_at?: string | null
+}
+
+export interface PersonaProfile {
+  id: number
+  profile_key: string
+  name: string
+  description?: string | null
+  market_id?: number | null
+  channel?: string | null
+  language?: string | null
+  is_active: boolean
+  draft_summary?: string | null
+  draft_content_json?: Record<string, unknown> | null
+  published_summary?: string | null
+  published_content_json?: Record<string, unknown> | null
+  published_version: number
+  published_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonaVersion {
+  id: number
+  profile_id: number
+  version: number
+  snapshot_json: Record<string, unknown>
+  summary?: string | null
+  notes?: string | null
+  published_by?: number | null
+  published_at: string
+}
+
+export interface PersonaPreview {
+  matched_profile_id?: number | null
+  matched_profile_key?: string | null
+  preview_json: Record<string, unknown>
+  debug_steps: string[]
+}
+
+export interface KnowledgeItem {
+  id: number
+  item_key: string
+  title: string
+  summary?: string | null
+  status: string
+  source_type: string
+  market_id?: number | null
+  channel?: string | null
+  audience_scope: string
+  priority: number
+  starts_at?: string | null
+  ends_at?: string | null
+  source_url?: string | null
+  file_name?: string | null
+  file_storage_key?: string | null
+  mime_type?: string | null
+  file_size?: number | null
+  draft_body?: string | null
+  published_body?: string | null
+  published_version: number
+  published_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface KnowledgeVersion {
+  id: number
+  item_id: number
+  version: number
+  snapshot_json: Record<string, unknown>
+  summary?: string | null
+  notes?: string | null
+  published_by?: number | null
+  published_at: string
+}
+
+export interface KnowledgePreview {
+  matched_items: KnowledgeItem[]
+  debug_steps: string[]
+}
+
+export interface KnowledgeUploadResult {
+  file_name: string
+  storage_key: string
+  mime_type: string
+  size_bytes: number
+  extracted_text?: string | null
 }
 
 export interface CaseDetail {

@@ -5,8 +5,10 @@ import { Route as IndexRoute } from '@/routes/index'
 import { Route as WorkspaceRoute } from '@/routes/workspace'
 import { Route as BulletinsRoute } from '@/routes/bulletins'
 import { Route as AIControlRoute } from '@/routes/ai-control'
+import { Route as PersonasRoute } from '@/routes/personas'
+import { Route as KnowledgeRoute } from '@/routes/knowledge'
 import { Route as AccountsRoute } from '@/routes/accounts'
-import { Route as UsersRoute } from '@/routes/users'
+// import { Route as UsersRoute } from '@/routes/users'
 import { Route as RuntimeRoute } from '@/routes/runtime'
 
 const routeTree = RootRoute.addChildren([
@@ -15,8 +17,10 @@ const routeTree = RootRoute.addChildren([
   WorkspaceRoute,
   BulletinsRoute,
   AIControlRoute,
+  PersonasRoute,
+  KnowledgeRoute,
   AccountsRoute,
-  UsersRoute,
+  // UsersRoute,
   RuntimeRoute,
 ])
 

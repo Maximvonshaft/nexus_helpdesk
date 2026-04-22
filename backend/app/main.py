@@ -4,17 +4,20 @@ import uuid
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from .api.admin import router as admin_router
 from .api.auth import router as auth_router
+from .api.channel_control import router as channel_control_router
 from .api.customers import router as customers_router
 from .api.files import router as files_router
 from .api.integration import router as integration_router
+from .api.knowledge_items import router as knowledge_items_router
 from .api.lookups import router as lookups_router
 from .api.lite import router as lite_router
+from .api.persona_profiles import router as persona_profiles_router
 from .api.stats import router as stats_router
 from .api.tickets import router as tickets_router
 from .db import Base, SessionLocal, engine
@@ -23,7 +26,7 @@ from .settings import get_settings
 
 settings = get_settings()
 configure_logging(get_settings().log_json)
-app = FastAPI(title='Helpdesk Suite Full Stack', version='20.3.0')
+app = FastAPI(title='Helpdesk Suite Full Stack', version='20.4.0')
 
 app.add_middleware(
     CORSMiddleware,
@@ -89,6 +92,9 @@ def readyz():
 
 
 app.include_router(admin_router)
+app.include_router(persona_profiles_router)
+app.include_router(knowledge_items_router)
+app.include_router(channel_control_router)
 app.include_router(auth_router)
 app.include_router(files_router)
 app.include_router(integration_router)
@@ -98,15 +104,10 @@ app.include_router(customers_router)
 app.include_router(stats_router)
 app.include_router(tickets_router)
 
-
-
-
-from fastapi.responses import FileResponse
-
 frontend_dir = settings.frontend_root
 if frontend_dir.exists():
     app.mount('/assets', StaticFiles(directory=str(frontend_dir / "assets")), name='frontend_assets')
-    
+
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         if full_path.startswith("api/"):
@@ -115,4 +116,3 @@ if frontend_dir.exists():
         if file_path.is_file():
             return FileResponse(str(file_path))
         return FileResponse(str(frontend_dir / "index.html"))
-

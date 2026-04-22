@@ -6,8 +6,17 @@ import type {
   CaseDetail,
   CaseListItem,
   ChannelAccount,
+  ChannelOnboardingTask,
+  ChannelRouteExplanation,
+  KnowledgeItem,
+  KnowledgePreview,
+  KnowledgeUploadResult,
+  KnowledgeVersion,
   LiteMeta,
   Market,
+  PersonaPreview,
+  PersonaProfile,
+  PersonaVersion,
   ProductionReadiness,
   QueueSummary,
   RuntimeHealth,
@@ -50,7 +59,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       const data = await res.json()
       msg = data?.detail || JSON.stringify(data)
     } catch {
-      // ignore non-JSON error bodies and fall back to status text
+      // ignore
     }
     throw new Error(msg)
   }
@@ -65,7 +74,6 @@ export const api = {
   }),
   me: () => request<AuthUser>('/api/auth/me'),
 
-  // user governance
   adminUsers: () => request<AdminUser[]>('/api/admin/users'),
   createUser: (payload: Record<string, unknown>) => request<AdminUser>('/api/admin/users', {
     method: 'POST',
@@ -84,7 +92,6 @@ export const api = {
   teams: () => request<Team[]>('/api/lookups/teams'),
   capabilityCatalog: () => request<string[]>('/api/admin/capabilities/catalog'),
 
-  // lite workspace
   liteMeta: () => request<LiteMeta>('/api/lite/meta'),
   cases: (params?: { q?: string; status?: string }) => {
     const search = new URLSearchParams()
@@ -102,7 +109,6 @@ export const api = {
     body: JSON.stringify(payload),
   }),
 
-  // market / bulletin / AI config
   markets: () => request<Market[]>('/api/lookups/markets'),
   bulletins: () => request<Bulletin[]>('/api/lookups/bulletins'),
   createBulletin: (payload: Partial<Bulletin>) => request<Bulletin>('/api/admin/bulletins', {
@@ -113,6 +119,7 @@ export const api = {
     method: 'PATCH',
     body: JSON.stringify(payload),
   }),
+
   aiConfigs: (configType?: string) => request<AIConfigResource[]>(`/api/admin/ai-configs${configType ? `?config_type=${encodeURIComponent(configType)}` : ''}`),
   publishedAIConfigs: (configType?: string, marketId?: number) => {
     const search = new URLSearchParams()
@@ -138,18 +145,86 @@ export const api = {
     body: JSON.stringify({ notes: notes || null }),
   }),
 
-  // channel routing
-  channelAccounts: () => request<ChannelAccount[]>('/api/admin/channel-accounts'),
-  createChannelAccount: (payload: Partial<ChannelAccount>) => request<ChannelAccount>('/api/admin/channel-accounts', {
+  personaProfiles: () => request<PersonaProfile[]>('/api/admin/persona-profiles'),
+  createPersonaProfile: (payload: Partial<PersonaProfile>) => request<PersonaProfile>('/api/admin/persona-profiles', {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
-  updateChannelAccount: (accountId: number, payload: Partial<ChannelAccount>) => request<ChannelAccount>(`/api/admin/channel-accounts/${accountId}`, {
+  updatePersonaProfile: (profileId: number, payload: Partial<PersonaProfile>) => request<PersonaProfile>(`/api/admin/persona-profiles/${profileId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  publishPersonaProfile: (profileId: number, notes?: string) => request<PersonaVersion>(`/api/admin/persona-profiles/${profileId}/publish`, {
+    method: 'POST',
+    body: JSON.stringify({ notes: notes || null }),
+  }),
+  personaVersions: (profileId: number) => request<PersonaVersion[]>(`/api/admin/persona-profiles/${profileId}/versions`),
+  rollbackPersonaProfile: (profileId: number, version: number, notes?: string) => request<PersonaVersion>(`/api/admin/persona-profiles/${profileId}/rollback/${version}`, {
+    method: 'POST',
+    body: JSON.stringify({ notes: notes || null }),
+  }),
+  previewPersonaResolution: (payload: Record<string, unknown>) => request<PersonaPreview>('/api/admin/persona-profiles/resolve-preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+
+  knowledgeItems: () => request<KnowledgeItem[]>('/api/admin/knowledge-items'),
+  createKnowledgeItem: (payload: Partial<KnowledgeItem>) => request<KnowledgeItem>('/api/admin/knowledge-items', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateKnowledgeItem: (itemId: number, payload: Partial<KnowledgeItem>) => request<KnowledgeItem>(`/api/admin/knowledge-items/${itemId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  publishKnowledgeItem: (itemId: number, notes?: string) => request<KnowledgeVersion>(`/api/admin/knowledge-items/${itemId}/publish`, {
+    method: 'POST',
+    body: JSON.stringify({ notes: notes || null }),
+  }),
+  archiveKnowledgeItem: (itemId: number) => request<KnowledgeItem>(`/api/admin/knowledge-items/${itemId}/archive`, {
+    method: 'POST',
+  }),
+  knowledgeVersions: (itemId: number) => request<KnowledgeVersion[]>(`/api/admin/knowledge-items/${itemId}/versions`),
+  rollbackKnowledgeItem: (itemId: number, version: number, notes?: string) => request<KnowledgeVersion>(`/api/admin/knowledge-items/${itemId}/rollback/${version}`, {
+    method: 'POST',
+    body: JSON.stringify({ notes: notes || null }),
+  }),
+  previewKnowledgeResolution: (payload: Record<string, unknown>) => request<KnowledgePreview>('/api/admin/knowledge-items/resolve-preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  uploadKnowledgeFile: async (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return request<KnowledgeUploadResult>('/api/admin/knowledge-items/upload', {
+      method: 'POST',
+      body: form,
+    })
+  },
+
+  channelControlAccounts: () => request<ChannelAccount[]>('/api/admin/channel-control/accounts'),
+  createChannelControlAccount: (payload: Partial<ChannelAccount>) => request<ChannelAccount>('/api/admin/channel-control/accounts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateChannelControlAccount: (accountId: number, payload: Partial<ChannelAccount>) => request<ChannelAccount>(`/api/admin/channel-control/accounts/${accountId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  explainChannelRoute: (payload: Record<string, unknown>) => request<ChannelRouteExplanation>('/api/admin/channel-control/route-explain', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  onboardingTasks: (provider?: string) => request<ChannelOnboardingTask[]>(`/api/admin/channel-control/onboarding-tasks${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
+  createOnboardingTask: (payload: Record<string, unknown>) => request<ChannelOnboardingTask>('/api/admin/channel-control/onboarding-tasks', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateOnboardingTask: (taskId: number, payload: Record<string, unknown>) => request<ChannelOnboardingTask>(`/api/admin/channel-control/onboarding-tasks/${taskId}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   }),
 
-  // runtime / diagnostics
   queueSummary: () => request<QueueSummary>('/api/admin/queues/summary'),
   runtimeHealth: () => request<RuntimeHealth>('/api/admin/openclaw/runtime-health'),
   openclawConnectivityCheck: () => request<OpenClawConnectivityProbe>('/api/admin/openclaw/connectivity-check'),
@@ -158,7 +233,6 @@ export const api = {
   jobs: () => request<BackgroundJob[]>('/api/admin/jobs?limit=50'),
   consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
 
-  // unresolved events governance
   unresolvedEvents: () => request<OpenClawUnresolvedEvent[]>('/api/admin/openclaw/unresolved-events'),
   replayUnresolvedEvent: (eventId: number) => request<{ ok: boolean; linked_ticket_id?: number | null }>(`/api/admin/openclaw/unresolved-events/${eventId}/replay`, {
     method: 'POST',
