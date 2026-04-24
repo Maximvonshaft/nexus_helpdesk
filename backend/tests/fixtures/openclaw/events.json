@@ -1,0 +1,39 @@
+{
+  "items": [
+    {
+      "type": "message",
+      "sessionKey": "mock-session-001",
+      "message": {
+        "id": "mock-message-001",
+        "role": "user",
+        "text": "Where is my parcel?",
+        "route": {
+          "channel": "whatsapp",
+          "recipient": "+41000000001",
+          "accountId": "mock-wa-account",
+          "threadId": "mock-thread-001"
+        }
+      }
+    },
+    {
+      "type": "message",
+      "sessionKey": "mock-session-missing-route",
+      "message": {
+        "id": "mock-message-missing-route",
+        "role": "user",
+        "text": "I need help but route is incomplete.",
+        "route": {
+          "channel": "whatsapp"
+        }
+      }
+    },
+    {
+      "type": "message",
+      "message": {
+        "id": "mock-message-no-session",
+        "role": "user",
+        "text": "No session key event."
+      }
+    }
+  ]
+}
