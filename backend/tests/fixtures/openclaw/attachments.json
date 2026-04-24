@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "id": "mock-attachment-meta",
+      "filename": "delivery-photo-metadata.json",
+      "mimeType": "application/json",
+      "size": 128,
+      "metadata": {
+        "caption": "metadata only attachment"
+      }
+    },
+    {
+      "id": "mock-attachment-base64",
+      "filename": "pod.txt",
+      "mimeType": "text/plain",
+      "size": 20,
+      "base64": "UHJvb2Ygb2YgZGVsaXZlcnk="
+    },
+    {
+      "id": "mock-attachment-text",
+      "filename": "customer-note.txt",
+      "mimeType": "text/plain",
+      "size": 27,
+      "text": "Customer provided note."
+    },
+    {
+      "id": "mock-attachment-private-url",
+      "filename": "blocked-private-url.jpg",
+      "mimeType": "image/jpeg",
+      "size": 1024,
+      "url": "http://127.0.0.1/private.jpg"
+    }
+  ]
+}
