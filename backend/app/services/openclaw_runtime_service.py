@@ -15,6 +15,8 @@ def probe_openclaw_connectivity() -> OpenClawConnectivityProbeRead:
         warnings.append("OpenClaw deployment mode is disabled")
     if settings.openclaw_transport != "mcp":
         warnings.append("OpenClaw transport is not MCP; live same-route bridge checks are limited")
+    if getattr(settings, 'openclaw_extra_paths', None):
+        warnings.append("OPENCLAW_EXTRA_PATHS is configured for MCP command lookup")
 
     result = OpenClawConnectivityProbeRead(
         deployment_mode=settings.openclaw_deployment_mode,

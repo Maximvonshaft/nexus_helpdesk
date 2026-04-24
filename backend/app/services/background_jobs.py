@@ -3,13 +3,12 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import timedelta
-import hashlib
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
-from ..enums import JobStatus, SourceChannel
-from ..models import BackgroundJob, OpenClawConversationLink, OpenClawTranscriptMessage
+from ..enums import JobStatus, MessageStatus, SourceChannel
+from ..models import BackgroundJob, OpenClawConversationLink, OpenClawTranscriptMessage, TicketOutboundMessage
 from ..settings import get_settings
 from ..utils.time import utc_now
 
@@ -32,10 +31,7 @@ def enqueue_background_job(
     if dedupe_key:
         existing = (
             db.query(BackgroundJob)
-            .filter(
-                BackgroundJob.dedupe_key == dedupe_key,
-                BackgroundJob.status.in_([JobStatus.pending, JobStatus.processing]),
-            )
+            .filter(BackgroundJob.dedupe_key == dedupe_key, BackgroundJob.status.in_([JobStatus.pending, JobStatus.processing]))
             .order_by(BackgroundJob.id.desc())
             .first()
         )
@@ -65,37 +61,13 @@ def enqueue_auto_reply_job(db: Session, *, ticket_id: int, user_id: int) -> Back
     )
 
 
-def enqueue_openclaw_sync_job(
-    db: Session,
-    *,
-    ticket_id: int,
-    session_key: str,
-    transcript_limit: int | None = None,
-    dedupe: bool = True,
-) -> BackgroundJob:
-    payload = {
-        'ticket_id': ticket_id,
-        'session_key': session_key,
-        'transcript_limit': transcript_limit or settings.openclaw_sync_transcript_limit,
-    }
-    dedupe_key = f'openclaw-sync:{session_key}' if dedupe else None
-    return enqueue_background_job(
-        db,
-        queue_name='openclaw_sync',
-        job_type=OPENCLAW_SYNC_JOB,
-        payload=payload,
-        dedupe_key=dedupe_key,
-    )
+def enqueue_openclaw_sync_job(db: Session, *, ticket_id: int, session_key: str, transcript_limit: int | None = None, dedupe: bool = True) -> BackgroundJob:
+    payload = {'ticket_id': ticket_id, 'session_key': session_key, 'transcript_limit': transcript_limit or settings.openclaw_sync_transcript_limit}
+    return enqueue_background_job(db, queue_name='openclaw_sync', job_type=OPENCLAW_SYNC_JOB, payload=payload, dedupe_key=f'openclaw-sync:{session_key}' if dedupe else None)
 
 
 def enqueue_attachment_persist_job(db: Session, *, attachment_ref_id: int, dedupe: bool = True) -> BackgroundJob:
-    return enqueue_background_job(
-        db,
-        queue_name='openclaw_attachment',
-        job_type=ATTACHMENT_PERSIST_JOB,
-        payload={'attachment_ref_id': attachment_ref_id},
-        dedupe_key=f'openclaw-attachment:{attachment_ref_id}' if dedupe else None,
-    )
+    return enqueue_background_job(db, queue_name='openclaw_attachment', job_type=ATTACHMENT_PERSIST_JOB, payload={'attachment_ref_id': attachment_ref_id}, dedupe_key=f'openclaw-attachment:{attachment_ref_id}' if dedupe else None)
 
 
 def enqueue_stale_openclaw_sync_jobs(db: Session, *, limit: int | None = None) -> list[BackgroundJob]:
@@ -106,10 +78,7 @@ def enqueue_stale_openclaw_sync_jobs(db: Session, *, limit: int | None = None) -
         db.query(OpenClawConversationLink)
         .join(OpenClawConversationLink.ticket)
         .filter(OpenClawConversationLink.session_key.is_not(None))
-        .filter(
-            (OpenClawConversationLink.last_synced_at.is_(None)) |
-            (OpenClawConversationLink.last_synced_at < cutoff)
-        )
+        .filter((OpenClawConversationLink.last_synced_at.is_(None)) | (OpenClawConversationLink.last_synced_at < cutoff))
         .order_by(OpenClawConversationLink.last_synced_at.asc().nullsfirst(), OpenClawConversationLink.id.asc())
         .limit(limit or settings.openclaw_sync_batch_size)
         .all()
@@ -120,15 +89,7 @@ def enqueue_stale_openclaw_sync_jobs(db: Session, *, limit: int | None = None) -
         if not row.session_key or row.session_key in seen:
             continue
         seen.add(row.session_key)
-        jobs.append(
-            enqueue_openclaw_sync_job(
-                db,
-                ticket_id=row.ticket_id,
-                session_key=row.session_key,
-                transcript_limit=settings.openclaw_sync_transcript_limit,
-                dedupe=True,
-            )
-        )
+        jobs.append(enqueue_openclaw_sync_job(db, ticket_id=row.ticket_id, session_key=row.session_key, transcript_limit=settings.openclaw_sync_transcript_limit, dedupe=True))
     return jobs
 
 
@@ -138,56 +99,30 @@ def claim_pending_jobs(db: Session, *, limit: int | None = None, worker_id: str 
     now = utc_now()
     lock_deadline = now - timedelta(seconds=settings.job_lock_seconds)
     normalized_job_types = tuple(sorted({str(job_type) for job_type in (job_types or []) if job_type}))
-
-    pending_filters = [
-        BackgroundJob.status == JobStatus.pending,
-        or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now),
-        or_(BackgroundJob.locked_at.is_(None), BackgroundJob.locked_at < lock_deadline),
-    ]
+    pending_filters = [BackgroundJob.status == JobStatus.pending, or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now), or_(BackgroundJob.locked_at.is_(None), BackgroundJob.locked_at < lock_deadline)]
     if normalized_job_types:
         pending_filters.append(BackgroundJob.job_type.in_(normalized_job_types))
 
     if db.bind and db.bind.dialect.name.startswith('postgresql'):
-        rows = db.execute(
-            select(BackgroundJob.id)
-            .where(*pending_filters)
-            .order_by(BackgroundJob.created_at.asc())
-            .limit(limit)
-            .with_for_update(skip_locked=True)
-        ).all()
+        rows = db.execute(select(BackgroundJob.id).where(*pending_filters).order_by(BackgroundJob.created_at.asc()).limit(limit).with_for_update(skip_locked=True)).all()
         claimed_ids = [row[0] for row in rows]
         if not claimed_ids:
             db.rollback()
             return []
-        db.execute(
-            update(BackgroundJob)
-            .where(BackgroundJob.id.in_(claimed_ids))
-            .values(status=JobStatus.processing, locked_at=now, locked_by=worker_id)
-        )
+        db.execute(update(BackgroundJob).where(BackgroundJob.id.in_(claimed_ids)).values(status=JobStatus.processing, locked_at=now, locked_by=worker_id))
+        # Queue claim is intentionally committed separately so other workers cannot double-claim jobs.
         db.commit()
     else:
-        candidate_ids = [
-            row[0]
-            for row in (
-                db.query(BackgroundJob.id)
-                .filter(*pending_filters)
-                .order_by(BackgroundJob.created_at.asc())
-                .limit(limit)
-                .all()
-            )
-        ]
-        claimed_ids = []
+        candidate_ids = [row[0] for row in db.query(BackgroundJob.id).filter(*pending_filters).order_by(BackgroundJob.created_at.asc()).limit(limit).all()]
+        claimed_ids: list[int] = []
         for job_id in candidate_ids:
-            updated = db.execute(
-                update(BackgroundJob)
-                .where(BackgroundJob.id == job_id, *pending_filters)
-                .values(status=JobStatus.processing, locked_at=now, locked_by=worker_id)
-            )
+            updated = db.execute(update(BackgroundJob).where(BackgroundJob.id == job_id, *pending_filters).values(status=JobStatus.processing, locked_at=now, locked_by=worker_id))
             if updated.rowcount == 1:
                 claimed_ids.append(job_id)
         if not claimed_ids:
             db.rollback()
             return []
+        # Queue claim is intentionally committed separately so other workers cannot double-claim jobs.
         db.commit()
     return db.query(BackgroundJob).filter(BackgroundJob.id.in_(claimed_ids)).order_by(BackgroundJob.created_at.asc()).all()
 
@@ -216,12 +151,29 @@ def _mark_retry(job: BackgroundJob, reason: str) -> None:
     job.updated_at = utc_now()
 
 
+def _draft_ai_auto_reply(db: Session, *, ticket, user, body: str, channel: SourceChannel) -> TicketOutboundMessage:
+    message = TicketOutboundMessage(
+        ticket_id=ticket.id,
+        channel=channel,
+        status=MessageStatus.draft,
+        body=body,
+        provider_status='ai_review_required',
+        error_message='AI-generated auto reply saved as draft by outbound safety gate',
+        failure_code='ai_review_required',
+        failure_reason='AI-generated outbound requires human review before direct send',
+        created_by=user.id,
+        max_retries=settings.outbox_max_retries,
+    )
+    db.add(message)
+    db.flush()
+    return message
+
+
 def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
     payload = json.loads(job.payload_json or '{}')
     try:
         if job.job_type == AUTO_REPLY_JOB:
-            from .ticket_service import get_ticket_or_404, get_user_or_404, send_outbound_message
-            from ..schemas import OutboundSendRequest
+            from .ticket_service import get_ticket_or_404, get_user_or_404
             from .llm_service import polish_reply_text
             from .bulletin_service import build_bulletin_context
 
@@ -244,15 +196,14 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
                 channel = SourceChannel(channel_value)
             except Exception:
                 channel = SourceChannel.whatsapp
-            send_outbound_message(db, ticket.id, OutboundSendRequest(channel=channel, body=polished_text), user)
-            if hasattr(ticket, 'conversation_state'):
-                from ..enums import ConversationState
-                ticket.conversation_state = ConversationState.replied_to_customer
+            _draft_ai_auto_reply(db, ticket=ticket, user=user, body=polished_text, channel=channel)
             _mark_done(job)
             return job
+
         if job.job_type == ATTACHMENT_PERSIST_JOB:
             from ..models import OpenClawAttachmentReference
             from .openclaw_bridge import persist_openclaw_attachment_reference
+
             row = db.query(OpenClawAttachmentReference).filter(OpenClawAttachmentReference.id == int(payload['attachment_ref_id'])).first()
             if row is None:
                 _mark_done(job)
@@ -261,20 +212,17 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             row.updated_at = utc_now()
             _mark_done(job)
             return job
+
         if job.job_type == OPENCLAW_SYNC_JOB:
             from .openclaw_bridge import sync_openclaw_conversation
 
             if not settings.openclaw_sync_enabled:
                 _mark_done(job)
                 return job
-            sync_openclaw_conversation(
-                db,
-                ticket_id=int(payload['ticket_id']),
-                session_key=str(payload['session_key']),
-                limit=int(payload.get('transcript_limit') or settings.openclaw_sync_transcript_limit),
-            )
+            sync_openclaw_conversation(db, ticket_id=int(payload['ticket_id']), session_key=str(payload['session_key']), limit=int(payload.get('transcript_limit') or settings.openclaw_sync_transcript_limit))
             _mark_done(job)
             return job
+
         raise RuntimeError(f'Unsupported job type: {job.job_type}')
     except Exception as exc:
         _mark_retry(job, str(exc))
@@ -286,7 +234,7 @@ def dispatch_pending_background_jobs(db: Session, *, limit: int | None = None, w
         enqueue_stale_openclaw_sync_jobs(db, limit=settings.openclaw_sync_batch_size)
         db.commit()
     claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB])
-    processed = []
+    processed: list[BackgroundJob] = []
     for job in claimed:
         process_background_job(db, job)
         processed.append(job)

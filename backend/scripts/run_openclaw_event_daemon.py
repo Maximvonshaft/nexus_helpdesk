@@ -18,7 +18,7 @@ from app.settings import get_settings  # noqa: E402
 from app.unit_of_work import managed_session  # noqa: E402
 
 settings = get_settings()
-configure_logging()
+configure_logging(settings.log_json)
 logger = logging.getLogger("openclaw_event_daemon")
 
 
@@ -42,6 +42,11 @@ def main() -> int:
                 logger.error(f"Event daemon iteration failed: {exc}\n{traceback.format_exc()}")
                 logger.exception("openclaw event daemon iteration failed", extra={"worker_id": worker_id, "error": str(exc)})
                 record_worker_result(worker_id, "openclaw_event", "failed", 1)
+                try:
+                    with managed_session(db):
+                        update_service_heartbeat(db, service_name='openclaw_event_daemon', instance_id=worker_id, status='error', details={'error': str(exc)[:500]})
+                except Exception:
+                    logger.exception("failed to update openclaw event daemon error heartbeat", extra={"worker_id": worker_id})
                 time.sleep(max(settings.worker_poll_seconds, 2))
     return 0
 

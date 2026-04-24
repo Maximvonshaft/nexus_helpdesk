@@ -1,13 +1,13 @@
 """governance overlay round 4 support tables
 
-Revision ID: 20260421_governance_overlay_round4
+Revision ID: 20260421_gov_r4
 Revises: 20260410_0011
 Create Date: 2026-04-21
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = '20260421_governance_overlay_round4'
+revision = '20260421_gov_r4'
 down_revision = '20260410_0011'
 branch_labels = None
 depends_on = None

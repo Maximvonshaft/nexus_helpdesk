@@ -13,8 +13,10 @@ from ..utils.time import utc_now
 from .audit_service import log_event
 from .observability import LOGGER
 from .openclaw_bridge import dispatch_via_openclaw_bridge, dispatch_via_openclaw_cli, dispatch_via_openclaw_mcp, resolve_channel_account
+from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 
 settings = get_settings()
+
 
 def _resolve_first_send_channel_account(db: Session, ticket: Ticket | None, link: OpenClawConversationLink | None) -> ChannelAccount | None:
     if link is not None and getattr(link, 'channel_account_id', None):
@@ -51,7 +53,6 @@ def queue_outbound_message(
     return message
 
 
-
 def _mark_retry(message: TicketOutboundMessage, reason: str) -> None:
     message.retry_count += 1
     message.error_message = reason
@@ -84,6 +85,18 @@ def _mark_dead(message: TicketOutboundMessage, reason: str, *, failure_code: str
     message.locked_by = None
 
 
+def _mark_review_required(message: TicketOutboundMessage, reason: str) -> None:
+    message.status = MessageStatus.draft
+    message.provider_status = 'safety_review_required'
+    message.error_message = reason
+    message.failure_code = 'safety_review_required'
+    message.failure_reason = reason
+    message.last_attempt_at = utc_now()
+    message.next_retry_at = None
+    message.locked_at = None
+    message.locked_by = None
+
+
 def _mark_sent(message: TicketOutboundMessage, provider_status: str | None, sent_at) -> None:
     message.status = MessageStatus.sent
     message.provider_status = provider_status
@@ -103,14 +116,16 @@ def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: 
     now = utc_now()
     lock_deadline = now - timedelta(seconds=settings.outbox_lock_seconds)
 
+    pending_filters = [
+        TicketOutboundMessage.status == MessageStatus.pending,
+        or_(TicketOutboundMessage.next_retry_at.is_(None), TicketOutboundMessage.next_retry_at <= now),
+        or_(TicketOutboundMessage.locked_at.is_(None), TicketOutboundMessage.locked_at < lock_deadline),
+    ]
+
     if db.bind and db.bind.dialect.name.startswith('postgresql'):
         rows = db.execute(
             select(TicketOutboundMessage.id)
-            .where(
-                TicketOutboundMessage.status == MessageStatus.pending,
-                or_(TicketOutboundMessage.next_retry_at.is_(None), TicketOutboundMessage.next_retry_at <= now),
-                or_(TicketOutboundMessage.locked_at.is_(None), TicketOutboundMessage.locked_at < lock_deadline),
-            )
+            .where(*pending_filters)
             .order_by(TicketOutboundMessage.created_at.asc())
             .limit(limit)
             .with_for_update(skip_locked=True)
@@ -124,32 +139,15 @@ def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: 
             .where(TicketOutboundMessage.id.in_(claimed_ids))
             .values(status=MessageStatus.processing, locked_at=now, locked_by=worker_id)
         )
+        # Queue claim is intentionally committed separately so other workers cannot double-claim messages.
         db.commit()
     else:
-        candidate_ids = [
-            row[0]
-            for row in (
-                db.query(TicketOutboundMessage.id)
-                .filter(
-                    TicketOutboundMessage.status == MessageStatus.pending,
-                    or_(TicketOutboundMessage.next_retry_at.is_(None), TicketOutboundMessage.next_retry_at <= now),
-                    or_(TicketOutboundMessage.locked_at.is_(None), TicketOutboundMessage.locked_at < lock_deadline),
-                )
-                .order_by(TicketOutboundMessage.created_at.asc())
-                .limit(limit)
-                .all()
-            )
-        ]
+        candidate_ids = [row[0] for row in db.query(TicketOutboundMessage.id).filter(*pending_filters).order_by(TicketOutboundMessage.created_at.asc()).limit(limit).all()]
         claimed_ids: list[int] = []
         for message_id in candidate_ids:
             updated = db.execute(
                 update(TicketOutboundMessage)
-                .where(
-                    TicketOutboundMessage.id == message_id,
-                    TicketOutboundMessage.status == MessageStatus.pending,
-                    or_(TicketOutboundMessage.next_retry_at.is_(None), TicketOutboundMessage.next_retry_at <= now),
-                    or_(TicketOutboundMessage.locked_at.is_(None), TicketOutboundMessage.locked_at < lock_deadline),
-                )
+                .where(TicketOutboundMessage.id == message_id, *pending_filters)
                 .values(status=MessageStatus.processing, locked_at=now, locked_by=worker_id)
             )
             if updated.rowcount == 1:
@@ -157,6 +155,7 @@ def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: 
         if not claimed_ids:
             db.rollback()
             return []
+        # Queue claim is intentionally committed separately so other workers cannot double-claim messages.
         db.commit()
 
     return (
@@ -168,8 +167,41 @@ def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: 
     )
 
 
+def _enforce_outbound_safety(db: Session, message: TicketOutboundMessage, ticket: Ticket | None) -> bool:
+    source = message.provider_status or 'manual_or_unknown'
+    decision = evaluate_outbound_safety(ticket, message.body, source=source, has_fact_evidence=False)
+    reason = format_safety_reasons(decision)
+    if decision.level == 'block':
+        _mark_dead(message, reason, failure_code='safety_blocked')
+        log_event(
+            db,
+            ticket_id=message.ticket_id,
+            actor_id=message.created_by,
+            event_type=EventType.outbound_failed,
+            note='Outbound safety gate blocked customer-facing message',
+            payload={'message_id': message.id, 'safety_level': decision.level, 'reasons': decision.reasons},
+        )
+        return False
+    if decision.requires_human_review:
+        _mark_review_required(message, reason)
+        log_event(
+            db,
+            ticket_id=message.ticket_id,
+            actor_id=message.created_by,
+            event_type=EventType.outbound_failed,
+            note='Outbound safety gate requires human review before send',
+            payload={'message_id': message.id, 'safety_level': decision.level, 'reasons': decision.reasons},
+        )
+        return False
+    message.body = decision.normalized_body
+    return True
+
+
 def process_outbound_message(db: Session, message: TicketOutboundMessage) -> TicketOutboundMessage:
     ticket = message.ticket
+    if not _enforce_outbound_safety(db, message, ticket):
+        return message
+
     target = None
     session_key = None
     link = None
@@ -182,15 +214,9 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
 
     if not target and not session_key:
         _mark_retry(message, 'No target address available')
-        if message.status == MessageStatus.dead:
-            log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Queued outbound message permanently failed', payload={'message_id': message.id, 'error': message.failure_reason})
-        else:
-            log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_retry_scheduled, note='Queued outbound message scheduled for retry', payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count})
+        event_type = EventType.outbound_dead if message.status == MessageStatus.dead else EventType.outbound_retry_scheduled
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='Queued outbound message could not resolve target', payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count})
         return message
-
-    status = None
-    provider_status = None
-    sent_at = None
 
     channel_value = link.channel if link is not None and link.channel else message.channel.value
     resolved_channel_account = _resolve_first_send_channel_account(db, ticket, link)
@@ -207,23 +233,8 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
             session_key=session_key,
         )
         if status == MessageStatus.failed and settings.openclaw_cli_fallback_enabled:
-            LOGGER.warning(
-                'openclaw_bridge_dispatch_failed_falling_back_to_cli',
-                extra={'event_payload': {
-                    'message_id': message.id,
-                    'ticket_id': message.ticket_id,
-                    'channel': channel_value,
-                    'target': target,
-                    'provider_status': provider_status,
-                }},
-            )
-            status, provider_status, sent_at = dispatch_via_openclaw_cli(
-                channel=channel_value,
-                target=target,
-                body=message.body,
-                account_id=account_id,
-                thread_id=thread_id,
-            )
+            LOGGER.warning('openclaw_bridge_dispatch_failed_falling_back_to_cli', extra={'event_payload': {'message_id': message.id, 'ticket_id': message.ticket_id, 'channel': channel_value, 'target': target, 'provider_status': provider_status}})
+            status, provider_status, sent_at = dispatch_via_openclaw_cli(channel=channel_value, target=target, body=message.body, account_id=account_id, thread_id=thread_id)
     elif session_key:
         status, provider_status, sent_at = dispatch_via_openclaw_mcp(session_key, message.body)
     else:
@@ -234,44 +245,14 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
         if ticket is not None and getattr(ticket, 'conversation_state', None) is not None:
             ticket.conversation_state = ConversationState.waiting_customer
         if session_key:
-            log_event(
-                db,
-                ticket_id=message.ticket_id,
-                actor_id=message.created_by,
-                event_type=EventType.openclaw_reply_sent,
-                note='OpenClaw same-route reply sent',
-                payload={'message_id': message.id, 'session_key': session_key, 'provider_status': provider_status},
-            )
-        log_event(
-            db,
-            ticket_id=message.ticket_id,
-            actor_id=message.created_by,
-            event_type=EventType.outbound_sent,
-            note='Queued outbound message sent',
-            payload={'message_id': message.id, 'provider_status': provider_status, 'route': {'channel': channel_value, 'account_id': account_id, 'source': 'ticket_or_market_or_fallback'}},
-        )
+            log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.openclaw_reply_sent, note='OpenClaw same-route reply sent', payload={'message_id': message.id, 'session_key': session_key, 'provider_status': provider_status})
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_sent, note='Queued outbound message sent', payload={'message_id': message.id, 'provider_status': provider_status, 'route': {'channel': channel_value, 'account_id': account_id, 'source': 'ticket_or_market_or_fallback'}})
         return message
 
     reason = provider_status or 'Dispatch failed'
     _mark_retry(message, reason)
-    if message.status == MessageStatus.dead:
-        log_event(
-            db,
-            ticket_id=message.ticket_id,
-            actor_id=message.created_by,
-            event_type=EventType.outbound_dead,
-            note='Queued outbound message permanently failed',
-            payload={'message_id': message.id, 'error': message.failure_reason, 'route': {'channel': channel_value, 'account_id': account_id, 'source': 'ticket_or_market_or_fallback'}},
-        )
-    else:
-        log_event(
-            db,
-            ticket_id=message.ticket_id,
-            actor_id=message.created_by,
-            event_type=EventType.outbound_retry_scheduled,
-            note='Queued outbound message scheduled for retry',
-            payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count, 'route': {'channel': channel_value, 'account_id': account_id, 'source': 'ticket_or_market_or_fallback'}},
-        )
+    event_type = EventType.outbound_dead if message.status == MessageStatus.dead else EventType.outbound_retry_scheduled
+    log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='Queued outbound message failed dispatch', payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count, 'route': {'channel': channel_value, 'account_id': account_id, 'source': 'ticket_or_market_or_fallback'}})
     return message
 
 

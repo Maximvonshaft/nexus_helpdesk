@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 from dataclasses import dataclass
 from datetime import timedelta
@@ -41,39 +40,19 @@ def authenticate_integration_client(
     x_api_key: str | None,
 ) -> AuthenticatedIntegrationClient:
     if x_client_key_id and x_client_key:
-        client = (
-            db.query(IntegrationClient)
-            .filter(IntegrationClient.key_id == x_client_key_id, IntegrationClient.is_active.is_(True))
-            .first()
-        )
+        client = db.query(IntegrationClient).filter(IntegrationClient.key_id == x_client_key_id, IntegrationClient.is_active.is_(True)).first()
         if not client or not verify_secret(x_client_key, client.secret_hash):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid integration credentials')
         client.last_used_at = utc_now()
-        db.commit()
-        return AuthenticatedIntegrationClient(
-            client_id=client.id,
-            name=client.name,
-            scopes=_parse_scopes(client.scopes_csv),
-            key_id=client.key_id,
-            rate_limit_per_minute=client.rate_limit_per_minute,
-            is_legacy=False,
-        )
+        # Do not commit inside authentication; request handlers own the transaction boundary.
+        db.flush()
+        return AuthenticatedIntegrationClient(client_id=client.id, name=client.name, scopes=_parse_scopes(client.scopes_csv), key_id=client.key_id, rate_limit_per_minute=client.rate_limit_per_minute, is_legacy=False)
 
     if settings.allow_legacy_integration_api_key and settings.integration_api_key and x_api_key == settings.integration_api_key:
-        return AuthenticatedIntegrationClient(
-            client_id=None,
-            name='legacy-env-key',
-            scopes={'profile.read', 'task.write'},
-            key_id='legacy',
-            rate_limit_per_minute=settings.integration_default_rate_limit_per_minute,
-            is_legacy=True,
-        )
+        return AuthenticatedIntegrationClient(client_id=None, name='legacy-env-key', scopes={'profile.read', 'task.write'}, key_id='legacy', rate_limit_per_minute=settings.integration_default_rate_limit_per_minute, is_legacy=True)
 
     if not settings.integration_api_key and not x_client_key_id:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail='Integration endpoint is disabled until an integration client or legacy API key is configured',
-        )
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Integration endpoint is disabled until an integration client or legacy API key is configured')
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid integration credentials')
 
 
@@ -101,24 +80,12 @@ def stable_request_hash(payload: dict) -> str:
 
 
 def error_code_from_status(status_code: int) -> str:
-    mapping = {
-        400: 'bad_request',
-        401: 'unauthorized',
-        403: 'forbidden',
-        404: 'not_found',
-        409: 'conflict',
-        429: 'rate_limited',
-        503: 'unavailable',
-    }
+    mapping = {400: 'bad_request', 401: 'unauthorized', 403: 'forbidden', 404: 'not_found', 409: 'conflict', 429: 'rate_limited', 503: 'unavailable'}
     return mapping.get(status_code, 'error')
 
 
 def get_idempotent_response(db: Session, client: AuthenticatedIntegrationClient, endpoint: str, idempotency_key: str, request_hash: str):
-    log = db.query(IntegrationRequestLog).filter(
-        IntegrationRequestLog.client_id == client.client_id,
-        IntegrationRequestLog.endpoint == endpoint,
-        IntegrationRequestLog.idempotency_key == idempotency_key,
-    ).first()
+    log = db.query(IntegrationRequestLog).filter(IntegrationRequestLog.client_id == client.client_id, IntegrationRequestLog.endpoint == endpoint, IntegrationRequestLog.idempotency_key == idempotency_key).first()
     if not log:
         return None
     if log.request_hash and log.request_hash != request_hash:
@@ -141,11 +108,7 @@ def record_integration_response(
     error_code: str | None = None,
 ) -> None:
     if idempotency_key:
-        existing = db.query(IntegrationRequestLog).filter(
-            IntegrationRequestLog.client_id == client.client_id,
-            IntegrationRequestLog.endpoint == endpoint,
-            IntegrationRequestLog.idempotency_key == idempotency_key,
-        ).first()
+        existing = db.query(IntegrationRequestLog).filter(IntegrationRequestLog.client_id == client.client_id, IntegrationRequestLog.endpoint == endpoint, IntegrationRequestLog.idempotency_key == idempotency_key).first()
         if existing:
             existing.method = method
             existing.request_hash = request_hash
@@ -155,14 +118,5 @@ def record_integration_response(
             existing.created_at = utc_now()
             db.flush()
             return
-    db.add(IntegrationRequestLog(
-        client_id=client.client_id,
-        endpoint=endpoint,
-        method=method,
-        idempotency_key=idempotency_key,
-        request_hash=request_hash,
-        status_code=status_code,
-        error_code=error_code,
-        response_json=json.dumps(response_payload, ensure_ascii=False),
-    ))
+    db.add(IntegrationRequestLog(client_id=client.client_id, endpoint=endpoint, method=method, idempotency_key=idempotency_key, request_hash=request_hash, status_code=status_code, error_code=error_code, response_json=json.dumps(response_payload, ensure_ascii=False)))
     db.flush()

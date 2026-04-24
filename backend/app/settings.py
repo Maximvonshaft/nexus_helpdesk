@@ -51,6 +51,7 @@ class Settings:
         self.openclaw_transport = os.getenv("OPENCLAW_TRANSPORT", "mcp").strip().lower() or "mcp"
         self.openclaw_deployment_mode = os.getenv("OPENCLAW_DEPLOYMENT_MODE", "local_gateway").strip().lower() or "local_gateway"
         self.openclaw_mcp_command = os.getenv("OPENCLAW_MCP_COMMAND", self.openclaw_bin or "openclaw").strip()
+        self.openclaw_extra_paths = self._parse_paths(os.getenv("OPENCLAW_EXTRA_PATHS", ""))
         self.openclaw_mcp_url = os.getenv("OPENCLAW_MCP_URL")
         self.openclaw_mcp_token_file = os.getenv("OPENCLAW_MCP_TOKEN_FILE")
         self.openclaw_mcp_password_file = os.getenv("OPENCLAW_MCP_PASSWORD_FILE")
@@ -100,7 +101,6 @@ class Settings:
         self.openclaw_attachment_allowed_mime_types = set(self._parse_csv(os.getenv("OPENCLAW_ATTACHMENT_ALLOWED_MIME_TYPES", ",".join(self.allowed_upload_mime_types + ["application/octet-stream"]))))
 
         self._normalize()
-
 
     @property
     def is_sqlite(self) -> bool:
@@ -158,6 +158,17 @@ class Settings:
     @staticmethod
     def _parse_csv(raw: str) -> list[str]:
         return [item.strip() for item in raw.split(",") if item.strip()]
+
+    @staticmethod
+    def _parse_paths(raw: str) -> list[str]:
+        if not raw:
+            return []
+        parts: list[str] = []
+        for item in raw.replace(";", os.pathsep).split(os.pathsep):
+            cleaned = item.strip()
+            if cleaned:
+                parts.append(cleaned)
+        return parts
 
 
 @lru_cache(maxsize=1)

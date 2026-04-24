@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
@@ -17,13 +17,13 @@ from .api.lookups import router as lookups_router
 from .api.lite import router as lite_router
 from .api.stats import router as stats_router
 from .api.tickets import router as tickets_router
-from .db import Base, SessionLocal, engine
+from .db import engine
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
 from .settings import get_settings
 
 settings = get_settings()
 configure_logging(get_settings().log_json)
-app = FastAPI(title='Helpdesk Suite Full Stack', version='20.3.0')
+app = FastAPI(title='NexusDesk Helpdesk', version='20.3.1')
 
 app.add_middleware(
     CORSMiddleware,
@@ -98,15 +98,10 @@ app.include_router(customers_router)
 app.include_router(stats_router)
 app.include_router(tickets_router)
 
-
-
-
-from fastapi.responses import FileResponse
-
 frontend_dir = settings.frontend_root
 if frontend_dir.exists():
     app.mount('/assets', StaticFiles(directory=str(frontend_dir / "assets")), name='frontend_assets')
-    
+
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         if full_path.startswith("api/"):
@@ -115,4 +110,3 @@ if frontend_dir.exists():
         if file_path.is_file():
             return FileResponse(str(file_path))
         return FileResponse(str(frontend_dir / "index.html"))
-

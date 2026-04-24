@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 from collections import deque
@@ -45,14 +46,16 @@ class OpenClawMCPClient:
             cmd += ['--claude-channel-mode', settings.openclaw_mcp_claude_channel_mode]
         return cmd
 
+    def _build_env(self) -> dict[str, str]:
+        env = os.environ.copy()
+        extra_paths = [p for p in getattr(settings, 'openclaw_extra_paths', []) if p]
+        if extra_paths:
+            env['PATH'] = os.pathsep.join(extra_paths + [env.get('PATH', '')])
+        return env
+
     def start(self) -> None:
         if self.process is not None:
             return
-        import os
-        env = os.environ.copy()
-        if '/home/vboxuser/.local/bin' not in env.get('PATH', ''):
-            env['PATH'] = f"/home/vboxuser/.local/bin:{env.get('PATH', '')}"
-        
         self.process = subprocess.Popen(
             self._build_command(),
             stdin=subprocess.PIPE,
@@ -60,7 +63,7 @@ class OpenClawMCPClient:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
-            env=env,
+            env=self._build_env(),
         )
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
@@ -94,11 +97,10 @@ class OpenClawMCPClient:
                 payload = json.loads(line)
             except Exception:
                 continue
-            # Handle MCP JSON-RPC
             if 'id' in payload:
                 self._response_queue.put(payload)
             elif payload.get('method') == 'notifications/message':
-                pass # Ignore raw notifications
+                pass
 
     def _stderr_loop(self) -> None:
         assert self.process and self.process.stderr
@@ -131,31 +133,24 @@ class OpenClawMCPClient:
             try:
                 queue_timeout = 15
                 if method == 'tools/call' and params and params.get('name') == 'events_wait':
-                    if isinstance(params.get('arguments', {}).get('timeoutSeconds'), (int, float)):
-                        queue_timeout = params['arguments']['timeoutSeconds'] + 5
-                
-                # Check how much time is left relative to the calculated queue_timeout
+                    timeout_arg = params.get('arguments', {}).get('timeoutSeconds')
+                    if isinstance(timeout_arg, (int, float)):
+                        queue_timeout = timeout_arg + 5
                 elapsed = time.monotonic() - start_time
                 remaining = max(0.1, queue_timeout - elapsed)
-                
                 result = self._response_queue.get(timeout=remaining)
             except Empty as exc:
                 if method == 'tools/call' and params and params.get('name') == 'events_wait':
                     return {'id': req_id, 'result': {'events': []}}
                 raise OpenClawMCPError(f'Timeout waiting for MCP response to {method}; stderr: {self._stderr_summary()}') from exc
             if result.get('id') != req_id:
-                # We pulled a response for a different request, loop again
                 continue
             if 'error' in result:
                 raise OpenClawMCPError(str(result['error']))
             return result.get('result', {})
 
     def _initialize(self) -> None:
-        self._request('initialize', {
-            'protocolVersion': '2024-11-05',
-            'capabilities': {},
-            'clientInfo': {'name': 'helpdesk-suite', 'version': '20.3.0'},
-        })
+        self._request('initialize', {'protocolVersion': '2024-11-05', 'capabilities': {}, 'clientInfo': {'name': 'helpdesk-suite', 'version': '20.3.0'}})
         assert self.process and self.process.stdin
         self.process.stdin.write(json.dumps({'jsonrpc': '2.0', 'method': 'notifications/initialized', 'params': {}}) + '\n')
         self.process.stdin.flush()

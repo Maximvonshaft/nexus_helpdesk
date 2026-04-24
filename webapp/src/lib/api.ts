@@ -20,6 +20,13 @@ import type {
 } from '@/lib/types'
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
+
+function buildApiUrl(path: string) {
+  if (/^https?:\/\//i.test(path)) return path
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return `${API_BASE_URL}${normalizedPath}`
+}
 
 export function getToken() {
   return sessionStorage.getItem(STORAGE_KEY)
@@ -39,7 +46,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? {})
   if (!(init?.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  const res = await fetch(path, { ...init, headers })
+  const res = await fetch(buildApiUrl(path), { ...init, headers })
   if (res.status === 401) {
     clearToken()
     throw new Error('登录状态已失效，请重新登录')
@@ -65,7 +72,6 @@ export const api = {
   }),
   me: () => request<AuthUser>('/api/auth/me'),
 
-  // user governance
   adminUsers: () => request<AdminUser[]>('/api/admin/users'),
   createUser: (payload: Record<string, unknown>) => request<AdminUser>('/api/admin/users', {
     method: 'POST',
@@ -84,7 +90,6 @@ export const api = {
   teams: () => request<Team[]>('/api/lookups/teams'),
   capabilityCatalog: () => request<string[]>('/api/admin/capabilities/catalog'),
 
-  // lite workspace
   liteMeta: () => request<LiteMeta>('/api/lite/meta'),
   cases: (params?: { q?: string; status?: string }) => {
     const search = new URLSearchParams()
@@ -102,7 +107,6 @@ export const api = {
     body: JSON.stringify(payload),
   }),
 
-  // market / bulletin / AI config
   markets: () => request<Market[]>('/api/lookups/markets'),
   bulletins: () => request<Bulletin[]>('/api/lookups/bulletins'),
   createBulletin: (payload: Partial<Bulletin>) => request<Bulletin>('/api/admin/bulletins', {
@@ -138,7 +142,6 @@ export const api = {
     body: JSON.stringify({ notes: notes || null }),
   }),
 
-  // channel routing
   channelAccounts: () => request<ChannelAccount[]>('/api/admin/channel-accounts'),
   createChannelAccount: (payload: Partial<ChannelAccount>) => request<ChannelAccount>('/api/admin/channel-accounts', {
     method: 'POST',
@@ -149,7 +152,6 @@ export const api = {
     body: JSON.stringify(payload),
   }),
 
-  // runtime / diagnostics
   queueSummary: () => request<QueueSummary>('/api/admin/queues/summary'),
   runtimeHealth: () => request<RuntimeHealth>('/api/admin/openclaw/runtime-health'),
   openclawConnectivityCheck: () => request<OpenClawConnectivityProbe>('/api/admin/openclaw/connectivity-check'),
@@ -158,7 +160,6 @@ export const api = {
   jobs: () => request<BackgroundJob[]>('/api/admin/jobs?limit=50'),
   consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
 
-  // unresolved events governance
   unresolvedEvents: () => request<OpenClawUnresolvedEvent[]>('/api/admin/openclaw/unresolved-events'),
   replayUnresolvedEvent: (eventId: number) => request<{ ok: boolean; linked_ticket_id?: number | null }>(`/api/admin/openclaw/unresolved-events/${eventId}/replay`, {
     method: 'POST',

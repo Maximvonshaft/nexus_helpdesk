@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from time import perf_counter
 
 LOGGER = logging.getLogger("nexusdesk")
 
 try:
-    from prometheus_client import CollectorRegistry, CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest, multiprocess
+    from prometheus_client import CollectorRegistry, CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest, multiprocess
 except Exception:  # pragma: no cover
     CollectorRegistry = None
     CONTENT_TYPE_LATEST = 'text/plain; version=0.0.4'
     Counter = None
+    Gauge = None
     Histogram = None
     generate_latest = None
     multiprocess = None
@@ -19,11 +21,7 @@ except Exception:  # pragma: no cover
 
 class _JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        payload = {
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-        }
+        payload = {"level": record.levelname, "logger": record.name, "message": record.getMessage()}
         extra = getattr(record, "event_payload", None)
         if isinstance(extra, dict):
             payload.update(extra)
@@ -37,37 +35,21 @@ if _PROM_REGISTRY and multiprocess:
     except ValueError:
         pass
 
-_HTTP_COUNTER = Counter(
-    'nexusdesk_http_requests_total',
-    'Total HTTP requests processed',
-    ['method', 'path', 'status_code'],
-    registry=_PROM_REGISTRY,
-) if Counter else None
-_HTTP_DURATION = Histogram(
-    'nexusdesk_http_request_duration_ms',
-    'HTTP request duration in milliseconds',
-    ['method', 'path'],
-    registry=_PROM_REGISTRY,
-    buckets=(5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000),
-) if Histogram else None
-_WORKER_RUNS = Counter(
-    'nexusdesk_worker_runs_total',
-    'Number of worker polling cycles',
-    ['worker_id'],
-    registry=_PROM_REGISTRY,
-) if Counter else None
-_JOB_COUNTER = Counter(
-    'nexusdesk_worker_processed_total',
-    'Processed queued jobs/messages',
-    ['worker_id', 'kind', 'result'],
-    registry=_PROM_REGISTRY,
-) if Counter else None
-_QUEUE_DEPTH = Counter(
-    'nexusdesk_queue_snapshots_total',
-    'Queue snapshot observations',
-    ['name', 'kind'],
-    registry=_PROM_REGISTRY,
-) if Counter else None
+_HTTP_COUNTER = Counter('nexusdesk_http_requests_total', 'Total HTTP requests processed', ['method', 'path', 'status_code'], registry=_PROM_REGISTRY) if Counter else None
+_HTTP_DURATION = Histogram('nexusdesk_http_request_duration_ms', 'HTTP request duration in milliseconds', ['method', 'path'], registry=_PROM_REGISTRY, buckets=(5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000)) if Histogram else None
+_WORKER_RUNS = Counter('nexusdesk_worker_runs_total', 'Number of worker polling cycles', ['worker_id'], registry=_PROM_REGISTRY) if Counter else None
+_JOB_COUNTER = Counter('nexusdesk_worker_processed_total', 'Processed queued jobs/messages', ['worker_id', 'kind', 'result'], registry=_PROM_REGISTRY) if Counter else None
+_QUEUE_DEPTH = Gauge('nexusdesk_queue_depth', 'Observed queue depth or per-cycle queue count', ['name', 'kind'], registry=_PROM_REGISTRY) if Gauge else None
+_QUEUE_SNAPSHOTS_COMPAT = Counter('nexusdesk_queue_snapshots_total', 'Backward-compatible queue snapshot observations', ['name', 'kind'], registry=_PROM_REGISTRY) if Counter else None
+
+_ID_SEGMENT_RE = re.compile(r"/\d+(?=/|$)")
+_UUID_SEGMENT_RE = re.compile(r"/[0-9a-fA-F]{8,}(?=/|$)")
+
+
+def normalize_metric_path(path: str) -> str:
+    normalized = _UUID_SEGMENT_RE.sub('/{id}', path or '/')
+    normalized = _ID_SEGMENT_RE.sub('/{id}', normalized)
+    return normalized or '/'
 
 
 def configure_logging(log_json: bool = True) -> None:
@@ -79,10 +61,7 @@ def configure_logging(log_json: bool = True) -> None:
     else:
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
     root = logging.getLogger()
-    if not root.handlers:
-        root.addHandler(handler)
-    else:
-        root.handlers = [handler]
+    root.handlers = [handler]
     root.setLevel(logging.INFO)
     configure_logging._configured = True
 
@@ -92,10 +71,11 @@ def log_event(level: int, message: str, **payload) -> None:
 
 
 def record_request_metric(path: str, method: str, status_code: int, duration_ms: float) -> None:
+    safe_path = normalize_metric_path(path)
     if _HTTP_COUNTER:
-        _HTTP_COUNTER.labels(method=method, path=path, status_code=str(status_code)).inc()
+        _HTTP_COUNTER.labels(method=method, path=safe_path, status_code=str(status_code)).inc()
     if _HTTP_DURATION:
-        _HTTP_DURATION.labels(method=method, path=path).observe(duration_ms)
+        _HTTP_DURATION.labels(method=method, path=safe_path).observe(duration_ms)
 
 
 def record_worker_poll(worker_id: str) -> None:
@@ -121,7 +101,9 @@ def timed_request():
 
 def record_queue_snapshot(name: str, kind: str, value: int = 1) -> None:
     if _QUEUE_DEPTH:
-        _QUEUE_DEPTH.labels(name=name, kind=kind).inc(value)
+        _QUEUE_DEPTH.labels(name=name, kind=kind).set(value)
+    if _QUEUE_SNAPSHOTS_COMPAT:
+        _QUEUE_SNAPSHOTS_COMPAT.labels(name=name, kind=kind).inc(max(value, 0))
 
 
 def log_signoff_state(state: str, **fields) -> None:
