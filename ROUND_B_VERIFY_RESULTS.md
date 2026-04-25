@@ -79,6 +79,24 @@ Observed result:
 5 passed, 1 skipped
 ```
 
+### 3b. Dev auth environment whitelist regression test
+
+A follow-up hardening pass narrowed `ALLOW_DEV_AUTH` from the earlier broad non-production behavior to an explicit whitelist.
+
+Current intended rule:
+- `X-User-Id` dev auth only works when `ALLOW_DEV_AUTH` is truthy
+- and `APP_ENV in {"development", "test", "local"}`
+
+This means the following environments default to **not** allowing `X-User-Id` dev auth:
+- `production`
+- `staging`
+- `preview`
+- `demo`
+
+This hardening does **not** change the Round B webchat business closure flow. It only tightens the authentication safety boundary around dev auth.
+
+A dedicated regression test was added to lock this matrix and reduce future drift.
+
 ### 4. Frontend typecheck and build
 
 Commands used:
@@ -185,6 +203,12 @@ Reason:
 
 Status: **GREEN for local Round B validation**
 
+Additional security note:
+- `ALLOW_DEV_AUTH` has been further narrowed after the original live smoke run
+- only `APP_ENV in {"development", "test", "local"}` plus truthy `ALLOW_DEV_AUTH` can enable `X-User-Id` dev auth
+- `production`, `staging`, `preview`, and `demo` do not enable `X-User-Id` dev auth by default
+- this safety tightening does not alter the Round B webchat business path that was already validated by live smoke
+
 What is verified:
 - backend source compiles
 - migration chain reaches head
@@ -195,7 +219,13 @@ What is verified:
 - local service starts cleanly on `127.0.0.1:18081`
 - `/healthz` and `/readyz` pass
 - full Round B live smoke passes end-to-end
+- dev auth environment whitelist is now explicitly locked by regression test
 
 ## Ready state
 
 The branch is ready to push as `round-b-webchat-closure`.
+
+Note for this last small follow-up:
+- the live smoke already passed in the earlier `2d53b94` validation stage
+- this final pass only tightened the dev auth safety boundary and added regression coverage
+- no Round B webchat closure business logic was changed in this safety follow-up
