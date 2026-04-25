@@ -13,6 +13,7 @@ from app.schemas import CustomerInput, TicketCreate
 from app.services.sla_service import seed_default_sla_policies
 from app.services.ai_config_service import publish_resource
 from app.services.ticket_service import create_ticket
+from app.webchat_models import WebchatConversation, WebchatMessage  # noqa: F401 - ensure metadata registration
 
 
 def seed_data() -> None:

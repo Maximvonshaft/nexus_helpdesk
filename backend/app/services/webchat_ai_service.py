@@ -63,6 +63,7 @@ def process_webchat_ai_reply_job(
             WebchatMessage.conversation_id == conversation.id,
             WebchatMessage.direction == "agent",
             WebchatMessage.id > visitor_message.id,
+            WebchatMessage.author_label == AI_AUTHOR_LABEL,
         )
         .first()
     )
