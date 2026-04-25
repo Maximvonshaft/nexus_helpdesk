@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import urllib.error
+import urllib.request
 from dataclasses import asdict
 from typing import Any
 
@@ -10,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketStatus
 from ..models import Ticket, TicketComment, TicketEvent, TicketOutboundMessage
+from ..settings import get_settings
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
 from .openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
@@ -17,6 +20,7 @@ from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .sla_service import evaluate_sla, update_first_response
 
 LOGGER = logging.getLogger("nexusdesk")
+settings = get_settings()
 AI_AUTHOR_LABEL = "NexusDesk AI Assistant"
 MAX_HISTORY_MESSAGES = 12
 TRACKING_HINT_RE = re.compile(r"\b([A-Z0-9]{8,30})\b", re.IGNORECASE)
@@ -165,6 +169,23 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
         return SAFE_TRACKING_REQUIRED_FALLBACK
 
     prompt = _build_prompt(ticket=ticket, conversation=conversation, visitor_message=visitor_message, history_rows=history_rows)
+    if settings.openclaw_bridge_enabled:
+        try:
+            text = _generate_ai_reply_via_bridge(prompt=prompt, conversation=conversation, visitor_message=visitor_message)
+            return _sanitize_ai_reply(text)
+        except Exception as exc:
+            LOGGER.warning(
+                "webchat_ai_bridge_runtime_failed",
+                extra={"event_payload": {
+                    "conversation_id": conversation.id,
+                    "ticket_id": ticket.id,
+                    "visitor_message_id": visitor_message.id,
+                    "bridge_url": settings.openclaw_bridge_url,
+                    "error": str(exc),
+                }},
+            )
+            return _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
+
     try:
         with OpenClawMCPClient() as client:
             session_key = f"webchat-ai-{conversation.public_id}-{visitor_message.id}"
@@ -183,6 +204,44 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
             }},
         )
         return _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
+
+
+def _generate_ai_reply_via_bridge(*, prompt: str, conversation: WebchatConversation, visitor_message: WebchatMessage) -> str:
+    bridge_url = settings.openclaw_bridge_url.rstrip('/')
+    session_key = f"webchat-ai-{conversation.public_id}-{visitor_message.id}"
+    send_req = urllib.request.Request(
+        f"{bridge_url}/send-message",
+        data=json.dumps({"sessionKey": session_key, "body": prompt}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(send_req, timeout=settings.openclaw_bridge_timeout_seconds) as resp:
+            parsed = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+        raise RuntimeError(f"bridge send http {exc.code}: {body[:300]}") from exc
+    if not isinstance(parsed, dict) or not parsed.get("ok"):
+        raise RuntimeError(f"bridge send rejected: {parsed}")
+
+    read_req = urllib.request.Request(
+        f"{bridge_url}/read-messages",
+        data=json.dumps({"sessionKey": session_key, "limit": 6}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(read_req, timeout=settings.openclaw_bridge_timeout_seconds) as resp:
+            parsed = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+        raise RuntimeError(f"bridge read http {exc.code}: {body[:300]}") from exc
+    if not isinstance(parsed, dict) or not parsed.get("ok"):
+        raise RuntimeError(f"bridge read rejected: {parsed}")
+    text = _extract_reply_text(parsed.get("messages") or [])
+    if not text:
+        raise RuntimeError("bridge returned empty reply")
+    return text
 
 
 def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage]) -> str:

@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:18081}"
+OPENCLAW_BRIDGE_URL="${OPENCLAW_BRIDGE_URL:-}"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -30,6 +31,15 @@ else:
     print(value)
 PY
 }
+
+echo '== preflight =='
+curl -fsS "$BASE_URL/healthz" >/dev/null
+curl -fsS "$BASE_URL/readyz" >/dev/null
+if [ -n "$OPENCLAW_BRIDGE_URL" ]; then
+  curl -fsS "$OPENCLAW_BRIDGE_URL/health"
+fi
+
+echo
 
 echo '== init webchat =='
 curl -fsS "$BASE_URL/api/webchat/init" \

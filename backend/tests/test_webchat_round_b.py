@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import pytest
 from fastapi.testclient import TestClient
 
@@ -23,8 +24,7 @@ def ensure_schema():
         db.close()
 
 
-def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
-    client = TestClient(app)
+def _create_webchat_message_flow(client: TestClient):
     init = client.post('/api/webchat/init', json={
         'tenant_key': 'pytest',
         'channel_key': 'website',
@@ -41,19 +41,25 @@ def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
 
     sent = client.post(f'/api/webchat/conversations/{conversation_id}/messages', json={
         'visitor_token': visitor_token,
-        'body': 'Where is my parcel?',
+        'body': 'Hello, what can you help me with?',
     })
     assert sent.status_code == 200, sent.text
 
     polled = client.get(f'/api/webchat/conversations/{conversation_id}/messages', params={'visitor_token': visitor_token})
     assert polled.status_code == 200, polled.text
     messages_before = polled.json()['messages']
-    assert any(item['direction'] == 'visitor' and item['body'] == 'Where is my parcel?' for item in messages_before)
-    assert any(item['direction'] == 'agent' and 'received your parcel inquiry' in item['body'] for item in messages_before)
+    assert any(item['direction'] == 'visitor' and 'Hello, what can you help me with?' in item['body'] for item in messages_before)
+    assert any(item['direction'] == 'agent' and 'received your message' in item['body'] for item in messages_before)
+    return conversation_id, visitor_token
+
+
+def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
+    client = TestClient(app)
+    conversation_id, visitor_token = _create_webchat_message_flow(client)
 
     from app.services import webchat_ai_service
 
-    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', lambda **kwargs: 'Please provide your tracking number so our support team can check your shipment.')
+    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', lambda **kwargs: 'We can help with shipment questions, delivery updates, and general support requests.')
 
     db = SessionLocal()
     try:
@@ -72,4 +78,93 @@ def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
     assert polled_after.status_code == 200, polled_after.text
     messages_after = polled_after.json()['messages']
     assert any(item['direction'] == 'agent' and item['author_label'] == 'NexusDesk AI Assistant' for item in messages_after)
-    assert any('tracking number' in item['body'].lower() for item in messages_after if item['direction'] == 'agent')
+    assert any('shipment' in item['body'].lower() or 'support' in item['body'].lower() for item in messages_after if item['direction'] == 'agent')
+
+
+def test_webchat_ai_reply_uses_bridge_when_enabled(monkeypatch):
+    client = TestClient(app)
+    conversation_id, visitor_token = _create_webchat_message_flow(client)
+
+    from app.services import webchat_ai_service
+
+    monkeypatch.setattr(webchat_ai_service.settings, 'openclaw_bridge_enabled', True)
+    calls = []
+
+    def fake_urlopen(req, timeout=0):
+        calls.append(req.full_url)
+        class Resp:
+            def __init__(self, payload):
+                self.payload = payload
+            def read(self):
+                return json.dumps(self.payload).encode('utf-8')
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return False
+        if req.full_url.endswith('/send-message'):
+            return Resp({'ok': True})
+        if req.full_url.endswith('/read-messages'):
+            return Resp({'ok': True, 'messages': [{'role': 'assistant', 'text': 'We can help with delivery updates and general support.'}]})
+        raise AssertionError(req.full_url)
+
+    monkeypatch.setattr(webchat_ai_service.urllib.request, 'urlopen', fake_urlopen)
+
+    db = SessionLocal()
+    try:
+        processed = dispatch_pending_background_jobs(db, worker_id='pytest-worker-bridge')
+        assert any(job.job_type == WEBCHAT_AI_REPLY_JOB for job in processed)
+        db.commit()
+    finally:
+        db.close()
+
+    assert any(url.endswith('/send-message') for url in calls)
+    assert any(url.endswith('/read-messages') for url in calls)
+
+    polled_after = client.get(f'/api/webchat/conversations/{conversation_id}/messages', params={'visitor_token': visitor_token})
+    assert polled_after.status_code == 200, polled_after.text
+    messages_after = polled_after.json()['messages']
+    assert any(item['direction'] == 'agent' and item['author_label'] == 'NexusDesk AI Assistant' for item in messages_after)
+
+
+def test_webchat_ai_reply_bridge_failure_falls_back_safely(monkeypatch):
+    client = TestClient(app)
+    init = client.post('/api/webchat/init', json={
+        'tenant_key': 'pytest',
+        'channel_key': 'website',
+        'visitor_name': 'Pytest Visitor',
+        'origin': 'https://example.test',
+        'page_url': 'https://example.test/help',
+    })
+    payload = init.json()
+    conversation_id = payload['conversation_id']
+    visitor_token = payload['visitor_token']
+    sent = client.post(f'/api/webchat/conversations/{conversation_id}/messages', json={
+        'visitor_token': visitor_token,
+        'body': 'Where is my parcel?',
+    })
+    assert sent.status_code == 200, sent.text
+
+    from app.services import webchat_ai_service
+
+    monkeypatch.setattr(webchat_ai_service.settings, 'openclaw_bridge_enabled', True)
+
+    def fake_urlopen_fail(req, timeout=0):
+        raise RuntimeError('bridge down')
+
+    monkeypatch.setattr(webchat_ai_service.urllib.request, 'urlopen', fake_urlopen_fail)
+
+    db = SessionLocal()
+    try:
+        processed = dispatch_pending_background_jobs(db, worker_id='pytest-worker-bridge-fail')
+        assert any(job.job_type == WEBCHAT_AI_REPLY_JOB for job in processed)
+        db.commit()
+    finally:
+        db.close()
+
+    polled_after = client.get(f'/api/webchat/conversations/{conversation_id}/messages', params={'visitor_token': visitor_token})
+    assert polled_after.status_code == 200, polled_after.text
+    messages_after = polled_after.json()['messages']
+    assert any(item['direction'] == 'visitor' and 'Where is my parcel?' in item['body'] for item in messages_after)
+    assert any(item['direction'] == 'agent' and 'received your parcel inquiry' in item['body'] for item in messages_after)
+    assert any(item['direction'] == 'agent' and item['author_label'] == 'NexusDesk AI Assistant' for item in messages_after)
+    assert any('tracking number' in item['body'].lower() or 'review' in item['body'].lower() for item in messages_after if item['author_label'] == 'NexusDesk AI Assistant')
