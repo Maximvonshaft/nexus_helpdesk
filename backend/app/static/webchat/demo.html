@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NexusDesk Webchat Demo</title>
+  <style>
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#f8fafc;color:#101828}
+    main{max-width:920px;margin:0 auto;padding:72px 24px}
+    .card{background:#fff;border:1px solid #e5e7eb;border-radius:24px;padding:32px;box-shadow:0 18px 40px rgba(15,23,42,.08)}
+    code{background:#f2f4f7;padding:3px 6px;border-radius:6px}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="card">
+      <h1>Demo customer website</h1>
+      <p>This page simulates a client website embedding the NexusDesk Webchat Widget.</p>
+      <p>Click the floating chat button in the bottom-right corner, send a message, then open the NexusDesk admin Webchat Inbox to reply.</p>
+      <p>Snippet:</p>
+      <pre><code>&lt;script src="/webchat/widget.js" data-tenant="demo" data-channel="website" async&gt;&lt;/script&gt;</code></pre>
+    </div>
+  </main>
+  <script src="/webchat/widget.js" data-tenant="demo" data-channel="website" data-title="Demo Support" async></script>
+</body>
+</html>

@@ -272,3 +272,53 @@ export interface OpenClawUnresolvedEvent {
   created_at: string
   updated_at: string
 }
+
+export interface WebchatConversation {
+  conversation_id: string
+  ticket_id: number
+  ticket_no: string
+  title: string
+  status: string
+  visitor_name?: string | null
+  visitor_email?: string | null
+  visitor_phone?: string | null
+  origin?: string | null
+  page_url?: string | null
+  last_seen_at?: string | null
+  updated_at?: string | null
+}
+
+export interface WebchatMessage {
+  id: number
+  direction: 'visitor' | 'agent' | 'system' | string
+  body: string
+  author_label?: string | null
+  created_at?: string | null
+}
+
+export interface WebchatThread {
+  conversation_id: string
+  ticket_id: number
+  ticket_no: string
+  origin?: string | null
+  page_url?: string | null
+  visitor: {
+    name?: string | null
+    email?: string | null
+    phone?: string | null
+    ref?: string | null
+  }
+  messages: WebchatMessage[]
+}
+
+export interface WebchatReplyResult {
+  ok: boolean
+  safety: {
+    allowed: boolean
+    level: 'allow' | 'review' | 'block' | string
+    reasons: string[]
+    requires_human_review: boolean
+    normalized_body: string
+  }
+  message: WebchatMessage
+}

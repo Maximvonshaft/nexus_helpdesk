@@ -17,20 +17,21 @@ from .api.lookups import router as lookups_router
 from .api.lite import router as lite_router
 from .api.stats import router as stats_router
 from .api.tickets import router as tickets_router
+from .api.webchat import router as webchat_router
 from .db import engine
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
 from .settings import get_settings
 
 settings = get_settings()
 configure_logging(get_settings().log_json)
-app = FastAPI(title='NexusDesk Helpdesk', version='20.3.1')
+app = FastAPI(title='NexusDesk Helpdesk', version='20.4.0-round-b')
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allow_headers=['Authorization', 'Content-Type', 'X-API-Key', 'X-Client-Key-Id', 'X-Client-Key', 'Idempotency-Key', settings.request_id_header],
+    allow_headers=['Authorization', 'Content-Type', 'X-API-Key', 'X-Client-Key-Id', 'X-Client-Key', 'Idempotency-Key', 'X-Requested-With', settings.request_id_header],
     expose_headers=[settings.request_id_header],
 )
 
@@ -97,6 +98,11 @@ app.include_router(lite_router)
 app.include_router(customers_router)
 app.include_router(stats_router)
 app.include_router(tickets_router)
+app.include_router(webchat_router)
+
+webchat_static_dir = settings.backend_root / 'app' / 'static' / 'webchat'
+if webchat_static_dir.exists():
+    app.mount('/webchat', StaticFiles(directory=str(webchat_static_dir), html=True), name='webchat_static')
 
 frontend_dir = settings.frontend_root
 assets_dir = frontend_dir / "assets"
@@ -108,6 +114,8 @@ if frontend_dir.exists():
     async def serve_spa(full_path: str):
         if full_path.startswith("api/"):
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        if full_path.startswith("webchat/"):
+            return JSONResponse(status_code=404, content={"detail": "Webchat asset not found"})
         file_path = frontend_dir / full_path
         if file_path.is_file():
             return FileResponse(str(file_path))

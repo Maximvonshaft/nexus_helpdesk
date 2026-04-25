@@ -13,6 +13,7 @@ import { canManageAIConfig, canManageChannels, canManageUsers, canViewOps, roleW
 const nav = [
   { to: '/', label: '首页总览' },
   { to: '/workspace', label: '工单处理' },
+  { to: '/webchat', label: '网站聊天' },
   { to: '/bulletins', label: '通知公告', permission: 'bulletins' },
   { to: '/ai-control', label: 'AI规则', permission: 'ai' },
   { to: '/accounts', label: '发送线路', permission: 'channels' },

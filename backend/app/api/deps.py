@@ -8,7 +8,6 @@ from ..enums import UserRole
 from ..models import User
 from ..settings import get_settings
 
-settings = get_settings()
 bearer = HTTPBearer(auto_error=False)
 
 
@@ -17,6 +16,7 @@ def get_current_user(
     x_user_id: int | None = Header(default=None, alias="X-User-Id"),
     db: Session = Depends(get_db),
 ):
+    settings = get_settings()
     user = None
     if credentials:
         user_id = decode_access_token(credentials.credentials)

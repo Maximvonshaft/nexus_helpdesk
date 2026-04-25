@@ -21,7 +21,8 @@ class Settings:
         self.jwt_issuer = os.getenv("JWT_ISSUER", "helpdesk-suite")
         self.jwt_audience = os.getenv("JWT_AUDIENCE", "helpdesk-suite-users")
         self.access_token_expire_hours = int(os.getenv("ACCESS_TOKEN_EXPIRE_HOURS", "12"))
-        self.allow_dev_auth = os.getenv("ALLOW_DEV_AUTH", "false").strip().lower() == "true" and self.app_env != "production"
+        self.allow_dev_auth_raw = os.getenv("ALLOW_DEV_AUTH", "false")
+        self.allow_dev_auth = self._is_truthy(self.allow_dev_auth_raw) and self.app_env in {"development", "test", "local"}
 
         self.auto_init_db = os.getenv("AUTO_INIT_DB", "false").strip().lower() == "true" and self.app_env != "production"
         self.seed_demo_data = os.getenv("SEED_DEMO_DATA", "false").strip().lower() == "true" and self.app_env != "production"
@@ -149,6 +150,10 @@ class Settings:
                     raise RuntimeError("prometheus_client must be installed in production when REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION=true") from exc
         if not self.jwt_secret_key:
             self.jwt_secret_key = f"dev-only-{secrets.token_urlsafe(24)}"
+
+    @staticmethod
+    def _is_truthy(raw: str | None) -> bool:
+        return (raw or "").strip().lower() in {"1", "true", "yes", "on"}
 
     @staticmethod
     def _parse_origins(raw: str) -> list[str]:

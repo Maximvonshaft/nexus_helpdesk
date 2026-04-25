@@ -17,6 +17,9 @@ import type {
   AIConfigVersion,
   OpenClawUnresolvedEvent,
   Team,
+  WebchatConversation,
+  WebchatThread,
+  WebchatReplyResult,
 } from '@/lib/types'
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
@@ -55,7 +58,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     let msg = `${res.status} ${res.statusText}`
     try {
       const data = await res.json()
-      msg = data?.detail || JSON.stringify(data)
+      const detail = data?.detail
+      msg = typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : JSON.stringify(data)
     } catch {
       // ignore non-JSON error bodies and fall back to status text
     }
@@ -159,6 +163,14 @@ export const api = {
   signoff: () => request<SignoffChecklist>('/api/admin/signoff-checklist'),
   jobs: () => request<BackgroundJob[]>('/api/admin/jobs?limit=50'),
   consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
+
+
+  webchatConversations: () => request<WebchatConversation[]>('/api/webchat/admin/conversations'),
+  webchatThread: (ticketId: number) => request<WebchatThread>(`/api/webchat/admin/tickets/${ticketId}/thread`),
+  webchatReply: (ticketId: number, payload: { body: string; has_fact_evidence?: boolean; confirm_review?: boolean }) => request<WebchatReplyResult>(`/api/webchat/admin/tickets/${ticketId}/reply`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
 
   unresolvedEvents: () => request<OpenClawUnresolvedEvent[]>('/api/admin/openclaw/unresolved-events'),
   replayUnresolvedEvent: (eventId: number) => request<{ ok: boolean; linked_ticket_id?: number | null }>(`/api/admin/openclaw/unresolved-events/${eventId}/replay`, {
