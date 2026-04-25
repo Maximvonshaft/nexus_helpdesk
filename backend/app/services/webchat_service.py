@@ -20,6 +20,7 @@ from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .permissions import ensure_ticket_visible
 from .sla_service import update_first_response, evaluate_sla
 from .ticket_service import generate_ticket_no, get_ticket_or_404
+from .background_jobs import enqueue_webchat_ai_reply_job
 WEBCHAT_LOGGER = logging.getLogger("nexusdesk")
 
 MAX_MESSAGE_CHARS = 2000
@@ -302,6 +303,21 @@ def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, 
     conversation.last_seen_at = utc_now()
     conversation.updated_at = utc_now()
     db.flush()
+
+    try:
+        enqueue_webchat_ai_reply_job(
+            db,
+            conversation_id=conversation.id,
+            ticket_id=conversation.ticket_id,
+            visitor_message_id=message.id,
+        )
+        db.flush()
+    except Exception as exc:
+        WEBCHAT_LOGGER.exception(
+            "webchat_ai_reply_enqueue_failed",
+            extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": conversation.ticket_id, "visitor_message_id": message.id, "error": str(exc)}},
+        )
+
     db.refresh(message)
     return {"ok": True, "message": _message_read(message)}
 

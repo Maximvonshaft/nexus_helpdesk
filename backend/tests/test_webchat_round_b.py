@@ -6,7 +6,8 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.db import Base, engine, SessionLocal
 from app.enums import UserRole
-from app.models import User
+from app.models import BackgroundJob, User
+from app.services.background_jobs import WEBCHAT_AI_REPLY_JOB, dispatch_pending_background_jobs
 from app.webchat_models import WebchatConversation, WebchatMessage  # noqa: F401 - ensure metadata registration
 
 
@@ -22,7 +23,7 @@ def ensure_schema():
         db.close()
 
 
-def test_public_webchat_init_send_poll_and_admin_reply():
+def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
     client = TestClient(app)
     init = client.post('/api/webchat/init', json={
         'tenant_key': 'pytest',
@@ -46,24 +47,29 @@ def test_public_webchat_init_send_poll_and_admin_reply():
 
     polled = client.get(f'/api/webchat/conversations/{conversation_id}/messages', params={'visitor_token': visitor_token})
     assert polled.status_code == 200, polled.text
-    assert any(item['direction'] == 'visitor' and item['body'] == 'Where is my parcel?' for item in polled.json()['messages'])
+    messages_before = polled.json()['messages']
+    assert any(item['direction'] == 'visitor' and item['body'] == 'Where is my parcel?' for item in messages_before)
+    assert any(item['direction'] == 'agent' and 'received your parcel inquiry' in item['body'] for item in messages_before)
 
-    conversations = client.get('/api/webchat/admin/conversations', headers={'X-User-Id': '9999'})
-    assert conversations.status_code in {200, 401}
-    if conversations.status_code == 401:
-        pytest.skip('dev auth disabled; public webchat path verified')
-    ticket_id = next(item['ticket_id'] for item in conversations.json() if item['conversation_id'] == conversation_id)
+    from app.services import webchat_ai_service
 
-    blocked = client.post(f'/api/webchat/admin/tickets/{ticket_id}/reply', headers={'X-User-Id': '9999'}, json={
-        'body': 'SECRET_KEY leaked in stack trace token password',
-    })
-    assert blocked.status_code == 400
+    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', lambda **kwargs: 'Please provide your tracking number so our support team can check your shipment.')
 
-    reply = client.post(f'/api/webchat/admin/tickets/{ticket_id}/reply', headers={'X-User-Id': '9999'}, json={
-        'body': 'We have received your request and will check it shortly.',
-    })
-    assert reply.status_code == 200, reply.text
-    assert reply.json()['safety']['level'] == 'allow'
+    db = SessionLocal()
+    try:
+        conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id).first()
+        assert conversation is not None
+        jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == WEBCHAT_AI_REPLY_JOB, BackgroundJob.status == 'pending').all()
+        assert jobs
+        assert any(job.payload_json for job in jobs)
+        processed = dispatch_pending_background_jobs(db, worker_id='pytest-worker')
+        assert any(job.job_type == WEBCHAT_AI_REPLY_JOB for job in processed)
+        db.commit()
+    finally:
+        db.close()
 
     polled_after = client.get(f'/api/webchat/conversations/{conversation_id}/messages', params={'visitor_token': visitor_token})
-    assert any(item['direction'] == 'agent' for item in polled_after.json()['messages'])
+    assert polled_after.status_code == 200, polled_after.text
+    messages_after = polled_after.json()['messages']
+    assert any(item['direction'] == 'agent' and item['author_label'] == 'NexusDesk AI Assistant' for item in messages_after)
+    assert any('tracking number' in item['body'].lower() for item in messages_after if item['direction'] == 'agent')

@@ -16,6 +16,7 @@ settings = get_settings()
 AUTO_REPLY_JOB = 'auto_reply.send_update'
 OPENCLAW_SYNC_JOB = 'openclaw.sync_session'
 ATTACHMENT_PERSIST_JOB = 'openclaw.persist_attachment'
+WEBCHAT_AI_REPLY_JOB = 'webchat.ai_reply'
 
 
 def enqueue_background_job(
@@ -68,6 +69,20 @@ def enqueue_openclaw_sync_job(db: Session, *, ticket_id: int, session_key: str, 
 
 def enqueue_attachment_persist_job(db: Session, *, attachment_ref_id: int, dedupe: bool = True) -> BackgroundJob:
     return enqueue_background_job(db, queue_name='openclaw_attachment', job_type=ATTACHMENT_PERSIST_JOB, payload={'attachment_ref_id': attachment_ref_id}, dedupe_key=f'openclaw-attachment:{attachment_ref_id}' if dedupe else None)
+
+
+def enqueue_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id: int, visitor_message_id: int) -> BackgroundJob:
+    return enqueue_background_job(
+        db,
+        queue_name='webchat_ai_reply',
+        job_type=WEBCHAT_AI_REPLY_JOB,
+        payload={
+            'conversation_id': conversation_id,
+            'ticket_id': ticket_id,
+            'visitor_message_id': visitor_message_id,
+        },
+        dedupe_key=f'webchat-ai-reply:{visitor_message_id}',
+    )
 
 
 def enqueue_stale_openclaw_sync_jobs(db: Session, *, limit: int | None = None) -> list[BackgroundJob]:
@@ -213,6 +228,18 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             _mark_done(job)
             return job
 
+        if job.job_type == WEBCHAT_AI_REPLY_JOB:
+            from .webchat_ai_service import process_webchat_ai_reply_job
+
+            process_webchat_ai_reply_job(
+                db,
+                conversation_id=int(payload['conversation_id']),
+                ticket_id=int(payload['ticket_id']),
+                visitor_message_id=int(payload['visitor_message_id']),
+            )
+            _mark_done(job)
+            return job
+
         if job.job_type == OPENCLAW_SYNC_JOB:
             from .openclaw_bridge import sync_openclaw_conversation
 
@@ -233,7 +260,7 @@ def dispatch_pending_background_jobs(db: Session, *, limit: int | None = None, w
     if settings.openclaw_sync_enabled:
         enqueue_stale_openclaw_sync_jobs(db, limit=settings.openclaw_sync_batch_size)
         db.commit()
-    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB])
+    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB, WEBCHAT_AI_REPLY_JOB])
     processed: list[BackgroundJob] = []
     for job in claimed:
         process_background_job(db, job)
