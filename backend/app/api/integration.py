@@ -106,6 +106,15 @@ def _customer_contact_filters(contact_id: str):
     return filters
 
 
+def _ticket_duplicate_contact_filters(contact_id: str):
+    cleaned = (contact_id or '').strip()
+    phone_norm = normalize_phone(cleaned)
+    filters = [Ticket.preferred_reply_contact == cleaned, Ticket.source_chat_id == cleaned]
+    if phone_norm and phone_norm != cleaned:
+        filters.extend([Ticket.preferred_reply_contact == phone_norm, Ticket.source_chat_id == phone_norm])
+    return filters
+
+
 def _normalize_priority(priority: str | None) -> TicketPriority:
     if not priority:
         return TicketPriority.medium
@@ -307,12 +316,7 @@ def nexusdesk_escalate_task(
             team = _pick_support_team(db, country_code=payload.country_code, market=market)
 
             filters = [
-                or_(
-                    Ticket.preferred_reply_contact == payload.contact_id,
-                    Ticket.preferred_reply_contact == normalize_phone(payload.contact_id),
-                    Ticket.source_chat_id == payload.contact_id,
-                    Ticket.source_chat_id == normalize_phone(payload.contact_id),
-                ),
+                or_(*_ticket_duplicate_contact_filters(payload.contact_id)),
                 Ticket.status.notin_(list(TERMINAL_STATUSES)),
             ]
             if payload.tracking_number:
