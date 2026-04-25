@@ -98,8 +98,9 @@ So in production:
 Conclusion: **No.**
 
 Reason:
-- production path is already hard-blocked inside settings normalization and in the `allow_dev_auth` expression itself
-- production also raises if `ALLOW_DEV_AUTH` is enabled during startup validation
+- production path is hard-blocked inside settings normalization
+- and the allowed environments for dev auth have now been explicitly narrowed to a whitelist: `development`, `test`, and `local`
+- `production`, `staging`, `preview`, and `demo` therefore all resolve `allow_dev_auth` to `False` by default
 
 ### Does it bypass JWT / current user validation?
 
@@ -117,7 +118,8 @@ Conclusion: **No.**
 
 Reason:
 - `X-User-Id` only works when `allow_dev_auth` is true
-- `allow_dev_auth` cannot be true in production by construction
+- `allow_dev_auth` now requires both `ALLOW_DEV_AUTH=true` and `APP_ENV in {development, test, local}`
+- therefore `production`, `staging`, `preview`, and `demo` cannot activate `X-User-Id` dev auth by default
 
 ### Is it necessary to keep?
 
@@ -132,7 +134,7 @@ Reason:
 
 - **Retain**
 - **No rollback required**
-- **No extra narrowing patch needed beyond existing production guardrails**
+- `deps.py` itself remains unchanged in behavior, but the underlying `allow_dev_auth` gate was further narrowed in `settings.py` to an explicit environment whitelist
 
 ## Focus audit: `backend/scripts/roundb_ensure_local_admin.py`
 
@@ -224,6 +226,7 @@ It still points to the caller-provided `BASE_URL` and uses synthetic smoke data.
 ### Action taken after audit
 
 - retained `deps.py`
+- narrowed `allow_dev_auth` in `settings.py` to `APP_ENV in {development, test, local}` plus explicit truthy `ALLOW_DEV_AUTH`
 - hardened `roundb_ensure_local_admin.py` with an explicit production refusal
 - recorded this audit in `docs/round-b-post-push-audit.md`
 
