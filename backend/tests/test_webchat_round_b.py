@@ -89,9 +89,12 @@ def test_webchat_ai_reply_uses_bridge_when_enabled(monkeypatch):
 
     monkeypatch.setattr(webchat_ai_service.settings, 'openclaw_bridge_enabled', True)
     calls = []
+    payloads = []
 
     def fake_urlopen(req, timeout=0):
         calls.append(req.full_url)
+        if getattr(req, 'data', None):
+            payloads.append((req.full_url, json.loads(req.data.decode('utf-8'))))
         class Resp:
             def __init__(self, payload):
                 self.payload = payload
@@ -119,6 +122,16 @@ def test_webchat_ai_reply_uses_bridge_when_enabled(monkeypatch):
 
     assert any(url.endswith('/send-message') for url in calls)
     assert any(url.endswith('/read-messages') for url in calls)
+
+    send_payload = next(payload for url, payload in payloads if url.endswith('/send-message'))
+    assert send_payload['channel'] == 'webchat_ai'
+    assert send_payload['target'].startswith(f'webchat:{conversation_id}:ticket:')
+    assert send_payload['sessionKey'].startswith(f'webchat-ai-{conversation_id}-')
+    assert isinstance(send_payload['body'], str) and send_payload['body']
+
+    read_payload = next(payload for url, payload in payloads if url.endswith('/read-messages'))
+    assert read_payload['sessionKey'].startswith(f'webchat-ai-{conversation_id}-')
+    assert read_payload['limit'] == 6
 
     polled_after = client.get(f'/api/webchat/conversations/{conversation_id}/messages', params={'visitor_token': visitor_token})
     assert polled_after.status_code == 200, polled_after.text

@@ -209,9 +209,15 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
 def _generate_ai_reply_via_bridge(*, prompt: str, conversation: WebchatConversation, visitor_message: WebchatMessage) -> str:
     bridge_url = settings.openclaw_bridge_url.rstrip('/')
     session_key = f"webchat-ai-{conversation.public_id}-{visitor_message.id}"
+    target = f"webchat:{conversation.public_id}:ticket:{conversation.ticket_id}"
     send_req = urllib.request.Request(
         f"{bridge_url}/send-message",
-        data=json.dumps({"sessionKey": session_key, "body": prompt}).encode("utf-8"),
+        data=json.dumps({
+            "channel": "webchat_ai",
+            "target": target,
+            "sessionKey": session_key,
+            "body": prompt,
+        }).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )

@@ -93,4 +93,23 @@ print('smoke_ok=true')
 PY
 
 echo
+
+echo '== optional worker log assertions =='
+if [ -n "${WORKER_LOG_CMD:-}" ]; then
+  eval "$WORKER_LOG_CMD" > "$TMP_DIR/worker.log" 2>/dev/null || true
+  cat "$TMP_DIR/worker.log"
+  if grep -q 'missing_required_fields' "$TMP_DIR/worker.log"; then
+    echo 'worker_log_check=failed missing_required_fields detected' >&2
+    exit 1
+  fi
+  if grep -q 'webchat_ai_bridge_runtime_failed' "$TMP_DIR/worker.log"; then
+    echo 'worker_log_check=bridge_failed'
+  elif grep -q 'fallback": false' "$TMP_DIR/worker.log" || grep -q 'fallback=false' "$TMP_DIR/worker.log"; then
+    echo 'worker_log_check=bridge_or_safe_reply_without_fallback'
+  else
+    echo 'worker_log_check=log_inconclusive'
+  fi
+fi
+
+echo
 echo '== done =='
