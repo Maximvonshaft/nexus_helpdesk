@@ -32,10 +32,13 @@ PAYLOAD='{
     "threadId":"mock-thread-001"
   }
 }'
-RESP="$(curl -fsS -X POST "$MOCK_URL/messages_send" -H 'content-type: application/json' --data "$PAYLOAD")"
-printf '%s' "$RESP" | python3 - <<'PY'
-import json, sys
-resp = json.load(sys.stdin)
+RESP_FILE="/tmp/nexusdesk-same-route-response.json"
+curl -fsS -X POST "$MOCK_URL/messages_send" -H 'content-type: application/json' --data "$PAYLOAD" > "$RESP_FILE"
+python3 - "$RESP_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+resp = json.loads(Path(sys.argv[1]).read_text())
 if not resp.get('ok'):
     raise SystemExit(f'mock send failed: {resp}')
 route = resp['message']['route']
