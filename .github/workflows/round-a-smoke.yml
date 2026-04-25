@@ -1,0 +1,85 @@
+name: round-a-smoke
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  round-a-smoke:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite:///./round_a_ci.db
+      APP_ENV: test
+      SECRET_KEY: ci-secret-key-change-me-with-enough-length
+      OPENCLAW_MOCK_MODE: "1"
+      NEXUSDESK_SMOKE_MODE: mock
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest
+
+      - name: Backend compile
+        run: python -m compileall backend/app backend/scripts
+
+      - name: Deterministic backend tests
+        working-directory: backend
+        run: |
+          pytest -q \
+            tests/test_outbound_safety.py \
+            tests/test_next_phase_max_push.py \
+            tests/test_openclaw_local_ops.py \
+            tests/test_round20a_rectification.py \
+            tests/test_round20b_legacy_frontend.py \
+            tests/test_round27_frontend_hardening.py
+
+      - name: Alembic upgrade on disposable SQLite
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Frontend build
+        working-directory: webapp
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
+      - name: Smoke dry run
+        run: bash scripts/smoke/smoke_all_round_a.sh --dry-run
+
+      - name: Mock-only smoke subset
+        run: |
+          bash scripts/smoke/smoke_e2e_outbound_safety.sh
+          bash scripts/smoke/smoke_e2e_openclaw_inbound_event.sh
+          bash scripts/smoke/smoke_e2e_transcript_sync.sh
+          bash scripts/smoke/smoke_e2e_same_route_reply.sh
+          bash scripts/smoke/smoke_e2e_unresolved_event_replay.sh
+          bash scripts/smoke/smoke_e2e_attachment_persist.sh
+
+      - name: Secret leak sanity check
+        run: |
+          ! grep -R "ghp_[A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_]\|SECRET_KEY=.*[A-Za-z0-9]\{40,\}\|S3_SECRET_KEY=.*[A-Za-z0-9]\{40,\}" -n . \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            --exclude-dir=__pycache__ \
+            --exclude-dir=frontend_dist \
+            --exclude-dir=webapp/dist \
+            --exclude-dir=backend/uploads \
+            --exclude="*.pyc" \
+            --exclude="*.md" \
+            --exclude="*.example" \
+            --exclude="round-a-smoke.yml"

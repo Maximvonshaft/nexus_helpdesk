@@ -1,0 +1,14 @@
+{
+  "sessionKey": "mock-session-001",
+  "channel": "whatsapp",
+  "recipient": "+41000000001",
+  "accountId": "mock-wa-account",
+  "threadId": "mock-thread-001",
+  "route": {
+    "channel": "whatsapp",
+    "recipient": "+41000000001",
+    "accountId": "mock-wa-account",
+    "threadId": "mock-thread-001"
+  },
+  "title": "Mock WhatsApp delivery inquiry"
+}

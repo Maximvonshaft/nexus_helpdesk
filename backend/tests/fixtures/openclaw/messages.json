@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "id": "mock-message-001",
+      "role": "user",
+      "text": "Where is my parcel?",
+      "createdAt": "2026-04-24T16:00:00Z",
+      "attachments": ["mock-attachment-meta"]
+    },
+    {
+      "id": "mock-message-002",
+      "role": "assistant",
+      "text": "We have received your request and will check it shortly.",
+      "createdAt": "2026-04-24T16:01:00Z"
+    },
+    {
+      "id": "mock-message-001",
+      "role": "user",
+      "text": "Duplicate should be idempotent",
+      "createdAt": "2026-04-24T16:02:00Z"
+    },
+    {
+      "id": "mock-message-system",
+      "role": "system",
+      "text": "Internal system message should not become customer transcript.",
+      "createdAt": "2026-04-24T16:03:00Z"
+    },
+    {
+      "id": "mock-message-attachment-only",
+      "role": "user",
+      "text": "",
+      "createdAt": "2026-04-24T16:04:00Z",
+      "attachments": ["mock-attachment-base64", "mock-attachment-text"]
+    }
+  ]
+}

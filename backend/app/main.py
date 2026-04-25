@@ -99,8 +99,10 @@ app.include_router(stats_router)
 app.include_router(tickets_router)
 
 frontend_dir = settings.frontend_root
+assets_dir = frontend_dir / "assets"
 if frontend_dir.exists():
-    app.mount('/assets', StaticFiles(directory=str(frontend_dir / "assets")), name='frontend_assets')
+    if assets_dir.exists():
+        app.mount('/assets', StaticFiles(directory=str(assets_dir)), name='frontend_assets')
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
@@ -109,4 +111,7 @@ if frontend_dir.exists():
         file_path = frontend_dir / full_path
         if file_path.is_file():
             return FileResponse(str(file_path))
-        return FileResponse(str(frontend_dir / "index.html"))
+        index_path = frontend_dir / "index.html"
+        if index_path.is_file():
+            return FileResponse(str(index_path))
+        return JSONResponse(status_code=404, content={"detail": "Frontend not built"})
