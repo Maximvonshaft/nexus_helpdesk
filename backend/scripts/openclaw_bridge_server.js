@@ -356,6 +356,54 @@ class BridgeRuntime {
     }
   }
 
+  async aiReply(payload) {
+    if (!this.client) {
+      throw new Error('bridge_client_not_started');
+    }
+    await this.waitForReady();
+
+    const bridgeRequestId = crypto.randomUUID();
+    const sessionKey = String(payload.sessionKey || '').trim();
+    const prompt = String(payload.prompt || '').trim();
+    const limit = Number.isFinite(payload.limit) ? payload.limit : 6;
+    if (!sessionKey) throw new Error('missing_sessionKey');
+    if (!prompt) throw new Error('missing_prompt');
+
+    this.pendingRequests.set(bridgeRequestId, {
+      createdAt: nowIso(),
+      sessionKey,
+      action: 'ai_reply',
+    });
+
+    log('info', 'bridge_ai_reply_dispatch', { bridgeRequestId, sessionKey, limit });
+
+    try {
+      await this.client.request('sessions.send', {
+        sessionKey,
+        message: prompt,
+      }, { timeoutMs: this.config.requestTimeoutMs });
+
+      const history = await this.client.request('chat.history', {
+        sessionKey,
+        limit,
+      }, { timeoutMs: this.config.requestTimeoutMs });
+      const messages = history.messages || [];
+
+      log('info', 'bridge_ai_reply_success', { bridgeRequestId, sessionKey, count: messages.length });
+      return { bridgeRequestId, messages };
+    } catch (error) {
+      log('warn', 'bridge_ai_reply_failed', {
+        bridgeRequestId,
+        sessionKey,
+        error: error?.message || String(error),
+        details: error?.details || null,
+      });
+      throw error;
+    } finally {
+      this.pendingRequests.delete(bridgeRequestId);
+    }
+  }
+
   pollEvents(payload) {
     const afterCursor = Number.isFinite(payload.afterCursor) ? payload.afterCursor : 0;
     const sessionKey = payload.sessionKey;
@@ -596,6 +644,30 @@ async function main() {
         }
         try {
           const response = await bridge.readMessages(payload);
+          sendJson(res, 200, { ok: true, ...response });
+        } catch (error) {
+          const errorMessage = error?.message || String(error);
+          const statusCode = errorMessage.startsWith('bridge_not_ready') ? 503 : 502;
+          sendJson(res, statusCode, {
+            ok: false,
+            error: errorMessage,
+            details: error?.details || null,
+          });
+        }
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/ai-reply') {
+        const payload = await readJsonBody(req);
+        const missing = [];
+        if (!payload || !payload.sessionKey) missing.push('sessionKey');
+        if (!payload || typeof payload.prompt !== 'string' || !payload.prompt.trim()) missing.push('prompt');
+        if (missing.length) {
+          sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing });
+          return;
+        }
+        try {
+          const response = await bridge.aiReply(payload);
           sendJson(res, 200, { ok: true, ...response });
         } catch (error) {
           const errorMessage = error?.message || String(error);

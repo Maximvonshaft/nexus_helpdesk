@@ -104,9 +104,7 @@ def test_webchat_ai_reply_uses_bridge_when_enabled(monkeypatch):
                 return self
             def __exit__(self, exc_type, exc, tb):
                 return False
-        if req.full_url.endswith('/send-message'):
-            return Resp({'ok': True})
-        if req.full_url.endswith('/read-messages'):
+        if req.full_url.endswith('/ai-reply'):
             return Resp({'ok': True, 'messages': [{'role': 'assistant', 'text': 'We can help with delivery updates and general support.'}]})
         raise AssertionError(req.full_url)
 
@@ -120,18 +118,13 @@ def test_webchat_ai_reply_uses_bridge_when_enabled(monkeypatch):
     finally:
         db.close()
 
-    assert any(url.endswith('/send-message') for url in calls)
-    assert any(url.endswith('/read-messages') for url in calls)
+    assert any(url.endswith('/ai-reply') for url in calls)
+    assert not any(url.endswith('/send-message') for url in calls)
 
-    send_payload = next(payload for url, payload in payloads if url.endswith('/send-message'))
-    assert send_payload['channel'] == 'webchat_ai'
-    assert send_payload['target'].startswith(f'webchat:{conversation_id}:ticket:')
-    assert send_payload['sessionKey'].startswith(f'webchat-ai-{conversation_id}-')
-    assert isinstance(send_payload['body'], str) and send_payload['body']
-
-    read_payload = next(payload for url, payload in payloads if url.endswith('/read-messages'))
-    assert read_payload['sessionKey'].startswith(f'webchat-ai-{conversation_id}-')
-    assert read_payload['limit'] == 6
+    ai_payload = next(payload for url, payload in payloads if url.endswith('/ai-reply'))
+    assert ai_payload['sessionKey'].startswith(f'webchat-ai-{conversation_id}-')
+    assert ai_payload['limit'] == 6
+    assert isinstance(ai_payload['prompt'], str) and ai_payload['prompt']
 
     polled_after = client.get(f'/api/webchat/conversations/{conversation_id}/messages', params={'visitor_token': visitor_token})
     assert polled_after.status_code == 200, polled_after.text
