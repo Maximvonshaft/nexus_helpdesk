@@ -1,0 +1,88 @@
+name: round-a-smoke
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  round-a-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: helpdesk
+          POSTGRES_PASSWORD: helpdesk
+          POSTGRES_DB: helpdesk
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U helpdesk -d helpdesk"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+psycopg2://helpdesk:helpdesk@127.0.0.1:5432/helpdesk
+      APP_ENV: test
+      SECRET_KEY: ci-secret-key-change-me-with-enough-length
+      OPENCLAW_MOCK_MODE: "1"
+      NEXUSDESK_SMOKE_MODE: mock
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest
+
+      - name: Backend compile
+        run: python -m compileall backend/app backend/scripts
+
+      - name: Backend tests
+        working-directory: backend
+        run: pytest -q
+
+      - name: Alembic upgrade
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Frontend build
+        working-directory: webapp
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
+      - name: Smoke dry run
+        run: bash scripts/smoke/smoke_all_round_a.sh --dry-run
+
+      - name: Mock-only smoke subset
+        run: |
+          bash scripts/smoke/smoke_e2e_outbound_safety.sh
+          bash scripts/smoke/smoke_e2e_openclaw_inbound_event.sh
+          bash scripts/smoke/smoke_e2e_transcript_sync.sh
+          bash scripts/smoke/smoke_e2e_same_route_reply.sh
+          bash scripts/smoke/smoke_e2e_unresolved_event_replay.sh
+          bash scripts/smoke/smoke_e2e_attachment_persist.sh
+
+      - name: Secret leak sanity check
+        run: |
+          ! grep -R "ghp_\|SECRET_KEY=.*[A-Za-z0-9]\{20,\}\|DATABASE_URL=.*password\|S3_SECRET_KEY=.*[A-Za-z0-9]" -n . \
+            --exclude-dir=.git \
+            --exclude-dir=node_modules \
+            --exclude-dir=frontend_dist \
+            --exclude-dir=webapp/dist \
+            --exclude-dir=backend/uploads \
+            --exclude="*.md"
