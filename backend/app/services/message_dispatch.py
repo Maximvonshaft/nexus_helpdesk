@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import timedelta
+from typing import Any
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session, joinedload
@@ -167,9 +168,35 @@ def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: 
     )
 
 
+def _build_fact_evidence(ticket: Ticket | None) -> dict[str, Any] | None:
+    """Build the minimal ticket-backed evidence object available to the worker.
+
+    This is intentionally conservative: a tracking number alone is not enough to
+    bypass review. A human/system update on the ticket must also be present.
+    """
+    if ticket is None or not getattr(ticket, 'tracking_number', None):
+        return None
+    evidence_summary = ticket.customer_update or ticket.resolution_summary or ticket.last_human_update
+    if not evidence_summary:
+        return None
+    return {
+        'evidence_source': 'ticket_operator_context',
+        'tracking_number': ticket.tracking_number,
+        'checked_at': utc_now().isoformat(),
+        'evidence_summary': evidence_summary,
+    }
+
+
 def _enforce_outbound_safety(db: Session, message: TicketOutboundMessage, ticket: Ticket | None) -> bool:
     source = message.provider_status or 'manual_or_unknown'
-    decision = evaluate_outbound_safety(ticket, message.body, source=source, has_fact_evidence=False)
+    fact_evidence = _build_fact_evidence(ticket)
+    decision = evaluate_outbound_safety(
+        ticket,
+        message.body,
+        source=source,
+        has_fact_evidence=fact_evidence is not None,
+        fact_evidence=fact_evidence,
+    )
     reason = format_safety_reasons(decision)
     if decision.level == 'block':
         _mark_dead(message, reason, failure_code='safety_blocked')
@@ -190,7 +217,7 @@ def _enforce_outbound_safety(db: Session, message: TicketOutboundMessage, ticket
             actor_id=message.created_by,
             event_type=EventType.outbound_failed,
             note='Outbound safety gate requires human review before send',
-            payload={'message_id': message.id, 'safety_level': decision.level, 'reasons': decision.reasons},
+            payload={'message_id': message.id, 'safety_level': decision.level, 'reasons': decision.reasons, 'fact_evidence_present': fact_evidence is not None},
         )
         return False
     message.body = decision.normalized_body
@@ -233,7 +260,7 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
             session_key=session_key,
         )
         if status == MessageStatus.failed and settings.openclaw_cli_fallback_enabled:
-            LOGGER.warning('openclaw_bridge_dispatch_failed_falling_back_to_cli', extra={'event_payload': {'message_id': message.id, 'ticket_id': message.ticket_id, 'channel': channel_value, 'target': target, 'provider_status': provider_status}})
+            LOGGER.warning('openclaw_bridge_dispatch_failed_falling_back_to_cli', extra={'event_payload': {'message_id': message.id, 'ticket_id': message.ticket_id, 'channel': channel_value, 'target': target, 'account_id': account_id, 'thread_id': thread_id, 'provider_status': provider_status}})
             status, provider_status, sent_at = dispatch_via_openclaw_cli(channel=channel_value, target=target, body=message.body, account_id=account_id, thread_id=thread_id)
     elif session_key:
         status, provider_status, sent_at = dispatch_via_openclaw_mcp(session_key, message.body)
@@ -246,13 +273,13 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
             ticket.conversation_state = ConversationState.waiting_customer
         if session_key:
             log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.openclaw_reply_sent, note='OpenClaw same-route reply sent', payload={'message_id': message.id, 'session_key': session_key, 'provider_status': provider_status})
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_sent, note='Queued outbound message sent', payload={'message_id': message.id, 'provider_status': provider_status, 'route': {'channel': channel_value, 'account_id': account_id, 'source': 'ticket_or_market_or_fallback'}})
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_sent, note='Queued outbound message sent', payload={'message_id': message.id, 'provider_status': provider_status, 'route': {'channel': channel_value, 'account_id': account_id, 'thread_id': thread_id, 'source': 'ticket_or_market_or_fallback'}})
         return message
 
     reason = provider_status or 'Dispatch failed'
     _mark_retry(message, reason)
     event_type = EventType.outbound_dead if message.status == MessageStatus.dead else EventType.outbound_retry_scheduled
-    log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='Queued outbound message failed dispatch', payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count, 'route': {'channel': channel_value, 'account_id': account_id, 'source': 'ticket_or_market_or_fallback'}})
+    log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='Queued outbound message failed dispatch', payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count, 'route': {'channel': channel_value, 'account_id': account_id, 'thread_id': thread_id, 'source': 'ticket_or_market_or_fallback'}})
     return message
 
 
