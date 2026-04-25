@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..db import get_db
 from ..enums import SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole
-from ..models import Customer, Market, Team, Ticket, User
+from ..models import Customer, IntegrationClient, Market, Team, Ticket, User
 from ..schemas import CustomerInput, TicketCreate
 from ..services.integration_auth import (
     AuthenticatedIntegrationClient,
@@ -25,6 +25,7 @@ from ..services.integration_auth import (
 from ..services.ticket_service import create_ticket
 from ..settings import get_settings
 from ..unit_of_work import managed_session
+from ..utils.time import utc_now
 
 router = APIRouter(prefix='/api/v1/integration', tags=['integration'])
 settings = get_settings()
@@ -162,6 +163,10 @@ def _record_integration_error(
     request_hash: str | None,
     exc: HTTPException,
 ) -> None:
+    if client.client_id is not None:
+        row = db.query(IntegrationClient).filter(IntegrationClient.id == client.client_id).first()
+        if row is not None:
+            row.last_used_at = utc_now()
     record_integration_response(
         db,
         client=client,
