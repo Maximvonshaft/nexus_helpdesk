@@ -5,6 +5,7 @@ SMOKE_PREFIX="${NEXUSDESK_SMOKE_PREFIX:-nxd-round-a-$(date +%Y%m%d%H%M%S)}"
 SMOKE_MODE="${NEXUSDESK_SMOKE_MODE:-mock}"
 OPENCLAW_MOCK_MODE="${OPENCLAW_MOCK_MODE:-1}"
 API_URL="${NEXUSDESK_API_URL:-http://127.0.0.1:18081}"
+SKIP_EXIT_CODE="${SKIP_EXIT_CODE:-77}"
 DRY_RUN=0
 
 usage_common() {
@@ -42,7 +43,7 @@ parse_common_args() {
 
 pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*" >&2; exit 1; }
-skip() { echo "SKIP $*"; exit 0; }
+skip() { echo "SKIP $*"; exit "$SKIP_EXIT_CODE"; }
 info() { echo "INFO $*"; }
 
 need_cmd() {
@@ -65,7 +66,7 @@ api_get() {
 require_live_api() {
   if [ "$DRY_RUN" = "1" ]; then
     info "dry-run: would call live NexusDesk API at $API_URL"
-    exit 0
+    return 0
   fi
 }
 
@@ -77,7 +78,7 @@ require_env() {
       missing=1
     fi
   done
-  [ "$missing" = "0" ] || exit 0
+  [ "$missing" = "0" ] || exit "$SKIP_EXIT_CODE"
 }
 
 ensure_safe_mode() {
