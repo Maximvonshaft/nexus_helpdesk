@@ -22,7 +22,10 @@ if [[ "${1:-}" == "--dry-run" ]]; then
 fi
 
 json_get() {
-  python3 -c "import json,sys; data=json.load(sys.stdin); cur=data;\nfor p in sys.argv[1].split('.'):\n    cur=cur[int(p)] if isinstance(cur, list) else cur[p]\nprint(cur)" "$1"
+  local path="$1"
+  local payload
+  payload=$(cat)
+  JSON_PAYLOAD="$payload" python3 -c 'import json, os, sys; cur = json.loads(os.environ["JSON_PAYLOAD"]); [None for p in sys.argv[1].split(".") if not (globals().__setitem__("cur", cur[int(p)] if isinstance(cur, list) else cur[p]))]; print(cur)' "$path"
 }
 
 curl_json() {

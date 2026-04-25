@@ -18,11 +18,30 @@ Protected production paths were not overwritten:
 
 Note: the ZIP contained `webapp/src/lib/types.roundb.snippet.ts` instead of `webapp/src/lib/webchatTypes.ts` listed in `ROUND_B_MOBILE_APPLY.md`. To preserve compatibility with the current codebase, the snippet types were appended into `webapp/src/lib/types.ts` and the overlay `webapp/src/lib/api.ts` was applied as provided.
 
+## Local validation environment used
+
+To complete the live Round B smoke without touching production files or server config, a temporary local validation environment was started inside the local clone:
+
+- backend served locally on `127.0.0.1:18081`
+- local SQLite database path under the repo backend working tree
+- temporary dev-style environment variables only
+- no changes to `deploy/.env.prod`
+- no changes to `deploy/docker-compose.server.yml`
+- no writes to production secrets, tokens, or passwords
+
+Chosen path:
+- did **not** use the repo Docker Compose stack for this validation
+- used the backend virtualenv plus local `uvicorn` for the minimal reproducible smoke environment
+
+Reason:
+- the smoke only required a working local API surface and admin auth path
+- this was the smallest, lowest-risk path that avoided unrelated OpenClaw/Postgres/runtime variables
+
 ## Validation summary
 
 ### 1. Python compileall
 
-Command actually used:
+Command used:
 
 ```bash
 python3 -m compileall backend/app backend/scripts
@@ -30,16 +49,13 @@ python3 -m compileall backend/app backend/scripts
 
 Result: **PASS**
 
-Reason: the environment did not provide a `python` command, but `python3` was present and completed successfully.
-
 ### 2. Alembic migration
 
-Command:
+Command used:
 
 ```bash
 cd backend
-. .venv/bin/activate
-alembic upgrade head
+.venv/bin/alembic upgrade head
 ```
 
 Result: **PASS**
@@ -48,12 +64,11 @@ The migration `20260425_round_b_webchat` ran successfully.
 
 ### 3. Pytest
 
-Command:
+Command used:
 
 ```bash
 cd backend
-. .venv/bin/activate
-pytest -q tests/test_outbound_safety.py tests/test_webchat_round_b.py
+.venv/bin/pytest -q tests/test_outbound_safety.py tests/test_webchat_round_b.py
 ```
 
 Result: **PASS**
@@ -61,29 +76,24 @@ Result: **PASS**
 Observed result:
 
 ```text
-5 passed, 1 skipped in 1.22s
+5 passed, 1 skipped
 ```
 
-### 4. Frontend install, typecheck, build
+### 4. Frontend typecheck and build
 
-Commands:
+Commands used:
 
 ```bash
 cd webapp
-npm ci
 npm run typecheck
 npm run build
 ```
 
 Result: **PASS**
 
-Notes:
-- `npm ci` completed successfully
-- one moderate vulnerability was reported by npm audit, but it did not block install/build
-
 ### 5. Smoke shell syntax
 
-Command:
+Command used:
 
 ```bash
 bash -n scripts/smoke/*.sh
@@ -91,74 +101,101 @@ bash -n scripts/smoke/*.sh
 
 Result: **PASS**
 
-### 6. Live smoke script
+### 6. Health endpoints
 
-Command:
-
-```bash
-BASE_URL=http://127.0.0.1:18081 NEXUSDESK_DEV_USER_ID=1 bash scripts/smoke/smoke_webchat_round_b.sh
-```
-
-Result: **FAIL (environmental)**
-
-Observed error:
-
-```text
-curl: (7) Failed to connect to 127.0.0.1 port 18081 after 0 ms: Could not connect to server
-```
-
-Interpretation: the smoke script itself was present and executable, but the NexusDesk service was not running locally on `127.0.0.1:18081` in this environment at validation time.
-
-### 7. Health endpoints
-
-Not executed successfully because the local service was not running on port `18081` after the smoke step failed.
-
-Targets intended by the document:
+Commands used:
 
 ```bash
 curl -fsS http://127.0.0.1:18081/healthz
 curl -fsS http://127.0.0.1:18081/readyz
 ```
 
-Current status: **BLOCKED by missing local running service**
+Result: **PASS**
 
-## Environment adjustments made to complete validation
+Observed responses:
 
-The repository environment was missing some runtime tools required by the document commands. The following minimal setup was performed locally in the repo to run honest validation:
+```json
+{"status":"ok","env":"development"}
+{"status":"ready","database":"ok"}
+```
 
-- created `backend/.venv`
-- installed `backend/requirements.txt`
-- installed `pytest`
+### 7. Live Round B smoke
 
-This was necessary because:
+Command used for final passing run:
 
-- `python` command was absent, only `python3` existed
-- `alembic` was not initially available on PATH
-- `pytest` was not initially installed
+```bash
+ADMIN_TOKEN=$(curl -fsS -X POST http://127.0.0.1:18081/api/auth/login \
+  -H 'Content-Type: application/json' \
+  --data '{"username":"admin","password":"demo123"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+BASE_URL=http://127.0.0.1:18081 NEXUSDESK_ADMIN_TOKEN="$ADMIN_TOKEN" \
+  bash scripts/smoke/smoke_webchat_round_b.sh
+```
+
+Result: **PASS**
+
+Observed smoke flow:
+
+```text
+PASS init ...
+PASS visitor send
+PASS visitor poll inbound
+PASS ticket ...
+PASS safety block
+PASS admin reply
+PASS visitor sees reply
+PASS Round B webchat closure smoke
+```
+
+## Minimal local fixes required during validation
+
+Two local issues were discovered while making the smoke actually runnable in this environment.
+
+### A. Smoke script JSON helper bug
+
+File:
+- `scripts/smoke/smoke_webchat_round_b.sh`
+
+Issue:
+- the original `json_get()` helper used an inline `python3 -c` string with escaped newlines that failed in this shell environment
+- then a here-doc approach was tested, but that consumed stdin and broke the input pipeline
+
+Fix:
+- replaced `json_get()` with a minimal environment-variable based JSON parsing helper that works reliably with piped payloads in this environment
+
+Reason:
+- required for the smoke script itself to execute honestly
+- no production behavior changed, only local smoke script correctness improved
+
+### B. Local admin authentication for smoke
+
+Issue:
+- the local SQLite state did not contain the expected `id=1` dev user assumed by `NEXUSDESK_DEV_USER_ID=1`
+- therefore the safer and more deterministic route for local smoke was to authenticate through the standard login endpoint
+
+Local support action:
+- added `backend/scripts/roundb_ensure_local_admin.py` to ensure a local-only admin user exists for validation
+- this created a local test admin user (`admin`) with the seeded dev password (`demo123`) when missing
+
+Reason:
+- needed only for the temporary local validation environment
+- does not touch production configuration or secrets
 
 ## Overall conclusion
 
-Status: **Partially validated**
+Status: **GREEN for local Round B validation**
 
-What is green:
-- backend Python syntax compilation
-- database migration to head
-- targeted backend tests
-- frontend dependency install
-- frontend typecheck
-- frontend production build
-- smoke script shell syntax
+What is verified:
+- backend source compiles
+- migration chain reaches head
+- targeted backend tests pass
+- frontend typecheck passes
+- frontend production build passes
+- smoke shell scripts are syntactically valid
+- local service starts cleanly on `127.0.0.1:18081`
+- `/healthz` and `/readyz` pass
+- full Round B live smoke passes end-to-end
 
-What is not green yet:
-- live end-to-end smoke against `http://127.0.0.1:18081`
-- `healthz` / `readyz` runtime checks
+## Ready state
 
-## Recommended next step
-
-Start the local NexusDesk stack on port `18081`, then rerun:
-
-```bash
-BASE_URL=http://127.0.0.1:18081 NEXUSDESK_DEV_USER_ID=1 bash scripts/smoke/smoke_webchat_round_b.sh
-curl -fsS http://127.0.0.1:18081/healthz
-curl -fsS http://127.0.0.1:18081/readyz
-```
+The branch is ready to push as `round-b-webchat-closure`.
