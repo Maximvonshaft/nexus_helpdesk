@@ -35,14 +35,14 @@ for script in "${SCRIPTS[@]}"; do
   set -e
   case "$code" in
     0) PASSES=$((PASSES+1)) ;;
-    2) SKIPS=$((SKIPS+1)) ;;
+    "$SKIP_EXIT_CODE") SKIPS=$((SKIPS+1)) ;;
     *) FAILURES=$((FAILURES+1)); echo "FAIL $script exited $code" >&2 ;;
   esac
 done
 
 echo
 echo "===== ROUND A SMOKE SUMMARY ====="
-echo "PASS_OR_SKIP_COUNT=$PASSES"
+echo "PASS_COUNT=$PASSES"
 echo "SKIP_COUNT=$SKIPS"
 echo "FAIL_COUNT=$FAILURES"
 [ "$FAILURES" = "0" ] || exit 1
