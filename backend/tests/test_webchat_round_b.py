@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -130,6 +132,18 @@ def test_webchat_ai_reply_uses_bridge_when_enabled(monkeypatch):
     assert polled_after.status_code == 200, polled_after.text
     messages_after = polled_after.json()['messages']
     assert any(item['direction'] == 'agent' and item['author_label'] == 'NexusDesk AI Assistant' for item in messages_after)
+
+
+def test_bridge_ai_reply_maps_public_session_key_to_gateway_key():
+    bridge_script = Path(__file__).resolve().parents[1] / 'scripts' / 'openclaw_bridge_server.js'
+    source = bridge_script.read_text(encoding='utf-8')
+    ai_reply_block = source.split('async aiReply(payload) {', 1)[1].split('\n  pollEvents(payload)', 1)[0]
+
+    assert "this.client.request('sessions.send'" in ai_reply_block
+    assert "this.client.request('chat.history'" in ai_reply_block
+    assert 'key: sessionKey' in ai_reply_block
+    assert 'sessionKey,\n        message: prompt' not in ai_reply_block
+    assert 'sessionKey,\n        limit,' not in ai_reply_block
 
 
 def test_webchat_ai_reply_bridge_failure_falls_back_safely(monkeypatch):
