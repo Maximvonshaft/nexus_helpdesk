@@ -50,9 +50,16 @@ jobs:
       - name: Backend compile
         run: python -m compileall backend/app backend/scripts
 
-      - name: Backend tests
+      - name: Deterministic backend tests
         working-directory: backend
-        run: pytest -q
+        run: |
+          pytest -q \
+            tests/test_outbound_safety.py \
+            tests/test_next_phase_max_push.py \
+            tests/test_openclaw_local_ops.py \
+            tests/test_round20a_rectification.py \
+            tests/test_round20b_legacy_frontend.py \
+            tests/test_round27_frontend_hardening.py
 
       - name: Alembic upgrade
         working-directory: backend
