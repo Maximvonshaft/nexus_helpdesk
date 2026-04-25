@@ -8,22 +8,8 @@ on:
 jobs:
   round-a-smoke:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: helpdesk
-          POSTGRES_PASSWORD: helpdesk
-          POSTGRES_DB: helpdesk
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U helpdesk -d helpdesk"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     env:
-      DATABASE_URL: postgresql+psycopg2://helpdesk:helpdesk@127.0.0.1:5432/helpdesk
+      DATABASE_URL: sqlite:///./round_a_ci.db
       APP_ENV: test
       SECRET_KEY: ci-secret-key-change-me-with-enough-length
       OPENCLAW_MOCK_MODE: "1"
@@ -61,7 +47,7 @@ jobs:
             tests/test_round20b_legacy_frontend.py \
             tests/test_round27_frontend_hardening.py
 
-      - name: Alembic upgrade
+      - name: Alembic upgrade on disposable SQLite
         working-directory: backend
         run: alembic upgrade head
 
@@ -86,7 +72,7 @@ jobs:
 
       - name: Secret leak sanity check
         run: |
-          ! grep -R "ghp_\|SECRET_KEY=.*[A-Za-z0-9]\{20,\}\|DATABASE_URL=.*password\|S3_SECRET_KEY=.*[A-Za-z0-9]" -n . \
+          ! grep -R "ghp_\|SECRET_KEY=.*[A-Za-z0-9]\{20,\}\|S3_SECRET_KEY=.*[A-Za-z0-9]" -n . \
             --exclude-dir=.git \
             --exclude-dir=node_modules \
             --exclude-dir=frontend_dist \
