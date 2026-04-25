@@ -56,6 +56,15 @@ class OpenClawMCPClient:
     def start(self) -> None:
         if self.process is not None:
             return
+        log_event(
+            20,
+            'openclaw_mcp_start',
+            command=settings.openclaw_mcp_command,
+            url=settings.openclaw_mcp_url,
+            token_file=bool(settings.openclaw_mcp_token_file),
+            password_file=bool(settings.openclaw_mcp_password_file),
+            extra_paths=settings.openclaw_extra_paths,
+        )
         self.process = subprocess.Popen(
             self._build_command(),
             stdin=subprocess.PIPE,

@@ -4,6 +4,8 @@ services:
       context: ..
       dockerfile: Dockerfile
     image: nexusdesk/helpdesk:round27
+    env_file:
+      - .env.prod
     environment:
       APP_ENV: production
       AUTO_INIT_DB: "false"
@@ -12,11 +14,15 @@ services:
       OPENCLAW_TRANSPORT: mcp
       OPENCLAW_CLI_FALLBACK_ENABLED: "false"
       REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
+    volumes:
+      - /run/secrets:/run/secrets:ro
     command: uvicorn app.main:app --host 0.0.0.0 --port 8080
     restart: unless-stopped
 
   worker:
     image: nexusdesk/helpdesk:round27
+    env_file:
+      - .env.prod
     environment:
       APP_ENV: production
       AUTO_INIT_DB: "false"
@@ -25,6 +31,8 @@ services:
       OPENCLAW_TRANSPORT: mcp
       OPENCLAW_CLI_FALLBACK_ENABLED: "false"
       REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
+    volumes:
+      - /run/secrets:/run/secrets:ro
     command: python scripts/run_worker.py --worker-id worker-main
     restart: unless-stopped
     depends_on:
@@ -32,6 +40,8 @@ services:
 
   sync-daemon:
     image: nexusdesk/helpdesk:round27
+    env_file:
+      - .env.prod
     environment:
       APP_ENV: production
       AUTO_INIT_DB: "false"
@@ -40,6 +50,8 @@ services:
       OPENCLAW_TRANSPORT: mcp
       OPENCLAW_CLI_FALLBACK_ENABLED: "false"
       REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
+    volumes:
+      - /run/secrets:/run/secrets:ro
     command: python scripts/run_openclaw_sync_daemon.py --worker-id worker-openclaw-sync
     restart: unless-stopped
     depends_on:
@@ -47,6 +59,8 @@ services:
 
   event-daemon:
     image: nexusdesk/helpdesk:round27
+    env_file:
+      - .env.prod
     environment:
       APP_ENV: production
       AUTO_INIT_DB: "false"
@@ -56,6 +70,8 @@ services:
       OPENCLAW_CLI_FALLBACK_ENABLED: "false"
       REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
       OPENCLAW_EVENT_DRIVER_ENABLED: "true"
+    volumes:
+      - /run/secrets:/run/secrets:ro
     command: python scripts/run_openclaw_event_daemon.py
     restart: unless-stopped
     depends_on:

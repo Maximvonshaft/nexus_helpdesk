@@ -49,19 +49,35 @@ curl -fsS "$BASE_URL/api/webchat/conversations/$CONVERSATION_ID/messages" \
 cat "$TMP_DIR/send.json"
 
 echo
-echo '== poll messages =='
-curl -fsS "$BASE_URL/api/webchat/conversations/$CONVERSATION_ID/messages?visitor_token=$VISITOR_TOKEN" > "$TMP_DIR/poll.json"
-cat "$TMP_DIR/poll.json"
+echo '== wait and poll messages =='
+for i in $(seq 1 15); do
+  curl -fsS "$BASE_URL/api/webchat/conversations/$CONVERSATION_ID/messages?visitor_token=$VISITOR_TOKEN" > "$TMP_DIR/poll.json"
+  cat "$TMP_DIR/poll.json"
+  if POLL_FILE="$TMP_DIR/poll.json" python3 - <<'PY'
+import json, os
+with open(os.environ['POLL_FILE'], 'r', encoding='utf-8') as f:
+    payload = json.load(f)
+messages = payload.get('messages', [])
+if any(m.get('direction') == 'agent' and m.get('author_label') == 'NexusDesk AI Assistant' for m in messages):
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+  then
+    break
+  fi
+  sleep 1
+done
 
 echo
 echo '== assertions =='
-python3 - "$TMP_DIR/poll.json" <<'PY'
-import json, sys
-with open(sys.argv[1], 'r', encoding='utf-8') as f:
+POLL_FILE="$TMP_DIR/poll.json" python3 - <<'PY'
+import json, os
+with open(os.environ['POLL_FILE'], 'r', encoding='utf-8') as f:
     payload = json.load(f)
 messages = payload['messages']
 assert any(m['direction'] == 'visitor' and 'Where is my parcel?' in m['body'] for m in messages), 'missing visitor message'
 assert any(m['direction'] == 'agent' and 'received your parcel inquiry' in m['body'] for m in messages), 'missing acknowledgement message'
+assert any(m['direction'] == 'agent' and m.get('author_label') == 'NexusDesk AI Assistant' for m in messages), 'missing NexusDesk AI Assistant reply'
 assert any(m['direction'] == 'agent' and ('tracking number' in m['body'].lower() or 'review' in m['body'].lower()) for m in messages), 'missing AI or safe fallback reply'
 print('smoke_ok=true')
 PY
