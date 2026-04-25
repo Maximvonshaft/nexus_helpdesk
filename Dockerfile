@@ -1,15 +1,19 @@
-FROM node:22-bookworm-slim AS webapp-builder
+FROM m.daocloud.io/docker.io/library/node:22-bookworm-slim AS webapp-builder
 WORKDIR /build/webapp
 COPY webapp/package*.json ./
+RUN npm config set registry https://registry.npmmirror.com
 RUN npm ci
 COPY webapp/ ./
 RUN npm run build
 
-FROM python:3.11-slim
+FROM m.daocloud.io/docker.io/library/python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=180 \
+    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 
 WORKDIR /app
 
@@ -22,6 +26,12 @@ RUN pip install -r /tmp/requirements.txt || pip install -r /tmp/requirements.txt
 
 COPY . /app
 COPY --from=webapp-builder /build/frontend_dist /app/frontend_dist
+
+# Round B webchat widget static export
+# Keep embeddable public webchat files outside SPA fallback.
+RUN mkdir -p /app/frontend_dist/static/webchat \
+    && cp -r /app/backend/app/static/webchat/. /app/frontend_dist/static/webchat/
+
 
 RUN mkdir -p /app/backend/uploads \
     && addgroup --system appgroup \

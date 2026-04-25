@@ -123,3 +123,34 @@ if frontend_dir.exists():
         if index_path.is_file():
             return FileResponse(str(index_path))
         return JSONResponse(status_code=404, content={"detail": "Frontend not built"})
+
+# === NEXUSDESK ROUND B WEBCHAT STATIC HOTFIX ===
+# Serve embeddable webchat assets before SPA fallback catches /static/webchat/*.
+from pathlib import Path as _NexusDeskPath
+from fastapi.responses import FileResponse as _NexusDeskFileResponse
+
+_NEXUSDESK_WEBCHAT_STATIC_DIR = _NexusDeskPath(__file__).resolve().parent / "static" / "webchat"
+
+@app.middleware("http")
+async def _nexusdesk_webchat_static_middleware(request, call_next):
+    path = request.url.path
+
+    if path == "/static/webchat/widget.js":
+        target = _NEXUSDESK_WEBCHAT_STATIC_DIR / "widget.js"
+        if target.is_file():
+            return _NexusDeskFileResponse(
+                target,
+                media_type="application/javascript; charset=utf-8",
+            )
+
+    if path == "/static/webchat/demo.html":
+        target = _NEXUSDESK_WEBCHAT_STATIC_DIR / "demo.html"
+        if target.is_file():
+            return _NexusDeskFileResponse(
+                target,
+                media_type="text/html; charset=utf-8",
+            )
+
+    return await call_next(request)
+# === END NEXUSDESK ROUND B WEBCHAT STATIC HOTFIX ===
+
