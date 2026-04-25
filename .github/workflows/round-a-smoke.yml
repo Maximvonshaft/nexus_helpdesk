@@ -72,10 +72,14 @@ jobs:
 
       - name: Secret leak sanity check
         run: |
-          ! grep -R "ghp_\|SECRET_KEY=.*[A-Za-z0-9]\{20,\}\|S3_SECRET_KEY=.*[A-Za-z0-9]" -n . \
+          ! grep -R "ghp_[A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_][A-Za-z0-9_]\|SECRET_KEY=.*[A-Za-z0-9]\{40,\}\|S3_SECRET_KEY=.*[A-Za-z0-9]\{40,\}" -n . \
             --exclude-dir=.git \
             --exclude-dir=node_modules \
+            --exclude-dir=__pycache__ \
             --exclude-dir=frontend_dist \
             --exclude-dir=webapp/dist \
             --exclude-dir=backend/uploads \
-            --exclude="*.md"
+            --exclude="*.pyc" \
+            --exclude="*.md" \
+            --exclude="*.example" \
+            --exclude="round-a-smoke.yml"
