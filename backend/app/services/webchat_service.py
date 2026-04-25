@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 import time
 from dataclasses import asdict
@@ -19,6 +20,7 @@ from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .permissions import ensure_ticket_visible
 from .sla_service import update_first_response, evaluate_sla
 from .ticket_service import generate_ticket_no, get_ticket_or_404
+WEBCHAT_LOGGER = logging.getLogger("nexusdesk")
 
 MAX_MESSAGE_CHARS = 2000
 MAX_FIELD_CHARS = 300
@@ -202,6 +204,54 @@ def create_or_resume_conversation(db: Session, payload: Any, request: Request) -
     }
 
 
+
+
+
+def _webchat_auto_ack_text(visitor_body: str) -> str:
+    text = (visitor_body or "").strip().lower()
+    parcel_keywords = (
+        "tracking", "track", "parcel", "package", "shipment", "order", "delivery",
+        "where", "delay", "late",
+        "快递", "包裹", "物流", "单号", "运单", "派送", "延误", "签收",
+    )
+    if any(k in text for k in parcel_keywords):
+        return (
+            "Thanks, we have received your parcel inquiry. "
+            "Our support team will check the shipment details and reply here. "
+            "If you have a tracking number, please send it in this chat."
+        )
+    return (
+        "Thanks, we have received your message. "
+        "Our support team will reply here as soon as possible."
+    )
+
+
+def _maybe_create_webchat_auto_ack(db: Session, *, conversation: WebchatConversation, visitor_message: WebchatMessage) -> None:
+    """Create a safe first-response agent message for public webchat.
+
+    This is acknowledgement-only. It must not claim parcel status, delivery result,
+    refund status, or any fact not backed by tools.
+    """
+    existing_agent = (
+        db.query(WebchatMessage.id)
+        .filter(
+            WebchatMessage.conversation_id == conversation.id,
+            WebchatMessage.direction == "agent",
+        )
+        .first()
+    )
+    if existing_agent:
+        return
+
+    row = WebchatMessage(
+        conversation_id=conversation.id,
+        ticket_id=conversation.ticket_id,
+        direction="agent",
+        body=_webchat_auto_ack_text(visitor_message.body),
+        author_label="NexusDesk Assistant",
+    )
+    db.add(row)
+
 def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, body: str, request: Request) -> dict[str, Any]:
     conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == public_id).first()
     if not conversation:
@@ -218,6 +268,17 @@ def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, 
         author_label=conversation.visitor_name or "Visitor",
     )
     db.add(message)
+
+    db.flush()
+    try:
+        with db.begin_nested():
+            _maybe_create_webchat_auto_ack(db, conversation=conversation, visitor_message=message)
+            db.flush()
+    except Exception as exc:
+        WEBCHAT_LOGGER.exception(
+            "webchat_auto_ack_failed",
+            extra={"event_payload": {"conversation_id": conversation.public_id, "error": str(exc)}},
+        )
 
     ticket = db.query(Ticket).filter(Ticket.id == conversation.ticket_id).first()
     if ticket:
