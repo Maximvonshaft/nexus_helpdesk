@@ -1,293 +1,372 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
-from datetime import timedelta
+import time
+from dataclasses import asdict
 from typing import Any
+from urllib.parse import urlparse
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus
-from ..models import Customer, Ticket
+from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketPriority, TicketSource, TicketStatus
+from ..models import Customer, Ticket, TicketComment, TicketEvent, TicketOutboundMessage, User
 from ..utils.time import utc_now
-from ..webchat_models import WebChatAuditLog, WebChatHandoffRequest, WebChatSession, WebChatSite, WebChatTicketUpgradeLink
-from .openclaw_bridge import ensure_openclaw_conversation_link
-from .openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
+from ..webchat_models import WebchatConversation, WebchatMessage
+from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
+from .permissions import ensure_ticket_visible
+from .sla_service import update_first_response, evaluate_sla
+from .ticket_service import generate_ticket_no, get_ticket_or_404
+
+MAX_MESSAGE_CHARS = 2000
+MAX_FIELD_CHARS = 300
+MAX_URL_CHARS = 700
+RATE_LIMIT_WINDOW_SECONDS = 60
+RATE_LIMIT_MAX_MESSAGES = 20
+_RATE_BUCKETS: dict[str, list[float]] = {}
 
 
-def _csv_to_list(raw: str | None) -> list[str]:
-    if not raw:
-        return []
-    return [item.strip() for item in raw.split(',') if item.strip()]
+def _clip(value: str | None, limit: int = MAX_FIELD_CHARS) -> str | None:
+    if value is None:
+        return None
+    cleaned = " ".join(str(value).strip().split())
+    if not cleaned:
+        return None
+    return cleaned[:limit]
 
 
-def site_allowed_origins(site: WebChatSite) -> list[str]:
-    return _csv_to_list(site.allowed_origins_csv)
+def _clip_body(value: str | None) -> str:
+    cleaned = (value or "").strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="message body is required")
+    if len(cleaned) > MAX_MESSAGE_CHARS:
+        raise HTTPException(status_code=413, detail=f"message body exceeds {MAX_MESSAGE_CHARS} characters")
+    return cleaned
 
 
-def serialize_site(site: WebChatSite) -> dict[str, Any]:
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _new_public_id() -> str:
+    return f"wc_{secrets.token_urlsafe(18).replace('-', '').replace('_', '')[:24]}"
+
+
+def _new_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _origin_from_request(request: Request, explicit_origin: str | None = None) -> str | None:
+    origin = explicit_origin or request.headers.get("origin")
+    if origin:
+        return _clip(origin, 255)
+    referer = request.headers.get("referer")
+    if not referer:
+        return None
+    parsed = urlparse(referer)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return _clip(f"{parsed.scheme}://{parsed.netloc}", 255)
+
+
+def _rate_limit_key(request: Request, conversation_id: str | None, tenant_key: str) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    ip = forwarded or (request.client.host if request.client else "unknown")
+    return f"{tenant_key}:{conversation_id or 'init'}:{ip}"
+
+
+def _enforce_rate_limit(request: Request, conversation_id: str | None, tenant_key: str) -> None:
+    now = time.time()
+    key = _rate_limit_key(request, conversation_id, tenant_key)
+    bucket = [ts for ts in _RATE_BUCKETS.get(key, []) if now - ts < RATE_LIMIT_WINDOW_SECONDS]
+    if len(bucket) >= RATE_LIMIT_MAX_MESSAGES:
+        raise HTTPException(status_code=429, detail="too many webchat requests")
+    bucket.append(now)
+    _RATE_BUCKETS[key] = bucket
+
+
+def _validate_token(conversation: WebchatConversation, token: str | None) -> None:
+    if not token or _hash_token(token) != conversation.visitor_token_hash:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
+
+
+def _message_read(row: WebchatMessage) -> dict[str, Any]:
     return {
-        'id': site.id,
-        'site_key': site.site_key,
-        'name': site.name,
-        'widget_title': site.widget_title,
-        'logo_url': site.logo_url,
-        'welcome_message': site.welcome_message,
-        'default_language': site.default_language,
-        'allowed_origins': site_allowed_origins(site),
-        'theme_json': site.theme_json,
-        'business_hours_json': site.business_hours_json,
-        'mapped_market_id': site.mapped_market_id,
-        'mapped_team_id': site.mapped_team_id,
-        'mapped_openclaw_agent': site.mapped_openclaw_agent,
-        'is_active': site.is_active,
-        'created_at': site.created_at,
-        'updated_at': site.updated_at,
+        "id": row.id,
+        "direction": row.direction,
+        "body": row.body,
+        "author_label": row.author_label,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
 
-def hash_ip(value: str | None) -> str | None:
-    if not value:
-        return None
-    return hashlib.sha256(value.encode('utf-8')).hexdigest()
+def create_or_resume_conversation(db: Session, payload: Any, request: Request) -> dict[str, Any]:
+    tenant_key = _clip(getattr(payload, "tenant_key", None) or "default", 120) or "default"
+    channel_key = _clip(getattr(payload, "channel_key", None) or "default", 120) or "default"
+    public_id = _clip(getattr(payload, "conversation_id", None), 64)
+    visitor_token = getattr(payload, "visitor_token", None)
+    _enforce_rate_limit(request, public_id, tenant_key)
 
+    if public_id:
+        existing = db.query(WebchatConversation).filter(WebchatConversation.public_id == public_id).first()
+        if existing:
+            _validate_token(existing, visitor_token)
+            existing.last_seen_at = utc_now()
+            existing.updated_at = utc_now()
+            existing.page_url = _clip(getattr(payload, "page_url", None), MAX_URL_CHARS) or existing.page_url
+            existing.origin = _origin_from_request(request, getattr(payload, "origin", None)) or existing.origin
+            existing.user_agent = _clip(request.headers.get("user-agent"), 300) or existing.user_agent
+            db.flush()
+            return {
+                "conversation_id": existing.public_id,
+                "visitor_token": visitor_token,
+                "status": existing.status,
+                "config": {"poll_interval_ms": 4000, "max_message_chars": MAX_MESSAGE_CHARS},
+            }
 
-def log_webchat_audit(
-    db: Session,
-    *,
-    event_type: str,
-    status_value: str = 'ok',
-    site_id: int | None = None,
-    session_id: int | None = None,
-    ticket_id: int | None = None,
-    user_id: int | None = None,
-    request_id: str | None = None,
-    origin: str | None = None,
-    ip_value: str | None = None,
-    payload: dict[str, Any] | None = None,
-) -> None:
-    row = WebChatAuditLog(
-        site_id=site_id,
-        session_id=session_id,
-        ticket_id=ticket_id,
-        user_id=user_id,
-        request_id=request_id,
-        event_type=event_type,
-        status=status_value,
-        origin=origin,
-        ip_hash=hash_ip(ip_value),
-        payload_json=payload,
-    )
-    db.add(row)
+    token = _new_token()
+    public_id = _new_public_id()
+    visitor_name = _clip(getattr(payload, "visitor_name", None), 160)
+    visitor_email = _clip(getattr(payload, "visitor_email", None), 200)
+    visitor_phone = _clip(getattr(payload, "visitor_phone", None), 80)
+    visitor_ref = _clip(getattr(payload, "visitor_ref", None), 160)
+    origin = _origin_from_request(request, getattr(payload, "origin", None))
+    page_url = _clip(getattr(payload, "page_url", None), MAX_URL_CHARS)
+    user_agent = _clip(request.headers.get("user-agent"), 300)
 
-
-def build_session_key(site_key: str, browser_session_id: str) -> str:
-    return f'webchat:{site_key}:{browser_session_id}'
-
-
-def ensure_site(db: Session, site_key: str) -> WebChatSite:
-    site = db.query(WebChatSite).filter(WebChatSite.site_key == site_key, WebChatSite.is_active.is_(True)).first()
-    if site is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='WebChat site not found')
-    return site
-
-
-def assert_origin_allowed(site: WebChatSite, origin: str | None) -> None:
-    allowed = site_allowed_origins(site)
-    if not allowed:
-        return
-    if not origin or origin not in allowed:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Origin not allowed for this site')
-
-
-def ensure_session(
-    db: Session,
-    *,
-    site: WebChatSite,
-    visitor_id: str | None,
-    browser_session_id: str | None,
-    locale: str | None,
-    timezone: str | None,
-    origin: str | None,
-) -> WebChatSession:
-    resolved_visitor = visitor_id or f'vst_{secrets.token_hex(12)}'
-    resolved_browser_session = browser_session_id or f'bsn_{secrets.token_hex(12)}'
-    row = db.query(WebChatSession).filter(WebChatSession.browser_session_id == resolved_browser_session).first()
-    if row is None:
-        row = WebChatSession(
-            site_id=site.id,
-            visitor_id=resolved_visitor,
-            browser_session_id=resolved_browser_session,
-            openclaw_session_key=build_session_key(site.site_key, resolved_browser_session),
-            origin=origin,
-            locale=locale,
-            timezone=timezone,
-            status='active',
-            handoff_status='none',
-            expires_at=utc_now() + timedelta(hours=24),
-        )
-        db.add(row)
-        db.flush()
-    else:
-        row.last_active_at = utc_now()
-        row.updated_at = utc_now()
-        row.locale = locale or row.locale
-        row.timezone = timezone or row.timezone
-        row.origin = origin or row.origin
-        row.expires_at = utc_now() + timedelta(hours=24)
-    return row
-
-
-def serialize_session(row: WebChatSession) -> dict[str, Any]:
-    return {
-        'id': row.id,
-        'site_id': row.site_id,
-        'ticket_id': row.ticket_id,
-        'visitor_id': row.visitor_id,
-        'browser_session_id': row.browser_session_id,
-        'status': row.status,
-        'handoff_status': row.handoff_status,
-        'origin': row.origin,
-        'locale': row.locale,
-        'timezone': row.timezone,
-        'last_message_preview': row.last_message_preview,
-        'last_message_at': row.last_message_at,
-        'created_at': row.created_at,
-        'updated_at': row.updated_at,
-        'last_active_at': row.last_active_at,
-        'expires_at': row.expires_at,
-    }
-
-
-def normalize_messages(items: Any) -> list[dict[str, Any]]:
-    if not isinstance(items, list):
-        return []
-    normalized: list[dict[str, Any]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        message_id = item.get('message_id') or item.get('messageId') or item.get('id')
-        role = item.get('role') or item.get('senderRole') or item.get('authorRole') or 'assistant'
-        text = item.get('text') or item.get('body') or item.get('message')
-        if not text and isinstance(item.get('content'), list):
-            parts: list[str] = []
-            for block in item['content']:
-                if isinstance(block, dict):
-                    value = block.get('text') or block.get('content')
-                    if isinstance(value, str) and value.strip():
-                        parts.append(value.strip())
-            text = '\n'.join(parts) if parts else None
-        normalized.append({
-            'id': str(message_id or secrets.token_hex(6)),
-            'role': str(role),
-            'author_name': item.get('author_name') or item.get('author') or item.get('sender'),
-            'text': text,
-            'created_at': item.get('received_at') or item.get('created_at'),
-        })
-    return normalized
-
-
-def read_session_history(db: Session, session: WebChatSession, *, limit: int = 50) -> list[dict[str, Any]]:
-    try:
-        with OpenClawMCPClient() as client:
-            messages = client.messages_read(session.openclaw_session_key, limit=limit)
-    except OpenClawMCPError:
-        return []
-    normalized = normalize_messages(messages)
-    if normalized:
-        latest = normalized[-1]
-        session.last_message_preview = latest.get('text')
-        session.last_message_at = utc_now()
-    return normalized
-
-
-def send_session_message(db: Session, session: WebChatSession, text: str) -> None:
-    with OpenClawMCPClient() as client:
-        client.messages_send(session.openclaw_session_key, text)
-    session.last_message_preview = text[:500]
-    session.last_message_at = utc_now()
-    session.last_active_at = utc_now()
-    session.updated_at = utc_now()
-
-
-def create_handoff_request(db: Session, session: WebChatSession, *, reason: str | None, note: str | None, requested_by: str) -> WebChatHandoffRequest:
-    row = WebChatHandoffRequest(
-        session_id=session.id,
-        requested_by=requested_by,
-        status='queued',
-        reason=reason,
-        note=note,
-    )
-    db.add(row)
-    session.handoff_status = 'requested'
-    session.updated_at = utc_now()
-    db.flush()
-    return row
-
-
-def _ensure_customer(db: Session, *, name: str | None, email: str | None, visitor_id: str) -> Customer | None:
-    if not name and not email:
-        return None
-    existing = None
-    if email:
-        existing = db.query(Customer).filter(Customer.email_normalized == email.strip().lower()).first()
-    if existing:
-        return existing
     customer = Customer(
-        name=name or visitor_id,
-        email=email,
-        email_normalized=email.strip().lower() if email else None,
-        external_ref=visitor_id,
+        name=visitor_name or visitor_email or visitor_phone or f"Webchat Visitor {public_id[-6:]}",
+        email=visitor_email,
+        phone=visitor_phone,
+        external_ref=visitor_ref or public_id,
     )
     db.add(customer)
     db.flush()
-    return customer
 
-
-def upgrade_session_to_ticket(
-    db: Session,
-    session: WebChatSession,
-    *,
-    title: str | None,
-    description: str | None,
-    customer_name: str | None,
-    customer_email: str | None,
-    created_by_user_id: int | None,
-) -> tuple[Ticket, WebChatTicketUpgradeLink]:
-    customer = _ensure_customer(db, name=customer_name, email=customer_email, visitor_id=session.visitor_id)
-    history = read_session_history(db, session, limit=20)
-    last_user_message = next((item.get('text') for item in reversed(history) if item.get('role') == 'user' and item.get('text')), None)
     ticket = Ticket(
-        ticket_no=f'W{int(utc_now().timestamp())}{session.id}',
-        title=title or session.last_message_preview or 'Website chat request',
-        description=description or last_user_message or 'Created from website chat session',
-        customer_id=customer.id if customer else None,
+        ticket_no=generate_ticket_no(),
+        title=f"Webchat inquiry · {customer.name}",
+        description="New webchat conversation created from customer website widget.",
+        customer_id=customer.id,
         source=TicketSource.user_message,
         source_channel=SourceChannel.web_chat,
         priority=TicketPriority.medium,
-        status=TicketStatus.new,
-        team_id=session.site.mapped_team_id,
-        market_id=session.site.mapped_market_id,
-        created_by=created_by_user_id,
-        conversation_state=ConversationState.human_review_required,
-        source_chat_id=session.browser_session_id,
-        customer_request=last_user_message,
-        last_customer_message=last_user_message,
-        preferred_reply_channel='web_chat',
-        preferred_reply_contact=session.visitor_id,
+        status=TicketStatus.pending_assignment,
+        conversation_state=ConversationState.human_owned,
+        source_chat_id=public_id,
+        preferred_reply_channel=SourceChannel.web_chat.value,
+        preferred_reply_contact=visitor_email or visitor_phone or public_id,
+        customer_request="Webchat conversation initiated.",
+        last_customer_message="Webchat conversation initiated.",
     )
     db.add(ticket)
     db.flush()
-    ensure_openclaw_conversation_link(db, ticket=ticket, session_key=session.openclaw_session_key, channel='web_chat', recipient=session.visitor_id)
-    session.ticket_id = ticket.id
-    session.handoff_status = 'ticket_created'
-    link = WebChatTicketUpgradeLink(
-        session_id=session.id,
+
+    conversation = WebchatConversation(
+        public_id=public_id,
+        visitor_token_hash=_hash_token(token),
+        tenant_key=tenant_key,
+        channel_key=channel_key,
         ticket_id=ticket.id,
-        upgrade_type='session_to_ticket',
-        created_by_user_id=created_by_user_id,
+        visitor_name=visitor_name,
+        visitor_email=visitor_email,
+        visitor_phone=visitor_phone,
+        visitor_ref=visitor_ref,
+        origin=origin,
+        page_url=page_url,
+        user_agent=user_agent,
+        status="open",
+        last_seen_at=utc_now(),
+        created_at=utc_now(),
+        updated_at=utc_now(),
     )
-    db.add(link)
+    db.add(conversation)
     db.flush()
-    return ticket, link
+
+    db.add(TicketEvent(
+        ticket_id=ticket.id,
+        actor_id=None,
+        event_type=EventType.ticket_created,
+        note="Webchat conversation created",
+        payload_json=json.dumps({"public_conversation_id": public_id, "origin": origin, "page_url": page_url}, ensure_ascii=False),
+    ))
+    db.flush()
+
+    return {
+        "conversation_id": conversation.public_id,
+        "visitor_token": token,
+        "status": conversation.status,
+        "config": {"poll_interval_ms": 4000, "max_message_chars": MAX_MESSAGE_CHARS},
+    }
+
+
+def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, body: str, request: Request) -> dict[str, Any]:
+    conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == public_id).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="webchat conversation not found")
+    _validate_token(conversation, visitor_token)
+    _enforce_rate_limit(request, public_id, conversation.tenant_key)
+    normalized_body = _clip_body(body)
+
+    message = WebchatMessage(
+        conversation_id=conversation.id,
+        ticket_id=conversation.ticket_id,
+        direction="visitor",
+        body=normalized_body,
+        author_label=conversation.visitor_name or "Visitor",
+    )
+    db.add(message)
+
+    ticket = db.query(Ticket).filter(Ticket.id == conversation.ticket_id).first()
+    if ticket:
+        ticket.last_customer_message = normalized_body
+        ticket.customer_request = normalized_body
+        ticket.updated_at = utc_now()
+        if ticket.status in {TicketStatus.resolved, TicketStatus.closed}:
+            ticket.status = TicketStatus.pending_assignment
+            ticket.conversation_state = ConversationState.reopened_by_customer
+        else:
+            ticket.conversation_state = ConversationState.human_owned
+        db.add(TicketComment(ticket_id=ticket.id, author_id=None, body=normalized_body, visibility=NoteVisibility.external))
+        db.add(TicketEvent(
+            ticket_id=ticket.id,
+            actor_id=None,
+            event_type=EventType.comment_added,
+            note="Webchat visitor message received",
+            payload_json=json.dumps({"public_conversation_id": public_id}, ensure_ascii=False),
+        ))
+
+    conversation.last_seen_at = utc_now()
+    conversation.updated_at = utc_now()
+    db.flush()
+    db.refresh(message)
+    return {"ok": True, "message": _message_read(message)}
+
+
+def list_public_messages(db: Session, public_id: str, visitor_token: str | None) -> dict[str, Any]:
+    conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == public_id).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="webchat conversation not found")
+    _validate_token(conversation, visitor_token)
+    rows = db.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id).order_by(WebchatMessage.created_at.asc(), WebchatMessage.id.asc()).all()
+    conversation.last_seen_at = utc_now()
+    db.flush()
+    return {"conversation_id": conversation.public_id, "status": conversation.status, "messages": [_message_read(row) for row in rows]}
+
+
+def admin_list_conversations(db: Session, current_user: User, *, limit: int = 50) -> list[dict[str, Any]]:
+    rows = (
+        db.query(WebchatConversation)
+        .order_by(WebchatConversation.updated_at.desc())
+        .limit(max(1, min(limit, 100)))
+        .all()
+    )
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        ticket = db.query(Ticket).filter(Ticket.id == row.ticket_id).first()
+        if not ticket:
+            continue
+        try:
+            ensure_ticket_visible(current_user, ticket, db)
+        except HTTPException:
+            continue
+        items.append({
+            "conversation_id": row.public_id,
+            "ticket_id": row.ticket_id,
+            "ticket_no": ticket.ticket_no,
+            "title": ticket.title,
+            "status": ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status),
+            "visitor_name": row.visitor_name,
+            "visitor_email": row.visitor_email,
+            "visitor_phone": row.visitor_phone,
+            "origin": row.origin,
+            "page_url": row.page_url,
+            "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        })
+    return items
+
+
+def admin_get_thread(db: Session, ticket_id: int, current_user: User) -> dict[str, Any]:
+    ticket = get_ticket_or_404(db, ticket_id)
+    ensure_ticket_visible(current_user, ticket, db)
+    conversation = db.query(WebchatConversation).filter(WebchatConversation.ticket_id == ticket.id).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="webchat conversation not found for ticket")
+    rows = db.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id).order_by(WebchatMessage.created_at.asc(), WebchatMessage.id.asc()).all()
+    return {
+        "conversation_id": conversation.public_id,
+        "ticket_id": ticket.id,
+        "ticket_no": ticket.ticket_no,
+        "origin": conversation.origin,
+        "page_url": conversation.page_url,
+        "visitor": {
+            "name": conversation.visitor_name,
+            "email": conversation.visitor_email,
+            "phone": conversation.visitor_phone,
+            "ref": conversation.visitor_ref,
+        },
+        "messages": [_message_read(row) for row in rows],
+    }
+
+
+def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, has_fact_evidence: bool = False, confirm_review: bool = False) -> dict[str, Any]:
+    ticket = get_ticket_or_404(db, ticket_id)
+    ensure_ticket_visible(current_user, ticket, db)
+    conversation = db.query(WebchatConversation).filter(WebchatConversation.ticket_id == ticket.id).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="webchat conversation not found for ticket")
+
+    normalized_body = _clip_body(body)
+    decision = evaluate_outbound_safety(ticket, normalized_body, source="manual", has_fact_evidence=has_fact_evidence)
+    decision_payload = asdict(decision)
+    if decision.level == "block":
+        raise HTTPException(status_code=400, detail={"message": "Outbound reply blocked by safety gate", "safety": decision_payload})
+    if decision.requires_human_review and not confirm_review:
+        raise HTTPException(status_code=409, detail={"message": "Outbound reply requires human review confirmation", "safety": decision_payload})
+
+    message = WebchatMessage(
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        direction="agent",
+        body=decision.normalized_body,
+        author_label=current_user.display_name,
+        safety_level=decision.level,
+        safety_reasons_json=json.dumps(decision.reasons, ensure_ascii=False),
+    )
+    db.add(message)
+    db.add(TicketComment(ticket_id=ticket.id, author_id=current_user.id, body=decision.normalized_body, visibility=NoteVisibility.external))
+    db.add(TicketOutboundMessage(
+        ticket_id=ticket.id,
+        channel=SourceChannel.web_chat,
+        status=MessageStatus.sent,
+        body=decision.normalized_body,
+        provider_status="webchat_delivered",
+        created_by=current_user.id,
+        sent_at=utc_now(),
+        max_retries=0,
+    ))
+    update_first_response(ticket)
+    ticket.status = TicketStatus.waiting_customer
+    ticket.conversation_state = ConversationState.waiting_customer
+    ticket.last_human_update = decision.normalized_body
+    ticket.updated_at = utc_now()
+    conversation.updated_at = utc_now()
+    db.add(TicketEvent(
+        ticket_id=ticket.id,
+        actor_id=current_user.id,
+        event_type=EventType.outbound_sent,
+        note="Webchat agent reply sent",
+        payload_json=json.dumps({
+            "public_conversation_id": conversation.public_id,
+            "safety_level": decision.level,
+            "safety_reasons": decision.reasons,
+            "safety_reason_text": format_safety_reasons(decision),
+        }, ensure_ascii=False),
+    ))
+    evaluate_sla(ticket, db)
+    db.flush()
+    db.refresh(message)
+    return {"ok": True, "safety": decision_payload, "message": _message_read(message)}
