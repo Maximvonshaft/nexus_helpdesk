@@ -40,6 +40,10 @@ export function canManageMarkets(user?: AuthUser | null) {
   return isOpsSupervisorRole(user?.role) || hasCapability(user, CAP_MARKET_MANAGE)
 }
 
+export function canViewControlPlane(user?: AuthUser | null) {
+  return canManageAIConfig(user) || canManageChannels(user) || canViewOps(user)
+}
+
 export function roleWorkspaceHint(user?: AuthUser | null) {
   return canViewOps(user)
     ? '你当前可以同时查看工单、公告、发送线路与运营保障。'
