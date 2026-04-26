@@ -13,6 +13,7 @@ from .api.auth import router as auth_router
 from .api.customers import router as customers_router
 from .api.files import router as files_router
 from .api.integration import router as integration_router
+from .api.knowledge_items import router as knowledge_items_router
 from .api.lookups import router as lookups_router
 from .api.lite import router as lite_router
 from .api.persona_profiles import router as persona_profiles_router
@@ -94,6 +95,7 @@ app.include_router(admin_router)
 app.include_router(auth_router)
 app.include_router(files_router)
 app.include_router(integration_router)
+app.include_router(knowledge_items_router)
 app.include_router(lookups_router)
 app.include_router(lite_router)
 app.include_router(customers_router)
