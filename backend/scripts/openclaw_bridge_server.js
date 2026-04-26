@@ -335,7 +335,7 @@ class BridgeRuntime {
 
     try {
       const response = await this.client.request('chat.history', {
-        sessionKey,
+        key: sessionKey,
         limit,
       }, { timeoutMs: this.config.requestTimeoutMs });
 
@@ -379,12 +379,12 @@ class BridgeRuntime {
 
     try {
       await this.client.request('sessions.send', {
-        sessionKey,
+        key: sessionKey,
         message: prompt,
       }, { timeoutMs: this.config.requestTimeoutMs });
 
       const history = await this.client.request('chat.history', {
-        sessionKey,
+        key: sessionKey,
         limit,
       }, { timeoutMs: this.config.requestTimeoutMs });
       const messages = history.messages || [];
@@ -466,7 +466,7 @@ class BridgeRuntime {
 
     try {
       const response = await this.client.request('chat.history', {
-        sessionKey,
+        key: sessionKey,
         limit: 100,
       }, { timeoutMs: this.config.requestTimeoutMs });
 

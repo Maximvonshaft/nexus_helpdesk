@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketPriority, TicketSource, TicketStatus
 from ..models import Customer, Ticket, TicketComment, TicketEvent, TicketOutboundMessage, User
 from ..utils.time import utc_now
+from ..settings import get_settings
 from ..webchat_models import WebchatConversation, WebchatMessage
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .permissions import ensure_ticket_visible
@@ -233,6 +234,9 @@ def _maybe_create_webchat_auto_ack(db: Session, *, conversation: WebchatConversa
     This is acknowledgement-only. It must not claim parcel status, delivery result,
     refund status, or any fact not backed by tools.
     """
+    if get_settings().openclaw_bridge_enabled:
+        return
+
     existing_agent = (
         db.query(WebchatMessage.id)
         .filter(
