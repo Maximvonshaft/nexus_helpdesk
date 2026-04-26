@@ -68,7 +68,7 @@ function WebchatInboxPage() {
     },
   })
 
-  const snippet = '<script src="https://YOUR_DOMAIN/webchat/widget.js" data-tenant="default" data-channel="website" async></script>'
+  const snippet = '<script src="https://YOUR_DOMAIN/webchat/widget.js" data-tenant="default" data-channel="website" data-title="Speedaf Support" data-subtitle="Usually replies instantly" data-assistant-name="Speedy" async></script>'
 
   return (
     <AppShell>
@@ -84,10 +84,10 @@ function WebchatInboxPage() {
       />
 
       <Card className="soft">
-        <CardHeader title="网站嵌入代码" subtitle="把这段代码放到客户网站页面底部即可。生产环境请替换为真实域名。" />
+        <CardHeader title="Speedaf Webchat 嵌入代码" subtitle="把这段代码放到客户网站页面底部即可。生产环境请替换为正式域名。" />
         <CardBody>
           <pre className="code-block"><code>{snippet}</code></pre>
-          <div className="section-subtitle">本轮不暴露内部技术品牌；访客只看到标准客服聊天入口。</div>
+          <div className="section-subtitle">访客只看到 Speedaf Support 标准客服聊天入口。</div>
         </CardBody>
       </Card>
 
