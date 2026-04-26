@@ -8,7 +8,7 @@ import { CommandPalette } from '@/components/ui/CommandPalette'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { labelize } from '@/lib/format'
-import { canManageAIConfig, canManageChannels, canManageUsers, canViewOps, roleWorkspaceHint } from '@/lib/access'
+import { canManageAIConfig, canManageChannels, canManageUsers, canViewControlPlane, canViewOps, roleWorkspaceHint } from '@/lib/access'
 
 const nav = [
   { to: '/', label: '首页总览' },
@@ -16,6 +16,7 @@ const nav = [
   { to: '/webchat', label: '网站聊天' },
   { to: '/bulletins', label: '通知公告', permission: 'bulletins' },
   { to: '/ai-control', label: 'AI规则', permission: 'ai' },
+  { to: '/control-plane', label: '控制面', permission: 'control-plane' },
   { to: '/accounts', label: '发送线路', permission: 'channels' },
   { to: '/users', label: '账号管理', permission: 'users' },
   { to: '/runtime', label: '运营保障', permission: 'ops' },
@@ -56,6 +57,7 @@ export function AppShell({ children }: PropsWithChildren) {
     if (item.permission === 'ops') return canViewOps(session.data)
     if (item.permission === 'channels') return canManageChannels(session.data)
     if (item.permission === 'ai') return canManageAIConfig(session.data)
+    if (item.permission === 'control-plane') return canViewControlPlane(session.data)
     if (item.permission === 'users') return canManageUsers(session.data)
     if (item.permission === 'bulletins') return true
     return true
