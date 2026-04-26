@@ -15,6 +15,7 @@ from .api.files import router as files_router
 from .api.integration import router as integration_router
 from .api.lookups import router as lookups_router
 from .api.lite import router as lite_router
+from .api.persona_profiles import router as persona_profiles_router
 from .api.stats import router as stats_router
 from .api.tickets import router as tickets_router
 from .api.webchat import router as webchat_router
@@ -96,6 +97,7 @@ app.include_router(integration_router)
 app.include_router(lookups_router)
 app.include_router(lite_router)
 app.include_router(customers_router)
+app.include_router(persona_profiles_router)
 app.include_router(stats_router)
 app.include_router(tickets_router)
 app.include_router(webchat_router)
