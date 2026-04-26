@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from .api.admin import router as admin_router
 from .api.auth import router as auth_router
+from .api.channel_control import router as channel_control_router
 from .api.customers import router as customers_router
 from .api.files import router as files_router
 from .api.integration import router as integration_router
@@ -93,6 +94,7 @@ def readyz():
 
 app.include_router(admin_router)
 app.include_router(auth_router)
+app.include_router(channel_control_router)
 app.include_router(files_router)
 app.include_router(integration_router)
 app.include_router(knowledge_items_router)
