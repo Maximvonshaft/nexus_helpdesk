@@ -89,7 +89,15 @@ def process_webchat_ai_reply_job(
         fallback_reason = "empty_ai_reply"
         ai_reply = _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
 
-    decision = evaluate_outbound_safety(ticket, ai_reply, source="ai", has_fact_evidence=False)
+    ai_reply = _sanitize_public_ai_reply(ai_reply)
+
+    if not ai_reply.strip():
+
+        fallback_reason = fallback_reason or "sanitized_empty_ai_reply"
+
+        ai_reply = _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
+
+    decision = evaluate_outbound_safety(ticket, ai_reply, source="webchat_ai", has_fact_evidence=False)
     final_body = decision.normalized_body
     safety_payload = asdict(decision)
 
@@ -209,33 +217,35 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
 def _generate_ai_reply_via_bridge(*, prompt: str, conversation: WebchatConversation, visitor_message: WebchatMessage) -> str:
     bridge_url = settings.openclaw_bridge_url.rstrip('/')
     session_key = f"webchat-ai-{conversation.public_id}-{visitor_message.id}"
+    payload = {
+        "sessionKey": session_key,
+        "prompt": prompt,
+        "limit": 20,
+        "waitTimeoutMs": max(settings.openclaw_bridge_timeout_seconds * 1000, 90000),
+    }
     ai_req = urllib.request.Request(
         f"{bridge_url}/ai-reply",
-        data=json.dumps({"sessionKey": session_key, "prompt": prompt, "limit": 6}).encode("utf-8"),
+        data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     try:
-        with urllib.request.urlopen(ai_req, timeout=settings.openclaw_bridge_timeout_seconds) as resp:
+        with urllib.request.urlopen(ai_req, timeout=max(settings.openclaw_bridge_timeout_seconds, 120)) as resp:
             parsed = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
         raise RuntimeError(f"bridge ai-reply http {exc.code}: {body[:300]}") from exc
+
     if not isinstance(parsed, dict) or not parsed.get("ok"):
         raise RuntimeError(f"bridge ai-reply rejected: {parsed}")
-    try:
-        with urllib.request.urlopen(read_req, timeout=settings.openclaw_bridge_timeout_seconds) as resp:
-            parsed = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
-        raise RuntimeError(f"bridge read http {exc.code}: {body[:300]}") from exc
-    if not isinstance(parsed, dict) or not parsed.get("ok"):
-        raise RuntimeError(f"bridge read rejected: {parsed}")
-    text = _extract_reply_text(parsed.get("messages") or [])
+
+    text = parsed.get("replyText")
+    if not text:
+        text = _extract_reply_text(parsed.get("messages") or [])
     if not text:
         raise RuntimeError("bridge returned empty reply")
-    return text
 
+    return str(text)
 
 def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage]) -> str:
     history_lines = []
@@ -309,6 +319,120 @@ def _has_tracking_number(*, ticket: Ticket, visitor_message: WebchatMessage, his
         if TRACKING_HINT_RE.search(row.body or ""):
             return True
     return False
+
+
+
+
+def _sanitize_public_ai_reply(raw: str | None) -> str:
+
+    """Clean LLM output before storing/sending public webchat replies."""
+
+    import re
+
+    text = (raw or "").strip()
+
+    if not text:
+
+        return ""
+
+    final_match = re.search(r"<\s*final\s*>", text, flags=re.IGNORECASE)
+
+    if final_match:
+
+        text = text[final_match.end():].strip()
+
+    text = re.sub(
+
+        r"<\s*think\s*>.*?<\s*/\s*think\s*>",
+
+        "",
+
+        text,
+
+        flags=re.IGNORECASE | re.DOTALL,
+
+    ).strip()
+
+    if re.search(r"<\s*think\b", text, flags=re.IGNORECASE):
+
+        return ""
+
+    text = re.sub(
+
+        r"</?\s*(?:final|answer|response|assistant|analysis|commentary)\s*>",
+
+        "",
+
+        text,
+
+        flags=re.IGNORECASE,
+
+    ).strip()
+
+    blocked_patterns = [
+
+        r"\bSOUL\.md\b",
+
+        r"\bsystem prompt\b",
+
+        r"\bdeveloper message\b",
+
+        r"\bdeveloper instruction\b",
+
+        r"\bchain[- ]of[- ]thought\b",
+
+        r"\bhidden reasoning\b",
+
+        r"\binternal context\b",
+
+        r"\binternal instruction\b",
+
+        r"\bOpenClaw\b",
+
+        r"\bMCP\b",
+
+        r"\btool call\b",
+
+        r"\baccording to .*?\.md\b",
+
+    ]
+
+    clean_lines = []
+
+    for line in text.splitlines():
+
+        candidate = line.strip()
+
+        if not candidate:
+
+            continue
+
+        if re.search(
+
+            r"^(analysis|reasoning|plan|thought|internal|system|developer)\s*:",
+
+            candidate,
+
+            flags=re.IGNORECASE,
+
+        ):
+
+            continue
+
+        if any(re.search(pattern, candidate, flags=re.IGNORECASE) for pattern in blocked_patterns):
+
+            continue
+
+        clean_lines.append(candidate)
+
+    text = "\n".join(clean_lines).strip()
+
+    text = re.sub(r"[ \t]+", " ", text)
+
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    return text
+
 
 
 def _fallback_reply_for(*, ticket: Ticket, visitor_message: WebchatMessage) -> str:
