@@ -25,6 +25,7 @@ from ..services.integration_auth import (
 from ..services.ticket_service import create_ticket
 from ..settings import get_settings
 from ..unit_of_work import managed_session
+from ..utils.normalize import normalize_email, normalize_phone
 from ..utils.time import utc_now
 
 router = APIRouter(prefix='/api/v1/integration', tags=['integration'])
@@ -68,7 +69,50 @@ def _normalize_channel(channel: str | None) -> SourceChannel:
         return SourceChannel.email
     if value in {'web', 'web_chat', 'chat'}:
         return SourceChannel.web_chat
-    return SourceChannel.internal
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported integration channel: {channel}")
+
+
+def _contact_match_filters(contact_id: str):
+    cleaned = (contact_id or '').strip()
+    phone_norm = normalize_phone(cleaned)
+    email_norm = normalize_email(cleaned)
+    filters = [
+        Ticket.preferred_reply_contact == cleaned,
+        Ticket.source_chat_id == cleaned,
+        Ticket.customer.has(Customer.phone == cleaned),
+        Ticket.customer.has(Customer.email == cleaned),
+        Ticket.customer.has(Customer.external_ref == cleaned),
+    ]
+    if phone_norm:
+        filters.extend([
+            Ticket.preferred_reply_contact == phone_norm,
+            Ticket.source_chat_id == phone_norm,
+            Ticket.customer.has(Customer.phone_normalized == phone_norm),
+        ])
+    if email_norm:
+        filters.append(Ticket.customer.has(Customer.email_normalized == email_norm))
+    return filters
+
+
+def _customer_contact_filters(contact_id: str):
+    cleaned = (contact_id or '').strip()
+    phone_norm = normalize_phone(cleaned)
+    email_norm = normalize_email(cleaned)
+    filters = [Customer.phone == cleaned, Customer.email == cleaned, Customer.external_ref == cleaned]
+    if phone_norm:
+        filters.append(Customer.phone_normalized == phone_norm)
+    if email_norm:
+        filters.append(Customer.email_normalized == email_norm)
+    return filters
+
+
+def _ticket_duplicate_contact_filters(contact_id: str):
+    cleaned = (contact_id or '').strip()
+    phone_norm = normalize_phone(cleaned)
+    filters = [Ticket.preferred_reply_contact == cleaned, Ticket.source_chat_id == cleaned]
+    if phone_norm and phone_norm != cleaned:
+        filters.extend([Ticket.preferred_reply_contact == phone_norm, Ticket.source_chat_id == phone_norm])
+    return filters
 
 
 def _normalize_priority(priority: str | None) -> TicketPriority:
@@ -192,34 +236,23 @@ def nexusdesk_customer_profile(
         with managed_session(db):
             require_scope(client, 'profile.read')
             enforce_rate_limit(db, client, 'integration.profile')
+            normalized_channel = _normalize_channel(channel)
 
             tickets = (
                 db.query(Ticket)
                 .options(joinedload(Ticket.customer), joinedload(Ticket.team), joinedload(Ticket.assignee))
-                .filter(
-                    or_(
-                        Ticket.preferred_reply_contact == contact_id,
-                        Ticket.source_chat_id == contact_id,
-                        Ticket.customer.has(Customer.phone == contact_id),
-                        Ticket.customer.has(Customer.email == contact_id),
-                        Ticket.customer.has(Customer.external_ref == contact_id),
-                    )
-                )
+                .filter(or_(*_contact_match_filters(contact_id)))
                 .order_by(Ticket.updated_at.desc())
                 .limit(20)
                 .all()
             )
 
-            customer = (
-                db.query(Customer)
-                .filter(or_(Customer.phone == contact_id, Customer.email == contact_id, Customer.external_ref == contact_id))
-                .first()
-            )
+            customer = db.query(Customer).filter(or_(*_customer_contact_filters(contact_id))).first()
             if not customer and tickets:
                 customer = tickets[0].customer
 
             if not customer and not tickets:
-                response = {'ok': True, 'found': False, 'message': 'No customer profile found for this contact.', 'channel': channel}
+                response = {'ok': True, 'found': False, 'message': 'No customer profile found for this contact.', 'channel': normalized_channel.value}
                 record_integration_response(db, client=client, endpoint='integration.profile', method='GET', idempotency_key=None, request_hash=None, status_code=200, response_payload=response)
                 db.flush()
                 return response
@@ -229,7 +262,7 @@ def nexusdesk_customer_profile(
             response = {
                 'ok': True,
                 'found': True,
-                'channel': channel,
+                'channel': normalized_channel.value,
                 'customer': {
                     'id': customer.id if customer else None,
                     'name': customer.name if customer else None,
@@ -283,7 +316,7 @@ def nexusdesk_escalate_task(
             team = _pick_support_team(db, country_code=payload.country_code, market=market)
 
             filters = [
-                Ticket.preferred_reply_contact == payload.contact_id,
+                or_(*_ticket_duplicate_contact_filters(payload.contact_id)),
                 Ticket.status.notin_(list(TERMINAL_STATUSES)),
             ]
             if payload.tracking_number:
@@ -328,7 +361,7 @@ def nexusdesk_escalate_task(
                     last_customer_message=description,
                     customer_update='Case created and queued for manual handling.',
                     last_human_update='Created by NexusDesk integration endpoint',
-                    preferred_reply_channel=payload.channel,
+                    preferred_reply_channel=channel.value,
                     preferred_reply_contact=payload.contact_id,
                     ai_summary=f"Escalated by {metadata.get('source')}" if metadata.get('source') else None,
                     ai_classification='manual_escalation',
