@@ -25,6 +25,8 @@ settings = get_settings()
 _LAST_AI_REPLY_SOURCE = "fallback"
 _LAST_AI_FALLBACK_REASON = None
 _LAST_BRIDGE_ELAPSED_MS = None
+_LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = None
+_LAST_BRIDGE_WAIT_TIMEOUT_MS = None
 
 AI_AUTHOR_LABEL = "NexusDesk AI Assistant"
 MAX_HISTORY_MESSAGES = 12
@@ -93,6 +95,8 @@ def process_webchat_ai_reply_job(
     fallback_reason = _LAST_AI_FALLBACK_REASON
     bridge_elapsed_ms = _LAST_BRIDGE_ELAPSED_MS
     bridge_timeout_seconds = getattr(settings, "openclaw_bridge_timeout_seconds", None)
+    bridge_effective_timeout_seconds = _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS
+    bridge_wait_timeout_ms = _LAST_BRIDGE_WAIT_TIMEOUT_MS
     sanitized_empty = False
     if not ai_reply:
         reply_source = "fallback"
@@ -169,6 +173,8 @@ def process_webchat_ai_reply_job(
             "reply_source": reply_source,
             "bridge_elapsed_ms": bridge_elapsed_ms,
             "bridge_timeout_seconds": bridge_timeout_seconds,
+            "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds,
+            "bridge_wait_timeout_ms": bridge_wait_timeout_ms,
             "sanitized_empty": sanitized_empty,
         }, ensure_ascii=False),
     ))
@@ -185,18 +191,22 @@ def process_webchat_ai_reply_job(
             "fallback_reason": fallback_reason,
             "bridge_elapsed_ms": bridge_elapsed_ms,
             "bridge_timeout_seconds": bridge_timeout_seconds,
+            "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds,
+            "bridge_wait_timeout_ms": bridge_wait_timeout_ms,
             "sanitized_empty": sanitized_empty,
         }},
     )
-    return {"status": "done", "message_id": message.id, "fallback": bool(fallback_reason), "reply_source": reply_source, "fallback_reason": fallback_reason, "bridge_elapsed_ms": bridge_elapsed_ms}
+    return {"status": "done", "message_id": message.id, "fallback": bool(fallback_reason), "reply_source": reply_source, "fallback_reason": fallback_reason, "bridge_elapsed_ms": bridge_elapsed_ms, "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds, "bridge_wait_timeout_ms": bridge_wait_timeout_ms}
 
 
 def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage]) -> str:
-    global _LAST_AI_REPLY_SOURCE, _LAST_AI_FALLBACK_REASON, _LAST_BRIDGE_ELAPSED_MS
+    global _LAST_AI_REPLY_SOURCE, _LAST_AI_FALLBACK_REASON, _LAST_BRIDGE_ELAPSED_MS, _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS, _LAST_BRIDGE_WAIT_TIMEOUT_MS
 
     _LAST_AI_REPLY_SOURCE = "fallback"
     _LAST_AI_FALLBACK_REASON = None
     _LAST_BRIDGE_ELAPSED_MS = None
+    _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = None
+    _LAST_BRIDGE_WAIT_TIMEOUT_MS = None
 
     prompt = _build_prompt(ticket=ticket, conversation=conversation, visitor_message=visitor_message, history_rows=history_rows)
 
@@ -224,6 +234,8 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
                     "fallback_reason": _LAST_AI_FALLBACK_REASON,
                     "bridge_elapsed_ms": _LAST_BRIDGE_ELAPSED_MS,
                     "bridge_timeout_seconds": settings.openclaw_bridge_timeout_seconds,
+                    "bridge_effective_timeout_seconds": _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS,
+                    "bridge_wait_timeout_ms": _LAST_BRIDGE_WAIT_TIMEOUT_MS,
                 }},
             )
             return _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
@@ -254,6 +266,8 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
                     "fallback_reason": _LAST_AI_FALLBACK_REASON,
                     "bridge_elapsed_ms": _LAST_BRIDGE_ELAPSED_MS,
                     "bridge_timeout_seconds": settings.openclaw_bridge_timeout_seconds,
+                    "bridge_effective_timeout_seconds": _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS,
+                    "bridge_wait_timeout_ms": _LAST_BRIDGE_WAIT_TIMEOUT_MS,
                     "error_type": type(exc).__name__,
                 }},
             )
@@ -265,13 +279,21 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
 
 
 def _generate_ai_reply_via_bridge(*, prompt: str, conversation: WebchatConversation, visitor_message: WebchatMessage) -> str:
+    global _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS, _LAST_BRIDGE_WAIT_TIMEOUT_MS
+
     bridge_url = settings.openclaw_bridge_url.rstrip('/')
     session_key = f"webchat-ai-{conversation.public_id}-{visitor_message.id}"
+    configured_timeout_seconds = int(getattr(settings, "openclaw_bridge_timeout_seconds", 20) or 20)
+    effective_timeout_seconds = min(max(configured_timeout_seconds, 5), 30)
+    wait_timeout_ms = effective_timeout_seconds * 1000
+    _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = effective_timeout_seconds
+    _LAST_BRIDGE_WAIT_TIMEOUT_MS = wait_timeout_ms
+
     payload = {
         "sessionKey": session_key,
         "prompt": prompt,
         "limit": 20,
-        "waitTimeoutMs": max(settings.openclaw_bridge_timeout_seconds * 1000, 90000),
+        "waitTimeoutMs": wait_timeout_ms,
     }
     ai_req = urllib.request.Request(
         f"{bridge_url}/ai-reply",
@@ -280,7 +302,7 @@ def _generate_ai_reply_via_bridge(*, prompt: str, conversation: WebchatConversat
         method="POST",
     )
     try:
-        with urllib.request.urlopen(ai_req, timeout=max(settings.openclaw_bridge_timeout_seconds, 120)) as resp:
+        with urllib.request.urlopen(ai_req, timeout=effective_timeout_seconds + 5) as resp:
             parsed = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
