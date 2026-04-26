@@ -1,7 +1,7 @@
 """control plane database foundation
 
 Revision ID: 20260426_ctrl_foundation
-Revises: 20260410_0001
+Revises: 20260410_0011
 Create Date: 2026-04-26
 """
 
@@ -10,9 +10,14 @@ import sqlalchemy as sa
 
 
 revision = "20260426_ctrl_foundation"
-down_revision = "20260410_0001"
+down_revision = "20260410_0011"
 branch_labels = None
 depends_on = None
+
+
+def _drop_indexes(table_name: str, names: list[str]) -> None:
+    for name in names:
+        op.drop_index(name, table_name=table_name)
 
 
 def upgrade() -> None:
@@ -38,18 +43,21 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
     )
-    op.create_index("ix_persona_profiles_profile_key", "persona_profiles", ["profile_key"], unique=True)
-    op.create_index("ix_persona_profiles_name", "persona_profiles", ["name"])
-    op.create_index("ix_persona_profiles_market_id", "persona_profiles", ["market_id"])
-    op.create_index("ix_persona_profiles_channel", "persona_profiles", ["channel"])
-    op.create_index("ix_persona_profiles_language", "persona_profiles", ["language"])
-    op.create_index("ix_persona_profiles_is_active", "persona_profiles", ["is_active"])
-    op.create_index("ix_persona_profiles_published_at", "persona_profiles", ["published_at"])
-    op.create_index("ix_persona_profiles_created_by", "persona_profiles", ["created_by"])
-    op.create_index("ix_persona_profiles_updated_by", "persona_profiles", ["updated_by"])
-    op.create_index("ix_persona_profiles_published_by", "persona_profiles", ["published_by"])
-    op.create_index("ix_persona_profiles_created_at", "persona_profiles", ["created_at"])
-    op.create_index("ix_persona_profiles_updated_at", "persona_profiles", ["updated_at"])
+    for name, columns, unique in [
+        ("ix_persona_profiles_profile_key", ["profile_key"], True),
+        ("ix_persona_profiles_name", ["name"], False),
+        ("ix_persona_profiles_market_id", ["market_id"], False),
+        ("ix_persona_profiles_channel", ["channel"], False),
+        ("ix_persona_profiles_language", ["language"], False),
+        ("ix_persona_profiles_is_active", ["is_active"], False),
+        ("ix_persona_profiles_published_at", ["published_at"], False),
+        ("ix_persona_profiles_created_by", ["created_by"], False),
+        ("ix_persona_profiles_updated_by", ["updated_by"], False),
+        ("ix_persona_profiles_published_by", ["published_by"], False),
+        ("ix_persona_profiles_created_at", ["created_at"], False),
+        ("ix_persona_profiles_updated_at", ["updated_at"], False),
+    ]:
+        op.create_index(name, "persona_profiles", columns, unique=unique)
 
     op.create_table(
         "persona_profile_versions",
@@ -63,10 +71,13 @@ def upgrade() -> None:
         sa.Column("published_at", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint("profile_id", "version", name="uq_persona_profile_version"),
     )
-    op.create_index("ix_persona_profile_versions_profile_id", "persona_profile_versions", ["profile_id"])
-    op.create_index("ix_persona_profile_versions_version", "persona_profile_versions", ["version"])
-    op.create_index("ix_persona_profile_versions_published_by", "persona_profile_versions", ["published_by"])
-    op.create_index("ix_persona_profile_versions_published_at", "persona_profile_versions", ["published_at"])
+    for name, columns in [
+        ("ix_persona_profile_versions_profile_id", ["profile_id"]),
+        ("ix_persona_profile_versions_version", ["version"]),
+        ("ix_persona_profile_versions_published_by", ["published_by"]),
+        ("ix_persona_profile_versions_published_at", ["published_at"]),
+    ]:
+        op.create_index(name, "persona_profile_versions", columns)
 
     op.create_table(
         "knowledge_items",
@@ -99,23 +110,26 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
     )
-    op.create_index("ix_knowledge_items_item_key", "knowledge_items", ["item_key"], unique=True)
-    op.create_index("ix_knowledge_items_title", "knowledge_items", ["title"])
-    op.create_index("ix_knowledge_items_status", "knowledge_items", ["status"])
-    op.create_index("ix_knowledge_items_source_type", "knowledge_items", ["source_type"])
-    op.create_index("ix_knowledge_items_market_id", "knowledge_items", ["market_id"])
-    op.create_index("ix_knowledge_items_channel", "knowledge_items", ["channel"])
-    op.create_index("ix_knowledge_items_audience_scope", "knowledge_items", ["audience_scope"])
-    op.create_index("ix_knowledge_items_priority", "knowledge_items", ["priority"])
-    op.create_index("ix_knowledge_items_starts_at", "knowledge_items", ["starts_at"])
-    op.create_index("ix_knowledge_items_ends_at", "knowledge_items", ["ends_at"])
-    op.create_index("ix_knowledge_items_file_storage_key", "knowledge_items", ["file_storage_key"])
-    op.create_index("ix_knowledge_items_published_at", "knowledge_items", ["published_at"])
-    op.create_index("ix_knowledge_items_created_by", "knowledge_items", ["created_by"])
-    op.create_index("ix_knowledge_items_updated_by", "knowledge_items", ["updated_by"])
-    op.create_index("ix_knowledge_items_published_by", "knowledge_items", ["published_by"])
-    op.create_index("ix_knowledge_items_created_at", "knowledge_items", ["created_at"])
-    op.create_index("ix_knowledge_items_updated_at", "knowledge_items", ["updated_at"])
+    for name, columns, unique in [
+        ("ix_knowledge_items_item_key", ["item_key"], True),
+        ("ix_knowledge_items_title", ["title"], False),
+        ("ix_knowledge_items_status", ["status"], False),
+        ("ix_knowledge_items_source_type", ["source_type"], False),
+        ("ix_knowledge_items_market_id", ["market_id"], False),
+        ("ix_knowledge_items_channel", ["channel"], False),
+        ("ix_knowledge_items_audience_scope", ["audience_scope"], False),
+        ("ix_knowledge_items_priority", ["priority"], False),
+        ("ix_knowledge_items_starts_at", ["starts_at"], False),
+        ("ix_knowledge_items_ends_at", ["ends_at"], False),
+        ("ix_knowledge_items_file_storage_key", ["file_storage_key"], False),
+        ("ix_knowledge_items_published_at", ["published_at"], False),
+        ("ix_knowledge_items_created_by", ["created_by"], False),
+        ("ix_knowledge_items_updated_by", ["updated_by"], False),
+        ("ix_knowledge_items_published_by", ["published_by"], False),
+        ("ix_knowledge_items_created_at", ["created_at"], False),
+        ("ix_knowledge_items_updated_at", ["updated_at"], False),
+    ]:
+        op.create_index(name, "knowledge_items", columns, unique=unique)
 
     op.create_table(
         "knowledge_item_versions",
@@ -129,10 +143,13 @@ def upgrade() -> None:
         sa.Column("published_at", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint("item_id", "version", name="uq_knowledge_item_version"),
     )
-    op.create_index("ix_knowledge_item_versions_item_id", "knowledge_item_versions", ["item_id"])
-    op.create_index("ix_knowledge_item_versions_version", "knowledge_item_versions", ["version"])
-    op.create_index("ix_knowledge_item_versions_published_by", "knowledge_item_versions", ["published_by"])
-    op.create_index("ix_knowledge_item_versions_published_at", "knowledge_item_versions", ["published_at"])
+    for name, columns in [
+        ("ix_knowledge_item_versions_item_id", ["item_id"]),
+        ("ix_knowledge_item_versions_version", ["version"]),
+        ("ix_knowledge_item_versions_published_by", ["published_by"]),
+        ("ix_knowledge_item_versions_published_at", ["published_at"]),
+    ]:
+        op.create_index(name, "knowledge_item_versions", columns)
 
     op.create_table(
         "channel_onboarding_tasks",
@@ -151,66 +168,94 @@ def upgrade() -> None:
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
     )
-    op.create_index("ix_channel_onboarding_tasks_provider", "channel_onboarding_tasks", ["provider"])
-    op.create_index("ix_channel_onboarding_tasks_status", "channel_onboarding_tasks", ["status"])
-    op.create_index("ix_channel_onboarding_tasks_requested_by", "channel_onboarding_tasks", ["requested_by"])
-    op.create_index("ix_channel_onboarding_tasks_market_id", "channel_onboarding_tasks", ["market_id"])
-    op.create_index("ix_channel_onboarding_tasks_target_slot", "channel_onboarding_tasks", ["target_slot"])
-    op.create_index("ix_channel_onboarding_tasks_openclaw_account_id", "channel_onboarding_tasks", ["openclaw_account_id"])
-    op.create_index("ix_channel_onboarding_tasks_created_at", "channel_onboarding_tasks", ["created_at"])
+    for name, columns in [
+        ("ix_channel_onboarding_tasks_provider", ["provider"]),
+        ("ix_channel_onboarding_tasks_status", ["status"]),
+        ("ix_channel_onboarding_tasks_requested_by", ["requested_by"]),
+        ("ix_channel_onboarding_tasks_market_id", ["market_id"]),
+        ("ix_channel_onboarding_tasks_target_slot", ["target_slot"]),
+        ("ix_channel_onboarding_tasks_openclaw_account_id", ["openclaw_account_id"]),
+        ("ix_channel_onboarding_tasks_created_at", ["created_at"]),
+    ]:
+        op.create_index(name, "channel_onboarding_tasks", columns)
 
 
 def downgrade() -> None:
-    op.drop_index("ix_channel_onboarding_tasks_created_at", table_name="channel_onboarding_tasks")
-    op.drop_index("ix_channel_onboarding_tasks_openclaw_account_id", table_name="channel_onboarding_tasks")
-    op.drop_index("ix_channel_onboarding_tasks_target_slot", table_name="channel_onboarding_tasks")
-    op.drop_index("ix_channel_onboarding_tasks_market_id", table_name="channel_onboarding_tasks")
-    op.drop_index("ix_channel_onboarding_tasks_requested_by", table_name="channel_onboarding_tasks")
-    op.drop_index("ix_channel_onboarding_tasks_status", table_name="channel_onboarding_tasks")
-    op.drop_index("ix_channel_onboarding_tasks_provider", table_name="channel_onboarding_tasks")
+    _drop_indexes(
+        "channel_onboarding_tasks",
+        [
+            "ix_channel_onboarding_tasks_created_at",
+            "ix_channel_onboarding_tasks_openclaw_account_id",
+            "ix_channel_onboarding_tasks_target_slot",
+            "ix_channel_onboarding_tasks_market_id",
+            "ix_channel_onboarding_tasks_requested_by",
+            "ix_channel_onboarding_tasks_status",
+            "ix_channel_onboarding_tasks_provider",
+        ],
+    )
     op.drop_table("channel_onboarding_tasks")
 
-    op.drop_index("ix_knowledge_item_versions_published_at", table_name="knowledge_item_versions")
-    op.drop_index("ix_knowledge_item_versions_published_by", table_name="knowledge_item_versions")
-    op.drop_index("ix_knowledge_item_versions_version", table_name="knowledge_item_versions")
-    op.drop_index("ix_knowledge_item_versions_item_id", table_name="knowledge_item_versions")
+    _drop_indexes(
+        "knowledge_item_versions",
+        [
+            "ix_knowledge_item_versions_published_at",
+            "ix_knowledge_item_versions_published_by",
+            "ix_knowledge_item_versions_version",
+            "ix_knowledge_item_versions_item_id",
+        ],
+    )
     op.drop_table("knowledge_item_versions")
 
-    op.drop_index("ix_knowledge_items_updated_at", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_created_at", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_published_by", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_updated_by", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_created_by", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_published_at", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_file_storage_key", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_ends_at", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_starts_at", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_priority", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_audience_scope", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_channel", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_market_id", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_source_type", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_status", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_title", table_name="knowledge_items")
-    op.drop_index("ix_knowledge_items_item_key", table_name="knowledge_items")
+    _drop_indexes(
+        "knowledge_items",
+        [
+            "ix_knowledge_items_updated_at",
+            "ix_knowledge_items_created_at",
+            "ix_knowledge_items_published_by",
+            "ix_knowledge_items_updated_by",
+            "ix_knowledge_items_created_by",
+            "ix_knowledge_items_published_at",
+            "ix_knowledge_items_file_storage_key",
+            "ix_knowledge_items_ends_at",
+            "ix_knowledge_items_starts_at",
+            "ix_knowledge_items_priority",
+            "ix_knowledge_items_audience_scope",
+            "ix_knowledge_items_channel",
+            "ix_knowledge_items_market_id",
+            "ix_knowledge_items_source_type",
+            "ix_knowledge_items_status",
+            "ix_knowledge_items_title",
+            "ix_knowledge_items_item_key",
+        ],
+    )
     op.drop_table("knowledge_items")
 
-    op.drop_index("ix_persona_profile_versions_published_at", table_name="persona_profile_versions")
-    op.drop_index("ix_persona_profile_versions_published_by", table_name="persona_profile_versions")
-    op.drop_index("ix_persona_profile_versions_version", table_name="persona_profile_versions")
-    op.drop_index("ix_persona_profile_versions_profile_id", table_name="persona_profile_versions")
+    _drop_indexes(
+        "persona_profile_versions",
+        [
+            "ix_persona_profile_versions_published_at",
+            "ix_persona_profile_versions_published_by",
+            "ix_persona_profile_versions_version",
+            "ix_persona_profile_versions_profile_id",
+        ],
+    )
     op.drop_table("persona_profile_versions")
 
-    op.drop_index("ix_persona_profiles_updated_at", table_name="persona_profiles")
-    op.drop_index("ix_persona_profiles_created_at", table_name="persona_profiles")
-    op.drop_index("ix_persona_profiles_published_by", table_name="persona_profiles")
-    op.drop_index("ix_persona_profiles_updated_by", table_name="persona_profiles")
-    op.drop_index("ix_persona_profiles_created_by", table_name="persona_profiles")
-    op.drop_index("ix_persona_profiles_published_at", table_name="persona_profiles")
-    op.drop_index("ix_persona_profiles_is_active", table_name="persona_profiles")
-    op.drop_index("ix_persona_profiles_language", table_name="persona_profiles")
-    op.drop_index("ix_persona_profiles_channel", table_name="persona_profiles")
-    op.drop_index("ix_persona_profiles_market_id", table_name="persona_profiles")
-    op.drop_index("ix_persona_profiles_name", table_name="persona_profiles")
-    op.drop_index("ix_persona_profiles_profile_key", table_name="persona_profiles")
+    _drop_indexes(
+        "persona_profiles",
+        [
+            "ix_persona_profiles_updated_at",
+            "ix_persona_profiles_created_at",
+            "ix_persona_profiles_published_by",
+            "ix_persona_profiles_updated_by",
+            "ix_persona_profiles_created_by",
+            "ix_persona_profiles_published_at",
+            "ix_persona_profiles_is_active",
+            "ix_persona_profiles_language",
+            "ix_persona_profiles_channel",
+            "ix_persona_profiles_market_id",
+            "ix_persona_profiles_name",
+            "ix_persona_profiles_profile_key",
+        ],
+    )
     op.drop_table("persona_profiles")
