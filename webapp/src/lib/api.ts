@@ -6,6 +6,7 @@ import type {
   CaseDetail,
   CaseListItem,
   ChannelAccount,
+  ChannelOnboardingTaskList,
   LiteMeta,
   Market,
   ProductionReadiness,
@@ -15,7 +16,9 @@ import type {
   SignoffChecklist,
   AIConfigResource,
   AIConfigVersion,
+  KnowledgeItemList,
   OpenClawUnresolvedEvent,
+  PersonaProfileList,
   Team,
   WebchatConversation,
   WebchatThread,
@@ -145,6 +148,9 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ notes: notes || null }),
   }),
+  personaProfiles: () => request<PersonaProfileList>('/api/persona-profiles?limit=200'),
+  knowledgeItems: () => request<KnowledgeItemList>('/api/knowledge-items?limit=200'),
+  channelOnboardingTasks: () => request<ChannelOnboardingTaskList>('/api/channel-control/onboarding-tasks?limit=200'),
 
   channelAccounts: () => request<ChannelAccount[]>('/api/admin/channel-accounts'),
   createChannelAccount: (payload: Partial<ChannelAccount>) => request<ChannelAccount>('/api/admin/channel-accounts', {
