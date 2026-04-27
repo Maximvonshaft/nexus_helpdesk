@@ -99,13 +99,13 @@ def test_agent_cannot_create_update_publish_or_rollback(db_session):
     assert rollback_exc.value.status_code == 403
 
 
-def test_manager_can_create_profile(db_session):
-    manager = _user(db_session, UserRole.manager, "manager")
-    profile = create_persona_profile(_create_payload(profile_key="manager.persona"), db_session, manager)
+def test_admin_can_create_profile(db_session):
+    admin = _user(db_session, UserRole.admin, "admin-persona")
+    profile = create_persona_profile(_create_payload(profile_key="admin.persona"), db_session, admin)
 
-    assert profile.profile_key == "manager.persona"
-    assert profile.created_by == manager.id
-    assert profile.updated_by == manager.id
+    assert profile.profile_key == "admin.persona"
+    assert profile.created_by == admin.id
+    assert profile.updated_by == admin.id
     assert profile.published_version == 0
 
 

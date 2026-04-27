@@ -57,7 +57,7 @@ class Settings:
         self.openclaw_mcp_token_file = os.getenv("OPENCLAW_MCP_TOKEN_FILE")
         self.openclaw_mcp_password_file = os.getenv("OPENCLAW_MCP_PASSWORD_FILE")
         self.openclaw_mcp_claude_channel_mode = os.getenv("OPENCLAW_MCP_CLAUDE_CHANNEL_MODE", "off").strip().lower() or "off"
-        self.openclaw_cli_fallback_enabled = os.getenv("OPENCLAW_CLI_FALLBACK_ENABLED", "true").strip().lower() == "true"
+        self.openclaw_cli_fallback_enabled = os.getenv("OPENCLAW_CLI_FALLBACK_ENABLED", "false").strip().lower() == "true"
         self.openclaw_bridge_enabled = os.getenv("OPENCLAW_BRIDGE_ENABLED", "false").strip().lower() == "true"
         self.openclaw_bridge_url = (os.getenv("OPENCLAW_BRIDGE_URL", "http://127.0.0.1:18792").strip() or "http://127.0.0.1:18792").rstrip("/")
         self.openclaw_bridge_timeout_seconds = int(os.getenv("OPENCLAW_BRIDGE_TIMEOUT_SECONDS", "20"))
@@ -90,6 +90,13 @@ class Settings:
         self.integration_default_rate_limit_per_minute = int(os.getenv("INTEGRATION_DEFAULT_RATE_LIMIT_PER_MINUTE", "60"))
         self.integration_require_idempotency_key = os.getenv("INTEGRATION_REQUIRE_IDEMPOTENCY_KEY", "true").strip().lower() == "true"
 
+        self.webchat_allowed_origins = self._parse_csv(os.getenv("WEBCHAT_ALLOWED_ORIGINS", ""))
+        self.webchat_allow_no_origin = os.getenv("WEBCHAT_ALLOW_NO_ORIGIN", "false").strip().lower() == "true"
+        self.webchat_rate_limit_backend = os.getenv("WEBCHAT_RATE_LIMIT_BACKEND", "database" if self.app_env == "production" else "memory").strip().lower() or "database"
+        self.webchat_rate_limit_window_seconds = int(os.getenv("WEBCHAT_RATE_LIMIT_WINDOW_SECONDS", "60"))
+        self.webchat_rate_limit_max_requests = int(os.getenv("WEBCHAT_RATE_LIMIT_MAX_REQUESTS", "20"))
+        self.webchat_ai_auto_reply_mode = os.getenv("WEBCHAT_AI_AUTO_REPLY_MODE", "safe_ack" if self.app_env == "production" else "safe_ai").strip().lower() or "safe_ack"
+
         self.request_id_header = os.getenv("REQUEST_ID_HEADER", "X-Request-Id")
         self.log_json = os.getenv("LOG_JSON", "true").strip().lower() == "true"
         self.metrics_enabled = os.getenv("METRICS_ENABLED", "false").strip().lower() == "true"
@@ -113,6 +120,10 @@ class Settings:
 
     def _normalize(self) -> None:
         self.upload_root.mkdir(parents=True, exist_ok=True)
+        if self.webchat_rate_limit_backend not in {"memory", "database"}:
+            raise RuntimeError("WEBCHAT_RATE_LIMIT_BACKEND must be memory or database")
+        if self.webchat_ai_auto_reply_mode not in {"off", "safe_ack", "safe_ai"}:
+            raise RuntimeError("WEBCHAT_AI_AUTO_REPLY_MODE must be off, safe_ack, or safe_ai")
         if self.app_env == "production":
             if not self.jwt_secret_key:
                 raise RuntimeError("SECRET_KEY must be set in production")
@@ -128,6 +139,8 @@ class Settings:
                 raise RuntimeError("ALLOW_DEV_AUTH must be disabled in production")
             if self.allow_legacy_integration_api_key:
                 raise RuntimeError("ALLOW_LEGACY_INTEGRATION_API_KEY must be disabled in production")
+            if self.openclaw_cli_fallback_enabled:
+                raise RuntimeError("OPENCLAW_CLI_FALLBACK_ENABLED must be false in production")
             localhost_origins = {"http://localhost", "http://127.0.0.1"}
             if set(self.allowed_origins) & localhost_origins:
                 raise RuntimeError("Production ALLOWED_ORIGINS must not include localhost defaults")

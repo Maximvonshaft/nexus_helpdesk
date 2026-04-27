@@ -292,7 +292,7 @@ def _generate_ai_reply_via_bridge(*, prompt: str, conversation: WebchatConversat
     payload = {
         "sessionKey": session_key,
         "prompt": prompt,
-        "limit": 20,
+        "limit": 6,
         "waitTimeoutMs": wait_timeout_ms,
     }
     ai_req = urllib.request.Request(

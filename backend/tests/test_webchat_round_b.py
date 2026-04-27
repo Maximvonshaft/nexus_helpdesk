@@ -60,7 +60,9 @@ def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
     conversation_id, visitor_token = _create_webchat_message_flow(client)
 
     from app.services import webchat_ai_service
+    from app.services import webchat_ai_safe_service
 
+    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
     monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', lambda **kwargs: 'We can help with shipment questions, delivery updates, and general support requests.')
 
     db = SessionLocal()
@@ -88,7 +90,9 @@ def test_webchat_ai_reply_uses_bridge_when_enabled(monkeypatch):
     conversation_id, visitor_token = _create_webchat_message_flow(client)
 
     from app.services import webchat_ai_service
+    from app.services import webchat_ai_safe_service
 
+    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
     monkeypatch.setattr(webchat_ai_service.settings, 'openclaw_bridge_enabled', True)
     calls = []
     payloads = []
@@ -165,7 +169,9 @@ def test_webchat_ai_reply_bridge_failure_falls_back_safely(monkeypatch):
     assert sent.status_code == 200, sent.text
 
     from app.services import webchat_ai_service
+    from app.services import webchat_ai_safe_service
 
+    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
     monkeypatch.setattr(webchat_ai_service.settings, 'openclaw_bridge_enabled', True)
 
     def fake_urlopen_fail(req, timeout=0):

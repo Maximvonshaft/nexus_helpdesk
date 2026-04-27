@@ -25,9 +25,21 @@ class StoredFile:
 
 class StorageBackend(Protocol):
     def save_upload(self, file: UploadFile, *, allowed_mime_types: set[str], allowed_extensions: set[str], max_bytes: int) -> StoredFile: ...
-    def persist_bytes(self, *, content: bytes, filename: str, media_type: str) -> StoredFile: ...
+    def persist_bytes(self, *, content: bytes, filename: str, media_type: str, allowed_mime_types: set[str] | None = None, allowed_extensions: set[str] | None = None, max_bytes: int | None = None) -> StoredFile: ...
     def resolve(self, storage_key: str) -> Path: ...
     def download_url(self, storage_key: str, *, filename: str | None = None, media_type: str | None = None) -> str | None: ...
+
+
+def _validate_persist_bytes_inputs(*, content: bytes, filename: str, media_type: str, allowed_mime_types: set[str] | None, allowed_extensions: set[str] | None, max_bytes: int | None) -> tuple[str, str]:
+    suffix = Path(filename or 'attachment.bin').suffix.lower() or '.bin'
+    normalized_media_type = (media_type or 'application/octet-stream').split(';', 1)[0].strip().lower()
+    if max_bytes is not None and len(content) > max_bytes:
+        raise HTTPException(status_code=413, detail='Persisted attachment exceeds configured size limit')
+    if allowed_extensions is not None and suffix not in allowed_extensions and suffix not in {'.bin', '.json', '.txt'}:
+        raise HTTPException(status_code=400, detail=f"File extension '{suffix}' is not allowed")
+    if allowed_mime_types is not None and normalized_media_type not in allowed_mime_types:
+        raise HTTPException(status_code=400, detail=f"MIME type '{normalized_media_type}' is not allowed")
+    return suffix, normalized_media_type
 
 
 class LocalStorageBackend:
@@ -89,9 +101,15 @@ class LocalStorageBackend:
             raise HTTPException(status_code=400, detail=f"Detected MIME type '{detected_mime}' is not allowed")
         return StoredFile(storage_key=storage_key, absolute_path=absolute_path, size_bytes=total, detected_mime_type=detected_mime)
 
-
-    def persist_bytes(self, *, content: bytes, filename: str, media_type: str) -> StoredFile:
-        suffix = Path(filename).suffix.lower() or ".bin"
+    def persist_bytes(self, *, content: bytes, filename: str, media_type: str, allowed_mime_types: set[str] | None = None, allowed_extensions: set[str] | None = None, max_bytes: int | None = None) -> StoredFile:
+        suffix, detected_mime = _validate_persist_bytes_inputs(
+            content=content,
+            filename=filename,
+            media_type=media_type,
+            allowed_mime_types=allowed_mime_types,
+            allowed_extensions=allowed_extensions,
+            max_bytes=max_bytes,
+        )
         storage_key = f"{uuid.uuid4().hex}{suffix}"
         absolute_path = (self.root / storage_key).resolve()
         try:
@@ -99,7 +117,7 @@ class LocalStorageBackend:
         except ValueError as exc:
             raise HTTPException(status_code=500, detail='Resolved storage path escaped storage root') from exc
         absolute_path.write_bytes(content)
-        return StoredFile(storage_key=storage_key, absolute_path=absolute_path, size_bytes=len(content), detected_mime_type=media_type)
+        return StoredFile(storage_key=storage_key, absolute_path=absolute_path, size_bytes=len(content), detected_mime_type=detected_mime)
 
     def resolve(self, storage_key: str) -> Path:
         candidate = (self.root / storage_key).resolve()
@@ -131,11 +149,7 @@ class S3CompatibleStorageBackend:
             import boto3
         except ImportError as exc:
             raise RuntimeError("boto3 is required for STORAGE_BACKEND=s3") from exc
-        kwargs = {
-            "service_name": "s3",
-            "endpoint_url": self.endpoint_url,
-            "region_name": self.region,
-        }
+        kwargs = {"service_name": "s3", "endpoint_url": self.endpoint_url, "region_name": self.region}
         if self.access_key and self.secret_key:
             kwargs["aws_access_key_id"] = self.access_key
             kwargs["aws_secret_access_key"] = self.secret_key
@@ -169,19 +183,24 @@ class S3CompatibleStorageBackend:
             if detected_mime not in allowed_mime_types:
                 raise HTTPException(status_code=400, detail=f"Detected MIME type '{detected_mime}' is not allowed")
             client = self._client()
-            extra_args = {"ContentType": detected_mime}
-            client.upload_file(str(tmp_path), self.bucket, storage_key, ExtraArgs=extra_args)
+            client.upload_file(str(tmp_path), self.bucket, storage_key, ExtraArgs={"ContentType": detected_mime})
             return StoredFile(storage_key=storage_key, absolute_path=None, size_bytes=total, detected_mime_type=detected_mime)
         finally:
             tmp_path.unlink(missing_ok=True)
 
-
-    def persist_bytes(self, *, content: bytes, filename: str, media_type: str) -> StoredFile:
-        suffix = Path(filename).suffix.lower() or ".bin"
+    def persist_bytes(self, *, content: bytes, filename: str, media_type: str, allowed_mime_types: set[str] | None = None, allowed_extensions: set[str] | None = None, max_bytes: int | None = None) -> StoredFile:
+        suffix, detected_mime = _validate_persist_bytes_inputs(
+            content=content,
+            filename=filename,
+            media_type=media_type,
+            allowed_mime_types=allowed_mime_types,
+            allowed_extensions=allowed_extensions,
+            max_bytes=max_bytes,
+        )
         storage_key = f"{uuid.uuid4().hex}{suffix}"
         client = self._client()
-        client.put_object(Bucket=self.bucket, Key=storage_key, Body=content, ContentType=media_type)
-        return StoredFile(storage_key=storage_key, absolute_path=None, size_bytes=len(content), detected_mime_type=media_type)
+        client.put_object(Bucket=self.bucket, Key=storage_key, Body=content, ContentType=detected_mime)
+        return StoredFile(storage_key=storage_key, absolute_path=None, size_bytes=len(content), detected_mime_type=detected_mime)
 
     def resolve(self, storage_key: str) -> Path:
         raise HTTPException(status_code=501, detail='Direct file resolution is not available for remote storage')
@@ -190,15 +209,10 @@ class S3CompatibleStorageBackend:
         client = self._client()
         params = {"Bucket": self.bucket, "Key": storage_key}
         if filename:
-            disposition = f'attachment; filename="{filename}"'
-            params["ResponseContentDisposition"] = disposition
+            params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
         if media_type:
             params["ResponseContentType"] = media_type
-        return client.generate_presigned_url(
-            "get_object",
-            Params=params,
-            ExpiresIn=self.presign_expiry_seconds,
-        )
+        return client.generate_presigned_url("get_object", Params=params, ExpiresIn=self.presign_expiry_seconds)
 
 
 def get_storage_backend() -> StorageBackend:

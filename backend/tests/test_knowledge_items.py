@@ -103,13 +103,13 @@ def test_agent_cannot_create_update_publish_or_rollback(db_session):
     assert rollback_exc.value.status_code == 403
 
 
-def test_manager_can_create_knowledge_item(db_session):
-    manager = _user(db_session, UserRole.manager, "manager")
-    item = create_knowledge_item(_create_payload(item_key="manager.knowledge"), db_session, manager)
+def test_admin_can_create_knowledge_item(db_session):
+    admin = _user(db_session, UserRole.admin, "admin-knowledge")
+    item = create_knowledge_item(_create_payload(item_key="admin.knowledge"), db_session, admin)
 
-    assert item.item_key == "manager.knowledge"
-    assert item.created_by == manager.id
-    assert item.updated_by == manager.id
+    assert item.item_key == "admin.knowledge"
+    assert item.created_by == admin.id
+    assert item.updated_by == admin.id
     assert item.published_version == 0
 
 
@@ -192,7 +192,8 @@ def test_publish_valid_draft_creates_and_increments_versions(db_session):
     v1 = publish_knowledge_item(item.id, KnowledgePublishRequest(notes="v1"), db_session, admin)
     assert v1.version == 1
     assert v1.summary == "Common delivery answers"
-    assert item.status == "active"
+    detail_v1 = get_knowledge_item(item.id, db_session, admin)
+    assert detail_v1.status == "active"
 
     update_knowledge_item(
         item.id,
