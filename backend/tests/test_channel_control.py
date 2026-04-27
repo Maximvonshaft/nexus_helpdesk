@@ -93,21 +93,21 @@ def test_agent_cannot_create_or_update_channel_control_task(db_session):
     assert update_exc.value.status_code == 403
 
 
-def test_manager_can_create_and_list_tasks(db_session):
-    manager = _user(db_session, UserRole.manager, "manager")
+def test_admin_can_create_and_list_tasks(db_session):
+    admin = _user(db_session, UserRole.admin, "admin-channel")
     market = _market(db_session)
 
-    task = create_onboarding_task(_payload(market_id=market.id), db_session, manager)
+    task = create_onboarding_task(_payload(market_id=market.id), db_session, admin)
     assert task.provider == "whatsapp"
     assert task.status == "pending"
-    assert task.requested_by == manager.id
+    assert task.requested_by == admin.id
     assert task.market_id == market.id
 
-    listing = list_onboarding_tasks(provider="whatsapp", db=db_session, current_user=manager)
+    listing = list_onboarding_tasks(provider="whatsapp", db=db_session, current_user=admin)
     assert listing.total == 1
     assert listing.tasks[0].id == task.id
 
-    detail = get_onboarding_task(task.id, db_session, manager)
+    detail = get_onboarding_task(task.id, db_session, admin)
     assert detail.id == task.id
 
 

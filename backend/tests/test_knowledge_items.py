@@ -103,13 +103,13 @@ def test_agent_cannot_create_update_publish_or_rollback(db_session):
     assert rollback_exc.value.status_code == 403
 
 
-def test_manager_can_create_knowledge_item(db_session):
-    manager = _user(db_session, UserRole.manager, "manager")
-    item = create_knowledge_item(_create_payload(item_key="manager.knowledge"), db_session, manager)
+def test_admin_can_create_knowledge_item(db_session):
+    admin = _user(db_session, UserRole.admin, "admin-knowledge")
+    item = create_knowledge_item(_create_payload(item_key="admin.knowledge"), db_session, admin)
 
-    assert item.item_key == "manager.knowledge"
-    assert item.created_by == manager.id
-    assert item.updated_by == manager.id
+    assert item.item_key == "admin.knowledge"
+    assert item.created_by == admin.id
+    assert item.updated_by == admin.id
     assert item.published_version == 0
 
 

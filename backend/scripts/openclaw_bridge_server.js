@@ -379,13 +379,13 @@ class BridgeRuntime {
 
     try {
       await this.client.request('sessions.send', {
-        key: sessionKey,
         message: prompt,
+        key: sessionKey,
       }, { timeoutMs: this.config.requestTimeoutMs });
 
       const history = await this.client.request('chat.history', {
-        key: sessionKey,
         limit,
+        key: sessionKey,
       }, { timeoutMs: this.config.requestTimeoutMs });
       const messages = history.messages || [];
 
