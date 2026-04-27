@@ -73,8 +73,11 @@ class OpenClawBridgeHTTPClient:
         return [item for item in messages if isinstance(item, dict)] if isinstance(messages, list) else []
 
     def attachments_fetch(self, message_id: str, *, session_key: str | None = None) -> list[dict[str, Any]]:
+        # sync_openclaw_conversation already tries the bridge-native /attachments-fetch
+        # path with sessionKey. This MCP-compatible fallback signature does not receive
+        # sessionKey, so returning an empty list is safer than any local CLI fallback.
         if not session_key:
-            raise OpenClawBridgeHTTPError('session_key_required_for_bridge_attachment_fetch')
+            return []
         data = self._post('/attachments-fetch', {'sessionKey': session_key, 'messageId': message_id})
         attachments = data.get('attachments')
         return [item for item in attachments if isinstance(item, dict)] if isinstance(attachments, list) else []
