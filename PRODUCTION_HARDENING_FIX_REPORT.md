@@ -3,9 +3,9 @@
 Branch: `fix/production-hardening-webchat-openclaw-outbound`
 Base: `main` at `99ecd42537e914df5200ce82f11f8812173c6fc4`
 
-## Scope
+## Current status
 
-This branch applies a focused P0/P1 production-hardening patch for NexusDesk. The changes target public Webchat exposure, OpenClaw CLI fallback defaults, manager capability reduction, outbound dispatch recovery semantics, database-backed Webchat rate limiting, and CI production readiness gating.
+This branch contains a staged production-hardening patch. It is ahead of `main` and focuses on Webchat public-entry hardening, manager capability reduction, OpenClaw CLI fallback safety, outbound dispatch recovery semantics, admin requeue endpoints, storage `persist_bytes` validation, CI production readiness, and lightweight regression tests.
 
 ## Completed fixes
 
@@ -15,27 +15,28 @@ Files changed:
 - `backend/app/settings.py`
 - `backend/app/api/webchat.py`
 
-What changed:
-- Added `WEBCHAT_ALLOWED_ORIGINS`.
-- Added `WEBCHAT_ALLOW_NO_ORIGIN`.
-- Replaced public Webchat CORS origin reflection with allowlist validation.
-- Removed the production path that returned `Access-Control-Allow-Origin: *`.
-- Allowed localhost only for development/test/local.
+Implemented:
+- `WEBCHAT_ALLOWED_ORIGINS`
+- `WEBCHAT_ALLOW_NO_ORIGIN`
+- Public Webchat CORS allowlist validation.
+- No production path intentionally returns `Access-Control-Allow-Origin: *`.
+- Localhost remains allowed only for development/test/local.
 
-Remaining configuration requirement:
-- Production deployments must set `WEBCHAT_ALLOWED_ORIGINS` to the real customer website origins that may embed the widget.
+Production requirement:
+- Set `WEBCHAT_ALLOWED_ORIGINS` to the exact site origins allowed to embed the widget.
 
 ### P0-2 Webchat visitor token transport hardening
 
 Files changed:
 - `backend/app/api/webchat.py`
 - `backend/app/static/webchat/widget.js`
+- `backend/tests/test_production_hardening_static.py`
 
-What changed:
-- Widget polling now sends `X-Webchat-Visitor-Token` instead of putting `visitor_token` in the URL query string.
-- Backend now prefers `X-Webchat-Visitor-Token`.
-- Query token remains as a short compatibility path for old widgets.
-- Widget no longer actively emits `?visitor_token=`.
+Implemented:
+- Widget sends `X-Webchat-Visitor-Token` instead of putting the token in the URL.
+- Backend prefers `X-Webchat-Visitor-Token`.
+- Query token remains only as short compatibility path for old widgets.
+- Static regression test verifies the widget does not actively emit the unsafe query fragment and contains the secure header name.
 
 ### P0-3 Webchat database-backed rate limiting
 
@@ -45,42 +46,45 @@ Files changed:
 - `backend/app/api/webchat.py`
 - `backend/alembic/versions/20260427_prod_hardening.py`
 
-What changed:
-- Added `WEBCHAT_RATE_LIMIT_BACKEND` with production default `database`.
-- Added `WEBCHAT_RATE_LIMIT_WINDOW_SECONDS`.
-- Added `WEBCHAT_RATE_LIMIT_MAX_REQUESTS`.
-- Added `webchat_rate_limits` table.
-- Added public Webchat API level database-backed limiter.
-- Client IP resolution only trusts `X-Forwarded-For` when the direct client host is in `TRUSTED_PROXY_IPS`.
+Implemented:
+- `WEBCHAT_RATE_LIMIT_BACKEND`, production default `database`.
+- `WEBCHAT_RATE_LIMIT_WINDOW_SECONDS`.
+- `WEBCHAT_RATE_LIMIT_MAX_REQUESTS`.
+- `webchat_rate_limits` table.
+- Public Webchat API invokes database-backed limiter before service handling.
+- `X-Forwarded-For` is only trusted when the direct client host is in `TRUSTED_PROXY_IPS`.
 
-Known follow-up:
-- `webchat_service.py` still contains its previous in-process limiter. Because API-level database limiter now runs before service handling, the public edge is hardened. A later cleanup PR should remove the old service-level memory limiter to avoid double limiting in local/test mode.
+Known issue to verify locally:
+- `webchat_rate_limit.py` still uses a raw SQL datetime comparison. This should be validated under SQLite and PostgreSQL. A safer window-key rewrite was attempted but blocked by the execution environment safety filter.
 
 ### P0-4 Manager capability reduction
 
 Files changed:
 - `backend/app/services/permissions.py`
+- `backend/tests/test_production_hardening_permissions.py`
 
-What changed:
-- Removed the following default capabilities from `UserRole.manager`:
+Implemented:
+- Removed default manager system-governance capabilities:
   - `user.manage`
   - `channel_account.manage`
   - `ai_config.manage`
   - `runtime.manage`
   - `market.manage`
-- Admin remains fully privileged.
-- Capability overrides still allow explicit exception grants.
+- Admin still has full capability catalog.
+- Capability overrides remain available for explicit exception grants.
+- Tests cover manager capability removal, admin full capability, and OpenClaw CLI fallback setting behavior.
 
 ### P0-5 OpenClaw CLI fallback disabled by default
 
 Files changed:
 - `backend/app/settings.py`
 - `backend/scripts/validate_production_readiness.py`
+- `backend/tests/test_production_hardening_permissions.py`
 
-What changed:
-- `OPENCLAW_CLI_FALLBACK_ENABLED` now defaults to `false`.
-- Production startup fails if `OPENCLAW_CLI_FALLBACK_ENABLED=true`.
-- Production readiness now reports fallback-enabled environments as unsafe.
+Implemented:
+- `OPENCLAW_CLI_FALLBACK_ENABLED` defaults to `false`.
+- Production startup fails if fallback is enabled.
+- Production readiness reports fallback-enabled environments as unsafe.
 
 ### P0-6 Outbound duplicate-send risk reduction
 
@@ -88,17 +92,16 @@ Files changed:
 - `backend/app/services/message_dispatch.py`
 - `backend/alembic/versions/20260427_prod_hardening.py`
 
-What changed:
-- Added stable local idempotency semantics using `nexusdesk-outbound-{message.id}`.
-- Stored the key in `provider_message_id` for current compatibility.
-- Added the idempotency key into outbound audit/route payloads.
-- Skips already-sent messages before dispatch.
-- Commits after each processed message instead of one batch-level commit.
-- Added helper to requeue dead outbound messages.
-- Added migration column `provider_idempotency_key` as a forward-compatible schema hook, although the current implementation uses the existing `provider_message_id` field to avoid broader model/schema churn in this PR.
+Implemented:
+- Stable local idempotency semantics using `nexusdesk-outbound-{message.id}`.
+- Current implementation stores the local key in `provider_message_id` for compatibility.
+- Idempotency key is included in outbound audit/route payloads.
+- Already-sent messages are skipped before dispatch.
+- `dispatch_pending_messages()` commits after every processed message.
+- Added helper for dead outbound requeue.
 
 Known follow-up:
-- OpenClaw bridge/CLI/MCP functions still need provider-native idempotency support. This PR makes local state and audit idempotency-ready but does not modify OpenClaw provider contracts.
+- OpenClaw bridge/CLI/MCP provider-native idempotency still needs upstream provider contract support.
 
 ### P1-4 CI production readiness gate
 
@@ -106,37 +109,41 @@ Files changed:
 - `.github/workflows/production-readiness.yml`
 - `backend/scripts/validate_production_readiness.py`
 
-What changed:
-- Added a strict `production-readiness-gate` workflow.
-- The workflow runs migrations against PostgreSQL and runs production readiness with safe dummy production env values.
+Implemented:
+- Added strict `production-readiness-gate` workflow.
+- The workflow runs migrations against PostgreSQL and then runs production readiness with safe dummy production env values.
 - Existing advisory checks are preserved.
 
 ### P1-5 Dead job/outbound requeue API implementation
 
 Files changed:
 - `backend/app/api/admin_queue.py`
+- `backend/app/main.py`
 - `backend/app/services/message_dispatch.py`
 
-What changed:
-- Added runtime-managed requeue endpoints in a new router:
+Implemented:
+- Added runtime-managed endpoints:
   - `POST /api/admin/jobs/{job_id}/requeue`
   - `POST /api/admin/jobs/requeue-dead`
   - `POST /api/admin/outbound/{message_id}/requeue`
   - `POST /api/admin/outbound/requeue-dead`
-- Added admin audit logging for requeue actions.
+- Added admin audit logging.
+- Registered `admin_queue_router` in `backend/app/main.py`.
 
-Important incomplete item:
-- The router still needs to be registered in `backend/app/main.py`. The attempted tool call to update `main.py` was blocked by the execution environment safety filter. The code is present but the endpoints will not be exposed until `main.py` imports and includes `admin_queue_router`.
+### P1-3 Storage-layer persist-bytes validation
 
-Manual patch needed:
+Files changed:
+- `backend/app/services/storage.py`
 
-```python
-from .api.admin_queue import router as admin_queue_router
-...
-app.include_router(admin_queue_router)
-```
+Implemented:
+- `StorageBackend.persist_bytes()` now accepts optional:
+  - `allowed_mime_types`
+  - `allowed_extensions`
+  - `max_bytes`
+- Local and S3-compatible backends validate size, MIME type, and extension before persistence.
 
-Insert it next to the existing admin router registration.
+Still pending:
+- `openclaw_bridge.persist_openclaw_attachment_reference()` must be wired to pass the OpenClaw attachment constraints into `persist_bytes()`.
 
 ## Partially completed / deferred items
 
@@ -145,42 +152,35 @@ Insert it next to the existing admin router registration.
 Status: deferred.
 
 Reason:
-- This requires deeper changes to `openclaw_bridge.py` and corresponding tests around session routing, account matching, market matching, and unresolved quarantine behavior.
-- The file is large and high-risk. I avoided making a broad patch without local test execution.
+- Requires careful edits to `openclaw_bridge.py`, route-aware matching tests, and local execution.
+- Broad blind edits to this high-risk file were avoided without test execution.
 
-Recommended next PR:
-- Update `_find_matching_open_tickets()` to accept route context.
-- Require account/channel/market disambiguation before auto-linking.
+Next PR should:
+- Make `_find_matching_open_tickets()` accept full route context.
+- Require channel/account/market disambiguation before auto-linking.
 - Force unresolved quarantine when account context is absent in multi-account environments.
 
 ### P1-2 unresolved replay concurrency/idempotency hardening
 
 Status: deferred.
 
-Recommended next PR:
+Next PR should:
 - Add replay state CAS or row lock.
-- Block replay of `resolved` / `dropped` events.
-- Add unique constraints for transcript and attachment references if missing.
-
-### P1-3 OpenClaw attachment `persist_bytes` validation
-
-Status: deferred.
-
-Recommended next PR:
-- Extend `StorageBackend.persist_bytes()` signature with allowed MIME/extension/max byte constraints.
-- Apply the same restrictions to OpenClaw attachment persistence as normal upload flow.
+- Block replay of `resolved`, `dropped`, or `replaying` events.
+- Add/verify unique constraints for transcript and attachment references.
 
 ### P1-6 Webchat AI high-risk mode
 
-Status: settings added, behavior not fully wired.
+Status: settings and readiness added, behavior not fully wired.
 
-What is already added:
+Implemented:
 - `WEBCHAT_AI_AUTO_REPLY_MODE=off|safe_ack|safe_ai`
 - Production default is `safe_ack`.
 - Readiness checks warn if production is not `off` or `safe_ack`.
 
-Remaining implementation:
-- `webchat_ai_service.py` must still short-circuit bridge generation in `safe_ack` mode and force high-risk intent to safe acknowledgement/review fallback.
+Still pending:
+- `webchat_ai_service.py` must short-circuit bridge generation in `off` and `safe_ack` modes.
+- High-risk intent fallback in `safe_ai` mode remains to be implemented.
 
 ## Migration
 
@@ -189,21 +189,36 @@ Added migration:
 - Revision ID: `20260427_prod_hardening`
 - Down revision: `20260410_0001`
 
-Migration adds:
+Adds:
 - `webchat_rate_limits`
 - `ticket_outbound_messages.provider_idempotency_key`
 
-## Test / validation status
+Must verify locally:
+- `cd backend && alembic heads`
+- `cd backend && alembic upgrade head`
 
-Tooling limitation:
-- I could modify the GitHub branch through the GitHub connector, but I could not clone the private repository into the execution container because external DNS/network access to GitHub was unavailable from the container.
-- Therefore I did not run `pytest`, `alembic upgrade head`, `npm run build`, or Docker build locally.
+## Tests added
 
-Required validation before merge:
+Added:
+- `backend/tests/test_production_hardening_permissions.py`
+- `backend/tests/test_production_hardening_static.py`
+
+Covered:
+- Manager no longer has high-risk system capabilities by default.
+- Admin still has all capabilities.
+- OpenClaw CLI fallback default is false.
+- Production rejects OpenClaw CLI fallback enabled.
+- Widget does not actively emit unsafe visitor-token query transport.
+- Widget contains secure Webchat visitor-token header transport.
+
+## Validation status
+
+I could modify the GitHub branch through the GitHub connector, but I could not run the repository locally from this environment. Therefore the following remain required before merge:
 
 ```bash
 python -m compileall backend/app backend/scripts
 pytest -q backend/tests
+cd backend && alembic heads
 cd backend && alembic upgrade head
 cd ../webapp && npm ci && npm run typecheck && npm run build
 cd .. && docker build -t nexusdesk/helpdesk:hardening-check .
@@ -218,19 +233,20 @@ Production must configure:
 - `OPENCLAW_CLI_FALLBACK_ENABLED=false`
 - `TRUSTED_PROXY_IPS` if using `X-Forwarded-For`
 - `ALLOWED_ORIGINS` without localhost
-- `DATABASE_URL` PostgreSQL
-- `SECRET_KEY` strong production secret
-- `METRICS_TOKEN` if metrics enabled
+- PostgreSQL `DATABASE_URL`
+- Strong `SECRET_KEY`
+- `METRICS_TOKEN` if metrics are enabled
 
 ## Recommendation
 
+Open a PR for this branch, but do not merge until CI and local validation pass.
+
 Do not deploy directly to production yet.
 
-Recommended next step:
-1. Apply the small manual `main.py` router registration patch for `admin_queue_router`.
-2. Run the full validation commands above.
-3. Fix any Alembic head/down_revision conflict if the branch's current Alembic chain has newer heads than `20260410_0001`.
-4. Open a PR and let GitHub Actions run.
-5. After CI passes, deploy to staging first.
-
-This branch is a strong first hardening patch, but because several deep OpenClaw/Webchat AI items were intentionally deferred to avoid unsafe broad edits, it should be treated as a staged hardening PR rather than the final production sign-off.
+Recommended path:
+1. Run the full validation commands above.
+2. Fix any Alembic head or import error if found.
+3. Open PR from `fix/production-hardening-webchat-openclaw-outbound` into `main`.
+4. Let GitHub Actions run.
+5. Merge only after CI is green and a staging smoke test passes.
+6. Create a follow-up PR for OpenClaw auto-link/replay and full Webchat AI safe mode wiring.
