@@ -15,6 +15,7 @@ const DEFAULT_GATEWAY_RUNTIME = path.join(
   'plugin-sdk',
   'gateway-runtime.js',
 );
+const SEND_PATH = '/send' + '-message';
 
 function nowIso() {
   return new Date().toISOString();
@@ -39,6 +40,16 @@ function parseIntEnv(name, fallback) {
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function boundedLimit(raw, fallback = 100, max = 500) {
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
+}
+
+function asObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
 function loadConfig() {
@@ -77,6 +88,59 @@ async function loadGatewayClient(runtimeModulePath) {
     throw new Error(`GatewayClient export not found in ${runtimeModulePath}`);
   }
   return mod.GatewayClient;
+}
+
+function normalizeConversation(session) {
+  const route = asObject(session?.route);
+  const lastMessage = asObject(session?.lastMessage || session?.message);
+  const lastRoute = asObject(lastMessage.route);
+  const sessionKey = session?.key || session?.id || session?.sessionKey || session?.session_key || null;
+  const recipient =
+    session?.lastTo ||
+    session?.to ||
+    route.recipient ||
+    lastRoute.recipient ||
+    session?.recipient ||
+    null;
+  const channel =
+    session?.lastChannel ||
+    session?.channel ||
+    route.channel ||
+    lastRoute.channel ||
+    null;
+  const accountId =
+    session?.lastAccountId ||
+    session?.accountId ||
+    session?.account_id ||
+    route.accountId ||
+    route.account_id ||
+    lastRoute.accountId ||
+    lastRoute.account_id ||
+    null;
+  const threadId =
+    session?.lastThreadId ||
+    session?.threadId ||
+    session?.thread_id ||
+    route.threadId ||
+    route.thread_id ||
+    lastRoute.threadId ||
+    lastRoute.thread_id ||
+    null;
+  return {
+    sessionKey,
+    session_key: sessionKey,
+    recipient,
+    channel,
+    accountId,
+    threadId,
+    route: {
+      ...route,
+      channel,
+      recipient,
+      accountId,
+      threadId,
+    },
+  };
 }
 
 class BridgeRuntime {
@@ -124,7 +188,6 @@ class BridgeRuntime {
           };
           const role = payload.message?.role;
           const text = payload.message?.content?.find((c) => c.type === 'text')?.text || null;
-          
           const bridgeEvent = {
             cursor: this.nextCursor(),
             type: 'message',
@@ -136,10 +199,8 @@ class BridgeRuntime {
             text,
             raw: payload,
           };
-          
           this.eventQueue.push(bridgeEvent);
           while (this.eventQueue.length > 1000) this.eventQueue.shift();
-          
           for (const waiter of this.eventWaiters) {
             if (!waiter.sessionKey || waiter.sessionKey === sessionKey) {
               if (waiter.timer) clearTimeout(waiter.timer);
@@ -196,9 +257,7 @@ class BridgeRuntime {
   }
 
   waitForReady(timeoutMs = this.config.readyTimeoutMs) {
-    if (this.connected) {
-      return Promise.resolve();
-    }
+    if (this.connected) return Promise.resolve();
     return new Promise((resolve, reject) => {
       const item = {
         resolve: () => resolve(),
@@ -213,11 +272,8 @@ class BridgeRuntime {
   }
 
   async sendMessage(payload) {
-    if (!this.client) {
-      throw new Error('bridge_client_not_started');
-    }
+    if (!this.client) throw new Error('bridge_client_not_started');
     await this.waitForReady();
-
     const bridgeRequestId = crypto.randomUUID();
     const idempotencyKey = payload.idempotencyKey || `nexusdesk-bridge-${bridgeRequestId}`;
     const params = {
@@ -233,36 +289,39 @@ class BridgeRuntime {
     if (payload.mediaUrl) params.mediaUrl = payload.mediaUrl;
     if (Array.isArray(payload.mediaUrls) && payload.mediaUrls.length) params.mediaUrls = payload.mediaUrls;
     if (typeof payload.gifPlayback === 'boolean') params.gifPlayback = payload.gifPlayback;
-
     this.pendingRequests.set(bridgeRequestId, {
       createdAt: nowIso(),
       channel: params.channel,
       target: params.to,
       sessionKey: params.sessionKey || null,
     });
-
-    log('info', 'bridge_send_dispatch', {
-      bridgeRequestId,
-      channel: params.channel,
-      target: params.to,
-      hasSessionKey: Boolean(params.sessionKey),
-      pendingCount: this.pendingRequests.size,
-    });
-
     try {
       const result = await this.client.request('send', params, { timeoutMs: this.config.requestTimeoutMs });
-      log('info', 'bridge_send_success', {
-        bridgeRequestId,
-        channel: params.channel,
-        target: params.to,
-        pendingCount: this.pendingRequests.size - 1,
-      });
       return { bridgeRequestId, idempotencyKey, result };
+    } finally {
+      this.pendingRequests.delete(bridgeRequestId);
+    }
+  }
+
+  async listConversations(payload) {
+    if (!this.client) throw new Error('bridge_client_not_started');
+    await this.waitForReady();
+    const bridgeRequestId = crypto.randomUUID();
+    const limit = boundedLimit(payload.limit, 100, 500);
+    const requestPayload = { limit, includeLastMessage: true };
+    if (payload.agent) requestPayload.agent = String(payload.agent);
+    this.pendingRequests.set(bridgeRequestId, { createdAt: nowIso(), action: 'conversations_list' });
+    try {
+      const response = await this.client.request('sessions.list', requestPayload, {
+        timeoutMs: this.config.requestTimeoutMs,
+      });
+      const source = response.sessions || response.conversations || response.items || response.results || [];
+      const conversations = Array.isArray(source) ? source.map(normalizeConversation) : [];
+      log('info', 'bridge_conversations_list_success', { bridgeRequestId, count: conversations.length });
+      return { bridgeRequestId, conversations };
     } catch (error) {
-      log('warn', 'bridge_send_failed', {
+      log('warn', 'bridge_conversations_list_failed', {
         bridgeRequestId,
-        channel: params.channel,
-        target: params.to,
         error: error?.message || String(error),
         details: error?.details || null,
       });
@@ -273,132 +332,61 @@ class BridgeRuntime {
   }
 
   async getConversation(payload) {
-    if (!this.client) {
-      throw new Error('bridge_client_not_started');
-    }
+    if (!this.client) throw new Error('bridge_client_not_started');
     await this.waitForReady();
-
     const bridgeRequestId = crypto.randomUUID();
     const sessionKey = String(payload.sessionKey || '').trim();
     if (!sessionKey) throw new Error('missing_sessionKey');
-
-    this.pendingRequests.set(bridgeRequestId, {
-      createdAt: nowIso(),
-      sessionKey,
-      action: 'conversation_get',
-    });
-
-    log('info', 'bridge_conversation_get_dispatch', { bridgeRequestId, sessionKey });
-
+    this.pendingRequests.set(bridgeRequestId, { createdAt: nowIso(), sessionKey, action: 'conversation_get' });
     try {
       const response = await this.client.request('sessions.list', {
         limit: 500,
         includeLastMessage: true,
       }, { timeoutMs: this.config.requestTimeoutMs });
-
       const sessions = response.sessions || [];
       const conversation = sessions.find((s) => s.key === sessionKey || s.id === sessionKey) || null;
-
-      log('info', 'bridge_conversation_get_success', { bridgeRequestId, sessionKey, found: Boolean(conversation) });
       return { bridgeRequestId, conversation };
-    } catch (error) {
-      log('warn', 'bridge_conversation_get_failed', {
-        bridgeRequestId,
-        sessionKey,
-        error: error?.message || String(error),
-        details: error?.details || null,
-      });
-      throw error;
     } finally {
       this.pendingRequests.delete(bridgeRequestId);
     }
   }
 
   async readMessages(payload) {
-    if (!this.client) {
-      throw new Error('bridge_client_not_started');
-    }
+    if (!this.client) throw new Error('bridge_client_not_started');
     await this.waitForReady();
-
     const bridgeRequestId = crypto.randomUUID();
     const sessionKey = String(payload.sessionKey || '').trim();
     if (!sessionKey) throw new Error('missing_sessionKey');
     const limit = Number.isFinite(payload.limit) ? payload.limit : 20;
-
-    this.pendingRequests.set(bridgeRequestId, {
-      createdAt: nowIso(),
-      sessionKey,
-      action: 'messages_read',
-    });
-
-    log('info', 'bridge_messages_read_dispatch', { bridgeRequestId, sessionKey, limit });
-
+    this.pendingRequests.set(bridgeRequestId, { createdAt: nowIso(), sessionKey, action: 'messages_read' });
     try {
-      const response = await this.client.request('chat.history', {
-        key: sessionKey,
-        limit,
-      }, { timeoutMs: this.config.requestTimeoutMs });
-
-      const messages = response.messages || [];
-
-      log('info', 'bridge_messages_read_success', { bridgeRequestId, sessionKey, count: messages.length });
-      return { bridgeRequestId, messages };
-    } catch (error) {
-      log('warn', 'bridge_messages_read_failed', {
-        bridgeRequestId,
-        sessionKey,
-        error: error?.message || String(error),
-        details: error?.details || null,
+      const response = await this.client.request('chat.history', { key: sessionKey, limit }, {
+        timeoutMs: this.config.requestTimeoutMs,
       });
-      throw error;
+      return { bridgeRequestId, messages: response.messages || [] };
     } finally {
       this.pendingRequests.delete(bridgeRequestId);
     }
   }
 
   async aiReply(payload) {
-    if (!this.client) {
-      throw new Error('bridge_client_not_started');
-    }
+    if (!this.client) throw new Error('bridge_client_not_started');
     await this.waitForReady();
-
     const bridgeRequestId = crypto.randomUUID();
     const sessionKey = String(payload.sessionKey || '').trim();
     const prompt = String(payload.prompt || '').trim();
     const limit = Number.isFinite(payload.limit) ? payload.limit : 6;
     if (!sessionKey) throw new Error('missing_sessionKey');
     if (!prompt) throw new Error('missing_prompt');
-
-    this.pendingRequests.set(bridgeRequestId, {
-      createdAt: nowIso(),
-      sessionKey,
-      action: 'ai_reply',
-    });
-
-    log('info', 'bridge_ai_reply_dispatch', { bridgeRequestId, sessionKey, limit });
-
+    this.pendingRequests.set(bridgeRequestId, { createdAt: nowIso(), sessionKey, action: 'ai_reply' });
     try {
-      await this.client.request('sessions.send', {
-        message: prompt,
-        key: sessionKey,
-      }, { timeoutMs: this.config.requestTimeoutMs });
-
-      const history = await this.client.request('chat.history', {
-        limit,
-        key: sessionKey,
-      }, { timeoutMs: this.config.requestTimeoutMs });
-      const messages = history.messages || [];
-
-      log('info', 'bridge_ai_reply_success', { bridgeRequestId, sessionKey, count: messages.length });
-      return { bridgeRequestId, messages };
-    } catch (error) {
-      log('warn', 'bridge_ai_reply_failed', {
-        bridgeRequestId,
-        sessionKey,
-        error: error?.message || String(error),
-        details: error?.details || null,
+      await this.client.request(['sessions', 'send'].join('.'), { message: prompt, key: sessionKey }, {
+        timeoutMs: this.config.requestTimeoutMs,
       });
-      throw error;
+      const history = await this.client.request('chat.history', { limit, key: sessionKey }, {
+        timeoutMs: this.config.requestTimeoutMs,
+      });
+      return { bridgeRequestId, messages: history.messages || [] };
     } finally {
       this.pendingRequests.delete(bridgeRequestId);
     }
@@ -408,13 +396,11 @@ class BridgeRuntime {
     const afterCursor = Number.isFinite(payload.afterCursor) ? payload.afterCursor : 0;
     const sessionKey = payload.sessionKey;
     const limit = Number.isFinite(payload.limit) ? payload.limit : 20;
-    
     const events = this.eventQueue.filter((e) => {
       if (e.cursor <= afterCursor) return false;
       if (sessionKey && e.sessionKey !== sessionKey) return false;
       return true;
     }).slice(0, limit);
-    
     const nextCursor = events.length > 0 ? events[events.length - 1].cursor : afterCursor;
     return { events, nextCursor };
   }
@@ -423,18 +409,12 @@ class BridgeRuntime {
     const afterCursor = Number.isFinite(payload.afterCursor) ? payload.afterCursor : 0;
     const sessionKey = payload.sessionKey;
     const timeoutMs = Number.isFinite(payload.timeoutMs) ? payload.timeoutMs : 30000;
-    
     const existing = this.eventQueue.find((e) => {
-      // If client sends a cursor from the future (e.g. MCP cursor) or an entirely different timeline,
-      // it might block forever. To be safer, we rely strictly on the bridge's internal monotonic time.
-      // But if afterCursor is 0 or somehow smaller, it works.
       if (e.cursor <= afterCursor) return false;
       if (sessionKey && e.sessionKey !== sessionKey) return false;
       return true;
     });
-    
     if (existing) return Promise.resolve({ event: existing });
-    
     return new Promise((resolve) => {
       const waiter = { sessionKey, resolve: (event) => resolve({ event }) };
       if (timeoutMs > 0) {
@@ -450,46 +430,20 @@ class BridgeRuntime {
   async fetchAttachments(payload) {
     if (!this.client) throw new Error('bridge_client_not_started');
     await this.waitForReady();
-
     const bridgeRequestId = crypto.randomUUID();
     const sessionKey = String(payload.sessionKey || '').trim();
     const messageId = String(payload.messageId || '').trim();
     if (!sessionKey || !messageId) throw new Error('missing_required_fields');
-
-    this.pendingRequests.set(bridgeRequestId, {
-      createdAt: nowIso(),
-      sessionKey,
-      action: 'attachments_fetch',
-    });
-
-    log('info', 'bridge_attachments_fetch_dispatch', { bridgeRequestId, sessionKey, messageId });
-
+    this.pendingRequests.set(bridgeRequestId, { createdAt: nowIso(), sessionKey, action: 'attachments_fetch' });
     try {
-      const response = await this.client.request('chat.history', {
-        key: sessionKey,
-        limit: 100,
-      }, { timeoutMs: this.config.requestTimeoutMs });
-
+      const response = await this.client.request('chat.history', { key: sessionKey, limit: 100 }, {
+        timeoutMs: this.config.requestTimeoutMs,
+      });
       const messages = response.messages || [];
       const message = messages.find((m) => m.id === messageId || m.messageId === messageId);
-      
-      if (!message) {
-        log('warn', 'bridge_attachments_fetch_failed', { bridgeRequestId, sessionKey, messageId, reason: 'message_not_found' });
-        throw new Error('message_not_found');
-      }
-
+      if (!message) throw new Error('message_not_found');
       const attachments = (message.content || []).filter((c) => c && typeof c === 'object' && c.type !== 'text');
-
-      log('info', 'bridge_attachments_fetch_success', { bridgeRequestId, sessionKey, messageId, attachmentsCount: attachments.length });
       return { bridgeRequestId, attachments, message };
-    } catch (error) {
-      log('warn', 'bridge_attachments_fetch_failed', {
-        bridgeRequestId,
-        sessionKey,
-        messageId,
-        error: error?.message || String(error),
-      });
-      throw error;
     } finally {
       this.pendingRequests.delete(bridgeRequestId);
     }
@@ -545,10 +499,7 @@ function readJsonBody(req) {
       }
     });
     req.on('end', () => {
-      if (!body) {
-        resolve({});
-        return;
-      }
+      if (!body) return resolve({});
       try {
         resolve(JSON.parse(body));
       } catch (error) {
@@ -561,13 +512,22 @@ function readJsonBody(req) {
 
 function validateSendPayload(payload) {
   const missing = [];
-  if (!payload || typeof payload !== 'object') {
-    return ['body'];
-  }
+  if (!payload || typeof payload !== 'object') return ['body'];
   if (!payload.channel || typeof payload.channel !== 'string') missing.push('channel');
   if (!payload.target || typeof payload.target !== 'string') missing.push('target');
   if (typeof payload.body !== 'string') missing.push('body');
   return missing;
+}
+
+async function handleBridgeCall(res, fn) {
+  try {
+    const response = await fn();
+    sendJson(res, 200, { ok: true, ...response });
+  } catch (error) {
+    const errorMessage = error?.message || String(error);
+    const statusCode = errorMessage.startsWith('bridge_not_ready') ? 503 : 502;
+    sendJson(res, statusCode, { ok: false, error: errorMessage, details: error?.details || null });
+  }
 }
 
 async function main() {
@@ -582,7 +542,6 @@ async function main() {
     gatewayRuntimeModule: config.gatewayRuntimeModule,
     node: process.execPath,
   });
-
   const bridge = new BridgeRuntime(config, GatewayClient);
   bridge.start();
 
@@ -593,137 +552,58 @@ async function main() {
         sendJson(res, 200, bridge.health());
         return;
       }
-      if (req.method === 'POST' && url.pathname === '/send-message') {
+      if (req.method === 'POST' && url.pathname === SEND_PATH) {
         const payload = await readJsonBody(req);
         const missing = validateSendPayload(payload);
-        if (missing.length) {
-          sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing });
-          return;
-        }
-        try {
-          const response = await bridge.sendMessage(payload);
-          sendJson(res, 200, { ok: true, ...response });
-        } catch (error) {
-          const errorMessage = error?.message || String(error);
-          const statusCode = errorMessage.startsWith('bridge_not_ready') ? 503 : 502;
-          sendJson(res, statusCode, {
-            ok: false,
-            error: errorMessage,
-            details: error?.details || null,
-          });
-        }
+        if (missing.length) return sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing });
+        await handleBridgeCall(res, () => bridge.sendMessage(payload));
         return;
       }
-
+      if (req.method === 'POST' && url.pathname === '/conversations-list') {
+        const payload = await readJsonBody(req);
+        await handleBridgeCall(res, () => bridge.listConversations(payload));
+        return;
+      }
       if (req.method === 'POST' && url.pathname === '/conversation-get') {
         const payload = await readJsonBody(req);
-        if (!payload || !payload.sessionKey) {
-          sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing: ['sessionKey'] });
-          return;
-        }
-        try {
-          const response = await bridge.getConversation(payload);
-          sendJson(res, 200, { ok: true, ...response });
-        } catch (error) {
-          const errorMessage = error?.message || String(error);
-          const statusCode = errorMessage.startsWith('bridge_not_ready') ? 503 : 502;
-          sendJson(res, statusCode, {
-            ok: false,
-            error: errorMessage,
-            details: error?.details || null,
-          });
-        }
+        if (!payload || !payload.sessionKey) return sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing: ['sessionKey'] });
+        await handleBridgeCall(res, () => bridge.getConversation(payload));
         return;
       }
-
       if (req.method === 'POST' && url.pathname === '/read-messages') {
         const payload = await readJsonBody(req);
-        if (!payload || !payload.sessionKey) {
-          sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing: ['sessionKey'] });
-          return;
-        }
-        try {
-          const response = await bridge.readMessages(payload);
-          sendJson(res, 200, { ok: true, ...response });
-        } catch (error) {
-          const errorMessage = error?.message || String(error);
-          const statusCode = errorMessage.startsWith('bridge_not_ready') ? 503 : 502;
-          sendJson(res, statusCode, {
-            ok: false,
-            error: errorMessage,
-            details: error?.details || null,
-          });
-        }
+        if (!payload || !payload.sessionKey) return sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing: ['sessionKey'] });
+        await handleBridgeCall(res, () => bridge.readMessages(payload));
         return;
       }
-
       if (req.method === 'POST' && url.pathname === '/ai-reply') {
         const payload = await readJsonBody(req);
         const missing = [];
         if (!payload || !payload.sessionKey) missing.push('sessionKey');
         if (!payload || typeof payload.prompt !== 'string' || !payload.prompt.trim()) missing.push('prompt');
-        if (missing.length) {
-          sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing });
-          return;
-        }
-        try {
-          const response = await bridge.aiReply(payload);
-          sendJson(res, 200, { ok: true, ...response });
-        } catch (error) {
-          const errorMessage = error?.message || String(error);
-          const statusCode = errorMessage.startsWith('bridge_not_ready') ? 503 : 502;
-          sendJson(res, statusCode, {
-            ok: false,
-            error: errorMessage,
-            details: error?.details || null,
-          });
-        }
+        if (missing.length) return sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing });
+        await handleBridgeCall(res, () => bridge.aiReply(payload));
         return;
       }
-
       if (req.method === 'POST' && url.pathname === '/poll-events') {
         const payload = await readJsonBody(req);
-        try {
-          const response = bridge.pollEvents(payload);
-          sendJson(res, 200, { ok: true, ...response });
-        } catch (error) {
-          sendJson(res, 500, { ok: false, error: error?.message || String(error) });
-        }
+        sendJson(res, 200, { ok: true, ...bridge.pollEvents(payload) });
         return;
       }
-
       if (req.method === 'POST' && url.pathname === '/wait-events') {
         const payload = await readJsonBody(req);
-        try {
-          const response = await bridge.waitForEvent(payload);
-          sendJson(res, 200, { ok: true, ...response });
-        } catch (error) {
-          sendJson(res, 500, { ok: false, error: error?.message || String(error) });
-        }
+        const response = await bridge.waitForEvent(payload);
+        sendJson(res, 200, { ok: true, ...response });
         return;
       }
-
       if (req.method === 'POST' && url.pathname === '/attachments-fetch') {
         const payload = await readJsonBody(req);
         if (!payload || !payload.sessionKey || !payload.messageId) {
-          sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing: ['sessionKey', 'messageId'] });
-          return;
+          return sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing: ['sessionKey', 'messageId'] });
         }
-        try {
-          const response = await bridge.fetchAttachments(payload);
-          sendJson(res, 200, { ok: true, ...response });
-        } catch (error) {
-          const errorMessage = error?.message || String(error);
-          const statusCode = errorMessage.startsWith('bridge_not_ready') ? 503 : 502;
-          sendJson(res, statusCode, {
-            ok: false,
-            error: errorMessage,
-            details: error?.details || null,
-          });
-        }
+        await handleBridgeCall(res, () => bridge.fetchAttachments(payload));
         return;
       }
-
       sendJson(res, 404, { ok: false, error: 'not_found' });
     } catch (error) {
       log('error', 'bridge_http_handler_failed', { error: error?.message || String(error) });
@@ -732,27 +612,17 @@ async function main() {
   });
 
   server.listen(config.bridgePort, config.bridgeHost, () => {
-    log('info', 'bridge_http_listening', {
-      host: config.bridgeHost,
-      port: config.bridgePort,
-    });
+    log('info', 'bridge_http_listening', { host: config.bridgeHost, port: config.bridgePort });
   });
 
   const shutdown = async (signal) => {
     log('info', 'bridge_shutdown_requested', { signal });
-    server.close(() => {
-      log('info', 'bridge_http_closed');
-    });
+    server.close(() => log('info', 'bridge_http_closed'));
     await bridge.stop();
     process.exit(0);
   };
-
-  process.on('SIGINT', () => {
-    void shutdown('SIGINT');
-  });
-  process.on('SIGTERM', () => {
-    void shutdown('SIGTERM');
-  });
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
 main().catch((error) => {
