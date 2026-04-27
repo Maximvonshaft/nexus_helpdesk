@@ -306,13 +306,16 @@ def _find_matching_open_tickets(db: Session, contact_id: str | None) -> list[Tic
     ).order_by(Ticket.updated_at.desc()).all()
 
 
-def _fetch_session_route(session_key: str, *, limit: int = 1) -> dict[str, Any] | None:
+def _fetch_session_route(session_key: str, *, limit: int = 1, client: OpenClawMCPClient | None = None) -> dict[str, Any] | None:
     payload_conv = None
     if settings.openclaw_bridge_enabled:
         payload_conv, _ = read_openclaw_bridge_conversation(session_key, limit=limit)
     if payload_conv is None:
-        with OpenClawMCPClient() as mcp_client:
-            payload_conv = mcp_client.conversation_get(session_key)
+        if client is not None:
+            payload_conv = client.conversation_get(session_key)
+        else:
+            with OpenClawMCPClient() as mcp_client:
+                payload_conv = mcp_client.conversation_get(session_key)
     if not isinstance(payload_conv, dict):
         return None
     return _extract_route(payload_conv)
@@ -324,6 +327,7 @@ def process_openclaw_inbound_event(
     event: dict[str, Any],
     source: str = 'default',
     unresolved_event: OpenClawUnresolvedEvent | None = None,
+    client: OpenClawMCPClient | None = None,
 ) -> bool:
     if str(event.get('type') or event.get('eventType') or 'message') not in {'message', 'inbound_message'}:
         return False
@@ -339,7 +343,7 @@ def process_openclaw_inbound_event(
     route = _extract_event_route(event)
     if not route.get('recipient'):
         try:
-            fetched_route = _fetch_session_route(session_key)
+            fetched_route = _fetch_session_route(session_key, client=client)
             if fetched_route:
                 route = {**fetched_route, **route}
         except Exception as exc:
@@ -398,7 +402,7 @@ def process_openclaw_inbound_event(
             ticket_id=link.ticket_id,
             session_key=session_key,
             limit=settings.openclaw_sync_transcript_limit,
-            client=None,
+            client=client,
         )
     except Exception as exc:
         if unresolved_event is not None:
@@ -1103,7 +1107,7 @@ def consume_openclaw_events_once(db: Session, *, source: str = "default", timeou
     for event in events:
         if not isinstance(event, dict):
             continue
-        if process_openclaw_inbound_event(db, event=event, source=source):
+        if process_openclaw_inbound_event(db, event=event, source=source, client=client):
             processed += 1
 
     if next_cursor is not None:

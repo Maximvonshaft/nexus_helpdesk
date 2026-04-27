@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 revision = "20260427_prod_hardening"
-down_revision = "20260410_0001"
+down_revision = "20260426_ctrl_foundation"
 branch_labels = None
 depends_on = None
 

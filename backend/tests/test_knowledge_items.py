@@ -192,7 +192,8 @@ def test_publish_valid_draft_creates_and_increments_versions(db_session):
     v1 = publish_knowledge_item(item.id, KnowledgePublishRequest(notes="v1"), db_session, admin)
     assert v1.version == 1
     assert v1.summary == "Common delivery answers"
-    assert item.status == "active"
+    detail_v1 = get_knowledge_item(item.id, db_session, admin)
+    assert detail_v1.status == "active"
 
     update_knowledge_item(
         item.id,
