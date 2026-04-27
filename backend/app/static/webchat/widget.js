@@ -32,29 +32,22 @@
   var style = document.createElement('style');
   style.textContent = '\n'
     + '.nd-webchat-button,.nd-webchat-panel,.nd-webchat-panel *{box-sizing:border-box}\n'
-    + '.nd-webchat-button{position:fixed;right:22px;bottom:22px;z-index:2147483000;border:0;border-radius:999px;background:#101828;color:#fff;padding:12px 17px;font:650 14px/20px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;letter-spacing:-.01em;box-shadow:0 14px 34px rgba(15,23,42,.24);cursor:pointer;transition:transform .16s ease,box-shadow .16s ease,background .16s ease}\n'
-    + '.nd-webchat-button:hover{transform:translateY(-1px);box-shadow:0 18px 42px rgba(15,23,42,.28)}\n'
-    + '.nd-webchat-button:active{transform:translateY(0)}\n'
+    + '.nd-webchat-button{position:fixed;right:22px;bottom:22px;z-index:2147483000;border:0;border-radius:999px;background:#101828;color:#fff;padding:12px 17px;font:650 14px/20px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;box-shadow:0 14px 34px rgba(15,23,42,.24);cursor:pointer}\n'
     + '.nd-webchat-panel{position:fixed;right:22px;bottom:82px;z-index:2147483000;width:380px;max-width:calc(100vw - 32px);height:590px;max-height:calc(100dvh - 112px);display:none;flex-direction:column;background:#fff;border:1px solid #e5e7eb;border-radius:22px;box-shadow:0 26px 70px rgba(15,23,42,.24);overflow:hidden;font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;color:#101828}\n'
     + '.nd-webchat-panel[data-open=true]{display:flex}\n'
     + '.nd-webchat-header{flex:0 0 auto;padding:14px 16px;background:#101828;color:#fff}\n'
-    + '.nd-webchat-header strong{display:block;font-size:17px;line-height:22px;font-weight:760;letter-spacing:-.02em}\n'
-    + '.nd-webchat-header span{display:inline-flex;align-items:center;gap:7px;opacity:.86;font-size:12.5px;line-height:18px;margin-top:3px;font-weight:520}\n'
-    + '.nd-webchat-header span:before{content:"";width:7px;height:7px;border-radius:999px;background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.16)}\n'
-    + '.nd-webchat-messages{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:14px;background:#f7f8fb;scroll-behavior:smooth}\n'
-    + '.nd-webchat-msg{max-width:84%;margin:0 0 10px;padding:10px 12px;border-radius:16px;font-size:14.5px;line-height:1.46;font-weight:480;letter-spacing:-.01em;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}\n'
-    + '.nd-webchat-msg.visitor{margin-left:auto;background:#101828;color:#fff;border-bottom-right-radius:6px;box-shadow:0 8px 18px rgba(15,23,42,.10)}\n'
-    + '.nd-webchat-msg.agent,.nd-webchat-msg.system{margin-right:auto;background:#fff;color:#101828;border:1px solid #e3e7ee;border-bottom-left-radius:6px;box-shadow:0 6px 16px rgba(15,23,42,.045)}\n'
+    + '.nd-webchat-header strong{display:block;font-size:17px;line-height:22px;font-weight:760}\n'
+    + '.nd-webchat-header span{display:block;opacity:.86;font-size:12.5px;line-height:18px;margin-top:3px;font-weight:520}\n'
+    + '.nd-webchat-messages{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:14px;background:#f7f8fb}\n'
+    + '.nd-webchat-msg{max-width:84%;margin:0 0 10px;padding:10px 12px;border-radius:16px;font-size:14.5px;line-height:1.46;white-space:pre-wrap;overflow-wrap:anywhere}\n'
+    + '.nd-webchat-msg.visitor{margin-left:auto;background:#101828;color:#fff;border-bottom-right-radius:6px}\n'
+    + '.nd-webchat-msg.agent,.nd-webchat-msg.system{margin-right:auto;background:#fff;color:#101828;border:1px solid #e3e7ee;border-bottom-left-radius:6px}\n'
     + '.nd-webchat-form{flex:0 0 auto;display:flex;align-items:center;gap:9px;padding:12px 14px;border-top:1px solid #edf0f4;background:#fff}\n'
     + '.nd-webchat-input{flex:1;min-width:0;height:44px;border:1px solid #d0d5dd;border-radius:15px;padding:0 14px;background:#fff;color:#101828;font:500 14.5px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;outline:none}\n'
-    + '.nd-webchat-input::placeholder{color:#98a2b3;font-weight:500}\n'
-    + '.nd-webchat-input:focus{border-color:#667085;box-shadow:0 0 0 3px rgba(16,24,40,.08)}\n'
     + '.nd-webchat-send{flex:0 0 auto;height:44px;min-width:74px;border:0;border-radius:15px;background:#101828;color:#fff;padding:0 16px;font:720 14px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;cursor:pointer}\n'
     + '.nd-webchat-send:disabled{opacity:.58;cursor:not-allowed}\n'
-    + '.nd-webchat-status{flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:7px 15px;font-size:12.5px;line-height:18px;font-weight:560;color:#667085;border-top:1px solid #f2f4f7;background:#fff}\n'
-    + '.nd-webchat-status:before{content:"";width:7px;height:7px;border-radius:999px;background:#22c55e}\n'
-    + '@media (max-width:480px){.nd-webchat-panel{left:12px;right:12px;bottom:76px;width:auto;height:min(620px,calc(100dvh - 104px));max-height:calc(100dvh - 104px);border-radius:22px}.nd-webchat-button{right:16px;bottom:16px;padding:11px 16px;font-size:14px}.nd-webchat-header{padding:13px 16px}.nd-webchat-messages{padding:13px 12px}.nd-webchat-msg{max-width:86%;font-size:14.5px;padding:10px 12px}.nd-webchat-form{padding:11px 12px;gap:8px}.nd-webchat-input{height:43px;border-radius:14px}.nd-webchat-send{height:43px;min-width:70px;border-radius:14px;padding:0 14px}}\n'
-    + '@media (max-width:380px){.nd-webchat-panel{left:8px;right:8px}.nd-webchat-send{min-width:64px;padding:0 12px}.nd-webchat-msg{max-width:88%}}\n';
+    + '.nd-webchat-status{flex:0 0 auto;padding:7px 15px;font-size:12.5px;font-weight:560;color:#667085;border-top:1px solid #f2f4f7;background:#fff}\n'
+    + '@media (max-width:480px){.nd-webchat-panel{left:12px;right:12px;bottom:76px;width:auto;height:min(620px,calc(100dvh - 104px));max-height:calc(100dvh - 104px)}.nd-webchat-button{right:16px;bottom:16px}}\n';
   document.head.appendChild(style);
 
   var button = document.createElement('button');
@@ -85,7 +78,9 @@
   function setStatus(text) { statusEl.textContent = text; }
   function persist() { window.localStorage.setItem(storageKey, JSON.stringify({ conversationId: state.conversationId, visitorToken: state.visitorToken })); }
   function api(path, options) {
-    return fetch(apiBase + path, Object.assign({ headers: { 'Content-Type': 'application/json' }, mode: 'cors' }, options || {}))
+    options = options || {};
+    var headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
+    return fetch(apiBase + path, Object.assign({ mode: 'cors' }, options, { headers: headers }))
       .then(function (res) { return res.json().catch(function () { return {}; }).then(function (data) { if (!res.ok) { var err = new Error(data.detail && data.detail.message ? data.detail.message : data.detail || ('HTTP ' + res.status)); err.payload = data; throw err; } return data; }); });
   }
   function render() {
@@ -123,8 +118,9 @@
   }
   function poll() {
     if (!state.conversationId || !state.visitorToken) return Promise.resolve();
-    return api('/api/webchat/conversations/' + encodeURIComponent(state.conversationId) + '/messages?visitor_token=' + encodeURIComponent(state.visitorToken))
-      .then(function (data) { state.messages = data.messages || []; render(); setStatus('Online'); })
+    return api('/api/webchat/conversations/' + encodeURIComponent(state.conversationId) + '/messages', {
+      headers: { 'X-Webchat-Visitor-Token': state.visitorToken }
+    }).then(function (data) { state.messages = data.messages || []; render(); setStatus('Online'); })
       .catch(function () { setStatus('Reconnecting...'); });
   }
   function startPolling() {
@@ -151,7 +147,11 @@
     sendEl.disabled = true;
     setStatus('Sending...');
     init().then(function () {
-      return api('/api/webchat/conversations/' + encodeURIComponent(state.conversationId) + '/messages', { method: 'POST', body: JSON.stringify({ visitor_token: state.visitorToken, body: body }) });
+      return api('/api/webchat/conversations/' + encodeURIComponent(state.conversationId) + '/messages', {
+        method: 'POST',
+        headers: { 'X-Webchat-Visitor-Token': state.visitorToken },
+        body: JSON.stringify({ body: body })
+      });
     }).then(function () {
       inputEl.value = '';
       setStatus('Sent');
