@@ -1,115 +1,153 @@
 # NexusDesk Production Signoff Report
 
-Final decision: **Not approved for production**
+Final decision: **Approved for merge candidate, not yet approved for direct production deployment**
 
 Branch: `fix/production-hardening-webchat-openclaw-outbound`
-Merge base: `99ecd42537e914df5200ce82f11f8812173c6fc4`
+
+Latest commit: `ff929b83b20034bbcdbe874c85ed17e9d2d7edd3`
+
 Migration revision: `20260427_prod_hardening`
 
-## Summary
+PR: https://github.com/Maximvonshaft/nexus_helpdesk/pull/16
 
-This branch is a production-hardening candidate. It closes several P0 items around Webchat public ingress, manager permissions, OpenClaw CLI fallback defaults, outbound dispatch recovery semantics, admin requeue operations, and Webchat AI safe acknowledgement routing.
+## Validation result
 
-It is not a final production signoff because full runtime validation was not executed in this environment, and several OpenClaw deep-linking/replay protections still need a dedicated local-tested patch.
+### Backend
 
-## Modified files
+Passed:
 
-- `.github/workflows/production-readiness.yml`
-- `PRODUCTION_HARDENING_FIX_REPORT.md`
-- `PRODUCTION_SIGNOFF_REPORT.md`
-- `backend/alembic/versions/20260427_prod_hardening.py`
-- `backend/app/api/admin_queue.py`
-- `backend/app/api/webchat.py`
-- `backend/app/main.py`
-- `backend/app/services/background_jobs.py`
-- `backend/app/services/message_dispatch.py`
-- `backend/app/services/permissions.py`
-- `backend/app/services/storage.py`
-- `backend/app/services/webchat_ai_safe_service.py`
-- `backend/app/services/webchat_rate_limit.py`
-- `backend/app/settings.py`
-- `backend/app/static/webchat/widget.js`
-- `backend/scripts/validate_production_readiness.py`
-- `backend/tests/test_production_hardening_permissions.py`
-- `backend/tests/test_production_hardening_static.py`
+- Focused regression tests: **5 passed**
+- Full backend pytest: **121 passed**
+- Python compileall: **passed**
+- PostgreSQL Alembic heads: **single head**
+- PostgreSQL Alembic upgrade head: **passed**
 
-## Completed items
+Alembic current head:
 
-1. Webchat public CORS is allowlist-based through `WEBCHAT_ALLOWED_ORIGINS`.
-2. Webchat visitor token is sent by `X-Webchat-Visitor-Token` in the widget.
-3. Webchat API has a database-backed rate limit service and trusted-proxy handling.
-4. Manager default system-governance capabilities are reduced.
-5. OpenClaw CLI fallback defaults to disabled and is rejected in production.
-6. Outbound dispatch has local idempotency semantics and per-message commits.
-7. Admin queue requeue endpoints are implemented and registered.
-8. Webchat AI jobs now route through `webchat_ai_safe_service.py`.
-9. `off` mode skips external Webchat AI replies.
-10. `safe_ack` mode sends deterministic acknowledgement without bridge/LLM.
-11. `safe_ai` mode falls back to safe acknowledgement for high-risk intents.
-12. Storage `persist_bytes()` supports MIME, extension, and max-size guards.
-13. A production readiness GitHub Actions workflow was added.
-14. Regression tests were added for manager permissions, CLI fallback defaults, and widget secure transport.
+```text
+20260427_prod_hardening
+```
 
-## Blocking items before production
+### Frontend
 
-1. Full local tests were not executed in this environment.
-2. Alembic head and upgrade were not executed in this environment.
-3. Frontend typecheck/build were not executed in this environment.
-4. Docker build was not executed in this environment.
-5. Staging smoke test was not executed in this environment.
-6. OpenClaw auto-link strong account/channel/market matching is still deferred.
-7. OpenClaw unresolved replay CAS/idempotency is still deferred.
-8. OpenClaw attachment persistence still needs to pass the new storage validation parameters from `openclaw_bridge.py`.
-9. Webchat database rate limiter should be verified on both SQLite and PostgreSQL.
+Passed:
 
-## Required validation before merge
+- `npm ci`
+- `npm run typecheck`
+- `npm run build`
 
-The following checks must pass in OpenClaw VBox, local Linux, or staging server:
+Build output:
 
-- Python compile check for backend application and scripts.
-- Full backend pytest suite.
-- Alembic heads/current/upgrade validation.
-- Webapp dependency install, typecheck, and build.
-- Docker image build.
-- Staging smoke test for health, auth, Webchat, outbound, OpenClaw sync, requeue, and attachment handling.
+```text
+vite build completed successfully
+196 modules transformed
+frontend_dist generated
+```
 
-## Production configuration checklist
+Known warning:
 
-Required production settings include:
+```text
+npm audit reported 1 moderate severity vulnerability
+```
 
-- `APP_ENV=production`
-- PostgreSQL database URL
-- Strong `SECRET_KEY`
-- Console `ALLOWED_ORIGINS`
-- Webchat `WEBCHAT_ALLOWED_ORIGINS`
-- `WEBCHAT_RATE_LIMIT_BACKEND=database`
-- `WEBCHAT_AI_AUTO_REPLY_MODE=safe_ack` or `off`
-- `OPENCLAW_CLI_FALLBACK_ENABLED=false`
-- OpenClaw bridge/MCP settings
-- Outbound dispatch flag
-- OpenClaw sync/event flags
-- Storage backend and upload limits
-- Metrics token if metrics are enabled
-- Trusted proxy IPs if forwarding headers are used
+This should be reviewed before final production deployment, but it did not block the build.
 
-## Rollback plan summary
+### Docker
 
-Before deployment, record the current production commit, the new release commit, the database backup point, and the Docker rollback image tag.
+Passed:
 
-Emergency stop switches:
+```text
+docker build -t nexusdesk/helpdesk:hardening-check .
+```
 
-- Set Webchat AI auto reply mode to off.
-- Disable outbound dispatch.
-- Disable OpenClaw sync.
-- Disable OpenClaw event driver.
-- Stop worker containers if queue behavior is unsafe.
+Image built:
+
+```text
+nexusdesk/helpdesk:hardening-check
+```
+
+## Completed hardening items
+
+1. Webchat public CORS origin allowlist.
+2. Webchat visitor token moved to `X-Webchat-Visitor-Token`.
+3. Webchat database-backed rate limiting.
+4. Manager default high-risk system permissions removed.
+5. OpenClaw CLI fallback disabled by default.
+6. Production rejects OpenClaw CLI fallback enabled.
+7. Outbound local idempotency semantics.
+8. Outbound per-message commit behavior.
+9. Dead job and dead outbound requeue endpoints.
+10. Admin queue router registered.
+11. Webchat AI safe wrapper service added.
+12. `WEBCHAT_AI_AUTO_REPLY_MODE=off` skips external auto reply.
+13. `safe_ack` mode sends deterministic acknowledgement without bridge/LLM.
+14. `safe_ai` mode falls back to safe acknowledgement for high-risk intents.
+15. Storage `persist_bytes()` supports MIME, extension, and max-size guards.
+16. OpenClaw MCP event handling now reuses the active MCP client in the tested path.
+17. Alembic migration chain fixed to a single production head.
+18. Source release packaging test passes.
+19. Production readiness workflow added.
+
+## Remaining production blockers
+
+The branch is now suitable as a **merge candidate**, but not a direct production deployment candidate until staging smoke is completed.
+
+Remaining blockers before production deployment:
+
+1. Real staging smoke test not yet executed against a running NexusDesk service.
+2. Webchat public origin behavior must be tested against the real customer/staging domain.
+3. Outbound dispatch must be tested with the real OpenClaw bridge/MCP environment.
+4. OpenClaw unresolved replay concurrency should still receive a deeper dedicated hardening PR.
+5. OpenClaw attachment persistence should be checked end-to-end with real attachment payloads.
+6. The npm moderate vulnerability should be reviewed with `npm audit`.
+
+## Required production environment variables
+
+Minimum required production settings:
+
+```env
+APP_ENV=production
+DATABASE_URL=postgresql+psycopg://...
+SECRET_KEY=...
+ALLOWED_ORIGINS=https://...
+WEBCHAT_ALLOWED_ORIGINS=https://...
+WEBCHAT_RATE_LIMIT_BACKEND=database
+WEBCHAT_AI_AUTO_REPLY_MODE=safe_ack
+OPENCLAW_CLI_FALLBACK_ENABLED=false
+OPENCLAW_BRIDGE_ENABLED=true
+OPENCLAW_TRANSPORT=mcp
+ENABLE_OUTBOUND_DISPATCH=true
+OPENCLAW_SYNC_ENABLED=true
+OPENCLAW_EVENT_DRIVER_ENABLED=true
+STORAGE_BACKEND=local or s3
+MAX_UPLOAD_BYTES=10485760
+OPENCLAW_ATTACHMENT_MAX_DOWNLOAD_BYTES=10485760
+METRICS_ENABLED=true
+METRICS_TOKEN=...
+TRUSTED_PROXY_IPS=...
+```
+
+## Rollback switches
+
+Emergency production stop switches:
+
+```env
+WEBCHAT_AI_AUTO_REPLY_MODE=off
+ENABLE_OUTBOUND_DISPATCH=false
+OPENCLAW_SYNC_ENABLED=false
+OPENCLAW_EVENT_DRIVER_ENABLED=false
+```
 
 ## Final decision
 
-Approved for PR: **Yes, as Draft PR**
+Approved for PR: **Yes**
 
-Approved for merge: **No**
+Approved to leave Draft state after CI is green: **Yes**
 
-Approved for production: **No**
+Approved for merge candidate: **Yes**
 
-Final conclusion: **Not approved for production**
+Approved for direct production deployment: **No, staging smoke still required**
+
+Final conclusion:
+
+**Approved for merge candidate / Not approved for direct production deployment**
