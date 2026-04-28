@@ -68,7 +68,7 @@ function loadConfig() {
     readyTimeoutMs: parseIntEnv('OPENCLAW_BRIDGE_READY_TIMEOUT_MS', 8000),
     gatewayUrl: process.env.OPENCLAW_GATEWAY_URL || `ws://127.0.0.1:${gatewayPort}`,
     gatewayRole: process.env.OPENCLAW_BRIDGE_GATEWAY_ROLE || 'operator',
-    gatewayScopes: (process.env.OPENCLAW_BRIDGE_GATEWAY_SCOPES || 'operator.read,operator.write')
+    gatewayScopes: (process.env.OPENCLAW_BRIDGE_GATEWAY_SCOPES || 'operator.read')
       .split(',')
       .map((item) => item.trim())
       .filter(Boolean),
@@ -78,6 +78,7 @@ function loadConfig() {
     gatewayRuntimeModule:
       process.env.OPENCLAW_GATEWAY_RUNTIME_MODULE || DEFAULT_GATEWAY_RUNTIME,
     connectChallengeTimeoutMs: parseIntEnv('OPENCLAW_BRIDGE_CONNECT_CHALLENGE_TIMEOUT_MS', 8000),
+    allowWrites: String(process.env.OPENCLAW_BRIDGE_ALLOW_WRITES || 'false').toLowerCase() === 'true',
   };
 }
 
@@ -272,6 +273,7 @@ class BridgeRuntime {
   }
 
   async sendMessage(payload) {
+    if (!this.config.allowWrites) throw new Error('bridge_writes_disabled');
     if (!this.client) throw new Error('bridge_client_not_started');
     await this.waitForReady();
     const bridgeRequestId = crypto.randomUUID();
@@ -369,6 +371,7 @@ class BridgeRuntime {
   }
 
   async aiReply(payload) {
+    if (!this.config.allowWrites) throw new Error('bridge_writes_disabled');
     if (!this.client) throw new Error('bridge_client_not_started');
     await this.waitForReady();
     const bridgeRequestId = crypto.randomUUID();
@@ -440,7 +443,10 @@ class BridgeRuntime {
       });
       const messages = response.messages || [];
       const message = messages.find((m) => m.id === messageId || m.messageId === messageId);
-      if (!message) throw new Error('message_not_found');
+      if (!message) {
+        log('info', 'bridge_attachments_message_not_found', { bridgeRequestId, sessionKey, messageId });
+        return { bridgeRequestId, attachments: [], message: null, notFound: true };
+      }
       const attachments = (message.content || []).filter((c) => c && typeof c === 'object' && c.type !== 'text');
       return { bridgeRequestId, attachments, message };
     } finally {
