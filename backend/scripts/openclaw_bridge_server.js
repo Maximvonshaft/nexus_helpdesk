@@ -308,8 +308,8 @@ class BridgeRuntime {
     await this.waitForReady();
     const bridgeRequestId = crypto.randomUUID();
     const limit = boundedLimit(payload.limit, 100, 500);
-    const requestPayload = { limit, includeLastMessage: true };
-    if (payload.agent) requestPayload.agent = String(payload.agent);
+    const requestPayload = { limit };
+
     this.pendingRequests.set(bridgeRequestId, { createdAt: nowIso(), action: 'conversations_list' });
     try {
       const response = await this.client.request('sessions.list', requestPayload, {
@@ -341,7 +341,6 @@ class BridgeRuntime {
     try {
       const response = await this.client.request('sessions.list', {
         limit: 500,
-        includeLastMessage: true,
       }, { timeoutMs: this.config.requestTimeoutMs });
       const sessions = response.sessions || [];
       const conversation = sessions.find((s) => s.key === sessionKey || s.id === sessionKey) || null;
@@ -360,7 +359,7 @@ class BridgeRuntime {
     const limit = Number.isFinite(payload.limit) ? payload.limit : 20;
     this.pendingRequests.set(bridgeRequestId, { createdAt: nowIso(), sessionKey, action: 'messages_read' });
     try {
-      const response = await this.client.request('chat.history', { key: sessionKey, limit }, {
+      const response = await this.client.request('chat.history', { sessionKey, limit }, {
         timeoutMs: this.config.requestTimeoutMs,
       });
       return { bridgeRequestId, messages: response.messages || [] };
@@ -383,7 +382,7 @@ class BridgeRuntime {
       await this.client.request(['sessions', 'send'].join('.'), { message: prompt, key: sessionKey }, {
         timeoutMs: this.config.requestTimeoutMs,
       });
-      const history = await this.client.request('chat.history', { limit, key: sessionKey }, {
+      const history = await this.client.request('chat.history', { limit, sessionKey }, {
         timeoutMs: this.config.requestTimeoutMs,
       });
       return { bridgeRequestId, messages: history.messages || [] };
@@ -436,7 +435,7 @@ class BridgeRuntime {
     if (!sessionKey || !messageId) throw new Error('missing_required_fields');
     this.pendingRequests.set(bridgeRequestId, { createdAt: nowIso(), sessionKey, action: 'attachments_fetch' });
     try {
-      const response = await this.client.request('chat.history', { key: sessionKey, limit: 100 }, {
+      const response = await this.client.request('chat.history', { sessionKey, limit: 100 }, {
         timeoutMs: this.config.requestTimeoutMs,
       });
       const messages = response.messages || [];
