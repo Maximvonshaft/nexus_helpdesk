@@ -39,8 +39,8 @@ jobs:
             backend/tests/test_round20b_legacy_frontend.py \
             backend/tests/test_round27_frontend_hardening.py
 
-      - name: Production readiness import check
+      - name: Development readiness import check
         env:
           APP_ENV: development
           DATABASE_URL: sqlite:///./helpdesk_ci.db
-        run: cd backend && python scripts/validate_production_readiness.py || true
+        run: cd backend && python scripts/validate_production_readiness.py
