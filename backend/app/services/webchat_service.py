@@ -4,7 +4,6 @@ import hashlib
 import json
 import logging
 import secrets
-import time
 from dataclasses import asdict
 from typing import Any
 from urllib.parse import urlparse
@@ -27,9 +26,6 @@ WEBCHAT_LOGGER = logging.getLogger("nexusdesk")
 MAX_MESSAGE_CHARS = 2000
 MAX_FIELD_CHARS = 300
 MAX_URL_CHARS = 700
-RATE_LIMIT_WINDOW_SECONDS = 60
-RATE_LIMIT_MAX_MESSAGES = 20
-_RATE_BUCKETS: dict[str, list[float]] = {}
 
 
 def _clip(value: str | None, limit: int = MAX_FIELD_CHARS) -> str | None:
@@ -75,22 +71,6 @@ def _origin_from_request(request: Request, explicit_origin: str | None = None) -
     return _clip(f"{parsed.scheme}://{parsed.netloc}", 255)
 
 
-def _rate_limit_key(request: Request, conversation_id: str | None, tenant_key: str) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-    ip = forwarded or (request.client.host if request.client else "unknown")
-    return f"{tenant_key}:{conversation_id or 'init'}:{ip}"
-
-
-def _enforce_rate_limit(request: Request, conversation_id: str | None, tenant_key: str) -> None:
-    now = time.time()
-    key = _rate_limit_key(request, conversation_id, tenant_key)
-    bucket = [ts for ts in _RATE_BUCKETS.get(key, []) if now - ts < RATE_LIMIT_WINDOW_SECONDS]
-    if len(bucket) >= RATE_LIMIT_MAX_MESSAGES:
-        raise HTTPException(status_code=429, detail="too many webchat requests")
-    bucket.append(now)
-    _RATE_BUCKETS[key] = bucket
-
-
 def _validate_token(conversation: WebchatConversation, token: str | None) -> None:
     if not token or _hash_token(token) != conversation.visitor_token_hash:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
@@ -111,7 +91,6 @@ def create_or_resume_conversation(db: Session, payload: Any, request: Request) -
     channel_key = _clip(getattr(payload, "channel_key", None) or "default", 120) or "default"
     public_id = _clip(getattr(payload, "conversation_id", None), 64)
     visitor_token = getattr(payload, "visitor_token", None)
-    _enforce_rate_limit(request, public_id, tenant_key)
 
     if public_id:
         existing = db.query(WebchatConversation).filter(WebchatConversation.public_id == public_id).first()
@@ -206,9 +185,6 @@ def create_or_resume_conversation(db: Session, payload: Any, request: Request) -
     }
 
 
-
-
-
 def _webchat_auto_ack_text(visitor_body: str) -> str:
     text = (visitor_body or "").strip().lower()
     parcel_keywords = (
@@ -257,12 +233,12 @@ def _maybe_create_webchat_auto_ack(db: Session, *, conversation: WebchatConversa
     )
     db.add(row)
 
+
 def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, body: str, request: Request) -> dict[str, Any]:
     conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == public_id).first()
     if not conversation:
         raise HTTPException(status_code=404, detail="webchat conversation not found")
     _validate_token(conversation, visitor_token)
-    _enforce_rate_limit(request, public_id, conversation.tenant_key)
     normalized_body = _clip_body(body)
 
     message = WebchatMessage(
