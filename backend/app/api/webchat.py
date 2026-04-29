@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
@@ -89,9 +90,17 @@ def _set_public_cors(response: Response, request: Request) -> None:
         response.headers.setdefault(key, value)
 
 
+def _legacy_token_transport_enabled() -> bool:
+    return os.getenv("WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _resolve_visitor_token(header_token: str | None, query_token: str | None, body_token: str | None = None) -> str | None:
-    # Header is the production-safe transport. Query/body are retained only for short compatibility windows.
-    return header_token or body_token or query_token
+    # Header is the production-safe transport. Query/body compatibility is opt-in only.
+    if header_token:
+        return header_token
+    if _legacy_token_transport_enabled():
+        return body_token or query_token
+    return None
 
 
 @router.options("/{full_path:path}")
@@ -100,11 +109,19 @@ def webchat_options(full_path: str, request: Request):
 
 
 @router.post("/init")
-def init_webchat(payload: WebchatInitRequest, request: Request, response: Response, db: Session = Depends(get_db)) -> dict[str, Any]:
+def init_webchat(
+    payload: WebchatInitRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
+) -> dict[str, Any]:
     _set_public_cors(response, request)
+    visitor_token = _resolve_visitor_token(x_webchat_visitor_token, None, payload.visitor_token)
+    safe_payload = payload.model_copy(update={"visitor_token": visitor_token})
     with managed_session(db):
         enforce_webchat_rate_limit(db, request, tenant_key=payload.tenant_key, conversation_id=payload.conversation_id)
-        result = create_or_resume_conversation(db, payload, request)
+        result = create_or_resume_conversation(db, safe_payload, request)
     return result
 
 
