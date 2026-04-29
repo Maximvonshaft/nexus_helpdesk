@@ -92,6 +92,7 @@ class Settings:
 
         self.webchat_allowed_origins = self._parse_csv(os.getenv("WEBCHAT_ALLOWED_ORIGINS", ""))
         self.webchat_allow_no_origin = os.getenv("WEBCHAT_ALLOW_NO_ORIGIN", "false").strip().lower() == "true"
+        self.webchat_allow_legacy_token_transport = os.getenv("WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT", "false").strip().lower() == "true"
         self.webchat_rate_limit_backend = os.getenv("WEBCHAT_RATE_LIMIT_BACKEND", "database" if self.app_env == "production" else "memory").strip().lower() or "database"
         self.webchat_rate_limit_window_seconds = int(os.getenv("WEBCHAT_RATE_LIMIT_WINDOW_SECONDS", "60"))
         self.webchat_rate_limit_max_requests = int(os.getenv("WEBCHAT_RATE_LIMIT_MAX_REQUESTS", "20"))
@@ -154,6 +155,8 @@ class Settings:
                 raise RuntimeError("OPENCLAW_SESSION_DM_SCOPE must be a supported session dm scope")
             if self.metrics_enabled and not self.metrics_token:
                 raise RuntimeError("METRICS_TOKEN must be set in production when METRICS_ENABLED=true")
+            if self.webchat_allow_legacy_token_transport:
+                raise RuntimeError("WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must be false in production")
             if self.openclaw_attachment_url_fetch_enabled and not self.openclaw_attachment_allowed_hosts:
                 raise RuntimeError("OPENCLAW_ATTACHMENT_ALLOWED_HOSTS must be set when OPENCLAW_ATTACHMENT_URL_FETCH_ENABLED=true in production")
             if self.require_prometheus_client_in_production:
