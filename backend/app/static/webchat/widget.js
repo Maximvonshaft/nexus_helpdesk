@@ -100,12 +100,12 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
   function init() {
+    var headers = state.visitorToken ? { 'X-Webchat-Visitor-Token': state.visitorToken } : {};
     setStatus('Connecting...');
-    return api('/api/webchat/init', { method: 'POST', body: JSON.stringify({
+    return api('/api/webchat/init', { method: 'POST', headers: headers, body: JSON.stringify({
       tenant_key: tenantKey,
       channel_key: channelKey,
       conversation_id: state.conversationId,
-      visitor_token: state.visitorToken,
       origin: window.location.origin,
       page_url: window.location.href
     })}).then(function (data) {
