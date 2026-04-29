@@ -30,6 +30,8 @@ def main() -> int:
         warnings.append("WEBCHAT_RATE_LIMIT_BACKEND should be database in production")
     if settings.app_env == "production" and settings.webchat_ai_auto_reply_mode not in {"off", "safe_ack"}:
         warnings.append("WEBCHAT_AI_AUTO_REPLY_MODE should be off or safe_ack in production")
+    if settings.webchat_allow_legacy_token_transport:
+        warnings.append("WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must remain false")
     payload = {
         "app_env": settings.app_env,
         "database_url_scheme": settings.database_url.split(":", 1)[0],
@@ -43,6 +45,7 @@ def main() -> int:
         "openclaw_attachment_url_fetch_enabled": settings.openclaw_attachment_url_fetch_enabled,
         "openclaw_attachment_allowed_hosts": settings.openclaw_attachment_allowed_hosts,
         "webchat_allowed_origins_configured": bool(settings.webchat_allowed_origins),
+        "webchat_allow_legacy_token_transport": settings.webchat_allow_legacy_token_transport,
         "webchat_rate_limit_backend": settings.webchat_rate_limit_backend,
         "webchat_ai_auto_reply_mode": settings.webchat_ai_auto_reply_mode,
         "warnings": warnings,
