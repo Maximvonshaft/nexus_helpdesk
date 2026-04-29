@@ -42,8 +42,14 @@ jobs:
           APP_ENV: development
         run: cd backend && alembic upgrade head
 
-      - name: Readiness check
+      - name: Strict production-like readiness check
         env:
           DATABASE_URL: postgresql+psycopg://helpdesk:helpdesk@127.0.0.1:5432/helpdesk
           APP_ENV: development
-        run: cd backend && python scripts/validate_production_readiness.py || true
+          STORAGE_BACKEND: s3
+          OPENCLAW_TRANSPORT: mcp
+          OPENCLAW_CLI_FALLBACK_ENABLED: "false"
+          WEBCHAT_RATE_LIMIT_BACKEND: database
+          WEBCHAT_AI_AUTO_REPLY_MODE: safe_ack
+          WEBCHAT_ALLOWED_ORIGINS: https://example.test
+        run: cd backend && python scripts/validate_production_readiness.py
