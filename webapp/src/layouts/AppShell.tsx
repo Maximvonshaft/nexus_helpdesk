@@ -48,6 +48,12 @@ export function AppShell({ children }: PropsWithChildren) {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  useEffect(() => {
+    if (location.pathname !== '/login' && !session.isLoading && !session.isFetching && !session.data) {
+      navigate({ to: '/login', replace: true })
+    }
+  }, [location.pathname, navigate, session.data, session.isFetching, session.isLoading])
+
   const userLabel = useMemo(() => {
     if (!session.data) return '未登录'
     return `${session.data.display_name} · ${labelize(session.data.role)}`
@@ -63,10 +69,11 @@ export function AppShell({ children }: PropsWithChildren) {
     return true
   }), [session.data])
 
-  if (!session.data) {
-    navigate({ to: '/login' })
-    return null
+  if (session.isLoading || session.isFetching) {
+    return <div className="auth-shell"><div className="auth-card">正在确认登录状态…</div></div>
   }
+
+  if (!session.data) return null
 
   return (
     <div className="app-shell">
@@ -89,7 +96,7 @@ export function AppShell({ children }: PropsWithChildren) {
           <div className="sidebar-helper">{roleWorkspaceHint(session.data)}</div>
           <div className="button-row" style={{ marginTop: 12 }}>
             <Button variant="secondary" onClick={() => setCommandOpen(true)}>快捷操作</Button>
-            <Button variant="ghost" onClick={() => { logout(); navigate({ to: '/login' }) }}>退出登录</Button>
+            <Button variant="ghost" onClick={() => { logout(); navigate({ to: '/login', replace: true }) }}>退出登录</Button>
           </div>
         </div>
       </aside>
