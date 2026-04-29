@@ -16,7 +16,7 @@ from ..schemas_control_plane import (
     PersonaResolvePreviewRequest,
     PersonaRollbackRequest,
 )
-from ..services.permissions import ensure_can_manage_ai_configs
+from ..services.permissions import ensure_can_manage_ai_configs, ensure_can_read_ai_configs
 from ..services import persona_service
 from ..unit_of_work import managed_session
 from .deps import get_current_user
@@ -45,6 +45,7 @@ def list_persona_profiles(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    ensure_can_read_ai_configs(current_user, db)
     rows, total = persona_service.list_profiles(
         db,
         market_id=market_id,
@@ -77,6 +78,7 @@ def resolve_persona_preview(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    ensure_can_read_ai_configs(current_user, db)
     row, score = persona_service.resolve_preview(
         db,
         market_id=payload.market_id,
@@ -92,6 +94,7 @@ def get_persona_profile(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    ensure_can_read_ai_configs(current_user, db)
     row = persona_service.get_profile_or_404(db, profile_id)
     return _detail_out(db, row)
 
