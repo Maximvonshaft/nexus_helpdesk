@@ -15,10 +15,9 @@ function LoginPage() {
 
   useEffect(() => { document.title = '登录 · 客服工作台' }, [])
 
-  if (session.data) {
-    navigate({ to: '/' })
-    return null
-  }
+  useEffect(() => {
+    if (session.data) navigate({ to: '/', replace: true })
+  }, [navigate, session.data])
 
   return (
     <div className="auth-shell">
@@ -37,8 +36,12 @@ function LoginPage() {
             variant="primary"
             disabled={login.isPending}
             onClick={async () => {
-              const res = await login.mutateAsync({ username, password })
-              if (res.access_token) navigate({ to: '/' })
+              try {
+                const res = await login.mutateAsync({ username, password })
+                if (res.access_token) navigate({ to: '/', replace: true })
+              } catch {
+                // React Query keeps the login error in mutation state for display above.
+              }
             }}
           >
             {login.isPending ? '登录中…' : '登录'}
