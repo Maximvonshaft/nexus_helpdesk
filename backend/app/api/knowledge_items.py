@@ -16,7 +16,7 @@ from ..schemas_control_plane import (
     KnowledgeSearchPublishedOut,
     KnowledgeSearchPublishedRequest,
 )
-from ..services.permissions import ensure_can_manage_ai_configs
+from ..services.permissions import ensure_can_manage_ai_configs, ensure_can_read_ai_configs
 from ..services import knowledge_service
 from ..unit_of_work import managed_session
 from .deps import get_current_user
@@ -46,6 +46,7 @@ def list_knowledge_items(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    ensure_can_read_ai_configs(current_user, db)
     rows, total = knowledge_service.list_items(
         db,
         status=status,
@@ -79,6 +80,7 @@ def search_published_knowledge_items(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    ensure_can_read_ai_configs(current_user, db)
     rows, total = knowledge_service.search_published(
         db,
         q=payload.q,
@@ -96,6 +98,7 @@ def get_knowledge_item(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    ensure_can_read_ai_configs(current_user, db)
     row = knowledge_service.get_item_or_404(db, item_id)
     return _detail_out(db, row)
 
