@@ -24,6 +24,7 @@ CAP_NOTE_WRITE_EXTERNAL = "note.write.external"
 CAP_USER_MANAGE = "user.manage"
 CAP_CHANNEL_ACCOUNT_MANAGE = "channel_account.manage"
 CAP_BULLETIN_MANAGE = "bulletin.manage"
+CAP_AI_CONFIG_READ = "ai_config.read"
 CAP_AI_CONFIG_MANAGE = "ai_config.manage"
 CAP_RUNTIME_MANAGE = "runtime.manage"
 CAP_MARKET_MANAGE = "market.manage"
@@ -47,6 +48,7 @@ ALL_CAPABILITIES = [
     CAP_USER_MANAGE,
     CAP_CHANNEL_ACCOUNT_MANAGE,
     CAP_BULLETIN_MANAGE,
+    CAP_AI_CONFIG_READ,
     CAP_AI_CONFIG_MANAGE,
     CAP_RUNTIME_MANAGE,
     CAP_MARKET_MANAGE,
@@ -198,6 +200,12 @@ def ensure_can_manage_channel_accounts(user, db: Session | None = None):
 
 def ensure_can_manage_bulletins(user, db: Session | None = None):
     ensure_capability(user, CAP_BULLETIN_MANAGE, db, message="Not authorized to manage bulletins")
+
+
+def ensure_can_read_ai_configs(user, db: Session | None = None):
+    capabilities = resolve_capabilities(user, db)
+    if CAP_AI_CONFIG_READ not in capabilities and CAP_AI_CONFIG_MANAGE not in capabilities:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to read AI config")
 
 
 def ensure_can_manage_ai_configs(user, db: Session | None = None):
