@@ -69,7 +69,7 @@ export function AppShell({ children }: PropsWithChildren) {
     return true
   }), [session.data])
 
-  if (session.isLoading || session.isFetching) {
+  if (!session.data && (session.isLoading || session.isFetching)) {
     return <div className="auth-shell"><div className="auth-card">正在确认登录状态…</div></div>
   }
 
