@@ -27,6 +27,16 @@ import type {
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
+const PUBLIC_API_PATHS = ['/api/auth/login', '/auth/login', '/api/auth/register', '/auth/register', '/healthz', '/readyz']
+
+let authExpiryHandled = false
+
+export class AuthExpiredError extends Error {
+  constructor(message = '登录状态已失效，请重新登录') {
+    super(message)
+    this.name = 'AuthExpiredError'
+  }
+}
 
 function buildApiUrl(path: string) {
   if (/^https?:\/\//i.test(path)) return path
@@ -34,11 +44,32 @@ function buildApiUrl(path: string) {
   return `${API_BASE_URL}${normalizedPath}`
 }
 
+function requestPathname(path: string) {
+  if (!/^https?:\/\//i.test(path)) return path.startsWith('/') ? path : `/${path}`
+  try { return new URL(path).pathname } catch { return path }
+}
+
+function isPublicRequest(path: string) {
+  const pathname = requestPathname(path)
+  return PUBLIC_API_PATHS.some((publicPath) => pathname === publicPath || pathname.endsWith(publicPath))
+}
+
+async function readErrorMessage(res: Response, fallback: string) {
+  try {
+    const data = await res.json()
+    const detail = data?.detail
+    return typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : JSON.stringify(data)
+  } catch {
+    return fallback
+  }
+}
+
 export function getToken() {
   return sessionStorage.getItem(STORAGE_KEY)
 }
 
 export function setToken(token: string | null) {
+  authExpiryHandled = false
   if (!token) sessionStorage.removeItem(STORAGE_KEY)
   else sessionStorage.setItem(STORAGE_KEY, token)
 }
@@ -48,24 +79,25 @@ export function clearToken() {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const publicRequest = isPublicRequest(path)
   const token = getToken()
   const headers = new Headers(init?.headers ?? {})
   if (!(init?.body instanceof FormData)) headers.set('Content-Type', 'application/json')
-  if (token) headers.set('Authorization', `Bearer ${token}`)
+  if (token && !publicRequest) headers.set('Authorization', `Bearer ${token}`)
   const res = await fetch(buildApiUrl(path), { ...init, headers })
   if (res.status === 401) {
-    clearToken()
-    throw new Error('登录状态已失效，请重新登录')
+    if (publicRequest) {
+      const msg = await readErrorMessage(res, '登录失败，请检查账号或密码')
+      throw new Error(msg)
+    }
+    if (!authExpiryHandled) {
+      authExpiryHandled = true
+      clearToken()
+    }
+    throw new AuthExpiredError()
   }
   if (!res.ok) {
-    let msg = `${res.status} ${res.statusText}`
-    try {
-      const data = await res.json()
-      const detail = data?.detail
-      msg = typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : JSON.stringify(data)
-    } catch {
-      // ignore non-JSON error bodies and fall back to status text
-    }
+    const msg = await readErrorMessage(res, `${res.status} ${res.statusText}`)
     throw new Error(msg)
   }
   if (res.status === 204) return undefined as T
