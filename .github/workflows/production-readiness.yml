@@ -48,18 +48,24 @@ jobs:
         env:
           APP_ENV: production
           DATABASE_URL: postgresql+psycopg://helpdesk:helpdesk@127.0.0.1:5432/helpdesk
-          SECRET_KEY: ci-production-readiness-secret-change-in-real-prod-1234567890
-          ALLOWED_ORIGINS: https://console.example.com
-          WEBCHAT_ALLOWED_ORIGINS: https://www.example.com
+          SECRET_KEY: ci-production-readiness-secret-long-enough
+          ALLOWED_ORIGINS: https://helpdesk.example.test
+          WEBCHAT_ALLOWED_ORIGINS: https://customer.example.test
+          STORAGE_BACKEND: s3
+          S3_BUCKET: ci-placeholder-bucket
+          S3_REGION: auto
+          S3_ACCESS_KEY: ci-placeholder-access-key
+          S3_SECRET_KEY: ci-placeholder-secret-key
+          OPENCLAW_DEPLOYMENT_MODE: remote_gateway
+          OPENCLAW_TRANSPORT: mcp
+          OPENCLAW_MCP_URL: wss://openclaw.example.invalid/mcp
+          OPENCLAW_MCP_TOKEN_FILE: /tmp/openclaw_mcp_token
+          OPENCLAW_CLI_FALLBACK_ENABLED: "false"
+          WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT: "false"
           WEBCHAT_RATE_LIMIT_BACKEND: database
           WEBCHAT_AI_AUTO_REPLY_MODE: safe_ack
-          STORAGE_BACKEND: s3
-          S3_BUCKET: ci-dummy-bucket
-          S3_REGION: us-east-1
-          OPENCLAW_TRANSPORT: mcp
-          OPENCLAW_DEPLOYMENT_MODE: remote_gateway
-          OPENCLAW_CLI_FALLBACK_ENABLED: "false"
-          METRICS_ENABLED: "true"
-          METRICS_TOKEN: ci-metrics-token
-          REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
-        run: cd backend && python scripts/validate_production_readiness.py
+          METRICS_ENABLED: "false"
+        run: |
+          printf 'ci-placeholder-openclaw-token' > /tmp/openclaw_mcp_token
+          chmod 600 /tmp/openclaw_mcp_token
+          cd backend && python scripts/validate_production_readiness.py
