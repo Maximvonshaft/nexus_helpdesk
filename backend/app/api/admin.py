@@ -28,6 +28,7 @@ from ..services.background_jobs import enqueue_openclaw_sync_job, enqueue_stale_
 from ..unit_of_work import managed_session
 from ..services.openclaw_bridge import ALLOWED_CHANNEL_ACCOUNT_PROVIDERS, consume_openclaw_events_once, count_stale_openclaw_links, link_ticket_to_openclaw_session, list_stale_openclaw_links, replay_unresolved_openclaw_event as replay_unresolved_openclaw_event_payload, sync_openclaw_conversation
 from ..services.openclaw_runtime_service import probe_openclaw_connectivity
+from ..services.readiness_service import evaluate_production_readiness
 from .deps import get_current_user
 
 settings = get_settings()
@@ -327,65 +328,18 @@ def list_background_jobs(status: str | None = None, limit: int = 100, db: Sessio
 @router.get('/production-readiness', response_model=ProductionReadinessRead)
 def production_readiness(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
-    warnings: list[str] = []
-    if not settings.is_postgres:
-        warnings.append('DATABASE_URL is not PostgreSQL; stage/prod cutover is still pending')
-    if settings.storage_backend == 'local':
-        warnings.append('STORAGE_BACKEND=local; object storage cutover is still pending')
-    if settings.openclaw_transport != 'mcp':
-        warnings.append('OpenClaw transport is not MCP-first')
-    if not settings.metrics_enabled:
-        warnings.append('Metrics are disabled')
-    if db.bind and not db.bind.dialect.name.startswith('postgresql'):
-        warnings.append('Current runtime DB dialect is not PostgreSQL')
-    return ProductionReadinessRead(
-        app_env=settings.app_env,
-        database_url_scheme=settings.database_url.split(':', 1)[0],
-        is_postgres=settings.is_postgres,
-        storage_backend=settings.storage_backend,
-        openclaw_transport=settings.openclaw_transport,
-        metrics_enabled=settings.metrics_enabled,
-        openclaw_sync_enabled=settings.openclaw_sync_enabled,
-        warnings=warnings,
-    )
+    payload = evaluate_production_readiness(db)
+    return ProductionReadinessRead(**payload)
 
 
 @router.get('/signoff-checklist')
 def signoff_checklist(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
-    warnings: list[str] = []
-    checks: dict[str, bool] = {}
-
-    checks['postgres_configured'] = settings.is_postgres
-    if not checks['postgres_configured']:
-        warnings.append('DATABASE_URL is not PostgreSQL')
-
-    checks['storage_not_local'] = settings.storage_backend != 'local'
-    if not checks['storage_not_local']:
-        warnings.append('STORAGE_BACKEND is local')
-
-    checks['openclaw_transport_mcp'] = settings.openclaw_transport == 'mcp'
-    if not checks['openclaw_transport_mcp']:
-        warnings.append('OPENCLAW_TRANSPORT is not mcp')
-
-    checks['metrics_enabled'] = settings.metrics_enabled
-    if not checks['metrics_enabled']:
-        warnings.append('METRICS_ENABLED is false')
-
-    try:
-        with engine.connect() as conn:
-            conn.execute(text('SELECT 1'))
-        checks['database_connected'] = True
-    except Exception:
-        checks['database_connected'] = False
-        warnings.append('Database connectivity check failed')
-
-    if settings.openclaw_event_driver_enabled is False:
-        warnings.append('OPENCLAW_EVENT_DRIVER_ENABLED is false')
+    payload = evaluate_production_readiness(db)
     return {
-        'status': 'ready' if not warnings else 'not_ready',
-        'checks': checks,
-        'warnings': warnings,
+        'status': payload['status'],
+        'checks': payload['checks'],
+        'warnings': payload['warnings'] + payload['failures'],
     }
 
 
@@ -454,39 +408,89 @@ def update_channel_account(account_id: int, payload: ChannelAccountUpdate, db: S
 @router.get('/openclaw/runtime-health', response_model=OpenClawRuntimeHealthRead)
 def openclaw_runtime_health(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
+    from ..utils.time import ensure_utc
+
+    def heartbeat_payload(service_name: str):
+        row = db.query(ServiceHeartbeat).filter(ServiceHeartbeat.service_name == service_name).first()
+        if row is None:
+            return None
+        return {
+            'status': row.status,
+            'last_seen_at': row.last_seen_at,
+            'instance_id': row.instance_id,
+            'details': row.details_json or {},
+        }
+
+    def heartbeat_stale(row_payload) -> bool:
+        if row_payload is None or not row_payload.get('last_seen_at'):
+            return True
+        return (utc_now() - ensure_utc(row_payload['last_seen_at'])).total_seconds() > settings.openclaw_sync_daemon_stale_seconds
+
     cursor = db.query(OpenClawSyncCursor).filter(OpenClawSyncCursor.source == 'default').first()
-    heartbeat = db.query(ServiceHeartbeat).filter(ServiceHeartbeat.service_name == 'openclaw_event_daemon').first()
+    worker = heartbeat_payload('worker')
+    sync_daemon = heartbeat_payload('openclaw_sync_daemon')
+    event_daemon = heartbeat_payload('openclaw_event_daemon')
+
     stale_link_count = count_stale_openclaw_links(db)
     pending_sync_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'openclaw.sync_session', BackgroundJob.status == JobStatus.pending).count()
     dead_sync_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'openclaw.sync_session', BackgroundJob.status == JobStatus.dead).count()
     pending_attachment_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'openclaw.persist_attachment', BackgroundJob.status == JobStatus.pending).count()
     dead_attachment_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'openclaw.persist_attachment', BackgroundJob.status == JobStatus.dead).count()
-    warnings: list[str] = []
-    if heartbeat is None:
+    pending_outbound = db.query(TicketOutboundMessage).filter(TicketOutboundMessage.status == MessageStatus.pending).count()
+    dead_outbound = db.query(TicketOutboundMessage).filter(TicketOutboundMessage.status == MessageStatus.dead).count()
+    pending_jobs = db.query(BackgroundJob).filter(BackgroundJob.status == JobStatus.pending).count()
+    dead_jobs = db.query(BackgroundJob).filter(BackgroundJob.status == JobStatus.dead).count()
+
+    warnings = []
+    if worker is None:
+        warnings.append('Worker heartbeat missing')
+    elif heartbeat_stale(worker):
+        warnings.append('Worker heartbeat is stale')
+
+    if sync_daemon is None:
+        warnings.append('OpenClaw sync daemon heartbeat missing')
+    elif heartbeat_stale(sync_daemon):
+        warnings.append('OpenClaw sync daemon heartbeat is stale')
+
+    if event_daemon is None:
         warnings.append('OpenClaw event daemon heartbeat missing')
-        daemon_status = None
-        daemon_seen = None
-    else:
-        daemon_status = heartbeat.status
-        daemon_seen = heartbeat.last_seen_at
-        from ..utils.time import ensure_utc
-        if daemon_seen and (utc_now() - ensure_utc(daemon_seen)).total_seconds() > settings.openclaw_sync_daemon_stale_seconds:
-            warnings.append('OpenClaw event daemon heartbeat is stale')
+    elif heartbeat_stale(event_daemon):
+        warnings.append('OpenClaw event daemon heartbeat is stale')
+
     if stale_link_count > settings.openclaw_sync_batch_size:
         warnings.append('OpenClaw stale link backlog exceeds one batch')
     if dead_sync_jobs > 0:
         warnings.append('There are dead OpenClaw sync jobs')
     if dead_attachment_jobs > 0:
         warnings.append('There are dead OpenClaw attachment persist jobs')
+    if dead_outbound > 0:
+        warnings.append('There are dead outbound messages')
+    if dead_jobs > 0:
+        warnings.append('There are dead background jobs')
+
     return OpenClawRuntimeHealthRead(
         sync_cursor=cursor.cursor_value if cursor else None,
-        sync_daemon_last_seen_at=daemon_seen,
-        sync_daemon_status=daemon_status,
+        sync_daemon_last_seen_at=sync_daemon.get('last_seen_at') if sync_daemon else None,
+        sync_daemon_status=sync_daemon.get('status') if sync_daemon else None,
         stale_link_count=stale_link_count,
         pending_sync_jobs=pending_sync_jobs,
         dead_sync_jobs=dead_sync_jobs,
         pending_attachment_jobs=pending_attachment_jobs,
         dead_attachment_jobs=dead_attachment_jobs,
+        worker=worker,
+        openclaw_sync_daemon=sync_daemon,
+        openclaw_event_daemon=event_daemon,
+        queue={
+            'pending_outbound': pending_outbound,
+            'dead_outbound': dead_outbound,
+            'pending_jobs': pending_jobs,
+            'dead_jobs': dead_jobs,
+        },
+        openclaw={
+            'stale_link_count': stale_link_count,
+            'pending_sync_jobs': pending_sync_jobs,
+            'dead_sync_jobs': dead_sync_jobs,
+        },
         warnings=warnings,
     )
 

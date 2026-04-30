@@ -168,6 +168,13 @@ export interface QueueSummary {
   openclaw_links: number
 }
 
+export interface ServiceHealth {
+  status?: string | null
+  last_seen_at?: string | null
+  instance_id?: string | null
+  details?: Record<string, unknown> | null
+}
+
 export interface RuntimeHealth {
   sync_cursor?: string | null
   sync_daemon_last_seen_at?: string | null
@@ -177,6 +184,20 @@ export interface RuntimeHealth {
   dead_sync_jobs: number
   pending_attachment_jobs: number
   dead_attachment_jobs: number
+  worker?: ServiceHealth | null
+  openclaw_sync_daemon?: ServiceHealth | null
+  openclaw_event_daemon?: ServiceHealth | null
+  queue?: {
+    pending_outbound: number
+    dead_outbound: number
+    pending_jobs: number
+    dead_jobs: number
+  } | null
+  openclaw?: {
+    stale_link_count: number
+    pending_sync_jobs: number
+    dead_sync_jobs: number
+  } | null
   warnings: string[]
 }
 
@@ -191,6 +212,10 @@ export interface OpenClawConnectivityProbe {
   conversations_tool_ok: boolean
   conversations_seen: number
   sample_session_key?: string | null
+  level?: string
+  transcript_read_ok?: boolean
+  same_route_send_ready?: boolean
+  attachment_metadata_ok?: boolean
   warnings: string[]
 }
 
@@ -202,6 +227,9 @@ export interface ProductionReadiness {
   openclaw_transport: string
   metrics_enabled: boolean
   openclaw_sync_enabled: boolean
+  status?: 'ready' | 'not_ready' | string
+  checks?: Record<string, boolean>
+  failures?: string[]
   warnings: string[]
 }
 

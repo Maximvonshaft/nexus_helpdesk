@@ -673,6 +673,9 @@ class ProductionReadinessRead(APIModel):
     metrics_enabled: bool
     openclaw_sync_enabled: bool
     warnings: list[str]
+    status: str = 'not_ready'
+    checks: dict[str, bool] = Field(default_factory=dict)
+    failures: list[str] = Field(default_factory=list)
 
 
 
@@ -719,6 +722,26 @@ class ChannelAccountUpdate(BaseModel):
     fallback_account_id: Optional[str] = None
 
 
+class ServiceHealthRead(APIModel):
+    status: Optional[str] = None
+    last_seen_at: Optional[datetime] = None
+    instance_id: Optional[str] = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeQueueHealthRead(APIModel):
+    pending_outbound: int = 0
+    dead_outbound: int = 0
+    pending_jobs: int = 0
+    dead_jobs: int = 0
+
+
+class RuntimeOpenClawHealthRead(APIModel):
+    stale_link_count: int = 0
+    pending_sync_jobs: int = 0
+    dead_sync_jobs: int = 0
+
+
 class OpenClawRuntimeHealthRead(APIModel):
     sync_cursor: Optional[str] = None
     sync_daemon_last_seen_at: Optional[datetime] = None
@@ -728,6 +751,11 @@ class OpenClawRuntimeHealthRead(APIModel):
     dead_sync_jobs: int
     pending_attachment_jobs: int = 0
     dead_attachment_jobs: int = 0
+    worker: Optional[ServiceHealthRead] = None
+    openclaw_sync_daemon: Optional[ServiceHealthRead] = None
+    openclaw_event_daemon: Optional[ServiceHealthRead] = None
+    queue: Optional[RuntimeQueueHealthRead] = None
+    openclaw: Optional[RuntimeOpenClawHealthRead] = None
     warnings: list[str]
 
 
@@ -742,7 +770,11 @@ class OpenClawConnectivityProbeRead(APIModel):
     conversations_tool_ok: bool = False
     conversations_seen: int = 0
     sample_session_key: Optional[str] = None
-    warnings: list[str] = []
+    level: str = 'L0'
+    transcript_read_ok: bool = False
+    same_route_send_ready: bool = False
+    attachment_metadata_ok: bool = False
+    warnings: list[str] = Field(default_factory=list)
 
 
 class MarketBulletinRead(APIModel):
