@@ -1,73 +1,86 @@
-# NexusDesk Webchat Widget
+# NexusDesk WebChat Widget
 
 ## What it is
 
-Round B adds a first production-shaped Webchat entry point for customer websites. A website embeds one JavaScript snippet, visitors send messages, NexusDesk creates or links a Webchat ticket, agents reply from the authenticated admin UI, and the visitor sees the reply in the same widget.
+NexusDesk WebChat is the public customer-side support runtime for customer websites. A website embeds one JavaScript snippet, visitors send messages or click structured actions, NexusDesk creates or links a WebChat ticket, agents reply from the authenticated admin UI, and the visitor sees replies in the same widget.
 
-## Embed snippet
+The visitor entry point and the admin console are intentionally separate:
+
+- Visitor: public widget or `/webchat/demo.html`, no login.
+- Admin: `/webchat` inside the authenticated NexusDesk console.
+
+## Basic embed
 
 ```html
-<script src="https://YOUR_NEXUSDESK_DOMAIN/webchat/widget.js" data-tenant="default" data-channel="website" async></script>
+<script src="https://YOUR_DOMAIN/webchat/widget.js" data-tenant="default" data-channel="website" async></script>
 ```
 
-Optional attributes:
+## Optional attributes
 
 ```html
 <script
-  src="https://YOUR_NEXUSDESK_DOMAIN/webchat/widget.js"
+  src="https://YOUR_DOMAIN/webchat/widget.js"
   data-tenant="speedaf-ch"
   data-channel="website-zurich"
-  data-title="SpeedAF Support"
+  data-title="Speedaf Support"
+  data-subtitle="Secure website support"
+  data-assistant-name="Speedy"
+  data-locale="en"
   data-welcome="Hi, how can we help you today?"
   async>
 </script>
 ```
 
+Supported attributes:
+
+- `data-tenant`: tenant key, default `default`.
+- `data-channel`: channel key, default `default`.
+- `data-title`: widget header title.
+- `data-subtitle`: widget header subtitle.
+- `data-assistant-name`: public assistant name.
+- `data-locale`: locale hint.
+- `data-welcome`: local welcome text before conversation creation.
+- `data-api-base`: API origin override for controlled staging/demo use.
+
+No admin token, OpenClaw token, bridge credential, MCP credential, or internal API secret is stored in the browser.
+
 ## API flow
 
 1. Widget calls `POST /api/webchat/init`.
-2. Backend creates `webchat_conversations`, a NexusDesk ticket, and a visitor token.
-3. Widget calls `POST /api/webchat/conversations/{conversation_id}/messages` to send visitor messages.
-4. Widget polls `GET /api/webchat/conversations/{conversation_id}/messages?visitor_token=...`.
-5. Admin UI calls `GET /api/webchat/admin/conversations` and `GET /api/webchat/admin/tickets/{ticket_id}/thread`.
-6. Agent replies through `POST /api/webchat/admin/tickets/{ticket_id}/reply`.
-7. Reply is written to `webchat_messages`, `ticket_comments`, and `ticket_outbound_messages` with `webchat_delivered` status.
+2. Backend creates or resumes `webchat_conversations` and a NexusDesk ticket.
+3. Widget sends visitor messages to `POST /api/webchat/conversations/{conversation_id}/messages`.
+4. Widget polls `GET /api/webchat/conversations/{conversation_id}/messages?after_id=...&limit=...`.
+5. Widget submits card actions to `POST /api/webchat/conversations/{conversation_id}/actions`.
+6. Admin UI reads `/api/webchat/admin/conversations` and `/api/webchat/admin/tickets/{ticket_id}/thread`.
+7. Agent replies through `/api/webchat/admin/tickets/{ticket_id}/reply`.
 
-## Safety design
+## Structured cards
 
-- Public API never exposes internal numeric ticket ids to visitors.
-- Visitor reads require `conversation_id + visitor_token`.
-- Empty and oversized messages are rejected.
-- Basic in-memory rate limiting protects public init/send routes.
-- Agent replies pass through `evaluate_outbound_safety`.
-- Sensitive terms such as `SECRET_KEY`, `password`, `token`, and `stack trace` are blocked.
-- Logistics factual commitments require evidence or human review confirmation.
+This release renders:
 
-## Local demo
+- `quick_replies`
+- `handoff`
 
-After applying the patch and running the app:
+Unknown card types degrade to a safe text fallback. Card text is rendered through DOM `textContent`; the widget does not execute HTML, JS, CSS, iframe, or arbitrary markup from cards.
 
-```bash
-open http://127.0.0.1:18081/webchat/demo.html
+## Runtime behavior
+
+- Uses `sessionStorage` for conversation id and visitor token.
+- Uses `client_message_id` for optimistic send idempotency.
+- Uses incremental polling with `after_id` after the first full history load.
+- Uses request timeout and exponential backoff.
+- Pauses/slows polling when the page is hidden.
+- Avoids full DOM redraw and appends new messages/cards.
+- Shows sending / failed states.
+
+## Demo
+
+```text
+/webchat/demo.html
 ```
 
-Then open the authenticated admin UI and go to `/webchat`.
+For production customer websites, prefer the script snippet and configure `WEBCHAT_ALLOWED_ORIGINS`.
 
-## Smoke
+## iframe note
 
-```bash
-BASE_URL=http://127.0.0.1:18081 NEXUSDESK_DEV_USER_ID=1 bash scripts/smoke/smoke_webchat_round_b.sh
-```
-
-For production-like auth:
-
-```bash
-BASE_URL=https://YOUR_DOMAIN NEXUSDESK_ADMIN_TOKEN='<jwt>' bash scripts/smoke/smoke_webchat_round_b.sh
-```
-
-## Current Round B limits
-
-- Polling is used instead of WebSocket/SSE for stability.
-- Tenant origin allowlist is not yet persisted; public CORS currently echoes the caller origin for widget API routes.
-- Webchat replies are delivered into the widget itself; no external WhatsApp/Email/OpenClaw dispatch is performed in Round B.
-- Round C should add configured widget channels, origin allowlists, OpenClaw suggested replies, and real-time push.
+The JS widget is the primary embed path. Do not globally relax `X-Frame-Options` or `frame-ancestors`. If iframe embed is later required, create a dedicated `/webchat/embed` route with isolated response headers.
