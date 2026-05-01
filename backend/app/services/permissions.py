@@ -24,6 +24,7 @@ CAP_NOTE_WRITE_EXTERNAL = "note.write.external"
 CAP_USER_MANAGE = "user.manage"
 CAP_CHANNEL_ACCOUNT_MANAGE = "channel_account.manage"
 CAP_BULLETIN_MANAGE = "bulletin.manage"
+CAP_AI_CONFIG_READ = "ai_config.read"
 CAP_AI_CONFIG_MANAGE = "ai_config.manage"
 CAP_RUNTIME_MANAGE = "runtime.manage"
 CAP_MARKET_MANAGE = "market.manage"
@@ -47,6 +48,7 @@ ALL_CAPABILITIES = [
     CAP_USER_MANAGE,
     CAP_CHANNEL_ACCOUNT_MANAGE,
     CAP_BULLETIN_MANAGE,
+    CAP_AI_CONFIG_READ,
     CAP_AI_CONFIG_MANAGE,
     CAP_RUNTIME_MANAGE,
     CAP_MARKET_MANAGE,
@@ -54,14 +56,14 @@ ALL_CAPABILITIES = [
 
 ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
     UserRole.admin: set(ALL_CAPABILITIES),
+    # Production hardening: manager remains an operations role, not a default system-governance role.
+    # System capabilities can still be granted explicitly through UserCapabilityOverride when needed.
     UserRole.manager: {
         CAP_TICKET_READ, CAP_TICKET_ASSIGN, CAP_TICKET_ESCALATE, CAP_TICKET_UPDATE_CORE,
         CAP_TICKET_STATUS_CHANGE, CAP_TICKET_CLOSE, CAP_ATTACHMENT_READ_EXTERNAL,
         CAP_ATTACHMENT_READ_INTERNAL, CAP_ATTACHMENT_UPLOAD, CAP_CUSTOMER_PROFILE_READ,
         CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND, CAP_AI_INTAKE_WRITE,
-        CAP_NOTE_WRITE_INTERNAL, CAP_NOTE_WRITE_EXTERNAL,
-        CAP_USER_MANAGE, CAP_CHANNEL_ACCOUNT_MANAGE, CAP_BULLETIN_MANAGE,
-        CAP_AI_CONFIG_MANAGE, CAP_RUNTIME_MANAGE, CAP_MARKET_MANAGE,
+        CAP_NOTE_WRITE_INTERNAL, CAP_NOTE_WRITE_EXTERNAL, CAP_BULLETIN_MANAGE,
     },
     UserRole.lead: {
         CAP_TICKET_READ, CAP_TICKET_ASSIGN, CAP_TICKET_ESCALATE, CAP_TICKET_UPDATE_CORE,
@@ -198,6 +200,12 @@ def ensure_can_manage_channel_accounts(user, db: Session | None = None):
 
 def ensure_can_manage_bulletins(user, db: Session | None = None):
     ensure_capability(user, CAP_BULLETIN_MANAGE, db, message="Not authorized to manage bulletins")
+
+
+def ensure_can_read_ai_configs(user, db: Session | None = None):
+    capabilities = resolve_capabilities(user, db)
+    if CAP_AI_CONFIG_READ not in capabilities and CAP_AI_CONFIG_MANAGE not in capabilities:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to read AI config")
 
 
 def ensure_can_manage_ai_configs(user, db: Session | None = None):

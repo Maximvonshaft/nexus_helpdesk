@@ -3,24 +3,32 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NexusDesk Webchat Demo</title>
+  <title>Speedaf Support Webchat Demo</title>
   <style>
-    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#f8fafc;color:#101828}
-    main{max-width:920px;margin:0 auto;padding:72px 24px}
-    .card{background:#fff;border:1px solid #e5e7eb;border-radius:24px;padding:32px;box-shadow:0 18px 40px rgba(15,23,42,.08)}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:linear-gradient(180deg,#f8fafc 0%,#eef2f7 100%);color:#101828}
+    main{max-width:960px;margin:0 auto;padding:72px 24px}
+    .card{background:#fff;border:1px solid #e5e7eb;border-radius:26px;padding:34px;box-shadow:0 18px 44px rgba(15,23,42,.08)}
+    .eyebrow{display:inline-flex;align-items:center;gap:8px;margin-bottom:14px;padding:6px 10px;border-radius:999px;background:#ecfdf3;color:#027a48;font-size:13px;font-weight:700}
+    .eyebrow:before{content:"";width:8px;height:8px;border-radius:999px;background:#12b76a}
+    h1{margin:0 0 12px;font-size:36px;line-height:1.08;letter-spacing:-.04em}
+    p{margin:0 0 14px;color:#475467;font-size:16px;line-height:1.65}
     code{background:#f2f4f7;padding:3px 6px;border-radius:6px}
+    pre{white-space:pre-wrap;overflow:auto;background:#101828;color:#f8fafc;border-radius:18px;padding:18px;margin:18px 0 0}
+    @media(max-width:640px){main{padding:42px 18px}.card{padding:24px;border-radius:22px}h1{font-size:30px}}
   </style>
 </head>
 <body>
   <main>
     <div class="card">
-      <h1>Demo customer website</h1>
-      <p>This page simulates a client website embedding the NexusDesk Webchat Widget.</p>
-      <p>Click the floating chat button in the bottom-right corner, send a message, then open the NexusDesk admin Webchat Inbox to reply.</p>
+      <div class="eyebrow">Online support demo</div>
+      <h1>Speedaf customer support</h1>
+      <p>This page simulates a customer website with the Speedaf Support webchat widget installed.</p>
+      <p>Open the chat in the bottom-right corner and send a message. Speedy will reply inside the widget.</p>
       <p>Snippet:</p>
-      <pre><code>&lt;script src="/webchat/widget.js" data-tenant="demo" data-channel="website" async&gt;&lt;/script&gt;</code></pre>
+      <pre><code>&lt;script src="/webchat/widget.js" data-tenant="demo" data-channel="website" data-title="Speedaf Support" data-subtitle="Usually replies instantly" data-assistant-name="Speedy" async&gt;&lt;/script&gt;</code></pre>
     </div>
   </main>
-  <script src="/webchat/widget.js" data-tenant="demo" data-channel="website" data-title="Demo Support" async></script>
+  <script src="/webchat/widget.js" data-tenant="demo" data-channel="website" data-title="Speedaf Support" data-subtitle="Usually replies instantly" data-assistant-name="Speedy" async></script>
 </body>
 </html>

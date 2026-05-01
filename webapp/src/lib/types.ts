@@ -258,6 +258,72 @@ export interface AIConfigVersion {
   published_at: string
 }
 
+export interface PersonaProfile {
+  id: number
+  profile_key: string
+  name: string
+  description?: string | null
+  market_id?: number | null
+  channel?: string | null
+  language?: string | null
+  is_active: boolean
+  draft_summary?: string | null
+  published_summary?: string | null
+  published_version: number
+  published_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonaProfileList {
+  profiles: PersonaProfile[]
+  total: number
+}
+
+export interface KnowledgeItem {
+  id: number
+  item_key: string
+  title: string
+  summary?: string | null
+  status: string
+  source_type: string
+  market_id?: number | null
+  channel?: string | null
+  audience_scope: string
+  priority: number
+  published_version: number
+  published_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface KnowledgeItemList {
+  items: KnowledgeItem[]
+  total: number
+}
+
+export interface ChannelOnboardingTask {
+  id: number
+  provider: string
+  status: string
+  requested_by?: number | null
+  market_id?: number | null
+  target_slot?: string | null
+  desired_display_name?: string | null
+  desired_channel_account_binding?: string | null
+  openclaw_account_id?: string | null
+  last_error?: string | null
+  created_at: string
+  updated_at: string
+  started_at?: string | null
+  completed_at?: string | null
+}
+
+export interface ChannelOnboardingTaskList {
+  tasks: ChannelOnboardingTask[]
+  total: number
+}
+
 export interface OpenClawUnresolvedEvent {
   id: number
   source: string

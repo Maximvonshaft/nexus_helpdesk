@@ -888,6 +888,174 @@ def sync_openclaw_inbound_conversations_once(
     db.flush()
     return summary
 
+def sanitize_openclaw_transcript_payload(message: dict[str, Any]) -> dict[str, Any]:
+    import copy
+    import json
+    import re
+    
+    role = str(message.get('role') or message.get('senderRole') or message.get('authorRole') or '').lower()
+    
+    msg_str = json.dumps(message)
+    high_risk_keywords = [
+        "<think",
+        "</think",
+        "thoughtSignature",
+        "toolCallId",
+        "toolName",
+        '"type":"thinking"',
+        '"type": "thinking"',
+        "toolResult",
+    ]
+    
+    has_risk = any(k in msg_str for k in high_risk_keywords)
+    
+    def _get_text(m: dict[str, Any]) -> str | None:
+        for k in ('text', 'body', 'message', 'contentText'):
+            val = m.get(k)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        content = m.get('content')
+        if isinstance(content, list):
+            pieces = []
+            for block in content:
+                if isinstance(block, dict):
+                    t = block.get('text') or block.get('content')
+                    if isinstance(t, str) and t.strip():
+                        pieces.append(t.strip())
+            if pieces:
+                return "\n".join(pieces)
+        return None
+
+    def _clean_text(text: str) -> str:
+        if not text:
+            return ""
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+        if '<final>' in text and '</final>' in text:
+            match = re.search(r'<final>(.*?)</final>', text, flags=re.DOTALL)
+            if match:
+                text = match.group(1)
+        return text.strip()
+        
+    def _create_redacted_placeholder(orig: dict[str, Any]) -> dict[str, Any]:
+        placeholder = {
+            "redacted": True,
+            "reason": "NexusDesk transcript sync safety gate"
+        }
+        for k in ('id', 'message_id', 'messageId', 'role', 'senderRole', 'authorRole', 'author_name', 'author', 'sender', 'createdAt', 'timestamp'):
+            if k in orig:
+                placeholder[k] = orig[k]
+        return placeholder
+
+    safe_message = copy.deepcopy(message)
+    is_redacted = False
+    
+    if role == 'assistant':
+        for key in list(safe_message.keys()):
+            if key in ('thoughtSignature', 'toolCalls', 'toolResults', 'toolCallId', 'toolName'):
+                del safe_message[key]
+                is_redacted = True
+
+        content = safe_message.get('content')
+        if isinstance(content, list):
+            new_content = []
+            for block in content:
+                if not isinstance(block, dict):
+                    new_content.append(block)
+                    continue
+                b_type = block.get('type')
+                if b_type in ('thinking', 'toolCall', 'toolResult'):
+                    is_redacted = True
+                    continue
+                if b_type == 'text':
+                    txt = block.get('text') or block.get('content') or ""
+                    cleaned = _clean_text(txt)
+                    if txt and not cleaned:
+                        is_redacted = True
+                    elif cleaned:
+                        if txt != cleaned:
+                            is_redacted = True
+                        block['text'] = cleaned
+                        if 'content' in block:
+                            block['content'] = cleaned
+                        new_content.append(block)
+                else:
+                    new_content.append(block)
+            safe_message['content'] = new_content
+        else:
+            for k in ('text', 'body', 'message', 'contentText'):
+                if k in safe_message and isinstance(safe_message[k], str):
+                    val = safe_message[k]
+                    cleaned = _clean_text(val)
+                    if val and not cleaned:
+                        is_redacted = True
+                    if val != cleaned:
+                        is_redacted = True
+                    safe_message[k] = cleaned
+
+        final_text = _get_text(safe_message) or ""
+        
+        if not final_text and has_risk:
+            return {
+                "body_text": "[redacted by NexusDesk transcript sync safety gate]",
+                "content_json": _create_redacted_placeholder(message),
+                "redacted": True
+            }
+            
+        safe_str = json.dumps(safe_message)
+        if any(k in safe_str for k in high_risk_keywords):
+            return {
+                "body_text": "[redacted by NexusDesk transcript sync safety gate]",
+                "content_json": _create_redacted_placeholder(message),
+                "redacted": True
+            }
+            
+        return {
+            "body_text": final_text,
+            "content_json": safe_message,
+            "redacted": is_redacted
+        }
+
+    elif role == 'user':
+        for key in list(safe_message.keys()):
+            if key in ('thoughtSignature', 'toolCalls', 'toolResults', 'toolCallId', 'toolName'):
+                del safe_message[key]
+                is_redacted = True
+                
+        content = safe_message.get('content')
+        if isinstance(content, list):
+            new_content = []
+            for block in content:
+                if not isinstance(block, dict):
+                    new_content.append(block)
+                    continue
+                b_type = block.get('type')
+                if b_type in ('thinking', 'toolCall', 'toolResult'):
+                    is_redacted = True
+                    continue
+                new_content.append(block)
+            safe_message['content'] = new_content
+            
+        final_text = _get_text(safe_message) or ""
+        return {
+            "body_text": final_text,
+            "content_json": safe_message,
+            "redacted": is_redacted
+        }
+    
+    else:
+        final_text = _get_text(safe_message) or ""
+        if has_risk and not final_text:
+            return {
+                "body_text": "[redacted by NexusDesk transcript sync safety gate]",
+                "content_json": _create_redacted_placeholder(message),
+                "redacted": True
+            }
+        return {
+            "body_text": final_text,
+            "content_json": safe_message,
+            "redacted": False
+        }
+
 
 def _should_sync_transcript_message(*, role: Any, body_text: str | None, attachment_refs: list[dict[str, Any]]) -> bool:
     normalized_role = str(role or '').lower()
@@ -974,7 +1142,9 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
 
         for message in _as_items(messages_payload):
             message_id = _extract_message_id(message) or _stable_synthetic_message_id(session_key, message)
-            body_text = _normalize_message_body(message)
+            sanitized = sanitize_openclaw_transcript_payload(message)
+            body_text = sanitized['body_text']
+            message = sanitized['content_json']
             role = _normalize_openclaw_role(message)
             author_name = message.get('author_name') or message.get('author') or message.get('sender')
             attachments_payload = None

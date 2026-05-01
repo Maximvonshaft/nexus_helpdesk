@@ -125,7 +125,6 @@ def claim_pending_jobs(db: Session, *, limit: int | None = None, worker_id: str 
             db.rollback()
             return []
         db.execute(update(BackgroundJob).where(BackgroundJob.id.in_(claimed_ids)).values(status=JobStatus.processing, locked_at=now, locked_by=worker_id))
-        # Queue claim is intentionally committed separately so other workers cannot double-claim jobs.
         db.commit()
     else:
         candidate_ids = [row[0] for row in db.query(BackgroundJob.id).filter(*pending_filters).order_by(BackgroundJob.created_at.asc()).limit(limit).all()]
@@ -137,7 +136,6 @@ def claim_pending_jobs(db: Session, *, limit: int | None = None, worker_id: str 
         if not claimed_ids:
             db.rollback()
             return []
-        # Queue claim is intentionally committed separately so other workers cannot double-claim jobs.
         db.commit()
     return db.query(BackgroundJob).filter(BackgroundJob.id.in_(claimed_ids)).order_by(BackgroundJob.created_at.asc()).all()
 
@@ -229,7 +227,7 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             return job
 
         if job.job_type == WEBCHAT_AI_REPLY_JOB:
-            from .webchat_ai_service import process_webchat_ai_reply_job
+            from .webchat_ai_safe_service import process_webchat_ai_reply_job
 
             process_webchat_ai_reply_job(
                 db,
@@ -242,11 +240,19 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
 
         if job.job_type == OPENCLAW_SYNC_JOB:
             from .openclaw_bridge import sync_openclaw_conversation
+            from .openclaw_client_factory import get_openclaw_runtime_client
 
             if not settings.openclaw_sync_enabled:
                 _mark_done(job)
                 return job
-            sync_openclaw_conversation(db, ticket_id=int(payload['ticket_id']), session_key=str(payload['session_key']), limit=int(payload.get('transcript_limit') or settings.openclaw_sync_transcript_limit))
+            with get_openclaw_runtime_client() as client:
+                sync_openclaw_conversation(
+                    db,
+                    ticket_id=int(payload['ticket_id']),
+                    session_key=str(payload['session_key']),
+                    limit=int(payload.get('transcript_limit') or settings.openclaw_sync_transcript_limit),
+                    client=client,
+                )
             _mark_done(job)
             return job
 

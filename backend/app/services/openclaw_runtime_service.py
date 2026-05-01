@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from ..schemas import OpenClawConnectivityProbeRead
@@ -7,6 +8,36 @@ from ..settings import get_settings
 from .openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
 
 settings = get_settings()
+
+
+def _csv(raw: str | None) -> list[str]:
+    return [item.strip() for item in (raw or '').split(',') if item.strip()]
+
+
+def _truthy(raw: str | None) -> bool:
+    return (raw or '').strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _append_bridge_contract_warnings(warnings: list[str]) -> None:
+    if not settings.openclaw_bridge_enabled:
+        warnings.append('OpenClaw bridge is disabled; NexusDesk will not use the bridge-first runtime path')
+        return
+
+    warnings.append(f'OpenClaw bridge enabled at {settings.openclaw_bridge_url}')
+    scopes = _csv(os.getenv('OPENCLAW_BRIDGE_GATEWAY_SCOPES', 'operator.read'))
+    allow_writes = _truthy(os.getenv('OPENCLAW_BRIDGE_ALLOW_WRITES', 'false'))
+
+    if allow_writes:
+        warnings.append('OpenClaw bridge write mode is enabled; verify write scope and outbound safety gates before production sends')
+        if 'operator.write' not in scopes:
+            warnings.append('OpenClaw bridge write mode is enabled but OPENCLAW_BRIDGE_GATEWAY_SCOPES does not include operator.write')
+    else:
+        warnings.append('OpenClaw bridge is read-only; inbound sync can work, but outbound sends through the bridge will fail safely with bridge_writes_disabled')
+
+    if settings.enable_outbound_dispatch and settings.outbound_provider == 'openclaw' and not allow_writes:
+        warnings.append('Outbound provider is OpenClaw but bridge writes are disabled; production sends will remain failed/retryable')
+    if settings.openclaw_cli_fallback_enabled:
+        warnings.append('OPENCLAW_CLI_FALLBACK_ENABLED is true; production should keep CLI fallback disabled')
 
 
 def probe_openclaw_connectivity() -> OpenClawConnectivityProbeRead:
@@ -17,12 +48,13 @@ def probe_openclaw_connectivity() -> OpenClawConnectivityProbeRead:
         warnings.append("OpenClaw transport is not MCP; live same-route bridge checks are limited")
     if getattr(settings, 'openclaw_extra_paths', None):
         warnings.append("OPENCLAW_EXTRA_PATHS is configured for MCP command lookup")
+    _append_bridge_contract_warnings(warnings)
 
     result = OpenClawConnectivityProbeRead(
         deployment_mode=settings.openclaw_deployment_mode,
         transport=settings.openclaw_transport,
         command=settings.openclaw_mcp_command,
-        url=settings.openclaw_mcp_url or None,
+        url=settings.openclaw_bridge_url if settings.openclaw_bridge_enabled else (settings.openclaw_mcp_url or None),
         token_auth_configured=bool(settings.openclaw_mcp_token_file),
         password_auth_configured=bool(settings.openclaw_mcp_password_file),
         bridge_started=False,

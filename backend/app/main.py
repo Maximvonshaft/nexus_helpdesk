@@ -9,12 +9,16 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from .api.admin import router as admin_router
+from .api.admin_queue import router as admin_queue_router
 from .api.auth import router as auth_router
+from .api.channel_control import router as channel_control_router
 from .api.customers import router as customers_router
 from .api.files import router as files_router
 from .api.integration import router as integration_router
+from .api.knowledge_items import router as knowledge_items_router
 from .api.lookups import router as lookups_router
 from .api.lite import router as lite_router
+from .api.persona_profiles import router as persona_profiles_router
 from .api.stats import router as stats_router
 from .api.tickets import router as tickets_router
 from .api.webchat import router as webchat_router
@@ -90,12 +94,16 @@ def readyz():
 
 
 app.include_router(admin_router)
+app.include_router(admin_queue_router)
 app.include_router(auth_router)
+app.include_router(channel_control_router)
 app.include_router(files_router)
 app.include_router(integration_router)
+app.include_router(knowledge_items_router)
 app.include_router(lookups_router)
 app.include_router(lite_router)
 app.include_router(customers_router)
+app.include_router(persona_profiles_router)
 app.include_router(stats_router)
 app.include_router(tickets_router)
 app.include_router(webchat_router)
@@ -103,6 +111,7 @@ app.include_router(webchat_router)
 webchat_static_dir = settings.backend_root / 'app' / 'static' / 'webchat'
 if webchat_static_dir.exists():
     app.mount('/webchat', StaticFiles(directory=str(webchat_static_dir), html=True), name='webchat_static')
+    app.mount('/static/webchat', StaticFiles(directory=str(webchat_static_dir), html=False), name='webchat_embeddable_static')
 
 frontend_dir = settings.frontend_root
 assets_dir = frontend_dir / "assets"
@@ -114,7 +123,7 @@ if frontend_dir.exists():
     async def serve_spa(full_path: str):
         if full_path.startswith("api/"):
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
-        if full_path.startswith("webchat/"):
+        if full_path.startswith("webchat/") or full_path.startswith("static/webchat/"):
             return JSONResponse(status_code=404, content={"detail": "Webchat asset not found"})
         file_path = frontend_dir / full_path
         if file_path.is_file():
@@ -123,34 +132,3 @@ if frontend_dir.exists():
         if index_path.is_file():
             return FileResponse(str(index_path))
         return JSONResponse(status_code=404, content={"detail": "Frontend not built"})
-
-# === NEXUSDESK ROUND B WEBCHAT STATIC HOTFIX ===
-# Serve embeddable webchat assets before SPA fallback catches /static/webchat/*.
-from pathlib import Path as _NexusDeskPath
-from fastapi.responses import FileResponse as _NexusDeskFileResponse
-
-_NEXUSDESK_WEBCHAT_STATIC_DIR = _NexusDeskPath(__file__).resolve().parent / "static" / "webchat"
-
-@app.middleware("http")
-async def _nexusdesk_webchat_static_middleware(request, call_next):
-    path = request.url.path
-
-    if path == "/static/webchat/widget.js":
-        target = _NEXUSDESK_WEBCHAT_STATIC_DIR / "widget.js"
-        if target.is_file():
-            return _NexusDeskFileResponse(
-                target,
-                media_type="application/javascript; charset=utf-8",
-            )
-
-    if path == "/static/webchat/demo.html":
-        target = _NEXUSDESK_WEBCHAT_STATIC_DIR / "demo.html"
-        if target.is_file():
-            return _NexusDeskFileResponse(
-                target,
-                media_type="text/html; charset=utf-8",
-            )
-
-    return await call_next(request)
-# === END NEXUSDESK ROUND B WEBCHAT STATIC HOTFIX ===
-

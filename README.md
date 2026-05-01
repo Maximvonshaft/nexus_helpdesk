@@ -277,6 +277,8 @@ This repository now includes a minimal production delivery bundle:
 
 - `Dockerfile` — single image for API / worker / sync daemons
 - `deploy/docker-compose.cloud.yml` — cloud-friendly stack using external PostgreSQL/S3/OpenClaw Gateway
+- `deploy/docker-compose.server.example.yml` — VM/server stack template for app, worker, OpenClaw daemons, and local PostgreSQL
+- `deploy/.env.prod.example` — production environment template without real secrets
 - `deploy/nginx/default.conf` — reverse proxy example
 - `deploy/systemd/*.service` — systemd unit samples for VM deployments
 - `scripts/deploy/preflight.sh` — deployment preflight validation
@@ -286,10 +288,36 @@ This repository now includes a minimal production delivery bundle:
 
 Recommended production topology:
 - Helpdesk app + workers in cloud
-- PostgreSQL in managed cloud database
-- S3-compatible object storage in cloud
+- PostgreSQL in managed cloud database or the server-side `postgres` service during controlled pilot deployments
+- S3-compatible object storage in cloud for strict production
 - OpenClaw Gateway on local or edge environment
 - MCP over secure remote Gateway URL (`wss://...`) as primary route
+
+## Server deployment drift prevention
+
+Server deployments must keep runtime state separate from Git-tracked source.
+
+Do not use `git reset --hard` or destructive cleanup against a live server directory until these paths are backed up and intentionally restored:
+- `deploy/.env.prod`
+- `data/`
+- uploaded attachments / local storage roots
+- any server-only compose override or reverse-proxy file
+
+The repository-owned templates are:
+- `deploy/docker-compose.cloud.yml` for cloud-style deployments
+- `deploy/docker-compose.server.example.yml` for single-server/VM deployments
+- `deploy/.env.prod.example` for required production variables
+
+The live server should copy templates into local files and fill secrets locally. Real tokens, passwords, database URLs, Tailscale addresses, and private OpenClaw Gateway credentials must never be committed. After pulling new source, rebuild images and run migrations before switching traffic:
+
+```bash
+cd /opt/nexus_helpdesk
+docker compose -f deploy/docker-compose.server.yml build
+docker compose -f deploy/docker-compose.server.yml run --rm app alembic upgrade head
+docker compose -f deploy/docker-compose.server.yml up -d
+curl -fsS http://127.0.0.1:18081/healthz
+curl -fsS http://127.0.0.1:18081/readyz
+```
 
 ## Strategic extension beyond customer support
 With broader capabilities and stronger operator controls, this system can evolve from a customer-support runtime into a dispatch / operations control layer:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -58,7 +60,9 @@ def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
     conversation_id, visitor_token = _create_webchat_message_flow(client)
 
     from app.services import webchat_ai_service
+    from app.services import webchat_ai_safe_service
 
+    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
     monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', lambda **kwargs: 'We can help with shipment questions, delivery updates, and general support requests.')
 
     db = SessionLocal()
@@ -86,7 +90,9 @@ def test_webchat_ai_reply_uses_bridge_when_enabled(monkeypatch):
     conversation_id, visitor_token = _create_webchat_message_flow(client)
 
     from app.services import webchat_ai_service
+    from app.services import webchat_ai_safe_service
 
+    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
     monkeypatch.setattr(webchat_ai_service.settings, 'openclaw_bridge_enabled', True)
     calls = []
     payloads = []
@@ -132,6 +138,18 @@ def test_webchat_ai_reply_uses_bridge_when_enabled(monkeypatch):
     assert any(item['direction'] == 'agent' and item['author_label'] == 'NexusDesk AI Assistant' for item in messages_after)
 
 
+def test_bridge_ai_reply_maps_public_session_key_to_gateway_key():
+    bridge_script = Path(__file__).resolve().parents[1] / 'scripts' / 'openclaw_bridge_server.js'
+    source = bridge_script.read_text(encoding='utf-8')
+    ai_reply_block = source.split('async aiReply(payload) {', 1)[1].split('\n  pollEvents(payload)', 1)[0]
+
+    assert "this.client.request('sessions.send'" in ai_reply_block
+    assert "this.client.request('chat.history'" in ai_reply_block
+    assert 'key: sessionKey' in ai_reply_block
+    assert 'sessionKey,\n        message: prompt' not in ai_reply_block
+    assert 'sessionKey,\n        limit,' not in ai_reply_block
+
+
 def test_webchat_ai_reply_bridge_failure_falls_back_safely(monkeypatch):
     client = TestClient(app)
     init = client.post('/api/webchat/init', json={
@@ -151,7 +169,9 @@ def test_webchat_ai_reply_bridge_failure_falls_back_safely(monkeypatch):
     assert sent.status_code == 200, sent.text
 
     from app.services import webchat_ai_service
+    from app.services import webchat_ai_safe_service
 
+    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
     monkeypatch.setattr(webchat_ai_service.settings, 'openclaw_bridge_enabled', True)
 
     def fake_urlopen_fail(req, timeout=0):

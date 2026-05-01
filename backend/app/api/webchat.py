@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..settings import get_settings
 from ..unit_of_work import managed_session
 from .deps import get_current_user
+from ..services.webchat_rate_limit import enforce_webchat_rate_limit
 from ..services.webchat_service import (
     add_visitor_message,
     admin_get_thread,
@@ -19,6 +22,7 @@ from ..services.webchat_service import (
 )
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat"])
+settings = get_settings()
 
 
 class WebchatInitRequest(BaseModel):
@@ -37,7 +41,7 @@ class WebchatInitRequest(BaseModel):
 
 class WebchatSendRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    visitor_token: str = Field(min_length=20, max_length=160)
+    visitor_token: str | None = Field(default=None, min_length=20, max_length=160)
     body: str = Field(min_length=1, max_length=2000)
 
 
@@ -48,21 +52,55 @@ class WebchatReplyRequest(BaseModel):
     confirm_review: bool = False
 
 
+def _normalized_allowed_origins() -> set[str]:
+    allowed = {item.rstrip("/") for item in settings.webchat_allowed_origins if item.strip()}
+    if settings.app_env in {"development", "test", "local"}:
+        allowed.update({"http://localhost", "http://127.0.0.1"})
+    return allowed
+
+
+def _validated_origin(request: Request) -> str | None:
+    origin = request.headers.get("origin")
+    if not origin:
+        if settings.webchat_allow_no_origin or settings.app_env in {"development", "test", "local"}:
+            return None
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webchat origin is required")
+    normalized = origin.rstrip("/")
+    if normalized not in _normalized_allowed_origins():
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webchat origin is not allowed")
+    return origin
+
+
 def _public_cors_headers(request: Request) -> dict[str, str]:
-    origin = request.headers.get("origin") or "*"
-    return {
-        "Access-Control-Allow-Origin": origin,
+    origin = _validated_origin(request)
+    headers = {
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, X-Requested-With",
+        "Access-Control-Allow-Headers": "Content-Type, X-Requested-With, X-Webchat-Visitor-Token",
         "Access-Control-Max-Age": "600",
         "Vary": "Origin",
         "Cache-Control": "no-store",
     }
+    if origin:
+        headers["Access-Control-Allow-Origin"] = origin
+    return headers
 
 
 def _set_public_cors(response: Response, request: Request) -> None:
     for key, value in _public_cors_headers(request).items():
         response.headers.setdefault(key, value)
+
+
+def _legacy_token_transport_enabled() -> bool:
+    return os.getenv("WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_visitor_token(header_token: str | None, query_token: str | None, body_token: str | None = None) -> str | None:
+    # Header is the production-safe transport. Query/body compatibility is opt-in only.
+    if header_token:
+        return header_token
+    if _legacy_token_transport_enabled():
+        return body_token or query_token
+    return None
 
 
 @router.options("/{full_path:path}")
@@ -71,26 +109,57 @@ def webchat_options(full_path: str, request: Request):
 
 
 @router.post("/init")
-def init_webchat(payload: WebchatInitRequest, request: Request, response: Response, db: Session = Depends(get_db)) -> dict[str, Any]:
+def init_webchat(
+    payload: WebchatInitRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
+) -> dict[str, Any]:
     _set_public_cors(response, request)
+    visitor_token = _resolve_visitor_token(x_webchat_visitor_token, None, payload.visitor_token)
+    safe_payload = payload.model_copy(update={"visitor_token": visitor_token})
     with managed_session(db):
-        result = create_or_resume_conversation(db, payload, request)
+        enforce_webchat_rate_limit(db, request, tenant_key=payload.tenant_key, conversation_id=payload.conversation_id)
+        result = create_or_resume_conversation(db, safe_payload, request)
     return result
 
 
 @router.post("/conversations/{conversation_id}/messages")
-def send_webchat_message(conversation_id: str, payload: WebchatSendRequest, request: Request, response: Response, db: Session = Depends(get_db)) -> dict[str, Any]:
+def send_webchat_message(
+    conversation_id: str,
+    payload: WebchatSendRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
+) -> dict[str, Any]:
     _set_public_cors(response, request)
+    visitor_token = _resolve_visitor_token(x_webchat_visitor_token, None, payload.visitor_token)
+    if not visitor_token:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
     with managed_session(db):
-        result = add_visitor_message(db, conversation_id, payload.visitor_token, payload.body, request)
+        enforce_webchat_rate_limit(db, request, tenant_key="default", conversation_id=conversation_id)
+        result = add_visitor_message(db, conversation_id, visitor_token, payload.body, request)
     return result
 
 
 @router.get("/conversations/{conversation_id}/messages")
-def poll_webchat_messages(conversation_id: str, visitor_token: str, request: Request, response: Response, db: Session = Depends(get_db)) -> dict[str, Any]:
+def poll_webchat_messages(
+    conversation_id: str,
+    request: Request,
+    response: Response,
+    visitor_token: str | None = Query(default=None),
+    x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
     _set_public_cors(response, request)
+    resolved_token = _resolve_visitor_token(x_webchat_visitor_token, visitor_token)
+    if not resolved_token:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
     with managed_session(db):
-        result = list_public_messages(db, conversation_id, visitor_token)
+        enforce_webchat_rate_limit(db, request, tenant_key="default", conversation_id=conversation_id)
+        result = list_public_messages(db, conversation_id, resolved_token)
     return result
 
 

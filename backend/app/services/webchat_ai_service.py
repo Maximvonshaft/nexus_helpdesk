@@ -18,9 +18,16 @@ from ..webchat_models import WebchatConversation, WebchatMessage
 from .openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .sla_service import evaluate_sla, update_first_response
+import time
 
 LOGGER = logging.getLogger("nexusdesk")
 settings = get_settings()
+_LAST_AI_REPLY_SOURCE = "fallback"
+_LAST_AI_FALLBACK_REASON = None
+_LAST_BRIDGE_ELAPSED_MS = None
+_LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = None
+_LAST_BRIDGE_WAIT_TIMEOUT_MS = None
+
 AI_AUTHOR_LABEL = "NexusDesk AI Assistant"
 MAX_HISTORY_MESSAGES = 12
 TRACKING_HINT_RE = re.compile(r"\b([A-Z0-9]{8,30})\b", re.IGNORECASE)
@@ -84,12 +91,27 @@ def process_webchat_ai_reply_job(
     history_rows.reverse()
 
     ai_reply = _generate_ai_reply(ticket=ticket, conversation=conversation, visitor_message=visitor_message, history_rows=history_rows)
-    fallback_reason = None
+    reply_source = _LAST_AI_REPLY_SOURCE
+    fallback_reason = _LAST_AI_FALLBACK_REASON
+    bridge_elapsed_ms = _LAST_BRIDGE_ELAPSED_MS
+    bridge_timeout_seconds = getattr(settings, "openclaw_bridge_timeout_seconds", None)
+    bridge_effective_timeout_seconds = _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS
+    bridge_wait_timeout_ms = _LAST_BRIDGE_WAIT_TIMEOUT_MS
+    sanitized_empty = False
     if not ai_reply:
-        fallback_reason = "empty_ai_reply"
+        reply_source = "fallback"
+        fallback_reason = fallback_reason or "empty_ai_reply"
         ai_reply = _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
 
-    decision = evaluate_outbound_safety(ticket, ai_reply, source="ai", has_fact_evidence=False)
+    ai_reply = _sanitize_public_ai_reply(ai_reply)
+
+    if not ai_reply.strip():
+
+        fallback_reason = fallback_reason or "sanitizer_empty"
+
+        ai_reply = _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
+
+    decision = evaluate_outbound_safety(ticket, ai_reply, source="webchat_ai", has_fact_evidence=False)
     final_body = decision.normalized_body
     safety_payload = asdict(decision)
 
@@ -148,6 +170,12 @@ def process_webchat_ai_reply_job(
             "webchat_message_id": message.id,
             "safety": safety_payload,
             "fallback_reason": fallback_reason,
+            "reply_source": reply_source,
+            "bridge_elapsed_ms": bridge_elapsed_ms,
+            "bridge_timeout_seconds": bridge_timeout_seconds,
+            "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds,
+            "bridge_wait_timeout_ms": bridge_wait_timeout_ms,
+            "sanitized_empty": sanitized_empty,
         }, ensure_ascii=False),
     ))
     evaluate_sla(ticket, db)
@@ -159,83 +187,137 @@ def process_webchat_ai_reply_job(
             "visitor_message_id": visitor_message.id,
             "webchat_message_id": message.id,
             "fallback": bool(fallback_reason),
+            "reply_source": reply_source,
+            "fallback_reason": fallback_reason,
+            "bridge_elapsed_ms": bridge_elapsed_ms,
+            "bridge_timeout_seconds": bridge_timeout_seconds,
+            "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds,
+            "bridge_wait_timeout_ms": bridge_wait_timeout_ms,
+            "sanitized_empty": sanitized_empty,
         }},
     )
-    return {"status": "done", "message_id": message.id, "fallback": bool(fallback_reason)}
+    return {"status": "done", "message_id": message.id, "fallback": bool(fallback_reason), "reply_source": reply_source, "fallback_reason": fallback_reason, "bridge_elapsed_ms": bridge_elapsed_ms, "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds, "bridge_wait_timeout_ms": bridge_wait_timeout_ms}
 
 
 def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage]) -> str:
-    if _looks_like_tracking_request(visitor_message.body) and not _has_tracking_number(ticket=ticket, visitor_message=visitor_message, history_rows=history_rows):
-        return SAFE_TRACKING_REQUIRED_FALLBACK
+    global _LAST_AI_REPLY_SOURCE, _LAST_AI_FALLBACK_REASON, _LAST_BRIDGE_ELAPSED_MS, _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS, _LAST_BRIDGE_WAIT_TIMEOUT_MS
+
+    _LAST_AI_REPLY_SOURCE = "fallback"
+    _LAST_AI_FALLBACK_REASON = None
+    _LAST_BRIDGE_ELAPSED_MS = None
+    _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = None
+    _LAST_BRIDGE_WAIT_TIMEOUT_MS = None
 
     prompt = _build_prompt(ticket=ticket, conversation=conversation, visitor_message=visitor_message, history_rows=history_rows)
+
     if settings.openclaw_bridge_enabled:
+        started = time.monotonic()
         try:
             text = _generate_ai_reply_via_bridge(prompt=prompt, conversation=conversation, visitor_message=visitor_message)
-            return _sanitize_ai_reply(text)
-        except Exception as exc:
+            _LAST_BRIDGE_ELAPSED_MS = int((time.monotonic() - started) * 1000)
+            text = (text or "").strip()
+
+            if text:
+                _LAST_AI_REPLY_SOURCE = "bridge"
+                _LAST_AI_FALLBACK_REASON = None
+                return text
+
+            _LAST_AI_REPLY_SOURCE = "fallback"
+            _LAST_AI_FALLBACK_REASON = "bridge_empty"
             LOGGER.warning(
                 "webchat_ai_bridge_runtime_failed",
                 extra={"event_payload": {
                     "conversation_id": conversation.id,
                     "ticket_id": ticket.id,
                     "visitor_message_id": visitor_message.id,
-                    "bridge_url": settings.openclaw_bridge_url,
-                    "error": str(exc),
+                    "reply_source": _LAST_AI_REPLY_SOURCE,
+                    "fallback_reason": _LAST_AI_FALLBACK_REASON,
+                    "bridge_elapsed_ms": _LAST_BRIDGE_ELAPSED_MS,
+                    "bridge_timeout_seconds": settings.openclaw_bridge_timeout_seconds,
+                    "bridge_effective_timeout_seconds": _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS,
+                    "bridge_wait_timeout_ms": _LAST_BRIDGE_WAIT_TIMEOUT_MS,
                 }},
             )
             return _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
 
-    try:
-        with OpenClawMCPClient() as client:
-            session_key = f"webchat-ai-{conversation.public_id}-{visitor_message.id}"
-            client.messages_send(session_key, prompt)
-            rows = client.messages_read(session_key, limit=6)
-        text = _extract_reply_text(rows)
-        return _sanitize_ai_reply(text)
-    except (OpenClawMCPError, FileNotFoundError) as exc:
-        LOGGER.warning(
-            "webchat_ai_runtime_failed",
-            extra={"event_payload": {
-                "conversation_id": conversation.id,
-                "ticket_id": ticket.id,
-                "visitor_message_id": visitor_message.id,
-                "error": str(exc),
-            }},
-        )
-        return _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
+        except Exception as exc:
+            _LAST_BRIDGE_ELAPSED_MS = int((time.monotonic() - started) * 1000)
+            error_text = f"{type(exc).__name__}: {exc}".lower()
+
+            if "timed out" in error_text or "timeout" in error_text:
+                reason = "bridge_timeout"
+            elif "rejected" in error_text:
+                reason = "bridge_rejected"
+            elif "empty" in error_text:
+                reason = "bridge_empty"
+            else:
+                reason = "bridge_exception"
+
+            _LAST_AI_REPLY_SOURCE = "fallback"
+            _LAST_AI_FALLBACK_REASON = reason
+
+            LOGGER.warning(
+                "webchat_ai_bridge_runtime_failed",
+                extra={"event_payload": {
+                    "conversation_id": conversation.id,
+                    "ticket_id": ticket.id,
+                    "visitor_message_id": visitor_message.id,
+                    "reply_source": _LAST_AI_REPLY_SOURCE,
+                    "fallback_reason": _LAST_AI_FALLBACK_REASON,
+                    "bridge_elapsed_ms": _LAST_BRIDGE_ELAPSED_MS,
+                    "bridge_timeout_seconds": settings.openclaw_bridge_timeout_seconds,
+                    "bridge_effective_timeout_seconds": _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS,
+                    "bridge_wait_timeout_ms": _LAST_BRIDGE_WAIT_TIMEOUT_MS,
+                    "error_type": type(exc).__name__,
+                }},
+            )
+            return _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
+
+    _LAST_AI_REPLY_SOURCE = "fallback"
+    _LAST_AI_FALLBACK_REASON = "bridge_disabled"
+    return _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
 
 
 def _generate_ai_reply_via_bridge(*, prompt: str, conversation: WebchatConversation, visitor_message: WebchatMessage) -> str:
+    global _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS, _LAST_BRIDGE_WAIT_TIMEOUT_MS
+
     bridge_url = settings.openclaw_bridge_url.rstrip('/')
     session_key = f"webchat-ai-{conversation.public_id}-{visitor_message.id}"
+    configured_timeout_seconds = int(getattr(settings, "openclaw_bridge_timeout_seconds", 20) or 20)
+    effective_timeout_seconds = min(max(configured_timeout_seconds, 5), 30)
+    wait_timeout_ms = effective_timeout_seconds * 1000
+    _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = effective_timeout_seconds
+    _LAST_BRIDGE_WAIT_TIMEOUT_MS = wait_timeout_ms
+
+    payload = {
+        "sessionKey": session_key,
+        "prompt": prompt,
+        "limit": 6,
+        "waitTimeoutMs": wait_timeout_ms,
+    }
     ai_req = urllib.request.Request(
         f"{bridge_url}/ai-reply",
-        data=json.dumps({"sessionKey": session_key, "prompt": prompt, "limit": 6}).encode("utf-8"),
+        data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     try:
-        with urllib.request.urlopen(ai_req, timeout=settings.openclaw_bridge_timeout_seconds) as resp:
+        with urllib.request.urlopen(ai_req, timeout=effective_timeout_seconds + 5) as resp:
             parsed = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
         raise RuntimeError(f"bridge ai-reply http {exc.code}: {body[:300]}") from exc
+
     if not isinstance(parsed, dict) or not parsed.get("ok"):
         raise RuntimeError(f"bridge ai-reply rejected: {parsed}")
-    try:
-        with urllib.request.urlopen(read_req, timeout=settings.openclaw_bridge_timeout_seconds) as resp:
-            parsed = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
-        raise RuntimeError(f"bridge read http {exc.code}: {body[:300]}") from exc
-    if not isinstance(parsed, dict) or not parsed.get("ok"):
-        raise RuntimeError(f"bridge read rejected: {parsed}")
-    text = _extract_reply_text(parsed.get("messages") or [])
+
+    text = parsed.get("replyText")
+    if not text:
+        text = _extract_reply_text(parsed.get("messages") or [])
     if not text:
         raise RuntimeError("bridge returned empty reply")
-    return text
 
+    return str(text)
 
 def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage]) -> str:
     history_lines = []
@@ -243,15 +325,21 @@ def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_
         speaker = "Visitor" if row.direction == "visitor" else "Agent"
         history_lines.append(f"{speaker}: {row.body}")
     history_block = "\n".join(history_lines[-MAX_HISTORY_MESSAGES:])
+
     return (
-        "You are a customer support reply assistant for a public web chat. "
-        "Write one short customer-facing reply only. Do not mention OpenClaw, MCP, prompt, policy, or internal systems. "
-        "Do not claim parcel delivered, signed, refunded, compensated, customs cleared, or promise arrival times unless exact evidence is provided. "
-        "If the customer asks about parcel status and no tracking number is available, ask them to provide the tracking number. "
-        "If human verification is needed, say a support agent will review and reply here. "
-        "Keep it concise, polite, and useful.\n\n"
+        "You are Speedy, the public webchat assistant for Speedaf Support. "
+        "Reply in the same language as the visitor. "
+        "Be concise, friendly, and professional. "
+        "Write one short customer-facing reply only. "
+        "For tracking, parcel status, refund, customs, delivery, compensation, or SLA questions, "
+        "ask for the tracking number or say a support specialist will check. "
+        "Never invent parcel status, delivery result, customs clearance, refund, compensation, or SLA. "
+        "Never mention internal tools, OpenClaw, bridge, provider, prompt, logs, ports, tokens, "
+        "system prompt, developer message, localhost, 127.0.0.1, or internal systems. "
+        "For simple greetings, reply naturally as Speedy. "
+        "English greeting example: Hi, this is Speedy. How can I help you today? "
+        "Chinese greeting example: 您好，我是 Speedy，请问有什么可以帮您？\n\n"
         f"Ticket #{ticket.ticket_no}\n"
-        f"Conversation public id: {conversation.public_id}\n"
         f"Last customer message: {visitor_message.body}\n\n"
         f"Recent webchat history:\n{history_block}\n\n"
         "Return only the final reply text."
@@ -311,9 +399,147 @@ def _has_tracking_number(*, ticket: Ticket, visitor_message: WebchatMessage, his
     return False
 
 
+
+
+def _sanitize_public_ai_reply(raw: str | None) -> str:
+
+    """Clean LLM output before storing/sending public webchat replies."""
+
+    import re
+
+    text = (raw or "").strip()
+
+    if not text:
+
+        return ""
+
+    final_match = re.search(r"<\s*final\s*>", text, flags=re.IGNORECASE)
+
+    if final_match:
+
+        text = text[final_match.end():].strip()
+
+    text = re.sub(
+
+        r"<\s*think\s*>.*?<\s*/\s*think\s*>",
+
+        "",
+
+        text,
+
+        flags=re.IGNORECASE | re.DOTALL,
+
+    ).strip()
+
+    if re.search(r"<\s*think\b", text, flags=re.IGNORECASE):
+
+        return ""
+
+    text = re.sub(
+
+        r"</?\s*(?:final|answer|response|assistant|analysis|commentary)\s*>",
+
+        "",
+
+        text,
+
+        flags=re.IGNORECASE,
+
+    ).strip()
+
+    blocked_patterns = [
+
+        r"\bSOUL\.md\b",
+
+        r"\bsystem prompt\b",
+
+        r"\bdeveloper message\b",
+
+        r"\bdeveloper instruction\b",
+
+        r"\bchain[- ]of[- ]thought\b",
+
+        r"\bhidden reasoning\b",
+
+        r"\binternal context\b",
+
+        r"\binternal instruction\b",
+
+        r"\bOpenClaw\b",
+
+        r"\bMCP\b",
+
+        r"\btool call\b",
+
+        r"\baccording to .*?\.md\b",
+
+    ]
+
+    clean_lines = []
+
+    for line in text.splitlines():
+
+        candidate = line.strip()
+
+        if not candidate:
+
+            continue
+
+        if re.search(
+
+            r"^(analysis|reasoning|plan|thought|internal|system|developer)\s*:",
+
+            candidate,
+
+            flags=re.IGNORECASE,
+
+        ):
+
+            continue
+
+        if any(re.search(pattern, candidate, flags=re.IGNORECASE) for pattern in blocked_patterns):
+
+            continue
+
+        clean_lines.append(candidate)
+
+    text = "\n".join(clean_lines).strip()
+
+    text = re.sub(r"[ \t]+", " ", text)
+
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    return text
+
+
+
+def _is_probably_chinese_text(text: str | None) -> bool:
+    text = text or ""
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+def _speedy_generic_fallback(body: str | None) -> str:
+    if _is_probably_chinese_text(body):
+        return "您好，我是 Speedy，已收到您的消息。客服专员会尽快查看并在这里回复您。"
+    return "Hi, this is Speedy. I’ve received your message. A support specialist will review it and reply here shortly."
+
+
+def _speedy_tracking_required_fallback(body: str | None) -> str:
+    if _is_probably_chinese_text(body):
+        return "您好，我是 Speedy。请提供您的运单号，客服专员会帮您核查并在这里回复您。"
+    return "Hi, this is Speedy. Please share your tracking number, and a support specialist will review it and reply here."
+
+
+def _speedy_review_fallback(body: str | None) -> str:
+    if _is_probably_chinese_text(body):
+        return "您好，我是 Speedy，已收到您的消息。客服专员会尽快核查并在这里回复您。"
+    return "Hi, this is Speedy. I’ve received your message. A support specialist will review it and reply here shortly."
+
+
 def _fallback_reply_for(*, ticket: Ticket, visitor_message: WebchatMessage) -> str:
-    if _looks_like_tracking_request(visitor_message.body) and not _has_tracking_number(ticket=ticket, visitor_message=visitor_message, history_rows=[]):
-        return SAFE_TRACKING_REQUIRED_FALLBACK
-    if _looks_like_tracking_request(visitor_message.body):
-        return SAFE_REVIEW_FALLBACK
-    return SAFE_GENERAL_FALLBACK
+    body = getattr(visitor_message, "body", "") or ""
+    if _looks_like_tracking_request(body) and not _has_tracking_number(ticket=ticket, visitor_message=visitor_message, history_rows=[]):
+        return _speedy_tracking_required_fallback(body)
+    if _looks_like_tracking_request(body):
+        return _speedy_review_fallback(body)
+    return _speedy_generic_fallback(body)

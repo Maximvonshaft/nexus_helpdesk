@@ -8,7 +8,7 @@ import { CommandPalette } from '@/components/ui/CommandPalette'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { labelize } from '@/lib/format'
-import { canManageAIConfig, canManageChannels, canManageUsers, canViewOps, roleWorkspaceHint } from '@/lib/access'
+import { canManageAIConfig, canManageChannels, canManageUsers, canViewControlPlane, canViewOps, roleWorkspaceHint } from '@/lib/access'
 
 const nav = [
   { to: '/', label: '首页总览' },
@@ -16,6 +16,7 @@ const nav = [
   { to: '/webchat', label: '网站聊天' },
   { to: '/bulletins', label: '通知公告', permission: 'bulletins' },
   { to: '/ai-control', label: 'AI规则', permission: 'ai' },
+  { to: '/control-plane', label: '控制面', permission: 'control-plane' },
   { to: '/accounts', label: '发送线路', permission: 'channels' },
   { to: '/users', label: '账号管理', permission: 'users' },
   { to: '/runtime', label: '运营保障', permission: 'ops' },
@@ -47,6 +48,12 @@ export function AppShell({ children }: PropsWithChildren) {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  useEffect(() => {
+    if (location.pathname !== '/login' && !session.isLoading && !session.isFetching && !session.data) {
+      navigate({ to: '/login', replace: true })
+    }
+  }, [location.pathname, navigate, session.data, session.isFetching, session.isLoading])
+
   const userLabel = useMemo(() => {
     if (!session.data) return '未登录'
     return `${session.data.display_name} · ${labelize(session.data.role)}`
@@ -56,15 +63,17 @@ export function AppShell({ children }: PropsWithChildren) {
     if (item.permission === 'ops') return canViewOps(session.data)
     if (item.permission === 'channels') return canManageChannels(session.data)
     if (item.permission === 'ai') return canManageAIConfig(session.data)
+    if (item.permission === 'control-plane') return canViewControlPlane(session.data)
     if (item.permission === 'users') return canManageUsers(session.data)
     if (item.permission === 'bulletins') return true
     return true
   }), [session.data])
 
-  if (!session.data) {
-    navigate({ to: '/login' })
-    return null
+  if (!session.data && (session.isLoading || session.isFetching)) {
+    return <div className="auth-shell"><div className="auth-card">正在确认登录状态…</div></div>
   }
+
+  if (!session.data) return null
 
   return (
     <div className="app-shell">
@@ -87,7 +96,7 @@ export function AppShell({ children }: PropsWithChildren) {
           <div className="sidebar-helper">{roleWorkspaceHint(session.data)}</div>
           <div className="button-row" style={{ marginTop: 12 }}>
             <Button variant="secondary" onClick={() => setCommandOpen(true)}>快捷操作</Button>
-            <Button variant="ghost" onClick={() => { logout(); navigate({ to: '/login' }) }}>退出登录</Button>
+            <Button variant="ghost" onClick={() => { logout(); navigate({ to: '/login', replace: true }) }}>退出登录</Button>
           </div>
         </div>
       </aside>
