@@ -15,6 +15,7 @@ from ..utils.time import utc_now
 from .audit_service import log_event
 from .observability import LOGGER
 from .openclaw_bridge import dispatch_via_openclaw_bridge, dispatch_via_openclaw_cli, dispatch_via_openclaw_mcp, resolve_channel_account
+from .outbound_message_semantics import EXTERNAL_OUTBOUND_CHANNELS, is_external_send_candidate
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 
 settings = get_settings()
@@ -134,6 +135,8 @@ def requeue_dead_outbound_message(db: Session, *, message_id: int) -> TicketOutb
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Outbound message not found')
     if message.status != MessageStatus.dead:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Only dead outbound messages can be requeued')
+    if not is_external_send_candidate(message):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Only external outbound messages can be requeued')
     message.status = MessageStatus.pending
     message.provider_status = 'requeued_by_admin'
     message.retry_count = 0
@@ -156,6 +159,7 @@ def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: 
     lock_deadline = now - timedelta(seconds=settings.outbox_lock_seconds)
 
     pending_filters = [
+        TicketOutboundMessage.channel.in_(list(EXTERNAL_OUTBOUND_CHANNELS)),
         TicketOutboundMessage.status == MessageStatus.pending,
         or_(TicketOutboundMessage.next_retry_at.is_(None), TicketOutboundMessage.next_retry_at <= now),
         or_(TicketOutboundMessage.locked_at.is_(None), TicketOutboundMessage.locked_at < lock_deadline),
@@ -243,6 +247,10 @@ def _enforce_outbound_safety(db: Session, message: TicketOutboundMessage, ticket
 
 def process_outbound_message(db: Session, message: TicketOutboundMessage) -> TicketOutboundMessage:
     if message.status == MessageStatus.sent:
+        return message
+    if not is_external_send_candidate(message):
+        _mark_dead(message, 'Non-external outbound row is not eligible for provider dispatch', failure_code='non_external_outbound_not_dispatchable')
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Non-external outbound row was blocked from provider dispatch', payload={'message_id': message.id, 'channel': message.channel.value if hasattr(message.channel, 'value') else str(message.channel), 'provider_status': message.provider_status})
         return message
     idempotency_key = _ensure_provider_idempotency_key(message)
     ticket = message.ticket
