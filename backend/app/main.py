@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
+from .api.admin_outbound_semantics import router as admin_outbound_semantics_router
 from .api.admin import router as admin_router
 from .api.admin_queue import router as admin_queue_router
 from .api.auth import router as auth_router
@@ -93,6 +94,9 @@ def readyz():
         return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error'})
 
 
+# Semantic overrides must be registered before the broader admin router so
+# /api/admin/queues/summary and /api/admin/openclaw/runtime-health use external-send-safe counts.
+app.include_router(admin_outbound_semantics_router)
 app.include_router(admin_router)
 app.include_router(admin_queue_router)
 app.include_router(auth_router)

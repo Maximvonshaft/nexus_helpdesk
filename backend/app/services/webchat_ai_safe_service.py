@@ -99,6 +99,12 @@ def _agent_reply_exists(db: Session, *, conversation: WebchatConversation, visit
     )
 
 
+def _provider_status_for_reason(reason: str) -> str:
+    if reason in {"webchat_safe_ai_high_risk_fallback", "bridge_timeout", "bridge_failure", "ai_safety_fallback"}:
+        return "webchat_ai_safe_fallback"
+    return "webchat_safe_ack_delivered"
+
+
 def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, body: str, reason: str) -> dict[str, Any]:
     final_body = _sanitize_public_reply(body)
     decision = evaluate_outbound_safety(ticket, final_body, source="webchat_safe_ack", has_fact_evidence=False)
@@ -121,13 +127,13 @@ def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, t
         channel=SourceChannel.web_chat,
         status=MessageStatus.sent,
         body=final_body,
-        provider_status="webchat_safe_ack_delivered",
+        provider_status=_provider_status_for_reason(reason),
         error_message=reason,
         created_by=None,
         sent_at=utc_now(),
         max_retries=0,
-        failure_code=None,
-        failure_reason=None,
+        failure_code="safety_review_required" if _provider_status_for_reason(reason) == "webchat_ai_safe_fallback" else None,
+        failure_reason="AI safe fallback delivered locally; no external provider send occurred" if _provider_status_for_reason(reason) == "webchat_ai_safe_fallback" else None,
     ))
     update_first_response(ticket)
     ticket.status = TicketStatus.waiting_customer
@@ -147,6 +153,8 @@ def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, t
             "visitor_message_id": visitor_message.id,
             "webchat_message_id": message.id,
             "reply_source": reason,
+            "provider_status": _provider_status_for_reason(reason),
+            "external_send": False,
             "safety": safety_payload,
         }, ensure_ascii=False),
     ))
