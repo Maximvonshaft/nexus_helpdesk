@@ -50,19 +50,13 @@ echo "$INCREMENTAL_JSON" | jq -e '.messages | length >= 1' >/dev/null
 echo "visitor flow ok"
 
 if [ -n "$ADMIN_TOKEN" ]; then
-  TICKET_ID=$(python3 - <<'PY' "$POLL_JSON"
-import json,sys
-payload=json.loads(sys.argv[1])
-print(payload.get('ticket_id') or '')
-PY
-)
-  if [ -n "$TICKET_ID" ]; then
-    THREAD_JSON=$(curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" "$BASE_URL/api/webchat/admin/tickets/$TICKET_ID/thread")
-    echo "$THREAD_JSON" | jq -e '.actions | length >= 1' >/dev/null
-    echo "admin thread action audit ok"
-  else
-    echo "ADMIN_TOKEN set but public poll does not expose ticket_id; inspect /api/webchat/admin/conversations manually"
-  fi
+  CONVERSATIONS_JSON=$(curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" "$BASE_URL/api/webchat/admin/conversations")
+  TICKET_ID=$(echo "$CONVERSATIONS_JSON" | jq -r --arg cid "$CONVERSATION_ID" '.[] | select(.conversation_id==$cid) | .ticket_id' | head -1)
+  test -n "$TICKET_ID" && test "$TICKET_ID" != "null"
+  THREAD_JSON=$(curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" "$BASE_URL/api/webchat/admin/tickets/$TICKET_ID/thread")
+  echo "$THREAD_JSON" | jq -e '.actions | length >= 1' >/dev/null
+  echo "$THREAD_JSON" | jq -e '.messages[] | select(.message_type=="action")' >/dev/null
+  echo "admin thread action audit ok"
 else
   echo "ADMIN_TOKEN not set; skipped admin thread smoke"
 fi
