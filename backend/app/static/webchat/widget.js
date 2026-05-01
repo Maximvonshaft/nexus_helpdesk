@@ -23,31 +23,10 @@
   var buttonLabel = script.getAttribute('data-button-label') || 'Chat with us';
   var closeLabel = script.getAttribute('data-close-label') || 'Close chat';
   var storageKey = 'nexusdesk:webchat:' + apiBase + ':' + tenantKey + ':' + channelKey;
-  var state = {
-    conversationId: null,
-    visitorToken: null,
-    open: false,
-    busy: false,
-    pollTimer: null,
-    lastMessageId: 0,
-    backoffMs: 4000,
-    rendered: {},
-    optimisticSeq: 0,
-    unread: 0,
-    userNearBottom: true
-  };
+  var state = { conversationId: null, visitorToken: null, open: false, busy: false, pollTimer: null, lastMessageId: 0, backoffMs: 4000, rendered: {}, optimisticSeq: 0, unread: 0, userNearBottom: true };
 
-  function loadCache() {
-    try {
-      var cached = JSON.parse(window.sessionStorage.getItem(storageKey) || '{}');
-      state.conversationId = cached.conversationId || null;
-      state.visitorToken = cached.visitorToken || null;
-      state.lastMessageId = cached.lastMessageId || 0;
-    } catch (err) {}
-  }
-  function persist() {
-    try { window.sessionStorage.setItem(storageKey, JSON.stringify({ conversationId: state.conversationId, visitorToken: state.visitorToken, lastMessageId: state.lastMessageId })); } catch (err) {}
-  }
+  function loadCache() { try { var cached = JSON.parse(window.sessionStorage.getItem(storageKey) || '{}'); state.conversationId = cached.conversationId || null; state.visitorToken = cached.visitorToken || null; state.lastMessageId = 0; } catch (err) {} }
+  function persist() { try { window.sessionStorage.setItem(storageKey, JSON.stringify({ conversationId: state.conversationId, visitorToken: state.visitorToken })); } catch (err) {} }
   loadCache();
 
   var style = document.createElement('style');
@@ -73,169 +52,36 @@
     + '@media (max-width:480px){.nd-webchat-panel{left:0;right:0;bottom:0;width:100vw;height:100dvh;max-height:100dvh;max-width:100vw;border-radius:0}.nd-webchat-button{right:16px;bottom:16px}}\n';
   document.head.appendChild(style);
 
-  var button = document.createElement('button');
-  button.className = 'nd-webchat-button';
-  button.type = 'button';
-  button.setAttribute('aria-label', buttonLabel);
-  var buttonText = document.createElement('span');
-  buttonText.textContent = buttonLabel;
-  var unread = document.createElement('span');
-  unread.className = 'nd-webchat-unread';
-  button.appendChild(buttonText);
-  button.appendChild(unread);
-
-  var panel = document.createElement('section');
-  panel.className = 'nd-webchat-panel';
-  panel.setAttribute('aria-label', title);
-  var header = document.createElement('div'); header.className = 'nd-webchat-header';
-  var headerText = document.createElement('div');
-  var h = document.createElement('strong'); h.textContent = title;
-  var s = document.createElement('span'); s.textContent = subtitle;
-  headerText.appendChild(h); headerText.appendChild(s);
-  var close = document.createElement('button'); close.className = 'nd-webchat-close'; close.type = 'button'; close.setAttribute('aria-label', closeLabel); close.textContent = '×';
-  header.appendChild(headerText); header.appendChild(close);
+  var button = document.createElement('button'); button.className = 'nd-webchat-button'; button.type = 'button'; button.setAttribute('aria-label', buttonLabel);
+  var buttonText = document.createElement('span'); buttonText.textContent = buttonLabel;
+  var unread = document.createElement('span'); unread.className = 'nd-webchat-unread'; button.appendChild(buttonText); button.appendChild(unread);
+  var panel = document.createElement('section'); panel.className = 'nd-webchat-panel'; panel.setAttribute('aria-label', title);
+  var header = document.createElement('div'); header.className = 'nd-webchat-header'; var headerText = document.createElement('div');
+  var h = document.createElement('strong'); h.textContent = title; var s = document.createElement('span'); s.textContent = subtitle; headerText.appendChild(h); headerText.appendChild(s);
+  var close = document.createElement('button'); close.className = 'nd-webchat-close'; close.type = 'button'; close.setAttribute('aria-label', closeLabel); close.textContent = '×'; header.appendChild(headerText); header.appendChild(close);
   var messagesEl = document.createElement('div'); messagesEl.className = 'nd-webchat-messages'; messagesEl.setAttribute('role', 'log'); messagesEl.setAttribute('aria-live', 'polite');
-  var formEl = document.createElement('form'); formEl.className = 'nd-webchat-form';
-  var inputEl = document.createElement('input'); inputEl.className = 'nd-webchat-input'; inputEl.maxLength = 2000; inputEl.placeholder = 'Type your message...'; inputEl.autocomplete = 'off';
-  var sendEl = document.createElement('button'); sendEl.className = 'nd-webchat-send'; sendEl.type = 'submit'; sendEl.textContent = 'Send';
-  formEl.appendChild(inputEl); formEl.appendChild(sendEl);
-  var statusEl = document.createElement('div'); statusEl.className = 'nd-webchat-status'; statusEl.textContent = 'Online';
-  panel.appendChild(header); panel.appendChild(messagesEl); panel.appendChild(formEl); panel.appendChild(statusEl);
-  document.body.appendChild(panel); document.body.appendChild(button);
+  var formEl = document.createElement('form'); formEl.className = 'nd-webchat-form'; var inputEl = document.createElement('input'); inputEl.className = 'nd-webchat-input'; inputEl.maxLength = 2000; inputEl.placeholder = 'Type your message...'; inputEl.autocomplete = 'off';
+  var sendEl = document.createElement('button'); sendEl.className = 'nd-webchat-send'; sendEl.type = 'submit'; sendEl.textContent = 'Send'; formEl.appendChild(inputEl); formEl.appendChild(sendEl);
+  var statusEl = document.createElement('div'); statusEl.className = 'nd-webchat-status'; statusEl.textContent = 'Online'; panel.appendChild(header); panel.appendChild(messagesEl); panel.appendChild(formEl); panel.appendChild(statusEl); document.body.appendChild(panel); document.body.appendChild(button);
 
   function setStatus(text) { statusEl.textContent = text; panel.setAttribute('data-status', text.toLowerCase().replace(/\s+/g, '-')); }
   function updateUnread() { unread.style.display = state.unread > 0 ? 'block' : 'none'; unread.textContent = String(Math.min(state.unread, 9)); }
   function isNearBottom() { return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80; }
   messagesEl.addEventListener('scroll', function () { state.userNearBottom = isNearBottom(); });
-
-  function api(path, options, timeoutMs) {
-    options = options || {}; timeoutMs = timeoutMs || 12000;
-    var headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
-    var controller = window.AbortController ? new AbortController() : null;
-    var timer = controller ? setTimeout(function () { controller.abort(); }, timeoutMs) : null;
-    return fetch(apiBase + path, Object.assign({ mode: 'cors', signal: controller ? controller.signal : undefined }, options, { headers: headers }))
-      .then(function (res) { return res.json().catch(function () { return {}; }).then(function (data) { if (!res.ok) { var err = new Error(data.detail && data.detail.message ? data.detail.message : data.detail || ('HTTP ' + res.status)); err.payload = data; throw err; } return data; }); })
-      .finally(function () { if (timer) clearTimeout(timer); });
-  }
+  function api(path, options, timeoutMs) { options = options || {}; timeoutMs = timeoutMs || 12000; var headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {}); var controller = window.AbortController ? new AbortController() : null; var timer = controller ? setTimeout(function () { controller.abort(); }, timeoutMs) : null; return fetch(apiBase + path, Object.assign({ mode: 'cors', signal: controller ? controller.signal : undefined }, options, { headers: headers })).then(function (res) { return res.json().catch(function () { return {}; }).then(function (data) { if (!res.ok) { var err = new Error(data.detail && data.detail.message ? data.detail.message : data.detail || ('HTTP ' + res.status)); err.payload = data; throw err; } return data; }); }).finally(function () { if (timer) clearTimeout(timer); }); }
   function clientMessageId() { return 'wc_client_' + Date.now().toString(36) + '_' + (++state.optimisticSeq).toString(36); }
+  function renderWelcomeIfEmpty() { if (Object.keys(state.rendered).length) return; var w = document.createElement('div'); w.className = 'nd-webchat-msg agent'; w.textContent = welcome; messagesEl.appendChild(w); }
+  function appendTextMessage(msg, extraClass) { var key = msg.id ? String(msg.id) : msg.client_message_id; if (key && state.rendered[key]) return; var el = document.createElement('div'); var role = msg.direction === 'visitor' ? 'visitor' : msg.direction === 'action' ? 'action' : msg.direction === 'system' ? 'system' : 'agent'; el.className = 'nd-webchat-msg ' + role + (extraClass ? ' ' + extraClass : ''); el.textContent = msg.body_text || msg.body || ''; if (key) state.rendered[key] = el; messagesEl.appendChild(el); }
+  function renderUnknownCard(card) { var text = (card && (card.title || card.body)) || 'Unsupported card. Please type your request.'; var el = document.createElement('div'); el.className = 'nd-webchat-msg system'; el.textContent = text; messagesEl.appendChild(el); }
+  function appendCardMessage(msg) { var key = String(msg.id); if (state.rendered[key]) return; var payload = msg.payload_json || {}; if (!payload || ['quick_replies', 'handoff'].indexOf(payload.card_type) === -1) { renderUnknownCard(payload); state.rendered[key] = true; return; } var card = document.createElement('div'); card.className = 'nd-webchat-card'; var titleEl = document.createElement('div'); titleEl.className = 'nd-webchat-card-title'; titleEl.textContent = payload.title || 'Support options'; card.appendChild(titleEl); if (payload.body) { var bodyEl = document.createElement('div'); bodyEl.className = 'nd-webchat-card-body'; bodyEl.textContent = payload.body; card.appendChild(bodyEl); } var actionsEl = document.createElement('div'); actionsEl.className = 'nd-webchat-card-actions'; card.appendChild(actionsEl); (payload.actions || []).forEach(function (action) { var a = document.createElement('button'); a.type = 'button'; a.className = 'nd-webchat-card-action'; a.textContent = action.label || action.id; a.disabled = msg.action_status === 'submitted'; a.addEventListener('click', function () { submitAction(msg, payload, action, a); }); actionsEl.appendChild(a); }); state.rendered[key] = card; messagesEl.appendChild(card); }
+  function appendMessages(messages) { var wasNearBottom = state.userNearBottom; renderWelcomeIfEmpty(); (messages || []).forEach(function (msg) { if (msg.id && msg.id > state.lastMessageId) state.lastMessageId = msg.id; if (msg.message_type === 'card') appendCardMessage(msg); else appendTextMessage(msg); if (!state.open && msg.direction !== 'visitor') state.unread += 1; }); persist(); updateUnread(); if (wasNearBottom || state.open) messagesEl.scrollTop = messagesEl.scrollHeight; }
+  function init() { var headers = state.visitorToken ? { 'X-Webchat-Visitor-Token': state.visitorToken } : {}; setStatus('Connecting...'); return api('/api/webchat/init', { method: 'POST', headers: headers, body: JSON.stringify({ tenant_key: tenantKey, channel_key: channelKey, conversation_id: state.conversationId, origin: window.location.origin, page_url: window.location.href })}, 12000).then(function (data) { state.conversationId = data.conversation_id; state.visitorToken = data.visitor_token; persist(); setStatus('Online'); return poll(true); }).catch(function () { setStatus('Temporarily unavailable'); }); }
+  function poll(resetBackoff) { if (!state.conversationId || !state.visitorToken) return Promise.resolve(); var qs = '?limit=50'; if (state.lastMessageId) qs += '&after_id=' + encodeURIComponent(state.lastMessageId); return api('/api/webchat/conversations/' + encodeURIComponent(state.conversationId) + '/messages' + qs, { headers: { 'X-Webchat-Visitor-Token': state.visitorToken } }, 10000).then(function (data) { appendMessages(data.messages || []); setStatus('Online'); if (resetBackoff !== false) state.backoffMs = 4000; }).catch(function () { setStatus('Reconnecting...'); state.backoffMs = Math.min(30000, Math.max(4000, state.backoffMs * 1.6)); }); }
+  function schedulePoll() { if (state.pollTimer) clearTimeout(state.pollTimer); state.pollTimer = setTimeout(function tick() { if (state.open && document.visibilityState !== 'hidden') poll(false).finally(schedulePoll); else schedulePoll(); }, document.visibilityState === 'hidden' ? Math.max(state.backoffMs, 15000) : state.backoffMs); }
+  function openPanel(force) { state.open = typeof force === 'boolean' ? force : !state.open; panel.setAttribute('data-open', state.open ? 'true' : 'false'); if (state.open) { state.unread = 0; updateUnread(); buttonText.textContent = closeLabel; init().then(schedulePoll); setTimeout(function () { inputEl.focus(); }, 80); } else { buttonText.textContent = buttonLabel; } }
+  function submitAction(msg, payload, action, buttonEl) { if (!state.conversationId || !state.visitorToken || buttonEl.disabled) return; buttonEl.disabled = true; setStatus('Sending selection...'); api('/api/webchat/conversations/' + encodeURIComponent(state.conversationId) + '/actions', { method: 'POST', headers: { 'X-Webchat-Visitor-Token': state.visitorToken }, body: JSON.stringify({ message_id: msg.id, card_id: payload.card_id, action_id: action.id, action_type: action.action_type || 'quick_reply', payload: action.payload || {} }) }, 12000).then(function (data) { appendMessages([data.message]); setStatus(data.handoff_triggered ? 'Human support requested' : 'Selection sent'); return poll(true); }).catch(function () { buttonEl.disabled = false; setStatus('Failed to send selection'); }); }
 
-  function renderWelcomeIfEmpty() {
-    if (Object.keys(state.rendered).length) return;
-    var w = document.createElement('div'); w.className = 'nd-webchat-msg agent'; w.textContent = welcome; messagesEl.appendChild(w);
-  }
-  function appendTextMessage(msg, extraClass) {
-    var key = msg.id ? String(msg.id) : msg.client_message_id;
-    if (key && state.rendered[key]) return;
-    var el = document.createElement('div');
-    var role = msg.direction === 'visitor' ? 'visitor' : msg.direction === 'action' ? 'action' : msg.direction === 'system' ? 'system' : 'agent';
-    el.className = 'nd-webchat-msg ' + role + (extraClass ? ' ' + extraClass : '');
-    el.textContent = msg.body_text || msg.body || '';
-    if (key) state.rendered[key] = el;
-    messagesEl.appendChild(el);
-  }
-  function renderUnknownCard(card) {
-    var text = (card && (card.title || card.body)) || 'Unsupported card. Please type your request.';
-    var el = document.createElement('div'); el.className = 'nd-webchat-msg system'; el.textContent = text; messagesEl.appendChild(el);
-  }
-  function appendCardMessage(msg) {
-    var key = String(msg.id);
-    if (state.rendered[key]) return;
-    var payload = msg.payload_json || {};
-    if (!payload || ['quick_replies', 'handoff'].indexOf(payload.card_type) === -1) { renderUnknownCard(payload); state.rendered[key] = true; return; }
-    var card = document.createElement('div'); card.className = 'nd-webchat-card';
-    var titleEl = document.createElement('div'); titleEl.className = 'nd-webchat-card-title'; titleEl.textContent = payload.title || 'Support options'; card.appendChild(titleEl);
-    if (payload.body) { var bodyEl = document.createElement('div'); bodyEl.className = 'nd-webchat-card-body'; bodyEl.textContent = payload.body; card.appendChild(bodyEl); }
-    var actionsEl = document.createElement('div'); actionsEl.className = 'nd-webchat-card-actions'; card.appendChild(actionsEl);
-    (payload.actions || []).forEach(function (action) {
-      var a = document.createElement('button'); a.type = 'button'; a.className = 'nd-webchat-card-action'; a.textContent = action.label || action.id; a.disabled = msg.action_status === 'submitted';
-      a.addEventListener('click', function () { submitAction(msg, payload, action, a); });
-      actionsEl.appendChild(a);
-    });
-    state.rendered[key] = card;
-    messagesEl.appendChild(card);
-  }
-  function appendMessages(messages) {
-    var wasNearBottom = state.userNearBottom;
-    renderWelcomeIfEmpty();
-    (messages || []).forEach(function (msg) {
-      if (msg.id && msg.id > state.lastMessageId) state.lastMessageId = msg.id;
-      if (msg.message_type === 'card') appendCardMessage(msg);
-      else appendTextMessage(msg);
-      if (!state.open && msg.direction !== 'visitor') state.unread += 1;
-    });
-    persist(); updateUnread();
-    if (wasNearBottom || state.open) messagesEl.scrollTop = messagesEl.scrollHeight;
-  }
-  function init() {
-    var headers = state.visitorToken ? { 'X-Webchat-Visitor-Token': state.visitorToken } : {};
-    setStatus('Connecting...');
-    return api('/api/webchat/init', { method: 'POST', headers: headers, body: JSON.stringify({
-      tenant_key: tenantKey,
-      channel_key: channelKey,
-      conversation_id: state.conversationId,
-      origin: window.location.origin,
-      page_url: window.location.href
-    })}, 12000).then(function (data) {
-      state.conversationId = data.conversation_id; state.visitorToken = data.visitor_token; persist(); setStatus('Online'); return poll(true);
-    }).catch(function () { setStatus('Temporarily unavailable'); });
-  }
-  function poll(resetBackoff) {
-    if (!state.conversationId || !state.visitorToken) return Promise.resolve();
-    var qs = '?limit=50';
-    if (state.lastMessageId) qs += '&after_id=' + encodeURIComponent(state.lastMessageId);
-    return api('/api/webchat/conversations/' + encodeURIComponent(state.conversationId) + '/messages' + qs, {
-      headers: { 'X-Webchat-Visitor-Token': state.visitorToken }
-    }, 10000).then(function (data) { appendMessages(data.messages || []); setStatus('Online'); if (resetBackoff !== false) state.backoffMs = 4000; })
-      .catch(function () { setStatus('Reconnecting...'); state.backoffMs = Math.min(30000, Math.max(4000, state.backoffMs * 1.6)); });
-  }
-  function schedulePoll() {
-    if (state.pollTimer) clearTimeout(state.pollTimer);
-    state.pollTimer = setTimeout(function tick() {
-      if (state.open && document.visibilityState !== 'hidden') poll(false).finally(schedulePoll);
-      else schedulePoll();
-    }, document.visibilityState === 'hidden' ? Math.max(state.backoffMs, 15000) : state.backoffMs);
-  }
-  function openPanel(force) {
-    state.open = typeof force === 'boolean' ? force : !state.open;
-    panel.setAttribute('data-open', state.open ? 'true' : 'false');
-    if (state.open) {
-      state.unread = 0; updateUnread(); buttonText.textContent = closeLabel; init().then(schedulePoll); setTimeout(function () { inputEl.focus(); }, 80);
-    } else { buttonText.textContent = buttonLabel; }
-  }
-  function submitAction(msg, payload, action, buttonEl) {
-    if (!state.conversationId || !state.visitorToken || buttonEl.disabled) return;
-    buttonEl.disabled = true; setStatus('Sending selection...');
-    api('/api/webchat/conversations/' + encodeURIComponent(state.conversationId) + '/actions', {
-      method: 'POST', headers: { 'X-Webchat-Visitor-Token': state.visitorToken }, body: JSON.stringify({
-        message_id: msg.id, card_id: payload.card_id, action_id: action.id, action_type: action.action_type || 'quick_reply', payload: action.payload || {}
-      })
-    }, 12000).then(function (data) { appendMessages([data.message]); setStatus(data.handoff_triggered ? 'Human support requested' : 'Selection sent'); return poll(true); })
-      .catch(function () { buttonEl.disabled = false; setStatus('Failed to send selection'); });
-  }
-
-  button.addEventListener('click', function () { openPanel(); });
-  close.addEventListener('click', function () { openPanel(false); });
-  formEl.addEventListener('submit', function (event) {
-    event.preventDefault();
-    var body = inputEl.value.trim();
-    if (!body || state.busy) return;
-    var cmid = clientMessageId();
-    state.busy = true; sendEl.disabled = true; setStatus('Sending...');
-    appendTextMessage({ direction: 'visitor', body: body, body_text: body, client_message_id: cmid }, 'sending');
-    init().then(function () {
-      return api('/api/webchat/conversations/' + encodeURIComponent(state.conversationId) + '/messages', {
-        method: 'POST', headers: { 'X-Webchat-Visitor-Token': state.visitorToken }, body: JSON.stringify({ body: body, client_message_id: cmid })
-      });
-    }).then(function (data) {
-      inputEl.value = ''; setStatus('Sent');
-      var optimistic = state.rendered[cmid]; if (optimistic) optimistic.className = optimistic.className.replace('sending', '');
-      if (data.message && data.message.id) state.lastMessageId = Math.max(state.lastMessageId, data.message.id);
-      return poll(true);
-    }).catch(function () {
-      var optimistic = state.rendered[cmid]; if (optimistic) optimistic.className = optimistic.className.replace('sending', 'failed');
-      setStatus('Failed to send. Please retry.');
-    }).finally(function () { state.busy = false; sendEl.disabled = false; });
-  });
-  document.addEventListener('visibilitychange', schedulePoll);
-  renderWelcomeIfEmpty();
+  button.addEventListener('click', function () { openPanel(); }); close.addEventListener('click', function () { openPanel(false); });
+  formEl.addEventListener('submit', function (event) { event.preventDefault(); var body = inputEl.value.trim(); if (!body || state.busy) return; var cmid = clientMessageId(); state.busy = true; sendEl.disabled = true; setStatus('Sending...'); appendTextMessage({ direction: 'visitor', body: body, body_text: body, client_message_id: cmid }, 'sending'); init().then(function () { return api('/api/webchat/conversations/' + encodeURIComponent(state.conversationId) + '/messages', { method: 'POST', headers: { 'X-Webchat-Visitor-Token': state.visitorToken }, body: JSON.stringify({ body: body, client_message_id: cmid }) }); }).then(function (data) { inputEl.value = ''; setStatus('Sent'); var optimistic = state.rendered[cmid]; if (optimistic) optimistic.className = optimistic.className.replace('sending', ''); if (data.message && data.message.id) state.lastMessageId = Math.max(state.lastMessageId, data.message.id); return poll(true); }).catch(function () { var optimistic = state.rendered[cmid]; if (optimistic) optimistic.className = optimistic.className.replace('sending', 'failed'); setStatus('Failed to send. Please retry.'); }).finally(function () { state.busy = false; sendEl.disabled = false; }); });
+  document.addEventListener('visibilitychange', schedulePoll); renderWelcomeIfEmpty();
 })();
