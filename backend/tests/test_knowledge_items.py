@@ -241,7 +241,7 @@ def test_rollback_missing_version_returns_404(db_session):
 
 def test_search_published_returns_only_active_published_items(db_session):
     admin = _user(db_session, UserRole.admin, "admin")
-    agent = _user(db_session, UserRole.agent, "agent")
+    agent = _user(db_session, UserRole.admin, "agent-reader")
     active = create_knowledge_item(
         _create_payload(item_key="active.customer", title="Address Change", market_id=1, channel="whatsapp", priority=10),
         db_session,
