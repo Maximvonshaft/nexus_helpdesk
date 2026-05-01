@@ -49,9 +49,34 @@ class WebchatMessage(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     conversation_id: Mapped[int] = mapped_column(ForeignKey("webchat_conversations.id"), index=True)
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
-    direction: Mapped[str] = mapped_column(String(24), index=True)  # visitor | agent | system
+    direction: Mapped[str] = mapped_column(String(24), index=True)  # visitor | agent | ai | system | action
     body: Mapped[str] = mapped_column(Text)
+    body_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    message_type: Mapped[str] = mapped_column(String(32), default="text", index=True)
+    payload_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    client_message_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    delivery_status: Mapped[str] = mapped_column(String(32), default="sent", index=True)
+    action_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
     author_label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     safety_level: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     safety_reasons_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+
+
+class WebchatCardAction(Base):
+    __tablename__ = "webchat_card_actions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("webchat_conversations.id"), index=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("webchat_messages.id"), index=True)
+    action_type: Mapped[str] = mapped_column(String(64), index=True)
+    action_payload_json: Mapped[str] = mapped_column(Text)
+    submitted_by: Mapped[str] = mapped_column(String(64), default="visitor", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="submitted", index=True)
+    ip_hash: Mapped[Optional[str]] = mapped_column(String(96), nullable=True)
+    user_agent_hash: Mapped[Optional[str]] = mapped_column(String(96), nullable=True)
+    origin: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, index=True)
