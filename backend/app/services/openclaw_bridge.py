@@ -1,21 +1,22 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import ipaddress
 import json
 import socket
 import subprocess
 import urllib.error
 import urllib.request
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility
-from ..models import ChannelAccount, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, Team, Ticket, TicketAttachment
+from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketPriority, TicketSource, UserRole
+from ..models import ChannelAccount, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, Team, Ticket, TicketAttachment, User
 from ..schemas import OpenClawConversationRead, OpenClawSyncResult, OpenClawTranscriptRead
 from ..settings import get_settings
 from ..utils.time import utc_now
@@ -306,13 +307,16 @@ def _find_matching_open_tickets(db: Session, contact_id: str | None) -> list[Tic
     ).order_by(Ticket.updated_at.desc()).all()
 
 
-def _fetch_session_route(session_key: str, *, limit: int = 1) -> dict[str, Any] | None:
+def _fetch_session_route(session_key: str, *, limit: int = 1, client: OpenClawMCPClient | None = None) -> dict[str, Any] | None:
     payload_conv = None
     if settings.openclaw_bridge_enabled:
         payload_conv, _ = read_openclaw_bridge_conversation(session_key, limit=limit)
     if payload_conv is None:
-        with OpenClawMCPClient() as mcp_client:
-            payload_conv = mcp_client.conversation_get(session_key)
+        if client is not None:
+            payload_conv = client.conversation_get(session_key)
+        else:
+            with OpenClawMCPClient() as mcp_client:
+                payload_conv = mcp_client.conversation_get(session_key)
     if not isinstance(payload_conv, dict):
         return None
     return _extract_route(payload_conv)
@@ -324,6 +328,7 @@ def process_openclaw_inbound_event(
     event: dict[str, Any],
     source: str = 'default',
     unresolved_event: OpenClawUnresolvedEvent | None = None,
+    client: OpenClawMCPClient | None = None,
 ) -> bool:
     if str(event.get('type') or event.get('eventType') or 'message') not in {'message', 'inbound_message'}:
         return False
@@ -339,7 +344,7 @@ def process_openclaw_inbound_event(
     route = _extract_event_route(event)
     if not route.get('recipient'):
         try:
-            fetched_route = _fetch_session_route(session_key)
+            fetched_route = _fetch_session_route(session_key, client=client)
             if fetched_route:
                 route = {**fetched_route, **route}
         except Exception as exc:
@@ -398,7 +403,7 @@ def process_openclaw_inbound_event(
             ticket_id=link.ticket_id,
             session_key=session_key,
             limit=settings.openclaw_sync_transcript_limit,
-            client=None,
+            client=client,
         )
     except Exception as exc:
         if unresolved_event is not None:
@@ -543,6 +548,347 @@ def _extract_message_id(message: dict[str, Any]) -> str | None:
     return None
 
 
+def _extract_message_timestamp(message: dict[str, Any]) -> datetime | None:
+    for key in ('received_at', 'receivedAt', 'created_at', 'createdAt', 'timestamp', 'ts'):
+        value = message.get(key)
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(float(value), tz=utc_now().tzinfo)
+            except Exception:
+                continue
+        if isinstance(value, str) and value.strip():
+            raw = value.strip()
+            normalized = raw.replace('Z', '+00:00')
+            try:
+                parsed = datetime.fromisoformat(normalized)
+            except ValueError:
+                continue
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=utc_now().tzinfo)
+            return parsed
+    return None
+
+
+def _stable_synthetic_message_id(session_key: str, message: dict[str, Any]) -> str:
+    payload = {
+        'session_key': session_key,
+        'role': message.get('role') or message.get('senderRole') or message.get('authorRole'),
+        'author': message.get('author_name') or message.get('author') or message.get('sender'),
+        'body': _normalize_message_body(message),
+        'timestamp': message.get('received_at') or message.get('receivedAt') or message.get('created_at') or message.get('createdAt') or message.get('timestamp') or message.get('ts'),
+        'content': message.get('content'),
+    }
+    digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode('utf-8')).hexdigest()[:24]
+    return f'synth-{digest}'
+
+
+def _normalize_openclaw_role(message: dict[str, Any]) -> str | None:
+    role = message.get('role') or message.get('senderRole') or message.get('authorRole')
+    if role in (None, ''):
+        return None
+    normalized = str(role).strip().lower()
+    if normalized in {'user', 'customer', 'visitor', 'inbound'}:
+        return 'user'
+    if normalized in {'assistant', 'agent', 'support', 'outbound'}:
+        return 'assistant'
+    return normalized
+
+
+def _normalize_source_channel(channel: str | None) -> SourceChannel:
+    normalized = (channel or '').strip().lower()
+    try:
+        return SourceChannel(normalized)
+    except Exception:
+        return SourceChannel.internal
+
+
+def _is_whatsapp_group_route(channel: str | None, recipient: str | None) -> bool:
+    return (channel or '').strip().lower() == 'whatsapp' and isinstance(recipient, str) and recipient.endswith('@g.us')
+
+
+def _extract_session_key_from_conversation(item: dict[str, Any]) -> str | None:
+    for key in ('session_key', 'sessionKey', 'id'):
+        value = item.get(key)
+        if isinstance(value, str) and value:
+            return value
+    nested = item.get('conversation')
+    if isinstance(nested, dict):
+        for key in ('session_key', 'sessionKey', 'id'):
+            value = nested.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return None
+
+
+def _pick_latest_customer_message(messages_payload: Any) -> dict[str, Any] | None:
+    messages = _as_items(messages_payload)
+    for message in reversed(messages):
+        if _normalize_openclaw_role(message) == 'user':
+            return message
+    return messages[-1] if messages else None
+
+
+def _build_ticket_title(body_text: str | None, channel: str | None, recipient: str | None) -> str:
+    text = (body_text or '').strip()
+    if text:
+        collapsed = ' '.join(text.split())
+        return collapsed[:255]
+    fallback = f'OpenClaw inbound {channel or "conversation"}'
+    if recipient:
+        fallback = f'{fallback} {recipient}'
+    return fallback[:255]
+
+
+def _get_openclaw_ticket_actor(db: Session) -> User | None:
+    role_order = [UserRole.admin, UserRole.manager, UserRole.lead, UserRole.agent]
+    for role in role_order:
+        user = db.query(User).filter(User.role == role, User.is_active.is_(True)).order_by(User.id.asc()).first()
+        if user is not None:
+            return user
+    return None
+
+
+def _find_existing_ticket_for_route(db: Session, *, recipient: str | None, channel: str | None) -> Ticket | None:
+    if not recipient:
+        return None
+    from ..enums import TicketStatus
+
+    query = db.query(Ticket).filter(
+        ((Ticket.source_chat_id == recipient) | (Ticket.preferred_reply_contact == recipient)),
+        Ticket.status.notin_([TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled]),
+    )
+    normalized_channel = (channel or '').strip().lower()
+    if normalized_channel:
+        exact = query.filter(Ticket.preferred_reply_channel == normalized_channel).order_by(Ticket.updated_at.desc()).first()
+        if exact is not None:
+            return exact
+    return query.order_by(Ticket.updated_at.desc()).first()
+
+
+def _create_ticket_for_openclaw_conversation(
+    db: Session,
+    *,
+    session_key: str,
+    route: dict[str, Any],
+    latest_message: dict[str, Any] | None,
+) -> Ticket:
+    from ..schemas import TicketCreate
+    from .ticket_service import create_ticket
+
+    actor = _get_openclaw_ticket_actor(db)
+    if actor is None:
+        raise RuntimeError('No active user is available to own auto-created OpenClaw tickets')
+    body_text = _normalize_message_body(latest_message or {})
+    recipient = route.get('recipient') or session_key
+    channel = (route.get('channel') or '').strip().lower()
+    payload = TicketCreate(
+        title=_build_ticket_title(body_text, channel, recipient),
+        description=(body_text or f'OpenClaw inbound conversation discovered for {recipient}')[:4000],
+        source=TicketSource.user_message,
+        source_channel=_normalize_source_channel(channel),
+        priority=TicketPriority.medium,
+        team_id=actor.team_id,
+        source_chat_id=recipient,
+        preferred_reply_channel=channel or None,
+        preferred_reply_contact=route.get('recipient'),
+        customer_request=body_text,
+        last_customer_message=body_text,
+    )
+    ticket = create_ticket(db, payload, actor)
+    db.flush()
+    return ticket
+
+
+def list_openclaw_bridge_conversations(*, limit: int = 50, channel: str | None = None) -> Any:
+    if not settings.openclaw_bridge_enabled:
+        return None
+    bridge_url = settings.openclaw_bridge_url.rstrip('/')
+    payload: dict[str, Any] = {'limit': limit, 'includeLastMessage': True}
+    if channel:
+        payload['channel'] = channel
+    try:
+        req = urllib.request.Request(
+            f'{bridge_url}/conversations-list',
+            data=json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with urllib.request.urlopen(req, timeout=settings.openclaw_bridge_timeout_seconds) as resp:
+            parsed = json.loads(resp.read().decode('utf-8'))
+            if parsed.get('ok'):
+                return parsed.get('conversations') or parsed.get('items') or parsed
+    except Exception as exc:
+        LOGGER.warning('openclaw_bridge_read_failed', extra={'event_payload': {'action': 'conversations_list', 'error': str(exc)}})
+    return None
+
+
+def list_openclaw_conversations(*, limit: int = 50, channel: str | None = None, client: OpenClawMCPClient | None = None) -> Any:
+    if settings.openclaw_bridge_enabled:
+        payload = list_openclaw_bridge_conversations(limit=limit, channel=channel)
+        if payload is not None:
+            return payload
+    if client is not None:
+        return client.conversations_list(limit=limit, channel=channel, include_last_message=True)
+    with OpenClawMCPClient() as managed_client:
+        return managed_client.conversations_list(limit=limit, channel=channel, include_last_message=True)
+
+
+def sync_openclaw_inbound_conversations_once(
+    db: Session,
+    *,
+    source: str = 'default',
+    limit: int | None = None,
+    force: bool = False,
+    client: OpenClawMCPClient | None = None,
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        'ok': True,
+        'conversations_seen': 0,
+        'conversations_skipped': 0,
+        'tickets_created': 0,
+        'links_created': 0,
+        'messages_inserted': 0,
+        'unresolved_events': 0,
+        'errors': [],
+        'synced_conversations': 0,
+    }
+    if not settings.openclaw_sync_enabled:
+        return summary
+    if not settings.openclaw_inbound_auto_sync_enabled and not force:
+        return summary
+
+    now = utc_now()
+    cursor_source = f'{source}:conversation_scan'
+    if not force:
+        cursor_row = db.query(OpenClawSyncCursor).filter(OpenClawSyncCursor.source == cursor_source).first()
+        if cursor_row and cursor_row.cursor_value:
+            try:
+                last_run = datetime.fromtimestamp(int(cursor_row.cursor_value), tz=now.tzinfo)
+            except Exception:
+                last_run = None
+            if last_run is not None and (now - last_run).total_seconds() < settings.openclaw_inbound_discovery_interval_seconds:
+                return summary
+
+    payload = list_openclaw_conversations(limit=limit or settings.openclaw_inbound_sync_limit, client=client)
+    items = _as_items(payload)
+    summary['conversations_seen'] = len(items)
+
+    for item in items:
+        session_key = _extract_session_key_from_conversation(item)
+        route = _extract_route(item)
+        channel = route.get('channel')
+        recipient = route.get('recipient')
+        event_type = 'conversation_discovery'
+
+        if not session_key:
+            persist_unresolved_openclaw_event(
+                db,
+                source=source,
+                session_key=None,
+                event_type=event_type,
+                recipient=recipient,
+                source_chat_id=recipient,
+                preferred_reply_contact=recipient,
+                payload=item,
+            ).last_error = 'Missing session_key in conversations-list payload'
+            summary['conversations_skipped'] += 1
+            summary['unresolved_events'] += 1
+            continue
+
+        if _is_whatsapp_group_route(channel, recipient) and not settings.openclaw_inbound_sync_include_groups:
+            summary['conversations_skipped'] += 1
+            continue
+
+        if not recipient:
+            persist_unresolved_openclaw_event(
+                db,
+                source=source,
+                session_key=session_key,
+                event_type=event_type,
+                recipient=None,
+                source_chat_id=None,
+                preferred_reply_contact=None,
+                payload=item,
+            ).last_error = 'Missing recipient in conversations-list payload'
+            summary['conversations_skipped'] += 1
+            summary['unresolved_events'] += 1
+            continue
+
+        link = db.query(OpenClawConversationLink).filter(OpenClawConversationLink.session_key == session_key).first()
+        ticket = link.ticket if link is not None else _find_existing_ticket_for_route(db, recipient=recipient, channel=channel)
+        link_created = False
+
+        if ticket is None:
+            conversation_payload, messages_payload = read_openclaw_bridge_conversation(session_key, limit=settings.openclaw_inbound_sync_message_limit)
+            if conversation_payload is None or messages_payload is None:
+                if client is not None:
+                    conversation_payload = client.conversation_get(session_key)
+                    messages_payload = client.messages_read(session_key, limit=settings.openclaw_inbound_sync_message_limit)
+                else:
+                    with OpenClawMCPClient() as managed_client:
+                        conversation_payload = managed_client.conversation_get(session_key)
+                        messages_payload = managed_client.messages_read(session_key, limit=settings.openclaw_inbound_sync_message_limit)
+            resolved_route = _extract_route(conversation_payload if isinstance(conversation_payload, dict) else item) or route
+            latest_message = _pick_latest_customer_message(messages_payload)
+            try:
+                ticket = _create_ticket_for_openclaw_conversation(db, session_key=session_key, route=resolved_route or route, latest_message=latest_message)
+                summary['tickets_created'] += 1
+            except Exception as exc:
+                persist_unresolved_openclaw_event(
+                    db,
+                    source=source,
+                    session_key=session_key,
+                    event_type=event_type,
+                    recipient=recipient,
+                    source_chat_id=recipient,
+                    preferred_reply_contact=recipient,
+                    payload=item,
+                ).last_error = str(exc)
+                summary['conversations_skipped'] += 1
+                summary['unresolved_events'] += 1
+                summary['errors'].append({'session_key': session_key, 'error': str(exc)})
+                continue
+            link = ensure_openclaw_conversation_link(db, ticket=ticket, session_key=session_key, route=resolved_route or route)
+            link_created = True
+        elif link is None:
+            link = ensure_openclaw_conversation_link(db, ticket=ticket, session_key=session_key, route=route)
+            link_created = True
+
+        if link_created:
+            summary['links_created'] += 1
+
+        before_count = db.query(OpenClawTranscriptMessage).filter(OpenClawTranscriptMessage.session_key == session_key).count()
+
+        try:
+            sync_openclaw_conversation(
+                db,
+                ticket_id=ticket.id,
+                session_key=session_key,
+                limit=settings.openclaw_inbound_sync_message_limit,
+                client=client,
+            )
+            after_count = db.query(OpenClawTranscriptMessage).filter(OpenClawTranscriptMessage.session_key == session_key).count()
+            summary['messages_inserted'] += max(0, after_count - before_count)
+            summary['synced_conversations'] += 1
+        except Exception as exc:
+            persist_unresolved_openclaw_event(
+                db,
+                source=source,
+                session_key=session_key,
+                event_type=event_type,
+                recipient=recipient,
+                source_chat_id=recipient,
+                preferred_reply_contact=recipient,
+                payload=item,
+            ).last_error = str(exc)
+            summary['unresolved_events'] += 1
+            summary['errors'].append({'session_key': session_key, 'error': str(exc)})
+
+    upsert_openclaw_sync_cursor(db, source=cursor_source, cursor_value=str(int(now.timestamp())))
+    db.flush()
+    return summary
+
+
 def _should_sync_transcript_message(*, role: Any, body_text: str | None, attachment_refs: list[dict[str, Any]]) -> bool:
     normalized_role = str(role or '').lower()
     if normalized_role not in {'user', 'assistant'}:
@@ -627,11 +973,9 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
         link = ensure_openclaw_conversation_link(db, ticket=ticket, session_key=session_key, route=route)
 
         for message in _as_items(messages_payload):
-            message_id = _extract_message_id(message)
-            if not message_id:
-                continue
+            message_id = _extract_message_id(message) or _stable_synthetic_message_id(session_key, message)
             body_text = _normalize_message_body(message)
-            role = message.get('role') or message.get('senderRole') or message.get('authorRole')
+            role = _normalize_openclaw_role(message)
             author_name = message.get('author_name') or message.get('author') or message.get('sender')
             attachments_payload = None
             
@@ -670,7 +1014,7 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
                     author_name=author_name,
                     body_text=body_text,
                     content_json=message,
-                    received_at=utc_now(),
+                    received_at=_extract_message_timestamp(message) or utc_now(),
                 )
                 db.add(row)
                 db.flush()
@@ -679,6 +1023,7 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
                 row.author_name = author_name
                 row.body_text = body_text
                 row.content_json = message
+                row.received_at = _extract_message_timestamp(message) or row.received_at
             synced_rows.append(row)
             if body_text and str(role).lower() == 'user':
                 ticket.last_customer_message = body_text
@@ -717,11 +1062,17 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
                     )
         return link
 
-    if client is None:
+    if client is not None:
+        link = _run_sync(client)
+    elif settings.openclaw_bridge_enabled:
+        try:
+            link = _run_sync(None)
+        except RuntimeError:
+            with OpenClawMCPClient() as managed_client:
+                link = _run_sync(managed_client)
+    else:
         with OpenClawMCPClient() as managed_client:
             link = _run_sync(managed_client)
-    else:
-        link = _run_sync(client)
 
     if synced_rows:
         link.last_message_id = synced_rows[-1].message_id
@@ -1103,7 +1454,7 @@ def consume_openclaw_events_once(db: Session, *, source: str = "default", timeou
     for event in events:
         if not isinstance(event, dict):
             continue
-        if process_openclaw_inbound_event(db, event=event, source=source):
+        if process_openclaw_inbound_event(db, event=event, source=source, client=client if not bridge_success else None):
             processed += 1
 
     if next_cursor is not None:

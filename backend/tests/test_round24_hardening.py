@@ -284,6 +284,29 @@ def test_worker_skips_outbound_dispatch_when_disabled(monkeypatch):
     assert run_worker.run_once('worker-test') == 0
 
 
+def test_worker_runs_openclaw_inbound_discovery_when_enabled(monkeypatch):
+    calls = []
+
+    @contextmanager
+    def dummy_db_context():
+        yield SimpleNamespace()
+
+    monkeypatch.setattr(run_worker.settings, 'enable_outbound_dispatch', False)
+    monkeypatch.setattr(run_worker.settings, 'openclaw_sync_enabled', True)
+    monkeypatch.setattr(run_worker.settings, 'openclaw_inbound_auto_sync_enabled', True)
+    monkeypatch.setattr(run_worker, 'db_context', dummy_db_context)
+    monkeypatch.setattr(run_worker, 'dispatch_pending_messages', lambda *args, **kwargs: [])
+    monkeypatch.setattr(run_worker, 'dispatch_pending_background_jobs', lambda *args, **kwargs: [])
+    monkeypatch.setattr(run_worker, 'sync_openclaw_inbound_conversations_once', lambda *args, **kwargs: calls.append(kwargs.get('source')) or {'synced_conversations': 2, 'conversations_seen': 2, 'tickets_created': 1, 'messages_inserted': 3, 'unresolved_events': 0})
+    monkeypatch.setattr(run_worker, 'record_queue_snapshot', lambda *args, **kwargs: None)
+    monkeypatch.setattr(run_worker, 'record_worker_poll', lambda *args, **kwargs: None)
+    monkeypatch.setattr(run_worker, 'record_worker_result', lambda *args, **kwargs: None)
+    monkeypatch.setattr(run_worker, 'log_event', lambda *args, **kwargs: None)
+
+    assert run_worker.run_once('worker-test') == 2
+    assert calls == ['default']
+
+
 def test_sync_openclaw_conversation_reuses_single_mcp_client(db_session, monkeypatch):
     team = make_team(db_session)
     lead = make_user(db_session, 'lead7', UserRole.lead, team)
@@ -318,6 +341,151 @@ def test_sync_openclaw_conversation_reuses_single_mcp_client(db_session, monkeyp
     assert result.linked_ticket_id == ticket.id
     assert FakeClient.instances == 1
     assert db_session.query(OpenClawAttachmentReference).count() == 1
+
+
+def test_sync_openclaw_conversation_generates_stable_synthetic_message_ids(db_session, monkeypatch):
+    team = make_team(db_session)
+    lead = make_user(db_session, 'lead-synth', UserRole.lead, team)
+    ticket = make_ticket(db_session, lead, team=team)
+
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_bridge_enabled', True)
+    monkeypatch.setattr(openclaw_bridge, 'read_openclaw_bridge_conversation', lambda *args, **kwargs: (
+        {'sessionKey': 'sess-synth', 'route': {'channel': 'telegram', 'recipient': 'telegram:customer-1'}},
+        [{'role': 'user', 'author': 'customer', 'text': 'hello from telegram', 'createdAt': '2026-05-01T09:00:00+00:00'}],
+    ))
+    monkeypatch.setattr(openclaw_bridge, 'fetch_openclaw_bridge_attachments', lambda *args, **kwargs: [])
+
+    openclaw_bridge.sync_openclaw_conversation(db_session, ticket_id=ticket.id, session_key='sess-synth', limit=10)
+    openclaw_bridge.sync_openclaw_conversation(db_session, ticket_id=ticket.id, session_key='sess-synth', limit=10)
+    db_session.commit()
+
+    rows = db_session.query(OpenClawTranscriptMessage).filter_by(session_key='sess-synth').all()
+    assert len(rows) == 1
+    assert rows[0].message_id.startswith('synth-')
+
+
+def test_sync_openclaw_inbound_conversations_auto_creates_ticket_and_records_unresolved(db_session, monkeypatch):
+    team = make_team(db_session)
+    make_user(db_session, 'lead-discovery', UserRole.lead, team)
+
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_sync_enabled', True)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_enabled', True)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_discovery_interval_seconds', 0)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_limit', 10)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_include_groups', False)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_message_limit', 20)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_bridge_enabled', True)
+    monkeypatch.setattr(openclaw_bridge, 'list_openclaw_conversations', lambda **kwargs: {
+        'conversations': [
+            {'sessionKey': 'sess-valid', 'route': {'channel': 'telegram', 'recipient': 'telegram:customer-42', 'accountId': 'default'}},
+            {'sessionKey': 'sess-group', 'route': {'channel': 'whatsapp', 'recipient': '120363@g.us', 'accountId': 'default'}},
+            {'sessionKey': 'sess-bad', 'route': {'channel': 'telegram', 'accountId': 'default'}},
+        ]
+    })
+
+    def fake_read(session_key, limit=50):
+        if session_key == 'sess-valid':
+            return (
+                {'sessionKey': 'sess-valid', 'route': {'channel': 'telegram', 'recipient': 'telegram:customer-42', 'accountId': 'default'}},
+                [{'id': 'msg-1', 'role': 'user', 'author': 'customer', 'text': 'Need help with parcel ETA'}],
+            )
+        if session_key == 'sess-group':
+            return (
+                {'sessionKey': 'sess-group', 'route': {'channel': 'whatsapp', 'recipient': '120363@g.us', 'accountId': 'default'}},
+                [{'id': 'msg-g', 'role': 'user', 'author': 'customer', 'text': 'group chat'}],
+            )
+        return ({'sessionKey': session_key, 'route': {'channel': 'telegram'}}, [])
+
+    monkeypatch.setattr(openclaw_bridge, 'read_openclaw_bridge_conversation', fake_read)
+    monkeypatch.setattr(openclaw_bridge, 'fetch_openclaw_bridge_attachments', lambda *args, **kwargs: [])
+
+    summary = openclaw_bridge.sync_openclaw_inbound_conversations_once(db_session, source='default', force=True)
+    db_session.commit()
+
+    assert summary['synced_conversations'] == 1
+    assert summary['conversations_seen'] == 3
+    assert summary['conversations_skipped'] == 2
+    assert summary['tickets_created'] == 1
+    assert summary['links_created'] == 1
+    assert summary['messages_inserted'] == 1
+    assert summary['unresolved_events'] == 1
+    ticket = db_session.query(Ticket).one()
+    assert ticket.source == TicketSource.user_message
+    assert ticket.source_channel == SourceChannel.telegram
+    assert ticket.source_chat_id == 'telegram:customer-42'
+    assert ticket.preferred_reply_channel == 'telegram'
+    assert ticket.preferred_reply_contact == 'telegram:customer-42'
+    assert ticket.last_customer_message == 'Need help with parcel ETA'
+    assert db_session.query(OpenClawConversationLink).filter_by(session_key='sess-valid').count() == 1
+    assert db_session.query(OpenClawTranscriptMessage).filter_by(session_key='sess-valid').count() == 1
+    assert db_session.query(OpenClawConversationLink).filter_by(session_key='sess-group').count() == 0
+    unresolved = db_session.query(openclaw_bridge.OpenClawUnresolvedEvent).filter_by(session_key='sess-bad').one()
+    assert unresolved.last_error == 'Missing recipient in conversations-list payload'
+
+
+def test_sync_openclaw_inbound_parses_session_key_variants_and_reuses_existing_ticket(db_session, monkeypatch):
+    team = make_team(db_session)
+    lead = make_user(db_session, 'lead-existing', UserRole.lead, team)
+    ticket = make_ticket(db_session, lead, team=team, contact='+15558889999')
+
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_sync_enabled', True)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_enabled', True)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_discovery_interval_seconds', 0)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_limit', 10)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_message_limit', 20)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_include_groups', False)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_bridge_enabled', True)
+    monkeypatch.setattr(openclaw_bridge, 'list_openclaw_conversations', lambda **kwargs: {
+        'conversations': [
+            {'session_key': 'sess-existing', 'route': {'channel': 'whatsapp', 'recipient': '+15558889999', 'accountId': 'default'}},
+        ]
+    })
+    monkeypatch.setattr(openclaw_bridge, 'read_openclaw_bridge_conversation', lambda session_key, limit=50: (
+        {'session_key': session_key, 'route': {'channel': 'whatsapp', 'recipient': '+15558889999', 'accountId': 'default'}},
+        [{'message_id': 'msg-existing', 'role': 'user', 'author': 'customer', 'text': 'Need update'}],
+    ))
+    monkeypatch.setattr(openclaw_bridge, 'fetch_openclaw_bridge_attachments', lambda *args, **kwargs: [])
+
+    summary = openclaw_bridge.sync_openclaw_inbound_conversations_once(db_session, source='default', force=True)
+    db_session.commit()
+
+    assert summary['tickets_created'] == 0
+    assert summary['links_created'] == 1
+    assert db_session.query(Ticket).count() == 1
+    link = db_session.query(OpenClawConversationLink).filter_by(session_key='sess-existing').one()
+    assert link.ticket_id == ticket.id
+    assert db_session.query(OpenClawTranscriptMessage).filter_by(session_key='sess-existing', message_id='msg-existing').count() == 1
+
+
+def test_inbound_sync_never_calls_send_message_paths(db_session, monkeypatch):
+    team = make_team(db_session)
+    make_user(db_session, 'lead-safe', UserRole.lead, team)
+
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_sync_enabled', True)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_enabled', True)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_discovery_interval_seconds', 0)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_limit', 10)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_message_limit', 20)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_bridge_enabled', True)
+    monkeypatch.setattr(openclaw_bridge, 'dispatch_via_openclaw_bridge', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('send-message should not be called')))
+    monkeypatch.setattr(openclaw_bridge, 'dispatch_via_openclaw_mcp', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('messages_send should not be called')))
+    monkeypatch.setattr(openclaw_bridge, 'dispatch_via_openclaw_cli', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('cli send should not be called')))
+    monkeypatch.setattr(openclaw_bridge, 'list_openclaw_conversations', lambda **kwargs: {
+        'conversations': [
+            {'sessionKey': 'sess-safe', 'route': {'channel': 'telegram', 'recipient': 'telegram:customer-safe', 'accountId': 'default'}},
+        ]
+    })
+    monkeypatch.setattr(openclaw_bridge, 'read_openclaw_bridge_conversation', lambda session_key, limit=50: (
+        {'sessionKey': session_key, 'route': {'channel': 'telegram', 'recipient': 'telegram:customer-safe', 'accountId': 'default'}},
+        [{'id': 'msg-safe', 'role': 'user', 'author': 'customer', 'text': 'hello safe path'}],
+    ))
+    monkeypatch.setattr(openclaw_bridge, 'fetch_openclaw_bridge_attachments', lambda *args, **kwargs: [])
+
+    summary = openclaw_bridge.sync_openclaw_inbound_conversations_once(db_session, source='default', force=True)
+    db_session.commit()
+
+    assert summary['synced_conversations'] == 1
+    assert db_session.query(BackgroundJob).filter(BackgroundJob.job_type == 'auto_reply.send_update').count() == 0
 
 
 def test_integration_task_missing_idempotency_is_audited_and_persists_last_used(db_session):
