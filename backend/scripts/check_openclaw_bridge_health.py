@@ -63,6 +63,7 @@ def _diagnose(payload: dict[str, Any] | None, *, http_ok: bool, error: str | Non
         summary['diagnosis'] = 'bridge_http_unreachable'
     elif allow_writes and 'operator.write' not in scopes:
         summary['diagnosis'] = 'bridge_write_enabled_without_operator_write_scope'
+        summary['ok'] = False
     else:
         summary['diagnosis'] = 'ok'
     return summary
