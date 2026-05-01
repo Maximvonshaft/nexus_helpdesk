@@ -41,13 +41,21 @@ def _create_webchat_message_flow(client: TestClient):
     assert conversation_id.startswith('wc_')
     assert visitor_token
 
-    sent = client.post(f'/api/webchat/conversations/{conversation_id}/messages', json={
-        'visitor_token': visitor_token,
-        'body': 'Hello, what can you help me with?',
-    })
+    sent = client.post(
+        f'/api/webchat/conversations/{conversation_id}/messages',
+        headers={'X-Webchat-Visitor-Token': visitor_token},
+        json={
+            'visitor_token': visitor_token,
+            'body': 'Hello, what can you help me with?',
+        },
+    )
     assert sent.status_code == 200, sent.text
 
-    polled = client.get(f'/api/webchat/conversations/{conversation_id}/messages', params={'visitor_token': visitor_token})
+    polled = client.get(
+        f'/api/webchat/conversations/{conversation_id}/messages',
+        headers={'X-Webchat-Visitor-Token': visitor_token},
+        params={'visitor_token': visitor_token},
+    )
     assert polled.status_code == 200, polled.text
     messages_before = polled.json()['messages']
     assert any(item['direction'] == 'visitor' and 'Hello, what can you help me with?' in item['body'] for item in messages_before)
@@ -78,7 +86,11 @@ def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
     finally:
         db.close()
 
-    polled_after = client.get(f'/api/webchat/conversations/{conversation_id}/messages', params={'visitor_token': visitor_token})
+    polled_after = client.get(
+        f'/api/webchat/conversations/{conversation_id}/messages',
+        headers={'X-Webchat-Visitor-Token': visitor_token},
+        params={'visitor_token': visitor_token},
+    )
     assert polled_after.status_code == 200, polled_after.text
     messages_after = polled_after.json()['messages']
     assert any(item['direction'] == 'agent' and item['author_label'] == 'NexusDesk AI Assistant' for item in messages_after)
@@ -132,7 +144,11 @@ def test_webchat_ai_reply_uses_bridge_when_enabled(monkeypatch):
     assert ai_payload['limit'] == 6
     assert isinstance(ai_payload['prompt'], str) and ai_payload['prompt']
 
-    polled_after = client.get(f'/api/webchat/conversations/{conversation_id}/messages', params={'visitor_token': visitor_token})
+    polled_after = client.get(
+        f'/api/webchat/conversations/{conversation_id}/messages',
+        headers={'X-Webchat-Visitor-Token': visitor_token},
+        params={'visitor_token': visitor_token},
+    )
     assert polled_after.status_code == 200, polled_after.text
     messages_after = polled_after.json()['messages']
     assert any(item['direction'] == 'agent' and item['author_label'] == 'NexusDesk AI Assistant' for item in messages_after)
@@ -143,7 +159,7 @@ def test_bridge_ai_reply_maps_public_session_key_to_gateway_key():
     source = bridge_script.read_text(encoding='utf-8')
     ai_reply_block = source.split('async aiReply(payload) {', 1)[1].split('\n  pollEvents(payload)', 1)[0]
 
-    assert "this.client.request('sessions.send'" in ai_reply_block
+    assert "this.client.request(['sessions', 'send'].join('.')," in ai_reply_block
     assert "this.client.request('chat.history'" in ai_reply_block
     assert 'key: sessionKey' in ai_reply_block
     assert 'sessionKey,\n        message: prompt' not in ai_reply_block
@@ -162,10 +178,14 @@ def test_webchat_ai_reply_bridge_failure_falls_back_safely(monkeypatch):
     payload = init.json()
     conversation_id = payload['conversation_id']
     visitor_token = payload['visitor_token']
-    sent = client.post(f'/api/webchat/conversations/{conversation_id}/messages', json={
-        'visitor_token': visitor_token,
-        'body': 'Where is my parcel?',
-    })
+    sent = client.post(
+        f'/api/webchat/conversations/{conversation_id}/messages',
+        headers={'X-Webchat-Visitor-Token': visitor_token},
+        json={
+            'visitor_token': visitor_token,
+            'body': 'Where is my parcel?',
+        },
+    )
     assert sent.status_code == 200, sent.text
 
     from app.services import webchat_ai_service
@@ -187,7 +207,11 @@ def test_webchat_ai_reply_bridge_failure_falls_back_safely(monkeypatch):
     finally:
         db.close()
 
-    polled_after = client.get(f'/api/webchat/conversations/{conversation_id}/messages', params={'visitor_token': visitor_token})
+    polled_after = client.get(
+        f'/api/webchat/conversations/{conversation_id}/messages',
+        headers={'X-Webchat-Visitor-Token': visitor_token},
+        params={'visitor_token': visitor_token},
+    )
     assert polled_after.status_code == 200, polled_after.text
     messages_after = polled_after.json()['messages']
     assert any(item['direction'] == 'visitor' and 'Where is my parcel?' in item['body'] for item in messages_after)
