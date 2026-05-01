@@ -14,6 +14,62 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Toast } from '@/components/ui/Toast'
 
+function PayloadBlock({ payload }: { payload: unknown }) {
+  const [open, setOpen] = useState(false)
+  if (!payload || typeof payload !== 'object') return null
+  return (
+    <div className="stack compact">
+      <Button variant="secondary" onClick={() => setOpen((value) => !value)}>{open ? '收起 payload' : '查看 payload'}</Button>
+      {open ? <pre className="code-block"><code>{sanitizeDisplayText(JSON.stringify(payload, null, 2))}</code></pre> : null}
+    </div>
+  )
+}
+
+function MessageCard({ msg }: { msg: any }) {
+  const messageType = msg.message_type || 'text'
+  const payload = msg.payload_json
+  if (messageType === 'card') {
+    return (
+      <div className="message" data-role="agent">
+        <div className="message-head">
+          <strong>结构化卡片 · {sanitizeDisplayText(payload?.card_type || 'card')}</strong>
+          <span>{formatDateTime(msg.created_at)}</span>
+        </div>
+        <div className="stack compact">
+          <div><strong>{sanitizeDisplayText(payload?.title || msg.body_text || msg.body)}</strong></div>
+          {payload?.body ? <div>{sanitizeDisplayText(payload.body)}</div> : null}
+          <div className="badges">
+            <Badge tone="success">{sanitizeDisplayText(msg.action_status || 'pending')}</Badge>
+            {(payload?.actions || []).map((action: any) => <Badge key={action.id}>{sanitizeDisplayText(action.label || action.id)}</Badge>)}
+          </div>
+          <PayloadBlock payload={payload} />
+        </div>
+      </div>
+    )
+  }
+  if (messageType === 'action' || msg.direction === 'action') {
+    return (
+      <div className="message" data-role="user">
+        <div className="message-head">
+          <strong>客户动作</strong>
+          <span>{formatDateTime(msg.created_at)}</span>
+        </div>
+        <div>{sanitizeDisplayText(msg.body_text || msg.body)}</div>
+        <PayloadBlock payload={payload} />
+      </div>
+    )
+  }
+  return (
+    <div className="message" data-role={msg.direction === 'visitor' ? 'user' : 'agent'}>
+      <div className="message-head">
+        <strong>{msg.direction === 'visitor' ? '访客' : msg.direction === 'system' ? '系统' : msg.author_label ? sanitizeDisplayText(msg.author_label) : '客服 / AI'}</strong>
+        <span>{formatDateTime(msg.created_at)}</span>
+      </div>
+      <div>{sanitizeDisplayText(msg.body_text || msg.body)}</div>
+    </div>
+  )
+}
+
 function WebchatInboxPage() {
   const client = useQueryClient()
   const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null)
@@ -38,13 +94,13 @@ function WebchatInboxPage() {
     queryKey: ['webchatThread', selectedTicketId],
     queryFn: () => api.webchatThread(selectedTicketId as number),
     enabled: !!selectedTicketId,
-    refetchInterval: 5000,
+    refetchInterval: 7000,
   })
 
   const selectedConversation = useMemo(
     () => (conversations.data ?? []).find((item) => item.ticket_id === selectedTicketId),
     [conversations.data, selectedTicketId],
-  )
+  ) as any
 
   const replyMutation = useMutation({
     mutationFn: async () => {
@@ -56,7 +112,7 @@ function WebchatInboxPage() {
       })
     },
     onSuccess: async () => {
-      setToast({ message: 'Webchat 回复已发送，访客端可见', tone: 'success' })
+      setToast({ message: 'Webchat 回复已发送，访客端可见；该记录是 WebChat local delivery，不是外部渠道发送。', tone: 'success' })
       setReply('')
       setConfirmReview(false)
       setHasFactEvidence(false)
@@ -68,60 +124,52 @@ function WebchatInboxPage() {
     },
   })
 
-  const snippet = '<script src="https://YOUR_DOMAIN/webchat/widget.js" data-tenant="default" data-channel="website" data-title="Speedaf Support" data-subtitle="Usually replies instantly" data-assistant-name="Speedy" async></script>'
+  const snippet = '<script src="https://YOUR_DOMAIN/webchat/widget.js" data-tenant="default" data-channel="website" data-title="Speedaf Support" data-locale="en" async></script>'
 
   return (
     <AppShell>
       <PageHeader
         eyebrow="Webchat"
         title="网站聊天收件箱"
-        description="把客户网站 Widget 的访客消息接入工单，并由客服在后台完成人工回复；所有回复都会经过安全门。"
-        actions={
-          <div className="button-row">
-            <Button variant="secondary" onClick={() => client.invalidateQueries({ queryKey: ['webchatConversations'] })}>刷新</Button>
-          </div>
-        }
+        description="客户侧结构化交互运行时：普通消息、Quick Reply、Handoff、Action 审计全部进入工单。WebChat ACK/card/handoff 均为 local-only，不代表 WhatsApp/Telegram/SMS/Email 外发。"
+        actions={<Button variant="secondary" onClick={() => client.invalidateQueries({ queryKey: ['webchatConversations'] })}>刷新</Button>}
       />
 
       <Card className="soft">
-        <CardHeader title="Speedaf Webchat 嵌入代码" subtitle="把这段代码放到客户网站页面底部即可。生产环境请替换为正式域名。" />
+        <CardHeader title="Speedaf Webchat 嵌入代码" subtitle="visitor 端无需登录；admin 后台需要登录。生产环境请替换为正式域名，并配置 WEBCHAT_ALLOWED_ORIGINS。" />
         <CardBody>
           <pre className="code-block"><code>{snippet}</code></pre>
-          <div className="section-subtitle">访客只看到 Speedaf Support 标准客服聊天入口。</div>
+          <div className="section-subtitle">可选属性：data-tenant、data-channel、data-title、data-subtitle、data-assistant-name、data-locale、data-welcome、data-api-base。不会暴露内部 token。</div>
         </CardBody>
       </Card>
 
       <div className="page-grid workspace">
         <Card>
-          <CardHeader title="Webchat 会话" subtitle="按最近更新时间排序。点击会话后在右侧查看消息和回复。" />
+          <CardHeader title="Webchat 会话" subtitle="按最近更新时间排序。needs human 表示客户请求人工或 AI/规则建议人工。" />
           <CardBody>
             {conversations.isLoading ? <Skeleton lines={8} /> : null}
             <div className="list">
-              {(conversations.data ?? []).map((item) => (
-                <button
-                  key={item.conversation_id}
-                  className={`queue-card ${selectedTicketId === item.ticket_id ? 'selected' : ''}`}
-                  onClick={() => setSelectedTicketId(item.ticket_id)}
-                >
-                  <div className="queue-card-top">
-                    <div className="badges">
-                      <Badge tone={statusTone(item.status)}>{sanitizeDisplayText(item.status)}</Badge>
-                      <Badge tone="success">Webchat</Badge>
-                    </div>
-                  </div>
+              {(conversations.data ?? []).map((item: any) => (
+                <button key={item.conversation_id} className={`queue-card ${selectedTicketId === item.ticket_id ? 'selected' : ''}`} onClick={() => setSelectedTicketId(item.ticket_id)}>
+                  <div className="queue-card-top"><div className="badges">
+                    <Badge tone={statusTone(item.status)}>{sanitizeDisplayText(item.status)}</Badge>
+                    <Badge tone="success">WebChat</Badge>
+                    {item.last_message_type ? <Badge>{sanitizeDisplayText(item.last_message_type)}</Badge> : null}
+                    {item.needs_human ? <Badge tone="warning">Needs human</Badge> : null}
+                  </div></div>
                   <div className="queue-card-title">{sanitizeDisplayText(item.ticket_no)} · {sanitizeDisplayText(item.title)}</div>
                   <div className="queue-card-meta">{sanitizeDisplayText(item.visitor_name || item.visitor_email || item.visitor_phone || 'Anonymous visitor')}</div>
                   <div className="queue-card-meta">{sanitizeDisplayText(item.origin || 'unknown origin')} · {formatDateTime(item.updated_at)}</div>
                 </button>
               ))}
-              {!conversations.isLoading && !(conversations.data?.length) ? <EmptyState text="还没有 Webchat 会话。打开 /webchat/demo.html 发送一条消息即可测试。" /> : null}
+              {!conversations.isLoading && !(conversations.data?.length) ? <EmptyState text="还没有 Webchat 会话。打开 /webchat/demo.html 或嵌入 widget 发送一条消息即可测试。" /> : null}
             </div>
           </CardBody>
         </Card>
 
         <div className="stack">
           <Card>
-            <CardHeader title="会话详情" subtitle="展示访客来源、页面 URL 和完整消息。" />
+            <CardHeader title="会话详情" subtitle="展示访客来源、结构化卡片、客户 action、handoff 和完整消息。" />
             <CardBody>
               {thread.isLoading && selectedTicketId ? <Skeleton lines={8} /> : null}
               {selectedConversation ? (
@@ -131,44 +179,27 @@ function WebchatInboxPage() {
                     <div className="kv"><label>访客</label><div>{sanitizeDisplayText(selectedConversation.visitor_name || selectedConversation.visitor_email || selectedConversation.visitor_phone || 'Anonymous')}</div></div>
                     <div className="kv"><label>来源网站</label><div>{sanitizeDisplayText(selectedConversation.origin)}</div></div>
                     <div className="kv"><label>页面</label><div>{sanitizeDisplayText(selectedConversation.page_url)}</div></div>
+                    <div className="kv"><label>当前状态</label><div>{sanitizeDisplayText((thread.data as any)?.conversation_state || selectedConversation.status)}</div></div>
+                    <div className="kv"><label>Required action</label><div>{sanitizeDisplayText((thread.data as any)?.required_action || 'None')}</div></div>
                   </div>
                   <div className="timeline">
-                    {(thread.data?.messages ?? []).map((msg) => (
-                      <div key={msg.id} className="message" data-role={msg.direction === 'visitor' ? 'user' : 'agent'}>
-                        <div className="message-head">
-                          <strong>{msg.direction === 'visitor' ? '访客' : '客服'}</strong>
-                          <span>{formatDateTime(msg.created_at)}</span>
-                        </div>
-                        <div>{sanitizeDisplayText(msg.body)}</div>
-                      </div>
-                    ))}
-                    {thread.data && !thread.data.messages.length ? <EmptyState text="该会话暂无消息。" /> : null}
+                    {((thread.data as any)?.messages ?? []).map((msg: any) => <MessageCard key={msg.id} msg={msg} />)}
+                    {(thread.data as any)?.actions?.length ? <div className="message" data-role="agent"><div className="message-head"><strong>Action audit</strong><span>{(thread.data as any).actions.length} actions</span></div><PayloadBlock payload={(thread.data as any).actions} /></div> : null}
+                    {thread.data && !((thread.data as any).messages ?? []).length ? <EmptyState text="该会话暂无消息。" /> : null}
                   </div>
                 </div>
-              ) : (
-                <EmptyState text="请选择一个 Webchat 会话。" />
-              )}
+              ) : <EmptyState text="请选择一个 Webchat 会话。" />}
             </CardBody>
           </Card>
 
           <Card>
-            <CardHeader title="人工回复" subtitle="回复前后端会执行 outbound safety gate；敏感内容会被阻断，物流事实承诺需证据或人工确认。" />
+            <CardHeader title="人工回复" subtitle="回复会执行 outbound safety gate；WebChat 回复只写 local delivery，不进入真实外部 provider dispatch。" />
             <CardBody>
               <div className="stack">
-                <Field label="回复内容">
-                  <Textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="例如：We have received your request and will check it shortly." />
-                </Field>
-                <label className="check-row">
-                  <input type="checkbox" checked={hasFactEvidence} onChange={(event) => setHasFactEvidence(event.target.checked)} />
-                  <span>本次回复涉及物流事实时，我已核对系统证据</span>
-                </label>
-                <label className="check-row">
-                  <input type="checkbox" checked={confirmReview} onChange={(event) => setConfirmReview(event.target.checked)} />
-                  <span>若安全门返回 review，我确认已人工复核并继续发送</span>
-                </label>
-                <Button variant="primary" disabled={!selectedTicketId || !reply.trim() || replyMutation.isPending} onClick={() => replyMutation.mutate()}>
-                  {replyMutation.isPending ? '发送中…' : '发送 Webchat 回复'}
-                </Button>
+                <Field label="回复内容"><Textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="例如：We have received your request and will check it shortly." /></Field>
+                <label className="check-row"><input type="checkbox" checked={hasFactEvidence} onChange={(event) => setHasFactEvidence(event.target.checked)} /><span>本次回复涉及物流事实时，我已核对系统证据</span></label>
+                <label className="check-row"><input type="checkbox" checked={confirmReview} onChange={(event) => setConfirmReview(event.target.checked)} /><span>若安全门返回 review，我确认已人工复核并继续发送</span></label>
+                <Button variant="primary" disabled={!selectedTicketId || !reply.trim() || replyMutation.isPending} onClick={() => replyMutation.mutate()}>{replyMutation.isPending ? '发送中…' : '发送 Webchat 回复'}</Button>
               </div>
             </CardBody>
           </Card>
