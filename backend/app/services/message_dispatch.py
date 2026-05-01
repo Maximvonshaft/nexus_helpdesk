@@ -19,6 +19,25 @@ from .outbound_semantics import external_channel_values, is_external_outbound_me
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 
 settings = get_settings()
+ALLOWED_OUTBOUND_PROVIDERS = {'openclaw'}
+
+
+def _external_dispatch_block_reason() -> tuple[str, str] | None:
+    if not settings.enable_outbound_dispatch:
+        return 'outbound_dispatch_disabled', 'ENABLE_OUTBOUND_DISPATCH=false blocks external dispatch'
+    if settings.outbound_provider == 'disabled':
+        return 'outbound_provider_disabled', 'OUTBOUND_PROVIDER=disabled blocks external dispatch'
+    if settings.outbound_provider not in ALLOWED_OUTBOUND_PROVIDERS:
+        return 'unsupported_outbound_provider', f"Unsupported OUTBOUND_PROVIDER: {settings.outbound_provider}"
+    return None
+
+
+def ensure_external_dispatch_allowed() -> None:
+    """Fail closed unless the runtime is explicitly configured for external sends."""
+    blocked = _external_dispatch_block_reason()
+    if blocked:
+        _, reason = blocked
+        raise RuntimeError(reason)
 
 
 def _provider_idempotency_key(message: TicketOutboundMessage) -> str:
@@ -252,6 +271,12 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
         _mark_dead(message, 'Non-external outbound row is not eligible for provider dispatch', failure_code='non_external_outbound_not_dispatchable')
         log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Non-external outbound row was blocked from provider dispatch', payload={'message_id': message.id, 'channel': message.channel.value if hasattr(message.channel, 'value') else str(message.channel), 'provider_status': message.provider_status})
         return message
+    blocked = _external_dispatch_block_reason()
+    if blocked:
+        failure_code, reason = blocked
+        _mark_dead(message, reason, failure_code=failure_code)
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='External outbound dispatch blocked by runtime kill switch', payload={'message_id': message.id, 'failure_code': failure_code, 'outbound_provider': settings.outbound_provider, 'enable_outbound_dispatch': settings.enable_outbound_dispatch})
+        return message
     idempotency_key = _ensure_provider_idempotency_key(message)
     ticket = message.ticket
     if not _enforce_outbound_safety(db, message, ticket):
@@ -315,6 +340,11 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
 
 
 def dispatch_pending_messages(db: Session, *, limit: int | None = None, worker_id: str | None = None) -> list[TicketOutboundMessage]:
+    blocked = _external_dispatch_block_reason()
+    if blocked:
+        failure_code, reason = blocked
+        LOGGER.warning('external_outbound_dispatch_blocked_by_runtime_gate', extra={'event_payload': {'failure_code': failure_code, 'reason': reason, 'outbound_provider': settings.outbound_provider, 'enable_outbound_dispatch': settings.enable_outbound_dispatch}})
+        return []
     claimed = claim_pending_messages(db, limit=limit, worker_id=worker_id)
     processed: list[TicketOutboundMessage] = []
     for message in claimed:
