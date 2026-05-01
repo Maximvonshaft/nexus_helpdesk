@@ -67,8 +67,8 @@ def upgrade() -> None:
             sa.Column("action_payload_json", sa.Text(), nullable=False),
             sa.Column("submitted_by", sa.String(length=64), nullable=False, server_default="visitor"),
             sa.Column("status", sa.String(length=32), nullable=False, server_default="submitted"),
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.Column("ip_hash", sa.String(length=96), nullable=True),
             sa.Column("user_agent_hash", sa.String(length=96), nullable=True),
             sa.Column("origin", sa.String(length=255), nullable=True),
@@ -93,6 +93,8 @@ def downgrade() -> None:
         ]:
             if name in _indexes(bind, "webchat_messages"):
                 op.drop_index(name, table_name="webchat_messages")
-        for col in ["action_status", "delivery_status", "client_message_id", "metadata_json", "payload_json", "body_text", "message_type"]:
-            if col in _columns(bind, "webchat_messages"):
-                op.drop_column("webchat_messages", col)
+        existing_cols = _columns(bind, "webchat_messages")
+        with op.batch_alter_table("webchat_messages") as batch_op:
+            for col in ["action_status", "delivery_status", "client_message_id", "metadata_json", "payload_json", "body_text", "message_type"]:
+                if col in existing_cols:
+                    batch_op.drop_column(col)
