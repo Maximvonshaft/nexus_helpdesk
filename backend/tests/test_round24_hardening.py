@@ -284,7 +284,7 @@ def test_worker_skips_outbound_dispatch_when_disabled(monkeypatch):
     assert run_worker.run_once('worker-test') == 0
 
 
-def test_worker_runs_openclaw_inbound_discovery_when_enabled(monkeypatch):
+def test_worker_runs_openclaw_inbound_auto_sync_when_enabled(monkeypatch):
     calls = []
 
     @contextmanager
@@ -370,7 +370,7 @@ def test_sync_openclaw_inbound_conversations_auto_creates_ticket_and_records_unr
 
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_sync_enabled', True)
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_enabled', True)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_discovery_interval_seconds', 0)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_interval_seconds', 0)
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_limit', 10)
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_include_groups', False)
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_message_limit', 20)
@@ -430,7 +430,7 @@ def test_sync_openclaw_inbound_parses_session_key_variants_and_reuses_existing_t
 
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_sync_enabled', True)
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_enabled', True)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_discovery_interval_seconds', 0)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_interval_seconds', 0)
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_limit', 10)
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_message_limit', 20)
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_include_groups', False)
@@ -463,7 +463,7 @@ def test_inbound_sync_never_calls_send_message_paths(db_session, monkeypatch):
 
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_sync_enabled', True)
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_enabled', True)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_discovery_interval_seconds', 0)
+    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_interval_seconds', 0)
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_limit', 10)
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_message_limit', 20)
     monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_bridge_enabled', True)

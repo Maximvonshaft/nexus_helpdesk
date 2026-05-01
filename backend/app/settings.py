@@ -76,14 +76,11 @@ class Settings:
         self.openclaw_sync_stale_seconds = int(os.getenv("OPENCLAW_SYNC_STALE_SECONDS", "120"))
         self.openclaw_sync_transcript_limit = int(os.getenv("OPENCLAW_SYNC_TRANSCRIPT_LIMIT", "100"))
         self.openclaw_sync_poll_timeout_seconds = int(os.getenv("OPENCLAW_SYNC_POLL_TIMEOUT_SECONDS", "10"))
-        self.openclaw_inbound_auto_sync_enabled = os.getenv("OPENCLAW_INBOUND_AUTO_SYNC_ENABLED", os.getenv("OPENCLAW_INBOUND_DISCOVERY_ENABLED", "false")).strip().lower() == "true"
-        self.openclaw_inbound_sync_limit = int(os.getenv("OPENCLAW_INBOUND_SYNC_LIMIT", os.getenv("OPENCLAW_INBOUND_DISCOVERY_LIMIT", "10")))
+        self.openclaw_inbound_auto_sync_enabled = os.getenv("OPENCLAW_INBOUND_AUTO_SYNC_ENABLED", "false").strip().lower() == "true"
+        self.openclaw_inbound_sync_limit = int(os.getenv("OPENCLAW_INBOUND_SYNC_LIMIT", "10"))
         self.openclaw_inbound_sync_message_limit = int(os.getenv("OPENCLAW_INBOUND_SYNC_MESSAGE_LIMIT", str(self.openclaw_sync_transcript_limit)))
-        self.openclaw_inbound_sync_include_groups = os.getenv("OPENCLAW_INBOUND_SYNC_INCLUDE_GROUPS", os.getenv("OPENCLAW_SYNC_WHATSAPP_GROUPS", "false")).strip().lower() == "true"
-        self.openclaw_inbound_discovery_enabled = self.openclaw_inbound_auto_sync_enabled
-        self.openclaw_inbound_discovery_interval_seconds = int(os.getenv("OPENCLAW_INBOUND_DISCOVERY_INTERVAL_SECONDS", "30"))
-        self.openclaw_inbound_discovery_limit = self.openclaw_inbound_sync_limit
-        self.openclaw_sync_whatsapp_groups = self.openclaw_inbound_sync_include_groups
+        self.openclaw_inbound_sync_include_groups = os.getenv("OPENCLAW_INBOUND_SYNC_INCLUDE_GROUPS", "false").strip().lower() == "true"
+        self.openclaw_inbound_auto_sync_interval_seconds = int(os.getenv("OPENCLAW_INBOUND_AUTO_SYNC_INTERVAL_SECONDS", "30"))
         self.openclaw_session_dm_scope = os.getenv("OPENCLAW_SESSION_DM_SCOPE", "per-account-channel-peer").strip()
         self.openclaw_event_driver_enabled = os.getenv("OPENCLAW_EVENT_DRIVER_ENABLED", "true").strip().lower() == "true"
         self.openclaw_sync_daemon_stale_seconds = int(os.getenv("OPENCLAW_SYNC_DAEMON_STALE_SECONDS", "90"))

@@ -766,7 +766,7 @@ def sync_openclaw_inbound_conversations_once(
                 last_run = datetime.fromtimestamp(int(cursor_row.cursor_value), tz=now.tzinfo)
             except Exception:
                 last_run = None
-            if last_run is not None and (now - last_run).total_seconds() < settings.openclaw_inbound_discovery_interval_seconds:
+            if last_run is not None and (now - last_run).total_seconds() < settings.openclaw_inbound_auto_sync_interval_seconds:
                 return summary
 
     payload = list_openclaw_conversations(limit=limit or settings.openclaw_inbound_sync_limit, client=client)
