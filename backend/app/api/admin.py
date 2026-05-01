@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db, engine
 from ..enums import JobStatus, MessageStatus, UserRole
-from ..models import AIConfigResource, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawUnresolvedEvent, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
+from ..models import AIConfigResource, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
 from ..schemas import UserUpdate, PasswordResetRequest, OpenClawUnresolvedEventRead, AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, OpenClawConnectivityProbeRead, OpenClawConversationRead, OpenClawLinkRequest, OpenClawRuntimeHealthRead, OpenClawSyncEnqueueRequest, OpenClawSyncResult, ProductionReadinessRead, QueueSummaryRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead, UserCreate
 from ..settings import get_settings
 from ..auth_service import hash_password
@@ -311,6 +311,8 @@ def get_queue_summary(db: Session = Depends(get_db), current_user=Depends(get_cu
         pending_jobs=db.query(BackgroundJob).filter(BackgroundJob.status == JobStatus.pending).count(),
         dead_jobs=db.query(BackgroundJob).filter(BackgroundJob.status == JobStatus.dead).count(),
         openclaw_links=db.query(OpenClawConversationLink).count(),
+        openclaw_transcript_messages=db.query(OpenClawTranscriptMessage).count(),
+        openclaw_unresolved_events=db.query(OpenClawUnresolvedEvent).count(),
     )
 
 
@@ -338,6 +340,8 @@ def production_readiness(db: Session = Depends(get_db), current_user=Depends(get
         warnings.append('Metrics are disabled')
     if db.bind and not db.bind.dialect.name.startswith('postgresql'):
         warnings.append('Current runtime DB dialect is not PostgreSQL')
+    if settings.openclaw_sync_enabled and not settings.openclaw_inbound_auto_sync_enabled and not settings.openclaw_event_driver_enabled:
+        warnings.append('OpenClaw sync is enabled but no inbound auto-sync/event driver/manual job producer is active')
     return ProductionReadinessRead(
         app_env=settings.app_env,
         database_url_scheme=settings.database_url.split(':', 1)[0],
@@ -346,6 +350,10 @@ def production_readiness(db: Session = Depends(get_db), current_user=Depends(get
         openclaw_transport=settings.openclaw_transport,
         metrics_enabled=settings.metrics_enabled,
         openclaw_sync_enabled=settings.openclaw_sync_enabled,
+        openclaw_inbound_auto_sync_enabled=settings.openclaw_inbound_auto_sync_enabled,
+        openclaw_links_count=db.query(OpenClawConversationLink).count(),
+        openclaw_transcript_messages_count=db.query(OpenClawTranscriptMessage).count(),
+        openclaw_unresolved_events_count=db.query(OpenClawUnresolvedEvent).count(),
         warnings=warnings,
     )
 
@@ -483,6 +491,9 @@ def openclaw_runtime_health(db: Session = Depends(get_db), current_user=Depends(
         sync_daemon_last_seen_at=daemon_seen,
         sync_daemon_status=daemon_status,
         stale_link_count=stale_link_count,
+        openclaw_links_count=db.query(OpenClawConversationLink).count(),
+        transcript_messages_count=db.query(OpenClawTranscriptMessage).count(),
+        unresolved_events_count=db.query(OpenClawUnresolvedEvent).count(),
         pending_sync_jobs=pending_sync_jobs,
         dead_sync_jobs=dead_sync_jobs,
         pending_attachment_jobs=pending_attachment_jobs,

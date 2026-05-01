@@ -662,6 +662,8 @@ class QueueSummaryRead(APIModel):
     pending_jobs: int
     dead_jobs: int
     openclaw_links: int
+    openclaw_transcript_messages: int = 0
+    openclaw_unresolved_events: int = 0
 
 
 class ProductionReadinessRead(APIModel):
@@ -672,6 +674,10 @@ class ProductionReadinessRead(APIModel):
     openclaw_transport: str
     metrics_enabled: bool
     openclaw_sync_enabled: bool
+    openclaw_inbound_auto_sync_enabled: bool
+    openclaw_links_count: int = 0
+    openclaw_transcript_messages_count: int = 0
+    openclaw_unresolved_events_count: int = 0
     warnings: list[str]
 
 
@@ -724,6 +730,9 @@ class OpenClawRuntimeHealthRead(APIModel):
     sync_daemon_last_seen_at: Optional[datetime] = None
     sync_daemon_status: Optional[str] = None
     stale_link_count: int
+    openclaw_links_count: int = 0
+    transcript_messages_count: int = 0
+    unresolved_events_count: int = 0
     pending_sync_jobs: int
     dead_sync_jobs: int
     pending_attachment_jobs: int = 0

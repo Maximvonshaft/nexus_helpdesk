@@ -18,6 +18,8 @@ class TicketSource(str, Enum):
 
 class SourceChannel(str, Enum):
     whatsapp = "whatsapp"
+    telegram = "telegram"
+    sms = "sms"
     email = "email"
     web_chat = "web_chat"
     internal = "internal"
