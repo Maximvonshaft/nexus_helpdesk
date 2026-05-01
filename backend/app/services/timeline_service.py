@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..enums import EventType, MessageStatus
 from ..models import Ticket, TicketAIIntake, TicketAttachment, TicketComment, TicketEvent, TicketInternalNote, TicketOutboundMessage
+from .outbound_semantics import outbound_is_external_send, outbound_ui_label
 
 
 def _actor_name(obj, fallback: Optional[str] = None) -> Optional[str]:
@@ -102,15 +103,18 @@ def serialize_attachment(attachment: TicketAttachment) -> dict:
 
 
 def serialize_outbound(message: TicketOutboundMessage) -> dict:
-    if message.status == MessageStatus.draft:
-        title = "Reply draft saved"
-        summary = f"Draft saved for {message.channel.value}"
+    ui_label = outbound_ui_label(message.channel, message.status, message.provider_status)
+    external = outbound_is_external_send(message.channel, message.provider_status)
+
+    if ui_label in {"Local WebChat ACK", "WebChat Safe Fallback", "Draft / Review Required", "External Send Pending"}:
+        title = ui_label
+        summary = message.error_message or f"{ui_label} for {message.channel.value}"
     elif message.status == MessageStatus.pending:
         title = "Reply queued"
         summary = f"Reply queued for {message.channel.value}"
     elif message.status == MessageStatus.processing:
         title = "Reply dispatch in progress"
-        summary = f"Dispatch worker is sending via {message.channel.value}"
+        summary = f"Dispatch worker is processing {message.channel.value}"
     elif message.status == MessageStatus.sent:
         title = "Reply sent"
         summary = f"Reply sent via {message.channel.value}"
@@ -134,6 +138,8 @@ def serialize_outbound(message: TicketOutboundMessage) -> dict:
             "channel": message.channel.value,
             "status": message.status.value,
             "provider_status": message.provider_status,
+            "ui_label": ui_label,
+            "is_external_send": external,
         },
     }
 
