@@ -51,7 +51,7 @@ from app.services.lite_service import assign_lite_case, get_lite_case, save_ai_i
 from app.services.ticket_service import add_ai_intake, add_comment, create_ticket  # noqa: E402
 from app.settings import Settings  # noqa: E402
 from app.utils import client_ip as client_ip_utils  # noqa: E402
-from app.services import openclaw_bridge  # noqa: E402
+from app.services import background_jobs, openclaw_bridge  # noqa: E402
 from app.services.background_jobs import ATTACHMENT_PERSIST_JOB, OPENCLAW_SYNC_JOB, claim_pending_jobs, dispatch_pending_background_jobs, dispatch_pending_sync_jobs, enqueue_background_job  # noqa: E402
 from scripts import run_worker  # noqa: E402
 
@@ -598,11 +598,17 @@ def test_dispatch_pending_sync_jobs_only_processes_sync_queue(db_session, monkey
         attachment_calls.append(kwargs.get('attachment_ref'))
         return None
 
-    monkeypatch.setattr(openclaw_bridge, 'sync_openclaw_conversation', fake_sync)
-    monkeypatch.setattr(openclaw_bridge, 'persist_openclaw_attachment_reference', fake_persist, raising=False)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_sync_enabled', True)
-    monkeypatch.setattr(sys.modules['app.services.background_jobs'], 'settings', sys.modules['app.services.background_jobs'].settings)
-    monkeypatch.setattr(sys.modules['app.services.background_jobs'].settings, 'openclaw_sync_enabled', True)
+    class DummyClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+    monkeypatch.setattr(background_jobs.openclaw_client_factory, 'get_openclaw_runtime_client', lambda: DummyClient())
+    monkeypatch.setattr(background_jobs.openclaw_bridge, 'sync_openclaw_conversation', fake_sync)
+    monkeypatch.setattr(background_jobs.openclaw_bridge, 'persist_openclaw_attachment_reference', fake_persist, raising=False)
+    monkeypatch.setattr(background_jobs.settings, 'openclaw_sync_enabled', True)
 
     processed = dispatch_pending_sync_jobs(db_session, worker_id='sync-only')
 
