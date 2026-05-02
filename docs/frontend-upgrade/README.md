@@ -6,7 +6,7 @@ Status: planning / review gate. This package establishes the governance baseline
 
 This directory is the execution-readiness package for upgrading NexusDesk from a functional React helpdesk console into an agent-native customer operations runtime.
 
-The package exists to make sure product intent, architecture, UX, API contracts, security, testing, migration, release, rollback, and minimal-grain execution plans are reviewed before implementation starts.
+The package exists to make sure product intent, architecture, UX, API contracts, security, testing, migration, release, rollback, and fast-track execution plans are reviewed before implementation starts.
 
 ## Current main-branch facts
 
@@ -39,26 +39,29 @@ Implementation may start only after these documents are reviewed and accepted:
 17. `17-pr26-professional-review-report.md`
 18. `18-execution-construction-blueprint.md`
 
-## Construction blueprint
+## Fast-track construction blueprint
 
-`18-execution-construction-blueprint.md` converts the approved frontend direction into minimal, reviewable construction units.
+`18-execution-construction-blueprint.md` now defines the fast-track execution path.
 
-It defines the exact execution order from the current `main` branch:
+The old ultra-granular approach was intentionally replaced. The new execution model is:
 
 ```text
-Radix wrappers
-→ Design System CSS activation
-→ Runtime low-risk adoption
+One PR = one complete visible layer or one complete product surface.
+```
+
+Fast-track order:
+
+```text
+Radix wrappers + CSS activation
 → Runtime Control Tower
 → AI Governance Studio
 → WebChat Control Center
-→ WebChat SDK runtime
+→ Parallel WebChat SDK runtime
 → Workspace Ticket Operations Cockpit
-→ Realtime Event Runtime
-→ Branch governance cleanup
+→ Optional Realtime Runtime
 ```
 
-Each construction unit defines:
+Each fast-track PR still defines:
 
 - branch name
 - commit message
@@ -80,16 +83,16 @@ Each construction unit defines:
 
 ## Decision baseline
 
-The professional upgrade path is not a rewrite. The target is a phased migration:
+The professional upgrade path is not a rewrite. The target is a fast but controlled phased migration:
 
-1. Freeze and audit current state.
-2. Approve target architecture.
-3. Establish frontend runtime foundation.
-4. Introduce design system and business components.
-5. Wrap Radix primitives behind NexusDesk-owned components.
-6. Adopt the design system on low-risk runtime surfaces first.
-7. Upgrade AI Governance, WebChat, and Workspace only after foundations are proven.
-8. Harden tests, release, rollback, and observability.
+1. Use the foundations already merged into main.
+2. Wrap Radix primitives behind NexusDesk-owned components.
+3. Activate semantic tokens/components safely.
+4. Upgrade low-risk runtime surfaces first.
+5. Upgrade AI Governance and WebChat admin next.
+6. Build WebChat SDK in parallel without cutover risk.
+7. Upgrade Workspace after shared patterns are proven.
+8. Add realtime only after core surfaces are stable.
 
 ## Closed checklist
 
@@ -103,20 +106,20 @@ The professional upgrade path is not a rewrite. The target is a phased migration
 - Agentic design system foundation has been merged.
 - Radix adoption runbook has been merged.
 - Radix primitive dependencies have been merged.
-- Minimal-grain frontend construction blueprint has been added.
+- Fast-track frontend construction blueprint has been added.
 
 ## Next branch after construction blueprint merge
 
 After `18-execution-construction-blueprint.md` is merged to `main`, create:
 
 ```text
-feature/radix-dialog-wrapper
+feature/design-system-radix-wrapper-foundation
 ```
 
 First implementation commit target:
 
 ```text
-feat: add Dialog primitive wrapper
+feat: add Radix-backed design system primitives
 ```
 
-The first wrapper phase must not change product behavior or adopt the wrapper in business pages yet.
+The first fast-track implementation PR should add all current Radix-backed NexusDesk wrappers and activate design-system CSS, but it should not migrate business pages yet.
