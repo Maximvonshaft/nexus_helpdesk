@@ -4,16 +4,39 @@ set -Eeuo pipefail
 BASE_URL="${BASE_URL:-http://127.0.0.1:8080}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-}"
 ORIGIN="${ORIGIN:-http://localhost}"
+MODE="${MODE:-full}"
+
+if [ "$MODE" != "full" ] && [ "$MODE" != "visitor-only" ]; then
+  echo "MODE must be full or visitor-only" >&2
+  exit 2
+fi
+if [ "$MODE" = "full" ] && [ -z "$ADMIN_TOKEN" ]; then
+  echo "ADMIN_TOKEN is required when MODE=full" >&2
+  exit 2
+fi
 
 echo "== WebChat structured cards smoke =="
 echo "BASE_URL=$BASE_URL"
+echo "MODE=$MODE"
 
 need_jq() {
   command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 2; }
 }
 need_jq
 
-INIT_JSON=$(curl -fsS -H "Origin: $ORIGIN" -H 'Content-Type: application/json' \
+curl_json() {
+  local label="$1"
+  shift
+  local out
+  if ! out=$(curl -fsS "$@" 2>&1); then
+    echo "❌ $label failed" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  printf '%s' "$out"
+}
+
+INIT_JSON=$(curl_json "init conversation" -H "Origin: $ORIGIN" -H 'Content-Type: application/json' \
   -X POST "$BASE_URL/api/webchat/init" \
   -d '{"tenant_key":"smoke","channel_key":"website","visitor_name":"Smoke Visitor","origin":"http://localhost","page_url":"http://localhost/webchat-smoke"}')
 CONVERSATION_ID=$(echo "$INIT_JSON" | jq -r '.conversation_id')
@@ -22,12 +45,12 @@ test -n "$CONVERSATION_ID" && test "$CONVERSATION_ID" != "null"
 test -n "$VISITOR_TOKEN" && test "$VISITOR_TOKEN" != "null"
 echo "conversation=$CONVERSATION_ID"
 
-SEND_JSON=$(curl -fsS -H "Origin: $ORIGIN" -H "X-Webchat-Visitor-Token: $VISITOR_TOKEN" -H 'Content-Type: application/json' \
+SEND_JSON=$(curl_json "send visitor message" -H "Origin: $ORIGIN" -H "X-Webchat-Visitor-Token: $VISITOR_TOKEN" -H 'Content-Type: application/json' \
   -X POST "$BASE_URL/api/webchat/conversations/$CONVERSATION_ID/messages" \
   -d '{"body":"Hello, I need help tracking my parcel","client_message_id":"smoke-card-1"}')
 echo "$SEND_JSON" | jq -e '.ok == true' >/dev/null
 
-POLL_JSON=$(curl -fsS -H "Origin: $ORIGIN" -H "X-Webchat-Visitor-Token: $VISITOR_TOKEN" \
+POLL_JSON=$(curl_json "poll messages" -H "Origin: $ORIGIN" -H "X-Webchat-Visitor-Token: $VISITOR_TOKEN" \
   "$BASE_URL/api/webchat/conversations/$CONVERSATION_ID/messages?limit=50")
 CARD_ID=$(echo "$POLL_JSON" | jq -r '.messages[] | select(.message_type=="card" and .payload_json.card_type=="quick_replies") | .payload_json.card_id' | head -1)
 MESSAGE_ID=$(echo "$POLL_JSON" | jq -r '.messages[] | select(.message_type=="card" and .payload_json.card_type=="quick_replies") | .id' | head -1)
@@ -37,28 +60,39 @@ test -n "$CARD_ID" && test -n "$MESSAGE_ID" && test -n "$ACTION_ID"
 echo "quick_reply_card=$CARD_ID message=$MESSAGE_ID action=$ACTION_ID"
 
 ACTION_JSON=$(jq -n --argjson message_id "$MESSAGE_ID" --arg card_id "$CARD_ID" --arg action_id "$ACTION_ID" --arg action_type "$ACTION_TYPE" '{message_id:$message_id,card_id:$card_id,action_id:$action_id,action_type:$action_type,payload:{smoke:true}}')
-SUBMIT_JSON=$(curl -fsS -H "Origin: $ORIGIN" -H "X-Webchat-Visitor-Token: $VISITOR_TOKEN" -H 'Content-Type: application/json' \
+SUBMIT_JSON=$(curl_json "submit card action" -H "Origin: $ORIGIN" -H "X-Webchat-Visitor-Token: $VISITOR_TOKEN" -H 'Content-Type: application/json' \
   -X POST "$BASE_URL/api/webchat/conversations/$CONVERSATION_ID/actions" \
   -d "$ACTION_JSON")
 echo "$SUBMIT_JSON" | jq -e '.ok == true and .message.message_type == "action"' >/dev/null
 
 AFTER_ID=$(echo "$POLL_JSON" | jq -r '.next_after_id')
-INCREMENTAL_JSON=$(curl -fsS -H "Origin: $ORIGIN" -H "X-Webchat-Visitor-Token: $VISITOR_TOKEN" \
+INCREMENTAL_JSON=$(curl_json "incremental poll" -H "Origin: $ORIGIN" -H "X-Webchat-Visitor-Token: $VISITOR_TOKEN" \
   "$BASE_URL/api/webchat/conversations/$CONVERSATION_ID/messages?after_id=$AFTER_ID&limit=20")
 echo "$INCREMENTAL_JSON" | jq -e '.messages | length >= 1' >/dev/null
 
 echo "visitor flow ok"
 
-if [ -n "$ADMIN_TOKEN" ]; then
-  CONVERSATIONS_JSON=$(curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" "$BASE_URL/api/webchat/admin/conversations")
-  TICKET_ID=$(echo "$CONVERSATIONS_JSON" | jq -r --arg cid "$CONVERSATION_ID" '.[] | select(.conversation_id==$cid) | .ticket_id' | head -1)
-  test -n "$TICKET_ID" && test "$TICKET_ID" != "null"
-  THREAD_JSON=$(curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" "$BASE_URL/api/webchat/admin/tickets/$TICKET_ID/thread")
-  echo "$THREAD_JSON" | jq -e '.actions | length >= 1' >/dev/null
-  echo "$THREAD_JSON" | jq -e '.messages[] | select(.message_type=="action")' >/dev/null
-  echo "admin thread action audit ok"
+if [ "$MODE" = "visitor-only" ]; then
+  echo "visitor-only mode: skipped admin thread smoke"
+  echo "PASS smoke_webchat_cards"
+  exit 0
+fi
+
+CONVERSATIONS_JSON=$(curl_json "admin conversations" -H "Authorization: Bearer $ADMIN_TOKEN" "$BASE_URL/api/webchat/admin/conversations")
+TICKET_ID=$(echo "$CONVERSATIONS_JSON" | jq -r --arg cid "$CONVERSATION_ID" '.[] | select(.conversation_id==$cid) | .ticket_id' | head -1)
+test -n "$TICKET_ID" && test "$TICKET_ID" != "null"
+THREAD_JSON=$(curl_json "admin thread" -H "Authorization: Bearer $ADMIN_TOKEN" "$BASE_URL/api/webchat/admin/tickets/$TICKET_ID/thread")
+echo "$THREAD_JSON" | jq -e '.actions | length >= 1' >/dev/null
+echo "$THREAD_JSON" | jq -e '.messages[] | select(.message_type=="action")' >/dev/null
+
+echo "admin thread action audit ok"
+
+QUEUE_JSON=$(curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" "$BASE_URL/api/admin/queues/summary" 2>/dev/null || true)
+if [ -n "$QUEUE_JSON" ]; then
+  echo "$QUEUE_JSON" | jq -e '(.external_pending_outbound // .pending_outbound // 0) >= 0' >/dev/null
+  echo "queue summary reachable"
 else
-  echo "ADMIN_TOKEN not set; skipped admin thread smoke"
+  echo "queue summary not available; skipped optional queue semantics smoke"
 fi
 
 echo "PASS smoke_webchat_cards"
