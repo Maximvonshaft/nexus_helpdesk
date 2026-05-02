@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, event
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -84,3 +85,28 @@ class WebchatCardAction(Base):
     origin: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, index=True)
+
+
+def _extract_action_id_from_payload(raw: str | None) -> str:
+    if not raw:
+        return "legacy_action"
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return "legacy_action"
+    value = parsed.get("action_id") if isinstance(parsed, dict) else None
+    if isinstance(value, str) and value.strip():
+        return value.strip()[:80]
+    return "legacy_action"
+
+
+@event.listens_for(WebchatCardAction, "before_insert")
+def _populate_webchat_card_action_id(mapper, connection, target: WebchatCardAction) -> None:  # noqa: ANN001
+    if not getattr(target, "action_id", None) or target.action_id == "legacy_action":
+        target.action_id = _extract_action_id_from_payload(target.action_payload_json)
+
+
+@event.listens_for(WebchatCardAction, "before_update")
+def _refresh_webchat_card_action_id(mapper, connection, target: WebchatCardAction) -> None:  # noqa: ANN001
+    if not getattr(target, "action_id", None) or target.action_id == "legacy_action":
+        target.action_id = _extract_action_id_from_payload(target.action_payload_json)
