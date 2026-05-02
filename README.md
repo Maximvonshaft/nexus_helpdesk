@@ -59,6 +59,8 @@ This runs backend checks, frontend checks, deployment contract checks, compose c
 
 ## Deployment entrypoints
 
+Server deployment drift prevention is enforced through separated compose/env templates and the deploy contract check.
+
 Choose exactly one deployment mode:
 
 - Local PostgreSQL server or VM pilot:
