@@ -16,21 +16,25 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("webchat_conversations", sa.Column("visitor_token_expires_at", sa.DateTime(timezone=True), nullable=True))
-    op.create_index("ix_webchat_conversations_visitor_token_expires_at", "webchat_conversations", ["visitor_token_expires_at"])
+    with op.batch_alter_table("webchat_conversations") as batch_op:
+        batch_op.add_column(sa.Column("visitor_token_expires_at", sa.DateTime(timezone=True), nullable=True))
+        batch_op.create_index("ix_webchat_conversations_visitor_token_expires_at", ["visitor_token_expires_at"])
 
-    op.add_column("webchat_messages", sa.Column("client_message_id", sa.String(length=120), nullable=True))
-    op.create_index("ix_webchat_messages_client_message_id", "webchat_messages", ["client_message_id"])
-    op.create_unique_constraint(
-        "uq_webchat_message_client_id",
-        "webchat_messages",
-        ["conversation_id", "direction", "client_message_id"],
-    )
+    with op.batch_alter_table("webchat_messages") as batch_op:
+        batch_op.add_column(sa.Column("client_message_id", sa.String(length=120), nullable=True))
+        batch_op.create_index("ix_webchat_messages_client_message_id", ["client_message_id"])
+        batch_op.create_unique_constraint(
+            "uq_webchat_message_client_id",
+            ["conversation_id", "direction", "client_message_id"],
+        )
 
 
 def downgrade() -> None:
-    op.drop_constraint("uq_webchat_message_client_id", "webchat_messages", type_="unique")
-    op.drop_index("ix_webchat_messages_client_message_id", table_name="webchat_messages")
-    op.drop_column("webchat_messages", "client_message_id")
-    op.drop_index("ix_webchat_conversations_visitor_token_expires_at", table_name="webchat_conversations")
-    op.drop_column("webchat_conversations", "visitor_token_expires_at")
+    with op.batch_alter_table("webchat_messages") as batch_op:
+        batch_op.drop_constraint("uq_webchat_message_client_id", type_="unique")
+        batch_op.drop_index("ix_webchat_messages_client_message_id")
+        batch_op.drop_column("client_message_id")
+
+    with op.batch_alter_table("webchat_conversations") as batch_op:
+        batch_op.drop_index("ix_webchat_conversations_visitor_token_expires_at")
+        batch_op.drop_column("visitor_token_expires_at")
