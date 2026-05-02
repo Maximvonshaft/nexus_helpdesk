@@ -79,6 +79,8 @@ Always run:
 bash scripts/deploy/check_deploy_contract.sh
 ```
 
+Production deploys must not use `git reset --hard` as a blind cleanup step on server-local runtime paths. Preserve uploads, `data/`, live env files, and database volumes before source updates.
+
 ## Required documentation
 
 - `docs/architecture.md`
