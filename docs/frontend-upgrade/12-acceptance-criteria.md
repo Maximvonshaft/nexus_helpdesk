@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. These criteria define the execution readiness gate and future implementation acceptance gate.
+Accepted for planning merge by PR #26 professional review. These criteria define the execution readiness gate and future implementation acceptance gate.
 
 ## Execution-readiness acceptance
 
@@ -15,29 +15,42 @@ The planning package is accepted only when reviewers agree that it clearly defin
 - design system direction
 - WebChat runtime direction
 - AI governance direction
+- API contract boundaries
 - security threat model
 - test strategy
+- migration plan
+- release plan
+- rollback plan
 - execution epics
 - engineering handoff
 
 ## Execution-readiness checklist
 
 ```text
-[ ] README accepted
-[ ] Current-state audit accepted
-[ ] Product requirements accepted
-[ ] Target architecture RFC accepted
-[ ] UX interaction blueprint accepted
-[ ] Design system blueprint accepted
-[ ] WebChat runtime blueprint accepted
-[ ] AI governance blueprint accepted
-[ ] Security threat model accepted
-[ ] Test strategy accepted
-[ ] Execution epics accepted
-[ ] Engineering handoff accepted
+[x] README accepted
+[x] Current-state audit accepted
+[x] Product requirements accepted
+[x] Target architecture RFC accepted
+[x] UX interaction blueprint accepted
+[x] Design system blueprint accepted
+[x] WebChat runtime blueprint accepted
+[x] AI governance blueprint accepted
+[x] Security threat model accepted
+[x] Test strategy accepted
+[x] Execution epics accepted
+[x] Engineering handoff accepted
+[x] API contract map accepted
+[x] Migration plan accepted
+[x] Release rollout plan accepted
+[x] Rollback plan accepted
+[x] PR #26 professional review report accepted
 ```
 
-Implementation must not start until this checklist is accepted.
+Implementation may start only after this planning package is merged to `main`, and only through the first approved implementation branch:
+
+```text
+feature/frontend-runtime-foundation
+```
 
 ## Role-based acceptance
 
@@ -110,6 +123,24 @@ The WebChat widget is successful when a visitor can:
 - reload and continue the conversation
 - use the widget on mobile
 - never see internal ticket ids
+
+## First implementation acceptance
+
+The first implementation PR, `feature/frontend-runtime-foundation`, is accepted only when:
+
+```text
+[ ] app / features / entities / shared / styles structure exists or is prepared
+[ ] existing route paths remain unchanged
+[ ] existing API paths remain unchanged
+[ ] auth/token behavior remains unchanged
+[ ] WebChat static widget behavior remains unchanged
+[ ] visible product behavior is unchanged unless explicitly documented as non-functional cleanup
+[ ] npm run typecheck passes
+[ ] npm run lint passes
+[ ] npm run build passes
+[ ] affected route smoke passes
+[ ] rollback plan is included
+```
 
 ## Technical acceptance
 
