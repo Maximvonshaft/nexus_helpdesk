@@ -180,10 +180,24 @@ export interface RuntimeHealth {
   sync_daemon_last_seen_at?: string | null
   sync_daemon_status?: string | null
   stale_link_count: number
+  openclaw_links_count?: number
+  transcript_messages_count?: number
+  unresolved_events_count?: number
   pending_sync_jobs: number
   dead_sync_jobs: number
   pending_attachment_jobs: number
   dead_attachment_jobs: number
+  external_pending_outbound?: number
+  external_dead_outbound?: number
+  webchat_local_ack_sent?: number
+  webchat_ai_delivered_sent?: number
+  webchat_ai_safe_fallback_sent?: number
+  webchat_card_sent?: number
+  webchat_handoff_ack_sent?: number
+  outbound_dispatch_enabled?: boolean
+  outbound_provider?: string
+  openclaw_bridge_allow_writes?: boolean
+  openclaw_cli_fallback_enabled?: boolean
   warnings: string[]
 }
 
