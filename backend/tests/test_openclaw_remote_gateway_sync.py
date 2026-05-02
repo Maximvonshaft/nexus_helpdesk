@@ -156,6 +156,7 @@ def test_background_sync_job_uses_runtime_client_factory(db_session, monkeypatch
         def __exit__(self, exc_type, exc, tb):
             return None
 
+    monkeypatch.setattr(background_jobs.settings, 'openclaw_sync_enabled', True)
     monkeypatch.setattr(background_jobs.openclaw_client_factory, 'get_openclaw_runtime_client', lambda: DummyClient())
     monkeypatch.setattr(background_jobs.openclaw_bridge, 'sync_openclaw_conversation', lambda *args, **kwargs: calls.append(kwargs.get('client')))
 
