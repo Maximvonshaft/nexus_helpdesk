@@ -18,6 +18,7 @@ from ..services.webchat_service import (
     admin_list_conversations,
     admin_reply,
     create_or_resume_conversation,
+    get_public_conversation_or_404,
     list_public_messages,
 )
 
@@ -43,6 +44,7 @@ class WebchatSendRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     visitor_token: str | None = Field(default=None, min_length=20, max_length=160)
     body: str = Field(min_length=1, max_length=2000)
+    client_message_id: str | None = Field(default=None, max_length=120)
 
 
 class WebchatReplyRequest(BaseModel):
@@ -139,8 +141,9 @@ def send_webchat_message(
     if not visitor_token:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
     with managed_session(db):
-        enforce_webchat_rate_limit(db, request, tenant_key="default", conversation_id=conversation_id)
-        result = add_visitor_message(db, conversation_id, visitor_token, payload.body, request)
+        conversation = get_public_conversation_or_404(db, conversation_id)
+        enforce_webchat_rate_limit(db, request, tenant_key=conversation.tenant_key, conversation_id=conversation_id)
+        result = add_visitor_message(db, conversation_id, visitor_token, payload.body, request, client_message_id=payload.client_message_id)
     return result
 
 
@@ -150,6 +153,8 @@ def poll_webchat_messages(
     request: Request,
     response: Response,
     visitor_token: str | None = Query(default=None),
+    after_id: int | None = Query(default=None, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
     x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
@@ -158,8 +163,9 @@ def poll_webchat_messages(
     if not resolved_token:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
     with managed_session(db):
-        enforce_webchat_rate_limit(db, request, tenant_key="default", conversation_id=conversation_id)
-        result = list_public_messages(db, conversation_id, resolved_token)
+        conversation = get_public_conversation_or_404(db, conversation_id)
+        enforce_webchat_rate_limit(db, request, tenant_key=conversation.tenant_key, conversation_id=conversation_id)
+        result = list_public_messages(db, conversation_id, resolved_token, after_id=after_id, limit=limit)
     return result
 
 
