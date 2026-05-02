@@ -9,7 +9,8 @@ def test_webchat_models_have_client_message_id_contract():
     models = (BACKEND / "app/webchat_models.py").read_text(encoding="utf-8")
     assert "client_message_id" in models
     assert "uq_webchat_message_client_id" in models
-    assert "conversation_id", "direction", "client_message_id"
+    assert "conversation_id" in models
+    assert "direction" in models
 
 
 def test_webchat_service_short_circuits_duplicate_client_message_id():
