@@ -5,6 +5,7 @@ from typing import Any
 
 from ..schemas import OpenClawConnectivityProbeRead
 from ..settings import get_settings
+from .openclaw_client_factory import OpenClawBridgeHTTPClient, OpenClawBridgeHTTPError
 from .openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
 
 settings = get_settings()
@@ -64,7 +65,28 @@ def probe_openclaw_connectivity() -> OpenClawConnectivityProbeRead:
         warnings=warnings,
     )
 
-    if settings.openclaw_transport != "mcp" or settings.openclaw_deployment_mode == "disabled":
+    if settings.openclaw_deployment_mode == "disabled":
+        return result
+
+    if settings.openclaw_deployment_mode == "remote_gateway" and settings.openclaw_bridge_enabled:
+        try:
+            with OpenClawBridgeHTTPClient() as client:
+                payload = client.conversations_list(limit=1, agent='support')
+            result.bridge_started = True
+            result.conversations_tool_ok = True
+            conversations = _as_items(payload)
+            result.conversations_seen = len(conversations)
+            if conversations:
+                result.sample_session_key = _session_key_from_item(conversations[0])
+            else:
+                result.warnings.append("Remote OpenClaw bridge is reachable but no routed conversations are currently visible")
+        except OpenClawBridgeHTTPError as exc:
+            result.warnings.append(f"openclaw_bridge_unreachable: {exc}")
+        except Exception as exc:  # pragma: no cover
+            result.warnings.append(f"unexpected_openclaw_bridge_probe_failure: {exc}")
+        return result
+
+    if settings.openclaw_transport != "mcp":
         return result
 
     try:
