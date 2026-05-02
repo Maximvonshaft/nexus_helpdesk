@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
@@ -7,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 
 from .api.admin_outbound_semantics import router as admin_outbound_semantics_router
 from .api.admin import router as admin_router
@@ -41,6 +43,24 @@ app.add_middleware(
 )
 
 
+def _runtime_identity() -> dict[str, str]:
+    return {
+        'app_version': os.getenv('APP_VERSION', app.version),
+        'git_sha': os.getenv('GIT_SHA', 'unknown'),
+        'image_tag': os.getenv('IMAGE_TAG', 'unknown'),
+        'build_time': os.getenv('BUILD_TIME', 'unknown'),
+        'frontend_build_sha': os.getenv('FRONTEND_BUILD_SHA', 'unknown'),
+    }
+
+
+def _migration_revision(conn: Connection) -> str | None:
+    try:
+        row = conn.execute(text('SELECT version_num FROM alembic_version LIMIT 1')).first()
+        return str(row[0]) if row and row[0] else None
+    except Exception:
+        return None
+
+
 @app.middleware('http')
 async def request_context_middleware(request: Request, call_next):
     request_id = request.headers.get(settings.request_id_header) or uuid.uuid4().hex
@@ -69,7 +89,7 @@ async def request_context_middleware(request: Request, call_next):
 
 @app.get('/healthz')
 def healthz():
-    return {'status': 'ok', 'env': settings.app_env}
+    return {'status': 'ok', 'env': settings.app_env, **_runtime_identity()}
 
 
 @app.get('/metrics')
@@ -88,10 +108,11 @@ def readyz():
     try:
         with engine.connect() as conn:
             conn.execute(text('SELECT 1'))
-        return {'status': 'ready', 'database': 'ok'}
+            migration_revision = _migration_revision(conn)
+        return {'status': 'ready', 'database': 'ok', 'migration_revision': migration_revision, **_runtime_identity()}
     except Exception as exc:
         app_log_event(40, 'readiness_check_failed', error=str(exc))
-        return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error'})
+        return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error', **_runtime_identity()})
 
 
 # Semantic overrides must be registered before the broader admin router so
