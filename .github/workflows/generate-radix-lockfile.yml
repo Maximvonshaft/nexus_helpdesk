@@ -1,0 +1,64 @@
+name: Generate Radix lockfile
+
+on:
+  push:
+    branches:
+      - feature/radix-primitives-dependencies
+    paths:
+      - ".github/workflows/generate-radix-lockfile.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  generate-lockfile:
+    name: Install Radix packages and commit lockfile
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/radix-primitives-dependencies
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Install current dependencies
+        working-directory: webapp
+        run: npm ci
+
+      - name: Install Radix primitives
+        working-directory: webapp
+        run: |
+          npm install \
+            @radix-ui/react-dialog \
+            @radix-ui/react-popover \
+            @radix-ui/react-tooltip \
+            @radix-ui/react-dropdown-menu \
+            @radix-ui/react-tabs \
+            @radix-ui/react-select
+
+      - name: Validate webapp
+        working-directory: webapp
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run build
+
+      - name: Commit generated package files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add webapp/package.json webapp/package-lock.json
+          if git diff --cached --quiet; then
+            echo "No package changes to commit."
+          else
+            git commit -m "chore: add Radix primitive dependencies"
+            git push origin feature/radix-primitives-dependencies
+          fi
