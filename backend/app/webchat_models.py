@@ -28,6 +28,7 @@ class WebchatConversation(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     public_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     visitor_token_hash: Mapped[str] = mapped_column(String(96), index=True)
+    visitor_token_expires_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
     tenant_key: Mapped[str] = mapped_column(String(120), default="default", index=True)
     channel_key: Mapped[str] = mapped_column(String(120), default="default", index=True)
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)

@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import secrets
+from datetime import timezone, timedelta
 from dataclasses import asdict
 from typing import Any
 from urllib.parse import urlparse
@@ -32,6 +33,7 @@ MAX_FIELD_CHARS = 300
 MAX_URL_CHARS = 700
 DEFAULT_POLL_LIMIT = 50
 MAX_POLL_LIMIT = 100
+WEBCHAT_VISITOR_TOKEN_TTL_DAYS = 7
 
 
 def _clip(value: str | None, limit: int = MAX_FIELD_CHARS) -> str | None:
@@ -70,6 +72,18 @@ def _new_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+def _new_token_expiry():
+    return utc_now() + timedelta(days=WEBCHAT_VISITOR_TOKEN_TTL_DAYS)
+
+
+def _ensure_aware_utc(value):
+    if value is None:
+        return None
+    if getattr(value, "tzinfo", None) is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _origin_from_request(request: Request, explicit_origin: str | None = None) -> str | None:
     origin = explicit_origin or request.headers.get("origin")
     if origin:
@@ -86,6 +100,10 @@ def _origin_from_request(request: Request, explicit_origin: str | None = None) -
 def _validate_token(conversation: WebchatConversation, token: str | None) -> None:
     if not token or _hash_token(token) != conversation.visitor_token_hash:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
+    expires_at = _ensure_aware_utc(getattr(conversation, "visitor_token_expires_at", None))
+    now = _ensure_aware_utc(utc_now())
+    if expires_at is not None and now is not None and expires_at <= now:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")  # visitor token expired
 
 
 def _loads_json(value: str | None) -> Any:
@@ -133,6 +151,7 @@ def create_or_resume_conversation(db: Session, payload: Any, request: Request) -
         if existing:
             _validate_token(existing, visitor_token)
             existing.last_seen_at = utc_now()
+            existing.visitor_token_expires_at = _new_token_expiry()
             existing.updated_at = utc_now()
             existing.page_url = _clip(getattr(payload, "page_url", None), MAX_URL_CHARS) or existing.page_url
             existing.origin = _origin_from_request(request, getattr(payload, "origin", None)) or existing.origin
@@ -187,6 +206,7 @@ def create_or_resume_conversation(db: Session, payload: Any, request: Request) -
     conversation = WebchatConversation(
         public_id=public_id,
         visitor_token_hash=_hash_token(token),
+        visitor_token_expires_at=_new_token_expiry(),
         tenant_key=tenant_key,
         channel_key=channel_key,
         ticket_id=ticket.id,
