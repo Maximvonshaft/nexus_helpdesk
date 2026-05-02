@@ -26,7 +26,6 @@ import type {
 } from '@/lib/types'
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
 const PUBLIC_API_PATHS = ['/api/auth/login', '/auth/login', '/api/auth/register', '/auth/register', '/healthz', '/readyz']
 
 let authExpiryHandled = false
@@ -37,6 +36,17 @@ export class AuthExpiredError extends Error {
     this.name = 'AuthExpiredError'
   }
 }
+
+export function normalizeApiBaseUrl(raw: string | undefined | null) {
+  const trimmed = (raw ?? '').trim().replace(/\/+$/, '')
+  // The webapp API client owns the `/api/...` path prefix. Deployment envs must
+  // provide only the origin/base host. Keep this defensive normalization so an
+  // accidentally configured `VITE_API_BASE_URL=https://host/api` cannot generate
+  // broken `/api/api/...` requests in production or Tailscale previews.
+  return trimmed.replace(/\/api$/i, '')
+}
+
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
 
 function buildApiUrl(path: string) {
   if (/^https?:\/\//i.test(path)) return path
@@ -201,7 +211,6 @@ export const api = {
   signoff: () => request<SignoffChecklist>('/api/admin/signoff-checklist'),
   jobs: () => request<BackgroundJob[]>('/api/admin/jobs?limit=50'),
   consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
-
 
   webchatConversations: () => request<WebchatConversation[]>('/api/webchat/admin/conversations'),
   webchatThread: (ticketId: number) => request<WebchatThread>(`/api/webchat/admin/tickets/${ticketId}/thread`),

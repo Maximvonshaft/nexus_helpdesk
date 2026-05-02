@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..enums import NoteVisibility
-from ..models import OpenClawTranscriptMessage, Ticket, Tag, TicketTag
+from ..enums import NoteVisibility, SourceChannel
+from ..models import OpenClawTranscriptMessage, Ticket, Tag, TicketTag, TicketOutboundMessage
 from ..schemas import (
     AIIntakeCreate,
     AIIntakeRead,
@@ -56,12 +56,47 @@ from ..services.ticket_service import (
 from ..services.timeline_service import build_unified_timeline
 from ..services.permissions import ensure_ticket_visible
 from ..services.sla_service import compute_sla_snapshot
+from ..services.outbound_semantics import outbound_is_external_send, outbound_ui_label
+from ..settings import get_settings
 from .deps import get_current_user
 from ..utils.time import ensure_utc, format_utc, utc_now
 from ..unit_of_work import managed_session
 from ..services.bulletin_service import list_active_bulletins
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
+
+
+def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
+    settings = get_settings()
+    channel_value = row.channel.value if hasattr(row.channel, "value") else str(row.channel)
+    external_send = outbound_is_external_send(row.channel, row.provider_status)
+    if external_send:
+        delivery_semantics = "external_provider_send"
+    elif channel_value == SourceChannel.web_chat.value:
+        delivery_semantics = "local_webchat_delivery"
+    else:
+        delivery_semantics = "local_or_non_dispatchable"
+    return {
+        "id": row.id,
+        "ticket_id": row.ticket_id,
+        "channel": row.channel,
+        "status": row.status,
+        "body": row.body,
+        "provider_status": row.provider_status,
+        "error_message": row.error_message,
+        "retry_count": row.retry_count,
+        "max_retries": row.max_retries,
+        "sent_at": row.sent_at,
+        "created_at": row.created_at,
+        "failure_code": getattr(row, "failure_code", None),
+        "failure_reason": getattr(row, "failure_reason", None),
+        "external_send": external_send,
+        "delivery_semantics": delivery_semantics,
+        "dispatch_enabled": bool(settings.enable_outbound_dispatch),
+        "outbound_provider": settings.outbound_provider,
+        "ui_label": outbound_ui_label(row.channel, row.status, row.provider_status),
+        "operator_note": "Queued for external provider dispatch; wait for sent/dead/review final state" if external_send else "Local-only delivery; no external provider send occurred",
+    }
 
 
 def _serialize_ticket(ticket: Ticket, db: Session) -> TicketRead:
@@ -273,12 +308,12 @@ def save_draft_endpoint(ticket_id: int, payload: OutboundDraftCreate, db: Sessio
     return row
 
 
-@router.post("/{ticket_id}/outbound/send", response_model=OutboundMessageRead)
+@router.post("/{ticket_id}/outbound/send")
 def send_message_endpoint(ticket_id: int, payload: OutboundSendRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     with managed_session(db):
         row = send_outbound_message(db, ticket_id, payload, current_user)
         db.flush()
-    return row
+    return _serialize_outbound_message(row)
 
 
 @router.post("/{ticket_id}/ai-intakes", response_model=AIIntakeRead)

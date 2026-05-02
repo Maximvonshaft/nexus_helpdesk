@@ -1,9 +1,28 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - .env.prod
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-nexusdesk} -d $${POSTGRES_DB:-nexusdesk}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   app:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: nexusdesk/helpdesk:round27
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+        IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
+        APP_VERSION: ${APP_VERSION:-server}
+        FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
+    image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
     env_file:
       - .env.prod
     environment:
@@ -14,13 +33,30 @@ services:
       OPENCLAW_TRANSPORT: mcp
       OPENCLAW_CLI_FALLBACK_ENABLED: "false"
       REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
+      GIT_SHA: ${GIT_SHA:-unknown}
+      BUILD_TIME: ${BUILD_TIME:-unknown}
+      IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
+      APP_VERSION: ${APP_VERSION:-server}
+      FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
     volumes:
       - /run/secrets:/run/secrets:ro
+      - ../data/uploads:/app/backend/uploads
+    ports:
+      - "127.0.0.1:18081:8080"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8080
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   worker:
-    image: nexusdesk/helpdesk:round27
+    image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
     env_file:
       - .env.prod
     environment:
@@ -31,15 +67,22 @@ services:
       OPENCLAW_TRANSPORT: mcp
       OPENCLAW_CLI_FALLBACK_ENABLED: "false"
       REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
+      GIT_SHA: ${GIT_SHA:-unknown}
+      BUILD_TIME: ${BUILD_TIME:-unknown}
+      IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
+      APP_VERSION: ${APP_VERSION:-server}
+      FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
     volumes:
       - /run/secrets:/run/secrets:ro
+      - ../data/uploads:/app/backend/uploads
     command: python scripts/run_worker.py --worker-id worker-main
     restart: unless-stopped
     depends_on:
-      - app
+      app:
+        condition: service_healthy
 
   sync-daemon:
-    image: nexusdesk/helpdesk:round27
+    image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
     env_file:
       - .env.prod
     environment:
@@ -50,15 +93,22 @@ services:
       OPENCLAW_TRANSPORT: mcp
       OPENCLAW_CLI_FALLBACK_ENABLED: "false"
       REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
+      GIT_SHA: ${GIT_SHA:-unknown}
+      BUILD_TIME: ${BUILD_TIME:-unknown}
+      IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
+      APP_VERSION: ${APP_VERSION:-server}
+      FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
     volumes:
       - /run/secrets:/run/secrets:ro
+      - ../data/uploads:/app/backend/uploads
     command: python scripts/run_openclaw_sync_daemon.py --worker-id worker-openclaw-sync
     restart: unless-stopped
     depends_on:
-      - app
+      app:
+        condition: service_healthy
 
   event-daemon:
-    image: nexusdesk/helpdesk:round27
+    image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
     env_file:
       - .env.prod
     environment:
@@ -70,19 +120,31 @@ services:
       OPENCLAW_CLI_FALLBACK_ENABLED: "false"
       REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
       OPENCLAW_EVENT_DRIVER_ENABLED: "true"
+      GIT_SHA: ${GIT_SHA:-unknown}
+      BUILD_TIME: ${BUILD_TIME:-unknown}
+      IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
+      APP_VERSION: ${APP_VERSION:-server}
+      FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
     volumes:
       - /run/secrets:/run/secrets:ro
+      - ../data/uploads:/app/backend/uploads
     command: python scripts/run_openclaw_event_daemon.py
     restart: unless-stopped
     depends_on:
-      - app
+      app:
+        condition: service_healthy
 
   nginx:
     image: nginx:1.27-alpine
+    profiles: ["edge-nginx"]
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
       - "80:80"
     depends_on:
-      - app
+      app:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  postgres_data:

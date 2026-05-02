@@ -34,6 +34,9 @@ jobs:
         run: |
           pytest -q \
             backend/tests/test_outbound_safety.py \
+            backend/tests/test_outbound_message_semantics.py \
+            backend/tests/test_round24_hardening.py \
+            backend/tests/test_production_settings_contract.py \
             backend/tests/test_next_phase_max_push.py \
             backend/tests/test_openclaw_local_ops.py \
             backend/tests/test_round20a_rectification.py \

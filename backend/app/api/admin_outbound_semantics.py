@@ -101,7 +101,7 @@ def openclaw_runtime_health_with_outbound_semantics(db: Session = Depends(get_db
         **webchat_counts,
         'outbound_dispatch_enabled': bool(settings.enable_outbound_dispatch),
         'outbound_provider': settings.outbound_provider,
-        'openclaw_bridge_allow_writes': bool(settings.openclaw_bridge_allow_writes),
+        'openclaw_bridge_allow_writes': bool(getattr(settings, 'openclaw_bridge_allow_writes', False)),
         'openclaw_cli_fallback_enabled': bool(settings.openclaw_cli_fallback_enabled),
         'warnings': warnings,
     }

@@ -22,7 +22,8 @@ class Settings:
         self.jwt_audience = os.getenv("JWT_AUDIENCE", "helpdesk-suite-users")
         self.access_token_expire_hours = int(os.getenv("ACCESS_TOKEN_EXPIRE_HOURS", "12"))
         self.allow_dev_auth_raw = os.getenv("ALLOW_DEV_AUTH", "false")
-        self.allow_dev_auth = self._is_truthy(self.allow_dev_auth_raw) and self.app_env in {"development", "test", "local"}
+        self.allow_dev_auth_requested = self._is_truthy(self.allow_dev_auth_raw)
+        self.allow_dev_auth = self.allow_dev_auth_requested and self.app_env in {"development", "test", "local"}
 
         self.auto_init_db = os.getenv("AUTO_INIT_DB", "false").strip().lower() == "true" and self.app_env != "production"
         self.seed_demo_data = os.getenv("SEED_DEMO_DATA", "false").strip().lower() == "true" and self.app_env != "production"
@@ -141,7 +142,7 @@ class Settings:
                 raise RuntimeError("Production requires a PostgreSQL DATABASE_URL")
             if self.auto_init_db or self.seed_demo_data:
                 raise RuntimeError("AUTO_INIT_DB and SEED_DEMO_DATA must be disabled in production")
-            if self.allow_dev_auth:
+            if self.allow_dev_auth_requested:
                 raise RuntimeError("ALLOW_DEV_AUTH must be disabled in production")
             if self.allow_legacy_integration_api_key:
                 raise RuntimeError("ALLOW_LEGACY_INTEGRATION_API_KEY must be disabled in production")
