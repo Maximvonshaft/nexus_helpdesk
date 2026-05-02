@@ -112,7 +112,10 @@ def readyz():
         return {'status': 'ready', 'database': 'ok', 'migration_revision': migration_revision, **_runtime_identity()}
     except Exception as exc:
         app_log_event(40, 'readiness_check_failed', error=str(exc))
-        return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error', **_runtime_identity()})
+        # Keep the failure response deliberately minimal. Runtime identity is
+        # exposed on /healthz and successful /readyz, but not on readiness
+        # failures so the response cannot leak incidental error context.
+        return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error'})
 
 
 # Semantic overrides must be registered before the broader admin router so
