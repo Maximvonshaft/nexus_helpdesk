@@ -2,6 +2,10 @@
 
 This branch starts the controlled Radix UI adoption phase.
 
+## Current branch status
+
+Radix dependencies have been generated through npm automation and must be validated by CI on this branch before merge.
+
 ## Why Radix
 
 NexusDesk should not hand-roll complex interaction primitives such as dialogs, popovers, dropdown menus, tooltips, tabs, select controls, sheets, and alert dialogs. These controls require correct focus management, keyboard navigation, ARIA semantics, portal behavior, escape handling, and layering.
