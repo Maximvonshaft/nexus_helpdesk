@@ -18,6 +18,20 @@ class OpenClawMCPError(RuntimeError):
     pass
 
 
+def local_mcp_cli_allowed() -> bool:
+    """Return whether this process may start a local OpenClaw MCP CLI.
+
+    In remote_gateway mode the remote bridge HTTP endpoint is the runtime boundary.
+    If CLI fallback is disabled, accidentally starting `openclaw mcp serve` must fail
+    before logging openclaw_mcp_start or spawning a subprocess.
+    """
+    return not (
+        settings.openclaw_deployment_mode == "remote_gateway"
+        and settings.openclaw_bridge_enabled
+        and not settings.openclaw_cli_fallback_enabled
+    )
+
+
 class OpenClawMCPClient:
     def __init__(self) -> None:
         self.process: subprocess.Popen[str] | None = None
@@ -56,6 +70,11 @@ class OpenClawMCPClient:
     def start(self) -> None:
         if self.process is not None:
             return
+        if not local_mcp_cli_allowed():
+            raise OpenClawMCPError(
+                "local_openclaw_mcp_cli_disabled_in_remote_gateway_mode: "
+                "use OPENCLAW_BRIDGE_URL remote bridge client; local CLI fallback is disabled"
+            )
         log_event(
             20,
             'openclaw_mcp_start',

@@ -31,6 +31,42 @@ settings = get_settings()
 ALLOWED_CHANNEL_ACCOUNT_PROVIDERS = {'whatsapp', 'telegram', 'sms'}
 
 
+def _remote_gateway_bridge_mode() -> bool:
+    return settings.openclaw_deployment_mode == 'remote_gateway' and settings.openclaw_bridge_enabled
+
+
+def _local_mcp_fallback_allowed(*, client: OpenClawMCPClient | None = None) -> bool:
+    # Explicitly supplied clients are allowed for tests/local controlled paths.
+    if client is not None:
+        return True
+    if not _remote_gateway_bridge_mode():
+        return True
+    return settings.openclaw_cli_fallback_enabled
+
+
+def _log_remote_gateway_bridge_degraded(*, action: str, error: str | None = None) -> None:
+    payload = {
+        'action': action,
+        'deployment_mode': settings.openclaw_deployment_mode,
+        'bridge_enabled': settings.openclaw_bridge_enabled,
+        'bridge_url': settings.openclaw_bridge_url,
+        'cli_fallback_enabled': settings.openclaw_cli_fallback_enabled,
+        'degraded_reason': 'openclaw_bridge_unreachable',
+    }
+    if error:
+        payload['error'] = error
+    LOGGER.warning('openclaw_remote_gateway_bridge_degraded', extra={'event_payload': payload})
+
+
+def _empty_remote_gateway_degraded_payload(action: str) -> dict[str, Any]:
+    return {
+        'conversations': [],
+        'degraded': True,
+        'degraded_reason': 'openclaw_bridge_unreachable',
+        'action': action,
+    }
+
+
 def _is_public_ip_address(value: str) -> bool:
     try:
         addr = ipaddress.ip_address(value)
@@ -312,6 +348,9 @@ def _fetch_session_route(session_key: str, *, limit: int = 1, client: OpenClawMC
     if settings.openclaw_bridge_enabled:
         payload_conv, _ = read_openclaw_bridge_conversation(session_key, limit=limit)
     if payload_conv is None:
+        if not _local_mcp_fallback_allowed(client=client):
+            _log_remote_gateway_bridge_degraded(action='conversation_get')
+            return None
         if client is not None:
             payload_conv = client.conversation_get(session_key)
         else:
@@ -727,8 +766,14 @@ def list_openclaw_conversations(*, limit: int = 50, channel: str | None = None, 
         payload = list_openclaw_bridge_conversations(limit=limit, channel=channel)
         if payload is not None:
             return payload
+
+    if not _local_mcp_fallback_allowed(client=client):
+        _log_remote_gateway_bridge_degraded(action='conversations_list')
+        return _empty_remote_gateway_degraded_payload('conversations_list')
+
     if client is not None:
         return client.conversations_list(limit=limit, channel=channel, include_last_message=True)
+
     with OpenClawMCPClient() as managed_client:
         return managed_client.conversations_list(limit=limit, channel=channel, include_last_message=True)
 

@@ -58,6 +58,8 @@ jobs:
           S3_REGION: us-east-1
           OPENCLAW_TRANSPORT: mcp
           OPENCLAW_DEPLOYMENT_MODE: remote_gateway
+          OPENCLAW_BRIDGE_ENABLED: "true"
+          OPENCLAW_BRIDGE_URL: http://127.0.0.1:18792
           OPENCLAW_CLI_FALLBACK_ENABLED: "false"
           METRICS_ENABLED: "true"
           METRICS_TOKEN: ci-metrics-token
