@@ -9,11 +9,14 @@ from app.main import app
 from app.models import TicketOutboundMessage, User
 from app.services.outbound_semantics import (
     is_external_outbound_channel,
+    is_external_outbound_message,
+    is_webchat_local_only_message,
     outbound_ui_label,
     count_outbound_semantics,
 )
+from app.services.webchat_fact_gate import evaluate_webchat_fact_gate
 from app.webchat_models import WebchatCardAction, WebchatConversation, WebchatMessage  # noqa: F401 - ensure metadata registration
-from app.webchat_schemas import WebChatCardPayload
+from app.webchat_schemas import WebChatActionSubmitRequest, WebChatCardAction, WebChatCardPayload
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -48,6 +51,17 @@ def _init_and_send(client: TestClient, body: str = "Hello, I need help tracking 
     )
     assert sent.status_code == 200, sent.text
     return conversation_id, visitor_token, client_message_id
+
+
+def _conversation_for(public_id: str) -> WebchatConversation:
+    db = SessionLocal()
+    try:
+        conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == public_id).first()
+        assert conversation is not None
+        db.expunge(conversation)
+        return conversation
+    finally:
+        db.close()
 
 
 def test_webchat_structured_message_contract_and_incremental_poll():
@@ -157,6 +171,61 @@ def test_invalid_card_type_and_invalid_action_id_rejected():
     assert rejected.status_code == 400
 
 
+def test_webchat_card_payload_rejects_html_script_iframe_style_and_unsafe_urls():
+    unsafe_texts = [
+        '<script>alert(1)</script>',
+        '<img src=x onerror=alert(1)>',
+        '<iframe src="https://evil.example"></iframe>',
+        '<style>body{}</style>',
+        'javascript:alert(1)',
+    ]
+    for text in unsafe_texts:
+        with pytest.raises(ValueError):
+            WebChatCardPayload(
+                card_id='card_safe_1',
+                card_type='quick_replies',
+                title=text,
+                body='Choose one',
+                actions=[WebChatCardAction(id='track_parcel', label='Track parcel', value='track')],
+            )
+
+    with pytest.raises(ValueError):
+        WebChatCardPayload(
+            card_id='card_safe_2',
+            card_type='quick_replies',
+            title='Safe',
+            body='Choose one',
+            actions=[WebChatCardAction(id='track_parcel', label='Track parcel', value='track', payload={'target_url': 'http://evil.example'})],
+        )
+
+    payload = WebChatCardPayload(
+        card_id='card_safe_3',
+        card_type='quick_replies',
+        title='Safe',
+        body='Choose one',
+        actions=[WebChatCardAction(id='track_parcel', label='Track parcel', value='track', payload={'target_url': 'https://example.test/help'})],
+    )
+    assert payload.card_id == 'card_safe_3'
+
+
+def test_webchat_action_submit_rejects_unsafe_ids():
+    for unsafe_id in ['card_<script>', 'card_ bad', 'card_"quote', "card_'quote", 'card_/path', 'card_\\path']:
+        with pytest.raises(ValueError):
+            WebChatActionSubmitRequest(message_id=1, card_id=unsafe_id, action_id='track_parcel', action_type='quick_reply')
+    for unsafe_action in ['bad action', '<script>', 'bad"quote', "bad'quote", 'bad/path']:
+        with pytest.raises(ValueError):
+            WebChatActionSubmitRequest(message_id=1, card_id='card_quick_abc123', action_id=unsafe_action, action_type='quick_reply')
+    assert WebChatActionSubmitRequest(message_id=1, card_id='card_quick_abc123', action_id='request_handoff', action_type='handoff_request')
+
+
+def test_fact_gate_blocks_unverified_operational_claims():
+    for text in ['Your parcel was delivered today', 'Refund approved', 'Address changed successfully', 'Customs cleared']:
+        decision = evaluate_webchat_fact_gate(text, fact_evidence_present=False)
+        assert decision.allowed is False
+        assert decision.fact_evidence_present is False
+    assert evaluate_webchat_fact_gate('Please share your tracking number', fact_evidence_present=False).allowed is True
+
+
 def test_handoff_card_and_action_are_local_only_outbound():
     client = TestClient(app)
     conversation_id, visitor_token, _ = _init_and_send(client, body='I want a human support agent for a complaint')
@@ -181,11 +250,17 @@ def test_handoff_card_and_action_are_local_only_outbound():
     assert submitted.status_code == 200, submitted.text
     assert submitted.json()['handoff_triggered'] is True
 
+    conversation = _conversation_for(conversation_id)
     db = SessionLocal()
     try:
+        rows = db.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == conversation.ticket_id).all()
+        assert any(row.provider_status == 'webchat_handoff_ack_delivered' for row in rows)
+        webchat_rows = [row for row in rows if row.channel == SourceChannel.web_chat]
+        assert webchat_rows
+        assert all(not is_external_outbound_message(row) for row in webchat_rows)
+        assert all(is_webchat_local_only_message(row) or row.provider_status is None for row in webchat_rows)
         counts = count_outbound_semantics(db)
         assert counts['webchat_handoff_ack_sent'] >= 1
-        assert counts['external_pending_outbound'] == 0
     finally:
         db.close()
 
@@ -194,6 +269,7 @@ def test_outbound_semantics_labels_and_external_channels():
     assert not is_external_outbound_channel(SourceChannel.web_chat)
     assert is_external_outbound_channel(SourceChannel.whatsapp)
     assert outbound_ui_label(SourceChannel.web_chat, MessageStatus.sent, 'webchat_safe_ack_delivered') == 'Local WebChat ACK'
+    assert outbound_ui_label(SourceChannel.web_chat, MessageStatus.sent, 'webchat_ai_delivered') == 'Local WebChat AI Reply'
     assert outbound_ui_label(SourceChannel.web_chat, MessageStatus.sent, 'webchat_ai_safe_fallback') == 'WebChat Safe Fallback'
     assert outbound_ui_label(SourceChannel.web_chat, MessageStatus.sent, 'webchat_card_delivered') == 'Local WebChat Card'
     assert outbound_ui_label(SourceChannel.web_chat, MessageStatus.sent, 'webchat_handoff_ack_delivered') == 'Local WebChat Handoff ACK'
