@@ -1,12 +1,12 @@
 # NexusDesk Frontend Agentic Runtime Upgrade — Execution Readiness Package
 
-Status: planning / review gate only. This package does not authorize implementation yet.
+Status: planning / review gate. This package establishes the governance baseline for implementation. It does not itself change runtime behavior.
 
 ## Purpose
 
 This directory is the execution-readiness package for upgrading NexusDesk from a functional React helpdesk console into an agent-native customer operations runtime.
 
-The package exists to make sure product intent, architecture, UX, security, testing, migration, release, and rollback are reviewed before implementation starts.
+The package exists to make sure product intent, architecture, UX, API contracts, security, testing, migration, release, and rollback are reviewed before implementation starts.
 
 ## Current main-branch facts
 
@@ -32,6 +32,11 @@ Implementation may start only after these documents are reviewed and accepted:
 10. `10-execution-epics.md`
 11. `11-engineering-handoff.md`
 12. `12-acceptance-criteria.md`
+13. `13-api-contract-map.md`
+14. `14-migration-plan.md`
+15. `15-release-rollout-plan.md`
+16. `16-rollback-plan.md`
+17. `17-pr26-professional-review-report.md`
 
 ## Non-goals for this planning branch
 
@@ -55,3 +60,28 @@ The professional upgrade path is not a rewrite. The target is a phased migration
 7. Add realtime event runtime.
 8. Upgrade AI Control into AI Governance Studio.
 9. Harden tests, release, rollback, and observability.
+
+## Closed checklist
+
+- PR #26 has a complete execution-readiness document set.
+- API contract map has been added.
+- Migration plan has been added.
+- Release rollout plan has been added.
+- Rollback plan has been added.
+- Professional review report has been added with an `Approve` decision for planning merge.
+
+## Next branch after merge
+
+After this package is merged to `main`, create:
+
+```text
+feature/frontend-runtime-foundation
+```
+
+First implementation commit target:
+
+```text
+refactor: establish frontend runtime foundation
+```
+
+The first implementation phase must be structure/foundation only and must not change product behavior.
