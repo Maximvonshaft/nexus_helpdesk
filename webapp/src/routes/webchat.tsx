@@ -5,6 +5,7 @@ import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
 import { formatDateTime, sanitizeDisplayText, statusTone } from '@/lib/format'
+import type { WebchatCardAction, WebchatCardPayload, WebchatMessage } from '@/lib/types'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
@@ -13,6 +14,10 @@ import { Field, Textarea } from '@/components/ui/Field'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Toast } from '@/components/ui/Toast'
+
+function isCardPayload(payload: WebchatMessage['payload_json']): payload is WebchatCardPayload {
+  return Boolean(payload && typeof payload === 'object' && 'card_type' in payload && 'actions' in payload)
+}
 
 function PayloadBlock({ payload }: { payload: unknown }) {
   const [open, setOpen] = useState(false)
@@ -25,24 +30,25 @@ function PayloadBlock({ payload }: { payload: unknown }) {
   )
 }
 
-function MessageCard({ msg }: { msg: any }) {
+function MessageCard({ msg }: { msg: WebchatMessage }) {
   const messageType = msg.message_type || 'text'
-  const payload = msg.payload_json
+  const cardPayload = isCardPayload(msg.payload_json) ? msg.payload_json : null
   if (messageType === 'card') {
+    const actions: WebchatCardAction[] = cardPayload?.actions ?? []
     return (
       <div className="message" data-role="agent">
         <div className="message-head">
-          <strong>结构化卡片 · {sanitizeDisplayText(payload?.card_type || 'card')}</strong>
+          <strong>结构化卡片 · {sanitizeDisplayText(cardPayload?.card_type || 'card')}</strong>
           <span>{formatDateTime(msg.created_at)}</span>
         </div>
         <div className="stack compact">
-          <div><strong>{sanitizeDisplayText(payload?.title || msg.body_text || msg.body)}</strong></div>
-          {payload?.body ? <div>{sanitizeDisplayText(payload.body)}</div> : null}
+          <div><strong>{sanitizeDisplayText(cardPayload?.title || msg.body_text || msg.body)}</strong></div>
+          {cardPayload?.body ? <div>{sanitizeDisplayText(cardPayload.body)}</div> : null}
           <div className="badges">
             <Badge tone="success">{sanitizeDisplayText(msg.action_status || 'pending')}</Badge>
-            {(payload?.actions || []).map((action: any) => <Badge key={action.id}>{sanitizeDisplayText(action.label || action.id)}</Badge>)}
+            {actions.map((action) => <Badge key={action.id}>{sanitizeDisplayText(action.label || action.id)}</Badge>)}
           </div>
-          <PayloadBlock payload={payload} />
+          <PayloadBlock payload={msg.payload_json} />
         </div>
       </div>
     )
@@ -55,7 +61,7 @@ function MessageCard({ msg }: { msg: any }) {
           <span>{formatDateTime(msg.created_at)}</span>
         </div>
         <div>{sanitizeDisplayText(msg.body_text || msg.body)}</div>
-        <PayloadBlock payload={payload} />
+        <PayloadBlock payload={msg.payload_json} />
       </div>
     )
   }
@@ -100,7 +106,8 @@ function WebchatInboxPage() {
   const selectedConversation = useMemo(
     () => (conversations.data ?? []).find((item) => item.ticket_id === selectedTicketId),
     [conversations.data, selectedTicketId],
-  ) as any
+  )
+  const threadData = thread.data
 
   const replyMutation = useMutation({
     mutationFn: async () => {
@@ -149,7 +156,7 @@ function WebchatInboxPage() {
           <CardBody>
             {conversations.isLoading ? <Skeleton lines={8} /> : null}
             <div className="list">
-              {(conversations.data ?? []).map((item: any) => (
+              {(conversations.data ?? []).map((item) => (
                 <button key={item.conversation_id} className={`queue-card ${selectedTicketId === item.ticket_id ? 'selected' : ''}`} onClick={() => setSelectedTicketId(item.ticket_id)}>
                   <div className="queue-card-top"><div className="badges">
                     <Badge tone={statusTone(item.status)}>{sanitizeDisplayText(item.status)}</Badge>
@@ -179,13 +186,13 @@ function WebchatInboxPage() {
                     <div className="kv"><label>访客</label><div>{sanitizeDisplayText(selectedConversation.visitor_name || selectedConversation.visitor_email || selectedConversation.visitor_phone || 'Anonymous')}</div></div>
                     <div className="kv"><label>来源网站</label><div>{sanitizeDisplayText(selectedConversation.origin)}</div></div>
                     <div className="kv"><label>页面</label><div>{sanitizeDisplayText(selectedConversation.page_url)}</div></div>
-                    <div className="kv"><label>当前状态</label><div>{sanitizeDisplayText((thread.data as any)?.conversation_state || selectedConversation.status)}</div></div>
-                    <div className="kv"><label>Required action</label><div>{sanitizeDisplayText((thread.data as any)?.required_action || 'None')}</div></div>
+                    <div className="kv"><label>当前状态</label><div>{sanitizeDisplayText(threadData?.conversation_state || selectedConversation.status)}</div></div>
+                    <div className="kv"><label>Required action</label><div>{sanitizeDisplayText(threadData?.required_action || 'None')}</div></div>
                   </div>
                   <div className="timeline">
-                    {((thread.data as any)?.messages ?? []).map((msg: any) => <MessageCard key={msg.id} msg={msg} />)}
-                    {(thread.data as any)?.actions?.length ? <div className="message" data-role="agent"><div className="message-head"><strong>Action audit</strong><span>{(thread.data as any).actions.length} actions</span></div><PayloadBlock payload={(thread.data as any).actions} /></div> : null}
-                    {thread.data && !((thread.data as any).messages ?? []).length ? <EmptyState text="该会话暂无消息。" /> : null}
+                    {(threadData?.messages ?? []).map((msg) => <MessageCard key={msg.id} msg={msg} />)}
+                    {threadData?.actions?.length ? <div className="message" data-role="agent"><div className="message-head"><strong>Action audit</strong><span>{threadData.actions.length} actions</span></div><PayloadBlock payload={threadData.actions} /></div> : null}
+                    {threadData && !(threadData.messages ?? []).length ? <EmptyState text="该会话暂无消息。" /> : null}
                   </div>
                 </div>
               ) : <EmptyState text="请选择一个 Webchat 会话。" />}
