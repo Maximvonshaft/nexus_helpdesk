@@ -67,11 +67,24 @@ Unknown card types degrade to a safe text fallback. Card text is rendered throug
 
 - Uses `sessionStorage` for conversation id and visitor token.
 - Uses `client_message_id` for optimistic send idempotency.
+- Uses stable client ids for retry, so a failed send can be retried without creating a duplicate visitor message.
 - Uses incremental polling with `after_id` after the first full history load.
 - Uses request timeout and exponential backoff.
 - Pauses/slows polling when the page is hidden.
 - Avoids full DOM redraw and appends new messages/cards.
 - Shows sending / failed states.
+- Shows a Retry button for failed optimistic visitor messages.
+- Disables card action buttons while submitting.
+
+## Action idempotency
+
+Card action submission is protected in three layers:
+
+1. Widget disables the clicked action button during submit.
+2. API returns the existing action response for a repeated same card/action submit.
+3. Database schema enforces one visitor submission per `(conversation_id, message_id, action_id, submitted_by)`.
+
+This prevents double-clicks and normal network retries from duplicating `webchat_card_actions`, action messages, and ticket comments.
 
 ## Demo
 
