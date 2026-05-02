@@ -6,12 +6,12 @@ Status: planning / review gate. This package establishes the governance baseline
 
 This directory is the execution-readiness package for upgrading NexusDesk from a functional React helpdesk console into an agent-native customer operations runtime.
 
-The package exists to make sure product intent, architecture, UX, API contracts, security, testing, migration, release, and rollback are reviewed before implementation starts.
+The package exists to make sure product intent, architecture, UX, API contracts, security, testing, migration, release, rollback, and minimal-grain execution plans are reviewed before implementation starts.
 
 ## Current main-branch facts
 
 - Main console is a Vite React webapp under `webapp/`.
-- The frontend stack currently uses React 19, Vite, TypeScript, TanStack Router, TanStack Query, and Tailwind CSS.
+- The frontend stack currently uses React 19, Vite, TypeScript, TanStack Router, TanStack Query, Tailwind CSS, and Radix primitive dependencies.
 - The current route surface includes dashboard, workspace, webchat, bulletins, AI control, control plane, accounts, users, and runtime pages.
 - WebChat is currently served as a static browser widget at `backend/app/static/webchat/widget.js`.
 - The WebChat admin and Workspace pages are already production-shaped but should be modularized before large-scale feature expansion.
@@ -37,8 +37,39 @@ Implementation may start only after these documents are reviewed and accepted:
 15. `15-release-rollout-plan.md`
 16. `16-rollback-plan.md`
 17. `17-pr26-professional-review-report.md`
+18. `18-execution-construction-blueprint.md`
 
-## Non-goals for this planning branch
+## Construction blueprint
+
+`18-execution-construction-blueprint.md` converts the approved frontend direction into minimal, reviewable construction units.
+
+It defines the exact execution order from the current `main` branch:
+
+```text
+Radix wrappers
+→ Design System CSS activation
+→ Runtime low-risk adoption
+→ Runtime Control Tower
+→ AI Governance Studio
+→ WebChat Control Center
+→ WebChat SDK runtime
+→ Workspace Ticket Operations Cockpit
+→ Realtime Event Runtime
+→ Branch governance cleanup
+```
+
+Each construction unit defines:
+
+- branch name
+- commit message
+- files to add/update
+- implementation details
+- non-goals
+- acceptance checks
+- rollback plan
+- hard stop rules
+
+## Non-goals for planning branches
 
 - No production code changes.
 - No framework migration.
@@ -55,11 +86,10 @@ The professional upgrade path is not a rewrite. The target is a phased migration
 2. Approve target architecture.
 3. Establish frontend runtime foundation.
 4. Introduce design system and business components.
-5. Upgrade Workspace into a ticket operations cockpit.
-6. Upgrade WebChat into an embeddable runtime SDK.
-7. Add realtime event runtime.
-8. Upgrade AI Control into AI Governance Studio.
-9. Harden tests, release, rollback, and observability.
+5. Wrap Radix primitives behind NexusDesk-owned components.
+6. Adopt the design system on low-risk runtime surfaces first.
+7. Upgrade AI Governance, WebChat, and Workspace only after foundations are proven.
+8. Harden tests, release, rollback, and observability.
 
 ## Closed checklist
 
@@ -69,19 +99,24 @@ The professional upgrade path is not a rewrite. The target is a phased migration
 - Release rollout plan has been added.
 - Rollback plan has been added.
 - Professional review report has been added with an `Approve` decision for planning merge.
+- Frontend runtime foundation has been merged.
+- Agentic design system foundation has been merged.
+- Radix adoption runbook has been merged.
+- Radix primitive dependencies have been merged.
+- Minimal-grain frontend construction blueprint has been added.
 
-## Next branch after merge
+## Next branch after construction blueprint merge
 
-After this package is merged to `main`, create:
+After `18-execution-construction-blueprint.md` is merged to `main`, create:
 
 ```text
-feature/frontend-runtime-foundation
+feature/radix-dialog-wrapper
 ```
 
 First implementation commit target:
 
 ```text
-refactor: establish frontend runtime foundation
+feat: add Dialog primitive wrapper
 ```
 
-The first implementation phase must be structure/foundation only and must not change product behavior.
+The first wrapper phase must not change product behavior or adopt the wrapper in business pages yet.
