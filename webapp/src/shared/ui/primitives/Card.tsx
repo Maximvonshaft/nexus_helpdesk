@@ -13,7 +13,7 @@ export function Card({ elevated = false, className, children, ...props }: CardPr
   )
 }
 
-export interface CardHeaderProps extends HTMLAttributes<HTMLDivElement> {
+export interface CardHeaderProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'> {
   title: ReactNode
   subtitle?: ReactNode
   actions?: ReactNode
