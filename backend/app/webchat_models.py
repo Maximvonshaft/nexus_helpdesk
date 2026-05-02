@@ -74,7 +74,7 @@ class WebchatCardAction(Base):
     conversation_id: Mapped[int] = mapped_column(ForeignKey("webchat_conversations.id"), index=True)
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
     message_id: Mapped[int] = mapped_column(ForeignKey("webchat_messages.id"), index=True)
-    action_id: Mapped[str] = mapped_column(String(80), index=True)
+    action_id: Mapped[str] = mapped_column(String(80), default="legacy_action", index=True)
     action_type: Mapped[str] = mapped_column(String(64), index=True)
     action_payload_json: Mapped[str] = mapped_column(Text)
     submitted_by: Mapped[str] = mapped_column(String(64), default="visitor", index=True)
