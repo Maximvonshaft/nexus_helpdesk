@@ -2,7 +2,9 @@
 
 ## Status
 
-Planning handoff. This is not yet authorization to implement. Implementation starts only after the readiness package is reviewed and accepted.
+Planning handoff accepted by PR #26 professional review. This handoff authorizes only the next controlled step after merge: creating the first implementation branch `feature/frontend-runtime-foundation`.
+
+It does not authorize broad product rewrites, WebChat behavior changes, API breaking changes, or production deployment by itself.
 
 ## Task name
 
@@ -53,6 +55,11 @@ This handoff creates the review package only. It must not change production beha
 - `09-test-strategy.md`
 - `10-execution-epics.md`
 - `12-acceptance-criteria.md`
+- `13-api-contract-map.md`
+- `14-migration-plan.md`
+- `15-release-rollout-plan.md`
+- `16-rollback-plan.md`
+- `17-pr26-professional-review-report.md`
 
 ## Implementation guardrails
 
@@ -67,10 +74,12 @@ Do not:
 - break current one-line WebChat snippet
 - remove polling before realtime fallback is proven
 - mix all epics into one pull request
+- start with Workspace redesign before foundation is complete
+- start with WebChat SDK before compatibility smoke exists
 
 ## Approved target direction
 
-If readiness is approved, implementation should follow this phased path:
+Implementation must follow this phased path:
 
 1. Frontend Runtime Foundation
 2. Design System Foundation
@@ -145,10 +154,27 @@ Implementation may start only after:
 - test strategy accepted
 - execution epics accepted
 - acceptance criteria accepted
+- API contract map accepted
+- migration plan accepted
+- release rollout plan accepted
+- rollback plan accepted
+- PR #26 professional review accepted
 
 ## Recommended first implementation branch after approval
 
 `feature/frontend-runtime-foundation`
+
+## First implementation scope
+
+The first implementation branch must only establish frontend runtime foundation:
+
+- create or prepare `app / features / entities / shared / styles` structure
+- split safe shared API/auth/UI/layout utilities only when behavior remains unchanged
+- preserve all existing routes
+- preserve all existing API paths
+- preserve WebChat widget behavior
+- preserve login/session behavior
+- preserve current product behavior
 
 ## Recommended first implementation commit message
 
