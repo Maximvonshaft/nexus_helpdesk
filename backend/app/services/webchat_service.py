@@ -5,6 +5,7 @@ import json
 import logging
 import secrets
 from dataclasses import asdict
+from datetime import timedelta
 from typing import Any
 from urllib.parse import urlparse
 
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketPriority, TicketSource, TicketStatus
 from ..models import Customer, Ticket, TicketComment, TicketEvent, TicketOutboundMessage, User
-from ..utils.time import utc_now
+from ..utils.time import ensure_utc, utc_now
 from ..settings import get_settings
 from ..webchat_models import WebchatConversation, WebchatMessage
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
@@ -26,6 +27,10 @@ WEBCHAT_LOGGER = logging.getLogger("nexusdesk")
 MAX_MESSAGE_CHARS = 2000
 MAX_FIELD_CHARS = 300
 MAX_URL_CHARS = 700
+MAX_CLIENT_MESSAGE_ID_CHARS = 120
+WEBCHAT_VISITOR_TOKEN_TTL_DAYS = 7
+DEFAULT_PUBLIC_MESSAGE_LIMIT = 50
+MAX_PUBLIC_MESSAGE_LIMIT = 100
 
 
 def _clip(value: str | None, limit: int = MAX_FIELD_CHARS) -> str | None:
@@ -58,6 +63,10 @@ def _new_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+def _new_token_expiry():
+    return utc_now() + timedelta(days=WEBCHAT_VISITOR_TOKEN_TTL_DAYS)
+
+
 def _origin_from_request(request: Request, explicit_origin: str | None = None) -> str | None:
     origin = explicit_origin or request.headers.get("origin")
     if origin:
@@ -74,16 +83,27 @@ def _origin_from_request(request: Request, explicit_origin: str | None = None) -
 def _validate_token(conversation: WebchatConversation, token: str | None) -> None:
     if not token or _hash_token(token) != conversation.visitor_token_hash:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
+    expires_at = ensure_utc(conversation.visitor_token_expires_at)
+    if expires_at is not None and expires_at <= utc_now():
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
 
 
 def _message_read(row: WebchatMessage) -> dict[str, Any]:
     return {
         "id": row.id,
         "direction": row.direction,
+        "client_message_id": row.client_message_id,
         "body": row.body,
         "author_label": row.author_label,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
+
+
+def get_public_conversation_or_404(db: Session, public_id: str) -> WebchatConversation:
+    conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == public_id).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="webchat conversation not found")
+    return conversation
 
 
 def create_or_resume_conversation(db: Session, payload: Any, request: Request) -> dict[str, Any]:
@@ -98,6 +118,7 @@ def create_or_resume_conversation(db: Session, payload: Any, request: Request) -
             _validate_token(existing, visitor_token)
             existing.last_seen_at = utc_now()
             existing.updated_at = utc_now()
+            existing.visitor_token_expires_at = existing.visitor_token_expires_at or _new_token_expiry()
             existing.page_url = _clip(getattr(payload, "page_url", None), MAX_URL_CHARS) or existing.page_url
             existing.origin = _origin_from_request(request, getattr(payload, "origin", None)) or existing.origin
             existing.user_agent = _clip(request.headers.get("user-agent"), 300) or existing.user_agent
@@ -161,6 +182,7 @@ def create_or_resume_conversation(db: Session, payload: Any, request: Request) -
         page_url=page_url,
         user_agent=user_agent,
         status="open",
+        visitor_token_expires_at=_new_token_expiry(),
         last_seen_at=utc_now(),
         created_at=utc_now(),
         updated_at=utc_now(),
@@ -234,17 +256,41 @@ def _maybe_create_webchat_auto_ack(db: Session, *, conversation: WebchatConversa
     db.add(row)
 
 
-def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, body: str, request: Request) -> dict[str, Any]:
-    conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == public_id).first()
-    if not conversation:
-        raise HTTPException(status_code=404, detail="webchat conversation not found")
+def add_visitor_message(
+    db: Session,
+    public_id: str,
+    visitor_token: str | None,
+    body: str,
+    request: Request,
+    *,
+    client_message_id: str | None = None,
+) -> dict[str, Any]:
+    conversation = get_public_conversation_or_404(db, public_id)
     _validate_token(conversation, visitor_token)
     normalized_body = _clip_body(body)
+    normalized_client_message_id = _clip(client_message_id, MAX_CLIENT_MESSAGE_ID_CHARS)
+
+    if normalized_client_message_id:
+        existing_message = (
+            db.query(WebchatMessage)
+            .filter(
+                WebchatMessage.conversation_id == conversation.id,
+                WebchatMessage.direction == "visitor",
+                WebchatMessage.client_message_id == normalized_client_message_id,
+            )
+            .first()
+        )
+        if existing_message:
+            conversation.last_seen_at = utc_now()
+            conversation.updated_at = utc_now()
+            db.flush()
+            return {"ok": True, "idempotent": True, "message": _message_read(existing_message)}
 
     message = WebchatMessage(
         conversation_id=conversation.id,
         ticket_id=conversation.ticket_id,
         direction="visitor",
+        client_message_id=normalized_client_message_id,
         body=normalized_body,
         author_label=conversation.visitor_name or "Visitor",
     )
@@ -277,7 +323,7 @@ def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, 
             actor_id=None,
             event_type=EventType.comment_added,
             note="Webchat visitor message received",
-            payload_json=json.dumps({"public_conversation_id": public_id}, ensure_ascii=False),
+            payload_json=json.dumps({"public_conversation_id": public_id, "client_message_id": normalized_client_message_id}, ensure_ascii=False),
         ))
 
     conversation.last_seen_at = utc_now()
@@ -299,18 +345,31 @@ def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, 
         )
 
     db.refresh(message)
-    return {"ok": True, "message": _message_read(message)}
+    return {"ok": True, "idempotent": False, "message": _message_read(message)}
 
 
-def list_public_messages(db: Session, public_id: str, visitor_token: str | None) -> dict[str, Any]:
-    conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == public_id).first()
-    if not conversation:
-        raise HTTPException(status_code=404, detail="webchat conversation not found")
+def list_public_messages(
+    db: Session,
+    public_id: str,
+    visitor_token: str | None,
+    *,
+    after_id: int | None = None,
+    limit: int = DEFAULT_PUBLIC_MESSAGE_LIMIT,
+) -> dict[str, Any]:
+    conversation = get_public_conversation_or_404(db, public_id)
     _validate_token(conversation, visitor_token)
-    rows = db.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id).order_by(WebchatMessage.created_at.asc(), WebchatMessage.id.asc()).all()
+    safe_limit = max(1, min(limit or DEFAULT_PUBLIC_MESSAGE_LIMIT, MAX_PUBLIC_MESSAGE_LIMIT))
+    query = db.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id)
+    if after_id is not None:
+        query = query.filter(WebchatMessage.id > after_id)
+        rows = query.order_by(WebchatMessage.id.asc()).limit(safe_limit).all()
+    else:
+        rows = query.order_by(WebchatMessage.id.desc()).limit(safe_limit).all()
+        rows = list(reversed(rows))
     conversation.last_seen_at = utc_now()
     db.flush()
-    return {"conversation_id": conversation.public_id, "status": conversation.status, "messages": [_message_read(row) for row in rows]}
+    next_after_id = rows[-1].id if rows else after_id
+    return {"conversation_id": conversation.public_id, "status": conversation.status, "messages": [_message_read(row) for row in rows], "next_after_id": next_after_id}
 
 
 def admin_list_conversations(db: Session, current_user: User, *, limit: int = 50) -> list[dict[str, Any]]:
