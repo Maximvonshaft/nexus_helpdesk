@@ -36,9 +36,9 @@ def _add_column_if_missing(bind, table: str, column: sa.Column) -> None:
         op.add_column(table, column)
 
 
-def _create_index_if_missing(bind, name: str, table: str, cols: list[str]) -> None:
+def _create_index_if_missing(bind, name: str, table: str, cols: list[str], *, unique: bool = False) -> None:
     if name not in _indexes(bind, table):
-        op.create_index(name, table, cols)
+        op.create_index(name, table, cols, unique=unique)
 
 
 def upgrade() -> None:
@@ -63,6 +63,7 @@ def upgrade() -> None:
             sa.Column("conversation_id", sa.Integer(), sa.ForeignKey("webchat_conversations.id"), nullable=False),
             sa.Column("ticket_id", sa.Integer(), sa.ForeignKey("tickets.id"), nullable=False),
             sa.Column("message_id", sa.Integer(), sa.ForeignKey("webchat_messages.id"), nullable=False),
+            sa.Column("action_id", sa.String(length=80), nullable=False),
             sa.Column("action_type", sa.String(length=64), nullable=False),
             sa.Column("action_payload_json", sa.Text(), nullable=False),
             sa.Column("submitted_by", sa.String(length=64), nullable=False, server_default="visitor"),
@@ -73,11 +74,21 @@ def upgrade() -> None:
             sa.Column("user_agent_hash", sa.String(length=96), nullable=True),
             sa.Column("origin", sa.String(length=255), nullable=True),
         )
+    elif "action_id" not in _columns(bind, "webchat_card_actions"):
+        _add_column_if_missing(bind, "webchat_card_actions", sa.Column("action_id", sa.String(length=80), nullable=False, server_default="legacy_action"))
     _create_index_if_missing(bind, "ix_webchat_card_actions_conversation_id", "webchat_card_actions", ["conversation_id"])
     _create_index_if_missing(bind, "ix_webchat_card_actions_ticket_id", "webchat_card_actions", ["ticket_id"])
     _create_index_if_missing(bind, "ix_webchat_card_actions_message_id", "webchat_card_actions", ["message_id"])
+    _create_index_if_missing(bind, "ix_webchat_card_actions_action_id", "webchat_card_actions", ["action_id"])
     _create_index_if_missing(bind, "ix_webchat_card_actions_status", "webchat_card_actions", ["status"])
     _create_index_if_missing(bind, "ix_webchat_card_actions_action_type", "webchat_card_actions", ["action_type"])
+    _create_index_if_missing(
+        bind,
+        "uq_webchat_card_actions_once_per_action",
+        "webchat_card_actions",
+        ["conversation_id", "message_id", "action_id", "submitted_by"],
+        unique=True,
+    )
 
 
 def downgrade() -> None:
