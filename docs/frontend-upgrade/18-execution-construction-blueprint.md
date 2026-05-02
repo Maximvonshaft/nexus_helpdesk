@@ -1,10 +1,10 @@
-# 18 — Frontend Execution Construction Blueprint
+# 18 — Frontend Fast-Track Execution Construction Blueprint
 
 ## Status
 
-Planning / execution blueprint. This document is based on the current `main` branch after the frontend readiness, runtime foundation, design system foundation, and Radix dependency work have been merged.
+Fast-track execution blueprint. This document is based on the current `main` branch after the frontend readiness, runtime foundation, design system foundation, Radix adoption runbook, and Radix dependency work have been merged.
 
-This document does not authorize a large rewrite. It converts the approved frontend direction into minimal, reviewable construction units.
+This version intentionally replaces the overly granular 29-PR plan with a faster 6-PR execution plan. The goal is speed with controlled blast radius, not academic decomposition.
 
 ## Current `main` baseline
 
@@ -40,22 +40,34 @@ Current `main` does **not** yet contain:
 - WebChat SDK / Shadow DOM runtime
 - Workspace Ticket Operations Cockpit rewrite
 
-## Global execution law
+## Fast-track principle
 
-Every construction unit must follow these rules:
+We will not split one component into one PR. That is safe but too slow.
 
-1. Create a fresh branch from latest `main`.
-2. Keep one PR to one construction unit.
-3. Do not mix foundation, component wrappers, page migration, backend API changes, and WebChat widget changes in the same PR.
-4. Preserve existing route paths unless the PR explicitly says otherwise.
-5. Preserve existing API contracts unless the API contract map is updated and reviewed.
-6. Preserve WebChat public widget compatibility.
-7. Preserve admin auth/session behavior.
-8. Run Frontend CI for frontend changes.
-9. Include rollback plan in every PR.
-10. Do not merge if latest head has no green CI.
+The new rule is:
 
-## Global required checks
+```text
+One PR = one complete visible layer or one complete product surface.
+```
+
+This gives speed while keeping rollback possible.
+
+## Non-negotiable guardrails
+
+Fast does not mean reckless. Every PR must still follow these gates:
+
+1. Branch from latest `main`.
+2. One PR must have one clear rollback path.
+3. No hand-edited lockfile.
+4. Latest head must have green CI.
+5. Existing route paths remain stable.
+6. Existing API paths remain stable unless explicitly reviewed.
+7. Existing WebChat public widget contract remains stable.
+8. Admin auth/session behavior must not change unintentionally.
+9. External outbound dispatch semantics must not change accidentally.
+10. Workspace/WebChat core changes must include targeted smoke notes.
+
+## Required checks
 
 Frontend-only PRs:
 
@@ -77,693 +89,298 @@ alembic heads
 alembic upgrade head
 ```
 
-Release/smoke checks when affected:
+Smoke when affected:
 
 ```text
-[ ] login smoke
-[ ] dashboard smoke
-[ ] Workspace smoke
-[ ] WebChat admin smoke
-[ ] WebChat widget smoke
-[ ] AI Control / Governance smoke
-[ ] Runtime smoke
+[ ] login
+[ ] dashboard
+[ ] runtime
+[ ] AI Control / Governance
+[ ] WebChat admin
+[ ] WebChat visitor widget
+[ ] Workspace ticket list/detail/update
 ```
 
 ---
 
-# Phase 1 — Radix Wrapper Primitives
+# Fast-Track PR 1 — Radix Wrappers + Design System CSS Activation
+
+## Branch
+
+```text
+feature/design-system-radix-wrapper-foundation
+```
+
+## Commit target
+
+```text
+feat: add Radix-backed design system primitives
+```
 
 ## Goal
 
-Convert raw Radix dependencies into NexusDesk-owned wrapper components under `shared/ui/primitives`.
+Convert the existing Radix dependencies into NexusDesk-owned wrappers and activate NexusDesk design-system CSS in one controlled PR.
 
-Feature code must import NexusDesk wrappers, not raw Radix packages.
+This PR gives us the real UI foundation needed for fast page adoption.
 
-## Construction unit 1.1 — Dialog wrapper
-
-### Branch
-
-```text
-feature/radix-dialog-wrapper
-```
-
-### Commit
-
-```text
-feat: add Dialog primitive wrapper
-```
-
-### Files to add
+## Files to add
 
 ```text
 webapp/src/shared/ui/primitives/Dialog.tsx
+webapp/src/shared/ui/primitives/Tooltip.tsx
+webapp/src/shared/ui/primitives/Popover.tsx
+webapp/src/shared/ui/primitives/DropdownMenu.tsx
+webapp/src/shared/ui/primitives/Tabs.tsx
+webapp/src/shared/ui/primitives/Select.tsx
+webapp/src/styles/design-system.css
 ```
 
-### Files to update
+## Files to update
 
 ```text
 webapp/src/shared/ui/primitives/index.ts
 webapp/src/shared/ui/index.ts
 webapp/src/styles/components.css
+webapp/src/styles.css
 webapp/src/shared/ui/DESIGN_SYSTEM_FOUNDATION.md
 ```
 
-### Implementation details
+## Wrapper exports
 
-- Wrap `@radix-ui/react-dialog`.
-- Export:
-  - `DialogRoot`
-  - `DialogTrigger`
-  - `DialogPortal`
-  - `DialogOverlay`
-  - `DialogContent`
-  - `DialogTitle`
-  - `DialogDescription`
-  - `DialogClose`
-- Use `clsx` and `nd-dialog*` class names.
-- Do not add page usage in this PR.
-- Do not import `components.css` into app yet unless this PR explicitly chooses to activate only safe base classes. Recommended: keep CSS inactive until first adoption PR.
+Dialog:
 
-### Non-goals
+```text
+DialogRoot
+DialogTrigger
+DialogPortal
+DialogOverlay
+DialogContent
+DialogTitle
+DialogDescription
+DialogClose
+```
 
-- No Workspace usage.
-- No WebChat usage.
-- No AI Control usage.
-- No route import changes.
+Tooltip:
+
+```text
+TooltipProvider
+TooltipRoot
+TooltipTrigger
+TooltipContent
+```
+
+Popover:
+
+```text
+PopoverRoot
+PopoverTrigger
+PopoverPortal
+PopoverContent
+PopoverClose
+```
+
+DropdownMenu:
+
+```text
+DropdownMenuRoot
+DropdownMenuTrigger
+DropdownMenuContent
+DropdownMenuItem
+DropdownMenuSeparator
+DropdownMenuLabel
+```
+
+Tabs:
+
+```text
+TabsRoot
+TabsList
+TabsTrigger
+TabsContent
+```
+
+Select:
+
+```text
+SelectRoot
+SelectTrigger
+SelectValue
+SelectContent
+SelectItem
+SelectLabel
+SelectSeparator
+```
+
+## CSS activation
+
+Add:
+
+```text
+webapp/src/styles/design-system.css
+```
+
+It should import:
+
+```css
+@import './styles/tokens.css';
+@import './styles/components.css';
+```
+
+Then import `design-system.css` from the active `webapp/src/styles.css`.
+
+The new component class names must use the `nd-` prefix to avoid collisions.
+
+## Important decision
+
+Skip `AlertDialog` in this PR because current `main` does not include `@radix-ui/react-alert-dialog`. Add it only when a destructive confirmation flow actually needs it.
+
+## Non-goals
+
+- No page migration.
+- No Workspace changes.
+- No WebChat admin changes.
+- No WebChat widget changes.
 - No backend changes.
+- No API/auth changes.
 
-### Acceptance
+## Acceptance
 
 ```text
 [ ] npm ci passes
 [ ] npm run typecheck passes
 [ ] npm run lint passes
 [ ] npm run build passes
-[ ] no existing page imports changed
-```
-
-### Rollback
-
-Revert PR. No active route should depend on it.
-
-## Construction unit 1.2 — Tooltip wrapper
-
-### Branch
-
-```text
-feature/radix-tooltip-wrapper
-```
-
-### Commit
-
-```text
-feat: add Tooltip primitive wrapper
-```
-
-### Files to add
-
-```text
-webapp/src/shared/ui/primitives/Tooltip.tsx
-```
-
-### Files to update
-
-```text
-webapp/src/shared/ui/primitives/index.ts
-webapp/src/styles/components.css
-```
-
-### Implementation details
-
-- Wrap `@radix-ui/react-tooltip`.
-- Export:
-  - `TooltipProvider`
-  - `TooltipRoot`
-  - `TooltipTrigger`
-  - `TooltipContent`
-- Use `nd-tooltip*` class names.
-- Default delay should be conservative and not disruptive.
-
-### Non-goals
-
-- No page adoption yet.
-
-### Acceptance
-
-Same as unit 1.1.
-
-## Construction unit 1.3 — Popover wrapper
-
-### Branch
-
-```text
-feature/radix-popover-wrapper
-```
-
-### Commit
-
-```text
-feat: add Popover primitive wrapper
-```
-
-### Files to add
-
-```text
-webapp/src/shared/ui/primitives/Popover.tsx
-```
-
-### Files to update
-
-```text
-webapp/src/shared/ui/primitives/index.ts
-webapp/src/styles/components.css
-```
-
-### Implementation details
-
-- Wrap `@radix-ui/react-popover`.
-- Export:
-  - `PopoverRoot`
-  - `PopoverTrigger`
-  - `PopoverPortal`
-  - `PopoverContent`
-  - `PopoverClose`
-- Use `nd-popover*` class names.
-
-### Acceptance
-
-Same as unit 1.1.
-
-## Construction unit 1.4 — DropdownMenu wrapper
-
-### Branch
-
-```text
-feature/radix-dropdown-wrapper
-```
-
-### Commit
-
-```text
-feat: add DropdownMenu primitive wrapper
-```
-
-### Files to add
-
-```text
-webapp/src/shared/ui/primitives/DropdownMenu.tsx
-```
-
-### Files to update
-
-```text
-webapp/src/shared/ui/primitives/index.ts
-webapp/src/styles/components.css
-```
-
-### Implementation details
-
-- Wrap `@radix-ui/react-dropdown-menu`.
-- Export:
-  - `DropdownMenuRoot`
-  - `DropdownMenuTrigger`
-  - `DropdownMenuContent`
-  - `DropdownMenuItem`
-  - `DropdownMenuSeparator`
-  - `DropdownMenuLabel`
-- Use `nd-dropdown*` class names.
-
-### Acceptance
-
-Same as unit 1.1.
-
-## Construction unit 1.5 — Tabs wrapper
-
-### Branch
-
-```text
-feature/radix-tabs-wrapper
-```
-
-### Commit
-
-```text
-feat: add Tabs primitive wrapper
-```
-
-### Files to add
-
-```text
-webapp/src/shared/ui/primitives/Tabs.tsx
-```
-
-### Files to update
-
-```text
-webapp/src/shared/ui/primitives/index.ts
-webapp/src/styles/components.css
-```
-
-### Implementation details
-
-- Wrap `@radix-ui/react-tabs`.
-- Export:
-  - `TabsRoot`
-  - `TabsList`
-  - `TabsTrigger`
-  - `TabsContent`
-- Use `nd-tabs*` class names.
-
-### Acceptance
-
-Same as unit 1.1.
-
-## Construction unit 1.6 — Select wrapper
-
-### Branch
-
-```text
-feature/radix-select-wrapper
-```
-
-### Commit
-
-```text
-feat: add Select primitive wrapper
-```
-
-### Files to add
-
-```text
-webapp/src/shared/ui/primitives/Select.tsx
-```
-
-### Files to update
-
-```text
-webapp/src/shared/ui/primitives/index.ts
-webapp/src/styles/components.css
-```
-
-### Implementation details
-
-- Wrap `@radix-ui/react-select`.
-- Export:
-  - `SelectRoot`
-  - `SelectTrigger`
-  - `SelectValue`
-  - `SelectContent`
-  - `SelectItem`
-  - `SelectLabel`
-  - `SelectSeparator`
-- Use `nd-select*` class names.
-
-### Acceptance
-
-Same as unit 1.1.
-
-## Construction unit 1.7 — Optional AlertDialog dependency and wrapper
-
-### Important current-main fact
-
-Current `main` does **not** include `@radix-ui/react-alert-dialog`.
-
-### Branch
-
-```text
-feature/radix-alert-dialog-wrapper
-```
-
-### Commit sequence
-
-```text
-chore: add AlertDialog Radix dependency
-feat: add AlertDialog primitive wrapper
-```
-
-### Required dependency command
-
-Run inside `webapp/`:
-
-```bash
-npm install @radix-ui/react-alert-dialog
-```
-
-Commit both:
-
-```text
-webapp/package.json
-webapp/package-lock.json
-```
-
-### Files to add
-
-```text
-webapp/src/shared/ui/primitives/AlertDialog.tsx
-```
-
-### Files to update
-
-```text
-webapp/src/shared/ui/primitives/index.ts
-webapp/src/styles/components.css
-```
-
-### Acceptance
-
-```text
-[ ] package-lock generated by npm, not hand-edited
-[ ] npm ci passes
-[ ] typecheck/lint/build pass
-```
-
-### Non-goal
-
-Do not use AlertDialog in business pages until wrapper CI is green.
-
----
-
-# Phase 2 — Design System CSS Activation
-
-## Goal
-
-Activate NexusDesk token/component CSS safely after wrappers exist.
-
-## Construction unit 2.1 — CSS composition entry
-
-### Branch
-
-```text
-feature/design-system-css-composition
-```
-
-### Commit
-
-```text
-feat: compose design system styles
-```
-
-### Files to add
-
-```text
-webapp/src/styles/design-system.css
-```
-
-### Files to update
-
-```text
-webapp/src/styles.css
-```
-
-### Implementation details
-
-- Add `design-system.css` that imports:
-  - `./styles/tokens.css`
-  - `./styles/components.css`
-- Import `design-system.css` from `styles.css` at a controlled position.
-- Confirm no existing class names collide destructively.
-
-### Non-goals
-
-- No page migration.
-- No component adoption.
-- No visual redesign.
-
-### Acceptance
-
-```text
-[ ] build passes
 [ ] login visual smoke has no breakage
 [ ] dashboard visual smoke has no breakage
 [ ] no horizontal overflow introduced
 ```
 
-### Rollback
+## Rollback
 
-Revert CSS import PR.
+Revert this PR. Since no product page should depend on wrappers yet, rollback is low risk.
 
 ---
 
-# Phase 3 — Low-risk Runtime Page Adoption
+# Fast-Track PR 2 — Runtime Control Tower First Visible Adoption
+
+## Branch
+
+```text
+feature/runtime-control-tower-fast-track
+```
+
+## Commit target
+
+```text
+feat: upgrade runtime page to control tower
+```
 
 ## Goal
 
-Use new design-system components on a non-critical status surface before touching Workspace or WebChat.
+Use the new design system on the lowest-risk operational surface first: `/runtime`.
 
-Target page: `/runtime`.
+This produces visible product value quickly while avoiding Workspace/WebChat risk.
 
-## Construction unit 3.1 — Extract runtime feature shell
-
-### Branch
-
-```text
-feature/runtime-feature-shell
-```
-
-### Commit
-
-```text
-refactor: extract runtime feature shell
-```
-
-### Files to add
+## Files to add
 
 ```text
 webapp/src/features/runtime-control/RuntimeControlRoute.tsx
 webapp/src/features/runtime-control/components/RuntimePageHeader.tsx
-webapp/src/features/runtime-control/components/RuntimeSection.tsx
-webapp/src/features/runtime-control/index.ts
-```
-
-### Files to update
-
-```text
-webapp/src/routes/runtime.tsx
-```
-
-### Implementation details
-
-- Move rendering orchestration only.
-- Keep API calls and behavior unchanged.
-- Route path remains `/runtime`.
-- Do not redesign yet.
-
-### Acceptance
-
-```text
-[ ] /runtime renders same data
-[ ] typecheck/lint/build pass
-[ ] no API changes
-```
-
-## Construction unit 3.2 — Runtime status cards with Card/StatusBadge
-
-### Branch
-
-```text
-feature/runtime-status-cards-design-system
-```
-
-### Commit
-
-```text
-feat: apply design system to runtime status cards
-```
-
-### Files to add/update
-
-```text
 webapp/src/features/runtime-control/components/RuntimeHealthCard.tsx
-webapp/src/features/runtime-control/components/OpenClawHealthCard.tsx
-webapp/src/features/runtime-control/components/JobHealthCard.tsx
-webapp/src/features/runtime-control/components/ReadinessCard.tsx
-webapp/src/features/runtime-control/RuntimeControlRoute.tsx
-```
-
-### Components to use
-
-```text
-Card
-CardHeader
-CardBody
-StatusBadge
-Tooltip
-```
-
-### Non-goals
-
-- No dangerous runtime actions.
-- No replay/drop behavior change.
-- No backend API change.
-
-### Acceptance
-
-```text
-[ ] Runtime page smoke passes
-[ ] status labels remain semantically correct
-[ ] healthy/degraded/failing states are visually distinct
-[ ] typecheck/lint/build pass
-```
-
----
-
-# Phase 4 — Runtime Control Tower
-
-## Goal
-
-Turn `/runtime` into a production-grade control tower without modifying backend semantics.
-
-## Construction unit 4.1 — Runtime data model normalization
-
-### Branch
-
-```text
-feature/runtime-entity-models
-```
-
-### Commit
-
-```text
-refactor: add runtime entity models
-```
-
-### Files to add
-
-```text
+webapp/src/features/runtime-control/components/OpenClawBridgePanel.tsx
+webapp/src/features/runtime-control/components/JobsPanel.tsx
+webapp/src/features/runtime-control/components/ProductionReadinessPanel.tsx
+webapp/src/features/runtime-control/components/SafetyGatePanel.tsx
+webapp/src/features/runtime-control/index.ts
 webapp/src/entities/runtime/types.ts
 webapp/src/entities/runtime/queryKeys.ts
 webapp/src/entities/runtime/index.ts
 ```
 
-### Files to update
+## Files to update
 
 ```text
-webapp/src/lib/api.ts  # only if adding typed wrapper exports without behavior change
+webapp/src/routes/runtime.tsx
 ```
 
-### Acceptance
+## Components to use
 
 ```text
-[ ] no API path changes
-[ ] typecheck/lint/build pass
-```
-
-## Construction unit 4.2 — Runtime event/status panels
-
-### Branch
-
-```text
-feature/runtime-control-panels
-```
-
-### Commit
-
-```text
-feat: add runtime control panels
-```
-
-### Files to add
-
-```text
-webapp/src/features/runtime-control/components/ProductionReadinessPanel.tsx
-webapp/src/features/runtime-control/components/OpenClawBridgePanel.tsx
-webapp/src/features/runtime-control/components/JobsPanel.tsx
-webapp/src/features/runtime-control/components/SafetyGatePanel.tsx
-```
-
-### Components to use
-
-```text
-Tabs
 Card
+CardHeader
+CardBody
+Badge
 StatusBadge
 SafetyGateBadge
 Tooltip
+Tabs
 ```
 
-### Non-goals
+## Implementation rules
 
-- No destructive actions unless confirmation flow exists.
-- No backend mutation changes.
+- Route remains `/runtime`.
+- Existing API calls remain unchanged unless wrapped with type-safe local helpers.
+- No backend behavior change.
+- No dangerous runtime mutation changes.
+- Health states must clearly show healthy / degraded / failing / unknown.
+
+## Acceptance
+
+```text
+[ ] /runtime loads
+[ ] existing runtime data still appears
+[ ] status labels remain semantically correct
+[ ] typecheck/lint/build pass
+[ ] no API path changes
+```
+
+## Rollback
+
+Revert PR to previous `runtime.tsx` route.
 
 ---
 
-# Phase 5 — AI Governance Studio Foundation
+# Fast-Track PR 3 — AI Governance Studio Fast Foundation
+
+## Branch
+
+```text
+feature/ai-governance-studio-fast-track
+```
+
+## Commit target
+
+```text
+feat: upgrade AI Control to governance studio foundation
+```
 
 ## Goal
 
-Refactor AI Control into `features/ai-governance` without changing backend API behavior.
+Refactor current AI Control into an AI Governance Studio shell and apply the design system in one PR.
 
-## Construction unit 5.1 — Extract AI Governance feature shell
+This is high product value and lower operational risk than Workspace.
 
-### Branch
-
-```text
-feature/ai-governance-feature-shell
-```
-
-### Commit
-
-```text
-refactor: extract AI governance feature shell
-```
-
-### Files to add
+## Files to add
 
 ```text
 webapp/src/features/ai-governance/AiGovernanceRoute.tsx
 webapp/src/features/ai-governance/components/GovernanceHeader.tsx
+webapp/src/features/ai-governance/components/ConfigTypeTabs.tsx
 webapp/src/features/ai-governance/components/ConfigResourceList.tsx
 webapp/src/features/ai-governance/components/ConfigEditorPanel.tsx
+webapp/src/features/ai-governance/components/DraftPublishedStateCard.tsx
+webapp/src/features/ai-governance/components/VersionHistoryPanel.tsx
+webapp/src/features/ai-governance/components/PolicyGuardrailSummary.tsx
 webapp/src/features/ai-governance/index.ts
 ```
 
-### Files to update
+## Files to update
 
 ```text
 webapp/src/routes/ai-control.tsx
 ```
 
-### Implementation details
-
-- Move rendering structure only.
-- Preserve existing API calls, publish, rollback, and draft editing behavior.
-- Route remains `/ai-control`.
-
-### Acceptance
-
-```text
-[ ] AI config list loads
-[ ] draft save works
-[ ] publish works
-[ ] rollback works
-[ ] typecheck/lint/build pass
-```
-
-## Construction unit 5.2 — Governance tabs and draft/published cards
-
-### Branch
-
-```text
-feature/ai-governance-design-system
-```
-
-### Commit
-
-```text
-feat: apply design system to AI governance states
-```
-
-### Files to add/update
-
-```text
-webapp/src/features/ai-governance/components/ConfigTypeTabs.tsx
-webapp/src/features/ai-governance/components/DraftPublishedStateCard.tsx
-webapp/src/features/ai-governance/components/VersionHistoryPanel.tsx
-webapp/src/features/ai-governance/components/PolicyGuardrailSummary.tsx
-```
-
-### Components to use
+## Components to use
 
 ```text
 Tabs
@@ -772,91 +389,74 @@ Badge
 StatusBadge
 SafetyGateBadge
 Tooltip
+Select
+Dialog
 ```
 
-### Non-goals
+## Implementation rules
 
-- No schema change.
+- Route remains `/ai-control`.
+- Existing AI config APIs remain unchanged.
+- Existing create/update/publish/rollback behavior remains unchanged.
+- JSON mode remains available.
 - No auto-reply enablement.
-- No backend behavior change.
+- No backend schema change.
+
+## Acceptance
+
+```text
+[ ] AI config list loads
+[ ] draft edit/save works
+[ ] publish works
+[ ] rollback works
+[ ] version history still displays
+[ ] typecheck/lint/build pass
+```
+
+## Rollback
+
+Revert route extraction and return to previous `ai-control.tsx` implementation.
 
 ---
 
-# Phase 6 — WebChat Control Center Foundation
+# Fast-Track PR 4 — WebChat Control Center Fast Foundation
+
+## Branch
+
+```text
+feature/webchat-control-center-fast-track
+```
+
+## Commit target
+
+```text
+feat: upgrade WebChat admin to control center foundation
+```
 
 ## Goal
 
-Refactor WebChat admin UI into feature modules without rewriting the public widget.
+Upgrade WebChat admin UI into a modular control center without touching the public widget runtime.
 
-## Construction unit 6.1 — Extract WebChat admin feature shell
-
-### Branch
-
-```text
-feature/webchat-admin-feature-shell
-```
-
-### Commit
-
-```text
-refactor: extract WebChat admin feature shell
-```
-
-### Files to add
+## Files to add
 
 ```text
 webapp/src/features/webchat-admin/WebChatAdminRoute.tsx
 webapp/src/features/webchat-admin/components/WebChatInbox.tsx
 webapp/src/features/webchat-admin/components/WebChatThreadPanel.tsx
 webapp/src/features/webchat-admin/components/WebChatReplyComposer.tsx
+webapp/src/features/webchat-admin/components/WebChatSafetyPanel.tsx
 webapp/src/features/webchat-admin/components/WebChatSnippetCard.tsx
+webapp/src/features/webchat-admin/components/WebChatRuntimeNotes.tsx
 webapp/src/features/webchat-admin/index.ts
 ```
 
-### Files to update
+## Files to update
 
 ```text
 webapp/src/routes/webchat.tsx
 ```
 
-### Implementation details
-
-- Preserve polling behavior.
-- Preserve reply API behavior.
-- Preserve safety-gate flags.
-- Preserve snippet behavior.
-
-### Non-goals
-
-- No widget rewrite.
-- No public API changes.
-- No Shadow DOM.
-
-### Acceptance
-
-```text
-[ ] WebChat admin conversation list loads
-[ ] thread loads
-[ ] reply still works
-[ ] snippet display still works
-[ ] typecheck/lint/build pass
-```
-
-## Construction unit 6.2 — WebChat admin design-system adoption
-
-### Branch
-
-```text
-feature/webchat-admin-design-system
-```
-
-### Commit
-
-```text
-feat: apply design system to WebChat admin
-```
-
-### Components to use
+## Components to use
 
 ```text
 Card
@@ -866,169 +466,132 @@ SafetyGateBadge
 Tooltip
 Popover
 Tabs
+Dialog
 ```
 
-### Non-goals
+## Implementation rules
 
-- Do not change public visitor widget.
-- Do not change API contract.
+- Route remains `/webchat`.
+- Admin conversation list behavior remains unchanged.
+- Thread polling remains unchanged.
+- Reply API behavior remains unchanged.
+- Safety gate flags remain unchanged.
+- Snippet output remains unchanged.
+- Do not change `backend/app/static/webchat/widget.js`.
+- Do not change public WebChat APIs.
+
+## Acceptance
+
+```text
+[ ] WebChat admin conversation list loads
+[ ] thread loads
+[ ] reply still works
+[ ] safety/review UI still appears
+[ ] snippet display still works
+[ ] typecheck/lint/build pass
+```
+
+## Rollback
+
+Revert route extraction and return to previous `webchat.tsx` implementation.
 
 ---
 
-# Phase 7 — WebChat Widget SDK Runtime
+# Fast-Track PR 5 — WebChat Widget SDK Parallel Runtime
+
+## Branch
+
+```text
+feature/webchat-widget-sdk-parallel-runtime
+```
+
+## Commit target
+
+```text
+feat: add parallel WebChat widget SDK runtime
+```
 
 ## Goal
 
-Convert `backend/app/static/webchat/widget.js` into a proper SDK build while preserving current one-line embed compatibility.
+Build the next WebChat SDK runtime in parallel without cutting over production snippet yet.
 
-## Construction unit 7.1 — Widget SDK architecture docs and build plan
+This is the fastest safe way to move toward TypeScript + Shadow DOM without breaking current embeds.
 
-### Branch
-
-```text
-feature/webchat-widget-sdk-plan
-```
-
-### Commit
-
-```text
-docs: add WebChat widget SDK implementation plan
-```
-
-### Files to add
-
-```text
-docs/frontend-upgrade/webchat-widget-sdk-implementation-plan.md
-```
-
-### Acceptance
-
-Docs-only, CI green.
-
-## Construction unit 7.2 — Add widget package skeleton
-
-### Branch
-
-```text
-feature/webchat-widget-package-skeleton
-```
-
-### Commit
-
-```text
-feat: add WebChat widget package skeleton
-```
-
-### Files to add
+## Files to add
 
 ```text
 packages/webchat-core/README.md
 packages/webchat-core/src/index.ts
+packages/webchat-core/src/config.ts
+packages/webchat-core/src/transport.ts
+packages/webchat-core/src/messageModel.ts
 packages/webchat-widget/README.md
 packages/webchat-widget/src/index.ts
 packages/webchat-widget/src/mount.ts
-packages/webchat-widget/src/config.ts
-packages/webchat-widget/src/transport.ts
-```
-
-### Non-goals
-
-- Do not replace active `backend/app/static/webchat/widget.js` yet.
-- Do not change public API.
-
-## Construction unit 7.3 — Build generated widget artifact in parallel path
-
-### Branch
-
-```text
-feature/webchat-widget-sdk-parallel-build
-```
-
-### Files to add/update
-
-```text
+packages/webchat-widget/src/shadowRoot.ts
+packages/webchat-widget/src/widgetApp.ts
+packages/webchat-widget/src/styles.ts
 packages/webchat-widget/vite.config.ts
-webapp/package.json or root scripts if needed
+docs/frontend-upgrade/webchat-widget-sdk-implementation-plan.md
+```
+
+## Files to update
+
+```text
+webapp/package.json or root package/build scripts if needed
+```
+
+## Generated output target
+
+```text
 backend/app/static/webchat/widget.next.js
 ```
 
-### Implementation details
+## Implementation rules
 
-- Build `widget.next.js` side-by-side.
-- Keep current `widget.js` active.
-- Add smoke page for `widget.next.js` only.
+- Keep current `backend/app/static/webchat/widget.js` active.
+- `widget.next.js` is parallel only.
+- Preserve script attribute config semantics.
+- Preserve visitor token/conversation model.
+- Do not change public WebChat APIs.
+- Do not cut over production snippet in this PR.
 
-### Acceptance
+## Acceptance
 
 ```text
-[ ] old widget.js still untouched
+[ ] old widget.js untouched
 [ ] widget.next.js builds
-[ ] visitor-only smoke passes against next widget if test harness exists
+[ ] basic visitor init/send/poll smoke documented or automated
+[ ] typecheck/lint/build pass
 ```
 
-## Construction unit 7.4 — Shadow DOM runtime
+## Rollback
 
-### Branch
-
-```text
-feature/webchat-widget-shadow-dom-runtime
-```
-
-### Implementation details
-
-- Mount into Shadow DOM.
-- Isolate CSS.
-- Preserve script attribute config parser.
-- Preserve conversation id and visitor token flow.
-
-### Non-goals
-
-- Do not point production snippet to new SDK yet.
-
-## Construction unit 7.5 — Controlled switch from old widget.js to SDK widget.js
-
-### Branch
-
-```text
-feature/webchat-widget-sdk-cutover
-```
-
-### Preconditions
-
-```text
-[ ] old snippet compatibility smoke passes
-[ ] visitor init/send/poll passes
-[ ] mobile viewport smoke passes
-[ ] rollback artifact available
-```
-
-### Rollback
-
-Restore previous `backend/app/static/webchat/widget.js` artifact.
+Delete parallel package and `widget.next.js`. Current widget remains active.
 
 ---
 
-# Phase 8 — Workspace Ticket Operations Cockpit
+# Fast-Track PR 6 — Workspace Ticket Operations Cockpit
+
+## Branch
+
+```text
+feature/workspace-cockpit-fast-track
+```
+
+## Commit target
+
+```text
+feat: upgrade workspace to ticket operations cockpit
+```
 
 ## Goal
 
-Refactor the highest-risk page last, after shared UI, Radix wrappers, Runtime, AI Governance, and WebChat admin have proven the pattern.
+Upgrade the highest-value page after foundations are proven.
 
-## Construction unit 8.1 — Workspace feature shell extraction
+This PR is allowed to be larger because time is limited, but it must preserve existing behavior and be easy to revert.
 
-### Branch
-
-```text
-feature/workspace-feature-shell
-```
-
-### Commit
-
-```text
-refactor: extract workspace feature shell
-```
-
-### Files to add
+## Files to add
 
 ```text
 webapp/src/features/workspace/WorkspaceRoute.tsx
@@ -1039,252 +602,145 @@ webapp/src/features/workspace/components/ConversationTimeline.tsx
 webapp/src/features/workspace/components/EvidencePanel.tsx
 webapp/src/features/workspace/components/BulletinPanel.tsx
 webapp/src/features/workspace/components/AiCopilotPanel.tsx
+webapp/src/features/workspace/components/SafetyGatePanel.tsx
 webapp/src/features/workspace/components/TicketActionPanel.tsx
 webapp/src/features/workspace/index.ts
 ```
 
-### Files to update
+## Files to update
 
 ```text
 webapp/src/routes/workspace.tsx
 ```
 
-### Implementation details
-
-- Extract without changing behavior.
-- Preserve dirty-state protection.
-- Preserve current polling/refresh behavior.
-- Preserve all API calls.
-
-### Acceptance
-
-```text
-[ ] ticket list loads
-[ ] filter/search works
-[ ] ticket selection works
-[ ] ticket detail loads
-[ ] workflow update works
-[ ] AI intake save works
-[ ] dirty-state protection works
-[ ] typecheck/lint/build pass
-```
-
-## Construction unit 8.2 — Conversation timeline component adoption
-
-### Branch
-
-```text
-feature/workspace-conversation-timeline
-```
-
-### Goal
-
-Make message display reusable and safe.
-
-### Acceptance
-
-```text
-[ ] no HTML injection
-[ ] attachments still display
-[ ] OpenClaw transcript still displays
-```
-
-## Construction unit 8.3 — Evidence and Safety Gate panels
-
-### Branch
-
-```text
-feature/workspace-evidence-safety-panels
-```
-
-### Components to use
+## Components to use
 
 ```text
 Card
-SafetyGateBadge
+Badge
 StatusBadge
+SafetyGateBadge
 Tooltip
 Popover
+Tabs
+Dialog
+Select
 ```
 
-### Non-goals
+## Implementation rules
 
-- Do not change backend safety decisions.
-- Do not enable external outbound.
+- Route remains `/workspace`.
+- Existing API calls remain unchanged.
+- Existing dirty-state protection must remain.
+- Existing ticket list/detail behavior must remain.
+- Existing workflow update behavior must remain.
+- Existing AI intake behavior must remain.
+- No external outbound dispatch changes.
+- No backend behavior changes.
 
-## Construction unit 8.4 — Cockpit layout
-
-### Branch
+## Layout target
 
 ```text
-feature/workspace-cockpit-layout
+Queue / Filters
+→ Ticket + Conversation + Evidence
+→ AI Copilot + Safety + Action Panel
 ```
 
-### Preconditions
-
-All previous Workspace extraction units pass CI and smoke.
-
-### Goal
-
-Three-panel layout:
+## Acceptance
 
 ```text
-Queue | Ticket + Conversation | AI + Actions
-```
-
-### Acceptance
-
-```text
+[ ] ticket list loads
+[ ] search/filter works
+[ ] ticket selection works
+[ ] ticket detail loads
+[ ] conversation displays
+[ ] evidence/attachments display
+[ ] workflow update works
+[ ] AI intake save works
+[ ] dirty-state protection works
 [ ] no horizontal overflow
-[ ] usable at tablet width
-[ ] dirty state preserved
-[ ] no API behavior changes
+[ ] typecheck/lint/build pass
 ```
+
+## Rollback
+
+Revert PR to previous `workspace.tsx`. Because backend/API behavior is unchanged, rollback is frontend-only.
 
 ---
 
-# Phase 9 — Realtime Event Runtime
+# Optional Fast-Track PR 7 — Realtime Runtime
+
+## Branch
+
+```text
+feature/realtime-runtime-fast-track
+```
+
+## Commit target
+
+```text
+feat: add realtime runtime with polling fallback
+```
 
 ## Goal
 
-Add realtime event support without removing existing polling until proven stable.
+Add SSE/event runtime only after Runtime, AI, WebChat admin, and Workspace are stable.
 
-## Construction unit 9.1 — Frontend realtime client skeleton
-
-### Branch
-
-```text
-feature/realtime-client-foundation
-```
-
-### Files to add
+## Files likely added
 
 ```text
 webapp/src/shared/realtime/eventTypes.ts
 webapp/src/shared/realtime/eventClient.ts
 webapp/src/shared/realtime/useEventStream.ts
 webapp/src/shared/realtime/index.ts
-```
-
-### Non-goals
-
-- No backend endpoint required yet.
-- No page usage yet.
-
-## Construction unit 9.2 — SSE backend endpoint proposal
-
-### Branch
-
-```text
-feature/realtime-api-stream
-```
-
-### Files likely touched
-
-```text
 backend/app/api/events.py
-backend/app/main.py
-backend/app/schemas.py
 backend/tests/test_realtime_events.py
 ```
 
-### Non-goals
+## Rules
 
-- Do not remove polling.
-- Do not expose public visitor events.
+- Polling remains fallback.
+- Do not expose admin events to public visitors.
+- Events must be authenticated and permission-filtered.
+- Duplicate events must be ignored.
 
-## Construction unit 9.3 — Runtime event dock adoption
-
-### Branch
-
-```text
-feature/runtime-event-dock
-```
-
-### Acceptance
+## Acceptance
 
 ```text
-[ ] SSE works when available
-[ ] fallback polling remains available
+[ ] SSE connects when available
+[ ] fallback polling works
 [ ] duplicate events ignored
-[ ] unauthorized stream is rejected
+[ ] unauthorized stream rejected
+[ ] typecheck/lint/build pass
+[ ] backend tests pass
 ```
 
 ---
 
-# Phase 10 — Branch Cleanup / Governance
-
-## Goal
-
-Reduce confusion from historical branches after the main line stabilizes.
-
-## Construction unit 10.1 — Branch cleanup report
-
-### Branch
-
-```text
-planning/branch-cleanup-report
-```
-
-### File to add
-
-```text
-docs/repo-governance/branch-cleanup-report.md
-```
-
-### Content
-
-Classify branches as:
-
-- keep active
-- merged/archive
-- superseded/close
-- requires rebase audit
-
-### Non-goal
-
-Do not delete remote branches automatically in the same PR.
-
-## Construction unit 10.2 — Optional remote branch deletion
-
-Only after human approval.
-
----
-
-# Full execution order
+# Fast-track execution order
 
 Execute in this order:
 
 ```text
-1. feature/radix-dialog-wrapper
-2. feature/radix-tooltip-wrapper
-3. feature/radix-popover-wrapper
-4. feature/radix-dropdown-wrapper
-5. feature/radix-tabs-wrapper
-6. feature/radix-select-wrapper
-7. optional feature/radix-alert-dialog-wrapper
-8. feature/design-system-css-composition
-9. feature/runtime-feature-shell
-10. feature/runtime-status-cards-design-system
-11. feature/runtime-entity-models
-12. feature/runtime-control-panels
-13. feature/ai-governance-feature-shell
-14. feature/ai-governance-design-system
-15. feature/webchat-admin-feature-shell
-16. feature/webchat-admin-design-system
-17. feature/webchat-widget-sdk-plan
-18. feature/webchat-widget-package-skeleton
-19. feature/webchat-widget-sdk-parallel-build
-20. feature/webchat-widget-shadow-dom-runtime
-21. feature/webchat-widget-sdk-cutover
-22. feature/workspace-feature-shell
-23. feature/workspace-conversation-timeline
-24. feature/workspace-evidence-safety-panels
-25. feature/workspace-cockpit-layout
-26. feature/realtime-client-foundation
-27. feature/realtime-api-stream
-28. feature/runtime-event-dock
-29. planning/branch-cleanup-report
+1. feature/design-system-radix-wrapper-foundation
+2. feature/runtime-control-tower-fast-track
+3. feature/ai-governance-studio-fast-track
+4. feature/webchat-control-center-fast-track
+5. feature/webchat-widget-sdk-parallel-runtime
+6. feature/workspace-cockpit-fast-track
+7. optional feature/realtime-runtime-fast-track
+```
+
+## Why this order
+
+```text
+Radix wrappers first      = shared UI foundation ready
+Runtime second            = low-risk visible adoption
+AI Governance third       = high demo value, medium risk
+WebChat admin fourth      = high demo value, protects public widget
+Widget SDK fifth          = parallel runtime, no cutover risk
+Workspace sixth           = highest value and highest risk, done after foundations prove stable
+Realtime seventh          = optional because it touches frontend/backend runtime behavior
 ```
 
 ## Hard stop rules
@@ -1306,19 +762,17 @@ Stop and return to review if any of these happen:
 
 ## Final target state
 
-When the construction plan is complete, NexusDesk frontend should have:
+After the fast-track plan:
 
 ```text
 - NexusDesk-owned Radix wrappers
-- activated semantic design tokens
-- reusable business status/safety components
+- active semantic design tokens
 - Runtime Control Tower
-- AI Governance Studio
-- WebChat Control Center
-- SDK-based WebChat widget runtime
+- AI Governance Studio foundation
+- WebChat Control Center foundation
+- parallel SDK WebChat widget runtime
 - Workspace Ticket Operations Cockpit
-- realtime event runtime with fallback polling
-- clean branch governance
+- optional realtime runtime with polling fallback
 ```
 
-This is the professional path from the current `main` branch to an agent-native customer operations console.
+This is the fastest responsible path from the current `main` branch to an agent-native customer operations console.
