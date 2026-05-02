@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict
@@ -18,7 +19,7 @@ from ..webchat_models import WebchatConversation, WebchatMessage
 from .openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .sla_service import evaluate_sla, update_first_response
-import time
+from .webchat_fact_gate import evaluate_webchat_fact_gate
 
 LOGGER = logging.getLogger("nexusdesk")
 settings = get_settings()
@@ -43,6 +44,21 @@ SAFE_TRACKING_REQUIRED_FALLBACK = (
 SAFE_GENERAL_FALLBACK = (
     "Thanks for your message. Our support team is reviewing your request and will reply here as soon as possible."
 )
+
+
+def _message_metadata(*, generated_by: str, decision_level: str, fallback_reason: str | None, reply_source: str | None, fact_evidence_present: bool = False, **extra: Any) -> str:
+    payload = {
+        "generated_by": generated_by,
+        "intent": None,
+        "confidence": None,
+        "safety_level": decision_level,
+        "fallback_reason": fallback_reason,
+        "fact_evidence_present": fact_evidence_present,
+        "external_send": False,
+        "reply_source": reply_source,
+    }
+    payload.update({key: value for key, value in extra.items() if value is not None})
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def process_webchat_ai_reply_job(
@@ -98,6 +114,7 @@ def process_webchat_ai_reply_job(
     bridge_effective_timeout_seconds = _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS
     bridge_wait_timeout_ms = _LAST_BRIDGE_WAIT_TIMEOUT_MS
     sanitized_empty = False
+    fact_gate_reason = None
     if not ai_reply:
         reply_source = "fallback"
         fallback_reason = fallback_reason or "empty_ai_reply"
@@ -106,9 +123,8 @@ def process_webchat_ai_reply_job(
     ai_reply = _sanitize_public_ai_reply(ai_reply)
 
     if not ai_reply.strip():
-
         fallback_reason = fallback_reason or "sanitizer_empty"
-
+        sanitized_empty = True
         ai_reply = _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
 
     decision = evaluate_outbound_safety(ticket, ai_reply, source="webchat_ai", has_fact_evidence=False)
@@ -123,11 +139,46 @@ def process_webchat_ai_reply_job(
         safety_payload = asdict(fallback_decision)
         decision = fallback_decision
 
+    fact_decision = evaluate_webchat_fact_gate(final_body, fact_evidence_present=False, allow_tracking_status_card=False)
+    if not fact_decision.allowed:
+        fact_gate_reason = fact_decision.reason or "fact_gate_blocked"
+        fallback_reason = fallback_reason or fact_gate_reason
+        final_body = _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
+        fallback_decision = evaluate_outbound_safety(ticket, final_body, source="webchat_fact_gate_fallback", has_fact_evidence=False)
+        final_body = fallback_decision.normalized_body
+        safety_payload = asdict(fallback_decision)
+        decision = fallback_decision
+        LOGGER.info(
+            "webchat_fact_gate_blocked",
+            extra={"event_payload": {
+                "conversation_id": conversation.id,
+                "ticket_id": ticket.id,
+                "visitor_message_id": visitor_message.id,
+                "reason": fact_gate_reason,
+            }},
+        )
+
     message = WebchatMessage(
         conversation_id=conversation.id,
         ticket_id=ticket.id,
         direction="agent",
         body=final_body,
+        body_text=final_body,
+        message_type="text",
+        delivery_status="sent",
+        metadata_json=_message_metadata(
+            generated_by="webchat_ai_safe_fallback" if fallback_reason else "webchat_ai",
+            decision_level=decision.level,
+            fallback_reason=fallback_reason,
+            reply_source=reply_source,
+            fact_evidence_present=False,
+            fact_gate_reason=fact_gate_reason,
+            bridge_elapsed_ms=bridge_elapsed_ms,
+            bridge_timeout_seconds=bridge_timeout_seconds,
+            bridge_effective_timeout_seconds=bridge_effective_timeout_seconds,
+            bridge_wait_timeout_ms=bridge_wait_timeout_ms,
+            sanitized_empty=sanitized_empty,
+        ),
         author_label=AI_AUTHOR_LABEL,
         safety_level=decision.level,
         safety_reasons_json=json.dumps(safety_payload.get("reasons", []), ensure_ascii=False),
@@ -135,13 +186,14 @@ def process_webchat_ai_reply_job(
     db.add(message)
     db.flush()
 
+    provider_status = "webchat_ai_delivered" if not fallback_reason else "webchat_ai_safe_fallback"
     db.add(TicketComment(ticket_id=ticket.id, author_id=None, body=final_body, visibility=NoteVisibility.external))
     db.add(TicketOutboundMessage(
         ticket_id=ticket.id,
         channel=SourceChannel.web_chat,
         status=MessageStatus.sent,
         body=final_body,
-        provider_status="webchat_ai_delivered" if not fallback_reason else "webchat_ai_safe_fallback",
+        provider_status=provider_status,
         error_message=None if not fallback_reason else fallback_reason,
         created_by=None,
         sent_at=utc_now(),
@@ -170,7 +222,10 @@ def process_webchat_ai_reply_job(
             "webchat_message_id": message.id,
             "safety": safety_payload,
             "fallback_reason": fallback_reason,
+            "fact_gate_reason": fact_gate_reason,
             "reply_source": reply_source,
+            "provider_status": provider_status,
+            "external_send": False,
             "bridge_elapsed_ms": bridge_elapsed_ms,
             "bridge_timeout_seconds": bridge_timeout_seconds,
             "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds,
@@ -189,6 +244,9 @@ def process_webchat_ai_reply_job(
             "fallback": bool(fallback_reason),
             "reply_source": reply_source,
             "fallback_reason": fallback_reason,
+            "fact_gate_reason": fact_gate_reason,
+            "provider_status": provider_status,
+            "external_send": False,
             "bridge_elapsed_ms": bridge_elapsed_ms,
             "bridge_timeout_seconds": bridge_timeout_seconds,
             "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds,
@@ -319,6 +377,7 @@ def _generate_ai_reply_via_bridge(*, prompt: str, conversation: WebchatConversat
 
     return str(text)
 
+
 def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage]) -> str:
     history_lines = []
     for row in history_rows:
@@ -399,118 +458,46 @@ def _has_tracking_number(*, ticket: Ticket, visitor_message: WebchatMessage, his
     return False
 
 
-
-
 def _sanitize_public_ai_reply(raw: str | None) -> str:
-
     """Clean LLM output before storing/sending public webchat replies."""
-
-    import re
-
     text = (raw or "").strip()
-
     if not text:
-
         return ""
-
     final_match = re.search(r"<\s*final\s*>", text, flags=re.IGNORECASE)
-
     if final_match:
-
         text = text[final_match.end():].strip()
-
-    text = re.sub(
-
-        r"<\s*think\s*>.*?<\s*/\s*think\s*>",
-
-        "",
-
-        text,
-
-        flags=re.IGNORECASE | re.DOTALL,
-
-    ).strip()
-
+    text = re.sub(r"<\s*think\s*>.*?<\s*/\s*think\s*>", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
     if re.search(r"<\s*think\b", text, flags=re.IGNORECASE):
-
         return ""
-
-    text = re.sub(
-
-        r"</?\s*(?:final|answer|response|assistant|analysis|commentary)\s*>",
-
-        "",
-
-        text,
-
-        flags=re.IGNORECASE,
-
-    ).strip()
-
+    text = re.sub(r"</?\s*(?:final|answer|response|assistant|analysis|commentary)\s*>", "", text, flags=re.IGNORECASE).strip()
     blocked_patterns = [
-
         r"\bSOUL\.md\b",
-
         r"\bsystem prompt\b",
-
         r"\bdeveloper message\b",
-
         r"\bdeveloper instruction\b",
-
         r"\bchain[- ]of[- ]thought\b",
-
         r"\bhidden reasoning\b",
-
         r"\binternal context\b",
-
         r"\binternal instruction\b",
-
         r"\bOpenClaw\b",
-
         r"\bMCP\b",
-
         r"\btool call\b",
-
         r"\baccording to .*?\.md\b",
-
     ]
-
     clean_lines = []
-
     for line in text.splitlines():
-
         candidate = line.strip()
-
         if not candidate:
-
             continue
-
-        if re.search(
-
-            r"^(analysis|reasoning|plan|thought|internal|system|developer)\s*:",
-
-            candidate,
-
-            flags=re.IGNORECASE,
-
-        ):
-
+        if re.search(r"^(analysis|reasoning|plan|thought|internal|system|developer)\s*:", candidate, flags=re.IGNORECASE):
             continue
-
         if any(re.search(pattern, candidate, flags=re.IGNORECASE) for pattern in blocked_patterns):
-
             continue
-
         clean_lines.append(candidate)
-
     text = "\n".join(clean_lines).strip()
-
     text = re.sub(r"[ \t]+", " ", text)
-
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
-
     return text
-
 
 
 def _is_probably_chinese_text(text: str | None) -> bool:
