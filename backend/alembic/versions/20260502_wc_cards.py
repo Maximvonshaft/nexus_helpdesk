@@ -1,14 +1,14 @@
 """webchat structured cards and actions
 
 Revision ID: 20260502_wc_cards
-Revises: 20260501_0012
+Revises: 20260502_0014
 Create Date: 2026-05-02
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "20260502_wc_cards"
-down_revision = "20260501_0012"
+down_revision = "20260502_0014"
 branch_labels = None
 depends_on = None
 
