@@ -50,6 +50,7 @@ def test_webchat_cards_migration_upgrade_downgrade_upgrade(tmp_path: Path):
             "conversation_id",
             "ticket_id",
             "message_id",
+            "action_id",
             "action_type",
             "action_payload_json",
             "submitted_by",
@@ -66,7 +67,9 @@ def test_webchat_cards_migration_upgrade_downgrade_upgrade(tmp_path: Path):
             "ix_webchat_card_actions_conversation_id",
             "ix_webchat_card_actions_ticket_id",
             "ix_webchat_card_actions_message_id",
+            "ix_webchat_card_actions_action_id",
             "ix_webchat_card_actions_status",
+            "uq_webchat_card_actions_once_per_action",
         }.issubset(action_indexes)
     finally:
         engine.dispose()
