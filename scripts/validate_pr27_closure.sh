@@ -17,8 +17,9 @@ pytest -q tests/test_webchat_runtime_idempotency.py
 pytest -q tests/test_webchat_incremental_poll.py
 pytest -q tests/test_webchat_rate_limit_tenant_scope.py
 pytest -q tests/test_webchat_token_lifecycle.py
+pytest -q tests/test_webchat_widget_runtime.py
 pytest -q tests/test_migration_drift_gate.py
-pytest -q
+pytest -q tests
 
 cd "$ROOT_DIR"
 if [ -d webapp ]; then
