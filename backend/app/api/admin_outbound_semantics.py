@@ -21,18 +21,28 @@ def _outbound_counts(db: Session) -> dict[str, int]:
     return count_outbound_semantics(db)
 
 
+def _webchat_local_counts(outbound_counts: dict[str, int]) -> dict[str, int]:
+    return {
+        'webchat_local_ack_sent': outbound_counts['webchat_local_ack_sent'],
+        'webchat_ai_delivered_sent': outbound_counts['webchat_ai_delivered_sent'],
+        'webchat_ai_safe_fallback_sent': outbound_counts['webchat_ai_safe_fallback_sent'],
+        'webchat_card_sent': outbound_counts['webchat_card_sent'],
+        'webchat_handoff_ack_sent': outbound_counts['webchat_handoff_ack_sent'],
+    }
+
+
 @router.get('/queues/summary')
 def get_semantic_queue_summary(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
     outbound_counts = _outbound_counts(db)
+    webchat_counts = _webchat_local_counts(outbound_counts)
     return {
         # Keep legacy field names but make their runtime meaning safe: these now represent external sends only.
         'pending_outbound': outbound_counts['external_pending_outbound'],
         'dead_outbound': outbound_counts['external_dead_outbound'],
         'external_pending_outbound': outbound_counts['external_pending_outbound'],
         'external_dead_outbound': outbound_counts['external_dead_outbound'],
-        'webchat_local_ack_sent': outbound_counts['webchat_local_ack_sent'],
-        'webchat_ai_safe_fallback_sent': outbound_counts['webchat_ai_safe_fallback_sent'],
+        **webchat_counts,
         'pending_jobs': db.query(BackgroundJob).filter(BackgroundJob.status == JobStatus.pending).count(),
         'dead_jobs': db.query(BackgroundJob).filter(BackgroundJob.status == JobStatus.dead).count(),
         'openclaw_links': db.query(OpenClawConversationLink).count(),
@@ -52,6 +62,7 @@ def openclaw_runtime_health_with_outbound_semantics(db: Session = Depends(get_db
     pending_attachment_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'openclaw.persist_attachment', BackgroundJob.status == JobStatus.pending).count()
     dead_attachment_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'openclaw.persist_attachment', BackgroundJob.status == JobStatus.dead).count()
     outbound_counts = _outbound_counts(db)
+    webchat_counts = _webchat_local_counts(outbound_counts)
 
     warnings: list[str] = []
     if heartbeat is None:
@@ -87,7 +98,10 @@ def openclaw_runtime_health_with_outbound_semantics(db: Session = Depends(get_db
         'dead_attachment_jobs': dead_attachment_jobs,
         'external_pending_outbound': outbound_counts['external_pending_outbound'],
         'external_dead_outbound': outbound_counts['external_dead_outbound'],
-        'webchat_local_ack_sent': outbound_counts['webchat_local_ack_sent'],
-        'webchat_ai_safe_fallback_sent': outbound_counts['webchat_ai_safe_fallback_sent'],
+        **webchat_counts,
+        'outbound_dispatch_enabled': bool(settings.enable_outbound_dispatch),
+        'outbound_provider': settings.outbound_provider,
+        'openclaw_bridge_allow_writes': bool(settings.openclaw_bridge_allow_writes),
+        'openclaw_cli_fallback_enabled': bool(settings.openclaw_cli_fallback_enabled),
         'warnings': warnings,
     }

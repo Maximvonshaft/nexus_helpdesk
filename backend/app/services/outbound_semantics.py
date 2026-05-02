@@ -20,9 +20,29 @@ WEBCHAT_LOCAL_ACK_PROVIDER_STATUSES = frozenset({
     'webchat_safe_ack_delivered',
 })
 
+WEBCHAT_CARD_PROVIDER_STATUSES = frozenset({
+    'webchat_card_delivered',
+})
+
+WEBCHAT_HANDOFF_PROVIDER_STATUSES = frozenset({
+    'webchat_handoff_ack_delivered',
+})
+
+WEBCHAT_AI_DELIVERED_PROVIDER_STATUSES = frozenset({
+    'webchat_ai_delivered',
+})
+
 WEBCHAT_AI_SAFE_FALLBACK_PROVIDER_STATUSES = frozenset({
     'webchat_ai_safe_fallback',
 })
+
+WEBCHAT_LOCAL_ONLY_PROVIDER_STATUSES = frozenset().union(
+    WEBCHAT_LOCAL_ACK_PROVIDER_STATUSES,
+    WEBCHAT_CARD_PROVIDER_STATUSES,
+    WEBCHAT_HANDOFF_PROVIDER_STATUSES,
+    WEBCHAT_AI_DELIVERED_PROVIDER_STATUSES,
+    WEBCHAT_AI_SAFE_FALLBACK_PROVIDER_STATUSES,
+)
 
 DRAFT_REVIEW_PROVIDER_STATUSES = frozenset({
     'ai_review_required',
@@ -57,11 +77,42 @@ def is_webchat_local_ack(message: TicketOutboundMessage) -> bool:
     )
 
 
+def is_webchat_card_delivery(message: TicketOutboundMessage) -> bool:
+    return (
+        _value(message.channel) == SourceChannel.web_chat.value
+        and _value(message.status) == MessageStatus.sent.value
+        and _value(message.provider_status) in WEBCHAT_CARD_PROVIDER_STATUSES
+    )
+
+
+def is_webchat_handoff_ack(message: TicketOutboundMessage) -> bool:
+    return (
+        _value(message.channel) == SourceChannel.web_chat.value
+        and _value(message.status) == MessageStatus.sent.value
+        and _value(message.provider_status) in WEBCHAT_HANDOFF_PROVIDER_STATUSES
+    )
+
+
+def is_webchat_ai_delivered(message: TicketOutboundMessage) -> bool:
+    return (
+        _value(message.channel) == SourceChannel.web_chat.value
+        and _value(message.status) == MessageStatus.sent.value
+        and _value(message.provider_status) in WEBCHAT_AI_DELIVERED_PROVIDER_STATUSES
+    )
+
+
 def is_webchat_ai_safe_fallback(message: TicketOutboundMessage) -> bool:
     return (
         _value(message.channel) == SourceChannel.web_chat.value
         and _value(message.status) == MessageStatus.sent.value
         and _value(message.provider_status) in WEBCHAT_AI_SAFE_FALLBACK_PROVIDER_STATUSES
+    )
+
+
+def is_webchat_local_only_message(message: TicketOutboundMessage) -> bool:
+    return (
+        _value(message.channel) == SourceChannel.web_chat.value
+        and _value(message.provider_status) in WEBCHAT_LOCAL_ONLY_PROVIDER_STATUSES
     )
 
 
@@ -84,6 +135,12 @@ def outbound_ui_label(channel: Any, status: Any, provider_status: str | None = N
 
     if channel_value == SourceChannel.web_chat.value and provider_value in WEBCHAT_LOCAL_ACK_PROVIDER_STATUSES:
         return 'Local WebChat ACK'
+    if channel_value == SourceChannel.web_chat.value and provider_value in WEBCHAT_CARD_PROVIDER_STATUSES:
+        return 'Local WebChat Card'
+    if channel_value == SourceChannel.web_chat.value and provider_value in WEBCHAT_HANDOFF_PROVIDER_STATUSES:
+        return 'Local WebChat Handoff ACK'
+    if channel_value == SourceChannel.web_chat.value and provider_value in WEBCHAT_AI_DELIVERED_PROVIDER_STATUSES:
+        return 'Local WebChat AI Reply'
     if channel_value == SourceChannel.web_chat.value and provider_value in WEBCHAT_AI_SAFE_FALLBACK_PROVIDER_STATUSES:
         return 'WebChat Safe Fallback'
     if provider_value in DRAFT_REVIEW_PROVIDER_STATUSES or status_value == MessageStatus.draft.value:
@@ -93,7 +150,7 @@ def outbound_ui_label(channel: Any, status: Any, provider_status: str | None = N
     if channel_value in EXTERNAL_OUTBOUND_CHANNELS and status_value == MessageStatus.sent.value:
         return 'External Send Sent'
     if channel_value in EXTERNAL_OUTBOUND_CHANNELS and status_value == MessageStatus.dead.value:
-        return 'External Send Dead'
+        return 'External Send Failed'
     if channel_value == SourceChannel.web_chat.value:
         return 'Local WebChat Message'
     return 'Outbound Message'
@@ -118,6 +175,21 @@ def count_outbound_semantics(db: Session) -> dict[str, int]:
             TicketOutboundMessage.channel == SourceChannel.web_chat,
             TicketOutboundMessage.status == MessageStatus.sent,
             TicketOutboundMessage.provider_status.in_(sorted(WEBCHAT_LOCAL_ACK_PROVIDER_STATUSES)),
+        ).count(),
+        'webchat_card_sent': db.query(TicketOutboundMessage).filter(
+            TicketOutboundMessage.channel == SourceChannel.web_chat,
+            TicketOutboundMessage.status == MessageStatus.sent,
+            TicketOutboundMessage.provider_status.in_(sorted(WEBCHAT_CARD_PROVIDER_STATUSES)),
+        ).count(),
+        'webchat_handoff_ack_sent': db.query(TicketOutboundMessage).filter(
+            TicketOutboundMessage.channel == SourceChannel.web_chat,
+            TicketOutboundMessage.status == MessageStatus.sent,
+            TicketOutboundMessage.provider_status.in_(sorted(WEBCHAT_HANDOFF_PROVIDER_STATUSES)),
+        ).count(),
+        'webchat_ai_delivered_sent': db.query(TicketOutboundMessage).filter(
+            TicketOutboundMessage.channel == SourceChannel.web_chat,
+            TicketOutboundMessage.status == MessageStatus.sent,
+            TicketOutboundMessage.provider_status.in_(sorted(WEBCHAT_AI_DELIVERED_PROVIDER_STATUSES)),
         ).count(),
         'webchat_ai_safe_fallback_sent': db.query(TicketOutboundMessage).filter(
             TicketOutboundMessage.channel == SourceChannel.web_chat,

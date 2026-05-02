@@ -15,6 +15,7 @@ from ..webchat_models import WebchatConversation, WebchatMessage
 from .outbound_safety import evaluate_outbound_safety
 from .sla_service import evaluate_sla, update_first_response
 from .webchat_ai_service import AI_AUTHOR_LABEL, process_webchat_ai_reply_job as _legacy_process_webchat_ai_reply_job
+from .webchat_fact_gate import evaluate_webchat_fact_gate
 
 settings = get_settings()
 
@@ -71,6 +72,20 @@ def _sanitize_public_reply(text: str) -> str:
     return cleaned[:1200]
 
 
+def _message_metadata(*, generated_by: str, reason: str, decision_level: str, fact_gate_reason: str | None = None) -> str:
+    return json.dumps({
+        "generated_by": generated_by,
+        "intent": None,
+        "confidence": None,
+        "safety_level": decision_level,
+        "fallback_reason": reason,
+        "fact_gate_reason": fact_gate_reason,
+        "fact_evidence_present": False,
+        "external_send": False,
+        "reply_source": reason,
+    }, ensure_ascii=False)
+
+
 def _load_context(db: Session, *, conversation_id: int, ticket_id: int, visitor_message_id: int) -> tuple[WebchatConversation, Ticket, WebchatMessage]:
     conversation = db.query(WebchatConversation).filter(WebchatConversation.id == conversation_id).first()
     if conversation is None:
@@ -100,21 +115,37 @@ def _agent_reply_exists(db: Session, *, conversation: WebchatConversation, visit
 
 
 def _provider_status_for_reason(reason: str) -> str:
-    if reason in {"webchat_safe_ai_high_risk_fallback", "bridge_timeout", "bridge_failure", "ai_safety_fallback"}:
+    if reason in {"webchat_safe_ai_high_risk_fallback", "bridge_timeout", "bridge_failure", "ai_safety_fallback", "fact_gate_blocked"}:
         return "webchat_ai_safe_fallback"
     return "webchat_safe_ack_delivered"
 
 
 def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, body: str, reason: str) -> dict[str, Any]:
     final_body = _sanitize_public_reply(body)
+    fact_gate_reason = None
+    fact_decision = evaluate_webchat_fact_gate(final_body, fact_evidence_present=False, allow_tracking_status_card=False)
+    if not fact_decision.allowed:
+        fact_gate_reason = fact_decision.reason or "fact_gate_blocked"
+        reason = "fact_gate_blocked"
+        final_body = _safe_ack_body(ticket, visitor_message)
     decision = evaluate_outbound_safety(ticket, final_body, source="webchat_safe_ack", has_fact_evidence=False)
     final_body = decision.normalized_body
     safety_payload = asdict(decision)
+    provider_status = _provider_status_for_reason(reason)
     message = WebchatMessage(
         conversation_id=conversation.id,
         ticket_id=ticket.id,
         direction="agent",
         body=final_body,
+        body_text=final_body,
+        message_type="text",
+        delivery_status="sent",
+        metadata_json=_message_metadata(
+            generated_by="webchat_ai_safe_fallback" if provider_status == "webchat_ai_safe_fallback" else "webchat_safe_ack",
+            reason=reason,
+            decision_level=decision.level,
+            fact_gate_reason=fact_gate_reason,
+        ),
         author_label=AI_AUTHOR_LABEL,
         safety_level=decision.level,
         safety_reasons_json=json.dumps(safety_payload.get("reasons", []), ensure_ascii=False),
@@ -127,13 +158,13 @@ def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, t
         channel=SourceChannel.web_chat,
         status=MessageStatus.sent,
         body=final_body,
-        provider_status=_provider_status_for_reason(reason),
+        provider_status=provider_status,
         error_message=reason,
         created_by=None,
         sent_at=utc_now(),
         max_retries=0,
-        failure_code="safety_review_required" if _provider_status_for_reason(reason) == "webchat_ai_safe_fallback" else None,
-        failure_reason="AI safe fallback delivered locally; no external provider send occurred" if _provider_status_for_reason(reason) == "webchat_ai_safe_fallback" else None,
+        failure_code="safety_review_required" if provider_status == "webchat_ai_safe_fallback" else None,
+        failure_reason="AI safe fallback delivered locally; no external provider send occurred" if provider_status == "webchat_ai_safe_fallback" else None,
     ))
     update_first_response(ticket)
     ticket.status = TicketStatus.waiting_customer
@@ -153,8 +184,9 @@ def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, t
             "visitor_message_id": visitor_message.id,
             "webchat_message_id": message.id,
             "reply_source": reason,
-            "provider_status": _provider_status_for_reason(reason),
+            "provider_status": provider_status,
             "external_send": False,
+            "fact_gate_reason": fact_gate_reason,
             "safety": safety_payload,
         }, ensure_ascii=False),
     ))

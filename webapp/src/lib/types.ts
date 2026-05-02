@@ -163,6 +163,13 @@ export interface CaseDetail {
 export interface QueueSummary {
   pending_outbound: number
   dead_outbound: number
+  external_pending_outbound?: number
+  external_dead_outbound?: number
+  webchat_local_ack_sent?: number
+  webchat_ai_delivered_sent?: number
+  webchat_ai_safe_fallback_sent?: number
+  webchat_card_sent?: number
+  webchat_handoff_ack_sent?: number
   pending_jobs: number
   dead_jobs: number
   openclaw_links: number
@@ -173,10 +180,24 @@ export interface RuntimeHealth {
   sync_daemon_last_seen_at?: string | null
   sync_daemon_status?: string | null
   stale_link_count: number
+  openclaw_links_count?: number
+  transcript_messages_count?: number
+  unresolved_events_count?: number
   pending_sync_jobs: number
   dead_sync_jobs: number
   pending_attachment_jobs: number
   dead_attachment_jobs: number
+  external_pending_outbound?: number
+  external_dead_outbound?: number
+  webchat_local_ack_sent?: number
+  webchat_ai_delivered_sent?: number
+  webchat_ai_safe_fallback_sent?: number
+  webchat_card_sent?: number
+  webchat_handoff_ack_sent?: number
+  outbound_dispatch_enabled?: boolean
+  outbound_provider?: string
+  openclaw_bridge_allow_writes?: boolean
+  openclaw_cli_fallback_enabled?: boolean
   warnings: string[]
 }
 
@@ -339,6 +360,35 @@ export interface OpenClawUnresolvedEvent {
   updated_at: string
 }
 
+export type WebchatMessageType = 'text' | 'system' | 'card' | 'action' | 'attachment'
+
+export type WebchatCardType =
+  | 'quick_replies'
+  | 'tracking_status'
+  | 'address_confirmation'
+  | 'reschedule_picker'
+  | 'photo_upload_request'
+  | 'handoff'
+  | 'csat'
+
+export interface WebchatCardAction {
+  id: string
+  label: string
+  value?: string | null
+  action_type: string
+  payload?: Record<string, unknown>
+}
+
+export interface WebchatCardPayload {
+  card_id: string
+  card_type: WebchatCardType
+  version: number
+  title: string
+  body?: string | null
+  actions: WebchatCardAction[]
+  metadata?: Record<string, unknown>
+}
+
 export interface WebchatConversation {
   conversation_id: string
   ticket_id: number
@@ -352,13 +402,34 @@ export interface WebchatConversation {
   page_url?: string | null
   last_seen_at?: string | null
   updated_at?: string | null
+  last_message_type?: WebchatMessageType | null
+  last_action_status?: string | null
+  needs_human?: boolean
 }
 
 export interface WebchatMessage {
   id: number
-  direction: 'visitor' | 'agent' | 'system' | string
+  direction: 'visitor' | 'agent' | 'ai' | 'system' | 'action' | string
   body: string
+  body_text?: string | null
+  message_type?: WebchatMessageType
+  payload_json?: WebchatCardPayload | Record<string, unknown> | null
+  metadata_json?: Record<string, unknown> | null
+  client_message_id?: string | null
+  delivery_status?: string | null
+  action_status?: string | null
   author_label?: string | null
+  created_at?: string | null
+}
+
+export interface WebchatActionAudit {
+  id: number
+  message_id: number
+  action_type: string
+  status: string
+  payload: Record<string, unknown>
+  submitted_by: string
+  origin?: string | null
   created_at?: string | null
 }
 
@@ -368,6 +439,9 @@ export interface WebchatThread {
   ticket_no: string
   origin?: string | null
   page_url?: string | null
+  status?: string | null
+  conversation_state?: string | null
+  required_action?: string | null
   visitor: {
     name?: string | null
     email?: string | null
@@ -375,6 +449,7 @@ export interface WebchatThread {
     ref?: string | null
   }
   messages: WebchatMessage[]
+  actions?: WebchatActionAudit[]
 }
 
 export interface WebchatReplyResult {

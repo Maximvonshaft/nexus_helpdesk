@@ -11,6 +11,7 @@ from ..enums import JobStatus, MessageStatus, SourceChannel
 from ..models import BackgroundJob, OpenClawConversationLink, OpenClawTranscriptMessage, TicketOutboundMessage
 from ..settings import get_settings
 from ..utils.time import utc_now
+from . import openclaw_bridge, openclaw_client_factory
 
 settings = get_settings()
 AUTO_REPLY_JOB = 'auto_reply.send_update'
@@ -215,13 +216,12 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
 
         if job.job_type == ATTACHMENT_PERSIST_JOB:
             from ..models import OpenClawAttachmentReference
-            from .openclaw_bridge import persist_openclaw_attachment_reference
 
             row = db.query(OpenClawAttachmentReference).filter(OpenClawAttachmentReference.id == int(payload['attachment_ref_id'])).first()
             if row is None:
                 _mark_done(job)
                 return job
-            persist_openclaw_attachment_reference(db, attachment_ref=row)
+            openclaw_bridge.persist_openclaw_attachment_reference(db, attachment_ref=row)
             row.updated_at = utc_now()
             _mark_done(job)
             return job
@@ -239,14 +239,11 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             return job
 
         if job.job_type == OPENCLAW_SYNC_JOB:
-            from .openclaw_bridge import sync_openclaw_conversation
-            from .openclaw_client_factory import get_openclaw_runtime_client
-
             if not settings.openclaw_sync_enabled:
                 _mark_done(job)
                 return job
-            with get_openclaw_runtime_client() as client:
-                sync_openclaw_conversation(
+            with openclaw_client_factory.get_openclaw_runtime_client() as client:
+                openclaw_bridge.sync_openclaw_conversation(
                     db,
                     ticket_id=int(payload['ticket_id']),
                     session_key=str(payload['session_key']),

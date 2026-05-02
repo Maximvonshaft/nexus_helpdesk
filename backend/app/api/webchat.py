@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from typing import Any
 
@@ -12,6 +14,8 @@ from ..settings import get_settings
 from ..unit_of_work import managed_session
 from .deps import get_current_user
 from ..services.webchat_rate_limit import enforce_webchat_rate_limit
+from ..webchat_models import WebchatCardAction, WebchatConversation, WebchatMessage
+from ..webchat_schemas import WebChatActionSubmitRequest
 from ..services.webchat_service import (
     add_visitor_message,
     admin_get_thread,
@@ -19,6 +23,7 @@ from ..services.webchat_service import (
     admin_reply,
     create_or_resume_conversation,
     list_public_messages,
+    submit_card_action,
 )
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat"])
@@ -43,6 +48,7 @@ class WebchatSendRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     visitor_token: str | None = Field(default=None, min_length=20, max_length=160)
     body: str = Field(min_length=1, max_length=2000)
+    client_message_id: str | None = Field(default=None, max_length=120)
 
 
 class WebchatReplyRequest(BaseModel):
@@ -103,6 +109,92 @@ def _resolve_visitor_token(header_token: str | None, query_token: str | None, bo
     return None
 
 
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _loads_json(value: str | None) -> Any:
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except Exception:
+        return None
+
+
+def _message_read(row: WebchatMessage) -> dict[str, Any]:
+    body_text = getattr(row, "body_text", None) or row.body
+    return {
+        "id": row.id,
+        "direction": row.direction,
+        "body": row.body,
+        "body_text": body_text,
+        "message_type": getattr(row, "message_type", None) or "text",
+        "payload_json": _loads_json(getattr(row, "payload_json", None)),
+        "metadata_json": _loads_json(getattr(row, "metadata_json", None)),
+        "client_message_id": getattr(row, "client_message_id", None),
+        "delivery_status": getattr(row, "delivery_status", None) or "sent",
+        "action_status": getattr(row, "action_status", None),
+        "author_label": row.author_label,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def _find_existing_action_response(
+    db: Session,
+    *,
+    public_conversation_id: str,
+    visitor_token: str,
+    payload: WebChatActionSubmitRequest,
+) -> dict[str, Any] | None:
+    """Return an existing action response for repeated card-action submissions.
+
+    This is intentionally conservative: it only treats an action as idempotent
+    after the visitor token is verified and the same card message + action_id has
+    already produced a `webchat_card_actions` row. It prevents double-clicks and
+    network retries from creating duplicate action audit rows or ticket comments.
+    """
+    conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == public_conversation_id).first()
+    if not conversation or _hash_token(visitor_token) != conversation.visitor_token_hash:
+        return None
+
+    candidates = (
+        db.query(WebchatCardAction)
+        .filter(
+            WebchatCardAction.conversation_id == conversation.id,
+            WebchatCardAction.message_id == payload.message_id,
+            WebchatCardAction.submitted_by == "visitor",
+        )
+        .order_by(WebchatCardAction.id.asc())
+        .all()
+    )
+    for action in candidates:
+        stored_payload = _loads_json(action.action_payload_json) or {}
+        if stored_payload.get("action_id") != payload.action_id:
+            continue
+        message = (
+            db.query(WebchatMessage)
+            .filter(
+                WebchatMessage.conversation_id == conversation.id,
+                WebchatMessage.message_type == "action",
+                WebchatMessage.payload_json.like(f'%"action_id": "{payload.action_id}"%'),
+            )
+            .order_by(WebchatMessage.id.asc())
+            .first()
+        )
+        if not message:
+            return None
+        return {
+            "ok": True,
+            "idempotent": True,
+            "action_id": action.id,
+            "status": action.status,
+            "message": _message_read(message),
+            "handoff_triggered": payload.action_type == "handoff_request" or stored_payload.get("card_type") == "handoff" or payload.action_id == "talk_to_human",
+        }
+    return None
+
+
 @router.options("/{full_path:path}")
 def webchat_options(full_path: str, request: Request):
     return Response(status_code=204, headers=_public_cors_headers(request))
@@ -140,7 +232,7 @@ def send_webchat_message(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
     with managed_session(db):
         enforce_webchat_rate_limit(db, request, tenant_key="default", conversation_id=conversation_id)
-        result = add_visitor_message(db, conversation_id, visitor_token, payload.body, request)
+        result = add_visitor_message(db, conversation_id, visitor_token, payload.body, request, client_message_id=payload.client_message_id)
     return result
 
 
@@ -150,6 +242,8 @@ def poll_webchat_messages(
     request: Request,
     response: Response,
     visitor_token: str | None = Query(default=None),
+    after_id: int | None = Query(default=None, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
     x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
@@ -159,7 +253,29 @@ def poll_webchat_messages(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
     with managed_session(db):
         enforce_webchat_rate_limit(db, request, tenant_key="default", conversation_id=conversation_id)
-        result = list_public_messages(db, conversation_id, resolved_token)
+        result = list_public_messages(db, conversation_id, resolved_token, after_id=after_id, limit=limit)
+    return result
+
+
+@router.post("/conversations/{conversation_id}/actions")
+def submit_webchat_action(
+    conversation_id: str,
+    payload: WebChatActionSubmitRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
+) -> dict[str, Any]:
+    _set_public_cors(response, request)
+    visitor_token = _resolve_visitor_token(x_webchat_visitor_token, None, payload.visitor_token)
+    if not visitor_token:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
+    with managed_session(db):
+        enforce_webchat_rate_limit(db, request, tenant_key="default", conversation_id=conversation_id)
+        existing = _find_existing_action_response(db, public_conversation_id=conversation_id, visitor_token=visitor_token, payload=payload)
+        if existing:
+            return existing
+        result = submit_card_action(db, conversation_id, visitor_token, payload, request)
     return result
 
 
