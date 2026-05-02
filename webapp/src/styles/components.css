@@ -1,0 +1,89 @@
+/*
+ * NexusDesk component style foundation.
+ *
+ * This file is intentionally not imported yet. It documents the class contract
+ * for new shared UI primitives while avoiding visual changes in active pages.
+ */
+
+.nd-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--nd-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--nd-radius-md);
+  font-family: var(--nd-font-sans);
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.nd-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.nd-button--sm { min-height: 32px; padding: 0 var(--nd-space-3); font-size: 13px; }
+.nd-button--md { min-height: 40px; padding: 0 var(--nd-space-4); font-size: 14px; }
+.nd-button--lg { min-height: 48px; padding: 0 var(--nd-space-5); font-size: 15px; }
+
+.nd-button--primary { background: var(--nd-color-brand); color: white; }
+.nd-button--secondary { background: var(--nd-color-surface); color: var(--nd-color-text); border-color: var(--nd-color-border); }
+.nd-button--ghost { background: transparent; color: var(--nd-color-text-muted); }
+.nd-button--danger { background: var(--nd-color-danger); color: white; }
+
+.nd-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-family: var(--nd-font-sans);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  border: 1px solid var(--nd-color-border);
+  background: var(--nd-color-surface);
+  color: var(--nd-color-text-muted);
+}
+
+.nd-badge--success { background: var(--nd-color-success-bg); color: var(--nd-color-success); }
+.nd-badge--warning { background: var(--nd-color-warning-bg); color: var(--nd-color-warning); }
+.nd-badge--danger { background: var(--nd-color-danger-bg); color: var(--nd-color-danger); }
+.nd-badge--info { background: var(--nd-color-info-bg); color: var(--nd-color-info); }
+.nd-badge--ai { background: var(--nd-color-ai-bg); color: var(--nd-color-ai); }
+
+.nd-card {
+  border: 1px solid var(--nd-color-border);
+  border-radius: var(--nd-radius-lg);
+  background: var(--nd-color-surface);
+}
+
+.nd-card--elevated {
+  box-shadow: var(--nd-shadow-panel);
+}
+
+.nd-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--nd-space-4);
+  padding: var(--nd-space-5);
+  border-bottom: 1px solid var(--nd-color-border);
+}
+
+.nd-card__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--nd-color-text);
+}
+
+.nd-card__subtitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--nd-color-text-muted);
+}
+
+.nd-card__body {
+  padding: var(--nd-space-5);
+}
