@@ -45,6 +45,37 @@ Existing WebChat behavior is preserved:
 - `action_status`: `pending`, `submitted`, `expired`, `cancelled` style state.
 - `webchat_card_actions`: durable action audit table.
 
+## Current release boundaries
+
+Fully implemented in this PR:
+
+- Text message send/poll/reply compatibility.
+- `after_id` incremental polling contract.
+- Visitor `client_message_id` idempotency for message send.
+- Quick replies card generation and widget rendering.
+- Handoff card generation and widget rendering.
+- Card action submission.
+- Durable action audit via `webchat_card_actions`.
+- Admin thread display for text/card/action/handoff messages.
+- WebChat local-only outbound semantics for ACK, AI reply, safe fallback, card delivery, and handoff ACK.
+
+Schema-only / fallback-first in this release:
+
+- `tracking_status`
+- `address_confirmation`
+- `reschedule_picker`
+- `photo_upload_request`
+- `csat`
+
+Not enabled in this release:
+
+- Binary photo upload handling.
+- Verified tracking-status cards without trusted tool/database evidence.
+- Automated address-change success confirmation.
+- Automated reschedule success confirmation.
+- Automated refund / compensation / customs handling.
+- WebSocket/SSE realtime transport.
+
 ## AI safety model
 
 AI does not render HTML or arbitrary JSON directly. AI or rules can produce an intent. Backend-owned code maps that intent to allowlisted card builders:
@@ -66,7 +97,7 @@ Without tool/database evidence, WebChat must not promise:
 - customs result
 - driver contact or delivery time
 
-The first release includes a lightweight fact gate service and records `fact_evidence_present=false` in generated metadata.
+The first release includes a lightweight fact gate service. Generated AI/WebChat metadata must record `fact_evidence_present=false` unless a trusted tool/database result is explicitly attached.
 
 ## Observability events
 
@@ -80,6 +111,7 @@ The implementation logs structured events including:
 - `webchat_card_action_submitted`
 - `webchat_card_action_rejected`
 - `webchat_handoff_triggered`
+- `webchat_fact_gate_blocked`
 
 Tokens and full PII are not logged.
 
@@ -89,3 +121,4 @@ Tokens and full PII are not logged.
 - `quick_replies` and `handoff` are fully rendered in the widget.
 - Tracking/address/reschedule/photo/CSAT are schema-safe or fallback-first, not full business workflow yet.
 - Photo upload is not enabled in this release.
+- Production deployment requires Alembic migration, app/worker rebuild, staging smoke, and WebChat full admin smoke.
