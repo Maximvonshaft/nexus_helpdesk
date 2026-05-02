@@ -28,8 +28,10 @@ ACTION_TYPE_ALLOWLIST = {
     "photo_upload_submit",
     "csat_submit",
 }
+SAFE_CARD_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$")
 SAFE_ACTION_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,79}$")
 HTML_MARKUP_RE = re.compile(r"<\s*/?\s*(script|iframe|style|object|embed|link|meta|html|body|svg|math|[a-zA-Z][a-zA-Z0-9:-]*)\b", re.IGNORECASE)
+UNSAFE_TEXT_RE = re.compile(r"javascript:|data:text/html|vbscript:", re.IGNORECASE)
 MAX_CARD_PAYLOAD_BYTES = 12_000
 
 
@@ -41,10 +43,8 @@ def _reject_unsafe_text(value: str | None, *, field_name: str, max_len: int) -> 
         raise ValueError(f"{field_name} exceeds {max_len} characters")
     if HTML_MARKUP_RE.search(text):
         raise ValueError(f"{field_name} must not contain HTML or executable markup")
-    lowered = text.lower()
-    for forbidden in ("javascript:", "data:text/html", "<script", "</script", "<iframe", "<style"):
-        if forbidden in lowered:
-            raise ValueError(f"{field_name} contains unsafe content")
+    if UNSAFE_TEXT_RE.search(text):
+        raise ValueError(f"{field_name} contains unsafe content")
     return text
 
 
@@ -58,8 +58,9 @@ def _validate_urls_are_https(value: Any) -> None:
     elif isinstance(value, list):
         for item in value:
             _validate_urls_are_https(item)
-    elif isinstance(value, str) and HTML_MARKUP_RE.search(value):
-        raise ValueError("WebChat card payload text must not contain HTML or executable markup")
+    elif isinstance(value, str):
+        if HTML_MARKUP_RE.search(value) or UNSAFE_TEXT_RE.search(value):
+            raise ValueError("WebChat card payload text must not contain HTML or executable markup")
 
 
 class WebChatAPIModel(BaseModel):
@@ -98,6 +99,11 @@ class WebChatCardAction(BaseModel):
             raise ValueError("unsupported WebChat card action_type")
         return value
 
+    @model_validator(mode="after")
+    def validate_action_payload_security(self):
+        _validate_urls_are_https(self.payload)
+        return self
+
 
 class WebChatCardPayload(BaseModel):
     card_id: str = Field(max_length=120)
@@ -111,7 +117,7 @@ class WebChatCardPayload(BaseModel):
     @field_validator("card_id")
     @classmethod
     def validate_card_id(cls, value: str) -> str:
-        if not SAFE_ACTION_ID_RE.match(value or "") and not str(value or "").startswith("card_"):
+        if not SAFE_CARD_ID_RE.match(value or ""):
             raise ValueError("card_id must be a safe string")
         return value
 
@@ -162,11 +168,18 @@ class WebChatActionSubmitRequest(BaseModel):
     action_type: str = Field(default="quick_reply", max_length=64)
     payload: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("card_id", "action_id")
+    @field_validator("card_id")
     @classmethod
-    def validate_safe_ids(cls, value: str) -> str:
-        if not SAFE_ACTION_ID_RE.match(value or "") and not str(value or "").startswith("card_"):
-            raise ValueError("unsafe card/action id")
+    def validate_submit_card_id(cls, value: str) -> str:
+        if not SAFE_CARD_ID_RE.match(value or ""):
+            raise ValueError("unsafe card id")
+        return value
+
+    @field_validator("action_id")
+    @classmethod
+    def validate_submit_action_id(cls, value: str) -> str:
+        if not SAFE_ACTION_ID_RE.match(value or ""):
+            raise ValueError("unsafe action id")
         return value
 
     @field_validator("action_type")
