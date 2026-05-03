@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -67,14 +68,28 @@ def _normalized_allowed_origins() -> set[str]:
 
 def _validated_origin(request: Request) -> str | None:
     origin = request.headers.get("origin")
-    if not origin:
-        if settings.webchat_allow_no_origin or settings.app_env in {"development", "test", "local"}:
-            return None
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webchat origin is required")
-    normalized = origin.rstrip("/")
-    if normalized not in _normalized_allowed_origins():
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webchat origin is not allowed")
-    return origin
+    allowed = _normalized_allowed_origins()
+
+    if origin:
+        normalized = origin.rstrip("/")
+        if normalized not in allowed:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webchat origin is not allowed")
+        return origin
+
+    # Same-origin browser GET/fetch requests often omit the Origin header.
+    # For public WebChat read polling, accept a Referer-derived origin only when it
+    # exactly matches WEBCHAT_ALLOWED_ORIGINS. Visitor token validation still applies.
+    referer = request.headers.get("referer")
+    if referer:
+        parsed = urlparse(referer)
+        if parsed.scheme and parsed.netloc:
+            referer_origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+            if referer_origin in allowed:
+                return referer_origin
+
+    if settings.webchat_allow_no_origin or settings.app_env in {"development", "test", "local"}:
+        return None
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webchat origin is required")
 
 
 def _public_cors_headers(request: Request) -> dict[str, str]:
