@@ -48,6 +48,8 @@ def test_tracking_payload_redacts_pii_fields_and_raw_names():
     assert safe["email_redacted"] is True
     assert "recipient_name" not in safe
     assert safe["latest_event"]["location"] == "PK FIN Center"
+    assert "John Smith" not in safe["latest_event"]["description"]
+    assert "[redacted_name]" in safe["latest_event"]["description"]
 
 
 def test_normalized_tracking_fact_is_sanitized_and_prompt_ready():
@@ -60,7 +62,7 @@ def test_normalized_tracking_fact_is_sanitized_and_prompt_ready():
         "latest_event": {
             "event_time": "2026-03-24T17:40:55Z",
             "location": "PK FIN Center",
-            "description": "Delivered",
+            "description": "Delivered to John Smith",
         },
         "pod": {"signed_by": "John Smith"},
     }, tracking_number="PK120053679836")
@@ -75,6 +77,7 @@ def test_normalized_tracking_fact_is_sanitized_and_prompt_ready():
     assert "Trusted tracking fact" in prompt
     assert "Delivered" in prompt
     assert "John Smith" not in prompt
+    assert "[redacted_name]" in prompt
 
 
 def test_fact_gate_allows_delivered_only_with_fact_evidence():
@@ -120,7 +123,7 @@ def test_tracking_lookup_success_uses_bridge_and_redacts(monkeypatch):
                 "latest_event": {
                     "event_time": "2026-03-24T17:40:55Z",
                     "location": "PK FIN Center",
-                    "description": "Delivered",
+                    "description": "Delivered to John Smith",
                 },
                 "pod": {"signed_by": "John Smith"},
             },
@@ -141,6 +144,7 @@ def test_tracking_lookup_success_uses_bridge_and_redacts(monkeypatch):
     assert result.fact_evidence_present is True
     assert result.pii_redacted is True
     assert "John Smith" not in result.prompt_summary()
+    assert "[redacted_name]" in result.prompt_summary()
 
 
 def test_webchat_ai_prompt_includes_sanitized_tracking_fact_only():
