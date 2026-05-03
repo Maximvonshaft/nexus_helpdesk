@@ -4,10 +4,13 @@ from fastapi.testclient import TestClient
 
 from app.db import Base, SessionLocal, engine
 from app.main import app
+from app.settings import get_settings
 from app.webchat_models import WebchatCardAction, WebchatConversation
 
 
-def test_webchat_action_submit_is_idempotent_for_same_card_action():
+def test_webchat_action_submit_is_idempotent_for_same_card_action(monkeypatch):
+    monkeypatch.setenv("WEBCHAT_STATIC_QUICK_REPLIES_MODE", "legacy")
+    get_settings.cache_clear()
     Base.metadata.create_all(bind=engine)
     client = TestClient(app)
 
@@ -77,3 +80,4 @@ def test_webchat_action_submit_is_idempotent_for_same_card_action():
         assert len(actions) == 1
     finally:
         db.close()
+        get_settings.cache_clear()

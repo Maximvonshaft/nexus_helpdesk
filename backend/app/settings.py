@@ -103,6 +103,7 @@ class Settings:
         self.webchat_rate_limit_window_seconds = int(os.getenv("WEBCHAT_RATE_LIMIT_WINDOW_SECONDS", "60"))
         self.webchat_rate_limit_max_requests = int(os.getenv("WEBCHAT_RATE_LIMIT_MAX_REQUESTS", "20"))
         self.webchat_ai_auto_reply_mode = os.getenv("WEBCHAT_AI_AUTO_REPLY_MODE", "safe_ack" if self.app_env == "production" else "safe_ai").strip().lower() or "safe_ack"
+        self.webchat_static_quick_replies_mode = os.getenv("WEBCHAT_STATIC_QUICK_REPLIES_MODE", "off").strip().lower() or "off"
 
         self.request_id_header = os.getenv("REQUEST_ID_HEADER", "X-Request-Id")
         self.log_json = os.getenv("LOG_JSON", "true").strip().lower() == "true"
@@ -131,6 +132,8 @@ class Settings:
             raise RuntimeError("WEBCHAT_RATE_LIMIT_BACKEND must be memory or database")
         if self.webchat_ai_auto_reply_mode not in {"off", "safe_ack", "safe_ai"}:
             raise RuntimeError("WEBCHAT_AI_AUTO_REPLY_MODE must be off, safe_ack, or safe_ai")
+        if self.webchat_static_quick_replies_mode not in {"off", "legacy"}:
+            raise RuntimeError("WEBCHAT_STATIC_QUICK_REPLIES_MODE must be off or legacy")
         if self.app_env == "production":
             if not self.jwt_secret_key:
                 raise RuntimeError("SECRET_KEY must be set in production")

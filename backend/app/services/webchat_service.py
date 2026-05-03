@@ -375,6 +375,18 @@ def _maybe_create_structured_card(db: Session, *, conversation: WebchatConversat
         WEBCHAT_LOGGER.info("webchat_handoff_triggered", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "reason": intent.intent}})
         return
     if intent.recommended_card == "quick_replies" or intent.intent in {"greeting", "tracking", "unknown"}:
+        settings = get_settings()
+        if settings.webchat_static_quick_replies_mode != "legacy":
+            WEBCHAT_LOGGER.info("webchat_static_quick_replies_skipped", extra={"event_payload": {
+                "conversation_id": conversation.id,
+                "ticket_id": ticket.id,
+                "visitor_message_id": visitor_message.id,
+                "intent": intent.intent,
+                "recommended_card": intent.recommended_card,
+                "mode": settings.webchat_static_quick_replies_mode
+            }})
+            return
+
         body = "Choose one option below. If this is about a parcel, please share your tracking number."
         if "tracking_number" in intent.missing_fields:
             body = "Please share your tracking number, or choose another option below."
