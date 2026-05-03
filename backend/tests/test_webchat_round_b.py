@@ -166,6 +166,23 @@ def test_bridge_ai_reply_maps_public_session_key_to_gateway_key():
     assert 'sessionKey,\n        limit,' not in ai_reply_block
 
 
+def test_bridge_ai_reply_is_decoupled_from_external_write_mode():
+    bridge_script = Path(__file__).resolve().parents[1] / 'scripts' / 'openclaw_bridge_server.js'
+    source = bridge_script.read_text(encoding='utf-8')
+    send_block = source.split('async sendMessage(payload) {', 1)[1].split('\n  async listConversations', 1)[0]
+    ai_reply_block = source.split('async aiReply(payload) {', 1)[1].split('\n  pollEvents(payload)', 1)[0]
+    health_block = source.split('health() {', 1)[1].split('\n  async stop()', 1)[0]
+
+    assert "allowWrites: truthyEnv('OPENCLAW_BRIDGE_ALLOW_WRITES', false)" in source
+    assert "aiReplyEnabled: truthyEnv('OPENCLAW_BRIDGE_AI_REPLY_ENABLED', true)" in source
+    assert "if (!this.config.allowWrites) throw new Error('bridge_writes_disabled');" in send_block
+    assert "if (!this.config.allowWrites)" not in ai_reply_block
+    assert "if (!this.config.aiReplyEnabled) throw new Error('bridge_ai_reply_disabled');" in ai_reply_block
+    assert 'allowWrites: this.config.allowWrites' in health_block
+    assert 'aiReplyEnabled: this.config.aiReplyEnabled' in health_block
+    assert 'sendMessageEnabled: this.config.allowWrites' in health_block
+
+
 def test_webchat_ai_reply_bridge_failure_falls_back_safely(monkeypatch):
     client = TestClient(app)
     init = client.post('/api/webchat/init', json={
