@@ -16,6 +16,7 @@ const DEFAULT_GATEWAY_RUNTIME = path.join(
   'gateway-runtime.js',
 );
 const SEND_PATH = '/send' + '-message';
+const SPEEDAF_LOOKUP_PATH = '/tools/speedaf_lookup';
 
 function nowIso() {
   return new Date().toISOString();
@@ -86,6 +87,9 @@ function loadConfig() {
     connectChallengeTimeoutMs: parseIntEnv('OPENCLAW_BRIDGE_CONNECT_CHALLENGE_TIMEOUT_MS', 8000),
     allowWrites: truthyEnv('OPENCLAW_BRIDGE_ALLOW_WRITES', false),
     aiReplyEnabled: truthyEnv('OPENCLAW_BRIDGE_AI_REPLY_ENABLED', true),
+    trackingLookupEnabled: truthyEnv('OPENCLAW_BRIDGE_TRACKING_LOOKUP_ENABLED', false),
+    trackingLookupMethod: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_METHOD || 'tools.call',
+    trackingLookupToolName: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_TOOL_NAME || 'speedaf-support__speedaf_lookup',
   };
 }
 
@@ -401,6 +405,65 @@ class BridgeRuntime {
     }
   }
 
+  async lookupSpeedaf(payload) {
+    if (!this.config.trackingLookupEnabled) throw new Error('bridge_tracking_lookup_disabled');
+    if (!this.client) throw new Error('bridge_client_not_started');
+    await this.waitForReady();
+    const trackingNumber = String(payload.tracking_number || payload.trackingNumber || '').trim().toUpperCase();
+    if (!trackingNumber) throw new Error('missing_tracking_number');
+    const bridgeRequestId = crypto.randomUUID();
+    const args = {
+      tracking_number: trackingNumber,
+      trackingNumber,
+      source: payload.source || 'nexus_webchat',
+      request_id: payload.request_id || null,
+      conversation_id: payload.conversation_id || null,
+      ticket_id: payload.ticket_id || null,
+    };
+    const requestPayload = {
+      name: this.config.trackingLookupToolName,
+      tool_name: this.config.trackingLookupToolName,
+      arguments: args,
+      args,
+    };
+    this.pendingRequests.set(bridgeRequestId, {
+      createdAt: nowIso(),
+      action: 'speedaf_lookup',
+      toolName: this.config.trackingLookupToolName,
+      trackingNumberSuffix: trackingNumber.slice(-4),
+    });
+    try {
+      const result = await this.client.request(this.config.trackingLookupMethod, requestPayload, {
+        timeoutMs: this.config.requestTimeoutMs,
+      });
+      log('info', 'bridge_tracking_lookup_success', {
+        bridgeRequestId,
+        toolName: this.config.trackingLookupToolName,
+        trackingNumberSuffix: trackingNumber.slice(-4),
+      });
+      return {
+        bridgeRequestId,
+        tool_name: 'speedaf_lookup',
+        tool_status: 'success',
+        tracking_number: trackingNumber,
+        checked_at: nowIso(),
+        raw_included: false,
+        result,
+      };
+    } catch (error) {
+      log('warn', 'bridge_tracking_lookup_failed', {
+        bridgeRequestId,
+        toolName: this.config.trackingLookupToolName,
+        trackingNumberSuffix: trackingNumber.slice(-4),
+        error: error?.message || String(error),
+        details: error?.details || null,
+      });
+      throw error;
+    } finally {
+      this.pendingRequests.delete(bridgeRequestId);
+    }
+  }
+
   pollEvents(payload) {
     const afterCursor = Number.isFinite(payload.afterCursor) ? payload.afterCursor : 0;
     const sessionKey = payload.sessionKey;
@@ -469,6 +532,9 @@ class BridgeRuntime {
       allowWrites: this.config.allowWrites,
       aiReplyEnabled: this.config.aiReplyEnabled,
       sendMessageEnabled: this.config.allowWrites,
+      trackingLookupEnabled: this.config.trackingLookupEnabled,
+      trackingLookupMethod: this.config.trackingLookupMethod,
+      trackingLookupToolName: this.config.trackingLookupToolName,
       gateway: {
         url: this.config.gatewayUrl,
         connected: this.connected,
@@ -542,7 +608,12 @@ async function handleBridgeCall(res, fn) {
     const errorMessage = error?.message || String(error);
     let statusCode = 502;
     if (errorMessage.startsWith('bridge_not_ready')) statusCode = 503;
-    if (errorMessage === 'bridge_writes_disabled' || errorMessage === 'bridge_ai_reply_disabled') statusCode = 403;
+    if (
+      errorMessage === 'bridge_writes_disabled' ||
+      errorMessage === 'bridge_ai_reply_disabled' ||
+      errorMessage === 'bridge_tracking_lookup_disabled'
+    ) statusCode = 403;
+    if (errorMessage === 'missing_tracking_number') statusCode = 400;
     sendJson(res, statusCode, { ok: false, error: errorMessage, details: error?.details || null });
   }
 }
@@ -559,6 +630,7 @@ async function main() {
     gatewayRuntimeModule: config.gatewayRuntimeModule,
     allowWrites: config.allowWrites,
     aiReplyEnabled: config.aiReplyEnabled,
+    trackingLookupEnabled: config.trackingLookupEnabled,
     node: process.execPath,
   });
   const bridge = new BridgeRuntime(config, GatewayClient);
@@ -576,6 +648,14 @@ async function main() {
         const missing = validateSendPayload(payload);
         if (missing.length) return sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing });
         await handleBridgeCall(res, () => bridge.sendMessage(payload));
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === SPEEDAF_LOOKUP_PATH) {
+        const payload = await readJsonBody(req);
+        if (!payload || (!payload.tracking_number && !payload.trackingNumber)) {
+          return sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing: ['tracking_number'] });
+        }
+        await handleBridgeCall(res, () => bridge.lookupSpeedaf(payload));
         return;
       }
       if (req.method === 'POST' && url.pathname === '/conversations-list') {
