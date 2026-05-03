@@ -9,6 +9,11 @@ _EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
 _PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\d\s().-]{6,}\d)(?!\w)")
 _ID_LIKE_RE = re.compile(r"\b(?:passport|id card|national id|身份证|护照)\b\s*[:：]?\s*[A-Z0-9-]{4,}", re.IGNORECASE)
 _ADDRESS_HINT_RE = re.compile(r"\b(?:street|strasse|straße|road|avenue|apt|apartment|unit|floor|room|door|building|house|地址|门牌|房间|楼层)\b", re.IGNORECASE)
+_POD_NAME_EN_RE = re.compile(
+    r"\b(?P<prefix>signed by|received by|receiver|recipient|consignee|delivered to)\s*[:：]?\s+(?P<name>[A-Z][A-Za-z .'-]{1,80})",
+    re.IGNORECASE,
+)
+_POD_NAME_ZH_RE = re.compile(r"(?P<prefix>签收人|收件人|收货人)\s*[:：]?\s*(?P<name>[\u4e00-\u9fffA-Za-z .'-]{1,30})")
 
 PII_KEYS = {
     "recipient",
@@ -47,12 +52,19 @@ def mask_name(value: str | None) -> str | None:
     return compact[0] + "***" + compact[-1]
 
 
+def _redact_embedded_pod_names(text: str) -> str:
+    text = _POD_NAME_EN_RE.sub(lambda m: f"{m.group('prefix')} [redacted_name]", text)
+    text = _POD_NAME_ZH_RE.sub(lambda m: f"{m.group('prefix')}[redacted_name]", text)
+    return text
+
+
 def redact_text(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
     if not text:
         return None
+    text = _redact_embedded_pod_names(text)
     text = _EMAIL_RE.sub("[redacted_email]", text)
     text = _PHONE_RE.sub("[redacted_phone]", text)
     text = _ID_LIKE_RE.sub("[redacted_id]", text)
