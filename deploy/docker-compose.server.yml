@@ -136,7 +136,15 @@ services:
     depends_on:
       app:
         condition: service_healthy
-
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'scripts/run_openclaw_sync_daemon.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('openclaw-sync-daemon-ok')"
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
   event-daemon:
     logging:
       driver: json-file
@@ -170,7 +178,15 @@ services:
     depends_on:
       app:
         condition: service_healthy
-
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'scripts/run_openclaw_event_daemon.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('openclaw-event-daemon-ok')"
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
   nginx:
     image: nginx:1.27-alpine
     profiles: ["edge-nginx"]
