@@ -62,6 +62,9 @@ class Settings:
         self.openclaw_bridge_enabled = os.getenv("OPENCLAW_BRIDGE_ENABLED", "false").strip().lower() == "true"
         self.openclaw_bridge_url = (os.getenv("OPENCLAW_BRIDGE_URL", "http://127.0.0.1:18792").strip() or "http://127.0.0.1:18792").rstrip("/")
         self.openclaw_bridge_timeout_seconds = int(os.getenv("OPENCLAW_BRIDGE_TIMEOUT_SECONDS", "20"))
+        self.openclaw_bridge_token = os.getenv("OPENCLAW_BRIDGE_TOKEN")
+        self.openclaw_bridge_token_file = os.getenv("OPENCLAW_BRIDGE_TOKEN_FILE")
+        self.openclaw_bridge_auth_required = os.getenv("OPENCLAW_BRIDGE_AUTH_REQUIRED", "true" if self.app_env == "production" else "false").strip().lower() == "true"
         self.enable_outbound_dispatch = os.getenv("ENABLE_OUTBOUND_DISPATCH", "false").strip().lower() == "true"
         self.outbound_provider = os.getenv("OUTBOUND_PROVIDER", "disabled").strip().lower() or "disabled"
         self.outbox_batch_size = int(os.getenv("OUTBOX_BATCH_SIZE", "50"))
@@ -157,6 +160,11 @@ class Settings:
                 raise RuntimeError("OPENCLAW_TRANSPORT must be mcp or cli")
             if self.openclaw_deployment_mode not in {"local_gateway", "remote_gateway", "disabled"}:
                 raise RuntimeError("OPENCLAW_DEPLOYMENT_MODE must be local_gateway, remote_gateway, or disabled")
+            if self.openclaw_deployment_mode == "remote_gateway" and self.openclaw_bridge_enabled and self.openclaw_bridge_auth_required:
+                if not (self.openclaw_bridge_token or self.openclaw_bridge_token_file):
+                    raise RuntimeError("OPENCLAW_BRIDGE_TOKEN or OPENCLAW_BRIDGE_TOKEN_FILE must be set in production when OPENCLAW_BRIDGE_ENABLED=true and OPENCLAW_DEPLOYMENT_MODE=remote_gateway")
+                if self.openclaw_bridge_token_file and not Path(self.openclaw_bridge_token_file).is_file():
+                    raise RuntimeError("OPENCLAW_BRIDGE_TOKEN_FILE must point to a readable file in production")
             if self.openclaw_session_dm_scope not in {"per-account-channel-peer", "per-channel-peer", "per-peer"}:
                 raise RuntimeError("OPENCLAW_SESSION_DM_SCOPE must be a supported session dm scope")
             if self.metrics_enabled and not self.metrics_token:
