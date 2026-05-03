@@ -15,7 +15,7 @@ STORAGE = get_storage_backend()
 
 
 class StoredUpload:
-    def __init__(self, stored_name: str, storage_key: str, file_path: str, file_size: int, mime_type: str):
+    def __init__(self, stored_name: str, storage_key: str, file_path: str | None, file_size: int, mime_type: str):
         self.stored_name = stored_name
         self.storage_key = storage_key
         self.file_path = file_path
@@ -33,7 +33,7 @@ def save_upload(file: UploadFile) -> StoredUpload:
     return StoredUpload(
         stored_name=Path(file.filename or stored.storage_key).name,
         storage_key=stored.storage_key,
-        file_path=str(stored.absolute_path),
+        file_path=str(stored.absolute_path) if stored.absolute_path is not None else None,
         file_size=stored.size_bytes,
         mime_type=stored.detected_mime_type,
     )
