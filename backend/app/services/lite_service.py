@@ -446,7 +446,7 @@ def workflow_update_lite_case(db: Session, ticket_id: int, payload: LiteWorkflow
         internal = _lite_status_to_internal(ticket, payload.status or "")
         status_changed = internal != ticket.status
         if status_changed:
-            ensure_can_change_status(current_user, ticket, internal)
+            ensure_can_change_status(current_user, ticket, internal, db)
             validate_transition(ticket.status, internal)
             if requires_note(internal) and not payload.human_note:
                 raise HTTPException(status_code=400, detail="This status change requires a note in workflow_update")
