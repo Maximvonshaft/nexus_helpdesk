@@ -14,6 +14,7 @@ from app.services.outbound_semantics import (
     outbound_ui_label,
     count_outbound_semantics,
 )
+from app.settings import get_settings
 from app.services.webchat_fact_gate import evaluate_webchat_fact_gate
 from app.webchat_models import WebchatCardAction, WebchatConversation, WebchatMessage  # noqa: F401 - ensure metadata registration
 from app.webchat_schemas import WebChatActionSubmitRequest, WebChatCardAction, WebChatCardPayload
@@ -64,29 +65,85 @@ def _conversation_for(public_id: str) -> WebchatConversation:
         db.close()
 
 
-def test_webchat_structured_message_contract_and_incremental_poll():
-    client = TestClient(app)
-    conversation_id, visitor_token, client_message_id = _init_and_send(client)
+def test_webchat_legacy_static_quick_replies_mode_still_generates_card(monkeypatch):
+    monkeypatch.setenv("WEBCHAT_STATIC_QUICK_REPLIES_MODE", "legacy")
+    get_settings.cache_clear()
+    
+    try:
+        client = TestClient(app)
+        conversation_id, visitor_token, client_message_id = _init_and_send(client, body="Hello")
 
-    first_poll = client.get(
+        first_poll = client.get(
+            f'/api/webchat/conversations/{conversation_id}/messages',
+            headers={'X-Webchat-Visitor-Token': visitor_token},
+            params={'limit': 20},
+        )
+        assert first_poll.status_code == 200, first_poll.text
+        data = first_poll.json()
+        assert data['has_more'] is False
+        assert any(item['message_type'] == 'text' and item['client_message_id'] == client_message_id for item in data['messages'])
+        assert any(item['message_type'] == 'card' and item['payload_json']['card_type'] == 'quick_replies' for item in data['messages'])
+        
+        qr_card = next(item for item in data['messages'] if item['message_type'] == 'card' and item['payload_json']['card_type'] == 'quick_replies')
+        assert qr_card['payload_json']['title'] == 'How can we help you?'
+        actions = [a['id'] for a in qr_card['payload_json']['actions']]
+        assert 'track_parcel' in actions
+        assert 'change_address' in actions
+        assert 'talk_to_human' in actions
+
+        next_after_id = data['next_after_id']
+        second_poll = client.get(
+            f'/api/webchat/conversations/{conversation_id}/messages',
+            headers={'X-Webchat-Visitor-Token': visitor_token},
+            params={'after_id': next_after_id, 'limit': 20},
+        )
+        assert second_poll.status_code == 200, second_poll.text
+        assert second_poll.json()['messages'] == []
+    finally:
+        get_settings.cache_clear()
+
+def test_webchat_default_does_not_generate_static_quick_replies():
+    get_settings.cache_clear()
+    client = TestClient(app)
+    conversation_id, visitor_token, client_message_id = _init_and_send(client, body="Hello")
+
+    polled = client.get(
         f'/api/webchat/conversations/{conversation_id}/messages',
         headers={'X-Webchat-Visitor-Token': visitor_token},
         params={'limit': 20},
     )
-    assert first_poll.status_code == 200, first_poll.text
-    data = first_poll.json()
-    assert data['has_more'] is False
+    assert polled.status_code == 200
+    data = polled.json()
     assert any(item['message_type'] == 'text' and item['client_message_id'] == client_message_id for item in data['messages'])
-    assert any(item['message_type'] == 'card' and item['payload_json']['card_type'] == 'quick_replies' for item in data['messages'])
+    assert not any(item['message_type'] == 'card' and item['payload_json']['card_type'] == 'quick_replies' for item in data['messages'])
 
-    next_after_id = data['next_after_id']
-    second_poll = client.get(
+def test_webchat_default_tracking_does_not_generate_static_quick_replies():
+    get_settings.cache_clear()
+    client = TestClient(app)
+    conversation_id, visitor_token, client_message_id = _init_and_send(client, body="I want to track my parcel")
+
+    polled = client.get(
         f'/api/webchat/conversations/{conversation_id}/messages',
         headers={'X-Webchat-Visitor-Token': visitor_token},
-        params={'after_id': next_after_id, 'limit': 20},
+        params={'limit': 20},
     )
-    assert second_poll.status_code == 200, second_poll.text
-    assert second_poll.json()['messages'] == []
+    assert polled.status_code == 200
+    data = polled.json()
+    assert not any(item['message_type'] == 'card' and item['payload_json']['card_type'] == 'quick_replies' for item in data['messages'])
+
+def test_webchat_default_unknown_does_not_generate_static_quick_replies():
+    get_settings.cache_clear()
+    client = TestClient(app)
+    conversation_id, visitor_token, client_message_id = _init_and_send(client, body="some random unknown thing")
+
+    polled = client.get(
+        f'/api/webchat/conversations/{conversation_id}/messages',
+        headers={'X-Webchat-Visitor-Token': visitor_token},
+        params={'limit': 20},
+    )
+    assert polled.status_code == 200
+    data = polled.json()
+    assert not any(item['message_type'] == 'card' and item['payload_json']['card_type'] == 'quick_replies' for item in data['messages'])
 
 
 def test_webchat_client_message_id_idempotency():
@@ -110,65 +167,76 @@ def test_webchat_client_message_id_idempotency():
         db.close()
 
 
-def test_quick_reply_action_submit_records_action_and_ticket_event():
-    client = TestClient(app)
-    conversation_id, visitor_token, _ = _init_and_send(client)
-    polled = client.get(
-        f'/api/webchat/conversations/{conversation_id}/messages',
-        headers={'X-Webchat-Visitor-Token': visitor_token},
-        params={'limit': 30},
-    )
-    card = next(item for item in polled.json()['messages'] if item['message_type'] == 'card' and item['payload_json']['card_type'] == 'quick_replies')
-    action = card['payload_json']['actions'][0]
-    submitted = client.post(
-        f'/api/webchat/conversations/{conversation_id}/actions',
-        headers={'X-Webchat-Visitor-Token': visitor_token},
-        json={
-            'message_id': card['id'],
-            'card_id': card['payload_json']['card_id'],
-            'action_id': action['id'],
-            'action_type': action['action_type'],
-            'payload': action.get('payload') or {},
-        },
-    )
-    assert submitted.status_code == 200, submitted.text
-    body = submitted.json()
-    assert body['ok'] is True
-    assert body['message']['message_type'] == 'action'
-
-    db = SessionLocal()
+def test_quick_reply_action_submit_records_action_and_ticket_event(monkeypatch):
+    monkeypatch.setenv("WEBCHAT_STATIC_QUICK_REPLIES_MODE", "legacy")
+    get_settings.cache_clear()
     try:
-        conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id).first()
-        assert conversation is not None
-        assert db.query(WebchatCardAction).filter(WebchatCardAction.conversation_id == conversation.id).count() == 1
+        client = TestClient(app)
+        conversation_id, visitor_token, _ = _init_and_send(client)
+        polled = client.get(
+            f'/api/webchat/conversations/{conversation_id}/messages',
+            headers={'X-Webchat-Visitor-Token': visitor_token},
+            params={'limit': 30},
+        )
+        card = next(item for item in polled.json()['messages'] if item['message_type'] == 'card' and item['payload_json']['card_type'] == 'quick_replies')
+        action = card['payload_json']['actions'][0]
+        submitted = client.post(
+            f'/api/webchat/conversations/{conversation_id}/actions',
+            headers={'X-Webchat-Visitor-Token': visitor_token},
+            json={
+                'message_id': card['id'],
+                'card_id': card['payload_json']['card_id'],
+                'action_id': action['id'],
+                'action_type': action['action_type'],
+                'payload': action.get('payload') or {},
+            },
+        )
+        assert submitted.status_code == 200, submitted.text
+        body = submitted.json()
+        assert body['ok'] is True
+        assert body['message']['message_type'] == 'action'
+
+        db = SessionLocal()
+        try:
+            conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id).first()
+            assert conversation is not None
+            assert db.query(WebchatCardAction).filter(WebchatCardAction.conversation_id == conversation.id).count() == 1
+        finally:
+            db.close()
     finally:
-        db.close()
+        get_settings.cache_clear()
 
 
-def test_invalid_card_type_and_invalid_action_id_rejected():
-    with pytest.raises(ValueError):
-        WebChatCardPayload(card_id='card_bad', card_type='evil_html', title='Bad', body='Bad', actions=[])
+def test_invalid_card_type_and_invalid_action_id_rejected(monkeypatch):
+    monkeypatch.setenv("WEBCHAT_STATIC_QUICK_REPLIES_MODE", "legacy")
+    get_settings.cache_clear()
 
-    client = TestClient(app)
-    conversation_id, visitor_token, _ = _init_and_send(client)
-    polled = client.get(
-        f'/api/webchat/conversations/{conversation_id}/messages',
-        headers={'X-Webchat-Visitor-Token': visitor_token},
-        params={'limit': 30},
-    )
-    card = next(item for item in polled.json()['messages'] if item['message_type'] == 'card')
-    rejected = client.post(
-        f'/api/webchat/conversations/{conversation_id}/actions',
-        headers={'X-Webchat-Visitor-Token': visitor_token},
-        json={
-            'message_id': card['id'],
-            'card_id': card['payload_json']['card_id'],
-            'action_id': 'not_in_card',
-            'action_type': 'quick_reply',
-            'payload': {},
-        },
-    )
-    assert rejected.status_code == 400
+    try:
+        with pytest.raises(ValueError):
+            WebChatCardPayload(card_id='card_bad', card_type='evil_html', title='Bad', body='Bad', actions=[])
+
+        client = TestClient(app)
+        conversation_id, visitor_token, _ = _init_and_send(client)
+        polled = client.get(
+            f'/api/webchat/conversations/{conversation_id}/messages',
+            headers={'X-Webchat-Visitor-Token': visitor_token},
+            params={'limit': 30},
+        )
+        card = next(item for item in polled.json()['messages'] if item['message_type'] == 'card')
+        rejected = client.post(
+            f'/api/webchat/conversations/{conversation_id}/actions',
+            headers={'X-Webchat-Visitor-Token': visitor_token},
+            json={
+                'message_id': card['id'],
+                'card_id': card['payload_json']['card_id'],
+                'action_id': 'not_in_card',
+                'action_type': 'quick_reply',
+                'payload': {},
+            },
+        )
+        assert rejected.status_code == 400
+    finally:
+        get_settings.cache_clear()
 
 
 def test_webchat_card_payload_rejects_html_script_iframe_style_and_unsafe_urls():
