@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Promote `backend/scripts/openclaw_bridge_server.js` from a manual runner into a managed service for the outbound send path.
+Promote `backend/scripts/openclaw_bridge_server.js` from a manual runner into a managed service for OpenClaw read, AI-reply, and controlled outbound bridge paths.
 
 ## Service files
 
@@ -25,6 +25,30 @@ Set these in `/opt/nexusdesk/backend/.env.production` or the relevant env file.
 
 - `OPENCLAW_BRIDGE_ENABLED=true`
 - `OPENCLAW_BRIDGE_URL=http://127.0.0.1:18792`
+
+### Bridge safety switches
+
+- `OPENCLAW_BRIDGE_AI_REPLY_ENABLED=true`
+- `OPENCLAW_BRIDGE_ALLOW_WRITES=false`
+
+`OPENCLAW_BRIDGE_AI_REPLY_ENABLED` controls the internal `/ai-reply` WebChat AI generation path.
+
+`OPENCLAW_BRIDGE_ALLOW_WRITES` controls the customer-facing `/send-message` path. Keep it `false` unless outbound dispatch is intentionally enabled and verified.
+
+Recommended controlled-pilot posture:
+
+```bash
+OPENCLAW_BRIDGE_AI_REPLY_ENABLED=true
+OPENCLAW_BRIDGE_ALLOW_WRITES=false
+ENABLE_OUTBOUND_DISPATCH=false
+OUTBOUND_PROVIDER=disabled
+```
+
+Expected behavior:
+
+- `/ai-reply` works for WebChat AI generation.
+- `/send-message` returns `bridge_writes_disabled`.
+- WhatsApp / Telegram / SMS external outbound dispatch remains disabled.
 
 ### Optional bridge overrides
 
@@ -113,11 +137,19 @@ python backend/scripts/check_openclaw_bridge_health.py
 
 ## Log interpretation
 
-### Bridge path
+### AI reply path
+
+Look for:
+- bridge service: `action: "ai_reply"` pending request metadata
+- backend: latest WebChat agent message metadata with `generated_by=webchat_ai` and `reply_source=bridge`
+
+### Customer-facing send path
 
 Look for:
 - bridge service: `bridge_send_dispatch`, `bridge_send_success`
 - backend: `openclaw_bridge_dispatch_success`
+
+This path should be unavailable when `OPENCLAW_BRIDGE_ALLOW_WRITES=false`.
 
 ### Bridge unavailable
 
@@ -134,10 +166,11 @@ Look for:
 
 ## Failure behavior
 
-- If bridge is down, outbound send attempts fail bridge-first.
-- If `OPENCLAW_CLI_FALLBACK_ENABLED=true`, the worker falls back to `openclaw message send`.
-- If fallback is disabled, the outbound message remains failed/retryable instead of silently disappearing.
+- If bridge is down, bridge-first calls fail fast or fall back according to backend service policy.
+- If `OPENCLAW_CLI_FALLBACK_ENABLED=true`, outbound worker paths may fall back to `openclaw message send`.
+- If fallback is disabled, outbound messages remain failed/retryable instead of silently disappearing.
+- `/ai-reply` does not enable customer-facing outbound dispatch.
 
 ## Recovery behavior
 
-Once the bridge is back and `/health` reports `gateway.connected=true`, the next outbound attempts return to the main bridge path automatically. No code change is required.
+Once the bridge is back and `/health` reports `gateway.connected=true`, the next bridge-backed attempts return to the main bridge path automatically. No code change is required.
