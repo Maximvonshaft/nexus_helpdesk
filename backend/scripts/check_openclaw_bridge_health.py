@@ -33,6 +33,13 @@ def _payload_bool(payload: dict[str, Any], key: str, *, env_name: str, default: 
     return _truthy(os.getenv(env_name), default=default)
 
 
+def _payload_text(payload: dict[str, Any], key: str, *, env_name: str, default: str) -> str:
+    value = payload.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return (os.getenv(env_name, default).strip() or default)
+
+
 def _csv(raw: str | None) -> list[str]:
     return [item.strip() for item in (raw or '').split(',') if item.strip()]
 
@@ -68,6 +75,24 @@ def _diagnose(payload: dict[str, Any] | None, *, http_ok: bool, error: str | Non
         env_name='OPENCLAW_BRIDGE_AI_REPLY_ENABLED',
         default=True,
     )
+    tracking_lookup_enabled = _payload_bool(
+        payload,
+        'trackingLookupEnabled',
+        env_name='OPENCLAW_BRIDGE_TRACKING_LOOKUP_ENABLED',
+        default=False,
+    )
+    tracking_lookup_method = _payload_text(
+        payload,
+        'trackingLookupMethod',
+        env_name='OPENCLAW_BRIDGE_TRACKING_LOOKUP_METHOD',
+        default='tools.call',
+    )
+    tracking_lookup_tool_name = _payload_text(
+        payload,
+        'trackingLookupToolName',
+        env_name='OPENCLAW_BRIDGE_TRACKING_LOOKUP_TOOL_NAME',
+        default='speedaf-support__speedaf_lookup',
+    )
     scopes = _csv(os.getenv('OPENCLAW_BRIDGE_GATEWAY_SCOPES', 'operator.read'))
     gateway_connected = bool(gateway.get('connected'))
     summary = {
@@ -78,6 +103,9 @@ def _diagnose(payload: dict[str, Any] | None, *, http_ok: bool, error: str | Non
         'allow_writes': allow_writes,
         'send_message_enabled': send_message_enabled,
         'ai_reply_enabled': ai_reply_enabled,
+        'tracking_lookup_enabled': tracking_lookup_enabled,
+        'tracking_lookup_method': tracking_lookup_method,
+        'tracking_lookup_tool_name': tracking_lookup_tool_name,
         'gateway_scopes': scopes,
         'write_scope_present': 'operator.write' in scopes,
         'runtime_module_exists': _runtime_module_exists(payload),
