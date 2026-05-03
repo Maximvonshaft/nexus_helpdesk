@@ -52,6 +52,12 @@ function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function truthyEnv(name, fallback = false) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+}
+
 function loadConfig() {
   const configPath = process.env.OPENCLAW_CONFIG_PATH || DEFAULT_OPENCLAW_CONFIG;
   const raw = fs.readFileSync(configPath, 'utf8');
@@ -78,7 +84,8 @@ function loadConfig() {
     gatewayRuntimeModule:
       process.env.OPENCLAW_GATEWAY_RUNTIME_MODULE || DEFAULT_GATEWAY_RUNTIME,
     connectChallengeTimeoutMs: parseIntEnv('OPENCLAW_BRIDGE_CONNECT_CHALLENGE_TIMEOUT_MS', 8000),
-    allowWrites: String(process.env.OPENCLAW_BRIDGE_ALLOW_WRITES || 'false').toLowerCase() === 'true',
+    allowWrites: truthyEnv('OPENCLAW_BRIDGE_ALLOW_WRITES', false),
+    aiReplyEnabled: truthyEnv('OPENCLAW_BRIDGE_AI_REPLY_ENABLED', true),
   };
 }
 
@@ -371,7 +378,7 @@ class BridgeRuntime {
   }
 
   async aiReply(payload) {
-    if (!this.config.allowWrites) throw new Error('bridge_writes_disabled');
+    if (!this.config.aiReplyEnabled) throw new Error('bridge_ai_reply_disabled');
     if (!this.client) throw new Error('bridge_client_not_started');
     await this.waitForReady();
     const bridgeRequestId = crypto.randomUUID();
@@ -459,6 +466,9 @@ class BridgeRuntime {
       ok: true,
       service: 'openclaw-bridge',
       startedAt: this.startedAt,
+      allowWrites: this.config.allowWrites,
+      aiReplyEnabled: this.config.aiReplyEnabled,
+      sendMessageEnabled: this.config.allowWrites,
       gateway: {
         url: this.config.gatewayUrl,
         connected: this.connected,
@@ -530,7 +540,9 @@ async function handleBridgeCall(res, fn) {
     sendJson(res, 200, { ok: true, ...response });
   } catch (error) {
     const errorMessage = error?.message || String(error);
-    const statusCode = errorMessage.startsWith('bridge_not_ready') ? 503 : 502;
+    let statusCode = 502;
+    if (errorMessage.startsWith('bridge_not_ready')) statusCode = 503;
+    if (errorMessage === 'bridge_writes_disabled' || errorMessage === 'bridge_ai_reply_disabled') statusCode = 403;
     sendJson(res, statusCode, { ok: false, error: errorMessage, details: error?.details || null });
   }
 }
@@ -545,6 +557,8 @@ async function main() {
     configPath: config.configPath,
     tokenSource: config.tokenSource,
     gatewayRuntimeModule: config.gatewayRuntimeModule,
+    allowWrites: config.allowWrites,
+    aiReplyEnabled: config.aiReplyEnabled,
     node: process.execPath,
   });
   const bridge = new BridgeRuntime(config, GatewayClient);
