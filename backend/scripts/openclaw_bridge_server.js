@@ -52,6 +52,38 @@ function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function truthyEnv(name, fallback = false) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+}
+
+function withTimeout(promise, timeoutMs, timeoutMessage) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(timeoutMessage)), Math.max(1, timeoutMs));
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function extractReplyText(rows) {
+  if (!Array.isArray(rows)) return '';
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const item = rows[i] || {};
+    const role = String(item.role || item.sender || item.author || '').toLowerCase();
+    if (role && !['assistant', 'agent', 'ai'].includes(role)) continue;
+    for (const key of ['text', 'body', 'content', 'message']) {
+      const value = item[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+      if (Array.isArray(value)) {
+        const merged = value.map((part) => (part && typeof part.text === 'string' ? part.text.trim() : '')).filter(Boolean).join('\n');
+        if (merged) return merged;
+      }
+    }
+  }
+  return '';
+}
+
 function loadConfig() {
   const configPath = process.env.OPENCLAW_CONFIG_PATH || DEFAULT_OPENCLAW_CONFIG;
   const raw = fs.readFileSync(configPath, 'utf8');
@@ -78,7 +110,8 @@ function loadConfig() {
     gatewayRuntimeModule:
       process.env.OPENCLAW_GATEWAY_RUNTIME_MODULE || DEFAULT_GATEWAY_RUNTIME,
     connectChallengeTimeoutMs: parseIntEnv('OPENCLAW_BRIDGE_CONNECT_CHALLENGE_TIMEOUT_MS', 8000),
-    allowWrites: String(process.env.OPENCLAW_BRIDGE_ALLOW_WRITES || 'false').toLowerCase() === 'true',
+    allowWrites: truthyEnv('OPENCLAW_BRIDGE_ALLOW_WRITES', false),
+    aiReplyEnabled: truthyEnv('OPENCLAW_BRIDGE_AI_REPLY_ENABLED', true),
   };
 }
 
@@ -371,24 +404,44 @@ class BridgeRuntime {
   }
 
   async aiReply(payload) {
-    if (!this.config.allowWrites) throw new Error('bridge_writes_disabled');
+    if (!this.config.aiReplyEnabled) throw new Error('bridge_ai_reply_disabled');
     if (!this.client) throw new Error('bridge_client_not_started');
     await this.waitForReady();
     const bridgeRequestId = crypto.randomUUID();
     const sessionKey = String(payload.sessionKey || '').trim();
     const prompt = String(payload.prompt || '').trim();
     const limit = Number.isFinite(payload.limit) ? payload.limit : 6;
+    const timeoutMs = Number.isFinite(payload.waitTimeoutMs)
+      ? Math.max(1000, Math.min(Number(payload.waitTimeoutMs), 30000))
+      : Math.max(1000, Math.min(this.config.requestTimeoutMs, 30000));
     if (!sessionKey) throw new Error('missing_sessionKey');
     if (!prompt) throw new Error('missing_prompt');
+    const startedAt = Date.now();
     this.pendingRequests.set(bridgeRequestId, { createdAt: nowIso(), sessionKey, action: 'ai_reply' });
     try {
-      await this.client.request(['sessions', 'send'].join('.'), { message: prompt, key: sessionKey }, {
-        timeoutMs: this.config.requestTimeoutMs,
-      });
-      const history = await this.client.request('chat.history', { limit, sessionKey }, {
-        timeoutMs: this.config.requestTimeoutMs,
-      });
-      return { bridgeRequestId, messages: history.messages || [] };
+      await withTimeout(
+        this.client.request(['sessions', 'send'].join('.'), { message: prompt, key: sessionKey }, { timeoutMs }),
+        timeoutMs + 500,
+        'bridge_ai_reply_timeout',
+      );
+      const history = await withTimeout(
+        this.client.request('chat.history', { limit, sessionKey }, { timeoutMs: Math.min(timeoutMs, this.config.requestTimeoutMs) }),
+        timeoutMs + 500,
+        'bridge_ai_reply_timeout',
+      );
+      const messages = history.messages || [];
+      const replyText = extractReplyText(messages);
+      const elapsedMs = Date.now() - startedAt;
+      if (!replyText) {
+        return { bridgeRequestId, status: 'empty', error: 'bridge_empty_reply', elapsedMs, timeoutMs, sessionKey, messages };
+      }
+      return { bridgeRequestId, status: 'ok', replyText, elapsedMs, timeoutMs, sessionKey, messages };
+    } catch (error) {
+      const elapsedMs = Date.now() - startedAt;
+      if (String(error?.message || error).includes('bridge_ai_reply_timeout')) {
+        return { bridgeRequestId, status: 'timeout', error: 'bridge_ai_reply_timeout', elapsedMs, timeoutMs, sessionKey };
+      }
+      return { bridgeRequestId, status: 'error', error: error?.message || String(error), elapsedMs, timeoutMs, sessionKey };
     } finally {
       this.pendingRequests.delete(bridgeRequestId);
     }
@@ -459,6 +512,9 @@ class BridgeRuntime {
       ok: true,
       service: 'openclaw-bridge',
       startedAt: this.startedAt,
+      allowWrites: this.config.allowWrites,
+      aiReplyEnabled: this.config.aiReplyEnabled,
+      sendMessageEnabled: this.config.allowWrites,
       gateway: {
         url: this.config.gatewayUrl,
         connected: this.connected,
@@ -527,11 +583,15 @@ function validateSendPayload(payload) {
 async function handleBridgeCall(res, fn) {
   try {
     const response = await fn();
-    sendJson(res, 200, { ok: true, ...response });
+    const ok = response && response.status ? response.status === 'ok' : true;
+    const statusCode = ok ? 200 : response.status === 'timeout' ? 504 : response.status === 'empty' ? 502 : 502;
+    sendJson(res, statusCode, { ok, ...response });
   } catch (error) {
     const errorMessage = error?.message || String(error);
-    const statusCode = errorMessage.startsWith('bridge_not_ready') ? 503 : 502;
-    sendJson(res, statusCode, { ok: false, error: errorMessage, details: error?.details || null });
+    let statusCode = 502;
+    if (errorMessage.startsWith('bridge_not_ready')) statusCode = 503;
+    if (errorMessage === 'bridge_writes_disabled' || errorMessage === 'bridge_ai_reply_disabled') statusCode = 403;
+    sendJson(res, statusCode, { ok: false, status: 'error', error: errorMessage, details: error?.details || null });
   }
 }
 
@@ -545,6 +605,8 @@ async function main() {
     configPath: config.configPath,
     tokenSource: config.tokenSource,
     gatewayRuntimeModule: config.gatewayRuntimeModule,
+    allowWrites: config.allowWrites,
+    aiReplyEnabled: config.aiReplyEnabled,
     node: process.execPath,
   });
   const bridge = new BridgeRuntime(config, GatewayClient);
