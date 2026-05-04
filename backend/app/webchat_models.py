@@ -40,11 +40,13 @@ class WebchatConversation(Base):
     page_url: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
     user_agent: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="open", index=True)
-    active_ai_turn_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_ai_turns.id"), nullable=True, index=True)
+    # Fast-read AI runtime snapshot. These fields are cache values, not the
+    # source of truth, so keep them as plain indexed ids to avoid circular FKs.
+    active_ai_turn_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     active_ai_status: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
-    active_ai_for_message_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_messages.id"), nullable=True, index=True)
-    active_ai_context_cutoff_message_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_messages.id"), nullable=True, index=True)
-    next_ai_turn_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_ai_turns.id"), nullable=True, index=True)
+    active_ai_for_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    active_ai_context_cutoff_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    next_ai_turn_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     active_ai_started_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True)
     active_ai_updated_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
     last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
