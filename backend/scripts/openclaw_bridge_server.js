@@ -16,6 +16,7 @@ const DEFAULT_GATEWAY_RUNTIME = path.join(
   'gateway-runtime.js',
 );
 const SEND_PATH = '/send' + '-message';
+const SPEEDAF_LOOKUP_PATH = '/tools/speedaf_lookup';
 
 function nowIso() {
   return new Date().toISOString();
@@ -66,24 +67,6 @@ function withTimeout(promise, timeoutMs, timeoutMessage) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-function extractReplyText(rows) {
-  if (!Array.isArray(rows)) return '';
-  for (let i = rows.length - 1; i >= 0; i -= 1) {
-    const item = rows[i] || {};
-    const role = String(item.role || item.sender || item.author || '').toLowerCase();
-    if (role && !['assistant', 'agent', 'ai'].includes(role)) continue;
-    for (const key of ['text', 'body', 'content', 'message']) {
-      const value = item[key];
-      if (typeof value === 'string' && value.trim()) return value.trim();
-      if (Array.isArray(value)) {
-        const merged = value.map((part) => (part && typeof part.text === 'string' ? part.text.trim() : '')).filter(Boolean).join('\n');
-        if (merged) return merged;
-      }
-    }
-  }
-  return '';
-}
-
 function loadConfig() {
   const configPath = process.env.OPENCLAW_CONFIG_PATH || DEFAULT_OPENCLAW_CONFIG;
   const raw = fs.readFileSync(configPath, 'utf8');
@@ -112,6 +95,10 @@ function loadConfig() {
     connectChallengeTimeoutMs: parseIntEnv('OPENCLAW_BRIDGE_CONNECT_CHALLENGE_TIMEOUT_MS', 8000),
     allowWrites: truthyEnv('OPENCLAW_BRIDGE_ALLOW_WRITES', false),
     aiReplyEnabled: truthyEnv('OPENCLAW_BRIDGE_AI_REPLY_ENABLED', true),
+    aiReplySessionKey: process.env.OPENCLAW_BRIDGE_AI_REPLY_SESSION_KEY || 'agent:support:main',
+    trackingLookupEnabled: truthyEnv('OPENCLAW_BRIDGE_TRACKING_LOOKUP_ENABLED', false),
+    trackingLookupMethod: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_METHOD || 'tools.call',
+    trackingLookupToolName: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_TOOL_NAME || 'speedaf-support__speedaf_lookup',
   };
 }
 
@@ -175,6 +162,22 @@ function normalizeConversation(session) {
       threadId,
     },
   };
+}
+
+function extractTextFromMessage(message) {
+  if (!message) return '';
+  if (typeof message === 'string') return message;
+  const content = message.content || message.text || message.message || message.body;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.filter((c) => c && c.type === 'text').map((c) => c.text || '').join('');
+  }
+  return '';
+}
+
+function getMessageId(msg) {
+  if (!msg) return null;
+  return msg.id || msg.messageId || msg.__openclaw?.id || msg.__openclaw?.seq || msg.timestamp || null;
 }
 
 class BridgeRuntime {
@@ -407,41 +410,194 @@ class BridgeRuntime {
     if (!this.config.aiReplyEnabled) throw new Error('bridge_ai_reply_disabled');
     if (!this.client) throw new Error('bridge_client_not_started');
     await this.waitForReady();
+
     const bridgeRequestId = crypto.randomUUID();
-    const sessionKey = String(payload.sessionKey || '').trim();
+    const requestedSessionKey = String(payload.sessionKey || '').trim();
+    let effectiveSessionKey = this.config.aiReplySessionKey || requestedSessionKey;
+    if (requestedSessionKey.startsWith('webchat') || requestedSessionKey.startsWith('manual') || requestedSessionKey.startsWith('wc')) {
+      effectiveSessionKey = this.config.aiReplySessionKey || requestedSessionKey;
+    } else {
+      effectiveSessionKey = requestedSessionKey;
+    }
+
     const prompt = String(payload.prompt || '').trim();
     const limit = Number.isFinite(payload.limit) ? payload.limit : 6;
     const timeoutMs = Number.isFinite(payload.waitTimeoutMs)
       ? Math.max(1000, Math.min(Number(payload.waitTimeoutMs), 30000))
       : Math.max(1000, Math.min(this.config.requestTimeoutMs, 30000));
-    if (!sessionKey) throw new Error('missing_sessionKey');
+
+    if (!requestedSessionKey) throw new Error('missing_sessionKey');
     if (!prompt) throw new Error('missing_prompt');
+
     const startedAt = Date.now();
-    this.pendingRequests.set(bridgeRequestId, { createdAt: nowIso(), sessionKey, action: 'ai_reply' });
+    this.pendingRequests.set(bridgeRequestId, {
+      createdAt: nowIso(),
+      requestedSessionKey,
+      effectiveSessionKey,
+      action: 'ai_reply',
+    });
+
     try {
+      const beforeHistory = await withTimeout(
+        this.client.request('chat.history', { limit: 1, sessionKey: effectiveSessionKey }, {
+          timeoutMs: Math.min(timeoutMs, this.config.requestTimeoutMs),
+        }),
+        timeoutMs + 500,
+        'bridge_ai_reply_timeout',
+      );
+
+      const beforeMessages = beforeHistory.messages || [];
+      const lastMessageBefore = beforeMessages.length > 0 ? beforeMessages[beforeMessages.length - 1] : null;
+      const beforeMsgId = getMessageId(lastMessageBefore);
+
       await withTimeout(
-        this.client.request(['sessions', 'send'].join('.'), { message: prompt, key: sessionKey }, { timeoutMs }),
+        this.client.request(['sessions', 'send'].join('.'), { message: prompt, key: effectiveSessionKey }, { timeoutMs }),
         timeoutMs + 500,
         'bridge_ai_reply_timeout',
       );
-      const history = await withTimeout(
-        this.client.request('chat.history', { limit, sessionKey }, { timeoutMs: Math.min(timeoutMs, this.config.requestTimeoutMs) }),
-        timeoutMs + 500,
-        'bridge_ai_reply_timeout',
-      );
-      const messages = history.messages || [];
-      const replyText = extractReplyText(messages);
-      const elapsedMs = Date.now() - startedAt;
-      if (!replyText) {
-        return { bridgeRequestId, status: 'empty', error: 'bridge_empty_reply', elapsedMs, timeoutMs, sessionKey, messages };
+
+      let replyText = '';
+      let messages = [];
+      let gotNewReply = false;
+      const pollDeadline = Date.now() + timeoutMs;
+
+      while (Date.now() < pollDeadline) {
+        const remainingMs = Math.max(1000, pollDeadline - Date.now());
+        const history = await withTimeout(
+          this.client.request('chat.history', { limit, sessionKey: effectiveSessionKey }, {
+            timeoutMs: Math.min(remainingMs, this.config.requestTimeoutMs),
+          }),
+          Math.min(remainingMs + 500, timeoutMs + 500),
+          'bridge_ai_reply_timeout',
+        );
+        messages = history.messages || [];
+
+        if (messages.length > 0) {
+          const lastMsg = messages[messages.length - 1];
+          const lastMsgId = getMessageId(lastMsg);
+          if (lastMsg.role === 'assistant' && (!lastMessageBefore || lastMsgId !== beforeMsgId)) {
+            replyText = extractTextFromMessage(lastMsg);
+            gotNewReply = true;
+            break;
+          }
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
-      return { bridgeRequestId, status: 'ok', replyText, elapsedMs, timeoutMs, sessionKey, messages };
+
+      const elapsedMs = Date.now() - startedAt;
+
+      if (!gotNewReply) {
+        return {
+          bridgeRequestId,
+          status: 'timeout',
+          error: 'bridge_ai_reply_timeout',
+          requestedSessionKey,
+          effectiveSessionKey,
+          elapsedMs,
+          timeoutMs,
+        };
+      }
+
+      if (!replyText) {
+        return {
+          bridgeRequestId,
+          status: 'empty',
+          error: 'bridge_empty_reply',
+          requestedSessionKey,
+          effectiveSessionKey,
+          elapsedMs,
+          timeoutMs,
+          messages,
+        };
+      }
+
+      return {
+        bridgeRequestId,
+        status: 'ok',
+        requestedSessionKey,
+        effectiveSessionKey,
+        sessionKey: effectiveSessionKey,
+        replyText,
+        elapsedMs,
+        timeoutMs,
+        messages,
+      };
     } catch (error) {
       const elapsedMs = Date.now() - startedAt;
-      if (String(error?.message || error).includes('bridge_ai_reply_timeout')) {
-        return { bridgeRequestId, status: 'timeout', error: 'bridge_ai_reply_timeout', elapsedMs, timeoutMs, sessionKey };
-      }
-      return { bridgeRequestId, status: 'error', error: error?.message || String(error), elapsedMs, timeoutMs, sessionKey };
+      const errorMessage = error?.message || String(error);
+      const status = errorMessage.includes('bridge_ai_reply_timeout') || errorMessage.includes('bridge_timeout')
+        ? 'timeout'
+        : 'error';
+
+      return {
+        bridgeRequestId,
+        status,
+        error: status === 'timeout' ? 'bridge_ai_reply_timeout' : errorMessage,
+        requestedSessionKey,
+        effectiveSessionKey,
+        elapsedMs,
+        timeoutMs,
+      };
+    } finally {
+      this.pendingRequests.delete(bridgeRequestId);
+    }
+  }
+
+  async lookupSpeedaf(payload) {
+    if (!this.config.trackingLookupEnabled) throw new Error('bridge_tracking_lookup_disabled');
+    if (!this.client) throw new Error('bridge_client_not_started');
+    await this.waitForReady();
+    const trackingNumber = String(payload.tracking_number || payload.trackingNumber || '').trim().toUpperCase();
+    if (!trackingNumber) throw new Error('missing_tracking_number');
+    const bridgeRequestId = crypto.randomUUID();
+    const args = {
+      tracking_number: trackingNumber,
+      trackingNumber,
+      source: payload.source || 'nexus_webchat',
+      request_id: payload.request_id || null,
+      conversation_id: payload.conversation_id || null,
+      ticket_id: payload.ticket_id || null,
+    };
+    const requestPayload = {
+      name: this.config.trackingLookupToolName,
+      tool_name: this.config.trackingLookupToolName,
+      arguments: args,
+      args,
+    };
+    this.pendingRequests.set(bridgeRequestId, {
+      createdAt: nowIso(),
+      action: 'speedaf_lookup',
+      toolName: this.config.trackingLookupToolName,
+      trackingNumberSuffix: trackingNumber.slice(-4),
+    });
+    try {
+      const result = await this.client.request(this.config.trackingLookupMethod, requestPayload, {
+        timeoutMs: this.config.requestTimeoutMs,
+      });
+      log('info', 'bridge_tracking_lookup_success', {
+        bridgeRequestId,
+        toolName: this.config.trackingLookupToolName,
+        trackingNumberSuffix: trackingNumber.slice(-4),
+      });
+      return {
+        bridgeRequestId,
+        tool_name: 'speedaf_lookup',
+        tool_status: 'success',
+        tracking_number: trackingNumber,
+        checked_at: nowIso(),
+        raw_included: false,
+        result,
+      };
+    } catch (error) {
+      log('warn', 'bridge_tracking_lookup_failed', {
+        bridgeRequestId,
+        toolName: this.config.trackingLookupToolName,
+        trackingNumberSuffix: trackingNumber.slice(-4),
+        error: error?.message || String(error),
+        details: error?.details || null,
+      });
+      throw error;
     } finally {
       this.pendingRequests.delete(bridgeRequestId);
     }
@@ -512,9 +668,17 @@ class BridgeRuntime {
       ok: true,
       service: 'openclaw-bridge',
       startedAt: this.startedAt,
+      bridgeVersion: '1.1.0',
+      bridgeGitSha: process.env.BRIDGE_GIT_SHA || 'unknown',
+      bridgeFilePath: __filename,
+      aiReplySessionRoutingMode: 'effective_session_fallback',
       allowWrites: this.config.allowWrites,
       aiReplyEnabled: this.config.aiReplyEnabled,
+      aiReplySessionKey: this.config.aiReplySessionKey,
       sendMessageEnabled: this.config.allowWrites,
+      trackingLookupEnabled: this.config.trackingLookupEnabled,
+      trackingLookupMethod: this.config.trackingLookupMethod,
+      trackingLookupToolName: this.config.trackingLookupToolName,
       gateway: {
         url: this.config.gatewayUrl,
         connected: this.connected,
@@ -583,14 +747,23 @@ function validateSendPayload(payload) {
 async function handleBridgeCall(res, fn) {
   try {
     const response = await fn();
-    const ok = response && response.status ? response.status === 'ok' : true;
-    const statusCode = ok ? 200 : response.status === 'timeout' ? 504 : response.status === 'empty' ? 502 : 502;
+    const hasStatus = response && typeof response.status === 'string';
+    const ok = hasStatus ? response.status === 'ok' : true;
+    let statusCode = ok ? 200 : 502;
+    if (response?.status === 'timeout') statusCode = 504;
+    if (response?.status === 'empty') statusCode = 502;
+    if (response?.status === 'error') statusCode = 502;
     sendJson(res, statusCode, { ok, ...response });
   } catch (error) {
     const errorMessage = error?.message || String(error);
     let statusCode = 502;
     if (errorMessage.startsWith('bridge_not_ready')) statusCode = 503;
-    if (errorMessage === 'bridge_writes_disabled' || errorMessage === 'bridge_ai_reply_disabled') statusCode = 403;
+    if (
+      errorMessage === 'bridge_writes_disabled' ||
+      errorMessage === 'bridge_ai_reply_disabled' ||
+      errorMessage === 'bridge_tracking_lookup_disabled'
+    ) statusCode = 403;
+    if (errorMessage === 'missing_tracking_number') statusCode = 400;
     sendJson(res, statusCode, { ok: false, status: 'error', error: errorMessage, details: error?.details || null });
   }
 }
@@ -607,6 +780,7 @@ async function main() {
     gatewayRuntimeModule: config.gatewayRuntimeModule,
     allowWrites: config.allowWrites,
     aiReplyEnabled: config.aiReplyEnabled,
+    trackingLookupEnabled: config.trackingLookupEnabled,
     node: process.execPath,
   });
   const bridge = new BridgeRuntime(config, GatewayClient);
@@ -624,6 +798,14 @@ async function main() {
         const missing = validateSendPayload(payload);
         if (missing.length) return sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing });
         await handleBridgeCall(res, () => bridge.sendMessage(payload));
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === SPEEDAF_LOOKUP_PATH) {
+        const payload = await readJsonBody(req);
+        if (!payload || (!payload.tracking_number && !payload.trackingNumber)) {
+          return sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing: ['tracking_number'] });
+        }
+        await handleBridgeCall(res, () => bridge.lookupSpeedaf(payload));
         return;
       }
       if (req.method === 'POST' && url.pathname === '/conversations-list') {
