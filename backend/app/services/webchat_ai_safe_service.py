@@ -11,10 +11,18 @@ from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility,
 from ..models import Ticket, TicketComment, TicketEvent, TicketOutboundMessage
 from ..settings import get_settings
 from ..utils.time import utc_now
-from ..webchat_models import WebchatConversation, WebchatMessage
+from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
 from .outbound_safety import evaluate_outbound_safety
 from .sla_service import evaluate_sla, update_first_response
 from .webchat_ai_service import AI_AUTHOR_LABEL, process_webchat_ai_reply_job as _legacy_process_webchat_ai_reply_job
+from .webchat_ai_turn_service import (
+    AI_TURN_OPEN_STATUSES,
+    complete_ai_turn_with_reply,
+    latest_visitor_message_id,
+    mark_ai_turn_bridge_calling,
+    mark_ai_turn_processing,
+    supersede_ai_turn,
+)
 from .webchat_fact_gate import evaluate_webchat_fact_gate
 
 settings = get_settings()
@@ -55,11 +63,11 @@ def _safe_ack_body(ticket: Ticket, visitor_message: WebchatMessage) -> str:
     body = visitor_message.body or ""
     chinese = _is_chinese(body)
     if _has_high_risk_intent(body):
-        return "您好，我是 Speedy，已收到您的消息。客服专员会核查后在这里回复您。" if chinese else "Hi, this is Speedy. I’ve received your message. A support specialist will review it and reply here shortly."
+        return "您好，我是 Speedy，已收到您的消息。请补充运单号和问题细节，我会根据当前可用信息继续协助您。" if chinese else "Hi, this is Speedy. I’ve received your message. Please share your tracking number and details so I can help check the next step."
     if _looks_like_tracking_request(body) and not _has_tracking_number(ticket, visitor_message):
-        return "您好，我是 Speedy。请提供您的运单号，客服专员会帮您核查并在这里回复您。" if chinese else "Hi, this is Speedy. Please share your tracking number, and a support specialist will review it and reply here."
+        return "您好，我是 Speedy。请提供您的运单号，我可以继续帮您判断下一步。" if chinese else "Hi, this is Speedy. Please share your tracking number so I can help check the next step."
     if _looks_like_tracking_request(body):
-        return "您好，我是 Speedy，已收到您的运单信息。客服专员会核查后在这里回复您。" if chinese else "Hi, this is Speedy. I’ve received your tracking details. A support specialist will review them and reply here."
+        return "您好，我是 Speedy，已收到您的运单信息。我会根据当前可用信息继续协助您。" if chinese else "Hi, this is Speedy. I’ve received your tracking details and will help with the information available here."
     return "您好，我是 Speedy，已收到您的消息。请告诉我您需要什么帮助。" if chinese else "Hi, this is Speedy. I’ve received your message. How can I help you today?"
 
 
@@ -99,6 +107,19 @@ def _load_context(db: Session, *, conversation_id: int, ticket_id: int, visitor_
     if visitor_message.conversation_id != conversation.id or visitor_message.ticket_id != ticket.id:
         raise RuntimeError("webchat job payload mismatch")
     return conversation, ticket, visitor_message
+
+
+def _open_turn_for_message(db: Session, *, conversation: WebchatConversation, visitor_message: WebchatMessage) -> WebchatAITurn | None:
+    candidates = (
+        db.query(WebchatAITurn)
+        .filter(WebchatAITurn.conversation_id == conversation.id, WebchatAITurn.status.in_(AI_TURN_OPEN_STATUSES))
+        .order_by(WebchatAITurn.id.asc())
+        .all()
+    )
+    for turn in candidates:
+        if turn.trigger_message_id == visitor_message.id or turn.latest_visitor_message_id == visitor_message.id or conversation.active_ai_turn_id == turn.id:
+            return turn
+    return None
 
 
 def _agent_reply_exists(db: Session, *, conversation: WebchatConversation, visitor_message: WebchatMessage) -> bool:
@@ -191,13 +212,31 @@ def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, t
         }, ensure_ascii=False),
     ))
     evaluate_sla(ticket, db)
-    return {"status": "done", "message_id": message.id, "fallback": True, "reply_source": reason, "fallback_reason": reason}
+    return {"status": "done", "message_id": message.id, "fallback": True, "reply_source": reason, "fallback_reason": reason, "fact_gate_reason": fact_gate_reason}
+
+
+def _complete_turn_if_present(db: Session, *, conversation: WebchatConversation, turn: WebchatAITurn | None, result: dict[str, Any]) -> None:
+    if turn is not None:
+        complete_ai_turn_with_reply(db, conversation=conversation, turn=turn, result=result)
 
 
 def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id: int, visitor_message_id: int) -> dict[str, Any]:
     conversation, ticket, visitor_message = _load_context(db, conversation_id=conversation_id, ticket_id=ticket_id, visitor_message_id=visitor_message_id)
+    turn = _open_turn_for_message(db, conversation=conversation, visitor_message=visitor_message)
+    if turn is not None and turn.status == "queued":
+        mark_ai_turn_processing(db, conversation=conversation, turn=turn)
+        cutoff_id = latest_visitor_message_id(db, conversation_id=conversation.id)
+        mark_ai_turn_bridge_calling(db, conversation=conversation, turn=turn, context_cutoff_message_id=cutoff_id)
     if _agent_reply_exists(db, conversation=conversation, visitor_message=visitor_message):
-        return {"status": "skipped", "reason": "agent_reply_already_exists"}
+        result = {"status": "skipped", "reason": "agent_reply_already_exists", "reply_source": "existing_reply"}
+        _complete_turn_if_present(db, conversation=conversation, turn=turn, result=result)
+        return result
+
+    if turn is not None and turn.context_cutoff_message_id:
+        latest_id = latest_visitor_message_id(db, conversation_id=conversation.id)
+        if latest_id is not None and latest_id > turn.context_cutoff_message_id:
+            supersede_ai_turn(db, conversation=conversation, turn=turn, reason="newer_message_before_reply")
+            return {"status": "superseded", "reason": "newer_message_before_reply"}
 
     mode = (settings.webchat_ai_auto_reply_mode or "safe_ack").lower()
     if mode == "off":
@@ -208,12 +247,20 @@ def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
             note="Webchat AI auto reply skipped because WEBCHAT_AI_AUTO_REPLY_MODE=off",
             payload_json=json.dumps({"conversation_id": conversation.id, "visitor_message_id": visitor_message.id}, ensure_ascii=False),
         ))
-        return {"status": "skipped", "reason": "webchat_ai_auto_reply_off"}
+        result = {"status": "skipped", "reason": "webchat_ai_auto_reply_off", "reply_source": "off"}
+        _complete_turn_if_present(db, conversation=conversation, turn=turn, result=result)
+        return result
 
     if mode == "safe_ack":
-        return _write_safe_agent_reply(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, body=_safe_ack_body(ticket, visitor_message), reason="webchat_safe_ack_mode")
+        result = _write_safe_agent_reply(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, body=_safe_ack_body(ticket, visitor_message), reason="webchat_safe_ack_mode")
+        _complete_turn_if_present(db, conversation=conversation, turn=turn, result=result)
+        return result
 
     if mode == "safe_ai" and _has_high_risk_intent(visitor_message.body):
-        return _write_safe_agent_reply(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, body=_safe_ack_body(ticket, visitor_message), reason="webchat_safe_ai_high_risk_fallback")
+        result = _write_safe_agent_reply(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, body=_safe_ack_body(ticket, visitor_message), reason="webchat_safe_ai_high_risk_fallback")
+        _complete_turn_if_present(db, conversation=conversation, turn=turn, result=result)
+        return result
 
-    return _legacy_process_webchat_ai_reply_job(db, conversation_id=conversation_id, ticket_id=ticket_id, visitor_message_id=visitor_message_id)
+    result = _legacy_process_webchat_ai_reply_job(db, conversation_id=conversation_id, ticket_id=ticket_id, visitor_message_id=visitor_message_id)
+    _complete_turn_if_present(db, conversation=conversation, turn=turn, result=result or {})
+    return result

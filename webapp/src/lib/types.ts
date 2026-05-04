@@ -389,7 +389,17 @@ export interface WebchatCardPayload {
   metadata?: Record<string, unknown>
 }
 
-export interface WebchatConversation {
+export interface WebchatAIRuntimeSnapshot {
+  ai_pending?: boolean
+  ai_status?: string | null
+  ai_turn_id?: number | null
+  ai_pending_for_message_id?: number | null
+  last_ai_reply_source?: string | null
+  last_ai_fallback_reason?: string | null
+  last_bridge_elapsed_ms?: number | null
+}
+
+export interface WebchatConversation extends WebchatAIRuntimeSnapshot {
   conversation_id: string
   ticket_id: number
   ticket_no: string
@@ -433,7 +443,26 @@ export interface WebchatActionAudit {
   created_at?: string | null
 }
 
-export interface WebchatThread {
+export interface WebchatAITurnSummary {
+  id: number
+  status: string
+  trigger_message_id?: number | null
+  latest_visitor_message_id?: number | null
+  context_cutoff_message_id?: number | null
+  reply_message_id?: number | null
+  reply_source?: string | null
+  fallback_reason?: string | null
+  bridge_elapsed_ms?: number | null
+}
+
+export interface WebchatEventSummary {
+  id: number
+  event_type: string
+  payload_json?: Record<string, unknown> | null
+  created_at?: string | null
+}
+
+export interface WebchatThread extends WebchatAIRuntimeSnapshot {
   conversation_id: string
   ticket_id: number
   ticket_no: string
@@ -450,6 +479,8 @@ export interface WebchatThread {
   }
   messages: WebchatMessage[]
   actions?: WebchatActionAudit[]
+  ai_turns?: WebchatAITurnSummary[]
+  events?: WebchatEventSummary[]
 }
 
 export interface WebchatReplyResult {
