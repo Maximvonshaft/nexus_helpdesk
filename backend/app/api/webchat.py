@@ -10,9 +10,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..enums import JobStatus
+from ..models import BackgroundJob
 from ..settings import get_settings
 from ..unit_of_work import managed_session
+from ..utils.time import utc_now
 from .deps import get_current_user
+from ..services.background_jobs import WEBCHAT_AI_REPLY_JOB, enqueue_background_job
+from ..services.webchat_ai_reconciler import reconcile_webchat_ai_state
+from ..services.webchat_ai_turn_service import ai_snapshot, schedule_webchat_ai_turn
 from ..services.webchat_rate_limit import enforce_webchat_rate_limit
 from ..webchat_models import WebchatCardAction, WebchatConversation, WebchatMessage
 from ..webchat_schemas import WebChatActionSubmitRequest
@@ -140,6 +146,71 @@ def _message_read(row: WebchatMessage) -> dict[str, Any]:
     }
 
 
+def _attach_ai_snapshot(result: dict[str, Any], conversation: WebchatConversation) -> dict[str, Any]:
+    result.update(ai_snapshot(conversation))
+    return result
+
+
+def _schedule_ai_turn_for_result(db: Session, *, conversation: WebchatConversation, result: dict[str, Any]) -> dict[str, Any]:
+    message_payload = result.get("message") if isinstance(result, dict) else None
+    message_id = message_payload.get("id") if isinstance(message_payload, dict) else None
+    if not message_id or result.get("idempotent"):
+        return _attach_ai_snapshot(result, conversation)
+    visitor_message = (
+        db.query(WebchatMessage)
+        .filter(
+            WebchatMessage.id == int(message_id),
+            WebchatMessage.conversation_id == conversation.id,
+            WebchatMessage.direction == "visitor",
+        )
+        .first()
+    )
+    if visitor_message is None:
+        return _attach_ai_snapshot(result, conversation)
+
+    # add_visitor_message() still calls the legacy enqueue path. Mark that
+    # immediate legacy job done and replace it with a turn-aware job. This keeps
+    # the existing service contract intact without making BackgroundJob a public
+    # typing-state source.
+    legacy_job = (
+        db.query(BackgroundJob)
+        .filter(
+            BackgroundJob.dedupe_key == f"webchat-ai-reply:{visitor_message.id}",
+            BackgroundJob.status.in_([JobStatus.pending, JobStatus.processing]),
+        )
+        .order_by(BackgroundJob.id.desc())
+        .first()
+    )
+    if legacy_job is not None:
+        legacy_job.status = JobStatus.done
+        legacy_job.locked_at = None
+        legacy_job.locked_by = None
+        legacy_job.next_run_at = None
+        legacy_job.last_error = None
+        legacy_job.updated_at = utc_now()
+
+    def create_job(payload: dict[str, Any], dedupe_key: str, scheduled_at) -> BackgroundJob:
+        return enqueue_background_job(
+            db,
+            queue_name="webchat_ai_reply",
+            job_type=WEBCHAT_AI_REPLY_JOB,
+            payload=payload,
+            dedupe_key=dedupe_key,
+            next_run_at=scheduled_at,
+        )
+
+    snapshot = schedule_webchat_ai_turn(
+        db,
+        conversation=conversation,
+        ticket_id=conversation.ticket_id,
+        visitor_message=visitor_message,
+        create_job=create_job,
+        debounce_seconds=int(getattr(settings, "webchat_ai_turn_debounce_seconds", 1) or 1),
+    )
+    result.update(snapshot)
+    return result
+
+
 def _find_existing_action_response(
     db: Session,
     *,
@@ -236,6 +307,7 @@ def send_webchat_message(
             raise HTTPException(status_code=404, detail="webchat conversation not found")
         enforce_webchat_rate_limit(db, request, tenant_key=conversation.tenant_key, conversation_id=conversation_id)
         result = add_visitor_message(db, conversation_id, visitor_token, payload.body, request, client_message_id=payload.client_message_id)
+        result = _schedule_ai_turn_for_result(db, conversation=conversation, result=result)
     return result
 
 
@@ -259,7 +331,9 @@ def poll_webchat_messages(
         if not conversation:
             raise HTTPException(status_code=404, detail="webchat conversation not found")
         enforce_webchat_rate_limit(db, request, tenant_key=conversation.tenant_key, conversation_id=conversation_id)
+        reconcile_webchat_ai_state(db, conversation_id=conversation.id)
         result = list_public_messages(db, conversation_id, resolved_token, after_id=after_id, limit=limit)
+        result = _attach_ai_snapshot(result, conversation)
     return result
 
 
@@ -290,12 +364,21 @@ def submit_webchat_action(
 
 @router.get("/admin/conversations")
 def list_webchat_conversations(limit: int = 50, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> list[dict[str, Any]]:
-    return admin_list_conversations(db, current_user, limit=limit)
+    rows = admin_list_conversations(db, current_user, limit=limit)
+    for row in rows:
+        conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == row.get("conversation_id")).first()
+        if conversation:
+            row.update(ai_snapshot(conversation))
+    return rows
 
 
 @router.get("/admin/tickets/{ticket_id}/thread")
 def get_webchat_thread(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
-    return admin_get_thread(db, ticket_id, current_user)
+    result = admin_get_thread(db, ticket_id, current_user)
+    conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == result.get("conversation_id")).first()
+    if conversation:
+        result.update(ai_snapshot(conversation))
+    return result
 
 
 @router.post("/admin/tickets/{ticket_id}/reply")
