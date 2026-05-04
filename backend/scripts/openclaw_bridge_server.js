@@ -87,6 +87,7 @@ function loadConfig() {
     connectChallengeTimeoutMs: parseIntEnv('OPENCLAW_BRIDGE_CONNECT_CHALLENGE_TIMEOUT_MS', 8000),
     allowWrites: truthyEnv('OPENCLAW_BRIDGE_ALLOW_WRITES', false),
     aiReplyEnabled: truthyEnv('OPENCLAW_BRIDGE_AI_REPLY_ENABLED', true),
+    aiReplySessionKey: process.env.OPENCLAW_BRIDGE_AI_REPLY_SESSION_KEY || 'agent:support:main',
     trackingLookupEnabled: truthyEnv('OPENCLAW_BRIDGE_TRACKING_LOOKUP_ENABLED', false),
     trackingLookupMethod: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_METHOD || 'tools.call',
     trackingLookupToolName: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_TOOL_NAME || 'speedaf-support__speedaf_lookup',
@@ -153,6 +154,22 @@ function normalizeConversation(session) {
       threadId,
     },
   };
+}
+
+function extractTextFromMessage(message) {
+  if (!message) return '';
+  if (typeof message === 'string') return message;
+  const content = message.content || message.text || message.message || message.body;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.filter((c) => c && c.type === 'text').map((c) => c.text || '').join('');
+  }
+  return '';
+}
+
+function getMessageId(msg) {
+  if (!msg) return null;
+  return msg.id || msg.messageId || msg.__openclaw?.id || msg.__openclaw?.seq || msg.timestamp || null;
 }
 
 class BridgeRuntime {
@@ -386,20 +403,91 @@ class BridgeRuntime {
     if (!this.client) throw new Error('bridge_client_not_started');
     await this.waitForReady();
     const bridgeRequestId = crypto.randomUUID();
-    const sessionKey = String(payload.sessionKey || '').trim();
+    const requestedSessionKey = String(payload.sessionKey || '').trim();
+    let effectiveSessionKey = this.config.aiReplySessionKey || requestedSessionKey;
+    if (requestedSessionKey.startsWith('webchat') || requestedSessionKey.startsWith('manual') || requestedSessionKey.startsWith('wc')) {
+      effectiveSessionKey = this.config.aiReplySessionKey || requestedSessionKey;
+    } else {
+      effectiveSessionKey = requestedSessionKey;
+    }
     const prompt = String(payload.prompt || '').trim();
     const limit = Number.isFinite(payload.limit) ? payload.limit : 6;
-    if (!sessionKey) throw new Error('missing_sessionKey');
+    if (!requestedSessionKey) throw new Error('missing_sessionKey');
     if (!prompt) throw new Error('missing_prompt');
-    this.pendingRequests.set(bridgeRequestId, { createdAt: nowIso(), sessionKey, action: 'ai_reply' });
+    this.pendingRequests.set(bridgeRequestId, { createdAt: nowIso(), requestedSessionKey, effectiveSessionKey, action: 'ai_reply' });
+    const startedAt = Date.now();
     try {
-      await this.client.request(['sessions', 'send'].join('.'), { message: prompt, key: sessionKey }, {
+      const beforeHistory = await this.client.request('chat.history', { limit: 1, sessionKey: effectiveSessionKey }, {
         timeoutMs: this.config.requestTimeoutMs,
       });
-      const history = await this.client.request('chat.history', { limit, sessionKey }, {
+      const lastMessageBefore = (beforeHistory.messages || []).length > 0 ? beforeHistory.messages[beforeHistory.messages.length - 1] : null;
+      const beforeMsgId = getMessageId(lastMessageBefore);
+
+      await this.client.request(['sessions', 'send'].join('.'), { message: prompt, key: effectiveSessionKey }, {
         timeoutMs: this.config.requestTimeoutMs,
       });
-      return { bridgeRequestId, messages: history.messages || [] };
+
+      let replyText = '';
+      let messages = [];
+      let gotNewReply = false;
+      const pollDeadline = Date.now() + 45000;
+      
+      while (Date.now() < pollDeadline) {
+        const history = await this.client.request('chat.history', { limit, sessionKey: effectiveSessionKey }, {
+          timeoutMs: this.config.requestTimeoutMs,
+        });
+        messages = history.messages || [];
+        if (messages.length > 0) {
+          const lastMsg = messages[messages.length - 1];
+          const lastMsgId = getMessageId(lastMsg);
+          if (lastMsg.role === 'assistant' && (!lastMessageBefore || lastMsgId !== beforeMsgId)) {
+            replyText = extractTextFromMessage(lastMsg);
+            gotNewReply = true;
+            break;
+          }
+        }
+        await new Promise(r => setTimeout(r, 1000));
+      }
+
+      if (!gotNewReply) {
+        throw new Error('bridge_timeout');
+      }
+      if (!replyText) {
+        throw new Error('bridge_empty');
+      }
+
+      const elapsedMs = Date.now() - startedAt;
+      log('info', 'bridge_ai_reply_success', {
+        bridgeRequestId,
+        requestedSessionKey,
+        effectiveSessionKey,
+        replySource: 'openclaw',
+        elapsedMs,
+        fallbackReason: null
+      });
+      return { 
+        bridgeRequestId, 
+        requestedSessionKey,
+        effectiveSessionKey,
+        replyText,
+        elapsedMs,
+        messages 
+      };
+    } catch (error) {
+      let isSessionNotFound = String(error?.message || '').includes('session not found');
+      log('warn', 'bridge_ai_reply_failed', {
+        bridgeRequestId,
+        requestedSessionKey,
+        effectiveSessionKey,
+        replySource: 'fallback',
+        elapsedMs: Date.now() - startedAt,
+        fallbackReason: isSessionNotFound ? 'ai_reply_effective_session_not_found' : 'bridge_exception',
+        error: error?.message || String(error)
+      });
+      if (isSessionNotFound) {
+        throw new Error('ai_reply_effective_session_not_found: ' + (error?.message || String(error)));
+      }
+      throw error;
     } finally {
       this.pendingRequests.delete(bridgeRequestId);
     }
@@ -529,8 +617,13 @@ class BridgeRuntime {
       ok: true,
       service: 'openclaw-bridge',
       startedAt: this.startedAt,
+      bridgeVersion: '1.1.0',
+      bridgeGitSha: process.env.BRIDGE_GIT_SHA || 'unknown',
+      bridgeFilePath: __filename,
+      aiReplySessionRoutingMode: 'effective_session_fallback',
       allowWrites: this.config.allowWrites,
       aiReplyEnabled: this.config.aiReplyEnabled,
+      aiReplySessionKey: this.config.aiReplySessionKey,
       sendMessageEnabled: this.config.allowWrites,
       trackingLookupEnabled: this.config.trackingLookupEnabled,
       trackingLookupMethod: this.config.trackingLookupMethod,
