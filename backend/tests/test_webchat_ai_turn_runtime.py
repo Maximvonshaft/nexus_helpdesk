@@ -91,7 +91,15 @@ def test_queued_turn_coalesces_consecutive_visitor_messages():
         assert conversation is not None
         turns = db.query(WebchatAITurn).filter(WebchatAITurn.conversation_id == conversation.id).all()
         assert len(turns) == 1
-        second_message = db.query(WebchatMessage).filter(WebchatMessage.client_message_id == 'turn-runtime-coalesce-2').first()
+        second_message = (
+            db.query(WebchatMessage)
+            .filter(
+                WebchatMessage.conversation_id == conversation.id,
+                WebchatMessage.client_message_id == 'turn-runtime-coalesce-2',
+            )
+            .order_by(WebchatMessage.id.desc())
+            .first()
+        )
         assert second_message is not None
         assert turns[0].latest_visitor_message_id == second_message.id
         assert db.query(BackgroundJob).filter(BackgroundJob.job_type == WEBCHAT_AI_REPLY_JOB, BackgroundJob.dedupe_key == f'webchat-ai-turn:{turns[0].id}').count() == 1
