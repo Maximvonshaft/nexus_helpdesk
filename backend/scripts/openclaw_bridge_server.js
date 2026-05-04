@@ -488,6 +488,14 @@ class BridgeRuntime {
       const elapsedMs = Date.now() - startedAt;
 
       if (!gotNewReply) {
+        log('warn', 'bridge_ai_reply_failed', {
+          bridgeRequestId,
+          requestedSessionKey,
+          effectiveSessionKey,
+          replySource: 'fallback',
+          elapsedMs,
+          fallbackReason: 'bridge_ai_reply_timeout'
+        });
         return {
           bridgeRequestId,
           status: 'timeout',
@@ -500,6 +508,14 @@ class BridgeRuntime {
       }
 
       if (!replyText) {
+        log('warn', 'bridge_ai_reply_failed', {
+          bridgeRequestId,
+          requestedSessionKey,
+          effectiveSessionKey,
+          replySource: 'fallback',
+          elapsedMs,
+          fallbackReason: 'bridge_empty'
+        });
         return {
           bridgeRequestId,
           status: 'empty',
@@ -511,6 +527,15 @@ class BridgeRuntime {
           messages,
         };
       }
+
+      log('info', 'bridge_ai_reply_success', {
+        bridgeRequestId,
+        requestedSessionKey,
+        effectiveSessionKey,
+        replySource: 'openclaw',
+        elapsedMs,
+        fallbackReason: null
+      });
 
       return {
         bridgeRequestId,
@@ -526,14 +551,24 @@ class BridgeRuntime {
     } catch (error) {
       const elapsedMs = Date.now() - startedAt;
       const errorMessage = error?.message || String(error);
-      const status = errorMessage.includes('bridge_ai_reply_timeout') || errorMessage.includes('bridge_timeout')
-        ? 'timeout'
-        : 'error';
+      const isSessionNotFound = errorMessage.includes('session not found');
+      const isTimeout = errorMessage.includes('bridge_ai_reply_timeout') || errorMessage.includes('bridge_timeout');
+      const status = isTimeout ? 'timeout' : 'error';
+
+      log('warn', 'bridge_ai_reply_failed', {
+        bridgeRequestId,
+        requestedSessionKey,
+        effectiveSessionKey,
+        replySource: 'fallback',
+        elapsedMs,
+        fallbackReason: isSessionNotFound ? 'ai_reply_effective_session_not_found' : (isTimeout ? 'bridge_ai_reply_timeout' : 'bridge_exception'),
+        error: errorMessage
+      });
 
       return {
         bridgeRequestId,
         status,
-        error: status === 'timeout' ? 'bridge_ai_reply_timeout' : errorMessage,
+        error: isTimeout ? 'bridge_ai_reply_timeout' : errorMessage,
         requestedSessionKey,
         effectiveSessionKey,
         elapsedMs,

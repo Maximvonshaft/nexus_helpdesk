@@ -1,5 +1,10 @@
 services:
   postgres:
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     image: postgres:16-alpine
     env_file:
       - .env.prod
@@ -13,6 +18,11 @@ services:
     restart: unless-stopped
 
   app:
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     build:
       context: ..
       dockerfile: Dockerfile
@@ -56,6 +66,19 @@ services:
         condition: service_healthy
 
   worker:
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "python -c \"from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'scripts/run_worker.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('worker-ok')\""
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
     env_file:
       - .env.prod
@@ -82,6 +105,13 @@ services:
         condition: service_healthy
 
   sync-daemon:
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    profiles:
+      - openclaw
     image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
     env_file:
       - .env.prod
@@ -106,8 +136,23 @@ services:
     depends_on:
       app:
         condition: service_healthy
-
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'scripts/run_openclaw_sync_daemon.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('openclaw-sync-daemon-ok')"
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
   event-daemon:
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    profiles:
+      - openclaw
     image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
     env_file:
       - .env.prod
@@ -133,7 +178,15 @@ services:
     depends_on:
       app:
         condition: service_healthy
-
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'scripts/run_openclaw_event_daemon.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('openclaw-event-daemon-ok')"
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
   nginx:
     image: nginx:1.27-alpine
     profiles: ["edge-nginx"]

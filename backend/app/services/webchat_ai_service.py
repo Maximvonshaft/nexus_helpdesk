@@ -19,6 +19,8 @@ from ..webchat_models import WebchatConversation, WebchatMessage
 from .openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .sla_service import evaluate_sla, update_first_response
+from .tracking_fact_schema import TrackingFactResult
+from .tracking_fact_service import extract_tracking_number, lookup_tracking_fact
 from .webchat_fact_gate import evaluate_webchat_fact_gate
 
 LOGGER = logging.getLogger("nexusdesk")
@@ -106,7 +108,17 @@ def process_webchat_ai_reply_job(
     )
     history_rows.reverse()
 
-    ai_reply = _generate_ai_reply(ticket=ticket, conversation=conversation, visitor_message=visitor_message, history_rows=history_rows)
+    tracking_fact = _maybe_lookup_tracking_fact(
+        conversation=conversation,
+        ticket=ticket,
+        visitor_message=visitor_message,
+        history_rows=history_rows,
+    )
+    fact_evidence_present = bool(tracking_fact and tracking_fact.fact_evidence_present and tracking_fact.pii_redacted)
+    tracking_fact_metadata = tracking_fact.metadata_payload() if tracking_fact else {}
+    tracking_fact_metadata.pop("fact_evidence_present", None)
+
+    ai_reply = _generate_ai_reply(ticket=ticket, conversation=conversation, visitor_message=visitor_message, history_rows=history_rows, tracking_fact=tracking_fact)
     reply_source = _LAST_AI_REPLY_SOURCE
     fallback_reason = _LAST_AI_FALLBACK_REASON
     bridge_elapsed_ms = _LAST_BRIDGE_ELAPSED_MS
@@ -127,7 +139,7 @@ def process_webchat_ai_reply_job(
         sanitized_empty = True
         ai_reply = _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
 
-    decision = evaluate_outbound_safety(ticket, ai_reply, source="webchat_ai", has_fact_evidence=False)
+    decision = evaluate_outbound_safety(ticket, ai_reply, source="webchat_ai", has_fact_evidence=fact_evidence_present)
     final_body = decision.normalized_body
     safety_payload = asdict(decision)
 
@@ -138,8 +150,13 @@ def process_webchat_ai_reply_job(
         final_body = fallback_decision.normalized_body
         safety_payload = asdict(fallback_decision)
         decision = fallback_decision
+        fact_evidence_present = False
 
-    fact_decision = evaluate_webchat_fact_gate(final_body, fact_evidence_present=False, allow_tracking_status_card=False)
+    fact_decision = evaluate_webchat_fact_gate(
+        final_body,
+        fact_evidence_present=fact_evidence_present,
+        allow_tracking_status_card=bool(getattr(settings, "webchat_tracking_fact_card_enabled", False)),
+    )
     if not fact_decision.allowed:
         fact_gate_reason = fact_decision.reason or "fact_gate_blocked"
         fallback_reason = fallback_reason or fact_gate_reason
@@ -148,6 +165,7 @@ def process_webchat_ai_reply_job(
         final_body = fallback_decision.normalized_body
         safety_payload = asdict(fallback_decision)
         decision = fallback_decision
+        fact_evidence_present = False
         LOGGER.info(
             "webchat_fact_gate_blocked",
             extra={"event_payload": {
@@ -171,13 +189,14 @@ def process_webchat_ai_reply_job(
             decision_level=decision.level,
             fallback_reason=fallback_reason,
             reply_source=reply_source,
-            fact_evidence_present=False,
+            fact_evidence_present=fact_evidence_present,
             fact_gate_reason=fact_gate_reason,
             bridge_elapsed_ms=bridge_elapsed_ms,
             bridge_timeout_seconds=bridge_timeout_seconds,
             bridge_effective_timeout_seconds=bridge_effective_timeout_seconds,
             bridge_wait_timeout_ms=bridge_wait_timeout_ms,
             sanitized_empty=sanitized_empty,
+            **tracking_fact_metadata,
         ),
         author_label=AI_AUTHOR_LABEL,
         safety_level=decision.level,
@@ -210,29 +229,52 @@ def process_webchat_ai_reply_job(
     conversation.updated_at = utc_now()
     conversation.last_seen_at = utc_now()
 
+    event_payload = {
+        "public_conversation_id": conversation.public_id,
+        "conversation_id": conversation.id,
+        "visitor_message_id": visitor_message.id,
+        "webchat_message_id": message.id,
+        "safety": safety_payload,
+        "fallback_reason": fallback_reason,
+        "fact_gate_reason": fact_gate_reason,
+        "fact_evidence_present": fact_evidence_present,
+        "tracking_fact": tracking_fact_metadata or None,
+        "reply_source": reply_source,
+        "provider_status": provider_status,
+        "external_send": False,
+        "bridge_elapsed_ms": bridge_elapsed_ms,
+        "bridge_timeout_seconds": bridge_timeout_seconds,
+        "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds,
+        "bridge_wait_timeout_ms": bridge_wait_timeout_ms,
+        "sanitized_empty": sanitized_empty,
+    }
     db.add(TicketEvent(
         ticket_id=ticket.id,
         actor_id=None,
         event_type=EventType.outbound_sent,
         note="Webchat AI reply sent",
-        payload_json=json.dumps({
-            "public_conversation_id": conversation.public_id,
-            "conversation_id": conversation.id,
-            "visitor_message_id": visitor_message.id,
-            "webchat_message_id": message.id,
-            "safety": safety_payload,
-            "fallback_reason": fallback_reason,
-            "fact_gate_reason": fact_gate_reason,
-            "reply_source": reply_source,
-            "provider_status": provider_status,
-            "external_send": False,
-            "bridge_elapsed_ms": bridge_elapsed_ms,
-            "bridge_timeout_seconds": bridge_timeout_seconds,
-            "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds,
-            "bridge_wait_timeout_ms": bridge_wait_timeout_ms,
-            "sanitized_empty": sanitized_empty,
-        }, ensure_ascii=False),
+        payload_json=json.dumps(event_payload, ensure_ascii=False),
     ))
+    if tracking_fact:
+        db.add(TicketEvent(
+            ticket_id=ticket.id,
+            actor_id=None,
+            event_type=EventType.field_updated,
+            note="Webchat tracking fact evaluated",
+            payload_json=json.dumps({
+                "event": "webchat_tracking_fact_used" if fact_evidence_present else "webchat_tracking_fact_not_used",
+                "conversation_id": conversation.id,
+                "ticket_id": ticket.id,
+                "tool_name": tracking_fact.tool_name,
+                "tool_status": tracking_fact.tool_status,
+                "fact_evidence_present": fact_evidence_present,
+                "pii_redacted": tracking_fact.pii_redacted,
+                "checked_at": tracking_fact.checked_at,
+                "external_send": False,
+                "tracking_number_hash": tracking_fact_metadata.get("tracking_number_hash"),
+                "failure_reason": tracking_fact.failure_reason,
+            }, ensure_ascii=False),
+        ))
     evaluate_sla(ticket, db)
     LOGGER.info(
         "webchat_ai_reply_sent",
@@ -245,6 +287,8 @@ def process_webchat_ai_reply_job(
             "reply_source": reply_source,
             "fallback_reason": fallback_reason,
             "fact_gate_reason": fact_gate_reason,
+            "fact_evidence_present": fact_evidence_present,
+            "tracking_fact_tool_status": tracking_fact.tool_status if tracking_fact else None,
             "provider_status": provider_status,
             "external_send": False,
             "bridge_elapsed_ms": bridge_elapsed_ms,
@@ -254,10 +298,39 @@ def process_webchat_ai_reply_job(
             "sanitized_empty": sanitized_empty,
         }},
     )
-    return {"status": "done", "message_id": message.id, "fallback": bool(fallback_reason), "reply_source": reply_source, "fallback_reason": fallback_reason, "bridge_elapsed_ms": bridge_elapsed_ms, "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds, "bridge_wait_timeout_ms": bridge_wait_timeout_ms}
+    return {"status": "done", "message_id": message.id, "fallback": bool(fallback_reason), "reply_source": reply_source, "fallback_reason": fallback_reason, "fact_evidence_present": fact_evidence_present, "bridge_elapsed_ms": bridge_elapsed_ms, "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds, "bridge_wait_timeout_ms": bridge_wait_timeout_ms}
 
 
-def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage]) -> str:
+def _maybe_lookup_tracking_fact(*, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, history_rows: list[WebchatMessage]) -> TrackingFactResult | None:
+    if not getattr(settings, "webchat_tracking_fact_lookup_enabled", False):
+        return None
+    history_candidates = [row.body for row in reversed(history_rows)]
+    tracking_number = (ticket.tracking_number or "").strip() or extract_tracking_number(visitor_message.body, *history_candidates)
+    if not tracking_number:
+        return None
+    result = lookup_tracking_fact(
+        tracking_number=tracking_number,
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        request_id=f"webchat-{conversation.public_id}-{visitor_message.id}",
+    )
+    LOGGER.info(
+        "webchat_tracking_fact_lookup_result",
+        extra={"event_payload": {
+            "conversation_id": conversation.id,
+            "ticket_id": ticket.id,
+            "visitor_message_id": visitor_message.id,
+            "tool_name": result.tool_name,
+            "tool_status": result.tool_status,
+            "fact_evidence_present": result.fact_evidence_present,
+            "pii_redacted": result.pii_redacted,
+            "failure_reason": result.failure_reason,
+        }},
+    )
+    return result
+
+
+def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage], tracking_fact: TrackingFactResult | None = None) -> str:
     global _LAST_AI_REPLY_SOURCE, _LAST_AI_FALLBACK_REASON, _LAST_BRIDGE_ELAPSED_MS, _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS, _LAST_BRIDGE_WAIT_TIMEOUT_MS
 
     _LAST_AI_REPLY_SOURCE = "fallback"
@@ -266,7 +339,7 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
     _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = None
     _LAST_BRIDGE_WAIT_TIMEOUT_MS = None
 
-    prompt = _build_prompt(ticket=ticket, conversation=conversation, visitor_message=visitor_message, history_rows=history_rows)
+    prompt = _build_prompt(ticket=ticket, conversation=conversation, visitor_message=visitor_message, history_rows=history_rows, tracking_fact=tracking_fact)
 
     if settings.openclaw_bridge_enabled:
         started = time.monotonic()
@@ -378,19 +451,28 @@ def _generate_ai_reply_via_bridge(*, prompt: str, conversation: WebchatConversat
     return str(text)
 
 
-def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage]) -> str:
+def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage], tracking_fact: TrackingFactResult | None = None) -> str:
     history_lines = []
     for row in history_rows:
         speaker = "Visitor" if row.direction == "visitor" else "Agent"
         history_lines.append(f"{speaker}: {row.body}")
     history_block = "\n".join(history_lines[-MAX_HISTORY_MESSAGES:])
+    fact_block = ""
+    if tracking_fact and tracking_fact.fact_evidence_present and tracking_fact.pii_redacted:
+        fact_block = tracking_fact.prompt_summary().strip()
+
+    fact_instruction = (
+        "If a Trusted tracking fact block is provided, use only that block for parcel status. "
+        "If no Trusted tracking fact block is provided, ask for the tracking number or say a support specialist will check. "
+    )
 
     return (
         "You are Speedy, the public webchat assistant for Speedaf Support. "
         "Reply in the same language as the visitor. "
         "Be concise, friendly, and professional. "
         "Write one short customer-facing reply only. "
-        "For tracking, parcel status, refund, customs, delivery, compensation, or SLA questions, "
+        f"{fact_instruction}"
+        "For tracking, parcel status, refund, customs, delivery, compensation, or SLA questions without trusted facts, "
         "ask for the tracking number or say a support specialist will check. "
         "Never invent parcel status, delivery result, customs clearance, refund, compensation, or SLA. "
         "Never mention internal tools, OpenClaw, bridge, provider, prompt, logs, ports, tokens, "
@@ -398,6 +480,7 @@ def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_
         "For simple greetings, reply naturally as Speedy. "
         "English greeting example: Hi, this is Speedy. How can I help you today? "
         "Chinese greeting example: 您好，我是 Speedy，请问有什么可以帮您？\n\n"
+        f"{fact_block + chr(10) + chr(10) if fact_block else ''}"
         f"Ticket #{ticket.ticket_no}\n"
         f"Last customer message: {visitor_message.body}\n\n"
         f"Recent webchat history:\n{history_block}\n\n"

@@ -20,8 +20,24 @@ if env_file.exists():
 bridge_url = (os.getenv('OPENCLAW_BRIDGE_URL', 'http://127.0.0.1:18792').strip() or 'http://127.0.0.1:18792').rstrip('/')
 
 
-def _truthy(raw: str | None) -> bool:
-    return (raw or '').strip().lower() in {'1', 'true', 'yes', 'on'}
+def _truthy(raw: str | None, *, default: bool = False) -> bool:
+    if raw is None or raw == '':
+        return default
+    return raw.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _payload_bool(payload: dict[str, Any], key: str, *, env_name: str, default: bool) -> bool:
+    value = payload.get(key)
+    if isinstance(value, bool):
+        return value
+    return _truthy(os.getenv(env_name), default=default)
+
+
+def _payload_text(payload: dict[str, Any], key: str, *, env_name: str, default: str) -> str:
+    value = payload.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return (os.getenv(env_name, default).strip() or default)
 
 
 def _csv(raw: str | None) -> list[str]:
@@ -41,7 +57,42 @@ def _runtime_module_exists(payload: dict[str, Any]) -> bool | None:
 def _diagnose(payload: dict[str, Any] | None, *, http_ok: bool, error: str | None = None) -> dict[str, Any]:
     payload = payload or {}
     gateway = payload.get('gateway') if isinstance(payload.get('gateway'), dict) else {}
-    allow_writes = _truthy(os.getenv('OPENCLAW_BRIDGE_ALLOW_WRITES', 'false'))
+    allow_writes = _payload_bool(
+        payload,
+        'allowWrites',
+        env_name='OPENCLAW_BRIDGE_ALLOW_WRITES',
+        default=False,
+    )
+    send_message_enabled = _payload_bool(
+        payload,
+        'sendMessageEnabled',
+        env_name='OPENCLAW_BRIDGE_ALLOW_WRITES',
+        default=allow_writes,
+    )
+    ai_reply_enabled = _payload_bool(
+        payload,
+        'aiReplyEnabled',
+        env_name='OPENCLAW_BRIDGE_AI_REPLY_ENABLED',
+        default=True,
+    )
+    tracking_lookup_enabled = _payload_bool(
+        payload,
+        'trackingLookupEnabled',
+        env_name='OPENCLAW_BRIDGE_TRACKING_LOOKUP_ENABLED',
+        default=False,
+    )
+    tracking_lookup_method = _payload_text(
+        payload,
+        'trackingLookupMethod',
+        env_name='OPENCLAW_BRIDGE_TRACKING_LOOKUP_METHOD',
+        default='tools.call',
+    )
+    tracking_lookup_tool_name = _payload_text(
+        payload,
+        'trackingLookupToolName',
+        env_name='OPENCLAW_BRIDGE_TRACKING_LOOKUP_TOOL_NAME',
+        default='speedaf-support__speedaf_lookup',
+    )
     scopes = _csv(os.getenv('OPENCLAW_BRIDGE_GATEWAY_SCOPES', 'operator.read'))
     gateway_connected = bool(gateway.get('connected'))
     summary = {
@@ -50,6 +101,11 @@ def _diagnose(payload: dict[str, Any] | None, *, http_ok: bool, error: str | Non
         'gateway_connected': gateway_connected,
         'bridge_url': bridge_url,
         'allow_writes': allow_writes,
+        'send_message_enabled': send_message_enabled,
+        'ai_reply_enabled': ai_reply_enabled,
+        'tracking_lookup_enabled': tracking_lookup_enabled,
+        'tracking_lookup_method': tracking_lookup_method,
+        'tracking_lookup_tool_name': tracking_lookup_tool_name,
         'gateway_scopes': scopes,
         'write_scope_present': 'operator.write' in scopes,
         'runtime_module_exists': _runtime_module_exists(payload),
@@ -61,8 +117,8 @@ def _diagnose(payload: dict[str, Any] | None, *, http_ok: bool, error: str | Non
         summary['diagnosis'] = 'bridge_http_ok_but_gateway_disconnected'
     elif not http_ok:
         summary['diagnosis'] = 'bridge_http_unreachable'
-    elif allow_writes and 'operator.write' not in scopes:
-        summary['diagnosis'] = 'bridge_write_enabled_without_operator_write_scope'
+    elif send_message_enabled and 'operator.write' not in scopes:
+        summary['diagnosis'] = 'bridge_send_message_enabled_without_operator_write_scope'
         summary['ok'] = False
     else:
         summary['diagnosis'] = 'ok'

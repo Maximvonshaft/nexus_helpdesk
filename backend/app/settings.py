@@ -103,6 +103,12 @@ class Settings:
         self.webchat_rate_limit_window_seconds = int(os.getenv("WEBCHAT_RATE_LIMIT_WINDOW_SECONDS", "60"))
         self.webchat_rate_limit_max_requests = int(os.getenv("WEBCHAT_RATE_LIMIT_MAX_REQUESTS", "20"))
         self.webchat_ai_auto_reply_mode = os.getenv("WEBCHAT_AI_AUTO_REPLY_MODE", "safe_ack" if self.app_env == "production" else "safe_ai").strip().lower() or "safe_ack"
+        self.webchat_static_quick_replies_mode = os.getenv("WEBCHAT_STATIC_QUICK_REPLIES_MODE", "off").strip().lower() or "off"
+        self.webchat_tracking_fact_lookup_enabled = os.getenv("WEBCHAT_TRACKING_FACT_LOOKUP_ENABLED", "false").strip().lower() == "true"
+        self.webchat_tracking_fact_source = os.getenv("WEBCHAT_TRACKING_FACT_SOURCE", "openclaw_bridge").strip().lower() or "openclaw_bridge"
+        self.webchat_tracking_fact_timeout_seconds = int(os.getenv("WEBCHAT_TRACKING_FACT_TIMEOUT_SECONDS", "8"))
+        self.webchat_tracking_fact_redaction_enabled = os.getenv("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED", "true").strip().lower() == "true"
+        self.webchat_tracking_fact_card_enabled = os.getenv("WEBCHAT_TRACKING_FACT_CARD_ENABLED", "false").strip().lower() == "true"
 
         self.request_id_header = os.getenv("REQUEST_ID_HEADER", "X-Request-Id")
         self.log_json = os.getenv("LOG_JSON", "true").strip().lower() == "true"
@@ -131,6 +137,14 @@ class Settings:
             raise RuntimeError("WEBCHAT_RATE_LIMIT_BACKEND must be memory or database")
         if self.webchat_ai_auto_reply_mode not in {"off", "safe_ack", "safe_ai"}:
             raise RuntimeError("WEBCHAT_AI_AUTO_REPLY_MODE must be off, safe_ack, or safe_ai")
+        if self.webchat_static_quick_replies_mode not in {"off", "legacy"}:
+            raise RuntimeError("WEBCHAT_STATIC_QUICK_REPLIES_MODE must be off or legacy")
+        if self.webchat_tracking_fact_source not in {"openclaw_bridge"}:
+            raise RuntimeError("WEBCHAT_TRACKING_FACT_SOURCE must be openclaw_bridge")
+        if self.webchat_tracking_fact_timeout_seconds < 1 or self.webchat_tracking_fact_timeout_seconds > 30:
+            raise RuntimeError("WEBCHAT_TRACKING_FACT_TIMEOUT_SECONDS must be between 1 and 30")
+        if self.webchat_tracking_fact_lookup_enabled and not self.webchat_tracking_fact_redaction_enabled:
+            raise RuntimeError("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED must be true when tracking lookup is enabled")
         if self.app_env == "production":
             if not self.jwt_secret_key:
                 raise RuntimeError("SECRET_KEY must be set in production")

@@ -1642,6 +1642,10 @@ def consume_openclaw_events_once(db: Session, *, source: str = "default", timeou
 
     # Fallback to MCP
     if not bridge_success:
+        if not _local_mcp_fallback_allowed():
+            LOGGER.warning('openclaw_event_local_mcp_fallback_skipped_in_remote_gateway_mode', extra={'event_payload': {'after_cursor': after_cursor, 'reason': 'remote_gateway_local_mcp_disabled'}})
+            return 0
+
         LOGGER.info('openclaw_mcp_event_invoked', extra={'event_payload': {'after_cursor': after_cursor}})
         with OpenClawMCPClient() as client:
             try:
