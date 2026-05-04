@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { spawn } = require('child_process');
 
 const DEFAULT_OPENCLAW_HOME = path.join(process.env.HOME || '', '.openclaw');
 const DEFAULT_OPENCLAW_CONFIG = path.join(DEFAULT_OPENCLAW_HOME, 'openclaw.json');
@@ -89,8 +90,10 @@ function loadConfig() {
     aiReplyEnabled: truthyEnv('OPENCLAW_BRIDGE_AI_REPLY_ENABLED', true),
     aiReplySessionKey: process.env.OPENCLAW_BRIDGE_AI_REPLY_SESSION_KEY || 'agent:support:main',
     trackingLookupEnabled: truthyEnv('OPENCLAW_BRIDGE_TRACKING_LOOKUP_ENABLED', false),
-    trackingLookupMethod: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_METHOD || 'tools.call',
+    trackingLookupMethod: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_METHOD || 'readonly_adapter',
     trackingLookupToolName: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_TOOL_NAME || 'speedaf-support__speedaf_lookup',
+    trackingLookupAdapter: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_ADAPTER || 'speedaf_tracking_readonly_adapter',
+    trackingLookupAdapterScript: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_ADAPTER_SCRIPT || path.join(__dirname, 'speedaf_tracking_readonly_adapter.py'),
   };
 }
 
@@ -493,8 +496,115 @@ class BridgeRuntime {
     }
   }
 
+  runReadonlyTrackingAdapter(payload) {
+    return new Promise((resolve, reject) => {
+      const scriptPath = this.config.trackingLookupAdapterScript;
+      const child = spawn('python3', [scriptPath], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          PYTHONUNBUFFERED: '1',
+        },
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      const timeout = setTimeout(() => {
+        child.kill('SIGTERM');
+        reject(new Error('readonly_adapter_timeout'));
+      }, this.config.requestTimeoutMs);
+
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk.toString('utf8');
+        if (stdout.length > 1024 * 1024) {
+          child.kill('SIGTERM');
+          reject(new Error('readonly_adapter_stdout_too_large'));
+        }
+      });
+
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk.toString('utf8');
+      });
+
+      child.on('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+
+      child.on('close', (code) => {
+        clearTimeout(timeout);
+        if (code !== 0) {
+          reject(new Error(`readonly_adapter_failed:${code}:${stderr.slice(0, 500)}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(stdout || '{}'));
+        } catch (error) {
+          reject(new Error(`readonly_adapter_invalid_json:${error?.message || String(error)}`));
+        }
+      });
+
+      child.stdin.write(JSON.stringify(payload || {}));
+      child.stdin.end();
+    });
+  }
+
+  async lookupSpeedafTrackingReadonlyAdapter(payload) {
+    const trackingNumber = String(payload.tracking_number || payload.trackingNumber || '').trim().toUpperCase();
+    if (!trackingNumber) throw new Error('missing_tracking_number');
+
+    const bridgeRequestId = crypto.randomUUID();
+    const adapterPayload = {
+      tracking_number: trackingNumber,
+      trackingNumber,
+      source: payload.source || 'nexus_webchat',
+      request_id: payload.request_id || null,
+      conversation_id: payload.conversation_id || null,
+      ticket_id: payload.ticket_id || null,
+    };
+
+    this.pendingRequests.set(bridgeRequestId, {
+      createdAt: nowIso(),
+      action: 'speedaf_lookup_readonly_adapter',
+      adapter: this.config.trackingLookupAdapter,
+      trackingNumberSuffix: trackingNumber.slice(-4),
+    });
+
+    try {
+      const result = await this.runReadonlyTrackingAdapter(adapterPayload);
+      log('info', 'bridge_tracking_lookup_adapter_success', {
+        bridgeRequestId,
+        adapter: this.config.trackingLookupAdapter,
+        trackingNumberSuffix: trackingNumber.slice(-4),
+      });
+      return {
+        bridgeRequestId,
+        tool_name: this.config.trackingLookupAdapter,
+        tool_status: result?.ok === false ? 'failed' : 'success',
+        tracking_number: trackingNumber,
+        checked_at: result?.checked_at || nowIso(),
+        raw_included: false,
+        ...result,
+      };
+    } catch (error) {
+      log('warn', 'bridge_tracking_lookup_adapter_failed', {
+        bridgeRequestId,
+        adapter: this.config.trackingLookupAdapter,
+        trackingNumberSuffix: trackingNumber.slice(-4),
+        error: error?.message || String(error),
+      });
+      throw error;
+    } finally {
+      this.pendingRequests.delete(bridgeRequestId);
+    }
+  }
+
   async lookupSpeedaf(payload) {
     if (!this.config.trackingLookupEnabled) throw new Error('bridge_tracking_lookup_disabled');
+    if (this.config.trackingLookupMethod === 'readonly_adapter') {
+      return this.lookupSpeedafTrackingReadonlyAdapter(payload);
+    }
     if (!this.client) throw new Error('bridge_client_not_started');
     await this.waitForReady();
     const trackingNumber = String(payload.tracking_number || payload.trackingNumber || '').trim().toUpperCase();
@@ -628,6 +738,8 @@ class BridgeRuntime {
       trackingLookupEnabled: this.config.trackingLookupEnabled,
       trackingLookupMethod: this.config.trackingLookupMethod,
       trackingLookupToolName: this.config.trackingLookupToolName,
+      trackingLookupAdapter: this.config.trackingLookupAdapter,
+      trackingLookupAdapterScript: this.config.trackingLookupAdapterScript,
       gateway: {
         url: this.config.gatewayUrl,
         connected: this.connected,
