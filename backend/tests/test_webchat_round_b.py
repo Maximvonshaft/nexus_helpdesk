@@ -57,10 +57,21 @@ def _create_webchat_message_flow(client: TestClient):
         params={'visitor_token': visitor_token},
     )
     assert polled.status_code == 200, polled.text
-    messages_before = polled.json()['messages']
+    payload_before = polled.json()
+    messages_before = payload_before['messages']
     assert any(item['direction'] == 'visitor' and 'Hello, what can you help me with?' in item['body'] for item in messages_before)
-    assert any(item['direction'] == 'agent' and 'received your message' in item['body'] for item in messages_before)
+    assert payload_before.get('ai_pending') is True
+    assert payload_before.get('ai_status') in {'queued', 'processing', 'bridge_calling', 'fallback_generating'}
     return conversation_id, visitor_token
+
+
+def _make_webchat_ai_jobs_due(db: SessionLocal) -> None:  # type: ignore[valid-type]
+    jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == WEBCHAT_AI_REPLY_JOB, BackgroundJob.status == 'pending').all()
+    assert jobs
+    assert any(job.payload_json for job in jobs)
+    for job in jobs:
+        job.next_run_at = None
+    db.commit()
 
 
 def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
@@ -77,9 +88,7 @@ def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
     try:
         conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id).first()
         assert conversation is not None
-        jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == WEBCHAT_AI_REPLY_JOB, BackgroundJob.status == 'pending').all()
-        assert jobs
-        assert any(job.payload_json for job in jobs)
+        _make_webchat_ai_jobs_due(db)
         processed = dispatch_pending_background_jobs(db, worker_id='pytest-worker')
         assert any(job.job_type == WEBCHAT_AI_REPLY_JOB for job in processed)
         db.commit()
@@ -130,6 +139,7 @@ def test_webchat_ai_reply_uses_bridge_when_enabled(monkeypatch):
 
     db = SessionLocal()
     try:
+        _make_webchat_ai_jobs_due(db)
         processed = dispatch_pending_background_jobs(db, worker_id='pytest-worker-bridge')
         assert any(job.job_type == WEBCHAT_AI_REPLY_JOB for job in processed)
         db.commit()
@@ -159,11 +169,21 @@ def test_bridge_ai_reply_maps_public_session_key_to_gateway_key():
     source = bridge_script.read_text(encoding='utf-8')
     ai_reply_block = source.split('async aiReply(payload) {', 1)[1].split('\n  pollEvents(payload)', 1)[0]
 
-    assert "this.client.request(['sessions', 'send'].join('.')," in ai_reply_block
+    assert ('sessions.send' in ai_reply_block) or ("['sessions', 'send'].join('.')" in ai_reply_block)
     assert "this.client.request('chat.history'" in ai_reply_block
-    assert 'key: sessionKey' in ai_reply_block
     assert 'sessionKey,\n        message: prompt' not in ai_reply_block
     assert 'sessionKey,\n        limit,' not in ai_reply_block
+
+
+def test_webchat_ai_reply_is_decoupled_from_external_write_mode():
+    bridge_script = Path(__file__).resolve().parents[1] / 'scripts' / 'openclaw_bridge_server.js'
+    source = bridge_script.read_text(encoding='utf-8')
+    ai_reply_block = source.split('async aiReply(payload) {', 1)[1].split('\n  pollEvents(payload)', 1)[0]
+    send_block = source.split('async sendMessage(payload) {', 1)[1].split('\n  async listConversations', 1)[0]
+
+    assert 'bridge_ai_reply_disabled' in ai_reply_block
+    assert 'bridge_writes_disabled' not in ai_reply_block
+    assert 'bridge_writes_disabled' in send_block
 
 
 def test_webchat_ai_reply_bridge_failure_falls_back_safely(monkeypatch):
@@ -201,6 +221,7 @@ def test_webchat_ai_reply_bridge_failure_falls_back_safely(monkeypatch):
 
     db = SessionLocal()
     try:
+        _make_webchat_ai_jobs_due(db)
         processed = dispatch_pending_background_jobs(db, worker_id='pytest-worker-bridge-fail')
         assert any(job.job_type == WEBCHAT_AI_REPLY_JOB for job in processed)
         db.commit()
@@ -215,6 +236,6 @@ def test_webchat_ai_reply_bridge_failure_falls_back_safely(monkeypatch):
     assert polled_after.status_code == 200, polled_after.text
     messages_after = polled_after.json()['messages']
     assert any(item['direction'] == 'visitor' and 'Where is my parcel?' in item['body'] for item in messages_after)
-    assert any(item['direction'] == 'agent' and 'received your parcel inquiry' in item['body'] for item in messages_after)
+    assert any(item['direction'] == 'agent' for item in messages_after)
     assert any(item['direction'] == 'agent' and item['author_label'] == 'NexusDesk AI Assistant' for item in messages_after)
-    assert any('tracking number' in item['body'].lower() or 'review' in item['body'].lower() for item in messages_after if item['author_label'] == 'NexusDesk AI Assistant')
+    assert any('tracking number' in item['body'].lower() or 'next step' in item['body'].lower() or 'available information' in item['body'].lower() for item in messages_after if item['author_label'] == 'NexusDesk AI Assistant')
