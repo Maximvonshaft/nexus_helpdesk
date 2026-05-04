@@ -2,7 +2,6 @@ const http = require('http');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 
 const DEFAULT_OPENCLAW_HOME = path.join(process.env.HOME || '', '.openclaw');
@@ -90,13 +89,8 @@ function loadConfig() {
     aiReplyEnabled: truthyEnv('OPENCLAW_BRIDGE_AI_REPLY_ENABLED', true),
     aiReplySessionKey: process.env.OPENCLAW_BRIDGE_AI_REPLY_SESSION_KEY || 'agent:support:main',
     trackingLookupEnabled: truthyEnv('OPENCLAW_BRIDGE_TRACKING_LOOKUP_ENABLED', false),
-    trackingLookupMethod: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_METHOD || 'readonly_adapter',
-    trackingLookupAdapter:
-      process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_ADAPTER || 'speedaf_tracking_readonly_adapter',
-    trackingLookupAdapterScript:
-      process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_ADAPTER_SCRIPT ||
-      path.join(__dirname, 'speedaf_tracking_readonly_adapter.py'),
-    trackingLookupPython: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_PYTHON || 'python3',
+    trackingLookupMethod: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_METHOD || 'tools.call',
+    trackingLookupToolName: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_TOOL_NAME || 'speedaf-support__speedaf_lookup',
   };
 }
 
@@ -107,68 +101,6 @@ async function loadGatewayClient(runtimeModulePath) {
     throw new Error(`GatewayClient export not found in ${runtimeModulePath}`);
   }
   return mod.GatewayClient;
-}
-
-function runReadonlyTrackingAdapter(config, payload) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(config.trackingLookupPython, [config.trackingLookupAdapterScript], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        PYTHONUNBUFFERED: '1',
-      },
-    });
-
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill('SIGKILL');
-      const error = new Error('upstream_timeout');
-      error.details = { stderr: stderr.slice(0, 400) || null };
-      reject(error);
-    }, config.requestTimeoutMs);
-
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString('utf8');
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString('utf8');
-    });
-    child.on('error', (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (code !== 0) {
-        const error = new Error('adapter_error');
-        error.details = { code, stderr: stderr.slice(0, 400) || null };
-        reject(error);
-        return;
-      }
-      try {
-        const parsed = JSON.parse(stdout || '{}');
-        resolve(parsed);
-      } catch (error) {
-        const wrapped = new Error('adapter_error');
-        wrapped.details = {
-          parseError: error?.message || String(error),
-          stdout: stdout.slice(0, 400) || null,
-          stderr: stderr.slice(0, 400) || null,
-        };
-        reject(wrapped);
-      }
-    });
-
-    child.stdin.end(JSON.stringify(payload));
-  });
 }
 
 function normalizeConversation(session) {
@@ -561,41 +493,55 @@ class BridgeRuntime {
     }
   }
 
-  async lookupSpeedafTrackingReadonlyAdapter(payload) {
-    const trackingNumber = String(payload.tracking_number || '').trim().toUpperCase();
+  async lookupSpeedaf(payload) {
+    if (!this.config.trackingLookupEnabled) throw new Error('bridge_tracking_lookup_disabled');
+    if (!this.client) throw new Error('bridge_client_not_started');
+    await this.waitForReady();
+    const trackingNumber = String(payload.tracking_number || payload.trackingNumber || '').trim().toUpperCase();
     if (!trackingNumber) throw new Error('missing_tracking_number');
     const bridgeRequestId = crypto.randomUUID();
-    const requestPayload = {
+    const args = {
       tracking_number: trackingNumber,
-      source: payload.source || 'bridge_internal',
+      trackingNumber,
+      source: payload.source || 'nexus_webchat',
       request_id: payload.request_id || null,
       conversation_id: payload.conversation_id || null,
       ticket_id: payload.ticket_id || null,
     };
+    const requestPayload = {
+      name: this.config.trackingLookupToolName,
+      tool_name: this.config.trackingLookupToolName,
+      arguments: args,
+      args,
+    };
     this.pendingRequests.set(bridgeRequestId, {
       createdAt: nowIso(),
-      action: 'speedaf_lookup_readonly_adapter',
-      adapter: this.config.trackingLookupAdapter,
+      action: 'speedaf_lookup',
+      toolName: this.config.trackingLookupToolName,
       trackingNumberSuffix: trackingNumber.slice(-4),
     });
     try {
-      const result = await runReadonlyTrackingAdapter(this.config, requestPayload);
-      if (!result || typeof result !== 'object') {
-        const error = new Error('adapter_error');
-        error.details = { bridgeRequestId };
-        throw error;
-      }
+      const result = await this.client.request(this.config.trackingLookupMethod, requestPayload, {
+        timeoutMs: this.config.requestTimeoutMs,
+      });
       log('info', 'bridge_tracking_lookup_success', {
         bridgeRequestId,
-        adapter: this.config.trackingLookupAdapter,
+        toolName: this.config.trackingLookupToolName,
         trackingNumberSuffix: trackingNumber.slice(-4),
-        ok: result.ok === true,
       });
-      return result;
+      return {
+        bridgeRequestId,
+        tool_name: 'speedaf_lookup',
+        tool_status: 'success',
+        tracking_number: trackingNumber,
+        checked_at: nowIso(),
+        raw_included: false,
+        result,
+      };
     } catch (error) {
       log('warn', 'bridge_tracking_lookup_failed', {
         bridgeRequestId,
-        adapter: this.config.trackingLookupAdapter,
+        toolName: this.config.trackingLookupToolName,
         trackingNumberSuffix: trackingNumber.slice(-4),
         error: error?.message || String(error),
         details: error?.details || null,
@@ -604,14 +550,6 @@ class BridgeRuntime {
     } finally {
       this.pendingRequests.delete(bridgeRequestId);
     }
-  }
-
-  async lookupSpeedaf(payload) {
-    if (!this.config.trackingLookupEnabled) throw new Error('bridge_tracking_lookup_disabled');
-    if (this.config.trackingLookupMethod !== 'readonly_adapter') {
-      throw new Error('unsupported_tracking_lookup_method');
-    }
-    return this.lookupSpeedafTrackingReadonlyAdapter(payload);
   }
 
   pollEvents(payload) {
@@ -689,7 +627,7 @@ class BridgeRuntime {
       sendMessageEnabled: this.config.allowWrites,
       trackingLookupEnabled: this.config.trackingLookupEnabled,
       trackingLookupMethod: this.config.trackingLookupMethod,
-      trackingLookupAdapter: this.config.trackingLookupAdapter,
+      trackingLookupToolName: this.config.trackingLookupToolName,
       gateway: {
         url: this.config.gatewayUrl,
         connected: this.connected,
@@ -773,20 +711,6 @@ async function handleBridgeCall(res, fn) {
   }
 }
 
-async function handleTrackingLookupCall(res, fn) {
-  try {
-    const response = await fn();
-    sendJson(res, 200, response);
-  } catch (error) {
-    const errorMessage = error?.message || String(error);
-    let statusCode = 502;
-    if (errorMessage.startsWith('bridge_not_ready')) statusCode = 503;
-    if (errorMessage === 'bridge_tracking_lookup_disabled') statusCode = 403;
-    if (errorMessage === 'missing_tracking_number') statusCode = 400;
-    sendJson(res, statusCode, { ok: false, error: errorMessage, details: error?.details || null });
-  }
-}
-
 async function main() {
   const config = loadConfig();
   const GatewayClient = await loadGatewayClient(config.gatewayRuntimeModule);
@@ -821,10 +745,10 @@ async function main() {
       }
       if (req.method === 'POST' && url.pathname === SPEEDAF_LOOKUP_PATH) {
         const payload = await readJsonBody(req);
-        if (!payload || !payload.tracking_number) {
+        if (!payload || (!payload.tracking_number && !payload.trackingNumber)) {
           return sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing: ['tracking_number'] });
         }
-        await handleTrackingLookupCall(res, () => bridge.lookupSpeedaf(payload));
+        await handleBridgeCall(res, () => bridge.lookupSpeedaf(payload));
         return;
       }
       if (req.method === 'POST' && url.pathname === '/conversations-list') {
