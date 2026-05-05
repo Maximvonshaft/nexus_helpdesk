@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import asdict
 from typing import Any
@@ -21,11 +22,12 @@ from .webchat_ai_turn_service import (
     latest_visitor_message_id,
     mark_ai_turn_bridge_calling,
     mark_ai_turn_processing,
-    supersede_ai_turn,
+    suppress_stale_reply_if_needed,
 )
 from .webchat_fact_gate import evaluate_webchat_fact_gate
 
 settings = get_settings()
+LOGGER = logging.getLogger("nexusdesk")
 
 HIGH_RISK_TERMS = (
     "refund", "compensation", "lost", "damaged", "customs", " tax ", "claim", "legal", "pod",
@@ -80,7 +82,7 @@ def _sanitize_public_reply(text: str) -> str:
     return cleaned[:1200]
 
 
-def _message_metadata(*, generated_by: str, reason: str, decision_level: str, fact_gate_reason: str | None = None) -> str:
+def _message_metadata(*, generated_by: str, reason: str, decision_level: str, fact_gate_reason: str | None = None, ai_turn_id: int | None = None) -> str:
     return json.dumps({
         "generated_by": generated_by,
         "intent": None,
@@ -91,6 +93,7 @@ def _message_metadata(*, generated_by: str, reason: str, decision_level: str, fa
         "fact_evidence_present": False,
         "external_send": False,
         "reply_source": reason,
+        "ai_turn_id": ai_turn_id,
     }, ensure_ascii=False)
 
 
@@ -141,7 +144,11 @@ def _provider_status_for_reason(reason: str) -> str:
     return "webchat_safe_ack_delivered"
 
 
-def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, body: str, reason: str) -> dict[str, Any]:
+def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, body: str, reason: str, turn: WebchatAITurn | None = None) -> dict[str, Any]:
+    if suppress_stale_reply_if_needed(db, conversation=conversation, turn=turn, reason="newer_message_before_safe_ack_commit"):
+        LOGGER.info("webchat_ai_reply_suppressed_stale", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "visitor_message_id": visitor_message.id, "ai_turn_id": turn.id if turn else None, "reason": "newer_message_before_safe_ack_commit"}})
+        return {"status": "superseded", "reason": "newer_message_before_safe_ack_commit", "reply_source": "suppressed"}
+
     final_body = _sanitize_public_reply(body)
     fact_gate_reason = None
     fact_decision = evaluate_webchat_fact_gate(final_body, fact_evidence_present=False, allow_tracking_status_card=False)
@@ -160,12 +167,14 @@ def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, t
         body=final_body,
         body_text=final_body,
         message_type="text",
+        ai_turn_id=turn.id if turn else None,
         delivery_status="sent",
         metadata_json=_message_metadata(
             generated_by="webchat_ai_safe_fallback" if provider_status == "webchat_ai_safe_fallback" else "webchat_safe_ack",
             reason=reason,
             decision_level=decision.level,
             fact_gate_reason=fact_gate_reason,
+            ai_turn_id=turn.id if turn else None,
         ),
         author_label=AI_AUTHOR_LABEL,
         safety_level=decision.level,
@@ -204,6 +213,7 @@ def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, t
             "conversation_id": conversation.id,
             "visitor_message_id": visitor_message.id,
             "webchat_message_id": message.id,
+            "ai_turn_id": turn.id if turn else None,
             "reply_source": reason,
             "provider_status": provider_status,
             "external_send": False,
@@ -232,11 +242,8 @@ def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
         _complete_turn_if_present(db, conversation=conversation, turn=turn, result=result)
         return result
 
-    if turn is not None and turn.context_cutoff_message_id:
-        latest_id = latest_visitor_message_id(db, conversation_id=conversation.id)
-        if latest_id is not None and latest_id > turn.context_cutoff_message_id:
-            supersede_ai_turn(db, conversation=conversation, turn=turn, reason="newer_message_before_reply")
-            return {"status": "superseded", "reason": "newer_message_before_reply"}
+    if suppress_stale_reply_if_needed(db, conversation=conversation, turn=turn, reason="newer_message_before_reply"):
+        return {"status": "superseded", "reason": "newer_message_before_reply", "reply_source": "suppressed"}
 
     mode = (settings.webchat_ai_auto_reply_mode or "safe_ack").lower()
     if mode == "off":
@@ -245,22 +252,22 @@ def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
             actor_id=None,
             event_type=EventType.internal_note_added,
             note="Webchat AI auto reply skipped because WEBCHAT_AI_AUTO_REPLY_MODE=off",
-            payload_json=json.dumps({"conversation_id": conversation.id, "visitor_message_id": visitor_message.id}, ensure_ascii=False),
+            payload_json=json.dumps({"conversation_id": conversation.id, "visitor_message_id": visitor_message.id, "ai_turn_id": turn.id if turn else None}, ensure_ascii=False),
         ))
         result = {"status": "skipped", "reason": "webchat_ai_auto_reply_off", "reply_source": "off"}
         _complete_turn_if_present(db, conversation=conversation, turn=turn, result=result)
         return result
 
     if mode == "safe_ack":
-        result = _write_safe_agent_reply(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, body=_safe_ack_body(ticket, visitor_message), reason="webchat_safe_ack_mode")
+        result = _write_safe_agent_reply(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, body=_safe_ack_body(ticket, visitor_message), reason="webchat_safe_ack_mode", turn=turn)
         _complete_turn_if_present(db, conversation=conversation, turn=turn, result=result)
         return result
 
     if mode == "safe_ai" and _has_high_risk_intent(visitor_message.body):
-        result = _write_safe_agent_reply(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, body=_safe_ack_body(ticket, visitor_message), reason="webchat_safe_ai_high_risk_fallback")
+        result = _write_safe_agent_reply(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, body=_safe_ack_body(ticket, visitor_message), reason="webchat_safe_ai_high_risk_fallback", turn=turn)
         _complete_turn_if_present(db, conversation=conversation, turn=turn, result=result)
         return result
 
-    result = _legacy_process_webchat_ai_reply_job(db, conversation_id=conversation_id, ticket_id=ticket_id, visitor_message_id=visitor_message_id)
+    result = _legacy_process_webchat_ai_reply_job(db, conversation_id=conversation_id, ticket_id=ticket_id, visitor_message_id=visitor_message_id, ai_turn_id=turn.id if turn else None)
     _complete_turn_if_present(db, conversation=conversation, turn=turn, result=result or {})
     return result
