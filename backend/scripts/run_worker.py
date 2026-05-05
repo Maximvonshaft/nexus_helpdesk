@@ -13,6 +13,11 @@ from app.services.message_dispatch import dispatch_pending_messages  # noqa: E40
 from app.services.observability import configure_logging, log_event, record_queue_snapshot, record_worker_poll, record_worker_result  # noqa: E402
 from app.services.openclaw_bridge import sync_openclaw_inbound_conversations_once  # noqa: E402
 from app.settings import get_settings  # noqa: E402
+import logging
+from app.db import SessionLocal
+from app.services.webchat_ai_reconciler import reconcile_webchat_ai_state
+
+LOGGER = logging.getLogger(__name__)
 
 settings = get_settings()
 configure_logging(settings.log_json)
@@ -71,13 +76,74 @@ def main() -> int:
     parser.add_argument('--once', action='store_true')
     args = parser.parse_args()
 
+    webchat_ai_reconciler_interval_seconds = _webchat_ai_reconciler_interval_seconds()
+    next_webchat_ai_reconciler_run_at = 0.0
+    webchat_ai_reconciler_worker_id = str(args.worker_id)
     while True:
+        webchat_ai_reconciler_now = time.monotonic()
+        if (
+            _should_run_webchat_ai_reconciler(webchat_ai_reconciler_worker_id)
+            and webchat_ai_reconciler_now >= next_webchat_ai_reconciler_run_at
+        ):
+            _run_webchat_ai_reconciler_watchdog(webchat_ai_reconciler_worker_id)
+            next_webchat_ai_reconciler_run_at = (
+                webchat_ai_reconciler_now + webchat_ai_reconciler_interval_seconds
+            )
         processed = run_once(args.worker_id)
         if args.once:
             print(f'processed={processed}')
             return 0
         time.sleep(settings.worker_poll_seconds if processed == 0 else 0.2)
 
+
+
+def _webchat_ai_reconciler_interval_seconds() -> int:
+    try:
+        return max(5, int(getattr(settings, "webchat_ai_reconciler_interval_seconds", 30)))
+    except (TypeError, ValueError):
+        return 30
+
+
+def _should_run_webchat_ai_reconciler(worker_id: str) -> bool:
+    return (
+        worker_id == "worker-main"
+        and bool(getattr(settings, "webchat_ai_reconciler_enabled", True))
+    )
+
+
+def _run_webchat_ai_reconciler_watchdog(worker_id: str) -> None:
+    db = SessionLocal()
+    started = time.monotonic()
+    try:
+        result = reconcile_webchat_ai_state(db)
+        db.commit()
+        LOGGER.info(
+            "webchat_ai_reconciler_watchdog_completed",
+            extra={
+                "event_payload": {
+                    "worker_id": worker_id,
+                    "inspected": result.get("inspected"),
+                    "cleared": result.get("cleared"),
+                    "failed": result.get("failed"),
+                    "promoted": result.get("promoted"),
+                    "timed_out": result.get("timed_out"),
+                    "elapsed_ms": int((time.monotonic() - started) * 1000),
+                }
+            },
+        )
+    except Exception:
+        db.rollback()
+        LOGGER.exception(
+            "webchat_ai_reconciler_watchdog_failed",
+            extra={
+                "event_payload": {
+                    "worker_id": worker_id,
+                    "elapsed_ms": int((time.monotonic() - started) * 1000),
+                }
+            },
+        )
+    finally:
+        db.close()
 
 if __name__ == '__main__':
     raise SystemExit(main())

@@ -5,6 +5,13 @@ import secrets
 from functools import lru_cache
 from pathlib import Path
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 
 class Settings:
     def __init__(self) -> None:
@@ -103,6 +110,14 @@ class Settings:
         self.webchat_rate_limit_window_seconds = int(os.getenv("WEBCHAT_RATE_LIMIT_WINDOW_SECONDS", "60"))
         self.webchat_rate_limit_max_requests = int(os.getenv("WEBCHAT_RATE_LIMIT_MAX_REQUESTS", "20"))
         self.webchat_ai_auto_reply_mode = os.getenv("WEBCHAT_AI_AUTO_REPLY_MODE", "safe_ack" if self.app_env == "production" else "safe_ai").strip().lower() or "safe_ack"
+        self.webchat_ai_reconciler_enabled = _env_bool("WEBCHAT_AI_RECONCILER_ENABLED", True)
+        try:
+            self.webchat_ai_reconciler_interval_seconds = max(
+                5,
+                int(os.getenv("WEBCHAT_AI_RECONCILER_INTERVAL_SECONDS", "30")),
+            )
+        except ValueError:
+            self.webchat_ai_reconciler_interval_seconds = 30
         self.webchat_static_quick_replies_mode = os.getenv("WEBCHAT_STATIC_QUICK_REPLIES_MODE", "off").strip().lower() or "off"
         self.webchat_tracking_fact_lookup_enabled = os.getenv("WEBCHAT_TRACKING_FACT_LOOKUP_ENABLED", "false").strip().lower() == "true"
         self.webchat_tracking_fact_source = os.getenv("WEBCHAT_TRACKING_FACT_SOURCE", "openclaw_bridge").strip().lower() or "openclaw_bridge"

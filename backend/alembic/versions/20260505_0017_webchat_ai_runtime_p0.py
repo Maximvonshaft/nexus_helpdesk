@@ -34,6 +34,16 @@ def _indexes(bind, table_name: str) -> set[str]:
     return {idx["name"] for idx in inspector.get_indexes(table_name)}
 
 
+def _is_sqlite(bind) -> bool:
+    return bind.dialect.name == "sqlite"
+
+
+def _fk_column(bind, name: str, target: str, *, nullable: bool = True) -> sa.Column:
+    if _is_sqlite(bind):
+        return sa.Column(name, sa.Integer(), nullable=nullable)
+    return sa.Column(name, sa.Integer(), sa.ForeignKey(target), nullable=nullable)
+
+
 def _add_column_if_missing(bind, table: str, column: sa.Column) -> None:
     if column.name not in _columns(bind, table):
         op.add_column(table, column)
@@ -80,21 +90,21 @@ def _ensure_turn_runtime_tables(bind) -> None:
         op.create_table(
             "webchat_ai_turns",
             sa.Column("id", sa.Integer(), primary_key=True),
-            sa.Column("conversation_id", sa.Integer(), sa.ForeignKey("webchat_conversations.id"), nullable=False),
-            sa.Column("ticket_id", sa.Integer(), sa.ForeignKey("tickets.id"), nullable=False),
-            sa.Column("trigger_message_id", sa.Integer(), sa.ForeignKey("webchat_messages.id"), nullable=False),
-            sa.Column("latest_visitor_message_id", sa.Integer(), sa.ForeignKey("webchat_messages.id"), nullable=True),
-            sa.Column("context_cutoff_message_id", sa.Integer(), sa.ForeignKey("webchat_messages.id"), nullable=True),
-            sa.Column("job_id", sa.Integer(), sa.ForeignKey("background_jobs.id"), nullable=True),
+            _fk_column(bind, "conversation_id", "webchat_conversations.id", nullable=False),
+            _fk_column(bind, "ticket_id", "tickets.id", nullable=False),
+            _fk_column(bind, "trigger_message_id", "webchat_messages.id", nullable=False),
+            _fk_column(bind, "latest_visitor_message_id", "webchat_messages.id", nullable=True),
+            _fk_column(bind, "context_cutoff_message_id", "webchat_messages.id", nullable=True),
+            _fk_column(bind, "job_id", "background_jobs.id", nullable=True),
             sa.Column("status", sa.String(length=40), nullable=False, server_default="queued"),
             sa.Column("status_reason", sa.Text(), nullable=True),
-            sa.Column("reply_message_id", sa.Integer(), sa.ForeignKey("webchat_messages.id"), nullable=True),
+            _fk_column(bind, "reply_message_id", "webchat_messages.id", nullable=True),
             sa.Column("reply_source", sa.String(length=80), nullable=True),
             sa.Column("fallback_reason", sa.Text(), nullable=True),
             sa.Column("fact_gate_reason", sa.Text(), nullable=True),
             sa.Column("bridge_elapsed_ms", sa.Integer(), nullable=True),
             sa.Column("bridge_timeout_ms", sa.Integer(), nullable=True),
-            sa.Column("superseded_by_turn_id", sa.Integer(), sa.ForeignKey("webchat_ai_turns.id"), nullable=True),
+            _fk_column(bind, "superseded_by_turn_id", "webchat_ai_turns.id", nullable=True),
             sa.Column("is_public_reply_allowed", sa.Boolean(), nullable=False, server_default=sa.true()),
             sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
@@ -124,8 +134,8 @@ def _ensure_turn_runtime_tables(bind) -> None:
         op.create_table(
             "webchat_events",
             sa.Column("id", sa.Integer(), primary_key=True),
-            sa.Column("conversation_id", sa.Integer(), sa.ForeignKey("webchat_conversations.id"), nullable=False),
-            sa.Column("ticket_id", sa.Integer(), sa.ForeignKey("tickets.id"), nullable=False),
+            _fk_column(bind, "conversation_id", "webchat_conversations.id", nullable=False),
+            _fk_column(bind, "ticket_id", "tickets.id", nullable=False),
             sa.Column("event_type", sa.String(length=80), nullable=False),
             sa.Column("payload_json", sa.Text(), nullable=True),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
@@ -177,7 +187,7 @@ def upgrade() -> None:
     _add_column_if_missing(
         bind,
         "webchat_messages",
-        sa.Column("ai_turn_id", sa.Integer(), sa.ForeignKey("webchat_ai_turns.id"), nullable=True),
+        _fk_column(bind, "ai_turn_id", "webchat_ai_turns.id", nullable=True),
     )
     _create_index_if_missing(bind, "ix_webchat_messages_ai_turn_id", "webchat_messages", ["ai_turn_id"])
 
