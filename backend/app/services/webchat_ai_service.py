@@ -15,12 +15,13 @@ from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility,
 from ..models import Ticket, TicketComment, TicketEvent, TicketOutboundMessage
 from ..settings import get_settings
 from ..utils.time import utc_now
-from ..webchat_models import WebchatConversation, WebchatMessage
+from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
 from .openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .sla_service import evaluate_sla, update_first_response
 from .tracking_fact_schema import TrackingFactResult
 from .tracking_fact_service import extract_tracking_number, lookup_tracking_fact
+from .webchat_ai_turn_service import suppress_stale_reply_if_needed
 from .webchat_fact_gate import evaluate_webchat_fact_gate
 
 LOGGER = logging.getLogger("nexusdesk")
@@ -69,6 +70,7 @@ def process_webchat_ai_reply_job(
     conversation_id: int,
     ticket_id: int,
     visitor_message_id: int,
+    ai_turn_id: int | None = None,
 ) -> dict[str, Any]:
     conversation = db.query(WebchatConversation).filter(WebchatConversation.id == conversation_id).first()
     if conversation is None:
@@ -86,6 +88,8 @@ def process_webchat_ai_reply_job(
             f"conversation_id={conversation_id} ticket_id={ticket_id} visitor_message_id={visitor_message_id}"
         )
 
+    turn = db.query(WebchatAITurn).filter(WebchatAITurn.id == ai_turn_id, WebchatAITurn.conversation_id == conversation.id).first() if ai_turn_id else None
+
     existing_agent = (
         db.query(WebchatMessage.id)
         .filter(
@@ -97,7 +101,14 @@ def process_webchat_ai_reply_job(
         .first()
     )
     if existing_agent:
-        return {"status": "skipped", "reason": "agent_reply_already_exists"}
+        return {"status": "skipped", "reason": "agent_reply_already_exists", "reply_source": "existing_reply"}
+
+    if suppress_stale_reply_if_needed(db, conversation=conversation, turn=turn, reason="newer_message_before_bridge_reply"):
+        LOGGER.info(
+            "webchat_ai_reply_suppressed_stale",
+            extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "visitor_message_id": visitor_message.id, "ai_turn_id": ai_turn_id, "reason": "newer_message_before_bridge_reply"}},
+        )
+        return {"status": "superseded", "reason": "newer_message_before_bridge_reply", "reply_source": "suppressed"}
 
     history_rows = (
         db.query(WebchatMessage)
@@ -172,9 +183,17 @@ def process_webchat_ai_reply_job(
                 "conversation_id": conversation.id,
                 "ticket_id": ticket.id,
                 "visitor_message_id": visitor_message.id,
+                "ai_turn_id": ai_turn_id,
                 "reason": fact_gate_reason,
             }},
         )
+
+    if suppress_stale_reply_if_needed(db, conversation=conversation, turn=turn, reason="newer_message_before_reply_commit"):
+        LOGGER.info(
+            "webchat_ai_reply_suppressed_stale",
+            extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "visitor_message_id": visitor_message.id, "ai_turn_id": ai_turn_id, "reason": "newer_message_before_reply_commit"}},
+        )
+        return {"status": "superseded", "reason": "newer_message_before_reply_commit", "reply_source": "suppressed"}
 
     message = WebchatMessage(
         conversation_id=conversation.id,
@@ -183,6 +202,7 @@ def process_webchat_ai_reply_job(
         body=final_body,
         body_text=final_body,
         message_type="text",
+        ai_turn_id=ai_turn_id,
         delivery_status="sent",
         metadata_json=_message_metadata(
             generated_by="webchat_ai_safe_fallback" if fallback_reason else "webchat_ai",
@@ -196,6 +216,7 @@ def process_webchat_ai_reply_job(
             bridge_effective_timeout_seconds=bridge_effective_timeout_seconds,
             bridge_wait_timeout_ms=bridge_wait_timeout_ms,
             sanitized_empty=sanitized_empty,
+            ai_turn_id=ai_turn_id,
             **tracking_fact_metadata,
         ),
         author_label=AI_AUTHOR_LABEL,
@@ -232,8 +253,10 @@ def process_webchat_ai_reply_job(
     event_payload = {
         "public_conversation_id": conversation.public_id,
         "conversation_id": conversation.id,
+        "ticket_id": ticket.id,
         "visitor_message_id": visitor_message.id,
         "webchat_message_id": message.id,
+        "ai_turn_id": ai_turn_id,
         "safety": safety_payload,
         "fallback_reason": fallback_reason,
         "fact_gate_reason": fact_gate_reason,
@@ -283,6 +306,7 @@ def process_webchat_ai_reply_job(
             "ticket_id": ticket.id,
             "visitor_message_id": visitor_message.id,
             "webchat_message_id": message.id,
+            "ai_turn_id": ai_turn_id,
             "fallback": bool(fallback_reason),
             "reply_source": reply_source,
             "fallback_reason": fallback_reason,
