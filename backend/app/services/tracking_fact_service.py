@@ -63,7 +63,7 @@ def lookup_tracking_fact(
     timeout_seconds = max(1, min(int(getattr(settings, "webchat_tracking_fact_timeout_seconds", 8) or 8), 30))
     payload = {
         "tracking_number": tracking_number,
-        "source": "nexus_webchat",
+        "source": "webchat_tracking_fact_probe",
         "request_id": request_id,
         "conversation_id": conversation_id,
         "ticket_id": ticket_id,
@@ -104,19 +104,15 @@ def lookup_tracking_fact(
 
     if not isinstance(parsed, dict):
         return TrackingFactResult(ok=False, tracking_number=tracking_number, tool_status="invalid", pii_redacted=True, failure_reason="invalid_bridge_response")
-    if not parsed.get("ok", False):
-        normalized = normalize_tracking_fact(parsed, tracking_number=tracking_number)
-        if normalized.failure_reason:
-            return normalized
-        return TrackingFactResult(ok=False, tracking_number=tracking_number, tool_status=str(parsed.get("tool_status") or "error"), pii_redacted=True, failure_reason=str(parsed.get("error") or "tool_lookup_failed"))
 
-    raw_result: dict[str, Any]
-    result_value = parsed.get("result") or parsed.get("data") or parsed
-    raw_result = result_value if isinstance(result_value, dict) else {"result": result_value}
-    if "checked_at" not in raw_result:
-        raw_result["checked_at"] = utc_now().isoformat()
-    if "tracking_number" not in raw_result:
-        raw_result["tracking_number"] = tracking_number
-    if "tool_status" not in raw_result:
-        raw_result["tool_status"] = parsed.get("tool_status") or "success"
-    return normalize_tracking_fact(raw_result, tracking_number=tracking_number)
+    result_value: dict[str, Any]
+    if "result" in parsed and isinstance(parsed.get("result"), dict):
+        result_value = parsed["result"]
+    elif "data" in parsed and isinstance(parsed.get("data"), dict):
+        result_value = parsed["data"]
+    else:
+        result_value = parsed
+
+    if "checked_at" not in result_value:
+        result_value["checked_at"] = utc_now().isoformat()
+    return normalize_tracking_fact(result_value, tracking_number=tracking_number)
