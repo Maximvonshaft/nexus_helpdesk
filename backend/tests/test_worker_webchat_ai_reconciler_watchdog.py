@@ -97,3 +97,20 @@ def test_webchat_ai_reconciler_interval_is_clamped(monkeypatch):
     monkeypatch.setattr(run_worker.settings, "webchat_ai_reconciler_interval_seconds", 1, raising=False)
 
     assert run_worker._webchat_ai_reconciler_interval_seconds() == 5
+
+def test_run_worker_main_uses_args_worker_id_without_locals_hack(monkeypatch):
+    run_worker = _load_run_worker_module()
+    calls = []
+
+    class Args:
+        worker_id = "worker-main"
+        once = True
+
+    monkeypatch.setattr(run_worker.argparse.ArgumentParser, "parse_args", lambda self: Args())
+    monkeypatch.setattr(run_worker, "_webchat_ai_reconciler_interval_seconds", lambda: 30)
+    monkeypatch.setattr(run_worker, "_should_run_webchat_ai_reconciler", lambda worker_id: worker_id == "worker-main")
+    monkeypatch.setattr(run_worker, "_run_webchat_ai_reconciler_watchdog", lambda worker_id: calls.append(worker_id))
+    monkeypatch.setattr(run_worker, "run_once", lambda worker_id: 0)
+
+    assert run_worker.main() == 0
+    assert calls == ["worker-main"]

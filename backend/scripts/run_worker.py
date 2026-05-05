@@ -78,7 +78,7 @@ def main() -> int:
 
     webchat_ai_reconciler_interval_seconds = _webchat_ai_reconciler_interval_seconds()
     next_webchat_ai_reconciler_run_at = 0.0
-    webchat_ai_reconciler_worker_id = args.worker_id
+    webchat_ai_reconciler_worker_id = str(args.worker_id)
     while True:
         webchat_ai_reconciler_now = time.monotonic()
         if (
