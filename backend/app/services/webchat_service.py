@@ -133,6 +133,7 @@ def _message_read(row: WebchatMessage) -> dict[str, Any]:
         "payload_json": _loads_json(getattr(row, "payload_json", None)),
         "metadata_json": _loads_json(getattr(row, "metadata_json", None)),
         "client_message_id": getattr(row, "client_message_id", None),
+        "ai_turn_id": getattr(row, "ai_turn_id", None),
         "delivery_status": getattr(row, "delivery_status", None) or "sent",
         "action_status": getattr(row, "action_status", None),
         "author_label": row.author_label,

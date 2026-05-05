@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import timedelta, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -47,12 +47,23 @@ def _turn_anchor_time(turn: WebchatAITurn):
     return turn.updated_at or turn.started_at or turn.created_at
 
 
+def _ensure_aware_utc(value):
+    if value is None:
+        return None
+    if getattr(value, "tzinfo", None) is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _maybe_timeout_stale_open_turn(db: Session, *, conversation: WebchatConversation, turn: WebchatAITurn) -> bool:
     timeout_seconds = _timeout_seconds_for_status(turn)
     anchor = _turn_anchor_time(turn)
     if timeout_seconds is None or anchor is None:
         return False
-    now = utc_now()
+    anchor = _ensure_aware_utc(anchor)
+    now = _ensure_aware_utc(utc_now())
+    if anchor is None or now is None:
+        return False
     if anchor + timedelta(seconds=timeout_seconds) > now:
         return False
     reason = f"ai_turn_watchdog_timeout:{turn.status}:{timeout_seconds}s"
