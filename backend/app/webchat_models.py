@@ -67,6 +67,7 @@ class WebchatMessage(Base):
     payload_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     client_message_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    ai_turn_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_ai_turns.id"), nullable=True, index=True)
     delivery_status: Mapped[str] = mapped_column(String(32), default="sent", index=True)
     action_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
     author_label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)

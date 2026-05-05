@@ -82,9 +82,6 @@ def _validated_origin(request: Request) -> str | None:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webchat origin is not allowed")
         return origin
 
-    # Same-origin browser GET/fetch requests often omit the Origin header.
-    # For public WebChat read polling, accept a Referer-derived origin only when it
-    # exactly matches WEBCHAT_ALLOWED_ORIGINS. Visitor token validation still applies.
     referer = request.headers.get("referer")
     if referer:
         parsed = urlparse(referer)
@@ -122,7 +119,6 @@ def _legacy_token_transport_enabled() -> bool:
 
 
 def _resolve_visitor_token(header_token: str | None, query_token: str | None, body_token: str | None = None) -> str | None:
-    # Header is the production-safe transport. Query/body compatibility is opt-in only.
     if header_token:
         return header_token
     if _legacy_token_transport_enabled():
@@ -154,6 +150,7 @@ def _message_read(row: WebchatMessage) -> dict[str, Any]:
         "payload_json": _loads_json(getattr(row, "payload_json", None)),
         "metadata_json": _loads_json(getattr(row, "metadata_json", None)),
         "client_message_id": getattr(row, "client_message_id", None),
+        "ai_turn_id": getattr(row, "ai_turn_id", None),
         "delivery_status": getattr(row, "delivery_status", None) or "sent",
         "action_status": getattr(row, "action_status", None),
         "author_label": row.author_label,
@@ -183,10 +180,6 @@ def _schedule_ai_turn_for_result(db: Session, *, conversation: WebchatConversati
     if visitor_message is None:
         return _attach_ai_snapshot(result, conversation)
 
-    # add_visitor_message() still calls the legacy enqueue path. Mark that
-    # immediate legacy job done and replace it with a turn-aware job. This keeps
-    # the existing service contract intact without making BackgroundJob a public
-    # typing-state source.
     legacy_job = (
         db.query(BackgroundJob)
         .filter(
@@ -226,20 +219,7 @@ def _schedule_ai_turn_for_result(db: Session, *, conversation: WebchatConversati
     return result
 
 
-def _find_existing_action_response(
-    db: Session,
-    *,
-    public_conversation_id: str,
-    visitor_token: str,
-    payload: WebChatActionSubmitRequest,
-) -> dict[str, Any] | None:
-    """Return an existing action response for repeated card-action submissions.
-
-    This is intentionally conservative: it only treats an action as idempotent
-    after the visitor token is verified and the same card message + action_id has
-    already produced a `webchat_card_actions` row. It prevents double-clicks and
-    network retries from creating duplicate action audit rows or ticket comments.
-    """
+def _find_existing_action_response(db: Session, *, public_conversation_id: str, visitor_token: str, payload: WebChatActionSubmitRequest) -> dict[str, Any] | None:
     conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == public_conversation_id).first()
     if not conversation or _hash_token(visitor_token) != conversation.visitor_token_hash:
         return None
@@ -287,13 +267,7 @@ def webchat_options(full_path: str, request: Request):
 
 
 @router.post("/init")
-def init_webchat(
-    payload: WebchatInitRequest,
-    request: Request,
-    response: Response,
-    db: Session = Depends(get_db),
-    x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
-) -> dict[str, Any]:
+def init_webchat(payload: WebchatInitRequest, request: Request, response: Response, db: Session = Depends(get_db), x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token")) -> dict[str, Any]:
     _set_public_cors(response, request)
     visitor_token = _resolve_visitor_token(x_webchat_visitor_token, None, payload.visitor_token)
     safe_payload = payload.model_copy(update={"visitor_token": visitor_token})
@@ -304,20 +278,16 @@ def init_webchat(
 
 
 @router.post("/conversations/{conversation_id}/messages")
-def send_webchat_message(
-    conversation_id: str,
-    payload: WebchatSendRequest,
-    request: Request,
-    response: Response,
-    db: Session = Depends(get_db),
-    x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
-) -> dict[str, Any]:
+def send_webchat_message(conversation_id: str, payload: WebchatSendRequest, request: Request, response: Response, db: Session = Depends(get_db), x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token")) -> dict[str, Any]:
     _set_public_cors(response, request)
     visitor_token = _resolve_visitor_token(x_webchat_visitor_token, None, payload.visitor_token)
     if not visitor_token:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
     with managed_session(db):
-        conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id).first()
+        conversation_query = db.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id)
+        if db.bind and db.bind.dialect.name.startswith("postgresql"):
+            conversation_query = conversation_query.with_for_update()
+        conversation = conversation_query.first()
         if not conversation:
             raise HTTPException(status_code=404, detail="webchat conversation not found")
         enforce_webchat_rate_limit(db, request, tenant_key=conversation.tenant_key, conversation_id=conversation_id)
@@ -327,16 +297,7 @@ def send_webchat_message(
 
 
 @router.get("/conversations/{conversation_id}/messages")
-def poll_webchat_messages(
-    conversation_id: str,
-    request: Request,
-    response: Response,
-    visitor_token: str | None = Query(default=None),
-    after_id: int | None = Query(default=None, ge=0),
-    limit: int = Query(default=50, ge=1, le=100),
-    x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
+def poll_webchat_messages(conversation_id: str, request: Request, response: Response, visitor_token: str | None = Query(default=None), after_id: int | None = Query(default=None, ge=0), limit: int = Query(default=50, ge=1, le=100), x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"), db: Session = Depends(get_db)) -> dict[str, Any]:
     _set_public_cors(response, request)
     resolved_token = _resolve_visitor_token(x_webchat_visitor_token, visitor_token)
     if not resolved_token:
@@ -353,14 +314,7 @@ def poll_webchat_messages(
 
 
 @router.post("/conversations/{conversation_id}/actions")
-def submit_webchat_action(
-    conversation_id: str,
-    payload: WebChatActionSubmitRequest,
-    request: Request,
-    response: Response,
-    db: Session = Depends(get_db),
-    x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"),
-) -> dict[str, Any]:
+def submit_webchat_action(conversation_id: str, payload: WebChatActionSubmitRequest, request: Request, response: Response, db: Session = Depends(get_db), x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token")) -> dict[str, Any]:
     _set_public_cors(response, request)
     visitor_token = _resolve_visitor_token(x_webchat_visitor_token, None, payload.visitor_token)
     if not visitor_token:
@@ -399,12 +353,5 @@ def get_webchat_thread(ticket_id: int, db: Session = Depends(get_db), current_us
 @router.post("/admin/tickets/{ticket_id}/reply")
 def reply_webchat(ticket_id: int, payload: WebchatReplyRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
     with managed_session(db):
-        result = admin_reply(
-            db,
-            ticket_id,
-            current_user,
-            body=payload.body,
-            has_fact_evidence=payload.has_fact_evidence,
-            confirm_review=payload.confirm_review,
-        )
+        result = admin_reply(db, ticket_id, current_user, body=payload.body, has_fact_evidence=payload.has_fact_evidence, confirm_review=payload.confirm_review)
     return result

@@ -14,6 +14,10 @@ AI_TURN_OPEN_STATUSES = {"queued", "processing", "bridge_calling", "fallback_gen
 AI_TURN_TERMINAL_STATUSES = {"completed", "superseded", "failed", "timeout", "cancelled"}
 AI_TURN_TYPING_STATUSES = {"queued", "processing", "bridge_calling", "fallback_generating"}
 DEFAULT_AI_TURN_DEBOUNCE_SECONDS = 1
+DEFAULT_QUEUED_TIMEOUT_SECONDS = 120
+DEFAULT_PROCESSING_TIMEOUT_SECONDS = 90
+DEFAULT_BRIDGE_GRACE_SECONDS = 15
+DEFAULT_FALLBACK_TIMEOUT_SECONDS = 60
 
 JobFactory = Callable[[dict[str, Any], str, Any], BackgroundJob]
 
@@ -249,7 +253,57 @@ def mark_ai_turn_bridge_calling(db: Session, *, conversation: WebchatConversatio
     db.flush()
 
 
+def mark_ai_turn_failed(db: Session, *, conversation: WebchatConversation, turn: WebchatAITurn, reason: str) -> None:
+    now = utc_now()
+    turn.status = "failed"
+    turn.status_reason = reason
+    turn.completed_at = now
+    turn.updated_at = now
+    write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="ai_turn.failed", payload={"ai_turn_id": turn.id, "reason": reason})
+    clear_active_ai_snapshot_if_current(db, conversation=conversation, turn=turn)
+    db.flush()
+
+
+def mark_ai_turn_timeout(db: Session, *, conversation: WebchatConversation, turn: WebchatAITurn, reason: str) -> None:
+    now = utc_now()
+    turn.status = "timeout"
+    turn.status_reason = reason
+    turn.completed_at = now
+    turn.updated_at = now
+    write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="ai_turn.timeout", payload={"ai_turn_id": turn.id, "reason": reason})
+    clear_active_ai_snapshot_if_current(db, conversation=conversation, turn=turn)
+    db.flush()
+
+
+def should_suppress_stale_reply(db: Session, *, conversation: WebchatConversation, turn: WebchatAITurn | None) -> bool:
+    """Return true when a turn is no longer allowed to create a public reply."""
+    if turn is None:
+        return False
+    if not turn.is_public_reply_allowed or turn.status in AI_TURN_TERMINAL_STATUSES:
+        return True
+    cutoff_id = turn.context_cutoff_message_id or turn.latest_visitor_message_id or turn.trigger_message_id
+    current_latest = latest_visitor_message_id(db, conversation_id=conversation.id)
+    return bool(cutoff_id is not None and current_latest is not None and current_latest > cutoff_id)
+
+
+def suppress_stale_reply_if_needed(db: Session, *, conversation: WebchatConversation, turn: WebchatAITurn | None, reason: str = "newer_message_before_reply") -> bool:
+    if turn is None or not should_suppress_stale_reply(db, conversation=conversation, turn=turn):
+        return False
+    supersede_ai_turn(db, conversation=conversation, turn=turn, reason=reason)
+    write_webchat_event(
+        db,
+        conversation_id=conversation.id,
+        ticket_id=turn.ticket_id,
+        event_type="webchat_ai_reply_suppressed_stale",
+        payload={"ai_turn_id": turn.id, "reason": reason, "latest_visitor_message_id": latest_visitor_message_id(db, conversation_id=conversation.id)},
+    )
+    return True
+
+
 def complete_ai_turn_with_reply(db: Session, *, conversation: WebchatConversation, turn: WebchatAITurn, result: dict[str, Any]) -> None:
+    if result.get("status") == "superseded":
+        supersede_ai_turn(db, conversation=conversation, turn=turn, reason=result.get("reason") or "reply_suppressed")
+        return
     now = utc_now()
     turn.status = "completed"
     turn.reply_message_id = result.get("message_id")
@@ -316,12 +370,13 @@ def process_webchat_ai_turn_job(db: Session, *, ai_turn_id: int, legacy_process:
     cutoff_id = latest_visitor_message_id(db, conversation_id=conversation.id)
     mark_ai_turn_bridge_calling(db, conversation=conversation, turn=turn, context_cutoff_message_id=cutoff_id)
 
-    # If this turn was already stale before the model call, suppress it and promote the queued next turn.
-    current_latest = latest_visitor_message_id(db, conversation_id=conversation.id)
-    if cutoff_id is not None and current_latest is not None and current_latest > cutoff_id:
-        supersede_ai_turn(db, conversation=conversation, turn=turn)
+    if suppress_stale_reply_if_needed(db, conversation=conversation, turn=turn, reason="stale_before_ai_call"):
         return {"status": "superseded", "reason": "stale_before_ai_call"}
 
-    result = legacy_process(db, conversation_id=turn.conversation_id, ticket_id=turn.ticket_id, visitor_message_id=turn.latest_visitor_message_id or turn.trigger_message_id)
+    try:
+        result = legacy_process(db, conversation_id=turn.conversation_id, ticket_id=turn.ticket_id, visitor_message_id=turn.latest_visitor_message_id or turn.trigger_message_id)
+    except Exception as exc:
+        mark_ai_turn_failed(db, conversation=conversation, turn=turn, reason=f"{type(exc).__name__}: {exc}"[:500])
+        raise
     complete_ai_turn_with_reply(db, conversation=conversation, turn=turn, result=result or {})
     return {"status": "done", "ai_turn_id": turn.id, **(result or {})}
