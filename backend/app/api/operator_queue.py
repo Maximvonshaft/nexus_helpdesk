@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..services.operator_queue import list_operator_tasks, project_openclaw_unresolved_events, serialize_operator_task, transition_operator_task
+from ..services.operator_queue import list_operator_tasks, project_openclaw_unresolved_events, project_webchat_handoff_tasks, serialize_operator_task, transition_operator_task
 from ..services.openclaw_bridge import replay_unresolved_openclaw_event as replay_unresolved_openclaw_event_payload
 from ..services.permissions import ensure_can_manage_runtime
 from ..unit_of_work import managed_session
@@ -31,9 +31,11 @@ def get_operator_queue(
 ):
     ensure_can_manage_runtime(current_user, db)
     with managed_session(db):
-        projected = project_openclaw_unresolved_events(db, limit=100)
+        projected_openclaw = project_openclaw_unresolved_events(db, limit=100)
+        projected_webchat = project_webchat_handoff_tasks(db, limit=100)
         result = list_operator_tasks(db, status=status, source_type=source_type, task_type=task_type, cursor=cursor, limit=limit)
-    result["projected_openclaw_unresolved"] = projected
+    result["projected_openclaw_unresolved"] = projected_openclaw
+    result["projected_webchat_handoff"] = projected_webchat
     return result
 
 
