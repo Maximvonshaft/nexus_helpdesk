@@ -147,7 +147,7 @@ def evaluate_tool_call_policy(
 
     needs_capability = (is_write and require_write) or (is_external_send and require_external)
     capability_ok = _has_capability(actor_capabilities, required)
-    should_block = block_write or (needs_capability and not capability_ok)
+    should_block = (block_write or needs_capability) and not capability_ok
     reason = "write_or_external_send_allowed_with_capability" if capability_ok else "write_or_external_send_requires_capability"
 
     if should_block and mode == "audit_only":
