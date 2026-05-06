@@ -11,7 +11,7 @@ from typing import Any
 
 from ..settings import get_settings
 from .observability import log_event
-from .tool_governance import classify_tool_type, record_tool_call
+from .tool_governance import ToolPolicyBlocked, classify_tool_type, enforce_tool_policy, record_tool_call
 
 settings = get_settings()
 
@@ -35,13 +35,14 @@ def local_mcp_cli_allowed() -> bool:
 
 
 class OpenClawMCPClient:
-    def __init__(self) -> None:
+    def __init__(self, *, actor_capabilities: list[str] | None = None) -> None:
         self.process: subprocess.Popen[str] | None = None
         self._reader_thread: threading.Thread | None = None
         self._stderr_thread: threading.Thread | None = None
         self._response_queue: Queue[dict[str, Any]] = Queue()
         self._stderr_tail: deque[str] = deque(maxlen=50)
         self._next_id = 1
+        self.actor_capabilities = actor_capabilities or []
 
     def __enter__(self):
         self.start()
@@ -197,6 +198,23 @@ class OpenClawMCPClient:
         timeout_ms = self._tool_call_timeout_ms(name, args)
         tool_type = classify_tool_type(name)
         try:
+            decision = enforce_tool_policy(tool_name=name, tool_type=tool_type, actor_capabilities=self.actor_capabilities)
+        except ToolPolicyBlocked as exc:
+            record_tool_call(
+                tool_name=name,
+                provider='openclaw_mcp',
+                tool_type=tool_type,
+                input_payload=args,
+                output_payload=None,
+                status='blocked',
+                error_code='tool_policy_blocked',
+                error_message=exc.decision.reason_code,
+                elapsed_ms=0,
+                timeout_ms=timeout_ms,
+                policy_decision=exc.decision,
+            )
+            raise OpenClawMCPError(str(exc)) from exc
+        try:
             result = self._request('tools/call', {'name': name, 'arguments': args})
             if isinstance(result, dict):
                 if 'structuredContent' in result:
@@ -223,6 +241,7 @@ class OpenClawMCPClient:
                     status='success',
                     elapsed_ms=int((time.monotonic() - started) * 1000),
                     timeout_ms=timeout_ms,
+                    policy_decision=decision,
                 )
                 return parsed_result
             record_tool_call(
@@ -234,6 +253,7 @@ class OpenClawMCPClient:
                 status='success',
                 elapsed_ms=int((time.monotonic() - started) * 1000),
                 timeout_ms=timeout_ms,
+                policy_decision=decision,
             )
             return result
         except Exception as exc:
@@ -250,6 +270,7 @@ class OpenClawMCPClient:
                 error_message=str(exc),
                 elapsed_ms=elapsed_ms,
                 timeout_ms=timeout_ms,
+                policy_decision=decision,
             )
             raise
 
