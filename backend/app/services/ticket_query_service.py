@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..enums import TicketStatus, UserRole
 from ..models import Customer, Ticket, User
+from ..utils.time import utc_now
 from .sla_service import compute_sla_snapshot
 
 
@@ -70,7 +71,7 @@ def list_tickets_page(
     if overdue is True:
         query = query.filter(
             Ticket.resolution_due_at.is_not(None),
-            Ticket.resolution_due_at < __import__("app.utils.time", fromlist=["utc_now"]).utc_now(),
+            Ticket.resolution_due_at < utc_now(),
             Ticket.status.notin_([TicketStatus.closed, TicketStatus.canceled]),
         )
     if cursor:
