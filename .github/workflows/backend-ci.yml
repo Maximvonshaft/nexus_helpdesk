@@ -42,7 +42,8 @@ jobs:
             backend/tests/test_round20a_rectification.py \
             backend/tests/test_round20b_legacy_frontend.py \
             backend/tests/test_round27_frontend_hardening.py \
-            backend/tests/test_tool_governance.py
+            backend/tests/test_tool_governance.py \
+            backend/tests/test_webchat_events.py
 
       - name: Strict readiness configuration check
         env:

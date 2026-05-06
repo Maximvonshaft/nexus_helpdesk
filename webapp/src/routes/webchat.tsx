@@ -90,9 +90,20 @@ function MessageCard({ msg }: { msg: WebchatMessage }) {
   )
 }
 
+async function fetchWebchatEvents(ticketId: number, afterId: number) {
+  const token = getToken()
+  const params = new URLSearchParams({ after_id: String(afterId), limit: '50', wait_ms: '1500' })
+  const response = await fetch(`/api/webchat/admin/tickets/${ticketId}/events?${params.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!response.ok) throw new Error(`events_poll_failed:${response.status}`)
+  return response.json() as Promise<{ events: { id: number; event_type: string }[]; last_event_id: number }>
+}
+
 function WebchatInboxPage() {
   const client = useQueryClient()
   const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null)
+  const [lastEventId, setLastEventId] = useState(0)
   const [reply, setReply] = useState('')
   const [hasFactEvidence, setHasFactEvidence] = useState(false)
   const [confirmReview, setConfirmReview] = useState(false)
@@ -110,12 +121,31 @@ function WebchatInboxPage() {
     }
   }, [conversations.data, selectedTicketId])
 
+  useEffect(() => {
+    setLastEventId(0)
+  }, [selectedTicketId])
+
   const thread = useQuery({
     queryKey: ['webchatThread', selectedTicketId],
     queryFn: () => api.webchatThread(selectedTicketId as number),
     enabled: !!selectedTicketId,
     refetchInterval: 7000,
   })
+
+  const events = useQuery({
+    queryKey: ['webchatEvents', selectedTicketId, lastEventId],
+    queryFn: () => fetchWebchatEvents(selectedTicketId as number, lastEventId),
+    enabled: !!selectedTicketId,
+    refetchInterval: 2500,
+    retry: false,
+  })
+
+  useEffect(() => {
+    if (!selectedTicketId || !events.data?.events?.length) return
+    setLastEventId(events.data.last_event_id || events.data.events[events.data.events.length - 1].id)
+    void client.invalidateQueries({ queryKey: ['webchatThread', selectedTicketId] })
+    void client.invalidateQueries({ queryKey: ['webchatConversations'] })
+  }, [client, events.data, selectedTicketId])
 
   const selectedConversation = useMemo(
     () => (conversations.data ?? []).find((item) => item.ticket_id === selectedTicketId),
@@ -160,7 +190,7 @@ function WebchatInboxPage() {
         <CardHeader title="Speedaf Webchat 嵌入代码" subtitle="visitor 端无需登录；admin 后台需要登录。生产环境请替换为正式域名，并配置 WEBCHAT_ALLOWED_ORIGINS。" />
         <CardBody>
           <pre className="code-block"><code>{snippet}</code></pre>
-          <div className="section-subtitle">可选属性：data-tenant、data-channel、data-title、data-subtitle、data-assistant-name、data-locale、data-welcome、data-api-base。不会暴露内部 token。</div>
+          <div className="section-subtitle">Realtime-lite 使用 after_id events JSON long-poll；如事件接口不可用，仍保留 7s/10s polling fallback。</div>
         </CardBody>
       </Card>
 
@@ -203,7 +233,7 @@ function WebchatInboxPage() {
                     <div className="kv"><label>页面</label><div>{sanitizeDisplayText(selectedConversation.page_url)}</div></div>
                     <div className="kv"><label>当前状态</label><div>{sanitizeDisplayText(threadData?.conversation_state || selectedConversation.status)}</div></div>
                     <div className="kv"><label>AI Runtime</label><div><AIStatusBadge status={threadData?.ai_status || selectedConversation.ai_status} pending={threadData?.ai_pending || selectedConversation.ai_pending} turnId={threadData?.ai_turn_id || selectedConversation.ai_turn_id} /></div></div>
-                    <div className="kv"><label>AI pending for</label><div>{sanitizeDisplayText(String(threadData?.ai_pending_for_message_id || selectedConversation.ai_pending_for_message_id || 'None'))}</div></div>
+                    <div className="kv"><label>Realtime-lite</label><div>{events.isFetching ? 'polling events…' : `after_id ${lastEventId}`}</div></div>
                     <div className="kv"><label>Required action</label><div>{sanitizeDisplayText(threadData?.required_action || 'None')}</div></div>
                   </div>
                   <div className="timeline">
