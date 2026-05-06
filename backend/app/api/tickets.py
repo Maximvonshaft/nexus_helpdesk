@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -53,13 +53,14 @@ from ..services.ticket_service import (
     send_outbound_message,
     update_ticket,
 )
+from ..services.ticket_query_service import list_tickets_page
 from ..services.timeline_service import build_unified_timeline
 from ..services.permissions import ensure_ticket_visible
 from ..services.sla_service import compute_sla_snapshot
 from ..services.outbound_semantics import outbound_is_external_send, outbound_ui_label
 from ..settings import get_settings
 from .deps import get_current_user
-from ..utils.time import ensure_utc, format_utc, utc_now
+from ..utils.time import format_utc
 from ..unit_of_work import managed_session
 from ..services.bulletin_service import list_active_bulletins
 
@@ -217,6 +218,33 @@ def list_tickets_endpoint(
     return result
 
 
+@router.get("/page")
+def list_tickets_page_endpoint(
+    q: str | None = None,
+    status: str | None = None,
+    priority: str | None = None,
+    assignee_id: int | None = None,
+    team_id: int | None = None,
+    overdue: bool | None = None,
+    cursor: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return list_tickets_page(
+        db,
+        current_user,
+        q=q,
+        status_value=status,
+        priority_value=priority,
+        assignee_id=assignee_id,
+        team_id=team_id,
+        overdue=overdue,
+        cursor=cursor,
+        limit=limit,
+    )
+
+
 @router.get("/{ticket_id}", response_model=TicketRead)
 def get_ticket_endpoint(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ticket = get_ticket_or_404(db, ticket_id)
@@ -340,8 +368,11 @@ def get_ticket_timeline(ticket_id: int, db: Session = Depends(get_db), current_u
 
 
 @router.get("/{ticket_id}/events")
-def get_ticket_events_endpoint(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def get_ticket_events_endpoint(ticket_id: int, after_id: int | None = Query(default=None, ge=0), limit: int = Query(default=200, ge=1, le=500), db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     events = get_ticket_events(db, ticket_id, current_user)
+    if after_id is not None:
+        events = [event for event in events if event.id > after_id]
+    events = events[:limit]
     return [
         {
             "id": event.id,
