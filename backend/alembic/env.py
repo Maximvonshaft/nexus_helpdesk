@@ -9,6 +9,7 @@ from app.db import Base
 from app.settings import get_settings
 from app import models  # noqa: F401
 from app import tool_models  # noqa: F401
+from app import operator_models  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
@@ -70,7 +71,6 @@ def _include_object(object_, name, type_, reflected, compare_to):
     if dialect_name == 'sqlite' and type_ == 'foreign_key_constraint':
         return False
     return True
-
 
 
 
