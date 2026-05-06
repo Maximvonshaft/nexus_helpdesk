@@ -21,6 +21,7 @@ from .api.integration import router as integration_router
 from .api.knowledge_items import router as knowledge_items_router
 from .api.lookups import router as lookups_router
 from .api.lite import router as lite_router
+from .api.operator_queue import router as operator_queue_router
 from .api.persona_profiles import router as persona_profiles_router
 from .api.stats import router as stats_router
 from .api.tickets import router as tickets_router
@@ -124,6 +125,7 @@ def readyz():
 app.include_router(admin_outbound_semantics_router)
 app.include_router(admin_router)
 app.include_router(admin_queue_router)
+app.include_router(operator_queue_router)
 app.include_router(auth_router)
 app.include_router(channel_control_router)
 app.include_router(files_router)
