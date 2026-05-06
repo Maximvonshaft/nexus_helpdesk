@@ -41,12 +41,13 @@ jobs:
             backend/tests/test_openclaw_local_ops.py \
             backend/tests/test_round20a_rectification.py \
             backend/tests/test_round20b_legacy_frontend.py \
-            backend/tests/test_round27_frontend_hardening.py
+            backend/tests/test_round27_frontend_hardening.py \
+            backend/tests/test_tool_governance.py
 
       - name: Strict readiness configuration check
         env:
           APP_ENV: development
-          DATABASE_URL: postgresql+psycopg://helpdesk:helpdesk@127.0.0.1:5432/helpdesk
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
           STORAGE_BACKEND: s3
           OPENCLAW_TRANSPORT: mcp
           OPENCLAW_CLI_FALLBACK_ENABLED: "false"
