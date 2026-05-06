@@ -5,7 +5,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..models import OpenClawUnresolvedEvent
+from ..enums import ConversationState
+from ..models import OpenClawUnresolvedEvent, Ticket
 from ..operator_models import OperatorTask
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation
@@ -132,6 +133,54 @@ def project_openclaw_unresolved_events(db: Session, *, limit: int = 100) -> int:
                 "recipient": event.recipient,
                 "preferred_reply_contact": event.preferred_reply_contact,
                 "last_error": event.last_error,
+            },
+        )
+        created += 1
+    return created
+
+
+def project_webchat_handoff_tasks(db: Session, *, limit: int = 100) -> int:
+    rows = (
+        db.query(WebchatConversation, Ticket)
+        .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
+        .filter(
+            (Ticket.required_action.isnot(None))
+            | (Ticket.conversation_state == ConversationState.human_review_required)
+        )
+        .order_by(WebchatConversation.id.asc())
+        .limit(max(1, min(limit, 500)))
+        .all()
+    )
+    created = 0
+    for conversation, ticket in rows:
+        before = (
+            db.query(OperatorTask)
+            .filter(
+                OperatorTask.webchat_conversation_id == conversation.id,
+                OperatorTask.task_type == "handoff",
+                OperatorTask.status.notin_(list(TERMINAL_STATUSES)),
+            )
+            .first()
+        )
+        if before:
+            continue
+        create_operator_task(
+            db,
+            source_type="webchat",
+            source_id=conversation.public_id,
+            ticket_id=ticket.id,
+            webchat_conversation_id=conversation.id,
+            task_type="handoff",
+            reason_code="ticket_required_action" if ticket.required_action else "human_review_required",
+            priority=40,
+            payload={
+                "ticket_no": ticket.ticket_no,
+                "required_action": ticket.required_action,
+                "conversation_state": ticket.conversation_state.value if hasattr(ticket.conversation_state, "value") else str(ticket.conversation_state),
+                "visitor_name": conversation.visitor_name,
+                "visitor_email": conversation.visitor_email,
+                "visitor_phone": conversation.visitor_phone,
+                "origin": conversation.origin,
             },
         )
         created += 1
