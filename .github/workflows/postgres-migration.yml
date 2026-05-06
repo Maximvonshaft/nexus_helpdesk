@@ -41,7 +41,12 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://helpdesk:helpdesk@127.0.0.1:5432/helpdesk
           APP_ENV: development
-        run: cd backend && alembic upgrade head
+        run: |
+          cd backend
+          alembic heads
+          alembic upgrade head
+          alembic downgrade -1
+          alembic upgrade head
 
       - name: Strict production-like readiness check
         env:
