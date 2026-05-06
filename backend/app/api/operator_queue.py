@@ -30,6 +30,14 @@ def _raise_operator_queue_error(exc: OperatorQueueError) -> None:
     raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.detail}) from exc
 
 
+def _optional_query_string(value) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _query_limit(value) -> int:
+    return value if isinstance(value, int) else 50
+
+
 @router.get("", response_model=OperatorTaskListResponse)
 def get_operator_queue(
     status: str | None = Query(default=None),
@@ -42,7 +50,14 @@ def get_operator_queue(
 ):
     ensure_can_manage_runtime(current_user, db)
     try:
-        return list_operator_tasks(db, status=status, source_type=source_type, task_type=task_type, cursor=cursor, limit=limit)
+        return list_operator_tasks(
+            db,
+            status=_optional_query_string(status),
+            source_type=_optional_query_string(source_type),
+            task_type=_optional_query_string(task_type),
+            cursor=_optional_query_string(cursor),
+            limit=_query_limit(limit),
+        )
     except OperatorQueueError as exc:
         _raise_operator_queue_error(exc)
 
