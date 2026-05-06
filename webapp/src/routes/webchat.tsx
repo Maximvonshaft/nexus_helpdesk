@@ -30,6 +30,20 @@ function PayloadBlock({ payload }: { payload: unknown }) {
   )
 }
 
+function aiStatusTone(status?: string | null, pending?: boolean): 'default' | 'warning' | 'success' | 'danger' {
+  if (!status) return 'default'
+  if (status === 'completed') return 'success'
+  if (status === 'failed' || status === 'timeout' || status === 'cancelled') return 'danger'
+  if (pending || ['queued', 'processing', 'bridge_calling', 'fallback_generating'].includes(status)) return 'warning'
+  return 'default'
+}
+
+function AIStatusBadge({ status, pending, turnId }: { status?: string | null; pending?: boolean; turnId?: number | null }) {
+  const label = status || 'none'
+  const suffix = turnId ? ` #${turnId}` : ''
+  return <Badge tone={aiStatusTone(status, pending)}>AI {sanitizeDisplayText(label)}{suffix}</Badge>
+}
+
 function MessageCard({ msg }: { msg: WebchatMessage }) {
   const messageType = msg.message_type || 'text'
   const cardPayload = isCardPayload(msg.payload_json) ? msg.payload_json : null
@@ -161,6 +175,7 @@ function WebchatInboxPage() {
                   <div className="queue-card-top"><div className="badges">
                     <Badge tone={statusTone(item.status)}>{sanitizeDisplayText(item.status)}</Badge>
                     <Badge tone="success">WebChat</Badge>
+                    <AIStatusBadge status={item.ai_status} pending={item.ai_pending} turnId={item.ai_turn_id} />
                     {item.last_message_type ? <Badge>{sanitizeDisplayText(item.last_message_type)}</Badge> : null}
                     {item.needs_human ? <Badge tone="warning">Needs human</Badge> : null}
                   </div></div>
@@ -187,6 +202,8 @@ function WebchatInboxPage() {
                     <div className="kv"><label>来源网站</label><div>{sanitizeDisplayText(selectedConversation.origin)}</div></div>
                     <div className="kv"><label>页面</label><div>{sanitizeDisplayText(selectedConversation.page_url)}</div></div>
                     <div className="kv"><label>当前状态</label><div>{sanitizeDisplayText(threadData?.conversation_state || selectedConversation.status)}</div></div>
+                    <div className="kv"><label>AI Runtime</label><div><AIStatusBadge status={threadData?.ai_status || selectedConversation.ai_status} pending={threadData?.ai_pending || selectedConversation.ai_pending} turnId={threadData?.ai_turn_id || selectedConversation.ai_turn_id} /></div></div>
+                    <div className="kv"><label>AI pending for</label><div>{sanitizeDisplayText(String(threadData?.ai_pending_for_message_id || selectedConversation.ai_pending_for_message_id || 'None'))}</div></div>
                     <div className="kv"><label>Required action</label><div>{sanitizeDisplayText(threadData?.required_action || 'None')}</div></div>
                   </div>
                   <div className="timeline">
