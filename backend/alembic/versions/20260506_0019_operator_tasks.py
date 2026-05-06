@@ -36,19 +36,26 @@ def upgrade() -> None:
         sa.Column("priority", sa.Integer(), nullable=False, server_default="100"),
         sa.Column("assignee_id", sa.Integer(), nullable=True),
         sa.Column("reason_code", sa.String(length=160), nullable=True),
-        sa.Column("payload_json", sa.Text(), nullable=True),
+        sa.Column(
+            "payload_json",
+            sa.Text(),
+            nullable=True,
+            comment="Internal-only redacted operator context. Never expose through public WebChat APIs.",
+        ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
+        comment=(
+            "Soft-reference projection table for WebChat handoff and OpenClaw unresolved work. "
+            "Source existence is enforced by service code rather than hard foreign keys in this stacked PR."
+        ),
     )
     op.create_index("ix_operator_tasks_status_priority_created", "operator_tasks", ["status", "priority", "created_at"])
-    op.create_index("ix_operator_tasks_source_status", "operator_tasks", ["source_type", "status"])
-    op.create_index("ix_operator_tasks_task_status", "operator_tasks", ["task_type", "status"])
     op.create_index("ix_operator_tasks_ticket_id", "operator_tasks", ["ticket_id"])
     op.create_index("ix_operator_tasks_webchat_conversation_id", "operator_tasks", ["webchat_conversation_id"])
     op.create_index("ix_operator_tasks_unresolved_event_id", "operator_tasks", ["unresolved_event_id"])
-    op.create_index("ix_operator_tasks_assignee_id", "operator_tasks", ["assignee_id"])
-    op.create_index("ix_operator_tasks_reason_code", "operator_tasks", ["reason_code"])
+    op.create_index("ix_operator_tasks_source_task", "operator_tasks", ["source_type", "task_type"])
+    op.create_index("ix_operator_tasks_assignee_status", "operator_tasks", ["assignee_id", "status"])
     op.create_index(
         "uq_operator_tasks_active_openclaw_unresolved",
         "operator_tasks",
@@ -68,7 +75,7 @@ def upgrade() -> None:
     op.create_index(
         "uq_operator_tasks_active_source",
         "operator_tasks",
-        ["source_type", "source_id", "task_type"],
+        ["source_type", "task_type", "source_id"],
         unique=True,
         postgresql_where=_active_where("source_id IS NOT NULL"),
         sqlite_where=_active_where("source_id IS NOT NULL"),
@@ -79,12 +86,10 @@ def downgrade() -> None:
     op.drop_index("uq_operator_tasks_active_source", table_name="operator_tasks")
     op.drop_index("uq_operator_tasks_active_webchat_handoff", table_name="operator_tasks")
     op.drop_index("uq_operator_tasks_active_openclaw_unresolved", table_name="operator_tasks")
-    op.drop_index("ix_operator_tasks_reason_code", table_name="operator_tasks")
-    op.drop_index("ix_operator_tasks_assignee_id", table_name="operator_tasks")
+    op.drop_index("ix_operator_tasks_assignee_status", table_name="operator_tasks")
+    op.drop_index("ix_operator_tasks_source_task", table_name="operator_tasks")
     op.drop_index("ix_operator_tasks_unresolved_event_id", table_name="operator_tasks")
     op.drop_index("ix_operator_tasks_webchat_conversation_id", table_name="operator_tasks")
     op.drop_index("ix_operator_tasks_ticket_id", table_name="operator_tasks")
-    op.drop_index("ix_operator_tasks_task_status", table_name="operator_tasks")
-    op.drop_index("ix_operator_tasks_source_status", table_name="operator_tasks")
     op.drop_index("ix_operator_tasks_status_priority_created", table_name="operator_tasks")
     op.drop_table("operator_tasks")
