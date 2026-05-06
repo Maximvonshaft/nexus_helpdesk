@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.services import tool_governance
 
 
@@ -22,6 +24,7 @@ def test_classify_tool_type_read_write_and_system():
     assert tool_governance.classify_tool_type("messages_read") == "read_only"
     assert tool_governance.classify_tool_type("messages_send") == "external_send"
     assert tool_governance.classify_tool_type("openclaw_bridge.ai_reply") == "system"
+    assert tool_governance.classify_tool_type("external_provider.send") == "external_send"
     assert tool_governance.classify_tool_type("unknown_future_tool") == "read_only"
 
 
@@ -63,3 +66,50 @@ def test_record_tool_call_is_audit_only_and_does_not_raise_on_db_failure(monkeyp
     assert recorded_metrics
     assert recorded_metrics[0]["tool_type"] == "external_send"
     assert recorded_metrics[0]["status"] == "success"
+
+
+def test_audit_only_write_tool_would_block_but_allows(monkeypatch):
+    monkeypatch.setenv("TOOL_GOVERNANCE_ENFORCEMENT_MODE", "audit_only")
+    decision = tool_governance.evaluate_tool_call_policy(tool_name="messages_send")
+
+    assert decision.allowed is True
+    assert decision.audit_only is True
+    assert decision.tool_type == "external_send"
+    assert decision.reason_code.startswith("would_block")
+
+
+def test_enforce_blocks_write_tool_without_capability(monkeypatch):
+    monkeypatch.setenv("TOOL_GOVERNANCE_ENFORCEMENT_MODE", "enforce")
+    decision = tool_governance.evaluate_tool_call_policy(tool_name="messages_send", actor_capabilities=[])
+
+    assert decision.allowed is False
+    assert decision.audit_only is False
+    assert decision.required_capability == "tool:messages_send:external_send"
+    with pytest.raises(tool_governance.ToolPolicyBlocked):
+        tool_governance.enforce_tool_policy(tool_name="messages_send", actor_capabilities=[])
+
+
+def test_enforce_allows_write_tool_with_explicit_capability(monkeypatch):
+    monkeypatch.setenv("TOOL_GOVERNANCE_ENFORCEMENT_MODE", "enforce")
+    capability = "tool:messages_send:external_send"
+    decision = tool_governance.enforce_tool_policy(tool_name="messages_send", actor_capabilities=[capability])
+
+    assert decision.allowed is True
+    assert decision.required_capability == capability
+
+
+def test_enforce_allows_read_tool_without_capability(monkeypatch):
+    monkeypatch.setenv("TOOL_GOVERNANCE_ENFORCEMENT_MODE", "enforce")
+    decision = tool_governance.enforce_tool_policy(tool_name="messages_read", actor_capabilities=[])
+
+    assert decision.allowed is True
+    assert decision.tool_type == "read_only"
+
+
+def test_governance_off_allows_everything(monkeypatch):
+    monkeypatch.setenv("TOOL_GOVERNANCE_ENFORCEMENT_MODE", "off")
+    decision = tool_governance.enforce_tool_policy(tool_name="messages_send", actor_capabilities=[])
+
+    assert decision.allowed is True
+    assert decision.mode == "off"
+    assert decision.reason_code == "governance_off"
