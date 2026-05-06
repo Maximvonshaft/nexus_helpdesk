@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -37,11 +39,48 @@ READ_TOOLS = {
 WRITE_TOOLS = {"messages_send"}
 EXTERNAL_SEND_TOOLS = {"messages_send", "openclaw_bridge.messages_send"}
 SYSTEM_TOOLS = {"openclaw_bridge.ai_reply"}
+VALID_ENFORCEMENT_MODES = {"off", "audit_only", "enforce"}
+
+
+class ToolPolicyBlocked(RuntimeError):
+    def __init__(self, decision: "ToolPolicyDecision") -> None:
+        self.decision = decision
+        super().__init__(f"tool_policy_blocked:{decision.tool_name}:{decision.reason_code}")
+
+
+@dataclass(frozen=True)
+class ToolPolicyDecision:
+    allowed: bool
+    mode: str
+    tool_name: str
+    tool_type: str
+    risk_level: str
+    reason_code: str
+    required_capability: str | None = None
+    audit_only: bool = True
+
+    def as_payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _enforcement_mode() -> str:
+    mode = os.getenv("TOOL_GOVERNANCE_ENFORCEMENT_MODE", "audit_only").strip().lower() or "audit_only"
+    if mode not in VALID_ENFORCEMENT_MODES:
+        return "audit_only"
+    return mode
 
 
 def classify_tool_type(tool_name: str) -> str:
     normalized = (tool_name or "").strip()
-    if normalized in EXTERNAL_SEND_TOOLS:
+    lowered = normalized.lower()
+    if normalized in EXTERNAL_SEND_TOOLS or lowered.endswith(".send") or lowered.endswith("_send"):
         return "external_send"
     if normalized in WRITE_TOOLS or normalized.endswith(".messages_send"):
         return "write_action"
@@ -66,6 +105,68 @@ def _retry_policy_for_type(tool_type: str) -> str:
     if tool_type in {"external_send", "write_action"}:
         return "no_auto_retry_without_idempotency"
     return "read_retry_allowed"
+
+
+def _required_capability(tool_name: str, tool_type: str) -> str | None:
+    if tool_type == "external_send":
+        return f"tool:{tool_name}:external_send"
+    if tool_type == "write_action":
+        return f"tool:{tool_name}:write"
+    return None
+
+
+def _has_capability(capabilities: Iterable[str] | None, required: str | None) -> bool:
+    if not required:
+        return True
+    return required in set(capabilities or [])
+
+
+def evaluate_tool_call_policy(
+    *,
+    tool_name: str,
+    tool_type: str | None = None,
+    actor_capabilities: Iterable[str] | None = None,
+) -> ToolPolicyDecision:
+    resolved_type = tool_type or classify_tool_type(tool_name)
+    risk_level = _risk_for_tool_type(resolved_type)
+    mode = _enforcement_mode()
+    required = _required_capability(tool_name, resolved_type)
+    audit_only = mode != "enforce"
+
+    if mode == "off":
+        return ToolPolicyDecision(True, mode, tool_name, resolved_type, risk_level, "governance_off", required, True)
+
+    if resolved_type == "read_only" or resolved_type == "system":
+        return ToolPolicyDecision(True, mode, tool_name, resolved_type, risk_level, "read_or_system_allowed", required, audit_only)
+
+    is_external_send = resolved_type == "external_send"
+    is_write = resolved_type == "write_action"
+    require_write = _env_bool("TOOL_GOVERNANCE_REQUIRE_CAPABILITY_FOR_WRITE", True)
+    require_external = _env_bool("TOOL_GOVERNANCE_REQUIRE_CAPABILITY_FOR_EXTERNAL_SEND", True)
+    block_write = _env_bool("TOOL_GOVERNANCE_BLOCK_WRITE_TOOLS", True)
+
+    needs_capability = (is_write and require_write) or (is_external_send and require_external)
+    capability_ok = _has_capability(actor_capabilities, required)
+    should_block = block_write or (needs_capability and not capability_ok)
+    reason = "write_or_external_send_allowed_with_capability" if capability_ok else "write_or_external_send_requires_capability"
+
+    if should_block and mode == "audit_only":
+        return ToolPolicyDecision(True, mode, tool_name, resolved_type, risk_level, f"would_block:{reason}", required, True)
+    if should_block and mode == "enforce":
+        return ToolPolicyDecision(False, mode, tool_name, resolved_type, risk_level, reason, required, False)
+    return ToolPolicyDecision(True, mode, tool_name, resolved_type, risk_level, reason, required, audit_only)
+
+
+def enforce_tool_policy(
+    *,
+    tool_name: str,
+    tool_type: str | None = None,
+    actor_capabilities: Iterable[str] | None = None,
+) -> ToolPolicyDecision:
+    decision = evaluate_tool_call_policy(tool_name=tool_name, tool_type=tool_type, actor_capabilities=actor_capabilities)
+    if not decision.allowed:
+        raise ToolPolicyBlocked(decision)
+    return decision
 
 
 def _stable_json(value: Any) -> str:
@@ -203,6 +304,7 @@ def record_tool_call(
     actor_type: str | None = None,
     actor_id: int | None = None,
     request_id: str | None = None,
+    policy_decision: ToolPolicyDecision | None = None,
     db: Session | None = None,
 ) -> None:
     """Record a safe audit-only tool call.
@@ -212,6 +314,8 @@ def record_tool_call(
     been migrated yet or the audit insert fails.
     """
     resolved_type = tool_type or classify_tool_type(tool_name)
+    if policy_decision and policy_decision.reason_code.startswith("would_block") and status == "success":
+        status = "would_block"
     safe_status = (status or "success")[:40]
     owns_session = db is None
     session = db or SessionLocal()
@@ -223,6 +327,7 @@ def record_tool_call(
             tool_type=resolved_type,
             default_timeout_ms=timeout_ms,
             max_timeout_ms=timeout_ms,
+            description=json.dumps(policy_decision.as_payload(), ensure_ascii=False) if policy_decision else None,
         )
         row = ToolCallLog(
             tool_name=(tool_name or "unknown_tool")[:160],
@@ -237,7 +342,7 @@ def record_tool_call(
             actor_id=actor_id,
             request_id=request_id[:160] if request_id else None,
             input_hash=_hash_value(input_payload) if input_payload is not None else None,
-            input_summary=summarize_input_safe(input_payload) if input_payload is not None else None,
+            input_summary=summarize_input_safe({"payload": input_payload, "policy": policy_decision.as_payload() if policy_decision else None}) if input_payload is not None or policy_decision else None,
             output_hash=_hash_value(output_payload) if output_payload is not None else None,
             output_summary=summarize_output_safe(output_payload) if output_payload is not None else None,
             status=safe_status,
