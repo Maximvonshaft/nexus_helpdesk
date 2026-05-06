@@ -15,7 +15,7 @@ jobs:
         env:
           POSTGRES_DB: helpdesk
           POSTGRES_USER: helpdesk
-          POSTGRES_PASSWORD: helpdesk
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         options: >-
@@ -39,13 +39,18 @@ jobs:
 
       - name: Run Alembic migrations against PostgreSQL
         env:
-          DATABASE_URL: postgresql+psycopg://helpdesk:helpdesk@127.0.0.1:5432/helpdesk
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
           APP_ENV: development
-        run: cd backend && alembic upgrade head
+        run: |
+          cd backend
+          alembic heads
+          alembic upgrade head
+          alembic downgrade -1
+          alembic upgrade head
 
       - name: Strict production-like readiness check
         env:
-          DATABASE_URL: postgresql+psycopg://helpdesk:helpdesk@127.0.0.1:5432/helpdesk
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
           APP_ENV: development
           STORAGE_BACKEND: s3
           OPENCLAW_TRANSPORT: mcp
