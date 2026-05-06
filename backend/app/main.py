@@ -25,6 +25,7 @@ from .api.persona_profiles import router as persona_profiles_router
 from .api.stats import router as stats_router
 from .api.tickets import router as tickets_router
 from .api.webchat import router as webchat_router
+from .api.webchat_events import router as webchat_events_router
 from .db import engine
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
 from .settings import get_settings
@@ -134,6 +135,7 @@ app.include_router(customers_router)
 app.include_router(persona_profiles_router)
 app.include_router(stats_router)
 app.include_router(tickets_router)
+app.include_router(webchat_events_router)
 app.include_router(webchat_router)
 
 webchat_static_dir = settings.backend_root / 'app' / 'static' / 'webchat'
