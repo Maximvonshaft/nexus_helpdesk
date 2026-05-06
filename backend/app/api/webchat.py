@@ -20,6 +20,7 @@ from .deps import get_current_user
 from ..services.background_jobs import WEBCHAT_AI_REPLY_JOB, enqueue_background_job
 from ..services.webchat_ai_reconciler import reconcile_webchat_ai_state
 from ..services.webchat_ai_turn_service import ai_snapshot, schedule_webchat_ai_turn
+from ..services.webchat_query_service import admin_list_conversations_page
 from ..services.webchat_rate_limit import enforce_webchat_rate_limit
 from ..webchat_models import WebchatCardAction, WebchatConversation, WebchatMessage
 from ..webchat_schemas import WebChatActionSubmitRequest
@@ -339,6 +340,11 @@ def list_webchat_conversations(limit: int = 50, db: Session = Depends(get_db), c
         if conversation:
             row.update(ai_snapshot(conversation))
     return rows
+
+
+@router.get("/admin/conversations-page")
+def list_webchat_conversations_page(cursor: int | None = Query(default=None, ge=1), limit: int = Query(default=50, ge=1, le=100), db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
+    return admin_list_conversations_page(db, current_user, cursor=cursor, limit=limit)
 
 
 @router.get("/admin/tickets/{ticket_id}/thread")
