@@ -18,7 +18,6 @@ from .audit_service import log_admin_audit
 from .webchat_ai_turn_service import write_webchat_event
 
 TERMINAL_STATUSES = {"resolved", "dropped", "replayed", "replay_failed", "cancelled"}
-ACTIVE_STATUSES = {"pending", "assigned"}
 SENSITIVE_KEYS = {
     "session_key",
     "sessionkey",
@@ -71,11 +70,9 @@ def _safe_error_summary(value: Any) -> dict[str, Any]:
     if value in (None, ""):
         return {"redacted": True, "empty": True}
     raw = str(value)
-    normalized = raw.splitlines()[0][:160]
     return {
         "redacted": True,
         "type": "error_summary",
-        "safe_preview": normalized,
         "length": len(raw),
         "sha256_prefix": hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:16],
     }
@@ -99,7 +96,11 @@ def sanitize_operator_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
             return [sanitize(item, key) for item in value[:20]]
         if isinstance(value, str):
             if len(value) > 240:
-                return {"truncated": True, "preview": value[:120], "length": len(value)}
+                return {
+                    "truncated": True,
+                    "length": len(value),
+                    "sha256_prefix": hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()[:16],
+                }
             return value
         return value
 
@@ -120,7 +121,13 @@ def _loads(value: str | None) -> dict[str, Any]:
         parsed = json.loads(value)
         return parsed if isinstance(parsed, dict) else {"value": parsed}
     except Exception:
-        return {"raw": {"truncated": True, "length": len(value), "preview": value[:120]}}
+        return {
+            "raw": {
+                "truncated": True,
+                "length": len(value),
+                "sha256_prefix": hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()[:16],
+            }
+        }
 
 
 def serialize_operator_task(row: OperatorTask) -> dict[str, Any]:
@@ -178,7 +185,7 @@ def _unresolved_snapshot(row: OpenClawUnresolvedEvent | None) -> dict[str, Any] 
     }
 
 
-def _active_query(db: Session, *, source_type: str, task_type: str) -> Any:
+def _active_query(db: Session, *, source_type: str, task_type: str):
     return db.query(OperatorTask).filter(
         OperatorTask.source_type == source_type,
         OperatorTask.task_type == task_type,
@@ -294,7 +301,13 @@ def _log_operator_audit(
     )
 
 
-def project_openclaw_unresolved_events(db: Session, *, limit: int = 100, actor_id: int | None = None, note: str | None = None) -> ProjectResult:
+def project_openclaw_unresolved_events(
+    db: Session,
+    *,
+    limit: int = 100,
+    actor_id: int | None = None,
+    note: str | None = None,
+) -> ProjectResult:
     rows = (
         db.query(OpenClawUnresolvedEvent)
         .filter(OpenClawUnresolvedEvent.status == "pending")
@@ -338,7 +351,13 @@ def project_openclaw_unresolved_events(db: Session, *, limit: int = 100, actor_i
     return result
 
 
-def project_webchat_handoff_tasks(db: Session, *, limit: int = 100, actor_id: int | None = None, note: str | None = None) -> ProjectResult:
+def project_webchat_handoff_tasks(
+    db: Session,
+    *,
+    limit: int = 100,
+    actor_id: int | None = None,
+    note: str | None = None,
+) -> ProjectResult:
     rows = (
         db.query(WebchatConversation, Ticket)
         .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
