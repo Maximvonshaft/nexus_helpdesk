@@ -4,12 +4,14 @@ import json
 import os
 import subprocess
 import threading
+import time
 from collections import deque
 from queue import Empty, Queue
 from typing import Any
 
 from ..settings import get_settings
 from .observability import log_event
+from .tool_governance import classify_tool_type, record_tool_call
 
 settings = get_settings()
 
@@ -152,7 +154,6 @@ class OpenClawMCPClient:
         payload = {'jsonrpc': '2.0', 'id': req_id, 'method': method, 'params': params or {}}
         self.process.stdin.write(json.dumps(payload, ensure_ascii=False) + '\n')
         self.process.stdin.flush()
-        import time
         start_time = time.monotonic()
         while True:
             returncode = self.process.poll()
@@ -183,23 +184,74 @@ class OpenClawMCPClient:
         self.process.stdin.write(json.dumps({'jsonrpc': '2.0', 'method': 'notifications/initialized', 'params': {}}) + '\n')
         self.process.stdin.flush()
 
+    def _tool_call_timeout_ms(self, name: str, arguments: dict[str, Any] | None = None) -> int:
+        if name == 'events_wait':
+            timeout_arg = (arguments or {}).get('timeoutSeconds')
+            if isinstance(timeout_arg, (int, float)):
+                return int((timeout_arg + 5) * 1000)
+        return 15000
+
     def _tool_call(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
-        result = self._request('tools/call', {'name': name, 'arguments': arguments or {}})
-        if isinstance(result, dict):
-            if 'structuredContent' in result:
-                return result['structuredContent']
-            content = result.get('content')
-            if isinstance(content, list) and content:
-                first = content[0]
-                if isinstance(first, dict):
-                    if 'json' in first:
-                        return first['json']
-                    if 'text' in first:
-                        try:
-                            return json.loads(first['text'])
-                        except Exception:
-                            return first['text']
-        return result
+        args = arguments or {}
+        started = time.monotonic()
+        timeout_ms = self._tool_call_timeout_ms(name, args)
+        tool_type = classify_tool_type(name)
+        try:
+            result = self._request('tools/call', {'name': name, 'arguments': args})
+            if isinstance(result, dict):
+                if 'structuredContent' in result:
+                    parsed_result = result['structuredContent']
+                else:
+                    content = result.get('content')
+                    parsed_result = result
+                    if isinstance(content, list) and content:
+                        first = content[0]
+                        if isinstance(first, dict):
+                            if 'json' in first:
+                                parsed_result = first['json']
+                            elif 'text' in first:
+                                try:
+                                    parsed_result = json.loads(first['text'])
+                                except Exception:
+                                    parsed_result = first['text']
+                record_tool_call(
+                    tool_name=name,
+                    provider='openclaw_mcp',
+                    tool_type=tool_type,
+                    input_payload=args,
+                    output_payload=parsed_result,
+                    status='success',
+                    elapsed_ms=int((time.monotonic() - started) * 1000),
+                    timeout_ms=timeout_ms,
+                )
+                return parsed_result
+            record_tool_call(
+                tool_name=name,
+                provider='openclaw_mcp',
+                tool_type=tool_type,
+                input_payload=args,
+                output_payload=result,
+                status='success',
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+                timeout_ms=timeout_ms,
+            )
+            return result
+        except Exception as exc:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            status = 'timeout' if 'timeout' in str(exc).lower() or 'timed out' in str(exc).lower() else 'failed'
+            record_tool_call(
+                tool_name=name,
+                provider='openclaw_mcp',
+                tool_type=tool_type,
+                input_payload=args,
+                output_payload=None,
+                status=status,
+                error_code=type(exc).__name__,
+                error_message=str(exc),
+                elapsed_ms=elapsed_ms,
+                timeout_ms=timeout_ms,
+            )
+            raise
 
     def conversations_list(self, *, limit: int = 50, channel: str | None = None, include_last_message: bool = True) -> Any:
         args: dict[str, Any] = {'limit': limit, 'includeLastMessage': include_last_message}
