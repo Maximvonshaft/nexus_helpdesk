@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from .api.admin_outbound_semantics import router as admin_outbound_semantics_router
+from .api.admin_perf import router as admin_perf_router
 from .api.admin import router as admin_router
 from .api.admin_queue import router as admin_queue_router
 from .api.auth import router as auth_router
@@ -24,6 +25,7 @@ from .api.lite import router as lite_router
 from .api.operator_queue import router as operator_queue_router
 from .api.persona_profiles import router as persona_profiles_router
 from .api.stats import router as stats_router
+from .api.ticket_perf import router as ticket_perf_router
 from .api.tickets import router as tickets_router
 from .api.webchat import router as webchat_router
 from .api.webchat_events import router as webchat_events_router
@@ -120,9 +122,10 @@ def readyz():
         return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error'})
 
 
-# Semantic overrides must be registered before the broader admin router so
-# /api/admin/queues/summary and /api/admin/openclaw/runtime-health use external-send-safe counts.
+# Semantic/performance overrides must be registered before broader legacy routers.
 app.include_router(admin_outbound_semantics_router)
+app.include_router(admin_perf_router)
+app.include_router(ticket_perf_router)
 app.include_router(admin_router)
 app.include_router(admin_queue_router)
 app.include_router(operator_queue_router)
