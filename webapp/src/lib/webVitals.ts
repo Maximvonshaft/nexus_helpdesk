@@ -42,7 +42,7 @@ function observeLcp() {
   try {
     const observer = new PerformanceObserverCtor((list) => {
       const entries = list.getEntries()
-      const latest = entries.at(-1)
+      const latest = entries.length ? entries[entries.length - 1] : undefined
       if (latest) emit({ name: 'LCP', value: latest.startTime })
     })
     observer.observe({ type: 'largest-contentful-paint', buffered: true })
