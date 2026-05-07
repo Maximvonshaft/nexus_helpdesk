@@ -10,6 +10,7 @@ from queue import Empty, Queue
 from typing import Any
 
 from ..settings import get_settings
+from .error_sanitizer import redact_sensitive_error_text
 from .observability import log_event
 from .tool_governance import ToolPolicyBlocked, classify_tool_type, enforce_tool_policy, record_tool_call
 
@@ -32,6 +33,10 @@ def local_mcp_cli_allowed() -> bool:
         and settings.openclaw_bridge_enabled
         and not settings.openclaw_cli_fallback_enabled
     )
+
+
+def _safe_mcp_error_text(value: Any, *, code: str = "openclaw_mcp_error") -> str:
+    return redact_sensitive_error_text(value, error_code=code, error_class="OpenClawMCPError") or "openclaw_mcp_error"
 
 
 class OpenClawMCPClient:
@@ -139,8 +144,9 @@ class OpenClawMCPClient:
             line = raw_line.strip()
             if not line:
                 continue
-            self._stderr_tail.append(line)
-            log_event(30, 'openclaw_mcp_stderr', line=line)
+            safe_line = _safe_mcp_error_text(line, code="openclaw_mcp_stderr")
+            self._stderr_tail.append(safe_line)
+            log_event(30, 'openclaw_mcp_stderr', line=safe_line)
 
     def _stderr_summary(self) -> str:
         if not self._stderr_tail:
@@ -159,7 +165,11 @@ class OpenClawMCPClient:
         while True:
             returncode = self.process.poll()
             if returncode is not None:
-                raise OpenClawMCPError(f'MCP process exited with code {returncode} while waiting for {method}; stderr: {self._stderr_summary()}')
+                safe_error = _safe_mcp_error_text(
+                    f'MCP process exited with code {returncode} while waiting for {method}; stderr: {self._stderr_summary()}',
+                    code="openclaw_mcp_process_exited",
+                )
+                raise OpenClawMCPError(safe_error)
             try:
                 queue_timeout = 15
                 if method == 'tools/call' and params and params.get('name') == 'events_wait':
@@ -172,11 +182,15 @@ class OpenClawMCPClient:
             except Empty as exc:
                 if method == 'tools/call' and params and params.get('name') == 'events_wait':
                     return {'id': req_id, 'result': {'events': []}}
-                raise OpenClawMCPError(f'Timeout waiting for MCP response to {method}; stderr: {self._stderr_summary()}') from exc
+                safe_error = _safe_mcp_error_text(
+                    f'Timeout waiting for MCP response to {method}; stderr: {self._stderr_summary()}',
+                    code="openclaw_mcp_timeout",
+                )
+                raise OpenClawMCPError(safe_error) from exc
             if result.get('id') != req_id:
                 continue
             if 'error' in result:
-                raise OpenClawMCPError(str(result['error']))
+                raise OpenClawMCPError(_safe_mcp_error_text(result['error'], code="openclaw_mcp_result_error"))
             return result.get('result', {})
 
     def _initialize(self) -> None:
@@ -200,6 +214,7 @@ class OpenClawMCPClient:
         try:
             decision = enforce_tool_policy(tool_name=name, tool_type=tool_type, actor_capabilities=self.actor_capabilities)
         except ToolPolicyBlocked as exc:
+            safe_error = _safe_mcp_error_text(exc.decision.reason_code, code="tool_policy_blocked")
             record_tool_call(
                 tool_name=name,
                 provider='openclaw_mcp',
@@ -208,12 +223,12 @@ class OpenClawMCPClient:
                 output_payload=None,
                 status='blocked',
                 error_code='tool_policy_blocked',
-                error_message=exc.decision.reason_code,
+                error_message=safe_error,
                 elapsed_ms=0,
                 timeout_ms=timeout_ms,
                 policy_decision=exc.decision,
             )
-            raise OpenClawMCPError(str(exc)) from exc
+            raise OpenClawMCPError(safe_error) from exc
         try:
             result = self._request('tools/call', {'name': name, 'arguments': args})
             if isinstance(result, dict):
@@ -259,6 +274,7 @@ class OpenClawMCPClient:
         except Exception as exc:
             elapsed_ms = int((time.monotonic() - started) * 1000)
             status = 'timeout' if 'timeout' in str(exc).lower() or 'timed out' in str(exc).lower() else 'failed'
+            safe_error = _safe_mcp_error_text(str(exc), code=type(exc).__name__)
             record_tool_call(
                 tool_name=name,
                 provider='openclaw_mcp',
@@ -267,7 +283,7 @@ class OpenClawMCPClient:
                 output_payload=None,
                 status=status,
                 error_code=type(exc).__name__,
-                error_message=str(exc),
+                error_message=safe_error,
                 elapsed_ms=elapsed_ms,
                 timeout_ms=timeout_ms,
                 policy_decision=decision,
