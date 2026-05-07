@@ -27,6 +27,8 @@ import type {
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
 const PUBLIC_API_PATHS = ['/api/auth/login', '/auth/login', '/api/auth/register', '/auth/register', '/healthz', '/readyz']
+const DEFAULT_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 12000)
+const FRONTEND_LATENCY_DEBUG = String(import.meta.env.VITE_FRONTEND_LATENCY_DEBUG || '').toLowerCase() === 'true'
 
 let authExpiryHandled = false
 
@@ -34,6 +36,16 @@ export class AuthExpiredError extends Error {
   constructor(message = '登录状态已失效，请重新登录') {
     super(message)
     this.name = 'AuthExpiredError'
+  }
+}
+
+export class ApiTimeoutError extends Error {
+  requestId: string
+
+  constructor(requestId: string, timeoutMs: number) {
+    super(`请求超时，请稍后重试。Request ID: ${requestId}; timeout: ${timeoutMs}ms`)
+    this.name = 'ApiTimeoutError'
+    this.requestId = requestId
   }
 }
 
@@ -64,6 +76,35 @@ function isPublicRequest(path: string) {
   return PUBLIC_API_PATHS.some((publicPath) => pathname === publicPath || pathname.endsWith(publicPath))
 }
 
+function requestMethod(init?: RequestInit) {
+  return (init?.method || 'GET').toUpperCase()
+}
+
+function isSafeRetry(method: string) {
+  return method === 'GET' || method === 'HEAD'
+}
+
+function createRequestId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID()
+  }
+  return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function recordFrontendLatency(path: string, method: string, status: string, durationMs: number, requestId: string) {
+  const safePath = requestPathname(path).replace(/\/\d+(?=\/|$)/g, '/{id}').replace(/\/[0-9a-fA-F]{8,}(?=\/|$)/g, '/{id}')
+  const metric = {
+    name: 'frontend_api_latency',
+    method,
+    path: safePath,
+    status,
+    duration_ms: Math.round(durationMs),
+    request_id: requestId,
+  }
+  window.dispatchEvent(new CustomEvent('nexusdesk:frontend-api-latency', { detail: metric }))
+  if (FRONTEND_LATENCY_DEBUG) console.debug('[frontend-api-latency]', metric)
+}
+
 async function readErrorMessage(res: Response, fallback: string) {
   try {
     const data = await res.json()
@@ -88,17 +129,56 @@ export function clearToken() {
   sessionStorage.removeItem(STORAGE_KEY)
 }
 
+async function performFetch(path: string, init: RequestInit | undefined, headers: Headers, timeoutMs: number, requestId: string) {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(buildApiUrl(path), { ...init, headers, signal: controller.signal })
+  } catch (exc) {
+    if (exc instanceof DOMException && exc.name === 'AbortError') {
+      throw new ApiTimeoutError(requestId, timeoutMs)
+    }
+    throw exc
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const publicRequest = isPublicRequest(path)
   const token = getToken()
   const headers = new Headers(init?.headers ?? {})
+  const method = requestMethod(init)
+  const requestId = headers.get('X-Request-Id') || createRequestId()
+  const timeoutMs = Number((init as RequestInit & { timeoutMs?: number })?.timeoutMs || DEFAULT_TIMEOUT_MS)
+  const started = performance.now()
+  headers.set('X-Request-Id', requestId)
   if (!(init?.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (token && !publicRequest) headers.set('Authorization', `Bearer ${token}`)
-  const res = await fetch(buildApiUrl(path), { ...init, headers })
+
+  let res: Response
+  let attempt = 0
+  while (true) {
+    try {
+      res = await performFetch(path, init, headers, timeoutMs, requestId)
+      break
+    } catch (exc) {
+      const status = exc instanceof ApiTimeoutError ? 'timeout' : 'network_error'
+      recordFrontendLatency(path, method, status, performance.now() - started, requestId)
+      if (attempt === 0 && isSafeRetry(method)) {
+        attempt += 1
+        continue
+      }
+      throw exc
+    }
+  }
+
+  const responseRequestId = res.headers.get('X-Request-Id') || requestId
+  recordFrontendLatency(path, method, String(res.status), performance.now() - started, responseRequestId)
   if (res.status === 401) {
     if (publicRequest) {
       const msg = await readErrorMessage(res, '登录失败，请检查账号或密码')
-      throw new Error(msg)
+      throw new Error(`${msg} Request ID: ${responseRequestId}`)
     }
     if (!authExpiryHandled) {
       authExpiryHandled = true
@@ -108,7 +188,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const msg = await readErrorMessage(res, `${res.status} ${res.statusText}`)
-    throw new Error(msg)
+    throw new Error(`${msg} Request ID: ${responseRequestId}`)
   }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
