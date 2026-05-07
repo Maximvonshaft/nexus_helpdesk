@@ -27,7 +27,7 @@ from .api.stats import router as stats_router
 from .api.tickets import router as tickets_router
 from .api.webchat import router as webchat_router
 from .api.webchat_events import router as webchat_events_router
-from .db import engine
+from .db import engine, reset_current_request_id, set_current_request_id
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
 from .settings import get_settings
 
@@ -67,6 +67,7 @@ def _migration_revision(conn: Connection) -> str | None:
 async def request_context_middleware(request: Request, call_next):
     request_id = request.headers.get(settings.request_id_header) or uuid.uuid4().hex
     request.state.request_id = request_id
+    request_id_token = set_current_request_id(request_id)
     stop_timer = timed_request()
     try:
         response = await call_next(request)
@@ -75,6 +76,8 @@ async def request_context_middleware(request: Request, call_next):
         record_request_metric(request.url.path, request.method, 500, duration_ms)
         app_log_event(40, 'request_failed', request_id=request_id, method=request.method, path=request.url.path, status_code=500, duration_ms=round(duration_ms, 3), error=str(exc))
         raise
+    finally:
+        reset_current_request_id(request_id_token)
     duration_ms = stop_timer()
     record_request_metric(request.url.path, request.method, response.status_code, duration_ms)
     app_log_event(20, 'request_complete', request_id=request_id, method=request.method, path=request.url.path, status_code=response.status_code, duration_ms=round(duration_ms, 3))
