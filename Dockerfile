@@ -35,7 +35,11 @@ RUN apt-get update \
 COPY backend/requirements.txt /tmp/requirements.txt
 RUN pip install -r /tmp/requirements.txt || pip install -r /tmp/requirements.txt || pip install -r /tmp/requirements.txt
 
-COPY . /app
+# Keep the runtime image deterministic. Do not COPY the whole repository because
+# that can bake local caches, VCS metadata, env files, uploads, or secrets into
+# the image when .dockerignore drifts.
+COPY backend/ /app/backend/
+COPY scripts/ /app/scripts/
 COPY --from=webapp-builder /build/frontend_dist /app/frontend_dist
 
 # Round B webchat widget static export
@@ -56,4 +60,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD curl 
 
 USER appuser
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["gunicorn", "app.main:app", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "-b", "0.0.0.0:8080", "--timeout", "60"]
