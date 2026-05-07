@@ -1,6 +1,9 @@
 from contextlib import contextmanager
+from contextvars import ContextVar
+import os
+from time import perf_counter
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -9,12 +12,68 @@ from .settings import get_settings
 settings = get_settings()
 DATABASE_URL = settings.database_url
 
+_current_request_id: ContextVar[str | None] = ContextVar('nexusdesk_request_id', default=None)
+
+
+def set_current_request_id(request_id: str | None):
+    return _current_request_id.set(request_id)
+
+
+def reset_current_request_id(token) -> None:
+    _current_request_id.reset(token)
+
+
+def _db_query_timing_enabled() -> bool:
+    return os.getenv('DB_QUERY_TIMING_ENABLED', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _slow_query_ms() -> float:
+    try:
+        return float(os.getenv('DB_SLOW_QUERY_MS', '500'))
+    except ValueError:
+        return 500.0
+
+
 db_url = make_url(DATABASE_URL)
 connect_args = {"check_same_thread": False, "timeout": 30} if db_url.drivername.startswith("sqlite") else {}
 engine_kwargs = {"future": True, "echo": settings.database_echo, "pool_pre_ping": True}
 if db_url.drivername.startswith("postgresql"):
     engine_kwargs.update({"pool_size": 10, "max_overflow": 20, "pool_recycle": 1800})
 engine = create_engine(DATABASE_URL, connect_args=connect_args, **engine_kwargs)
+
+
+@event.listens_for(engine, 'before_cursor_execute')
+def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+    if not _db_query_timing_enabled():
+        return
+    context._nexusdesk_query_started_at = perf_counter()
+
+
+@event.listens_for(engine, 'after_cursor_execute')
+def _after_cursor_execute(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+    if not _db_query_timing_enabled():
+        return
+    started = getattr(context, '_nexusdesk_query_started_at', None)
+    if started is None:
+        return
+    try:
+        duration_ms = (perf_counter() - started) * 1000.0
+        from .services.observability import LOGGER, record_db_query
+
+        record_db_query(
+            duration_ms,
+            statement,
+            slow_threshold_ms=_slow_query_ms(),
+            request_id=_current_request_id.get(),
+        )
+    except Exception as exc:  # pragma: no cover - metrics must never break DB traffic
+        try:
+            from .services.observability import LOGGER
+
+            LOGGER.warning('db_query_timing_failed', extra={'event_payload': {'error': type(exc).__name__}})
+        except Exception:
+            pass
+
 
 if db_url.drivername.startswith("sqlite"):
     with engine.connect() as con:
