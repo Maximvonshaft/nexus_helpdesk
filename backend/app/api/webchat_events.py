@@ -11,6 +11,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..models import Ticket
+from ..services.permissions import ensure_ticket_visible
 from ..settings import get_settings
 from ..webchat_models import WebchatConversation, WebchatEvent
 from .deps import get_current_user
@@ -203,7 +205,11 @@ def admin_poll_webchat_events(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict[str, Any]:
-    _ = current_user
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if ticket is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    ensure_ticket_visible(current_user, ticket, db)
+
     result = _wait_for_events(db, ticket_id=ticket_id, after_id=after_id, limit=limit, wait_ms=wait_ms)
     events = result["events"]
     return {
