@@ -42,9 +42,15 @@ SOURCE_ORDER = {
 
 
 def _value(value: Any) -> Any:
-    if hasattr(value, "value"):
-        return value.value
-    return value
+    return value.value if hasattr(value, "value") else value
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _dt(value: Any) -> str | None:
@@ -85,23 +91,17 @@ def _team_summary(row: Team | None) -> dict[str, Any] | None:
 
 
 def _load_ticket_tags(db: Session, ticket_id: int) -> list[dict[str, Any]]:
-    """Best-effort tag summary without importing optional tag models.
-
-    The legacy detail serializer resolves tags elsewhere. This summary endpoint
-    intentionally avoids relationship loading and only reads known lightweight
-    tag table shapes when they exist.
-    """
+    """Best-effort tag summary without loading legacy detail relationships."""
 
     try:
-        bind = db.get_bind()
-        inspector = inspect(bind)
+        inspector = inspect(db.get_bind())
         tables = set(inspector.get_table_names())
         rows: list[Any] = []
         if "ticket_tags" in tables:
             cols = {item["name"] for item in inspector.get_columns("ticket_tags")}
             if {"ticket_id", "name"}.issubset(cols):
-                color_expr = "color" if "color" in cols else "NULL AS color"
                 id_expr = "id" if "id" in cols else "NULL AS id"
+                color_expr = "color" if "color" in cols else "NULL AS color"
                 rows = db.execute(
                     text(f"SELECT {id_expr}, name, {color_expr} FROM ticket_tags WHERE ticket_id = :ticket_id ORDER BY name ASC"),
                     {"ticket_id": ticket_id},
@@ -134,16 +134,29 @@ def _load_ticket_tags(db: Session, ticket_id: int) -> list[dict[str, Any]]:
 
 
 def _counts(db: Session, ticket_id: int) -> dict[str, int]:
-    stmt = select(
-        select(func.count(TicketComment.id)).where(TicketComment.ticket_id == ticket_id).scalar_subquery().label("comments_count"),
-        select(func.count(TicketInternalNote.id)).where(TicketInternalNote.ticket_id == ticket_id).scalar_subquery().label("internal_notes_count"),
-        select(func.count(TicketAttachment.id)).where(TicketAttachment.ticket_id == ticket_id).scalar_subquery().label("attachments_count"),
-        select(func.count(TicketOutboundMessage.id)).where(TicketOutboundMessage.ticket_id == ticket_id).scalar_subquery().label("outbound_messages_count"),
-        select(func.count(TicketAIIntake.id)).where(TicketAIIntake.ticket_id == ticket_id).scalar_subquery().label("ai_intakes_count"),
-        select(func.count(TicketEvent.id)).where(TicketEvent.ticket_id == ticket_id).scalar_subquery().label("events_count"),
-    )
-    row = db.execute(stmt).mappings().one()
+    row = db.execute(
+        select(
+            select(func.count(TicketComment.id)).where(TicketComment.ticket_id == ticket_id).scalar_subquery().label("comments_count"),
+            select(func.count(TicketInternalNote.id)).where(TicketInternalNote.ticket_id == ticket_id).scalar_subquery().label("internal_notes_count"),
+            select(func.count(TicketAttachment.id)).where(TicketAttachment.ticket_id == ticket_id).scalar_subquery().label("attachments_count"),
+            select(func.count(TicketOutboundMessage.id)).where(TicketOutboundMessage.ticket_id == ticket_id).scalar_subquery().label("outbound_messages_count"),
+            select(func.count(TicketAIIntake.id)).where(TicketAIIntake.ticket_id == ticket_id).scalar_subquery().label("ai_intakes_count"),
+            select(func.count(TicketEvent.id)).where(TicketEvent.ticket_id == ticket_id).scalar_subquery().label("events_count"),
+        )
+    ).mappings().one()
     return {key: int(row[key] or 0) for key in row.keys()}
+
+
+def _is_overdue(ticket: Ticket) -> bool:
+    now = _as_utc(utc_now())
+    if now is None:
+        return False
+    first_due = _as_utc(ticket.first_response_due_at)
+    resolution_due = _as_utc(ticket.resolution_due_at)
+    return bool(
+        (first_due and first_due < now and not ticket.first_response_at)
+        or (resolution_due and resolution_due < now and not ticket.resolved_at)
+    )
 
 
 @router.get("/{ticket_id}/summary")
@@ -180,13 +193,7 @@ def get_ticket_summary(ticket_id: int, db: Session = Depends(get_db), current_us
         .order_by(TicketEvent.created_at.desc(), TicketEvent.id.desc())
         .first()
     )
-    now = utc_now()
-    first_due = ticket.first_response_due_at
-    resolution_due = ticket.resolution_due_at
-    overdue = bool((first_due and first_due < now and not ticket.first_response_at) or (resolution_due and resolution_due < now and not ticket.resolved_at))
-    customer_data = _customer_summary(customer)
-    assignee_data = _user_summary(assignee)
-    team_data = _team_summary(team)
+
     payload = {
         "id": ticket.id,
         "ticket_no": ticket.ticket_no,
@@ -214,11 +221,11 @@ def get_ticket_summary(ticket_id: int, db: Session = Depends(get_db), current_us
         "resolution_due_at": _dt(ticket.resolution_due_at),
         "first_response_breached": ticket.first_response_breached,
         "resolution_breached": ticket.resolution_breached,
-        "customer": customer_data,
-        "assignee": assignee_data,
-        "team": team_data,
+        "customer": _customer_summary(customer),
+        "assignee": _user_summary(assignee),
+        "team": _team_summary(team),
         "sla": {
-            "overdue": overdue,
+            "overdue": _is_overdue(ticket),
             "first_response_due_at": _dt(ticket.first_response_due_at),
             "resolution_due_at": _dt(ticket.resolution_due_at),
             "first_response_breached": ticket.first_response_breached,
@@ -260,46 +267,38 @@ def _encode_timeline_cursor(item: dict[str, Any]) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
+def _cursor_sort_key(source_type: str, source_id: int, created_at: datetime) -> tuple[datetime, int, int]:
+    return (_as_utc(created_at) or datetime.min.replace(tzinfo=timezone.utc), -SOURCE_ORDER[source_type], int(source_id))
+
+
 def _parse_cursor(cursor: str | None) -> tuple[datetime, int, int] | None:
     if not cursor:
         return None
     try:
         padded = cursor + "=" * (-len(cursor) % 4)
         data = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
-        created_raw = str(data["created_at"])
-        created = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=timezone.utc)
         source_type = str(data["source_type"])
-        source_order = SOURCE_ORDER[source_type]
         source_id = int(data["source_id"])
-        return created, source_order, source_id
+        created = datetime.fromisoformat(str(data["created_at"]).replace("Z", "+00:00"))
+        if source_type not in SOURCE_ORDER:
+            raise ValueError("unknown source_type")
+        return _cursor_sort_key(source_type, source_id, created)
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid cursor") from exc
 
 
 def _item_key(item: dict[str, Any]) -> tuple[datetime, int, int]:
-    created_raw = item.get("created_at")
-    if isinstance(created_raw, datetime):
-        created = created_raw
-    else:
-        created = datetime.fromisoformat(str(created_raw).replace("Z", "+00:00"))
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
-    return (created, -SOURCE_ORDER[item["source_type"]], int(item["source_id"]))
+    created = datetime.fromisoformat(str(item["created_at"]).replace("Z", "+00:00"))
+    return _cursor_sort_key(str(item["source_type"]), int(item["source_id"]), created)
 
 
 def _older_than_cursor(item: dict[str, Any], cursor_key: tuple[datetime, int, int] | None) -> bool:
-    if cursor_key is None:
-        return True
-    created, neg_order, source_id = _item_key(item)
-    return (created, -neg_order, source_id) < cursor_key
+    return cursor_key is None or _item_key(item) < cursor_key
 
 
 def _base_timeline_query(query, model, ticket_id: int, cursor_key: tuple[datetime, int, int] | None, limit: int):
     if cursor_key is not None:
-        created_at = cursor_key[0]
-        query = query.filter(or_(model.created_at <= created_at, model.created_at.is_(None)))
+        query = query.filter(or_(model.created_at <= cursor_key[0], model.created_at.is_(None)))
     return query.filter(model.ticket_id == ticket_id).order_by(model.created_at.desc(), model.id.desc()).limit(limit + 1).all()
 
 
