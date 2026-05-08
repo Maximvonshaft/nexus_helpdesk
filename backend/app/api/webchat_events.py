@@ -29,6 +29,26 @@ PUBLIC_VISITOR_EVENTS_ERROR = {
 }
 
 
+class EventPage(dict):
+    """Dict-shaped event page with legacy list-like behavior for existing tests."""
+
+    def __iter__(self):
+        return iter(self["events"])
+
+    def __len__(self) -> int:
+        return len(self["events"])
+
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            return super().__getitem__(key)
+        return self["events"][key]
+
+    def __eq__(self, other):
+        if isinstance(other, list):
+            return self["events"] == other
+        return super().__eq__(other)
+
+
 def _events_max_wait_ms() -> int:
     raw = os.getenv("WEBCHAT_EVENTS_MAX_WAIT_MS", str(DEFAULT_EVENTS_MAX_WAIT_MS))
     try:
@@ -160,7 +180,7 @@ def _list_events(
     ticket_id: int | None = None,
     after_id: int = 0,
     limit: int = 50,
-) -> dict[str, Any]:
+) -> EventPage:
     safe_limit = _safe_limit(limit)
     query = db.query(WebchatEvent).filter(WebchatEvent.id > max(0, int(after_id or 0)))
     if conversation_id is not None:
@@ -169,10 +189,10 @@ def _list_events(
         query = query.filter(WebchatEvent.ticket_id == ticket_id)
     rows = query.order_by(WebchatEvent.id.asc()).limit(safe_limit + 1).all()
     visible = rows[:safe_limit]
-    return {
+    return EventPage({
         "events": [_event_read(row) for row in visible],
         "has_more": len(rows) > safe_limit,
-    }
+    })
 
 
 def _wait_for_events(
@@ -183,7 +203,7 @@ def _wait_for_events(
     after_id: int = 0,
     limit: int = 50,
     wait_ms: int = 0,
-) -> dict[str, Any]:
+) -> EventPage:
     max_wait_ms = _capped_wait_ms(wait_ms)
     deadline = time.monotonic() + (max_wait_ms / 1000.0)
     while True:
