@@ -27,4 +27,5 @@ def test_metric_helpers_render_without_high_cardinality_values() -> None:
     assert 'nexusdesk_frontend_api_latency_ms' in rendered
     assert 'nexusdesk_web_vitals_value' in rendered
     assert 'SELECT * FROM tickets' not in rendered
-    assert '123' not in rendered
+    assert '/api/tickets/123' not in rendered
+    assert '/api/tickets/{id}' in rendered
