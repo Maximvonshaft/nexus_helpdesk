@@ -21,6 +21,8 @@ from app.models import Team, User  # noqa: E402
 from app.api import admin as admin_api  # noqa: E402
 from app.services.openclaw_runtime_service import probe_openclaw_connectivity  # noqa: E402
 from app.services import openclaw_runtime_service  # noqa: E402
+from app.services import openclaw_mcp_client  # noqa: E402
+from app.services.openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError, local_mcp_cli_allowed  # noqa: E402
 
 
 @pytest.fixture()
@@ -101,3 +103,33 @@ def test_local_openclaw_artifacts_are_present():
     assert 'docker-compose.local-openclaw.yml' in script
     assert '检查 OpenClaw 联调' in runtime
     assert 'host.docker.internal:host-gateway' in compose
+
+
+def test_local_mcp_cli_allowed_blocks_remote_gateway_without_fallback(monkeypatch):
+    monkeypatch.setattr(openclaw_mcp_client.settings, 'openclaw_deployment_mode', 'remote_gateway')
+    monkeypatch.setattr(openclaw_mcp_client.settings, 'openclaw_bridge_enabled', True)
+    monkeypatch.setattr(openclaw_mcp_client.settings, 'openclaw_cli_fallback_enabled', False)
+
+    assert local_mcp_cli_allowed() is False
+
+
+def test_local_mcp_client_fails_before_subprocess_when_fallback_disabled(monkeypatch):
+    monkeypatch.setattr(openclaw_mcp_client.settings, 'openclaw_deployment_mode', 'remote_gateway')
+    monkeypatch.setattr(openclaw_mcp_client.settings, 'openclaw_bridge_enabled', True)
+    monkeypatch.setattr(openclaw_mcp_client.settings, 'openclaw_cli_fallback_enabled', False)
+
+    def fail_popen(*args, **kwargs):  # pragma: no cover - should never run
+        raise AssertionError('subprocess should not be started')
+
+    monkeypatch.setattr(openclaw_mcp_client.subprocess, 'Popen', fail_popen)
+
+    with pytest.raises(OpenClawMCPError, match='local_openclaw_mcp_cli_disabled'):
+        OpenClawMCPClient().start()
+
+
+def test_local_mcp_cli_allowed_for_explicit_local_mode(monkeypatch):
+    monkeypatch.setattr(openclaw_mcp_client.settings, 'openclaw_deployment_mode', 'local_gateway')
+    monkeypatch.setattr(openclaw_mcp_client.settings, 'openclaw_bridge_enabled', False)
+    monkeypatch.setattr(openclaw_mcp_client.settings, 'openclaw_cli_fallback_enabled', False)
+
+    assert local_mcp_cli_allowed() is True
