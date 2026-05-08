@@ -288,7 +288,11 @@ def _parse_cursor(cursor: str | None) -> tuple[datetime, int, int] | None:
 
 
 def _item_key(item: dict[str, Any]) -> tuple[datetime, int, int]:
-    created = datetime.fromisoformat(str(item["created_at"]).replace("Z", "+00:00"))
+    raw_created = item.get("created_at")
+    if raw_created:
+        created = datetime.fromisoformat(str(raw_created).replace("Z", "+00:00"))
+    else:
+        created = datetime.min.replace(tzinfo=timezone.utc)
     return _cursor_sort_key(str(item["source_type"]), int(item["source_id"]), created)
 
 
@@ -324,29 +328,17 @@ def _base_timeline_query(query, model, source_type: str, ticket_id: int, cursor_
 def _timeline_items(db: Session, ticket_id: int, cursor_key: tuple[datetime, int, int] | None, limit: int) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for row in _base_timeline_query(db.query(TicketComment), TicketComment, "comment", ticket_id, cursor_key, limit):
-        item = {"source_type": "comment", "source_id": row.id, "id": f"comment:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "visibility": _value(row.visibility), "author_id": row.author_id}
-        if _older_than_cursor(item, cursor_key):
-            items.append(item)
+        items.append({"source_type": "comment", "source_id": row.id, "id": f"comment:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "visibility": _value(row.visibility), "author_id": row.author_id})
     for row in _base_timeline_query(db.query(TicketInternalNote), TicketInternalNote, "internal_note", ticket_id, cursor_key, limit):
-        item = {"source_type": "internal_note", "source_id": row.id, "id": f"internal_note:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "visibility": "internal", "author_id": row.author_id}
-        if _older_than_cursor(item, cursor_key):
-            items.append(item)
+        items.append({"source_type": "internal_note", "source_id": row.id, "id": f"internal_note:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "visibility": "internal", "author_id": row.author_id})
     for row in _base_timeline_query(db.query(TicketOutboundMessage), TicketOutboundMessage, "outbound_message", ticket_id, cursor_key, limit):
-        item = {"source_type": "outbound_message", "source_id": row.id, "id": f"outbound_message:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "status": _value(row.status), "channel": _value(row.channel), "created_by": row.created_by}
-        if _older_than_cursor(item, cursor_key):
-            items.append(item)
+        items.append({"source_type": "outbound_message", "source_id": row.id, "id": f"outbound_message:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "status": _value(row.status), "channel": _value(row.channel), "created_by": row.created_by})
     for row in _base_timeline_query(db.query(TicketAIIntake), TicketAIIntake, "ai_intake", ticket_id, cursor_key, limit):
-        item = {"source_type": "ai_intake", "source_id": row.id, "id": f"ai_intake:{row.id}", "created_at": _dt(row.created_at), "summary": row.summary, "classification": row.classification, "confidence": row.confidence}
-        if _older_than_cursor(item, cursor_key):
-            items.append(item)
+        items.append({"source_type": "ai_intake", "source_id": row.id, "id": f"ai_intake:{row.id}", "created_at": _dt(row.created_at), "summary": row.summary, "classification": row.classification, "confidence": row.confidence})
     for row in _base_timeline_query(db.query(TicketEvent), TicketEvent, "ticket_event", ticket_id, cursor_key, limit):
-        item = {"source_type": "ticket_event", "source_id": row.id, "id": f"ticket_event:{row.id}", "created_at": _dt(row.created_at), "event_type": _value(row.event_type), "field_name": row.field_name, "note": row.note}
-        if _older_than_cursor(item, cursor_key):
-            items.append(item)
+        items.append({"source_type": "ticket_event", "source_id": row.id, "id": f"ticket_event:{row.id}", "created_at": _dt(row.created_at), "event_type": _value(row.event_type), "field_name": row.field_name, "note": row.note})
     for row in _base_timeline_query(db.query(WebchatEvent), WebchatEvent, "webchat_event", ticket_id, cursor_key, limit):
-        item = {"source_type": "webchat_event", "source_id": row.id, "id": f"webchat_event:{row.id}", "created_at": _dt(row.created_at), "event_type": row.event_type}
-        if _older_than_cursor(item, cursor_key):
-            items.append(item)
+        items.append({"source_type": "webchat_event", "source_id": row.id, "id": f"webchat_event:{row.id}", "created_at": _dt(row.created_at), "event_type": row.event_type})
     items.sort(key=_item_key, reverse=True)
     return items
 
