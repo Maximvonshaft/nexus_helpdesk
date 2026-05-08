@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import timedelta
+from time import perf_counter
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
@@ -12,6 +13,7 @@ from ..models import BackgroundJob, OpenClawConversationLink, OpenClawTranscript
 from ..settings import get_settings
 from ..utils.time import utc_now
 from . import openclaw_bridge, openclaw_client_factory
+from .observability import record_worker_job_metric
 
 settings = get_settings()
 AUTO_REPLY_JOB = 'auto_reply.send_update'
@@ -259,6 +261,37 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
         return job
 
 
+def _job_wait_ms(job: BackgroundJob) -> float | None:
+    if not job.created_at:
+        return None
+    try:
+        return max((utc_now() - job.created_at).total_seconds() * 1000.0, 0.0)
+    except Exception:
+        return None
+
+
+def _process_and_record_job(db: Session, job: BackgroundJob) -> BackgroundJob:
+    started = perf_counter()
+    wait_ms = _job_wait_ms(job)
+    before_attempts = job.attempt_count or 0
+    result = 'unknown'
+    try:
+        processed = process_background_job(db, job)
+        if processed.status == JobStatus.done:
+            result = 'success'
+        elif processed.status == JobStatus.pending:
+            result = 'retry'
+        elif processed.status == JobStatus.dead:
+            result = 'failed'
+        else:
+            result = str(processed.status.value if hasattr(processed.status, 'value') else processed.status)
+        return processed
+    finally:
+        duration_ms = (perf_counter() - started) * 1000.0
+        retry_delta = max((job.attempt_count or 0) - before_attempts, 0)
+        record_worker_job_metric(job.job_type, result, duration_ms=duration_ms, wait_ms=wait_ms, retry_count=retry_delta)
+
+
 def dispatch_pending_background_jobs(db: Session, *, limit: int | None = None, worker_id: str | None = None) -> list[BackgroundJob]:
     if settings.openclaw_sync_enabled:
         enqueue_stale_openclaw_sync_jobs(db, limit=settings.openclaw_sync_batch_size)
@@ -266,7 +299,7 @@ def dispatch_pending_background_jobs(db: Session, *, limit: int | None = None, w
     claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB, WEBCHAT_AI_REPLY_JOB])
     processed: list[BackgroundJob] = []
     for job in claimed:
-        process_background_job(db, job)
+        _process_and_record_job(db, job)
         processed.append(job)
     db.commit()
     return processed
@@ -281,7 +314,7 @@ def dispatch_pending_sync_jobs(db: Session, *, limit: int | None = None, worker_
     for job in claimed:
         if job.job_type != OPENCLAW_SYNC_JOB:
             continue
-        process_background_job(db, job)
+        _process_and_record_job(db, job)
         processed.append(job)
     db.commit()
     return processed
