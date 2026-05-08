@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import time
+from datetime import timezone
 from urllib.parse import urlparse
 from typing import Any
 
@@ -12,14 +13,20 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Ticket
-from ..services.permissions import ensure_ticket_visible
 from ..settings import get_settings
+from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatEvent
+from ..services.permissions import ensure_ticket_visible
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat-events"])
 settings = get_settings()
 DEFAULT_EVENTS_MAX_WAIT_MS = 5000
+
+PUBLIC_VISITOR_EVENTS_ERROR = {
+    "code": "webchat_conversation_not_found_or_invalid_token",
+    "message": "webchat conversation not found or invalid visitor token",
+}
 
 
 def _events_max_wait_ms() -> int:
@@ -91,6 +98,33 @@ def _resolve_visitor_token(header_token: str | None, query_token: str | None) ->
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _ensure_aware_utc(value):
+    if value is None:
+        return None
+    if getattr(value, "tzinfo", None) is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _raise_public_visitor_events_auth_error() -> None:
+    # Deliberately use one response for missing conversation, wrong visitor token,
+    # and expired token. The public polling endpoint must not be usable as a
+    # conversation-existence oracle.
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=PUBLIC_VISITOR_EVENTS_ERROR)
+
+
+def _validate_public_visitor_conversation(conversation: WebchatConversation | None, token: str | None) -> WebchatConversation:
+    if not conversation or not token:
+        _raise_public_visitor_events_auth_error()
+    if _hash_token(token) != conversation.visitor_token_hash:
+        _raise_public_visitor_events_auth_error()
+    expires_at = _ensure_aware_utc(getattr(conversation, "visitor_token_expires_at", None))
+    now = _ensure_aware_utc(utc_now())
+    if expires_at is not None and now is not None and expires_at <= now:
+        _raise_public_visitor_events_auth_error()
+    return conversation
 
 
 def _loads_json(value: str | None) -> Any:
@@ -179,13 +213,8 @@ def poll_webchat_events(
 ) -> dict[str, Any]:
     _set_public_cors(response, request)
     resolved_token = _resolve_visitor_token(x_webchat_visitor_token, visitor_token)
-    if not resolved_token:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
     conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id).first()
-    if not conversation:
-        raise HTTPException(status_code=404, detail="webchat conversation not found")
-    if _hash_token(resolved_token) != conversation.visitor_token_hash:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
+    conversation = _validate_public_visitor_conversation(conversation, resolved_token)
     result = _wait_for_events(db, conversation_id=conversation.id, after_id=after_id, limit=limit, wait_ms=wait_ms)
     events = result["events"]
     return {
@@ -206,10 +235,9 @@ def admin_poll_webchat_events(
     current_user=Depends(get_current_user),
 ) -> dict[str, Any]:
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
-    if ticket is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ticket not found")
     ensure_ticket_visible(current_user, ticket, db)
-
     result = _wait_for_events(db, ticket_id=ticket_id, after_id=after_id, limit=limit, wait_ms=wait_ms)
     events = result["events"]
     return {
