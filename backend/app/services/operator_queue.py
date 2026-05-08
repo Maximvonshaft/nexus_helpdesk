@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -15,7 +16,9 @@ from ..operator_models import OperatorTask
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation
 from .audit_service import log_admin_audit
-from .webchat_ai_turn_service import write_webchat_event
+from .webchat_ai_turn_service import safe_write_webchat_event
+
+LOGGER = logging.getLogger("nexusdesk")
 
 TERMINAL_STATUSES = {"resolved", "dropped", "replayed", "replay_failed", "cancelled"}
 SENSITIVE_KEYS = {
@@ -265,13 +268,28 @@ def _write_webchat_handoff_event(
         payload["note"] = _safe_note(note)
     if replay_result is not None:
         payload["replay_result"] = replay_result
-    write_webchat_event(
-        db,
-        conversation_id=row.webchat_conversation_id,
-        ticket_id=row.ticket_id,
-        event_type=f"handoff.{action}",
-        payload=payload,
-    )
+    event_type = f"handoff.{action}"
+    try:
+        safe_write_webchat_event(
+            db,
+            conversation_id=row.webchat_conversation_id,
+            ticket_id=row.ticket_id,
+            event_type=event_type,
+            payload=payload,
+        )
+    except Exception as exc:  # defensive: monkeypatched safe writer must not break source transition
+        LOGGER.warning(
+            "operator_queue_webchat_event_write_failed",
+            extra={
+                "event_payload": {
+                    "error_type": type(exc).__name__,
+                    "event_type": event_type,
+                    "operator_task_id": row.id,
+                    "conversation_id": row.webchat_conversation_id,
+                    "ticket_id": row.ticket_id,
+                }
+            },
+        )
 
 
 def _log_operator_audit(
