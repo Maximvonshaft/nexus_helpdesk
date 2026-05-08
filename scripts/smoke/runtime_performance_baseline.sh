@@ -15,8 +15,9 @@ info() {
   echo "[runtime-smoke] $*"
 }
 
-case " ${*:-} " in
-  *" down "*|*" restart "*|*" rm "*|*" kill "*|*|*" prune "*)
+args=" ${*:-} "
+case "$args" in
+  *" down "*|*" restart "*|*" rm "*|*" kill "*|*" prune "*)
     fail "destructive docker action detected; this smoke is read-only only"
     ;;
 esac
