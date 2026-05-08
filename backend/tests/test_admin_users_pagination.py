@@ -41,7 +41,7 @@ def make_user(db, username: str, role=UserRole.agent, active: bool = True):
     row = User(
         username=username,
         display_name=username,
-        email=f"{username}@example.test",
+        email=f"{username}@invalid.test",
         password_hash="x",
         role=role,
         is_active=active,
@@ -57,8 +57,8 @@ def test_admin_users_default_limit_cursor_and_no_overlap(db_session):
         make_user(db_session, f"agent{idx:03d}", UserRole.agent)
     db_session.commit()
 
-    first = list_admin_users_paginated(db_session, current_user=admin)
-    second = list_admin_users_paginated(db_session, current_user=admin, cursor=int(first["next_cursor"]))
+    first = list_admin_users_paginated(db_session, current_user=admin, limit=50, cursor=None)
+    second = list_admin_users_paginated(db_session, current_user=admin, limit=50, cursor=int(first["next_cursor"]))
 
     assert len(first["items"]) == 50
     assert first["has_more"] is True
@@ -73,7 +73,7 @@ def test_admin_users_limit_cap_and_capability_override_preload(db_session):
     db_session.add(UserCapabilityOverride(user_id=agent.id, capability="runtime.manage", allowed=True))
     db_session.commit()
 
-    result = list_admin_users_paginated(db_session, current_user=admin, limit=500)
+    result = list_admin_users_paginated(db_session, current_user=admin, limit=500, cursor=None)
 
     assert result["filters"]["limit"] == 100
     serialized_agent = next(item for item in result["items"] if item["username"] == "agent")
@@ -85,8 +85,8 @@ def test_admin_users_legacy_is_bounded_and_inactive_contract(db_session):
     inactive = make_user(db_session, "inactive", UserRole.agent, active=False)
     db_session.commit()
 
-    modern = list_admin_users_paginated(db_session, current_user=admin)
-    legacy = list_admin_users_paginated(db_session, current_user=admin, legacy=True)
+    modern = list_admin_users_paginated(db_session, current_user=admin, limit=50, cursor=None)
+    legacy = list_admin_users_paginated(db_session, current_user=admin, limit=50, cursor=None, legacy=True)
 
     assert inactive.id not in {item["id"] for item in modern["items"]}
     assert inactive.id in {item["id"] for item in legacy}
@@ -99,6 +99,6 @@ def test_admin_users_agent_forbidden(db_session):
     db_session.commit()
 
     with pytest.raises(HTTPException) as exc:
-        list_admin_users_paginated(db_session, current_user=agent)
+        list_admin_users_paginated(db_session, current_user=agent, limit=50, cursor=None)
 
     assert exc.value.status_code == 403
