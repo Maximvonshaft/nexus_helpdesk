@@ -114,6 +114,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
+export type TicketTimelinePage = {
+  items: Array<Record<string, unknown>>
+  next_cursor: string | null
+  has_more: boolean
+}
+
 export const api = {
   login: (username: string, password: string) => request<{access_token: string; user: AuthUser}>('/api/auth/login', {
     method: 'POST',
@@ -121,7 +127,7 @@ export const api = {
   }),
   me: () => request<AuthUser>('/api/auth/me'),
 
-  adminUsers: () => request<AdminUser[]>('/api/admin/users'),
+  adminUsers: () => request<AdminUser[]>('/api/admin/users?legacy=true'),
   createUser: (payload: Record<string, unknown>) => request<AdminUser>('/api/admin/users', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -142,11 +148,18 @@ export const api = {
   liteMeta: () => request<LiteMeta>('/api/lite/meta'),
   cases: (params?: { q?: string; status?: string }) => {
     const search = new URLSearchParams()
+    search.set('legacy', 'true')
     if (params?.q) search.set('q', params.q)
     if (params?.status) search.set('status', params.status)
-    return request<CaseListItem[]>(`/api/lite/cases${search.toString() ? `?${search.toString()}` : ''}`)
+    return request<CaseListItem[]>(`/api/lite/cases?${search.toString()}`)
   },
-  caseDetail: (ticketId: number) => request<CaseDetail>(`/api/tickets/${ticketId}`),
+  caseDetail: (ticketId: number) => request<CaseDetail>(`/api/tickets/${ticketId}/summary`),
+  ticketTimeline: (ticketId: number, params?: { cursor?: string | null; limit?: number }) => {
+    const search = new URLSearchParams()
+    search.set('limit', String(params?.limit ?? 50))
+    if (params?.cursor) search.set('cursor', params.cursor)
+    return request<TicketTimelinePage>(`/api/tickets/${ticketId}/timeline?${search.toString()}`)
+  },
   workflowUpdate: (ticketId: number, payload: unknown) => request<CaseDetail>(`/api/lite/cases/${ticketId}/workflow-update`, {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -212,8 +225,8 @@ export const api = {
   jobs: () => request<BackgroundJob[]>('/api/admin/jobs?limit=50'),
   consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
 
-  webchatConversations: () => request<WebchatConversation[]>('/api/webchat/admin/conversations'),
-  webchatThread: (ticketId: number) => request<WebchatThread>(`/api/webchat/admin/tickets/${ticketId}/thread`),
+  webchatConversations: (init?: RequestInit) => request<WebchatConversation[]>('/api/webchat/admin/conversations', init),
+  webchatThread: (ticketId: number, init?: RequestInit) => request<WebchatThread>(`/api/webchat/admin/tickets/${ticketId}/thread`, init),
   webchatReply: (ticketId: number, payload: { body: string; has_fact_evidence?: boolean; confirm_review?: boolean }) => request<WebchatReplyResult>(`/api/webchat/admin/tickets/${ticketId}/reply`, {
     method: 'POST',
     body: JSON.stringify(payload),
