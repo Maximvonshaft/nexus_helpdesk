@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, inspect, or_, select, text
+from sqlalchemy import and_, func, inspect, or_, select, text
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -296,35 +296,54 @@ def _older_than_cursor(item: dict[str, Any], cursor_key: tuple[datetime, int, in
     return cursor_key is None or _item_key(item) < cursor_key
 
 
-def _base_timeline_query(query, model, ticket_id: int, cursor_key: tuple[datetime, int, int] | None, limit: int):
-    if cursor_key is not None:
-        query = query.filter(or_(model.created_at <= cursor_key[0], model.created_at.is_(None)))
+def _cursor_predicate(model, source_type: str, cursor_key: tuple[datetime, int, int] | None):
+    if cursor_key is None:
+        return None
+
+    cursor_created_at, cursor_source_order_key, cursor_source_id = cursor_key
+    cursor_source_order = -cursor_source_order_key
+    source_order = SOURCE_ORDER[source_type]
+
+    if source_order < cursor_source_order:
+        predicate = model.created_at < cursor_created_at
+    elif source_order == cursor_source_order:
+        predicate = or_(model.created_at < cursor_created_at, and_(model.created_at == cursor_created_at, model.id < cursor_source_id))
+    else:
+        predicate = or_(model.created_at < cursor_created_at, model.created_at == cursor_created_at)
+
+    return or_(predicate, model.created_at.is_(None))
+
+
+def _base_timeline_query(query, model, source_type: str, ticket_id: int, cursor_key: tuple[datetime, int, int] | None, limit: int):
+    predicate = _cursor_predicate(model, source_type, cursor_key)
+    if predicate is not None:
+        query = query.filter(predicate)
     return query.filter(model.ticket_id == ticket_id).order_by(model.created_at.desc(), model.id.desc()).limit(limit + 1).all()
 
 
 def _timeline_items(db: Session, ticket_id: int, cursor_key: tuple[datetime, int, int] | None, limit: int) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for row in _base_timeline_query(db.query(TicketComment), TicketComment, ticket_id, cursor_key, limit):
+    for row in _base_timeline_query(db.query(TicketComment), TicketComment, "comment", ticket_id, cursor_key, limit):
         item = {"source_type": "comment", "source_id": row.id, "id": f"comment:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "visibility": _value(row.visibility), "author_id": row.author_id}
         if _older_than_cursor(item, cursor_key):
             items.append(item)
-    for row in _base_timeline_query(db.query(TicketInternalNote), TicketInternalNote, ticket_id, cursor_key, limit):
+    for row in _base_timeline_query(db.query(TicketInternalNote), TicketInternalNote, "internal_note", ticket_id, cursor_key, limit):
         item = {"source_type": "internal_note", "source_id": row.id, "id": f"internal_note:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "visibility": "internal", "author_id": row.author_id}
         if _older_than_cursor(item, cursor_key):
             items.append(item)
-    for row in _base_timeline_query(db.query(TicketOutboundMessage), TicketOutboundMessage, ticket_id, cursor_key, limit):
+    for row in _base_timeline_query(db.query(TicketOutboundMessage), TicketOutboundMessage, "outbound_message", ticket_id, cursor_key, limit):
         item = {"source_type": "outbound_message", "source_id": row.id, "id": f"outbound_message:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "status": _value(row.status), "channel": _value(row.channel), "created_by": row.created_by}
         if _older_than_cursor(item, cursor_key):
             items.append(item)
-    for row in _base_timeline_query(db.query(TicketAIIntake), TicketAIIntake, ticket_id, cursor_key, limit):
+    for row in _base_timeline_query(db.query(TicketAIIntake), TicketAIIntake, "ai_intake", ticket_id, cursor_key, limit):
         item = {"source_type": "ai_intake", "source_id": row.id, "id": f"ai_intake:{row.id}", "created_at": _dt(row.created_at), "summary": row.summary, "classification": row.classification, "confidence": row.confidence}
         if _older_than_cursor(item, cursor_key):
             items.append(item)
-    for row in _base_timeline_query(db.query(TicketEvent), TicketEvent, ticket_id, cursor_key, limit):
+    for row in _base_timeline_query(db.query(TicketEvent), TicketEvent, "ticket_event", ticket_id, cursor_key, limit):
         item = {"source_type": "ticket_event", "source_id": row.id, "id": f"ticket_event:{row.id}", "created_at": _dt(row.created_at), "event_type": _value(row.event_type), "field_name": row.field_name, "note": row.note}
         if _older_than_cursor(item, cursor_key):
             items.append(item)
-    for row in _base_timeline_query(db.query(WebchatEvent), WebchatEvent, ticket_id, cursor_key, limit):
+    for row in _base_timeline_query(db.query(WebchatEvent), WebchatEvent, "webchat_event", ticket_id, cursor_key, limit):
         item = {"source_type": "webchat_event", "source_id": row.id, "id": f"webchat_event:{row.id}", "created_at": _dt(row.created_at), "event_type": row.event_type}
         if _older_than_cursor(item, cursor_key):
             items.append(item)
