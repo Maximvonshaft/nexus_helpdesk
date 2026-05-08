@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from sqlalchemy import and_, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState
@@ -193,6 +194,30 @@ def _active_query(db: Session, *, source_type: str, task_type: str):
     )
 
 
+def _find_existing_active_task(
+    db: Session,
+    *,
+    source_type: str,
+    task_type: str,
+    source_id: str | None = None,
+    webchat_conversation_id: int | None = None,
+    unresolved_event_id: int | None = None,
+) -> OperatorTask | None:
+    query = _active_query(db, source_type=source_type, task_type=task_type)
+    if source_id:
+        query = query.filter(OperatorTask.source_id == source_id)
+    if unresolved_event_id is not None:
+        query = query.filter(OperatorTask.unresolved_event_id == unresolved_event_id)
+    if webchat_conversation_id is not None:
+        query = query.filter(OperatorTask.webchat_conversation_id == webchat_conversation_id)
+    return query.order_by(OperatorTask.id.desc()).first()
+
+
+def _ensure_task_mutable(row: OperatorTask) -> None:
+    if row.status in TERMINAL_STATUSES:
+        raise OperatorQueueError(409, "operator_task_terminal", "operator task is terminal")
+
+
 def create_operator_task(
     db: Session,
     *,
@@ -207,14 +232,14 @@ def create_operator_task(
     payload: dict[str, Any] | None = None,
     note: str | None = None,
 ) -> tuple[OperatorTask, bool]:
-    query = _active_query(db, source_type=source_type, task_type=task_type)
-    if source_id:
-        query = query.filter(OperatorTask.source_id == source_id)
-    if unresolved_event_id is not None:
-        query = query.filter(OperatorTask.unresolved_event_id == unresolved_event_id)
-    if webchat_conversation_id is not None:
-        query = query.filter(OperatorTask.webchat_conversation_id == webchat_conversation_id)
-    existing = query.order_by(OperatorTask.id.desc()).first()
+    existing = _find_existing_active_task(
+        db,
+        source_type=source_type,
+        task_type=task_type,
+        source_id=source_id,
+        webchat_conversation_id=webchat_conversation_id,
+        unresolved_event_id=unresolved_event_id,
+    )
     if existing:
         return existing, False
 
@@ -232,8 +257,22 @@ def create_operator_task(
         created_at=utc_now(),
         updated_at=utc_now(),
     )
-    db.add(row)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+    except IntegrityError as exc:
+        existing = _find_existing_active_task(
+            db,
+            source_type=source_type,
+            task_type=task_type,
+            source_id=source_id,
+            webchat_conversation_id=webchat_conversation_id,
+            unresolved_event_id=unresolved_event_id,
+        )
+        if existing:
+            return existing, False
+        raise OperatorQueueError(409, "operator_task_conflict", "operator task already exists") from exc
     if webchat_conversation_id and ticket_id:
         _write_webchat_handoff_event(
             db,
@@ -510,6 +549,7 @@ def transition_operator_task(
     if action not in {"assign", "resolve", "drop"}:
         raise OperatorQueueError(400, "unsupported_operator_task_action", "unsupported operator task action")
     row = _get_task(db, task_id)
+    _ensure_task_mutable(row)
     old_task = _task_snapshot(row)
     now = utc_now()
     source_transition: dict[str, Any] = {}
@@ -547,6 +587,7 @@ def replay_operator_task(
     replay_func: Callable[..., bool],
 ) -> tuple[OperatorTask, dict[str, Any]]:
     row = _get_task(db, task_id)
+    _ensure_task_mutable(row)
     if not row.unresolved_event_id:
         raise OperatorQueueError(404, "unresolved_event_missing", "unresolved event missing")
     event_row = db.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == row.unresolved_event_id).first()

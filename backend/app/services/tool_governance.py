@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from ..db import SessionLocal
 from ..tool_models import ToolCallLog, ToolRegistry
 from ..utils.time import utc_now
+from .error_sanitizer import redact_sensitive_error_text
 from .observability import record_tool_call_metric
 
 LOGGER = logging.getLogger("nexusdesk")
@@ -284,6 +285,67 @@ def _error_code_for(status: str, error_code: str | None, error_message: str | No
     return None
 
 
+def _insert_tool_call_audit(
+    session: Session,
+    *,
+    tool_name: str,
+    provider: str,
+    resolved_type: str,
+    input_payload: Any,
+    output_payload: Any,
+    safe_status: str,
+    error_code: str | None,
+    error_message: str | None,
+    elapsed_ms: int | None,
+    timeout_ms: int | None,
+    conversation_id: str | None,
+    webchat_conversation_id: int | None,
+    ticket_id: int | None,
+    ai_turn_id: int | None,
+    background_job_id: int | None,
+    actor_type: str | None,
+    actor_id: int | None,
+    request_id: str | None,
+    policy_decision: ToolPolicyDecision | None,
+) -> None:
+    get_or_create_tool_registry_entry(
+        session,
+        tool_name=tool_name,
+        provider=provider,
+        tool_type=resolved_type,
+        default_timeout_ms=timeout_ms,
+        max_timeout_ms=timeout_ms,
+        description=json.dumps(policy_decision.as_payload(), ensure_ascii=False) if policy_decision else None,
+    )
+    resolved_error_code = _error_code_for(safe_status, error_code, error_message)
+    row = ToolCallLog(
+        tool_name=(tool_name or "unknown_tool")[:160],
+        provider=(provider or "openclaw")[:80],
+        tool_type=resolved_type,
+        conversation_id=conversation_id[:160] if conversation_id else None,
+        webchat_conversation_id=webchat_conversation_id,
+        ticket_id=ticket_id,
+        ai_turn_id=ai_turn_id,
+        background_job_id=background_job_id,
+        actor_type=actor_type[:80] if actor_type else None,
+        actor_id=actor_id,
+        request_id=request_id[:160] if request_id else None,
+        input_hash=_hash_value(input_payload) if input_payload is not None else None,
+        input_summary=summarize_input_safe({"payload": input_payload, "policy": policy_decision.as_payload() if policy_decision else None}) if input_payload is not None or policy_decision else None,
+        output_hash=_hash_value(output_payload) if output_payload is not None else None,
+        output_summary=summarize_output_safe(output_payload) if output_payload is not None else None,
+        status=safe_status,
+        error_code=resolved_error_code,
+        error_message=redact_sensitive_error_text(error_message, error_code=resolved_error_code, error_class=error_code),
+        elapsed_ms=elapsed_ms,
+        timeout_ms=timeout_ms,
+        redaction_applied=True,
+        created_at=utc_now(),
+    )
+    session.add(row)
+    session.flush()
+
+
 def record_tool_call(
     *,
     tool_name: str,
@@ -320,52 +382,63 @@ def record_tool_call(
     owns_session = db is None
     session = db or SessionLocal()
     try:
-        get_or_create_tool_registry_entry(
-            session,
-            tool_name=tool_name,
-            provider=provider,
-            tool_type=resolved_type,
-            default_timeout_ms=timeout_ms,
-            max_timeout_ms=timeout_ms,
-            description=json.dumps(policy_decision.as_payload(), ensure_ascii=False) if policy_decision else None,
-        )
-        row = ToolCallLog(
-            tool_name=(tool_name or "unknown_tool")[:160],
-            provider=(provider or "openclaw")[:80],
-            tool_type=resolved_type,
-            conversation_id=conversation_id[:160] if conversation_id else None,
-            webchat_conversation_id=webchat_conversation_id,
-            ticket_id=ticket_id,
-            ai_turn_id=ai_turn_id,
-            background_job_id=background_job_id,
-            actor_type=actor_type[:80] if actor_type else None,
-            actor_id=actor_id,
-            request_id=request_id[:160] if request_id else None,
-            input_hash=_hash_value(input_payload) if input_payload is not None else None,
-            input_summary=summarize_input_safe({"payload": input_payload, "policy": policy_decision.as_payload() if policy_decision else None}) if input_payload is not None or policy_decision else None,
-            output_hash=_hash_value(output_payload) if output_payload is not None else None,
-            output_summary=summarize_output_safe(output_payload) if output_payload is not None else None,
-            status=safe_status,
-            error_code=_error_code_for(safe_status, error_code, error_message),
-            error_message=(error_message or "")[:500] or None,
-            elapsed_ms=elapsed_ms,
-            timeout_ms=timeout_ms,
-            redaction_applied=True,
-            created_at=utc_now(),
-        )
-        session.add(row)
         if owns_session:
+            _insert_tool_call_audit(
+                session,
+                tool_name=tool_name,
+                provider=provider,
+                resolved_type=resolved_type,
+                input_payload=input_payload,
+                output_payload=output_payload,
+                safe_status=safe_status,
+                error_code=error_code,
+                error_message=error_message,
+                elapsed_ms=elapsed_ms,
+                timeout_ms=timeout_ms,
+                conversation_id=conversation_id,
+                webchat_conversation_id=webchat_conversation_id,
+                ticket_id=ticket_id,
+                ai_turn_id=ai_turn_id,
+                background_job_id=background_job_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                request_id=request_id,
+                policy_decision=policy_decision,
+            )
             session.commit()
         else:
-            session.flush()
+            with session.begin_nested():
+                _insert_tool_call_audit(
+                    session,
+                    tool_name=tool_name,
+                    provider=provider,
+                    resolved_type=resolved_type,
+                    input_payload=input_payload,
+                    output_payload=output_payload,
+                    safe_status=safe_status,
+                    error_code=error_code,
+                    error_message=error_message,
+                    elapsed_ms=elapsed_ms,
+                    timeout_ms=timeout_ms,
+                    conversation_id=conversation_id,
+                    webchat_conversation_id=webchat_conversation_id,
+                    ticket_id=ticket_id,
+                    ai_turn_id=ai_turn_id,
+                    background_job_id=background_job_id,
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    request_id=request_id,
+                    policy_decision=policy_decision,
+                )
     except Exception as exc:  # pragma: no cover - audit-only must not break runtime
-        try:
-            session.rollback()
-        except Exception:
-            pass
+        if owns_session:
+            try:
+                session.rollback()
+            except Exception:
+                pass
         LOGGER.warning(
             "tool_governance_audit_failed",
-            extra={"event_payload": {"tool_name": tool_name, "provider": provider, "status": safe_status, "error": str(exc)[:300]}},
+            extra={"event_payload": {"tool_name": tool_name, "provider": provider, "status": safe_status, "error": redact_sensitive_error_text(str(exc), error_code=type(exc).__name__, error_class=type(exc).__name__)}},
         )
     finally:
         try:
