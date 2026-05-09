@@ -45,6 +45,7 @@ jobs:
             backend/tests/test_tool_governance.py \
             backend/tests/test_webchat_events.py \
             backend/tests/test_webchat_events_realdb.py \
+            backend/tests/test_webchat_events_rbac_realdb.py \
             backend/tests/test_webchat_polling_write_throttle.py \
             backend/tests/test_webchat_event_write_isolation.py \
             backend/tests/test_webchat_admin_conversations_query_count.py \
