@@ -1,6 +1,17 @@
 from __future__ import annotations
 
-from app.services.observability import record_db_query, sql_statement_category
+import os
+import sys
+from pathlib import Path
+
+os.environ.setdefault("APP_ENV", "development")
+os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/db_query_timing_tests.db")
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT.parent))
+
+from app.services.observability import record_db_query, sql_statement_category  # noqa: E402
 
 
 def test_sql_statement_category_is_low_cardinality() -> None:
