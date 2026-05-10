@@ -29,7 +29,9 @@ class WebchatFastReplyResult:
 
     def to_response(self) -> dict[str, Any]:
         payload = asdict(self)
-        # Keep the public response compact while preserving explicit false/null contract.
+        # Internal handoff guidance belongs in the ticket snapshot only, not the
+        # browser response. The customer-visible reply remains AI-generated.
+        payload.pop("recommended_agent_action", None)
         return payload
 
 
