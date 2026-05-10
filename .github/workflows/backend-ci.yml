@@ -56,6 +56,14 @@ jobs:
             backend/tests/test_observability_metrics.py \
             backend/tests/test_worker_metrics.py
 
+      - name: Run WebChat fast reply backend tests
+        run: |
+          set -Eeuo pipefail
+          timeout 600 pytest -q \
+            backend/tests/test_webchat_fast_reply_output_parser.py \
+            backend/tests/test_webchat_openclaw_responses_client.py \
+            backend/tests/test_webchat_fast_reply_api.py
+
       - name: Run webchat performance and security tests
         run: |
           set -Eeuo pipefail
