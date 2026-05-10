@@ -56,15 +56,30 @@ jobs:
             backend/tests/test_webchat_event_write_isolation.py \
             backend/tests/test_webchat_admin_conversations_query_count.py
 
-      - name: Run pagination and ticket summary tests
+      - name: Run admin users pagination tests
         run: |
           set -Eeuo pipefail
-          timeout 600 pytest -q \
-            backend/tests/test_admin_users_pagination.py \
-            backend/tests/test_lite_cases_pagination.py \
-            backend/tests/test_ticket_search_query.py \
-            backend/tests/test_ticket_timeline_pagination.py \
-            backend/tests/test_ticket_detail_summary.py
+          timeout 180 pytest -q backend/tests/test_admin_users_pagination.py
+
+      - name: Run lite cases pagination tests
+        run: |
+          set -Eeuo pipefail
+          timeout 180 pytest -q backend/tests/test_lite_cases_pagination.py
+
+      - name: Run ticket search query tests
+        run: |
+          set -Eeuo pipefail
+          timeout 180 pytest -q backend/tests/test_ticket_search_query.py
+
+      - name: Run ticket timeline pagination tests
+        run: |
+          set -Eeuo pipefail
+          timeout 180 pytest -q backend/tests/test_ticket_timeline_pagination.py
+
+      - name: Run ticket detail summary tests
+        run: |
+          set -Eeuo pipefail
+          timeout 180 pytest -q backend/tests/test_ticket_detail_summary.py
 
       - name: Run operator queue tests
         run: |
