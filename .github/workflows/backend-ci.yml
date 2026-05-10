@@ -45,6 +45,16 @@ jobs:
             backend/tests/test_round27_frontend_hardening.py \
             backend/tests/test_tool_governance.py
 
+      - name: Run runtime OpenClaw and observability tests
+        run: |
+          set -Eeuo pipefail
+          timeout 600 pytest -q \
+            backend/tests/test_openclaw_bridge_resilience.py \
+            backend/tests/test_openclaw_unresolved_idempotency.py \
+            backend/tests/test_worker_daemon_readiness.py \
+            backend/tests/test_db_query_timing.py \
+            backend/tests/test_worker_metrics.py
+
       - name: Run webchat performance and security tests
         run: |
           set -Eeuo pipefail
