@@ -1,7 +1,18 @@
 from __future__ import annotations
 
+import os
+import sys
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
+
+os.environ.setdefault("APP_ENV", "development")
+os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_voice_api_tests.db")
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT.parent))
 
 from app.auth_service import create_access_token
 from app.db import Base, SessionLocal, engine
