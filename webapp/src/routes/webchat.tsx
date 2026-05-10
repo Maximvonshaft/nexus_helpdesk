@@ -90,14 +90,20 @@ function MessageCard({ msg }: { msg: WebchatMessage }) {
   )
 }
 
-async function fetchWebchatEvents(ticketId: number, afterId: number) {
+async function fetchWebchatEvents(ticketId: number, afterId: number, signal?: AbortSignal) {
   const token = getToken()
   const params = new URLSearchParams({ after_id: String(afterId), limit: '50', wait_ms: '1500' })
   const response = await fetch(`/api/webchat/admin/tickets/${ticketId}/events?${params.toString()}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
+    signal,
   })
   if (!response.ok) throw new Error(`events_poll_failed:${response.status}`)
   return response.json() as Promise<{ events: { id: number; event_type: string }[]; last_event_id: number }>
+}
+
+function backoffMs(failures: number, baseMs: number, maxMs: number) {
+  if (failures <= 0) return baseMs
+  return Math.min(maxMs, baseMs * 2 ** Math.min(failures, 4))
 }
 
 function WebchatInboxPage() {
@@ -107,13 +113,21 @@ function WebchatInboxPage() {
   const [reply, setReply] = useState('')
   const [hasFactEvidence, setHasFactEvidence] = useState(false)
   const [confirmReview, setConfirmReview] = useState(false)
+  const [eventPollFailures, setEventPollFailures] = useState(0)
+  const [conversationPollFailures, setConversationPollFailures] = useState(0)
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
 
   const conversations = useQuery({
     queryKey: ['webchatConversations'],
-    queryFn: api.webchatConversations,
-    refetchInterval: 10000,
+    queryFn: ({ signal }) => api.webchatConversations({ signal }),
+    refetchInterval: backoffMs(conversationPollFailures, 10000, 60000),
+    retry: false,
   })
+
+  useEffect(() => {
+    if (conversations.isSuccess) setConversationPollFailures(0)
+    if (conversations.isError) setConversationPollFailures((value) => Math.min(value + 1, 6))
+  }, [conversations.isSuccess, conversations.isError, conversations.dataUpdatedAt, conversations.errorUpdatedAt])
 
   useEffect(() => {
     if (!selectedTicketId && conversations.data?.length) {
@@ -123,22 +137,29 @@ function WebchatInboxPage() {
 
   useEffect(() => {
     setLastEventId(0)
+    setEventPollFailures(0)
   }, [selectedTicketId])
 
   const thread = useQuery({
     queryKey: ['webchatThread', selectedTicketId],
-    queryFn: () => api.webchatThread(selectedTicketId as number),
+    queryFn: ({ signal }) => api.webchatThread(selectedTicketId as number, { signal }),
     enabled: !!selectedTicketId,
     refetchInterval: 7000,
+    retry: false,
   })
 
   const events = useQuery({
     queryKey: ['webchatEvents', selectedTicketId, lastEventId],
-    queryFn: () => fetchWebchatEvents(selectedTicketId as number, lastEventId),
+    queryFn: ({ signal }) => fetchWebchatEvents(selectedTicketId as number, lastEventId, signal),
     enabled: !!selectedTicketId,
-    refetchInterval: 2500,
+    refetchInterval: backoffMs(eventPollFailures, 2500, 30000),
     retry: false,
   })
+
+  useEffect(() => {
+    if (events.isSuccess) setEventPollFailures(0)
+    if (events.isError) setEventPollFailures((value) => Math.min(value + 1, 6))
+  }, [events.isSuccess, events.isError, events.dataUpdatedAt, events.errorUpdatedAt])
 
   useEffect(() => {
     if (!selectedTicketId || !events.data?.events?.length) return
@@ -190,7 +211,7 @@ function WebchatInboxPage() {
         <CardHeader title="Speedaf Webchat 嵌入代码" subtitle="visitor 端无需登录；admin 后台需要登录。生产环境请替换为正式域名，并配置 WEBCHAT_ALLOWED_ORIGINS。" />
         <CardBody>
           <pre className="code-block"><code>{snippet}</code></pre>
-          <div className="section-subtitle">Realtime-lite 使用 after_id events JSON long-poll；如事件接口不可用，仍保留 7s/10s polling fallback。</div>
+          <div className="section-subtitle">Realtime-lite 使用 after_id events JSON long-poll；如事件接口不可用，仍保留 7s/10s polling fallback。连续失败时自动 backoff，成功后恢复。</div>
         </CardBody>
       </Card>
 
