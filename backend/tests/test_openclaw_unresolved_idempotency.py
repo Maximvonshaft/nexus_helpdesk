@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 from pathlib import Path
@@ -101,6 +102,11 @@ def test_resolved_unresolved_event_does_not_block_new_active_row(db_session):
 
 def test_openclaw_bridge_live_function_is_rebound_to_hash_store(db_session):
     import app.services.openclaw_bridge as openclaw_bridge
+
+    assert openclaw_bridge.persist_unresolved_openclaw_event is persist_unresolved_openclaw_event_by_hash
+    live_source = inspect.getsource(openclaw_bridge.persist_unresolved_openclaw_event)
+    assert "payload_hash" in live_source
+    assert "OpenClawUnresolvedEvent.payload_json == payload_json" not in live_source
 
     payload_a = {"z": 1, "a": {"b": 2}}
     payload_b = {"a": {"b": 2}, "z": 1}
