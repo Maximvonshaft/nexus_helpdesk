@@ -352,8 +352,10 @@ def _ensure_final_voice_call_message(db: Session, *, session: WebchatVoiceSessio
     if existing is not None:
         return
     duration_seconds = None
-    if session.started_at and session.ended_at:
-        duration_seconds = max(0, int((session.ended_at - session.started_at).total_seconds()))
+    started_at = _ensure_aware_utc(session.started_at)
+    ended_at = _ensure_aware_utc(session.ended_at)
+    if started_at and ended_at:
+        duration_seconds = max(0, int((ended_at - started_at).total_seconds()))
     body = "Voice call ended" if session.status == "ended" else "Voice call cancelled"
     if duration_seconds is not None:
         body = f"{body} · {duration_seconds}s"
