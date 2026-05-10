@@ -4,6 +4,7 @@ import { Route as LoginRoute } from '@/routes/login'
 import { Route as IndexRoute } from '@/routes/index'
 import { Route as WorkspaceRoute } from '@/routes/workspace'
 import { Route as WebchatRoute } from '@/routes/webchat'
+import { Route as WebchatVoiceRoute } from '@/routes/webchat-voice'
 import { Route as BulletinsRoute } from '@/routes/bulletins'
 import { Route as AIControlRoute } from '@/routes/ai-control'
 import { Route as ControlPlaneRoute } from '@/routes/control-plane'
@@ -16,6 +17,7 @@ const routeTree = RootRoute.addChildren([
   IndexRoute,
   WorkspaceRoute,
   WebchatRoute,
+  WebchatVoiceRoute,
   BulletinsRoute,
   AIControlRoute,
   ControlPlaneRoute,
