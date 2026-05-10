@@ -74,6 +74,8 @@ class WebchatFastSettings:
             raise RuntimeError("WEBCHAT_FAST_AI_TIMEOUT_MS must be between 500 and WEBCHAT_FAST_AI_MAX_TIMEOUT_MS")
         if self.max_timeout_ms > 5000:
             raise RuntimeError("WEBCHAT_FAST_AI_MAX_TIMEOUT_MS must not exceed 5000")
+        if not self.enabled:
+            return
         if self.app_env == "production":
             if self.openclaw_responses_token:
                 raise RuntimeError("OPENCLAW_RESPONSES_TOKEN is forbidden in production; use OPENCLAW_RESPONSES_TOKEN_FILE")
