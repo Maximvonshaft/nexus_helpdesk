@@ -25,10 +25,13 @@
       <h1>Speedaf customer support</h1>
       <p>This page simulates a customer website with the Speedaf Support webchat widget installed.</p>
       <p>Open the chat in the bottom-right corner and send a message. Speedy will reply inside the widget.</p>
+      <p>If <code>WEBCHAT_VOICE_ENABLED=true</code>, a separate orange voice button appears. It creates a mock WebChat Voice session and opens the dedicated voice page. It does not request microphone access or load WebRTC in this phase.</p>
       <p>Snippet:</p>
-      <pre><code>&lt;script src="/webchat/widget.js" data-tenant="demo" data-channel="website" data-title="Speedaf Support" data-subtitle="Usually replies instantly" data-assistant-name="Speedy" async&gt;&lt;/script&gt;</code></pre>
+      <pre><code>&lt;script src="/webchat/widget.js" data-tenant="demo" data-channel="website" data-title="Speedaf Support" data-subtitle="Usually replies instantly" data-assistant-name="Speedy" async&gt;&lt;/script&gt;
+&lt;script src="/webchat/voice-entry.js" data-tenant="demo" data-channel="website" data-title="Speedaf Voice Call" data-voice-label="Voice call" async&gt;&lt;/script&gt;</code></pre>
     </div>
   </main>
   <script src="/webchat/widget.js" data-tenant="demo" data-channel="website" data-title="Speedaf Support" data-subtitle="Usually replies instantly" data-assistant-name="Speedy" async></script>
+  <script src="/webchat/voice-entry.js" data-tenant="demo" data-channel="website" data-title="Speedaf Voice Call" data-voice-label="Voice call" async></script>
 </body>
 </html>
