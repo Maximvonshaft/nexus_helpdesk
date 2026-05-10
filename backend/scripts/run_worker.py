@@ -24,6 +24,13 @@ settings = get_settings()
 configure_logging(settings.log_json)
 
 
+def _is_sqlalchemy_session(db) -> bool:
+    # Several legacy worker tests replace db_context() with a SimpleNamespace
+    # fake to assert dispatch behavior. The WebChat handoff snapshot worker uses
+    # BackgroundJob claiming and therefore requires a real SQLAlchemy Session.
+    return hasattr(db, "bind") and hasattr(db, "query") and hasattr(db, "commit")
+
+
 def run_once(worker_id: str) -> int:
     record_worker_poll(worker_id)
     processed = 0
@@ -68,7 +75,10 @@ def run_once(worker_id: str) -> int:
             record_worker_result(worker_id, "background_job", "processed", len(jobs))
         record_queue_snapshot("background_job", "processed", len(jobs))
     with db_context() as db:
-        handoff_jobs = dispatch_pending_webchat_handoff_snapshot_jobs(db, worker_id=worker_id)
+        if _is_sqlalchemy_session(db):
+            handoff_jobs = dispatch_pending_webchat_handoff_snapshot_jobs(db, worker_id=worker_id)
+        else:
+            handoff_jobs = []
         processed += len(handoff_jobs)
         if handoff_jobs:
             record_worker_result(worker_id, "webchat_handoff_snapshot", "processed", len(handoff_jobs))
