@@ -10,6 +10,8 @@ from app.settings import get_settings
 from app import models  # noqa: F401
 from app import tool_models  # noqa: F401
 from app import operator_models  # noqa: F401
+from app import webchat_models  # noqa: F401
+from app import voice_models  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
