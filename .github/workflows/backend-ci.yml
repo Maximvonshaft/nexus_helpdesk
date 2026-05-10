@@ -30,9 +30,10 @@ jobs:
       - name: Compile backend
         run: python -m compileall backend/app backend/scripts
 
-      - name: Run deterministic backend tests
+      - name: Run baseline backend tests
         run: |
-          pytest -q \
+          set -Eeuo pipefail
+          timeout 600 pytest -q \
             backend/tests/test_outbound_safety.py \
             backend/tests/test_outbound_message_semantics.py \
             backend/tests/test_round24_hardening.py \
@@ -42,18 +43,33 @@ jobs:
             backend/tests/test_round20a_rectification.py \
             backend/tests/test_round20b_legacy_frontend.py \
             backend/tests/test_round27_frontend_hardening.py \
-            backend/tests/test_tool_governance.py \
+            backend/tests/test_tool_governance.py
+
+      - name: Run webchat performance and security tests
+        run: |
+          set -Eeuo pipefail
+          timeout 600 pytest -q \
             backend/tests/test_webchat_events.py \
             backend/tests/test_webchat_events_realdb.py \
             backend/tests/test_webchat_events_rbac_realdb.py \
             backend/tests/test_webchat_polling_write_throttle.py \
             backend/tests/test_webchat_event_write_isolation.py \
-            backend/tests/test_webchat_admin_conversations_query_count.py \
+            backend/tests/test_webchat_admin_conversations_query_count.py
+
+      - name: Run pagination and ticket summary tests
+        run: |
+          set -Eeuo pipefail
+          timeout 600 pytest -q \
             backend/tests/test_admin_users_pagination.py \
             backend/tests/test_lite_cases_pagination.py \
             backend/tests/test_ticket_search_query.py \
             backend/tests/test_ticket_timeline_pagination.py \
-            backend/tests/test_ticket_detail_summary.py \
+            backend/tests/test_ticket_detail_summary.py
+
+      - name: Run operator queue tests
+        run: |
+          set -Eeuo pipefail
+          timeout 600 pytest -q \
             backend/tests/test_operator_queue.py \
             backend/tests/test_operator_queue_api.py \
             backend/tests/test_operator_queue_projection.py \
