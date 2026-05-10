@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from datetime import timezone
 from typing import Any
 from urllib.parse import urlparse
 
@@ -20,16 +21,19 @@ from .deps import get_current_user
 from ..services.background_jobs import WEBCHAT_AI_REPLY_JOB, enqueue_background_job
 from ..services.webchat_ai_reconciler import reconcile_webchat_ai_state
 from ..services.webchat_ai_turn_service import ai_snapshot, schedule_webchat_ai_turn
+from ..services.webchat_performance import (
+    admin_list_conversations_optimized,
+    list_public_messages_throttled,
+    webchat_poll_interval_ms,
+)
 from ..services.webchat_rate_limit import enforce_webchat_rate_limit
 from ..webchat_models import WebchatCardAction, WebchatConversation, WebchatMessage
 from ..webchat_schemas import WebChatActionSubmitRequest
 from ..services.webchat_service import (
     add_visitor_message,
     admin_get_thread,
-    admin_list_conversations,
     admin_reply,
     create_or_resume_conversation,
-    list_public_messages,
     submit_card_action,
 )
 
@@ -130,6 +134,23 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _ensure_aware_utc(value):
+    if value is None:
+        return None
+    if getattr(value, "tzinfo", None) is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _validate_public_conversation_token(conversation: WebchatConversation, token: str | None) -> None:
+    if not token or _hash_token(token) != conversation.visitor_token_hash:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
+    expires_at = _ensure_aware_utc(getattr(conversation, "visitor_token_expires_at", None))
+    now = _ensure_aware_utc(utc_now())
+    if expires_at is not None and now is not None and expires_at <= now:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")
+
+
 def _loads_json(value: str | None) -> Any:
     if not value:
         return None
@@ -160,6 +181,14 @@ def _message_read(row: WebchatMessage) -> dict[str, Any]:
 
 def _attach_ai_snapshot(result: dict[str, Any], conversation: WebchatConversation) -> dict[str, Any]:
     result.update(ai_snapshot(conversation))
+    return result
+
+
+def _apply_webchat_config_defaults(result: dict[str, Any]) -> dict[str, Any]:
+    config = dict(result.get("config") or {})
+    config["poll_interval_ms"] = webchat_poll_interval_ms()
+    config.setdefault("supports_after_id", True)
+    result["config"] = config
     return result
 
 
@@ -274,7 +303,7 @@ def init_webchat(payload: WebchatInitRequest, request: Request, response: Respon
     with managed_session(db):
         enforce_webchat_rate_limit(db, request, tenant_key=payload.tenant_key, conversation_id=payload.conversation_id)
         result = create_or_resume_conversation(db, safe_payload, request)
-    return result
+    return _apply_webchat_config_defaults(result)
 
 
 @router.post("/conversations/{conversation_id}/messages")
@@ -306,9 +335,10 @@ def poll_webchat_messages(conversation_id: str, request: Request, response: Resp
         conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id).first()
         if not conversation:
             raise HTTPException(status_code=404, detail="webchat conversation not found")
+        _validate_public_conversation_token(conversation, resolved_token)
         enforce_webchat_rate_limit(db, request, tenant_key=conversation.tenant_key, conversation_id=conversation_id)
         reconcile_webchat_ai_state(db, conversation_id=conversation.id)
-        result = list_public_messages(db, conversation_id, resolved_token, after_id=after_id, limit=limit)
+        result = list_public_messages_throttled(db, conversation, after_id=after_id, limit=limit)
         result = _attach_ai_snapshot(result, conversation)
     return result
 
@@ -332,13 +362,8 @@ def submit_webchat_action(conversation_id: str, payload: WebChatActionSubmitRequ
 
 
 @router.get("/admin/conversations")
-def list_webchat_conversations(limit: int = 50, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> list[dict[str, Any]]:
-    rows = admin_list_conversations(db, current_user, limit=limit)
-    for row in rows:
-        conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == row.get("conversation_id")).first()
-        if conversation:
-            row.update(ai_snapshot(conversation))
-    return rows
+def list_webchat_conversations(limit: int = Query(default=50, ge=1, le=100), db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> list[dict[str, Any]]:
+    return admin_list_conversations_optimized(db, current_user, limit=limit)
 
 
 @router.get("/admin/tickets/{ticket_id}/thread")
