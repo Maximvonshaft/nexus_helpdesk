@@ -44,7 +44,7 @@ services:
       OPENCLAW_CLI_FALLBACK_ENABLED: "false"
       REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
-      WEB_TIMEOUT: ${WEB_TIMEOUT:-60}
+      WEB_TIMEOUT: ${WEB_TIMEOUT:-30}
       DB_SLOW_QUERY_MS: ${DB_SLOW_QUERY_MS:-500}
       GIT_SHA: ${GIT_SHA:-unknown}
       BUILD_TIME: ${BUILD_TIME:-unknown}
@@ -56,12 +56,15 @@ services:
       - ../data/uploads:/app/backend/uploads
     ports:
       - "127.0.0.1:18081:8080"
-    command: >-
-      gunicorn app.main:app
-      -k uvicorn.workers.UvicornWorker
-      -w ${WEB_CONCURRENCY:-2}
-      -b 0.0.0.0:8080
-      --timeout ${WEB_TIMEOUT:-60}
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        exec gunicorn app.main:app
+        -k uvicorn.workers.UvicornWorker
+        --workers "$${WEB_CONCURRENCY:-2}"
+        --timeout "$${WEB_TIMEOUT:-30}"
+        --bind 0.0.0.0:8080
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
       interval: 30s
