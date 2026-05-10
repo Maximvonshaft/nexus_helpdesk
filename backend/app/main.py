@@ -65,6 +65,32 @@ def _migration_revision(conn: Connection) -> str | None:
         return None
 
 
+def _sanitize_exception(exc: Exception) -> dict[str, str]:
+    return {'error_type': exc.__class__.__name__}
+
+
+def _csp_connect_src() -> str:
+    raw = os.getenv('CSP_CONNECT_SRC', "'self'").strip() or "'self'"
+    tokens = [token.strip() for token in raw.split() if token.strip()]
+    if settings.app_env == 'production' and '*' in tokens:
+        return "'self'"
+    return ' '.join(tokens) if tokens else "'self'"
+
+
+def _content_security_policy() -> str:
+    return (
+        "default-src 'self'; "
+        "img-src 'self' data:; "
+        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
+        f"connect-src {_csp_connect_src()}; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
+    )
+
+
 @app.middleware('http')
 async def request_context_middleware(request: Request, call_next):
     request_id = request.headers.get(settings.request_id_header) or uuid.uuid4().hex
@@ -75,7 +101,7 @@ async def request_context_middleware(request: Request, call_next):
     except Exception as exc:
         duration_ms = stop_timer()
         record_request_metric(request.url.path, request.method, 500, duration_ms)
-        app_log_event(40, 'request_failed', request_id=request_id, method=request.method, path=request.url.path, status_code=500, duration_ms=round(duration_ms, 3), error=str(exc))
+        app_log_event(40, 'request_failed', request_id=request_id, method=request.method, path=request.url.path, status_code=500, duration_ms=round(duration_ms, 3), **_sanitize_exception(exc))
         raise
     duration_ms = stop_timer()
     record_request_metric(request.url.path, request.method, response.status_code, duration_ms)
@@ -85,7 +111,7 @@ async def request_context_middleware(request: Request, call_next):
     response.headers.setdefault('X-Frame-Options', 'DENY')
     response.headers.setdefault('Referrer-Policy', 'no-referrer')
     response.headers.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
-    response.headers.setdefault('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+    response.headers.setdefault('Content-Security-Policy', _content_security_policy())
     if request.url.path.startswith('/api/'):
         response.headers.setdefault('Cache-Control', 'no-store')
     return response
@@ -93,7 +119,7 @@ async def request_context_middleware(request: Request, call_next):
 
 @app.get('/healthz')
 def healthz():
-    return {'status': 'ok', 'env': settings.app_env, **_runtime_identity()}
+    return {'status': 'ok'}
 
 
 @app.get('/metrics')
@@ -113,12 +139,9 @@ def readyz():
         with engine.connect() as conn:
             conn.execute(text('SELECT 1'))
             migration_revision = _migration_revision(conn)
-        return {'status': 'ready', 'database': 'ok', 'migration_revision': migration_revision, **_runtime_identity()}
+        return {'status': 'ready', 'database': 'ok', 'migration_revision': migration_revision}
     except Exception as exc:
-        app_log_event(40, 'readiness_check_failed', error=str(exc))
-        # Keep the failure response deliberately minimal. Runtime identity is
-        # exposed on /healthz and successful /readyz, but not on readiness
-        # failures so the response cannot leak incidental error context.
+        app_log_event(40, 'readiness_check_failed', **_sanitize_exception(exc))
         return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error'})
 
 
@@ -151,6 +174,7 @@ if webchat_static_dir.exists():
 frontend_dir = settings.frontend_root
 assets_dir = frontend_dir / "assets"
 if frontend_dir.exists():
+    frontend_root_resolved = frontend_dir.resolve()
     if assets_dir.exists():
         app.mount('/assets', StaticFiles(directory=str(assets_dir)), name='frontend_assets')
 
@@ -160,10 +184,14 @@ if frontend_dir.exists():
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
         if full_path.startswith("webchat/") or full_path.startswith("static/webchat/"):
             return JSONResponse(status_code=404, content={"detail": "Webchat asset not found"})
-        file_path = frontend_dir / full_path
+        try:
+            file_path = (frontend_dir / full_path).resolve()
+            file_path.relative_to(frontend_root_resolved)
+        except ValueError:
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
         if file_path.is_file():
             return FileResponse(str(file_path))
-        index_path = frontend_dir / "index.html"
+        index_path = frontend_root_resolved / "index.html"
         if index_path.is_file():
             return FileResponse(str(index_path))
         return JSONResponse(status_code=404, content={"detail": "Frontend not built"})

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -70,3 +71,37 @@ def test_production_settings_reject_unsafe_contract(key: str, value: str, expect
         with pytest.raises(RuntimeError) as exc:
             Settings()
     assert expected_message in str(exc.value)
+
+
+def test_production_remote_bridge_requires_token_contract():
+    with patched_env(production_env(OPENCLAW_BRIDGE_ENABLED='true')):
+        with pytest.raises(RuntimeError) as exc:
+            Settings()
+    assert 'OPENCLAW_BRIDGE_TOKEN' in str(exc.value)
+
+
+def test_production_remote_bridge_accepts_env_token_contract():
+    with patched_env(production_env(OPENCLAW_BRIDGE_ENABLED='true', OPENCLAW_BRIDGE_TOKEN='ci-bridge-token')):
+        settings = Settings()
+    assert settings.openclaw_bridge_enabled is True
+    assert settings.openclaw_bridge_token == 'ci-bridge-token'
+
+
+def test_production_remote_bridge_rejects_missing_token_file_contract():
+    with patched_env(
+        production_env(
+            OPENCLAW_BRIDGE_ENABLED='true',
+            OPENCLAW_BRIDGE_TOKEN_FILE='/tmp/nexusdesk-missing-openclaw-bridge-token',
+        )
+    ):
+        with pytest.raises(RuntimeError) as exc:
+            Settings()
+    assert 'OPENCLAW_BRIDGE_TOKEN_FILE' in str(exc.value)
+
+
+def test_production_remote_bridge_accepts_token_file_contract(tmp_path: Path):
+    token_file = tmp_path / 'bridge-token'
+    token_file.write_text('ci-file-token\n')
+    with patched_env(production_env(OPENCLAW_BRIDGE_ENABLED='true', OPENCLAW_BRIDGE_TOKEN_FILE=str(token_file))):
+        settings = Settings()
+    assert settings.openclaw_bridge_token_file == str(token_file)

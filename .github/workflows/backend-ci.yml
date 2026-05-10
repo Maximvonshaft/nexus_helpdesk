@@ -38,6 +38,7 @@ jobs:
             backend/tests/test_outbound_message_semantics.py \
             backend/tests/test_round24_hardening.py \
             backend/tests/test_production_settings_contract.py \
+            backend/tests/test_production_contracts_baseline.py \
             backend/tests/test_next_phase_max_push.py \
             backend/tests/test_openclaw_local_ops.py \
             backend/tests/test_round20a_rectification.py \
@@ -103,3 +104,75 @@ jobs:
           WEBCHAT_AI_AUTO_REPLY_MODE: safe_ack
           WEBCHAT_ALLOWED_ORIGINS: https://example.test
         run: cd backend && python scripts/validate_production_readiness.py
+
+  postgres-migration-runtime:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: helpdesk
+          POSTGRES_PASSWORD: helpdesk
+          POSTGRES_DB: helpdesk
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg://helpdesk:helpdesk@127.0.0.1:5432/helpdesk
+      SECRET_KEY: ci-runtime-key-not-for-production-use
+      ALLOWED_ORIGINS: http://localhost,http://127.0.0.1
+      STORAGE_BACKEND: local
+      OPENCLAW_DEPLOYMENT_MODE: disabled
+      OPENCLAW_SYNC_ENABLED: "false"
+      OPENCLAW_EVENT_DRIVER_ENABLED: "false"
+      ENABLE_OUTBOUND_DISPATCH: "false"
+      OUTBOUND_PROVIDER: disabled
+      WEBCHAT_RATE_LIMIT_BACKEND: database
+      WEBCHAT_AI_AUTO_REPLY_MODE: safe_ack
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run Alembic migrations on PostgreSQL
+        run: |
+          cd backend
+          alembic upgrade head
+          alembic current
+
+      - name: Start FastAPI runtime
+        run: |
+          cd backend
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 18080 >/tmp/nexusdesk-runtime.out 2>/tmp/nexusdesk-runtime.err &
+          echo $! > /tmp/nexusdesk-runtime.pid
+
+      - name: Smoke health endpoints
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/healthz >/tmp/healthz.json; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18080/healthz
+          curl -fsS http://127.0.0.1:18080/readyz
+
+      - name: Dump runtime logs on failure
+        if: failure()
+        run: |
+          cat /tmp/nexusdesk-runtime.out || true
+          cat /tmp/nexusdesk-runtime.err || true
