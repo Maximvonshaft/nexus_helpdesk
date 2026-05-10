@@ -26,6 +26,7 @@ jobs:
     env:
       APP_ENV: development
       DATABASE_URL: sqlite:////tmp/nexusdesk_webchat_fast_reply_ci.db
+      PYTHONPATH: backend
       WEBCHAT_FAST_AI_ENABLED: 'false'
       WEBCHAT_ALLOWED_ORIGINS: http://localhost,https://example.test
       WEBCHAT_ALLOW_NO_ORIGIN: 'true'
