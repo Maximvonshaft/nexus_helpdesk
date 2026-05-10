@@ -1,6 +1,23 @@
 from __future__ import annotations
 
-from app.api.webchat_events import _list_events, _wait_for_events
+from app.api.webchat_events import _capped_wait_ms, _list_events, _wait_for_events
+
+
+class FakeColumn:
+    def __gt__(self, other):
+        return self
+
+    def __eq__(self, other):
+        return self
+
+    def asc(self):
+        return self
+
+
+class FakeEventModel:
+    id = FakeColumn()
+    conversation_id = FakeColumn()
+    ticket_id = FakeColumn()
 
 
 class FakeEvent:
@@ -14,7 +31,6 @@ class FakeEvent:
 class FakeQuery:
     def __init__(self, rows):
         self.rows = rows
-        self.after_id = 0
         self.limit_value = 50
 
     def filter(self, *args, **kwargs):
@@ -39,23 +55,35 @@ class FakeDB:
         return FakeQuery(self.rows)
 
 
-def test_list_events_caps_limit():
+def test_list_events_caps_limit_and_reports_has_more(monkeypatch):
+    monkeypatch.setattr("app.api.webchat_events.WebchatEvent", FakeEventModel)
     rows = [FakeEvent(i) for i in range(1, 200)]
-    events = _list_events(FakeDB(rows), after_id=0, limit=500)
+    result = _list_events(FakeDB(rows), after_id=0, limit=500)
 
-    assert len(events) == 100
-    assert events[0]["event_type"] == "message.created"
+    assert len(result["events"]) == 100
+    assert result["has_more"] is True
+    assert result["events"][0]["event_type"] == "message.created"
 
 
-def test_wait_for_events_returns_immediately_when_rows_exist():
+def test_wait_for_events_returns_immediately_when_rows_exist(monkeypatch):
+    monkeypatch.setattr("app.api.webchat_events.WebchatEvent", FakeEventModel)
     rows = [FakeEvent(10, "ai_turn.queued")]
-    events = _wait_for_events(FakeDB(rows), after_id=0, limit=10, wait_ms=25000)
+    result = _wait_for_events(FakeDB(rows), after_id=0, limit=10, wait_ms=25000)
 
-    assert events[0]["id"] == 10
-    assert events[0]["event_type"] == "ai_turn.queued"
+    assert result["events"][0]["id"] == 10
+    assert result["events"][0]["event_type"] == "ai_turn.queued"
+    assert result["wait_ms"] <= 5000
 
 
-def test_wait_for_events_empty_timeout_returns_empty():
-    events = _wait_for_events(FakeDB([]), after_id=0, limit=10, wait_ms=1)
+def test_wait_for_events_empty_timeout_returns_empty(monkeypatch):
+    monkeypatch.setattr("app.api.webchat_events.WebchatEvent", FakeEventModel)
+    result = _wait_for_events(FakeDB([]), after_id=0, limit=10, wait_ms=1)
 
-    assert events == []
+    assert result["events"] == []
+    assert result["has_more"] is False
+
+
+def test_wait_ms_is_capped(monkeypatch):
+    monkeypatch.setenv("WEBCHAT_EVENTS_MAX_WAIT_MS", "3000")
+
+    assert _capped_wait_ms(25000) == 3000
