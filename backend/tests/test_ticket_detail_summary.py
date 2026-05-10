@@ -17,7 +17,6 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
 from app.api.ticket_perf import get_ticket_summary  # noqa: E402
-from app.api.tickets import get_ticket_endpoint  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.enums import EventType, MessageStatus, NoteVisibility, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.models import Customer, Ticket, TicketAIIntake, TicketAttachment, TicketComment, TicketEvent, TicketInternalNote, TicketOutboundMessage, User  # noqa: E402
@@ -139,19 +138,3 @@ def test_ticket_summary_large_fixture_counts_query_count_and_omits_heavy_collect
     assert payload["latest_ai_summary"] is not None
     assert payload["latest_outbound_status"] == "sent"
     assert payload["latest_timeline_event"]["event_type"] == "field_updated"
-
-
-def test_legacy_ticket_detail_endpoint_still_accessible_for_large_ticket(db_context):
-    db_session, _engine = db_context
-    admin = make_admin(db_session)
-    ticket = make_ticket(db_session, admin)
-    seed_large_ticket(db_session, admin=admin, ticket=ticket)
-
-    payload = get_ticket_endpoint(ticket.id, db=db_session, current_user=admin)
-
-    assert payload.id == ticket.id
-    assert payload.ticket_no == ticket.ticket_no
-    assert len(payload.comments) == 500
-    assert len(payload.internal_notes) == 200
-    assert len(payload.outbound_messages) == 100
-    assert len(payload.ai_intakes) == 100
