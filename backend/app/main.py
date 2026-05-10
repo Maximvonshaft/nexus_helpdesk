@@ -30,6 +30,7 @@ from .api.tickets import router as tickets_router
 from .api.webchat_fast import router as webchat_fast_router
 from .api.webchat import router as webchat_router
 from .api.webchat_events import router as webchat_events_router
+from .api.webchat_voice import router as webchat_voice_router
 from .db import engine, reset_current_request_id, set_current_request_id
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
 from .settings import get_settings
@@ -177,6 +178,7 @@ app.include_router(stats_router)
 app.include_router(tickets_router)
 app.include_router(webchat_fast_router)
 app.include_router(webchat_events_router)
+app.include_router(webchat_voice_router)
 app.include_router(webchat_router)
 
 
