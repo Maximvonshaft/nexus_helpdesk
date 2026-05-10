@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -104,8 +105,11 @@ async def call_openclaw_responses(
 
     started = time.monotonic()
     try:
-        response = await _client(settings).post(settings.openclaw_responses_url, headers=headers, content=json.dumps(body).encode("utf-8"))
-    except (httpx.TimeoutException, httpx.NetworkError) as exc:
+        response = await asyncio.wait_for(
+            _client(settings).post(settings.openclaw_responses_url, headers=headers, content=json.dumps(body).encode("utf-8")),
+            timeout=settings.openclaw_total_timeout_ms / 1000,
+        )
+    except (asyncio.TimeoutError, httpx.TimeoutException, httpx.NetworkError) as exc:
         elapsed_ms = int((time.monotonic() - started) * 1000)
         LOGGER.warning(
             "webchat_openclaw_responses_unavailable",
