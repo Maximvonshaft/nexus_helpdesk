@@ -49,9 +49,20 @@ _OPENCLAW_BRIDGE_DURATION = Histogram('nexusdesk_openclaw_bridge_elapsed_ms', 'O
 _TOOL_CALLS = Counter('nexusdesk_tool_call_total', 'Tool governance audit call count', ['tool_name', 'tool_type', 'status'], registry=_PROM_REGISTRY) if Counter else None
 _TOOL_CALL_DURATION = Histogram('nexusdesk_tool_call_elapsed_ms', 'Tool governance audit call duration in milliseconds', ['tool_name', 'tool_type', 'status'], registry=_PROM_REGISTRY, buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000)) if Histogram else None
 _BACKGROUND_JOB_WAIT = Histogram('nexusdesk_background_job_wait_ms', 'Background job wait time before processing in milliseconds', ['job_type'], registry=_PROM_REGISTRY, buckets=(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 300000)) if Histogram else None
+_DB_QUERY_DURATION = Histogram('nexusdesk_db_query_duration_ms', 'Database query duration in milliseconds', ['category'], registry=_PROM_REGISTRY, buckets=(1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000)) if Histogram else None
+_DB_SLOW_QUERY_TOTAL = Counter('nexusdesk_db_slow_query_total', 'Database queries exceeding DB_SLOW_QUERY_MS', ['category'], registry=_PROM_REGISTRY) if Counter else None
+_BACKGROUND_JOB_DURATION = Histogram('nexusdesk_worker_job_duration_ms', 'Background job processing duration in milliseconds', ['job_type', 'result'], registry=_PROM_REGISTRY, buckets=(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 300000)) if Histogram else None
+_BACKGROUND_JOB_RETRIES = Counter('nexusdesk_worker_job_retries_total', 'Background job retry count', ['job_type', 'result'], registry=_PROM_REGISTRY) if Counter else None
+_BACKGROUND_JOB_OLDEST_PENDING = Gauge('nexusdesk_worker_oldest_pending_job_age_ms', 'Oldest pending job age in milliseconds by job type', ['job_type'], registry=_PROM_REGISTRY) if Gauge else None
+_OUTBOUND_QUEUED_TO_SENT = Histogram('nexusdesk_outbound_queued_to_sent_ms', 'Outbound queued_at to sent_at latency in milliseconds', ['channel', 'provider', 'status'], registry=_PROM_REGISTRY, buckets=(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 300000)) if Histogram else None
+_OUTBOUND_PROVIDER_DISPATCH = Histogram('nexusdesk_outbound_provider_dispatch_ms', 'Outbound provider dispatch duration in milliseconds', ['provider', 'status'], registry=_PROM_REGISTRY, buckets=(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000)) if Histogram else None
+_OUTBOUND_PROVIDER_RESULT = Counter('nexusdesk_outbound_provider_result_total', 'Outbound provider dispatch result count', ['provider', 'status'], registry=_PROM_REGISTRY) if Counter else None
+_FRONTEND_API_LATENCY = Histogram('nexusdesk_frontend_api_latency_ms', 'Frontend-observed API latency in milliseconds', ['method', 'path', 'status'], registry=_PROM_REGISTRY, buckets=(25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 15000)) if Histogram else None
+_WEB_VITALS = Histogram('nexusdesk_web_vitals_value', 'Frontend Web Vitals values reported without PII', ['name', 'rating'], registry=_PROM_REGISTRY, buckets=(0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10)) if Histogram else None
 
 _ID_SEGMENT_RE = re.compile(r"/\d+(?=/|$)")
 _UUID_SEGMENT_RE = re.compile(r"/[0-9a-fA-F]{8,}(?=/|$)")
+_SQL_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 
 
 def normalize_metric_path(path: str) -> str:
@@ -63,6 +74,18 @@ def normalize_metric_path(path: str) -> str:
 def _label(value: str | None, default: str = 'unknown') -> str:
     safe = (value or default).strip() or default
     return safe[:80]
+
+
+def sql_statement_category(statement: str | None) -> str:
+    raw = _SQL_COMMENT_RE.sub(' ', statement or '').lstrip().lower()
+    if not raw:
+        return 'unknown'
+    first = raw.split(None, 1)[0]
+    if first in {'select', 'insert', 'update', 'delete', 'commit', 'rollback', 'begin'}:
+        return first
+    if first in {'alter', 'create', 'drop'}:
+        return 'ddl'
+    return 'other'
 
 
 def configure_logging(log_json: bool = True) -> None:
@@ -155,6 +178,62 @@ def record_tool_call_metric(tool_name: str, tool_type: str, status: str, elapsed
 def record_background_job_wait(job_type: str, wait_ms: int | float | None) -> None:
     if wait_ms is not None and _BACKGROUND_JOB_WAIT:
         _BACKGROUND_JOB_WAIT.labels(job_type=_label(job_type)).observe(max(float(wait_ms), 0.0))
+
+
+def record_db_query(duration_ms: int | float, statement: str | None = None, *, slow_threshold_ms: int | float | None = None, request_id: str | None = None) -> None:
+    category = sql_statement_category(statement)
+    safe_duration = max(float(duration_ms), 0.0)
+    if _DB_QUERY_DURATION:
+        _DB_QUERY_DURATION.labels(category=category).observe(safe_duration)
+    if slow_threshold_ms is not None and safe_duration >= float(slow_threshold_ms):
+        if _DB_SLOW_QUERY_TOTAL:
+            _DB_SLOW_QUERY_TOTAL.labels(category=category).inc()
+        LOGGER.warning(
+            'db_slow_query',
+            extra={'event_payload': {
+                'duration_ms': round(safe_duration, 2),
+                'category': category,
+                'request_id': _label(request_id, 'none'),
+            }},
+        )
+
+
+def record_worker_job_metric(job_type: str, result: str, duration_ms: int | float | None = None, wait_ms: int | float | None = None, retry_count: int | None = None) -> None:
+    safe_job_type = _label(job_type)
+    safe_result = _label(result)
+    if wait_ms is not None:
+        record_background_job_wait(safe_job_type, wait_ms)
+    if duration_ms is not None and _BACKGROUND_JOB_DURATION:
+        _BACKGROUND_JOB_DURATION.labels(job_type=safe_job_type, result=safe_result).observe(max(float(duration_ms), 0.0))
+    if retry_count and retry_count > 0 and _BACKGROUND_JOB_RETRIES:
+        _BACKGROUND_JOB_RETRIES.labels(job_type=safe_job_type, result=safe_result).inc(int(retry_count))
+
+
+def record_oldest_pending_job_age(job_type: str, age_ms: int | float | None) -> None:
+    if age_ms is not None and _BACKGROUND_JOB_OLDEST_PENDING:
+        _BACKGROUND_JOB_OLDEST_PENDING.labels(job_type=_label(job_type)).set(max(float(age_ms), 0.0))
+
+
+def record_outbound_latency(channel: str | None, provider: str | None, status: str, queued_to_sent_ms: int | float | None = None, provider_dispatch_ms: int | float | None = None) -> None:
+    safe_channel = _label(channel)
+    safe_provider = _label(provider)
+    safe_status = _label(status)
+    if queued_to_sent_ms is not None and _OUTBOUND_QUEUED_TO_SENT:
+        _OUTBOUND_QUEUED_TO_SENT.labels(channel=safe_channel, provider=safe_provider, status=safe_status).observe(max(float(queued_to_sent_ms), 0.0))
+    if provider_dispatch_ms is not None and _OUTBOUND_PROVIDER_DISPATCH:
+        _OUTBOUND_PROVIDER_DISPATCH.labels(provider=safe_provider, status=safe_status).observe(max(float(provider_dispatch_ms), 0.0))
+    if _OUTBOUND_PROVIDER_RESULT:
+        _OUTBOUND_PROVIDER_RESULT.labels(provider=safe_provider, status=safe_status).inc()
+
+
+def record_frontend_api_latency(path: str, method: str, status: str, duration_ms: int | float | None) -> None:
+    if duration_ms is not None and _FRONTEND_API_LATENCY:
+        _FRONTEND_API_LATENCY.labels(method=_label(method), path=normalize_metric_path(path), status=_label(status)).observe(max(float(duration_ms), 0.0))
+
+
+def record_web_vital(name: str, rating: str, value: int | float | None) -> None:
+    if value is not None and _WEB_VITALS:
+        _WEB_VITALS.labels(name=_label(name), rating=_label(rating)).observe(max(float(value), 0.0))
 
 
 def log_signoff_state(state: str, **fields) -> None:
