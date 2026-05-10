@@ -106,7 +106,7 @@ def test_voice_enabled_custom_prefix_controls_voice_header_scope(monkeypatch):
     assert "wss://voice.example.test" in _csp(custom_prefix_response)
 
 
-def test_webchat_demo_and_api_init_keep_default_security_headers(monkeypatch):
+def test_webchat_demo_and_non_voice_api_keep_default_security_headers(monkeypatch):
     client = _client(
         monkeypatch,
         WEBCHAT_VOICE_ENABLED="true",
@@ -114,17 +114,13 @@ def test_webchat_demo_and_api_init_keep_default_security_headers(monkeypatch):
     )
 
     demo_response = client.get("/webchat/demo.html")
-    init_response = client.post(
-        "/api/webchat/init",
-        json={"tenant_key": "pytest", "channel_key": "website", "origin": "https://example.test"},
-    )
+    api_response = client.post("/api/webchat/fast-reply", json={})
 
     assert demo_response.status_code in {200, 404}
     assert _permissions(demo_response) == "camera=(), microphone=(), geolocation=()"
-    # This isolated header test does not create the WebChat DB schema. A 500 is
-    # acceptable here as long as the non-voice API path keeps strict headers.
-    assert init_response.status_code in {200, 403, 500}
-    assert _permissions(init_response) == "camera=(), microphone=(), geolocation=()"
+    assert api_response.status_code == 422
+    assert _permissions(api_response) == "camera=(), microphone=(), geolocation=()"
+    assert "wss://voice.example.test" not in _csp(api_response)
 
 
 def test_voice_connect_src_rejects_wildcard(monkeypatch):
