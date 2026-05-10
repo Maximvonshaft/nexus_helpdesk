@@ -1,8 +1,9 @@
 import { gzipSync } from 'node:zlib'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
-const distDir = new URL('../dist', import.meta.url).pathname
+const distDir = new URL('../../frontend_dist', import.meta.url).pathname
 const singleChunkLimitKb = Number(process.env.WEBAPP_SINGLE_CHUNK_GZIP_MAX_KB || 180)
 const firstScreenLimitKb = Number(process.env.WEBAPP_FIRST_SCREEN_JS_GZIP_MAX_KB || 300)
 
@@ -19,6 +20,11 @@ function walk(dir) {
 
 function gzipKb(path) {
   return gzipSync(readFileSync(path)).length / 1024
+}
+
+if (!existsSync(distDir)) {
+  console.error(`Build output not found: ${distDir}`)
+  process.exit(1)
 }
 
 const jsFiles = walk(distDir).filter((path) => path.endsWith('.js'))
