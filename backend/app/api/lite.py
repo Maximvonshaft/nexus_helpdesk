@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -20,6 +22,7 @@ from ..schemas import (
     TeamRead,
     UserRead,
 )
+from ..services.lite_pagination import list_lite_cases_page
 from ..services.lite_service import (
     LITE_STATUS_ORDER,
     assign_lite_case,
@@ -61,14 +64,34 @@ def get_lite_meta(db: Session = Depends(get_db), current_user=Depends(get_curren
     )
 
 
-@router.get("/cases", response_model=list[LiteCaseListItem])
+@router.get("/cases")
 def list_cases(
-    q: str | None = None,
-    status: str | None = None,
+    q: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    priority: str | None = Query(default=None),
+    assignee_id: int | None = Query(default=None),
+    team_id: int | None = Query(default=None),
+    overdue: bool | None = Query(default=None),
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    legacy: bool = Query(default=False, description="Return the pre-pagination list shape for older clients."),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
-):
-    return list_lite_cases(db, current_user, q=q, status=status)
+) -> dict[str, Any] | list[LiteCaseListItem]:
+    if legacy:
+        return list_lite_cases(db, current_user, q=q, status=status)
+    return list_lite_cases_page(
+        db,
+        current_user,
+        q=q,
+        status=status,
+        priority=priority,
+        assignee_id=assignee_id,
+        team_id=team_id,
+        overdue=overdue,
+        cursor=cursor,
+        limit=limit,
+    )
 
 
 @router.get("/cases/{ticket_id}", response_model=LiteCaseDetail)

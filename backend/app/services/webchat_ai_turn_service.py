@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import timedelta
 from typing import Any, Callable
 
@@ -10,6 +11,8 @@ from ..models import BackgroundJob
 from ..utils.time import utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatMessage
 from .observability import record_webchat_ai_stale_suppressed, record_webchat_ai_timeout, record_webchat_ai_turn_metric
+
+LOGGER = logging.getLogger("nexusdesk")
 
 AI_TURN_OPEN_STATUSES = {"queued", "processing", "bridge_calling", "fallback_generating"}
 AI_TURN_TERMINAL_STATUSES = {"completed", "superseded", "failed", "timeout", "cancelled"}
@@ -42,6 +45,10 @@ def _turn_duration_ms(turn: WebchatAITurn) -> int | None:
         return None
 
 
+def _sanitized_event_failure(exc: Exception) -> dict[str, Any]:
+    return {"error_type": type(exc).__name__}
+
+
 def write_webchat_event(
     db: Session,
     *,
@@ -49,17 +56,57 @@ def write_webchat_event(
     ticket_id: int,
     event_type: str,
     payload: dict[str, Any] | None = None,
-) -> WebchatEvent:
-    row = WebchatEvent(
+    best_effort: bool = False,
+) -> WebchatEvent | None:
+    def _insert() -> WebchatEvent:
+        row = WebchatEvent(
+            conversation_id=conversation_id,
+            ticket_id=ticket_id,
+            event_type=event_type,
+            payload_json=json.dumps(payload or {}, ensure_ascii=False),
+            created_at=utc_now(),
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    if not best_effort:
+        return _insert()
+
+    try:
+        with db.begin_nested():
+            return _insert()
+    except Exception as exc:  # pragma: no cover - exercised through monkeypatch failure tests
+        LOGGER.warning(
+            "webchat_event_write_failed_best_effort",
+            extra={
+                "event_payload": {
+                    "conversation_id": conversation_id,
+                    "ticket_id": ticket_id,
+                    "event_type": event_type,
+                    **_sanitized_event_failure(exc),
+                }
+            },
+        )
+        return None
+
+
+def safe_write_webchat_event(
+    db: Session,
+    *,
+    conversation_id: int,
+    ticket_id: int,
+    event_type: str,
+    payload: dict[str, Any] | None = None,
+) -> WebchatEvent | None:
+    return write_webchat_event(
+        db,
         conversation_id=conversation_id,
         ticket_id=ticket_id,
         event_type=event_type,
-        payload_json=json.dumps(payload or {}, ensure_ascii=False),
-        created_at=utc_now(),
+        payload=payload,
+        best_effort=True,
     )
-    db.add(row)
-    db.flush()
-    return row
 
 
 def ai_snapshot(conversation: WebchatConversation) -> dict[str, Any]:
@@ -113,7 +160,7 @@ def _promote_next_turn(db: Session, *, conversation: WebchatConversation) -> Web
         db.flush()
         return None
     _activate_turn(db, conversation=conversation, turn=next_turn)
-    write_webchat_event(
+    safe_write_webchat_event(
         db,
         conversation_id=conversation.id,
         ticket_id=conversation.ticket_id,
@@ -135,7 +182,7 @@ def schedule_webchat_ai_turn(
 ) -> dict[str, Any]:
     now = utc_now()
     debounce_at = now + timedelta(seconds=max(0, int(debounce_seconds or 0)))
-    write_webchat_event(
+    safe_write_webchat_event(
         db,
         conversation_id=conversation.id,
         ticket_id=ticket_id,
@@ -160,7 +207,7 @@ def schedule_webchat_ai_turn(
             if job is not None:
                 job.next_run_at = debounce_at
                 job.updated_at = now
-        write_webchat_event(
+        safe_write_webchat_event(
             db,
             conversation_id=conversation.id,
             ticket_id=ticket_id,
@@ -197,7 +244,7 @@ def schedule_webchat_ai_turn(
         next_turn.job_id = job.id
         conversation.next_ai_turn_id = next_turn.id
         conversation.active_ai_updated_at = now
-        write_webchat_event(
+        safe_write_webchat_event(
             db,
             conversation_id=conversation.id,
             ticket_id=ticket_id,
@@ -232,7 +279,7 @@ def schedule_webchat_ai_turn(
     )
     turn.job_id = job.id
     _activate_turn(db, conversation=conversation, turn=turn)
-    write_webchat_event(
+    safe_write_webchat_event(
         db,
         conversation_id=conversation.id,
         ticket_id=ticket_id,
@@ -252,7 +299,7 @@ def mark_ai_turn_processing(db: Session, *, conversation: WebchatConversation, t
     if conversation.active_ai_turn_id == turn.id:
         conversation.active_ai_status = "processing"
         conversation.active_ai_updated_at = now
-    write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="ai_turn.processing", payload={"ai_turn_id": turn.id})
+    safe_write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="ai_turn.processing", payload={"ai_turn_id": turn.id})
     record_webchat_ai_turn_metric("processing")
     db.flush()
 
@@ -266,7 +313,7 @@ def mark_ai_turn_bridge_calling(db: Session, *, conversation: WebchatConversatio
         conversation.active_ai_status = "bridge_calling"
         conversation.active_ai_context_cutoff_message_id = context_cutoff_message_id
         conversation.active_ai_updated_at = now
-    write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="ai_turn.bridge_calling", payload={"ai_turn_id": turn.id, "context_cutoff_message_id": context_cutoff_message_id})
+    safe_write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="ai_turn.bridge_calling", payload={"ai_turn_id": turn.id, "context_cutoff_message_id": context_cutoff_message_id})
     record_webchat_ai_turn_metric("bridge_calling")
     db.flush()
 
@@ -277,7 +324,7 @@ def mark_ai_turn_failed(db: Session, *, conversation: WebchatConversation, turn:
     turn.status_reason = reason
     turn.completed_at = now
     turn.updated_at = now
-    write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="ai_turn.failed", payload={"ai_turn_id": turn.id, "reason": reason})
+    safe_write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="ai_turn.failed", payload={"ai_turn_id": turn.id, "reason": reason})
     record_webchat_ai_turn_metric("failed", _turn_duration_ms(turn))
     clear_active_ai_snapshot_if_current(db, conversation=conversation, turn=turn)
     db.flush()
@@ -289,7 +336,7 @@ def mark_ai_turn_timeout(db: Session, *, conversation: WebchatConversation, turn
     turn.status_reason = reason
     turn.completed_at = now
     turn.updated_at = now
-    write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="ai_turn.timeout", payload={"ai_turn_id": turn.id, "reason": reason})
+    safe_write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="ai_turn.timeout", payload={"ai_turn_id": turn.id, "reason": reason})
     record_webchat_ai_timeout(reason)
     record_webchat_ai_turn_metric("timeout", _turn_duration_ms(turn))
     clear_active_ai_snapshot_if_current(db, conversation=conversation, turn=turn)
@@ -297,7 +344,6 @@ def mark_ai_turn_timeout(db: Session, *, conversation: WebchatConversation, turn
 
 
 def should_suppress_stale_reply(db: Session, *, conversation: WebchatConversation, turn: WebchatAITurn | None) -> bool:
-    """Return true when a turn is no longer allowed to create a public reply."""
     if turn is None:
         return False
     if not turn.is_public_reply_allowed or turn.status in AI_TURN_TERMINAL_STATUSES:
@@ -311,7 +357,7 @@ def suppress_stale_reply_if_needed(db: Session, *, conversation: WebchatConversa
     if turn is None or not should_suppress_stale_reply(db, conversation=conversation, turn=turn):
         return False
     supersede_ai_turn(db, conversation=conversation, turn=turn, reason=reason)
-    write_webchat_event(
+    safe_write_webchat_event(
         db,
         conversation_id=conversation.id,
         ticket_id=turn.ticket_id,
@@ -338,8 +384,8 @@ def complete_ai_turn_with_reply(db: Session, *, conversation: WebchatConversatio
         turn.bridge_timeout_ms = int(wait_timeout_ms)
     turn.completed_at = now
     turn.updated_at = now
-    write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="message.created", payload={"message_id": turn.reply_message_id, "direction": "agent", "ai_turn_id": turn.id})
-    write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="ai_turn.completed" if not turn.fallback_reason else "ai_turn.fallback", payload={"ai_turn_id": turn.id, "message_id": turn.reply_message_id, "reply_source": turn.reply_source, "fallback_reason": turn.fallback_reason})
+    safe_write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="message.created", payload={"message_id": turn.reply_message_id, "direction": "agent", "ai_turn_id": turn.id})
+    safe_write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="ai_turn.completed" if not turn.fallback_reason else "ai_turn.fallback", payload={"ai_turn_id": turn.id, "message_id": turn.reply_message_id, "reply_source": turn.reply_source, "fallback_reason": turn.fallback_reason})
     record_webchat_ai_turn_metric("fallback" if turn.fallback_reason else "completed", _turn_duration_ms(turn))
     if conversation.active_ai_turn_id == turn.id:
         if conversation.next_ai_turn_id:
@@ -357,7 +403,7 @@ def supersede_ai_turn(db: Session, *, conversation: WebchatConversation, turn: W
     turn.is_public_reply_allowed = False
     turn.completed_at = now
     turn.updated_at = now
-    write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="ai_turn.superseded", payload={"ai_turn_id": turn.id, "superseded_by_turn_id": superseded_by_turn_id, "reason": turn.status_reason})
+    safe_write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="ai_turn.superseded", payload={"ai_turn_id": turn.id, "superseded_by_turn_id": superseded_by_turn_id, "reason": turn.status_reason})
     record_webchat_ai_turn_metric("superseded", _turn_duration_ms(turn))
     if conversation.active_ai_turn_id == turn.id:
         if conversation.next_ai_turn_id:

@@ -18,7 +18,7 @@ from .webchat_ai_turn_service import (
     DEFAULT_QUEUED_TIMEOUT_SECONDS,
     clear_active_ai_snapshot_if_current,
     mark_ai_turn_timeout,
-    write_webchat_event,
+    safe_write_webchat_event,
 )
 
 settings = get_settings()
@@ -68,7 +68,7 @@ def _maybe_timeout_stale_open_turn(db: Session, *, conversation: WebchatConversa
         return False
     reason = f"ai_turn_watchdog_timeout:{turn.status}:{timeout_seconds}s"
     mark_ai_turn_timeout(db, conversation=conversation, turn=turn, reason=reason)
-    write_webchat_event(
+    safe_write_webchat_event(
         db,
         conversation_id=conversation.id,
         ticket_id=turn.ticket_id,
@@ -108,7 +108,7 @@ def reconcile_webchat_ai_state(db: Session, conversation_id: int | None = None) 
             conversation.active_ai_context_cutoff_message_id = None
             conversation.active_ai_started_at = None
             conversation.active_ai_updated_at = utc_now()
-            write_webchat_event(
+            safe_write_webchat_event(
                 db,
                 conversation_id=conversation.id,
                 ticket_id=conversation.ticket_id,
@@ -120,7 +120,7 @@ def reconcile_webchat_ai_state(db: Session, conversation_id: int | None = None) 
 
         if turn.status in AI_TURN_TERMINAL_STATUSES:
             clear_active_ai_snapshot_if_current(db, conversation=conversation, turn=turn)
-            write_webchat_event(
+            safe_write_webchat_event(
                 db,
                 conversation_id=conversation.id,
                 ticket_id=turn.ticket_id,
@@ -138,14 +138,14 @@ def reconcile_webchat_ai_state(db: Session, conversation_id: int | None = None) 
                 turn.completed_at = utc_now()
                 turn.updated_at = utc_now()
                 clear_active_ai_snapshot_if_current(db, conversation=conversation, turn=turn)
-                write_webchat_event(
+                safe_write_webchat_event(
                     db,
                     conversation_id=conversation.id,
                     ticket_id=turn.ticket_id,
                     event_type="ai_turn.failed",
                     payload={"ai_turn_id": turn.id, "reason": turn.status_reason, "job_id": job.id},
                 )
-                write_webchat_event(
+                safe_write_webchat_event(
                     db,
                     conversation_id=conversation.id,
                     ticket_id=turn.ticket_id,
@@ -164,7 +164,7 @@ def reconcile_webchat_ai_state(db: Session, conversation_id: int | None = None) 
             conversation.active_ai_for_message_id = turn.latest_visitor_message_id or turn.trigger_message_id
             conversation.active_ai_context_cutoff_message_id = turn.context_cutoff_message_id
             conversation.active_ai_updated_at = utc_now()
-            write_webchat_event(
+            safe_write_webchat_event(
                 db,
                 conversation_id=conversation.id,
                 ticket_id=turn.ticket_id,

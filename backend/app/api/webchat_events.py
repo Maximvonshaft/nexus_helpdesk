@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from datetime import timezone
 from urllib.parse import urlparse
@@ -20,11 +21,41 @@ from .deps import get_current_user
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat-events"])
 settings = get_settings()
+DEFAULT_EVENTS_MAX_WAIT_MS = 5000
 
 PUBLIC_VISITOR_EVENTS_ERROR = {
     "code": "webchat_conversation_not_found_or_invalid_token",
     "message": "webchat conversation not found or invalid visitor token",
 }
+
+
+class EventPage(dict):
+    """Dict-shaped event page with legacy list-like behavior for existing tests."""
+
+    def __iter__(self):
+        return iter(self["events"])
+
+    def __len__(self) -> int:
+        return len(self["events"])
+
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            return super().__getitem__(key)
+        return self["events"][key]
+
+    def __eq__(self, other):
+        if isinstance(other, list):
+            return self["events"] == other
+        return super().__eq__(other)
+
+
+def _events_max_wait_ms() -> int:
+    raw = os.getenv("WEBCHAT_EVENTS_MAX_WAIT_MS", str(DEFAULT_EVENTS_MAX_WAIT_MS))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = DEFAULT_EVENTS_MAX_WAIT_MS
+    return max(0, min(value, DEFAULT_EVENTS_MAX_WAIT_MS))
 
 
 def _normalized_allowed_origins() -> set[str]:
@@ -134,6 +165,14 @@ def _event_read(row: WebchatEvent) -> dict[str, Any]:
     }
 
 
+def _safe_limit(limit: int) -> int:
+    return max(1, min(int(limit or 50), 100))
+
+
+def _capped_wait_ms(wait_ms: int) -> int:
+    return max(0, min(int(wait_ms or 0), _events_max_wait_ms()))
+
+
 def _list_events(
     db: Session,
     *,
@@ -141,15 +180,19 @@ def _list_events(
     ticket_id: int | None = None,
     after_id: int = 0,
     limit: int = 50,
-) -> list[dict[str, Any]]:
-    safe_limit = max(1, min(int(limit or 50), 100))
+) -> EventPage:
+    safe_limit = _safe_limit(limit)
     query = db.query(WebchatEvent).filter(WebchatEvent.id > max(0, int(after_id or 0)))
     if conversation_id is not None:
         query = query.filter(WebchatEvent.conversation_id == conversation_id)
     if ticket_id is not None:
         query = query.filter(WebchatEvent.ticket_id == ticket_id)
-    rows = query.order_by(WebchatEvent.id.asc()).limit(safe_limit).all()
-    return [_event_read(row) for row in rows]
+    rows = query.order_by(WebchatEvent.id.asc()).limit(safe_limit + 1).all()
+    visible = rows[:safe_limit]
+    return EventPage({
+        "events": [_event_read(row) for row in visible],
+        "has_more": len(rows) > safe_limit,
+    })
 
 
 def _wait_for_events(
@@ -160,14 +203,15 @@ def _wait_for_events(
     after_id: int = 0,
     limit: int = 50,
     wait_ms: int = 0,
-) -> list[dict[str, Any]]:
-    max_wait_ms = max(0, min(int(wait_ms or 0), 25000))
+) -> EventPage:
+    max_wait_ms = _capped_wait_ms(wait_ms)
     deadline = time.monotonic() + (max_wait_ms / 1000.0)
     while True:
-        events = _list_events(db, conversation_id=conversation_id, ticket_id=ticket_id, after_id=after_id, limit=limit)
-        if events or max_wait_ms <= 0 or time.monotonic() >= deadline:
-            return events
-        time.sleep(min(0.5, max(0.05, deadline - time.monotonic())))
+        result = _list_events(db, conversation_id=conversation_id, ticket_id=ticket_id, after_id=after_id, limit=limit)
+        if result["events"] or max_wait_ms <= 0 or time.monotonic() >= deadline:
+            result["wait_ms"] = max_wait_ms
+            return result
+        time.sleep(min(0.25, max(0.05, deadline - time.monotonic())))
 
 
 @router.options("/conversations/{conversation_id}/events")
@@ -191,12 +235,13 @@ def poll_webchat_events(
     resolved_token = _resolve_visitor_token(x_webchat_visitor_token, visitor_token)
     conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id).first()
     conversation = _validate_public_visitor_conversation(conversation, resolved_token)
-    events = _wait_for_events(db, conversation_id=conversation.id, after_id=after_id, limit=limit, wait_ms=wait_ms)
+    result = _wait_for_events(db, conversation_id=conversation.id, after_id=after_id, limit=limit, wait_ms=wait_ms)
+    events = result["events"]
     return {
         "events": events,
         "last_event_id": events[-1]["id"] if events else after_id,
-        "has_more": len(events) >= min(limit, 100),
-        "wait_ms": min(wait_ms, 25000),
+        "has_more": result["has_more"],
+        "wait_ms": result["wait_ms"],
     }
 
 
@@ -213,10 +258,11 @@ def admin_poll_webchat_events(
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ticket not found")
     ensure_ticket_visible(current_user, ticket, db)
-    events = _wait_for_events(db, ticket_id=ticket_id, after_id=after_id, limit=limit, wait_ms=wait_ms)
+    result = _wait_for_events(db, ticket_id=ticket_id, after_id=after_id, limit=limit, wait_ms=wait_ms)
+    events = result["events"]
     return {
         "events": events,
         "last_event_id": events[-1]["id"] if events else after_id,
-        "has_more": len(events) >= min(limit, 100),
-        "wait_ms": min(wait_ms, 25000),
+        "has_more": result["has_more"],
+        "wait_ms": result["wait_ms"],
     }
