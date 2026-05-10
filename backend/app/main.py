@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -32,6 +32,7 @@ from .api.webchat_events import router as webchat_events_router
 from .db import engine
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
 from .settings import get_settings
+from .webchat_voice_config import is_webchat_voice_path, load_webchat_voice_runtime_config, webchat_voice_connect_sources
 
 settings = get_settings()
 configure_logging(get_settings().log_json)
@@ -45,6 +46,10 @@ app.add_middleware(
     allow_headers=['Authorization', 'Content-Type', 'X-API-Key', 'X-Client-Key-Id', 'X-Client-Key', 'Idempotency-Key', 'X-Requested-With', settings.request_id_header],
     expose_headers=[settings.request_id_header],
 )
+
+DEFAULT_PERMISSIONS_POLICY = 'camera=(), microphone=(), geolocation=()'
+VOICE_PERMISSIONS_POLICY = 'camera=(), microphone=(self), geolocation=()'
+DEFAULT_CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
 
 def _runtime_identity() -> dict[str, str]:
@@ -63,6 +68,32 @@ def _migration_revision(conn: Connection) -> str | None:
         return str(row[0]) if row and row[0] else None
     except Exception:
         return None
+
+
+def _voice_runtime_headers_enabled(path: str) -> bool:
+    config = load_webchat_voice_runtime_config()
+    return bool(config.enabled and is_webchat_voice_path(path, config))
+
+
+def _content_security_policy_for_request(path: str) -> str:
+    if not _voice_runtime_headers_enabled(path):
+        return DEFAULT_CSP
+    connect_src = ["'self'", *webchat_voice_connect_sources()]
+    return (
+        "default-src 'self'; "
+        "img-src 'self' data:; "
+        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
+        f"connect-src {' '.join(connect_src)}; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
+    )
+
+
+def _permissions_policy_for_request(path: str) -> str:
+    return VOICE_PERMISSIONS_POLICY if _voice_runtime_headers_enabled(path) else DEFAULT_PERMISSIONS_POLICY
 
 
 @app.middleware('http')
@@ -84,8 +115,8 @@ async def request_context_middleware(request: Request, call_next):
     response.headers.setdefault('X-Content-Type-Options', 'nosniff')
     response.headers.setdefault('X-Frame-Options', 'DENY')
     response.headers.setdefault('Referrer-Policy', 'no-referrer')
-    response.headers.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
-    response.headers.setdefault('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+    response.headers['Permissions-Policy'] = _permissions_policy_for_request(request.url.path)
+    response.headers['Content-Security-Policy'] = _content_security_policy_for_request(request.url.path)
     if request.url.path.startswith('/api/'):
         response.headers.setdefault('Cache-Control', 'no-store')
     return response
@@ -142,6 +173,27 @@ app.include_router(stats_router)
 app.include_router(tickets_router)
 app.include_router(webchat_events_router)
 app.include_router(webchat_router)
+
+
+@app.get('/webchat/voice/{voice_session_id}', response_class=HTMLResponse)
+def serve_webchat_voice_placeholder(voice_session_id: str):
+    config = load_webchat_voice_runtime_config()
+    if not config.enabled:
+        return JSONResponse(status_code=404, content={'detail': 'WebChat voice is disabled'})
+    safe_session_id = ''.join(ch for ch in voice_session_id if ch.isalnum() or ch in {'_', '-'})[:80]
+    if not safe_session_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='WebChat voice session not found')
+    return HTMLResponse(
+        "<!doctype html>"
+        "<html lang='en'>"
+        "<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>NexusDesk WebChat Voice</title></head>"
+        "<body><main><h1>WebChat Voice</h1>"
+        "<p>Voice runtime readiness is enabled. Real media is not implemented in this phase.</p>"
+        f"<p data-voice-session-id='{safe_session_id}'>Session: {safe_session_id}</p>"
+        "</main></body></html>"
+    )
+
 
 webchat_static_dir = settings.backend_root / 'app' / 'static' / 'webchat'
 if webchat_static_dir.exists():
