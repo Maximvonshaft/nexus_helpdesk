@@ -53,6 +53,7 @@ jobs:
             backend/tests/test_openclaw_unresolved_idempotency.py \
             backend/tests/test_worker_daemon_readiness.py \
             backend/tests/test_db_query_timing.py \
+            backend/tests/test_observability_metrics.py \
             backend/tests/test_worker_metrics.py
 
       - name: Run webchat performance and security tests
