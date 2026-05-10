@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 import importlib
+import os
+import sys
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+os.environ.setdefault("APP_ENV", "development")
+os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_voice_static_headers_tests.db")
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT.parent))
 
 VOICE_ENV_KEYS = [
     "WEBCHAT_VOICE_ENABLED",
