@@ -48,12 +48,19 @@ services:
       IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
       APP_VERSION: ${APP_VERSION:-server}
       FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      WEB_TIMEOUT: ${WEB_TIMEOUT:-30}
     volumes:
       - /run/secrets:/run/secrets:ro
       - ../data/uploads:/app/backend/uploads
     ports:
       - "127.0.0.1:18081:8080"
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8080
+    command: >-
+      gunicorn app.main:app
+      -k uvicorn.workers.UvicornWorker
+      --workers $${WEB_CONCURRENCY:-2}
+      --timeout $${WEB_TIMEOUT:-30}
+      --bind 0.0.0.0:8080
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
       interval: 30s
