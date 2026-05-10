@@ -61,6 +61,11 @@ jobs:
           set -Eeuo pipefail
           timeout 300 pytest -q backend/tests/test_webchat_voice_static_headers.py
 
+      - name: Run WebChat voice API foundation tests
+        run: |
+          set -Eeuo pipefail
+          timeout 300 pytest -q backend/tests/test_webchat_voice_api.py
+
       - name: Run webchat performance and security tests
         run: |
           set -Eeuo pipefail
