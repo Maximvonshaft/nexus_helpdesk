@@ -43,6 +43,9 @@ services:
       OPENCLAW_TRANSPORT: mcp
       OPENCLAW_CLI_FALLBACK_ENABLED: "false"
       REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      WEB_TIMEOUT: ${WEB_TIMEOUT:-60}
+      DB_SLOW_QUERY_MS: ${DB_SLOW_QUERY_MS:-500}
       GIT_SHA: ${GIT_SHA:-unknown}
       BUILD_TIME: ${BUILD_TIME:-unknown}
       IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
@@ -53,7 +56,12 @@ services:
       - ../data/uploads:/app/backend/uploads
     ports:
       - "127.0.0.1:18081:8080"
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8080
+    command: >-
+      gunicorn app.main:app
+      -k uvicorn.workers.UvicornWorker
+      -w ${WEB_CONCURRENCY:-2}
+      -b 0.0.0.0:8080
+      --timeout ${WEB_TIMEOUT:-60}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
       interval: 30s
@@ -90,6 +98,7 @@ services:
       OPENCLAW_TRANSPORT: mcp
       OPENCLAW_CLI_FALLBACK_ENABLED: "false"
       REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
+      DB_SLOW_QUERY_MS: ${DB_SLOW_QUERY_MS:-500}
       GIT_SHA: ${GIT_SHA:-unknown}
       BUILD_TIME: ${BUILD_TIME:-unknown}
       IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
@@ -123,6 +132,7 @@ services:
       OPENCLAW_TRANSPORT: mcp
       OPENCLAW_CLI_FALLBACK_ENABLED: "false"
       REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
+      DB_SLOW_QUERY_MS: ${DB_SLOW_QUERY_MS:-500}
       GIT_SHA: ${GIT_SHA:-unknown}
       BUILD_TIME: ${BUILD_TIME:-unknown}
       IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
@@ -165,6 +175,7 @@ services:
       OPENCLAW_CLI_FALLBACK_ENABLED: "false"
       REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
       OPENCLAW_EVENT_DRIVER_ENABLED: "true"
+      DB_SLOW_QUERY_MS: ${DB_SLOW_QUERY_MS:-500}
       GIT_SHA: ${GIT_SHA:-unknown}
       BUILD_TIME: ${BUILD_TIME:-unknown}
       IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}

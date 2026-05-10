@@ -1,15 +1,65 @@
+# Version control and editor metadata
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+.DS_Store
+
+# Python caches and local virtualenvs
 __pycache__/
-*.pyc
+**/__pycache__/
+*.py[cod]
 *.pyo
 *.pyd
-*.db
-*.sqlite
-.smoke_tmp/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+backend/.pytest_cache/
+backend/.venv/
+backend/venv/
+.venv/
+venv/
+
+# Node dependencies and build outputs
+node_modules/
+webapp/node_modules/
+webapp/dist/
+webapp/.vite/
+webapp/.turbo/
+frontend_dist/
+dist/
+build/
+.cache/
+
+# Runtime data, uploads, local DBs and smoke artifacts
+uploads/
 backend/uploads/
-.git/
+data/uploads/
+data/postgres/
+postgres_data/
+.smoke_tmp/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# Logs and diagnostics
+logs/
+*.log
+*.pid
+*.tmp
+*.swp
+
+# Secrets, local env and credentials must never be baked into images
 .env
 .env.*
-node_modules/
-backend/.venv/
-backend/.pytest_cache/
-webapp/dist/
+*.env
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*secret*
+*token*
