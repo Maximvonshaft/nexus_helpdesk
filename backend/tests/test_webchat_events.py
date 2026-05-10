@@ -1,6 +1,17 @@
 from __future__ import annotations
 
-from app.api.webchat_events import _capped_wait_ms, _list_events, _wait_for_events
+import os
+import sys
+from pathlib import Path
+
+os.environ.setdefault("APP_ENV", "development")
+os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_events_tests.db")
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT.parent))
+
+from app.api.webchat_events import _capped_wait_ms, _list_events, _wait_for_events  # noqa: E402
 
 
 class FakeColumn:
