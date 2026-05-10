@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -21,13 +19,19 @@ def ensure_schema():
     try:
         users = [
             User(id=9201, username="voice_admin", display_name="Voice Admin", password_hash="test", role=UserRole.admin, is_active=True),
-            User(id=9202, username="voice_agent_a", display_name="Voice Agent A", password_hash="test", role=UserRole.agent, is_active=True),
-            User(id=9203, username="voice_agent_b", display_name="Voice Agent B", password_hash="test", role=UserRole.agent, is_active=True),
+            User(id=9202, username="voice_admin_a", display_name="Voice Admin A", password_hash="test", role=UserRole.admin, is_active=True),
+            User(id=9203, username="voice_admin_b", display_name="Voice Admin B", password_hash="test", role=UserRole.admin, is_active=True),
+            User(id=9204, username="voice_outsider", display_name="Voice Outsider", password_hash="test", role=UserRole.agent, is_active=True),
         ]
         for user in users:
             existing = db.query(User).filter(User.id == user.id).first()
             if existing is None:
                 db.add(user)
+            else:
+                existing.username = user.username
+                existing.display_name = user.display_name
+                existing.role = user.role
+                existing.is_active = True
         db.commit()
     finally:
         db.close()
@@ -185,6 +189,24 @@ def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
         assert "voice.session.ended" in event_types
     finally:
         db.close()
+
+
+def test_admin_voice_endpoint_requires_ticket_visibility():
+    client = TestClient(app)
+    conversation_id, visitor_token, ticket_id = _create_webchat_conversation(client)
+    created = client.post(
+        f"/api/webchat/conversations/{conversation_id}/voice/sessions",
+        headers={"X-Webchat-Visitor-Token": visitor_token},
+        json={},
+    )
+    voice_session_id = created.json()["voice_session_id"]
+
+    response = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        headers=_admin_headers(9204),
+    )
+
+    assert response.status_code == 403
 
 
 def test_admin_voice_end_requires_auth():
