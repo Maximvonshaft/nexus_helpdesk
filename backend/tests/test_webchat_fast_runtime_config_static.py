@@ -29,8 +29,9 @@ def test_nginx_has_fast_reply_specific_location_and_limit():
     text = NGINX.read_text(encoding="utf-8")
 
     assert "limit_req_zone $binary_remote_addr zone=webchat_fast" in text
+    assert "upstream nexusdesk_app" in text
     assert "location = /api/webchat/fast-reply" in text
     assert "client_max_body_size 32k" in text
     assert "limit_req zone=webchat_fast burst=20 nodelay" in text
     assert "proxy_read_timeout 8s" in text
-    assert "proxy_pass http://app:8080/api/webchat/fast-reply" in text
+    assert "proxy_pass http://nexusdesk_app/api/webchat/fast-reply" in text
