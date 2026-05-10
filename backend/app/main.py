@@ -178,7 +178,8 @@ app.include_router(webchat_router)
 @app.get('/webchat/voice/{voice_session_id}', response_class=HTMLResponse)
 def serve_webchat_voice_placeholder(voice_session_id: str):
     config = load_webchat_voice_runtime_config()
-    if not config.enabled:
+    route_path = f'/webchat/voice/{voice_session_id}'
+    if not config.enabled or not is_webchat_voice_path(route_path, config):
         return JSONResponse(status_code=404, content={'detail': 'WebChat voice is disabled'})
     safe_session_id = ''.join(ch for ch in voice_session_id if ch.isalnum() or ch in {'_', '-'})[:80]
     if not safe_session_id:
