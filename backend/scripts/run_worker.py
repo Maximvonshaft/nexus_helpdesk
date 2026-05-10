@@ -12,6 +12,7 @@ from app.services.background_jobs import dispatch_pending_background_jobs  # noq
 from app.services.message_dispatch import dispatch_pending_messages  # noqa: E402
 from app.services.observability import configure_logging, log_event, record_queue_snapshot, record_worker_poll, record_worker_result  # noqa: E402
 from app.services.openclaw_bridge import sync_openclaw_inbound_conversations_once  # noqa: E402
+from app.services.webchat_handoff_snapshot_worker import dispatch_pending_webchat_handoff_snapshot_jobs  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 import logging
 from app.db import SessionLocal
@@ -66,6 +67,12 @@ def run_once(worker_id: str) -> int:
         if jobs:
             record_worker_result(worker_id, "background_job", "processed", len(jobs))
         record_queue_snapshot("background_job", "processed", len(jobs))
+    with db_context() as db:
+        handoff_jobs = dispatch_pending_webchat_handoff_snapshot_jobs(db, worker_id=worker_id)
+        processed += len(handoff_jobs)
+        if handoff_jobs:
+            record_worker_result(worker_id, "webchat_handoff_snapshot", "processed", len(handoff_jobs))
+        record_queue_snapshot("webchat_handoff_snapshot", "processed", len(handoff_jobs))
     log_event(20, "worker_cycle_complete", worker_id=worker_id, processed=processed)
     return processed
 
