@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import re
+import urllib.error
+import urllib.request
 from time import perf_counter
 from typing import Any
 
@@ -99,6 +102,25 @@ class OpenClawBridgeHTTPClient:
                 }},
             )
 
+    def _get(self, endpoint: str) -> dict[str, Any]:
+        url = f"{self.bridge_url}/{endpoint.lstrip('/')}"
+        request = urllib.request.Request(url, method='GET')
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as resp:
+                raw = resp.read().decode('utf-8')
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode('utf-8', errors='replace') if exc.fp else ''
+            raise OpenClawBridgeHTTPError(f'bridge_http_{exc.code}: {detail or exc.reason}') from exc
+        except Exception as exc:
+            raise OpenClawBridgeHTTPError(f'bridge_http_failed: {exc}') from exc
+        try:
+            data = json.loads(raw or '{}')
+        except json.JSONDecodeError as exc:
+            raise OpenClawBridgeHTTPError(f'bridge_invalid_json: {raw[:200]}') from exc
+        if not isinstance(data, dict):
+            raise OpenClawBridgeHTTPError('bridge_invalid_payload')
+        return data
+
     def _post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         endpoint_path = f"/{endpoint.lstrip('/')}"
         operation = endpoint_path.strip('/').replace('-', '_') or 'unknown'
@@ -132,6 +154,12 @@ class OpenClawBridgeHTTPClient:
 
     def conversations_list(self, *, limit: int = 50, agent: str = 'support') -> dict[str, Any]:
         return self._post('/conversations-list', {'limit': limit, 'agent': agent})
+
+    def readyz(self) -> dict[str, Any]:
+        data = self._get('/readyz')
+        if not bool(data.get('ok')):
+            raise OpenClawBridgeHTTPError(str(data.get('status') or 'bridge_not_ready'))
+        return data
 
     def conversation_get(self, session_key: str) -> dict[str, Any] | None:
         data = self._post('/conversation-get', {'sessionKey': session_key})

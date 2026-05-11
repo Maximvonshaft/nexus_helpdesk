@@ -124,6 +124,9 @@ class Settings:
         self.webchat_tracking_fact_timeout_seconds = int(os.getenv("WEBCHAT_TRACKING_FACT_TIMEOUT_SECONDS", "8"))
         self.webchat_tracking_fact_redaction_enabled = os.getenv("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED", "true").strip().lower() == "true"
         self.webchat_tracking_fact_card_enabled = os.getenv("WEBCHAT_TRACKING_FACT_CARD_ENABLED", "false").strip().lower() == "true"
+        self.webchat_ai_session_ttl_hours = int(os.getenv("WEBCHAT_AI_SESSION_TTL_HOURS", "24"))
+        self.webchat_ai_session_max_messages = int(os.getenv("WEBCHAT_AI_SESSION_MAX_MESSAGES", "40"))
+        self.webchat_ai_session_summary_messages = int(os.getenv("WEBCHAT_AI_SESSION_SUMMARY_MESSAGES", "8"))
 
         self.request_id_header = os.getenv("REQUEST_ID_HEADER", "X-Request-Id")
         self.log_json = os.getenv("LOG_JSON", "true").strip().lower() == "true"
@@ -158,6 +161,12 @@ class Settings:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_SOURCE must be openclaw_bridge")
         if self.webchat_tracking_fact_timeout_seconds < 1 or self.webchat_tracking_fact_timeout_seconds > 30:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_TIMEOUT_SECONDS must be between 1 and 30")
+        if self.webchat_ai_session_ttl_hours < 1 or self.webchat_ai_session_ttl_hours > 168:
+            raise RuntimeError("WEBCHAT_AI_SESSION_TTL_HOURS must be between 1 and 168")
+        if self.webchat_ai_session_max_messages < 4 or self.webchat_ai_session_max_messages > 200:
+            raise RuntimeError("WEBCHAT_AI_SESSION_MAX_MESSAGES must be between 4 and 200")
+        if self.webchat_ai_session_summary_messages < 1 or self.webchat_ai_session_summary_messages > 20:
+            raise RuntimeError("WEBCHAT_AI_SESSION_SUMMARY_MESSAGES must be between 1 and 20")
         if self.webchat_tracking_fact_lookup_enabled and not self.webchat_tracking_fact_redaction_enabled:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED must be true when tracking lookup is enabled")
         if self.app_env == "production":

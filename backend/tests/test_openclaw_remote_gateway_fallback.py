@@ -58,6 +58,9 @@ def test_remote_gateway_runtime_probe_uses_http_bridge_not_mcp(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return None
 
+        def readyz(self):
+            return {"ok": True, "checks": {"gatewayConnected": True}}
+
         def conversations_list(self, *, limit=1, agent="support"):
             return {"conversations": [{"sessionKey": "sess-ok"}]}
 
@@ -91,8 +94,11 @@ def test_remote_gateway_runtime_probe_degrades_when_bridge_unreachable(monkeypat
         def __exit__(self, exc_type, exc, tb):
             return None
 
-        def conversations_list(self, *, limit=1, agent="support"):
+        def readyz(self):
             raise runtime.OpenClawBridgeHTTPError("timed out")
+
+        def conversations_list(self, *, limit=1, agent="support"):
+            raise AssertionError("conversations_list should not run when readyz fails")
 
     monkeypatch.setattr(runtime, "OpenClawMCPClient", BombMCP)
     monkeypatch.setattr(runtime, "OpenClawBridgeHTTPClient", lambda *args, **kwargs: FailingBridge())

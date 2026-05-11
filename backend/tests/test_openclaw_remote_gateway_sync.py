@@ -114,6 +114,9 @@ def test_remote_bridge_client_conversations_list_posts_to_expected_endpoint(monk
     captured = {}
 
     class DummyResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
         def __enter__(self):
             return self
 
@@ -121,17 +124,44 @@ def test_remote_bridge_client_conversations_list_posts_to_expected_endpoint(monk
             return None
 
         def read(self):
-            return b'{"ok": true, "conversations": []}'
+            return json.dumps(self.payload).encode('utf-8')
+
+    class DummyHttpxResponse:
+        def __init__(self, payload):
+            self._payload = payload
+            self.status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class DummyHttpxClient:
+        def post(self, path, json=None):
+            captured['url'] = f'http://bridge.local:18792{path}'
+            captured['body'] = json
+            return DummyHttpxResponse({'ok': True, 'conversations': []})
+
+        def close(self):
+            return None
 
     def fake_urlopen(request, timeout):
-        captured['url'] = request.full_url
-        captured['body'] = json.loads(request.data.decode('utf-8'))
-        return DummyResponse()
+        captured['readyz_url'] = request.full_url
+        captured['readyz_method'] = getattr(request, 'method', None)
+        return DummyResponse({'ok': True, 'checks': {'gatewayConnected': True}})
 
     monkeypatch.setattr(openclaw_client_factory.urllib.request, 'urlopen', fake_urlopen)
-    client = openclaw_client_factory.OpenClawBridgeHTTPClient(bridge_url='http://bridge.local:18792', timeout_seconds=3)
+    client = openclaw_client_factory.OpenClawBridgeHTTPClient(
+        bridge_url='http://bridge.local:18792',
+        timeout_seconds=3,
+        client=DummyHttpxClient(),
+    )
+    ready = client.readyz()
     result = client.conversations_list(limit=123, agent='support')
 
+    assert ready == {'ok': True, 'checks': {'gatewayConnected': True}}
+    assert captured['readyz_url'] == 'http://bridge.local:18792/readyz'
     assert captured['url'] == 'http://bridge.local:18792/conversations-list'
     assert captured['body'] == {'limit': 123, 'agent': 'support'}
     assert result == {'ok': True, 'conversations': []}

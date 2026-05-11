@@ -7,6 +7,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -14,7 +15,7 @@ from sqlalchemy.orm import Session
 from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketStatus
 from ..models import Ticket, TicketComment, TicketEvent, TicketOutboundMessage
 from ..settings import get_settings
-from ..utils.time import utc_now
+from ..utils.time import ensure_utc, utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
 from .openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
@@ -47,6 +48,44 @@ SAFE_TRACKING_REQUIRED_FALLBACK = (
 SAFE_GENERAL_FALLBACK = (
     "Thanks for your message. Our support team is reviewing your request and will reply here as soon as possible."
 )
+
+
+def _webchat_session_policy(conversation: WebchatConversation, history_rows: list[WebchatMessage], total_messages: int) -> dict[str, Any]:
+    ttl_hours = max(1, int(getattr(settings, 'webchat_ai_session_ttl_hours', 24) or 24))
+    max_messages = max(4, int(getattr(settings, 'webchat_ai_session_max_messages', 40) or 40))
+    summary_messages = max(1, int(getattr(settings, 'webchat_ai_session_summary_messages', 8) or 8))
+    base_key = f"webchat:{conversation.tenant_key}:{conversation.channel_key}:{conversation.public_id}"
+
+    rotation_by_messages = total_messages // max_messages
+    created_at = ensure_utc(conversation.created_at) or utc_now()
+    age = utc_now() - created_at
+    rotation_by_ttl = int(age // timedelta(hours=ttl_hours)) if ttl_hours > 0 else 0
+    generation = max(rotation_by_messages, rotation_by_ttl)
+    session_key = base_key if generation <= 0 else f"{base_key}:g{generation}"
+
+    summary = None
+    if generation > 0 and history_rows:
+        older_rows = history_rows[:-summary_messages] if len(history_rows) > summary_messages else history_rows[:-1]
+        older_rows = older_rows[-summary_messages:]
+        if older_rows:
+            summary_lines = []
+            for row in older_rows:
+                speaker = 'Visitor' if row.direction == 'visitor' else 'Agent'
+                text = (row.body_text or row.body or '').strip().replace('\n', ' ')
+                if text:
+                    summary_lines.append(f"- {speaker}: {text[:160]}")
+            if summary_lines:
+                summary = "Prior conversation summary:\n" + "\n".join(summary_lines)
+
+    return {
+        'session_key': session_key,
+        'base_key': base_key,
+        'generation': generation,
+        'ttl_hours': ttl_hours,
+        'max_messages': max_messages,
+        'summary': summary,
+        'rotation_reason': 'ttl_or_message_limit' if generation > 0 else None,
+    }
 
 
 def _message_metadata(*, generated_by: str, decision_level: str, fallback_reason: str | None, reply_source: str | None, fact_evidence_present: bool = False, **extra: Any) -> str:
@@ -110,6 +149,12 @@ def process_webchat_ai_reply_job(
         )
         return {"status": "superseded", "reason": "newer_message_before_bridge_reply", "reply_source": "suppressed"}
 
+    total_messages = (
+        db.query(WebchatMessage.id)
+        .filter(WebchatMessage.conversation_id == conversation.id)
+        .count()
+    )
+
     history_rows = (
         db.query(WebchatMessage)
         .filter(WebchatMessage.conversation_id == conversation.id)
@@ -129,7 +174,8 @@ def process_webchat_ai_reply_job(
     tracking_fact_metadata = tracking_fact.metadata_payload() if tracking_fact else {}
     tracking_fact_metadata.pop("fact_evidence_present", None)
 
-    ai_reply = _generate_ai_reply(ticket=ticket, conversation=conversation, visitor_message=visitor_message, history_rows=history_rows, tracking_fact=tracking_fact)
+    session_policy = _webchat_session_policy(conversation, history_rows, total_messages)
+    ai_reply = _generate_ai_reply(ticket=ticket, conversation=conversation, visitor_message=visitor_message, history_rows=history_rows, tracking_fact=tracking_fact, session_policy=session_policy)
     reply_source = _LAST_AI_REPLY_SOURCE
     fallback_reason = _LAST_AI_FALLBACK_REASON
     bridge_elapsed_ms = _LAST_BRIDGE_ELAPSED_MS
@@ -210,6 +256,9 @@ def process_webchat_ai_reply_job(
             fallback_reason=fallback_reason,
             reply_source=reply_source,
             fact_evidence_present=fact_evidence_present,
+            openclaw_session_key=session_policy['session_key'],
+            openclaw_session_generation=session_policy['generation'],
+            openclaw_session_rotation_reason=session_policy['rotation_reason'],
             fact_gate_reason=fact_gate_reason,
             bridge_elapsed_ms=bridge_elapsed_ms,
             bridge_timeout_seconds=bridge_timeout_seconds,
@@ -265,6 +314,9 @@ def process_webchat_ai_reply_job(
         "reply_source": reply_source,
         "provider_status": provider_status,
         "external_send": False,
+        "openclaw_session_key": session_policy['session_key'],
+        "openclaw_session_generation": session_policy['generation'],
+        "openclaw_session_rotation_reason": session_policy['rotation_reason'],
         "bridge_elapsed_ms": bridge_elapsed_ms,
         "bridge_timeout_seconds": bridge_timeout_seconds,
         "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds,
@@ -306,7 +358,6 @@ def process_webchat_ai_reply_job(
             "ticket_id": ticket.id,
             "visitor_message_id": visitor_message.id,
             "webchat_message_id": message.id,
-            "ai_turn_id": ai_turn_id,
             "fallback": bool(fallback_reason),
             "reply_source": reply_source,
             "fallback_reason": fallback_reason,
@@ -315,6 +366,9 @@ def process_webchat_ai_reply_job(
             "tracking_fact_tool_status": tracking_fact.tool_status if tracking_fact else None,
             "provider_status": provider_status,
             "external_send": False,
+            "openclaw_session_key": session_policy['session_key'],
+            "openclaw_session_generation": session_policy['generation'],
+            "openclaw_session_rotation_reason": session_policy['rotation_reason'],
             "bridge_elapsed_ms": bridge_elapsed_ms,
             "bridge_timeout_seconds": bridge_timeout_seconds,
             "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds,
@@ -354,7 +408,7 @@ def _maybe_lookup_tracking_fact(*, conversation: WebchatConversation, ticket: Ti
     return result
 
 
-def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage], tracking_fact: TrackingFactResult | None = None) -> str:
+def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage], tracking_fact: TrackingFactResult | None = None, session_policy: dict[str, Any] | None = None) -> str:
     global _LAST_AI_REPLY_SOURCE, _LAST_AI_FALLBACK_REASON, _LAST_BRIDGE_ELAPSED_MS, _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS, _LAST_BRIDGE_WAIT_TIMEOUT_MS
 
     _LAST_AI_REPLY_SOURCE = "fallback"
@@ -363,12 +417,12 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
     _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = None
     _LAST_BRIDGE_WAIT_TIMEOUT_MS = None
 
-    prompt = _build_prompt(ticket=ticket, conversation=conversation, visitor_message=visitor_message, history_rows=history_rows, tracking_fact=tracking_fact)
+    prompt = _build_prompt(ticket=ticket, conversation=conversation, visitor_message=visitor_message, history_rows=history_rows, tracking_fact=tracking_fact, session_policy=session_policy)
 
     if settings.openclaw_bridge_enabled:
         started = time.monotonic()
         try:
-            text = _generate_ai_reply_via_bridge(prompt=prompt, conversation=conversation, visitor_message=visitor_message)
+            text = _generate_ai_reply_via_bridge(prompt=prompt, conversation=conversation, visitor_message=visitor_message, session_policy=session_policy)
             _LAST_BRIDGE_ELAPSED_MS = int((time.monotonic() - started) * 1000)
             text = (text or "").strip()
 
@@ -433,13 +487,13 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
     return _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
 
 
-def _generate_ai_reply_via_bridge(*, prompt: str, conversation: WebchatConversation, visitor_message: WebchatMessage) -> str:
+def _generate_ai_reply_via_bridge(*, prompt: str, conversation: WebchatConversation, visitor_message: WebchatMessage, session_policy: dict[str, Any] | None = None) -> str:
     global _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS, _LAST_BRIDGE_WAIT_TIMEOUT_MS
 
     bridge_url = settings.openclaw_bridge_url.rstrip('/')
-    session_key = f"webchat-ai-{conversation.public_id}-{visitor_message.id}"
+    session_key = (session_policy or {}).get('session_key') or f"webchat:{conversation.tenant_key}:{conversation.channel_key}:{conversation.public_id}"
     configured_timeout_seconds = int(getattr(settings, "openclaw_bridge_timeout_seconds", 20) or 20)
-    effective_timeout_seconds = min(max(configured_timeout_seconds, 5), 30)
+    effective_timeout_seconds = max(configured_timeout_seconds, 5)
     wait_timeout_ms = effective_timeout_seconds * 1000
     _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = effective_timeout_seconds
     _LAST_BRIDGE_WAIT_TIMEOUT_MS = wait_timeout_ms
@@ -475,7 +529,7 @@ def _generate_ai_reply_via_bridge(*, prompt: str, conversation: WebchatConversat
     return str(text)
 
 
-def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage], tracking_fact: TrackingFactResult | None = None) -> str:
+def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage], tracking_fact: TrackingFactResult | None = None, session_policy: dict[str, Any] | None = None) -> str:
     history_lines = []
     for row in history_rows:
         speaker = "Visitor" if row.direction == "visitor" else "Agent"
@@ -484,6 +538,7 @@ def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_
     fact_block = ""
     if tracking_fact and tracking_fact.fact_evidence_present and tracking_fact.pii_redacted:
         fact_block = tracking_fact.prompt_summary().strip()
+    session_summary_block = ((session_policy or {}).get('summary') or '').strip()
 
     fact_instruction = (
         "If a Trusted tracking fact block is provided, use only that block for parcel status. "
@@ -496,6 +551,7 @@ def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_
         "Be concise, friendly, and professional. "
         "Write one short customer-facing reply only. "
         f"{fact_instruction}"
+        f"{session_summary_block + chr(10) if session_summary_block else ''}"
         "For tracking, parcel status, refund, customs, delivery, compensation, or SLA questions without trusted facts, "
         "ask for the tracking number or say a support specialist will check. "
         "Never invent parcel status, delivery result, customs clearance, refund, compensation, or SLA. "
