@@ -71,3 +71,36 @@ def test_disabled_fast_ai_does_not_require_token_or_url():
 
     settings.validate_runtime()
     assert settings.is_openclaw_configured is False
+
+
+def test_production_timeout_caps_allow_tailnet_operational_75s(tmp_path):
+    token_file = tmp_path / "openclaw_responses_token"
+    token_file.write_text("local-token\n", encoding="utf-8")
+
+    settings = WebchatFastSettings(
+        enabled=True,
+        provider="openclaw_responses",
+        timeout_ms=30000,
+        max_timeout_ms=75000,
+        history_turns=5,
+        max_prompt_chars=2500,
+        rate_limit_window_seconds=60,
+        rate_limit_max_requests=30,
+        hard_fail_on_non_ai_reply=True,
+        openclaw_responses_url="http://100.106.75.61:18792/responses",
+        openclaw_responses_agent_id="webchat-fast",
+        openclaw_responses_token_file=str(token_file),
+        openclaw_responses_token=None,
+        openclaw_connect_timeout_ms=10000,
+        openclaw_read_timeout_ms=60000,
+        openclaw_total_timeout_ms=75000,
+        openclaw_pool_max_connections=10,
+        openclaw_pool_max_keepalive=5,
+        app_env="production",
+    )
+
+    settings.validate_runtime()
+    assert settings.token == "local-token"
+    assert settings.max_timeout_ms == 75000
+    assert settings.openclaw_total_timeout_ms == 75000
+

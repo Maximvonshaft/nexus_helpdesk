@@ -211,3 +211,58 @@ def test_idempotent_fast_reply_returns_same_response(monkeypatch):
     assert second.status_code == 200
     assert calls["generate"] == 1
     assert second.json()["idempotent"] is True
+
+
+def test_handoff_queued_notice_is_added_after_successful_enqueue(monkeypatch):
+    calls = {"db_opened": 0, "enqueued": 0}
+
+    async def fake_generate(**kwargs):
+        return WebchatFastReplyResult(
+            ok=True,
+            ai_generated=True,
+            reply_source="openclaw_responses",
+            reply="I’ll route this to a support specialist for checking.",
+            intent="handoff",
+            tracking_number="SF123456789",
+            handoff_required=True,
+            handoff_reason="manual_review_required",
+            recommended_agent_action="Check shipment status and reply with verified information.",
+            ticket_creation_queued=False,
+            elapsed_ms=30,
+        )
+
+    class FakeContext:
+        def __enter__(self):
+            calls["db_opened"] += 1
+            return object()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_enqueue(db, *, snapshot):
+        calls["enqueued"] += 1
+        return object()
+
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
+    monkeypatch.setattr(webchat_fast, "db_context", lambda: FakeContext())
+    monkeypatch.setattr(webchat_fast, "enqueue_webchat_handoff_snapshot_job", fake_enqueue)
+
+    response = client.post("/api/webchat/fast-reply", json=_payload("client-handoff-notice"))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["handoff_required"] is True
+    assert data["ticket_creation_queued"] is True
+    assert "submitted this for manual review" in data["reply"]
+    assert calls == {"db_opened": 1, "enqueued": 1}
+
+
+def test_handoff_queued_notice_helper_adds_chinese_submission_wording():
+    reply = webchat_fast._ensure_handoff_queued_notice(
+        "这种情况需要人工进一步核查。",
+        customer_message="你好，我的包裹显示签收但未收到。",
+    )
+
+    assert "我已为您提交人工核查" in reply
+

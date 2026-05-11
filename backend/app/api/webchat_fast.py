@@ -95,6 +95,39 @@ def _visitor_payload(visitor: WebchatFastVisitor | None) -> dict[str, Any]:
     return visitor.model_dump(exclude_none=True) if visitor else {}
 
 
+def _contains_chinese(value: str | None) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in (value or ""))
+
+
+def _ensure_handoff_queued_notice(reply: str | None, *, customer_message: str | None = None) -> str | None:
+    """Append deterministic customer-visible handoff submission wording after snapshot enqueue succeeds."""
+    if not reply:
+        return reply
+
+    clean = " ".join(str(reply).strip().split())
+    if not clean:
+        return reply
+
+    if _contains_chinese(f"{clean} {customer_message or ''}"):
+        already_committed = (
+            ("已" in clean or "已经" in clean)
+            and ("人工" in clean or "客服" in clean or "工单" in clean)
+            and ("提交" in clean or "转" in clean or "创建" in clean or "安排" in clean)
+        )
+        if already_committed:
+            return clean
+        return clean.rstrip("。.!！?？") + "。我已为您提交人工核查，请等待客服进一步处理。"
+
+    lowered = clean.lower()
+    already_committed = (
+        any(term in lowered for term in ["submitted", "created", "opened", "queued", "routed"])
+        and any(term in lowered for term in ["manual", "support", "ticket", "specialist", "review"])
+    )
+    if already_committed:
+        return clean
+    return clean.rstrip(".!?。！？") + ". I've submitted this for manual review, and our support team will follow up."
+
+
 @router.options("/fast-reply")
 def webchat_fast_reply_options(request: Request):
     return Response(status_code=204, headers=_public_cors_headers(request))
@@ -143,6 +176,7 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
             with db_context() as db:
                 enqueue_webchat_handoff_snapshot_job(db, snapshot=snapshot)
             result_payload["ticket_creation_queued"] = True
+            result_payload["reply"] = _ensure_handoff_queued_notice(result_payload.get("reply"), customer_message=payload.body)
         except Exception:
             # Customer AI reply must still return even if DB-backed enqueue fails.
             result_payload["ticket_creation_queued"] = False
