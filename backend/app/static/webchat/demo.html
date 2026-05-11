@@ -1,6 +1,9 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Speedaf Support Webchat Demo</title>
@@ -27,11 +30,11 @@
       <p>Open the chat in the bottom-right corner and send a message. Speedy will reply inside the widget.</p>
       <p>If <code>WEBCHAT_VOICE_ENABLED=true</code>, a separate orange voice button appears. It creates a mock WebChat Voice session and opens the dedicated voice page. It does not request microphone access or load WebRTC in this phase.</p>
       <p>Snippet:</p>
-      <pre><code>&lt;script src="/webchat/widget.js" data-tenant="demo" data-channel="website" data-title="Speedaf Support" data-subtitle="Usually replies instantly" data-assistant-name="Speedy" async&gt;&lt;/script&gt;
+      <pre><code>&lt;script data-timeout-ms="90000" data-fast-reply-timeout-ms="90000" src="/webchat/widget.js?v=mobile-timeout-hotfix-20260511T082120Z" data-tenant="demo" data-channel="website" data-title="Speedaf Support" data-subtitle="Usually replies instantly" data-assistant-name="Speedy" async&gt;&lt;/script&gt;
 &lt;script src="/webchat/voice-entry.js" data-tenant="demo" data-channel="website" data-title="Speedaf Voice Call" data-voice-label="Voice call" async&gt;&lt;/script&gt;</code></pre>
     </div>
   </main>
-  <script src="/webchat/widget.js" data-tenant="demo" data-channel="website" data-title="Speedaf Support" data-subtitle="Usually replies instantly" data-assistant-name="Speedy" async></script>
+  <script data-timeout-ms="90000" data-fast-reply-timeout-ms="90000" src="/webchat/widget.js?v=mobile-timeout-hotfix-20260511T082120Z" data-tenant="demo" data-channel="website" data-title="Speedaf Support" data-subtitle="Usually replies instantly" data-assistant-name="Speedy" async></script>
   <script src="/webchat/voice-entry.js" data-tenant="demo" data-channel="website" data-title="Speedaf Voice Call" data-voice-label="Voice call" async></script>
 </body>
 </html>

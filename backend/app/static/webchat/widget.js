@@ -67,7 +67,7 @@
     + '.nd-webchat-input{flex:1;min-width:0;height:44px;border:1px solid #d0d5dd;border-radius:15px;padding:0 14px;background:#fff;color:#101828;font:500 14.5px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;outline:none}\n'
     + '.nd-webchat-send{flex:0 0 auto;height:44px;min-width:74px;border:0;border-radius:15px;background:#101828;color:#fff;padding:0 16px;font:720 14px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;cursor:pointer}.nd-webchat-send:disabled{opacity:.58;cursor:not-allowed}\n'
     + '.nd-webchat-status{flex:0 0 auto;padding:7px 15px;font-size:12.5px;font-weight:560;color:#667085;border-top:1px solid #f2f4f7;background:#fff}\n'
-    + '@media (max-width:480px){.nd-webchat-panel{left:0;right:0;bottom:0;width:100vw;height:100dvh;max-height:100dvh;max-width:100vw;border-radius:0}.nd-webchat-button{right:16px;bottom:16px}}\n';
+    + '@media (max-width:480px){.nd-webchat-panel{left:0;right:0;bottom:0;width:100vw;height:100dvh;max-height:100dvh;max-width:100vw;border-radius:0}.nd-webchat-button{right:16px;bottom:16px}.nd-webchat-button[data-open=true]{display:none}.nd-webchat-form{padding-right:max(14px,env(safe-area-inset-right));padding-left:max(14px,env(safe-area-inset-left))}.nd-webchat-send{min-width:68px;padding:0 14px}}\n';
   document.head.appendChild(style);
 
   var button = document.createElement('button');
@@ -156,6 +156,7 @@
   function openPanel(force) {
     state.open = typeof force === 'boolean' ? force : !state.open;
     panel.setAttribute('data-open', state.open ? 'true' : 'false');
+    button.setAttribute('data-open', state.open ? 'true' : 'false');
     buttonText.textContent = state.open ? closeLabel : buttonLabel;
     if (state.open) {
       state.unread = 0;
@@ -324,7 +325,7 @@
         body: body,
         recent_context: state.recentContext
       })
-    }, 10000).then(function (data) {
+    }, Number(script.getAttribute('data-fast-reply-timeout-ms') || script.getAttribute('data-timeout-ms') || 90000)).then(function (data) {
       hideTyping();
       updateMessage(bubble, body, 'visitor');
       if (data && data.ok === true && data.ai_generated === true && data.reply) {
@@ -394,7 +395,7 @@
     if (state.legacyLastMessageId) qs += '&after_id=' + encodeURIComponent(state.legacyLastMessageId);
     return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/messages' + qs, {
       headers: { 'X-Webchat-Visitor-Token': state.legacyVisitorToken }
-    }, 10000).then(function (data) {
+    }, Number(script.getAttribute('data-fast-reply-timeout-ms') || script.getAttribute('data-timeout-ms') || 90000)).then(function (data) {
       (data.messages || []).forEach(function (msg) {
         if (msg.id && msg.id > state.legacyLastMessageId) state.legacyLastMessageId = msg.id;
         var role = msg.direction === 'visitor' ? 'visitor' : 'agent';
