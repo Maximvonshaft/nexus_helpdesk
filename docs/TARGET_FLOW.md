@@ -1,28 +1,29 @@
 # NexusDesk P0 Target Flow
 
-This branch closes the P0 business flow only. It does not upgrade OpenClaw, does not add real SMTP/SES/SendGrid, and does not implement inbound email webhooks.
+This branch closes the P0 formal outbound policy while preserving Webchat as the AI frontline service channel. It does not upgrade OpenClaw, does not add real SMTP/SES/SendGrid, and does not implement inbound email webhooks.
 
 ## Target
 
 ```text
-Webchat intake
+Webchat AI frontline service
 → Ticket
-→ AI email draft
+→ Human resolution note
+→ AI formal outbound draft
 → Human approve
-→ Sandbox EmailProvider dispatch
+→ Email/WhatsApp dispatch
 → Timeline audit
 ```
 
-WhatsApp remains routed through the existing OpenClaw path. Email is owned by NexusDesk and must not be sent through OpenClaw.
+Webchat is the AI frontline service channel. Email and WhatsApp are the formal resolution notification channels.
 
 ## Channel policy
 
-Customer outbound is limited to:
+Customer formal outbound is limited to:
 
 - `email`
 - `whatsapp`
 
-Inbound-only or blocked customer outbound channels:
+Formal/final resolution outbound is blocked on:
 
 - `web_chat`
 - `telegram`
@@ -31,8 +32,19 @@ Inbound-only or blocked customer outbound channels:
 
 ## Webchat policy
 
-Webchat is intake-only. It may create/update tickets and write visitor messages, comments, and audit events. It must not create customer-visible Webchat agent/system/AI replies.
+Webchat may provide customer-visible AI frontline service replies, including greeting, acknowledgement, missing tracking-number/contact requests, trusted tracking-fact replies, handoff acknowledgement, and support-team handoff notices.
+
+Webchat must not carry final/formal resolution notifications, compensation decisions, redelivery commitments, refund/claim confirmations, resolved/closed final notices, or outbound generated from a human resolution note. Those messages must be drafted and approved through the Ticket workflow, then sent by Email or WhatsApp.
+
+Runtime defaults:
+
+```text
+WEBCHAT_FRONTLINE_AI_ENABLED=true
+WEBCHAT_FORMAL_OUTBOUND_ENABLED=false
+```
 
 ## AI policy
 
-AI may create draft outbound only. AI-generated outbound is saved as `draft` with `provider_status=ai_review_required`. It is not eligible for dispatch until a human approves it.
+AI may create formal outbound drafts only. AI-generated formal outbound is saved as `draft` with `provider_status=ai_review_required`. It is not eligible for dispatch until a human approves it.
+
+AI frontline Webchat replies are local Webchat service messages and are not external provider dispatch. They remain subject to safety/fact gates and must not represent final human resolution decisions.
