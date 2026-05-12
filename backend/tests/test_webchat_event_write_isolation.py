@@ -15,6 +15,8 @@ os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_event_isolation_te
 os.environ.setdefault("WEBCHAT_RATE_LIMIT_BACKEND", "memory")
 os.environ.setdefault("WEBCHAT_ALLOW_NO_ORIGIN", "true")
 os.environ.setdefault("OPENCLAW_BRIDGE_ENABLED", "false")
+os.environ.setdefault("WEBCHAT_FRONTLINE_AI_ENABLED", "true")
+os.environ.setdefault("WEBCHAT_FORMAL_OUTBOUND_ENABLED", "false")
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -141,7 +143,7 @@ def test_operator_resolve_and_drop_main_state_still_success_without_event_depend
     assert dropped.resolved_at is not None
 
 
-def test_intake_only_visitor_message_survives_webchat_event_flush_failure(api_context, monkeypatch, caplog):
+def test_frontline_ai_visitor_message_survives_webchat_event_flush_failure(api_context, monkeypatch, caplog):
     db_session, client = api_context
     public_id = "wc_ai_isolation"
     visitor_token = "visitor-token-for-event-isolation-0001"
@@ -169,9 +171,9 @@ def test_intake_only_visitor_message_survives_webchat_event_flush_failure(api_co
     payload = response.json()
     assert payload["ok"] is True
     assert payload["message"]["direction"] == "visitor"
-    assert payload["intake_only"] is True
-    assert "ai_status" not in payload
-    assert "ai_pending" not in payload
+    assert payload.get("frontline_ai_enabled") is not False
+    assert "ai_status" in payload
+    assert "ai_pending" in payload
     assert "raw secret" not in response.text
 
     visitor_message = db_session.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == "visitor").one()
@@ -179,10 +181,10 @@ def test_intake_only_visitor_message_survives_webchat_event_flush_failure(api_co
     turns = db_session.query(WebchatAITurn).filter(WebchatAITurn.conversation_id == conversation.id).all()
     jobs = db_session.query(BackgroundJob).filter(BackgroundJob.job_type == WEBCHAT_AI_REPLY_JOB, BackgroundJob.status.in_([JobStatus.pending, JobStatus.processing])).all()
     assert visitor_message.body.startswith("Please help with tracking number")
-    assert turns == []
-    assert jobs == []
-    assert conversation.active_ai_turn_id is None
-    assert conversation.active_ai_status is None
+    assert len(turns) == 1
+    assert len(jobs) == 1
+    assert conversation.active_ai_turn_id == turns[0].id
+    assert conversation.active_ai_status in {"queued", "processing", "bridge_calling"}
 
     rendered_logs = "\n".join(record.getMessage() for record in caplog.records)
     assert "raw secret token" not in rendered_logs
