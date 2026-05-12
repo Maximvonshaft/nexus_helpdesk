@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, EventType, SourceChannel, TicketPriority, TicketSource, TicketStatus
@@ -21,6 +23,14 @@ def _clip(value: Any, limit: int) -> str | None:
     if not cleaned:
         return None
     return cleaned[:limit]
+
+
+def webchat_handoff_source_dedupe_key(snapshot: dict[str, Any]) -> str:
+    return "webchat-fast-handoff:{tenant}:{session}:{client}".format(
+        tenant=_clip(snapshot.get("tenant_key"), 120) or "default",
+        session=_clip(snapshot.get("session_id"), 120) or "unknown",
+        client=_clip(snapshot.get("client_message_id"), 120) or "unknown",
+    )[:300]
 
 
 def build_handoff_snapshot_payload(
@@ -46,7 +56,7 @@ def build_handoff_snapshot_payload(
         text = _clip(item.get("text") or item.get("body"), 240)
         if role and text:
             compact_context.append({"role": role, "text": text})
-    return {
+    snapshot = {
         "snapshot_type": "webchat_ai_handoff_snapshot",
         "source": "webchat_fast_openclaw_responses",
         "tenant_key": _clip(tenant_key, 120) or "default",
@@ -64,14 +74,12 @@ def build_handoff_snapshot_payload(
         "visitor": visitor or {},
         "created_at": utc_now().isoformat(),
     }
+    snapshot["source_dedupe_key"] = webchat_handoff_source_dedupe_key(snapshot)
+    return snapshot
 
 
 def enqueue_webchat_handoff_snapshot_job(db: Session, *, snapshot: dict[str, Any]) -> BackgroundJob:
-    dedupe_key = "webchat-fast-handoff:{tenant}:{session}:{client}".format(
-        tenant=snapshot.get("tenant_key") or "default",
-        session=snapshot.get("session_id") or "unknown",
-        client=snapshot.get("client_message_id") or "unknown",
-    )
+    dedupe_key = snapshot.get("source_dedupe_key") or webchat_handoff_source_dedupe_key(snapshot)
     return enqueue_background_job(
         db,
         queue_name="webchat_handoff_snapshot",
@@ -81,7 +89,16 @@ def enqueue_webchat_handoff_snapshot_job(db: Session, *, snapshot: dict[str, Any
     )
 
 
+def _existing_ticket_by_source_dedupe_key(db: Session, source_dedupe_key: str) -> Ticket | None:
+    return db.execute(select(Ticket).where(Ticket.source_dedupe_key == source_dedupe_key).limit(1)).scalar_one_or_none()
+
+
 def create_ticket_from_webchat_snapshot(db: Session, *, snapshot: dict[str, Any]) -> Ticket:
+    source_dedupe_key = snapshot.get("source_dedupe_key") or webchat_handoff_source_dedupe_key(snapshot)
+    existing = _existing_ticket_by_source_dedupe_key(db, source_dedupe_key)
+    if existing is not None:
+        return existing
+
     title_part = snapshot.get("tracking_number") or snapshot.get("intent") or "handoff"
     title = f"WebChat handoff · {title_part}"[:255]
     description = (
@@ -101,22 +118,30 @@ def create_ticket_from_webchat_snapshot(db: Session, *, snapshot: dict[str, Any]
         conversation_state=ConversationState.human_review_required,
         tracking_number=snapshot.get("tracking_number"),
         source_chat_id=f"webchat-fast:{snapshot.get('tenant_key') or 'default'}:{snapshot.get('session_id') or 'unknown'}"[:120],
+        source_dedupe_key=source_dedupe_key,
         customer_request=snapshot.get("customer_last_message"),
         last_customer_message=snapshot.get("customer_last_message"),
         required_action=snapshot.get("recommended_agent_action"),
         preferred_reply_channel=SourceChannel.web_chat.value,
         preferred_reply_contact=(snapshot.get("visitor") or {}).get("email") or (snapshot.get("visitor") or {}).get("phone") or snapshot.get("session_id"),
     )
-    db.add(ticket)
-    db.flush()
-    db.add(TicketEvent(
-        ticket_id=ticket.id,
-        actor_id=None,
-        event_type=EventType.ticket_created,
-        note="WebChat AI handoff snapshot created",
-        payload_json=json.dumps(snapshot, ensure_ascii=False),
-    ))
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(ticket)
+            db.flush()
+            db.add(TicketEvent(
+                ticket_id=ticket.id,
+                actor_id=None,
+                event_type=EventType.ticket_created,
+                note="WebChat AI handoff snapshot created",
+                payload_json=json.dumps(snapshot, ensure_ascii=False),
+            ))
+            db.flush()
+    except IntegrityError:
+        existing = _existing_ticket_by_source_dedupe_key(db, source_dedupe_key)
+        if existing is None:
+            raise
+        return existing
     return ticket
 
 

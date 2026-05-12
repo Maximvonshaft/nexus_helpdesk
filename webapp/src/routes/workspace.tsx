@@ -16,6 +16,31 @@ import { SegmentedControl, ToolbarAction } from '@/components/ui/SegmentedContro
 import { Skeleton } from '@/components/ui/Skeleton'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 
+function timelineTitle(item: Record<string, unknown>) {
+  const sourceType = String(item.source_type || '')
+  if (sourceType === 'comment') return '客户消息'
+  if (sourceType === 'internal_note') return '内部备注'
+  if (sourceType === 'outbound_message') return '回复发送'
+  if (sourceType === 'ai_intake') return '智能提炼'
+  if (sourceType === 'ticket_event') return '工单事件'
+  if (sourceType === 'webchat_event') return 'WebChat 事件'
+  return '时间线项目'
+}
+
+function timelineBody(item: Record<string, unknown>) {
+  return sanitizeDisplayText(
+    String(
+      item.body
+      || item.summary
+      || item.note
+      || item.event_type
+      || item.classification
+      || item.id
+      || ''
+    )
+  )
+}
+
 function SyncCountdown({ onRefresh }: { onRefresh: () => void }) {
   const [countdown, setCountdown] = useState(10)
   const timerRef = useRef<number | null>(null)
@@ -68,10 +93,17 @@ function WorkspacePage() {
     enabled: !!selectedId,
     refetchInterval: autoRefresh.enabled && !isDirty ? 10000 : false,
   })
+  const timeline = useQuery({
+    queryKey: ['ticketTimeline', selectedId],
+    queryFn: () => api.ticketTimeline(selectedId as number, { limit: 50 }),
+    enabled: !!selectedId,
+    refetchInterval: autoRefresh.enabled && !isDirty ? 10000 : false,
+  })
 
   const refreshConversation = () => {
     if (selectedId) {
       client.invalidateQueries({ queryKey: ['caseDetail', selectedId] })
+      client.invalidateQueries({ queryKey: ['ticketTimeline', selectedId] })
     }
   }
 
@@ -140,6 +172,7 @@ function WorkspacePage() {
       setToast({ message: '工单已更新', tone: 'success' })
       await client.invalidateQueries({ queryKey: ['cases'] })
       await client.invalidateQueries({ queryKey: ['caseDetail', selectedId] })
+      await client.invalidateQueries({ queryKey: ['ticketTimeline', selectedId] })
       if (updated?.id) { setSelectedId(updated.id); setIsDirty(false); }
     },
     onError: (err: Error) => setToast({ message: err.message || '更新工单失败', tone: 'danger' }),
@@ -160,11 +193,13 @@ function WorkspacePage() {
       setToast({ message: '智能提炼已保存', tone: 'success' })
       setIsDirty(false)
       await client.invalidateQueries({ queryKey: ['caseDetail', selectedId] })
+      await client.invalidateQueries({ queryKey: ['ticketTimeline', selectedId] })
     },
     onError: (err: Error) => setToast({ message: err.message || '保存智能提炼失败', tone: 'danger' }),
   })
 
   const activeCase = detail.data
+  const timelineItems = timeline.data?.items ?? []
   const users = meta.data?.users ?? []
   const statuses = meta.data?.statuses ?? []
   const caseCount = cases.data?.length ?? 0
@@ -331,17 +366,17 @@ function WorkspacePage() {
                       <CardHeader title="客户消息记录" subtitle="客服处理时重点看这一段，按时间顺序看清客户说了什么。" />
                       <CardBody>
                         <div className="timeline">
-                          {(activeCase.openclaw_transcript ?? []).map((msg) => (
-                            <div key={msg.id} className="message" data-role={msg.role === 'user' ? 'user' : msg.role === 'assistant' ? 'assistant' : 'agent'}>
+                          {timelineItems.map((item) => (
+                            <div key={String(item.id || Math.random())} className="message" data-role={String(item.source_type) === 'comment' ? 'user' : 'agent'}>
                               <div className="message-head">
-                                <strong>{labelize(msg.role)}</strong>
-                                <span>{formatDateTime(msg.received_at || msg.created_at)}</span>
+                                <strong>{timelineTitle(item)}</strong>
+                                <span>{formatDateTime(String(item.created_at || ''))}</span>
                               </div>
-                              <div className="section-subtitle">{sanitizeDisplayText(msg.author_name)}</div>
-                              <div>{sanitizeDisplayText(msg.body_text)}</div>
+                              <div>{timelineBody(item)}</div>
                             </div>
                           ))}
-                          {!(activeCase.openclaw_transcript?.length) ? <EmptyState text="当前还没有同步到客户消息记录。" /> : null}
+                          {!timelineItems.length && !timeline.isLoading ? <EmptyState text="当前还没有可展示的时间线记录。" /> : null}
+                          {timeline.isLoading ? <Skeleton lines={4} /> : null}
                         </div>
                       </CardBody>
                     </Card>

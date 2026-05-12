@@ -90,6 +90,13 @@ def _extract_response_text(payload: Any) -> str:
         if isinstance(value, str) and value.strip():
             return value
 
+    response = payload.get("response")
+    if isinstance(response, dict):
+        for nested_key in ("output_text", "text"):
+            value = response.get(nested_key)
+            if isinstance(value, str) and value.strip():
+                return value
+
     output = payload.get("output")
     if isinstance(output, list):
         texts: list[str] = []
@@ -167,15 +174,21 @@ def _sanitize_reply(reply: str) -> str:
     return cleaned[:1200]
 
 
-def parse_openclaw_fast_reply(payload: Any) -> ParsedFastReply:
-    """Parse and validate OpenClaw /v1/responses output for public WebChat.
+def parse_openclaw_fast_reply_from_strict_json(payload: dict[str, Any]) -> ParsedFastReply:
+    """Validate a strict Fast Lane JSON object.
 
-    Only strict pure JSON text is accepted. Tool/function calls, markdown fenced
-    JSON, mixed prose, missing keys, and internal system terms are rejected.
+    Accepted shape:
+    {
+      "reply": str,
+      "intent": str,
+      "tracking_number": str | null,
+      "handoff_required": bool,
+      "handoff_reason": str | null,
+      "recommended_agent_action": str | null,
+    }
     """
 
-    raw_text = _extract_response_text(payload)
-    parsed = _parse_pure_json_text(raw_text)
+    parsed = dict(payload)
     missing = sorted(_REQUIRED_KEYS - set(parsed.keys()))
     if missing:
         raise FastReplyParseError(f"AI output missing required keys: {', '.join(missing)}")
@@ -207,3 +220,24 @@ def parse_openclaw_fast_reply(payload: Any) -> ParsedFastReply:
         handoff_reason=handoff_reason,
         recommended_agent_action=recommended_agent_action,
     )
+
+
+def parse_openclaw_fast_reply(payload: Any) -> ParsedFastReply:
+    """Parse and validate WebChat Fast Lane AI output.
+
+    Input contract:
+    - strict Fast Lane JSON object (already json.loads'ed dict), or
+    - strict JSON text body, or
+    - an OpenClaw envelope carrying strict JSON in output_text/text/response.output_text.
+
+    Only strict pure JSON output is accepted. Tool/function calls, markdown
+    fenced JSON, mixed prose, missing keys, and internal system terms are
+    rejected.
+    """
+
+    if isinstance(payload, dict) and _REQUIRED_KEYS.issubset(payload.keys()):
+        return parse_openclaw_fast_reply_from_strict_json(payload)
+
+    raw_text = _extract_response_text(payload)
+    parsed = _parse_pure_json_text(raw_text)
+    return parse_openclaw_fast_reply_from_strict_json(parsed)

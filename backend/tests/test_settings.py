@@ -21,11 +21,18 @@ def _load_settings(monkeypatch, *, app_env: str, allow_dev_auth: str):
         get_settings.cache_clear()
 
 
+import pytest
+
+
 def test_allow_dev_auth_environment_matrix(monkeypatch):
     disabled_envs = ['production', 'staging', 'preview', 'demo']
     for env_name in disabled_envs:
-        settings = _load_settings(monkeypatch, app_env=env_name, allow_dev_auth='true')
-        assert settings.allow_dev_auth is False, env_name
+        if env_name == 'production':
+            with pytest.raises(RuntimeError, match='ALLOW_DEV_AUTH must be disabled in production'):
+                _load_settings(monkeypatch, app_env=env_name, allow_dev_auth='true')
+        else:
+            settings = _load_settings(monkeypatch, app_env=env_name, allow_dev_auth='true')
+            assert settings.allow_dev_auth is False, env_name
 
     enabled_envs = ['development', 'test', 'local']
     for env_name in enabled_envs:

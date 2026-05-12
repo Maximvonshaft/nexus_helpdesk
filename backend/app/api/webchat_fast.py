@@ -4,14 +4,24 @@ from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 
 from ..db import db_context
 from ..settings import get_settings
 from ..services.webchat_fast_ai_service import generate_webchat_fast_reply
-from ..services.webchat_fast_idempotency import get_fast_reply_idempotent_response, remember_fast_reply_response
+from ..services.webchat_fast_idempotency_db import (
+    WebchatFastIdempotency,
+    begin_webchat_fast_idempotency,
+    compute_request_hash,
+    mark_webchat_fast_done,
+    mark_webchat_fast_failed,
+)
 from ..services.webchat_fast_rate_limit import enforce_webchat_fast_rate_limit
+from ..services.webchat_fast_stream_service import prepare_webchat_fast_stream, stream_webchat_fast_reply_events
 from ..services.webchat_handoff_snapshot_service import build_handoff_snapshot_payload, enqueue_webchat_handoff_snapshot_job
+from ..services.webchat_fast_config import get_webchat_fast_settings
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat-fast"])
 settings = get_settings()
@@ -72,7 +82,7 @@ def _public_cors_headers(request: Request) -> dict[str, str]:
     origin = _validated_origin(request)
     headers = {
         "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, X-Requested-With",
+        "Access-Control-Allow-Headers": "Content-Type, X-Requested-With, Accept",
         "Access-Control-Max-Age": "600",
         "Vary": "Origin",
         "Cache-Control": "no-store",
@@ -100,19 +110,51 @@ def webchat_fast_reply_options(request: Request):
     return Response(status_code=204, headers=_public_cors_headers(request))
 
 
+@router.options("/fast-reply/stream")
+def webchat_fast_reply_stream_options(request: Request):
+    headers = _public_cors_headers(request)
+    headers["X-Accel-Buffering"] = "no"
+    return Response(status_code=204, headers=headers)
+
+
 @router.post("/fast-reply")
-async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request, response: Response) -> dict[str, Any]:
+async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request, response: Response) -> Response:
     _set_public_cors(response, request)
     enforce_webchat_fast_rate_limit(request, tenant_key=payload.tenant_key, session_id=payload.session_id)
+    headers = _public_cors_headers(request)
 
-    existing = get_fast_reply_idempotent_response(
+    request_hash = compute_request_hash(
         tenant_key=payload.tenant_key,
+        channel_key=payload.channel_key,
         session_id=payload.session_id,
         client_message_id=payload.client_message_id,
+        body=payload.body,
+        recent_context=_context_payload(payload.recent_context),
     )
-    if existing is not None:
-        existing["idempotent"] = True
-        return existing
+
+    with db_context() as db:
+        begin = begin_webchat_fast_idempotency(
+            db,
+            tenant_key=payload.tenant_key,
+            session_id=payload.session_id,
+            client_message_id=payload.client_message_id,
+            request_hash=request_hash,
+            owner_request_id=getattr(request.state, "request_id", None),
+        )
+        row_id = begin.row.id if begin.row is not None else None
+
+    if begin.kind == "replay":
+        replayed = dict(begin.response_json or {})
+        replayed["idempotent"] = True
+        return JSONResponse(replayed, status_code=200, headers=headers)
+    if begin.kind == "processing":
+        return JSONResponse({"error_code": "request_processing", "retry_after_ms": 1500}, status_code=202, headers=headers)
+    if begin.kind == "conflict":
+        return JSONResponse({"error_code": "idempotency_key_reused_with_different_payload"}, status_code=409, headers=headers)
+    if begin.kind == "failed_non_retryable":
+        return JSONResponse({"error_code": begin.error_code or "request_failed"}, status_code=409, headers=headers)
+    if row_id is None:
+        return JSONResponse({"error_code": "idempotency_error", "retry_after_ms": 1500}, status_code=500, headers=headers)
 
     result = await generate_webchat_fast_reply(
         tenant_key=payload.tenant_key,
@@ -147,10 +189,59 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
             # Customer AI reply must still return even if DB-backed enqueue fails.
             result_payload["ticket_creation_queued"] = False
 
-    remember_fast_reply_response(
+    with db_context() as db:
+        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
+        if result.ok:
+            mark_webchat_fast_done(db, row, response_json=result_payload)
+        else:
+            mark_webchat_fast_failed(db, row, error_code=result.error_code or "request_failed")
+    return JSONResponse(result_payload, status_code=200, headers=headers)
+
+
+@router.post("/fast-reply/stream")
+async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: Request) -> Response:
+    stream_settings = get_webchat_fast_settings()
+    headers = _public_cors_headers(request)
+    headers.update({
+        "Content-Type": "text/event-stream",
+        "X-Accel-Buffering": "no",
+        "Cache-Control": "no-store",
+        "Vary": "Origin",
+    })
+
+    if not stream_settings.stream_enabled:
+        return JSONResponse({"error_code": "stream_disabled"}, status_code=503, headers=headers)
+    if stream_settings.stream_require_accept and "text/event-stream" not in (request.headers.get("accept") or ""):
+        return JSONResponse({"error_code": "stream_accept_required"}, status_code=406, headers=headers)
+
+    enforce_webchat_fast_rate_limit(request, tenant_key=payload.tenant_key, session_id=payload.session_id)
+
+    begin = prepare_webchat_fast_stream(
         tenant_key=payload.tenant_key,
+        channel_key=payload.channel_key,
         session_id=payload.session_id,
         client_message_id=payload.client_message_id,
-        response=result_payload,
+        body=payload.body,
+        recent_context=_context_payload(payload.recent_context),
+        request_id=getattr(request.state, "request_id", None),
     )
-    return result_payload
+    if begin.status == "processing":
+        return JSONResponse({"error_code": "request_processing", "retry_after_ms": 1500}, status_code=202, headers=headers)
+    if begin.status == "conflict":
+        return JSONResponse({"error_code": "idempotency_key_reused_with_different_payload"}, status_code=409, headers=headers)
+    if begin.status == "failed_non_retryable":
+        return JSONResponse({"error_code": begin.error_code or "request_failed"}, status_code=409, headers=headers)
+
+    generator = stream_webchat_fast_reply_events(
+        begin=begin,
+        tenant_key=payload.tenant_key,
+        channel_key=payload.channel_key,
+        session_id=payload.session_id,
+        client_message_id=payload.client_message_id,
+        body=payload.body,
+        recent_context=_context_payload(payload.recent_context),
+        visitor=payload.visitor,
+        request_id=getattr(request.state, "request_id", None),
+        settings=stream_settings,
+    )
+    return StreamingResponse(generator, media_type="text/event-stream", headers=headers)

@@ -1,10 +1,43 @@
+x-app-image: &app_image
+  image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
+  env_file:
+    - .env.prod
+  environment: &app_env
+    APP_ENV: production
+    AUTO_INIT_DB: "false"
+    SEED_DEMO_DATA: "false"
+    OPENCLAW_DEPLOYMENT_MODE: remote_gateway
+    OPENCLAW_TRANSPORT: mcp
+    OPENCLAW_CLI_FALLBACK_ENABLED: "false"
+    REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
+    DB_SLOW_QUERY_MS: ${DB_SLOW_QUERY_MS:-500}
+    GIT_SHA: ${GIT_SHA:-unknown}
+    BUILD_TIME: ${BUILD_TIME:-unknown}
+    IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
+    APP_VERSION: ${APP_VERSION:-server}
+    FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
+  volumes: &app_volumes
+    - /run/secrets:/run/secrets:ro
+    - ../data/uploads:/app/backend/uploads
+  logging: &json_logging
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "5"
+  restart: unless-stopped
+
+x-worker-healthcheck: &worker_healthcheck
+  test:
+    - CMD-SHELL
+    - "python -c \"from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'scripts/run_worker.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('worker-ok')\""
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 20s
+
 services:
   postgres:
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
+    logging: *json_logging
     image: postgres:16-alpine
     env_file:
       - .env.prod
@@ -18,11 +51,7 @@ services:
     restart: unless-stopped
 
   app:
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
+    logging: *json_logging
     build:
       context: ..
       dockerfile: Dockerfile
@@ -36,24 +65,10 @@ services:
     env_file:
       - .env.prod
     environment:
-      APP_ENV: production
-      AUTO_INIT_DB: "false"
-      SEED_DEMO_DATA: "false"
-      OPENCLAW_DEPLOYMENT_MODE: remote_gateway
-      OPENCLAW_TRANSPORT: mcp
-      OPENCLAW_CLI_FALLBACK_ENABLED: "false"
-      REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
+      <<: *app_env
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
       WEB_TIMEOUT: ${WEB_TIMEOUT:-30}
-      DB_SLOW_QUERY_MS: ${DB_SLOW_QUERY_MS:-500}
-      GIT_SHA: ${GIT_SHA:-unknown}
-      BUILD_TIME: ${BUILD_TIME:-unknown}
-      IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
-      APP_VERSION: ${APP_VERSION:-server}
-      FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
-    volumes:
-      - /run/secrets:/run/secrets:ro
-      - ../data/uploads:/app/backend/uploads
+    volumes: *app_volumes
     ports:
       - "127.0.0.1:18081:8080"
     command:
@@ -76,76 +91,63 @@ services:
       postgres:
         condition: service_healthy
 
-  worker:
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - "python -c \"from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'scripts/run_worker.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('worker-ok')\""
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-    image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
-    env_file:
-      - .env.prod
-    environment:
-      APP_ENV: production
-      AUTO_INIT_DB: "false"
-      SEED_DEMO_DATA: "false"
-      OPENCLAW_DEPLOYMENT_MODE: remote_gateway
-      OPENCLAW_TRANSPORT: mcp
-      OPENCLAW_CLI_FALLBACK_ENABLED: "false"
-      REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
-      DB_SLOW_QUERY_MS: ${DB_SLOW_QUERY_MS:-500}
-      GIT_SHA: ${GIT_SHA:-unknown}
-      BUILD_TIME: ${BUILD_TIME:-unknown}
-      IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
-      APP_VERSION: ${APP_VERSION:-server}
-      FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
-    volumes:
-      - /run/secrets:/run/secrets:ro
-      - ../data/uploads:/app/backend/uploads
-    command: python scripts/run_worker.py --worker-id worker-main
-    restart: unless-stopped
+  worker-outbound:
+    <<: *app_image
+    command: python scripts/run_worker.py --worker-id worker-outbound --queue outbound
+    healthcheck: *worker_healthcheck
+    depends_on:
+      app:
+        condition: service_healthy
+
+  worker-background:
+    <<: *app_image
+    command: python scripts/run_worker.py --worker-id worker-background --queue background
+    healthcheck: *worker_healthcheck
+    depends_on:
+      app:
+        condition: service_healthy
+
+  worker-handoff-snapshot:
+    <<: *app_image
+    command: python scripts/run_worker.py --worker-id worker-handoff-snapshot --queue handoff-snapshot
+    healthcheck: *worker_healthcheck
+    depends_on:
+      app:
+        condition: service_healthy
+
+  worker-webchat-ai:
+    <<: *app_image
+    command: python scripts/run_worker.py --worker-id worker-webchat-ai --queue webchat-ai
+    healthcheck: *worker_healthcheck
+    depends_on:
+      app:
+        condition: service_healthy
+
+  worker-openclaw-inbound:
+    <<: *app_image
+    profiles:
+      - openclaw-inbound
+    command: python scripts/run_worker.py --worker-id worker-openclaw-inbound --queue openclaw-inbound
+    healthcheck: *worker_healthcheck
+    depends_on:
+      app:
+        condition: service_healthy
+
+  legacy-worker:
+    <<: *app_image
+    profiles:
+      - legacy-worker
+    command: python scripts/run_worker.py --worker-id worker-main --queue all
+    healthcheck: *worker_healthcheck
     depends_on:
       app:
         condition: service_healthy
 
   sync-daemon:
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
+    <<: *app_image
     profiles:
       - openclaw
-    image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
-    env_file:
-      - .env.prod
-    environment:
-      APP_ENV: production
-      AUTO_INIT_DB: "false"
-      SEED_DEMO_DATA: "false"
-      OPENCLAW_DEPLOYMENT_MODE: remote_gateway
-      OPENCLAW_TRANSPORT: mcp
-      OPENCLAW_CLI_FALLBACK_ENABLED: "false"
-      REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
-      DB_SLOW_QUERY_MS: ${DB_SLOW_QUERY_MS:-500}
-      GIT_SHA: ${GIT_SHA:-unknown}
-      BUILD_TIME: ${BUILD_TIME:-unknown}
-      IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
-      APP_VERSION: ${APP_VERSION:-server}
-      FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
-    volumes:
-      - /run/secrets:/run/secrets:ro
-      - ../data/uploads:/app/backend/uploads
     command: python scripts/run_openclaw_sync_daemon.py --worker-id worker-openclaw-sync
-    restart: unless-stopped
     depends_on:
       app:
         condition: service_healthy
@@ -158,37 +160,15 @@ services:
       timeout: 10s
       start_period: 20s
       retries: 3
+
   event-daemon:
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
+    <<: *app_image
     profiles:
       - openclaw
-    image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
-    env_file:
-      - .env.prod
     environment:
-      APP_ENV: production
-      AUTO_INIT_DB: "false"
-      SEED_DEMO_DATA: "false"
-      OPENCLAW_DEPLOYMENT_MODE: remote_gateway
-      OPENCLAW_TRANSPORT: mcp
-      OPENCLAW_CLI_FALLBACK_ENABLED: "false"
-      REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
+      <<: *app_env
       OPENCLAW_EVENT_DRIVER_ENABLED: "true"
-      DB_SLOW_QUERY_MS: ${DB_SLOW_QUERY_MS:-500}
-      GIT_SHA: ${GIT_SHA:-unknown}
-      BUILD_TIME: ${BUILD_TIME:-unknown}
-      IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
-      APP_VERSION: ${APP_VERSION:-server}
-      FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
-    volumes:
-      - /run/secrets:/run/secrets:ro
-      - ../data/uploads:/app/backend/uploads
     command: python scripts/run_openclaw_event_daemon.py
-    restart: unless-stopped
     depends_on:
       app:
         condition: service_healthy
@@ -201,6 +181,7 @@ services:
       timeout: 10s
       start_period: 20s
       retries: 3
+
   nginx:
     image: nginx:1.27-alpine
     profiles: ["edge-nginx"]

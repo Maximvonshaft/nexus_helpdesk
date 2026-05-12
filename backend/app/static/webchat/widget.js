@@ -188,6 +188,17 @@
     scrollToBottomIfNeeded();
   }
 
+  function appendTextToMessage(el, text) {
+    if (!el || !text) return;
+    el.textContent = (el.textContent || '') + text;
+    scrollToBottomIfNeeded();
+  }
+
+  function setBubbleState(el, stateName) {
+    if (!el) return;
+    el.setAttribute('data-ai-state', stateName || '');
+  }
+
   function appendRetry(el, body, handler) {
     if (!el || el.querySelector('.nd-webchat-retry')) return;
     var retry = document.createElement('button');
@@ -256,6 +267,75 @@
       .finally(function () { if (timer) clearTimeout(timer); });
   }
 
+  function parseSseBlock(block) {
+    var lines = String(block || '').split(/\r?\n/);
+    var eventName = '';
+    var dataLines = [];
+    for (var i = 0; i < lines.length; i += 1) {
+      var line = lines[i];
+      if (!line || line.charAt(0) === ':') continue;
+      if (line.indexOf('event:') === 0) eventName = line.slice(6).trim();
+      else if (line.indexOf('data:') === 0) dataLines.push(line.slice(5).trim());
+    }
+    if (!eventName && !dataLines.length) return null;
+    var payload = {};
+    if (dataLines.length) {
+      try {
+        payload = JSON.parse(dataLines.join('\n'));
+      } catch (err) {
+        payload = {};
+      }
+    }
+    return { event: eventName, payload: payload };
+  }
+
+  function streamApi(path, payload, timeoutMs, onEvent) {
+    var controller = window.AbortController ? new AbortController() : null;
+    var timer = controller ? setTimeout(function () { controller.abort(); }, timeoutMs || 90000) : null;
+    return fetch(apiBase + path, {
+      method: 'POST',
+      mode: 'cors',
+      signal: controller ? controller.signal : undefined,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream'
+      },
+      body: JSON.stringify(payload)
+    }).then(async function (res) {
+      var contentType = String(res.headers.get('content-type') || '').toLowerCase();
+      if (!res.ok || contentType.indexOf('text/event-stream') === -1 || !res.body || !res.body.getReader) {
+        var data = {};
+        try {
+          data = await res.json();
+        } catch (err) {}
+        var error = new Error(data.detail || data.error_code || ('HTTP ' + res.status));
+        error.status = res.status;
+        error.payload = data;
+        throw error;
+      }
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = '';
+      while (true) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        while (buffer.indexOf('\n\n') >= 0) {
+          var idx = buffer.indexOf('\n\n');
+          var block = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          var parsed = parseSseBlock(block);
+          if (parsed) onEvent(parsed.event, parsed.payload || {});
+        }
+      }
+      buffer += decoder.decode();
+      if (buffer.trim()) {
+        var trailing = parseSseBlock(buffer);
+        if (trailing) onEvent(trailing.event, trailing.payload || {});
+      }
+    }).finally(function () { if (timer) clearTimeout(timer); });
+  }
+
   function clientMessageId() {
     return 'wc_client_' + Date.now().toString(36) + '_' + (++state.optimisticSeq).toString(36);
   }
@@ -307,43 +387,121 @@
     persistRecentContext();
   }
 
-  function sendFastMessage(body, existingEl) {
-    var cmid = clientMessageId();
+  function sendFastMessage(body, existingEl, reuseClientMessageId) {
+    var cmid = reuseClientMessageId || (existingEl && existingEl.getAttribute('data-client-message-id')) || clientMessageId();
     var bubble = existingEl || appendMessage('visitor', body, 'sending', 'client:' + cmid);
+    bubble.setAttribute('data-client-message-id', cmid);
     state.busy = true;
     sendEl.disabled = true;
     inputEl.value = '';
     setStatus(assistantName + ' is replying...');
     showTyping();
-    api('/api/webchat/fast-reply', {
-      method: 'POST',
-      body: JSON.stringify({
-        tenant_key: tenantKey,
-        channel_key: channelKey,
-        session_id: state.sessionId,
-        client_message_id: cmid,
-        body: body,
-        recent_context: state.recentContext
-      })
-    }, Number(script.getAttribute('data-fast-reply-timeout-ms') || script.getAttribute('data-timeout-ms') || 90000)).then(function (data) {
+    var aiBubble = null;
+    var aiText = '';
+    var sawVisibleStreamText = false;
+    var finalSeen = false;
+    var replayed = false;
+    var requestPayload = {
+      tenant_key: tenantKey,
+      channel_key: channelKey,
+      session_id: state.sessionId,
+      client_message_id: cmid,
+      body: body,
+      recent_context: state.recentContext
+    };
+    var timeoutMs = Number(script.getAttribute('data-fast-reply-timeout-ms') || script.getAttribute('data-timeout-ms') || 90000);
+
+    function ensureAIBubble() {
+      if (!aiBubble) aiBubble = appendMessage('agent', '', 'streaming', 'agent:' + cmid);
+      return aiBubble;
+    }
+
+    function markReplyComplete(stateName) {
       hideTyping();
       updateMessage(bubble, body, 'visitor');
-      if (data && data.ok === true && data.ai_generated === true && data.reply) {
-        appendMessage('agent', data.reply);
-        pushRecentContext('customer', body);
-        pushRecentContext('ai', data.reply);
-        if (data.handoff_required === true) setStatus('Support handoff requested');
-        else setStatus('Online');
+      if (aiBubble) {
+        updateMessage(aiBubble, aiText, 'agent', 'complete');
+        setBubbleState(aiBubble, stateName || 'complete');
+      }
+      pushRecentContext('customer', body);
+      if (aiText) pushRecentContext('ai', aiText);
+      setStatus('Online');
+    }
+
+    function markReplyInterrupted() {
+      hideTyping();
+      updateMessage(bubble, body, 'visitor');
+      aiBubble = ensureAIBubble();
+      aiText = aiText ? aiText + '\n\nThis reply was interrupted. Please retry.' : 'This reply was interrupted. Please retry.';
+      updateMessage(aiBubble, aiText, 'agent', 'failed');
+      setBubbleState(aiBubble, 'failed_incomplete');
+      setStatus('Connection issue. Please try again.');
+      appendRetry(aiBubble, body, function (retryBody) { sendFastMessage(retryBody, bubble, cmid); });
+    }
+
+    function fallbackToNonStream() {
+      hideTyping();
+      api('/api/webchat/fast-reply', {
+        method: 'POST',
+        body: JSON.stringify(requestPayload)
+      }, timeoutMs).then(function (data) {
+        updateMessage(bubble, body, 'visitor');
+        if (data && data.ok === true && data.ai_generated === true && data.reply) {
+          aiText = String(data.reply || '');
+          aiBubble = ensureAIBubble();
+          updateMessage(aiBubble, aiText, 'agent', 'complete');
+          setBubbleState(aiBubble, 'complete');
+          pushRecentContext('customer', body);
+          pushRecentContext('ai', aiText);
+          setStatus(data.handoff_required === true ? 'Support handoff requested' : 'Online');
+          return;
+        }
+        updateMessage(bubble, body, 'visitor', 'failed');
+        setStatus(data && data.retry_after_ms ? 'Speedy is reconnecting...' : 'Connection issue. Please try again.');
+        appendRetry(bubble, body, function (retryBody) { sendFastMessage(retryBody, bubble, cmid); });
+      }).catch(function () {
+        updateMessage(bubble, body, 'visitor', 'failed');
+        setStatus('Connection issue. Please try again.');
+        appendRetry(bubble, body, function (retryBody) { sendFastMessage(retryBody, bubble, cmid); });
+      });
+    }
+
+    streamApi('/api/webchat/fast-reply/stream', requestPayload, timeoutMs, function (eventName, data) {
+      if (eventName === 'reply_delta' && data && typeof data.text === 'string' && data.text) {
+        hideTyping();
+        sawVisibleStreamText = true;
+        aiBubble = ensureAIBubble();
+        appendTextToMessage(aiBubble, data.text);
+        aiText += data.text;
+        updateMessage(aiBubble, aiText, 'agent', 'streaming');
+        setBubbleState(aiBubble, 'streaming');
         return;
       }
-      updateMessage(bubble, body, 'visitor', 'failed');
-      setStatus(data && data.retry_after_ms ? 'Speedy is reconnecting...' : 'Connection issue. Please try again.');
-      appendRetry(bubble, body, sendFastMessage);
+      if (eventName === 'replay' && data && typeof data.reply === 'string') {
+        hideTyping();
+        replayed = true;
+        sawVisibleStreamText = true;
+        aiText = data.reply;
+        aiBubble = ensureAIBubble();
+        updateMessage(aiBubble, aiText, 'agent', 'complete');
+        setBubbleState(aiBubble, 'replayed_complete');
+        return;
+      }
+      if (eventName === 'final') {
+        finalSeen = true;
+        markReplyComplete(replayed || (data && data.replayed === true) ? 'replayed_complete' : 'complete');
+        return;
+      }
+      if (eventName === 'error') {
+        if (sawVisibleStreamText) markReplyInterrupted();
+        else throw new Error('stream_failed_before_reply');
+      }
+    }).then(function () {
+      if (!finalSeen && sawVisibleStreamText) markReplyInterrupted();
+      else if (!finalSeen && !sawVisibleStreamText) fallbackToNonStream();
     }).catch(function () {
-      hideTyping();
-      updateMessage(bubble, body, 'visitor', 'failed');
-      setStatus('Connection issue. Please try again.');
-      appendRetry(bubble, body, sendFastMessage);
+      if (sawVisibleStreamText) markReplyInterrupted();
+      else fallbackToNonStream();
     }).finally(function () {
       state.busy = false;
       sendEl.disabled = false;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import time
 from dataclasses import dataclass
 
@@ -17,8 +18,39 @@ class FastClientIdentity:
     client_ip: str
 
 
-def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+def _is_public_ip(value: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return False
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified)
+
+
+def _is_trusted_proxy(value: str) -> bool:
+    settings = get_webchat_fast_settings()
+    try:
+        ip = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return False
+    for cidr in settings.trusted_proxy_cidrs:
+        try:
+            if ip in ipaddress.ip_network(cidr, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def trusted_client_ip(request: Request) -> str:
+    remote = request.client.host if request.client else "unknown"
+    settings = get_webchat_fast_settings()
+    if settings.rate_limit_trust_x_forwarded_for and remote != "unknown" and _is_trusted_proxy(remote):
+        xff = request.headers.get("x-forwarded-for") or request.headers.get("X-Forwarded-For")
+        if xff:
+            for candidate in [part.strip() for part in xff.split(",") if part.strip()]:
+                if _is_public_ip(candidate):
+                    return candidate
+    return remote
 
 
 def _bucket_key(identity: FastClientIdentity) -> str:
@@ -28,7 +60,7 @@ def _bucket_key(identity: FastClientIdentity) -> str:
 def enforce_webchat_fast_rate_limit(request: Request, *, tenant_key: str, session_id: str) -> None:
     settings = get_webchat_fast_settings()
     now = time.time()
-    key = _bucket_key(FastClientIdentity(tenant_key=tenant_key, session_id=session_id, client_ip=_client_ip(request)))
+    key = _bucket_key(FastClientIdentity(tenant_key=tenant_key, session_id=session_id, client_ip=trusted_client_ip(request)))
     bucket = [ts for ts in _BUCKETS.get(key, []) if now - ts < settings.rate_limit_window_seconds]
     if len(bucket) >= settings.rate_limit_max_requests:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="too many webchat fast reply requests")

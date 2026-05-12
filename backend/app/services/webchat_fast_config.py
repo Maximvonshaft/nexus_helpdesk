@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 import socket
-import ipaddress
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -29,6 +29,11 @@ def _env_int(name: str, default: int, *, minimum: int | None = None, maximum: in
     return value
 
 
+def _csv(name: str, default: str) -> tuple[str, ...]:
+    raw = os.getenv(name, default)
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
 @dataclass(frozen=True)
 class WebchatFastSettings:
     enabled: bool
@@ -40,6 +45,11 @@ class WebchatFastSettings:
     rate_limit_window_seconds: int
     rate_limit_max_requests: int
     hard_fail_on_non_ai_reply: bool
+    stream_enabled: bool
+    stream_rollout_percent: int
+    stream_require_accept: bool
+    trusted_proxy_cidrs: tuple[str, ...]
+    rate_limit_trust_x_forwarded_for: bool
     openclaw_responses_url: str
     openclaw_responses_agent_id: str
     openclaw_responses_token_file: str | None
@@ -81,6 +91,13 @@ class WebchatFastSettings:
             raise RuntimeError("WEBCHAT_FAST_AI_TIMEOUT_MS must be between 500 and WEBCHAT_FAST_AI_MAX_TIMEOUT_MS")
         if self.max_timeout_ms > 30000:
             raise RuntimeError("WEBCHAT_FAST_AI_MAX_TIMEOUT_MS must not exceed 30000")
+        if self.stream_rollout_percent < 0 or self.stream_rollout_percent > 100:
+            raise RuntimeError("WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT must be between 0 and 100")
+        for cidr in self.trusted_proxy_cidrs:
+            try:
+                ipaddress.ip_network(cidr, strict=False)
+            except ValueError as exc:
+                raise RuntimeError(f"Invalid TRUSTED_PROXY_CIDRS entry: {cidr}") from exc
         if not self.enabled:
             return
         if self.app_env == "production":
@@ -115,15 +132,11 @@ def _validate_private_responses_url(value: str) -> None:
     tailnet_or_cgnat = ipaddress.ip_network("100.64.0.0/10")
 
     def allowed(ip) -> bool:
-        return (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip in tailnet_or_cgnat
-        )
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip in tailnet_or_cgnat
 
     if not any(allowed(ip) for ip in resolved_ips):
         raise RuntimeError("OPENCLAW_RESPONSES_URL must point to a private or tailnet host in production")
+
 
 @lru_cache(maxsize=1)
 def get_webchat_fast_settings() -> WebchatFastSettings:
@@ -138,6 +151,11 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         rate_limit_window_seconds=_env_int("WEBCHAT_FAST_RATE_LIMIT_WINDOW_SECONDS", 60, minimum=10, maximum=3600),
         rate_limit_max_requests=_env_int("WEBCHAT_FAST_RATE_LIMIT_MAX_REQUESTS", 30, minimum=1, maximum=300),
         hard_fail_on_non_ai_reply=_env_bool("WEBCHAT_FAST_HARD_FAIL_ON_NON_AI_REPLY", True),
+        stream_enabled=_env_bool("WEBCHAT_FAST_STREAM_ENABLED", False),
+        stream_rollout_percent=_env_int("WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT", 0, minimum=0, maximum=100),
+        stream_require_accept=_env_bool("WEBCHAT_FAST_STREAM_REQUIRE_ACCEPT", True),
+        trusted_proxy_cidrs=_csv("TRUSTED_PROXY_CIDRS", "127.0.0.1/32,172.16.0.0/12"),
+        rate_limit_trust_x_forwarded_for=_env_bool("WEBCHAT_RATE_LIMIT_TRUST_X_FORWARDED_FOR", True),
         openclaw_responses_url=os.getenv("OPENCLAW_RESPONSES_URL", "").strip(),
         openclaw_responses_agent_id=os.getenv("OPENCLAW_RESPONSES_AGENT_ID", "webchat-fast").strip() or "webchat-fast",
         openclaw_responses_token_file=os.getenv("OPENCLAW_RESPONSES_TOKEN_FILE"),

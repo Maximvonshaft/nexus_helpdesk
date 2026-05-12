@@ -168,6 +168,8 @@ def test_processing_turn_queues_next_turn_for_new_message():
 
 def test_stale_turn_is_superseded_and_does_not_write_agent_reply(monkeypatch):
     _ensure_schema_and_user()
+    from app.services import webchat_ai_safe_service
+    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'off')
     client = TestClient(app)
     conversation_id, visitor_token = _init_conversation(client)
 
@@ -176,9 +178,10 @@ def test_stale_turn_is_superseded_and_does_not_write_agent_reply(monkeypatch):
 
     db = SessionLocal()
     try:
+        first_message_id = first['message']['id']
         conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id).first()
         turn = db.query(WebchatAITurn).filter(WebchatAITurn.id == first_turn_id).first()
-        first_message = db.query(WebchatMessage).filter(WebchatMessage.client_message_id == 'turn-runtime-stale-1').first()
+        first_message = db.query(WebchatMessage).filter(WebchatMessage.id == first_message_id).first()
         assert conversation is not None and turn is not None and first_message is not None
         turn.status = 'bridge_calling'
         turn.context_cutoff_message_id = first_message.id
@@ -190,12 +193,12 @@ def test_stale_turn_is_superseded_and_does_not_write_agent_reply(monkeypatch):
 
     _send(client, conversation_id, visitor_token, 'Newer question', 'turn-runtime-stale-2')
 
-    from app.services import webchat_ai_safe_service
     monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ack')
 
     db = SessionLocal()
     try:
-        first_message = db.query(WebchatMessage).filter(WebchatMessage.client_message_id == 'turn-runtime-stale-1').first()
+        first_message_id = first['message']['id']
+        first_message = db.query(WebchatMessage).filter(WebchatMessage.id == first_message_id).first()
         result = webchat_ai_safe_service.process_webchat_ai_reply_job(db, conversation_id=first_message.conversation_id, ticket_id=first_message.ticket_id, visitor_message_id=first_message.id)
         db.commit()
         assert result['status'] == 'superseded'
