@@ -69,7 +69,8 @@ def test_tool_call_rejected():
 
 def test_reply_then_invalid_final_rejected():
     extractor = StreamingReplyExtractor()
-    delta = extractor.feed_event(ContentDelta('{"reply":"Hello","intent":"greeting","tracking_number":null,"handoff_required":"bad","handoff_reason":null,"recommended_agent_action":null}'))
+    long_reply = "Hello, this is a deliberately long customer-visible reply so holdback emits at least one delta."
+    delta = extractor.feed_event(ContentDelta('{"reply":' + repr(long_reply).replace("'", '"') + ',"intent":"greeting","tracking_number":null,"handoff_required":"bad","handoff_reason":null,"recommended_agent_action":null}'))
     assert delta is not None
     with pytest.raises(FastReplyParseError):
         extractor.final_parse('{"reply":"Hello","intent":"greeting","tracking_number":null,"handoff_required":"bad","handoff_reason":null,"recommended_agent_action":null}')
