@@ -106,7 +106,7 @@ def test_voice_enabled_custom_prefix_controls_voice_header_scope(monkeypatch):
     assert "wss://voice.example.test" in _csp(custom_prefix_response)
 
 
-def test_webchat_demo_and_fast_reply_intake_only_keep_security_headers(monkeypatch):
+def test_webchat_demo_and_fast_reply_frontline_path_keep_security_headers(monkeypatch):
     client = _client(
         monkeypatch,
         WEBCHAT_VOICE_ENABLED="true",
@@ -118,8 +118,10 @@ def test_webchat_demo_and_fast_reply_intake_only_keep_security_headers(monkeypat
 
     assert demo_response.status_code in {200, 404}
     assert _permissions(demo_response) == "camera=(), microphone=(), geolocation=()"
-    assert api_response.status_code == 409
-    assert api_response.json()["detail"] == "webchat_outbound_disabled_intake_only"
+    # Empty payload now hits the AI frontline endpoint schema instead of an
+    # intake-only blanket block. Formal resolution outbound remains blocked in
+    # the Ticket workflow, not at this frontline endpoint.
+    assert api_response.status_code == 422
     assert _permissions(api_response) == "camera=(), microphone=(), geolocation=()"
     assert "wss://voice.example.test" not in _csp(api_response)
 
