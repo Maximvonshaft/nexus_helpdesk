@@ -11,11 +11,11 @@
   var apiBase = (script.getAttribute('data-api-base') || scriptUrl.origin).replace(/\/$/, '');
   var tenantKey = script.getAttribute('data-tenant') || 'default';
   var channelKey = script.getAttribute('data-channel') || 'default';
-  var title = script.getAttribute('data-title') || 'Voice Call';
+  var title = script.getAttribute('data-title') || 'WebCall';
   var locale = (script.getAttribute('data-locale') || navigator.language || 'en').toLowerCase();
-  var buttonLabel = script.getAttribute('data-voice-label') || (locale.indexOf('zh') === 0 ? '网络语音' : 'Voice call');
+  var buttonLabel = script.getAttribute('data-voice-label') || (locale.indexOf('zh') === 0 ? '网页语音' : 'WebCall');
   var storageKey = 'nexusdesk:webchat:' + apiBase + ':' + tenantKey + ':' + channelKey;
-  var state = { conversationId: null, visitorToken: null, busy: false, enabled: false };
+  var state = { conversationId: null, visitorToken: null, busy: false, enabled: false, provider: 'mock', livekitUrl: null };
 
   function loadCache() {
     try {
@@ -74,15 +74,19 @@
   function refreshRuntimeConfig() {
     return api('/api/webchat/voice/runtime-config', { method: 'GET' }, 7000).then(function (config) {
       state.enabled = Boolean(config && config.enabled);
+      state.provider = config && config.provider ? String(config.provider) : 'mock';
+      state.livekitUrl = config && config.livekit_url ? String(config.livekit_url) : null;
       button.setAttribute('data-visible', state.enabled ? 'true' : 'false');
     }).catch(function () {
       state.enabled = false;
+      state.provider = 'mock';
+      state.livekitUrl = null;
       button.setAttribute('data-visible', 'false');
     });
   }
   function ensureSession() {
     if (state.conversationId && state.visitorToken) return Promise.resolve();
-    setStatus('Preparing WebChat session...', true);
+    setStatus('Preparing WebCall session...', true);
     return api('/api/webchat/init', {
       method: 'POST',
       body: JSON.stringify({
@@ -97,11 +101,26 @@
       persist();
     });
   }
+  function buildWebCallUrl(data) {
+    if (state.provider !== 'livekit' || !state.livekitUrl || !data.participant_token) {
+      return data.voice_page_url || ('/webchat/voice/' + encodeURIComponent(data.voice_session_id));
+    }
+    var hash = new URLSearchParams();
+    hash.set('api_base', apiBase);
+    hash.set('conversation_id', state.conversationId || '');
+    hash.set('visitor_token', state.visitorToken || '');
+    hash.set('livekit_url', state.livekitUrl);
+    hash.set('participant_token', data.participant_token);
+    hash.set('room_name', data.provider_room_name || data.room_name || '');
+    hash.set('participant_identity', data.participant_identity || '');
+    hash.set('provider', data.provider || state.provider);
+    return '/webcall/' + encodeURIComponent(data.voice_session_id) + '#' + hash.toString();
+  }
   function startVoiceCall() {
     if (!state.enabled || state.busy) return;
     state.busy = true;
     button.disabled = true;
-    setStatus('Starting mock voice session...', true);
+    setStatus('Starting WebCall session...', true);
     ensureSession().then(function () {
       return api('/api/webchat/conversations/' + encodeURIComponent(state.conversationId) + '/voice/sessions', {
         method: 'POST',
@@ -109,16 +128,16 @@
         body: JSON.stringify({ locale: locale, recording_consent: false })
       }, 12000);
     }).then(function (data) {
-      setStatus('Voice session created. Waiting for support...', true);
-      var url = data.voice_page_url || ('/webchat/voice/' + encodeURIComponent(data.voice_session_id));
-      var opened = window.open(apiBase + url, 'nexusdesk_webchat_voice_' + data.voice_session_id, 'noopener,noreferrer,width=420,height=640');
+      setStatus('WebCall session created. Opening call room...', true);
+      var url = buildWebCallUrl(data);
+      var opened = window.open(apiBase + url, 'nexusdesk_webcall_' + data.voice_session_id, 'noopener,noreferrer,width=460,height=720');
       if (!opened) {
-        setStatus('Popup blocked. Open voice page: ' + url, true);
+        setStatus('Popup blocked. Please allow popups and click WebCall again.', true);
         return;
       }
       setTimeout(function () { setStatus('', false); }, 2600);
     }).catch(function (err) {
-      setStatus(err && err.message ? err.message : 'Voice call unavailable', true);
+      setStatus(err && err.message ? err.message : 'WebCall unavailable', true);
     }).finally(function () {
       state.busy = false;
       button.disabled = false;
