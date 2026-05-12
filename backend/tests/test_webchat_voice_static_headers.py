@@ -89,6 +89,22 @@ def test_voice_enabled_voice_path_allows_microphone_and_configured_wss(monkeypat
     assert "unsafe-eval" not in policy
 
 
+def test_voice_enabled_webcall_path_allows_microphone_and_configured_wss(monkeypatch):
+    client = _client(
+        monkeypatch,
+        WEBCHAT_VOICE_ENABLED="true",
+        WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test https://voice.example.test",
+    )
+
+    response = client.get("/webcall/wv_demo")
+
+    assert response.status_code in {200, 404}
+    assert _permissions(response) == "camera=(), microphone=(self), geolocation=()"
+    policy = _csp(response)
+    assert "connect-src 'self' wss://voice.example.test https://voice.example.test" in policy
+    assert "unsafe-eval" not in policy
+
+
 def test_voice_enabled_custom_prefix_controls_voice_header_scope(monkeypatch):
     client = _client(
         monkeypatch,
