@@ -50,21 +50,6 @@ function WebCallVisitorRoomPage() {
   const localAudioRef = useRef<any>(null)
   const remoteAudioRef = useRef<HTMLDivElement | null>(null)
 
-  useEffect(() => {
-    const parsed = readContextFromHash()
-    setContext(parsed)
-    if (!parsed) {
-      setCallState('error')
-      setMessage('This WebCall session is missing secure join context. Please start the call again from the WebCall button.')
-    }
-    return () => {
-      void disconnectRoom()
-    }
-  }, [])
-
-  const canJoin = useMemo(() => Boolean(context && callState === 'ready' && !ended), [context, callState, ended])
-  const connected = callState === 'connected'
-
   async function disconnectRoom() {
     try {
       if (localAudioRef.current) {
@@ -80,6 +65,21 @@ function WebCallVisitorRoomPage() {
       // best effort cleanup only
     }
   }
+
+  useEffect(() => {
+    const parsed = readContextFromHash()
+    setContext(parsed)
+    if (!parsed) {
+      setCallState('error')
+      setMessage('This WebCall session is missing secure join context. Please start the call again from the WebCall button.')
+    }
+    return () => {
+      void disconnectRoom()
+    }
+  }, [])
+
+  const canJoin = useMemo(() => Boolean(context && callState === 'ready' && !ended), [context, callState, ended])
+  const connected = callState === 'connected'
 
   async function joinCall() {
     if (!context || !canJoin) return
