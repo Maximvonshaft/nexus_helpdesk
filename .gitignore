@@ -75,3 +75,6 @@ backend/uploads/
 *.bak
 /tmp/
 *.tsbuildinfo
+
+# Local artifacts
+backend/artifacts/

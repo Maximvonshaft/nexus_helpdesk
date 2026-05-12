@@ -1,2 +1,0 @@
-origin	https://github.com/Maximvonshaft/nexus_helpdesk.git (fetch)
-origin	https://github.com/Maximvonshaft/nexus_helpdesk.git (push)

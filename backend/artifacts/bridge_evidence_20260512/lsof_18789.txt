@@ -1,3 +1,0 @@
-COMMAND      PID     USER FD   TYPE  DEVICE SIZE/OFF NODE NAME
-openclaw- 162204 vboxuser 26u  IPv4 1164328      0t0  TCP 127.0.0.1:18789 (LISTEN)
-openclaw- 162204 vboxuser 27u  IPv6 1164329      0t0  TCP [::1]:18789 (LISTEN)
