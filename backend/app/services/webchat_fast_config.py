@@ -79,8 +79,8 @@ class WebchatFastSettings:
             raise RuntimeError("WEBCHAT_FAST_AI_PROVIDER must be openclaw_responses")
         if self.timeout_ms < 500 or self.timeout_ms > self.max_timeout_ms:
             raise RuntimeError("WEBCHAT_FAST_AI_TIMEOUT_MS must be between 500 and WEBCHAT_FAST_AI_MAX_TIMEOUT_MS")
-        if self.max_timeout_ms > 5000:
-            raise RuntimeError("WEBCHAT_FAST_AI_MAX_TIMEOUT_MS must not exceed 5000")
+        if self.max_timeout_ms > 30000:
+            raise RuntimeError("WEBCHAT_FAST_AI_MAX_TIMEOUT_MS must not exceed 30000")
         if not self.enabled:
             return
         if self.app_env == "production":
@@ -127,7 +127,7 @@ def _validate_private_responses_url(value: str) -> None:
 
 @lru_cache(maxsize=1)
 def get_webchat_fast_settings() -> WebchatFastSettings:
-    max_timeout_ms = _env_int("WEBCHAT_FAST_AI_MAX_TIMEOUT_MS", 5000, minimum=500, maximum=5000)
+    max_timeout_ms = _env_int("WEBCHAT_FAST_AI_MAX_TIMEOUT_MS", 30000, minimum=500, maximum=30000)
     settings = WebchatFastSettings(
         enabled=_env_bool("WEBCHAT_FAST_AI_ENABLED", True),
         provider=os.getenv("WEBCHAT_FAST_AI_PROVIDER", "openclaw_responses").strip().lower() or "openclaw_responses",
@@ -144,7 +144,7 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         openclaw_responses_token=os.getenv("OPENCLAW_RESPONSES_TOKEN"),
         openclaw_connect_timeout_ms=_env_int("OPENCLAW_RESPONSES_CONNECT_TIMEOUT_MS", 500, minimum=100, maximum=3000),
         openclaw_read_timeout_ms=_env_int("OPENCLAW_RESPONSES_READ_TIMEOUT_MS", 3000, minimum=500, maximum=max_timeout_ms),
-        openclaw_total_timeout_ms=_env_int("OPENCLAW_RESPONSES_TOTAL_TIMEOUT_MS", 3500, minimum=1000, maximum=8000),
+        openclaw_total_timeout_ms=_env_int("OPENCLAW_RESPONSES_TOTAL_TIMEOUT_MS", 30000, minimum=1000, maximum=30000),
         openclaw_pool_max_connections=_env_int("OPENCLAW_RESPONSES_POOL_MAX_CONNECTIONS", 10, minimum=1, maximum=50),
         openclaw_pool_max_keepalive=_env_int("OPENCLAW_RESPONSES_POOL_MAX_KEEPALIVE", 5, minimum=0, maximum=25),
         app_env=os.getenv("APP_ENV", "development").strip().lower() or "development",
