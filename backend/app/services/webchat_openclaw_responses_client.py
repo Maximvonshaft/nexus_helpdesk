@@ -5,11 +5,12 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 
 from .webchat_fast_config import WebchatFastSettings, get_webchat_fast_settings
+from .webchat_openclaw_stream_adapter import OpenClawResponsesStreamAdapter, NormalizedStreamEvent, StreamError
 
 LOGGER = logging.getLogger("nexusdesk")
 
@@ -58,12 +59,12 @@ def _client(settings: WebchatFastSettings) -> httpx.AsyncClient:
     return _CLIENT
 
 
-def build_responses_request_body(*, instructions: str, input_text: str, settings: WebchatFastSettings | None = None) -> dict[str, Any]:
+def build_responses_request_body(*, instructions: str, input_text: str, settings: WebchatFastSettings | None = None, stream: bool = False) -> dict[str, Any]:
     settings = settings or get_webchat_fast_settings()
     return {
         "model": f"openclaw:{settings.openclaw_responses_agent_id}",
         "max_output_tokens": 350,
-        "stream": False,
+        "stream": bool(stream),
         "instructions": instructions,
         "input": [
             {
@@ -77,6 +78,28 @@ def build_responses_request_body(*, instructions: str, input_text: str, settings
     }
 
 
+def _headers(*, token: str, session_key: str, request_id: str | None) -> dict[str, str]:
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "x-openclaw-session-key": session_key,
+    }
+    if request_id:
+        headers["X-Request-Id"] = request_id
+    return headers
+
+
+def _validate_ready(settings: WebchatFastSettings) -> str:
+    if not settings.enabled:
+        raise OpenClawResponsesError("webchat fast AI is disabled")
+    if not settings.openclaw_responses_url:
+        raise OpenClawResponsesError("OPENCLAW_RESPONSES_URL is not configured")
+    token = settings.token
+    if not token:
+        raise OpenClawResponsesError("OpenClaw responses token is not configured")
+    return token
+
+
 async def call_openclaw_responses(
     *,
     session_key: str,
@@ -86,22 +109,10 @@ async def call_openclaw_responses(
     settings: WebchatFastSettings | None = None,
 ) -> OpenClawResponsesResult:
     settings = settings or get_webchat_fast_settings()
-    if not settings.enabled:
-        raise OpenClawResponsesError("webchat fast AI is disabled")
-    if not settings.openclaw_responses_url:
-        raise OpenClawResponsesError("OPENCLAW_RESPONSES_URL is not configured")
-    token = settings.token
-    if not token:
-        raise OpenClawResponsesError("OpenClaw responses token is not configured")
+    token = _validate_ready(settings)
 
-    body = build_responses_request_body(instructions=instructions, input_text=input_text, settings=settings)
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "x-openclaw-session-key": session_key,
-    }
-    if request_id:
-        headers["X-Request-Id"] = request_id
+    body = build_responses_request_body(instructions=instructions, input_text=input_text, settings=settings, stream=False)
+    headers = _headers(token=token, session_key=session_key, request_id=request_id)
 
     started = time.monotonic()
     try:
@@ -132,3 +143,69 @@ async def call_openclaw_responses(
     if not isinstance(payload, dict):
         raise OpenClawResponsesError("OpenClaw responses payload must be an object", status_code=response.status_code)
     return OpenClawResponsesResult(payload=payload, elapsed_ms=elapsed_ms, status_code=response.status_code)
+
+
+async def call_openclaw_responses_stream(
+    *,
+    session_key: str,
+    instructions: str,
+    input_text: str,
+    request_id: str | None = None,
+    settings: WebchatFastSettings | None = None,
+) -> AsyncIterator[NormalizedStreamEvent]:
+    """Call OpenClaw /v1/responses with stream=true and yield normalized events.
+
+    Raw provider lines are normalized here and are never exposed to API routes or
+    browsers. Logs intentionally omit Authorization, raw customer payload, and
+    full raw OpenClaw payload.
+    """
+    settings = settings or get_webchat_fast_settings()
+    token = _validate_ready(settings)
+    adapter = OpenClawResponsesStreamAdapter()
+    body = build_responses_request_body(instructions=instructions, input_text=input_text, settings=settings, stream=True)
+    headers = _headers(token=token, session_key=session_key, request_id=request_id)
+    started = time.monotonic()
+    try:
+        async with _client(settings).stream(
+            "POST",
+            settings.openclaw_responses_url,
+            headers=headers,
+            content=json.dumps(body).encode("utf-8"),
+        ) as response:
+            if response.status_code == 404:
+                raise OpenClawResponsesError("OpenClaw responses endpoint is unavailable", status_code=response.status_code)
+            if response.status_code in {401, 403}:
+                raise OpenClawResponsesError("OpenClaw responses authentication failed", status_code=response.status_code)
+            if response.status_code >= 400:
+                raise OpenClawResponsesError(f"OpenClaw responses returned HTTP {response.status_code}", status_code=response.status_code)
+            buffer = ""
+            async for chunk in response.aiter_text():
+                if not chunk:
+                    continue
+                buffer += chunk
+                while "\n\n" in buffer:
+                    block, buffer = buffer.split("\n\n", 1)
+                    if block.lstrip().startswith(("event:", "data:")):
+                        for event in adapter.feed_sse_block(block):
+                            yield event
+                    else:
+                        for line in block.splitlines():
+                            for event in adapter.feed_json_line(line):
+                                yield event
+            if buffer.strip():
+                if buffer.lstrip().startswith(("event:", "data:")):
+                    for event in adapter.feed_sse_block(buffer):
+                        yield event
+                else:
+                    for line in buffer.splitlines():
+                        for event in adapter.feed_json_line(line):
+                            yield event
+    except OpenClawResponsesError:
+        raise
+    except (httpx.TimeoutException, httpx.NetworkError, asyncio.TimeoutError) as exc:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        LOGGER.warning(
+            "webchat_openclaw_responses_stream_unavailable",
+            extra={"event_payload": {"request_id": request_id, "elapsed_ms": elapsed_ms, "url": _safe_url_for_log(settings.openclaw_responses_url), "error_type": type(exc).__name__}},
+        )
+        yield StreamError(error_code="stream_transport_error", message=None)
