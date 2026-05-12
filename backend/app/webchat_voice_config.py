@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from urllib.parse import urlparse, urlunparse
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -21,6 +22,22 @@ def _parse_sources(raw: str) -> list[str]:
     return [item.strip() for item in raw.replace(",", " ").split() if item.strip()]
 
 
+def _normalize_url(raw: str | None) -> str | None:
+    value = (raw or "").strip().rstrip("/")
+    return value or None
+
+
+def _livekit_wss_source(livekit_url: str | None) -> str | None:
+    if not livekit_url:
+        return None
+    parsed = urlparse(livekit_url)
+    if parsed.scheme == "wss":
+        return livekit_url.rstrip("/")
+    if parsed.scheme == "https":
+        return urlunparse(parsed._replace(scheme="wss")).rstrip("/")
+    return None
+
+
 @dataclass(frozen=True)
 class WebchatVoiceRuntimeConfig:
     enabled: bool
@@ -33,6 +50,9 @@ class WebchatVoiceRuntimeConfig:
     rate_limit_max_requests: int
     recording_enabled: bool
     transcription_enabled: bool
+    livekit_url: str | None
+    livekit_api_key: str | None
+    livekit_api_secret: str | None
 
 
 def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
@@ -47,6 +67,9 @@ def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
         rate_limit_max_requests=int(os.getenv("WEBCHAT_VOICE_RATE_LIMIT_MAX_REQUESTS", "5")),
         recording_enabled=_env_bool("WEBCHAT_VOICE_RECORDING_ENABLED", False),
         transcription_enabled=_env_bool("WEBCHAT_VOICE_TRANSCRIPTION_ENABLED", False),
+        livekit_url=_normalize_url(os.getenv("LIVEKIT_URL")),
+        livekit_api_key=(os.getenv("LIVEKIT_API_KEY") or "").strip() or None,
+        livekit_api_secret=(os.getenv("LIVEKIT_API_SECRET") or "").strip() or None,
     )
     validate_webchat_voice_runtime_config(config)
     return config
@@ -76,8 +99,30 @@ def validate_webchat_voice_runtime_config(config: WebchatVoiceRuntimeConfig) -> 
             continue
         if not (normalized.startswith("https://") or normalized.startswith("wss://")):
             raise RuntimeError("WEBCHAT_VOICE_CONNECT_SRC entries must be https://, wss://, or self")
-    if os.getenv("APP_ENV", "development").strip().lower() == "production" and config.recording_enabled:
+    app_env = os.getenv("APP_ENV", "development").strip().lower()
+    if app_env == "production" and config.recording_enabled:
         raise RuntimeError("WEBCHAT_VOICE_RECORDING_ENABLED must remain false in production until a consent policy is implemented")
+    if config.provider == "livekit":
+        _validate_livekit_runtime_config(config, app_env=app_env)
+
+
+def _validate_livekit_runtime_config(config: WebchatVoiceRuntimeConfig, *, app_env: str) -> None:
+    if not config.livekit_url:
+        raise RuntimeError("LIVEKIT_URL must be set when WEBCHAT_VOICE_PROVIDER=livekit")
+    if not config.livekit_api_key:
+        raise RuntimeError("LIVEKIT_API_KEY must be set when WEBCHAT_VOICE_PROVIDER=livekit")
+    if not config.livekit_api_secret:
+        raise RuntimeError("LIVEKIT_API_SECRET must be set when WEBCHAT_VOICE_PROVIDER=livekit")
+    parsed = urlparse(config.livekit_url)
+    if parsed.scheme not in {"wss", "ws", "https", "http"} or not parsed.netloc:
+        raise RuntimeError("LIVEKIT_URL must be a valid LiveKit URL")
+    if app_env == "production" and parsed.scheme != "wss":
+        raise RuntimeError("LIVEKIT_URL must use wss:// in production")
+    required_wss = _livekit_wss_source(config.livekit_url)
+    if required_wss:
+        normalized_sources = {source.rstrip("/") for source in config.connect_src}
+        if required_wss not in normalized_sources:
+            raise RuntimeError("WEBCHAT_VOICE_CONNECT_SRC must include the LiveKit wss URL when WEBCHAT_VOICE_PROVIDER=livekit")
 
 
 def is_webchat_voice_path(path: str, config: WebchatVoiceRuntimeConfig | None = None) -> bool:

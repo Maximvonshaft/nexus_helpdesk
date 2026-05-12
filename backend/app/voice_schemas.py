@@ -17,6 +17,8 @@ class WebchatVoiceSessionRead(BaseModel):
     provider: str
     voice_page_url: str | None = None
     room_name: str
+    provider_room_name: str | None = None
+    participant_identity: str | None = None
     participant_token: str | None = None
     expires_in_seconds: int | None = None
     accepted_by_user_id: int | None = None
