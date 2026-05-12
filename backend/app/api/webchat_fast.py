@@ -4,6 +4,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..db import db_context
@@ -11,7 +12,9 @@ from ..settings import get_settings
 from ..services.webchat_fast_ai_service import generate_webchat_fast_reply
 from ..services.webchat_fast_idempotency import get_fast_reply_idempotent_response, remember_fast_reply_response
 from ..services.webchat_fast_rate_limit import enforce_webchat_fast_rate_limit
+from ..services.webchat_fast_stream_service import prepare_webchat_fast_stream, stream_webchat_fast_reply_events
 from ..services.webchat_handoff_snapshot_service import build_handoff_snapshot_payload, enqueue_webchat_handoff_snapshot_job
+from ..services.webchat_fast_config import get_webchat_fast_settings
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat-fast"])
 settings = get_settings()
@@ -72,7 +75,7 @@ def _public_cors_headers(request: Request) -> dict[str, str]:
     origin = _validated_origin(request)
     headers = {
         "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, X-Requested-With",
+        "Access-Control-Allow-Headers": "Content-Type, X-Requested-With, Accept",
         "Access-Control-Max-Age": "600",
         "Vary": "Origin",
         "Cache-Control": "no-store",
@@ -98,6 +101,13 @@ def _visitor_payload(visitor: WebchatFastVisitor | None) -> dict[str, Any]:
 @router.options("/fast-reply")
 def webchat_fast_reply_options(request: Request):
     return Response(status_code=204, headers=_public_cors_headers(request))
+
+
+@router.options("/fast-reply/stream")
+def webchat_fast_reply_stream_options(request: Request):
+    headers = _public_cors_headers(request)
+    headers["X-Accel-Buffering"] = "no"
+    return Response(status_code=204, headers=headers)
 
 
 @router.post("/fast-reply")
@@ -154,3 +164,52 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
         response=result_payload,
     )
     return result_payload
+
+
+@router.post("/fast-reply/stream")
+async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: Request) -> Response:
+    stream_settings = get_webchat_fast_settings()
+    headers = _public_cors_headers(request)
+    headers.update({
+        "Content-Type": "text/event-stream",
+        "X-Accel-Buffering": "no",
+        "Cache-Control": "no-store",
+        "Vary": "Origin",
+    })
+
+    if not stream_settings.stream_enabled:
+        return JSONResponse({"error_code": "stream_disabled"}, status_code=503, headers=headers)
+    if stream_settings.stream_require_accept and "text/event-stream" not in (request.headers.get("accept") or ""):
+        return JSONResponse({"error_code": "stream_accept_required"}, status_code=406, headers=headers)
+
+    enforce_webchat_fast_rate_limit(request, tenant_key=payload.tenant_key, session_id=payload.session_id)
+
+    begin = prepare_webchat_fast_stream(
+        tenant_key=payload.tenant_key,
+        channel_key=payload.channel_key,
+        session_id=payload.session_id,
+        client_message_id=payload.client_message_id,
+        body=payload.body,
+        recent_context=_context_payload(payload.recent_context),
+        request_id=getattr(request.state, "request_id", None),
+    )
+    if begin.status == "processing":
+        return JSONResponse({"error_code": "request_processing", "retry_after_ms": 1500}, status_code=202, headers=headers)
+    if begin.status == "conflict":
+        return JSONResponse({"error_code": "idempotency_key_reused_with_different_payload"}, status_code=409, headers=headers)
+    if begin.status == "failed_non_retryable":
+        return JSONResponse({"error_code": begin.error_code or "request_failed"}, status_code=409, headers=headers)
+
+    generator = stream_webchat_fast_reply_events(
+        begin=begin,
+        tenant_key=payload.tenant_key,
+        channel_key=payload.channel_key,
+        session_id=payload.session_id,
+        client_message_id=payload.client_message_id,
+        body=payload.body,
+        recent_context=_context_payload(payload.recent_context),
+        visitor=payload.visitor,
+        request_id=getattr(request.state, "request_id", None),
+        settings=stream_settings,
+    )
+    return StreamingResponse(generator, media_type="text/event-stream", headers=headers)
