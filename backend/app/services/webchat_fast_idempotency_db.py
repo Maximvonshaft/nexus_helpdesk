@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import timedelta, timezone
 from typing import Any, Literal
 
 from sqlalchemy import JSON, DateTime, Integer, String, UniqueConstraint, delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
@@ -124,6 +125,175 @@ class IdempotencyBeginResult:
     error_code: str | None = None
 
 
+def _key_filters(*, tenant_key: str, session_id: str, client_message_id: str):
+    return (
+        WebchatFastIdempotency.tenant_key == tenant_key,
+        WebchatFastIdempotency.session_id == session_id,
+        WebchatFastIdempotency.client_message_id == client_message_id,
+    )
+
+
+def _dialect_name(db: Session) -> str:
+    bind = db.get_bind()
+    dialect = getattr(bind, "dialect", None)
+    return str(getattr(dialect, "name", "") or "").lower()
+
+
+def _coerce_utc(dt: Any) -> Any:
+    if dt is None or not hasattr(dt, "tzinfo"):
+        return dt
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _resolve_locked_row(
+    db: Session,
+    *,
+    row: WebchatFastIdempotency,
+    request_hash: str,
+    owner_request_id: str | None,
+    now: Any,
+    locked_until: Any,
+    expires_at: Any,
+    newly_inserted: bool,
+) -> IdempotencyBeginResult:
+    now = _coerce_utc(now)
+    row_locked_until = _coerce_utc(row.locked_until)
+    if row.request_hash != request_hash:
+        return IdempotencyBeginResult(kind="conflict", row=row, error_code="idempotency_key_reused_with_different_payload")
+    if row.status == "done":
+        return IdempotencyBeginResult(kind="replay", row=row, response_json=dict(row.response_json or {}))
+    if row.status == "processing" and row_locked_until and row_locked_until > now:
+        return IdempotencyBeginResult(kind="owner", row=row) if newly_inserted else IdempotencyBeginResult(kind="processing", row=row, error_code="request_processing")
+    if row.status == "failed" and row.error_code not in _RETRYABLE_FAILED_CODES:
+        return IdempotencyBeginResult(kind="failed_non_retryable", row=row, error_code=row.error_code or "request_failed")
+
+    row.status = "processing"
+    row.error_code = None
+    row.locked_until = locked_until
+    row.owner_request_id = owner_request_id
+    row.attempt_count = 1 if newly_inserted else int(row.attempt_count or 0) + 1
+    row.last_heartbeat_at = now
+    row.updated_at = now
+    row.expires_at = expires_at
+    db.flush()
+    return IdempotencyBeginResult(kind="owner", row=row)
+
+
+def _begin_webchat_fast_idempotency_postgres(
+    db: Session,
+    *,
+    tenant_key: str,
+    session_id: str,
+    client_message_id: str,
+    request_hash: str,
+    owner_request_id: str | None,
+    now: Any,
+    locked_until: Any,
+    expires_at: Any,
+) -> IdempotencyBeginResult:
+    insert_result = db.execute(
+        pg_insert(WebchatFastIdempotency)
+        .values(
+            tenant_key=tenant_key,
+            session_id=session_id,
+            client_message_id=client_message_id,
+            request_hash=request_hash,
+            status="processing",
+            locked_until=locked_until,
+            owner_request_id=owner_request_id,
+            attempt_count=1,
+            last_heartbeat_at=now,
+            created_at=now,
+            updated_at=now,
+            expires_at=expires_at,
+        )
+        .on_conflict_do_nothing(index_elements=["tenant_key", "session_id", "client_message_id"])
+        .returning(WebchatFastIdempotency.id)
+    )
+    inserted_id = insert_result.scalar_one_or_none()
+    row = db.execute(
+        select(WebchatFastIdempotency)
+        .where(*_key_filters(tenant_key=tenant_key, session_id=session_id, client_message_id=client_message_id))
+        .with_for_update()
+    ).scalar_one()
+    return _resolve_locked_row(
+        db,
+        row=row,
+        request_hash=request_hash,
+        owner_request_id=owner_request_id,
+        now=now,
+        locked_until=locked_until,
+        expires_at=expires_at,
+        newly_inserted=inserted_id is not None,
+    )
+
+
+def _begin_webchat_fast_idempotency_compatible(
+    db: Session,
+    *,
+    tenant_key: str,
+    session_id: str,
+    client_message_id: str,
+    request_hash: str,
+    owner_request_id: str | None,
+    now: Any,
+    locked_until: Any,
+    expires_at: Any,
+) -> IdempotencyBeginResult:
+    row = db.execute(
+        select(WebchatFastIdempotency).where(
+            *_key_filters(tenant_key=tenant_key, session_id=session_id, client_message_id=client_message_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        row = WebchatFastIdempotency(
+            tenant_key=tenant_key,
+            session_id=session_id,
+            client_message_id=client_message_id,
+            request_hash=request_hash,
+            status="processing",
+            locked_until=locked_until,
+            owner_request_id=owner_request_id,
+            attempt_count=1,
+            last_heartbeat_at=now,
+            created_at=now,
+            updated_at=now,
+            expires_at=expires_at,
+        )
+        try:
+            with db.begin_nested():
+                db.add(row)
+                db.flush()
+        except IntegrityError:
+            row = db.execute(
+                select(WebchatFastIdempotency).where(
+                    *_key_filters(tenant_key=tenant_key, session_id=session_id, client_message_id=client_message_id)
+                )
+            ).scalar_one()
+            return _resolve_locked_row(
+                db,
+                row=row,
+                request_hash=request_hash,
+                owner_request_id=owner_request_id,
+                now=now,
+                locked_until=locked_until,
+                expires_at=expires_at,
+                newly_inserted=False,
+            )
+        return IdempotencyBeginResult(kind="owner", row=row)
+
+    return _resolve_locked_row(
+        db,
+        row=row,
+        request_hash=request_hash,
+        owner_request_id=owner_request_id,
+        now=now,
+        locked_until=locked_until,
+        expires_at=expires_at,
+        newly_inserted=False,
+    )
+
+
 def begin_webchat_fast_idempotency(
     db: Session,
     *,
@@ -142,64 +312,29 @@ def begin_webchat_fast_idempotency(
     clean_session = clean(session_id)
     clean_client = clean(client_message_id)
 
-    row = db.execute(
-        select(WebchatFastIdempotency).where(
-            WebchatFastIdempotency.tenant_key == clean_tenant,
-            WebchatFastIdempotency.session_id == clean_session,
-            WebchatFastIdempotency.client_message_id == clean_client,
-        )
-    ).scalar_one_or_none()
-    if row is None:
-        row = WebchatFastIdempotency(
+    if _dialect_name(db) == "postgresql":
+        return _begin_webchat_fast_idempotency_postgres(
+            db,
             tenant_key=clean_tenant,
             session_id=clean_session,
             client_message_id=clean_client,
             request_hash=request_hash,
-            status="processing",
-            locked_until=locked_until,
             owner_request_id=owner_request_id,
-            attempt_count=1,
-            last_heartbeat_at=now,
-            created_at=now,
-            updated_at=now,
+            now=now,
+            locked_until=locked_until,
             expires_at=expires_at,
         )
-        db.add(row)
-        try:
-            db.flush()
-        except IntegrityError:
-            db.rollback()
-            return begin_webchat_fast_idempotency(
-                db,
-                tenant_key=tenant_key,
-                session_id=session_id,
-                client_message_id=client_message_id,
-                request_hash=request_hash,
-                owner_request_id=owner_request_id,
-                lock_seconds=lock_seconds,
-                ttl_seconds=ttl_seconds,
-            )
-        return IdempotencyBeginResult(kind="owner", row=row)
-
-    if row.request_hash != request_hash:
-        return IdempotencyBeginResult(kind="conflict", row=row, error_code="idempotency_key_reused_with_different_payload")
-    if row.status == "done":
-        return IdempotencyBeginResult(kind="replay", row=row, response_json=dict(row.response_json or {}))
-    if row.status == "processing" and row.locked_until and row.locked_until > now:
-        return IdempotencyBeginResult(kind="processing", row=row, error_code="request_processing")
-    if row.status == "failed" and row.error_code not in _RETRYABLE_FAILED_CODES:
-        return IdempotencyBeginResult(kind="failed_non_retryable", row=row, error_code=row.error_code or "request_failed")
-
-    row.status = "processing"
-    row.error_code = None
-    row.locked_until = locked_until
-    row.owner_request_id = owner_request_id
-    row.attempt_count = int(row.attempt_count or 0) + 1
-    row.last_heartbeat_at = now
-    row.updated_at = now
-    row.expires_at = expires_at
-    db.flush()
-    return IdempotencyBeginResult(kind="owner", row=row)
+    return _begin_webchat_fast_idempotency_compatible(
+        db,
+        tenant_key=clean_tenant,
+        session_id=clean_session,
+        client_message_id=clean_client,
+        request_hash=request_hash,
+        owner_request_id=owner_request_id,
+        now=now,
+        locked_until=locked_until,
+        expires_at=expires_at,
+    )
 
 
 def mark_webchat_fast_done(db: Session, row: WebchatFastIdempotency, *, response_json: dict[str, Any]) -> None:

@@ -1,0 +1,10 @@
+2026-05-12T00:36:28+02:00 vbox systemd[979]: Stopping nexusdesk-openclaw-bridge.service - NexusDesk OpenClaw Bridge...
+2026-05-12T00:36:28+02:00 vbox node[168108]: {"ts":"2026-05-11T22:36:28.045Z","level":"info","event":"bridge_shutdown_requested","signal":"SIGTERM"}
+2026-05-12T00:36:28+02:00 vbox node[168108]: {"ts":"2026-05-11T22:36:28.052Z","level":"warn","event":"gateway_closed","code":1005,"reason":""}
+2026-05-12T00:36:28+02:00 vbox systemd[979]: Stopped nexusdesk-openclaw-bridge.service - NexusDesk OpenClaw Bridge.
+2026-05-12T00:36:28+02:00 vbox systemd[979]: nexusdesk-openclaw-bridge.service: Consumed 1.288s CPU time, 75.3M memory peak.
+2026-05-12T00:36:28+02:00 vbox systemd[979]: Started nexusdesk-openclaw-bridge.service - NexusDesk OpenClaw Bridge.
+2026-05-12T00:36:28+02:00 vbox node[168405]: {"ts":"2026-05-11T22:36:28.675Z","level":"info","event":"bridge_starting","bridgeHost":"127.0.0.1","bridgePort":18792,"gatewayUrl":"ws://127.0.0.1:18789","configPath":"/home/vboxuser/.openclaw/openclaw.json","tokenSource":"/home/vboxuser/.openclaw/openclaw.json","gatewayRuntimeModule":"/home/vboxuser/.openclaw/tools/node-v22.22.0/lib/node_modules/openclaw/dist/plugin-sdk/gateway-runtime.js","allowWrites":false,"aiReplyEnabled":true,"trackingLookupEnabled":false,"node":"/home/vboxuser/.openclaw/tools/node-v22.22.0/bin/node"}
+2026-05-12T00:36:28+02:00 vbox node[168405]: {"ts":"2026-05-11T22:36:28.680Z","level":"info","event":"gateway_connecting","gatewayUrl":"ws://127.0.0.1:18789"}
+2026-05-12T00:36:28+02:00 vbox node[168405]: {"ts":"2026-05-11T22:36:28.685Z","level":"info","event":"bridge_http_listening","host":"127.0.0.1","port":18792}
+2026-05-12T00:36:28+02:00 vbox node[168405]: {"ts":"2026-05-11T22:36:28.725Z","level":"info","event":"gateway_hello_ok","protocol":3,"tickIntervalMs":30000}

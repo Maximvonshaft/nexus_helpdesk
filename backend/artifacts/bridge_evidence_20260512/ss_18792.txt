@@ -1,0 +1,4 @@
+State  Recv-Q Send-Q               Local Address:Port  Peer Address:PortProcess                                                                                                                                                             
+LISTEN 0      4096                 100.106.75.61:18792      0.0.0.0:*                                      ino:16518 sk:2 cgroup:/system.slice/tailscaled.service <->                                                                       
+LISTEN 0      511                      127.0.0.1:18792      0.0.0.0:*    users:(("node",pid=168405,fd=22)) uid:1000 ino:1202604 sk:3002 cgroup:/user.slice/user-1000.slice/user@1000.service/app.slice/nexusdesk-openclaw-bridge.service <->
+LISTEN 0      4096   [fd7a:115c:a1e0::b134:4b3d]:18792         [::]:*                                      ino:12820 sk:9 cgroup:/system.slice/tailscaled.service v6only:1 <->                                                              

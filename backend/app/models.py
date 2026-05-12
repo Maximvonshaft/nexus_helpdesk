@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
 from typing import Optional
 
@@ -23,6 +25,22 @@ from .enums import (
 from .utils.time import utc_now
 
 UTCDateTime = DateTime(timezone=True)
+
+
+def _canonical_payload_json(payload: object) -> str:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _payload_hash_from_json_text(payload_json: str | None) -> str:
+    try:
+        payload = json.loads(payload_json or "{}")
+    except Exception:
+        payload = payload_json or ""
+    return hashlib.sha256(_canonical_payload_json(payload).encode("utf-8")).hexdigest()
+
+
+def _openclaw_payload_hash_default(context) -> str:
+    return _payload_hash_from_json_text(context.get_current_parameters().get("payload_json"))
 
 
 class Team(Base):
@@ -250,6 +268,7 @@ class OpenClawUnresolvedEvent(Base):
     source_chat_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     preferred_reply_contact: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
     payload_json: Mapped[str] = mapped_column(Text)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True, default=_openclaw_payload_hash_default)
     status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
     replay_count: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -351,6 +370,7 @@ class Ticket(Base):
     issue_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     customer_request: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source_chat_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    source_dedupe_key: Mapped[Optional[str]] = mapped_column(String(300), nullable=True, index=True)
     required_action: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     missing_fields: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_customer_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

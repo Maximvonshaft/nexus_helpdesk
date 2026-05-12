@@ -1,7 +1,7 @@
 """webchat fast lane V2.2.2 idempotency and ticket dedupe
 
 Revision ID: 20260512_fl222
-Revises: 20260506_0018
+Revises: 20260510_0022
 Create Date: 2026-05-12
 """
 
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "20260512_fl222"
-down_revision = "20260506_0018"
+down_revision = "20260510_0022"
 branch_labels = None
 depends_on = None
 

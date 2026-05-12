@@ -21,9 +21,34 @@ def test_widget_defaults_to_fast_ai_mode():
 def test_widget_calls_fast_reply_endpoint():
     source = _widget_source()
 
+    assert "/api/webchat/fast-reply/stream" in source
     assert "/api/webchat/fast-reply" in source
+    assert "Accept': 'text/event-stream'" in source or 'Accept": "text/event-stream"' in source
+    assert ".getReader" in source
+    assert "EventSource" not in source
     assert "recent_context: state.recentContext" in source
     assert "sessionStorage.setItem(contextKey" in source
+
+
+def test_widget_tracks_stream_bubble_states_and_partial_failure_copy():
+    source = _widget_source()
+
+    assert "setBubbleState(aiBubble, 'streaming')" in source
+    assert "setBubbleState(aiBubble, 'complete')" in source
+    assert "setBubbleState(aiBubble, 'failed_incomplete')" in source
+    assert "setBubbleState(aiBubble, 'replayed_complete')" in source
+    assert "This reply was interrupted. Please retry." in source
+    assert "reply_delta" in source
+    assert "replay" in source
+    assert "final" in source
+
+
+def test_widget_reuses_same_client_message_id_for_retry_and_non_stream_fallback():
+    source = _widget_source()
+
+    assert "sendFastMessage(retryBody, bubble, cmid)" in source
+    assert "client_message_id: cmid" in source
+    assert "fallbackToNonStream" in source
 
 
 def test_widget_keeps_legacy_rollback_path():

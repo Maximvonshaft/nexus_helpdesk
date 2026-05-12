@@ -1,0 +1,7 @@
+## feature/speedaf-tracking-readonly-adapter...origin/feature/speedaf-tracking-readonly-adapter
+ M app/services/openclaw_client_factory.py
+ M app/services/openclaw_runtime_service.py
+ M app/services/webchat_ai_service.py
+ M app/settings.py
+ M scripts/openclaw_bridge_server.js
+ M tests/test_webchat_round_b.py

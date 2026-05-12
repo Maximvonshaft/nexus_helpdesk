@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -90,20 +90,7 @@ def enqueue_webchat_handoff_snapshot_job(db: Session, *, snapshot: dict[str, Any
 
 
 def _existing_ticket_by_source_dedupe_key(db: Session, source_dedupe_key: str) -> Ticket | None:
-    row = db.execute(
-        text("SELECT id FROM tickets WHERE source_dedupe_key = :key LIMIT 1"),
-        {"key": source_dedupe_key},
-    ).first()
-    if not row:
-        return None
-    return db.get(Ticket, int(row[0]))
-
-
-def _stamp_ticket_source_dedupe_key(db: Session, ticket: Ticket, source_dedupe_key: str) -> None:
-    db.execute(
-        text("UPDATE tickets SET source_dedupe_key = :key WHERE id = :ticket_id"),
-        {"key": source_dedupe_key, "ticket_id": ticket.id},
-    )
+    return db.execute(select(Ticket).where(Ticket.source_dedupe_key == source_dedupe_key).limit(1)).scalar_one_or_none()
 
 
 def create_ticket_from_webchat_snapshot(db: Session, *, snapshot: dict[str, Any]) -> Ticket:
@@ -131,6 +118,7 @@ def create_ticket_from_webchat_snapshot(db: Session, *, snapshot: dict[str, Any]
         conversation_state=ConversationState.human_review_required,
         tracking_number=snapshot.get("tracking_number"),
         source_chat_id=f"webchat-fast:{snapshot.get('tenant_key') or 'default'}:{snapshot.get('session_id') or 'unknown'}"[:120],
+        source_dedupe_key=source_dedupe_key,
         customer_request=snapshot.get("customer_last_message"),
         last_customer_message=snapshot.get("customer_last_message"),
         required_action=snapshot.get("recommended_agent_action"),
@@ -138,25 +126,22 @@ def create_ticket_from_webchat_snapshot(db: Session, *, snapshot: dict[str, Any]
         preferred_reply_contact=(snapshot.get("visitor") or {}).get("email") or (snapshot.get("visitor") or {}).get("phone") or snapshot.get("session_id"),
     )
     try:
-        db.add(ticket)
-        db.flush()
-        _stamp_ticket_source_dedupe_key(db, ticket, source_dedupe_key)
-        db.flush()
+        with db.begin_nested():
+            db.add(ticket)
+            db.flush()
+            db.add(TicketEvent(
+                ticket_id=ticket.id,
+                actor_id=None,
+                event_type=EventType.ticket_created,
+                note="WebChat AI handoff snapshot created",
+                payload_json=json.dumps(snapshot, ensure_ascii=False),
+            ))
+            db.flush()
     except IntegrityError:
-        db.rollback()
         existing = _existing_ticket_by_source_dedupe_key(db, source_dedupe_key)
         if existing is None:
             raise
         return existing
-
-    db.add(TicketEvent(
-        ticket_id=ticket.id,
-        actor_id=None,
-        event_type=EventType.ticket_created,
-        note="WebChat AI handoff snapshot created",
-        payload_json=json.dumps(snapshot, ensure_ascii=False),
-    ))
-    db.flush()
     return ticket
 
 

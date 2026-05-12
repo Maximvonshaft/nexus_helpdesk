@@ -6,6 +6,7 @@ from app.services.webchat_fast_output_parser import (
     FastReplyParseError,
     UnexpectedToolCallError,
     parse_openclaw_fast_reply,
+    parse_openclaw_fast_reply_from_strict_json,
 )
 
 
@@ -28,6 +29,23 @@ def test_accepts_pure_json_output_text():
     parsed = parse_openclaw_fast_reply({"output_text": _valid_text()})
 
     assert parsed.reply.startswith("Hi")
+    assert parsed.intent == "greeting"
+    assert parsed.handoff_required is False
+
+
+def test_accepts_direct_strict_json_dict():
+    parsed = parse_openclaw_fast_reply_from_strict_json(
+        {
+            "reply": "Hello",
+            "intent": "greeting",
+            "tracking_number": None,
+            "handoff_required": False,
+            "handoff_reason": None,
+            "recommended_agent_action": None,
+        }
+    )
+
+    assert parsed.reply == "Hello"
     assert parsed.intent == "greeting"
     assert parsed.handoff_required is False
 

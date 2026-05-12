@@ -7,11 +7,13 @@ os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_fast_reply_api_tes
 os.environ.setdefault("WEBCHAT_FAST_AI_ENABLED", "false")
 
 from fastapi.testclient import TestClient
+from sqlalchemy import delete, select
 
 from app.api import webchat_fast
+from app.db import Base, SessionLocal, engine
 from app.main import app
+from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency, begin_webchat_fast_idempotency, compute_request_hash
 from app.services.webchat_fast_ai_service import WebchatFastReplyResult
-from app.services.webchat_fast_idempotency import reset_fast_reply_idempotency_for_tests
 from app.services.webchat_fast_rate_limit import reset_webchat_fast_rate_limit_for_tests
 
 
@@ -19,7 +21,13 @@ client = TestClient(app)
 
 
 def setup_function():
-    reset_fast_reply_idempotency_for_tests()
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        db.execute(delete(WebchatFastIdempotency))
+        db.commit()
+    finally:
+        db.close()
     reset_webchat_fast_rate_limit_for_tests()
 
 
@@ -34,7 +42,7 @@ def _payload(client_message_id: str = "client-1") -> dict:
     }
 
 
-def test_fast_reply_normal_path_does_not_open_db(monkeypatch):
+def test_fast_reply_normal_path_marks_db_idempotency_done(monkeypatch):
     async def fake_generate(**kwargs):
         return WebchatFastReplyResult(
             ok=True,
@@ -50,11 +58,7 @@ def test_fast_reply_normal_path_does_not_open_db(monkeypatch):
             elapsed_ms=25,
         )
 
-    def fail_db_context():
-        raise AssertionError("normal fast reply path must not open db_context")
-
     monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
-    monkeypatch.setattr(webchat_fast, "db_context", fail_db_context)
 
     response = client.post("/api/webchat/fast-reply", json=_payload())
 
@@ -66,9 +70,17 @@ def test_fast_reply_normal_path_does_not_open_db(monkeypatch):
     assert data["handoff_required"] is False
     assert data["ticket_creation_queued"] is False
 
+    db = SessionLocal()
+    try:
+        row = db.execute(select(WebchatFastIdempotency)).scalar_one()
+        assert row.status == "done"
+        assert row.response_json["reply"] == "Hi, this is Speedy. How can I help you today?"
+    finally:
+        db.close()
+
 
 def test_fast_reply_handoff_enqueues_job_but_returns_ai_reply(monkeypatch):
-    calls = {"db_opened": 0, "enqueued": 0}
+    calls = {"enqueued": 0}
 
     async def fake_generate(**kwargs):
         return WebchatFastReplyResult(
@@ -85,17 +97,6 @@ def test_fast_reply_handoff_enqueues_job_but_returns_ai_reply(monkeypatch):
             elapsed_ms=30,
         )
 
-    class FakeContext:
-        def __enter__(self):
-            calls["db_opened"] += 1
-            return object()
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    def fake_db_context():
-        return FakeContext()
-
     def fake_enqueue(db, *, snapshot):
         calls["enqueued"] += 1
         assert snapshot["tracking_number"] == "SF123456789"
@@ -103,7 +104,6 @@ def test_fast_reply_handoff_enqueues_job_but_returns_ai_reply(monkeypatch):
         return object()
 
     monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
-    monkeypatch.setattr(webchat_fast, "db_context", fake_db_context)
     monkeypatch.setattr(webchat_fast, "enqueue_webchat_handoff_snapshot_job", fake_enqueue)
 
     response = client.post("/api/webchat/fast-reply", json=_payload("client-2"))
@@ -114,7 +114,7 @@ def test_fast_reply_handoff_enqueues_job_but_returns_ai_reply(monkeypatch):
     assert data["ai_generated"] is True
     assert data["handoff_required"] is True
     assert data["ticket_creation_queued"] is True
-    assert calls == {"db_opened": 1, "enqueued": 1}
+    assert calls == {"enqueued": 1}
 
 
 def test_handoff_enqueue_failure_does_not_block_ai_reply(monkeypatch):
@@ -133,15 +133,8 @@ def test_handoff_enqueue_failure_does_not_block_ai_reply(monkeypatch):
             elapsed_ms=30,
         )
 
-    class FailingContext:
-        def __enter__(self):
-            raise RuntimeError("db unavailable")
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
     monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
-    monkeypatch.setattr(webchat_fast, "db_context", lambda: FailingContext())
+    monkeypatch.setattr(webchat_fast, "enqueue_webchat_handoff_snapshot_job", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db unavailable")))
 
     response = client.post("/api/webchat/fast-reply", json=_payload("client-3"))
 
@@ -211,3 +204,83 @@ def test_idempotent_fast_reply_returns_same_response(monkeypatch):
     assert second.status_code == 200
     assert calls["generate"] == 1
     assert second.json()["idempotent"] is True
+
+
+def test_non_stream_same_key_different_hash_returns_409(monkeypatch):
+    calls = {"generate": 0}
+
+    async def fake_generate(**kwargs):
+        calls["generate"] += 1
+        return WebchatFastReplyResult(
+            ok=True,
+            ai_generated=True,
+            reply_source="openclaw_responses",
+            reply="Hi, this is Speedy.",
+            intent="greeting",
+            tracking_number=None,
+            handoff_required=False,
+            handoff_reason=None,
+            recommended_agent_action=None,
+            ticket_creation_queued=False,
+            elapsed_ms=20,
+        )
+
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
+
+    first = client.post("/api/webchat/fast-reply", json=_payload("client-conflict"))
+    second = client.post("/api/webchat/fast-reply", json={**_payload("client-conflict"), "body": "Different body"})
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert second.json()["error_code"] == "idempotency_key_reused_with_different_payload"
+    assert calls["generate"] == 1
+
+
+def test_non_stream_active_processing_returns_202_without_duplicate_generation(monkeypatch):
+    calls = {"generate": 0}
+
+    async def fake_generate(**kwargs):
+        calls["generate"] += 1
+        return WebchatFastReplyResult(
+            ok=True,
+            ai_generated=True,
+            reply_source="openclaw_responses",
+            reply="Hi, this is Speedy.",
+            intent="greeting",
+            tracking_number=None,
+            handoff_required=False,
+            handoff_reason=None,
+            recommended_agent_action=None,
+            ticket_creation_queued=False,
+            elapsed_ms=20,
+        )
+
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
+
+    request_payload = _payload("client-processing")
+    db = SessionLocal()
+    try:
+        begin = begin_webchat_fast_idempotency(
+            db,
+            tenant_key=request_payload["tenant_key"],
+            session_id=request_payload["session_id"],
+            client_message_id=request_payload["client_message_id"],
+            request_hash=compute_request_hash(
+                tenant_key=request_payload["tenant_key"],
+                channel_key=request_payload["channel_key"],
+                session_id=request_payload["session_id"],
+                client_message_id=request_payload["client_message_id"],
+                body=request_payload["body"],
+                recent_context=request_payload["recent_context"],
+            ),
+            owner_request_id="existing-owner",
+        )
+        assert begin.kind == "owner"
+    finally:
+        db.close()
+
+    response = client.post("/api/webchat/fast-reply", json=request_payload)
+
+    assert response.status_code == 202
+    assert response.json()["error_code"] == "request_processing"
+    assert calls["generate"] == 0

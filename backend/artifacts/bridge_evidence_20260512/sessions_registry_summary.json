@@ -1,0 +1,13 @@
+{
+  "webchat_session_keys": 25,
+  "has_unscoped_webchat": false,
+  "has_agent_support_main": true,
+  "new_evidence_keys": [
+    "agent:support:webchat:evidence:website:conv1",
+    "agent:support:webchat:evidence:website:conv2",
+    "agent:support:webchat:evidence:website:conv3",
+    "agent:support:webchat:evidence:website:conv4",
+    "agent:support:webchat:evidence:website:conv5"
+  ],
+  "new_evidence_keys_count": 5
+}

@@ -95,10 +95,18 @@ def _run_handoff_snapshot(worker_id: str) -> int:
         return len(handoff_jobs)
 
 
-def _run_webchat_ai(worker_id: str) -> int:
-    if not bool(getattr(settings, "webchat_ai_reconciler_enabled", True)):
-        record_queue_snapshot("webchat_ai_reconciler", "disabled", 0)
-        return 0
+def _webchat_ai_reconciler_interval_seconds() -> int:
+    try:
+        return max(5, int(getattr(settings, "webchat_ai_reconciler_interval_seconds", 30) or 30))
+    except (TypeError, ValueError):
+        return 30
+
+
+def _should_run_webchat_ai_reconciler(worker_id: str) -> bool:
+    return bool(getattr(settings, "webchat_ai_reconciler_enabled", True)) and worker_id == "worker-main"
+
+
+def _run_webchat_ai_reconciler_watchdog(worker_id: str) -> int:
     db = SessionLocal()
     started = time.monotonic()
     try:
@@ -133,6 +141,13 @@ def _run_webchat_ai(worker_id: str) -> int:
         db.close()
 
 
+def _run_webchat_ai(worker_id: str) -> int:
+    if not bool(getattr(settings, "webchat_ai_reconciler_enabled", True)):
+        record_queue_snapshot("webchat_ai_reconciler", "disabled", 0)
+        return 0
+    return _run_webchat_ai_reconciler_watchdog(worker_id)
+
+
 def run_queue_once(worker_id: str, queue: str) -> int:
     if queue not in QUEUES:
         raise ValueError(f"unsupported worker queue: {queue}")
@@ -163,9 +178,18 @@ def main() -> int:
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
 
+    worker_id = getattr(args, "worker_id", "worker-main")
+    queue = getattr(args, "queue", "all")
+    once = bool(getattr(args, "once", False))
+
     while True:
-        processed = run_queue_once(args.worker_id, args.queue)
-        if args.once:
+        if queue == "all":
+            if _should_run_webchat_ai_reconciler(worker_id):
+                _run_webchat_ai_reconciler_watchdog(worker_id)
+            processed = run_once(worker_id)
+        else:
+            processed = run_queue_once(worker_id, queue)
+        if once:
             print(f"processed={processed}")
             return 0
         time.sleep(settings.worker_poll_seconds if processed == 0 else 0.2)

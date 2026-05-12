@@ -171,11 +171,12 @@ class StreamingReplyExtractor:
         if _has_forbidden(visible):
             self._aborted = True
             raise StreamingReplyAbort("ai_safety_abort")
-        if not visible.startswith(self._emitted):
+        visible_prefix = self._emitted + self._holdback
+        if not visible.startswith(visible_prefix):
             # Model rewrote earlier reply text; do not risk leaking stale partials.
             self._aborted = True
             raise StreamingReplyAbort("ai_invalid_output")
-        pending = visible[len(self._emitted):]
+        pending = visible[len(visible_prefix):]
         if not pending:
             return None
         safe_joined = self._holdback + pending
@@ -202,19 +203,15 @@ class StreamingReplyExtractor:
         return None
 
     def final_parse(self, payload_or_text: dict[str, Any] | str | None) -> ParsedFastReply:
-        candidate: dict[str, Any]
+        candidate: dict[str, Any] | str
         if isinstance(payload_or_text, dict):
             candidate = payload_or_text
         else:
-            text = payload_or_text if isinstance(payload_or_text, str) and payload_or_text.strip() else self._buffer
-            if text.lstrip().startswith("```"):
+            candidate = payload_or_text if isinstance(payload_or_text, str) and payload_or_text.strip() else self._buffer
+            if not isinstance(candidate, str) or not candidate.strip():
+                raise FastReplyParseError("stream final payload is empty")
+            if candidate.lstrip().startswith("```"):
                 raise FastReplyParseError("markdown fenced JSON is not allowed")
-            try:
-                candidate = json.loads(text)
-            except json.JSONDecodeError as exc:
-                raise FastReplyParseError("stream final payload is not valid JSON") from exc
-            if not isinstance(candidate, dict):
-                raise FastReplyParseError("stream final payload must be an object")
         parsed = parse_openclaw_fast_reply(candidate)
         if not parsed.reply or not parsed.reply.strip():
             raise FastReplyParseError("reply is required")
