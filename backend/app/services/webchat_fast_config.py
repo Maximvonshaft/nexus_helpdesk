@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import socket
+import ipaddress
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -84,16 +86,39 @@ class WebchatFastSettings:
             _validate_private_responses_url(self.openclaw_responses_url)
 
 
-def _validate_private_responses_url(url: str) -> None:
-    parsed = urlparse(url or "")
+def _validate_private_responses_url(value: str) -> None:
+    parsed = urlparse(value or "")
+
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise RuntimeError("OPENCLAW_RESPONSES_URL must be a valid http(s) URL")
-    hostname = parsed.hostname.lower()
-    if hostname not in {"localhost", "127.0.0.1"} and not hostname.endswith(".local"):
-        # Allow Docker service names / tailnet / private ingress names, but reject obvious public hosts.
-        if "." in hostname and not hostname.endswith(".internal") and not hostname.endswith(".tailnet"):
-            raise RuntimeError("OPENCLAW_RESPONSES_URL must point to a private host in production")
 
+    host = parsed.hostname
+
+    try:
+        resolved_ips = {ipaddress.ip_address(host)}
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(
+                host,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                type=socket.SOCK_STREAM,
+            )
+            resolved_ips = {ipaddress.ip_address(item[4][0]) for item in infos}
+        except Exception as exc:
+            raise RuntimeError("OPENCLAW_RESPONSES_URL host could not be resolved in production") from exc
+
+    tailnet_or_cgnat = ipaddress.ip_network("100.64.0.0/10")
+
+    def allowed(ip) -> bool:
+        return (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip in tailnet_or_cgnat
+        )
+
+    if not any(allowed(ip) for ip in resolved_ips):
+        raise RuntimeError("OPENCLAW_RESPONSES_URL must point to a private or tailnet host in production")
 
 @lru_cache(maxsize=1)
 def get_webchat_fast_settings() -> WebchatFastSettings:
