@@ -84,6 +84,26 @@ def _create_webchat_conversation(client: TestClient, name: str = "Voice Visitor"
     return conversation_id, visitor_token, ticket_id
 
 
+def test_voice_runtime_config_exposes_livekit_url_without_secrets(monkeypatch):
+    monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "livekit")
+    monkeypatch.setenv("LIVEKIT_URL", "wss://voice.example.test")
+    monkeypatch.setenv("LIVEKIT_API_KEY", "unit_key")
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "unit_secret")
+    monkeypatch.setenv("WEBCHAT_VOICE_CONNECT_SRC", "wss://voice.example.test https://voice.example.test")
+
+    client = TestClient(app)
+    response = client.get("/api/webchat/voice/runtime-config")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["enabled"] is True
+    assert payload["provider"] == "livekit"
+    assert payload["livekit_url"] == "wss://voice.example.test"
+    assert "unit_secret" not in response.text
+    assert "LIVEKIT_API_SECRET" not in response.text
+    assert "unit_key" not in response.text
+
+
 def test_public_create_voice_session_binds_conversation_and_ticket():
     client = TestClient(app)
     conversation_id, visitor_token, ticket_id = _create_webchat_conversation(client)
