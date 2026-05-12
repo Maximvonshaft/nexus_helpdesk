@@ -71,9 +71,12 @@ def probe_openclaw_connectivity() -> OpenClawConnectivityProbeRead:
     if settings.openclaw_deployment_mode == "remote_gateway" and settings.openclaw_bridge_enabled:
         try:
             with OpenClawBridgeHTTPClient() as client:
+                ready = client.readyz()
                 payload = client.conversations_list(limit=1, agent='support')
             result.bridge_started = True
             result.conversations_tool_ok = True
+            if not ready.get('checks', {}).get('gatewayConnected', False):
+                result.warnings.append('OpenClaw bridge /readyz returned ok=false for gateway connectivity')
             conversations = _as_items(payload)
             result.conversations_seen = len(conversations)
             if conversations:

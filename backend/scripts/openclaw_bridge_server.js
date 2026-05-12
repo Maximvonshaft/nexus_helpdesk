@@ -95,7 +95,8 @@ function loadConfig() {
     connectChallengeTimeoutMs: parseIntEnv('OPENCLAW_BRIDGE_CONNECT_CHALLENGE_TIMEOUT_MS', 8000),
     allowWrites: truthyEnv('OPENCLAW_BRIDGE_ALLOW_WRITES', false),
     aiReplyEnabled: truthyEnv('OPENCLAW_BRIDGE_AI_REPLY_ENABLED', true),
-    aiReplySessionKey: process.env.OPENCLAW_BRIDGE_AI_REPLY_SESSION_KEY || 'agent:support:main',
+    aiReplyAgentId: (process.env.OPENCLAW_BRIDGE_AI_REPLY_AGENT_ID || 'support').trim() || 'support',
+    aiReplySessionKey: (process.env.OPENCLAW_BRIDGE_AI_REPLY_SESSION_KEY || '').trim() || null,
     trackingLookupEnabled: truthyEnv('OPENCLAW_BRIDGE_TRACKING_LOOKUP_ENABLED', false),
     trackingLookupMethod: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_METHOD || 'tools.call',
     trackingLookupToolName: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_TOOL_NAME || 'speedaf-support__speedaf_lookup',
@@ -178,6 +179,14 @@ function extractTextFromMessage(message) {
 function getMessageId(msg) {
   if (!msg) return null;
   return msg.id || msg.messageId || msg.__openclaw?.id || msg.__openclaw?.seq || msg.timestamp || null;
+}
+
+function toAgentScopedSessionKey(sessionKey, agentId) {
+  const raw = String(sessionKey || '').trim();
+  if (!raw) return '';
+  if (raw.toLowerCase().startsWith('agent:')) return raw;
+  const scopedAgentId = String(agentId || '').trim() || 'support';
+  return `agent:${scopedAgentId}:${raw}`;
 }
 
 class BridgeRuntime {
@@ -308,6 +317,31 @@ class BridgeRuntime {
     });
   }
 
+  readiness() {
+    const ready = Boolean(this.connected && this.client && this.config.aiReplyEnabled);
+    return {
+      ok: ready,
+      status: ready ? 'ready' : 'not_ready',
+      service: 'openclaw-bridge',
+      checks: {
+        aiReplyEnabled: this.config.aiReplyEnabled,
+        gatewayConnected: this.connected,
+      },
+      gateway: {
+        url: this.config.gatewayUrl,
+        connected: this.connected,
+        lastHello: this.lastHello,
+        lastConnectError: this.lastConnectError,
+        lastClose: this.lastClose,
+      },
+      pendingRequests: this.pendingRequests.size,
+      runtime: {
+        pid: process.pid,
+        node: process.execPath,
+      },
+    };
+  }
+
   async sendMessage(payload) {
     if (!this.config.allowWrites) throw new Error('bridge_writes_disabled');
     if (!this.client) throw new Error('bridge_client_not_started');
@@ -413,18 +447,16 @@ class BridgeRuntime {
 
     const bridgeRequestId = crypto.randomUUID();
     const requestedSessionKey = String(payload.sessionKey || '').trim();
-    let effectiveSessionKey = this.config.aiReplySessionKey || requestedSessionKey;
-    if (requestedSessionKey.startsWith('webchat') || requestedSessionKey.startsWith('manual') || requestedSessionKey.startsWith('wc')) {
-      effectiveSessionKey = this.config.aiReplySessionKey || requestedSessionKey;
-    } else {
-      effectiveSessionKey = requestedSessionKey;
-    }
+    const effectiveSessionKey = requestedSessionKey
+      ? toAgentScopedSessionKey(requestedSessionKey, this.config.aiReplyAgentId)
+      : (this.config.aiReplySessionKey || '');
 
     const prompt = String(payload.prompt || '').trim();
     const limit = Number.isFinite(payload.limit) ? payload.limit : 6;
+    const configuredTimeoutMs = Math.max(1000, Number(this.config.requestTimeoutMs) || 20000);
     const timeoutMs = Number.isFinite(payload.waitTimeoutMs)
-      ? Math.max(1000, Math.min(Number(payload.waitTimeoutMs), 30000))
-      : Math.max(1000, Math.min(this.config.requestTimeoutMs, 30000));
+      ? Math.max(1000, Math.min(Number(payload.waitTimeoutMs), configuredTimeoutMs))
+      : configuredTimeoutMs;
 
     if (!requestedSessionKey) throw new Error('missing_sessionKey');
     if (!prompt) throw new Error('missing_prompt');
@@ -438,20 +470,32 @@ class BridgeRuntime {
     });
 
     try {
-      const beforeHistory = await withTimeout(
-        this.client.request('chat.history', { limit: 1, sessionKey: effectiveSessionKey }, {
-          timeoutMs: Math.min(timeoutMs, this.config.requestTimeoutMs),
-        }),
-        timeoutMs + 500,
-        'bridge_ai_reply_timeout',
-      );
+      let beforeMessages = [];
+      try {
+        const beforeHistory = await withTimeout(
+          this.client.request('chat.history', { limit: 1, sessionKey: effectiveSessionKey }, {
+            timeoutMs: Math.min(5000, configuredTimeoutMs),
+          }),
+          Math.min(5500, configuredTimeoutMs + 500),
+          'bridge_ai_reply_timeout',
+        );
+        beforeMessages = beforeHistory.messages || [];
+      } catch (error) {
+        const errorMessage = error?.message || String(error);
+        if (!errorMessage.includes('session not found')) {
+          throw error;
+        }
+      }
 
-      const beforeMessages = beforeHistory.messages || [];
       const lastMessageBefore = beforeMessages.length > 0 ? beforeMessages[beforeMessages.length - 1] : null;
       const beforeMsgId = getMessageId(lastMessageBefore);
 
       await withTimeout(
-        this.client.request(['sessions', 'send'].join('.'), { message: prompt, key: effectiveSessionKey }, { timeoutMs }),
+        this.client.request('chat.send', {
+          sessionKey: effectiveSessionKey,
+          message: prompt,
+          idempotencyKey: bridgeRequestId,
+        }, { timeoutMs }),
         timeoutMs + 500,
         'bridge_ai_reply_timeout',
       );
@@ -463,22 +507,32 @@ class BridgeRuntime {
 
       while (Date.now() < pollDeadline) {
         const remainingMs = Math.max(1000, pollDeadline - Date.now());
-        const history = await withTimeout(
-          this.client.request('chat.history', { limit, sessionKey: effectiveSessionKey }, {
-            timeoutMs: Math.min(remainingMs, this.config.requestTimeoutMs),
-          }),
-          Math.min(remainingMs + 500, timeoutMs + 500),
-          'bridge_ai_reply_timeout',
-        );
-        messages = history.messages || [];
+        const historyTimeoutMs = Math.min(5000, remainingMs, configuredTimeoutMs);
+        try {
+          const history = await withTimeout(
+            this.client.request('chat.history', { limit, sessionKey: effectiveSessionKey }, {
+              timeoutMs: historyTimeoutMs,
+            }),
+            Math.min(historyTimeoutMs + 500, remainingMs + 500),
+            'bridge_ai_reply_timeout',
+          );
+          messages = history.messages || [];
 
-        if (messages.length > 0) {
-          const lastMsg = messages[messages.length - 1];
-          const lastMsgId = getMessageId(lastMsg);
-          if (lastMsg.role === 'assistant' && (!lastMessageBefore || lastMsgId !== beforeMsgId)) {
-            replyText = extractTextFromMessage(lastMsg);
-            gotNewReply = true;
-            break;
+          if (messages.length > 0) {
+            const lastMsg = messages[messages.length - 1];
+            const lastMsgId = getMessageId(lastMsg);
+            if (lastMsg.role === 'assistant' && (!lastMessageBefore || lastMsgId !== beforeMsgId)) {
+              replyText = extractTextFromMessage(lastMsg);
+              gotNewReply = true;
+              break;
+            }
+          }
+        } catch (error) {
+          const errorMessage = error?.message || String(error);
+          const transientHistoryTimeout = errorMessage.includes('gateway request timeout for chat.history')
+            || errorMessage.includes('bridge_ai_reply_timeout');
+          if (!transientHistoryTimeout || Date.now() + 500 >= pollDeadline) {
+            throw error;
           }
         }
 
@@ -488,14 +542,6 @@ class BridgeRuntime {
       const elapsedMs = Date.now() - startedAt;
 
       if (!gotNewReply) {
-        log('warn', 'bridge_ai_reply_failed', {
-          bridgeRequestId,
-          requestedSessionKey,
-          effectiveSessionKey,
-          replySource: 'fallback',
-          elapsedMs,
-          fallbackReason: 'bridge_ai_reply_timeout'
-        });
         return {
           bridgeRequestId,
           status: 'timeout',
@@ -508,14 +554,6 @@ class BridgeRuntime {
       }
 
       if (!replyText) {
-        log('warn', 'bridge_ai_reply_failed', {
-          bridgeRequestId,
-          requestedSessionKey,
-          effectiveSessionKey,
-          replySource: 'fallback',
-          elapsedMs,
-          fallbackReason: 'bridge_empty'
-        });
         return {
           bridgeRequestId,
           status: 'empty',
@@ -527,15 +565,6 @@ class BridgeRuntime {
           messages,
         };
       }
-
-      log('info', 'bridge_ai_reply_success', {
-        bridgeRequestId,
-        requestedSessionKey,
-        effectiveSessionKey,
-        replySource: 'openclaw',
-        elapsedMs,
-        fallbackReason: null
-      });
 
       return {
         bridgeRequestId,
@@ -551,24 +580,14 @@ class BridgeRuntime {
     } catch (error) {
       const elapsedMs = Date.now() - startedAt;
       const errorMessage = error?.message || String(error);
-      const isSessionNotFound = errorMessage.includes('session not found');
-      const isTimeout = errorMessage.includes('bridge_ai_reply_timeout') || errorMessage.includes('bridge_timeout');
-      const status = isTimeout ? 'timeout' : 'error';
-
-      log('warn', 'bridge_ai_reply_failed', {
-        bridgeRequestId,
-        requestedSessionKey,
-        effectiveSessionKey,
-        replySource: 'fallback',
-        elapsedMs,
-        fallbackReason: isSessionNotFound ? 'ai_reply_effective_session_not_found' : (isTimeout ? 'bridge_ai_reply_timeout' : 'bridge_exception'),
-        error: errorMessage
-      });
+      const status = errorMessage.includes('bridge_ai_reply_timeout') || errorMessage.includes('bridge_timeout')
+        ? 'timeout'
+        : 'error';
 
       return {
         bridgeRequestId,
         status,
-        error: isTimeout ? 'bridge_ai_reply_timeout' : errorMessage,
+        error: status === 'timeout' ? 'bridge_ai_reply_timeout' : errorMessage,
         requestedSessionKey,
         effectiveSessionKey,
         elapsedMs,
@@ -706,9 +725,10 @@ class BridgeRuntime {
       bridgeVersion: '1.1.0',
       bridgeGitSha: process.env.BRIDGE_GIT_SHA || 'unknown',
       bridgeFilePath: __filename,
-      aiReplySessionRoutingMode: 'effective_session_fallback',
+      aiReplySessionRoutingMode: this.config.aiReplySessionKey ? 'explicit_fallback_only' : 'preserve_requested_session_agent_scoped',
       allowWrites: this.config.allowWrites,
       aiReplyEnabled: this.config.aiReplyEnabled,
+      aiReplyAgentId: this.config.aiReplyAgentId,
       aiReplySessionKey: this.config.aiReplySessionKey,
       sendMessageEnabled: this.config.allowWrites,
       trackingLookupEnabled: this.config.trackingLookupEnabled,
@@ -779,6 +799,58 @@ function validateSendPayload(payload) {
   return missing;
 }
 
+
+function extractResponsesCompatText(payload) {
+  const parts = [];
+
+  function collect(value) {
+    if (!value) return;
+    if (typeof value === 'string') {
+      parts.push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) collect(item);
+      return;
+    }
+    if (typeof value === 'object') {
+      if (typeof value.text === 'string') parts.push(value.text);
+      if (typeof value.input_text === 'string') parts.push(value.input_text);
+      if (typeof value.content === 'string') parts.push(value.content);
+      if (Array.isArray(value.content)) collect(value.content);
+    }
+  }
+
+  collect(payload?.input);
+  return parts.join('\n').trim();
+}
+
+function buildResponsesCompatResponse(payload, result) {
+  const replyText = String(result?.replyText || '').trim();
+  return {
+    status: 'ok',
+    id: `resp_${result?.bridgeRequestId || crypto.randomUUID()}`,
+    object: 'response',
+    created: Math.floor(Date.now() / 1000),
+    model: payload?.model || 'openclaw:webchat-fast',
+    output_text: replyText,
+    output: [
+      {
+        type: 'message',
+        role: 'assistant',
+        content: [
+          {
+            type: 'output_text',
+            text: replyText,
+          },
+        ],
+      },
+    ],
+    replyText,
+    bridge: result,
+  };
+}
+
 async function handleBridgeCall(res, fn) {
   try {
     const response = await fn();
@@ -828,6 +900,20 @@ async function main() {
         sendJson(res, 200, bridge.health());
         return;
       }
+      if ((req.method === 'GET' || req.method === 'POST') && url.pathname === '/healthz') {
+        sendJson(res, 200, {
+          ok: true,
+          status: 'alive',
+          service: 'openclaw-bridge',
+          runtime: { pid: process.pid, node: process.execPath },
+        });
+        return;
+      }
+      if ((req.method === 'GET' || req.method === 'POST') && url.pathname === '/readyz') {
+        const readiness = bridge.readiness();
+        sendJson(res, readiness.ok ? 200 : 503, readiness);
+        return;
+      }
       if (req.method === 'POST' && url.pathname === SEND_PATH) {
         const payload = await readJsonBody(req);
         const missing = validateSendPayload(payload);
@@ -860,6 +946,40 @@ async function main() {
         await handleBridgeCall(res, () => bridge.readMessages(payload));
         return;
       }
+
+      if (req.method === 'POST' && (url.pathname === '/responses' || url.pathname === '/v1/responses')) {
+        const payload = await readJsonBody(req);
+        const inputText = extractResponsesCompatText(payload);
+        const instructions = typeof payload?.instructions === 'string' ? payload.instructions.trim() : '';
+        const prompt = [instructions, inputText].filter(Boolean).join('\n\n');
+
+        const sessionKey = String(
+          req.headers['x-openclaw-session-key'] ||
+          payload?.sessionKey ||
+          payload?.session_key ||
+          payload?.sessionId ||
+          payload?.session_id ||
+          config.aiReplySessionKey ||
+          ''
+        ).trim();
+
+        await handleBridgeCall(res, async () => {
+          const result = await bridge.aiReply({
+            sessionKey,
+            prompt,
+            limit: 8,
+            waitTimeoutMs: config.requestTimeoutMs,
+          });
+
+          if (!result || result.status !== 'ok') {
+            return result;
+          }
+
+          return buildResponsesCompatResponse(payload, result);
+        });
+        return;
+      }
+
       if (req.method === 'POST' && url.pathname === '/ai-reply') {
         const payload = await readJsonBody(req);
         const missing = [];
