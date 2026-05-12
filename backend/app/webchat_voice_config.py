@@ -58,7 +58,7 @@ class WebchatVoiceRuntimeConfig:
 def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
     config = WebchatVoiceRuntimeConfig(
         enabled=_env_bool("WEBCHAT_VOICE_ENABLED", False),
-        allowed_path_prefixes=tuple(_parse_csv(os.getenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webchat/voice"))),
+        allowed_path_prefixes=tuple(_parse_csv(os.getenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webchat/voice,/webcall"))),
         connect_src=tuple(_parse_sources(os.getenv("WEBCHAT_VOICE_CONNECT_SRC", ""))),
         provider=(os.getenv("WEBCHAT_VOICE_PROVIDER", "mock").strip().lower() or "mock"),
         session_ttl_seconds=int(os.getenv("WEBCHAT_VOICE_SESSION_TTL_SECONDS", "900")),
