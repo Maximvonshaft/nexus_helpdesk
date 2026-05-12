@@ -1,39 +1,34 @@
 from __future__ import annotations
 
-import uuid
 from datetime import timedelta
+import uuid
 from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
-from ..enums import ConversationState, EventType, MessageStatus
+from ..enums import ConversationState, EventType, MessageStatus, SourceChannel
 from ..models import ChannelAccount, OpenClawConversationLink, Ticket, TicketOutboundMessage
 from ..settings import get_settings
 from ..utils.time import utc_now
 from .audit_service import log_event
+from .email_provider import get_email_provider
 from .observability import LOGGER
 from .openclaw_bridge import dispatch_via_openclaw_bridge, dispatch_via_openclaw_cli, dispatch_via_openclaw_mcp, resolve_channel_account
-from .outbound_semantics import external_channel_values, is_external_outbound_message
+from .outbound_semantics import external_channel_values, is_external_outbound_message, validate_customer_outbound_channel
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 
 settings = get_settings()
-ALLOWED_OUTBOUND_PROVIDERS = {'openclaw'}
 
 
 def _external_dispatch_block_reason() -> tuple[str, str] | None:
     if not settings.enable_outbound_dispatch:
         return 'outbound_dispatch_disabled', 'ENABLE_OUTBOUND_DISPATCH=false blocks external dispatch'
-    if settings.outbound_provider == 'disabled':
-        return 'outbound_provider_disabled', 'OUTBOUND_PROVIDER=disabled blocks external dispatch'
-    if settings.outbound_provider not in ALLOWED_OUTBOUND_PROVIDERS:
-        return 'unsupported_outbound_provider', f"Unsupported OUTBOUND_PROVIDER: {settings.outbound_provider}"
     return None
 
 
 def ensure_external_dispatch_allowed() -> None:
-    """Fail closed unless the runtime is explicitly configured for external sends."""
     blocked = _external_dispatch_block_reason()
     if blocked:
         _, reason = blocked
@@ -41,17 +36,7 @@ def ensure_external_dispatch_allowed() -> None:
 
 
 def _provider_idempotency_key(message: TicketOutboundMessage) -> str:
-    return message.provider_message_id or f'nexusdesk-outbound-{message.id}'
-
-
-def _ensure_provider_idempotency_key(message: TicketOutboundMessage) -> str:
-    key = _provider_idempotency_key(message)
-    if not message.provider_message_id:
-        # The current provider bridge does not yet return a remote provider id before dispatch.
-        # Keep a stable local idempotency key in the existing provider_message_id field so retry/recovery
-        # can correlate attempts and future bridge implementations can consume the same key.
-        message.provider_message_id = key
-    return key
+    return f'nexusdesk-outbound-{message.id}'
 
 
 def _resolve_first_send_channel_account(db: Session, ticket: Ticket | None, link: OpenClawConversationLink | None) -> ChannelAccount | None:
@@ -75,9 +60,10 @@ def queue_outbound_message(
     created_by: int | None,
     provider_status: str = 'queued',
 ) -> TicketOutboundMessage:
+    normalized_channel = validate_customer_outbound_channel(channel)
     message = TicketOutboundMessage(
         ticket_id=ticket_id,
-        channel=channel,
+        channel=normalized_channel,
         status=MessageStatus.pending,
         body=body,
         provider_status=provider_status,
@@ -85,8 +71,6 @@ def queue_outbound_message(
         max_retries=settings.outbox_max_retries,
     )
     db.add(message)
-    db.flush()
-    _ensure_provider_idempotency_key(message)
     db.flush()
     return message
 
@@ -135,9 +119,11 @@ def _mark_review_required(message: TicketOutboundMessage, reason: str) -> None:
     message.locked_by = None
 
 
-def _mark_sent(message: TicketOutboundMessage, provider_status: str | None, sent_at) -> None:
+def _mark_sent(message: TicketOutboundMessage, provider_status: str | None, sent_at, *, provider_message_id: str | None = None) -> None:
     message.status = MessageStatus.sent
     message.provider_status = provider_status
+    if provider_message_id:
+        message.provider_message_id = provider_message_id
     message.sent_at = sent_at
     message.error_message = None
     message.failure_code = None
@@ -156,6 +142,7 @@ def requeue_dead_outbound_message(db: Session, *, message_id: int) -> TicketOutb
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Only dead outbound messages can be requeued')
     if not is_external_outbound_message(message):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Only external outbound messages can be requeued')
+    validate_customer_outbound_channel(message.channel)
     message.status = MessageStatus.pending
     message.provider_status = 'requeued_by_admin'
     message.retry_count = 0
@@ -166,7 +153,6 @@ def requeue_dead_outbound_message(db: Session, *, message_id: int) -> TicketOutb
     message.locked_by = None
     message.next_retry_at = utc_now()
     message.last_attempt_at = None
-    _ensure_provider_idempotency_key(message)
     db.flush()
     return message
 
@@ -264,24 +250,23 @@ def _enforce_outbound_safety(db: Session, message: TicketOutboundMessage, ticket
     return True
 
 
-def process_outbound_message(db: Session, message: TicketOutboundMessage) -> TicketOutboundMessage:
-    if message.status == MessageStatus.sent:
+def _process_email_message(db: Session, message: TicketOutboundMessage) -> TicketOutboundMessage:
+    log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_queued, note='email_send_started', payload={'channel': 'email', 'outbound_message_id': message.id, 'provider': 'sandbox_email'})
+    result = get_email_provider().dispatch(message)
+    if result.status == 'sent':
+        _mark_sent(message, f'{result.provider}:sent', utc_now(), provider_message_id=result.provider_message_id)
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_sent, note='email_sent', payload={'channel': 'email', 'provider': result.provider, 'provider_message_id': result.provider_message_id, 'provider_status': message.provider_status, 'outbound_message_id': message.id})
         return message
-    if not is_external_outbound_message(message):
-        _mark_dead(message, 'Non-external outbound row is not eligible for provider dispatch', failure_code='non_external_outbound_not_dispatchable')
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Non-external outbound row was blocked from provider dispatch', payload={'message_id': message.id, 'channel': message.channel.value if hasattr(message.channel, 'value') else str(message.channel), 'provider_status': message.provider_status})
-        return message
-    blocked = _external_dispatch_block_reason()
-    if blocked:
-        failure_code, reason = blocked
-        _mark_dead(message, reason, failure_code=failure_code)
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='External outbound dispatch blocked by runtime kill switch', payload={'message_id': message.id, 'failure_code': failure_code, 'outbound_provider': settings.outbound_provider, 'enable_outbound_dispatch': settings.enable_outbound_dispatch})
-        return message
-    idempotency_key = _ensure_provider_idempotency_key(message)
-    ticket = message.ticket
-    if not _enforce_outbound_safety(db, message, ticket):
-        return message
+    reason = result.error_message or result.error_code or 'Email sandbox dispatch failed'
+    _mark_retry(message, reason)
+    event_type = EventType.outbound_dead if message.status == MessageStatus.dead else EventType.outbound_retry_scheduled
+    log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='email_send_failed', payload={'channel': 'email', 'provider': result.provider, 'provider_status': message.provider_status, 'outbound_message_id': message.id, 'error_code': result.error_code, 'error_message': result.error_message})
+    return message
 
+
+def _process_whatsapp_message(db: Session, message: TicketOutboundMessage) -> TicketOutboundMessage:
+    idempotency_key = _provider_idempotency_key(message)
+    ticket = message.ticket
     target = None
     session_key = None
     link = None
@@ -295,23 +280,16 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
     if not target and not session_key:
         _mark_retry(message, 'No target address available')
         event_type = EventType.outbound_dead if message.status == MessageStatus.dead else EventType.outbound_retry_scheduled
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='Queued outbound message could not resolve target', payload={'message_id': message.id, 'idempotency_key': idempotency_key, 'error': message.failure_reason, 'retry_count': message.retry_count})
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='whatsapp_send_failed', payload={'channel': 'whatsapp', 'outbound_message_id': message.id, 'idempotency_key': idempotency_key, 'error': message.failure_reason, 'retry_count': message.retry_count})
         return message
 
-    channel_value = link.channel if link is not None and link.channel else message.channel.value
+    channel_value = SourceChannel.whatsapp.value
     resolved_channel_account = _resolve_first_send_channel_account(db, ticket, link)
     account_id = link.account_id if link is not None and link.account_id else (resolved_channel_account.account_id if resolved_channel_account else None)
     thread_id = link.thread_id if link is not None else None
 
-    route_context = {
-        'channel': channel_value,
-        'account_id': account_id,
-        'thread_id': thread_id,
-        'session_key': session_key,
-        'target': target,
-        'idempotency_key': idempotency_key,
-        'source': 'ticket_or_market_or_fallback',
-    }
+    route_context = {'channel': channel_value, 'account_id': account_id, 'thread_id': thread_id, 'session_key': session_key, 'target': target, 'idempotency_key': idempotency_key, 'source': 'ticket_or_market_or_fallback'}
+    log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_queued, note='whatsapp_send_started', payload={'channel': 'whatsapp', 'provider': 'openclaw', 'outbound_message_id': message.id, 'route': route_context})
 
     if target:
         status_value, provider_status, sent_at = dispatch_via_openclaw_bridge(channel=channel_value, target=target, body=message.body, account_id=account_id, thread_id=thread_id, session_key=session_key)
@@ -329,13 +307,43 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
             ticket.conversation_state = ConversationState.waiting_customer
         if session_key:
             log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.openclaw_reply_sent, note='OpenClaw same-route reply sent', payload={'message_id': message.id, 'session_key': session_key, 'provider_status': provider_status, 'idempotency_key': idempotency_key})
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_sent, note='Queued outbound message sent', payload={'message_id': message.id, 'provider_status': provider_status, 'route': route_context})
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_sent, note='whatsapp_sent', payload={'channel': 'whatsapp', 'provider': 'openclaw', 'message_id': message.id, 'provider_status': provider_status, 'route': route_context})
         return message
 
     reason = provider_status or 'Dispatch failed'
     _mark_retry(message, reason)
     event_type = EventType.outbound_dead if message.status == MessageStatus.dead else EventType.outbound_retry_scheduled
-    log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='Queued outbound message failed dispatch', payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count, 'route': route_context})
+    log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='whatsapp_send_failed', payload={'channel': 'whatsapp', 'provider': 'openclaw', 'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count, 'route': route_context})
+    return message
+
+
+def process_outbound_message(db: Session, message: TicketOutboundMessage) -> TicketOutboundMessage:
+    if message.status == MessageStatus.sent:
+        return message
+    try:
+        validate_customer_outbound_channel(message.channel)
+    except ValueError as exc:
+        _mark_dead(message, str(exc), failure_code='customer_outbound_channel_not_allowed')
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Customer outbound channel blocked by policy', payload={'message_id': message.id, 'channel': message.channel.value if hasattr(message.channel, 'value') else str(message.channel), 'provider_status': message.provider_status})
+        return message
+    if not is_external_outbound_message(message):
+        _mark_dead(message, 'Non-external outbound row is not eligible for provider dispatch', failure_code='non_external_outbound_not_dispatchable')
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Non-external outbound row was blocked from provider dispatch', payload={'message_id': message.id, 'channel': message.channel.value if hasattr(message.channel, 'value') else str(message.channel), 'provider_status': message.provider_status})
+        return message
+    blocked = _external_dispatch_block_reason()
+    if blocked:
+        failure_code, reason = blocked
+        _mark_dead(message, reason, failure_code=failure_code)
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='External outbound dispatch blocked by runtime kill switch', payload={'message_id': message.id, 'failure_code': failure_code, 'enable_outbound_dispatch': settings.enable_outbound_dispatch})
+        return message
+    ticket = message.ticket
+    if not _enforce_outbound_safety(db, message, ticket):
+        return message
+    if message.channel == SourceChannel.email:
+        return _process_email_message(db, message)
+    if message.channel == SourceChannel.whatsapp:
+        return _process_whatsapp_message(db, message)
+    _mark_dead(message, 'Unsupported customer outbound channel', failure_code='unsupported_customer_outbound_channel')
     return message
 
 
@@ -343,14 +351,12 @@ def dispatch_pending_messages(db: Session, *, limit: int | None = None, worker_i
     blocked = _external_dispatch_block_reason()
     if blocked:
         failure_code, reason = blocked
-        LOGGER.warning('external_outbound_dispatch_blocked_by_runtime_gate', extra={'event_payload': {'failure_code': failure_code, 'reason': reason, 'outbound_provider': settings.outbound_provider, 'enable_outbound_dispatch': settings.enable_outbound_dispatch}})
+        LOGGER.warning('external_outbound_dispatch_blocked_by_runtime_gate', extra={'event_payload': {'failure_code': failure_code, 'reason': reason, 'enable_outbound_dispatch': settings.enable_outbound_dispatch}})
         return []
     claimed = claim_pending_messages(db, limit=limit, worker_id=worker_id)
     processed: list[TicketOutboundMessage] = []
     for message in claimed:
         process_outbound_message(db, message)
         processed.append(message)
-        # Commit after each external dispatch attempt to reduce the window where a sent provider message
-        # could be retried after a process crash before a batch-level commit.
         db.commit()
     return processed

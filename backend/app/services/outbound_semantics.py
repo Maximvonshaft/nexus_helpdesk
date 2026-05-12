@@ -8,12 +8,22 @@ from ..enums import MessageStatus, SourceChannel
 from ..models import TicketOutboundMessage
 
 
-EXTERNAL_OUTBOUND_CHANNELS = frozenset({
-    SourceChannel.whatsapp.value,
-    SourceChannel.telegram.value,
-    SourceChannel.sms.value,
-    SourceChannel.email.value,
+CUSTOMER_OUTBOUND_CHANNELS = frozenset({
+    SourceChannel.email,
+    SourceChannel.whatsapp,
 })
+
+INBOUND_ONLY_CHANNELS = frozenset({
+    SourceChannel.web_chat,
+})
+
+LEGACY_NON_TARGET_OUTBOUND_CHANNELS = frozenset({
+    SourceChannel.telegram,
+    SourceChannel.sms,
+})
+
+# Worker-facing external dispatch set is now exactly the customer outbound policy.
+EXTERNAL_OUTBOUND_CHANNELS = frozenset(channel.value for channel in CUSTOMER_OUTBOUND_CHANNELS)
 
 WEBCHAT_LOCAL_ACK_PROVIDER_STATUSES = frozenset({
     'webchat_delivered',
@@ -55,6 +65,28 @@ def _value(raw: Any) -> str:
         return ''
     value = getattr(raw, 'value', raw)
     return str(value or '').strip()
+
+
+def _source_channel(raw: Any) -> SourceChannel | None:
+    if isinstance(raw, SourceChannel):
+        return raw
+    try:
+        return SourceChannel(_value(raw))
+    except Exception:
+        return None
+
+
+def is_customer_outbound_channel(channel: Any) -> bool:
+    normalized = _source_channel(channel)
+    return normalized in CUSTOMER_OUTBOUND_CHANNELS
+
+
+def validate_customer_outbound_channel(channel: Any) -> SourceChannel:
+    normalized = _source_channel(channel)
+    if normalized not in CUSTOMER_OUTBOUND_CHANNELS:
+        value = _value(channel) or 'unknown'
+        raise ValueError(f'customer_outbound_channel_not_allowed:{value}')
+    return normalized
 
 
 def external_channel_values() -> list[str]:

@@ -17,16 +17,19 @@ from .api.admin_queue import router as admin_queue_router
 from .api.auth import router as auth_router
 from .api.channel_control import router as channel_control_router
 from .api.customers import router as customers_router
+from .api.direct_send_block import router as direct_send_block_router
 from .api.files import router as files_router
 from .api.integration import router as integration_router
 from .api.knowledge_items import router as knowledge_items_router
 from .api.lookups import router as lookups_router
 from .api.lite import router as lite_router
 from .api.operator_queue import router as operator_queue_router
+from .api.outbound_approval import router as outbound_approval_router
 from .api.persona_profiles import router as persona_profiles_router
 from .api.stats import router as stats_router
 from .api.ticket_perf import router as ticket_perf_router
 from .api.tickets import router as tickets_router
+from .api.webchat_intake_policy import router as webchat_intake_policy_router
 from .api.webchat_fast import router as webchat_fast_router
 from .api.webchat import router as webchat_router
 from .api.webchat_events import router as webchat_events_router
@@ -152,9 +155,6 @@ def readyz():
         return {'status': 'ready', 'database': 'ok', 'migration_revision': migration_revision, **_runtime_identity()}
     except Exception as exc:
         app_log_event(40, 'readiness_check_failed', error=str(exc))
-        # Keep the failure response deliberately minimal. Runtime identity is
-        # exposed on /healthz and successful /readyz, but not on readiness
-        # failures so the response cannot leak incidental error context.
         return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error'})
 
 
@@ -175,6 +175,10 @@ app.include_router(lite_router)
 app.include_router(customers_router)
 app.include_router(persona_profiles_router)
 app.include_router(stats_router)
+# P0 closure policy routers must precede legacy ticket/webchat routers.
+app.include_router(direct_send_block_router)
+app.include_router(outbound_approval_router)
+app.include_router(webchat_intake_policy_router)
 app.include_router(tickets_router)
 app.include_router(webchat_fast_router)
 app.include_router(webchat_events_router)

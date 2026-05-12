@@ -111,15 +111,17 @@ def test_webchat_safe_ack_and_fallback_do_not_count_as_external_pending(db_sessi
     assert counts['webchat_ai_safe_fallback_sent'] == 1
 
 
-def test_whatsapp_and_telegram_pending_count_as_external_pending(db_session):
+def test_only_email_and_whatsapp_pending_count_as_external_pending(db_session):
     whatsapp_ticket = make_ticket(db_session, channel=SourceChannel.whatsapp, contact='+15550101')
+    email_ticket = make_ticket(db_session, channel=SourceChannel.email, contact='customer@example.com')
     telegram_ticket = make_ticket(db_session, channel=SourceChannel.telegram, contact='telegram:42')
     sms_ticket = make_ticket(db_session, channel=SourceChannel.sms, contact='+15550102')
     add_outbound(db_session, whatsapp_ticket, channel=SourceChannel.whatsapp, status=MessageStatus.pending, provider_status='queued')
+    add_outbound(db_session, email_ticket, channel=SourceChannel.email, status=MessageStatus.dead, provider_status='dead:max_retries')
     add_outbound(db_session, telegram_ticket, channel=SourceChannel.telegram, status=MessageStatus.pending, provider_status='queued')
     add_outbound(db_session, sms_ticket, channel=SourceChannel.sms, status=MessageStatus.dead, provider_status='dead:max_retries')
     counts = count_outbound_semantics(db_session)
-    assert counts['external_pending_outbound'] == 2
+    assert counts['external_pending_outbound'] == 1
     assert counts['external_dead_outbound'] == 1
 
 
@@ -151,7 +153,7 @@ def test_claim_pending_messages_ignores_local_webchat_pending_rows(db_session):
     assert whatsapp_row.status == MessageStatus.processing
 
 
-def test_non_external_outbound_never_calls_provider_dispatch(db_session, monkeypatch):
+def test_non_customer_outbound_never_calls_provider_dispatch(db_session, monkeypatch):
     ticket = make_ticket(db_session, channel=SourceChannel.web_chat, contact='wc-send-block')
     row = add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.pending, provider_status='queued')
     db_session.commit()
@@ -160,7 +162,7 @@ def test_non_external_outbound_never_calls_provider_dispatch(db_session, monkeyp
     monkeypatch.setattr('app.services.message_dispatch.dispatch_via_openclaw_cli', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('cli path must not run for web_chat')))
     processed = process_outbound_message(db_session, row)
     assert processed.status == MessageStatus.dead
-    assert processed.failure_code == 'non_external_outbound_not_dispatchable'
+    assert processed.failure_code == 'customer_outbound_channel_not_allowed'
 
 
 def test_requeue_dead_outbound_rejects_local_webchat_ack(db_session):

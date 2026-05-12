@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db import db_context  # noqa: E402
-from app.services.background_jobs import dispatch_pending_background_jobs  # noqa: E402
+from app.services.background_jobs_policy import dispatch_pending_background_jobs  # noqa: E402
 from app.services.message_dispatch import dispatch_pending_messages  # noqa: E402
 from app.services.observability import configure_logging, log_event, record_queue_snapshot, record_worker_poll, record_worker_result  # noqa: E402
 from app.services.openclaw_bridge import sync_openclaw_inbound_conversations_once  # noqa: E402
