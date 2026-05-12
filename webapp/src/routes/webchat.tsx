@@ -117,42 +117,42 @@ function WebchatInboxPage() {
 
   return (
     <AppShell>
-      <PageHeader eyebrow="Webchat" title="网站聊天收件箱" description="Webchat 当前为 intake-only：只接收客户问题并创建/更新工单；客户回复必须从 Ticket workflow 通过 Email 或 WhatsApp 发送。" actions={<Button variant="secondary" onClick={() => client.invalidateQueries({ queryKey: ['webchatConversations'] })}>刷新</Button>} />
+      <PageHeader eyebrow="Webchat" title="网站聊天收件箱" description="Webchat 是 AI 一线服务入口，可用于收集问题、查询轨迹和转人工。人工处理后的正式通知必须通过工单流程，经 Email 或 WhatsApp 发送。" actions={<Button variant="secondary" onClick={() => client.invalidateQueries({ queryKey: ['webchatConversations'] })}>刷新</Button>} />
 
       <Card className="soft">
-        <CardHeader title="Speedaf Webchat 嵌入代码" subtitle="Webchat 只作为入口。默认不再展示或发送 Webchat local reply。" />
+        <CardHeader title="Speedaf Webchat 嵌入代码" subtitle="Webchat is the AI frontline service channel. AI can collect information, check tracking facts, and hand off complex cases." />
         <CardBody>
           <pre className="code-block"><code>{snippet}</code></pre>
-          <div className="section-subtitle">Outbound policy: Webchat inbound only. Follow-up must be sent by Email or WhatsApp from the Ticket workflow after human approval.</div>
+          <div className="section-subtitle">Formal outbound policy: final resolution notifications must be sent from the Ticket workflow via Email or WhatsApp after human approval.</div>
         </CardBody>
       </Card>
 
       <Card className="soft">
-        <CardHeader title="Webchat outbound disabled" subtitle="普通客服不再通过 Webchat 回复客户。后端 API 也会返回 409 webchat_outbound_disabled_intake_only。" />
+        <CardHeader title="Formal Webchat outbound disabled" subtitle="普通客服默认不通过 Webchat 发送最终处理结果。Webchat 保留 AI 一线服务能力；正式结果走 Email/WhatsApp draft approval。" />
       </Card>
 
       <div className="page-grid workspace">
         <Card>
-          <CardHeader title="Webchat 会话" subtitle="按最近更新时间排序。Webchat 仅用于 intake 和审计。" />
+          <CardHeader title="Webchat 会话" subtitle="按最近更新时间排序。Webchat 用于 AI 一线服务、客户动作和审计。" />
           <CardBody>
             {conversations.isLoading ? <Skeleton lines={8} /> : null}
             <div className="list">
               {(conversations.data ?? []).map((item) => (
                 <button key={item.conversation_id} className={`queue-card ${selectedTicketId === item.ticket_id ? 'selected' : ''}`} onClick={() => setSelectedTicketId(item.ticket_id)}>
-                  <div className="queue-card-top"><div className="badges"><Badge tone={statusTone(item.status)}>{sanitizeDisplayText(item.status)}</Badge><Badge tone="success">WebChat Intake</Badge>{item.needs_human ? <Badge tone="warning">Needs human</Badge> : null}</div></div>
+                  <div className="queue-card-top"><div className="badges"><Badge tone={statusTone(item.status)}>{sanitizeDisplayText(item.status)}</Badge><Badge tone="success">WebChat AI Frontline</Badge>{item.needs_human ? <Badge tone="warning">Needs human</Badge> : null}</div></div>
                   <div className="queue-card-title">{sanitizeDisplayText(item.ticket_no)} · {sanitizeDisplayText(item.title)}</div>
                   <div className="queue-card-meta">{sanitizeDisplayText(item.visitor_name || item.visitor_email || item.visitor_phone || 'Anonymous visitor')}</div>
                   <div className="queue-card-meta">{sanitizeDisplayText(item.origin || 'unknown origin')} · {formatDateTime(item.updated_at)}</div>
                 </button>
               ))}
-              {!conversations.isLoading && !(conversations.data?.length) ? <EmptyState text="还没有 Webchat intake 会话。" /> : null}
+              {!conversations.isLoading && !(conversations.data?.length) ? <EmptyState text="还没有 Webchat 一线服务会话。" /> : null}
             </div>
           </CardBody>
         </Card>
 
         <div className="stack">
           <Card>
-            <CardHeader title="会话详情" subtitle="只读展示 Webchat inbound 消息、客户动作和审计内容。" />
+            <CardHeader title="会话详情" subtitle="只读展示 Webchat 消息、AI 一线回复、客户动作和审计内容。" />
             <CardBody>
               {thread.isLoading && selectedTicketId ? <Skeleton lines={8} /> : null}
               {selectedConversation ? (
