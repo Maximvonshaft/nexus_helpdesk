@@ -18,6 +18,7 @@ from .background_jobs import (
     process_background_job as legacy_process_background_job,
 )
 from .reply_channel_policy import ReplyTargetError, resolve_ticket_reply_target
+from .webchat_formal_policy import is_formal_resolution_context, webchat_frontline_ai_enabled
 
 settings = get_settings()
 
@@ -97,17 +98,33 @@ def _process_auto_reply_job(db: Session, job: BackgroundJob, payload: dict) -> B
 
 
 def _process_webchat_ai_reply_job(db: Session, job: BackgroundJob, payload: dict) -> BackgroundJob:
-    if getattr(settings, 'webchat_mode', 'intake_only') == 'intake_only' or not bool(getattr(settings, 'webchat_outbound_enabled', False)):
+    if not webchat_frontline_ai_enabled():
         log_event(
             db,
             ticket_id=int(payload['ticket_id']),
             actor_id=None,
             event_type=EventType.internal_note_added,
-            note='webchat_outbound_suppressed_intake_only',
+            note='webchat_frontline_ai_disabled',
             payload={'job_id': job.id, 'visitor_message_id': payload.get('visitor_message_id')},
         )
         _mark_done(job)
         return job
+
+    from .ticket_service import get_ticket_or_404
+
+    ticket = get_ticket_or_404(db, int(payload['ticket_id']))
+    if is_formal_resolution_context(ticket, source='webchat_ai_reply'):
+        log_event(
+            db,
+            ticket_id=ticket.id,
+            actor_id=None,
+            event_type=EventType.internal_note_added,
+            note='webchat_final_resolution_suppressed',
+            payload={'job_id': job.id, 'visitor_message_id': payload.get('visitor_message_id'), 'formal_outbound_disabled': True},
+        )
+        _mark_done(job)
+        return job
+
     return legacy_process_background_job(db, job)
 
 
