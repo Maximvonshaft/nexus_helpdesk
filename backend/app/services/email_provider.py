@@ -44,7 +44,7 @@ class SandboxEmailProvider:
 
 def get_email_provider() -> SandboxEmailProvider:
     settings = get_settings()
-    provider = (settings.email_provider or 'sandbox').strip().lower()
+    provider = (getattr(settings, 'email_provider', 'sandbox') or 'sandbox').strip().lower()
     if provider != 'sandbox':
         raise RuntimeError(f'unsupported_email_provider:{provider}')
     return SandboxEmailProvider()
