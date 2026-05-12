@@ -19,6 +19,8 @@ from app.db import Base, SessionLocal, engine
 from app.enums import UserRole
 from app.main import app
 from app.models import User
+from app.services.livekit_voice_provider import LiveKitVoiceProvider
+from app.services.voice_provider import VoiceParticipantToken
 from app.voice_models import WebchatVoiceSession
 from app.webchat_models import WebchatEvent, WebchatMessage  # noqa: F401 - ensure metadata registration
 
@@ -186,15 +188,98 @@ def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
 
     db = SessionLocal()
     try:
-        final_messages = (
-            db.query(WebchatMessage)
-            .filter(WebchatMessage.ticket_id == ticket_id, WebchatMessage.message_type == "voice_call")
-            .all()
-        )
+        final_messages = db.query(WebchatMessage).filter(WebchatMessage.ticket_id == ticket_id, WebchatMessage.message_type == "voice_call").all()
         assert len(final_messages) == 1
         assert final_messages[0].client_message_id == f"voice-call-ended:{voice_session_id}"
         events = db.query(WebchatEvent).filter(WebchatEvent.ticket_id == ticket_id).all()
         event_types = [event.event_type for event in events]
+        assert "voice.session.accepted" in event_types
+        assert "voice.session.active" in event_types
+        assert "voice.session.ended" in event_types
+    finally:
+        db.close()
+
+
+def test_livekit_provider_create_accept_end_without_external_api(monkeypatch):
+    created_rooms: list[str] = []
+    closed_rooms: list[str] = []
+
+    def fake_create_room(self, *, room_name: str) -> str:
+        created_rooms.append(room_name)
+        return room_name
+
+    def fake_close_room(self, *, room_name: str) -> None:
+        closed_rooms.append(room_name)
+        return None
+
+    def fake_issue_token(self, *, room_name: str, participant_identity: str, ttl_seconds: int) -> VoiceParticipantToken:
+        return VoiceParticipantToken(
+            provider="livekit",
+            room_name=room_name,
+            participant_identity=participant_identity,
+            participant_token=f"fake_livekit_token::{participant_identity}::{room_name}",
+            expires_in_seconds=ttl_seconds,
+        )
+
+    monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "livekit")
+    monkeypatch.setenv("LIVEKIT_URL", "wss://voice.example.test")
+    monkeypatch.setenv("LIVEKIT_API_KEY", "unit_key")
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "unit_secret")
+    monkeypatch.setenv("WEBCHAT_VOICE_CONNECT_SRC", "wss://voice.example.test https://voice.example.test")
+    monkeypatch.setattr(LiveKitVoiceProvider, "create_room", fake_create_room)
+    monkeypatch.setattr(LiveKitVoiceProvider, "close_room", fake_close_room)
+    monkeypatch.setattr(LiveKitVoiceProvider, "issue_participant_token", fake_issue_token)
+
+    client = TestClient(app)
+    conversation_id, visitor_token, ticket_id = _create_webchat_conversation(client, name="LiveKit Visitor")
+
+    created = client.post(
+        f"/api/webchat/conversations/{conversation_id}/voice/sessions",
+        headers={"X-Webchat-Visitor-Token": visitor_token},
+        json={},
+    )
+    assert created.status_code == 200, created.text
+    payload = created.json()
+    voice_session_id = payload["voice_session_id"]
+    assert payload["provider"] == "livekit"
+    assert payload["status"] == "ringing"
+    assert payload["provider_room_name"].startswith("webcall_wv_")
+    assert payload["room_name"] == payload["provider_room_name"]
+    assert payload["participant_identity"].startswith("visitor_")
+    assert payload["participant_token"].startswith("fake_livekit_token::visitor_")
+    assert "unit_secret" not in payload["participant_token"]
+    assert created_rooms == [payload["provider_room_name"]]
+
+    accepted = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        headers=_admin_headers(9202),
+    )
+    assert accepted.status_code == 200, accepted.text
+    accepted_payload = accepted.json()
+    assert accepted_payload["status"] == "active"
+    assert accepted_payload["provider"] == "livekit"
+    assert accepted_payload["participant_identity"].startswith("agent_")
+    assert accepted_payload["participant_token"].startswith("fake_livekit_token::agent_")
+
+    ended = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/end",
+        headers=_admin_headers(9202),
+    )
+    assert ended.status_code == 200, ended.text
+    assert closed_rooms == [payload["provider_room_name"]]
+
+    db = SessionLocal()
+    try:
+        row = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.public_id == voice_session_id).one()
+        assert row.provider == "livekit"
+        assert row.provider_room_name == payload["provider_room_name"]
+        assert row.ticket_id == ticket_id
+        final_message = db.query(WebchatMessage).filter(WebchatMessage.ticket_id == ticket_id, WebchatMessage.message_type == "voice_call").order_by(WebchatMessage.id.desc()).first()
+        assert final_message is not None
+        assert final_message.client_message_id == f"voice-call-ended:{voice_session_id}"
+        event_types = [event.event_type for event in db.query(WebchatEvent).filter(WebchatEvent.ticket_id == ticket_id).all()]
+        assert "voice.session.created" in event_types
+        assert "voice.session.ringing" in event_types
         assert "voice.session.accepted" in event_types
         assert "voice.session.active" in event_types
         assert "voice.session.ended" in event_types
