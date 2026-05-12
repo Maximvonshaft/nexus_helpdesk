@@ -16,6 +16,9 @@ def _hash(**overrides):
         "body": " hello   world ",
         "recent_context": [{"role": "visitor", "text": " Hi "}, {"role": "assistant", "text": " Hello "}],
     }
+    # visitor is intentionally outside canonical_request_payload and must not
+    # affect request_hash even when present at the API payload layer.
+    overrides.pop("visitor", None)
     payload.update(overrides)
     return compute_request_hash(**payload)
 
