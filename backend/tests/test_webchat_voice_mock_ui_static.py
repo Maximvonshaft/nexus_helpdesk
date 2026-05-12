@@ -50,6 +50,7 @@ def test_visitor_webcall_route_is_registered_and_click_to_join_only():
     route_text = WEBCALL_ROUTE.read_text(encoding="utf-8")
     router_text = ROUTER.read_text(encoding="utf-8")
     package_text = PACKAGE_JSON.read_text(encoding="utf-8")
+    module_prefix, join_body = route_text.split("function joinCall", 1)
 
     assert "path: '/webcall/$voice_session_id'" in route_text
     assert "createLocalAudioTrack" in route_text
@@ -59,7 +60,8 @@ def test_visitor_webcall_route_is_registered_and_click_to_join_only():
     assert "history.replaceState" in route_text
     assert "Microphone permission will be requested only after you click Join" in route_text
     assert "no recording in this phase" in route_text.lower()
-    assert "createLocalAudioTrack" not in route_text.split("function joinCall", 1)[0]
+    assert "await createLocalAudioTrack" in join_body
+    assert "await createLocalAudioTrack" not in module_prefix
     assert "WebCallRoute" in router_text
     assert "@/routes/webcall" in router_text
     assert "livekit-client" in package_text
