@@ -144,5 +144,16 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         openclaw_pool_max_keepalive=_env_int("OPENCLAW_RESPONSES_POOL_MAX_KEEPALIVE", 5, minimum=0, maximum=25),
         app_env=os.getenv("APP_ENV", "development").strip().lower() or "development",
     )
+
+    # TOKEN_FILE_LOADER_PATCH_V2
+    if not settings.token and settings.openclaw_responses_token_file:
+        try:
+            token_from_file = Path(settings.openclaw_responses_token_file).read_text(encoding="utf-8").strip()
+        except OSError:
+            token_from_file = ""
+        if token_from_file.lower().startswith("bearer "):
+            token_from_file = token_from_file.split(None, 1)[1].strip()
+        if token_from_file:
+            object.__setattr__(settings, "token", token_from_file)
     settings.validate_runtime()
     return settings
