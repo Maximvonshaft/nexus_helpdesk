@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import socket
+import ipaddress
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -57,10 +59,15 @@ class WebchatFastSettings:
                 value = path.read_text(encoding="utf-8").strip()
             except OSError:
                 value = ""
+            if value.lower().startswith("bearer "):
+                value = value.split(None, 1)[1].strip()
             if value:
                 return value
         if self.app_env in {"development", "test", "local"}:
-            return self.openclaw_responses_token
+            value = (self.openclaw_responses_token or "").strip()
+            if value.lower().startswith("bearer "):
+                value = value.split(None, 1)[1].strip()
+            return value or None
         return None
 
     @property
@@ -72,8 +79,8 @@ class WebchatFastSettings:
             raise RuntimeError("WEBCHAT_FAST_AI_PROVIDER must be openclaw_responses")
         if self.timeout_ms < 500 or self.timeout_ms > self.max_timeout_ms:
             raise RuntimeError("WEBCHAT_FAST_AI_TIMEOUT_MS must be between 500 and WEBCHAT_FAST_AI_MAX_TIMEOUT_MS")
-        if self.max_timeout_ms > 5000:
-            raise RuntimeError("WEBCHAT_FAST_AI_MAX_TIMEOUT_MS must not exceed 5000")
+        if self.max_timeout_ms > 30000:
+            raise RuntimeError("WEBCHAT_FAST_AI_MAX_TIMEOUT_MS must not exceed 30000")
         if not self.enabled:
             return
         if self.app_env == "production":
@@ -84,20 +91,43 @@ class WebchatFastSettings:
             _validate_private_responses_url(self.openclaw_responses_url)
 
 
-def _validate_private_responses_url(url: str) -> None:
-    parsed = urlparse(url or "")
+def _validate_private_responses_url(value: str) -> None:
+    parsed = urlparse(value or "")
+
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise RuntimeError("OPENCLAW_RESPONSES_URL must be a valid http(s) URL")
-    hostname = parsed.hostname.lower()
-    if hostname not in {"localhost", "127.0.0.1"} and not hostname.endswith(".local"):
-        # Allow Docker service names / tailnet / private ingress names, but reject obvious public hosts.
-        if "." in hostname and not hostname.endswith(".internal") and not hostname.endswith(".tailnet"):
-            raise RuntimeError("OPENCLAW_RESPONSES_URL must point to a private host in production")
 
+    host = parsed.hostname
+
+    try:
+        resolved_ips = {ipaddress.ip_address(host)}
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(
+                host,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                type=socket.SOCK_STREAM,
+            )
+            resolved_ips = {ipaddress.ip_address(item[4][0]) for item in infos}
+        except Exception as exc:
+            raise RuntimeError("OPENCLAW_RESPONSES_URL host could not be resolved in production") from exc
+
+    tailnet_or_cgnat = ipaddress.ip_network("100.64.0.0/10")
+
+    def allowed(ip) -> bool:
+        return (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip in tailnet_or_cgnat
+        )
+
+    if not any(allowed(ip) for ip in resolved_ips):
+        raise RuntimeError("OPENCLAW_RESPONSES_URL must point to a private or tailnet host in production")
 
 @lru_cache(maxsize=1)
 def get_webchat_fast_settings() -> WebchatFastSettings:
-    max_timeout_ms = _env_int("WEBCHAT_FAST_AI_MAX_TIMEOUT_MS", 5000, minimum=500, maximum=5000)
+    max_timeout_ms = _env_int("WEBCHAT_FAST_AI_MAX_TIMEOUT_MS", 30000, minimum=500, maximum=30000)
     settings = WebchatFastSettings(
         enabled=_env_bool("WEBCHAT_FAST_AI_ENABLED", True),
         provider=os.getenv("WEBCHAT_FAST_AI_PROVIDER", "openclaw_responses").strip().lower() or "openclaw_responses",
@@ -114,10 +144,11 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         openclaw_responses_token=os.getenv("OPENCLAW_RESPONSES_TOKEN"),
         openclaw_connect_timeout_ms=_env_int("OPENCLAW_RESPONSES_CONNECT_TIMEOUT_MS", 500, minimum=100, maximum=3000),
         openclaw_read_timeout_ms=_env_int("OPENCLAW_RESPONSES_READ_TIMEOUT_MS", 3000, minimum=500, maximum=max_timeout_ms),
-        openclaw_total_timeout_ms=_env_int("OPENCLAW_RESPONSES_TOTAL_TIMEOUT_MS", 3500, minimum=1000, maximum=8000),
+        openclaw_total_timeout_ms=_env_int("OPENCLAW_RESPONSES_TOTAL_TIMEOUT_MS", 30000, minimum=1000, maximum=30000),
         openclaw_pool_max_connections=_env_int("OPENCLAW_RESPONSES_POOL_MAX_CONNECTIONS", 10, minimum=1, maximum=50),
         openclaw_pool_max_keepalive=_env_int("OPENCLAW_RESPONSES_POOL_MAX_KEEPALIVE", 5, minimum=0, maximum=25),
         app_env=os.getenv("APP_ENV", "development").strip().lower() or "development",
     )
+
     settings.validate_runtime()
     return settings
