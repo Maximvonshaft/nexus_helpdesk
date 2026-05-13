@@ -1,0 +1,122 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_c9e2c49c-9205-474f-869a-4fb3f33f8abf","object":"response","created_at":1778667015,"status":"in_progress","model":"openclaw:webchat-fast","output":[],"usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"resp_c9e2c49c-9205-474f-869a-4fb3f33f8abf","object":"response","created_at":1778667015,"status":"in_progress","model":"openclaw:webchat-fast","output":[],"usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","role":"assistant","content":[{"type":"output_text","text":""}],"status":"in_progress"}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"part":{"type":"output_text","text":""}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"{\""}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"reply"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"\":\""}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"pong"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"\",\""}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"intent"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"\":\""}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"other"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"\",\""}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"tracking"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"_number"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"\":"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"null"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":",\""}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"hando"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"ff"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"_required"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"\":"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"false"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":",\""}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"hando"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"ff"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"_reason"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"\":"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"null"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":",\""}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"recommended"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"_agent"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"_action"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"\":"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"null"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"delta":"}"}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"text":"{\"reply\":\"pong\",\"intent\":\"other\",\"tracking_number\":null,\"handoff_required\":false,\"handoff_reason\":null,\"recommended_agent_action\":null}"}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","item_id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","output_index":0,"content_index":0,"part":{"type":"output_text","text":"{\"reply\":\"pong\",\"intent\":\"other\",\"tracking_number\":null,\"handoff_required\":false,\"handoff_reason\":null,\"recommended_agent_action\":null}"}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","role":"assistant","content":[{"type":"output_text","text":"{\"reply\":\"pong\",\"intent\":\"other\",\"tracking_number\":null,\"handoff_required\":false,\"handoff_reason\":null,\"recommended_agent_action\":null}"}],"phase":"final_answer","status":"completed"}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_c9e2c49c-9205-474f-869a-4fb3f33f8abf","object":"response","created_at":1778667036,"status":"completed","model":"openclaw:webchat-fast","output":[{"type":"message","id":"msg_3167a0f1-bf60-4ad0-ab0d-ad7e018d200c","role":"assistant","content":[{"type":"output_text","text":"{\"reply\":\"pong\",\"intent\":\"other\",\"tracking_number\":null,\"handoff_required\":false,\"handoff_reason\":null,\"recommended_agent_action\":null}"}],"phase":"final_answer","status":"completed"}],"usage":{"input_tokens":9955,"output_tokens":153,"total_tokens":12028}}}
+
+data: [DONE]
+
