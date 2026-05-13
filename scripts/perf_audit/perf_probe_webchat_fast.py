@@ -90,7 +90,16 @@ class ProbeResult:
     error_code: str | None = None
 
 
-async def _probe_one(client: httpx.AsyncClient, base_url: str, seq: int, *, require_stream: bool) -> ProbeResult:
+async def _probe_one(
+    client: httpx.AsyncClient, 
+    base_url: str, 
+    seq: int, 
+    *, 
+    require_stream: bool, 
+    expect_stream_disabled: bool = False, 
+    expect_stream_not_in_rollout: bool = False,
+    force_stream_canary_header: bool = False
+) -> ProbeResult:
     payload = _payload(seq)
     started = time.perf_counter()
     first_chunk_ms: float | None = None
@@ -98,13 +107,28 @@ async def _probe_one(client: httpx.AsyncClient, base_url: str, seq: int, *, requ
     error_code: str | None = None
     replayed = False
     try:
+        headers = {'Accept': 'text/event-stream', 'Content-Type': 'application/json'}
+        if force_stream_canary_header:
+            headers['X-Nexus-Stream-Canary'] = '1'
+
         async with client.stream(
             'POST',
             f'{base_url}/api/webchat/fast-reply/stream',
             json=payload,
-            headers={'Accept': 'text/event-stream', 'Content-Type': 'application/json'},
+            headers=headers,
         ) as response:
             content_type = response.headers.get('content-type', '')
+            
+            if expect_stream_disabled and response.status_code == 503:
+                data = await response.json()
+                if data.get('error_code') == 'stream_disabled':
+                    return ProbeResult(True, 0.0, (time.perf_counter() - started) * 1000, 0, False, False, False, False, 'stream_disabled')
+                    
+            if expect_stream_not_in_rollout and response.status_code == 503:
+                data = await response.json()
+                if data.get('error_code') == 'stream_not_in_rollout':
+                    return ProbeResult(True, 0.0, (time.perf_counter() - started) * 1000, 0, False, False, False, False, 'stream_not_in_rollout')
+                    
             if response.status_code != 200 or 'text/event-stream' not in content_type:
                 if require_stream:
                     data = {}
@@ -128,6 +152,7 @@ async def _probe_one(client: httpx.AsyncClient, base_url: str, seq: int, *, requ
                 stream_buffer += chunk
     except Exception as exc:
         return ProbeResult(False, 0.0, (time.perf_counter() - started) * 1000, 0, False, False, False, True, type(exc).__name__)
+
 
     for event, data in _parse_sse_events(stream_buffer):
         if event == 'reply_delta':
@@ -194,6 +219,9 @@ def main() -> int:
     parser.add_argument('--concurrency', type=int, default=10)
     parser.add_argument('--fail-on-gate', action='store_true')
     parser.add_argument('--require-stream', action='store_true')
+    parser.add_argument('--expect-stream-disabled', action='store_true')
+    parser.add_argument('--expect-stream-not-in-rollout', action='store_true')
+    parser.add_argument('--force-stream-canary-header', action='store_true')
     parser.add_argument('--max-fallback-count', type=int, default=999999)
     parser.add_argument('--max-error-rate', type=float, default=0.01)
     parser.add_argument('--max-p95-first-chunk-ms', type=float, default=1500)
