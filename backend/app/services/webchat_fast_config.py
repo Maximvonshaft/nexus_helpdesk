@@ -61,6 +61,36 @@ class WebchatFastSettings:
     openclaw_pool_max_keepalive: int
     app_env: str
 
+    openclaw_responses_stream_url: str | None
+    openclaw_responses_stream_token_file: str | None
+    openclaw_responses_stream_token: str | None
+    openclaw_stream_connect_timeout_ms: int
+    openclaw_stream_read_timeout_ms: int
+    openclaw_stream_total_timeout_ms: int
+
+    @property
+    def stream_token(self) -> str | None:
+        if self.openclaw_responses_stream_token_file:
+            path = Path(self.openclaw_responses_stream_token_file)
+            try:
+                value = path.read_text(encoding="utf-8").strip()
+            except OSError:
+                value = ""
+            if value.lower().startswith("bearer "):
+                value = value.split(None, 1)[1].strip()
+            if value:
+                return value
+        if self.app_env in {"development", "test", "local"}:
+            value = (self.openclaw_responses_stream_token or "").strip()
+            if value.lower().startswith("bearer "):
+                value = value.split(None, 1)[1].strip()
+            return value or None
+        return None
+
+    @property
+    def is_openclaw_stream_configured(self) -> bool:
+        return bool(self.openclaw_responses_stream_url and self.stream_token)
+
     @property
     def token(self) -> str | None:
         if self.openclaw_responses_token_file:
@@ -100,12 +130,23 @@ class WebchatFastSettings:
                 raise RuntimeError(f"Invalid TRUSTED_PROXY_CIDRS entry: {cidr}") from exc
         if not self.enabled:
             return
+            
         if self.app_env == "production":
             if self.openclaw_responses_token:
                 raise RuntimeError("OPENCLAW_RESPONSES_TOKEN is forbidden in production; use OPENCLAW_RESPONSES_TOKEN_FILE")
             if not self.openclaw_responses_token_file:
                 raise RuntimeError("OPENCLAW_RESPONSES_TOKEN_FILE is required in production")
             _validate_private_responses_url(self.openclaw_responses_url)
+            
+            if self.stream_enabled:
+                if not self.openclaw_responses_stream_url:
+                    raise RuntimeError("OPENCLAW_RESPONSES_STREAM_URL is required in production when stream is enabled")
+                if self.openclaw_responses_stream_token:
+                    raise RuntimeError("OPENCLAW_RESPONSES_STREAM_TOKEN is forbidden in production; use OPENCLAW_RESPONSES_STREAM_TOKEN_FILE")
+                if not self.openclaw_responses_stream_token_file:
+                    raise RuntimeError("OPENCLAW_RESPONSES_STREAM_TOKEN_FILE is required in production when stream is enabled")
+                _validate_private_responses_url(self.openclaw_responses_stream_url)
+
 
 
 def _validate_private_responses_url(value: str) -> None:
@@ -166,6 +207,12 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         openclaw_pool_max_connections=_env_int("OPENCLAW_RESPONSES_POOL_MAX_CONNECTIONS", 10, minimum=1, maximum=50),
         openclaw_pool_max_keepalive=_env_int("OPENCLAW_RESPONSES_POOL_MAX_KEEPALIVE", 5, minimum=0, maximum=25),
         app_env=os.getenv("APP_ENV", "development").strip().lower() or "development",
+        openclaw_responses_stream_url=os.getenv("OPENCLAW_RESPONSES_STREAM_URL", "").strip() or None,
+        openclaw_responses_stream_token_file=os.getenv("OPENCLAW_RESPONSES_STREAM_TOKEN_FILE", "").strip() or None,
+        openclaw_responses_stream_token=os.getenv("OPENCLAW_RESPONSES_STREAM_TOKEN", "").strip() or None,
+        openclaw_stream_connect_timeout_ms=_env_int("OPENCLAW_RESPONSES_STREAM_CONNECT_TIMEOUT_MS", 500, minimum=100, maximum=3000),
+        openclaw_stream_read_timeout_ms=_env_int("OPENCLAW_RESPONSES_STREAM_READ_TIMEOUT_MS", 15000, minimum=500, maximum=30000),
+        openclaw_stream_total_timeout_ms=_env_int("OPENCLAW_RESPONSES_STREAM_TOTAL_TIMEOUT_MS", 30000, minimum=1000, maximum=60000),
     )
 
     settings.validate_runtime()

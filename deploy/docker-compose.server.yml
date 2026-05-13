@@ -18,6 +18,8 @@ x-app-image: &app_image
     FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
   volumes: &app_volumes
     - /run/secrets:/run/secrets:ro
+    - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_responses_token:/run/openclaw_responses_token:ro
+    - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_native_responses_token:/run/openclaw_native_responses_token:ro
     - ../data/uploads:/app/backend/uploads
   logging: &json_logging
     driver: json-file

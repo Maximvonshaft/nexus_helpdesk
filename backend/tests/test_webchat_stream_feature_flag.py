@@ -70,6 +70,12 @@ def test_stream_disabled_env_blocks_stream_but_non_stream_still_works(monkeypatc
 
 def test_stream_enabled_env_allows_stream_path(monkeypatch):
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ENABLED', 'true')
+    monkeypatch.setenv('OPENCLAW_RESPONSES_STREAM_URL', 'http://127.0.0.1/stream')
+    monkeypatch.setenv('OPENCLAW_RESPONSES_STREAM_TOKEN', 'test')
+    import app.services.webchat_fast_config
+    monkeypatch.setattr(app.services.webchat_fast_config.WebchatFastSettings, 'stream_token', 'test')
+    monkeypatch.setattr(app.services.webchat_fast_config.WebchatFastSettings, 'is_openclaw_stream_configured', True)
+
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT', '100')
     get_webchat_fast_settings.cache_clear()
     monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
@@ -90,6 +96,12 @@ def test_stream_enabled_env_allows_stream_path(monkeypatch):
 
 def test_stream_rollout_gate_blocks_zero_percent(monkeypatch):
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ENABLED', 'true')
+    monkeypatch.setenv('OPENCLAW_RESPONSES_STREAM_URL', 'http://127.0.0.1/stream')
+    monkeypatch.setenv('OPENCLAW_RESPONSES_STREAM_TOKEN', 'test')
+    import app.services.webchat_fast_config
+    monkeypatch.setattr(app.services.webchat_fast_config.WebchatFastSettings, 'stream_token', 'test')
+    monkeypatch.setattr(app.services.webchat_fast_config.WebchatFastSettings, 'is_openclaw_stream_configured', True)
+
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT', '0')
     get_webchat_fast_settings.cache_clear()
     
@@ -99,6 +111,12 @@ def test_stream_rollout_gate_blocks_zero_percent(monkeypatch):
 
 def test_stream_canary_override_allows_bypass(monkeypatch):
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ENABLED', 'true')
+    monkeypatch.setenv('OPENCLAW_RESPONSES_STREAM_URL', 'http://127.0.0.1/stream')
+    monkeypatch.setenv('OPENCLAW_RESPONSES_STREAM_TOKEN', 'test')
+    import app.services.webchat_fast_config
+    monkeypatch.setattr(app.services.webchat_fast_config.WebchatFastSettings, 'stream_token', 'test')
+    monkeypatch.setattr(app.services.webchat_fast_config.WebchatFastSettings, 'is_openclaw_stream_configured', True)
+
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT', '0')
     monkeypatch.setenv('APP_ENV', 'development')
     get_webchat_fast_settings.cache_clear()
@@ -117,6 +135,12 @@ def test_stream_canary_override_allows_bypass(monkeypatch):
 
 def test_stream_canary_override_fails_for_public_ip_in_production(monkeypatch):
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ENABLED', 'true')
+    monkeypatch.setenv('OPENCLAW_RESPONSES_STREAM_URL', 'http://127.0.0.1/stream')
+    monkeypatch.setenv('OPENCLAW_RESPONSES_STREAM_TOKEN', 'test')
+    import app.services.webchat_fast_config
+    monkeypatch.setattr(app.services.webchat_fast_config.WebchatFastSettings, 'stream_token', 'test')
+    monkeypatch.setattr(app.services.webchat_fast_config.WebchatFastSettings, 'is_openclaw_stream_configured', True)
+
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT', '0')
     monkeypatch.setenv('APP_ENV', 'production')
     get_webchat_fast_settings.cache_clear()
@@ -141,6 +165,12 @@ def test_stream_canary_override_fails_for_public_ip_in_production(monkeypatch):
 
 def test_stream_canary_override_allows_bypass_for_loopback_in_production(monkeypatch):
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ENABLED', 'true')
+    monkeypatch.setenv('OPENCLAW_RESPONSES_STREAM_URL', 'http://127.0.0.1/stream')
+    monkeypatch.setenv('OPENCLAW_RESPONSES_STREAM_TOKEN', 'test')
+    import app.services.webchat_fast_config
+    monkeypatch.setattr(app.services.webchat_fast_config.WebchatFastSettings, 'stream_token', 'test')
+    monkeypatch.setattr(app.services.webchat_fast_config.WebchatFastSettings, 'is_openclaw_stream_configured', True)
+
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT', '0')
     monkeypatch.setenv('APP_ENV', 'production')
     get_webchat_fast_settings.cache_clear()
@@ -181,4 +211,96 @@ def test_stream_deterministic_rollout_hashing():
     
     for _ in range(10):
         assert is_stream_rollout_selected(tenant_key="t1", channel_key="c1", session_id="fixed-session-123", rollout_percent=50) == is_stream_rollout_selected(tenant_key="t1", channel_key="c1", session_id="fixed-session-123", rollout_percent=50)
+
+import os
+import pytest
+from unittest.mock import patch
+from app.services.webchat_fast_config import get_webchat_fast_settings
+
+def test_config_rules():
+    # Production stream disabled
+    with patch.dict(os.environ, {
+        "APP_ENV": "production",
+            "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_STREAM_ENABLED": "false",
+        "OPENCLAW_RESPONSES_URL": "http://100.64.0.1/responses",
+        "OPENCLAW_RESPONSES_TOKEN_FILE": "/dev/null",
+        "OPENCLAW_RESPONSES_STREAM_URL": "",
+        "OPENCLAW_RESPONSES_STREAM_TOKEN_FILE": "",
+    }):
+        get_webchat_fast_settings.cache_clear()
+        settings = get_webchat_fast_settings()
+        assert settings.enabled is True
+        assert settings.stream_enabled is False
+
+    # Production stream enabled missing URL
+    with patch.dict(os.environ, {
+        "APP_ENV": "production",
+            "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_STREAM_ENABLED": "true",
+        "OPENCLAW_RESPONSES_URL": "http://100.64.0.1/responses",
+        "OPENCLAW_RESPONSES_TOKEN_FILE": "/dev/null",
+        "OPENCLAW_RESPONSES_STREAM_URL": "",
+        "OPENCLAW_RESPONSES_STREAM_TOKEN_FILE": "/dev/null",
+    }):
+        get_webchat_fast_settings.cache_clear()
+        with pytest.raises(RuntimeError, match="OPENCLAW_RESPONSES_STREAM_URL is required in production when stream is enabled"):
+            get_webchat_fast_settings()
+
+    # Production stream enabled missing Token File
+    with patch.dict(os.environ, {
+        "APP_ENV": "production",
+            "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_STREAM_ENABLED": "true",
+        "OPENCLAW_RESPONSES_URL": "http://100.64.0.1/responses",
+        "OPENCLAW_RESPONSES_TOKEN_FILE": "/dev/null",
+        "OPENCLAW_RESPONSES_STREAM_URL": "http://100.64.0.2/responses",
+        "OPENCLAW_RESPONSES_STREAM_TOKEN_FILE": "",
+    }):
+        get_webchat_fast_settings.cache_clear()
+        with pytest.raises(RuntimeError, match="OPENCLAW_RESPONSES_STREAM_TOKEN_FILE is required in production when stream is enabled"):
+            get_webchat_fast_settings()
+
+    # Production stream enabled token plain text
+    with patch.dict(os.environ, {
+        "APP_ENV": "production",
+            "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_STREAM_ENABLED": "true",
+        "OPENCLAW_RESPONSES_URL": "http://100.64.0.1/responses",
+        "OPENCLAW_RESPONSES_TOKEN_FILE": "/dev/null",
+        "OPENCLAW_RESPONSES_STREAM_URL": "http://100.64.0.2/responses",
+        "OPENCLAW_RESPONSES_STREAM_TOKEN_FILE": "/dev/null",
+        "OPENCLAW_RESPONSES_STREAM_TOKEN": "secret",
+    }):
+        get_webchat_fast_settings.cache_clear()
+        with pytest.raises(RuntimeError, match="OPENCLAW_RESPONSES_STREAM_TOKEN is forbidden in production"):
+            get_webchat_fast_settings()
+
+    # Stream URL private/tailnet pass
+    with patch.dict(os.environ, {
+        "APP_ENV": "production",
+            "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_STREAM_ENABLED": "true",
+        "OPENCLAW_RESPONSES_URL": "http://100.64.0.1/responses",
+        "OPENCLAW_RESPONSES_TOKEN_FILE": "/dev/null",
+        "OPENCLAW_RESPONSES_STREAM_URL": "http://100.64.0.2/responses",
+        "OPENCLAW_RESPONSES_STREAM_TOKEN_FILE": "/dev/null",
+    }):
+        get_webchat_fast_settings.cache_clear()
+        settings = get_webchat_fast_settings()
+        assert settings.openclaw_responses_stream_url == "http://100.64.0.2/responses"
+
+    # Stream URL public host validation failure
+    with patch.dict(os.environ, {
+        "APP_ENV": "production",
+            "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_STREAM_ENABLED": "true",
+        "OPENCLAW_RESPONSES_URL": "http://100.64.0.1/responses",
+        "OPENCLAW_RESPONSES_TOKEN_FILE": "/dev/null",
+        "OPENCLAW_RESPONSES_STREAM_URL": "http://example.com/responses",
+        "OPENCLAW_RESPONSES_STREAM_TOKEN_FILE": "/dev/null",
+    }):
+        get_webchat_fast_settings.cache_clear()
+        with pytest.raises(RuntimeError, match="must point to a private or tailnet host"):
+            get_webchat_fast_settings()
 
