@@ -99,6 +99,7 @@ def voice_runtime_config() -> dict:
     return {
         "enabled": config.enabled,
         "provider": config.provider,
+        "livekit_url": config.livekit_url if config.provider == "livekit" else None,
         "recording_enabled": config.recording_enabled,
         "transcription_enabled": config.transcription_enabled,
     }
