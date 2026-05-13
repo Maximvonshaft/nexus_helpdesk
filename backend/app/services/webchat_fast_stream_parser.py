@@ -34,10 +34,19 @@ class ReplyDelta:
     text: str
 
 
+import re
+
+_FORBIDDEN_PATTERNS = [
+    re.compile(r"(?<![a-zA-Z])" + re.escape(phrase) + r"(?![a-zA-Z])", re.IGNORECASE)
+    for phrase in FORBIDDEN_PHRASES
+]
+
 def _has_forbidden(value: str) -> bool:
-    normalized = " ".join(value.split()).lower()
-    compact = value.lower()
-    return any(phrase.lower() in normalized or phrase.lower() in compact for phrase in FORBIDDEN_PHRASES)
+    normalized = " ".join(value.split())
+    for pattern in _FORBIDDEN_PATTERNS:
+        if pattern.search(normalized):
+            return True
+    return False
 
 
 class StreamingReplyExtractor:
