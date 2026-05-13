@@ -60,7 +60,8 @@ def _client(settings: WebchatFastSettings) -> httpx.AsyncClient:
 
 
 _STREAM_CLIENT: httpx.AsyncClient | None = None
-_STREAM_CLIENT_KEY: tuple[str, int, int] | None = None
+_STREAM_CLIENT_KEY: tuple[str | None, int, int] | None = None
+
 
 def _stream_client(settings: WebchatFastSettings) -> httpx.AsyncClient:
     global _STREAM_CLIENT, _STREAM_CLIENT_KEY
@@ -80,6 +81,7 @@ def _stream_client(settings: WebchatFastSettings) -> httpx.AsyncClient:
         _STREAM_CLIENT_KEY = key
     return _STREAM_CLIENT
 
+
 def _validate_stream_ready(settings: WebchatFastSettings) -> str:
     if not settings.enabled:
         raise OpenClawResponsesError("webchat fast AI is disabled")
@@ -91,6 +93,7 @@ def _validate_stream_ready(settings: WebchatFastSettings) -> str:
     if not token:
         raise OpenClawResponsesError("OpenClaw responses stream token is not configured")
     return token
+
 
 def build_responses_request_body(*, instructions: str, input_text: str, settings: WebchatFastSettings | None = None, stream: bool = False) -> dict[str, Any]:
     settings = settings or get_webchat_fast_settings()
@@ -150,14 +153,14 @@ async def call_openclaw_responses(
     started = time.monotonic()
     try:
         response = await asyncio.wait_for(
-            _client(settings).post(settings.openclaw_responses_stream_url, headers=headers, content=json.dumps(body).encode("utf-8")),
+            _client(settings).post(settings.openclaw_responses_url, headers=headers, content=json.dumps(body).encode("utf-8")),
             timeout=settings.openclaw_total_timeout_ms / 1000,
         )
     except (asyncio.TimeoutError, httpx.TimeoutException, httpx.NetworkError) as exc:
         elapsed_ms = int((time.monotonic() - started) * 1000)
         LOGGER.warning(
             "webchat_openclaw_responses_unavailable",
-            extra={"event_payload": {"request_id": request_id, "elapsed_ms": elapsed_ms, "url":  _safe_url_for_log(str(settings.openclaw_responses_stream_url)), "error_type": type(exc).__name__}},
+            extra={"event_payload": {"request_id": request_id, "elapsed_ms": elapsed_ms, "url": _safe_url_for_log(settings.openclaw_responses_url), "error_type": type(exc).__name__}},
         )
         raise OpenClawResponsesError("OpenClaw responses request failed") from exc
 
@@ -239,6 +242,6 @@ async def call_openclaw_responses_stream(
         elapsed_ms = int((time.monotonic() - started) * 1000)
         LOGGER.warning(
             "webchat_openclaw_responses_stream_unavailable",
-            extra={"event_payload": {"request_id": request_id, "elapsed_ms": elapsed_ms, "url":  _safe_url_for_log(str(settings.openclaw_responses_stream_url)), "error_type": type(exc).__name__}},
+            extra={"event_payload": {"request_id": request_id, "elapsed_ms": elapsed_ms, "url": _safe_url_for_log(str(settings.openclaw_responses_stream_url)), "error_type": type(exc).__name__}},
         )
         yield StreamError(error_code="stream_transport_error", message=None)
