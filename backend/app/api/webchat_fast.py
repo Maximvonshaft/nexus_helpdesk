@@ -23,7 +23,6 @@ from ..services.webchat_fast_stream_service import prepare_webchat_fast_stream, 
 from ..services.webchat_handoff_snapshot_service import build_handoff_snapshot_payload, enqueue_webchat_handoff_snapshot_job
 from ..services.webchat_fast_config import get_webchat_fast_settings, WebchatFastSettings
 from ..services.webchat_fast_rollout import is_stream_rollout_selected
-import ipaddress
 
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat-fast"])
@@ -121,15 +120,6 @@ def _is_stream_canary_override_allowed(request: Request, settings: WebchatFastSe
     if settings.app_env in {"development", "test", "local"}:
         return True
         
-    if client_host:
-        try:
-            client_ip = ipaddress.ip_address(client_host)
-            for cidr in settings.trusted_proxy_cidrs:
-                if client_ip in ipaddress.ip_network(cidr, strict=False):
-                    return True
-        except ValueError:
-            pass
-            
     return False
 
 @router.options("/fast-reply")

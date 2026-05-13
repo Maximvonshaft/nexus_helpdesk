@@ -100,6 +100,7 @@ def test_stream_rollout_gate_blocks_zero_percent(monkeypatch):
 def test_stream_canary_override_allows_bypass(monkeypatch):
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ENABLED', 'true')
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT', '0')
+    monkeypatch.setenv('APP_ENV', 'development')
     get_webchat_fast_settings.cache_clear()
     
     monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
@@ -111,6 +112,59 @@ def test_stream_canary_override_allows_bypass(monkeypatch):
     monkeypatch.setattr(webchat_fast, 'stream_webchat_fast_reply_events', fake_stream)
 
     response = client.post('/api/webchat/fast-reply/stream', json=_payload('stream-override'), headers={'Accept': 'text/event-stream', 'X-Nexus-Stream-Canary': '1'})
+    assert response.status_code == 200
+    assert 'text/event-stream' in response.headers['content-type']
+
+def test_stream_canary_override_fails_for_public_ip_in_production(monkeypatch):
+    monkeypatch.setenv('WEBCHAT_FAST_STREAM_ENABLED', 'true')
+    monkeypatch.setenv('WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT', '0')
+    monkeypatch.setenv('APP_ENV', 'production')
+    get_webchat_fast_settings.cache_clear()
+    
+    # We patch the request client host to simulate a non-loopback IP
+    original_receive = client.app
+    
+    class FakeHostMiddleware:
+        def __init__(self, app):
+            self.app = app
+            
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "http":
+                scope["client"] = ("172.18.0.10", 12345)
+            await self.app(scope, receive, send)
+            
+    client_prod = TestClient(FakeHostMiddleware(app))
+
+    response = client_prod.post('/api/webchat/fast-reply/stream', json=_payload('stream-override-prod'), headers={'Accept': 'text/event-stream', 'X-Nexus-Stream-Canary': '1'})
+    assert response.status_code == 503
+    assert response.json()['error_code'] == 'stream_not_in_rollout'
+
+def test_stream_canary_override_allows_bypass_for_loopback_in_production(monkeypatch):
+    monkeypatch.setenv('WEBCHAT_FAST_STREAM_ENABLED', 'true')
+    monkeypatch.setenv('WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT', '0')
+    monkeypatch.setenv('APP_ENV', 'production')
+    get_webchat_fast_settings.cache_clear()
+    
+    monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
+    monkeypatch.setattr(webchat_fast, 'prepare_webchat_fast_stream', lambda **kwargs: StreamBeginOutcome(status='owner', request_hash='h', row_id=1))
+
+    async def fake_stream(**kwargs):
+        yield 'event: final\ndata: {"intent":"greeting","handoff_required":false,"ticket_creation_queued":false}\n\n'
+
+    monkeypatch.setattr(webchat_fast, 'stream_webchat_fast_reply_events', fake_stream)
+    
+    class FakeHostMiddlewareLoopback:
+        def __init__(self, app):
+            self.app = app
+            
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "http":
+                scope["client"] = ("127.0.0.1", 12345)
+            await self.app(scope, receive, send)
+            
+    client_loopback = TestClient(FakeHostMiddlewareLoopback(app))
+
+    response = client_loopback.post('/api/webchat/fast-reply/stream', json=_payload('stream-override-loopback'), headers={'Accept': 'text/event-stream', 'X-Nexus-Stream-Canary': '1'})
     assert response.status_code == 200
     assert 'text/event-stream' in response.headers['content-type']
 
