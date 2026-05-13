@@ -21,7 +21,9 @@ from ..services.webchat_fast_idempotency_db import (
 from ..services.webchat_fast_rate_limit import enforce_webchat_fast_rate_limit
 from ..services.webchat_fast_stream_service import prepare_webchat_fast_stream, stream_webchat_fast_reply_events
 from ..services.webchat_handoff_snapshot_service import build_handoff_snapshot_payload, enqueue_webchat_handoff_snapshot_job
-from ..services.webchat_fast_config import get_webchat_fast_settings
+from ..services.webchat_fast_config import get_webchat_fast_settings, WebchatFastSettings
+from ..services.webchat_fast_rollout import is_stream_rollout_selected
+
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat-fast"])
 settings = get_settings()
@@ -104,6 +106,21 @@ def _context_payload(items: list[WebchatFastContextItem]) -> list[dict[str, str]
 def _visitor_payload(visitor: WebchatFastVisitor | None) -> dict[str, Any]:
     return visitor.model_dump(exclude_none=True) if visitor else {}
 
+
+
+def _is_stream_canary_override_allowed(request: Request, settings: WebchatFastSettings) -> bool:
+    canary_header = request.headers.get("x-nexus-stream-canary")
+    if canary_header != "1":
+        return False
+        
+    client_host = request.client.host if request.client else None
+    if client_host in ("127.0.0.1", "::1"):
+        return True
+        
+    if settings.app_env in {"development", "test", "local"}:
+        return True
+        
+    return False
 
 @router.options("/fast-reply")
 def webchat_fast_reply_options(request: Request):
@@ -213,6 +230,16 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         return JSONResponse({"error_code": "stream_disabled"}, status_code=503, headers=headers)
     if stream_settings.stream_require_accept and "text/event-stream" not in (request.headers.get("accept") or ""):
         return JSONResponse({"error_code": "stream_accept_required"}, status_code=406, headers=headers)
+
+    # Rollout gate
+    is_selected = is_stream_rollout_selected(
+        tenant_key=payload.tenant_key,
+        channel_key=payload.channel_key,
+        session_id=payload.session_id,
+        rollout_percent=getattr(stream_settings, "stream_rollout_percent", 100)
+    )
+    if not is_selected and not _is_stream_canary_override_allowed(request, stream_settings):
+        return JSONResponse({"error_code": "stream_not_in_rollout"}, status_code=503, headers=headers)
 
     enforce_webchat_fast_rate_limit(request, tenant_key=payload.tenant_key, session_id=payload.session_id)
 

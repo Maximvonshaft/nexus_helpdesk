@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -33,5 +34,8 @@ def test_nginx_has_fast_reply_specific_location_and_limit():
     assert "location = /api/webchat/fast-reply" in text
     assert "client_max_body_size 32k" in text
     assert "limit_req zone=webchat_fast burst=20 nodelay" in text
-    assert "proxy_read_timeout 8s" in text
     assert "proxy_pass http://nexusdesk_app/api/webchat/fast-reply" in text
+
+    timeout_match = re.search(r"proxy_read_timeout\s+(\d+)s", text)
+    assert timeout_match is not None
+    assert int(timeout_match.group(1)) >= 30
