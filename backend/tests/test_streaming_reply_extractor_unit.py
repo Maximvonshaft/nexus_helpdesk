@@ -132,3 +132,13 @@ def test_final_parse_uses_buffered_strict_json_when_completed_has_no_text():
     parsed = extractor.final_parse(None)
     assert parsed.reply == 'Hello from buffer'
     assert parsed.handoff_required is False
+
+def test_normal_greeting_does_not_abort_safety():
+    extractor = StreamingReplyExtractor()
+    extractor.feed_text('{"reply":"H')
+    extractor.feed_text('ello,')
+    extractor.feed_text(' I’m S')
+    extractor.feed_text('pe')
+    extractor.feed_text('edaf Support","intent":"other","tracking_number":null,"handoff_required":false}')
+    extractor.flush()
+    assert extractor.emitted_text == "Hello, I’m Speedaf Support"
