@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, select
+from sqlalchemy import delete, inspect, select, text
 
 from app.api import webchat_fast
 from app.db import Base, SessionLocal, engine
@@ -20,8 +20,23 @@ pytestmark = pytest.mark.fast_lane_v2_2_2
 client = TestClient(app)
 
 
-def setup_function():
+def _ensure_fast_lane_test_schema() -> None:
     Base.metadata.create_all(bind=engine)
+    inspector = inspect(engine)
+    if "tickets" not in inspector.get_table_names():
+        return
+
+    columns = {col["name"] for col in inspector.get_columns("tickets")}
+    indexes = {idx["name"] for idx in inspector.get_indexes("tickets")}
+    with engine.begin() as conn:
+        if "source_dedupe_key" not in columns:
+            conn.execute(text("ALTER TABLE tickets ADD COLUMN source_dedupe_key VARCHAR(300)"))
+        if "ux_tickets_source_dedupe_key" not in indexes:
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_tickets_source_dedupe_key ON tickets(source_dedupe_key)"))
+
+
+def setup_function():
+    _ensure_fast_lane_test_schema()
     db = SessionLocal()
     try:
         db.execute(delete(BackgroundJob))
