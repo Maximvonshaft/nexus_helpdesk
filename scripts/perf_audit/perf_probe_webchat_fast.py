@@ -186,7 +186,15 @@ async def run_probe(args: argparse.Namespace) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
         async def guarded(seq: int) -> ProbeResult:
             async with sem:
-                return await _probe_one(client, base_url, seq, require_stream=args.require_stream)
+                return await _probe_one(
+                    client,
+                    base_url,
+                    seq,
+                    require_stream=args.require_stream,
+                    expect_stream_disabled=getattr(args, 'expect_stream_disabled', False),
+                    expect_stream_not_in_rollout=getattr(args, 'expect_stream_not_in_rollout', False),
+                    force_stream_canary_header=getattr(args, 'force_stream_canary_header', False)
+                )
         results = await asyncio.gather(*(guarded(i) for i in range(args.requests)))
     success = [r for r in results if r.ok]
     errors = [r for r in results if not r.ok]
