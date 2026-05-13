@@ -80,3 +80,6 @@ backend/uploads/
 backend/artifacts/
 deploy/runtime_secrets/*
 !deploy/runtime_secrets/.gitkeep
+probe_reports/
+deploy/secrets/
+deploy/*.broken.*
