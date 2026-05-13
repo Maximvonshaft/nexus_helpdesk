@@ -78,3 +78,5 @@ backend/uploads/
 
 # Local artifacts
 backend/artifacts/
+deploy/runtime_secrets/*
+!deploy/runtime_secrets/.gitkeep
