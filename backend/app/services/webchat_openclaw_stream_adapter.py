@@ -28,7 +28,7 @@ class StreamError:
 
 NormalizedStreamEvent = ContentDelta | Completed | ToolCallDetected | StreamError
 
-_TOOL_HINTS = ("tool", "function_call", "function.call", "response.output_item.added")
+_TOOL_HINTS = ("tool", "function_call", "function.call")
 _IGNORE_TYPES = {"response.created", "response.in_progress", "response.output_item.done", "response.content_part.added"}
 
 
@@ -60,7 +60,28 @@ def _completed_text(payload: dict[str, Any]) -> str | None:
             value = response.get(key)
             if isinstance(value, str):
                 return value
+        output = response.get("output")
+        if isinstance(output, list):
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content")
+                if not isinstance(content, list):
+                    continue
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    value = part.get("text") or part.get("output_text")
+                    if isinstance(value, str):
+                        return value
     return None
+
+
+def _item_type(payload: dict[str, Any]) -> str:
+    item = payload.get("item")
+    if isinstance(item, dict):
+        return str(item.get("type") or "").strip().lower()
+    return ""
 
 
 class OpenClawResponsesStreamAdapter:
@@ -73,13 +94,18 @@ class OpenClawResponsesStreamAdapter:
     def feed_json_payload(self, payload: dict[str, Any], *, event_name: str | None = None) -> list[NormalizedStreamEvent]:
         event_type = _event_type(payload, event_name)
         lower_type = event_type.lower()
+        item_type = _item_type(payload)
         if any(hint in lower_type for hint in _TOOL_HINTS):
             return [ToolCallDetected(raw_type=event_type or None)]
-        if event_type in _IGNORE_TYPES:
+        if event_type == "response.output_item.added" and item_type in {"function_call", "tool_call", "tool_result", "function"}:
+            return [ToolCallDetected(raw_type=event_type or None)]
+        if event_type in _IGNORE_TYPES or event_type == "response.output_item.added":
             return []
         if event_type == "response.output_text.delta":
             text = _delta_text(payload)
             return [ContentDelta(text)] if text else []
+        if event_type == "response.output_text.done":
+            return [Completed(full_payload=payload, full_text=_completed_text(payload))]
         if event_type in {"response.completed", "response.done", "done"}:
             return [Completed(full_payload=payload, full_text=_completed_text(payload))]
         if event_type in {"response.error", "error"}:
