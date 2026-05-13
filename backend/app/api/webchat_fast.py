@@ -231,6 +231,9 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
     if stream_settings.stream_require_accept and "text/event-stream" not in (request.headers.get("accept") or ""):
         return JSONResponse({"error_code": "stream_accept_required"}, status_code=406, headers=headers)
 
+    if not stream_settings.is_openclaw_stream_configured:
+        return JSONResponse({"error_code": "stream_upstream_not_configured"}, status_code=503, headers=headers)
+
     # Rollout gate
     is_selected = is_stream_rollout_selected(
         tenant_key=payload.tenant_key,
