@@ -12,7 +12,12 @@ from sqlalchemy import delete, select
 from app.api import webchat_fast
 from app.db import Base, SessionLocal, engine
 from app.main import app
-from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency, begin_webchat_fast_idempotency, compute_request_hash
+from app.services.webchat_fast_idempotency_db import (
+    WebchatFastIdempotency,
+    begin_webchat_fast_idempotency,
+    compute_request_hash,
+    mark_webchat_fast_failed,
+)
 from app.services.webchat_fast_ai_service import WebchatFastReplyResult
 from app.services.webchat_fast_rate_limit import reset_webchat_fast_rate_limit_for_tests
 
@@ -204,6 +209,58 @@ def test_idempotent_fast_reply_returns_same_response(monkeypatch):
     assert second.status_code == 200
     assert calls["generate"] == 1
     assert second.json()["idempotent"] is True
+
+
+def test_retryable_ai_failure_does_not_poison_non_stream_fallback(monkeypatch):
+    calls = {"generate": 0}
+
+    async def fake_generate(**kwargs):
+        calls["generate"] += 1
+        return WebchatFastReplyResult(
+            ok=True,
+            ai_generated=True,
+            reply_source="openclaw_responses",
+            reply="Hi, this is Speedy.",
+            intent="greeting",
+            tracking_number=None,
+            handoff_required=False,
+            handoff_reason=None,
+            recommended_agent_action=None,
+            ticket_creation_queued=False,
+            elapsed_ms=20,
+        )
+
+    request_payload = _payload("client-retryable-ai-invalid")
+    request_hash = compute_request_hash(
+        tenant_key=request_payload["tenant_key"],
+        channel_key=request_payload["channel_key"],
+        session_id=request_payload["session_id"],
+        client_message_id=request_payload["client_message_id"],
+        body=request_payload["body"],
+        recent_context=request_payload["recent_context"],
+    )
+    db = SessionLocal()
+    try:
+        begin = begin_webchat_fast_idempotency(
+            db,
+            tenant_key=request_payload["tenant_key"],
+            session_id=request_payload["session_id"],
+            client_message_id=request_payload["client_message_id"],
+            request_hash=request_hash,
+            owner_request_id="stream-owner",
+        )
+        mark_webchat_fast_failed(db, begin.row, error_code="ai_invalid_output")
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
+
+    response = client.post("/api/webchat/fast-reply", json=request_payload)
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert calls["generate"] == 1
 
 
 def test_non_stream_same_key_different_hash_returns_409(monkeypatch):
