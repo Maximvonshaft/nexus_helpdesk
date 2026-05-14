@@ -234,7 +234,7 @@ class WebchatRateLimitBucket(Base):
     __tablename__ = "webchat_rate_limits"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    bucket_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    bucket_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     window_start: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, index=True)
     request_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)

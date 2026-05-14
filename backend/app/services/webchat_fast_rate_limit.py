@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 from dataclasses import dataclass
 from datetime import timedelta
@@ -79,28 +80,26 @@ def trusted_client_ip(request: Request) -> str:
 
 def _normalized_origin(request: Request) -> str:
     origin = (request.headers.get("origin") or request.headers.get("referer") or "").strip().lower()
-    return origin[:255] if origin else "no-origin"
+    return origin or "no-origin"
 
 
 def _client_fingerprint(request: Request) -> str:
     supplied = (request.headers.get("x-webchat-client-fingerprint") or "").strip()
     if supplied:
-        return supplied[:255]
+        return supplied
     user_agent = (request.headers.get("user-agent") or "unknown-agent").strip()
-    return user_agent[:255]
+    return user_agent
 
 
 def _bucket_key(identity: FastClientIdentity) -> str:
-    return f"fast:{identity.tenant_key or 'default'}:{identity.client_ip}:{identity.origin}:{identity.fingerprint}"
+    raw_identity = "|".join((identity.tenant_key or "default", identity.client_ip, identity.origin, identity.fingerprint))
+    return hashlib.sha256(raw_identity.encode("utf-8")).hexdigest()
 
 
 def _cleanup_expired_rows(db, *, now, window_seconds: int) -> None:
     cutoff = now - timedelta(seconds=max(window_seconds * 10, 600))
     db.execute(
-        text(
-            "DELETE FROM webchat_rate_limits "
-            "WHERE bucket_key LIKE 'fast:%' AND updated_at < :cutoff"
-        ),
+        text("DELETE FROM webchat_rate_limits WHERE updated_at < :cutoff"),
         {"cutoff": cutoff},
     )
 
@@ -140,5 +139,5 @@ def enforce_webchat_fast_rate_limit(request: Request, *, tenant_key: str, sessio
 def reset_webchat_fast_rate_limit_for_tests() -> None:
     get_webchat_fast_settings.cache_clear()
     with db_context() as db:
-        db.execute(text("DELETE FROM webchat_rate_limits WHERE bucket_key LIKE 'fast:%'"))
+        db.execute(text("DELETE FROM webchat_rate_limits"))
         db.flush()

@@ -55,19 +55,20 @@ def upgrade() -> None:
         op.create_table(
             "webchat_rate_limits",
             sa.Column("id", sa.Integer(), primary_key=True),
-            sa.Column("bucket_key", sa.String(length=255), nullable=False),
+            sa.Column("bucket_key", sa.String(length=64), nullable=False),
             sa.Column("window_start", sa.DateTime(timezone=True), nullable=False),
             sa.Column("request_count", sa.Integer(), nullable=False, server_default="0"),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         )
     _dedupe_bucket_keys()
     indexes = _indexes(bind, "webchat_rate_limits")
+    if "ix_webchat_rate_limits_bucket_key" in indexes:
+        op.drop_index("ix_webchat_rate_limits_bucket_key", table_name="webchat_rate_limits")
+        indexes.remove("ix_webchat_rate_limits_bucket_key")
     if "ux_webchat_rate_limits_bucket_key" not in indexes:
         op.create_index("ux_webchat_rate_limits_bucket_key", "webchat_rate_limits", ["bucket_key"], unique=True)
     if "ix_webchat_rate_limits_window_start" not in indexes:
         op.create_index("ix_webchat_rate_limits_window_start", "webchat_rate_limits", ["window_start"], unique=False)
-    if "ix_webchat_rate_limits_bucket_key" not in indexes:
-        op.create_index("ix_webchat_rate_limits_bucket_key", "webchat_rate_limits", ["bucket_key"], unique=False)
 
 
 def downgrade() -> None:
@@ -75,5 +76,10 @@ def downgrade() -> None:
     if "webchat_rate_limits" not in _tables(bind):
         return
     indexes = _indexes(bind, "webchat_rate_limits")
+    if "ix_webchat_rate_limits_window_start" in indexes:
+        op.drop_index("ix_webchat_rate_limits_window_start", table_name="webchat_rate_limits")
+    if "ix_webchat_rate_limits_bucket_key" in indexes:
+        op.drop_index("ix_webchat_rate_limits_bucket_key", table_name="webchat_rate_limits")
     if "ux_webchat_rate_limits_bucket_key" in indexes:
         op.drop_index("ux_webchat_rate_limits_bucket_key", table_name="webchat_rate_limits")
+    op.drop_table("webchat_rate_limits")
