@@ -202,40 +202,41 @@ async def call_openclaw_responses_stream(
     headers = _headers(token=token, session_key=session_key, request_id=request_id)
     started = time.monotonic()
     try:
-        async with _stream_client(settings).stream(
-            "POST",
-            settings.openclaw_responses_stream_url,
-            headers=headers,
-            content=json.dumps(body).encode("utf-8"),
-        ) as response:
-            if response.status_code == 404:
-                raise OpenClawResponsesError("OpenClaw responses endpoint is unavailable", status_code=response.status_code)
-            if response.status_code in {401, 403}:
-                raise OpenClawResponsesError("OpenClaw responses authentication failed", status_code=response.status_code)
-            if response.status_code >= 400:
-                raise OpenClawResponsesError(f"OpenClaw responses returned HTTP {response.status_code}", status_code=response.status_code)
-            buffer = ""
-            async for chunk in response.aiter_text():
-                if not chunk:
-                    continue
-                buffer += chunk
-                while "\n\n" in buffer:
-                    block, buffer = buffer.split("\n\n", 1)
-                    if block.lstrip().startswith(("event:", "data:")):
-                        for event in adapter.feed_sse_block(block):
+        async with asyncio.timeout(settings.openclaw_stream_total_timeout_ms / 1000):
+            async with _stream_client(settings).stream(
+                "POST",
+                settings.openclaw_responses_stream_url,
+                headers=headers,
+                content=json.dumps(body).encode("utf-8"),
+            ) as response:
+                if response.status_code == 404:
+                    raise OpenClawResponsesError("OpenClaw responses endpoint is unavailable", status_code=response.status_code)
+                if response.status_code in {401, 403}:
+                    raise OpenClawResponsesError("OpenClaw responses authentication failed", status_code=response.status_code)
+                if response.status_code >= 400:
+                    raise OpenClawResponsesError(f"OpenClaw responses returned HTTP {response.status_code}", status_code=response.status_code)
+                buffer = ""
+                async for chunk in response.aiter_text():
+                    if not chunk:
+                        continue
+                    buffer += chunk
+                    while "\n\n" in buffer:
+                        block, buffer = buffer.split("\n\n", 1)
+                        if block.lstrip().startswith(("event:", "data:")):
+                            for event in adapter.feed_sse_block(block):
+                                yield event
+                        else:
+                            for line in block.splitlines():
+                                for event in adapter.feed_json_line(line):
+                                    yield event
+                if buffer.strip():
+                    if buffer.lstrip().startswith(("event:", "data:")):
+                        for event in adapter.feed_sse_block(buffer):
                             yield event
                     else:
-                        for line in block.splitlines():
+                        for line in buffer.splitlines():
                             for event in adapter.feed_json_line(line):
                                 yield event
-            if buffer.strip():
-                if buffer.lstrip().startswith(("event:", "data:")):
-                    for event in adapter.feed_sse_block(buffer):
-                        yield event
-                else:
-                    for line in buffer.splitlines():
-                        for event in adapter.feed_json_line(line):
-                            yield event
     except OpenClawResponsesError:
         raise
     except (httpx.TimeoutException, httpx.NetworkError, asyncio.TimeoutError) as exc:
@@ -244,4 +245,5 @@ async def call_openclaw_responses_stream(
             "webchat_openclaw_responses_stream_unavailable",
             extra={"event_payload": {"request_id": request_id, "elapsed_ms": elapsed_ms, "url": _safe_url_for_log(str(settings.openclaw_responses_stream_url)), "error_type": type(exc).__name__}},
         )
-        yield StreamError(error_code="stream_transport_error", message=None)
+        error_code = "stream_total_timeout" if isinstance(exc, TimeoutError) else "stream_transport_error"
+        yield StreamError(error_code=error_code, message=None)
