@@ -63,6 +63,7 @@ def _settings(enabled: bool = True):
         stream_enabled=enabled,
         stream_require_accept=True,
         openclaw_responses_agent_id="webchat-fast",
+        is_openclaw_stream_configured=True,
     )
 
 
@@ -178,9 +179,7 @@ def test_partial_delta_then_invalid_final_marks_failed_without_ticket_or_handoff
     )
 
     assert response.status_code == 200
-    assert "event: reply_delta" in response.text
-    assert '"text":"Hello there, I' in response.text
-    assert '"text":" can help with that."' in response.text or '"text":" help with that."' in response.text
+    assert "event: reply_delta" not in response.text
     assert "event: error" in response.text
     assert "ai_invalid_output" in response.text
     assert "event: final" not in response.text

@@ -467,6 +467,7 @@
     }
 
     streamApi('/api/webchat/fast-reply/stream', requestPayload, timeoutMs, function (eventName, data) {
+      if (!eventName || (eventName !== 'reply_delta' && eventName !== 'replay' && eventName !== 'final' && eventName !== 'error')) return;
       if (eventName === 'reply_delta' && data && typeof data.text === 'string' && data.text) {
         hideTyping();
         sawVisibleStreamText = true;

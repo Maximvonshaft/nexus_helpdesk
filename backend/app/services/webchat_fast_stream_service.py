@@ -198,13 +198,7 @@ async def stream_webchat_fast_reply_events(
             if isinstance(event, Completed):
                 last_completed = event
                 continue
-            delta = extractor.feed_event(event)
-            if delta and delta.text:
-                yield sse_event("reply_delta", {"text": delta.text})
-
-        flush = extractor.flush()
-        if flush and flush.text:
-            yield sse_event("reply_delta", {"text": flush.text})
+            extractor.feed_event(event)
 
         final_input: dict[str, Any] | str | None = None
         if last_completed is not None:
@@ -228,6 +222,8 @@ async def stream_webchat_fast_reply_events(
         _mark_done(begin.row_id, {**final, "reply": parsed.reply})
         record_fast_reply_metric(status="ok", intent=parsed.intent, handoff_required=parsed.handoff_required, elapsed_ms=elapsed_ms)
         yield sse_event("final", final)
+        if parsed.reply:
+            yield sse_event("reply_delta", {"text": parsed.reply})
     except StreamingReplyAbort as exc:
         _mark_failed(begin.row_id, exc.error_code)
         record_fast_reply_metric(status=exc.error_code, elapsed_ms=int((time.monotonic() - started) * 1000))

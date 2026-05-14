@@ -12,15 +12,27 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api import webchat_fast
+from app.db import Base, SessionLocal, engine
 from app.main import app
 from app.services import webchat_fast_stream_service
+from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency
 from app.services.webchat_openclaw_stream_adapter import Completed, ContentDelta
 
 pytestmark = pytest.mark.fast_lane_v2_2_2
 
 
+def setup_function():
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        db.query(WebchatFastIdempotency).delete()
+        db.commit()
+    finally:
+        db.close()
+
+
 def _settings():
-    return SimpleNamespace(stream_enabled=True, stream_require_accept=True, openclaw_responses_agent_id='webchat-fast')
+    return SimpleNamespace(stream_enabled=True, stream_require_accept=True, openclaw_responses_agent_id='webchat-fast', is_openclaw_stream_configured=True)
 
 
 def _payload() -> dict:
@@ -34,7 +46,7 @@ def _payload() -> dict:
     }
 
 
-def test_first_reply_delta_is_observable_before_final(monkeypatch):
+def test_reply_delta_is_not_observable_before_final(monkeypatch):
     async def fake_call_stream(**kwargs):
         yield ContentDelta('{"reply":"Hello')
         await asyncio.sleep(0.05)
@@ -51,18 +63,11 @@ def test_first_reply_delta_is_observable_before_final(monkeypatch):
         async with AsyncClient(transport=transport, base_url='http://testserver') as client:
             async with client.stream('POST', '/api/webchat/fast-reply/stream', json=_payload(), headers={'Accept': 'text/event-stream'}) as response:
                 assert response.status_code == 200
-                seen_reply_delta = False
-                seen_final = False
-                order = []
+                body = ''
                 async for chunk in response.aiter_text():
-                    if 'event: reply_delta' in chunk and 'reply_delta' not in order:
-                        order.append('reply_delta')
-                        seen_reply_delta = True
-                    if 'event: final' in chunk and 'final' not in order:
-                        order.append('final')
-                        seen_final = True
-                assert seen_reply_delta is True
-                assert seen_final is True
-                assert order.index('reply_delta') < order.index('final')
+                    body += chunk
+                assert 'event: reply_delta' in body
+                assert 'event: final' in body
+                assert body.index('event: final') < body.index('event: reply_delta')
 
     asyncio.run(run())
