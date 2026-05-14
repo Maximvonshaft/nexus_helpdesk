@@ -60,6 +60,60 @@ def test_widget_keeps_legacy_rollback_path():
     assert "sendLegacyMessage" in source
 
 
+def test_widget_has_speedaf_official_support_ui_copy_and_testids():
+    source = _widget_source()
+
+    required_copy = [
+        "Chat with Speedaf",
+        "Speedaf Support",
+        "AI support · fast reply",
+        "Online",
+        "Track my parcel",
+        "Redelivery",
+        "Refuse delivery",
+        "Delivery problem",
+        "Talk to human",
+        "Type tracking number or message...",
+        "Do not share passwords or payment codes.",
+        "WebCall",
+        "Parcel Status Card",
+        "Redelivery Card",
+        "Refuse Delivery Card",
+        "Human Handoff Card",
+        "Network error / retry",
+        "AI unavailable",
+    ]
+    for needle in required_copy:
+        assert needle in source
+
+    required_testids = [
+        "speedaf-webchat-launcher",
+        "speedaf-webchat-panel",
+        "speedaf-webchat-header",
+        "speedaf-webchat-online-badge",
+        "speedaf-webchat-avatar",
+        "speedaf-webchat-quick-actions",
+        "speedaf-webchat-action-track",
+        "speedaf-webchat-action-redelivery",
+        "speedaf-webchat-action-refuse",
+        "speedaf-webchat-action-problem",
+        "speedaf-webchat-action-human",
+        "speedaf-webchat-input",
+        "speedaf-webchat-attachment",
+        "speedaf-webchat-send",
+        "speedaf-webchat-safety-notice",
+        "speedaf-webcall-cta",
+        "speedaf-parcel-status-card",
+        "speedaf-redelivery-card",
+        "speedaf-refuse-card",
+        "speedaf-handoff-card",
+        "speedaf-network-error",
+        "speedaf-ai-unavailable",
+    ]
+    for needle in required_testids:
+        assert needle in source
+
+
 def test_widget_does_not_expose_openclaw_gateway_details():
     source = _widget_source().lower()
 
