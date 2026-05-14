@@ -73,6 +73,16 @@ from .sla_service import (
 from .state_machine import is_terminal, requires_note, validate_transition
 
 
+DEFAULT_TICKET_DETAIL_LIMIT = 50
+MAX_TICKET_DETAIL_LIMIT = 100
+
+
+def clamp_ticket_detail_limit(limit: int | None, *, default: int = DEFAULT_TICKET_DETAIL_LIMIT) -> int:
+    if limit is None:
+        return default
+    return max(1, min(int(limit), MAX_TICKET_DETAIL_LIMIT))
+
+
 def generate_ticket_no() -> str:
     stamp = utc_now().strftime("%Y%m%d%H%M%S")
     suffix = uuid.uuid4().hex[:6].upper()
@@ -101,11 +111,6 @@ def get_ticket_or_404(db: Session, ticket_id: int) -> Ticket:
             joinedload(Ticket.customer),
             joinedload(Ticket.assignee),
             joinedload(Ticket.team),
-            joinedload(Ticket.comments),
-            joinedload(Ticket.internal_notes),
-            joinedload(Ticket.attachments),
-            joinedload(Ticket.outbound_messages),
-            joinedload(Ticket.ai_intakes),
         )
         .filter(Ticket.id == ticket_id)
         .first()

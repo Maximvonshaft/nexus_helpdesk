@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..enums import NoteVisibility, SourceChannel
-from ..models import OpenClawTranscriptMessage, Ticket, Tag, TicketTag, TicketOutboundMessage
+from ..models import OpenClawTranscriptMessage, Ticket, Tag, TicketTag, TicketOutboundMessage, TicketComment, TicketInternalNote, TicketAttachment, TicketAIIntake, OpenClawAttachmentReference
 from ..schemas import (
     AIIntakeCreate,
     AIIntakeRead,
@@ -37,11 +37,13 @@ from ..schemas import (
     MarketBulletinRead,
 )
 from ..services.ticket_service import (
+    MAX_TICKET_DETAIL_LIMIT,
     add_ai_intake,
     add_attachment,
     add_comment,
     add_internal_note,
     assign_ticket,
+    clamp_ticket_detail_limit,
     change_status,
     create_ticket,
     escalate_ticket,
@@ -99,9 +101,34 @@ def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
     }
 
 
-def _serialize_ticket(ticket: Ticket, db: Session) -> TicketRead:
+def _serialize_ticket(
+    ticket: Ticket,
+    db: Session,
+    *,
+    comments_limit: int | None = None,
+    internal_notes_limit: int | None = None,
+    attachments_limit: int | None = None,
+    outbound_messages_limit: int | None = None,
+    ai_intakes_limit: int | None = None,
+    openclaw_transcript_limit: int | None = 50,
+    openclaw_attachment_references_limit: int | None = 25,
+) -> TicketRead:
+    comments_limit = clamp_ticket_detail_limit(comments_limit)
+    internal_notes_limit = clamp_ticket_detail_limit(internal_notes_limit)
+    attachments_limit = clamp_ticket_detail_limit(attachments_limit)
+    outbound_messages_limit = clamp_ticket_detail_limit(outbound_messages_limit)
+    ai_intakes_limit = clamp_ticket_detail_limit(ai_intakes_limit)
+    openclaw_transcript_limit = clamp_ticket_detail_limit(openclaw_transcript_limit, default=50)
+    openclaw_attachment_references_limit = clamp_ticket_detail_limit(openclaw_attachment_references_limit, default=25)
+
+    comment_rows = db.query(TicketComment).filter(TicketComment.ticket_id == ticket.id).order_by(TicketComment.created_at.desc(), TicketComment.id.desc()).limit(comments_limit).all()
+    note_rows = db.query(TicketInternalNote).filter(TicketInternalNote.ticket_id == ticket.id).order_by(TicketInternalNote.created_at.desc(), TicketInternalNote.id.desc()).limit(internal_notes_limit).all()
+    attachment_rows = db.query(TicketAttachment).filter(TicketAttachment.ticket_id == ticket.id).order_by(TicketAttachment.created_at.desc(), TicketAttachment.id.desc()).limit(attachments_limit).all()
+    outbound_rows = db.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).order_by(TicketOutboundMessage.created_at.desc(), TicketOutboundMessage.id.desc()).limit(outbound_messages_limit).all()
+    ai_intake_rows = db.query(TicketAIIntake).filter(TicketAIIntake.ticket_id == ticket.id).order_by(TicketAIIntake.created_at.desc(), TicketAIIntake.id.desc()).limit(ai_intakes_limit).all()
     tag_rows = db.query(Tag).join(TicketTag, TicketTag.tag_id == Tag.id).filter(TicketTag.ticket_id == ticket.id).all()
-    openclaw_rows = db.query(OpenClawTranscriptMessage).filter(OpenClawTranscriptMessage.ticket_id == ticket.id).order_by(OpenClawTranscriptMessage.created_at.desc()).limit(50).all()
+    openclaw_rows = db.query(OpenClawTranscriptMessage).filter(OpenClawTranscriptMessage.ticket_id == ticket.id).order_by(OpenClawTranscriptMessage.created_at.desc(), OpenClawTranscriptMessage.id.desc()).limit(openclaw_transcript_limit).all()
+    openclaw_attachment_rows = db.query(OpenClawAttachmentReference).filter(OpenClawAttachmentReference.ticket_id == ticket.id).order_by(OpenClawAttachmentReference.created_at.desc(), OpenClawAttachmentReference.id.desc()).limit(openclaw_attachment_references_limit).all()
     return TicketRead(
         id=ticket.id,
         ticket_no=ticket.ticket_no,
@@ -148,14 +175,14 @@ def _serialize_ticket(ticket: Ticket, db: Session) -> TicketRead:
         resolution_category=ticket.resolution_category,
         created_at=ticket.created_at,
         updated_at=ticket.updated_at,
-        comments=[CommentRead.model_validate(x) for x in ticket.comments],
-        internal_notes=[InternalNoteRead.model_validate(x) for x in ticket.internal_notes],
-        attachments=[AttachmentRead.model_validate(x) for x in ticket.attachments],
-        outbound_messages=[OutboundMessageRead.model_validate(x) for x in ticket.outbound_messages],
-        ai_intakes=[AIIntakeRead.model_validate(x) for x in ticket.ai_intakes],
+        comments=[CommentRead.model_validate(x) for x in reversed(comment_rows)],
+        internal_notes=[InternalNoteRead.model_validate(x) for x in reversed(note_rows)],
+        attachments=[AttachmentRead.model_validate(x) for x in reversed(attachment_rows)],
+        outbound_messages=[OutboundMessageRead.model_validate(x) for x in reversed(outbound_rows)],
+        ai_intakes=[AIIntakeRead.model_validate(x) for x in reversed(ai_intake_rows)],
         openclaw_conversation=OpenClawConversationRead.model_validate(ticket.openclaw_link) if ticket.openclaw_link else None,
         openclaw_transcript=[OpenClawTranscriptRead.model_validate(x) for x in reversed(openclaw_rows)],
-        openclaw_attachment_references=[OpenClawAttachmentReferenceRead.model_validate(x) for x in ticket.openclaw_attachment_references],
+        openclaw_attachment_references=[OpenClawAttachmentReferenceRead.model_validate(x) for x in reversed(openclaw_attachment_rows)],
         active_market_bulletins=[MarketBulletinRead.model_validate(x) for x in list_active_bulletins(db, market_id=ticket.market_id, country_code=ticket.country_code, channel=ticket.preferred_reply_channel or (ticket.source_channel.value if ticket.source_channel else None))],
     )
 
@@ -218,10 +245,42 @@ def list_tickets_endpoint(
 
 
 @router.get("/{ticket_id}", response_model=TicketRead)
-def get_ticket_endpoint(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def get_ticket_endpoint(
+    ticket_id: int,
+    comments_limit: int = 50,
+    internal_notes_limit: int = 50,
+    attachments_limit: int = 50,
+    outbound_messages_limit: int = 50,
+    ai_intakes_limit: int = 50,
+    openclaw_transcript_limit: int = 50,
+    openclaw_attachment_references_limit: int = 25,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    if hasattr(comments_limit, "query"):
+        db = comments_limit
+        current_user = internal_notes_limit
+        comments_limit = 50
+        internal_notes_limit = 50
+        attachments_limit = 50
+        outbound_messages_limit = 50
+        ai_intakes_limit = 50
+        openclaw_transcript_limit = 50
+        openclaw_attachment_references_limit = 25
+
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
-    return _serialize_ticket(ticket, db)
+    return _serialize_ticket(
+        ticket,
+        db,
+        comments_limit=comments_limit,
+        internal_notes_limit=internal_notes_limit,
+        attachments_limit=attachments_limit,
+        outbound_messages_limit=outbound_messages_limit,
+        ai_intakes_limit=ai_intakes_limit,
+        openclaw_transcript_limit=openclaw_transcript_limit,
+        openclaw_attachment_references_limit=openclaw_attachment_references_limit,
+    )
 
 
 @router.patch("/{ticket_id}", response_model=TicketRead)
