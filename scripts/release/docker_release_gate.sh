@@ -32,7 +32,8 @@ POSTGRES_DB_GATE="${DOCKER_GATE_POSTGRES_DB:-nexusdesk_release_gate}"
 DATABASE_URL_GATE="postgresql+psycopg://${POSTGRES_USER_GATE}:${POSTGRES_PASSWORD_GATE}@postgres:5432/${POSTGRES_DB_GATE}"
 TMP_DIR="$(mktemp -d)"
 OVERRIDE_FILE="$TMP_DIR/docker-release-gate.override.yml"
-RESOLVED_CONFIG="$OUT/command_outputs/11_docker_resolved_config.yml"
+RAW_CONFIG="$TMP_DIR/docker-resolved-config.raw.yml"
+RESOLVED_CONFIG="$OUT/command_outputs/11_docker_resolved_config.redacted.yml"
 SANITIZE='s/(token|secret|password|authorization|cookie|api[_-]?key|database_url)([=: ]+)[^ ]+/\1\2[REDACTED]/Ig'
 
 cleanup() {
@@ -116,19 +117,25 @@ write_override
 {
   echo "===== docker compose config validation ====="
   COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config --quiet
-  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config > "$RESOLVED_CONFIG"
-  echo "Resolved config stored at $RESOLVED_CONFIG with sensitive values redacted in this log."
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config > "$RAW_CONFIG"
+  sed -E "$SANITIZE" "$RAW_CONFIG" > "$RESOLVED_CONFIG"
+  echo "Redacted resolved config stored at $RESOLVED_CONFIG. Raw config is kept only in a temporary directory and removed on exit."
   echo "===== docker compose resolved service list ====="
   COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config --services
   echo "===== safety assertion: app must use isolated app port and must not expose production app port 18081 ====="
-  grep -q "$APP_PORT" "$RESOLVED_CONFIG"
-  if grep -q "18081" "$RESOLVED_CONFIG"; then
+  grep -q "$APP_PORT" "$RAW_CONFIG"
+  if grep -q "18081" "$RAW_CONFIG"; then
     echo "Refusing config that still references production app port 18081" >&2
     exit 2
   fi
   echo "===== safety assertion: resolved config must point app/workers to isolated compose postgres ====="
-  grep -q "postgresql+psycopg://" "$RESOLVED_CONFIG"
-  grep -q "@postgres:5432/${POSTGRES_DB_GATE}" "$RESOLVED_CONFIG"
+  grep -q "postgresql+psycopg://" "$RAW_CONFIG"
+  grep -q "@postgres:5432/${POSTGRES_DB_GATE}" "$RAW_CONFIG"
+  echo "===== safety assertion: redacted evidence must not contain obvious secret values ====="
+  if grep -Ei "(token|secret|password|authorization|cookie|api[_-]?key|database_url):[[:space:]]*[^[]" "$RESOLVED_CONFIG" >/dev/null; then
+    echo "Refusing to keep unresolved secret-like values in redacted config evidence" >&2
+    exit 2
+  fi
 } 2>&1 | sed -E "$SANITIZE" | tee "$OUT/command_outputs/11_docker_config_validation.log"
 
 if [ "$RUN_STACK" != "1" ]; then
