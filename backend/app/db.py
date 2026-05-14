@@ -34,6 +34,24 @@ def _slow_query_ms() -> float:
         return 500.0
 
 
+def _normalize_database_url(database_url: str) -> str:
+    """Normalize PostgreSQL URLs to the repo-supported psycopg v3 driver.
+
+    SQLAlchemy treats bare `postgresql://` and legacy Heroku-style `postgres://`
+    URLs as non-psycopg-v3 dialects. This repository ships `psycopg[binary]`, so
+    gates and deployments should work with either shorthand without requiring the
+    old psycopg2 package.
+
+    Keep `hide_password=False`; using `str(URL)` would render passwords as `***`
+    and silently break real database connections.
+    """
+    parsed = make_url(database_url)
+    if parsed.drivername in {'postgresql', 'postgres'}:
+        return parsed.set(drivername='postgresql+psycopg').render_as_string(hide_password=False)
+    return database_url
+
+
+DATABASE_URL = _normalize_database_url(DATABASE_URL)
 db_url = make_url(DATABASE_URL)
 connect_args = {"check_same_thread": False, "timeout": 30} if db_url.drivername.startswith("sqlite") else {}
 engine_kwargs = {"future": True, "echo": settings.database_echo, "pool_pre_ping": True}

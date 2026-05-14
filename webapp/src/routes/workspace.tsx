@@ -41,6 +41,11 @@ function timelineBody(item: Record<string, unknown>) {
   )
 }
 
+function timelineItemKey(item: Record<string, unknown>, index: number) {
+  const stableValue = item.id || item.created_at || item.event_type || item.source_type || index
+  return `timeline-${String(stableValue)}-${index}`
+}
+
 function SyncCountdown({ onRefresh }: { onRefresh: () => void }) {
   const [countdown, setCountdown] = useState(10)
   const timerRef = useRef<number | null>(null)
@@ -366,8 +371,8 @@ function WorkspacePage() {
                       <CardHeader title="客户消息记录" subtitle="客服处理时重点看这一段，按时间顺序看清客户说了什么。" />
                       <CardBody>
                         <div className="timeline">
-                          {timelineItems.map((item) => (
-                            <div key={String(item.id || Math.random())} className="message" data-role={String(item.source_type) === 'comment' ? 'user' : 'agent'}>
+                          {timelineItems.map((item, index) => (
+                            <div key={timelineItemKey(item, index)} className="message" data-role={String(item.source_type) === 'comment' ? 'user' : 'agent'}>
                               <div className="message-head">
                                 <strong>{timelineTitle(item)}</strong>
                                 <span>{formatDateTime(String(item.created_at || ''))}</span>
