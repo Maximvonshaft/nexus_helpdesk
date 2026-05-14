@@ -200,6 +200,21 @@ class StreamingReplyExtractor:
         self._emitted += release
         return ReplyDelta(release)
 
+    def inspect_text(self, text: str) -> None:
+        if self._aborted:
+            raise StreamingReplyAbort("ai_safety_abort")
+        if not text:
+            return
+        self._buffer += text
+        visible = self._decode_reply_prefix()
+        if _has_forbidden(visible):
+            self._aborted = True
+            raise StreamingReplyAbort("ai_safety_abort")
+        visible_prefix = self._emitted + self._holdback
+        if not visible.startswith(visible_prefix):
+            self._aborted = True
+            raise StreamingReplyAbort("ai_invalid_output")
+
     def flush(self) -> ReplyDelta | None:
         if self._holdback:
             if _has_forbidden(self._holdback):
@@ -236,7 +251,8 @@ class StreamingReplyExtractor:
             self._aborted = True
             raise StreamingReplyAbort(event.error_code)
         if isinstance(event, ContentDelta):
-            return self.feed_text(event.text)
+            self.inspect_text(event.text)
+            return None
         if isinstance(event, Completed):
             return None
         return None
