@@ -4,7 +4,7 @@ import asyncio
 
 from app.services import webchat_openclaw_responses_client
 from app.services.webchat_fast_config import WebchatFastSettings
-from app.services.webchat_openclaw_responses_client import build_responses_request_body
+from app.services.webchat_openclaw_responses_client import build_responses_request_body, close_openclaw_clients
 
 
 def _settings(**overrides) -> WebchatFastSettings:
@@ -124,3 +124,28 @@ def test_stream_total_timeout_yields_deterministic_error(monkeypatch):
     events = asyncio.run(run())
     assert len(events) == 1
     assert events[0].error_code == "stream_total_timeout"
+
+
+def test_close_openclaw_clients_clears_cached_clients():
+    class FakeAsyncClient:
+        def __init__(self):
+            self.closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    async def run():
+        client = FakeAsyncClient()
+        stream_client = FakeAsyncClient()
+        webchat_openclaw_responses_client._CLIENT = client
+        webchat_openclaw_responses_client._CLIENT_KEY = ("a", 1, 1)
+        webchat_openclaw_responses_client._STREAM_CLIENT = stream_client
+        webchat_openclaw_responses_client._STREAM_CLIENT_KEY = ("b", 2, 2)
+        await close_openclaw_clients()
+        return client, stream_client
+
+    client, stream_client = asyncio.run(run())
+    assert client.closed is True
+    assert stream_client.closed is True
+    assert webchat_openclaw_responses_client._CLIENT is None
+    assert webchat_openclaw_responses_client._STREAM_CLIENT is None

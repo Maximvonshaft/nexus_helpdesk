@@ -44,6 +44,7 @@ def _client(settings: WebchatFastSettings) -> httpx.AsyncClient:
     global _CLIENT, _CLIENT_KEY
     key = (settings.openclaw_responses_url, settings.openclaw_pool_max_connections, settings.openclaw_pool_max_keepalive)
     if _CLIENT is None or _CLIENT_KEY != key:
+        previous = _CLIENT
         timeout = httpx.Timeout(
             connect=settings.openclaw_connect_timeout_ms / 1000,
             read=settings.openclaw_read_timeout_ms / 1000,
@@ -56,6 +57,8 @@ def _client(settings: WebchatFastSettings) -> httpx.AsyncClient:
         )
         _CLIENT = httpx.AsyncClient(timeout=timeout, limits=limits)
         _CLIENT_KEY = key
+        if previous is not None:
+            asyncio.get_running_loop().create_task(previous.aclose())
     return _CLIENT
 
 
@@ -67,6 +70,7 @@ def _stream_client(settings: WebchatFastSettings) -> httpx.AsyncClient:
     global _STREAM_CLIENT, _STREAM_CLIENT_KEY
     key = (settings.openclaw_responses_stream_url, settings.openclaw_pool_max_connections, settings.openclaw_pool_max_keepalive)
     if _STREAM_CLIENT is None or _STREAM_CLIENT_KEY != key:
+        previous = _STREAM_CLIENT
         timeout = httpx.Timeout(
             connect=settings.openclaw_stream_connect_timeout_ms / 1000,
             read=settings.openclaw_stream_read_timeout_ms / 1000,
@@ -79,7 +83,20 @@ def _stream_client(settings: WebchatFastSettings) -> httpx.AsyncClient:
         )
         _STREAM_CLIENT = httpx.AsyncClient(timeout=timeout, limits=limits)
         _STREAM_CLIENT_KEY = key
+        if previous is not None:
+            asyncio.get_running_loop().create_task(previous.aclose())
     return _STREAM_CLIENT
+
+
+async def close_openclaw_clients() -> None:
+    global _CLIENT, _CLIENT_KEY, _STREAM_CLIENT, _STREAM_CLIENT_KEY
+    to_close = [client for client in (_CLIENT, _STREAM_CLIENT) if client is not None]
+    _CLIENT = None
+    _CLIENT_KEY = None
+    _STREAM_CLIENT = None
+    _STREAM_CLIENT_KEY = None
+    for client in to_close:
+        await client.aclose()
 
 
 def _validate_stream_ready(settings: WebchatFastSettings) -> str:
