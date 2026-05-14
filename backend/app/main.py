@@ -33,12 +33,18 @@ from .api.webchat_events import router as webchat_events_router
 from .api.webchat_voice import router as webchat_voice_router
 from .db import engine, reset_current_request_id, set_current_request_id
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
+from .services.webchat_openclaw_responses_client import close_openclaw_clients
 from .settings import get_settings
 from .webchat_voice_config import is_webchat_voice_path, load_webchat_voice_runtime_config, webchat_voice_connect_sources
 
 settings = get_settings()
 configure_logging(get_settings().log_json)
 app = FastAPI(title='NexusDesk Helpdesk', version='20.4.0-round-b')
+
+
+@app.on_event('shutdown')
+async def shutdown_openclaw_clients() -> None:
+    await close_openclaw_clients()
 
 app.add_middleware(
     CORSMiddleware,
