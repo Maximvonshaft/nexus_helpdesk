@@ -32,6 +32,7 @@ POSTGRES_PASSWORD_GATE="${DOCKER_GATE_POSTGRES_PASSWORD:-nexusdesk_gate_password
 POSTGRES_DB_GATE="${DOCKER_GATE_POSTGRES_DB:-nexusdesk_release_gate}"
 DATABASE_URL_GATE="postgresql+psycopg://${POSTGRES_USER_GATE}:${POSTGRES_PASSWORD_GATE}@postgres:5432/${POSTGRES_DB_GATE}"
 TMP_DIR="$(mktemp -d)"
+GATE_COMPOSE_FILE="$TMP_DIR/docker-compose.server.gate.yml"
 OVERRIDE_FILE="$TMP_DIR/docker-release-gate.override.yml"
 RAW_CONFIG="$TMP_DIR/docker-resolved-config.raw.yml"
 RESOLVED_CONFIG="$OUT/command_outputs/11_docker_resolved_config.redacted.yml"
@@ -39,11 +40,18 @@ SANITIZE='s/(token|secret|password|authorization|cookie|api[_-]?key|database_url
 
 cleanup() {
   if [ "${CLEANUP:-1}" = "1" ] && [ "$RUN_STACK" = "1" ]; then
-    COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" --profile edge-nginx down --remove-orphans || true
+    COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$GATE_COMPOSE_FILE" -f "$OVERRIDE_FILE" --profile edge-nginx down --remove-orphans || true
   fi
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
+
+write_gate_compose() {
+  sed \
+    -e "s#127\.0\.0\.1:18081:8080#127.0.0.1:${APP_PORT}:8080#g" \
+    -e "s#\"80:80\"#\"127.0.0.1:${NGINX_PORT}:80\"#g" \
+    "$COMPOSE_FILE" > "$GATE_COMPOSE_FILE"
+}
 
 write_override() {
   cat > "$OVERRIDE_FILE" <<YAML
@@ -59,8 +67,6 @@ services:
       AUTO_INIT_DB: "false"
       SEED_DEMO_DATA: "false"
       DATABASE_URL: ${DATABASE_URL_GATE}
-    ports:
-      - "127.0.0.1:${APP_PORT}:8080"
   worker-outbound:
     environment:
       APP_ENV: staging
@@ -93,12 +99,10 @@ services:
     environment:
       APP_ENV: staging
       DATABASE_URL: ${DATABASE_URL_GATE}
-  nginx:
-    ports:
-      - "127.0.0.1:${NGINX_PORT}:80"
 YAML
 }
 
+write_gate_compose
 write_override
 
 {
@@ -108,6 +112,7 @@ write_override
   docker --version
   docker compose version
   echo "COMPOSE_FILE=$COMPOSE_FILE"
+  echo "GATE_COMPOSE_FILE=$GATE_COMPOSE_FILE"
   echo "COMPOSE_PROJECT_NAME=$PROJECT_NAME"
   echo "DOCKER_GATE_RUN_STACK=$RUN_STACK"
   echo "DOCKER_GATE_APP_PORT=$APP_PORT"
@@ -117,12 +122,12 @@ write_override
 
 {
   echo "===== docker compose config validation ====="
-  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config --quiet
-  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config > "$RAW_CONFIG"
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$GATE_COMPOSE_FILE" -f "$OVERRIDE_FILE" config --quiet
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$GATE_COMPOSE_FILE" -f "$OVERRIDE_FILE" config > "$RAW_CONFIG"
   sed -E "$SANITIZE" "$RAW_CONFIG" > "$RESOLVED_CONFIG"
   echo "Redacted resolved config stored at $RESOLVED_CONFIG. Raw config is kept only in a temporary directory and removed on exit."
   echo "===== docker compose resolved service list ====="
-  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config --services
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$GATE_COMPOSE_FILE" -f "$OVERRIDE_FILE" config --services
   echo "===== safety assertion: app must use isolated app host port and must not bind production app host port 18081 ====="
   grep -Eq "published:[[:space:]]*\"?${APP_PORT}\"?|127\.0\.0\.1:${APP_PORT}:8080" "$RAW_CONFIG"
   if grep -Eq "published:[[:space:]]*\"?18081\"?|127\.0\.0\.1:18081:8080|0\.0\.0\.0:18081:8080" "$RAW_CONFIG"; then
@@ -145,7 +150,7 @@ if [ "$RUN_STACK" != "1" ]; then
     echo "Reason: server compose file is production-oriented and must not be started from a release gate by accident."
     echo "To run isolated staging stack evidence, set:"
     echo "  DOCKER_GATE_RUN_STACK=1 DOCKER_GATE_CONFIRM=non_production"
-    echo "Runtime gate forces DATABASE_URL to the isolated compose postgres service, not .env.prod."
+    echo "Runtime gate uses a temporary gate compose file with isolated host ports and forced DATABASE_URL."
     echo "Optional isolated ports:"
     echo "  DOCKER_GATE_APP_PORT=$APP_PORT DOCKER_GATE_NGINX_PORT=$NGINX_PORT"
   } | tee "$OUT/command_outputs/11_docker_stack_skipped.log"
@@ -167,14 +172,14 @@ esac
 
 {
   echo "===== docker compose build ====="
-  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" build
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$GATE_COMPOSE_FILE" -f "$OVERRIDE_FILE" build
   echo "===== start isolated postgres ====="
-  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" up -d postgres
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$GATE_COMPOSE_FILE" -f "$OVERRIDE_FILE" up -d postgres
   echo "===== alembic upgrade head against isolated postgres ====="
-  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" run --rm app alembic upgrade head
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$GATE_COMPOSE_FILE" -f "$OVERRIDE_FILE" run --rm app alembic upgrade head
   echo "===== up app and workers on isolated project/ports ====="
-  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" up -d app worker-background worker-handoff-snapshot worker-webchat-ai
-  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" ps
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$GATE_COMPOSE_FILE" -f "$OVERRIDE_FILE" up -d app worker-background worker-handoff-snapshot worker-webchat-ai
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$GATE_COMPOSE_FILE" -f "$OVERRIDE_FILE" ps
   echo "===== healthz ====="
   curl -fsS "http://127.0.0.1:${APP_PORT}/healthz"
   echo
@@ -182,16 +187,16 @@ esac
   curl -fsS "http://127.0.0.1:${APP_PORT}/readyz"
   echo
   echo "===== logs app tail ====="
-  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" logs --tail=200 app | sed -E "$SANITIZE"
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$GATE_COMPOSE_FILE" -f "$OVERRIDE_FILE" logs --tail=200 app | sed -E "$SANITIZE"
   echo "===== logs handoff worker tail ====="
-  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" logs --tail=200 worker-handoff-snapshot | sed -E "$SANITIZE"
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$GATE_COMPOSE_FILE" -f "$OVERRIDE_FILE" logs --tail=200 worker-handoff-snapshot | sed -E "$SANITIZE"
 } 2>&1 | sed -E "$SANITIZE" | tee "$OUT/command_outputs/11_docker_compose_health.log"
 
 if [ "${RUN_NGINX_SMOKE:-0}" = "1" ]; then
   {
     echo "===== start nginx edge profile on isolated port ====="
-    COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" --profile edge-nginx up -d nginx
-    COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" ps nginx
+    COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$GATE_COMPOSE_FILE" -f "$OVERRIDE_FILE" --profile edge-nginx up -d nginx
+    COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$GATE_COMPOSE_FILE" -f "$OVERRIDE_FILE" ps nginx
     echo "===== nginx widget smoke ====="
     curl -fsS "http://127.0.0.1:${NGINX_PORT}/webchat/widget.js" >/tmp/nexusdesk_widget_smoke.js
     wc -c /tmp/nexusdesk_widget_smoke.js
