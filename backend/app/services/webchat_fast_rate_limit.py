@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ipaddress
-from datetime import datetime
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -19,6 +18,28 @@ class FastClientIdentity:
     client_ip: str
     origin: str
     fingerprint: str
+
+
+_RATE_LIMIT_UPSERT_SQL = text(
+    """
+    INSERT INTO webchat_rate_limits (bucket_key, window_start, request_count, updated_at)
+    VALUES (:bucket_key, :window_start, 1, :updated_at)
+    ON CONFLICT(bucket_key) DO UPDATE
+    SET
+        window_start = CASE
+            WHEN webchat_rate_limits.window_start < :window_cutoff THEN excluded.window_start
+            ELSE webchat_rate_limits.window_start
+        END,
+        request_count = CASE
+            WHEN webchat_rate_limits.window_start < :window_cutoff THEN 1
+            ELSE webchat_rate_limits.request_count + 1
+        END,
+        updated_at = excluded.updated_at
+    WHERE webchat_rate_limits.window_start < :window_cutoff
+       OR webchat_rate_limits.request_count < :max_requests
+    RETURNING request_count
+    """
+)
 
 
 def _is_public_ip(value: str) -> bool:
@@ -73,25 +94,8 @@ def _bucket_key(identity: FastClientIdentity) -> str:
     return f"fast:{identity.tenant_key or 'default'}:{identity.client_ip}:{identity.origin}:{identity.fingerprint}"
 
 
-def _ensure_rate_limit_table() -> None:
-    with db_context() as db:
-        db.execute(
-            text(
-                "CREATE TABLE IF NOT EXISTS webchat_rate_limits ("
-                "id INTEGER PRIMARY KEY, "
-                "bucket_key VARCHAR(255) NOT NULL, "
-                "window_start TIMESTAMP NOT NULL, "
-                "request_count INTEGER NOT NULL DEFAULT 0, "
-                "updated_at TIMESTAMP NOT NULL)"
-            )
-        )
-        db.execute(text("CREATE INDEX IF NOT EXISTS ix_webchat_rate_limits_bucket_key ON webchat_rate_limits(bucket_key)"))
-        db.execute(text("CREATE INDEX IF NOT EXISTS ix_webchat_rate_limits_window_start ON webchat_rate_limits(window_start)"))
-        db.flush()
-
-
 def _cleanup_expired_rows(db, *, now, window_seconds: int) -> None:
-    cutoff = now - timedelta(seconds=max(window_seconds * 2, 120))
+    cutoff = now - timedelta(seconds=max(window_seconds * 10, 600))
     db.execute(
         text(
             "DELETE FROM webchat_rate_limits "
@@ -103,46 +107,25 @@ def _cleanup_expired_rows(db, *, now, window_seconds: int) -> None:
 
 def _enforce_database(bucket_key: str, *, window_seconds: int, max_requests: int) -> None:
     now = utc_now()
-    window_start = now - timedelta(seconds=window_seconds)
+    window_cutoff = now - timedelta(seconds=window_seconds)
     with db_context() as db:
-        _cleanup_expired_rows(db, now=now, window_seconds=window_seconds)
-        existing = db.execute(
-            text(
-                "SELECT id, window_start, request_count FROM webchat_rate_limits "
-                "WHERE bucket_key = :bucket_key ORDER BY id DESC LIMIT 1"
-            ),
-            {"bucket_key": bucket_key},
-        ).mappings().first()
-        existing_window_start = existing["window_start"] if existing is not None else None
-        if isinstance(existing_window_start, str):
-            existing_window_start = datetime.fromisoformat(existing_window_start)
-        if existing is None or existing_window_start is None or existing_window_start < window_start:
-            db.execute(
-                text(
-                    "INSERT INTO webchat_rate_limits "
-                    "(bucket_key, window_start, request_count, updated_at) "
-                    "VALUES (:bucket_key, :window_start, 1, :updated_at)"
-                ),
-                {"bucket_key": bucket_key, "window_start": now, "updated_at": now},
-            )
-            db.flush()
-            return
-        if int(existing["request_count"] or 0) >= max_requests:
+        row = db.execute(
+            _RATE_LIMIT_UPSERT_SQL,
+            {
+                "bucket_key": bucket_key,
+                "window_start": now,
+                "updated_at": now,
+                "window_cutoff": window_cutoff,
+                "max_requests": max_requests,
+            },
+        ).first()
+        if row is None:
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="too many webchat fast reply requests")
-        db.execute(
-            text(
-                "UPDATE webchat_rate_limits "
-                "SET request_count = request_count + 1, updated_at = :updated_at "
-                "WHERE id = :id"
-            ),
-            {"id": existing["id"], "updated_at": now},
-        )
-        db.flush()
+        _cleanup_expired_rows(db, now=now, window_seconds=window_seconds)
 
 
 def enforce_webchat_fast_rate_limit(request: Request, *, tenant_key: str, session_id: str) -> None:
     settings = get_webchat_fast_settings()
-    _ensure_rate_limit_table()
     key = _bucket_key(
         FastClientIdentity(
             tenant_key=tenant_key,
@@ -156,7 +139,6 @@ def enforce_webchat_fast_rate_limit(request: Request, *, tenant_key: str, sessio
 
 def reset_webchat_fast_rate_limit_for_tests() -> None:
     get_webchat_fast_settings.cache_clear()
-    _ensure_rate_limit_table()
     with db_context() as db:
         db.execute(text("DELETE FROM webchat_rate_limits WHERE bucket_key LIKE 'fast:%'"))
         db.flush()
