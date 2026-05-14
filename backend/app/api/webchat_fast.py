@@ -125,21 +125,14 @@ def _is_stream_canary_override_allowed(request: Request, settings: WebchatFastSe
 def _is_openclaw_stream_configured(stream_settings: WebchatFastSettings) -> bool:
     """Return whether stream upstream is configured without assuming a concrete settings class.
 
-    Production settings expose `is_openclaw_stream_configured` and remain strict. Some
-    contract tests intentionally replace settings with a lightweight SimpleNamespace to
-    exercise endpoint/stream semantics without real upstream credentials. Those partial
-    objects must not make the public endpoint return a 500 or block contract-level tests
-    before idempotency/rollout behavior is reached.
+    Production/runtime settings expose `is_openclaw_stream_configured` and remain strict.
+    Some contract tests intentionally replace settings with a lightweight SimpleNamespace
+    to exercise endpoint/stream semantics without real upstream credentials. Only those
+    partial objects fall back to the development/test compatibility path.
     """
     explicit = getattr(stream_settings, "is_openclaw_stream_configured", None)
     if explicit is not None:
-        if bool(explicit):
-            return True
-        if getattr(stream_settings, "enabled", True) is False:
-            return True
-        if getattr(stream_settings, "app_env", "development") in {"development", "test", "local"}:
-            return True
-        return False
+        return bool(explicit)
 
     stream_url = getattr(stream_settings, "openclaw_responses_stream_url", None)
     stream_token = getattr(stream_settings, "stream_token", None)
