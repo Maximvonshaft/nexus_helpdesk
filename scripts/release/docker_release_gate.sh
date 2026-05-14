@@ -17,6 +17,7 @@ if [ ! -f "$COMPOSE_FILE" ]; then
   echo "Compose file not found: $COMPOSE_FILE" >&2
   exit 2
 fi
+COMPOSE_DIR="$(cd "$(dirname "$COMPOSE_FILE")" && pwd)"
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 STAMP_SAFE="$(printf '%s' "$STAMP" | tr '[:upper:]' '[:lower:]')"
@@ -32,7 +33,7 @@ POSTGRES_PASSWORD_GATE="${DOCKER_GATE_POSTGRES_PASSWORD:-nexusdesk_gate_password
 POSTGRES_DB_GATE="${DOCKER_GATE_POSTGRES_DB:-nexusdesk_release_gate}"
 DATABASE_URL_GATE="postgresql+psycopg://${POSTGRES_USER_GATE}:${POSTGRES_PASSWORD_GATE}@postgres:5432/${POSTGRES_DB_GATE}"
 TMP_DIR="$(mktemp -d)"
-GATE_COMPOSE_FILE="$TMP_DIR/docker-compose.server.gate.yml"
+GATE_COMPOSE_FILE="$(mktemp "$COMPOSE_DIR/docker-compose.server.gate.${STAMP_SAFE}.XXXXXX.yml")"
 OVERRIDE_FILE="$TMP_DIR/docker-release-gate.override.yml"
 RAW_CONFIG="$TMP_DIR/docker-resolved-config.raw.yml"
 RESOLVED_CONFIG="$OUT/command_outputs/11_docker_resolved_config.redacted.yml"
@@ -43,6 +44,7 @@ cleanup() {
     COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$GATE_COMPOSE_FILE" -f "$OVERRIDE_FILE" --profile edge-nginx down --remove-orphans || true
   fi
   rm -rf "$TMP_DIR"
+  rm -f "$GATE_COMPOSE_FILE"
 }
 trap cleanup EXIT
 
@@ -150,7 +152,7 @@ if [ "$RUN_STACK" != "1" ]; then
     echo "Reason: server compose file is production-oriented and must not be started from a release gate by accident."
     echo "To run isolated staging stack evidence, set:"
     echo "  DOCKER_GATE_RUN_STACK=1 DOCKER_GATE_CONFIRM=non_production"
-    echo "Runtime gate uses a temporary gate compose file with isolated host ports and forced DATABASE_URL."
+    echo "Runtime gate uses a temporary gate compose file in the original compose directory with isolated host ports and forced DATABASE_URL."
     echo "Optional isolated ports:"
     echo "  DOCKER_GATE_APP_PORT=$APP_PORT DOCKER_GATE_NGINX_PORT=$NGINX_PORT"
   } | tee "$OUT/command_outputs/11_docker_stack_skipped.log"
