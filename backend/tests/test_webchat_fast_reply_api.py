@@ -1,26 +1,37 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 os.environ.setdefault("APP_ENV", "development")
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_fast_reply_api_tests.db")
 os.environ.setdefault("WEBCHAT_FAST_AI_ENABLED", "false")
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
+from starlette.requests import Request
 
 from app.api import webchat_fast
 from app.db import Base, SessionLocal, engine
 from app.main import app
+from app.models import WebchatRateLimitBucket
 from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency, begin_webchat_fast_idempotency, compute_request_hash
 from app.services.webchat_fast_ai_service import WebchatFastReplyResult
-from app.services.webchat_fast_rate_limit import reset_webchat_fast_rate_limit_for_tests
+from app.services.webchat_fast_rate_limit import enforce_webchat_fast_rate_limit, reset_webchat_fast_rate_limit_for_tests
 
 
 client = TestClient(app)
 
 
 def setup_function():
+    db = SessionLocal()
+    try:
+        db.execute(text("DROP TABLE IF EXISTS webchat_rate_limits"))
+        db.commit()
+    finally:
+        db.close()
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
@@ -30,6 +41,28 @@ def setup_function():
         db.close()
     reset_webchat_fast_rate_limit_for_tests()
 
+
+
+
+def _request(*, client_ip: str = "198.51.100.10", user_agent: str = "pytest-fast-limit/1.0", origin: str | None = None, referer: str | None = None, fingerprint: str | None = None) -> Request:
+    headers: list[tuple[bytes, bytes]] = [(b"user-agent", user_agent.encode("utf-8"))]
+    if origin is not None:
+        headers.append((b"origin", origin.encode("utf-8")))
+    if referer is not None:
+        headers.append((b"referer", referer.encode("utf-8")))
+    if fingerprint is not None:
+        headers.append((b"x-webchat-client-fingerprint", fingerprint.encode("utf-8")))
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/webchat/fast-reply",
+        "headers": headers,
+        "client": (client_ip, 12345),
+        "scheme": "http",
+        "query_string": b"",
+        "server": ("testserver", 80),
+    }
+    return Request(scope)
 
 def _payload(client_message_id: str = "client-1") -> dict:
     return {
@@ -284,3 +317,116 @@ def test_non_stream_active_processing_returns_202_without_duplicate_generation(m
     assert response.status_code == 202
     assert response.json()["error_code"] == "request_processing"
     assert calls["generate"] == 0
+
+
+def test_fast_rate_limit_is_shared_across_rotated_session_ids(monkeypatch):
+    reset_webchat_fast_rate_limit_for_tests()
+
+    async def fake_generate(**kwargs):
+        return WebchatFastReplyResult(
+            ok=True,
+            ai_generated=True,
+            reply_source="openclaw_responses",
+            reply="Hi, this is Speedy.",
+            intent="greeting",
+            tracking_number=None,
+            handoff_required=False,
+            handoff_reason=None,
+            recommended_agent_action=None,
+            ticket_creation_queued=False,
+            elapsed_ms=20,
+        )
+
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
+    monkeypatch.setenv("WEBCHAT_FAST_RATE_LIMIT_MAX_REQUESTS", "2")
+    monkeypatch.setenv("WEBCHAT_FAST_RATE_LIMIT_WINDOW_SECONDS", "60")
+
+    headers = {"User-Agent": "pytest-fast-limit/1.0"}
+    first = client.post("/api/webchat/fast-reply", json=_payload("rl-1"), headers=headers)
+    second = client.post("/api/webchat/fast-reply", json={**_payload("rl-2"), "session_id": "session-2"}, headers=headers)
+    third = client.post("/api/webchat/fast-reply", json={**_payload("rl-3"), "session_id": "session-3"}, headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert third.status_code == 429
+
+
+def test_fast_rate_limit_concurrent_same_bucket_does_not_exceed_limit(monkeypatch):
+    reset_webchat_fast_rate_limit_for_tests()
+    monkeypatch.setenv("WEBCHAT_FAST_RATE_LIMIT_MAX_REQUESTS", "3")
+    monkeypatch.setenv("WEBCHAT_FAST_RATE_LIMIT_WINDOW_SECONDS", "60")
+    reset_webchat_fast_rate_limit_for_tests()
+
+    barrier = Barrier(8)
+
+    def attempt(_: int) -> bool:
+        barrier.wait()
+        try:
+            enforce_webchat_fast_rate_limit(_request(fingerprint="fp-shared"), tenant_key="tenant-a", session_id=f"session-{_}")
+            return True
+        except HTTPException as exc:
+            assert exc.status_code == 429
+            return False
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(attempt, range(8)))
+
+    assert sum(results) == 3
+
+
+def test_long_origin_and_user_agent_do_not_exceed_bucket_key_column(monkeypatch):
+    reset_webchat_fast_rate_limit_for_tests()
+    monkeypatch.setenv("WEBCHAT_FAST_RATE_LIMIT_MAX_REQUESTS", "3")
+    monkeypatch.setenv("WEBCHAT_FAST_RATE_LIMIT_WINDOW_SECONDS", "60")
+    reset_webchat_fast_rate_limit_for_tests()
+
+    long_origin = "https://" + ("very-long-origin-segment-" * 20) + ".example.com/" + ("path/" * 80)
+    long_referer = long_origin + "?" + ("ref=" + "r" * 512)
+    long_user_agent = "pytest-agent/" + ("ua-" * 200)
+    long_fingerprint = "fp-" + ("abcdef" * 120)
+
+    enforce_webchat_fast_rate_limit(
+        _request(origin=long_origin, referer=long_referer, user_agent=long_user_agent, fingerprint=long_fingerprint),
+        tenant_key="tenant-a",
+        session_id="session-1",
+    )
+    enforce_webchat_fast_rate_limit(
+        _request(origin=long_origin, referer=long_referer, user_agent=long_user_agent, fingerprint=long_fingerprint),
+        tenant_key="tenant-a",
+        session_id="session-rotated",
+    )
+    enforce_webchat_fast_rate_limit(
+        _request(origin=None, referer=long_referer, user_agent=long_user_agent, fingerprint=None),
+        tenant_key="tenant-a",
+        session_id="session-ua-fallback",
+    )
+
+    db = SessionLocal()
+    try:
+        rows = db.execute(select(WebchatRateLimitBucket).order_by(WebchatRateLimitBucket.request_count.desc())).scalars().all()
+        assert len(rows) == 2
+        assert all(len(row.bucket_key) == 64 for row in rows)
+        assert rows[0].request_count == 2
+        assert rows[1].request_count == 1
+    finally:
+        db.close()
+
+
+def test_fast_rate_limit_different_dimensions_do_not_pollute_each_other(monkeypatch):
+    reset_webchat_fast_rate_limit_for_tests()
+    monkeypatch.setenv("WEBCHAT_FAST_RATE_LIMIT_MAX_REQUESTS", "1")
+    monkeypatch.setenv("WEBCHAT_FAST_RATE_LIMIT_WINDOW_SECONDS", "60")
+    reset_webchat_fast_rate_limit_for_tests()
+
+    enforce_webchat_fast_rate_limit(_request(client_ip="198.51.100.10", fingerprint="fp-a"), tenant_key="tenant-a", session_id="session-1")
+    enforce_webchat_fast_rate_limit(_request(client_ip="198.51.100.11", fingerprint="fp-a"), tenant_key="tenant-a", session_id="session-2")
+    enforce_webchat_fast_rate_limit(_request(client_ip="198.51.100.10", fingerprint="fp-b"), tenant_key="tenant-a", session_id="session-3")
+    enforce_webchat_fast_rate_limit(_request(client_ip="198.51.100.10", fingerprint="fp-a"), tenant_key="tenant-b", session_id="session-4")
+
+    db = SessionLocal()
+    try:
+        rows = db.execute(select(WebchatRateLimitBucket).order_by(WebchatRateLimitBucket.bucket_key)).scalars().all()
+        assert len(rows) == 4
+        assert all(row.request_count == 1 for row in rows)
+    finally:
+        db.close()
