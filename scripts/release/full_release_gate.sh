@@ -19,6 +19,7 @@ OUT="${OUT:-$REPO_ROOT/release_evidence_${STAMP}}"
 mkdir -p "$OUT/command_outputs" "$OUT/summaries"
 SUMMARY="$OUT/summaries/release_gate_summary.md"
 FAILED_STEP=""
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python || command -v python3 || true)}"
 
 on_error() {
   local line="$1"
@@ -33,6 +34,14 @@ on_error() {
   echo "Release gate failed at ${FAILED_STEP:-unknown}. Evidence: $OUT" >&2
 }
 trap 'on_error $LINENO' ERR
+
+require_cmd() {
+  local cmd="$1"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Missing required command: $cmd" >&2
+    exit 2
+  fi
+}
 
 run_step() {
   local name="$1"; shift
@@ -65,18 +74,27 @@ run_in_dir() {
   } 2>&1 | tee "$log"
 }
 
+FAILED_STEP="00_preflight"
+if [ -z "$PYTHON_BIN" ]; then
+  echo "Missing required command: python or python3" >&2
+  exit 2
+fi
+require_cmd node
+require_cmd npm
+require_cmd git
+
 {
   echo "UTC: $(date -u)"
   git rev-parse HEAD || true
   git status --short || true
-  python --version || true
+  "$PYTHON_BIN" --version || true
   node --version || true
   npm --version || true
   docker --version || true
   docker compose version || true
 } 2>&1 | tee "$OUT/command_outputs/00_environment.txt"
 
-run_step 01_compileall python -m compileall backend/app backend/scripts scripts
+run_step 01_compileall "$PYTHON_BIN" -m compileall backend/app backend/scripts scripts
 run_in_dir 02_backend_pytest backend pytest -q
 run_in_dir 03_webapp_npm_ci webapp npm ci
 run_in_dir 04_webapp_typecheck webapp npm run typecheck
@@ -88,7 +106,7 @@ if [ ! -f scripts/smoke/browser_bundle_secret_scan.py ]; then
   echo "MISSING scripts/smoke/browser_bundle_secret_scan.py" | tee "$OUT/command_outputs/08_browser_bundle_secret_scan.log"
   exit 1
 fi
-run_step 08_browser_bundle_secret_scan python scripts/smoke/browser_bundle_secret_scan.py --static backend/app/static/webchat --static frontend_dist
+run_step 08_browser_bundle_secret_scan "$PYTHON_BIN" scripts/smoke/browser_bundle_secret_scan.py --static backend/app/static/webchat --static frontend_dist
 
 {
   echo "# Release Gate Summary"
