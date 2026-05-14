@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault("APP_ENV", "development")
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_fast_reply_api_tests.db")
@@ -12,6 +13,7 @@ from sqlalchemy import delete, select
 from app.api import webchat_fast
 from app.db import Base, SessionLocal, engine
 from app.main import app
+from app.services import webchat_fast_rate_limit as rate_limit
 from app.services.webchat_fast_idempotency_db import (
     WebchatFastIdempotency,
     begin_webchat_fast_idempotency,
@@ -45,6 +47,24 @@ def _payload(client_message_id: str = "client-1") -> dict:
         "body": "Hi",
         "recent_context": [],
     }
+
+
+def _rate_limit_settings(**overrides):
+    values = {
+        "trusted_proxy_cidrs": ("127.0.0.1/32", "172.16.0.0/12"),
+        "rate_limit_trust_x_forwarded_for": True,
+        "rate_limit_window_seconds": 60,
+        "rate_limit_max_requests": 30,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _request(remote: str, xff: str | None = None):
+    headers = {}
+    if xff is not None:
+        headers["x-forwarded-for"] = xff
+    return SimpleNamespace(client=SimpleNamespace(host=remote), headers=headers)
 
 
 def test_fast_reply_normal_path_marks_db_idempotency_done(monkeypatch):
@@ -261,6 +281,24 @@ def test_retryable_ai_failure_does_not_poison_non_stream_fallback(monkeypatch):
     assert response.status_code == 200
     assert response.json()["ok"] is True
     assert calls["generate"] == 1
+
+
+def test_trusted_proxy_uses_rightmost_untrusted_public_xff(monkeypatch):
+    monkeypatch.setattr(rate_limit, "get_webchat_fast_settings", lambda: _rate_limit_settings())
+
+    request = _request("172.16.0.10", "8.8.8.8, 1.1.1.1, 172.16.0.10")
+
+    assert rate_limit.trusted_client_ip(request) == "1.1.1.1"
+
+
+def test_spoofed_leftmost_xff_cannot_rotate_bucket_identity(monkeypatch):
+    monkeypatch.setattr(rate_limit, "get_webchat_fast_settings", lambda: _rate_limit_settings())
+
+    first = _request("172.16.0.10", "8.8.8.8, 1.1.1.1")
+    second = _request("172.16.0.10", "9.9.9.9, 1.1.1.1")
+
+    assert rate_limit.trusted_client_ip(first) == "1.1.1.1"
+    assert rate_limit.trusted_client_ip(second) == "1.1.1.1"
 
 
 def test_non_stream_same_key_different_hash_returns_409(monkeypatch):
