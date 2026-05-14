@@ -107,20 +107,40 @@ def _visitor_payload(visitor: WebchatFastVisitor | None) -> dict[str, Any]:
     return visitor.model_dump(exclude_none=True) if visitor else {}
 
 
-
 def _is_stream_canary_override_allowed(request: Request, settings: WebchatFastSettings) -> bool:
     canary_header = request.headers.get("x-nexus-stream-canary")
     if canary_header != "1":
         return False
-        
+
     client_host = request.client.host if request.client else None
     if client_host in ("127.0.0.1", "::1"):
         return True
-        
-    if settings.app_env in {"development", "test", "local"}:
+
+    if getattr(settings, "app_env", "development") in {"development", "test", "local"}:
         return True
-        
+
     return False
+
+
+def _is_openclaw_stream_configured(stream_settings: WebchatFastSettings) -> bool:
+    """Return whether stream upstream is configured without assuming a concrete settings class.
+
+    Several stream contract tests intentionally monkeypatch settings with a lightweight
+    SimpleNamespace. The production settings object exposes `is_openclaw_stream_configured`,
+    but the endpoint must remain defensive so a partial test/runtime object cannot turn a
+    feature-gate check into a 500.
+    """
+    explicit = getattr(stream_settings, "is_openclaw_stream_configured", None)
+    if explicit is not None:
+        return bool(explicit)
+    stream_url = getattr(stream_settings, "openclaw_responses_stream_url", None)
+    stream_token = getattr(stream_settings, "stream_token", None)
+    if stream_token is None:
+        stream_token = getattr(stream_settings, "openclaw_responses_stream_token", None)
+    if stream_token is None:
+        stream_token = getattr(stream_settings, "openclaw_responses_stream_token_file", None)
+    return bool(stream_url and stream_token)
+
 
 @router.options("/fast-reply")
 def webchat_fast_reply_options(request: Request):
@@ -226,20 +246,19 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         "Vary": "Origin",
     })
 
-    if not stream_settings.stream_enabled:
+    if not getattr(stream_settings, "stream_enabled", False):
         return JSONResponse({"error_code": "stream_disabled"}, status_code=503, headers=headers)
-    if stream_settings.stream_require_accept and "text/event-stream" not in (request.headers.get("accept") or ""):
+    if getattr(stream_settings, "stream_require_accept", True) and "text/event-stream" not in (request.headers.get("accept") or ""):
         return JSONResponse({"error_code": "stream_accept_required"}, status_code=406, headers=headers)
 
-    if not stream_settings.is_openclaw_stream_configured:
+    if not _is_openclaw_stream_configured(stream_settings):
         return JSONResponse({"error_code": "stream_upstream_not_configured"}, status_code=503, headers=headers)
 
-    # Rollout gate
     is_selected = is_stream_rollout_selected(
         tenant_key=payload.tenant_key,
         channel_key=payload.channel_key,
         session_id=payload.session_id,
-        rollout_percent=getattr(stream_settings, "stream_rollout_percent", 100)
+        rollout_percent=getattr(stream_settings, "stream_rollout_percent", 100),
     )
     if not is_selected and not _is_stream_canary_override_allowed(request, stream_settings):
         return JSONResponse({"error_code": "stream_not_in_rollout"}, status_code=503, headers=headers)
