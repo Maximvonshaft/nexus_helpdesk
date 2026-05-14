@@ -53,6 +53,7 @@ jobs:
             backend/app/services/webchat_fast_ai_service.py \
             backend/app/services/webchat_fast_config.py \
             backend/app/services/webchat_fast_idempotency.py \
+            backend/app/services/webchat_fast_idempotency_db.py \
             backend/app/services/webchat_fast_output_parser.py \
             backend/app/services/webchat_fast_rate_limit.py \
             backend/app/services/webchat_fast_reply_metrics.py \
@@ -69,6 +70,8 @@ jobs:
           pytest -q \
             backend/tests/test_webchat_fast_reply_output_parser.py \
             backend/tests/test_webchat_fast_reply_api.py \
+            backend/tests/test_webchat_fast_idempotency_db.py \
+            backend/tests/test_webchat_fast_audit_regressions.py \
             backend/tests/test_webchat_openclaw_responses_client.py \
             backend/tests/test_webchat_widget_fast_mode_static.py \
             backend/tests/test_webchat_fast_runtime_config_static.py
