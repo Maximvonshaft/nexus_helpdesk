@@ -168,33 +168,40 @@ def create_public_voice_session(db: Session, *, conversation_public_id: str, vis
     provider = _provider(config)
     room_name = _room_name(public_id, provider.provider_name)
     provider.create_room(room_name=room_name)
-    session = WebchatVoiceSession(
-        public_id=public_id,
-        conversation_id=conversation.id,
-        ticket_id=conversation.ticket_id,
-        provider=provider.provider_name,
-        provider_room_name=room_name,
-        status="ringing",
-        mode="visitor_to_agent",
-        locale=(locale or None),
-        recording_consent=bool(recording_consent),
-        recording_status="disabled",
-        transcript_status="disabled",
-        summary_status="pending",
-        started_at=now,
-        ringing_at=now,
-        expires_at=now + timedelta(seconds=config.session_ttl_seconds),
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(session)
-    db.flush()
-    value, ttl, identity = _issue_token(session, "visitor", "initial")
-    db.add(WebchatVoiceParticipant(voice_session_id=session.id, participant_type="visitor", visitor_label=conversation.visitor_name or "Visitor", provider_identity=identity, status="invited", created_at=now))
-    _write_voice_event(db, conversation_id=conversation.id, ticket_id=conversation.ticket_id, event_type="voice.session.created", payload={"voice_session_id": session.public_id, "provider": session.provider, "room_name": session.provider_room_name})
-    _write_voice_event(db, conversation_id=conversation.id, ticket_id=conversation.ticket_id, event_type="voice.session.ringing", payload={"voice_session_id": session.public_id})
-    db.flush()
-    return _serialize_session(session, participant_token=value, expires_in_seconds=ttl, participant_identity=identity)
+    try:
+        session = WebchatVoiceSession(
+            public_id=public_id,
+            conversation_id=conversation.id,
+            ticket_id=conversation.ticket_id,
+            provider=provider.provider_name,
+            provider_room_name=room_name,
+            status="ringing",
+            mode="visitor_to_agent",
+            locale=(locale or None),
+            recording_consent=bool(recording_consent),
+            recording_status="disabled",
+            transcript_status="disabled",
+            summary_status="pending",
+            started_at=now,
+            ringing_at=now,
+            expires_at=now + timedelta(seconds=config.session_ttl_seconds),
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(session)
+        db.flush()
+        value, ttl, identity = _issue_token(session, "visitor", "initial")
+        db.add(WebchatVoiceParticipant(voice_session_id=session.id, participant_type="visitor", visitor_label=conversation.visitor_name or "Visitor", provider_identity=identity, status="invited", created_at=now))
+        _write_voice_event(db, conversation_id=conversation.id, ticket_id=conversation.ticket_id, event_type="voice.session.created", payload={"voice_session_id": session.public_id, "provider": session.provider, "room_name": session.provider_room_name})
+        _write_voice_event(db, conversation_id=conversation.id, ticket_id=conversation.ticket_id, event_type="voice.session.ringing", payload={"voice_session_id": session.public_id})
+        db.flush()
+        return _serialize_session(session, participant_token=value, expires_in_seconds=ttl, participant_identity=identity)
+    except Exception:
+        try:
+            provider.close_room(room_name=room_name)
+        except Exception as close_exc:
+            logger.warning("voice_provider_room_compensation_failed", extra={"room_name": room_name, "provider": provider.provider_name, "error_type": type(close_exc).__name__})
+        raise
 
 
 def end_public_voice_session(db: Session, *, conversation_public_id: str, voice_session_public_id: str, visitor_token: str | None) -> dict[str, Any]:
