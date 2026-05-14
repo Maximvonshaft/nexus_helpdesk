@@ -43,10 +43,15 @@ class FakeRow:
     id = 1
 
 
-def _configure_stream(monkeypatch, *, rollout: str = '100', env: str = 'development') -> None:
+def _configure_stream(monkeypatch, *, rollout: str = '100', env: str = 'development', stream_token_file: str | None = None) -> None:
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ENABLED', 'true')
     monkeypatch.setenv('OPENCLAW_RESPONSES_STREAM_URL', 'http://127.0.0.1/stream')
-    monkeypatch.setenv('OPENCLAW_RESPONSES_STREAM_TOKEN', 'test')
+    if stream_token_file:
+        monkeypatch.setenv('OPENCLAW_RESPONSES_STREAM_TOKEN_FILE', stream_token_file)
+        monkeypatch.delenv('OPENCLAW_RESPONSES_STREAM_TOKEN', raising=False)
+    else:
+        monkeypatch.setenv('OPENCLAW_RESPONSES_STREAM_TOKEN', 'test')
+        monkeypatch.delenv('OPENCLAW_RESPONSES_STREAM_TOKEN_FILE', raising=False)
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT', rollout)
     monkeypatch.setenv('APP_ENV', env)
     get_webchat_fast_settings.cache_clear()
@@ -135,8 +140,10 @@ def test_stream_canary_override_fails_for_public_ip_in_production(monkeypatch):
     assert response.json()['error_code'] == 'stream_not_in_rollout'
 
 
-def test_stream_canary_override_allows_bypass_for_loopback_in_production(monkeypatch):
-    _configure_stream(monkeypatch, rollout='0', env='production')
+def test_stream_canary_override_allows_bypass_for_loopback_in_production(monkeypatch, tmp_path):
+    token_file = tmp_path / 'stream-token.txt'
+    token_file.write_text('test-token', encoding='utf-8')
+    _configure_stream(monkeypatch, rollout='0', env='production', stream_token_file=str(token_file))
     monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
     monkeypatch.setattr(webchat_fast, 'prepare_webchat_fast_stream', lambda **kwargs: StreamBeginOutcome(status='owner', request_hash='h', row_id=1))
 
