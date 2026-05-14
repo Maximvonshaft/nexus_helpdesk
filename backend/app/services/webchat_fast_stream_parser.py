@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
+import re
 
 from .webchat_fast_output_parser import FastReplyParseError, ParsedFastReply, parse_openclaw_fast_reply
 from .webchat_openclaw_stream_adapter import ContentDelta, Completed, ToolCallDetected, StreamError
@@ -34,12 +35,11 @@ class ReplyDelta:
     text: str
 
 
-import re
-
 _FORBIDDEN_PATTERNS = [
     re.compile(r"(?<![a-zA-Z])" + re.escape(phrase) + r"(?![a-zA-Z])", re.IGNORECASE)
     for phrase in FORBIDDEN_PHRASES
 ]
+
 
 def _has_forbidden(value: str) -> bool:
     normalized = " ".join(value.split())
@@ -52,10 +52,10 @@ def _has_forbidden(value: str) -> bool:
 class StreamingReplyExtractor:
     """Extract only the JSON string value of key `reply` from streamed text.
 
-    The extractor is intentionally not regex-based. It tracks JSON object keys,
-    string boundaries, escapes, and unicode escapes so customer-visible deltas
-    never contain JSON braces, keys, commas, intent, tracking fields, or handoff
-    metadata.
+    Raw provider deltas may include the entire JSON object. This extractor only
+    releases text from the `reply` value and keeps a safety holdback window so
+    forbidden internal terms cannot be exposed to the browser before the strict
+    final parse succeeds.
     """
 
     def __init__(self) -> None:
@@ -75,8 +75,6 @@ class StreamingReplyExtractor:
         try:
             value = json.loads(text)
         except json.JSONDecodeError:
-            # Incomplete JSON while streaming is normal. Try a small state-machine
-            # extraction so deltas flush before Completed.
             return self._extract_reply_from_incomplete_json(text)
         if not isinstance(value, dict):
             raise StreamingReplyAbort("ai_invalid_output")
@@ -117,16 +115,12 @@ class StreamingReplyExtractor:
                 elif ch in "{[" or ch.isspace():
                     pass
                 elif expecting_value_for == "reply":
-                    # reply must be a JSON string value.
                     raise StreamingReplyAbort("ai_invalid_output")
                 i += 1
                 continue
 
             if unicode_left:
                 token += ch
-                if reading_reply:
-                    # Delay unicode decoding to json.loads on a synthetic string.
-                    pass
                 unicode_left -= 1
                 i += 1
                 continue
@@ -159,7 +153,6 @@ class StreamingReplyExtractor:
                 continue
             token += ch
             if reading_reply:
-                # Return decoded complete escape sequences available so far.
                 try:
                     partial = json.loads('"' + token + '"')
                     reply_chars = [partial]
@@ -182,7 +175,6 @@ class StreamingReplyExtractor:
             raise StreamingReplyAbort("ai_safety_abort")
         visible_prefix = self._emitted + self._holdback
         if not visible.startswith(visible_prefix):
-            # Model rewrote earlier reply text; do not risk leaking stale partials.
             self._aborted = True
             raise StreamingReplyAbort("ai_invalid_output")
         pending = visible[len(visible_prefix):]
@@ -201,19 +193,10 @@ class StreamingReplyExtractor:
         return ReplyDelta(release)
 
     def inspect_text(self, text: str) -> None:
-        if self._aborted:
-            raise StreamingReplyAbort("ai_safety_abort")
-        if not text:
+        if self.feed_text(text) is not None:
+            # Compatibility method used by older tests; callers that need real
+            # streaming should call feed_event/feed_text and emit the returned delta.
             return
-        self._buffer += text
-        visible = self._decode_reply_prefix()
-        if _has_forbidden(visible):
-            self._aborted = True
-            raise StreamingReplyAbort("ai_safety_abort")
-        visible_prefix = self._emitted + self._holdback
-        if not visible.startswith(visible_prefix):
-            self._aborted = True
-            raise StreamingReplyAbort("ai_invalid_output")
 
     def flush(self) -> ReplyDelta | None:
         if self._holdback:
@@ -251,8 +234,7 @@ class StreamingReplyExtractor:
             self._aborted = True
             raise StreamingReplyAbort(event.error_code)
         if isinstance(event, ContentDelta):
-            self.inspect_text(event.text)
-            return None
+            return self.feed_text(event.text)
         if isinstance(event, Completed):
             return None
         return None
