@@ -119,6 +119,11 @@ def _set_public_cors(response: Response, request: Request) -> None:
 
 
 def _legacy_token_transport_enabled() -> bool:
+    # Query/body token transport is legacy compatibility only. In production,
+    # visitor tokens must travel through X-Webchat-Visitor-Token so they do not
+    # leak through URLs, referers, proxy logs, browser history, or analytics.
+    if settings.app_env == "production":
+        return False
     return os.getenv("WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
