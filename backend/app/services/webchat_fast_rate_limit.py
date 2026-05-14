@@ -18,19 +18,24 @@ class FastClientIdentity:
     client_ip: str
 
 
-def _is_public_ip(value: str) -> bool:
+def _parse_ip(value: str):
     try:
-        ip = ipaddress.ip_address(value.strip())
+        return ipaddress.ip_address(value.strip())
     except ValueError:
+        return None
+
+
+def _is_public_ip(value: str) -> bool:
+    ip = _parse_ip(value)
+    if ip is None:
         return False
     return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified)
 
 
 def _is_trusted_proxy(value: str) -> bool:
     settings = get_webchat_fast_settings()
-    try:
-        ip = ipaddress.ip_address(value.strip())
-    except ValueError:
+    ip = _parse_ip(value)
+    if ip is None:
         return False
     for cidr in settings.trusted_proxy_cidrs:
         try:
@@ -41,15 +46,33 @@ def _is_trusted_proxy(value: str) -> bool:
     return False
 
 
+def _client_ip_from_forwarded_for(xff: str) -> str | None:
+    """Return the right-most untrusted public client from an X-Forwarded-For chain.
+
+    Nginx commonly uses proxy_add_x_forwarded_for, so a client-supplied spoofed
+    XFF value can be preserved on the left while the real peer seen by Nginx is
+    appended on the right. Choosing the first public address lets attackers
+    rotate rate-limit buckets by spoofing the left-most value. Walking from
+    right to left and skipping trusted proxies binds the bucket to the closest
+    untrusted public client.
+    """
+
+    candidates = [part.strip() for part in (xff or "").split(",") if part.strip()]
+    for candidate in reversed(candidates):
+        if _is_public_ip(candidate) and not _is_trusted_proxy(candidate):
+            return candidate
+    return None
+
+
 def trusted_client_ip(request: Request) -> str:
     remote = request.client.host if request.client else "unknown"
     settings = get_webchat_fast_settings()
     if settings.rate_limit_trust_x_forwarded_for and remote != "unknown" and _is_trusted_proxy(remote):
         xff = request.headers.get("x-forwarded-for") or request.headers.get("X-Forwarded-For")
         if xff:
-            for candidate in [part.strip() for part in xff.split(",") if part.strip()]:
-                if _is_public_ip(candidate):
-                    return candidate
+            forwarded_client = _client_ip_from_forwarded_for(xff)
+            if forwarded_client:
+                return forwarded_client
     return remote
 
 
