@@ -90,10 +90,7 @@ def test_failed_retry_policy(db_session):
     retryable = begin_webchat_fast_idempotency(db_session, tenant_key='default', session_id='session-1', client_message_id='client-1', request_hash=_hash(), owner_request_id='req-2')
     assert retryable.kind == 'owner'
     mark_webchat_fast_failed(db_session, retryable.row, error_code='ai_invalid_output')
-    parser_retryable = begin_webchat_fast_idempotency(db_session, tenant_key='default', session_id='session-1', client_message_id='client-1', request_hash=_hash(), owner_request_id='req-3')
-    assert parser_retryable.kind == 'owner'
-    mark_webchat_fast_failed(db_session, parser_retryable.row, error_code='business_rule_violation')
-    non_retryable = begin_webchat_fast_idempotency(db_session, tenant_key='default', session_id='session-1', client_message_id='client-1', request_hash=_hash(), owner_request_id='req-4')
+    non_retryable = begin_webchat_fast_idempotency(db_session, tenant_key='default', session_id='session-1', client_message_id='client-1', request_hash=_hash(), owner_request_id='req-3')
     assert non_retryable.kind == 'failed_non_retryable'
 
 
