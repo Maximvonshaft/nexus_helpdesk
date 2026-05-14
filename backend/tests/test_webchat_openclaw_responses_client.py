@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+
+from app.services import webchat_openclaw_responses_client
 from app.services.webchat_fast_config import WebchatFastSettings
 from app.services.webchat_openclaw_responses_client import build_responses_request_body
 
@@ -15,7 +18,7 @@ def _settings(**overrides) -> WebchatFastSettings:
         rate_limit_window_seconds=60,
         rate_limit_max_requests=30,
         hard_fail_on_non_ai_reply=True,
-        stream_enabled=False,
+        stream_enabled=True,
         stream_rollout_percent=0,
         stream_require_accept=True,
         trusted_proxy_cidrs=("127.0.0.1/32",),
@@ -83,3 +86,41 @@ def test_disabled_fast_ai_does_not_require_token_or_url():
     settings.validate_runtime()
     assert settings.is_openclaw_configured is False
     assert settings.is_openclaw_stream_configured is False
+
+
+def test_stream_total_timeout_yields_deterministic_error(monkeypatch):
+    class FakeStreamContext:
+        async def __aenter__(self):
+            class FakeResponse:
+                status_code = 200
+
+                async def aiter_text(self):
+                    await asyncio.sleep(0.02)
+                    if False:
+                        yield ""
+
+            return FakeResponse()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeClient:
+        def stream(self, *args, **kwargs):
+            return FakeStreamContext()
+
+    async def run():
+        monkeypatch.setattr(webchat_openclaw_responses_client, "_stream_client", lambda settings: FakeClient())
+        events = []
+        async for event in webchat_openclaw_responses_client.call_openclaw_responses_stream(
+            session_key="sess-1",
+            instructions="Return JSON",
+            input_text="hi",
+            request_id="req-1",
+            settings=_settings(openclaw_stream_total_timeout_ms=5),
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(run())
+    assert len(events) == 1
+    assert events[0].error_code == "stream_total_timeout"
