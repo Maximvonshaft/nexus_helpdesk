@@ -7,6 +7,8 @@ Create Date: 2026-05-14
 
 from __future__ import annotations
 
+import hashlib
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -25,6 +27,37 @@ def _indexes(bind, table_name: str) -> set[str]:
     if table_name not in inspector.get_table_names():
         return set()
     return {idx["name"] for idx in inspector.get_indexes(table_name)}
+
+
+def _bucket_key_length(bind) -> int | None:
+    inspector = sa.inspect(bind)
+    for column in inspector.get_columns("webchat_rate_limits"):
+        if column["name"] == "bucket_key":
+            return getattr(column["type"], "length", None)
+    return None
+
+
+def _drop_bucket_indexes(bind) -> None:
+    indexes = _indexes(bind, "webchat_rate_limits")
+    if "ix_webchat_rate_limits_bucket_key" in indexes:
+        op.drop_index("ix_webchat_rate_limits_bucket_key", table_name="webchat_rate_limits")
+    if "ux_webchat_rate_limits_bucket_key" in indexes:
+        op.drop_index("ux_webchat_rate_limits_bucket_key", table_name="webchat_rate_limits")
+
+
+def _normalize_bucket_keys(bind) -> None:
+    rows = bind.execute(sa.text("SELECT id, bucket_key FROM webchat_rate_limits")).mappings().all()
+    for row in rows:
+        bucket_key = row["bucket_key"] or ""
+        if len(bucket_key) == 64:
+            continue
+        bind.execute(
+            sa.text("UPDATE webchat_rate_limits SET bucket_key = :bucket_key WHERE id = :id"),
+            {
+                "id": row["id"],
+                "bucket_key": hashlib.sha256(bucket_key.encode("utf-8")).hexdigest(),
+            },
+        )
 
 
 def _dedupe_bucket_keys() -> None:
@@ -48,6 +81,18 @@ def _dedupe_bucket_keys() -> None:
     )
 
 
+def _shrink_bucket_key_column(bind) -> None:
+    existing_length = _bucket_key_length(bind)
+    if existing_length == 64:
+        return
+    existing_type = sa.String(length=existing_length or 255)
+    if bind.dialect.name == "postgresql":
+        op.alter_column("webchat_rate_limits", "bucket_key", existing_type=existing_type, type_=sa.String(length=64), existing_nullable=False)
+        return
+    with op.batch_alter_table("webchat_rate_limits") as batch_op:
+        batch_op.alter_column("bucket_key", existing_type=existing_type, type_=sa.String(length=64), existing_nullable=False)
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     tables = _tables(bind)
@@ -60,11 +105,12 @@ def upgrade() -> None:
             sa.Column("request_count", sa.Integer(), nullable=False, server_default="0"),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         )
-    _dedupe_bucket_keys()
+    else:
+        _drop_bucket_indexes(bind)
+        _normalize_bucket_keys(bind)
+        _dedupe_bucket_keys()
+        _shrink_bucket_key_column(bind)
     indexes = _indexes(bind, "webchat_rate_limits")
-    if "ix_webchat_rate_limits_bucket_key" in indexes:
-        op.drop_index("ix_webchat_rate_limits_bucket_key", table_name="webchat_rate_limits")
-        indexes.remove("ix_webchat_rate_limits_bucket_key")
     if "ux_webchat_rate_limits_bucket_key" not in indexes:
         op.create_index("ux_webchat_rate_limits_bucket_key", "webchat_rate_limits", ["bucket_key"], unique=True)
     if "ix_webchat_rate_limits_window_start" not in indexes:

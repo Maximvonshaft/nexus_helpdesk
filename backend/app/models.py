@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -232,10 +232,14 @@ class AuthThrottleEntry(Base):
 
 class WebchatRateLimitBucket(Base):
     __tablename__ = "webchat_rate_limits"
+    __table_args__ = (
+        UniqueConstraint("bucket_key", name="ux_webchat_rate_limits_bucket_key"),
+        Index("ix_webchat_rate_limits_window_start", "window_start"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    bucket_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    window_start: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, index=True)
+    bucket_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    window_start: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     request_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
