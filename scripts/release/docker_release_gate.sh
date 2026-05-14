@@ -17,18 +17,44 @@ if [ ! -f "$COMPOSE_FILE" ]; then
   echo "Compose file not found: $COMPOSE_FILE" >&2
   exit 2
 fi
-if [ "${APP_ENV:-staging}" = "production" ]; then
-  echo "Refusing APP_ENV=production" >&2
-  exit 2
-fi
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="${OUT:-$REPO_ROOT/release_evidence_${STAMP}}"
 mkdir -p "$OUT/command_outputs"
+RUN_STACK="${DOCKER_GATE_RUN_STACK:-0}"
+CONFIRM="${DOCKER_GATE_CONFIRM:-}"
+PROJECT_NAME="${COMPOSE_PROJECT_NAME:-nexusdesk_release_gate_${STAMP}}"
+APP_PORT="${DOCKER_GATE_APP_PORT:-18082}"
+NGINX_PORT="${DOCKER_GATE_NGINX_PORT:-18080}"
+TMP_DIR="$(mktemp -d)"
+OVERRIDE_FILE="$TMP_DIR/docker-release-gate.override.yml"
+SANITIZE='s/(token|secret|password|authorization|cookie|api[_-]?key)([=: ]+)[^ ]+/\1\2[REDACTED]/Ig'
 
-if [ "${CLEANUP:-0}" = "1" ]; then
-  trap 'docker compose -f "$COMPOSE_FILE" --profile edge-nginx down || true' EXIT
-fi
+cleanup() {
+  if [ "${CLEANUP:-1}" = "1" ] && [ "$RUN_STACK" = "1" ]; then
+    COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" --profile edge-nginx down --remove-orphans || true
+  fi
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+write_override() {
+  cat > "$OVERRIDE_FILE" <<YAML
+services:
+  app:
+    environment:
+      APP_ENV: staging
+      AUTO_INIT_DB: "false"
+      SEED_DEMO_DATA: "false"
+    ports:
+      - "127.0.0.1:${APP_PORT}:8080"
+  nginx:
+    ports:
+      - "127.0.0.1:${NGINX_PORT}:80"
+YAML
+}
+
+write_override
 
 {
   echo "UTC: $(date -u)"
@@ -36,41 +62,73 @@ fi
   git status --short || true
   docker --version
   docker compose version
+  echo "COMPOSE_FILE=$COMPOSE_FILE"
+  echo "COMPOSE_PROJECT_NAME=$PROJECT_NAME"
+  echo "DOCKER_GATE_RUN_STACK=$RUN_STACK"
+  echo "DOCKER_GATE_APP_PORT=$APP_PORT"
+  echo "DOCKER_GATE_NGINX_PORT=$NGINX_PORT"
 } 2>&1 | tee "$OUT/command_outputs/11_docker_environment.log"
 
 {
   echo "===== docker compose config validation ====="
-  docker compose -f "$COMPOSE_FILE" config --quiet
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config --quiet
+  echo "===== docker compose resolved service list ====="
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config --services
+} 2>&1 | tee "$OUT/command_outputs/11_docker_config_validation.log"
+
+if [ "$RUN_STACK" != "1" ]; then
+  {
+    echo "Docker stack execution skipped by default."
+    echo "Reason: server compose file is production-oriented and must not be started from a release gate by accident."
+    echo "To run isolated staging stack evidence, set:"
+    echo "  DOCKER_GATE_RUN_STACK=1 DOCKER_GATE_CONFIRM=non_production"
+    echo "Optional isolated ports:"
+    echo "  DOCKER_GATE_APP_PORT=$APP_PORT DOCKER_GATE_NGINX_PORT=$NGINX_PORT"
+  } | tee "$OUT/command_outputs/11_docker_stack_skipped.log"
+  echo "Docker config-only evidence written to: $OUT"
+  exit 0
+fi
+
+if [ "$CONFIRM" != "non_production" ]; then
+  echo "Refusing to start docker stack without DOCKER_GATE_CONFIRM=non_production" >&2
+  exit 2
+fi
+if [ "${APP_ENV:-staging}" = "production" ]; then
+  echo "Refusing shell APP_ENV=production" >&2
+  exit 2
+fi
+
+{
   echo "===== docker compose build ====="
-  docker compose -f "$COMPOSE_FILE" build
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" build
   echo "===== alembic upgrade head ====="
-  docker compose -f "$COMPOSE_FILE" run --rm app alembic upgrade head
-  echo "===== up app and workers ====="
-  docker compose -f "$COMPOSE_FILE" up -d app worker-background worker-handoff-snapshot worker-webchat-ai
-  docker compose -f "$COMPOSE_FILE" ps
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" run --rm app alembic upgrade head
+  echo "===== up app and workers on isolated project/ports ====="
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" up -d app worker-background worker-handoff-snapshot worker-webchat-ai
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" ps
   echo "===== healthz ====="
-  curl -fsS http://127.0.0.1:18081/healthz
+  curl -fsS "http://127.0.0.1:${APP_PORT}/healthz"
   echo
   echo "===== readyz ====="
-  curl -fsS http://127.0.0.1:18081/readyz
+  curl -fsS "http://127.0.0.1:${APP_PORT}/readyz"
   echo
   echo "===== logs app tail ====="
-  docker compose -f "$COMPOSE_FILE" logs --tail=200 app | sed -E 's/(token|secret|password|authorization)([=: ]+)[^ ]+/\1\2[REDACTED]/Ig'
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" logs --tail=200 app | sed -E "$SANITIZE"
   echo "===== logs handoff worker tail ====="
-  docker compose -f "$COMPOSE_FILE" logs --tail=200 worker-handoff-snapshot | sed -E 's/(token|secret|password|authorization)([=: ]+)[^ ]+/\1\2[REDACTED]/Ig'
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" logs --tail=200 worker-handoff-snapshot | sed -E "$SANITIZE"
 } 2>&1 | tee "$OUT/command_outputs/11_docker_compose_health.log"
 
 if [ "${RUN_NGINX_SMOKE:-0}" = "1" ]; then
   {
-    echo "===== start nginx edge profile ====="
-    docker compose -f "$COMPOSE_FILE" --profile edge-nginx up -d nginx
-    docker compose -f "$COMPOSE_FILE" ps nginx
+    echo "===== start nginx edge profile on isolated port ====="
+    COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" --profile edge-nginx up -d nginx
+    COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" ps nginx
     echo "===== nginx widget smoke ====="
-    curl -fsS http://127.0.0.1/webchat/widget.js >/tmp/nexusdesk_widget_smoke.js
+    curl -fsS "http://127.0.0.1:${NGINX_PORT}/webchat/widget.js" >/tmp/nexusdesk_widget_smoke.js
     wc -c /tmp/nexusdesk_widget_smoke.js
     grep -q "fast-reply" /tmp/nexusdesk_widget_smoke.js
     echo "===== nginx API OPTIONS smoke ====="
-    curl -fsS -X OPTIONS http://127.0.0.1/api/webchat/fast-reply -H 'Origin: http://localhost' -i | head -40
+    curl -fsS -X OPTIONS "http://127.0.0.1:${NGINX_PORT}/api/webchat/fast-reply" -H 'Origin: http://localhost' -i | head -40
   } 2>&1 | tee "$OUT/command_outputs/12_nginx_smoke.log"
 fi
 
