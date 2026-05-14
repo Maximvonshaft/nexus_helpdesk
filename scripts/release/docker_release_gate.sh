@@ -32,6 +32,7 @@ POSTGRES_DB_GATE="${DOCKER_GATE_POSTGRES_DB:-nexusdesk_release_gate}"
 DATABASE_URL_GATE="postgresql+psycopg://${POSTGRES_USER_GATE}:${POSTGRES_PASSWORD_GATE}@postgres:5432/${POSTGRES_DB_GATE}"
 TMP_DIR="$(mktemp -d)"
 OVERRIDE_FILE="$TMP_DIR/docker-release-gate.override.yml"
+RESOLVED_CONFIG="$OUT/command_outputs/11_docker_resolved_config.yml"
 SANITIZE='s/(token|secret|password|authorization|cookie|api[_-]?key|database_url)([=: ]+)[^ ]+/\1\2[REDACTED]/Ig'
 
 cleanup() {
@@ -115,14 +116,19 @@ write_override
 {
   echo "===== docker compose config validation ====="
   COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config --quiet
+  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config > "$RESOLVED_CONFIG"
+  echo "Resolved config stored at $RESOLVED_CONFIG with sensitive values redacted in this log."
   echo "===== docker compose resolved service list ====="
   COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config --services
-  echo "===== safety assertion: app must bind isolated app port and not production 18081 ====="
-  COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config | grep -q "127.0.0.1:${APP_PORT}:8080"
-  if COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config | grep -q "127.0.0.1:18081:8080"; then
-    echo "Refusing config that still binds production app port 18081" >&2
+  echo "===== safety assertion: app must use isolated app port and must not expose production app port 18081 ====="
+  grep -q "$APP_PORT" "$RESOLVED_CONFIG"
+  if grep -q "18081" "$RESOLVED_CONFIG"; then
+    echo "Refusing config that still references production app port 18081" >&2
     exit 2
   fi
+  echo "===== safety assertion: resolved config must point app/workers to isolated compose postgres ====="
+  grep -q "postgresql+psycopg://" "$RESOLVED_CONFIG"
+  grep -q "@postgres:5432/${POSTGRES_DB_GATE}" "$RESOLVED_CONFIG"
 } 2>&1 | sed -E "$SANITIZE" | tee "$OUT/command_outputs/11_docker_config_validation.log"
 
 if [ "$RUN_STACK" != "1" ]; then
