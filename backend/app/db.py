@@ -34,6 +34,21 @@ def _slow_query_ms() -> float:
         return 500.0
 
 
+def _normalize_database_url(database_url: str) -> str:
+    """Normalize PostgreSQL URLs to the repo-supported psycopg v3 driver.
+
+    SQLAlchemy treats bare `postgresql://` as the legacy psycopg2 dialect. This
+    repository ships `psycopg[binary]`, so non-production gates and deployments
+    should work with either `postgresql://` or `postgresql+psycopg://` without
+    requiring the old psycopg2 package.
+    """
+    parsed = make_url(database_url)
+    if parsed.drivername == 'postgresql':
+        return str(parsed.set(drivername='postgresql+psycopg'))
+    return database_url
+
+
+DATABASE_URL = _normalize_database_url(DATABASE_URL)
 db_url = make_url(DATABASE_URL)
 connect_args = {"check_same_thread": False, "timeout": 30} if db_url.drivername.startswith("sqlite") else {}
 engine_kwargs = {"future": True, "echo": settings.database_echo, "pool_pre_ping": True}
