@@ -18,6 +18,7 @@ AUTO_REPLY_JOB = 'auto_reply.send_update'
 OPENCLAW_SYNC_JOB = 'openclaw.sync_session'
 ATTACHMENT_PERSIST_JOB = 'openclaw.persist_attachment'
 WEBCHAT_AI_REPLY_JOB = 'webchat.ai_reply'
+WEBCHAT_HANDOFF_SNAPSHOT_JOB = 'webchat.handoff_snapshot'
 
 
 def enqueue_background_job(
@@ -238,6 +239,16 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             _mark_done(job)
             return job
 
+        if job.job_type == WEBCHAT_HANDOFF_SNAPSHOT_JOB:
+            from .webchat_handoff_snapshot_service import process_webchat_handoff_snapshot_job
+
+            snapshot = payload.get('snapshot')
+            if not isinstance(snapshot, dict):
+                raise RuntimeError('webchat handoff snapshot payload is required')
+            process_webchat_handoff_snapshot_job(db, snapshot=snapshot)
+            _mark_done(job)
+            return job
+
         if job.job_type == OPENCLAW_SYNC_JOB:
             if not settings.openclaw_sync_enabled:
                 _mark_done(job)
@@ -263,7 +274,7 @@ def dispatch_pending_background_jobs(db: Session, *, limit: int | None = None, w
     if settings.openclaw_sync_enabled:
         enqueue_stale_openclaw_sync_jobs(db, limit=settings.openclaw_sync_batch_size)
         db.commit()
-    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB, WEBCHAT_AI_REPLY_JOB])
+    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB, WEBCHAT_AI_REPLY_JOB, WEBCHAT_HANDOFF_SNAPSHOT_JOB])
     processed: list[BackgroundJob] = []
     for job in claimed:
         process_background_job(db, job)
