@@ -38,6 +38,16 @@ OVERRIDE_FILE="$TMP_DIR/docker-release-gate.override.yml"
 RAW_CONFIG="$TMP_DIR/docker-resolved-config.raw.yml"
 RESOLVED_CONFIG="$OUT/command_outputs/11_docker_resolved_config.redacted.yml"
 SANITIZE='s/(token|secret|password|authorization|cookie|api[_-]?key|database_url)([=: ]+)[^ ]+/\1\2[REDACTED]/Ig'
+PYTHON_BIN="${PYTHON_BIN:-}"
+if [ -z "$PYTHON_BIN" ]; then
+  if command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+  elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+  else
+    PYTHON_BIN=""
+  fi
+fi
 
 cleanup() {
   if [ "${CLEANUP:-1}" = "1" ] && [ "$RUN_STACK" = "1" ]; then
@@ -104,6 +114,49 @@ services:
 YAML
 }
 
+assert_redacted_evidence_safe() {
+  if [ -z "$PYTHON_BIN" ]; then
+    echo "python/python3 is required for redacted evidence safety scan" >&2
+    exit 2
+  fi
+  "$PYTHON_BIN" - "$RESOLVED_CONFIG" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding='utf-8', errors='replace')
+findings = []
+key_re = re.compile(r'^\s*[A-Za-z0-9_\-]*?(token|secret|password|authorization|cookie|api[_-]?key|database_url)[A-Za-z0-9_\-]*\s*[:=]\s*(.*)$', re.I)
+allowed_empty = {'', 'null', '~', "''", '""'}
+for line_no, line in enumerate(text.splitlines(), 1):
+    stripped = line.strip()
+    if not stripped or stripped.startswith('#'):
+        continue
+    # Structural compose keys like "secrets:" are not secret values.
+    if re.match(r'^secrets\s*:\s*$', stripped, re.I):
+        continue
+    match = key_re.match(line)
+    if not match:
+        continue
+    value = match.group(2).strip()
+    low = value.lower()
+    # Redacted, empty, null, and *_FILE path references are acceptable in evidence.
+    if value.startswith('[REDACTED]') or low in allowed_empty:
+        continue
+    key_part = stripped.split(':', 1)[0].split('=', 1)[0].lower()
+    if key_part.endswith('_file') or key_part.endswith('-file'):
+        continue
+    findings.append(f'{line_no}: {stripped[:160]}')
+
+if findings:
+    print('Refusing to keep unresolved secret-like values in redacted config evidence:', file=sys.stderr)
+    for item in findings[:30]:
+        print(item, file=sys.stderr)
+    sys.exit(2)
+PY
+}
+
 write_gate_compose
 write_override
 
@@ -139,11 +192,8 @@ write_override
   echo "===== safety assertion: resolved config must point app/workers to isolated compose postgres ====="
   grep -q "postgresql+psycopg://" "$RAW_CONFIG"
   grep -q "@postgres:5432/${POSTGRES_DB_GATE}" "$RAW_CONFIG"
-  echo "===== safety assertion: redacted evidence must not contain obvious secret values ====="
-  if grep -Ei "(token|secret|password|authorization|cookie|api[_-]?key|database_url):[[:space:]]*[^[]" "$RESOLVED_CONFIG" >/dev/null; then
-    echo "Refusing to keep unresolved secret-like values in redacted config evidence" >&2
-    exit 2
-  fi
+  echo "===== safety assertion: redacted evidence must not contain unresolved secret-like values ====="
+  assert_redacted_evidence_safe
 } 2>&1 | sed -E "$SANITIZE" | tee "$OUT/command_outputs/11_docker_config_validation.log"
 
 if [ "$RUN_STACK" != "1" ]; then
