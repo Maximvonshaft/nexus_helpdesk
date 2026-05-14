@@ -284,3 +284,35 @@ def test_non_stream_active_processing_returns_202_without_duplicate_generation(m
     assert response.status_code == 202
     assert response.json()["error_code"] == "request_processing"
     assert calls["generate"] == 0
+
+
+def test_fast_rate_limit_is_shared_across_rotated_session_ids(monkeypatch):
+    reset_webchat_fast_rate_limit_for_tests()
+
+    async def fake_generate(**kwargs):
+        return WebchatFastReplyResult(
+            ok=True,
+            ai_generated=True,
+            reply_source="openclaw_responses",
+            reply="Hi, this is Speedy.",
+            intent="greeting",
+            tracking_number=None,
+            handoff_required=False,
+            handoff_reason=None,
+            recommended_agent_action=None,
+            ticket_creation_queued=False,
+            elapsed_ms=20,
+        )
+
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
+    monkeypatch.setenv("WEBCHAT_FAST_RATE_LIMIT_MAX_REQUESTS", "2")
+    monkeypatch.setenv("WEBCHAT_FAST_RATE_LIMIT_WINDOW_SECONDS", "60")
+
+    headers = {"User-Agent": "pytest-fast-limit/1.0"}
+    first = client.post("/api/webchat/fast-reply", json=_payload("rl-1"), headers=headers)
+    second = client.post("/api/webchat/fast-reply", json={**_payload("rl-2"), "session_id": "session-2"}, headers=headers)
+    third = client.post("/api/webchat/fast-reply", json={**_payload("rl-3"), "session_id": "session-3"}, headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert third.status_code == 429
