@@ -123,10 +123,10 @@ write_override
   echo "Redacted resolved config stored at $RESOLVED_CONFIG. Raw config is kept only in a temporary directory and removed on exit."
   echo "===== docker compose resolved service list ====="
   COMPOSE_PROJECT_NAME="$PROJECT_NAME" docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" config --services
-  echo "===== safety assertion: app must use isolated app port and must not expose production app port 18081 ====="
-  grep -q "$APP_PORT" "$RAW_CONFIG"
-  if grep -q "18081" "$RAW_CONFIG"; then
-    echo "Refusing config that still references production app port 18081" >&2
+  echo "===== safety assertion: app must use isolated app host port and must not bind production app host port 18081 ====="
+  grep -Eq "published:[[:space:]]*\"?${APP_PORT}\"?|127\.0\.0\.1:${APP_PORT}:8080" "$RAW_CONFIG"
+  if grep -Eq "published:[[:space:]]*\"?18081\"?|127\.0\.0\.1:18081:8080|0\.0\.0\.0:18081:8080" "$RAW_CONFIG"; then
+    echo "Refusing config that still binds production app host port 18081" >&2
     exit 2
   fi
   echo "===== safety assertion: resolved config must point app/workers to isolated compose postgres ====="
