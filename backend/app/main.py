@@ -33,12 +33,18 @@ from .api.webchat_events import router as webchat_events_router
 from .api.webchat_voice import router as webchat_voice_router
 from .db import engine, reset_current_request_id, set_current_request_id
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
+from .services.webchat_openclaw_responses_client import close_openclaw_clients
 from .settings import get_settings
 from .webchat_voice_config import is_webchat_voice_path, load_webchat_voice_runtime_config, webchat_voice_connect_sources
 
 settings = get_settings()
 configure_logging(get_settings().log_json)
 app = FastAPI(title='NexusDesk Helpdesk', version='20.4.0-round-b')
+
+
+@app.on_event('shutdown')
+async def shutdown_openclaw_clients() -> None:
+    await close_openclaw_clients()
 
 app.add_middleware(
     CORSMiddleware,
@@ -212,18 +218,20 @@ frontend_dir = settings.frontend_root
 assets_dir = frontend_dir / "assets"
 if frontend_dir.exists():
     if assets_dir.exists():
-        app.mount('/assets', StaticFiles(directory=str(assets_dir)), name='frontend_assets')
+        app.mount('/assets', StaticFiles(directory=str(assets_dir)), name='assets')
 
-    @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str):
-        if full_path.startswith("api/"):
-            return JSONResponse(status_code=404, content={"detail": "Not Found"})
-        if full_path.startswith("webchat/") or full_path.startswith("static/webchat/"):
-            return JSONResponse(status_code=404, content={"detail": "Webchat asset not found"})
-        file_path = frontend_dir / full_path
-        if file_path.is_file():
-            return FileResponse(str(file_path))
-        index_path = frontend_dir / "index.html"
-        if index_path.is_file():
-            return FileResponse(str(index_path))
-        return JSONResponse(status_code=404, content={"detail": "Frontend not built"})
+    @app.get('/', include_in_schema=False)
+    def serve_spa_root():
+        index_file = frontend_dir / 'index.html'
+        if index_file.exists():
+            return FileResponse(index_file)
+        return JSONResponse(status_code=404, content={'detail': 'frontend build not found'})
+
+    @app.get('/{full_path:path}', include_in_schema=False)
+    def serve_spa_fallback(full_path: str):
+        if full_path.startswith(('api/', 'docs', 'openapi.json', 'healthz', 'readyz', 'metrics', 'webchat/', 'static/')):
+            return JSONResponse(status_code=404, content={'detail': 'not found'})
+        index_file = frontend_dir / 'index.html'
+        if index_file.exists():
+            return FileResponse(index_file)
+        return JSONResponse(status_code=404, content={'detail': 'frontend build not found'})
