@@ -19,11 +19,12 @@ if [ ! -f "$COMPOSE_FILE" ]; then
 fi
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+STAMP_SAFE="$(printf '%s' "$STAMP" | tr '[:upper:]' '[:lower:]')"
 OUT="${OUT:-$REPO_ROOT/release_evidence_${STAMP}}"
 mkdir -p "$OUT/command_outputs"
 RUN_STACK="${DOCKER_GATE_RUN_STACK:-0}"
 CONFIRM="${DOCKER_GATE_CONFIRM:-}"
-PROJECT_NAME="${COMPOSE_PROJECT_NAME:-nexusdesk_release_gate_${STAMP}}"
+PROJECT_NAME="${COMPOSE_PROJECT_NAME:-nexusdesk_release_gate_${STAMP_SAFE}}"
 APP_PORT="${DOCKER_GATE_APP_PORT:-18082}"
 NGINX_PORT="${DOCKER_GATE_NGINX_PORT:-18080}"
 POSTGRES_USER_GATE="${DOCKER_GATE_POSTGRES_USER:-nexusdesk_gate}"
