@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .ai_runtime.openclaw_responses_provider import (
+    build_fast_reply_input_text,
+    build_fast_reply_instructions,
+    build_fast_reply_session_key,
+)
 from .ai_runtime.provider_router import generate_fast_reply
 from .ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
 from .webchat_fast_config import get_webchat_fast_settings
@@ -31,6 +36,52 @@ class WebchatFastReplyResult:
         # browser response. The customer-visible reply remains AI-generated.
         payload.pop("recommended_agent_action", None)
         return payload
+
+
+def _clip(value: str | None, limit: int) -> str:
+    cleaned = (value or "").strip()
+    return cleaned[:limit]
+
+
+def _clean_context(recent_context: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+    """Backward-compatible helper for stream Fast Lane.
+
+    Stream service imports these private helpers today. Keep the old contract in
+    place while Phase 1 moves provider-specific construction into
+    ai_runtime.openclaw_responses_provider.
+    """
+
+    settings = get_webchat_fast_settings()
+    items = recent_context or []
+    cleaned: list[dict[str, str]] = []
+    for item in items[-settings.history_turns * 2:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        if role not in {"customer", "visitor", "user", "ai", "assistant", "agent"}:
+            continue
+        normalized_role = "customer" if role in {"customer", "visitor", "user"} else "ai"
+        text = _clip(str(item.get("text") or item.get("body") or ""), 500)
+        if text:
+            cleaned.append({"role": normalized_role, "text": text})
+    return cleaned[-settings.history_turns * 2:]
+
+
+def _instructions() -> str:
+    return build_fast_reply_instructions()
+
+
+def _input_text(*, body: str, recent_context: list[dict[str, str]]) -> str:
+    settings = get_webchat_fast_settings()
+    return build_fast_reply_input_text(
+        body=body,
+        recent_context=recent_context,
+        max_prompt_chars=settings.max_prompt_chars,
+    )
+
+
+def _session_key(*, tenant_key: str, session_id: str) -> str:
+    return build_fast_reply_session_key(tenant_key=tenant_key, session_id=session_id)
 
 
 def _result_from_provider(provider_result: FastAIProviderResult) -> WebchatFastReplyResult:
