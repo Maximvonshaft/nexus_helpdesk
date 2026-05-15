@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Speedaf delivery icon">
+  <rect width="512" height="512" rx="112" fill="#ff5a00"/>
+  <path d="M144 292h126c48 0 83 26 83 68 0 17-5 32-15 44l52-39V250c0-47-38-85-85-85H183c-29 0-53 24-53 53 0 42 29 74 86 74Z" fill="#fff" opacity=".97"/>
+  <path d="M197 116h159l68 49-68 48 15-36H206c-42 0-76 34-76 76 0 15 4 28 12 40-41-17-65-48-65-84 0-51 54-93 120-93Z" fill="#fff"/>
+  <path d="M99 314h91l50 22-62 19-79-17c-15-3-15-21 0-24Zm-34 53h115l42 19-52 18H65c-17 0-17-37 0-37Z" fill="#fff" opacity=".98"/>
+  <path d="M216 318 315 350v72l-99-31v-73Zm110 35 91-33v72l-91 30v-69Zm-103-47 96-28 92 28-92 34-96-34Z" fill="#fff"/>
+</svg>

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Speedaf Express | Parcel Delivery, Tracking and Support</title>
+  <meta name="description" content="Track shipments, manage parcel delivery, get customer support, and connect with Speedaf Express service teams." />
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="assets/favicon.ico" sizes="any" />
+  <link rel="icon" href="assets/favicon-32.png" type="image/png" sizes="32x32" />
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" sizes="180x180" />
+  <link rel="manifest" href="assets/site.webmanifest" />
+  
+  
+  
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#mainContent">Skip to content</a>
+
+  <div class="site-shell">
+    <header class="site-header" aria-label="Speedaf primary navigation">
+      <a class="brand-logo" href="#" aria-label="Speedaf Express home">
+        <img src="assets/speedaf-logo-official.png" alt="Speedaf Express" width="194" height="64" decoding="async" />
+      </a>
+
+      <nav class="primary-nav" aria-label="Main navigation">
+        <a href="#tracking">Track</a>
+        <a href="#ship">Ship</a>
+        <a href="#services">Services</a>
+        <a href="#business">Business</a>
+        <a href="#support" data-open-chat>Support</a>
+      </nav>
+
+      <div class="account-area">
+        <button class="language" type="button" aria-label="Language selector">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.4 3 14 0 18M12 3c-3 3.4-3 14 0 18"/></svg>
+          EN
+        </button>
+        <a class="login" href="#">Login</a>
+        <a class="quote-btn" href="#quote">Get a quote</a>
+        <button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Open menu" aria-controls="mobileNav" aria-expanded="false"><span></span><span></span><span></span></button>
+      </div>
+    </header>
+
+    <nav class="mobile-nav" id="mobileNav" aria-label="Mobile navigation" hidden>
+      <a href="#tracking">Track</a>
+      <a href="#ship">Ship</a>
+      <a href="#services">Services</a>
+      <a href="#business">Business</a>
+      <a href="#support" data-open-chat>Support</a>
+      <a href="#quote">Get a quote</a>
+    </nav>
+
+    <main id="mainContent">
+      <section class="hero" aria-label="Speedaf parcel delivery homepage">
+        <div class="hero-grid">
+          <section class="hero-copy" id="tracking" aria-label="Shipment tracking and delivery actions">
+            <p class="eyebrow">Parcel delivery · Tracking · Customer support</p>
+            <h1 class="hero-title">Ship, track, and manage parcels with Speedaf.</h1>
+            <p class="hero-subtitle">Reliable parcel delivery for tracking, shipping, redelivery, and business support—with AI assistance when customers need answers fast.</p>
+
+            <form class="tracking-card" id="trackForm" aria-label="Track your shipment">
+              <label for="trackingInput">Track your shipment</label>
+              <div class="tracking-row">
+                <input id="trackingInput" name="tracking" autocomplete="off" placeholder="Enter tracking number" maxlength="48" />
+                <button type="submit">Track</button>
+              </div>
+              <p class="tracking-hint">Example: CH02000126553</p>
+              <div class="track-result" id="trackResult" hidden>
+                <strong>Checking with Speedaf support...</strong>
+                <span>Opening support chat to retrieve live status.</span>
+              </div>
+            </form>
+
+            <div class="hero-actions">
+              <a class="primary-action" href="#ship">Ship now</a>
+              <a class="secondary-action" href="#quote">Contact sales</a>
+            </div>
+
+            <div class="support-note">
+              <span class="support-dot" aria-hidden="true"></span>
+              AI support is available for parcel questions; human agents handle exceptions and escalations.
+            </div>
+          </section>
+
+          <section class="hero-visual" aria-label="Speedaf logistics operation visual">
+            <img class="route-map-asset" src="assets/hero-route-map.webp" alt="" loading="eager" decoding="async" />
+            <div class="visual-glow" aria-hidden="true"></div>
+            <img class="hero-scene-img" src="assets/hero-logistics-scene.webp" alt="Speedaf parcel delivery vehicle, packages and delivery device" loading="eager" decoding="async" />
+
+            <div class="ops-card ops-card-route">
+              <span>Live route</span>
+              <strong>Zurich local delivery</strong>
+              <small>ETA today · verified scan trail</small>
+            </div>
+            <div class="ops-card ops-card-status">
+              <span>Shipment status</span>
+              <strong>Out for delivery</strong>
+            </div>
+            <div class="ops-card ops-card-proof">
+              <span>POD evidence</span>
+              <strong>Photo · GPS · Time</strong>
+            </div>
+          </section>
+        </div>
+
+        <div class="trust-strip" aria-label="Speedaf service capabilities">
+          <article class="trust-card">
+            <span class="trust-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 8 4-8 4-8-4 8-4Z"/><path d="M4 7v10l8 4 8-4V7M12 11v10"/></svg></span>
+            <div><strong>Real-time tracking</strong><p>Shipment events, scan trail, and delivery status in one flow.</p></div>
+          </article>
+          <article class="trust-card">
+            <span class="trust-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/></svg></span>
+            <div><strong>Proof of delivery</strong><p>Photo, GPS, timestamp, and delivery evidence for operations.</p></div>
+          </article>
+          <article class="trust-card">
+            <span class="trust-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.2-5 4-7 8-7s6.8 2 8 7"/></svg></span>
+            <div><strong>AI + human support</strong><p>Instant parcel help with agent handoff for complex cases.</p></div>
+          </article>
+        </div>
+
+        <section class="enterprise-proof" aria-label="Enterprise delivery proof points">
+          <article>
+            <span>24/7</span>
+            <strong>AI support availability</strong>
+            <p>Instant parcel assistance before manual escalation is needed.</p>
+          </article>
+          <article>
+            <span>POD</span>
+            <strong>Evidence-ready delivery</strong>
+            <p>Photo, GPS, timestamp, and scan events designed for operations.</p>
+          </article>
+          <article>
+            <span>SLA</span>
+            <strong>Operational visibility</strong>
+            <p>Status, routing, and exception signals for local delivery teams.</p>
+          </article>
+          <article>
+            <span>B2B</span>
+            <strong>Business customer flow</strong>
+            <p>Quote, support, and delivery issue routing for enterprise parcels.</p>
+          </article>
+        </section>
+      </section>
+
+      <section class="service-section" id="services" aria-label="Speedaf logistics services">
+        <div class="section-heading">
+          <p class="eyebrow">Service coverage</p>
+          <h2>Built for parcel operations, not just support conversations.</h2>
+        </div>
+        <div class="service-grid">
+          <article><strong>Cross-border parcels</strong><p>Support for e-commerce parcel flows, tracking events, and customer delivery questions.</p></article>
+          <article><strong>Last-mile delivery</strong><p>Route-based local delivery, failed delivery handling, redelivery, and returns workflow.</p></article>
+          <article id="business"><strong>Business support</strong><p>Customer support, voice requests, operational escalation, and service visibility.</p></article>
+        </div>
+      </section>
+
+      <section class="shipping-section" id="ship" aria-label="Shipping and quote actions">
+        <div>
+          <p class="eyebrow">Shipping actions</p>
+          <h2>Start with a shipment, quote, or support request.</h2>
+          <p>Use Speedaf for parcel tracking, last-mile delivery support, and business customer coordination.</p>
+        </div>
+        <div class="shipping-actions">
+          <a class="primary-action" href="#tracking">Track a parcel</a>
+          <a class="secondary-action" id="quote" href="#support" data-open-chat>Request a quote</a>
+          <button class="secondary-action button-link" type="button" data-open-chat>Open support</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer" aria-label="Footer">
+      <div class="footer-brand">
+        <img src="assets/speedaf-logo-official.png" alt="Speedaf Express" loading="lazy" decoding="async" />
+        <p>Parcel delivery, shipment tracking, last-mile support, and business logistics coordination.</p>
+      </div>
+      <nav class="footer-columns" aria-label="Footer links">
+        <div>
+          <strong>Shipments</strong>
+          <a href="#tracking">Track parcel</a>
+          <a href="#ship">Ship now</a>
+          <a href="#quote">Get a quote</a>
+        </div>
+        <div>
+          <strong>Services</strong>
+          <a href="#services">Cross-border parcels</a>
+          <a href="#services">Last-mile delivery</a>
+          <a href="#business">Business support</a>
+        </div>
+        <div>
+          <strong>Support</strong>
+          <a href="#support" data-open-chat>AI support</a>
+          <a href="#support" data-open-chat>Human handoff</a>
+          <a href="#support" data-open-chat>Voice support</a>
+        </div>
+        <div>
+          <strong>Company</strong>
+          <a href="#">About Speedaf</a>
+          <a href="#">Privacy policy</a>
+          <a href="#">Terms of use</a>
+        </div>
+      </nav>
+    </footer>
+  </div>
+
+  <div id="support" class="support-anchor" aria-hidden="true"></div>
+  <button class="floating-chat" id="floatingChat" aria-label="Open Speedaf chat" aria-controls="chatPanel" aria-expanded="false" type="button">
+    <span class="badge" aria-hidden="true"></span>
+    <span class="bubblemark" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-5.4A8 8 0 1 1 21 12Z"/><path d="M8 12h.01M12 12h.01M16 12h.01"/></svg></span>
+    <span class="chat-label">Chat with Speedaf</span>
+  </button>
+
+  <div class="chat-backdrop" id="chatBackdrop" hidden></div>
+  <aside class="chat-panel is-closed" id="chatPanel" role="dialog" aria-modal="true" aria-label="Speedaf Support webchat" aria-hidden="true">
+    <div class="chat-head">
+      <div class="bot-avatar"><img src="assets/speedaf-ai-bot-avatar.png" alt="" /></div>
+      <div>
+        <div class="chat-title"><span class="chat-title-text">Speedaf Support</span><span class="online">Online</span></div>
+        <div class="chat-sub">AI support · human handoff when needed</div>
+      </div>
+      <button class="close-chat" id="closeChat" aria-label="Close chat" type="button"></button>
+    </div>
+    <div class="chat-body">
+      <div class="message-log" id="messageLog" aria-live="polite">
+        <div class="message-row bot"><div class="mini-avatar"><img src="assets/speedaf-ai-bot-avatar.png" alt="" /></div><div class="bubble">Hi, I'm Speedy. I can help with tracking, redelivery, refusal, delivery problems, and agent handoff.<span class="time">10:30 AM</span></div></div>
+        <div class="quick-grid" aria-label="Common support actions">
+          <button class="quick-btn" type="button" data-action="track"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 8 4-8 4-8-4 8-4Z"/><path d="M4 7v10l8 4 8-4V7M12 11v10"/></svg>Track parcel</button>
+          <button class="quick-btn" type="button" data-action="redelivery"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h12v9H3zM15 10h3l3 4v2h-6"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg>Redelivery</button>
+          <button class="quick-btn" type="button" data-action="refuse"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="m8 16 8-8"/></svg>Refuse delivery</button>
+          <button class="quick-btn" type="button" data-action="problem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2 21h20L12 3Z"/><path d="M12 9v5M12 18h.01"/></svg>Delivery issue</button>
+          <button class="quick-btn human" type="button" data-action="human"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.2-5 4-7 8-7s6.8 2 8 7"/></svg>Talk to human</button>
+        </div>
+      </div>
+      <div class="composer-wrap">
+        <label class="composer" for="chatInput">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#152033" stroke-width="2" aria-hidden="true"><path d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.7 5.7L9.2 18.2a2 2 0 1 1-2.8-2.8l8.5-8.5"/></svg>
+          <input id="chatInput" autocomplete="off" maxlength="240" placeholder="Tracking number or message" aria-label="Type tracking number or message" />
+          <button class="send-btn" id="sendBtn" aria-label="Send message" type="button"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 12 16-8-5 16-3.2-6.2L4 12Z" fill="currentColor"/></svg></button>
+        </label>
+        <div class="security-note"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>Do not share passwords or payment codes.</div>
+        
+      </div>
+    </div>
+  </aside>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
