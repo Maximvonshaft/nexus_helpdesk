@@ -219,12 +219,6 @@
     bubble.className = 'bubble ' + (role === 'user' ? 'user-bubble' : '');
     if (options && options.handoff && role !== 'user') bubble.classList.add('handoff-bubble');
 
-    if (options && options.handoff && role !== 'user') {
-      const strong = document.createElement('strong');
-      strong.textContent = 'Agent follow-up prepared';
-      bubble.appendChild(strong);
-    }
-
     bubble.appendChild(document.createTextNode(text));
     const time = document.createElement('span');
     time.className = 'time';
