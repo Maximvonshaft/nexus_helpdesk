@@ -107,13 +107,21 @@ def _normalized_origin(request: Request) -> str:
 def _client_fingerprint(request: Request) -> str:
     supplied = (request.headers.get("x-webchat-client-fingerprint") or "").strip()
     if supplied:
-        return supplied
+        return supplied[:160]
     user_agent = (request.headers.get("user-agent") or "unknown-agent").strip()
-    return user_agent
+    return user_agent[:300]
 
 
 def _bucket_key(identity: FastClientIdentity) -> str:
-    raw_identity = "|".join((identity.tenant_key or "default", identity.client_ip, identity.origin, identity.fingerprint))
+    """Return the non-spoofable Fast Lane rate-limit bucket key.
+
+    `X-Webchat-Client-Fingerprint` is intentionally not part of the enforced
+    quota identity. It is client supplied and can be rotated by a bot. The public
+    Fast Lane gate must always have an IP/origin hard bucket that cannot be
+    bypassed by changing browser/session/fingerprint values.
+    """
+
+    raw_identity = "|".join((identity.tenant_key or "default", identity.client_ip, identity.origin))
     return hashlib.sha256(raw_identity.encode("utf-8")).hexdigest()
 
 

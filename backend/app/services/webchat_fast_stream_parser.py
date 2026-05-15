@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from typing import Any
 import re
 
-from .webchat_fast_output_parser import FastReplyParseError, ParsedFastReply, parse_openclaw_fast_reply
+from .webchat_fast_output_parser import (
+    FastReplyParseError,
+    ParsedFastReply,
+    assert_customer_visible_reply_is_safe,
+    parse_openclaw_fast_reply,
+)
 from .webchat_openclaw_stream_adapter import ContentDelta, Completed, ToolCallDetected, StreamError
 
 FORBIDDEN_PHRASES = [
@@ -14,12 +19,16 @@ FORBIDDEN_PHRASES = [
     "prompt",
     "system prompt",
     "developer message",
-    "token",
     "localhost",
     "127.0.0.1",
     "port",
     "Authorization",
     "Bearer",
+    "api key",
+    "secret",
+    "password",
+    "credential",
+    "access token",
 ]
 HOLD_BACK_CHARS = max(len(item) for item in FORBIDDEN_PHRASES) - 1
 
@@ -46,6 +55,10 @@ def _has_forbidden(value: str) -> bool:
     for pattern in _FORBIDDEN_PATTERNS:
         if pattern.search(normalized):
             return True
+    try:
+        assert_customer_visible_reply_is_safe(normalized)
+    except FastReplyParseError:
+        return True
     return False
 
 
@@ -54,8 +67,8 @@ class StreamingReplyExtractor:
 
     Raw provider deltas may include the entire JSON object. This extractor only
     releases text from the `reply` value and keeps a safety holdback window so
-    forbidden internal terms cannot be exposed to the browser before the strict
-    final parse succeeds.
+    forbidden internal terms or unsafe business promises cannot be exposed to the
+    browser before the strict final parse succeeds.
     """
 
     def __init__(self) -> None:
@@ -222,8 +235,7 @@ class StreamingReplyExtractor:
         parsed = parse_openclaw_fast_reply(candidate)
         if not parsed.reply or not parsed.reply.strip():
             raise FastReplyParseError("reply is required")
-        if _has_forbidden(parsed.reply):
-            raise FastReplyParseError("reply contains forbidden internal term")
+        assert_customer_visible_reply_is_safe(parsed.reply)
         return parsed
 
     def feed_event(self, event: object) -> ReplyDelta | None:

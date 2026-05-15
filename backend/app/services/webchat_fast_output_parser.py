@@ -42,10 +42,34 @@ _INTERNAL_PATTERNS = [
     r"\bprompt\b",
     r"\bsystem prompt\b",
     r"\bdeveloper message\b",
-    r"\btoken\b",
     r"\blocalhost\b",
     r"\b127\.0\.0\.1\b",
     r"\bport\s*\d+\b",
+    r"\bAuthorization\b",
+    r"\bBearer\b",
+    r"\bapi[_ -]?key\b",
+    r"\bsecret\b",
+    r"\bpassword\b",
+    r"\bcredential\b",
+    r"\baccess[_ -]?token\b",
+]
+_UNSAFE_BUSINESS_PROMISE_PATTERNS = [
+    r"\b(refund|reimbursement)\b[^.!?\n]{0,80}\b(approved|processed|issued|completed|sent|guaranteed|confirmed)\b",
+    r"\b(approved|processed|issued|completed|sent|guaranteed|confirmed)\b[^.!?\n]{0,80}\b(refund|reimbursement)\b",
+    r"\b(compensation|claim)\b[^.!?\n]{0,80}\b(approved|processed|completed|guaranteed|confirmed)\b",
+    r"\b(we|i)\s+(will|can)\s+(refund|compensate|reimburse)\b",
+    r"\b(address|delivery address)\b[^.!?\n]{0,80}\b(changed|updated|modified|corrected)\b",
+    r"\b(i|we)\s+(changed|updated|modified|corrected)\b[^.!?\n]{0,80}\b(address|delivery address)\b",
+    r"\b(customs|clearance|duty|tax)\b[^.!?\n]{0,80}\b(cleared|released|approved|completed|resolved)\b",
+    r"\b(parcel|package|shipment|order)\b[^.!?\n]{0,80}\b(delivered|lost|found|returned|cancelled|canceled|stolen)\b",
+    r"\b(delivery|redelivery|pickup|return)\b[^.!?\n]{0,80}\b(scheduled|confirmed|completed|guaranteed)\b",
+    r"\b(sla|delivery time|arrival time)\b[^.!?\n]{0,80}\b(guaranteed|confirmed)\b",
+    r"\b(赔偿|退款|索赔)[^。！？\n]{0,40}(已|已经|会|可以)(批准|处理|完成|到账|保证)",
+    r"(已|已经|会|可以)(批准|处理|完成|到账|保证)[^。！？\n]{0,40}\b(赔偿|退款|索赔)",
+    r"\b(地址|收货地址|派送地址)[^。！？\n]{0,40}(已|已经)(更改|修改|更新|变更)",
+    r"(已|已经)(更改|修改|更新|变更)[^。！？\n]{0,40}\b(地址|收货地址|派送地址)",
+    r"\b(清关|海关|关税|税费)[^。！？\n]{0,40}(已|已经)(完成|放行|解决|批准)",
+    r"\b(包裹|快件|运单)[^。！？\n]{0,40}(已|已经)(签收|派送成功|找回|退回|取消)",
 ]
 
 
@@ -165,12 +189,21 @@ def _clean_optional_string(value: Any, *, max_chars: int = 500) -> str | None:
     return cleaned[:max_chars] if cleaned else None
 
 
+def _has_pattern(value: str, patterns: list[str]) -> bool:
+    return any(re.search(pattern, value, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def assert_customer_visible_reply_is_safe(reply: str) -> None:
+    if _has_pattern(reply, _INTERNAL_PATTERNS):
+        raise FastReplyParseError("AI reply contains internal system, credential, or gateway terms")
+    if _has_pattern(reply, _UNSAFE_BUSINESS_PROMISE_PATTERNS):
+        raise FastReplyParseError("AI reply contains unsafe business promise or unverified operational outcome")
+
+
 def _sanitize_reply(reply: str) -> str:
     cleaned = re.sub(r"[ \t]+", " ", reply.strip())
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
-    for pattern in _INTERNAL_PATTERNS:
-        if re.search(pattern, cleaned, flags=re.IGNORECASE):
-            raise FastReplyParseError("AI reply contains internal system or gateway terms")
+    assert_customer_visible_reply_is_safe(cleaned)
     return cleaned[:1200]
 
 
