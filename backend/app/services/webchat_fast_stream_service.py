@@ -153,27 +153,6 @@ def _enqueue_handoff(
     return True
 
 
-def _missing_reply_suffix(parsed_reply: str, emitted_text: str) -> str | None:
-    """Return final-safe suffix that has not been emitted yet.
-
-    Normal streams emit safe deltas as provider chunks arrive. Some providers only
-    expose the complete text in the final event. After strict final parse has
-    accepted the reply, it is safe to emit any remaining customer-visible suffix
-    before the terminal final event.
-    """
-
-    if not parsed_reply:
-        return None
-    if not emitted_text:
-        return parsed_reply
-    if parsed_reply.startswith(emitted_text):
-        suffix = parsed_reply[len(emitted_text):]
-        return suffix or None
-    # The provider rewrote earlier chunks but strict final parse succeeded. Avoid
-    # duplicating a potentially stale partial; do not emit more text here.
-    return None
-
-
 async def stream_webchat_fast_reply_events(
     *,
     begin: StreamBeginOutcome,
@@ -191,6 +170,8 @@ async def stream_webchat_fast_reply_events(
         stored = dict(begin.response_json or {})
         yield sse_event("meta", {"replayed": True})
         if stored.get("reply"):
+            # Replayed replies were already accepted by the strict final parser
+            # before being persisted, so they are safe to expose.
             yield sse_event("reply_delta", {"text": stored.get("reply") or ""})
         final = {k: v for k, v in stored.items() if k != "reply"}
         final["replayed"] = True
@@ -217,21 +198,20 @@ async def stream_webchat_fast_reply_events(
             if isinstance(event, Completed):
                 last_completed = event
                 continue
-            delta = extractor.feed_event(event)
-            if delta and delta.text:
-                yield sse_event("reply_delta", {"text": delta.text})
+            # Strict safety gate: consume and validate provider deltas, but do
+            # not expose any customer-visible text until final_parse() accepts
+            # the complete OpenClaw output. This prevents partial replies from
+            # reaching the browser when the terminal payload later fails strict
+            # JSON parsing or business validation.
+            extractor.feed_event(event)
 
         final_input: dict[str, Any] | str | None = None
         if last_completed is not None:
             final_input = last_completed.full_text or last_completed.full_payload
         parsed = extractor.final_parse(final_input)
 
-        tail = extractor.flush()
-        if tail and tail.text:
-            yield sse_event("reply_delta", {"text": tail.text})
-        missing_suffix = _missing_reply_suffix(parsed.reply, extractor.emitted_text)
-        if missing_suffix:
-            yield sse_event("reply_delta", {"text": missing_suffix})
+        if parsed.reply:
+            yield sse_event("reply_delta", {"text": parsed.reply})
 
         ticket_creation_queued = False
         if parsed.handoff_required:
