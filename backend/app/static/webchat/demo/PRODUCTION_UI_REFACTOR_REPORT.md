@@ -1,45 +1,42 @@
-# Speedaf Enterprise Homepage Production UI Refactor Report
+# Speedaf Showcase UI Refactor Report
 
-## Refactor Objective
-Upgrade the uploaded Speedaf AI support page from a visual demo into a production-grade logistics enterprise homepage structure.
+## Objective
 
-## Key Decisions
-1. Removed the duplicated left-side/mobile customer support panel.
-2. Kept one official WebChat surface only: floating entry -> popup panel -> close back to floating entry.
-3. Moved WebChat out of the hero layout so it behaves as a global website support component.
-4. Rebuilt the hero as a logistics-company homepage: Track / Ship / Quote first; AI support as an enhancement.
-5. Added a proper shipment tracking form as the primary conversion component.
-6. Reworked typography, spacing, hierarchy, and responsive breakpoints.
-7. Added mobile menu support and production hidden-state hardening.
-8. Removed visible WebCall/demo/mock/presentation wording from user-facing UI and JS config.
+Replace the old minimal WebChat demo page with a Speedaf-branded showcase page that is suitable for visual demonstration while preserving a real NexusDesk WebChat Fast Lane integration.
 
-## Layout Changes
-- Header: enterprise navigation with Track, Ship, Services, Business, Support, Login, Get a quote.
-- Hero: left business copy and tracking form; right logistics visual only.
-- Trust strip: Real-time tracking, Proof of delivery, AI + human support.
+## Key decisions
+
+1. The old `/webchat/demo.html` page now redirects to `/webchat/demo/`.
+2. The showcase page uses its own polished Speedaf UI instead of the old plain demo shell.
+3. The customer-facing chat panel posts to `POST /api/webchat/fast-reply`.
+4. Quick actions send real user messages to the backend instead of displaying local bot replies.
+5. The tracking form opens chat and sends `Track parcel {tracking_number}` to the backend.
+6. Local fallback tracking answers, fake shipment status, fake handoff messages, and fake voice support were removed.
+7. The browser displays backend replies only after strict response validation.
+
+## Layout
+
+- Header: Track, Ship, Services, Business, Support, Login, Get a quote.
+- Hero: tracking entry and logistics visual.
+- Trust strip: tracking support, proof of delivery, AI plus human support.
 - Services section: cross-border parcels, last-mile delivery, business support.
-- Footer: clean basic enterprise footer.
-- WebChat: single popup component, hidden by default.
+- Footer: shipment, service, support, and company links.
+- WebChat: one floating launcher and one popup panel.
 
-## QA Results
-Static and browser-render checks completed through Chromium with inline asset rendering.
+## Required runtime validation
 
-Checked viewports:
-- 1440x900
-- 1366x768
-- 1280x720
-- 1024x768
-- 390x844
+Before presenting the branch as production-ready, validate against the deployed server:
 
-Result:
-- No horizontal overflow detected.
-- WebChat is closed by default.
-- Floating chat opens WebChat and hides itself while panel is open.
-- No .phone-preview duplicate panel remains.
-- No visible mock/WebCall/demo/presentation wording remains in the page flow.
-- Tracking result is hidden on initial load and appears only after submit.
+- `/webchat/demo.html` loads or redirects correctly.
+- `/webchat/demo/` loads the showcase page.
+- `/webchat/demo/js/app.js` is served.
+- Browser Network shows `POST /api/webchat/fast-reply`.
+- Request payload has no `visitor.source` and no `recent_context[].content`.
+- Response has `ok=true` and non-empty `reply`.
+- Failure cases display only `Connection issue. Please try again.`
 
-## Remaining Production Notes
-- Replace PNG Speedaf logo with official vector SVG if available.
-- Connect tracking form and WebChat API_BASE_URL to production backend when endpoint is ready.
-- Add real corporate pages for Services, Business, Terms, Privacy, and Contact before public launch.
+## Remaining production notes
+
+- Confirm `WEBCHAT_ALLOWED_ORIGINS` for the public demo domain.
+- Add real legal footer URLs before public launch.
+- Add real corporate contact details before public launch.
