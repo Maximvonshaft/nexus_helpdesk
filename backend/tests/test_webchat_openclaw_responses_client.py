@@ -11,6 +11,9 @@ def _settings(**overrides) -> WebchatFastSettings:
     values = dict(
         enabled=True,
         provider="openclaw_responses",
+        fallback_provider="none",
+        codex_enabled=False,
+        openai_enabled=False,
         timeout_ms=3000,
         max_timeout_ms=5000,
         history_turns=5,
@@ -39,6 +42,10 @@ def _settings(**overrides) -> WebchatFastSettings:
         openclaw_stream_connect_timeout_ms=500,
         openclaw_stream_read_timeout_ms=15000,
         openclaw_stream_total_timeout_ms=30000,
+        codex_auth_token_file=None,
+        codex_auth_token=None,
+        openai_api_key_file=None,
+        openai_api_key=None,
     )
     values.update(overrides)
     return WebchatFastSettings(**values)
