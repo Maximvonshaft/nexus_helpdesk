@@ -198,7 +198,7 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         trusted_proxy_cidrs=_csv("TRUSTED_PROXY_CIDRS", "127.0.0.1/32,172.16.0.0/12"),
         rate_limit_trust_x_forwarded_for=_env_bool("WEBCHAT_RATE_LIMIT_TRUST_X_FORWARDED_FOR", True),
         openclaw_responses_url=os.getenv("OPENCLAW_RESPONSES_URL", "").strip(),
-        openclaw_responses_agent_id=os.getenv("OPENCLAW_RESPONSES_AGENT_ID", "webchat-fast").strip() or "webchat-fast",
+        openclaw_responses_agent_id=os.getenv("OPENCLAW_RESPONSES_AGENT_ID", "support").strip() or "support",
         openclaw_responses_token_file=os.getenv("OPENCLAW_RESPONSES_TOKEN_FILE"),
         openclaw_responses_token=os.getenv("OPENCLAW_RESPONSES_TOKEN"),
         openclaw_connect_timeout_ms=_env_int("OPENCLAW_RESPONSES_CONNECT_TIMEOUT_MS", 500, minimum=100, maximum=3000),

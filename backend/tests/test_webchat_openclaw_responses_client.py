@@ -24,7 +24,7 @@ def _settings(**overrides) -> WebchatFastSettings:
         trusted_proxy_cidrs=("127.0.0.1/32",),
         rate_limit_trust_x_forwarded_for=True,
         openclaw_responses_url="http://openclaw-gateway-private:18792/responses",
-        openclaw_responses_agent_id="webchat-fast",
+        openclaw_responses_agent_id="support",
         openclaw_responses_token_file=None,
         openclaw_responses_token="local-token",
         openclaw_connect_timeout_ms=500,

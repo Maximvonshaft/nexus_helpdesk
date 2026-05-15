@@ -39,7 +39,7 @@ def setup_function():
 
 
 def _settings():
-    return SimpleNamespace(stream_enabled=True, stream_require_accept=True, openclaw_responses_agent_id='webchat-fast')
+    return SimpleNamespace(stream_enabled=True, stream_require_accept=True, openclaw_responses_agent_id="support")
 
 
 def _payload(client_message_id: str = 'client-invalid-final') -> dict:

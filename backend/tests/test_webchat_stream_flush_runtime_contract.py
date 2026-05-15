@@ -32,7 +32,7 @@ def setup_function():
 
 
 def _settings():
-    return SimpleNamespace(stream_enabled=True, stream_require_accept=True, openclaw_responses_agent_id='webchat-fast', is_openclaw_stream_configured=True)
+    return SimpleNamespace(stream_enabled=True, stream_require_accept=True, openclaw_responses_agent_id="support", is_openclaw_stream_configured=True)
 
 
 def _payload() -> dict:

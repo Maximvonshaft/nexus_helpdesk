@@ -69,7 +69,7 @@ def _parse_sse(body: str) -> list[tuple[str, dict]]:
 
 
 def _settings():
-    return SimpleNamespace(stream_enabled=True, stream_require_accept=True, openclaw_responses_agent_id='webchat-fast', is_openclaw_stream_configured=True)
+    return SimpleNamespace(stream_enabled=True, stream_require_accept=True, openclaw_responses_agent_id="support", is_openclaw_stream_configured=True)
 
 
 def test_only_customer_visible_surfaces_are_exposed_and_final_intent_is_allowed(monkeypatch):

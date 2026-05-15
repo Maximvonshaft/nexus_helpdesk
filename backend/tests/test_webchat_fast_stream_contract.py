@@ -62,7 +62,7 @@ def _settings(enabled: bool = True):
     return SimpleNamespace(
         stream_enabled=enabled,
         stream_require_accept=True,
-        openclaw_responses_agent_id="webchat-fast",
+        openclaw_responses_agent_id="support",
         is_openclaw_stream_configured=True,
     )
 

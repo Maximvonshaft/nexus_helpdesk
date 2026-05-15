@@ -48,7 +48,7 @@ def _stream_settings():
         stream_require_accept=True,
         is_openclaw_stream_configured=True,
         stream_rollout_percent=100,
-        openclaw_responses_agent_id="webchat-fast",
+        openclaw_responses_agent_id="support",
     )
 
 
