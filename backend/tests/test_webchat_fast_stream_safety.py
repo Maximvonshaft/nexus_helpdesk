@@ -94,6 +94,89 @@ def test_only_customer_visible_surfaces_are_exposed_and_final_intent_is_allowed(
     assert 'reply' not in finals[0]
 
 
+def test_stream_does_not_emit_reply_delta_until_final_parse_accepts(monkeypatch):
+    early_valid_json = json.dumps(
+        {
+            'reply': 'Your parcel is still moving through our network.',
+            'intent': 'tracking',
+            'tracking_number': 'SPX123',
+            'handoff_required': False,
+            'handoff_reason': None,
+            'recommended_agent_action': None,
+        },
+        separators=(',', ':'),
+    )
+    invalid_final_json = json.dumps({'reply': 'missing required business fields'}, separators=(',', ':'))
+
+    async def fake_call_stream(**kwargs):
+        yield ContentDelta(early_valid_json)
+        yield Completed(full_text=invalid_final_json)
+
+    monkeypatch.setattr(webchat_fast, 'get_webchat_fast_settings', _settings)
+    monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
+    monkeypatch.setattr(webchat_fast_stream_service.openclaw_client, 'call_openclaw_responses_stream', fake_call_stream)
+
+    response = client.post('/api/webchat/fast-reply/stream', json=_payload('strict-final-gate'), headers={'Accept': 'text/event-stream'})
+    events = _parse_sse(response.text)
+
+    assert any(event == 'error' and payload.get('error_code') == 'ai_invalid_output' for event, payload in events)
+    assert not any(event == 'reply_delta' for event, _ in events)
+    assert not any(event == 'final' for event, _ in events)
+
+    db = SessionLocal()
+    try:
+        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == 'strict-final-gate')).scalar_one()
+        assert row.status == 'failed'
+        assert row.error_code == 'ai_invalid_output'
+        assert db.execute(select(BackgroundJob)).scalars().all() == []
+        assert db.execute(select(Ticket)).scalars().all() == []
+    finally:
+        db.close()
+
+
+def test_stream_emits_single_full_reply_after_final_parse_accepts(monkeypatch):
+    final_json = json.dumps(
+        {
+            'reply': 'Hello, I can help you check your shipment.',
+            'intent': 'greeting',
+            'tracking_number': None,
+            'handoff_required': False,
+            'handoff_reason': None,
+            'recommended_agent_action': None,
+        },
+        separators=(',', ':'),
+    )
+
+    async def fake_call_stream(**kwargs):
+        midpoint = len(final_json) // 2
+        yield ContentDelta(final_json[:midpoint])
+        yield ContentDelta(final_json[midpoint:])
+        yield Completed(full_text=final_json)
+
+    monkeypatch.setattr(webchat_fast, 'get_webchat_fast_settings', _settings)
+    monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
+    monkeypatch.setattr(webchat_fast_stream_service.openclaw_client, 'call_openclaw_responses_stream', fake_call_stream)
+
+    response = client.post('/api/webchat/fast-reply/stream', json=_payload('strict-final-ok'), headers={'Accept': 'text/event-stream'})
+    events = _parse_sse(response.text)
+
+    reply_deltas = [payload['text'] for event, payload in events if event == 'reply_delta']
+    finals = [payload for event, payload in events if event == 'final']
+
+    assert reply_deltas == ['Hello, I can help you check your shipment.']
+    assert len(finals) == 1
+    assert finals[0]['intent'] == 'greeting'
+    assert finals[0]['handoff_required'] is False
+
+    db = SessionLocal()
+    try:
+        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == 'strict-final-ok')).scalar_one()
+        assert row.status == 'done'
+        assert row.response_json['reply'] == 'Hello, I can help you check your shipment.'
+    finally:
+        db.close()
+
+
 def test_tool_call_detected_aborts_without_reply_delta_or_side_effects(monkeypatch):
     async def fake_call_stream(**kwargs):
         yield ToolCallDetected('response.tool_call.delta')
@@ -119,7 +202,7 @@ def test_tool_call_detected_aborts_without_reply_delta_or_side_effects(monkeypat
         db.close()
 
 
-def test_stream_handoff_enqueue_failure_does_not_emit_final_success(monkeypatch):
+def test_stream_handoff_enqueue_failure_does_not_emit_reply_or_final_success(monkeypatch):
     final_json = json.dumps(
         {
             'reply': 'A human teammate will review this.',
@@ -148,6 +231,7 @@ def test_stream_handoff_enqueue_failure_does_not_emit_final_success(monkeypatch)
     events = _parse_sse(response.text)
 
     assert any(event == 'error' and payload.get('error_code') == 'handoff_enqueue_failed' for event, payload in events)
+    assert not any(event == 'reply_delta' for event, _ in events)
     assert not any(event == 'final' for event, _ in events)
 
     db = SessionLocal()
