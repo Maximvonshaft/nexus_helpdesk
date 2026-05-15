@@ -65,6 +65,8 @@ def test_partial_reply_then_invalid_final_rejected_and_failed(monkeypatch):
     response = client.post('/api/webchat/fast-reply/stream', json=_payload(), headers={'Accept': 'text/event-stream'})
 
     assert response.status_code == 200
+    assert 'event: reply_delta' not in response.text
+    assert 'Hello there, I can help with that.' not in response.text
     assert 'event: error' in response.text
     assert 'ai_invalid_output' in response.text
     assert 'event: final' not in response.text
