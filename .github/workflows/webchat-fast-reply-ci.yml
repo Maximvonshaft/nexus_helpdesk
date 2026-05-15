@@ -77,6 +77,7 @@ jobs:
             backend/tests/test_webchat_fast_idempotency_db.py \
             backend/tests/test_webchat_fast_audit_regressions.py \
             backend/tests/test_webchat_fast_handoff_policy.py \
+            backend/tests/test_webchat_fast_ai_provider_router_phase1.py \
             backend/tests/test_webchat_fast_stream_safety.py \
             backend/tests/test_webchat_openclaw_responses_client.py \
             backend/tests/test_webchat_widget_fast_mode_static.py \
