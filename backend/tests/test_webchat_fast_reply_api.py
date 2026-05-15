@@ -371,7 +371,7 @@ def test_fast_rate_limit_concurrent_same_bucket_does_not_exceed_limit(monkeypatc
     def attempt(_: int) -> bool:
         barrier.wait()
         try:
-            enforce_webchat_fast_rate_limit(_request(fingerprint="fp-shared"), tenant_key="tenant-a", session_id=f"session-{_}")
+            enforce_webchat_fast_rate_limit(_request(fingerprint=f"fp-{_}"), tenant_key="tenant-a", session_id=f"session-{_}")
             return True
         except HTTPException as exc:
             assert exc.status_code == 429
@@ -381,6 +381,29 @@ def test_fast_rate_limit_concurrent_same_bucket_does_not_exceed_limit(monkeypatc
         results = list(pool.map(attempt, range(8)))
 
     assert sum(results) == 3
+
+
+def test_fast_rate_limit_rotated_fingerprint_does_not_bypass_ip_origin_tenant_bucket(monkeypatch):
+    reset_webchat_fast_rate_limit_for_tests()
+    monkeypatch.setenv("WEBCHAT_FAST_RATE_LIMIT_MAX_REQUESTS", "2")
+    monkeypatch.setenv("WEBCHAT_FAST_RATE_LIMIT_WINDOW_SECONDS", "60")
+    reset_webchat_fast_rate_limit_for_tests()
+
+    enforce_webchat_fast_rate_limit(_request(origin="https://example.test", fingerprint="fp-a"), tenant_key="tenant-a", session_id="session-1")
+    enforce_webchat_fast_rate_limit(_request(origin="https://example.test", fingerprint="fp-b"), tenant_key="tenant-a", session_id="session-2")
+    try:
+        enforce_webchat_fast_rate_limit(_request(origin="https://example.test", fingerprint="fp-c"), tenant_key="tenant-a", session_id="session-3")
+        raise AssertionError("rotating X-Webchat-Client-Fingerprint must not bypass the hard IP/origin/tenant bucket")
+    except HTTPException as exc:
+        assert exc.status_code == 429
+
+    db = SessionLocal()
+    try:
+        rows = db.execute(select(WebchatRateLimitBucket)).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].request_count == 2
+    finally:
+        db.close()
 
 
 def test_long_origin_and_user_agent_do_not_exceed_bucket_key_column(monkeypatch):
@@ -400,7 +423,7 @@ def test_long_origin_and_user_agent_do_not_exceed_bucket_key_column(monkeypatch)
         session_id="session-1",
     )
     enforce_webchat_fast_rate_limit(
-        _request(origin=long_origin, referer=long_referer, user_agent=long_user_agent, fingerprint=long_fingerprint),
+        _request(origin=long_origin, referer=long_referer, user_agent=long_user_agent, fingerprint="rotated-fingerprint"),
         tenant_key="tenant-a",
         session_id="session-rotated",
     )
@@ -429,13 +452,17 @@ def test_fast_rate_limit_different_dimensions_do_not_pollute_each_other(monkeypa
 
     enforce_webchat_fast_rate_limit(_request(client_ip="198.51.100.10", fingerprint="fp-a"), tenant_key="tenant-a", session_id="session-1")
     enforce_webchat_fast_rate_limit(_request(client_ip="198.51.100.11", fingerprint="fp-a"), tenant_key="tenant-a", session_id="session-2")
-    enforce_webchat_fast_rate_limit(_request(client_ip="198.51.100.10", fingerprint="fp-b"), tenant_key="tenant-a", session_id="session-3")
+    try:
+        enforce_webchat_fast_rate_limit(_request(client_ip="198.51.100.10", fingerprint="fp-b"), tenant_key="tenant-a", session_id="session-3")
+        raise AssertionError("rotated fingerprint must not create a separate quota bucket for the same tenant/ip/origin")
+    except HTTPException as exc:
+        assert exc.status_code == 429
     enforce_webchat_fast_rate_limit(_request(client_ip="198.51.100.10", fingerprint="fp-a"), tenant_key="tenant-b", session_id="session-4")
 
     db = SessionLocal()
     try:
         rows = db.execute(select(WebchatRateLimitBucket).order_by(WebchatRateLimitBucket.bucket_key)).scalars().all()
-        assert len(rows) == 4
+        assert len(rows) == 3
         assert all(row.request_count == 1 for row in rows)
     finally:
         db.close()
