@@ -210,9 +210,6 @@ async def stream_webchat_fast_reply_events(
             final_input = last_completed.full_text or last_completed.full_payload
         parsed = extractor.final_parse(final_input)
 
-        if parsed.reply:
-            yield sse_event("reply_delta", {"text": parsed.reply})
-
         ticket_creation_queued = False
         if parsed.handoff_required:
             try:
@@ -232,6 +229,10 @@ async def stream_webchat_fast_reply_events(
                 record_fast_reply_metric(status="handoff_enqueue_failed", intent=parsed.intent, handoff_required=True, elapsed_ms=elapsed_ms)
                 yield sse_event("error", {"error_code": "handoff_enqueue_failed", "retry_after_ms": 1500})
                 return
+
+        if parsed.reply:
+            yield sse_event("reply_delta", {"text": parsed.reply})
+
         final = public_final_from_parsed(parsed, ticket_creation_queued=ticket_creation_queued, replayed=False)
         elapsed_ms = int((time.monotonic() - started) * 1000)
         final["elapsed_ms"] = elapsed_ms
