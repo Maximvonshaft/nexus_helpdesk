@@ -9,6 +9,7 @@ on:
       - 'backend/app/services/webchat_handoff_policy.py'
       - 'backend/app/services/webchat_handoff_snapshot*.py'
       - 'backend/app/static/webchat/widget.js'
+      - 'backend/app/static/webchat/demo/**'
       - 'backend/tests/test_webchat_fast*.py'
       - 'backend/tests/test_webchat_openclaw_responses_client.py'
       - 'scripts/smoke/webchat_fast_reply_concurrency_smoke.py'
