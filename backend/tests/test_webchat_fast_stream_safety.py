@@ -122,12 +122,12 @@ def test_tool_call_detected_aborts_without_reply_delta_or_side_effects(monkeypat
 def test_stream_handoff_enqueue_failure_does_not_emit_final_success(monkeypatch):
     final_json = json.dumps(
         {
-            'reply': 'I will route this to a support specialist.',
+            'reply': 'A human teammate will review this.',
             'intent': 'handoff',
             'tracking_number': None,
             'handoff_required': True,
             'handoff_reason': 'manual_review_required',
-            'recommended_agent_action': 'Review the WebChat handoff request.',
+            'recommended_agent_action': 'Review this handoff request.',
         },
         separators=(',', ':'),
     )
