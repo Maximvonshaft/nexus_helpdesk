@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 from urllib.parse import urlparse
 
@@ -15,6 +16,7 @@ from ..services.webchat_handoff_snapshot_service import build_handoff_snapshot_p
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat-fast"])
 settings = get_settings()
+LOGGER = logging.getLogger("nexusdesk")
 
 
 class WebchatFastContextItem(BaseModel):
@@ -143,9 +145,26 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
             with db_context() as db:
                 enqueue_webchat_handoff_snapshot_job(db, snapshot=snapshot)
             result_payload["ticket_creation_queued"] = True
-        except Exception:
-            # Customer AI reply must still return even if DB-backed enqueue fails.
-            result_payload["ticket_creation_queued"] = False
+        except Exception as exc:
+            LOGGER.warning(
+                "webchat_fast_handoff_enqueue_failed",
+                extra={
+                    "event_payload": {
+                        "tenant_key": payload.tenant_key,
+                        "channel_key": payload.channel_key,
+                        "request_id": getattr(request.state, "request_id", None),
+                        "error_type": type(exc).__name__,
+                    }
+                },
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error_code": "handoff_enqueue_failed",
+                    "message": "Unable to queue human handoff. Please retry.",
+                    "retry_after_ms": 1500,
+                },
+            ) from exc
 
     remember_fast_reply_response(
         tenant_key=payload.tenant_key,
