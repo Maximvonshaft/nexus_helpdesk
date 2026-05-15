@@ -6,6 +6,7 @@ on:
       - 'backend/app/api/webchat_fast.py'
       - 'backend/app/services/webchat_fast_*.py'
       - 'backend/app/services/webchat_openclaw_responses_client.py'
+      - 'backend/app/services/webchat_handoff_policy.py'
       - 'backend/app/services/webchat_handoff_snapshot*.py'
       - 'backend/app/static/webchat/widget.js'
       - 'backend/tests/test_webchat_fast*.py'
@@ -58,6 +59,7 @@ jobs:
             backend/app/services/webchat_fast_rate_limit.py \
             backend/app/services/webchat_fast_reply_metrics.py \
             backend/app/services/webchat_fast_stream_service.py \
+            backend/app/services/webchat_handoff_policy.py \
             backend/app/services/webchat_openclaw_responses_client.py \
             backend/app/services/webchat_handoff_snapshot_service.py \
             backend/app/services/webchat_handoff_snapshot_worker.py \
@@ -73,6 +75,7 @@ jobs:
             backend/tests/test_webchat_fast_reply_api.py \
             backend/tests/test_webchat_fast_idempotency_db.py \
             backend/tests/test_webchat_fast_audit_regressions.py \
+            backend/tests/test_webchat_fast_handoff_policy.py \
             backend/tests/test_webchat_fast_stream_safety.py \
             backend/tests/test_webchat_openclaw_responses_client.py \
             backend/tests/test_webchat_widget_fast_mode_static.py \
