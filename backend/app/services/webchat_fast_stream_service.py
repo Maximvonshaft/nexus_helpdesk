@@ -148,12 +148,9 @@ def _enqueue_handoff(
         recent_context=recent_context or [],
         visitor=_visitor_payload(visitor),
     )
-    try:
-        with db_context() as db:
-            enqueue_webchat_handoff_snapshot_job(db, snapshot=snapshot)
-        return True
-    except Exception:
-        return False
+    with db_context() as db:
+        enqueue_webchat_handoff_snapshot_job(db, snapshot=snapshot)
+    return True
 
 
 def _missing_reply_suffix(parsed_reply: str, emitted_text: str) -> str | None:
@@ -238,16 +235,23 @@ async def stream_webchat_fast_reply_events(
 
         ticket_creation_queued = False
         if parsed.handoff_required:
-            ticket_creation_queued = _enqueue_handoff(
-                tenant_key=tenant_key,
-                channel_key=channel_key,
-                session_id=session_id,
-                client_message_id=client_message_id,
-                body=body,
-                parsed=parsed,
-                recent_context=recent_context,
-                visitor=visitor,
-            )
+            try:
+                ticket_creation_queued = _enqueue_handoff(
+                    tenant_key=tenant_key,
+                    channel_key=channel_key,
+                    session_id=session_id,
+                    client_message_id=client_message_id,
+                    body=body,
+                    parsed=parsed,
+                    recent_context=recent_context,
+                    visitor=visitor,
+                )
+            except Exception:
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+                _mark_failed(begin.row_id, "handoff_enqueue_failed")
+                record_fast_reply_metric(status="handoff_enqueue_failed", intent=parsed.intent, handoff_required=True, elapsed_ms=elapsed_ms)
+                yield sse_event("error", {"error_code": "handoff_enqueue_failed", "retry_after_ms": 1500})
+                return
         final = public_final_from_parsed(parsed, ticket_creation_queued=ticket_creation_queued, replayed=False)
         elapsed_ms = int((time.monotonic() - started) * 1000)
         final["elapsed_ms"] = elapsed_ms
