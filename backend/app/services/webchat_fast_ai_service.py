@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-import hashlib
-import time
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .ai_runtime.openclaw_responses_provider import (
+    build_fast_reply_input_text,
+    build_fast_reply_instructions,
+    build_fast_reply_session_key,
+)
+from .ai_runtime.provider_router import generate_fast_reply
+from .ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
 from .webchat_fast_config import get_webchat_fast_settings
-from .webchat_fast_output_parser import FastReplyParseError, ParsedFastReply, UnexpectedToolCallError, parse_openclaw_fast_reply
-from .webchat_fast_reply_metrics import record_fast_reply_metric, record_openclaw_responses_metric
-from .webchat_openclaw_responses_client import OpenClawResponsesError, call_openclaw_responses
+from .webchat_fast_reply_metrics import record_fast_reply_metric
 
 
 @dataclass(frozen=True)
@@ -41,6 +44,13 @@ def _clip(value: str | None, limit: int) -> str:
 
 
 def _clean_context(recent_context: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+    """Backward-compatible helper for stream Fast Lane.
+
+    Stream service imports these private helpers today. Keep the old contract in
+    place while Phase 1 moves provider-specific construction into
+    ai_runtime.openclaw_responses_provider.
+    """
+
     settings = get_webchat_fast_settings()
     items = recent_context or []
     cleaned: list[dict[str, str]] = []
@@ -57,92 +67,38 @@ def _clean_context(recent_context: list[dict[str, Any]] | None) -> list[dict[str
     return cleaned[-settings.history_turns * 2:]
 
 
-def _context_block(recent_context: list[dict[str, str]]) -> str:
-    if not recent_context:
-        return "(none)"
-    lines = []
-    for item in recent_context:
-        speaker = "Customer" if item["role"] == "customer" else "AI"
-        lines.append(f"{speaker}: {item['text']}")
-    return "\n".join(lines)
-
-
 def _instructions() -> str:
-    return (
-        "You are Speedy, Speedaf's public WebChat AI assistant.\n\n"
-        "Hard rules:\n"
-        "- Reply in the customer's language.\n"
-        "- The customer-visible reply must be short, helpful, and natural.\n"
-        "- Do not invent parcel status, delivery result, customs result, refund, compensation, or SLA.\n"
-        "- If a tracking number is missing, ask for it naturally.\n"
-        "- If manual support is needed, say so naturally.\n"
-        "- Return valid JSON only.\n"
-        "- No markdown.\n"
-        "- No hidden reasoning.\n"
-        "- No internal tool names.\n"
-        "- No OpenClaw, gateway, prompt, token, localhost, port, or system details.\n\n"
-        "JSON schema:\n"
-        "{\n"
-        "  \"reply\": \"customer visible AI reply\",\n"
-        "  \"intent\": \"greeting|tracking|tracking_missing_number|tracking_unresolved|complaint|address_change|handoff|other\",\n"
-        "  \"tracking_number\": null,\n"
-        "  \"handoff_required\": false,\n"
-        "  \"handoff_reason\": null,\n"
-        "  \"recommended_agent_action\": null\n"
-        "}\n"
-    )
+    return build_fast_reply_instructions()
 
 
 def _input_text(*, body: str, recent_context: list[dict[str, str]]) -> str:
     settings = get_webchat_fast_settings()
-    text = (
-        "Recent context:\n"
-        f"{_context_block(recent_context)}\n\n"
-        "Customer message:\n"
-        f"{_clip(body, 2000)}"
+    return build_fast_reply_input_text(
+        body=body,
+        recent_context=recent_context,
+        max_prompt_chars=settings.max_prompt_chars,
     )
-    return text[: settings.max_prompt_chars]
 
 
 def _session_key(*, tenant_key: str, session_id: str) -> str:
-    raw = f"webchat-fast:{tenant_key or 'default'}:{session_id}"
-    if len(raw) <= 180:
-        return raw
-    digest = hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:32]
-    return f"webchat-fast:{digest}"
+    return build_fast_reply_session_key(tenant_key=tenant_key, session_id=session_id)
 
 
-def _success_from_parsed(parsed: ParsedFastReply, *, elapsed_ms: int) -> WebchatFastReplyResult:
+def _result_from_provider(provider_result: FastAIProviderResult) -> WebchatFastReplyResult:
     return WebchatFastReplyResult(
-        ok=True,
-        ai_generated=True,
-        reply_source="openclaw_responses",
-        reply=parsed.reply,
-        intent=parsed.intent,
-        tracking_number=parsed.tracking_number,
-        handoff_required=parsed.handoff_required,
-        handoff_reason=parsed.handoff_reason,
-        recommended_agent_action=parsed.recommended_agent_action,
+        ok=provider_result.ok,
+        ai_generated=provider_result.ai_generated,
+        reply_source=provider_result.reply_source,
+        reply=provider_result.reply,
+        intent=provider_result.intent,
+        tracking_number=provider_result.tracking_number,
+        handoff_required=provider_result.handoff_required,
+        handoff_reason=provider_result.handoff_reason,
+        recommended_agent_action=provider_result.recommended_agent_action,
         ticket_creation_queued=False,
-        elapsed_ms=elapsed_ms,
-    )
-
-
-def _error_response(error_code: str, *, elapsed_ms: int) -> WebchatFastReplyResult:
-    return WebchatFastReplyResult(
-        ok=False,
-        ai_generated=False,
-        reply_source=None,
-        reply=None,
-        intent=None,
-        tracking_number=None,
-        handoff_required=False,
-        handoff_reason=None,
-        recommended_agent_action=None,
-        ticket_creation_queued=False,
-        elapsed_ms=elapsed_ms,
-        error_code=error_code,
-        retry_after_ms=1500,
+        elapsed_ms=provider_result.elapsed_ms,
+        error_code=provider_result.error_code,
+        retry_after_ms=provider_result.retry_after_ms,
     )
 
 
@@ -155,45 +111,52 @@ async def generate_webchat_fast_reply(
     recent_context: list[dict[str, Any]] | None,
     request_id: str | None = None,
 ) -> WebchatFastReplyResult:
-    """Generate one AI-only WebChat reply through OpenClaw /v1/responses.
+    """Generate one AI-only WebChat reply through the configured provider.
 
     This function must remain DB-free. Ticket creation, message persistence,
     old AI turns, and polling are deliberately outside this path.
+
+    Phase 1 keeps openclaw_responses as the default provider while adding a
+    provider router for codex_auth/openai_responses compatibility work.
     """
 
-    started = time.monotonic()
     settings = get_webchat_fast_settings()
-    if not settings.enabled or not settings.is_openclaw_configured:
-        result = _error_response("ai_unavailable", elapsed_ms=0)
+    if not settings.enabled:
+        result = WebchatFastReplyResult(
+            ok=False,
+            ai_generated=False,
+            reply_source=None,
+            reply=None,
+            intent=None,
+            tracking_number=None,
+            handoff_required=False,
+            handoff_reason=None,
+            recommended_agent_action=None,
+            ticket_creation_queued=False,
+            elapsed_ms=0,
+            error_code="ai_unavailable",
+            retry_after_ms=1500,
+        )
         record_fast_reply_metric(status="ai_unavailable", elapsed_ms=0)
         return result
 
-    normalized_body = _clip(body, 2000)
-    context = _clean_context(recent_context)
-    try:
-        response = await call_openclaw_responses(
-            session_key=_session_key(tenant_key=tenant_key, session_id=session_id),
-            instructions=_instructions(),
-            input_text=_input_text(body=normalized_body, recent_context=context),
+    provider_result = await generate_fast_reply(
+        request=FastAIProviderRequest(
+            tenant_key=tenant_key,
+            channel_key=channel_key,
+            session_id=session_id,
+            body=body,
+            recent_context=recent_context,
             request_id=request_id,
-            settings=settings,
-        )
-        record_openclaw_responses_metric(status="ok", agent_id=settings.openclaw_responses_agent_id, elapsed_ms=response.elapsed_ms)
-        parsed = parse_openclaw_fast_reply(response.payload)
-        elapsed_ms = int((time.monotonic() - started) * 1000)
-        result = _success_from_parsed(parsed, elapsed_ms=elapsed_ms)
-        record_fast_reply_metric(status="ok", intent=result.intent, handoff_required=result.handoff_required, elapsed_ms=elapsed_ms)
-        return result
-    except UnexpectedToolCallError:
-        elapsed_ms = int((time.monotonic() - started) * 1000)
-        record_fast_reply_metric(status="ai_unexpected_tool_call", elapsed_ms=elapsed_ms)
-        return _error_response("ai_unexpected_tool_call", elapsed_ms=elapsed_ms)
-    except FastReplyParseError:
-        elapsed_ms = int((time.monotonic() - started) * 1000)
-        record_fast_reply_metric(status="ai_invalid_output", elapsed_ms=elapsed_ms)
-        return _error_response("ai_invalid_output", elapsed_ms=elapsed_ms)
-    except OpenClawResponsesError:
-        elapsed_ms = int((time.monotonic() - started) * 1000)
-        record_openclaw_responses_metric(status="unavailable", agent_id=settings.openclaw_responses_agent_id, elapsed_ms=elapsed_ms)
-        record_fast_reply_metric(status="ai_unavailable", elapsed_ms=elapsed_ms)
-        return _error_response("ai_unavailable", elapsed_ms=elapsed_ms)
+        ),
+        settings=settings,
+    )
+
+    status = "ok" if provider_result.ok else (provider_result.error_code or "ai_unavailable")
+    record_fast_reply_metric(
+        status=status,
+        intent=provider_result.intent,
+        handoff_required=provider_result.handoff_required,
+        elapsed_ms=provider_result.elapsed_ms,
+    )
+    return _result_from_provider(provider_result)

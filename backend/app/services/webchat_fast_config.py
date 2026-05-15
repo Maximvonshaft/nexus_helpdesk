@@ -9,6 +9,10 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
+_ALLOWED_FAST_AI_PROVIDERS = {"openclaw_responses", "codex_auth", "openai_responses"}
+_ALLOWED_FAST_AI_FALLBACK_PROVIDERS = {"openclaw_responses", "none"}
+
+
 def _env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -34,10 +38,32 @@ def _csv(name: str, default: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
+def _read_secret_file(path_value: str | None) -> str | None:
+    if not path_value:
+        return None
+    try:
+        value = Path(path_value).read_text(encoding="utf-8").strip()
+    except OSError:
+        value = ""
+    if value.lower().startswith("bearer "):
+        value = value.split(None, 1)[1].strip()
+    return value or None
+
+
+def _normalize_secret_value(value: str | None) -> str | None:
+    cleaned = (value or "").strip()
+    if cleaned.lower().startswith("bearer "):
+        cleaned = cleaned.split(None, 1)[1].strip()
+    return cleaned or None
+
+
 @dataclass(frozen=True)
 class WebchatFastSettings:
     enabled: bool
     provider: str
+    fallback_provider: str
+    codex_enabled: bool
+    openai_enabled: bool
     timeout_ms: int
     max_timeout_ms: int
     history_turns: int
@@ -68,23 +94,18 @@ class WebchatFastSettings:
     openclaw_stream_read_timeout_ms: int
     openclaw_stream_total_timeout_ms: int
 
+    codex_auth_token_file: str | None
+    codex_auth_token: str | None
+    openai_api_key_file: str | None
+    openai_api_key: str | None
+
     @property
     def stream_token(self) -> str | None:
-        if self.openclaw_responses_stream_token_file:
-            path = Path(self.openclaw_responses_stream_token_file)
-            try:
-                value = path.read_text(encoding="utf-8").strip()
-            except OSError:
-                value = ""
-            if value.lower().startswith("bearer "):
-                value = value.split(None, 1)[1].strip()
-            if value:
-                return value
+        file_token = _read_secret_file(self.openclaw_responses_stream_token_file)
+        if file_token:
+            return file_token
         if self.app_env in {"development", "test", "local"}:
-            value = (self.openclaw_responses_stream_token or "").strip()
-            if value.lower().startswith("bearer "):
-                value = value.split(None, 1)[1].strip()
-            return value or None
+            return _normalize_secret_value(self.openclaw_responses_stream_token)
         return None
 
     @property
@@ -93,30 +114,55 @@ class WebchatFastSettings:
 
     @property
     def token(self) -> str | None:
-        if self.openclaw_responses_token_file:
-            path = Path(self.openclaw_responses_token_file)
-            try:
-                value = path.read_text(encoding="utf-8").strip()
-            except OSError:
-                value = ""
-            if value.lower().startswith("bearer "):
-                value = value.split(None, 1)[1].strip()
-            if value:
-                return value
+        file_token = _read_secret_file(self.openclaw_responses_token_file)
+        if file_token:
+            return file_token
         if self.app_env in {"development", "test", "local"}:
-            value = (self.openclaw_responses_token or "").strip()
-            if value.lower().startswith("bearer "):
-                value = value.split(None, 1)[1].strip()
-            return value or None
+            return _normalize_secret_value(self.openclaw_responses_token)
         return None
 
     @property
     def is_openclaw_configured(self) -> bool:
         return bool(self.openclaw_responses_url and self.token)
 
+    @property
+    def codex_token(self) -> str | None:
+        file_token = _read_secret_file(self.codex_auth_token_file)
+        if file_token:
+            return file_token
+        if self.app_env in {"development", "test", "local"}:
+            return _normalize_secret_value(self.codex_auth_token)
+        return None
+
+    @property
+    def is_codex_configured(self) -> bool:
+        return bool(self.codex_enabled and self.codex_token)
+
+    @property
+    def openai_token(self) -> str | None:
+        file_token = _read_secret_file(self.openai_api_key_file)
+        if file_token:
+            return file_token
+        if self.app_env in {"development", "test", "local"}:
+            return _normalize_secret_value(self.openai_api_key)
+        return None
+
+    @property
+    def is_openai_configured(self) -> bool:
+        return bool(self.openai_enabled and self.openai_token)
+
     def validate_runtime(self) -> None:
-        if self.provider != "openclaw_responses":
-            raise RuntimeError("WEBCHAT_FAST_AI_PROVIDER must be openclaw_responses")
+        if self.provider not in _ALLOWED_FAST_AI_PROVIDERS:
+            raise RuntimeError(
+                "WEBCHAT_FAST_AI_PROVIDER must be one of: "
+                + ", ".join(sorted(_ALLOWED_FAST_AI_PROVIDERS))
+            )
+        if self.fallback_provider not in _ALLOWED_FAST_AI_FALLBACK_PROVIDERS:
+            raise RuntimeError("WEBCHAT_FAST_AI_FALLBACK_PROVIDER must be openclaw_responses or none")
+        if self.provider == "codex_auth" and not self.codex_enabled:
+            raise RuntimeError("WEBCHAT_FAST_AI_CODEX_ENABLED=true is required for WEBCHAT_FAST_AI_PROVIDER=codex_auth")
+        if self.provider == "openai_responses" and not self.openai_enabled:
+            raise RuntimeError("WEBCHAT_FAST_AI_OPENAI_ENABLED=true is required for WEBCHAT_FAST_AI_PROVIDER=openai_responses")
         if self.timeout_ms < 500 or self.timeout_ms > self.max_timeout_ms:
             raise RuntimeError("WEBCHAT_FAST_AI_TIMEOUT_MS must be between 500 and WEBCHAT_FAST_AI_MAX_TIMEOUT_MS")
         if self.max_timeout_ms > 30000:
@@ -130,14 +176,24 @@ class WebchatFastSettings:
                 raise RuntimeError(f"Invalid TRUSTED_PROXY_CIDRS entry: {cidr}") from exc
         if not self.enabled:
             return
-            
+
         if self.app_env == "production":
-            if self.openclaw_responses_token:
-                raise RuntimeError("OPENCLAW_RESPONSES_TOKEN is forbidden in production; use OPENCLAW_RESPONSES_TOKEN_FILE")
-            if not self.openclaw_responses_token_file:
-                raise RuntimeError("OPENCLAW_RESPONSES_TOKEN_FILE is required in production")
-            _validate_private_responses_url(self.openclaw_responses_url)
-            
+            if self.codex_auth_token:
+                raise RuntimeError("CODEX_AUTH_TOKEN is forbidden in production; use CODEX_AUTH_TOKEN_FILE")
+            if self.openai_api_key:
+                raise RuntimeError("OPENAI_API_KEY is forbidden in production for this phase; use OPENAI_API_KEY_FILE")
+            if self.provider == "codex_auth" and not self.codex_auth_token_file:
+                raise RuntimeError("CODEX_AUTH_TOKEN_FILE is required in production when provider=codex_auth")
+            if self.provider == "openai_responses" and not self.openai_api_key_file:
+                raise RuntimeError("OPENAI_API_KEY_FILE is required in production when provider=openai_responses")
+
+            if self.provider == "openclaw_responses" or self.fallback_provider == "openclaw_responses":
+                if self.openclaw_responses_token:
+                    raise RuntimeError("OPENCLAW_RESPONSES_TOKEN is forbidden in production; use OPENCLAW_RESPONSES_TOKEN_FILE")
+                if not self.openclaw_responses_token_file:
+                    raise RuntimeError("OPENCLAW_RESPONSES_TOKEN_FILE is required in production")
+                _validate_private_responses_url(self.openclaw_responses_url)
+
             if self.stream_enabled:
                 if not self.openclaw_responses_stream_url:
                     raise RuntimeError("OPENCLAW_RESPONSES_STREAM_URL is required in production when stream is enabled")
@@ -146,7 +202,6 @@ class WebchatFastSettings:
                 if not self.openclaw_responses_stream_token_file:
                     raise RuntimeError("OPENCLAW_RESPONSES_STREAM_TOKEN_FILE is required in production when stream is enabled")
                 _validate_private_responses_url(self.openclaw_responses_stream_url)
-
 
 
 def _validate_private_responses_url(value: str) -> None:
@@ -185,6 +240,9 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
     settings = WebchatFastSettings(
         enabled=_env_bool("WEBCHAT_FAST_AI_ENABLED", True),
         provider=os.getenv("WEBCHAT_FAST_AI_PROVIDER", "openclaw_responses").strip().lower() or "openclaw_responses",
+        fallback_provider=os.getenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "none").strip().lower() or "none",
+        codex_enabled=_env_bool("WEBCHAT_FAST_AI_CODEX_ENABLED", False),
+        openai_enabled=_env_bool("WEBCHAT_FAST_AI_OPENAI_ENABLED", False),
         timeout_ms=_env_int("WEBCHAT_FAST_AI_TIMEOUT_MS", 3000, minimum=500, maximum=max_timeout_ms),
         max_timeout_ms=max_timeout_ms,
         history_turns=_env_int("WEBCHAT_FAST_AI_HISTORY_TURNS", 5, minimum=1, maximum=5),
@@ -213,6 +271,10 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         openclaw_stream_connect_timeout_ms=_env_int("OPENCLAW_RESPONSES_STREAM_CONNECT_TIMEOUT_MS", 500, minimum=100, maximum=3000),
         openclaw_stream_read_timeout_ms=_env_int("OPENCLAW_RESPONSES_STREAM_READ_TIMEOUT_MS", 15000, minimum=500, maximum=30000),
         openclaw_stream_total_timeout_ms=_env_int("OPENCLAW_RESPONSES_STREAM_TOTAL_TIMEOUT_MS", 30000, minimum=1000, maximum=60000),
+        codex_auth_token_file=os.getenv("CODEX_AUTH_TOKEN_FILE", "").strip() or None,
+        codex_auth_token=os.getenv("CODEX_AUTH_TOKEN", "").strip() or None,
+        openai_api_key_file=os.getenv("OPENAI_API_KEY_FILE", "").strip() or None,
+        openai_api_key=os.getenv("OPENAI_API_KEY", "").strip() or None,
     )
 
     settings.validate_runtime()
