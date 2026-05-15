@@ -1,47 +1,29 @@
-# Enterprise Website Standards Hardening Report
+# Speedaf Showcase Hardening Report
 
 ## Scope
-This pass upgrades the Speedaf homepage from a strong demo layout toward a production-grade enterprise logistics website.
 
-## Standards applied
-- Typography scale: role-based display/headline/body/label hierarchy inspired by Material Design type roles, IBM Carbon type tokens, and Fluent baseline rhythm.
-- Spacing system: 4/8/12/16/24/32/48/64 rhythm, aligned with enterprise design-system spacing practices.
-- Layout: WebChat remains a global support component rather than a hero-layout object; homepage primary actions remain Track / Ship / Quote.
-- Accessibility: target sizes kept at 48px+ for primary controls; anchors normalized for navigation; duplicate IDs checked.
-- Enterprise completeness: stronger footer, business/action section, and operational proof points added.
+This static showcase page replaces the old `/webchat/demo.html` visual shell with a Speedaf-branded logistics homepage and a customer-facing support panel.
 
-## Changes made
-1. Added Inter webfont link with system fallback. No local font files are included.
-2. Refined desktop and mobile typography:
-   - Reduced excessive headline scale.
-   - Improved line-height and letter spacing.
-   - Reduced over-heavy weights on navigation, cards, body copy, and buttons.
-3. Reduced logo dominance and tightened header rhythm.
-4. Converted floating WebChat into a compact enterprise-style circular launcher with hover label.
-5. Moved POD card upward to prevent collision with the floating chat launcher.
-6. Added enterprise proof strip:
-   - 24/7 AI support availability
-   - POD evidence-ready delivery
-   - SLA operational visibility
-   - B2B business customer flow
-7. Added shipping / quote / support action section.
-8. Expanded footer into enterprise-style footer columns.
-9. Normalized all internal anchors:
-   - #tracking
-   - #ship
-   - #services
-   - #business
-   - #support
-   - #quote
-10. Rechecked:
-   - no duplicate IDs
-   - no missing internal anchors
-   - no phone-preview duplicated WebChat panel
-   - only one real WebChat component remains
+## Current integration status
 
-## Remaining production items before public launch
-1. Replace PNG logo with official SVG logo.
-2. Connect API_BASE_URL to the real NexusDesk / WebChat backend.
-3. Confirm legal footer URLs: Privacy Policy, Terms of Use, Cookie Policy.
-4. Add real company contact address / local support contact if this domain will be public.
-5. Decide whether Google-hosted Inter is acceptable, or self-host fonts through your own CDN/legal-approved asset pipeline.
+- Served from `/webchat/demo/` under the existing NexusDesk webchat static mount.
+- `/webchat/demo.html` redirects to `/webchat/demo/` through plain HTML meta refresh.
+- The showcase chat posts customer messages to `POST /api/webchat/fast-reply`.
+- The active frontend payload is schema-safe: no `visitor.source`, no `recent_context[].content`, and no unsupported backend fields.
+- Customer-visible bot replies require `ok=true` and a non-empty backend `reply`.
+- API failures, invalid responses, empty replies, and timeouts display only `Connection issue. Please try again.`
+
+## Visual hardening applied
+
+- Speedaf-branded hero, navigation, tracking entry, support panel, proof cards, services, business section, and footer.
+- System font stack only; no external Google Fonts dependency.
+- Single customer-facing support surface: floating chat launcher to popup panel.
+- Tracking form opens support chat and sends the tracking number to the real Fast Reply endpoint.
+- Quick actions send real customer messages to the Fast Reply endpoint.
+- Static fake parcel-status claims and fake voice support entry points were removed.
+
+## Remaining checks before production showcase
+
+- Validate the deployed runtime with a browser Network capture showing `POST /api/webchat/fast-reply`, response `ok=true`, and non-empty `reply`.
+- Validate `WEBCHAT_ALLOWED_ORIGINS` for the actual public demo domain.
+- Confirm legal footer URLs and company contact details before public launch.
