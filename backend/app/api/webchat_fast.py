@@ -107,6 +107,22 @@ def _visitor_payload(visitor: WebchatFastVisitor | None) -> dict[str, Any]:
     return visitor.model_dump(exclude_none=True) if visitor else {}
 
 
+def _handoff_enqueue_failure_payload(result: Any) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "ai_generated": result.ai_generated,
+        "reply_source": result.reply_source,
+        "reply": None,
+        "intent": result.intent,
+        "tracking_number": result.tracking_number,
+        "handoff_required": True,
+        "handoff_reason": result.handoff_reason,
+        "ticket_creation_queued": False,
+        "elapsed_ms": result.elapsed_ms,
+        "error_code": "handoff_enqueue_failed",
+        "retry_after_ms": 1500,
+    }
+
 
 def _is_stream_canary_override_allowed(request: Request, settings: WebchatFastSettings) -> bool:
     canary_header = request.headers.get("x-nexus-stream-canary")
@@ -203,8 +219,11 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
                 enqueue_webchat_handoff_snapshot_job(db, snapshot=snapshot)
             result_payload["ticket_creation_queued"] = True
         except Exception:
-            # Customer AI reply must still return even if DB-backed enqueue fails.
-            result_payload["ticket_creation_queued"] = False
+            failure_payload = _handoff_enqueue_failure_payload(result)
+            with db_context() as db:
+                row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
+                mark_webchat_fast_failed(db, row, error_code="handoff_enqueue_failed")
+            return JSONResponse(failure_payload, status_code=503, headers=headers)
 
     with db_context() as db:
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
