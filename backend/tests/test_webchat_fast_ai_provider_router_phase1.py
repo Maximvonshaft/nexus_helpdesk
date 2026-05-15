@@ -9,6 +9,7 @@ from app.services.ai_runtime.provider_router import generate_fast_reply
 from app.services.ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
 from app.services.ai_runtime.safety_contract import redact_secret_text
 from app.services.ai_runtime.tool_intent import normalize_tool_intents
+from app.services.ai_runtime_probe.endpoint_guard import validate_probe_endpoint
 from app.services.webchat_fast_config import get_webchat_fast_settings
 
 
@@ -106,6 +107,19 @@ def test_tool_intents_schema_normalizes_but_does_not_execute():
     assert len(intents) == 1
     assert intents[0].name == "create_ticket"
     assert intents[0].to_safe_dict()["arguments"] == {"priority": "medium"}
+
+
+def test_probe_endpoint_guard_rejects_unsafe_urls():
+    assert validate_probe_endpoint("http://example.com/responses") == (False, "probe_endpoint_must_be_https")
+    assert validate_probe_endpoint("https://user@example.com/responses") == (False, "probe_endpoint_userinfo_forbidden")
+    assert validate_probe_endpoint("https://example.com/") == (False, "probe_endpoint_path_required")
+    assert validate_probe_endpoint("https://127.0.0.1/responses") == (False, "probe_endpoint_ip_forbidden")
+
+
+def test_probe_endpoint_guard_domain_allowlist(monkeypatch):
+    monkeypatch.setenv("CODEX_AUTH_PROBE_ALLOWED_DOMAINS", "allowed.example")
+
+    assert validate_probe_endpoint("https://other.example/responses") == (False, "probe_endpoint_domain_not_allowed")
 
 
 def test_router_can_fallback_to_openclaw_provider(monkeypatch):
