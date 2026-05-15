@@ -10,6 +10,7 @@ on:
       - 'backend/app/services/webchat_handoff_snapshot*.py'
       - 'backend/app/static/webchat/widget.js'
       - 'backend/tests/test_webchat_fast*.py'
+      - 'backend/tests/test_streaming_reply_extractor_unit.py'
       - 'backend/tests/test_webchat_openclaw_responses_client.py'
       - 'scripts/smoke/webchat_fast_reply_concurrency_smoke.py'
       - 'scripts/smoke/browser_bundle_secret_scan.py'
@@ -58,6 +59,7 @@ jobs:
             backend/app/services/webchat_fast_output_parser.py \
             backend/app/services/webchat_fast_rate_limit.py \
             backend/app/services/webchat_fast_reply_metrics.py \
+            backend/app/services/webchat_fast_stream_parser.py \
             backend/app/services/webchat_fast_stream_service.py \
             backend/app/services/webchat_handoff_policy.py \
             backend/app/services/webchat_openclaw_responses_client.py \
@@ -72,6 +74,8 @@ jobs:
           set -Eeuo pipefail
           pytest -q \
             backend/tests/test_webchat_fast_reply_output_parser.py \
+            backend/tests/test_webchat_fast_hostile_output_corpus.py \
+            backend/tests/test_streaming_reply_extractor_unit.py \
             backend/tests/test_webchat_fast_reply_api.py \
             backend/tests/test_webchat_fast_idempotency_db.py \
             backend/tests/test_webchat_fast_audit_regressions.py \
