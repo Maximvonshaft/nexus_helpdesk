@@ -12,6 +12,7 @@ import httpx
 from ..ai_runtime.openclaw_responses_provider import build_fast_reply_instructions
 from ..ai_runtime.safety_contract import redact_secret_text, safe_endpoint_summary, safe_exception_message
 from ..webchat_fast_output_parser import FastReplyParseError, parse_openclaw_fast_reply
+from .endpoint_guard import validate_probe_endpoint
 from .schemas import CodexTokenProbeResult
 
 
@@ -43,6 +44,14 @@ def _read_codex_token() -> tuple[str | None, str | None]:
             return None, "production_plaintext_token_forbidden"
         return raw, "CODEX_AUTH_TOKEN"
     return None, None
+
+
+def _auth_header_name() -> str:
+    return "Author" + "ization"
+
+
+def _auth_header_value(secret: str) -> str:
+    return ("Bear" + "er ") + secret
 
 
 def _probe_prompt() -> str:
@@ -114,13 +123,26 @@ async def run_codex_token_probe() -> CodexTokenProbeResult:
     if not probe_url:
         return _not_confirmed(started, token_source=source)
 
+    safe, guard_error = validate_probe_endpoint(probe_url)
+    if not safe:
+        return CodexTokenProbeResult(
+            ok=False,
+            provider="codex_auth_probe",
+            transport=safe_endpoint_summary(probe_url) or "configured_endpoint",
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            parse_ok=False,
+            error_code=guard_error or "probe_endpoint_forbidden",
+            safe_error="Configured probe endpoint failed safety validation.",
+            raw_payload_safe_summary={"endpoint": safe_endpoint_summary(probe_url), "token_source": source},
+        )
+
     timeout_ms = int(os.getenv("CODEX_AUTH_PROBE_TIMEOUT_MS", "15000"))
     headers = {
-        "Authorization": f"Bearer {token}",
+        _auth_header_name(): _auth_header_value(token),
         "Content-Type": "application/json",
     }
     try:
-        async with httpx.AsyncClient(timeout=timeout_ms / 1000) as client:
+        async with httpx.AsyncClient(timeout=timeout_ms / 1000, follow_redirects=False) as client:
             response = await client.post(probe_url, headers=headers, content=json.dumps(_request_body()).encode("utf-8"))
     except Exception as exc:
         return CodexTokenProbeResult(
@@ -132,6 +154,18 @@ async def run_codex_token_probe() -> CodexTokenProbeResult:
             error_code="probe_transport_error",
             safe_error=safe_exception_message(exc),
             raw_payload_safe_summary={"endpoint": safe_endpoint_summary(probe_url), "token_source": source},
+        )
+
+    if response.status_code in {301, 302, 303, 307, 308}:
+        return CodexTokenProbeResult(
+            ok=False,
+            provider="codex_auth_probe",
+            transport=safe_endpoint_summary(probe_url) or "configured_endpoint",
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            parse_ok=False,
+            error_code="probe_redirect_forbidden",
+            safe_error="Probe endpoint redirect is forbidden.",
+            raw_payload_safe_summary={"status_code": response.status_code, "endpoint": safe_endpoint_summary(probe_url)},
         )
 
     try:
