@@ -43,7 +43,6 @@ def setup_function():
 
 
 
-
 def _request(*, client_ip: str = "198.51.100.10", user_agent: str = "pytest-fast-limit/1.0", origin: str | None = None, referer: str | None = None, fingerprint: str | None = None) -> Request:
     headers: list[tuple[bytes, bytes]] = [(b"user-agent", user_agent.encode("utf-8"))]
     if origin is not None:
@@ -63,6 +62,7 @@ def _request(*, client_ip: str = "198.51.100.10", user_agent: str = "pytest-fast
         "server": ("testserver", 80),
     }
     return Request(scope)
+
 
 def _payload(client_message_id: str = "client-1") -> dict:
     return {
@@ -150,7 +150,7 @@ def test_fast_reply_handoff_enqueues_job_but_returns_ai_reply(monkeypatch):
     assert calls == {"enqueued": 1}
 
 
-def test_handoff_enqueue_failure_does_not_block_ai_reply(monkeypatch):
+def test_handoff_enqueue_failure_fails_safe_without_silent_ai_success(monkeypatch):
     async def fake_generate(**kwargs):
         return WebchatFastReplyResult(
             ok=True,
@@ -171,12 +171,21 @@ def test_handoff_enqueue_failure_does_not_block_ai_reply(monkeypatch):
 
     response = client.post("/api/webchat/fast-reply", json=_payload("client-3"))
 
-    assert response.status_code == 200
+    assert response.status_code == 503
     data = response.json()
-    assert data["ok"] is True
-    assert data["ai_generated"] is True
+    assert data["ok"] is False
+    assert data["error_code"] == "handoff_enqueue_failed"
+    assert data["reply"] is None
     assert data["handoff_required"] is True
     assert data["ticket_creation_queued"] is False
+
+    db = SessionLocal()
+    try:
+        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == "client-3")).scalar_one()
+        assert row.status == "failed"
+        assert row.error_code == "handoff_enqueue_failed"
+    finally:
+        db.close()
 
 
 def test_ai_unavailable_returns_no_reply(monkeypatch):
