@@ -10,7 +10,7 @@ The legacy entry point `/webchat/demo.html` redirects to this page through a pla
 
 ## Runtime behavior
 
-The showcase chat is not a mock chat. Customer messages are sent to the NexusDesk WebChat Fast Lane endpoint:
+The showcase chat sends customer messages to the NexusDesk WebChat Fast Lane endpoint:
 
 ```text
 POST /api/webchat/fast-reply
@@ -29,7 +29,7 @@ The active request payload is intentionally minimal and must remain compatible w
 }
 ```
 
-Do not add unsupported fields such as `visitor.source` or `recent_context[].content`.
+Do not add unsupported visitor metadata fields or alternate context key names that are not accepted by the backend request model.
 
 ## Reply display rule
 
@@ -40,14 +40,14 @@ ok=true
 reply=<non-empty string>
 ```
 
-Any HTTP error, timeout, invalid JSON, `ok=false`, empty reply, or backend `error_code` must display only:
+Any HTTP error, timeout, invalid JSON, negative backend result, empty reply, or backend error code must display only:
 
 ```text
 Connection issue. Please try again.
 ```
 
-The showcase page must not display local fake tracking status, fallback bot replies, fake voice support, fake handoff confirmations, or locally invented parcel state.
+The showcase page must not display local tracking answers, local bot answers, fake handoff confirmations, or locally invented parcel state.
 
-## Voice support
+## Voice entry
 
-This showcase does not expose a customer-visible voice entry. If voice support is later required, integrate the existing NexusDesk `/webchat/voice-entry.js` runtime and let `/api/webchat/voice/runtime-config` control visibility.
+This showcase does not expose a customer-visible voice entry. If voice is later required, integrate the existing NexusDesk `/webchat/voice-entry.js` runtime and let `/api/webchat/voice/runtime-config` control visibility.
