@@ -17,7 +17,7 @@ from .webchat_fast_idempotency_db import (
     mark_webchat_fast_done,
     mark_webchat_fast_failed,
 )
-from .webchat_fast_output_parser import FastReplyParseError, ParsedFastReply
+from .webchat_fast_output_parser import FastReplyParseError, ParsedFastReply, assert_customer_visible_reply_is_safe
 from .webchat_fast_reply_metrics import record_fast_reply_metric, record_openclaw_responses_metric
 from .webchat_fast_stream_parser import StreamingReplyAbort, StreamingReplyExtractor
 from .webchat_handoff_snapshot_service import build_handoff_snapshot_payload, enqueue_webchat_handoff_snapshot_job
@@ -67,6 +67,19 @@ def _visitor_payload(visitor: Any) -> dict[str, Any]:
     if isinstance(visitor, dict):
         return {k: v for k, v in visitor.items() if v is not None}
     return {}
+
+
+def _validated_replay_reply(stored: dict[str, Any]) -> str | None:
+    reply = stored.get("reply")
+    if reply is None:
+        return None
+    if not isinstance(reply, str):
+        raise FastReplyParseError("Stored replay reply must be a string")
+    cleaned = reply.strip()
+    if not cleaned:
+        return None
+    assert_customer_visible_reply_is_safe(cleaned)
+    return cleaned
 
 
 def prepare_webchat_fast_stream(
@@ -169,8 +182,14 @@ async def stream_webchat_fast_reply_events(
     if begin.status == "replay":
         stored = dict(begin.response_json or {})
         yield sse_event("meta", {"replayed": True})
-        if stored.get("reply"):
-            yield sse_event("reply_delta", {"text": stored.get("reply") or ""})
+        try:
+            replay_reply = _validated_replay_reply(stored)
+        except FastReplyParseError:
+            record_fast_reply_metric(status="replay_invalid_output", elapsed_ms=0)
+            yield sse_event("error", {"error_code": "ai_invalid_output", "retry_after_ms": 1500, "replayed": True})
+            return
+        if replay_reply:
+            yield sse_event("reply_delta", {"text": replay_reply})
         final = {k: v for k, v in stored.items() if k != "reply"}
         final["replayed"] = True
         yield sse_event("final", final)
