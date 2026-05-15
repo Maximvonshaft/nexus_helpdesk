@@ -6,7 +6,6 @@
     tenant_key: 'speedaf_public_site',
     channel_key: 'speedaf_webchat',
     session_id: makeId('session'),
-    
     requestTimeoutMs: 90000
   });
 
@@ -19,7 +18,6 @@
   const messageLog = document.getElementById('messageLog');
   const input = document.getElementById('chatInput');
   const sendBtn = document.getElementById('sendBtn');
-  const webcallBtn = document.getElementById('webcallBtn');
   const mobileMenuBtn = document.getElementById('mobileMenuBtn');
   const mobileNav = document.getElementById('mobileNav');
   const trackForm = document.getElementById('trackForm');
@@ -30,48 +28,22 @@
   let lastIntent = 'general';
   let busy = false;
 
-  const actionCopy = {
-    track: {
-      placeholder: 'Enter tracking number, e.g. CH02000126553',
-      text: 'Please enter your tracking number. I can check the current shipment status, latest scan trail, and delivery options.'
-    },
-    redelivery: {
-      placeholder: 'Tracking number + preferred redelivery date',
-      text: 'I can help prepare a redelivery request. Please share the tracking number and your preferred delivery date or time window.'
-    },
-    refuse: {
-      placeholder: 'Tracking number for refusal request',
-      text: 'I can guide a delivery refusal request. Please confirm the tracking number. The parcel may enter the return process according to delivery policy.'
-    },
-    problem: {
-      placeholder: 'Describe: not received / damaged / wrong address / failed delivery',
-      text: 'Please describe the delivery issue: not received, damaged parcel, wrong address, or failed delivery. I will collect the key details first.'
-    },
-    human: {
-      placeholder: 'Describe the issue for agent follow-up',
-      text: 'I will summarize this case for a human agent when manual follow-up is needed. Routine parcel questions stay in instant support.'
-    }
-  };
+  const quickActionMessages = Object.freeze({
+    track: 'I want to track a parcel.',
+    redelivery: 'I need help with redelivery.',
+    refuse: 'I want to refuse a delivery.',
+    problem: 'I have a delivery issue.',
+    human: 'I need a human agent.'
+  });
 
-  
   Array.from(document.querySelectorAll('.chat-panel .quick-btn[data-action]')).forEach((button) => {
     button.addEventListener('click', () => {
       const action = button.dataset.action || 'general';
       lastIntent = action;
-      let msg = "";
-      if (action === 'track') msg = "I want to track a parcel.";
-      else if (action === 'redelivery') msg = "I need help with redelivery.";
-      else if (action === 'refuse') msg = "I want to refuse a delivery.";
-      else if (action === 'problem') msg = "I have a delivery issue.";
-      else if (action === 'human') msg = "I need a human agent.";
-      else msg = "I need help.";
-      input.value = msg;
+      input.value = quickActionMessages[action] || 'I need help.';
       submitMessage();
     });
   });
-
-
-  
 
   if (sendBtn) sendBtn.addEventListener('click', submitMessage);
   if (input) {
@@ -172,26 +144,23 @@
     input.value = '';
     busy = true;
     addTyping();
-    getReply(raw, lastIntent)
+    getReply(raw)
       .then((reply) => {
         removeTyping();
         appendMessage('bot', reply.message, { handoff: Boolean(reply.handoff_required) });
         if (reply.intent) lastIntent = reply.intent;
       })
-      
       .catch(() => {
         removeTyping();
         appendMessage('bot', 'Connection issue. Please try again.');
       })
-
       .finally(() => {
         busy = false;
         input.focus();
       });
   }
 
-  
-  async function getReply(text, intent) {
+  async function getReply(text) {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), SiteConfig.requestTimeoutMs);
     const payload = {
@@ -202,6 +171,7 @@
       body: text,
       recent_context: []
     };
+
     try {
       const res = await fetch(SiteConfig.API_BASE_URL.replace(/\/$/, '') + '/api/webchat/fast-reply', {
         method: 'POST',
@@ -209,26 +179,26 @@
         body: JSON.stringify(payload),
         signal: controller.signal
       });
-      window.clearTimeout(timer);
-      if (!res.ok) throw new Error('Support API unavailable');
+
+      if (!res.ok) throw new Error('support_api_http_error');
       const data = await res.json();
       return normalizeSupportReply(data);
-    } catch (err) {
-      throw err;
+    } finally {
+      window.clearTimeout(timer);
     }
   }
 
-
   function normalizeSupportReply(data) {
-    const message = String(data.reply || data.message || data.body || 'I received your message.');
+    if (!data || data.ok !== true || typeof data.reply !== 'string' || !data.reply.trim()) {
+      throw new Error('invalid_support_reply');
+    }
+
     return {
-      message,
+      message: data.reply.trim(),
       handoff_required: Boolean(data.handoff_required),
       intent: data.intent || lastIntent || 'general'
     };
   }
-
-  
 
   function appendMessage(role, text, options) {
     if (!messageLog) return;
@@ -265,17 +235,6 @@
     messageLog.scrollTop = messageLog.scrollHeight;
   }
 
-  function showTypingThen(text, options) {
-    if (busy) return;
-    busy = true;
-    addTyping();
-    window.setTimeout(() => {
-      removeTyping();
-      appendMessage('bot', text, options || {});
-      busy = false;
-    }, 460);
-  }
-
   function addTyping() {
     if (!messageLog) return;
     removeTyping();
@@ -302,8 +261,6 @@
     messageLog.querySelectorAll('.dynamic-typing').forEach((node) => node.remove());
   }
 
-  function wait(ms) { return new Promise((resolve) => window.setTimeout(resolve, ms)); }
-
   function currentTime() {
     const now = new Date();
     return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -311,9 +268,5 @@
 
   function makeId(prefix) {
     return prefix + '_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
-  }
-
-  function safePlain(value) {
-    return String(value).replace(/\s+/g, ' ').slice(0, 80);
   }
 })();
