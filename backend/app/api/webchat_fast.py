@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, AsyncIterator
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
@@ -19,8 +19,8 @@ from ..services.webchat_fast_idempotency_db import (
     mark_webchat_fast_failed,
 )
 from ..services.webchat_fast_rate_limit import enforce_webchat_fast_rate_limit
-from ..services.webchat_fast_stream_service import prepare_webchat_fast_stream, stream_webchat_fast_reply_events
-from ..services.webchat_handoff_policy import decide_server_handoff_policy
+from ..services.webchat_fast_stream_service import prepare_webchat_fast_stream, sse_event, stream_webchat_fast_reply_events
+from ..services.webchat_handoff_policy import HandoffPolicyDecision, decide_server_handoff_policy
 from ..services.webchat_handoff_snapshot_service import build_handoff_snapshot_payload, enqueue_webchat_handoff_snapshot_job
 from ..services.webchat_fast_config import get_webchat_fast_settings, WebchatFastSettings
 from ..services.webchat_fast_rollout import is_stream_rollout_selected
@@ -150,6 +150,66 @@ def _server_handoff_enqueue_failure_payload(result_payload: dict[str, Any]) -> d
     return failure
 
 
+def _server_policy_handoff_snapshot(
+    *,
+    payload: WebchatFastReplyRequest,
+    context_payload: list[dict[str, str]],
+    server_policy: HandoffPolicyDecision,
+    reply: str,
+) -> dict[str, Any]:
+    return build_handoff_snapshot_payload(
+        tenant_key=payload.tenant_key,
+        channel_key=payload.channel_key,
+        session_id=payload.session_id,
+        client_message_id=payload.client_message_id,
+        customer_last_message=payload.body,
+        ai_reply=reply,
+        intent="handoff",
+        tracking_number=None,
+        handoff_reason=server_policy.handoff_reason,
+        recommended_agent_action=server_policy.recommended_agent_action,
+        recent_context=context_payload,
+        visitor=_visitor_payload(payload.visitor),
+    )
+
+
+async def _server_policy_stream_events(
+    *,
+    row_id: int,
+    payload: WebchatFastReplyRequest,
+    context_payload: list[dict[str, str]],
+    server_policy: HandoffPolicyDecision,
+) -> AsyncIterator[str]:
+    result_payload = _server_handoff_response_payload(
+        handoff_reason=server_policy.handoff_reason,
+        customer_reply=server_policy.customer_reply,
+    )
+    snapshot = _server_policy_handoff_snapshot(
+        payload=payload,
+        context_payload=context_payload,
+        server_policy=server_policy,
+        reply=result_payload["reply"],
+    )
+    try:
+        with db_context() as db:
+            enqueue_webchat_handoff_snapshot_job(db, snapshot=snapshot)
+        result_payload["ticket_creation_queued"] = True
+    except Exception:
+        with db_context() as db:
+            row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
+            mark_webchat_fast_failed(db, row, error_code="handoff_enqueue_failed")
+        yield sse_event("error", {"error_code": "handoff_enqueue_failed", "retry_after_ms": 1500})
+        return
+
+    with db_context() as db:
+        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
+        mark_webchat_fast_done(db, row, response_json=result_payload)
+    yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2", "reply_source": "server_handoff_policy"})
+    yield sse_event("reply_delta", {"text": result_payload["reply"]})
+    final = {k: v for k, v in result_payload.items() if k != "reply"}
+    yield sse_event("final", final)
+
+
 def _is_stream_canary_override_allowed(request: Request, settings: WebchatFastSettings) -> bool:
     canary_header = request.headers.get("x-nexus-stream-canary")
     if canary_header != "1":
@@ -222,19 +282,11 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
             handoff_reason=server_policy.handoff_reason,
             customer_reply=server_policy.customer_reply,
         )
-        snapshot = build_handoff_snapshot_payload(
-            tenant_key=payload.tenant_key,
-            channel_key=payload.channel_key,
-            session_id=payload.session_id,
-            client_message_id=payload.client_message_id,
-            customer_last_message=payload.body,
-            ai_reply=result_payload["reply"],
-            intent="handoff",
-            tracking_number=None,
-            handoff_reason=server_policy.handoff_reason,
-            recommended_agent_action=server_policy.recommended_agent_action,
-            recent_context=context_payload,
-            visitor=_visitor_payload(payload.visitor),
+        snapshot = _server_policy_handoff_snapshot(
+            payload=payload,
+            context_payload=context_payload,
+            server_policy=server_policy,
+            reply=result_payload["reply"],
         )
         try:
             with db_context() as db:
@@ -325,6 +377,7 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         return JSONResponse({"error_code": "stream_not_in_rollout"}, status_code=503, headers=headers)
 
     enforce_webchat_fast_rate_limit(request, tenant_key=payload.tenant_key, session_id=payload.session_id)
+    context_payload = _context_payload(payload.recent_context)
 
     begin = prepare_webchat_fast_stream(
         tenant_key=payload.tenant_key,
@@ -332,7 +385,7 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         session_id=payload.session_id,
         client_message_id=payload.client_message_id,
         body=payload.body,
-        recent_context=_context_payload(payload.recent_context),
+        recent_context=context_payload,
         request_id=getattr(request.state, "request_id", None),
     )
     if begin.status == "processing":
@@ -342,6 +395,17 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
     if begin.status == "failed_non_retryable":
         return JSONResponse({"error_code": begin.error_code or "request_failed"}, status_code=409, headers=headers)
 
+    if begin.row_id is not None:
+        server_policy = decide_server_handoff_policy(body=payload.body, recent_context=context_payload)
+        if server_policy.handoff_required:
+            generator = _server_policy_stream_events(
+                row_id=begin.row_id,
+                payload=payload,
+                context_payload=context_payload,
+                server_policy=server_policy,
+            )
+            return StreamingResponse(generator, media_type="text/event-stream", headers=headers)
+
     generator = stream_webchat_fast_reply_events(
         begin=begin,
         tenant_key=payload.tenant_key,
@@ -349,7 +413,7 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         session_id=payload.session_id,
         client_message_id=payload.client_message_id,
         body=payload.body,
-        recent_context=_context_payload(payload.recent_context),
+        recent_context=context_payload,
         visitor=payload.visitor,
         request_id=getattr(request.state, "request_id", None),
         settings=stream_settings,
