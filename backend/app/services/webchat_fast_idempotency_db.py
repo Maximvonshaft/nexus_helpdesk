@@ -44,8 +44,9 @@ class WebchatFastIdempotency(Base):
 # They must not poison the idempotency key, otherwise the browser stream path can
 # fail before any visible reply and then block the non-stream fallback/retry with
 # failed_non_retryable. Business invariant: exact duplicate customer action may
-# retry after upstream transport, parser, or safety-abort failures; successful
-# responses and different-payload conflicts remain strictly idempotent.
+# retry after upstream transport, parser, safety-abort, or handoff enqueue
+# failures; successful responses and different-payload conflicts remain strictly
+# idempotent.
 _RETRYABLE_FAILED_CODES = {
     "ai_unavailable",
     "ai_invalid_output",
@@ -55,6 +56,7 @@ _RETRYABLE_FAILED_CODES = {
     "openclaw_malformed_json",
     "stream_transport_error",
     "stream_internal_error",
+    "handoff_enqueue_failed",
 }
 
 

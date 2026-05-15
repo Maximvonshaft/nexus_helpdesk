@@ -19,7 +19,7 @@ from app.main import app
 from app.models import BackgroundJob, Ticket
 from app.services import webchat_fast_stream_service
 from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency
-from app.services.webchat_openclaw_stream_adapter import ToolCallDetected
+from app.services.webchat_openclaw_stream_adapter import Completed, ContentDelta, ToolCallDetected
 from app.services.webchat_fast_stream_service import StreamBeginOutcome
 
 pytestmark = pytest.mark.fast_lane_v2_2_2
@@ -115,5 +115,47 @@ def test_tool_call_detected_aborts_without_reply_delta_or_side_effects(monkeypat
         from sqlalchemy import text as sql_text
         assert db.execute(sql_text('select count(*) from tickets')).scalar_one() == 0
         assert db.execute(sql_text('select count(*) from background_jobs')).scalar_one() == 0
+    finally:
+        db.close()
+
+
+def test_stream_handoff_enqueue_failure_does_not_emit_final_success(monkeypatch):
+    final_json = json.dumps(
+        {
+            'reply': 'A human teammate will review this.',
+            'intent': 'handoff',
+            'tracking_number': None,
+            'handoff_required': True,
+            'handoff_reason': 'manual_review_required',
+            'recommended_agent_action': 'Review this handoff request.',
+        },
+        separators=(',', ':'),
+    )
+
+    async def fake_call_stream(**kwargs):
+        yield ContentDelta(final_json)
+        yield Completed(full_text=final_json)
+
+    def fail_enqueue(*args, **kwargs):
+        raise RuntimeError('db unavailable')
+
+    monkeypatch.setattr(webchat_fast, 'get_webchat_fast_settings', _settings)
+    monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
+    monkeypatch.setattr(webchat_fast_stream_service.openclaw_client, 'call_openclaw_responses_stream', fake_call_stream)
+    monkeypatch.setattr(webchat_fast_stream_service, 'enqueue_webchat_handoff_snapshot_job', fail_enqueue)
+
+    response = client.post('/api/webchat/fast-reply/stream', json=_payload('handoff-enqueue-failed'), headers={'Accept': 'text/event-stream'})
+    events = _parse_sse(response.text)
+
+    assert any(event == 'error' and payload.get('error_code') == 'handoff_enqueue_failed' for event, payload in events)
+    assert not any(event == 'final' for event, _ in events)
+
+    db = SessionLocal()
+    try:
+        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == 'handoff-enqueue-failed')).scalar_one()
+        assert row.status == 'failed'
+        assert row.error_code == 'handoff_enqueue_failed'
+        assert db.execute(select(BackgroundJob)).scalars().all() == []
+        assert db.execute(select(Ticket)).scalars().all() == []
     finally:
         db.close()
