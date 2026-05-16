@@ -13,6 +13,7 @@ from .webchat_fast_ai_service import _clean_context, _input_text, _instructions,
 from .webchat_fast_idempotency_db import (
     WebchatFastIdempotency,
     begin_webchat_fast_idempotency,
+    compute_legacy_v1_request_hash_aliases,
     compute_request_hash,
     mark_webchat_fast_done,
     mark_webchat_fast_failed,
@@ -96,6 +97,14 @@ def prepare_webchat_fast_stream(
         body=body,
         recent_context=recent_context,
     )
+    request_hash_aliases = compute_legacy_v1_request_hash_aliases(
+        tenant_key=tenant_key,
+        channel_key=channel_key,
+        session_id=session_id,
+        client_message_id=client_message_id,
+        body=body,
+        recent_context=recent_context,
+    )
     with db_context() as db:
         begin = begin_webchat_fast_idempotency(
             db,
@@ -103,6 +112,7 @@ def prepare_webchat_fast_stream(
             session_id=session_id,
             client_message_id=client_message_id,
             request_hash=request_hash,
+            request_hash_aliases=request_hash_aliases,
             owner_request_id=request_id,
         )
         return StreamBeginOutcome(
