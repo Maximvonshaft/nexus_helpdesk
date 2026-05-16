@@ -119,7 +119,7 @@ def test_tool_call_detected_aborts_without_reply_delta_or_side_effects(monkeypat
         db.close()
 
 
-def test_stream_handoff_enqueue_failure_does_not_emit_final_success(monkeypatch):
+def test_stream_handoff_persistence_failure_does_not_emit_final_success(monkeypatch):
     final_json = json.dumps(
         {
             'reply': 'A human teammate will review this.',
@@ -136,13 +136,13 @@ def test_stream_handoff_enqueue_failure_does_not_emit_final_success(monkeypatch)
         yield ContentDelta(final_json)
         yield Completed(full_text=final_json)
 
-    def fail_enqueue(*args, **kwargs):
+    def fail_persist(*args, **kwargs):
         raise RuntimeError('db unavailable')
 
     monkeypatch.setattr(webchat_fast, 'get_webchat_fast_settings', _settings)
     monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
     monkeypatch.setattr(webchat_fast_stream_service.openclaw_client, 'call_openclaw_responses_stream', fake_call_stream)
-    monkeypatch.setattr(webchat_fast_stream_service, 'enqueue_webchat_handoff_snapshot_job', fail_enqueue)
+    monkeypatch.setattr(webchat_fast_stream_service, '_persist_stream_result', fail_persist)
 
     response = client.post('/api/webchat/fast-reply/stream', json=_payload('handoff-enqueue-failed'), headers={'Accept': 'text/event-stream'})
     events = _parse_sse(response.text)
