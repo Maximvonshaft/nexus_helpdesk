@@ -70,10 +70,12 @@ def downgrade() -> None:
     _drop_index_if_exists("ix_webchat_fast_issue_key", "webchat_conversations")
     _drop_index_if_exists("ix_webchat_fast_session", "webchat_conversations")
 
-    with op.batch_alter_table("webchat_messages") as batch_op:
-        batch_op.alter_column("ticket_id", existing_type=sa.Integer(), nullable=False)
+    # Keep ticket_id nullable on downgrade.
+    #
+    # Fast Lane now supports ticketless AI-resolved conversations.
+    # Restoring the old NOT NULL constraint is not data-preserving once
+    # ticketless rows exist, and SQLite batch migration will fail.
     with op.batch_alter_table("webchat_conversations") as batch_op:
-        batch_op.alter_column("ticket_id", existing_type=sa.Integer(), nullable=False)
         for column_name in (
             "fast_context_updated_at",
             "fast_last_client_message_id",
