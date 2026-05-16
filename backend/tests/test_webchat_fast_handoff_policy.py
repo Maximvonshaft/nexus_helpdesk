@@ -85,23 +85,23 @@ def test_server_policy_detects_business_mandatory_handoff_terms():
         assert decision.recommended_agent_action and expected_rule in decision.recommended_agent_action
 
 
-def test_non_stream_server_policy_handoff_skips_ai_and_enqueues(monkeypatch):
-    calls = {"ai": 0, "enqueue": 0}
+def test_non_stream_server_policy_handoff_skips_ai_and_creates_ticket(monkeypatch):
+    calls = {"ai": 0, "ticket": 0}
 
     async def fail_if_ai_called(**kwargs):
         calls["ai"] += 1
         raise AssertionError("server policy handoff must not call AI")
 
-    def fake_enqueue(db, *, snapshot):
-        calls["enqueue"] += 1
-        assert snapshot["intent"] == "handoff"
-        assert snapshot["handoff_reason"] == "address_change_requires_human_review"
-        assert snapshot["recommended_agent_action"].startswith("[address_change_request]")
-        assert snapshot["customer_last_message"] == "Please change address for this parcel"
-        return object()
+    def fake_get_or_create_ticket(db, *, conversation, business_state, handoff_reason, recommended_agent_action, customer_message):
+        calls["ticket"] += 1
+        assert handoff_reason == "address_change_requires_human_review"
+        assert recommended_agent_action.startswith("[address_change_request]")
+        assert customer_message == "Please change address for this parcel"
+        assert conversation.fast_session_id == "session-handoff-policy"
+        return SimpleNamespace(id=9001)
 
     monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fail_if_ai_called)
-    monkeypatch.setattr(webchat_fast, "enqueue_webchat_handoff_snapshot_job", fake_enqueue)
+    monkeypatch.setattr(webchat_fast, "get_or_create_fast_ticket", fake_get_or_create_ticket)
 
     response = client.post(
         "/api/webchat/fast-reply",
@@ -115,8 +115,9 @@ def test_non_stream_server_policy_handoff_skips_ai_and_enqueues(monkeypatch):
     assert data["reply_source"] == "server_handoff_policy"
     assert data["handoff_required"] is True
     assert data["handoff_reason"] == "address_change_requires_human_review"
-    assert data["ticket_creation_queued"] is True
-    assert calls == {"ai": 0, "enqueue": 1}
+    assert data["ticket_creation_queued"] is False
+    assert data["ticket_id"] == 9001
+    assert calls == {"ai": 0, "ticket": 1}
 
     db = SessionLocal()
     try:
@@ -129,23 +130,23 @@ def test_non_stream_server_policy_handoff_skips_ai_and_enqueues(monkeypatch):
         db.close()
 
 
-def test_stream_server_policy_handoff_skips_openclaw_and_enqueues(monkeypatch):
-    calls = {"stream": 0, "enqueue": 0}
+def test_stream_server_policy_handoff_skips_openclaw_and_creates_ticket(monkeypatch):
+    calls = {"stream": 0, "ticket": 0}
 
     async def fail_if_stream_called(**kwargs):
         calls["stream"] += 1
         raise AssertionError("server policy handoff must not call OpenClaw stream")
 
-    def fake_enqueue(db, *, snapshot):
-        calls["enqueue"] += 1
-        assert snapshot["intent"] == "handoff"
-        assert snapshot["handoff_reason"] == "refund_or_compensation_requires_human_review"
-        assert snapshot["recommended_agent_action"].startswith("[refund_compensation_claim]")
-        return object()
+    def fake_get_or_create_ticket(db, *, conversation, business_state, handoff_reason, recommended_agent_action, customer_message):
+        calls["ticket"] += 1
+        assert handoff_reason == "refund_or_compensation_requires_human_review"
+        assert recommended_agent_action.startswith("[refund_compensation_claim]")
+        assert conversation.fast_session_id == "session-handoff-policy"
+        return SimpleNamespace(id=9002)
 
     monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", _stream_settings)
     monkeypatch.setattr(webchat_fast, "stream_webchat_fast_reply_events", fail_if_stream_called)
-    monkeypatch.setattr(webchat_fast, "enqueue_webchat_handoff_snapshot_job", fake_enqueue)
+    monkeypatch.setattr(webchat_fast, "get_or_create_fast_ticket", fake_get_or_create_ticket)
 
     response = client.post(
         "/api/webchat/fast-reply/stream",
@@ -163,8 +164,10 @@ def test_stream_server_policy_handoff_skips_openclaw_and_enqueues(monkeypatch):
     assert finals[0]["reply_source"] == "server_handoff_policy"
     assert finals[0]["handoff_required"] is True
     assert finals[0]["handoff_reason"] == "refund_or_compensation_requires_human_review"
+    assert finals[0]["ticket_creation_queued"] is False
+    assert finals[0]["ticket_id"] == 9002
     assert "reply" not in finals[0]
-    assert calls == {"stream": 0, "enqueue": 1}
+    assert calls == {"stream": 0, "ticket": 1}
 
     db = SessionLocal()
     try:
