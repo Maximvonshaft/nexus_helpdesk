@@ -19,6 +19,7 @@ from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency
 from app.services.webchat_fast_rate_limit import reset_webchat_fast_rate_limit_for_tests
 from app.webchat_models import WebchatConversation, WebchatMessage
 
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
 client = TestClient(app)
 
 
@@ -173,14 +174,14 @@ def test_fast_reply_different_session_creates_different_conversation(monkeypatch
 
 
 def test_demo_payload_does_not_force_empty_context():
-    source = Path("app/static/webchat/demo/js/app.js").read_text(encoding="utf-8")
+    source = (BACKEND_ROOT / "app/static/webchat/demo/js/app.js").read_text(encoding="utf-8")
     assert "recent_context: []" not in source
     assert "sessionStorage" in source
     assert "recentContext.slice" in source
 
 
 def test_widget_persists_recent_context():
-    source = Path("app/static/webchat/widget.js").read_text(encoding="utf-8")
+    source = (BACKEND_ROOT / "app/static/webchat/widget.js").read_text(encoding="utf-8")
     assert "contextKey" in source
     assert "sessionStorage.setItem(contextKey" in source
     assert "recent_context: state.recentContext" in source
