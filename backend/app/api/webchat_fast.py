@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
 from ..db import db_context
@@ -31,9 +31,43 @@ settings = get_settings()
 
 
 class WebchatFastContextItem(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    role: str = Field(max_length=40)
+    """Backward-compatible webchat context item.
+
+    Accepts both the current schema:
+      {"role": "visitor", "text": "..."}
+    and stale/demo/browser cached schemas:
+      {"role": "visitor", "body": "..."}
+      {"role": "bot", "body": "..."}
+      {"role": "assistant", "content": "..."}
+    """
+
+    role: str = Field(default="visitor", max_length=32)
     text: str = Field(max_length=500)
+
+    @model_validator(mode="before")
+    @classmethod
+    def __webchat_recent_context_compat_v1(cls, value):
+        if not isinstance(value, dict):
+            return value
+
+        data = dict(value)
+
+        if data.get("text") is None:
+            for key in ("body", "content", "message"):
+                if data.get(key) is not None:
+                    data["text"] = data.get(key)
+                    break
+
+        role = str(data.get("role") or "").strip().lower()
+
+        if role in {"user", "visitor", "customer", "client"}:
+            data["role"] = "visitor"
+        elif role in {"assistant", "agent", "ai", "bot", "support", "system"}:
+            data["role"] = "agent"
+        else:
+            data["role"] = "visitor"
+
+        return data
 
 
 class WebchatFastVisitor(BaseModel):
