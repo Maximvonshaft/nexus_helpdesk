@@ -178,7 +178,6 @@ async def _server_policy_stream_events(
     result_payload = _server_handoff_response_payload(handoff_reason=server_policy.handoff_reason, customer_reply=server_policy.customer_reply)
     with db_context() as db:
         conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id)
-        append_fast_visitor_message(db, conversation=conversation, body=payload.body, client_message_id=payload.client_message_id)
         server_context = build_fast_server_context(db, conversation=conversation)
         merged_context = merge_fast_context(server_context, context_payload)
         business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
