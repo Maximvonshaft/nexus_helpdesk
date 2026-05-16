@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -71,6 +72,22 @@ _UNSAFE_BUSINESS_PROMISE_PATTERNS = [
     r"\b(清关|海关|关税|税费)[^。！？\n]{0,40}(已|已经)(完成|放行|解决|批准)",
     r"\b(包裹|快件|运单)[^。！？\n]{0,40}(已|已经)(签收|派送成功|找回|退回|取消)",
 ]
+_ZERO_WIDTH_CODEPOINTS = {
+    ord("\u200b"): None,
+    ord("\u200c"): None,
+    ord("\u200d"): None,
+    ord("\u2060"): None,
+    ord("\ufeff"): None,
+}
+_CONFUSABLE_TRANSLATION = str.maketrans(
+    {
+        # Cyrillic and Greek homoglyphs that commonly bypass ASCII keyword filters.
+        "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O", "Р": "P", "С": "C", "Т": "T", "Х": "X",
+        "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x", "І": "I", "і": "i", "ј": "j",
+        "Α": "A", "Β": "B", "Ε": "E", "Η": "H", "Ι": "I", "Κ": "K", "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Χ": "X", "Υ": "Y", "Ζ": "Z",
+        "α": "a", "β": "b", "γ": "y", "δ": "d", "ε": "e", "ι": "i", "κ": "k", "ν": "v", "ο": "o", "ρ": "p", "τ": "t", "χ": "x", "υ": "u", "ζ": "z",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -189,8 +206,24 @@ def _clean_optional_string(value: Any, *, max_chars: int = 500) -> str | None:
     return cleaned[:max_chars] if cleaned else None
 
 
+def _safety_normalized_text(value: str) -> str:
+    # NFKC folds full-width compatibility forms; zero-width stripping blocks
+    # split-token bypasses such as se\u200bcret; the small homoglyph map covers
+    # common Cyrillic/Greek substitutions used to hide internal terms like prompt.
+    normalized = unicodedata.normalize("NFKC", value or "")
+    normalized = normalized.translate(_ZERO_WIDTH_CODEPOINTS)
+    normalized = normalized.translate(_CONFUSABLE_TRANSLATION)
+    normalized = unicodedata.normalize("NFKC", normalized)
+    return " ".join(normalized.split())
+
+
 def _has_pattern(value: str, patterns: list[str]) -> bool:
-    return any(re.search(pattern, value, flags=re.IGNORECASE) for pattern in patterns)
+    candidates = {value, _safety_normalized_text(value)}
+    return any(
+        re.search(pattern, candidate, flags=re.IGNORECASE)
+        for candidate in candidates
+        for pattern in patterns
+    )
 
 
 def assert_customer_visible_reply_is_safe(reply: str) -> None:
@@ -258,19 +291,11 @@ def parse_openclaw_fast_reply_from_strict_json(payload: dict[str, Any]) -> Parse
 def parse_openclaw_fast_reply(payload: Any) -> ParsedFastReply:
     """Parse and validate WebChat Fast Lane AI output.
 
-    Input contract:
-    - strict Fast Lane JSON object (already json.loads'ed dict), or
-    - strict JSON text body, or
-    - an OpenClaw envelope carrying strict JSON in output_text/text/response.output_text.
-
-    Only strict pure JSON output is accepted. Tool/function calls, markdown
-    fenced JSON, mixed prose, missing keys, and internal system terms are
-    rejected.
+    The boundary is intentionally strict: OpenClaw must produce only customer-safe
+    JSON text. Tool calls, markdown fences, surrounding prose, unsafe operational
+    promises, and internal implementation terms are rejected.
     """
 
-    if isinstance(payload, dict) and _REQUIRED_KEYS.issubset(payload.keys()):
-        return parse_openclaw_fast_reply_from_strict_json(payload)
-
-    raw_text = _extract_response_text(payload)
-    parsed = _parse_pure_json_text(raw_text)
+    text = _extract_response_text(payload)
+    parsed = _parse_pure_json_text(text)
     return parse_openclaw_fast_reply_from_strict_json(parsed)
