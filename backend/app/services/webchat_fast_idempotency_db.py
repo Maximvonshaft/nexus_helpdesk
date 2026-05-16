@@ -428,8 +428,8 @@ def begin_webchat_fast_idempotency(
     session_id: str,
     client_message_id: str,
     request_hash: str,
-    request_hash_aliases: tuple[str, ...] | None = None,
     owner_request_id: str | None,
+    request_hash_aliases: tuple[str, ...] | None = None,
     lock_seconds: int = 60,
     ttl_seconds: int = 600,
 ) -> IdempotencyBeginResult:
