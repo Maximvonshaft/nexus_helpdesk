@@ -91,6 +91,11 @@ def normalize_recent_context(recent_context: list[dict[str, Any]] | None) -> lis
     return [{"role": item["role"], "text": item["text"]} for item in tail]
 
 
+def _encode_hash_payload(canonical: dict[str, Any]) -> str:
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def canonical_request_payload(
     *,
     tenant_key: str | None,
@@ -116,6 +121,32 @@ def canonical_request_payload(
     }
 
 
+def legacy_v1_canonical_request_payload(
+    *,
+    tenant_key: str | None,
+    channel_key: str | None,
+    session_id: str,
+    client_message_id: str,
+    body: str,
+    recent_context: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Return the pre-PR-113 idempotency identity for rollout compatibility only.
+
+    v1 included mutable recent_context in the request hash. New writes must not use
+    this identity, but existing rows created before the hash fix may still carry
+    a v1 hash during the short idempotency TTL window after deployment.
+    """
+
+    return {
+        "tenant_key": clean(tenant_key) or "default",
+        "channel_key": clean(channel_key) or "website",
+        "session_id": clean(session_id),
+        "client_message_id": clean(client_message_id),
+        "body": clean_body(body),
+        "recent_context": normalize_recent_context(recent_context),
+    }
+
+
 def compute_request_hash(
     *,
     tenant_key: str | None,
@@ -133,8 +164,67 @@ def compute_request_hash(
         body=body,
         recent_context=recent_context,
     )
-    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return _encode_hash_payload(canonical)
+
+
+def compute_legacy_v1_request_hash(
+    *,
+    tenant_key: str | None,
+    channel_key: str | None,
+    session_id: str,
+    client_message_id: str,
+    body: str,
+    recent_context: list[dict[str, Any]] | None,
+) -> str:
+    canonical = legacy_v1_canonical_request_payload(
+        tenant_key=tenant_key,
+        channel_key=channel_key,
+        session_id=session_id,
+        client_message_id=client_message_id,
+        body=body,
+        recent_context=recent_context,
+    )
+    return _encode_hash_payload(canonical)
+
+
+def compute_legacy_v1_request_hash_aliases(
+    *,
+    tenant_key: str | None,
+    channel_key: str | None,
+    session_id: str,
+    client_message_id: str,
+    body: str,
+    recent_context: list[dict[str, Any]] | None,
+) -> tuple[str, ...]:
+    """Return bounded legacy v1 hash candidates for mixed-version deploys.
+
+    The exact pre-deploy browser recent_context is not stored in the idempotency
+    table, so perfect reconstruction is impossible. These aliases cover the
+    common safe cases: unchanged context, missing/empty context, and suffix drift
+    when a browser retries after context truncation or appending. Different body
+    values still conflict because every alias includes the cleaned body.
+    """
+
+    normalized = normalize_recent_context(recent_context)
+    candidate_contexts: list[list[dict[str, str]]] = [normalized, []]
+    for index in range(1, len(normalized)):
+        candidate_contexts.append(normalized[index:])
+
+    aliases: list[str] = []
+    seen: set[str] = set()
+    for context in candidate_contexts:
+        alias = compute_legacy_v1_request_hash(
+            tenant_key=tenant_key,
+            channel_key=channel_key,
+            session_id=session_id,
+            client_message_id=client_message_id,
+            body=body,
+            recent_context=context,
+        )
+        if alias not in seen:
+            aliases.append(alias)
+            seen.add(alias)
+    return tuple(aliases)
 
 
 BeginKind = Literal["owner", "replay", "processing", "conflict", "failed_non_retryable"]
@@ -168,11 +258,20 @@ def _coerce_utc(dt: Any) -> Any:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
+def _matching_request_hashes(request_hash: str, request_hash_aliases: tuple[str, ...] | None) -> set[str]:
+    matches = {request_hash}
+    for alias in request_hash_aliases or ():
+        if isinstance(alias, str) and alias:
+            matches.add(alias)
+    return matches
+
+
 def _resolve_locked_row(
     db: Session,
     *,
     row: WebchatFastIdempotency,
     request_hash: str,
+    request_hash_aliases: tuple[str, ...] | None,
     owner_request_id: str | None,
     now: Any,
     locked_until: Any,
@@ -181,7 +280,7 @@ def _resolve_locked_row(
 ) -> IdempotencyBeginResult:
     now = _coerce_utc(now)
     row_locked_until = _coerce_utc(row.locked_until)
-    if row.request_hash != request_hash:
+    if row.request_hash not in _matching_request_hashes(request_hash, request_hash_aliases):
         return IdempotencyBeginResult(kind="conflict", row=row, error_code="idempotency_key_reused_with_different_payload")
     if row.status == "done":
         return IdempotencyBeginResult(kind="replay", row=row, response_json=dict(row.response_json or {}))
@@ -209,6 +308,7 @@ def _begin_webchat_fast_idempotency_postgres(
     session_id: str,
     client_message_id: str,
     request_hash: str,
+    request_hash_aliases: tuple[str, ...] | None,
     owner_request_id: str | None,
     now: Any,
     locked_until: Any,
@@ -243,6 +343,7 @@ def _begin_webchat_fast_idempotency_postgres(
         db,
         row=row,
         request_hash=request_hash,
+        request_hash_aliases=request_hash_aliases,
         owner_request_id=owner_request_id,
         now=now,
         locked_until=locked_until,
@@ -258,6 +359,7 @@ def _begin_webchat_fast_idempotency_compatible(
     session_id: str,
     client_message_id: str,
     request_hash: str,
+    request_hash_aliases: tuple[str, ...] | None,
     owner_request_id: str | None,
     now: Any,
     locked_until: Any,
@@ -297,6 +399,7 @@ def _begin_webchat_fast_idempotency_compatible(
                 db,
                 row=row,
                 request_hash=request_hash,
+                request_hash_aliases=request_hash_aliases,
                 owner_request_id=owner_request_id,
                 now=now,
                 locked_until=locked_until,
@@ -309,6 +412,7 @@ def _begin_webchat_fast_idempotency_compatible(
         db,
         row=row,
         request_hash=request_hash,
+        request_hash_aliases=request_hash_aliases,
         owner_request_id=owner_request_id,
         now=now,
         locked_until=locked_until,
@@ -324,6 +428,7 @@ def begin_webchat_fast_idempotency(
     session_id: str,
     client_message_id: str,
     request_hash: str,
+    request_hash_aliases: tuple[str, ...] | None = None,
     owner_request_id: str | None,
     lock_seconds: int = 60,
     ttl_seconds: int = 600,
@@ -342,6 +447,7 @@ def begin_webchat_fast_idempotency(
             session_id=clean_session,
             client_message_id=clean_client,
             request_hash=request_hash,
+            request_hash_aliases=request_hash_aliases,
             owner_request_id=owner_request_id,
             now=now,
             locked_until=locked_until,
@@ -353,6 +459,7 @@ def begin_webchat_fast_idempotency(
         session_id=clean_session,
         client_message_id=clean_client,
         request_hash=request_hash,
+        request_hash_aliases=request_hash_aliases,
         owner_request_id=owner_request_id,
         now=now,
         locked_until=locked_until,
