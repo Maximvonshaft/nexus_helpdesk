@@ -81,8 +81,8 @@ def test_fast_reply_same_session_reuses_conversation_and_uses_server_context(mon
 
     monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
 
-    first = client.post("/api/webchat/fast-reply", json=_payload("m1", body="Where is my parcel?"))
-    second = client.post("/api/webchat/fast-reply", json=_payload("m2", body="SPX123456789CH"))
+    first = client.post("/api/webchat/fast-reply", json=_payload("msg-0001", body="Where is my parcel?"))
+    second = client.post("/api/webchat/fast-reply", json=_payload("msg-0002", body="SPX123456789CH"))
 
     assert first.status_code == 200
     assert second.status_code == 200
@@ -123,8 +123,8 @@ def test_fast_handoff_same_session_does_not_create_duplicate_ticket():
 
 
 def test_fast_handoff_same_tracking_number_reuses_ticket_across_sessions():
-    first = client.post("/api/webchat/fast-reply", json=_payload("a1", session_id="session-a", body="My parcel is lost SPX123456789CH"))
-    second = client.post("/api/webchat/fast-reply", json=_payload("b1", session_id="session-b", body="My parcel is lost SPX123456789CH"))
+    first = client.post("/api/webchat/fast-reply", json=_payload("msg-a001", session_id="session-a", body="My parcel is lost SPX123456789CH"))
+    second = client.post("/api/webchat/fast-reply", json=_payload("msg-b001", session_id="session-b", body="My parcel is lost SPX123456789CH"))
     assert first.status_code == 200
     assert second.status_code == 200
 
@@ -163,8 +163,8 @@ def test_fast_reply_different_session_creates_different_conversation(monkeypatch
         return _ok_reply("Hi, this is Speedy.")
 
     monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
-    assert client.post("/api/webchat/fast-reply", json=_payload("m1", session_id="session-a")).status_code == 200
-    assert client.post("/api/webchat/fast-reply", json=_payload("m2", session_id="session-b")).status_code == 200
+    assert client.post("/api/webchat/fast-reply", json=_payload("msg-1001", session_id="session-a")).status_code == 200
+    assert client.post("/api/webchat/fast-reply", json=_payload("msg-1002", session_id="session-b")).status_code == 200
     db = SessionLocal()
     try:
         assert db.execute(select(func.count(WebchatConversation.id))).scalar_one() == 2
@@ -173,14 +173,14 @@ def test_fast_reply_different_session_creates_different_conversation(monkeypatch
 
 
 def test_demo_payload_does_not_force_empty_context():
-    source = Path("backend/app/static/webchat/demo/js/app.js").read_text(encoding="utf-8")
+    source = Path("app/static/webchat/demo/js/app.js").read_text(encoding="utf-8")
     assert "recent_context: []" not in source
     assert "sessionStorage" in source
     assert "recentContext.slice" in source
 
 
 def test_widget_persists_recent_context():
-    source = Path("backend/app/static/webchat/widget.js").read_text(encoding="utf-8")
+    source = Path("app/static/webchat/widget.js").read_text(encoding="utf-8")
     assert "contextKey" in source
     assert "sessionStorage.setItem(contextKey" in source
     assert "recent_context: state.recentContext" in source
