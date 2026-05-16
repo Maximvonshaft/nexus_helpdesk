@@ -19,6 +19,7 @@ from app.db import Base, SessionLocal, engine
 from app.enums import UserRole
 from app.main import app
 from app.models import User
+from app.services import webchat_voice_service
 from app.services.livekit_voice_provider import LiveKitVoiceProvider
 from app.services.voice_provider import VoiceParticipantToken
 from app.voice_models import WebchatVoiceSession
@@ -91,7 +92,7 @@ def test_voice_runtime_config_exposes_livekit_url_without_secrets(monkeypatch):
     monkeypatch.setenv("LIVEKIT_API_SECRET", "unit_secret")
     monkeypatch.setenv("WEBCHAT_VOICE_CONNECT_SRC", "wss://voice.example.test https://voice.example.test")
 
-    client = TestClient(app)
+    client = TestClient(app, raise_server_exceptions=False)
     response = client.get("/api/webchat/voice/runtime-config")
 
     assert response.status_code == 200, response.text
@@ -105,7 +106,7 @@ def test_voice_runtime_config_exposes_livekit_url_without_secrets(monkeypatch):
 
 
 def test_public_create_voice_session_binds_conversation_and_ticket():
-    client = TestClient(app)
+    client = TestClient(app, raise_server_exceptions=False)
     conversation_id, visitor_token, ticket_id = _create_webchat_conversation(client)
 
     created = client.post(
@@ -138,7 +139,7 @@ def test_public_create_voice_session_binds_conversation_and_ticket():
 
 
 def test_public_create_voice_session_rejects_invalid_token():
-    client = TestClient(app)
+    client = TestClient(app, raise_server_exceptions=False)
     conversation_id, _visitor_token, _ticket_id = _create_webchat_conversation(client)
 
     created = client.post(
@@ -151,7 +152,7 @@ def test_public_create_voice_session_rejects_invalid_token():
 
 
 def test_public_create_voice_session_returns_existing_active_session():
-    client = TestClient(app)
+    client = TestClient(app, raise_server_exceptions=False)
     conversation_id, visitor_token, _ticket_id = _create_webchat_conversation(client)
 
     first = client.post(
@@ -352,3 +353,46 @@ def test_voice_feature_disabled_rejects_public_create(monkeypatch):
     )
 
     assert response.status_code == 404
+
+
+def test_livekit_room_is_closed_if_db_side_fails_after_room_creation(monkeypatch):
+    created_rooms: list[str] = []
+    closed_rooms: list[str] = []
+
+    def fake_create_room(self, *, room_name: str) -> str:
+        created_rooms.append(room_name)
+        return room_name
+
+    def fake_close_room(self, *, room_name: str) -> None:
+        closed_rooms.append(room_name)
+
+    def fake_issue_token(*args, **kwargs):
+        raise RuntimeError("token mint failed")
+
+    monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "livekit")
+    monkeypatch.setenv("LIVEKIT_URL", "wss://voice.example.test")
+    monkeypatch.setenv("LIVEKIT_API_KEY", "unit_key")
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "unit_secret")
+    monkeypatch.setenv("WEBCHAT_VOICE_CONNECT_SRC", "wss://voice.example.test https://voice.example.test")
+    monkeypatch.setattr(LiveKitVoiceProvider, "create_room", fake_create_room)
+    monkeypatch.setattr(LiveKitVoiceProvider, "close_room", fake_close_room)
+    monkeypatch.setattr(webchat_voice_service, "_issue_token", fake_issue_token)
+
+    client = TestClient(app, raise_server_exceptions=False)
+    conversation_id, visitor_token, _ticket_id = _create_webchat_conversation(client, name="Compensate Visitor")
+
+    created = client.post(
+        f"/api/webchat/conversations/{conversation_id}/voice/sessions",
+        headers={"X-Webchat-Visitor-Token": visitor_token},
+        json={},
+    )
+
+    assert created.status_code == 500
+    assert len(created_rooms) == 1
+    assert closed_rooms == created_rooms
+
+    db = SessionLocal()
+    try:
+        assert db.query(WebchatVoiceSession).filter(WebchatVoiceSession.provider_room_name == created_rooms[0]).count() == 0
+    finally:
+        db.close()
