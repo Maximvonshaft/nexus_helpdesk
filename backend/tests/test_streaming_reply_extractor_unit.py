@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.webchat_fast_output_parser import FastReplyParseError
+from app.services.webchat_fast_output_parser import FastReplyParseError, UnexpectedToolCallError
 from app.services.webchat_fast_stream_parser import StreamingReplyAbort, StreamingReplyExtractor
 from app.services.webchat_openclaw_stream_adapter import ContentDelta, ToolCallDetected
 
@@ -115,6 +115,20 @@ def test_direct_strict_dict_final_parse_passes():
     assert parsed.reply == 'Hello'
 
 
+def test_direct_strict_dict_with_tool_call_metadata_rejected():
+    extractor = StreamingReplyExtractor()
+    with pytest.raises(UnexpectedToolCallError):
+        extractor.final_parse({
+            'type': 'tool_call',
+            'reply': 'Hello',
+            'intent': 'greeting',
+            'tracking_number': None,
+            'handoff_required': False,
+            'handoff_reason': None,
+            'recommended_agent_action': None,
+        })
+
+
 def test_openclaw_envelope_final_parse_passes():
     extractor = StreamingReplyExtractor()
     parsed = extractor.final_parse({
@@ -132,6 +146,7 @@ def test_final_parse_uses_buffered_strict_json_when_completed_has_no_text():
     parsed = extractor.final_parse(None)
     assert parsed.reply == 'Hello from buffer'
     assert parsed.handoff_required is False
+
 
 def test_normal_greeting_does_not_abort_safety():
     extractor = StreamingReplyExtractor()
