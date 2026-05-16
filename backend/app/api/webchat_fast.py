@@ -14,6 +14,7 @@ from ..services.webchat_fast_ai_service import generate_webchat_fast_reply
 from ..services.webchat_fast_idempotency_db import (
     WebchatFastIdempotency,
     begin_webchat_fast_idempotency,
+    compute_legacy_v1_request_hash_aliases,
     compute_request_hash,
     mark_webchat_fast_done,
     mark_webchat_fast_failed,
@@ -226,9 +227,10 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
     headers = _public_cors_headers(request)
     frontend_context = _context_payload(payload.recent_context)
     request_hash = compute_request_hash(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=frontend_context)
+    request_hash_aliases = compute_legacy_v1_request_hash_aliases(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=frontend_context)
 
     with db_context() as db:
-        begin = begin_webchat_fast_idempotency(db, tenant_key=payload.tenant_key, session_id=payload.session_id, client_message_id=payload.client_message_id, request_hash=request_hash, owner_request_id=getattr(request.state, "request_id", None))
+        begin = begin_webchat_fast_idempotency(db, tenant_key=payload.tenant_key, session_id=payload.session_id, client_message_id=payload.client_message_id, request_hash=request_hash, request_hash_aliases=request_hash_aliases, owner_request_id=getattr(request.state, "request_id", None))
         row_id = begin.row.id if begin.row is not None else None
 
     if begin.kind == "replay":
