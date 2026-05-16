@@ -12,8 +12,10 @@ from app.main import app
 from app.models import BackgroundJob, Ticket
 from app.services import webchat_fast_stream_service
 from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency
+from app.services.webchat_fast_session_service import get_or_create_fast_conversation
 from app.services.webchat_fast_stream_service import StreamBeginOutcome, sse_event
 from app.services.webchat_openclaw_stream_adapter import Completed, ContentDelta
+from app.webchat_models import WebchatConversation, WebchatMessage
 
 pytestmark = pytest.mark.fast_lane_v2_2_2
 
@@ -39,6 +41,8 @@ def setup_function():
     _ensure_fast_lane_test_schema()
     db = SessionLocal()
     try:
+        db.execute(delete(WebchatMessage))
+        db.execute(delete(WebchatConversation))
         db.execute(delete(BackgroundJob))
         db.execute(delete(Ticket))
         db.execute(delete(WebchatFastIdempotency))
@@ -161,6 +165,109 @@ def test_active_processing_returns_202_before_streaming(monkeypatch):
     assert response.status_code == 202
     assert response.json()["error_code"] == "request_processing"
     assert calls["stream"] == 0
+
+
+def test_stream_conflict_returns_before_conversation_side_effects(monkeypatch):
+    monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", lambda: _settings(True))
+    monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
+    monkeypatch.setattr(
+        webchat_fast,
+        "prepare_webchat_fast_stream",
+        lambda **kwargs: StreamBeginOutcome(
+            status="conflict",
+            request_hash="h",
+            error_code="idempotency_key_reused_with_different_payload",
+        ),
+    )
+
+    response = client.post(
+        "/api/webchat/fast-reply/stream",
+        json=_payload("client-stream-conflict"),
+        headers={"Accept": "text/event-stream"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "idempotency_key_reused_with_different_payload"
+    db = SessionLocal()
+    try:
+        assert db.execute(select(WebchatConversation)).scalars().all() == []
+        assert db.execute(select(WebchatMessage)).scalars().all() == []
+    finally:
+        db.close()
+
+
+def test_stream_replay_returns_without_conversation_side_effects(monkeypatch):
+    monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", lambda: _settings(True))
+    monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
+    monkeypatch.setattr(
+        webchat_fast,
+        "prepare_webchat_fast_stream",
+        lambda **kwargs: StreamBeginOutcome(
+            status="replay",
+            request_hash="h",
+            response_json={
+                "ok": True,
+                "reply": "Cached reply",
+                "intent": "greeting",
+                "tracking_number": None,
+                "handoff_required": False,
+                "handoff_reason": None,
+                "ticket_creation_queued": False,
+            },
+        ),
+    )
+
+    response = client.post(
+        "/api/webchat/fast-reply/stream",
+        json=_payload("client-stream-replay"),
+        headers={"Accept": "text/event-stream"},
+    )
+
+    assert response.status_code == 200
+    assert "event: reply_delta" in response.text
+    assert "Cached reply" in response.text
+    db = SessionLocal()
+    try:
+        assert db.execute(select(WebchatConversation)).scalars().all() == []
+        assert db.execute(select(WebchatMessage)).scalars().all() == []
+    finally:
+        db.close()
+
+
+def test_closed_fast_conversation_reopens_without_public_id_collision():
+    db = SessionLocal()
+    try:
+        conversation = get_or_create_fast_conversation(
+            db,
+            tenant_key="default",
+            channel_key="website",
+            session_id="closed-session-1",
+        )
+        original_id = conversation.id
+        original_public_id = conversation.public_id
+        conversation.status = "closed"
+        conversation.ticket_id = 12345
+        db.commit()
+    finally:
+        db.close()
+
+    db = SessionLocal()
+    try:
+        reopened = get_or_create_fast_conversation(
+            db,
+            tenant_key="default",
+            channel_key="website",
+            session_id="closed-session-1",
+        )
+        db.commit()
+        assert reopened.id == original_id
+        assert reopened.public_id == original_public_id
+        assert reopened.status == "open"
+        assert reopened.ticket_id is None
+        rows = db.execute(select(WebchatConversation).where(WebchatConversation.fast_session_id == "closed-session-1")).scalars().all()
+        assert len(rows) == 1
+    finally:
+        db.close()
 
 
 def test_partial_delta_then_invalid_final_marks_failed_without_ticket_or_handoff(monkeypatch):
