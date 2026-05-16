@@ -1,11 +1,16 @@
 (function () {
   'use strict';
 
+  const STORAGE_PREFIX = 'speedaf-demo:webchat';
+  const SESSION_KEY = STORAGE_PREFIX + ':session-id';
+  const CONTEXT_KEY = STORAGE_PREFIX + ':recent-context';
+  const MAX_CONTEXT_TURNS = 10;
+
   const SiteConfig = Object.freeze({
     API_BASE_URL: window.location.origin,
     tenant_key: 'speedaf_public_site',
     channel_key: 'speedaf_webchat',
-    session_id: makeId('session'),
+    session_id: loadSessionId(),
     requestTimeoutMs: 90000
   });
 
@@ -27,6 +32,7 @@
 
   let lastIntent = 'general';
   let busy = false;
+  let recentContext = loadRecentContext();
 
   const quickActionMessages = Object.freeze({
     track: 'I want to track a parcel.',
@@ -148,6 +154,7 @@
       .then((reply) => {
         removeTyping();
         appendMessage('bot', reply.message, { handoff: Boolean(reply.handoff_required) });
+        rememberTurn(raw, reply.message);
         if (reply.intent) lastIntent = reply.intent;
       })
       .catch(() => {
@@ -169,7 +176,7 @@
       session_id: SiteConfig.session_id,
       client_message_id: makeId('msg'),
       body: text,
-      recent_context: []
+      recent_context: recentContext.slice(-MAX_CONTEXT_TURNS)
     };
 
     try {
@@ -192,7 +199,6 @@
     if (!data || data.ok !== true || typeof data.reply !== 'string' || !data.reply.trim()) {
       throw new Error('invalid_support_reply');
     }
-
     return {
       message: data.reply.trim(),
       handoff_required: Boolean(data.handoff_required),
@@ -200,11 +206,38 @@
     };
   }
 
+  function rememberTurn(visitorText, assistantText) {
+    recentContext.push({ role: 'visitor', text: String(visitorText || '').slice(0, 500) });
+    recentContext.push({ role: 'agent', text: String(assistantText || '').slice(0, 500) });
+    recentContext = recentContext.filter((item) => item && item.text).slice(-(MAX_CONTEXT_TURNS * 2));
+    try { window.sessionStorage.setItem(CONTEXT_KEY, JSON.stringify(recentContext)); } catch (_) {}
+  }
+
+  function loadRecentContext() {
+    try {
+      const parsed = JSON.parse(window.sessionStorage.getItem(CONTEXT_KEY) || '[]');
+      return Array.isArray(parsed) ? parsed.slice(-(MAX_CONTEXT_TURNS * 2)) : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function loadSessionId() {
+    try {
+      const existing = window.sessionStorage.getItem(SESSION_KEY);
+      if (existing) return existing;
+      const created = makeId('session');
+      window.sessionStorage.setItem(SESSION_KEY, created);
+      return created;
+    } catch (_) {
+      return makeId('session');
+    }
+  }
+
   function appendMessage(role, text, options) {
     if (!messageLog) return;
     const row = document.createElement('div');
     row.className = 'message-row ' + (role === 'user' ? 'user' : 'bot');
-
     if (role !== 'user') {
       const avatar = document.createElement('div');
       avatar.className = 'mini-avatar';
@@ -214,11 +247,9 @@
       avatar.appendChild(img);
       row.appendChild(avatar);
     }
-
     const bubble = document.createElement('div');
     bubble.className = 'bubble ' + (role === 'user' ? 'user-bubble' : '');
     if (options && options.handoff && role !== 'user') bubble.classList.add('handoff-bubble');
-
     bubble.appendChild(document.createTextNode(text));
     const time = document.createElement('span');
     time.className = 'time';
