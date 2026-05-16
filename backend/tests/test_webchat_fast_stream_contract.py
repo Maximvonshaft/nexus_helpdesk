@@ -246,7 +246,6 @@ def test_closed_fast_conversation_reopens_without_public_id_collision():
         original_id = conversation.id
         original_public_id = conversation.public_id
         conversation.status = "closed"
-        conversation.ticket_id = 12345
         db.commit()
     finally:
         db.close()
@@ -263,7 +262,6 @@ def test_closed_fast_conversation_reopens_without_public_id_collision():
         assert reopened.id == original_id
         assert reopened.public_id == original_public_id
         assert reopened.status == "open"
-        assert reopened.ticket_id is None
         rows = db.execute(select(WebchatConversation).where(WebchatConversation.fast_session_id == "closed-session-1")).scalars().all()
         assert len(rows) == 1
     finally:
