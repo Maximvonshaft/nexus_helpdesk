@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus
-from ..models import Customer, Ticket
+from ..models import ChannelAccount, Customer, Market, Ticket
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
 from .ticket_service import generate_ticket_no
@@ -46,11 +46,25 @@ class FastBusinessState:
         }
 
 
+@dataclass(frozen=True)
+class FastRoutingContext:
+    """Resolved market/channel-account context for a Fast Lane handoff ticket."""
+
+    market_id: int | None = None
+    country_code: str | None = None
+    channel_account_id: int | None = None
+
+
 def _clip(value: Any, limit: int) -> str | None:
     if value is None:
         return None
     cleaned = " ".join(str(value).strip().split())
     return cleaned[:limit] if cleaned else None
+
+
+def _upper(value: Any, limit: int) -> str | None:
+    cleaned = _clip(value, limit)
+    return cleaned.upper() if cleaned else None
 
 
 def _sha(value: str) -> str:
@@ -104,6 +118,80 @@ def merge_fast_context(server_context: list[dict[str, Any]] | None, frontend_con
         seen.add(key)
         merged.append(item)
     return merged[-FAST_CONTEXT_LIMIT:]
+
+
+def resolve_fast_routing_context(
+    db: Session,
+    *,
+    country_code: str | None = None,
+    market_code: str | None = None,
+    channel_account_key: str | None = None,
+) -> FastRoutingContext:
+    """Resolve public Fast Lane routing hints into internal ticket routing ids.
+
+    Public WebChat payloads should not need to know database ids. This resolver
+    accepts stable business keys and falls back conservatively:
+    explicit channel account -> matching market -> global OpenClaw account.
+    """
+
+    normalized_country = _upper(country_code, 8)
+    normalized_market = _upper(market_code, 16)
+    normalized_account = _clip(channel_account_key, 160)
+
+    market: Market | None = None
+    if normalized_market:
+        market = db.execute(
+            select(Market).where(Market.code == normalized_market, Market.is_active.is_(True)).limit(1)
+        ).scalar_one_or_none()
+    if market is None and normalized_country:
+        market = db.execute(
+            select(Market)
+            .where(Market.country_code == normalized_country, Market.is_active.is_(True))
+            .order_by(Market.id.asc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    account: ChannelAccount | None = None
+    if normalized_account:
+        account = db.execute(
+            select(ChannelAccount)
+            .where(ChannelAccount.account_id == normalized_account, ChannelAccount.is_active.is_(True))
+            .limit(1)
+        ).scalar_one_or_none()
+
+    if account is None and market is not None:
+        account = db.execute(
+            select(ChannelAccount)
+            .where(
+                ChannelAccount.provider == "openclaw",
+                ChannelAccount.market_id == market.id,
+                ChannelAccount.is_active.is_(True),
+            )
+            .order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    if account is None:
+        account = db.execute(
+            select(ChannelAccount)
+            .where(
+                ChannelAccount.provider == "openclaw",
+                ChannelAccount.market_id.is_(None),
+                ChannelAccount.is_active.is_(True),
+            )
+            .order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    if market is None and account is not None and account.market_id is not None:
+        market = db.get(Market, account.market_id)
+
+    resolved_country = normalized_country or (market.country_code if market is not None else None)
+    return FastRoutingContext(
+        market_id=market.id if market is not None else None,
+        country_code=resolved_country,
+        channel_account_id=account.id if account is not None else None,
+    )
 
 
 def extract_tracking_number(*, body: str, context: list[dict[str, Any]] | None = None) -> str | None:
@@ -276,6 +364,17 @@ def _find_or_create_customer(db: Session, *, conversation: WebchatConversation) 
     return customer
 
 
+def _apply_routing_context(ticket: Ticket, routing_context: FastRoutingContext | None) -> None:
+    if routing_context is None:
+        return
+    if routing_context.market_id is not None and ticket.market_id is None:
+        ticket.market_id = routing_context.market_id
+    if routing_context.country_code and not ticket.country_code:
+        ticket.country_code = routing_context.country_code
+    if routing_context.channel_account_id is not None and ticket.channel_account_id is None:
+        ticket.channel_account_id = routing_context.channel_account_id
+
+
 def _find_active_ticket(db: Session, *, conversation: WebchatConversation, business_state: FastBusinessState) -> Ticket | None:
     if conversation.ticket_id is not None:
         ticket = db.get(Ticket, conversation.ticket_id)
@@ -290,10 +389,20 @@ def _find_active_ticket(db: Session, *, conversation: WebchatConversation, busin
     return None
 
 
-def get_or_create_fast_ticket(db: Session, *, conversation: WebchatConversation, business_state: FastBusinessState, handoff_reason: str | None, recommended_agent_action: str | None, customer_message: str | None = None) -> Ticket:
+def get_or_create_fast_ticket(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    business_state: FastBusinessState,
+    handoff_reason: str | None,
+    recommended_agent_action: str | None,
+    customer_message: str | None = None,
+    routing_context: FastRoutingContext | None = None,
+) -> Ticket:
     existing = _find_active_ticket(db, conversation=conversation, business_state=business_state)
     if existing is not None:
         conversation.ticket_id = existing.id
+        _apply_routing_context(existing, routing_context)
         db.execute(WebchatMessage.__table__.update().where(WebchatMessage.conversation_id == conversation.id, WebchatMessage.ticket_id.is_(None)).values(ticket_id=existing.id))
         db.flush()
         return existing
@@ -318,6 +427,9 @@ def get_or_create_fast_ticket(db: Session, *, conversation: WebchatConversation,
         required_action=recommended_agent_action,
         preferred_reply_channel=SourceChannel.web_chat.value,
         preferred_reply_contact=conversation.public_id,
+        market_id=routing_context.market_id if routing_context else None,
+        country_code=routing_context.country_code if routing_context else None,
+        channel_account_id=routing_context.channel_account_id if routing_context else None,
     )
     db.add(ticket)
     db.flush()
