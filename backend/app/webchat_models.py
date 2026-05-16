@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, event
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, event
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -14,15 +14,14 @@ UTCDateTime = DateTime(timezone=True)
 
 
 class WebchatConversation(Base):
-    """Public webchat visitor session linked to one NexusDesk ticket.
-
-    The public API exposes only `public_id` and a one-time visitor token. Internal
-    numeric ticket ids stay on the authenticated admin side.
-    """
+    """Public webchat visitor session linked to a NexusDesk ticket when human handoff is needed."""
 
     __tablename__ = "webchat_conversations"
     __table_args__ = (
         UniqueConstraint("tenant_key", "channel_key", "public_id", name="uq_webchat_tenant_channel_public"),
+        Index("ix_webchat_fast_session", "tenant_key", "channel_key", "fast_session_id"),
+        Index("ix_webchat_fast_issue_key", "tenant_key", "channel_key", "fast_issue_key"),
+        Index("ix_webchat_fast_last_tracking", "last_tracking_number"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -31,7 +30,7 @@ class WebchatConversation(Base):
     visitor_token_expires_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
     tenant_key: Mapped[str] = mapped_column(String(120), default="default", index=True)
     channel_key: Mapped[str] = mapped_column(String(120), default="default", index=True)
-    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    ticket_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tickets.id"), nullable=True, index=True)
     visitor_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
     visitor_email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     visitor_phone: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
@@ -40,6 +39,14 @@ class WebchatConversation(Base):
     page_url: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
     user_agent: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="open", index=True)
+    # Fast Lane server-side continuity. These fields separate the short-lived
+    # AI conversation container from the ticket that exists only after handoff.
+    fast_session_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    fast_issue_key: Mapped[Optional[str]] = mapped_column(String(240), nullable=True, index=True)
+    last_intent: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    last_tracking_number: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    fast_last_client_message_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    fast_context_updated_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
     # Fast-read AI runtime snapshot. These fields are cache values, not the
     # source of truth, so keep them as plain indexed ids to avoid circular FKs.
     active_ai_turn_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
@@ -56,10 +63,13 @@ class WebchatConversation(Base):
 
 class WebchatMessage(Base):
     __tablename__ = "webchat_messages"
+    __table_args__ = (
+        Index("ix_webchat_messages_conversation_client", "conversation_id", "client_message_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     conversation_id: Mapped[int] = mapped_column(ForeignKey("webchat_conversations.id"), index=True)
-    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    ticket_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tickets.id"), nullable=True, index=True)
     direction: Mapped[str] = mapped_column(String(24), index=True)  # visitor | agent | ai | system | action
     body: Mapped[str] = mapped_column(Text)
     body_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

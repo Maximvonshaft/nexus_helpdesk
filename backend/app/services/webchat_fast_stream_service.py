@@ -19,8 +19,14 @@ from .webchat_fast_idempotency_db import (
 )
 from .webchat_fast_output_parser import FastReplyParseError, ParsedFastReply, assert_customer_visible_reply_is_safe
 from .webchat_fast_reply_metrics import record_fast_reply_metric, record_openclaw_responses_metric
+from .webchat_fast_session_service import (
+    append_fast_ai_message,
+    append_fast_system_handoff_message,
+    extract_fast_business_state,
+    get_or_create_fast_conversation,
+    get_or_create_fast_ticket,
+)
 from .webchat_fast_stream_parser import StreamingReplyAbort, StreamingReplyExtractor
-from .webchat_handoff_snapshot_service import build_handoff_snapshot_payload, enqueue_webchat_handoff_snapshot_job
 from .webchat_openclaw_responses_client import OpenClawResponsesError
 from .webchat_openclaw_stream_adapter import Completed
 
@@ -57,16 +63,6 @@ def public_final_from_parsed(parsed: ParsedFastReply, *, ticket_creation_queued:
 
 def _context_payload(items: list[Any]) -> list[dict[str, str]]:
     return _clean_context([item if isinstance(item, dict) else asdict(item) for item in items])
-
-
-def _visitor_payload(visitor: Any) -> dict[str, Any]:
-    if visitor is None:
-        return {}
-    if hasattr(visitor, "model_dump"):
-        return visitor.model_dump(exclude_none=True)
-    if isinstance(visitor, dict):
-        return {k: v for k, v in visitor.items() if v is not None}
-    return {}
 
 
 def _validated_replay_reply(stored: dict[str, Any]) -> str | None:
@@ -118,12 +114,6 @@ def prepare_webchat_fast_stream(
         )
 
 
-def _load_idem_row(row_id: int) -> WebchatFastIdempotency:
-    with db_context() as db:
-        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
-        return row
-
-
 def _mark_failed(row_id: int, error_code: str) -> None:
     with db_context() as db:
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
@@ -136,7 +126,7 @@ def _mark_done(row_id: int, response_json: dict[str, Any]) -> None:
         mark_webchat_fast_done(db, row, response_json=response_json)
 
 
-def _enqueue_handoff(
+def _persist_stream_result(
     *,
     tenant_key: str,
     channel_key: str,
@@ -145,25 +135,18 @@ def _enqueue_handoff(
     body: str,
     parsed: ParsedFastReply,
     recent_context: list[dict[str, Any]] | None,
-    visitor: Any,
-) -> bool:
-    snapshot = build_handoff_snapshot_payload(
-        tenant_key=tenant_key,
-        channel_key=channel_key,
-        session_id=session_id,
-        client_message_id=client_message_id,
-        customer_last_message=body,
-        ai_reply=parsed.reply,
-        intent=parsed.intent,
-        tracking_number=parsed.tracking_number,
-        handoff_reason=parsed.handoff_reason,
-        recommended_agent_action=parsed.recommended_agent_action,
-        recent_context=recent_context or [],
-        visitor=_visitor_payload(visitor),
-    )
+) -> int | None:
     with db_context() as db:
-        enqueue_webchat_handoff_snapshot_job(db, snapshot=snapshot)
-    return True
+        conversation = get_or_create_fast_conversation(db, tenant_key=tenant_key, channel_key=channel_key, session_id=session_id)
+        append_fast_ai_message(db, conversation=conversation, reply=parsed.reply, client_message_id=client_message_id, metadata={"handoff_required": parsed.handoff_required, "reply_source": "openclaw_responses_stream"})
+        if not parsed.handoff_required:
+            return None
+        business_state = extract_fast_business_state(body=body, context=recent_context or [], session_id=session_id)
+        if parsed.tracking_number:
+            business_state = type(business_state)(intent=business_state.intent, issue_type=business_state.issue_type, tracking_number=parsed.tracking_number, fast_issue_key=f"tracking:{parsed.tracking_number}:intent:{business_state.issue_type}"[:240], missing_fields=())
+        ticket = get_or_create_fast_ticket(db, conversation=conversation, business_state=business_state, handoff_reason=parsed.handoff_reason, recommended_agent_action=parsed.recommended_agent_action, customer_message=body)
+        append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=parsed.handoff_reason, recommended_agent_action=parsed.recommended_agent_action, client_message_id=client_message_id)
+        return ticket.id
 
 
 async def stream_webchat_fast_reply_events(
@@ -215,38 +198,24 @@ async def stream_webchat_fast_reply_events(
             if isinstance(event, Completed):
                 last_completed = event
                 continue
-            # Safety gate: inspect and accumulate provider deltas, but never make
-            # customer-visible output before the final strict parser accepts the
-            # completed OpenClaw payload. Earlier versions yielded reply_delta
-            # here, which could leak text if the final payload later failed
-            # strict parsing.
             extractor.feed_event(event)
 
         final_input: dict[str, Any] | str | None = None
         if last_completed is not None:
             final_input = last_completed.full_text or last_completed.full_payload
         parsed = extractor.final_parse(final_input)
-
-        ticket_creation_queued = False
-        if parsed.handoff_required:
-            try:
-                ticket_creation_queued = _enqueue_handoff(
-                    tenant_key=tenant_key,
-                    channel_key=channel_key,
-                    session_id=session_id,
-                    client_message_id=client_message_id,
-                    body=body,
-                    parsed=parsed,
-                    recent_context=recent_context,
-                    visitor=visitor,
-                )
-            except Exception:
-                elapsed_ms = int((time.monotonic() - started) * 1000)
+        try:
+            ticket_id = _persist_stream_result(tenant_key=tenant_key, channel_key=channel_key, session_id=session_id, client_message_id=client_message_id, body=body, parsed=parsed, recent_context=recent_context)
+        except Exception:
+            if parsed.handoff_required:
                 _mark_failed(begin.row_id, "handoff_enqueue_failed")
-                record_fast_reply_metric(status="handoff_enqueue_failed", intent=parsed.intent, handoff_required=True, elapsed_ms=elapsed_ms)
+                record_fast_reply_metric(status="handoff_enqueue_failed", elapsed_ms=int((time.monotonic() - started) * 1000))
                 yield sse_event("error", {"error_code": "handoff_enqueue_failed", "retry_after_ms": 1500})
                 return
-        final = public_final_from_parsed(parsed, ticket_creation_queued=ticket_creation_queued, replayed=False)
+            raise
+        final = public_final_from_parsed(parsed, ticket_creation_queued=False, replayed=False)
+        if ticket_id is not None:
+            final["ticket_id"] = ticket_id
         elapsed_ms = int((time.monotonic() - started) * 1000)
         final["elapsed_ms"] = elapsed_ms
         _mark_done(begin.row_id, {**final, "reply": parsed.reply})

@@ -21,26 +21,25 @@ from ..services.webchat_fast_idempotency_db import (
 from ..services.webchat_fast_rate_limit import enforce_webchat_fast_rate_limit
 from ..services.webchat_fast_stream_service import prepare_webchat_fast_stream, sse_event, stream_webchat_fast_reply_events
 from ..services.webchat_handoff_policy import HandoffPolicyDecision, decide_server_handoff_policy
-from ..services.webchat_handoff_snapshot_service import build_handoff_snapshot_payload, enqueue_webchat_handoff_snapshot_job
 from ..services.webchat_fast_config import get_webchat_fast_settings, WebchatFastSettings
 from ..services.webchat_fast_rollout import is_stream_rollout_selected
-
+from ..services.webchat_fast_session_service import (
+    append_fast_ai_message,
+    append_fast_system_handoff_message,
+    append_fast_visitor_message,
+    build_fast_server_context,
+    extract_fast_business_state,
+    get_or_create_fast_conversation,
+    get_or_create_fast_ticket,
+    merge_fast_context,
+    update_fast_business_state,
+)
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat-fast"])
 settings = get_settings()
 
 
 class WebchatFastContextItem(BaseModel):
-    """Backward-compatible webchat context item.
-
-    Accepts both the current schema:
-      {"role": "visitor", "text": "..."}
-    and stale/demo/browser cached schemas:
-      {"role": "visitor", "body": "..."}
-      {"role": "bot", "body": "..."}
-      {"role": "assistant", "content": "..."}
-    """
-
     role: str = Field(default="visitor", max_length=32)
     text: str = Field(max_length=500)
 
@@ -49,24 +48,19 @@ class WebchatFastContextItem(BaseModel):
     def __webchat_recent_context_compat_v1(cls, value):
         if not isinstance(value, dict):
             return value
-
         data = dict(value)
-
         if data.get("text") is None:
             for key in ("body", "content", "message"):
                 if data.get(key) is not None:
                     data["text"] = data.get(key)
                     break
-
         role = str(data.get("role") or "").strip().lower()
-
         if role in {"user", "visitor", "customer", "client"}:
             data["role"] = "visitor"
         elif role in {"assistant", "agent", "ai", "bot", "support", "system"}:
             data["role"] = "agent"
         else:
             data["role"] = "visitor"
-
         return data
 
 
@@ -174,39 +168,6 @@ def _server_handoff_response_payload(*, handoff_reason: str | None, customer_rep
     }
 
 
-def _server_handoff_enqueue_failure_payload(result_payload: dict[str, Any]) -> dict[str, Any]:
-    failure = dict(result_payload)
-    failure["ok"] = False
-    failure["reply"] = None
-    failure["ticket_creation_queued"] = False
-    failure["error_code"] = "handoff_enqueue_failed"
-    failure["retry_after_ms"] = 1500
-    return failure
-
-
-def _server_policy_handoff_snapshot(
-    *,
-    payload: WebchatFastReplyRequest,
-    context_payload: list[dict[str, str]],
-    server_policy: HandoffPolicyDecision,
-    reply: str,
-) -> dict[str, Any]:
-    return build_handoff_snapshot_payload(
-        tenant_key=payload.tenant_key,
-        channel_key=payload.channel_key,
-        session_id=payload.session_id,
-        client_message_id=payload.client_message_id,
-        customer_last_message=payload.body,
-        ai_reply=reply,
-        intent="handoff",
-        tracking_number=None,
-        handoff_reason=server_policy.handoff_reason,
-        recommended_agent_action=server_policy.recommended_agent_action,
-        recent_context=context_payload,
-        visitor=_visitor_payload(payload.visitor),
-    )
-
-
 async def _server_policy_stream_events(
     *,
     row_id: int,
@@ -214,28 +175,18 @@ async def _server_policy_stream_events(
     context_payload: list[dict[str, str]],
     server_policy: HandoffPolicyDecision,
 ) -> AsyncIterator[str]:
-    result_payload = _server_handoff_response_payload(
-        handoff_reason=server_policy.handoff_reason,
-        customer_reply=server_policy.customer_reply,
-    )
-    snapshot = _server_policy_handoff_snapshot(
-        payload=payload,
-        context_payload=context_payload,
-        server_policy=server_policy,
-        reply=result_payload["reply"],
-    )
-    try:
-        with db_context() as db:
-            enqueue_webchat_handoff_snapshot_job(db, snapshot=snapshot)
-        result_payload["ticket_creation_queued"] = True
-    except Exception:
-        with db_context() as db:
-            row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
-            mark_webchat_fast_failed(db, row, error_code="handoff_enqueue_failed")
-        yield sse_event("error", {"error_code": "handoff_enqueue_failed", "retry_after_ms": 1500})
-        return
-
+    result_payload = _server_handoff_response_payload(handoff_reason=server_policy.handoff_reason, customer_reply=server_policy.customer_reply)
     with db_context() as db:
+        conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id)
+        server_context = build_fast_server_context(db, conversation=conversation)
+        merged_context = merge_fast_context(server_context, context_payload)
+        business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
+        update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
+        ticket = get_or_create_fast_ticket(db, conversation=conversation, business_state=business_state, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, customer_message=payload.body)
+        append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"handoff_required": True, "source": "server_handoff_policy"})
+        append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, client_message_id=payload.client_message_id)
+        result_payload["ticket_id"] = ticket.id
+        result_payload["tracking_number"] = business_state.tracking_number
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
         mark_webchat_fast_done(db, row, response_json=result_payload)
     yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2", "reply_source": "server_handoff_policy"})
@@ -248,15 +199,13 @@ def _is_stream_canary_override_allowed(request: Request, settings: WebchatFastSe
     canary_header = request.headers.get("x-nexus-stream-canary")
     if canary_header != "1":
         return False
-        
     client_host = request.client.host if request.client else None
     if client_host in ("127.0.0.1", "::1"):
         return True
-        
     if settings.app_env in {"development", "test", "local"}:
         return True
-        
     return False
+
 
 @router.options("/fast-reply")
 def webchat_fast_reply_options(request: Request):
@@ -275,26 +224,11 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
     _set_public_cors(response, request)
     enforce_webchat_fast_rate_limit(request, tenant_key=payload.tenant_key, session_id=payload.session_id)
     headers = _public_cors_headers(request)
-    context_payload = _context_payload(payload.recent_context)
-
-    request_hash = compute_request_hash(
-        tenant_key=payload.tenant_key,
-        channel_key=payload.channel_key,
-        session_id=payload.session_id,
-        client_message_id=payload.client_message_id,
-        body=payload.body,
-        recent_context=context_payload,
-    )
+    frontend_context = _context_payload(payload.recent_context)
+    request_hash = compute_request_hash(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=frontend_context)
 
     with db_context() as db:
-        begin = begin_webchat_fast_idempotency(
-            db,
-            tenant_key=payload.tenant_key,
-            session_id=payload.session_id,
-            client_message_id=payload.client_message_id,
-            request_hash=request_hash,
-            owner_request_id=getattr(request.state, "request_id", None),
-        )
+        begin = begin_webchat_fast_idempotency(db, tenant_key=payload.tenant_key, session_id=payload.session_id, client_message_id=payload.client_message_id, request_hash=request_hash, owner_request_id=getattr(request.state, "request_id", None))
         row_id = begin.row.id if begin.row is not None else None
 
     if begin.kind == "replay":
@@ -310,69 +244,43 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
     if row_id is None:
         return JSONResponse({"error_code": "idempotency_error", "retry_after_ms": 1500}, status_code=500, headers=headers)
 
-    server_policy = decide_server_handoff_policy(body=payload.body, recent_context=context_payload)
+    with db_context() as db:
+        conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
+        visitor_message = append_fast_visitor_message(db, conversation=conversation, body=payload.body, client_message_id=payload.client_message_id, metadata={"source": "webchat_fast"})
+        server_context = build_fast_server_context(db, conversation=conversation, exclude_message_id=visitor_message.id)
+        merged_context = merge_fast_context(server_context, frontend_context)
+        business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
+        update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
+
+    server_policy = decide_server_handoff_policy(body=payload.body, recent_context=merged_context)
     if server_policy.handoff_required:
-        result_payload = _server_handoff_response_payload(
-            handoff_reason=server_policy.handoff_reason,
-            customer_reply=server_policy.customer_reply,
-        )
-        snapshot = _server_policy_handoff_snapshot(
-            payload=payload,
-            context_payload=context_payload,
-            server_policy=server_policy,
-            reply=result_payload["reply"],
-        )
-        try:
-            with db_context() as db:
-                enqueue_webchat_handoff_snapshot_job(db, snapshot=snapshot)
-            result_payload["ticket_creation_queued"] = True
-        except Exception:
-            with db_context() as db:
-                row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
-                mark_webchat_fast_failed(db, row, error_code="handoff_enqueue_failed")
-            return JSONResponse(_server_handoff_enqueue_failure_payload(result_payload), status_code=503, headers=headers)
+        result_payload = _server_handoff_response_payload(handoff_reason=server_policy.handoff_reason, customer_reply=server_policy.customer_reply)
         with db_context() as db:
+            conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
+            ticket = get_or_create_fast_ticket(db, conversation=conversation, business_state=business_state, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, customer_message=payload.body)
+            append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"handoff_required": True, "source": "server_handoff_policy"})
+            append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, client_message_id=payload.client_message_id)
+            result_payload["ticket_id"] = ticket.id
+            result_payload["tracking_number"] = business_state.tracking_number
             row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
             mark_webchat_fast_done(db, row, response_json=result_payload)
         return JSONResponse(result_payload, status_code=200, headers=headers)
 
-    result = await generate_webchat_fast_reply(
-        tenant_key=payload.tenant_key,
-        channel_key=payload.channel_key,
-        session_id=payload.session_id,
-        body=payload.body,
-        recent_context=context_payload,
-        request_id=getattr(request.state, "request_id", None),
-    )
+    result = await generate_webchat_fast_reply(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, body=payload.body, recent_context=merged_context, request_id=getattr(request.state, "request_id", None))
     result_payload = result.to_response()
 
-    if result.ok and result.handoff_required and result.reply:
-        snapshot = build_handoff_snapshot_payload(
-            tenant_key=payload.tenant_key,
-            channel_key=payload.channel_key,
-            session_id=payload.session_id,
-            client_message_id=payload.client_message_id,
-            customer_last_message=payload.body,
-            ai_reply=result.reply,
-            intent=result.intent,
-            tracking_number=result.tracking_number,
-            handoff_reason=result.handoff_reason,
-            recommended_agent_action=result.recommended_agent_action,
-            recent_context=context_payload,
-            visitor=_visitor_payload(payload.visitor),
-        )
-        try:
-            with db_context() as db:
-                enqueue_webchat_handoff_snapshot_job(db, snapshot=snapshot)
-            result_payload["ticket_creation_queued"] = True
-        except Exception:
-            failure_payload = _handoff_enqueue_failure_payload(result)
-            with db_context() as db:
-                row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
-                mark_webchat_fast_failed(db, row, error_code="handoff_enqueue_failed")
-            return JSONResponse(failure_payload, status_code=503, headers=headers)
-
     with db_context() as db:
+        conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
+        if result.ok:
+            append_fast_ai_message(db, conversation=conversation, reply=result.reply, client_message_id=payload.client_message_id, metadata={"handoff_required": result.handoff_required, "reply_source": result.reply_source})
+        if result.ok and result.handoff_required:
+            handoff_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
+            if result.tracking_number:
+                handoff_state = type(handoff_state)(intent=handoff_state.intent, issue_type=handoff_state.issue_type, tracking_number=result.tracking_number, fast_issue_key=f"tracking:{result.tracking_number}:intent:{handoff_state.issue_type}"[:240], missing_fields=())
+            ticket = get_or_create_fast_ticket(db, conversation=conversation, business_state=handoff_state, handoff_reason=result.handoff_reason, recommended_agent_action=result.recommended_agent_action, customer_message=payload.body)
+            append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=result.handoff_reason, recommended_agent_action=result.recommended_agent_action, client_message_id=payload.client_message_id)
+            result_payload["ticket_creation_queued"] = False
+            result_payload["ticket_id"] = ticket.id
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
         if result.ok:
             mark_webchat_fast_done(db, row, response_json=result_payload)
@@ -385,71 +293,35 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
 async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: Request) -> Response:
     stream_settings = get_webchat_fast_settings()
     headers = _public_cors_headers(request)
-    headers.update({
-        "Content-Type": "text/event-stream",
-        "X-Accel-Buffering": "no",
-        "Cache-Control": "no-store",
-        "Vary": "Origin",
-    })
-
+    headers.update({"Content-Type": "text/event-stream", "X-Accel-Buffering": "no", "Cache-Control": "no-store", "Vary": "Origin"})
     if not stream_settings.stream_enabled:
         return JSONResponse({"error_code": "stream_disabled"}, status_code=503, headers=headers)
     if stream_settings.stream_require_accept and "text/event-stream" not in (request.headers.get("accept") or ""):
         return JSONResponse({"error_code": "stream_accept_required"}, status_code=406, headers=headers)
-
     if not stream_settings.is_openclaw_stream_configured:
         return JSONResponse({"error_code": "stream_upstream_not_configured"}, status_code=503, headers=headers)
-
-    # Rollout gate
-    is_selected = is_stream_rollout_selected(
-        tenant_key=payload.tenant_key,
-        channel_key=payload.channel_key,
-        session_id=payload.session_id,
-        rollout_percent=getattr(stream_settings, "stream_rollout_percent", 100)
-    )
+    is_selected = is_stream_rollout_selected(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, rollout_percent=getattr(stream_settings, "stream_rollout_percent", 100))
     if not is_selected and not _is_stream_canary_override_allowed(request, stream_settings):
         return JSONResponse({"error_code": "stream_not_in_rollout"}, status_code=503, headers=headers)
-
     enforce_webchat_fast_rate_limit(request, tenant_key=payload.tenant_key, session_id=payload.session_id)
-    context_payload = _context_payload(payload.recent_context)
-
-    begin = prepare_webchat_fast_stream(
-        tenant_key=payload.tenant_key,
-        channel_key=payload.channel_key,
-        session_id=payload.session_id,
-        client_message_id=payload.client_message_id,
-        body=payload.body,
-        recent_context=context_payload,
-        request_id=getattr(request.state, "request_id", None),
-    )
+    frontend_context = _context_payload(payload.recent_context)
+    with db_context() as db:
+        conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
+        visitor_message = append_fast_visitor_message(db, conversation=conversation, body=payload.body, client_message_id=payload.client_message_id, metadata={"source": "webchat_fast_stream"})
+        server_context = build_fast_server_context(db, conversation=conversation, exclude_message_id=visitor_message.id)
+        merged_context = merge_fast_context(server_context, frontend_context)
+        business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
+        update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
+    begin = prepare_webchat_fast_stream(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=frontend_context, request_id=getattr(request.state, "request_id", None))
     if begin.status == "processing":
         return JSONResponse({"error_code": "request_processing", "retry_after_ms": 1500}, status_code=202, headers=headers)
     if begin.status == "conflict":
         return JSONResponse({"error_code": "idempotency_key_reused_with_different_payload"}, status_code=409, headers=headers)
     if begin.status == "failed_non_retryable":
         return JSONResponse({"error_code": begin.error_code or "request_failed"}, status_code=409, headers=headers)
-
     if begin.row_id is not None:
-        server_policy = decide_server_handoff_policy(body=payload.body, recent_context=context_payload)
+        server_policy = decide_server_handoff_policy(body=payload.body, recent_context=merged_context)
         if server_policy.handoff_required:
-            generator = _server_policy_stream_events(
-                row_id=begin.row_id,
-                payload=payload,
-                context_payload=context_payload,
-                server_policy=server_policy,
-            )
-            return StreamingResponse(generator, media_type="text/event-stream", headers=headers)
-
-    generator = stream_webchat_fast_reply_events(
-        begin=begin,
-        tenant_key=payload.tenant_key,
-        channel_key=payload.channel_key,
-        session_id=payload.session_id,
-        client_message_id=payload.client_message_id,
-        body=payload.body,
-        recent_context=context_payload,
-        visitor=payload.visitor,
-        request_id=getattr(request.state, "request_id", None),
-        settings=stream_settings,
-    )
+            return StreamingResponse(_server_policy_stream_events(row_id=begin.row_id, payload=payload, context_payload=merged_context, server_policy=server_policy), media_type="text/event-stream", headers=headers)
+    generator = stream_webchat_fast_reply_events(begin=begin, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=merged_context, visitor=payload.visitor, request_id=getattr(request.state, "request_id", None), settings=stream_settings)
     return StreamingResponse(generator, media_type="text/event-stream", headers=headers)
