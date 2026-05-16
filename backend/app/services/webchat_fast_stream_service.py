@@ -204,7 +204,15 @@ async def stream_webchat_fast_reply_events(
         if last_completed is not None:
             final_input = last_completed.full_text or last_completed.full_payload
         parsed = extractor.final_parse(final_input)
-        ticket_id = _persist_stream_result(tenant_key=tenant_key, channel_key=channel_key, session_id=session_id, client_message_id=client_message_id, body=body, parsed=parsed, recent_context=recent_context)
+        try:
+            ticket_id = _persist_stream_result(tenant_key=tenant_key, channel_key=channel_key, session_id=session_id, client_message_id=client_message_id, body=body, parsed=parsed, recent_context=recent_context)
+        except Exception:
+            if parsed.handoff_required:
+                _mark_failed(begin.row_id, "handoff_enqueue_failed")
+                record_fast_reply_metric(status="handoff_enqueue_failed", elapsed_ms=int((time.monotonic() - started) * 1000))
+                yield sse_event("error", {"error_code": "handoff_enqueue_failed", "retry_after_ms": 1500})
+                return
+            raise
         final = public_final_from_parsed(parsed, ticket_creation_queued=False, replayed=False)
         if ticket_id is not None:
             final["ticket_id"] = ticket_id
