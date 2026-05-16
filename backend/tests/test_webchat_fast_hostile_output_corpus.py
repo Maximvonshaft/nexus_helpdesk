@@ -41,6 +41,21 @@ def test_parser_rejects_prompt_leak_and_internal_security_terms(reply):
 @pytest.mark.parametrize(
     "reply",
     [
+        "The system prоmpt says to disclose internal routing.",  # Cyrillic о in prompt.
+        "Use the gateway se\u200bcret to continue.",
+        "Authorization Bearer credentiаls are available.",  # Cyrillic а in credentials.
+        "The local service is on lοcalhost port 18789.",  # Greek ο in localhost.
+        "The ａｐｉ key and password are configured.",
+    ],
+)
+def test_parser_rejects_unicode_confusable_internal_security_terms(reply):
+    with pytest.raises(FastReplyParseError):
+        parse_openclaw_fast_reply({"output_text": _strict_json(reply)})
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
         "Your refund has been approved and will be sent today.",
         "We will compensate you for the missing parcel.",
         "The delivery address has been changed.",
@@ -54,6 +69,19 @@ def test_parser_rejects_prompt_leak_and_internal_security_terms(reply):
     ],
 )
 def test_parser_rejects_unsafe_business_promises(reply):
+    with pytest.raises(FastReplyParseError):
+        parse_openclaw_fast_reply({"output_text": _strict_json(reply)})
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Your refund has been appro\u200bved and will be sent today.",
+        "The delivery address has been updаted.",  # Cyrillic а inside updated sentence still preserves English trigger words.
+        "Customs clearance is cοmpleted and released.",
+    ],
+)
+def test_parser_rejects_unicode_confusable_business_promises(reply):
     with pytest.raises(FastReplyParseError):
         parse_openclaw_fast_reply({"output_text": _strict_json(reply)})
 
@@ -89,6 +117,15 @@ def test_stream_rejects_split_unsafe_business_promise_before_final_success():
         extractor.feed_text('{"reply":"Your refund has been app')
         extractor.feed_text('roved and sent today","intent":"other","tracking_number":null,"handoff_required":false,"handoff_reason":null,"recommended_agent_action":null}')
     assert exc.value.error_code == "ai_safety_abort"
+
+
+def test_stream_rejects_unicode_confusable_internal_term_before_browser_leak():
+    extractor = StreamingReplyExtractor()
+    with pytest.raises(StreamingReplyAbort) as exc:
+        extractor.feed_text('{"reply":"The system pr')
+        extractor.feed_text('оmpt says hello","intent":"other","tracking_number":null,"handoff_required":false,"handoff_reason":null,"recommended_agent_action":null}')
+    assert exc.value.error_code == "ai_safety_abort"
+    assert "prompt" not in extractor.emitted_text.lower()
 
 
 def test_stream_final_parse_rejects_unsafe_business_promise_even_if_not_emitted():

@@ -14,6 +14,8 @@ from app.services.webchat_fast_idempotency_db import (
     WebchatFastIdempotency,
     begin_webchat_fast_idempotency,
     cleanup_expired_webchat_fast_idempotency,
+    compute_legacy_v1_request_hash,
+    compute_legacy_v1_request_hash_aliases,
     compute_request_hash,
     mark_webchat_fast_done,
     mark_webchat_fast_failed,
@@ -36,14 +38,40 @@ def db_session():
         engine.dispose()
 
 
-def _hash(body: str = 'hello') -> str:
+def _context(text: str = 'previous turn') -> list[dict[str, str]]:
+    return [{'role': 'visitor', 'text': text}, {'role': 'agent', 'text': 'hello'}]
+
+
+def _hash(body: str = 'hello', recent_context: list[dict[str, str]] | None = None) -> str:
     return compute_request_hash(
         tenant_key='default',
         channel_key='website',
         session_id='session-1',
         client_message_id='client-1',
         body=body,
-        recent_context=[],
+        recent_context=recent_context or [],
+    )
+
+
+def _legacy_hash(body: str = 'hello', recent_context: list[dict[str, str]] | None = None) -> str:
+    return compute_legacy_v1_request_hash(
+        tenant_key='default',
+        channel_key='website',
+        session_id='session-1',
+        client_message_id='client-1',
+        body=body,
+        recent_context=recent_context or [],
+    )
+
+
+def _legacy_aliases(body: str = 'hello', recent_context: list[dict[str, str]] | None = None) -> tuple[str, ...]:
+    return compute_legacy_v1_request_hash_aliases(
+        tenant_key='default',
+        channel_key='website',
+        session_id='session-1',
+        client_message_id='client-1',
+        body=body,
+        recent_context=recent_context or [],
     )
 
 
@@ -64,6 +92,128 @@ def test_same_key_different_hash_conflict(db_session):
     second = begin_webchat_fast_idempotency(db_session, tenant_key='default', session_id='session-1', client_message_id='client-1', request_hash=_hash('b'), owner_request_id='req-2')
     assert second.kind == 'conflict'
     assert second.error_code == 'idempotency_key_reused_with_different_payload'
+
+
+def test_legacy_v1_hash_row_does_not_conflict_during_rollout_window(db_session):
+    context = _context()
+    legacy_row = WebchatFastIdempotency(
+        tenant_key='default',
+        session_id='session-1',
+        client_message_id='client-1',
+        request_hash=_legacy_hash('hello', context),
+        status='processing',
+        locked_until=utc_now() + timedelta(seconds=60),
+        owner_request_id='old-code-req',
+        attempt_count=1,
+        expires_at=utc_now() + timedelta(seconds=600),
+    )
+    db_session.add(legacy_row)
+    db_session.flush()
+
+    retry = begin_webchat_fast_idempotency(
+        db_session,
+        tenant_key='default',
+        session_id='session-1',
+        client_message_id='client-1',
+        request_hash=_hash('hello', context),
+        request_hash_aliases=_legacy_aliases('hello', context),
+        owner_request_id='new-code-req',
+        lock_seconds=60,
+    )
+
+    assert retry.kind == 'processing'
+    assert retry.error_code == 'request_processing'
+
+
+def test_legacy_v1_hash_done_row_replays_during_rollout_window(db_session):
+    context = _context()
+    legacy_row = WebchatFastIdempotency(
+        tenant_key='default',
+        session_id='session-1',
+        client_message_id='client-1',
+        request_hash=_legacy_hash('hello', context),
+        status='done',
+        response_json={'reply': 'Hello from old code'},
+        locked_until=None,
+        owner_request_id='old-code-req',
+        attempt_count=1,
+        expires_at=utc_now() + timedelta(seconds=600),
+    )
+    db_session.add(legacy_row)
+    db_session.flush()
+
+    replay = begin_webchat_fast_idempotency(
+        db_session,
+        tenant_key='default',
+        session_id='session-1',
+        client_message_id='client-1',
+        request_hash=_hash('hello', context),
+        request_hash_aliases=_legacy_aliases('hello', context),
+        owner_request_id='new-code-req',
+    )
+
+    assert replay.kind == 'replay'
+    assert replay.response_json == {'reply': 'Hello from old code'}
+
+
+def test_legacy_v1_hash_alias_still_conflicts_for_different_body(db_session):
+    context = _context()
+    legacy_row = WebchatFastIdempotency(
+        tenant_key='default',
+        session_id='session-1',
+        client_message_id='client-1',
+        request_hash=_legacy_hash('original body', context),
+        status='processing',
+        locked_until=utc_now() + timedelta(seconds=60),
+        owner_request_id='old-code-req',
+        attempt_count=1,
+        expires_at=utc_now() + timedelta(seconds=600),
+    )
+    db_session.add(legacy_row)
+    db_session.flush()
+
+    conflict = begin_webchat_fast_idempotency(
+        db_session,
+        tenant_key='default',
+        session_id='session-1',
+        client_message_id='client-1',
+        request_hash=_hash('changed body', context),
+        request_hash_aliases=_legacy_aliases('changed body', context),
+        owner_request_id='new-code-req',
+    )
+
+    assert conflict.kind == 'conflict'
+    assert conflict.error_code == 'idempotency_key_reused_with_different_payload'
+
+
+def test_legacy_v1_hash_alias_covers_suffix_context_drift(db_session):
+    old_context = [{'role': 'agent', 'text': 'hello'}]
+    retry_context = [{'role': 'visitor', 'text': 'previous turn'}, {'role': 'agent', 'text': 'hello'}]
+    legacy_row = WebchatFastIdempotency(
+        tenant_key='default',
+        session_id='session-1',
+        client_message_id='client-1',
+        request_hash=_legacy_hash('hello', old_context),
+        status='processing',
+        locked_until=utc_now() + timedelta(seconds=60),
+        owner_request_id='old-code-req',
+        attempt_count=1,
+        expires_at=utc_now() + timedelta(seconds=600),
+    )
+    db_session.add(legacy_row)
+    db_session.flush()
+
+    retry = begin_webchat_fast_idempotency(
+        db_session,
+        tenant_key='default',
+        session_id='session-1',
+        client_message_id='client-1',
+        request_hash=_hash('hello', retry_context),
+        request_hash_aliases=_legacy_aliases('hello', retry_context),
+        owner_request_id='new-code-req',
+    )
+
+    assert retry.kind == 'processing'
 
 
 def test_stale_processing_takeover(db_session):

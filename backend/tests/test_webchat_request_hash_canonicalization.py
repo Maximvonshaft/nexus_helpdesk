@@ -104,9 +104,21 @@ def test_different_body_changes_hash():
     assert _hash(dict(payload, body='a')) != _hash(dict(payload, body='b'))
 
 
-def test_different_recent_context_changes_hash():
+def test_recent_context_changes_do_not_affect_idempotency_hash():
     payload = _base_payload()
-    assert _hash(dict(payload, recent_context=[{'role': 'customer', 'text': 'a'}])) != _hash(dict(payload, recent_context=[{'role': 'customer', 'text': 'b'}]))
+    assert _hash(dict(payload, recent_context=[{'role': 'customer', 'text': 'a'}])) == _hash(dict(payload, recent_context=[{'role': 'customer', 'text': 'b'}]))
+
+
+def test_recent_context_is_not_part_of_canonical_idempotency_identity():
+    canonical = canonical_request_payload(
+        tenant_key='default',
+        channel_key='website',
+        session_id='session-1',
+        client_message_id='client-1',
+        body='hello',
+        recent_context=[{'role': 'customer', 'text': 'volatile browser context'}],
+    )
+    assert 'recent_context' not in canonical
 
 
 def test_null_empty_string_and_missing_optional_fields_normalize_same():
