@@ -100,13 +100,19 @@ def canonical_request_payload(
     body: str,
     recent_context: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
+    # Idempotency identity must represent the customer action, not mutable browser
+    # context. recent_context is still accepted here for call-site compatibility
+    # and remains available to AI generation code, but it is deliberately excluded
+    # from the request hash so weak-network retry, stale cache, multi-tab state,
+    # and stream fallback do not convert the same client_message_id into a false
+    # conflict.
+    _ = recent_context
     return {
         "tenant_key": clean(tenant_key) or "default",
         "channel_key": clean(channel_key) or "website",
         "session_id": clean(session_id),
         "client_message_id": clean(client_message_id),
         "body": clean_body(body),
-        "recent_context": normalize_recent_context(recent_context),
     }
 
 
