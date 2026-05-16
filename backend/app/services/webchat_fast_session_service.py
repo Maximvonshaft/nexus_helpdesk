@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus
@@ -81,6 +82,47 @@ def _request_meta(request: Any) -> tuple[str | None, str | None]:
     return _clip(request.headers.get("referer"), 700), _clip(request.headers.get("user-agent"), 300)
 
 
+def _apply_fast_conversation_metadata(
+    row: WebchatConversation,
+    *,
+    now: Any,
+    request: Any = None,
+    visitor: Any = None,
+    reopen: bool = False,
+) -> WebchatConversation:
+    """Refresh runtime metadata without clobbering known visitor identity.
+
+    Fast Lane conversations are keyed by browser session. A customer can return
+    with the same session after a previous conversation was closed; in that case
+    we reopen the deterministic session row instead of trying to insert another
+    row with the same public_id.
+    """
+
+    if reopen and row.status != "open":
+        row.status = "open"
+        row.ticket_id = None
+
+    visitor_data = _visitor_payload(visitor)
+    if not row.visitor_name:
+        row.visitor_name = _clip(visitor_data.get("name"), 160)
+    if not row.visitor_email:
+        row.visitor_email = _clip(visitor_data.get("email"), 200)
+    if not row.visitor_phone:
+        row.visitor_phone = _clip(visitor_data.get("phone"), 80)
+
+    page_url, user_agent = _request_meta(request)
+    if page_url:
+        row.page_url = page_url
+    if user_agent:
+        row.user_agent = user_agent
+
+    row.last_seen_at = now
+    row.updated_at = now
+    if row.fast_context_updated_at is None:
+        row.fast_context_updated_at = now
+    return row
+
+
 def clean_fast_context(items: list[dict[str, Any]] | None) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for item in items or []:
@@ -141,10 +183,15 @@ def extract_fast_business_state(*, body: str, context: list[dict[str, Any]] | No
     return FastBusinessState(intent=intent, issue_type=issue_type, tracking_number=tracking, fast_issue_key=fast_issue_key[:240], missing_fields=missing_fields)
 
 
+def _find_fast_conversation_by_public_id(db: Session, public_id: str) -> WebchatConversation | None:
+    return db.execute(select(WebchatConversation).where(WebchatConversation.public_id == public_id).limit(1)).scalar_one_or_none()
+
+
 def get_or_create_fast_conversation(db: Session, *, tenant_key: str, channel_key: str, session_id: str, request: Any = None, visitor: Any = None) -> WebchatConversation:
     tenant = _clip(tenant_key, 120) or "default"
     channel = _clip(channel_key, 120) or "website"
     session = _clip(session_id, 120) or "unknown"
+    public_id = _safe_public_id(tenant_key=tenant, channel_key=channel, session_id=session)
     row = db.execute(
         select(WebchatConversation).where(
             WebchatConversation.tenant_key == tenant,
@@ -156,14 +203,20 @@ def get_or_create_fast_conversation(db: Session, *, tenant_key: str, channel_key
     ).scalar_one_or_none()
     now = utc_now()
     if row is not None:
-        row.last_seen_at = now
-        row.updated_at = now
+        _apply_fast_conversation_metadata(row, now=now, request=request, visitor=visitor)
         db.flush()
         return row
+
+    row = _find_fast_conversation_by_public_id(db, public_id)
+    if row is not None:
+        _apply_fast_conversation_metadata(row, now=now, request=request, visitor=visitor, reopen=True)
+        db.flush()
+        return row
+
     visitor_data = _visitor_payload(visitor)
     page_url, user_agent = _request_meta(request)
     row = WebchatConversation(
-        public_id=_safe_public_id(tenant_key=tenant, channel_key=channel, session_id=session),
+        public_id=public_id,
         visitor_token_hash=_sha(f"fast-visitor:{tenant}:{channel}:{session}"),
         tenant_key=tenant,
         channel_key=channel,
@@ -183,8 +236,21 @@ def get_or_create_fast_conversation(db: Session, *, tenant_key: str, channel_key
         fast_context_updated_at=now,
     )
     db.add(row)
-    db.flush()
-    return row
+    try:
+        db.flush()
+        return row
+    except IntegrityError:
+        # Another request created the deterministic Fast Lane session row between
+        # our read and insert. Recover by rolling back this insert and re-reading
+        # the canonical public_id instead of surfacing a customer-visible 500.
+        db.rollback()
+        recovered = _find_fast_conversation_by_public_id(db, public_id)
+        if recovered is None:
+            raise
+        now = utc_now()
+        _apply_fast_conversation_metadata(recovered, now=now, request=request, visitor=visitor, reopen=True)
+        db.flush()
+        return recovered
 
 
 def _find_message(db: Session, *, conversation_id: int, client_message_id: str) -> WebchatMessage | None:
