@@ -120,6 +120,40 @@ def _content_text_from_block(block: Any) -> str | None:
     return None
 
 
+def _declares_tool_or_function_call(payload: dict[str, Any]) -> bool:
+    payload_type = str(payload.get("type") or "").lower()
+    if "function" in payload_type or "tool" in payload_type:
+        return True
+    if payload.get("tool_calls"):
+        return True
+
+    output = payload.get("output")
+    if isinstance(output, list):
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("type") or "").lower()
+            if "function" in item_type or "tool" in item_type:
+                return True
+            content = item.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        block_type = str(block.get("type") or "").lower()
+                        if "function" in block_type or "tool" in block_type:
+                            return True
+
+    choices = payload.get("choices")
+    if isinstance(choices, list):
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            message = choice.get("message") or {}
+            if isinstance(message, dict) and message.get("tool_calls"):
+                return True
+    return False
+
+
 def _extract_response_text(payload: Any) -> str:
     if isinstance(payload, str):
         return payload
@@ -293,8 +327,16 @@ def parse_openclaw_fast_reply(payload: Any) -> ParsedFastReply:
 
     The boundary is intentionally strict: OpenClaw must produce only customer-safe
     JSON text. Tool calls, markdown fences, surrounding prose, unsafe operational
-    promises, and internal implementation terms are rejected.
+    promises, and internal implementation terms are rejected. A direct strict
+    dict is accepted only for internal already-parsed final payloads and still
+    passes the same customer-visible validation.
     """
+
+    if isinstance(payload, dict):
+        if _declares_tool_or_function_call(payload):
+            raise UnexpectedToolCallError("OpenClaw returned a tool/function call in webchat fast reply output")
+        if _REQUIRED_KEYS.issubset(payload.keys()):
+            return parse_openclaw_fast_reply_from_strict_json(payload)
 
     text = _extract_response_text(payload)
     parsed = _parse_pure_json_text(text)
