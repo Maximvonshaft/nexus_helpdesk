@@ -32,8 +32,6 @@ class WebchatFastReplyResult:
 
     def to_response(self) -> dict[str, Any]:
         payload = asdict(self)
-        # Internal handoff guidance belongs in the ticket snapshot only, not the
-        # browser response. The customer-visible reply remains AI-generated.
         payload.pop("recommended_agent_action", None)
         return payload
 
@@ -44,13 +42,6 @@ def _clip(value: str | None, limit: int) -> str:
 
 
 def _clean_context(recent_context: list[dict[str, Any]] | None) -> list[dict[str, str]]:
-    """Backward-compatible helper for stream Fast Lane.
-
-    Stream service imports these private helpers today. Keep the old contract in
-    place while Phase 1 moves provider-specific construction into
-    ai_runtime.openclaw_responses_provider.
-    """
-
     settings = get_webchat_fast_settings()
     items = recent_context or []
     cleaned: list[dict[str, str]] = []
@@ -71,12 +62,20 @@ def _instructions() -> str:
     return build_fast_reply_instructions()
 
 
-def _input_text(*, body: str, recent_context: list[dict[str, str]]) -> str:
+def _input_text(
+    *,
+    body: str,
+    recent_context: list[dict[str, str]],
+    tracking_fact_summary: str | None = None,
+    tracking_fact_evidence_present: bool = False,
+) -> str:
     settings = get_webchat_fast_settings()
     return build_fast_reply_input_text(
         body=body,
         recent_context=recent_context,
         max_prompt_chars=settings.max_prompt_chars,
+        tracking_fact_summary=tracking_fact_summary,
+        tracking_fact_evidence_present=tracking_fact_evidence_present,
     )
 
 
@@ -110,16 +109,10 @@ async def generate_webchat_fast_reply(
     body: str,
     recent_context: list[dict[str, Any]] | None,
     request_id: str | None = None,
+    tracking_fact_summary: str | None = None,
+    tracking_fact_metadata: dict[str, Any] | None = None,
+    tracking_fact_evidence_present: bool = False,
 ) -> WebchatFastReplyResult:
-    """Generate one AI-only WebChat reply through the configured provider.
-
-    This function must remain DB-free. Ticket creation, message persistence,
-    old AI turns, and polling are deliberately outside this path.
-
-    Phase 1 keeps openclaw_responses as the default provider while adding a
-    provider router for codex_auth/openai_responses compatibility work.
-    """
-
     settings = get_webchat_fast_settings()
     if not settings.enabled:
         result = WebchatFastReplyResult(
@@ -140,6 +133,7 @@ async def generate_webchat_fast_reply(
         record_fast_reply_metric(status="ai_unavailable", elapsed_ms=0)
         return result
 
+    evidence_present = bool(tracking_fact_evidence_present and tracking_fact_summary)
     provider_result = await generate_fast_reply(
         request=FastAIProviderRequest(
             tenant_key=tenant_key,
@@ -148,6 +142,9 @@ async def generate_webchat_fast_reply(
             body=body,
             recent_context=recent_context,
             request_id=request_id,
+            tracking_fact_summary=tracking_fact_summary if evidence_present else None,
+            tracking_fact_metadata=tracking_fact_metadata if evidence_present else None,
+            tracking_fact_evidence_present=evidence_present,
         ),
         settings=settings,
     )
