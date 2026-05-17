@@ -14,6 +14,7 @@ _POD_NAME_EN_RE = re.compile(
     re.IGNORECASE,
 )
 _POD_NAME_ZH_RE = re.compile(r"(?P<prefix>签收人|收件人|收货人)\s*[:：]?\s*(?P<name>[\u4e00-\u9fffA-Za-z .'-]{1,30})")
+_NO_TRACE_RE = re.compile(r"\b(no\s*info|no\s*tracking|no\s*trace|no\s*updates?)\b|暂无轨迹|暂无物流|暂无更新", re.IGNORECASE)
 
 PII_KEYS = {
     "recipient",
@@ -111,15 +112,22 @@ def _event_from_payload(payload: Any) -> TrackingFactEvent | None:
     )
 
 
+def _looks_like_no_trace_fact(*values: str | None) -> bool:
+    joined = "\n".join(value for value in values if value)
+    return bool(joined and _NO_TRACE_RE.search(joined))
+
+
 def normalize_tracking_fact(raw: dict[str, Any], *, tracking_number: str | None) -> TrackingFactResult:
     safe_raw = sanitize_payload(raw)
     if not isinstance(safe_raw, dict):
         return TrackingFactResult(ok=False, tracking_number=tracking_number, tool_status="invalid", pii_redacted=True, failure_reason="invalid_tool_response")
 
     ok = bool(safe_raw.get("ok", True))
-    tool_status = _first_string(safe_raw, ("tool_status", "status_code", "result_status")) or ("success" if ok else "error")
     status = _first_string(safe_raw, ("status", "shipment_status", "parcel_status"))
     status_label = _first_string(safe_raw, ("status_label", "statusLabel", "label")) or status
+    message = _first_string(safe_raw, ("message", "description", "desc"))
+    no_trace_fact = _looks_like_no_trace_fact(status, status_label, message)
+    tool_status = _first_string(safe_raw, ("tool_status", "status_code", "result_status")) or ("success" if ok else ("no_info" if no_trace_fact else "error"))
     checked_at = _first_string(safe_raw, ("checked_at", "checkedAt", "query_time", "time"))
     resolved_tracking_number = _first_string(safe_raw, ("tracking_number", "trackingNumber", "waybill", "waybill_no")) or tracking_number
 
@@ -134,7 +142,11 @@ def normalize_tracking_fact(raw: dict[str, Any], *, tracking_number: str | None)
     if latest_event is None and events_summary:
         latest_event = events_summary[0]
 
-    evidence_present = bool(ok and (status or status_label or (latest_event and latest_event.is_present()) or events_summary))
+    evidence_present = bool((ok or no_trace_fact) and (status or status_label or message or (latest_event and latest_event.is_present()) or events_summary))
+    if no_trace_fact and not status_label:
+        status_label = "No Info"
+    if no_trace_fact and latest_event is None and message:
+        latest_event = TrackingFactEvent(description=message)
     return TrackingFactResult(
         ok=ok,
         tracking_number=resolved_tracking_number,
