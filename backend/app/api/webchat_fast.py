@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, AsyncIterator
 from urllib.parse import urlparse
 
@@ -10,6 +11,8 @@ from sqlalchemy import select
 
 from ..db import db_context
 from ..settings import get_settings
+from ..services.tracking_fact_schema import TrackingFactResult, hash_tracking_number
+from ..services.tracking_fact_service import extract_tracking_number, lookup_tracking_fact
 from ..services.webchat_fast_ai_service import generate_webchat_fast_reply
 from ..services.webchat_fast_idempotency_db import (
     WebchatFastIdempotency,
@@ -41,6 +44,7 @@ from ..services.webchat_fast_session_service import (
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat-fast"])
 settings = get_settings()
+LOGGER = logging.getLogger("nexusdesk")
 
 
 class WebchatFastContextItem(BaseModel):
@@ -141,6 +145,81 @@ def _context_payload(items: list[WebchatFastContextItem]) -> list[dict[str, str]
 
 def _visitor_payload(visitor: WebchatFastVisitor | None) -> dict[str, Any]:
     return visitor.model_dump(exclude_none=True) if visitor else {}
+
+
+def _context_values(body: str, context: list[dict[str, Any]] | None, tracking_number: str | None) -> list[str | None]:
+    values: list[str | None] = [tracking_number, body]
+    for item in context or []:
+        if isinstance(item, dict):
+            values.append(str(item.get("text") or item.get("body") or ""))
+    return values
+
+
+def _tracking_candidate(*, body: str, context: list[dict[str, Any]] | None, tracking_number: str | None) -> str | None:
+    cleaned = (tracking_number or "").strip().upper()
+    if cleaned:
+        return cleaned
+    return extract_tracking_number(*_context_values(body, context, tracking_number))
+
+
+def _tracking_fact_public_payload(result: TrackingFactResult | None) -> dict[str, Any] | None:
+    if result is None:
+        return None
+    metadata = result.metadata_payload()
+    return {
+        "tool_status": result.tool_status,
+        "fact_evidence_present": result.fact_evidence_present,
+        "pii_redacted": result.pii_redacted,
+        "failure_reason": result.failure_reason,
+        "tracking_number_hash": metadata.get("tracking_number_hash"),
+    }
+
+
+def _lookup_fast_tracking_fact(
+    *,
+    tracking_number: str | None,
+    conversation_id: int | None,
+    ticket_id: int | None,
+    request_id: str | None,
+) -> TrackingFactResult | None:
+    if not tracking_number:
+        LOGGER.info("webchat_fast_tracking_fact_not_used", extra={"event_payload": {"reason": "missing_tracking_number", "conversation_id": conversation_id, "request_id": request_id}})
+        return None
+    LOGGER.info(
+        "webchat_fast_tracking_fact_lookup_started",
+        extra={"event_payload": {"conversation_id": conversation_id, "ticket_id": ticket_id, "request_id": request_id, "tracking_number_hash": hash_tracking_number(tracking_number)}},
+    )
+    try:
+        result = lookup_tracking_fact(
+            tracking_number=tracking_number,
+            conversation_id=conversation_id,
+            ticket_id=ticket_id,
+            request_id=request_id,
+        )
+    except Exception as exc:
+        LOGGER.warning(
+            "webchat_fast_tracking_fact_lookup_failed",
+            extra={"event_payload": {"conversation_id": conversation_id, "ticket_id": ticket_id, "request_id": request_id, "tracking_number_hash": hash_tracking_number(tracking_number), "error_type": type(exc).__name__}},
+        )
+        return None
+    LOGGER.info(
+        "webchat_fast_tracking_fact_lookup_result",
+        extra={"event_payload": {"conversation_id": conversation_id, "ticket_id": ticket_id, "request_id": request_id, **(_tracking_fact_public_payload(result) or {})}},
+    )
+    return result
+
+
+def _tracking_fact_provider_fields(result: TrackingFactResult | None) -> tuple[str | None, dict[str, Any] | None, bool]:
+    if result is None:
+        return None, None, False
+    metadata = result.metadata_payload()
+    evidence_present = bool(result.fact_evidence_present and result.pii_redacted)
+    if not evidence_present:
+        return None, metadata, False
+    summary = result.prompt_summary().strip()
+    if not summary:
+        return None, metadata, False
+    return summary, metadata, True
 
 
 def _handoff_enqueue_failure_payload(result: Any) -> dict[str, Any]:
@@ -268,6 +347,7 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
         merged_context = merge_fast_context(server_context, frontend_context)
         business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
         update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
+        conversation_id = conversation.id
         routing_context = resolve_fast_routing_context(
             db,
             country_code=payload.country_code,
@@ -298,13 +378,39 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
             mark_webchat_fast_done(db, row, response_json=result_payload)
         return JSONResponse(result_payload, status_code=200, headers=headers)
 
-    result = await generate_webchat_fast_reply(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, body=payload.body, recent_context=merged_context, request_id=getattr(request.state, "request_id", None))
+    tracking_number = _tracking_candidate(
+        body=payload.body,
+        context=merged_context,
+        tracking_number=business_state.tracking_number,
+    )
+    tracking_fact = _lookup_fast_tracking_fact(
+        tracking_number=tracking_number,
+        conversation_id=conversation_id,
+        ticket_id=None,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _tracking_fact_provider_fields(tracking_fact)
+
+    result = await generate_webchat_fast_reply(
+        tenant_key=payload.tenant_key,
+        channel_key=payload.channel_key,
+        session_id=payload.session_id,
+        body=payload.body,
+        recent_context=merged_context,
+        request_id=getattr(request.state, "request_id", None),
+        tracking_fact_summary=tracking_fact_summary,
+        tracking_fact_metadata=tracking_fact_metadata,
+        tracking_fact_evidence_present=tracking_fact_evidence_present,
+    )
     result_payload = result.to_response()
 
     with db_context() as db:
         conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
         if result.ok:
-            append_fast_ai_message(db, conversation=conversation, reply=result.reply, client_message_id=payload.client_message_id, metadata={"handoff_required": result.handoff_required, "reply_source": result.reply_source})
+            metadata = {"handoff_required": result.handoff_required, "reply_source": result.reply_source}
+            if tracking_fact_metadata:
+                metadata["tracking_fact"] = tracking_fact_metadata
+            append_fast_ai_message(db, conversation=conversation, reply=result.reply, client_message_id=payload.client_message_id, metadata=metadata)
         if result.ok and result.handoff_required:
             handoff_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
             if result.tracking_number:
