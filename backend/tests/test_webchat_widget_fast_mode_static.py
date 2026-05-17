@@ -26,8 +26,20 @@ def test_widget_calls_fast_reply_endpoint():
     assert "Accept': 'text/event-stream'" in source or 'Accept": "text/event-stream"' in source
     assert ".getReader" in source
     assert "EventSource" not in source
-    assert "recent_context: state.recentContext" in source
+    assert "recent_context: buildApiRecentContext()" in source
+    assert "recent_context: state.recentContext" not in source
     assert "sessionStorage.setItem(contextKey" in source
+
+
+def test_widget_filters_api_recent_context_to_visitor_roles():
+    source = _widget_source()
+
+    assert "function buildApiRecentContext()" in source
+    assert "role === 'visitor'" in source
+    assert "role === 'customer'" in source
+    assert "role === 'client'" in source
+    assert "role === 'user'" in source
+    assert "return { role: 'visitor'" in source
 
 
 def test_widget_tracks_stream_bubble_states_and_partial_failure_copy():
