@@ -140,7 +140,22 @@ def _set_public_cors(response: Response, request: Request) -> None:
 
 
 def _context_payload(items: list[WebchatFastContextItem]) -> list[dict[str, str]]:
-    return [{"role": item.role, "text": item.text} for item in items[-10:]]
+    return [{"role": "visitor", "text": item.text} for item in items[-10:] if item.role == "visitor"]
+
+
+def _trusted_context(server_context: list[dict[str, Any]] | None, frontend_context: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+    """Return a server-authoritative context for AI, handoff, and fact lookup.
+
+    Public WebChat clients can provide legacy visitor-only context, but they must
+    never be able to inject agent/assistant/system history into the trusted
+    prompt or handoff policy context. If server-side history exists, it is the
+    authority. Browser context is only a visitor fallback for old clients.
+    """
+
+    if server_context:
+        return merge_fast_context(server_context, [])
+    visitor_only = [item for item in (frontend_context or []) if str(item.get("role") or "").lower() == "visitor"]
+    return merge_fast_context([], visitor_only)
 
 
 def _visitor_payload(visitor: WebchatFastVisitor | None) -> dict[str, Any]:
@@ -266,7 +281,7 @@ async def _server_policy_stream_events(
     with db_context() as db:
         conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id)
         server_context = build_fast_server_context(db, conversation=conversation)
-        merged_context = merge_fast_context(server_context, context_payload)
+        merged_context = _trusted_context(server_context, context_payload)
         business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
         update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
         ticket = get_or_create_fast_ticket(
@@ -344,7 +359,7 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
         conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
         visitor_message = append_fast_visitor_message(db, conversation=conversation, body=payload.body, client_message_id=payload.client_message_id, metadata={"source": "webchat_fast"})
         server_context = build_fast_server_context(db, conversation=conversation, exclude_message_id=visitor_message.id)
-        merged_context = merge_fast_context(server_context, frontend_context)
+        merged_context = _trusted_context(server_context, frontend_context)
         business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
         update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
         conversation_id = conversation.id
@@ -451,11 +466,36 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         return JSONResponse({"error_code": "stream_not_in_rollout"}, status_code=503, headers=headers)
     enforce_webchat_fast_rate_limit(request, tenant_key=payload.tenant_key, session_id=payload.session_id)
     frontend_context = _context_payload(payload.recent_context)
+
+    begin = prepare_webchat_fast_stream(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=frontend_context, request_id=getattr(request.state, "request_id", None))
+    if begin.status == "processing":
+        return JSONResponse({"error_code": "request_processing", "retry_after_ms": 1500}, status_code=202, headers=headers)
+    if begin.status == "conflict":
+        return JSONResponse({"error_code": "idempotency_key_reused_with_different_payload"}, status_code=409, headers=headers)
+    if begin.status == "failed_non_retryable":
+        return JSONResponse({"error_code": begin.error_code or "request_failed"}, status_code=409, headers=headers)
+    if begin.status == "replay":
+        generator = stream_webchat_fast_reply_events(
+            begin=begin,
+            tenant_key=payload.tenant_key,
+            channel_key=payload.channel_key,
+            session_id=payload.session_id,
+            client_message_id=payload.client_message_id,
+            body=payload.body,
+            recent_context=[],
+            visitor=payload.visitor,
+            request_id=getattr(request.state, "request_id", None),
+            settings=stream_settings,
+        )
+        return StreamingResponse(generator, media_type="text/event-stream", headers=headers)
+    if begin.row_id is None:
+        return JSONResponse({"error_code": "idempotency_error", "retry_after_ms": 1500}, status_code=500, headers=headers)
+
     with db_context() as db:
         conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
         visitor_message = append_fast_visitor_message(db, conversation=conversation, body=payload.body, client_message_id=payload.client_message_id, metadata={"source": "webchat_fast_stream"})
         server_context = build_fast_server_context(db, conversation=conversation, exclude_message_id=visitor_message.id)
-        merged_context = merge_fast_context(server_context, frontend_context)
+        merged_context = _trusted_context(server_context, frontend_context)
         business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
         update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
         routing_context = resolve_fast_routing_context(
@@ -465,27 +505,20 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
             channel_account_key=payload.channel_account_key,
         )
         configured_rules = load_webchat_handoff_rules(db, market_id=routing_context.market_id, country_code=routing_context.country_code)
-    begin = prepare_webchat_fast_stream(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=frontend_context, request_id=getattr(request.state, "request_id", None))
-    if begin.status == "processing":
-        return JSONResponse({"error_code": "request_processing", "retry_after_ms": 1500}, status_code=202, headers=headers)
-    if begin.status == "conflict":
-        return JSONResponse({"error_code": "idempotency_key_reused_with_different_payload"}, status_code=409, headers=headers)
-    if begin.status == "failed_non_retryable":
-        return JSONResponse({"error_code": begin.error_code or "request_failed"}, status_code=409, headers=headers)
-    if begin.row_id is not None:
-        server_policy = decide_server_handoff_policy(body=payload.body, recent_context=merged_context, configured_rules=configured_rules)
-        if server_policy.handoff_required:
-            return StreamingResponse(
-                _server_policy_stream_events(
-                    row_id=begin.row_id,
-                    payload=payload,
-                    context_payload=merged_context,
-                    server_policy=server_policy,
-                    routing_context=routing_context,
-                ),
-                media_type="text/event-stream",
-                headers=headers,
-            )
+
+    server_policy = decide_server_handoff_policy(body=payload.body, recent_context=merged_context, configured_rules=configured_rules)
+    if server_policy.handoff_required:
+        return StreamingResponse(
+            _server_policy_stream_events(
+                row_id=begin.row_id,
+                payload=payload,
+                context_payload=merged_context,
+                server_policy=server_policy,
+                routing_context=routing_context,
+            ),
+            media_type="text/event-stream",
+            headers=headers,
+        )
     generator = stream_webchat_fast_reply_events(
         begin=begin,
         tenant_key=payload.tenant_key,
