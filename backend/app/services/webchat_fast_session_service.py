@@ -79,6 +79,23 @@ def _safe_public_id(*, tenant_key: str, channel_key: str, session_id: str) -> st
     return f"wcf_{_sha(f'fast:{tenant_key}:{channel_key}:{session_id}')[:24]}"
 
 
+def _fast_customer_external_ref(conversation: WebchatConversation) -> str:
+    """Return a tenant/channel-scoped customer identity for public WebChat Fast.
+
+    Customer is a long-lived CRM object. It must not be keyed by a bare browser
+    session id because external clients and future partner channels can reuse the
+    same session id under different tenant/channel scopes.
+    """
+
+    tenant = _clip(conversation.tenant_key, 40) or "default"
+    channel = _clip(conversation.channel_key, 40) or "website"
+    session = _clip(conversation.fast_session_id or conversation.visitor_ref or conversation.public_id, 40) or conversation.public_id[-24:]
+    scoped = f"webchat-fast:{tenant}:{channel}:{session}"
+    if len(scoped) <= 120:
+        return scoped
+    return f"webchat-fast:{_sha(scoped)[:64]}"
+
+
 def _visitor_payload(visitor: Any) -> dict[str, Any]:
     if visitor is None:
         return {}
@@ -354,7 +371,7 @@ def update_fast_business_state(db: Session, *, conversation: WebchatConversation
 
 
 def _find_or_create_customer(db: Session, *, conversation: WebchatConversation) -> Customer:
-    ext_ref = conversation.visitor_ref or conversation.public_id
+    ext_ref = _fast_customer_external_ref(conversation)
     existing = db.execute(select(Customer).where(Customer.external_ref == ext_ref).limit(1)).scalar_one_or_none()
     if existing is not None:
         return existing
