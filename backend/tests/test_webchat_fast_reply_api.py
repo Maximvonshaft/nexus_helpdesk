@@ -44,10 +44,17 @@ def setup_function():
     reset_webchat_fast_rate_limit_for_tests()
 
 
-def _payload(client_message_id: str = "client-1", *, session_id: str = "session-1", body: str = "Hi", recent_context: list[dict] | None = None) -> dict:
+def _payload(
+    client_message_id: str = "client-1",
+    *,
+    session_id: str = "session-1",
+    channel_key: str = "website",
+    body: str = "Hi",
+    recent_context: list[dict] | None = None,
+) -> dict:
     return {
         "tenant_key": "default",
-        "channel_key": "website",
+        "channel_key": channel_key,
         "session_id": session_id,
         "client_message_id": client_message_id,
         "body": body,
@@ -133,6 +140,41 @@ def test_fast_handoff_same_tracking_number_reuses_ticket_across_sessions():
     try:
         assert db.execute(select(func.count(WebchatConversation.id))).scalar_one() == 2
         assert db.execute(select(func.count(Ticket.id))).scalar_one() == 1
+    finally:
+        db.close()
+
+
+def test_fast_customer_external_ref_is_channel_scoped_for_same_session():
+    first = client.post(
+        "/api/webchat/fast-reply",
+        json=_payload(
+            "channel-customer-1",
+            session_id="shared-browser-session",
+            channel_key="website",
+            body="My parcel is lost WEB111111111CH",
+        ),
+    )
+    second = client.post(
+        "/api/webchat/fast-reply",
+        json=_payload(
+            "channel-customer-2",
+            session_id="shared-browser-session",
+            channel_key="mobile",
+            body="My parcel is lost MOB222222222CH",
+        ),
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    db = SessionLocal()
+    try:
+        customers = db.execute(select(Customer).order_by(Customer.external_ref.asc())).scalars().all()
+        assert [customer.external_ref for customer in customers] == [
+            "webchat-fast:default:mobile:shared-browser-session",
+            "webchat-fast:default:website:shared-browser-session",
+        ]
+        assert db.execute(select(func.count(WebchatConversation.id))).scalar_one() == 2
+        assert db.execute(select(func.count(Ticket.id))).scalar_one() == 2
     finally:
         db.close()
 
