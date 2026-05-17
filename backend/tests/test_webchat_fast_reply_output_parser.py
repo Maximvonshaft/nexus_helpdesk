@@ -50,6 +50,26 @@ def test_accepts_direct_strict_json_dict():
     assert parsed.handoff_required is False
 
 
+def test_rejects_extra_keys_in_strict_json_dict():
+    with pytest.raises(FastReplyParseError):
+        parse_openclaw_fast_reply_from_strict_json(
+            {
+                "reply": "Hello",
+                "intent": "greeting",
+                "tracking_number": None,
+                "handoff_required": False,
+                "handoff_reason": None,
+                "recommended_agent_action": None,
+                "unsupported_internal_action": "do_not_accept",
+            }
+        )
+
+
+def test_rejects_extra_keys_in_json_text():
+    with pytest.raises(FastReplyParseError):
+        parse_openclaw_fast_reply({"output_text": _valid_text(unsupported_internal_action="do_not_accept")})
+
+
 def test_rejects_markdown_fenced_json():
     with pytest.raises(FastReplyParseError):
         parse_openclaw_fast_reply({"output_text": "```json\n" + _valid_text() + "\n```"})
