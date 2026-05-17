@@ -387,6 +387,17 @@
     persistRecentContext();
   }
 
+  function buildApiRecentContext() {
+    return state.recentContext.filter(function (item) {
+      var role = String((item && item.role) || '').toLowerCase();
+      return role === 'visitor' || role === 'customer' || role === 'client' || role === 'user';
+    }).map(function (item) {
+      return { role: 'visitor', text: String(item.text || '').slice(0, 500) };
+    }).filter(function (item) {
+      return item.text.trim();
+    }).slice(-MAX_CONTEXT_TURNS);
+  }
+
   function sendFastMessage(body, existingEl, reuseClientMessageId) {
     var cmid = reuseClientMessageId || (existingEl && existingEl.getAttribute('data-client-message-id')) || clientMessageId();
     var bubble = existingEl || appendMessage('visitor', body, 'sending', 'client:' + cmid);
@@ -407,7 +418,7 @@
       session_id: state.sessionId,
       client_message_id: cmid,
       body: body,
-      recent_context: state.recentContext
+      recent_context: buildApiRecentContext()
     };
     var timeoutMs = Number(script.getAttribute('data-fast-reply-timeout-ms') || script.getAttribute('data-timeout-ms') || 90000);
 
