@@ -498,6 +498,7 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         merged_context = _trusted_context(server_context, frontend_context)
         business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
         update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
+        conversation_id = conversation.id
         routing_context = resolve_fast_routing_context(
             db,
             country_code=payload.country_code,
@@ -519,6 +520,20 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
             media_type="text/event-stream",
             headers=headers,
         )
+
+    tracking_number = _tracking_candidate(
+        body=payload.body,
+        context=merged_context,
+        tracking_number=business_state.tracking_number,
+    )
+    tracking_fact = _lookup_fast_tracking_fact(
+        tracking_number=tracking_number,
+        conversation_id=conversation_id,
+        ticket_id=None,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _tracking_fact_provider_fields(tracking_fact)
+
     generator = stream_webchat_fast_reply_events(
         begin=begin,
         tenant_key=payload.tenant_key,
@@ -531,5 +546,8 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         request_id=getattr(request.state, "request_id", None),
         settings=stream_settings,
         routing_context=routing_context,
+        tracking_fact_summary=tracking_fact_summary,
+        tracking_fact_metadata=tracking_fact_metadata,
+        tracking_fact_evidence_present=tracking_fact_evidence_present,
     )
     return StreamingResponse(generator, media_type="text/event-stream", headers=headers)
