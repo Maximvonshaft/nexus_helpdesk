@@ -80,6 +80,8 @@ jobs:
             backend/tests/test_webchat_fast_handoff_policy.py \
             backend/tests/test_webchat_fast_ai_provider_router_phase1.py \
             backend/tests/test_webchat_fast_stream_safety.py \
+            backend/tests/test_webchat_fast_stream_tracking_facts.py \
+            backend/tests/test_webchat_fast_unique_guards_static.py \
             backend/tests/test_webchat_openclaw_responses_client.py \
             backend/tests/test_webchat_widget_fast_mode_static.py \
             backend/tests/test_webchat_fast_runtime_config_static.py
