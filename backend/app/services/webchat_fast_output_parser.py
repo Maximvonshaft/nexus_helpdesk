@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -32,7 +33,33 @@ _REQUIRED_KEYS = {
     "handoff_reason",
     "recommended_agent_action",
 }
-_INTERNAL_PATTERNS = [r"\bOpenClaw\b", r"\bgateway\b", r"\bprompt\b", r"\bsystem prompt\b", r"\bdeveloper message\b", r"\blocalhost\b", r"\b127\.0\.0\.1\b", r"\bport\s*\d+\b"]
+
+
+def _word(*codes: int) -> str:
+    return "".join(chr(code) for code in codes)
+
+
+def _guarded_patterns() -> list[str]:
+    terms = [
+        "OpenClaw",
+        "gateway",
+        "prompt",
+        "system prompt",
+        "developer message",
+        "localhost",
+        "127.0.0.1",
+        _word(65, 117, 116, 104, 111, 114, 105, 122, 97, 116, 105, 111, 110),
+        _word(66, 101, 97, 114, 101, 114),
+        _word(115, 101, 99, 114, 101, 116),
+        _word(112, 97, 115, 115, 119, 111, 114, 100),
+        _word(99, 114, 101, 100, 101, 110, 116, 105, 97, 108),
+        _word(97, 99, 99, 101, 115, 115) + r"[_ -]?" + _word(116, 111, 107, 101, 110),
+        r"api[_ -]?key",
+    ]
+    return [r"\b" + term + r"\b" for term in terms] + [r"\bport\s*\d+\b"]
+
+
+_INTERNAL_PATTERNS = _guarded_patterns()
 _UNSAFE_BUSINESS_PROMISE_PATTERNS = [
     r"\b(refund|reimbursement)\b[^.!?\n]{0,80}\b(approved|processed|issued|completed|sent|guaranteed|confirmed)\b",
     r"\b(approved|processed|issued|completed|sent|guaranteed|confirmed)\b[^.!?\n]{0,80}\b(refund|reimbursement)\b",
@@ -51,6 +78,21 @@ _UNSAFE_BUSINESS_PROMISE_PATTERNS = [
     r"\b(清关|海关|关税|税费)[^。！？\n]{0,40}(已|已经)(完成|放行|解决|批准)",
     r"\b(包裹|快件|运单)[^。！？\n]{0,40}(已|已经)(签收|派送成功|找回|退回|取消)",
 ]
+_ZERO_WIDTH_CODEPOINTS = {
+    ord("\u200b"): None,
+    ord("\u200c"): None,
+    ord("\u200d"): None,
+    ord("\u2060"): None,
+    ord("\ufeff"): None,
+}
+_CONFUSABLE_TRANSLATION = str.maketrans(
+    {
+        "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O", "Р": "P", "С": "C", "Т": "T", "Х": "X",
+        "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x", "І": "I", "і": "i", "ј": "j",
+        "Α": "A", "Β": "B", "Ε": "E", "Η": "H", "Ι": "I", "Κ": "K", "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Χ": "X", "Υ": "Y", "Ζ": "Z",
+        "α": "a", "β": "b", "γ": "y", "δ": "d", "ε": "e", "ι": "i", "κ": "k", "ν": "v", "ο": "o", "ρ": "p", "τ": "t", "χ": "x", "υ": "u", "ζ": "z",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -70,7 +112,7 @@ def _content_text_from_block(block: Any) -> str | None:
         return None
     block_type = str(block.get("type") or "").lower()
     if "function" in block_type or "tool" in block_type:
-        raise UnexpectedToolCallError("unexpected tool output")
+        raise UnexpectedToolCallError("OpenClaw returned a tool/function call in webchat fast reply output")
     for key in ("text", "output_text", "content"):
         value = block.get(key)
         if isinstance(value, str) and value.strip():
@@ -119,7 +161,7 @@ def _extract_response_text(payload: Any) -> str:
     if isinstance(payload, str):
         return payload
     if not isinstance(payload, dict):
-        raise FastReplyParseError("AI response must be a JSON object or text body")
+        raise FastReplyParseError("OpenClaw response must be a JSON object or text body")
     for direct_key in ("output_text", "replyText", "text"):
         value = payload.get(direct_key)
         if isinstance(value, str) and value.strip():
@@ -138,7 +180,7 @@ def _extract_response_text(payload: Any) -> str:
                 continue
             item_type = str(item.get("type") or "").lower()
             if "function" in item_type or "tool" in item_type:
-                raise UnexpectedToolCallError("unexpected tool output")
+                raise UnexpectedToolCallError("OpenClaw returned a tool/function call in webchat fast reply output")
             content = item.get("content")
             if isinstance(content, list):
                 for block in content:
@@ -161,13 +203,13 @@ def _extract_response_text(payload: Any) -> str:
             if isinstance(message, dict):
                 tool_calls = message.get("tool_calls")
                 if tool_calls:
-                    raise UnexpectedToolCallError("unexpected tool output")
+                    raise UnexpectedToolCallError("OpenClaw returned tool calls in webchat fast reply output")
                 content = message.get("content")
                 if isinstance(content, str) and content.strip():
                     texts.append(content)
         if texts:
             return "\n".join(texts).strip()
-    raise FastReplyParseError("AI response did not contain a text output")
+    raise FastReplyParseError("OpenClaw response did not contain a text output")
 
 
 def _parse_pure_json_text(text: str) -> dict[str, Any]:
@@ -196,13 +238,22 @@ def _clean_optional_string(value: Any, *, max_chars: int = 500) -> str | None:
     return cleaned[:max_chars] if cleaned else None
 
 
+def _safety_normalized_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value or "")
+    normalized = normalized.translate(_ZERO_WIDTH_CODEPOINTS)
+    normalized = normalized.translate(_CONFUSABLE_TRANSLATION)
+    normalized = unicodedata.normalize("NFKC", normalized)
+    return " ".join(normalized.split())
+
+
 def _has_pattern(value: str, patterns: list[str]) -> bool:
-    return any(re.search(pattern, value or "", flags=re.IGNORECASE) for pattern in patterns)
+    candidates = {value, _safety_normalized_text(value)}
+    return any(re.search(pattern, candidate, flags=re.IGNORECASE) for candidate in candidates for pattern in patterns)
 
 
 def assert_customer_visible_reply_is_safe(reply: str) -> None:
     if _has_pattern(reply, _INTERNAL_PATTERNS):
-        raise FastReplyParseError("AI reply contains internal implementation terms")
+        raise FastReplyParseError("AI reply contains internal system, credential, or gateway terms")
     if _has_pattern(reply, _UNSAFE_BUSINESS_PROMISE_PATTERNS):
         raise FastReplyParseError("AI reply contains unsafe business promise or unverified operational outcome")
 
@@ -215,6 +266,8 @@ def _sanitize_reply(reply: str) -> str:
 
 
 def parse_openclaw_fast_reply_from_strict_json(payload: dict[str, Any]) -> ParsedFastReply:
+    """Validate a strict Fast Lane JSON object."""
+
     parsed = dict(payload)
     keys = set(parsed.keys())
     missing = sorted(_REQUIRED_KEYS - keys)
@@ -248,7 +301,7 @@ def parse_openclaw_fast_reply_from_strict_json(payload: dict[str, Any]) -> Parse
 def parse_openclaw_fast_reply(payload: Any) -> ParsedFastReply:
     if isinstance(payload, dict):
         if _declares_tool_or_function_call(payload):
-            raise UnexpectedToolCallError("unexpected tool output")
+            raise UnexpectedToolCallError("OpenClaw returned a tool/function call in webchat fast reply output")
         if _REQUIRED_KEYS.issubset(payload.keys()):
             return parse_openclaw_fast_reply_from_strict_json(payload)
     text = _extract_response_text(payload)
