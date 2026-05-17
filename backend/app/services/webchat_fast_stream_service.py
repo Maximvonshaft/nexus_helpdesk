@@ -147,10 +147,14 @@ def _persist_stream_result(
     parsed: ParsedFastReply,
     recent_context: list[dict[str, Any]] | None,
     routing_context: FastRoutingContext | None = None,
+    tracking_fact_metadata: dict[str, Any] | None = None,
 ) -> int | None:
     with db_context() as db:
         conversation = get_or_create_fast_conversation(db, tenant_key=tenant_key, channel_key=channel_key, session_id=session_id)
-        append_fast_ai_message(db, conversation=conversation, reply=parsed.reply, client_message_id=client_message_id, metadata={"handoff_required": parsed.handoff_required, "reply_source": "openclaw_responses_stream"})
+        metadata = {"handoff_required": parsed.handoff_required, "reply_source": "openclaw_responses_stream"}
+        if tracking_fact_metadata:
+            metadata["tracking_fact"] = tracking_fact_metadata
+        append_fast_ai_message(db, conversation=conversation, reply=parsed.reply, client_message_id=client_message_id, metadata=metadata)
         if not parsed.handoff_required:
             return None
         business_state = extract_fast_business_state(body=body, context=recent_context or [], session_id=session_id)
@@ -182,6 +186,9 @@ async def stream_webchat_fast_reply_events(
     request_id: str | None,
     settings: Any,
     routing_context: FastRoutingContext | None = None,
+    tracking_fact_summary: str | None = None,
+    tracking_fact_metadata: dict[str, Any] | None = None,
+    tracking_fact_evidence_present: bool = False,
 ) -> AsyncIterator[str]:
     if begin.status == "replay":
         stored = dict(begin.response_json or {})
@@ -206,13 +213,19 @@ async def stream_webchat_fast_reply_events(
     started = time.monotonic()
     extractor = StreamingReplyExtractor()
     last_completed: Completed | None = None
+    evidence_present = bool(tracking_fact_summary and tracking_fact_evidence_present)
     try:
         yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2"})
         context = _context_payload(recent_context or [])
         async for event in openclaw_client.call_openclaw_responses_stream(
             session_key=_session_key(tenant_key=tenant_key, session_id=session_id),
             instructions=_instructions(),
-            input_text=_input_text(body=body, recent_context=context),
+            input_text=_input_text(
+                body=body,
+                recent_context=context,
+                tracking_fact_summary=tracking_fact_summary if evidence_present else None,
+                tracking_fact_evidence_present=evidence_present,
+            ),
             request_id=request_id,
             settings=settings,
         ):
@@ -235,6 +248,7 @@ async def stream_webchat_fast_reply_events(
                 parsed=parsed,
                 recent_context=recent_context,
                 routing_context=routing_context,
+                tracking_fact_metadata=tracking_fact_metadata if evidence_present else None,
             )
         except Exception:
             if parsed.handoff_required:
