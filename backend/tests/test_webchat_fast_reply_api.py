@@ -184,7 +184,9 @@ def test_widget_persists_recent_context():
     source = (BACKEND_ROOT / "app/static/webchat/widget.js").read_text(encoding="utf-8")
     assert "contextKey" in source
     assert "sessionStorage.setItem(contextKey" in source
-    assert "recent_context: state.recentContext" in source
+    assert "function buildApiRecentContext()" in source
+    assert "recent_context: buildApiRecentContext()" in source
+    assert "recent_context: state.recentContext" not in source
 
 
 def test_fast_rate_limit_still_blocks_rotated_sessions(monkeypatch):
