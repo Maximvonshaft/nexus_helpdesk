@@ -54,13 +54,16 @@ def build_fast_reply_instructions() -> str:
         "- Reply in the customer's language.\n"
         "- The customer-visible reply must be short, helpful, and natural.\n"
         "- Do not invent parcel status, delivery result, customs result, refund, compensation, or SLA.\n"
+        "- If a Trusted tracking fact block is provided, use only that block for parcel status.\n"
+        "- If the Trusted tracking fact says No Info, no trace, or no tracking updates, say the official system currently has no tracking updates.\n"
+        "- If no Trusted tracking fact block is provided, do not claim any live parcel status; ask for the tracking number or say support will check.\n"
         "- If a tracking number is missing, ask for it naturally.\n"
         "- If manual support is needed, say so naturally.\n"
         "- Return valid JSON only.\n"
         "- No markdown.\n"
         "- No hidden reasoning.\n"
         "- No internal tool names.\n"
-        "- No OpenClaw, gateway, prompt, token, localhost, port, or system details.\n\n"
+        "- No OpenClaw, MCP, gateway, Bridge, prompt, token, localhost, port, or system details.\n\n"
         "JSON schema:\n"
         "{\n"
         '  "reply": "customer visible AI reply",\n'
@@ -73,10 +76,31 @@ def build_fast_reply_instructions() -> str:
     )
 
 
-def build_fast_reply_input_text(*, body: str, recent_context: list[dict[str, str]], max_prompt_chars: int) -> str:
+def _trusted_fact_block(*, tracking_fact_summary: str | None, tracking_fact_evidence_present: bool) -> str:
+    if not tracking_fact_evidence_present:
+        return ""
+    summary = _clip(tracking_fact_summary, 1600)
+    if not summary:
+        return ""
+    return "Trusted tracking fact block:\n" + summary + "\n\n"
+
+
+def build_fast_reply_input_text(
+    *,
+    body: str,
+    recent_context: list[dict[str, str]],
+    max_prompt_chars: int,
+    tracking_fact_summary: str | None = None,
+    tracking_fact_evidence_present: bool = False,
+) -> str:
+    fact_block = _trusted_fact_block(
+        tracking_fact_summary=tracking_fact_summary,
+        tracking_fact_evidence_present=tracking_fact_evidence_present,
+    )
     text = (
         "Recent context:\n"
         f"{_context_block(recent_context)}\n\n"
+        f"{fact_block}"
         "Customer message:\n"
         f"{_clip(body, 2000)}"
     )
@@ -91,13 +115,16 @@ def build_fast_reply_session_key(*, tenant_key: str, session_id: str) -> str:
     return f"webchat-fast:{digest}"
 
 
-def _success_from_parsed(parsed: ParsedFastReply, *, elapsed_ms: int) -> FastAIProviderResult:
+def _success_from_parsed(parsed: ParsedFastReply, *, elapsed_ms: int, tracking_fact_metadata: dict[str, Any] | None = None) -> FastAIProviderResult:
+    safe_summary: dict[str, Any] = {"parsed": True}
+    if tracking_fact_metadata:
+        safe_summary["tracking_fact"] = tracking_fact_metadata
     return FastAIProviderResult(
         ok=True,
         ai_generated=True,
         reply_source="openclaw_responses",
         raw_provider="openclaw_responses",
-        raw_payload_safe_summary={"parsed": True},
+        raw_payload_safe_summary=safe_summary,
         reply=parsed.reply,
         intent=parsed.intent,
         tracking_number=parsed.tracking_number,
@@ -130,6 +157,8 @@ class OpenClawResponsesProvider(BaseFastAIProvider):
                     body=normalized_body,
                     recent_context=context,
                     max_prompt_chars=self.settings.max_prompt_chars,
+                    tracking_fact_summary=request.tracking_fact_summary,
+                    tracking_fact_evidence_present=request.tracking_fact_evidence_present,
                 ),
                 request_id=request.request_id,
                 settings=self.settings,
@@ -141,7 +170,7 @@ class OpenClawResponsesProvider(BaseFastAIProvider):
             )
             parsed = parse_openclaw_fast_reply(response.payload)
             elapsed_ms = int((time.monotonic() - started) * 1000)
-            return _success_from_parsed(parsed, elapsed_ms=elapsed_ms)
+            return _success_from_parsed(parsed, elapsed_ms=elapsed_ms, tracking_fact_metadata=request.tracking_fact_metadata)
         except UnexpectedToolCallError:
             elapsed_ms = int((time.monotonic() - started) * 1000)
             return FastAIProviderResult.unavailable(

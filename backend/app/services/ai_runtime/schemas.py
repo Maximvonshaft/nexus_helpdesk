@@ -14,6 +14,9 @@ class FastAIProviderRequest:
     body: str
     recent_context: list[dict[str, Any]] | None = None
     request_id: str | None = None
+    tracking_fact_summary: str | None = None
+    tracking_fact_metadata: dict[str, Any] | None = None
+    tracking_fact_evidence_present: bool = False
 
 
 @dataclass(frozen=True)
