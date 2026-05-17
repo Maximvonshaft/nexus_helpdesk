@@ -21,6 +21,7 @@ from .webchat_fast_idempotency_db import (
 from .webchat_fast_output_parser import FastReplyParseError, ParsedFastReply, assert_customer_visible_reply_is_safe
 from .webchat_fast_reply_metrics import record_fast_reply_metric, record_openclaw_responses_metric
 from .webchat_fast_session_service import (
+    FastRoutingContext,
     append_fast_ai_message,
     append_fast_system_handoff_message,
     extract_fast_business_state,
@@ -145,6 +146,7 @@ def _persist_stream_result(
     body: str,
     parsed: ParsedFastReply,
     recent_context: list[dict[str, Any]] | None,
+    routing_context: FastRoutingContext | None = None,
 ) -> int | None:
     with db_context() as db:
         conversation = get_or_create_fast_conversation(db, tenant_key=tenant_key, channel_key=channel_key, session_id=session_id)
@@ -154,7 +156,15 @@ def _persist_stream_result(
         business_state = extract_fast_business_state(body=body, context=recent_context or [], session_id=session_id)
         if parsed.tracking_number:
             business_state = type(business_state)(intent=business_state.intent, issue_type=business_state.issue_type, tracking_number=parsed.tracking_number, fast_issue_key=f"tracking:{parsed.tracking_number}:intent:{business_state.issue_type}"[:240], missing_fields=())
-        ticket = get_or_create_fast_ticket(db, conversation=conversation, business_state=business_state, handoff_reason=parsed.handoff_reason, recommended_agent_action=parsed.recommended_agent_action, customer_message=body)
+        ticket = get_or_create_fast_ticket(
+            db,
+            conversation=conversation,
+            business_state=business_state,
+            handoff_reason=parsed.handoff_reason,
+            recommended_agent_action=parsed.recommended_agent_action,
+            customer_message=body,
+            routing_context=routing_context,
+        )
         append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=parsed.handoff_reason, recommended_agent_action=parsed.recommended_agent_action, client_message_id=client_message_id)
         return ticket.id
 
@@ -171,6 +181,7 @@ async def stream_webchat_fast_reply_events(
     visitor: Any,
     request_id: str | None,
     settings: Any,
+    routing_context: FastRoutingContext | None = None,
 ) -> AsyncIterator[str]:
     if begin.status == "replay":
         stored = dict(begin.response_json or {})
@@ -215,7 +226,16 @@ async def stream_webchat_fast_reply_events(
             final_input = last_completed.full_text or last_completed.full_payload
         parsed = extractor.final_parse(final_input)
         try:
-            ticket_id = _persist_stream_result(tenant_key=tenant_key, channel_key=channel_key, session_id=session_id, client_message_id=client_message_id, body=body, parsed=parsed, recent_context=recent_context)
+            ticket_id = _persist_stream_result(
+                tenant_key=tenant_key,
+                channel_key=channel_key,
+                session_id=session_id,
+                client_message_id=client_message_id,
+                body=body,
+                parsed=parsed,
+                recent_context=recent_context,
+                routing_context=routing_context,
+            )
         except Exception:
             if parsed.handoff_required:
                 _mark_failed(begin.row_id, "handoff_enqueue_failed")

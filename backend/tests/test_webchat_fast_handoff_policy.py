@@ -92,7 +92,7 @@ def test_non_stream_server_policy_handoff_skips_ai_and_creates_ticket(monkeypatc
         calls["ai"] += 1
         raise AssertionError("server policy handoff must not call AI")
 
-    def fake_get_or_create_ticket(db, *, conversation, business_state, handoff_reason, recommended_agent_action, customer_message):
+    def fake_get_or_create_ticket(db, *, conversation, business_state, handoff_reason, recommended_agent_action, customer_message, routing_context=None):
         calls["ticket"] += 1
         assert handoff_reason == "address_change_requires_human_review"
         assert recommended_agent_action.startswith("[address_change_request]")
@@ -137,7 +137,7 @@ def test_stream_server_policy_handoff_skips_openclaw_and_creates_ticket(monkeypa
         calls["stream"] += 1
         raise AssertionError("server policy handoff must not call OpenClaw stream")
 
-    def fake_get_or_create_ticket(db, *, conversation, business_state, handoff_reason, recommended_agent_action, customer_message):
+    def fake_get_or_create_ticket(db, *, conversation, business_state, handoff_reason, recommended_agent_action, customer_message, routing_context=None):
         calls["ticket"] += 1
         assert handoff_reason == "refund_or_compensation_requires_human_review"
         assert recommended_agent_action.startswith("[refund_compensation_claim]")

@@ -22,9 +22,11 @@ from ..services.webchat_fast_idempotency_db import (
 from ..services.webchat_fast_rate_limit import enforce_webchat_fast_rate_limit
 from ..services.webchat_fast_stream_service import prepare_webchat_fast_stream, sse_event, stream_webchat_fast_reply_events
 from ..services.webchat_handoff_policy import HandoffPolicyDecision, decide_server_handoff_policy
+from ..services.webchat_handoff_policy_config import load_webchat_handoff_rules
 from ..services.webchat_fast_config import get_webchat_fast_settings, WebchatFastSettings
 from ..services.webchat_fast_rollout import is_stream_rollout_selected
 from ..services.webchat_fast_session_service import (
+    FastRoutingContext,
     append_fast_ai_message,
     append_fast_system_handoff_message,
     append_fast_visitor_message,
@@ -33,6 +35,7 @@ from ..services.webchat_fast_session_service import (
     get_or_create_fast_conversation,
     get_or_create_fast_ticket,
     merge_fast_context,
+    resolve_fast_routing_context,
     update_fast_business_state,
 )
 
@@ -81,6 +84,9 @@ class WebchatFastReplyRequest(BaseModel):
     body: str = Field(min_length=1, max_length=2000)
     recent_context: list[WebchatFastContextItem] = Field(default_factory=list, max_length=10)
     visitor: WebchatFastVisitor | None = None
+    country_code: str | None = Field(default=None, max_length=8)
+    market_code: str | None = Field(default=None, max_length=16)
+    channel_account_key: str | None = Field(default=None, max_length=160)
 
 
 def _normalized_allowed_origins() -> set[str]:
@@ -175,6 +181,7 @@ async def _server_policy_stream_events(
     payload: WebchatFastReplyRequest,
     context_payload: list[dict[str, str]],
     server_policy: HandoffPolicyDecision,
+    routing_context: FastRoutingContext,
 ) -> AsyncIterator[str]:
     result_payload = _server_handoff_response_payload(handoff_reason=server_policy.handoff_reason, customer_reply=server_policy.customer_reply)
     with db_context() as db:
@@ -183,7 +190,15 @@ async def _server_policy_stream_events(
         merged_context = merge_fast_context(server_context, context_payload)
         business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
         update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
-        ticket = get_or_create_fast_ticket(db, conversation=conversation, business_state=business_state, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, customer_message=payload.body)
+        ticket = get_or_create_fast_ticket(
+            db,
+            conversation=conversation,
+            business_state=business_state,
+            handoff_reason=server_policy.handoff_reason,
+            recommended_agent_action=server_policy.recommended_agent_action,
+            customer_message=payload.body,
+            routing_context=routing_context,
+        )
         append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"handoff_required": True, "source": "server_handoff_policy"})
         append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, client_message_id=payload.client_message_id)
         result_payload["ticket_id"] = ticket.id
@@ -253,13 +268,28 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
         merged_context = merge_fast_context(server_context, frontend_context)
         business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
         update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
+        routing_context = resolve_fast_routing_context(
+            db,
+            country_code=payload.country_code,
+            market_code=payload.market_code,
+            channel_account_key=payload.channel_account_key,
+        )
+        configured_rules = load_webchat_handoff_rules(db, market_id=routing_context.market_id, country_code=routing_context.country_code)
 
-    server_policy = decide_server_handoff_policy(body=payload.body, recent_context=merged_context)
+    server_policy = decide_server_handoff_policy(body=payload.body, recent_context=merged_context, configured_rules=configured_rules)
     if server_policy.handoff_required:
         result_payload = _server_handoff_response_payload(handoff_reason=server_policy.handoff_reason, customer_reply=server_policy.customer_reply)
         with db_context() as db:
             conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
-            ticket = get_or_create_fast_ticket(db, conversation=conversation, business_state=business_state, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, customer_message=payload.body)
+            ticket = get_or_create_fast_ticket(
+                db,
+                conversation=conversation,
+                business_state=business_state,
+                handoff_reason=server_policy.handoff_reason,
+                recommended_agent_action=server_policy.recommended_agent_action,
+                customer_message=payload.body,
+                routing_context=routing_context,
+            )
             append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"handoff_required": True, "source": "server_handoff_policy"})
             append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, client_message_id=payload.client_message_id)
             result_payload["ticket_id"] = ticket.id
@@ -279,7 +309,15 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
             handoff_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
             if result.tracking_number:
                 handoff_state = type(handoff_state)(intent=handoff_state.intent, issue_type=handoff_state.issue_type, tracking_number=result.tracking_number, fast_issue_key=f"tracking:{result.tracking_number}:intent:{handoff_state.issue_type}"[:240], missing_fields=())
-            ticket = get_or_create_fast_ticket(db, conversation=conversation, business_state=handoff_state, handoff_reason=result.handoff_reason, recommended_agent_action=result.recommended_agent_action, customer_message=payload.body)
+            ticket = get_or_create_fast_ticket(
+                db,
+                conversation=conversation,
+                business_state=handoff_state,
+                handoff_reason=result.handoff_reason,
+                recommended_agent_action=result.recommended_agent_action,
+                customer_message=payload.body,
+                routing_context=routing_context,
+            )
             append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=result.handoff_reason, recommended_agent_action=result.recommended_agent_action, client_message_id=payload.client_message_id)
             result_payload["ticket_creation_queued"] = False
             result_payload["ticket_id"] = ticket.id
@@ -314,6 +352,13 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         merged_context = merge_fast_context(server_context, frontend_context)
         business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
         update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
+        routing_context = resolve_fast_routing_context(
+            db,
+            country_code=payload.country_code,
+            market_code=payload.market_code,
+            channel_account_key=payload.channel_account_key,
+        )
+        configured_rules = load_webchat_handoff_rules(db, market_id=routing_context.market_id, country_code=routing_context.country_code)
     begin = prepare_webchat_fast_stream(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=frontend_context, request_id=getattr(request.state, "request_id", None))
     if begin.status == "processing":
         return JSONResponse({"error_code": "request_processing", "retry_after_ms": 1500}, status_code=202, headers=headers)
@@ -322,8 +367,30 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
     if begin.status == "failed_non_retryable":
         return JSONResponse({"error_code": begin.error_code or "request_failed"}, status_code=409, headers=headers)
     if begin.row_id is not None:
-        server_policy = decide_server_handoff_policy(body=payload.body, recent_context=merged_context)
+        server_policy = decide_server_handoff_policy(body=payload.body, recent_context=merged_context, configured_rules=configured_rules)
         if server_policy.handoff_required:
-            return StreamingResponse(_server_policy_stream_events(row_id=begin.row_id, payload=payload, context_payload=merged_context, server_policy=server_policy), media_type="text/event-stream", headers=headers)
-    generator = stream_webchat_fast_reply_events(begin=begin, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=merged_context, visitor=payload.visitor, request_id=getattr(request.state, "request_id", None), settings=stream_settings)
+            return StreamingResponse(
+                _server_policy_stream_events(
+                    row_id=begin.row_id,
+                    payload=payload,
+                    context_payload=merged_context,
+                    server_policy=server_policy,
+                    routing_context=routing_context,
+                ),
+                media_type="text/event-stream",
+                headers=headers,
+            )
+    generator = stream_webchat_fast_reply_events(
+        begin=begin,
+        tenant_key=payload.tenant_key,
+        channel_key=payload.channel_key,
+        session_id=payload.session_id,
+        client_message_id=payload.client_message_id,
+        body=payload.body,
+        recent_context=merged_context,
+        visitor=payload.visitor,
+        request_id=getattr(request.state, "request_id", None),
+        settings=stream_settings,
+        routing_context=routing_context,
+    )
     return StreamingResponse(generator, media_type="text/event-stream", headers=headers)

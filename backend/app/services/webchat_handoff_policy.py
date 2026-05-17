@@ -14,6 +14,16 @@ class HandoffPolicyDecision:
     customer_reply: str | None = None
 
 
+@dataclass(frozen=True)
+class ConfiguredHandoffRule:
+    rule_id: str
+    phrases: tuple[str, ...]
+    handoff_reason: str
+    recommended_agent_action: str
+    customer_reply: str | None = None
+    enabled: bool = True
+
+
 _DEFAULT_CUSTOMER_REPLY = "A human teammate will review this request."
 
 _RULES: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
@@ -128,21 +138,67 @@ def _contains_phrase(haystack: str, phrase: str) -> bool:
     return re.search(r"(?<![a-z0-9])" + re.escape(needle) + r"(?![a-z0-9])", haystack, flags=re.IGNORECASE) is not None
 
 
+def _configured_rule_from_payload(item: Any) -> ConfiguredHandoffRule | None:
+    if isinstance(item, ConfiguredHandoffRule):
+        return item if item.enabled and item.phrases else None
+    if not isinstance(item, dict):
+        return None
+    if item.get("enabled") is False:
+        return None
+    raw_phrases = item.get("phrases") or item.get("keywords") or []
+    if isinstance(raw_phrases, str):
+        raw_phrases = [raw_phrases]
+    phrases = tuple(str(value).strip() for value in raw_phrases if str(value or "").strip())
+    if not phrases:
+        return None
+    rule_id = str(item.get("rule_id") or item.get("id") or "configured_handoff_rule").strip()[:120]
+    reason = str(item.get("handoff_reason") or item.get("reason") or f"{rule_id}_requires_human_review").strip()[:240]
+    action = str(item.get("recommended_agent_action") or item.get("action") or "Review the request and respond with verified information.").strip()[:500]
+    reply = item.get("customer_reply")
+    return ConfiguredHandoffRule(
+        rule_id=rule_id,
+        phrases=phrases,
+        handoff_reason=reason,
+        recommended_agent_action=action,
+        customer_reply=str(reply).strip()[:500] if reply else None,
+        enabled=True,
+    )
+
+
+def _iter_configured_rules(configured_rules: Iterable[Any] | None) -> Iterable[ConfiguredHandoffRule]:
+    for item in configured_rules or []:
+        rule = _configured_rule_from_payload(item)
+        if rule is not None:
+            yield rule
+
+
 def decide_server_handoff_policy(
     *,
     body: str,
     recent_context: list[dict[str, Any]] | None = None,
+    configured_rules: Iterable[Any] | None = None,
 ) -> HandoffPolicyDecision:
     """Return deterministic server authority for WebChat handoff routing.
 
-    This policy is intentionally independent from OpenClaw/model output. The AI
-    may still request handoff, but it cannot suppress these server-owned rules.
+    Configured rules are evaluated before built-in defaults, but the built-in
+    defaults remain the fail-closed safety floor. The AI may still request
+    handoff, but it cannot suppress these server-owned rules.
     """
 
     joined = _normalize(body)
     context = _customer_context_text(recent_context)
     if context:
         joined = f"{context}\n{joined}"
+
+    for rule in _iter_configured_rules(configured_rules):
+        if any(_contains_phrase(joined, phrase) for phrase in rule.phrases):
+            return HandoffPolicyDecision(
+                handoff_required=True,
+                rule_id=rule.rule_id,
+                handoff_reason=rule.handoff_reason,
+                recommended_agent_action=f"[{rule.rule_id}] {rule.recommended_agent_action}",
+                customer_reply=rule.customer_reply or _DEFAULT_CUSTOMER_REPLY,
+            )
 
     for rule_id, phrases, reason, action in _RULES:
         if any(_contains_phrase(joined, phrase) for phrase in phrases):
