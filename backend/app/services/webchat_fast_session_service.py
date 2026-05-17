@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus
@@ -127,71 +128,31 @@ def resolve_fast_routing_context(
     market_code: str | None = None,
     channel_account_key: str | None = None,
 ) -> FastRoutingContext:
-    """Resolve public Fast Lane routing hints into internal ticket routing ids.
-
-    Public WebChat payloads should not need to know database ids. This resolver
-    accepts stable business keys and falls back conservatively:
-    explicit channel account -> matching market -> global OpenClaw account.
-    """
-
     normalized_country = _upper(country_code, 8)
     normalized_market = _upper(market_code, 16)
     normalized_account = _clip(channel_account_key, 160)
 
     market: Market | None = None
     if normalized_market:
-        market = db.execute(
-            select(Market).where(Market.code == normalized_market, Market.is_active.is_(True)).limit(1)
-        ).scalar_one_or_none()
+        market = db.execute(select(Market).where(Market.code == normalized_market, Market.is_active.is_(True)).limit(1)).scalar_one_or_none()
     if market is None and normalized_country:
-        market = db.execute(
-            select(Market)
-            .where(Market.country_code == normalized_country, Market.is_active.is_(True))
-            .order_by(Market.id.asc())
-            .limit(1)
-        ).scalar_one_or_none()
+        market = db.execute(select(Market).where(Market.country_code == normalized_country, Market.is_active.is_(True)).order_by(Market.id.asc()).limit(1)).scalar_one_or_none()
 
     account: ChannelAccount | None = None
     if normalized_account:
-        account = db.execute(
-            select(ChannelAccount)
-            .where(ChannelAccount.account_id == normalized_account, ChannelAccount.is_active.is_(True))
-            .limit(1)
-        ).scalar_one_or_none()
+        account = db.execute(select(ChannelAccount).where(ChannelAccount.account_id == normalized_account, ChannelAccount.is_active.is_(True)).limit(1)).scalar_one_or_none()
 
     if account is None and market is not None:
-        account = db.execute(
-            select(ChannelAccount)
-            .where(
-                ChannelAccount.provider == "openclaw",
-                ChannelAccount.market_id == market.id,
-                ChannelAccount.is_active.is_(True),
-            )
-            .order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc())
-            .limit(1)
-        ).scalar_one_or_none()
+        account = db.execute(select(ChannelAccount).where(ChannelAccount.provider == "openclaw", ChannelAccount.market_id == market.id, ChannelAccount.is_active.is_(True)).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).limit(1)).scalar_one_or_none()
 
     if account is None:
-        account = db.execute(
-            select(ChannelAccount)
-            .where(
-                ChannelAccount.provider == "openclaw",
-                ChannelAccount.market_id.is_(None),
-                ChannelAccount.is_active.is_(True),
-            )
-            .order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc())
-            .limit(1)
-        ).scalar_one_or_none()
+        account = db.execute(select(ChannelAccount).where(ChannelAccount.provider == "openclaw", ChannelAccount.market_id.is_(None), ChannelAccount.is_active.is_(True)).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).limit(1)).scalar_one_or_none()
 
     if market is None and account is not None and account.market_id is not None:
         market = db.get(Market, account.market_id)
 
     resolved_country = normalized_country or (market.country_code if market is not None else None)
-    return FastRoutingContext(
-        market_id=market.id if market is not None else None,
-        country_code=resolved_country,
-        channel_account_id=account.id if account is not None else None,
-    )
+    return FastRoutingContext(market_id=market.id if market is not None else None, country_code=resolved_country, channel_account_id=account.id if account is not None else None)
 
 
 def extract_tracking_number(*, body: str, context: list[dict[str, Any]] | None = None) -> str | None:
@@ -229,11 +190,8 @@ def extract_fast_business_state(*, body: str, context: list[dict[str, Any]] | No
     return FastBusinessState(intent=intent, issue_type=issue_type, tracking_number=tracking, fast_issue_key=fast_issue_key[:240], missing_fields=missing_fields)
 
 
-def get_or_create_fast_conversation(db: Session, *, tenant_key: str, channel_key: str, session_id: str, request: Any = None, visitor: Any = None) -> WebchatConversation:
-    tenant = _clip(tenant_key, 120) or "default"
-    channel = _clip(channel_key, 120) or "website"
-    session = _clip(session_id, 120) or "unknown"
-    row = db.execute(
+def _find_fast_conversation(db: Session, *, tenant: str, channel: str, session: str) -> WebchatConversation | None:
+    return db.execute(
         select(WebchatConversation).where(
             WebchatConversation.tenant_key == tenant,
             WebchatConversation.channel_key == channel,
@@ -242,12 +200,24 @@ def get_or_create_fast_conversation(db: Session, *, tenant_key: str, channel_key
             WebchatConversation.status == "open",
         ).limit(1)
     ).scalar_one_or_none()
+
+
+def _touch_conversation(row: WebchatConversation) -> None:
     now = utc_now()
+    row.last_seen_at = now
+    row.updated_at = now
+
+
+def get_or_create_fast_conversation(db: Session, *, tenant_key: str, channel_key: str, session_id: str, request: Any = None, visitor: Any = None) -> WebchatConversation:
+    tenant = _clip(tenant_key, 120) or "default"
+    channel = _clip(channel_key, 120) or "website"
+    session = _clip(session_id, 120) or "unknown"
+    row = _find_fast_conversation(db, tenant=tenant, channel=channel, session=session)
     if row is not None:
-        row.last_seen_at = now
-        row.updated_at = now
+        _touch_conversation(row)
         db.flush()
         return row
+    now = utc_now()
     visitor_data = _visitor_payload(visitor)
     page_url, user_agent = _request_meta(request)
     row = WebchatConversation(
@@ -270,9 +240,18 @@ def get_or_create_fast_conversation(db: Session, *, tenant_key: str, channel_key
         last_seen_at=now,
         fast_context_updated_at=now,
     )
-    db.add(row)
-    db.flush()
-    return row
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+        return row
+    except IntegrityError:
+        existing = _find_fast_conversation(db, tenant=tenant, channel=channel, session=session)
+        if existing is None:
+            raise
+        _touch_conversation(existing)
+        db.flush()
+        return existing
 
 
 def _find_message(db: Session, *, conversation_id: int, client_message_id: str) -> WebchatMessage | None:
@@ -285,6 +264,7 @@ def _append_message(db: Session, *, conversation: WebchatConversation, direction
     if existing is not None:
         if conversation.ticket_id and existing.ticket_id is None:
             existing.ticket_id = conversation.ticket_id
+            db.flush()
         return existing
     now = utc_now()
     message = WebchatMessage(
@@ -300,7 +280,18 @@ def _append_message(db: Session, *, conversation: WebchatConversation, direction
         author_label=author_label,
         created_at=now,
     )
-    db.add(message)
+    try:
+        with db.begin_nested():
+            db.add(message)
+            db.flush()
+    except IntegrityError:
+        existing = _find_message(db, conversation_id=conversation.id, client_message_id=msg_id)
+        if existing is None:
+            raise
+        if conversation.ticket_id and existing.ticket_id is None:
+            existing.ticket_id = conversation.ticket_id
+            db.flush()
+        return existing
     conversation.fast_last_client_message_id = msg_id
     conversation.fast_context_updated_at = now
     conversation.updated_at = now
