@@ -478,12 +478,34 @@ def _apply_routing_context(ticket: Ticket, routing_context: FastRoutingContext |
         ticket.channel_account_id = routing_context.channel_account_id
 
 
+def _fast_ticket_source_dedupe_key(*, conversation: WebchatConversation, business_state: FastBusinessState) -> str:
+    return f"webchat-fast-issue:{conversation.tenant_key}:{conversation.channel_key}:{business_state.fast_issue_key}"[:300]
+
+
+def _backfill_fast_ticket_linkage(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    ticket: Ticket,
+    business_state: FastBusinessState,
+    routing_context: FastRoutingContext | None = None,
+) -> None:
+    conversation.ticket_id = ticket.id
+    conversation.fast_issue_key = business_state.fast_issue_key
+    conversation.last_intent = business_state.intent
+    if business_state.tracking_number:
+        conversation.last_tracking_number = business_state.tracking_number
+    _apply_routing_context(ticket, routing_context)
+    db.execute(WebchatMessage.__table__.update().where(WebchatMessage.conversation_id == conversation.id, WebchatMessage.ticket_id.is_(None)).values(ticket_id=ticket.id))
+    db.flush()
+
+
 def _find_active_ticket(db: Session, *, conversation: WebchatConversation, business_state: FastBusinessState) -> Ticket | None:
     if conversation.ticket_id is not None:
         ticket = db.get(Ticket, conversation.ticket_id)
         if ticket is not None and ticket.status in ACTIVE_TICKET_STATUSES:
             return ticket
-    dedupe_key = f"webchat-fast-issue:{conversation.tenant_key}:{conversation.channel_key}:{business_state.fast_issue_key}"[:300]
+    dedupe_key = _fast_ticket_source_dedupe_key(conversation=conversation, business_state=business_state)
     ticket = db.execute(select(Ticket).where(Ticket.source_dedupe_key == dedupe_key, Ticket.status.in_(ACTIVE_TICKET_STATUSES)).limit(1)).scalar_one_or_none()
     if ticket is not None:
         return ticket
@@ -504,13 +526,10 @@ def get_or_create_fast_ticket(
 ) -> Ticket:
     existing = _find_active_ticket(db, conversation=conversation, business_state=business_state)
     if existing is not None:
-        conversation.ticket_id = existing.id
-        _apply_routing_context(existing, routing_context)
-        db.execute(WebchatMessage.__table__.update().where(WebchatMessage.conversation_id == conversation.id, WebchatMessage.ticket_id.is_(None)).values(ticket_id=existing.id))
-        db.flush()
+        _backfill_fast_ticket_linkage(db, conversation=conversation, ticket=existing, business_state=business_state, routing_context=routing_context)
         return existing
     customer = _find_or_create_customer(db, conversation=conversation)
-    dedupe_key = f"webchat-fast-issue:{conversation.tenant_key}:{conversation.channel_key}:{business_state.fast_issue_key}"[:300]
+    dedupe_key = _fast_ticket_source_dedupe_key(conversation=conversation, business_state=business_state)
     ticket = Ticket(
         ticket_no=generate_ticket_no(),
         title=f"WebChat handoff · {business_state.tracking_number or business_state.issue_type}"[:255],
@@ -534,13 +553,15 @@ def get_or_create_fast_ticket(
         country_code=routing_context.country_code if routing_context else None,
         channel_account_id=routing_context.channel_account_id if routing_context else None,
     )
-    db.add(ticket)
-    db.flush()
-    conversation.ticket_id = ticket.id
-    conversation.fast_issue_key = business_state.fast_issue_key
-    conversation.last_intent = business_state.intent
-    if business_state.tracking_number:
-        conversation.last_tracking_number = business_state.tracking_number
-    db.execute(WebchatMessage.__table__.update().where(WebchatMessage.conversation_id == conversation.id, WebchatMessage.ticket_id.is_(None)).values(ticket_id=ticket.id))
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(ticket)
+            db.flush()
+    except IntegrityError:
+        existing = _find_active_ticket(db, conversation=conversation, business_state=business_state)
+        if existing is None:
+            raise
+        _backfill_fast_ticket_linkage(db, conversation=conversation, ticket=existing, business_state=business_state, routing_context=routing_context)
+        return existing
+    _backfill_fast_ticket_linkage(db, conversation=conversation, ticket=ticket, business_state=business_state, routing_context=routing_context)
     return ticket
