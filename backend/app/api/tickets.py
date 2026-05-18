@@ -56,6 +56,7 @@ from ..services.ticket_service import (
 from ..services.timeline_service import build_unified_timeline
 from ..services.permissions import ensure_ticket_visible
 from ..services.sla_service import compute_sla_snapshot
+from ..services.outbound_channel_registry import require_outbound_channel_sendable
 from ..services.outbound_semantics import outbound_is_external_send, outbound_ui_label
 from ..settings import get_settings
 from .deps import get_current_user
@@ -311,6 +312,9 @@ def save_draft_endpoint(ticket_id: int, payload: OutboundDraftCreate, db: Sessio
 @router.post("/{ticket_id}/outbound/send")
 def send_message_endpoint(ticket_id: int, payload: OutboundSendRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     with managed_session(db):
+        ticket = get_ticket_or_404(db, ticket_id)
+        ensure_ticket_visible(current_user, ticket, db)
+        require_outbound_channel_sendable(db, ticket=ticket, channel=payload.channel)
         row = send_outbound_message(db, ticket_id, payload, current_user)
         db.flush()
     return _serialize_outbound_message(row)
