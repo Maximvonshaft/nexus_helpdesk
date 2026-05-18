@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, event
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, event, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -20,6 +20,16 @@ class WebchatConversation(Base):
     __table_args__ = (
         UniqueConstraint("tenant_key", "channel_key", "public_id", name="uq_webchat_tenant_channel_public"),
         Index("ix_webchat_fast_session", "tenant_key", "channel_key", "fast_session_id"),
+        Index(
+            "uq_webchat_fast_open_session",
+            "tenant_key",
+            "channel_key",
+            "fast_session_id",
+            "origin",
+            unique=True,
+            sqlite_where=text("fast_session_id IS NOT NULL AND status = 'open'"),
+            postgresql_where=text("fast_session_id IS NOT NULL AND status = 'open'"),
+        ),
         Index("ix_webchat_fast_issue_key", "tenant_key", "channel_key", "fast_issue_key"),
         Index("ix_webchat_fast_last_tracking", "last_tracking_number"),
     )
@@ -65,6 +75,14 @@ class WebchatMessage(Base):
     __tablename__ = "webchat_messages"
     __table_args__ = (
         Index("ix_webchat_messages_conversation_client", "conversation_id", "client_message_id"),
+        Index(
+            "uq_webchat_messages_conversation_client",
+            "conversation_id",
+            "client_message_id",
+            unique=True,
+            sqlite_where=text("client_message_id IS NOT NULL"),
+            postgresql_where=text("client_message_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
