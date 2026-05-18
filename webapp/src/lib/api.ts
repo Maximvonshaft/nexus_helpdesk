@@ -13,6 +13,7 @@ import type {
   QueueSummary,
   RuntimeHealth,
   OpenClawConnectivityProbe,
+  OutboundChannelCapabilitiesResponse,
   SignoffChecklist,
   AIConfigResource,
   AIConfigVersion,
@@ -279,6 +280,7 @@ export const api = {
   signoff: () => request<SignoffChecklist>('/api/admin/signoff-checklist'),
   jobs: () => request<BackgroundJob[]>('/api/admin/jobs?limit=50'),
   consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
+  outboundChannelCapabilities: () => request<OutboundChannelCapabilitiesResponse>('/api/outbound/channels/capabilities'),
 
   webchatConversations: (init?: RequestInit) => request<WebchatConversation[]>('/api/webchat/admin/conversations', init),
   webchatThread: (ticketId: number, init?: RequestInit) => request<WebchatThread>(`/api/webchat/admin/tickets/${ticketId}/thread`, init),
