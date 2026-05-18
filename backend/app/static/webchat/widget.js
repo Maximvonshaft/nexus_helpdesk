@@ -457,7 +457,7 @@
         body: JSON.stringify(requestPayload)
       }, timeoutMs).then(function (data) {
         updateMessage(bubble, body, 'visitor');
-        if (data && data.ok === true && data.ai_generated === true && data.reply) {
+        if (data && data.ok === true && data.reply) {
           aiText = String(data.reply || '');
           aiBubble = ensureAIBubble();
           updateMessage(aiBubble, aiText, 'agent', 'complete');
