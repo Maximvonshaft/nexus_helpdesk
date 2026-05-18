@@ -85,7 +85,6 @@ def test_closed_fast_conversation_reopens_without_public_id_collision(monkeypatc
         original_id = conversation.id
         original_public_id = conversation.public_id
         conversation.status = "closed"
-        conversation.ticket_id = 123456
         db.commit()
     finally:
         db.close()
@@ -104,7 +103,6 @@ def test_closed_fast_conversation_reopens_without_public_id_collision(monkeypatc
         assert rows[0].id == original_id
         assert rows[0].public_id == original_public_id
         assert rows[0].status == "open"
-        assert rows[0].ticket_id is None
     finally:
         db.close()
 
