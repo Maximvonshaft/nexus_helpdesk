@@ -113,6 +113,55 @@ def _request_meta(request: Any) -> tuple[str | None, str | None]:
     return _clip(request.headers.get("referer"), 700), _clip(request.headers.get("user-agent"), 300)
 
 
+def _apply_fast_conversation_metadata(
+    row: WebchatConversation,
+    *,
+    now: Any,
+    request: Any = None,
+    visitor: Any = None,
+    reopen: bool = False,
+) -> WebchatConversation:
+    """Refresh deterministic Fast Lane session metadata without losing identity.
+
+    Browser Fast Lane sessions use a deterministic public_id. If the same browser
+    session returns after the previous conversation was closed, reuse and reopen
+    that deterministic row instead of attempting a second insert that would
+    collide with the public_id uniqueness contract.
+    """
+
+    if reopen and row.status != "open":
+        row.status = "open"
+        row.ticket_id = None
+
+    visitor_data = _visitor_payload(visitor)
+    if not row.visitor_name:
+        row.visitor_name = _clip(visitor_data.get("name"), 160)
+    if not row.visitor_email:
+        row.visitor_email = _clip(visitor_data.get("email"), 200)
+    if not row.visitor_phone:
+        row.visitor_phone = _clip(visitor_data.get("phone"), 80)
+
+    page_url, user_agent = _request_meta(request)
+    if page_url:
+        row.page_url = page_url
+    if user_agent:
+        row.user_agent = user_agent
+
+    row.last_seen_at = now
+    row.updated_at = now
+    if row.fast_context_updated_at is None:
+        row.fast_context_updated_at = now
+    return row
+
+
+def _derived_client_message_id(client_message_id: str, suffix: str) -> str:
+    raw = str(client_message_id or "")
+    digest = _sha(f"{suffix}:{raw}")[:16]
+    max_base = max(16, 120 - len(suffix) - len(digest) - 2)
+    base = _clip(raw, max_base) or _sha(f"empty:{suffix}")[:max_base]
+    return f"{base}:{suffix}:{digest}"
+
+
 def clean_fast_context(items: list[dict[str, Any]] | None) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for item in items or []:
@@ -259,21 +308,30 @@ def _find_open_fast_conversation(db: Session, *, tenant: str, channel: str, sess
     ).scalar_one_or_none()
 
 
+def _find_fast_conversation_by_public_id(db: Session, public_id: str) -> WebchatConversation | None:
+    return db.execute(select(WebchatConversation).where(WebchatConversation.public_id == public_id).limit(1)).scalar_one_or_none()
+
+
 def get_or_create_fast_conversation(db: Session, *, tenant_key: str, channel_key: str, session_id: str, request: Any = None, visitor: Any = None) -> WebchatConversation:
     tenant = _clip(tenant_key, 120) or "default"
     channel = _clip(channel_key, 120) or "website"
     session = _clip(session_id, 120) or "unknown"
+    public_id = _safe_public_id(tenant_key=tenant, channel_key=channel, session_id=session)
     row = _find_open_fast_conversation(db, tenant=tenant, channel=channel, session=session)
     now = utc_now()
     if row is not None:
-        row.last_seen_at = now
-        row.updated_at = now
+        _apply_fast_conversation_metadata(row, now=now, request=request, visitor=visitor)
+        db.flush()
+        return row
+    row = _find_fast_conversation_by_public_id(db, public_id)
+    if row is not None:
+        _apply_fast_conversation_metadata(row, now=now, request=request, visitor=visitor, reopen=True)
         db.flush()
         return row
     visitor_data = _visitor_payload(visitor)
     page_url, user_agent = _request_meta(request)
     row = WebchatConversation(
-        public_id=_safe_public_id(tenant_key=tenant, channel_key=channel, session_id=session),
+        public_id=public_id,
         visitor_token_hash=_sha(f"fast-visitor:{tenant}:{channel}:{session}"),
         tenant_key=tenant,
         channel_key=channel,
@@ -299,9 +357,10 @@ def get_or_create_fast_conversation(db: Session, *, tenant_key: str, channel_key
     except IntegrityError:
         existing = _find_open_fast_conversation(db, tenant=tenant, channel=channel, session=session)
         if existing is None:
+            existing = _find_fast_conversation_by_public_id(db, public_id)
+        if existing is None:
             raise
-        existing.last_seen_at = now
-        existing.updated_at = now
+        _apply_fast_conversation_metadata(existing, now=now, request=request, visitor=visitor, reopen=True)
         db.flush()
         return existing
     return row
@@ -360,7 +419,7 @@ def append_fast_ai_message(db: Session, *, conversation: WebchatConversation, re
     cleaned = _clip(reply, 2000)
     if not cleaned:
         return None
-    return _append_message(db, conversation=conversation, direction="ai", body=cleaned, client_message_id=f"{client_message_id}:ai"[:120], author_label="Speedy", metadata=metadata)
+    return _append_message(db, conversation=conversation, direction="ai", body=cleaned, client_message_id=_derived_client_message_id(client_message_id, "ai"), author_label="Speedy", metadata=metadata)
 
 
 def append_fast_system_handoff_message(db: Session, *, conversation: WebchatConversation, handoff_reason: str | None, recommended_agent_action: str | None, client_message_id: str) -> WebchatMessage:
@@ -369,7 +428,7 @@ def append_fast_system_handoff_message(db: Session, *, conversation: WebchatConv
         conversation=conversation,
         direction="system",
         body="WebChat Fast Lane created a human-review handoff ticket.",
-        client_message_id=f"{client_message_id}:handoff"[:120],
+        client_message_id=_derived_client_message_id(client_message_id, "handoff"),
         author_label="System",
         metadata={"handoff_reason": handoff_reason, "recommended_agent_action": recommended_agent_action, "source": "webchat_fast_handoff"},
     )
