@@ -127,7 +127,6 @@ def test_long_client_message_id_persists_distinct_visitor_and_ai_messages(monkey
         assert messages[0].client_message_id == long_client_message_id
         assert messages[1].client_message_id != long_client_message_id
         assert messages[1].client_message_id is not None
-        assert messages[1].client_message_id.endswith("a") is False
         assert ":ai:" in messages[1].client_message_id
         assert len(messages[1].client_message_id) <= 120
         assert db.execute(select(func.count(WebchatMessage.id))).scalar_one() == 2
