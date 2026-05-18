@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus
@@ -246,11 +247,8 @@ def extract_fast_business_state(*, body: str, context: list[dict[str, Any]] | No
     return FastBusinessState(intent=intent, issue_type=issue_type, tracking_number=tracking, fast_issue_key=fast_issue_key[:240], missing_fields=missing_fields)
 
 
-def get_or_create_fast_conversation(db: Session, *, tenant_key: str, channel_key: str, session_id: str, request: Any = None, visitor: Any = None) -> WebchatConversation:
-    tenant = _clip(tenant_key, 120) or "default"
-    channel = _clip(channel_key, 120) or "website"
-    session = _clip(session_id, 120) or "unknown"
-    row = db.execute(
+def _find_open_fast_conversation(db: Session, *, tenant: str, channel: str, session: str) -> WebchatConversation | None:
+    return db.execute(
         select(WebchatConversation).where(
             WebchatConversation.tenant_key == tenant,
             WebchatConversation.channel_key == channel,
@@ -259,6 +257,13 @@ def get_or_create_fast_conversation(db: Session, *, tenant_key: str, channel_key
             WebchatConversation.status == "open",
         ).limit(1)
     ).scalar_one_or_none()
+
+
+def get_or_create_fast_conversation(db: Session, *, tenant_key: str, channel_key: str, session_id: str, request: Any = None, visitor: Any = None) -> WebchatConversation:
+    tenant = _clip(tenant_key, 120) or "default"
+    channel = _clip(channel_key, 120) or "website"
+    session = _clip(session_id, 120) or "unknown"
+    row = _find_open_fast_conversation(db, tenant=tenant, channel=channel, session=session)
     now = utc_now()
     if row is not None:
         row.last_seen_at = now
@@ -287,8 +292,18 @@ def get_or_create_fast_conversation(db: Session, *, tenant_key: str, channel_key
         last_seen_at=now,
         fast_context_updated_at=now,
     )
-    db.add(row)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        existing = _find_open_fast_conversation(db, tenant=tenant, channel=channel, session=session)
+        if existing is None:
+            raise
+        existing.last_seen_at = now
+        existing.updated_at = now
+        db.flush()
+        return existing
     return row
 
 
@@ -298,14 +313,16 @@ def _find_message(db: Session, *, conversation_id: int, client_message_id: str) 
 
 def _append_message(db: Session, *, conversation: WebchatConversation, direction: str, body: str, client_message_id: str, author_label: str, metadata: dict[str, Any] | None = None) -> WebchatMessage:
     msg_id = _clip(client_message_id, 120) or f"fast-{direction}-{_sha(body or '')[:12]}"
-    existing = _find_message(db, conversation_id=conversation.id, client_message_id=msg_id)
+    conversation_id = conversation.id
+    existing = _find_message(db, conversation_id=conversation_id, client_message_id=msg_id)
     if existing is not None:
         if conversation.ticket_id and existing.ticket_id is None:
             existing.ticket_id = conversation.ticket_id
+            db.flush()
         return existing
     now = utc_now()
     message = WebchatMessage(
-        conversation_id=conversation.id,
+        conversation_id=conversation_id,
         ticket_id=conversation.ticket_id,
         direction=direction,
         body=body,
@@ -317,11 +334,21 @@ def _append_message(db: Session, *, conversation: WebchatConversation, direction
         author_label=author_label,
         created_at=now,
     )
-    db.add(message)
-    conversation.fast_last_client_message_id = msg_id
-    conversation.fast_context_updated_at = now
-    conversation.updated_at = now
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(message)
+            conversation.fast_last_client_message_id = msg_id
+            conversation.fast_context_updated_at = now
+            conversation.updated_at = now
+            db.flush()
+    except IntegrityError:
+        existing = _find_message(db, conversation_id=conversation_id, client_message_id=msg_id)
+        if existing is None:
+            raise
+        if conversation.ticket_id and existing.ticket_id is None:
+            existing.ticket_id = conversation.ticket_id
+            db.flush()
+        return existing
     return message
 
 
