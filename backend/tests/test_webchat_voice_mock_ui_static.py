@@ -28,12 +28,12 @@ def test_public_voice_entry_calls_voice_session_api_and_webcall_page():
     assert "Popup blocked. Please allow popups" in text
 
 
-def test_demo_page_loads_optional_voice_entry():
+def test_showcase_redirect_does_not_expose_unvalidated_voice_button():
     text = DEMO_HTML.read_text(encoding="utf-8")
 
-    assert "/webchat/widget.js" in text
-    assert "/webchat/voice-entry.js" in text
-    assert "does not request microphone access" in text
+    assert "url=/webchat/demo/" in text
+    assert "/webchat/voice-entry.js" not in text
+    assert "Voice support" not in text
 
 
 def test_agent_webcall_console_route_is_registered():
