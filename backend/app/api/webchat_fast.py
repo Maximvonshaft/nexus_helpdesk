@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from ..db import db_context
 from ..settings import get_settings
+from ..services.background_jobs import enqueue_speedaf_work_order_create_job
 from ..services.tracking_fact_schema import TrackingFactResult, hash_tracking_number
 from ..services.tracking_fact_service import extract_tracking_number, lookup_tracking_fact
 from ..services.webchat_fast_ai_service import generate_webchat_fast_reply
@@ -29,6 +30,7 @@ from ..services.webchat_handoff_policy_config import load_webchat_handoff_rules
 from ..services.webchat_fast_config import get_webchat_fast_settings, WebchatFastSettings
 from ..services.webchat_fast_rollout import is_stream_rollout_selected
 from ..services.webchat_fast_session_service import (
+    FastBusinessState,
     FastRoutingContext,
     append_fast_ai_message,
     append_fast_system_handoff_message,
@@ -162,6 +164,12 @@ def _visitor_payload(visitor: WebchatFastVisitor | None) -> dict[str, Any]:
     return visitor.model_dump(exclude_none=True) if visitor else {}
 
 
+def _caller_id(visitor: WebchatFastVisitor | None) -> str | None:
+    phone = (visitor.phone if visitor else None) or None
+    cleaned = " ".join(str(phone or "").strip().split())
+    return cleaned[:80] if cleaned else None
+
+
 def _context_values(body: str, context: list[dict[str, Any]] | None, tracking_number: str | None) -> list[str | None]:
     values: list[str | None] = [tracking_number, body]
     for item in context or []:
@@ -190,23 +198,67 @@ def _tracking_fact_public_payload(result: TrackingFactResult | None) -> dict[str
     }
 
 
+def _is_delivery_follow_up_request(*, body: str | None, business_state: FastBusinessState, handoff_reason: str | None = None, recommended_action: str | None = None) -> bool:
+    text = " ".join([body or "", business_state.intent or "", business_state.issue_type or "", handoff_reason or "", recommended_action or ""]).lower()
+    if business_state.issue_type in {"delivery_reschedule"}:
+        return True
+    markers = (
+        "催派", "催一下", "尽快派送", "加急派送", "还没到", "没有派送",
+        "urge delivery", "delivery follow", "follow up delivery", "too slow", "late delivery",
+        "not delivered", "still not delivered", "where is my parcel", "where is my package",
+        "redelivery", "reschedule", "deliver again",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _maybe_enqueue_speedaf_work_order(
+    *,
+    db,
+    ticket_id: int,
+    conversation_id: int | None,
+    business_state: FastBusinessState,
+    body: str,
+    visitor: WebchatFastVisitor | None,
+    handoff_reason: str | None = None,
+    recommended_action: str | None = None,
+) -> int | None:
+    caller_id = _caller_id(visitor)
+    waybill_code = (business_state.tracking_number or "").strip().upper()
+    if not caller_id or not waybill_code:
+        return None
+    if not _is_delivery_follow_up_request(body=body, business_state=business_state, handoff_reason=handoff_reason, recommended_action=recommended_action):
+        return None
+    job = enqueue_speedaf_work_order_create_job(
+        db,
+        ticket_id=ticket_id,
+        conversation_id=conversation_id,
+        waybill_code=waybill_code,
+        caller_id=caller_id,
+        description=f"WebChat delivery follow-up request: {body}"[:1000],
+        work_order_type="WT0103-05",
+    )
+    return job.id
+
+
 def _lookup_fast_tracking_fact(
     *,
     tracking_number: str | None,
     conversation_id: int | None,
     ticket_id: int | None,
     request_id: str | None,
+    caller_id: str | None = None,
 ) -> TrackingFactResult | None:
     if not tracking_number:
         LOGGER.info("webchat_fast_tracking_fact_not_used", extra={"event_payload": {"reason": "missing_tracking_number", "conversation_id": conversation_id, "request_id": request_id}})
         return None
     LOGGER.info(
         "webchat_fast_tracking_fact_lookup_started",
-        extra={"event_payload": {"conversation_id": conversation_id, "ticket_id": ticket_id, "request_id": request_id, "tracking_number_hash": hash_tracking_number(tracking_number)}},
+        extra={"event_payload": {"conversation_id": conversation_id, "ticket_id": ticket_id, "request_id": request_id, "tracking_number_hash": hash_tracking_number(tracking_number), "caller_id_present": bool(caller_id)}},
     )
     try:
         result = lookup_tracking_fact(
             tracking_number=tracking_number,
+            caller_id=caller_id,
             conversation_id=conversation_id,
             ticket_id=ticket_id,
             request_id=request_id,
@@ -293,10 +345,22 @@ async def _server_policy_stream_events(
             customer_message=payload.body,
             routing_context=routing_context,
         )
-        append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"handoff_required": True, "source": "server_handoff_policy"})
+        speedaf_job_id = _maybe_enqueue_speedaf_work_order(
+            db=db,
+            ticket_id=ticket.id,
+            conversation_id=conversation.id,
+            business_state=business_state,
+            body=payload.body,
+            visitor=payload.visitor,
+            handoff_reason=server_policy.handoff_reason,
+            recommended_action=server_policy.recommended_agent_action,
+        )
+        append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"handoff_required": True, "source": "server_handoff_policy", "speedaf_work_order_job_id": speedaf_job_id})
         append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, client_message_id=payload.client_message_id)
         result_payload["ticket_id"] = ticket.id
         result_payload["tracking_number"] = business_state.tracking_number
+        if speedaf_job_id:
+            result_payload["speedaf_work_order_job_id"] = speedaf_job_id
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
         mark_webchat_fast_done(db, row, response_json=result_payload)
     yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2", "reply_source": "server_handoff_policy"})
@@ -337,6 +401,7 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
     frontend_context = _context_payload(payload.recent_context)
     request_hash = compute_request_hash(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=frontend_context)
     request_hash_aliases = compute_legacy_v1_request_hash_aliases(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=frontend_context)
+    caller_id = _caller_id(payload.visitor)
 
     with db_context() as db:
         begin = begin_webchat_fast_idempotency(db, tenant_key=payload.tenant_key, session_id=payload.session_id, client_message_id=payload.client_message_id, request_hash=request_hash, request_hash_aliases=request_hash_aliases, owner_request_id=getattr(request.state, "request_id", None))
@@ -385,10 +450,22 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
                 customer_message=payload.body,
                 routing_context=routing_context,
             )
-            append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"handoff_required": True, "source": "server_handoff_policy"})
+            speedaf_job_id = _maybe_enqueue_speedaf_work_order(
+                db=db,
+                ticket_id=ticket.id,
+                conversation_id=conversation.id,
+                business_state=business_state,
+                body=payload.body,
+                visitor=payload.visitor,
+                handoff_reason=server_policy.handoff_reason,
+                recommended_action=server_policy.recommended_agent_action,
+            )
+            append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"handoff_required": True, "source": "server_handoff_policy", "speedaf_work_order_job_id": speedaf_job_id})
             append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, client_message_id=payload.client_message_id)
             result_payload["ticket_id"] = ticket.id
             result_payload["tracking_number"] = business_state.tracking_number
+            if speedaf_job_id:
+                result_payload["speedaf_work_order_job_id"] = speedaf_job_id
             row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
             mark_webchat_fast_done(db, row, response_json=result_payload)
         return JSONResponse(result_payload, status_code=200, headers=headers)
@@ -403,6 +480,7 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
         conversation_id=conversation_id,
         ticket_id=None,
         request_id=getattr(request.state, "request_id", None),
+        caller_id=caller_id,
     )
     tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _tracking_fact_provider_fields(tracking_fact)
 
@@ -439,9 +517,21 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
                 customer_message=payload.body,
                 routing_context=routing_context,
             )
+            speedaf_job_id = _maybe_enqueue_speedaf_work_order(
+                db=db,
+                ticket_id=ticket.id,
+                conversation_id=conversation.id,
+                business_state=handoff_state,
+                body=payload.body,
+                visitor=payload.visitor,
+                handoff_reason=result.handoff_reason,
+                recommended_action=result.recommended_agent_action,
+            )
             append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=result.handoff_reason, recommended_agent_action=result.recommended_agent_action, client_message_id=payload.client_message_id)
             result_payload["ticket_creation_queued"] = False
             result_payload["ticket_id"] = ticket.id
+            if speedaf_job_id:
+                result_payload["speedaf_work_order_job_id"] = speedaf_job_id
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
         if result.ok:
             mark_webchat_fast_done(db, row, response_json=result_payload)
@@ -466,6 +556,7 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         return JSONResponse({"error_code": "stream_not_in_rollout"}, status_code=503, headers=headers)
     enforce_webchat_fast_rate_limit(request, tenant_key=payload.tenant_key, session_id=payload.session_id)
     frontend_context = _context_payload(payload.recent_context)
+    caller_id = _caller_id(payload.visitor)
 
     begin = prepare_webchat_fast_stream(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=frontend_context, request_id=getattr(request.state, "request_id", None))
     if begin.status == "processing":
@@ -531,6 +622,7 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         conversation_id=conversation_id,
         ticket_id=None,
         request_id=getattr(request.state, "request_id", None),
+        caller_id=caller_id,
     )
     tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _tracking_fact_provider_fields(tracking_fact)
 

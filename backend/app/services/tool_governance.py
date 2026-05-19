@@ -36,10 +36,17 @@ READ_TOOLS = {
     "events_wait",
     "openclaw_bridge.speedaf_lookup",
     "tracking_fact_lookup",
+    "speedaf.order.query",
+    "speedaf.order.waybill_code.query",
 }
-WRITE_TOOLS = {"messages_send"}
+WRITE_TOOLS = {
+    "messages_send",
+    "speedaf.work_order.create",
+    "speedaf.order.cancel",
+    "speedaf.order.update_address",
+}
 EXTERNAL_SEND_TOOLS = {"messages_send", "openclaw_bridge.messages_send"}
-SYSTEM_TOOLS = {"openclaw_bridge.ai_reply"}
+SYSTEM_TOOLS = {"openclaw_bridge.ai_reply", "speedaf.voice.callback"}
 VALID_ENFORCEMENT_MODES = {"off", "audit_only", "enforce"}
 
 
