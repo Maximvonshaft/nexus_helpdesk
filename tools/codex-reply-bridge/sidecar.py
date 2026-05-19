@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -228,7 +228,6 @@ def auth_status(authorization: str | None = Header(default=None), x_nexus_bridge
 @app.post("/reply")
 async def reply(
     request: ReplyRequest,
-    raw_request: Request,
     authorization: str | None = Header(default=None),
     x_nexus_bridge_token: str | None = Header(default=None),
 ) -> JSONResponse | dict[str, Any]:
@@ -257,15 +256,21 @@ async def reply(
         return _safe_error(502, "upstream_unavailable")
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
-    return {
-        **strict_reply,
-        "_bridge_meta": {
-            "mode": settings.mode,
-            "elapsed_ms": elapsed_ms,
-            "request_id": request.request_id,
-            "client_host_present": bool(raw_request.client.host if raw_request.client else None),
-        },
-    }
+    if _env_bool("CODEX_REPLY_BRIDGE_LOG_SUCCESS", False):
+        print(
+            json.dumps(
+                {
+                    "event": "codex_reply_bridge.success",
+                    "mode": settings.mode,
+                    "elapsed_ms": elapsed_ms,
+                    "request_id": request.request_id,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+    return strict_reply
 
 
 if __name__ == "__main__":
