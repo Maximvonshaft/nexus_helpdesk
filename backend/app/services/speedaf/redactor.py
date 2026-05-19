@@ -26,6 +26,7 @@ SENSITIVE_KEYS = {
 }
 
 PHONE_LIKE_RE = re.compile(r"(?<!\d)(\+?\d[\d\s().-]{5,}\d)(?!\d)")
+DIGIT_RE = re.compile(r"\D+")
 
 
 def sha256_prefix(value: Any, *, length: int = 16) -> str | None:
@@ -46,7 +47,7 @@ def suffix(value: Any, size: int = 4) -> str | None:
 
 
 def mask_phone(value: Any) -> str | None:
-    cleaned = re.sub(r"\D+", "", str(value or ""))
+    cleaned = DIGIT_RE.sub("", str(value or ""))
     if not cleaned:
         return None
     if len(cleaned) <= 4:
@@ -54,11 +55,16 @@ def mask_phone(value: Any) -> str | None:
     return f"***{cleaned[-4:]}"
 
 
+def _phone_replacement(match: re.Match[str]) -> str:
+    cleaned = DIGIT_RE.sub("", match.group(1))
+    return f"***{cleaned[-4:]}" if cleaned else "***"
+
+
 def redact_text(value: str | None) -> str | None:
     if value is None:
         return None
     text = str(value)
-    return PHONE_LIKE_RE.sub(lambda m: f"***{re.sub(r'\\D+', '', m.group(1))[-4:]}", text)
+    return PHONE_LIKE_RE.sub(_phone_replacement, text)
 
 
 def redact_mapping(payload: Mapping[str, Any] | None, *, max_depth: int = 4) -> dict[str, Any]:
@@ -66,9 +72,10 @@ def redact_mapping(payload: Mapping[str, Any] | None, *, max_depth: int = 4) -> 
         if depth > max_depth:
             return {"redacted": True, "type": type(value).__name__}
         if key in SENSITIVE_KEYS:
-            if key and "address" in key.lower():
+            lowered = key.lower() if key else ""
+            if "address" in lowered:
                 return {"redacted": True, "type": "address", "sha256_prefix": sha256_prefix(value)}
-            if key and ("phone" in key.lower() or "mobile" in key.lower() or "caller" in key.lower()):
+            if "phone" in lowered or "mobile" in lowered or "caller" in lowered:
                 return {"redacted": True, "type": "phone", "suffix": suffix(value), "sha256_prefix": sha256_prefix(value)}
             return {"redacted": True, "type": "secret_or_sensitive", "sha256_prefix": sha256_prefix(value)}
         if isinstance(value, Mapping):
