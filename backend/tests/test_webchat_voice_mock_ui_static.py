@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 VOICE_ENTRY = ROOT / "backend" / "app" / "static" / "webchat" / "voice-entry.js"
 DEMO_HTML = ROOT / "backend" / "app" / "static" / "webchat" / "demo.html"
 ADMIN_ROUTE = ROOT / "webapp" / "src" / "routes" / "webchat-voice.tsx"
+AGENT_PANEL = ROOT / "webapp" / "src" / "components" / "webcall" / "AgentWebCallPanel.tsx"
 WEBCALL_ROUTE = ROOT / "webapp" / "src" / "routes" / "webcall.tsx"
 ROUTER = ROOT / "webapp" / "src" / "router.tsx"
 PACKAGE_JSON = ROOT / "webapp" / "package.json"
@@ -35,15 +36,46 @@ def test_demo_page_loads_optional_voice_entry():
     assert "does not request microphone access" in text
 
 
-def test_admin_mock_console_route_is_registered():
+def test_agent_webcall_console_route_is_registered():
     route_text = ADMIN_ROUTE.read_text(encoding="utf-8")
     router_text = ROUTER.read_text(encoding="utf-8")
 
     assert "path: '/webchat-voice'" in route_text
-    assert "webchatVoiceApi.acceptSession" in route_text
-    assert "webchatVoiceApi.endSession" in route_text
+    assert "WebCall Agent Console" in route_text
+    assert "AgentWebCallPanel" in route_text
+    assert "Mock voice session" not in route_text
+    assert "Accept mock call" not in route_text
+    assert "End mock call" not in route_text
     assert "WebchatVoiceRoute" in router_text
     assert "@/routes/webchat-voice" in router_text
+
+
+def test_agent_webcall_panel_uses_livekit_click_to_accept_only():
+    panel_text = AGENT_PANEL.read_text(encoding="utf-8")
+    package_text = PACKAGE_JSON.read_text(encoding="utf-8")
+    component_prefix, accept_body = panel_text.split("const acceptMutation", 1)
+
+    assert "Incoming WebCall" in panel_text
+    assert "Accept WebCall" in panel_text
+    assert "End WebCall" in panel_text
+    assert "webchatVoiceApi.acceptSession" in panel_text
+    assert "webchatVoiceApi.endSession" in panel_text
+    assert "runtimeConfig" in panel_text
+    assert "RoomEvent" in panel_text
+    assert "room.connect" in panel_text
+    assert "publishTrack" in panel_text
+    assert "createLocalAudioTrack" in panel_text
+    assert "await createLocalAudioTrack" in accept_body
+    assert "await createLocalAudioTrack" not in component_prefix
+    assert "console.log" not in panel_text
+    assert "participant_token" not in panel_text.replace("accepted.participant_token", "")
+    assert "LIVEKIT_API_SECRET" not in panel_text
+    assert "LIVEKIT_API_KEY" not in panel_text
+    assert "livekit-client" in package_text
+
+    forbidden_terms = ["sip", "pstn", "twilio", "vonage", "mediarecorder", "recording_enabled", "transcription"]
+    lowered = panel_text.lower()
+    assert not any(term in lowered for term in forbidden_terms)
 
 
 def test_visitor_webcall_route_is_registered_and_click_to_join_only():
