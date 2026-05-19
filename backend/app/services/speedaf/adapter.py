@@ -29,8 +29,21 @@ class SpeedafCoreAdapter:
 
     def query_waybills_by_caller(self, *, caller_id: str, country_code: str | None = None) -> SpeedafWaybillLookupResult:
         country = (country_code or self.client.config.country_code_default or "CH").strip().upper()
+        caller = (caller_id or "").strip()
+        if not caller:
+            return SpeedafWaybillLookupResult(
+                ok=False,
+                candidates=(),
+                safe_summary={
+                    "tool": "speedaf.order.waybill_code.query",
+                    "ok": False,
+                    "country_code": country,
+                    "failure_reason": "missing_caller_id",
+                },
+                failure_reason="missing_caller_id",
+            )
         try:
-            response = self.client.post(WAYBILL_BY_CALLER_PATH, {"callerID": caller_id, "countryCode": country})
+            response = self.client.post(WAYBILL_BY_CALLER_PATH, {"callerID": caller, "countryCode": country})
         except SpeedafMcpClientError as exc:
             return SpeedafWaybillLookupResult(ok=False, candidates=(), safe_summary=exc.safe_payload, failure_reason=exc.error.code)
         candidates = self._extract_waybill_candidates(response.data)
@@ -38,16 +51,26 @@ class SpeedafCoreAdapter:
             "tool": "speedaf.order.waybill_code.query",
             "ok": True,
             "count": len(candidates),
-            **safe_caller_payload(caller_id),
+            **safe_caller_payload(caller),
             "country_code": country,
             "response": response.safe_summary.get("response"),
         }
         return SpeedafWaybillLookupResult(ok=True, candidates=tuple(candidates), safe_summary=safe_summary)
 
     def query_order_tracking_fact(self, *, waybill_code: str, caller_id: str | None = None) -> TrackingFactResult:
-        payload: dict[str, Any] = {"waybillCode": waybill_code}
-        if caller_id:
-            payload["callerID"] = caller_id
+        caller = (caller_id or "").strip()
+        if not caller:
+            return TrackingFactResult(
+                ok=False,
+                tracking_number=waybill_code,
+                source="speedaf_api.order_query",
+                tool_name="speedaf.order.query",
+                tool_status="skipped",
+                pii_redacted=True,
+                fact_evidence_present=False,
+                failure_reason="missing_caller_id",
+            )
+        payload: dict[str, Any] = {"waybillCode": waybill_code, "callerID": caller}
         try:
             response = self.client.post(ORDER_QUERY_PATH, payload)
         except SpeedafMcpClientError as exc:
