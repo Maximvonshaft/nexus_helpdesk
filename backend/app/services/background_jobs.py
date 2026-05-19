@@ -226,18 +226,32 @@ def _append_ticket_event(db: Session, *, ticket_id: int, note: str, payload: dic
     db.flush()
 
 
+def _int_or_none(value) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
 def _process_speedaf_work_order_create_job(db: Session, job: BackgroundJob, payload: dict) -> None:
     from .speedaf.action_service import SpeedafActionDisabled, SpeedafActionService
 
     ticket_id = int(payload['ticket_id'])
+    conversation_id = _int_or_none(payload.get('conversation_id'))
     result_payload: dict = {
         'job_id': job.id,
         'job_type': SPEEDAF_WORK_ORDER_CREATE_JOB,
         'ticket_id': ticket_id,
+        'conversation_id': conversation_id,
         'workOrderType': payload.get('workOrderType') or 'WT0103-05',
     }
     try:
-        result = SpeedafActionService().create_work_order(
+        result = SpeedafActionService(
+            ticket_id=ticket_id,
+            webchat_conversation_id=conversation_id,
+            background_job_id=job.id,
+        ).create_work_order(
             waybill_code=str(payload['waybillCode']),
             work_order_type=str(payload.get('workOrderType') or 'WT0103-05'),
             description=str(payload.get('description') or '')[:1000],
