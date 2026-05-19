@@ -95,7 +95,7 @@ def test_livekit_room_is_closed_when_token_issuance_fails(monkeypatch):
     monkeypatch.setattr(LiveKitVoiceProvider, "close_room", fake_close_room)
     monkeypatch.setattr(LiveKitVoiceProvider, "issue_participant_token", fake_issue_token)
 
-    client = TestClient(app)
+    client = TestClient(app, raise_server_exceptions=False)
     conversation_id, visitor_token = _create_webchat_conversation(client)
 
     response = client.post(
