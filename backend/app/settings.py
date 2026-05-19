@@ -157,8 +157,8 @@ class Settings:
             raise RuntimeError("WEBCHAT_AI_AUTO_REPLY_MODE must be off, safe_ack, or safe_ai")
         if self.webchat_static_quick_replies_mode not in {"off", "legacy"}:
             raise RuntimeError("WEBCHAT_STATIC_QUICK_REPLIES_MODE must be off or legacy")
-        if self.webchat_tracking_fact_source not in {"openclaw_bridge"}:
-            raise RuntimeError("WEBCHAT_TRACKING_FACT_SOURCE must be openclaw_bridge")
+        if self.webchat_tracking_fact_source not in {"openclaw_bridge", "speedaf_api"}:
+            raise RuntimeError("WEBCHAT_TRACKING_FACT_SOURCE must be openclaw_bridge or speedaf_api")
         if self.webchat_tracking_fact_timeout_seconds < 1 or self.webchat_tracking_fact_timeout_seconds > 30:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_TIMEOUT_SECONDS must be between 1 and 30")
         if self.webchat_ai_session_ttl_hours < 1 or self.webchat_ai_session_ttl_hours > 168:
