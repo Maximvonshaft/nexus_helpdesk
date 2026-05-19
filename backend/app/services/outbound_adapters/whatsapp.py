@@ -117,10 +117,11 @@ def dispatch_whatsapp_outbound(
     message: TicketOutboundMessage,
     ticket: Ticket | None,
     idempotency_key: str,
-    dispatch_fn: DispatchFn = dispatch_via_openclaw_bridge,
+    dispatch_fn: DispatchFn | None = None,
 ) -> tuple[MessageStatus, str | None, object | None, dict[str, Any]]:
     route = resolve_whatsapp_outbound_route(db, message=message, ticket=ticket)
-    status_value, provider_status, sent_at = dispatch_fn(
+    active_dispatch = dispatch_fn or dispatch_via_openclaw_bridge
+    status_value, provider_status, sent_at = active_dispatch(
         channel=route.channel,
         target=route.target,
         body=message.body,
