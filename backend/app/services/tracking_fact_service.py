@@ -10,6 +10,7 @@ from typing import Any, Iterable
 
 from ..settings import get_settings
 from ..utils.time import utc_now
+from .speedaf.tracking_fact_source import lookup_speedaf_tracking_fact
 from .tracking_fact_redactor import normalize_tracking_fact
 from .tracking_fact_schema import TrackingFactResult
 from .tool_governance import record_tool_call
@@ -46,6 +47,10 @@ def _looks_like_tracking_number(candidate: str) -> bool:
     return bool(re.search(r"\d", candidate))
 
 
+def _current_tracking_fact_source() -> str:
+    return (getattr(settings, "webchat_tracking_fact_source", "openclaw_bridge") or "openclaw_bridge").strip().lower()
+
+
 def _audit_tracking_lookup(
     *,
     tracking_number: str | None,
@@ -61,15 +66,19 @@ def _audit_tracking_lookup(
 ) -> None:
     safe_ticket_id = int(ticket_id) if isinstance(ticket_id, int) or (isinstance(ticket_id, str) and ticket_id.isdigit()) else None
     safe_webchat_conversation_id = int(conversation_id) if isinstance(conversation_id, int) or (isinstance(conversation_id, str) and conversation_id.isdigit()) else None
+    source = _current_tracking_fact_source()
+    tool_name = "speedaf.order.query" if source == "speedaf_api" else "openclaw_bridge.speedaf_lookup"
+    provider = "speedaf_mcp" if source == "speedaf_api" else "openclaw_bridge"
     record_tool_call(
-        tool_name="openclaw_bridge.speedaf_lookup",
-        provider="openclaw_bridge",
+        tool_name=tool_name,
+        provider=provider,
         tool_type="read_only",
         input_payload={
             "tracking_number_hash_source": tracking_number,
             "conversation_id": conversation_id,
             "ticket_id": ticket_id,
             "request_id": request_id,
+            "source": source,
         },
         output_payload=output_payload,
         status=status,
@@ -90,11 +99,13 @@ def lookup_tracking_fact(
     conversation_id: int | str | None = None,
     ticket_id: int | str | None = None,
     request_id: str | None = None,
+    caller_id: str | None = None,
 ) -> TrackingFactResult:
     tracking_number = (tracking_number or "").strip().upper()
     started = time.monotonic()
     timeout_seconds = max(1, min(int(getattr(settings, "webchat_tracking_fact_timeout_seconds", 8) or 8), 30))
     timeout_ms = timeout_seconds * 1000
+    source = _current_tracking_fact_source()
     if not tracking_number:
         result = TrackingFactResult(ok=False, tool_status="skipped", pii_redacted=True, failure_reason="missing_tracking_number")
         _audit_tracking_lookup(
@@ -121,7 +132,15 @@ def lookup_tracking_fact(
             timeout_ms=timeout_ms,
         )
         return result
-    if getattr(settings, "webchat_tracking_fact_source", "openclaw_bridge") != "openclaw_bridge":
+    if source == "speedaf_api":
+        return lookup_speedaf_tracking_fact(
+            tracking_number=tracking_number,
+            caller_id=caller_id,
+            conversation_id=conversation_id,
+            ticket_id=ticket_id,
+            request_id=request_id,
+        )
+    if source != "openclaw_bridge":
         result = TrackingFactResult(ok=False, tracking_number=tracking_number, tool_status="unsupported_source", pii_redacted=True, failure_reason="unsupported_tracking_fact_source")
         _audit_tracking_lookup(
             tracking_number=tracking_number,
