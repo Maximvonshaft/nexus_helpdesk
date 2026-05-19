@@ -1,6 +1,7 @@
 import { createRouter } from '@tanstack/react-router'
 import { Route as RootRoute } from '@/routes/root'
 import { Route as LoginRoute } from '@/routes/login'
+import { Route as AdminRoute } from '@/routes/admin'
 import { Route as IndexRoute } from '@/routes/index'
 import { Route as WorkspaceRoute } from '@/routes/workspace'
 import { Route as WebchatRoute } from '@/routes/webchat'
@@ -15,6 +16,7 @@ import { Route as RuntimeRoute } from '@/routes/runtime'
 
 const routeTree = RootRoute.addChildren([
   LoginRoute,
+  AdminRoute,
   IndexRoute,
   WorkspaceRoute,
   WebchatRoute,
