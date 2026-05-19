@@ -201,6 +201,30 @@ export interface RuntimeHealth {
   warnings: string[]
 }
 
+export interface OutboundChannelCapability {
+  channel: string
+  label: string
+  dispatch_type: string
+  status: string
+  customer_sendable: boolean
+  enabled: boolean
+  configured: boolean
+  account_required: boolean
+  target_required: boolean
+  supports_send: boolean
+  supports_inbound_sync: boolean
+  supports_delivery_receipt: boolean
+  supports_attachments: boolean
+  external_send: boolean
+  target_validation?: string | null
+  missing: string[]
+  operator_note?: string | null
+}
+
+export interface OutboundChannelCapabilitiesResponse {
+  channels: OutboundChannelCapability[]
+}
+
 export interface OpenClawConnectivityProbe {
   deployment_mode: string
   transport: string
