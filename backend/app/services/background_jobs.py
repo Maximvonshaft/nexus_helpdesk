@@ -7,8 +7,8 @@ from datetime import timedelta
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
-from ..enums import JobStatus, MessageStatus, SourceChannel
-from ..models import BackgroundJob, OpenClawConversationLink, OpenClawTranscriptMessage, TicketOutboundMessage
+from ..enums import EventType, JobStatus, MessageStatus, SourceChannel
+from ..models import BackgroundJob, OpenClawConversationLink, OpenClawTranscriptMessage, TicketEvent, TicketOutboundMessage
 from ..settings import get_settings
 from ..utils.time import utc_now
 from . import openclaw_bridge, openclaw_client_factory
@@ -19,6 +19,7 @@ OPENCLAW_SYNC_JOB = 'openclaw.sync_session'
 ATTACHMENT_PERSIST_JOB = 'openclaw.persist_attachment'
 WEBCHAT_AI_REPLY_JOB = 'webchat.ai_reply'
 WEBCHAT_HANDOFF_SNAPSHOT_JOB = 'webchat.handoff_snapshot'
+SPEEDAF_WORK_ORDER_CREATE_JOB = 'speedaf.work_order.create'
 
 
 def enqueue_background_job(
@@ -84,6 +85,33 @@ def enqueue_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
             'visitor_message_id': visitor_message_id,
         },
         dedupe_key=f'webchat-ai-reply:{visitor_message_id}',
+    )
+
+
+def enqueue_speedaf_work_order_create_job(
+    db: Session,
+    *,
+    ticket_id: int,
+    waybill_code: str,
+    caller_id: str,
+    description: str,
+    work_order_type: str = 'WT0103-05',
+    conversation_id: int | None = None,
+) -> BackgroundJob:
+    payload = {
+        'ticket_id': ticket_id,
+        'conversation_id': conversation_id,
+        'waybillCode': waybill_code,
+        'callerID': caller_id,
+        'workOrderType': work_order_type,
+        'description': description,
+    }
+    return enqueue_background_job(
+        db,
+        queue_name='speedaf_work_order',
+        job_type=SPEEDAF_WORK_ORDER_CREATE_JOB,
+        payload=payload,
+        dedupe_key=f'speedaf-workorder:ticket:{ticket_id}:{work_order_type}',
     )
 
 
@@ -184,6 +212,60 @@ def _draft_ai_auto_reply(db: Session, *, ticket, user, body: str, channel: Sourc
     return message
 
 
+def _append_ticket_event(db: Session, *, ticket_id: int, note: str, payload: dict) -> None:
+    db.add(
+        TicketEvent(
+            ticket_id=ticket_id,
+            event_type=EventType.field_updated,
+            field_name='speedaf_work_order',
+            note=note,
+            payload_json=json.dumps(payload, ensure_ascii=False),
+            created_at=utc_now(),
+        )
+    )
+    db.flush()
+
+
+def _process_speedaf_work_order_create_job(db: Session, job: BackgroundJob, payload: dict) -> None:
+    from .speedaf.action_service import SpeedafActionDisabled, SpeedafActionService
+
+    ticket_id = int(payload['ticket_id'])
+    result_payload: dict = {
+        'job_id': job.id,
+        'job_type': SPEEDAF_WORK_ORDER_CREATE_JOB,
+        'ticket_id': ticket_id,
+        'workOrderType': payload.get('workOrderType') or 'WT0103-05',
+    }
+    try:
+        result = SpeedafActionService().create_work_order(
+            waybill_code=str(payload['waybillCode']),
+            work_order_type=str(payload.get('workOrderType') or 'WT0103-05'),
+            description=str(payload.get('description') or '')[:1000],
+            caller_id=str(payload['callerID']),
+        )
+    except SpeedafActionDisabled as exc:
+        result_payload.update({'ok': False, 'status': 'disabled', 'error_code': type(exc).__name__, 'error_message': str(exc)})
+        _append_ticket_event(db, ticket_id=ticket_id, note='Speedaf work order creation skipped by feature gate.', payload=result_payload)
+        _mark_done(job)
+        return
+    result_payload.update({
+        'ok': result.ok,
+        'status': result.status,
+        'external_id': result.external_id,
+        'error_code': result.error_code,
+        'error_message': result.error_message,
+        'safe_payload': result.safe_payload,
+    })
+    _append_ticket_event(
+        db,
+        ticket_id=ticket_id,
+        note='Speedaf work order creation completed.' if result.ok else 'Speedaf work order creation failed.',
+        payload=result_payload,
+    )
+    if not result.ok:
+        raise RuntimeError(result.error_code or 'speedaf_work_order_create_failed')
+
+
 def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
     payload = json.loads(job.payload_json or '{}')
     try:
@@ -249,6 +331,11 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             _mark_done(job)
             return job
 
+        if job.job_type == SPEEDAF_WORK_ORDER_CREATE_JOB:
+            _process_speedaf_work_order_create_job(db, job, payload)
+            _mark_done(job)
+            return job
+
         if job.job_type == OPENCLAW_SYNC_JOB:
             if not settings.openclaw_sync_enabled:
                 _mark_done(job)
@@ -274,7 +361,7 @@ def dispatch_pending_background_jobs(db: Session, *, limit: int | None = None, w
     if settings.openclaw_sync_enabled:
         enqueue_stale_openclaw_sync_jobs(db, limit=settings.openclaw_sync_batch_size)
         db.commit()
-    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB, WEBCHAT_AI_REPLY_JOB, WEBCHAT_HANDOFF_SNAPSHOT_JOB])
+    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB, WEBCHAT_AI_REPLY_JOB, WEBCHAT_HANDOFF_SNAPSHOT_JOB, SPEEDAF_WORK_ORDER_CREATE_JOB])
     processed: list[BackgroundJob] = []
     for job in claimed:
         process_background_job(db, job)
