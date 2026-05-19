@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from ...enums import MessageStatus, SourceChannel
 from ...models import ChannelAccount, OpenClawConversationLink, Ticket, TicketOutboundMessage
 from ...utils.time import utc_now
-from ..openclaw_bridge import dispatch_via_openclaw_bridge, resolve_channel_account
+from ..openclaw_bridge import dispatch_via_openclaw_bridge
 
 DispatchFn = Callable[..., tuple[MessageStatus, str | None, object | None]]
 
@@ -55,6 +55,18 @@ def _active_account_by_pk(db: Session, account_pk: int | None) -> ChannelAccount
     ).first()
 
 
+def _active_account_for_market(db: Session, market_id: int | None) -> ChannelAccount | None:
+    query = db.query(ChannelAccount).filter(
+        ChannelAccount.provider == SourceChannel.whatsapp.value,
+        ChannelAccount.is_active.is_(True),
+    )
+    if market_id is not None:
+        row = query.filter(ChannelAccount.market_id == market_id).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
+        if row is not None:
+            return row
+    return query.filter(ChannelAccount.market_id.is_(None)).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
+
+
 def _resolve_whatsapp_account(db: Session, *, ticket: Ticket | None, link: OpenClawConversationLink | None) -> tuple[ChannelAccount | None, str]:
     if link is not None:
         row = _active_account_by_pk(db, getattr(link, "channel_account_id", None))
@@ -67,9 +79,9 @@ def _resolve_whatsapp_account(db: Session, *, ticket: Ticket | None, link: OpenC
         row = _active_account_by_pk(db, getattr(ticket, "channel_account_id", None))
         if row is not None:
             return row, "ticket.channel_account_id"
-        row = resolve_channel_account(db, market_id=ticket.market_id, account_id=None)
-        if row is not None and row.provider == SourceChannel.whatsapp.value and row.is_active:
-            return row, "market_or_global_channel_account"
+        row = _active_account_for_market(db, getattr(ticket, "market_id", None))
+        if row is not None:
+            return row, "market_or_global_whatsapp_account"
     return None, "missing_whatsapp_channel_account"
 
 
