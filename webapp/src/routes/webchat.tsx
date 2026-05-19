@@ -5,6 +5,7 @@ import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
 import { formatDateTime, sanitizeDisplayText, statusTone } from '@/lib/format'
+import { findReplyChannelCapability, isCustomerSendableReplyChannel, outboundChannelMissingText, replyPanelVisibleChannels } from '@/lib/outboundChannels'
 import type { WebchatCardAction, WebchatCardPayload, WebchatMessage } from '@/lib/types'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -117,6 +118,13 @@ function WebchatInboxPage() {
   const [conversationPollFailures, setConversationPollFailures] = useState(0)
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
 
+  const outboundCapabilities = useQuery({
+    queryKey: ['outboundChannelCapabilities'],
+    queryFn: api.outboundChannelCapabilities,
+    refetchInterval: 30000,
+    retry: false,
+  })
+
   const conversations = useQuery({
     queryKey: ['webchatConversations'],
     queryFn: ({ signal }) => api.webchatConversations({ signal }),
@@ -173,10 +181,27 @@ function WebchatInboxPage() {
     [conversations.data, selectedTicketId],
   )
   const threadData = thread.data
+  const visibleReplyChannels = useMemo(
+    () => replyPanelVisibleChannels(outboundCapabilities.data?.channels),
+    [outboundCapabilities.data],
+  )
+  const webchatReplyChannel = useMemo(
+    () => findReplyChannelCapability(outboundCapabilities.data?.channels, 'web_chat'),
+    [outboundCapabilities.data],
+  )
+  const webchatReplyEnabled = isCustomerSendableReplyChannel(webchatReplyChannel)
+  const webchatCapabilityIssue = outboundCapabilities.isError
+    ? 'capability_api_unavailable'
+    : webchatReplyChannel
+      ? outboundChannelMissingText(webchatReplyChannel)
+      : 'web_chat_capability_missing'
 
   const replyMutation = useMutation({
     mutationFn: async () => {
       if (!selectedTicketId) return
+      if (!webchatReplyEnabled) {
+        throw new Error(`WebChat outbound channel is not ready: ${webchatCapabilityIssue}`)
+      }
       return api.webchatReply(selectedTicketId, {
         body: reply,
         has_fact_evidence: hasFactEvidence,
@@ -190,6 +215,7 @@ function WebchatInboxPage() {
       setHasFactEvidence(false)
       await client.invalidateQueries({ queryKey: ['webchatThread', selectedTicketId] })
       await client.invalidateQueries({ queryKey: ['webchatConversations'] })
+      await client.invalidateQueries({ queryKey: ['outboundChannelCapabilities'] })
     },
     onError: (err: Error) => {
       setToast({ message: err.message || '发送失败，已被安全门拦截或需要复核', tone: 'danger' })
@@ -268,13 +294,20 @@ function WebchatInboxPage() {
           </Card>
 
           <Card>
-            <CardHeader title="人工回复" subtitle="回复会执行 outbound safety gate；WebChat 回复只写 local delivery，不进入真实外部 provider dispatch。" />
+            <CardHeader title="人工回复" subtitle="回复通道由 Outbound Channel Capability API 控制；WebChat 回复只写 local delivery，不进入真实外部 provider dispatch。" />
             <CardBody>
               <div className="stack">
+                <div className="badges">
+                  {outboundCapabilities.isLoading ? <Badge tone="warning">加载回复通道能力…</Badge> : null}
+                  {outboundCapabilities.isError ? <Badge tone="danger">Capability API unavailable</Badge> : null}
+                  {webchatReplyChannel ? <Badge tone={webchatReplyEnabled ? 'success' : 'danger'}>WebChat {sanitizeDisplayText(webchatReplyChannel.status)}</Badge> : null}
+                  {visibleReplyChannels.map((channel) => <Badge key={channel.channel} tone={channel.channel === 'web_chat' ? 'success' : 'warning'}>{sanitizeDisplayText(channel.label)}</Badge>)}
+                </div>
+                {!webchatReplyEnabled ? <div className="section-subtitle">WebChat 回复当前未开放：{sanitizeDisplayText(webchatCapabilityIssue)}</div> : null}
                 <Field label="回复内容"><Textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="例如：We have received your request and will check it shortly." /></Field>
                 <label className="check-row"><input type="checkbox" checked={hasFactEvidence} onChange={(event) => setHasFactEvidence(event.target.checked)} /><span>本次回复涉及物流事实时，我已核对系统证据</span></label>
                 <label className="check-row"><input type="checkbox" checked={confirmReview} onChange={(event) => setConfirmReview(event.target.checked)} /><span>若安全门返回 review，我确认已人工复核并继续发送</span></label>
-                <Button variant="primary" disabled={!selectedTicketId || !reply.trim() || replyMutation.isPending} onClick={() => replyMutation.mutate()}>{replyMutation.isPending ? '发送中…' : '发送 Webchat 回复'}</Button>
+                <Button variant="primary" disabled={!selectedTicketId || !reply.trim() || !webchatReplyEnabled || replyMutation.isPending} onClick={() => replyMutation.mutate()}>{replyMutation.isPending ? '发送中…' : '发送 Webchat 回复'}</Button>
               </div>
             </CardBody>
           </Card>
