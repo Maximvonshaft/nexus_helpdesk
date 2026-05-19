@@ -53,8 +53,20 @@ class SpeedafActionService:
     LLM output.
     """
 
-    def __init__(self, client: SpeedafMcpClient | None = None) -> None:
+    def __init__(
+        self,
+        client: SpeedafMcpClient | None = None,
+        *,
+        ticket_id: int | None = None,
+        webchat_conversation_id: int | None = None,
+        background_job_id: int | None = None,
+        request_id: str | None = None,
+    ) -> None:
         self.client = client or SpeedafMcpClient()
+        self.ticket_id = ticket_id
+        self.webchat_conversation_id = webchat_conversation_id
+        self.background_job_id = background_job_id
+        self.request_id = request_id
 
     def create_work_order(
         self,
@@ -191,4 +203,8 @@ class SpeedafActionService:
             error_code=error_code,
             error_message=error_message,
             elapsed_ms=elapsed_ms,
+            webchat_conversation_id=self.webchat_conversation_id,
+            ticket_id=self.ticket_id,
+            background_job_id=self.background_job_id,
+            request_id=self.request_id,
         )
