@@ -39,11 +39,11 @@ def _proto_room_module(livekit_api):
     return getattr(livekit_api, "proto_room", livekit_api)
 
 
-def _room_request(livekit_api, name: str, **kwargs):
+def _room_request(livekit_api, request_name: str, **kwargs):
     proto_room = _proto_room_module(livekit_api)
-    request_cls = getattr(proto_room, name, None) or getattr(livekit_api, name, None)
+    request_cls = getattr(proto_room, request_name, None) or getattr(livekit_api, request_name, None)
     if request_cls is None:
-        raise VoiceProviderError(f"livekit-api is missing {name}")
+        raise VoiceProviderError(f"livekit-api is missing {request_name}")
     return request_cls(**kwargs)
 
 
