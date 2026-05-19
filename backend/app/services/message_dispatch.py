@@ -8,13 +8,14 @@ from fastapi import HTTPException, status
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
-from ..enums import ConversationState, EventType, MessageStatus
+from ..enums import ConversationState, EventType, MessageStatus, SourceChannel
 from ..models import ChannelAccount, OpenClawConversationLink, Ticket, TicketOutboundMessage
 from ..settings import get_settings
 from ..utils.time import utc_now
 from .audit_service import log_event
 from .observability import LOGGER
 from .openclaw_bridge import dispatch_via_openclaw_bridge, dispatch_via_openclaw_cli, dispatch_via_openclaw_mcp, resolve_channel_account
+from .outbound_adapters.whatsapp import dispatch_whatsapp_outbound
 from .outbound_semantics import external_channel_values, is_external_outbound_message
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 
@@ -264,6 +265,46 @@ def _enforce_outbound_safety(db: Session, message: TicketOutboundMessage, ticket
     return True
 
 
+def _dispatch_whatsapp_message(db: Session, message: TicketOutboundMessage, ticket: Ticket | None, idempotency_key: str) -> tuple[MessageStatus, str | None, object | None, dict[str, Any]]:
+    try:
+        return dispatch_whatsapp_outbound(db, message=message, ticket=ticket, idempotency_key=idempotency_key)
+    except ValueError as exc:
+        error_code = str(exc)
+        return MessageStatus.failed, error_code, None, {
+            'channel': SourceChannel.whatsapp.value,
+            'adapter': 'whatsapp_openclaw_bridge',
+            'idempotency_key': idempotency_key,
+            'error': error_code,
+        }
+
+
+def _handle_dispatch_result(
+    db: Session,
+    *,
+    message: TicketOutboundMessage,
+    ticket: Ticket | None,
+    status_value: MessageStatus,
+    provider_status: str | None,
+    sent_at,
+    route_context: dict[str, Any],
+) -> TicketOutboundMessage:
+    session_key = route_context.get('session_key')
+    if status_value == MessageStatus.sent:
+        _mark_sent(message, provider_status, sent_at)
+        if ticket is not None and getattr(ticket, 'conversation_state', None) is not None:
+            ticket.conversation_state = ConversationState.waiting_customer
+        if session_key:
+            log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.openclaw_reply_sent, note='OpenClaw same-route reply sent', payload={'message_id': message.id, 'session_key': session_key, 'provider_status': provider_status, 'idempotency_key': route_context.get('idempotency_key')})
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_sent, note='Queued outbound message sent', payload={'message_id': message.id, 'provider_status': provider_status, 'route': route_context})
+        return message
+
+    reason = provider_status or 'Dispatch failed'
+    _mark_retry(message, reason)
+    event_type = EventType.outbound_dead if message.status == MessageStatus.dead else EventType.outbound_retry_scheduled
+    log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='Queued outbound message failed dispatch', payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count, 'route': route_context})
+    return message
+
+
 def process_outbound_message(db: Session, message: TicketOutboundMessage) -> TicketOutboundMessage:
     if message.status == MessageStatus.sent:
         return message
@@ -281,6 +322,19 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
     ticket = message.ticket
     if not _enforce_outbound_safety(db, message, ticket):
         return message
+
+    if message.channel == SourceChannel.whatsapp:
+        status_value, provider_status, sent_at, route_context = _dispatch_whatsapp_message(db, message, ticket, idempotency_key)
+        if status_value == MessageStatus.failed and settings.openclaw_cli_fallback_enabled and route_context.get('target'):
+            LOGGER.warning('openclaw_bridge_dispatch_failed_falling_back_to_cli', extra={'event_payload': {'message_id': message.id, 'ticket_id': message.ticket_id, 'provider_status': provider_status, 'route': route_context}})
+            status_value, provider_status, sent_at = dispatch_via_openclaw_cli(
+                channel=route_context.get('channel') or SourceChannel.whatsapp.value,
+                target=route_context['target'],
+                body=message.body,
+                account_id=route_context.get('account_id'),
+                thread_id=route_context.get('thread_id'),
+            )
+        return _handle_dispatch_result(db, message=message, ticket=ticket, status_value=status_value, provider_status=provider_status, sent_at=sent_at, route_context=route_context)
 
     target = None
     session_key = None
@@ -311,6 +365,7 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
         'target': target,
         'idempotency_key': idempotency_key,
         'source': 'ticket_or_market_or_fallback',
+        'adapter': 'legacy_openclaw_bridge',
     }
 
     if target:
@@ -323,20 +378,7 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
     else:
         status_value, provider_status, sent_at = MessageStatus.failed, 'No target address available', None
 
-    if status_value == MessageStatus.sent:
-        _mark_sent(message, provider_status, sent_at)
-        if ticket is not None and getattr(ticket, 'conversation_state', None) is not None:
-            ticket.conversation_state = ConversationState.waiting_customer
-        if session_key:
-            log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.openclaw_reply_sent, note='OpenClaw same-route reply sent', payload={'message_id': message.id, 'session_key': session_key, 'provider_status': provider_status, 'idempotency_key': idempotency_key})
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_sent, note='Queued outbound message sent', payload={'message_id': message.id, 'provider_status': provider_status, 'route': route_context})
-        return message
-
-    reason = provider_status or 'Dispatch failed'
-    _mark_retry(message, reason)
-    event_type = EventType.outbound_dead if message.status == MessageStatus.dead else EventType.outbound_retry_scheduled
-    log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='Queued outbound message failed dispatch', payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count, 'route': route_context})
-    return message
+    return _handle_dispatch_result(db, message=message, ticket=ticket, status_value=status_value, provider_status=provider_status, sent_at=sent_at, route_context=route_context)
 
 
 def dispatch_pending_messages(db: Session, *, limit: int | None = None, worker_id: str | None = None) -> list[TicketOutboundMessage]:
