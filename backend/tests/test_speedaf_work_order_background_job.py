@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
 from app.db import Base  # noqa: E402
-from app.enums import ConversationState, EventType, SourceChannel, TicketPriority, TicketSource, TicketStatus  # noqa: E402
+from app.enums import ConversationState, EventType, JobStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus  # noqa: E402
 from app.models import BackgroundJob, Customer, Ticket, TicketEvent  # noqa: E402
 from app.services import background_jobs  # noqa: E402
 from app.services.speedaf.schemas import SpeedafWorkOrderResult  # noqa: E402
@@ -124,7 +124,7 @@ def test_process_speedaf_work_order_job_writes_ticket_event_and_marks_done(db_se
     background_jobs.process_background_job(db_session, job)
     db_session.flush()
 
-    assert job.status == TicketStatus.done or str(job.status.value if hasattr(job.status, "value") else job.status) == "done"
+    assert job.status == JobStatus.done
     event = db_session.query(TicketEvent).filter_by(ticket_id=ticket.id, field_name="speedaf_work_order").one()
     assert event.event_type == EventType.field_updated
     assert "completed" in event.note
@@ -163,8 +163,7 @@ def test_disabled_speedaf_work_order_job_records_skip_and_does_not_retry(db_sess
     background_jobs.process_background_job(db_session, job)
     db_session.flush()
 
-    status = job.status.value if hasattr(job.status, "value") else str(job.status)
-    assert status == "done"
+    assert job.status == JobStatus.done
     assert job.attempt_count == 0
     event = db_session.query(TicketEvent).filter_by(ticket_id=ticket.id, field_name="speedaf_work_order").one()
     payload = json.loads(event.payload_json)
