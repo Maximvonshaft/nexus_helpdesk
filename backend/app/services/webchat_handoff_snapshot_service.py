@@ -157,15 +157,39 @@ def _find_or_create_customer(db: Session, *, snapshot: dict[str, Any], public_id
     return customer
 
 
-def _message_exists(db: Session, *, conversation_id: int, client_message_id: str) -> bool:
-    return db.execute(select(WebchatMessage.id).where(WebchatMessage.conversation_id == conversation_id, WebchatMessage.client_message_id == client_message_id).limit(1)).scalar_one_or_none() is not None
+def _find_message(db: Session, *, conversation_id: int, client_message_id: str) -> WebchatMessage | None:
+    return db.execute(select(WebchatMessage).where(WebchatMessage.conversation_id == conversation_id, WebchatMessage.client_message_id == client_message_id).limit(1)).scalar_one_or_none()
 
 
-def _add_message_once(db: Session, *, conversation: WebchatConversation, ticket: Ticket, direction: str, body: str, client_message_id: str, author_label: str, metadata: dict[str, Any]) -> None:
+def _add_message_once(db: Session, *, conversation: WebchatConversation, ticket: Ticket, direction: str, body: str, client_message_id: str, author_label: str, metadata: dict[str, Any]) -> WebchatMessage:
     clipped_client_id = _clip(client_message_id, 120) or f"fast-handoff-{direction}"
-    if _message_exists(db, conversation_id=conversation.id, client_message_id=clipped_client_id):
-        return
-    db.add(WebchatMessage(conversation_id=conversation.id, ticket_id=ticket.id, direction=direction, body=body, body_text=body, message_type="text", metadata_json=_metadata_json(metadata), client_message_id=clipped_client_id, delivery_status="sent", author_label=author_label))
+    existing = _find_message(db, conversation_id=conversation.id, client_message_id=clipped_client_id)
+    if existing is not None:
+        if existing.ticket_id is None:
+            existing.ticket_id = ticket.id
+            db.flush()
+        return existing
+    message = WebchatMessage(conversation_id=conversation.id, ticket_id=ticket.id, direction=direction, body=body, body_text=body, message_type="text", metadata_json=_metadata_json(metadata), client_message_id=clipped_client_id, delivery_status="sent", author_label=author_label)
+    try:
+        with db.begin_nested():
+            db.add(message)
+            db.flush()
+    except IntegrityError:
+        existing = _find_message(db, conversation_id=conversation.id, client_message_id=clipped_client_id)
+        if existing is None:
+            raise
+        if existing.ticket_id is None:
+            existing.ticket_id = ticket.id
+            db.flush()
+        return existing
+    return message
+
+
+def _find_fast_handoff_conversation(db: Session, *, tenant: str, channel: str, session_id: str, public_id: str) -> WebchatConversation | None:
+    conversation = db.execute(select(WebchatConversation).where(WebchatConversation.tenant_key == tenant, WebchatConversation.channel_key == channel, WebchatConversation.fast_session_id == session_id, WebchatConversation.origin == "webchat-fast", WebchatConversation.status == "open").limit(1)).scalar_one_or_none()
+    if conversation is not None:
+        return conversation
+    return db.execute(select(WebchatConversation).where(WebchatConversation.public_id == public_id).limit(1)).scalar_one_or_none()
 
 
 def _ensure_fast_handoff_conversation_linkage(db: Session, *, ticket: Ticket, snapshot: dict[str, Any], source_dedupe_key: str) -> WebchatConversation:
@@ -176,21 +200,24 @@ def _ensure_fast_handoff_conversation_linkage(db: Session, *, ticket: Ticket, sn
     customer = _find_or_create_customer(db, snapshot=snapshot, public_id=public_id)
     if ticket.customer_id is None:
         ticket.customer_id = customer.id
-    conversation = db.execute(select(WebchatConversation).where(WebchatConversation.tenant_key == tenant, WebchatConversation.channel_key == channel, WebchatConversation.fast_session_id == session_id, WebchatConversation.origin == "webchat-fast", WebchatConversation.status == "open").limit(1)).scalar_one_or_none()
-    if conversation is None:
-        conversation = db.execute(select(WebchatConversation).where(WebchatConversation.public_id == public_id).limit(1)).scalar_one_or_none()
+    conversation = _find_fast_handoff_conversation(db, tenant=tenant, channel=channel, session_id=session_id, public_id=public_id)
     if conversation is None:
         conversation = WebchatConversation(public_id=public_id, visitor_token_hash=_fast_visitor_token_hash(source_dedupe_key), visitor_token_expires_at=None, tenant_key=tenant, channel_key=channel, ticket_id=ticket.id, visitor_name=_clip((snapshot.get("visitor") or {}).get("name"), 160), visitor_email=_clip((snapshot.get("visitor") or {}).get("email"), 200), visitor_phone=_clip((snapshot.get("visitor") or {}).get("phone"), 80), visitor_ref=session_id, origin="webchat-fast", page_url=None, user_agent=None, status="open", fast_session_id=session_id, fast_issue_key=_clip(snapshot.get("fast_issue_key"), 240), last_intent=_clip(snapshot.get("intent"), 120), last_tracking_number=_clip(snapshot.get("tracking_number"), 120), last_seen_at=utc_now(), created_at=utc_now(), updated_at=utc_now(), fast_context_updated_at=utc_now())
-        db.add(conversation)
-        db.flush()
-    else:
-        conversation.ticket_id = ticket.id
-        conversation.fast_session_id = conversation.fast_session_id or session_id
-        conversation.fast_issue_key = conversation.fast_issue_key or _clip(snapshot.get("fast_issue_key"), 240)
-        conversation.last_intent = _clip(snapshot.get("intent"), 120) or conversation.last_intent
-        conversation.last_tracking_number = _clip(snapshot.get("tracking_number"), 120) or conversation.last_tracking_number
-        conversation.updated_at = utc_now()
-        conversation.last_seen_at = utc_now()
+        try:
+            with db.begin_nested():
+                db.add(conversation)
+                db.flush()
+        except IntegrityError:
+            conversation = _find_fast_handoff_conversation(db, tenant=tenant, channel=channel, session_id=session_id, public_id=public_id)
+            if conversation is None:
+                raise
+    conversation.ticket_id = ticket.id
+    conversation.fast_session_id = conversation.fast_session_id or session_id
+    conversation.fast_issue_key = conversation.fast_issue_key or _clip(snapshot.get("fast_issue_key"), 240)
+    conversation.last_intent = _clip(snapshot.get("intent"), 120) or conversation.last_intent
+    conversation.last_tracking_number = _clip(snapshot.get("tracking_number"), 120) or conversation.last_tracking_number
+    conversation.updated_at = utc_now()
+    conversation.last_seen_at = utc_now()
     ticket.source_chat_id = f"webchat-fast:{public_id}"[:120]
     ticket.preferred_reply_channel = SourceChannel.web_chat.value
     ticket.preferred_reply_contact = public_id
