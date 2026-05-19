@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -14,6 +15,15 @@ assert spec is not None
 sidecar = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(sidecar)
+
+STRICT_REPLY_KEYS = {
+    "reply",
+    "intent",
+    "tracking_number",
+    "handoff_required",
+    "handoff_reason",
+    "recommended_agent_action",
+}
 
 
 def _client() -> TestClient:
@@ -73,7 +83,7 @@ def test_sidecar_reply_rejects_bad_token(monkeypatch):
     assert response.json()["detail"] == "bridge_auth_failed"
 
 
-def test_sidecar_stub_returns_strict_fast_reply(monkeypatch):
+def test_sidecar_stub_returns_only_strict_fast_reply(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("CODEX_REPLY_BRIDGE_MODE", "stub")
     monkeypatch.setenv("CODEX_REPLY_BRIDGE_REQUIRE_AUTH", "true")
@@ -83,10 +93,9 @@ def test_sidecar_stub_returns_strict_fast_reply(monkeypatch):
 
     assert response.status_code == 200
     data = response.json()
-    assert set(["reply", "intent", "tracking_number", "handoff_required", "handoff_reason", "recommended_agent_action"]).issubset(data)
+    assert set(data.keys()) == STRICT_REPLY_KEYS
     assert data["intent"] == "tracking_missing_number"
     assert data["handoff_required"] is False
-    assert data["_bridge_meta"]["mode"] == "stub"
 
 
 def test_sidecar_stub_forbidden_in_production_by_default(monkeypatch):
@@ -114,8 +123,8 @@ def test_sidecar_upstream_requires_url(monkeypatch):
     assert response.json()["error_code"] == "upstream_url_not_configured"
 
 
-def test_sidecar_normalizer_rejects_internal_reply(monkeypatch):
-    with __import__("pytest").raises(Exception):
+def test_sidecar_normalizer_rejects_internal_reply():
+    with pytest.raises(Exception):
         sidecar._normalize_strict_reply(
             {
                 "reply": "OpenClaw gateway on localhost is available.",
