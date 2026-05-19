@@ -15,17 +15,10 @@ export default defineConfig({
     outDir: '../frontend_dist',
     emptyOutDir: true,
     sourcemap: productionSourcemap,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (!id.includes('node_modules')) return undefined
-          if (id.includes('/react') || id.includes('/react-dom')) return 'vendor-react'
-          if (id.includes('@tanstack')) return 'vendor-tanstack'
-          if (id.includes('@radix-ui')) return 'vendor-radix'
-          return 'vendor'
-        },
-      },
-    },
+    // Production stability fix:
+    // Do not force React / React-DOM into a custom manual chunk.
+    // Previous vendor-react manual chunk caused React 19 runtime bootstrap crash:
+    // "Cannot set properties of undefined (setting 'Activity')".
   },
   server: {
     host: '0.0.0.0',
