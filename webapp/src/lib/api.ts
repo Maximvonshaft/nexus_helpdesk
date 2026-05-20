@@ -183,6 +183,15 @@ export type WebchatEventsPage = {
   last_event_id: number
 }
 
+export type RuntimeRecoveryResult = {
+  ok: boolean
+  requeued?: number
+  job_id?: number
+  message_id?: number
+  status?: string
+  job_type?: string | null
+}
+
 type CaseQueryParams = { q?: string; status?: string; priority?: string; assignee_id?: number; team_id?: number; overdue?: boolean; cursor?: string | null; limit?: number }
 
 type OutboundSendPayload = { channel: string; body: string }
@@ -206,6 +215,13 @@ function buildWebchatEventsSearch(afterId: number, limit = 50, waitMs = 1500) {
   search.set('limit', String(limit))
   search.set('wait_ms', String(waitMs))
   return search
+}
+
+function buildRecoverySearch(params?: { job_type?: string; limit?: number }) {
+  const search = new URLSearchParams()
+  if (params?.job_type) search.set('job_type', params.job_type)
+  if (typeof params?.limit === 'number') search.set('limit', String(params.limit))
+  return search.toString()
 }
 
 export const api = {
@@ -314,6 +330,16 @@ export const api = {
   readiness: () => request<ProductionReadiness>('/api/admin/production-readiness'),
   signoff: () => request<SignoffChecklist>('/api/admin/signoff-checklist'),
   jobs: () => request<BackgroundJob[]>('/api/admin/jobs?limit=50'),
+  requeueJob: (jobId: number) => request<RuntimeRecoveryResult>(`/api/admin/jobs/${jobId}/requeue`, { method: 'POST' }),
+  requeueDeadJobs: (params?: { job_type?: string; limit?: number }) => {
+    const search = buildRecoverySearch(params)
+    return request<RuntimeRecoveryResult>(`/api/admin/jobs/requeue-dead${search ? `?${search}` : ''}`, { method: 'POST' })
+  },
+  requeueOutboundMessage: (messageId: number) => request<RuntimeRecoveryResult>(`/api/admin/outbound/${messageId}/requeue`, { method: 'POST' }),
+  requeueDeadOutbound: (params?: { limit?: number }) => {
+    const search = buildRecoverySearch(params)
+    return request<RuntimeRecoveryResult>(`/api/admin/outbound/requeue-dead${search ? `?${search}` : ''}`, { method: 'POST' })
+  },
   consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
   outboundChannelCapabilities: () => request<OutboundChannelCapabilitiesResponse>('/api/outbound/channels/capabilities'),
 
