@@ -87,6 +87,7 @@ class EventType(str, Enum):
     openclaw_attachment_synced = "openclaw_attachment_synced"
     openclaw_attachment_persisted = "openclaw_attachment_persisted"
     conversation_state_changed = "conversation_state_changed"
+    speedaf_cancel = "speedaf_cancel"
 
 
 class NoteVisibility(str, Enum):

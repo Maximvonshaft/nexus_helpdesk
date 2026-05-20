@@ -65,3 +65,12 @@ def safe_work_order_type_label(work_order_type: str | None) -> str | None:
 
 def is_auto_work_order_type_allowed(work_order_type: str | None) -> bool:
     return (work_order_type or "").strip() == "WT0103-05"
+
+TERMINAL_STATUSES = {
+    "delivered", "return delivered", "exception signed"
+}
+
+def is_terminal_status(status_label: str | None) -> bool:
+    if not status_label:
+        return False
+    return status_label.strip().lower() in TERMINAL_STATUSES
