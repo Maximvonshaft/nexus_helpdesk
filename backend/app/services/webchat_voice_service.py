@@ -24,6 +24,16 @@ from .webchat_rate_limit import enforce_webchat_rate_limit
 logger = logging.getLogger(__name__)
 TERMINAL_STATUSES = {"ended", "missed", "failed", "cancelled"}
 ACTIVE_STATUSES = {"created", "ringing", "accepted", "active"}
+ACCEPT_READY_STATUSES = {"created", "ringing"}
+ACCEPTED_STATUSES = {"accepted", "active"}
+
+DETAIL_ALREADY_ACCEPTED_BY_OTHER = "voice session already accepted by another agent"
+DETAIL_EXPIRED = "voice session expired"
+DETAIL_MISSED = "voice session missed"
+DETAIL_ENDED = "voice session ended"
+DETAIL_FAILED = "voice session failed"
+DETAIL_CANCELLED = "voice session cancelled"
+DETAIL_NOT_ACCEPTABLE = "voice session cannot be accepted from current status"
 
 
 def _hash_token(value: str) -> str:
@@ -107,7 +117,54 @@ def _serialize_session(session: WebchatVoiceSession, *, participant_token: str |
         "active_at": _serialize_dt(session.active_at),
         "ended_at": _serialize_dt(session.ended_at),
         "expires_at": _serialize_dt(session.expires_at),
+        "recording_status": session.recording_status,
+        "transcript_status": session.transcript_status,
+        "summary_status": session.summary_status,
     }
+
+
+def _conflict(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+
+def _closed_accept_detail(session_status: str | None) -> str:
+    if session_status == "ended":
+        return DETAIL_ENDED
+    if session_status == "missed":
+        return DETAIL_MISSED
+    if session_status == "failed":
+        return DETAIL_FAILED
+    if session_status == "cancelled":
+        return DETAIL_CANCELLED
+    return DETAIL_NOT_ACCEPTABLE
+
+
+def _session_expired(session: WebchatVoiceSession, *, now: Any | None = None) -> bool:
+    expires_at = _ensure_aware_utc(getattr(session, "expires_at", None))
+    if expires_at is None:
+        return False
+    current = _ensure_aware_utc(now or utc_now())
+    return current is not None and expires_at <= current
+
+
+def _mark_missed_if_expired(db: Session, *, session: WebchatVoiceSession, now: Any | None = None) -> bool:
+    if session.status not in {"created", "ringing"}:
+        return False
+    current = _ensure_aware_utc(now or utc_now())
+    if not _session_expired(session, now=current):
+        return False
+    session.status = "missed"
+    session.ended_at = session.ended_at or current
+    session.updated_at = current
+    _close_provider_room_for_session(session)
+    _write_voice_event(
+        db,
+        conversation_id=session.conversation_id,
+        ticket_id=session.ticket_id,
+        event_type="voice.session.missed",
+        payload={"voice_session_id": session.public_id, "reason": "expired"},
+    )
+    return True
 
 
 def _load_public_conversation(db: Session, public_id: str) -> WebchatConversation:
@@ -159,6 +216,9 @@ def create_public_voice_session(db: Session, *, conversation_public_id: str, vis
     _validate_public_conversation_token(conversation, visitor_token)
     enforce_webchat_rate_limit(db, request, tenant_key=conversation.tenant_key, conversation_id=f"{conversation.public_id}:voice")
     active = _active_session_for_conversation(db, conversation.id)
+    if active is not None and _mark_missed_if_expired(db, session=active):
+        db.flush()
+        active = None
     if active is not None:
         value, ttl, identity = _issue_token(active, "visitor", "returning")
         return _serialize_session(active, participant_token=value, expires_in_seconds=ttl, participant_identity=identity)
@@ -236,11 +296,18 @@ def accept_admin_voice_session(db: Session, *, ticket_id: int, voice_session_pub
     if session.ticket_id != ticket_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
     _ensure_ticket_visible_for_session(db, current_user, session)
-    if session.status in TERMINAL_STATUSES:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="voice session is already closed")
-    if session.accepted_by_user_id is not None and session.accepted_by_user_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="voice session already accepted")
     now = utc_now()
+    if _mark_missed_if_expired(db, session=session, now=now):
+        db.flush()
+        raise _conflict(DETAIL_EXPIRED)
+    if session.status in TERMINAL_STATUSES:
+        raise _conflict(_closed_accept_detail(session.status))
+    if session.accepted_by_user_id is not None and session.accepted_by_user_id != current_user.id:
+        raise _conflict(DETAIL_ALREADY_ACCEPTED_BY_OTHER)
+    if session.status not in ACCEPT_READY_STATUSES and session.status not in ACCEPTED_STATUSES:
+        raise _conflict(DETAIL_NOT_ACCEPTABLE)
+
+    first_accept = session.accepted_by_user_id is None
     session.status = "active"
     session.accepted_by_user_id = current_user.id
     session.accepted_at = session.accepted_at or now
@@ -250,8 +317,9 @@ def accept_admin_voice_session(db: Session, *, ticket_id: int, voice_session_pub
     existing = db.query(WebchatVoiceParticipant).filter(WebchatVoiceParticipant.voice_session_id == session.id, WebchatVoiceParticipant.provider_identity == identity).first()
     if existing is None:
         db.add(WebchatVoiceParticipant(voice_session_id=session.id, participant_type="agent", user_id=current_user.id, provider_identity=identity, status="invited", created_at=now))
-    _write_voice_event(db, conversation_id=session.conversation_id, ticket_id=session.ticket_id, event_type="voice.session.accepted", payload={"voice_session_id": session.public_id, "accepted_by_user_id": current_user.id})
-    _write_voice_event(db, conversation_id=session.conversation_id, ticket_id=session.ticket_id, event_type="voice.session.active", payload={"voice_session_id": session.public_id, "accepted_by_user_id": current_user.id})
+    if first_accept:
+        _write_voice_event(db, conversation_id=session.conversation_id, ticket_id=session.ticket_id, event_type="voice.session.accepted", payload={"voice_session_id": session.public_id, "accepted_by_user_id": current_user.id})
+        _write_voice_event(db, conversation_id=session.conversation_id, ticket_id=session.ticket_id, event_type="voice.session.active", payload={"voice_session_id": session.public_id, "accepted_by_user_id": current_user.id})
     db.flush()
     return _serialize_session(session, participant_token=value, expires_in_seconds=ttl, participant_identity=identity)
 

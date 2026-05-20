@@ -78,6 +78,22 @@ def test_agent_webcall_panel_uses_livekit_click_to_accept_only():
     assert not any(term in lowered for term in forbidden_terms)
 
 
+def test_agent_webcall_panel_has_lifecycle_safe_operator_errors():
+    panel_text = AGENT_PANEL.read_text(encoding="utf-8")
+
+    assert "already accepted by another agent" in panel_text
+    assert "该通话已被其他客服接起" in panel_text
+    assert "该来电已超时" in panel_text
+    assert "该通话已结束" in panel_text
+    assert "该通话已取消" in panel_text
+    assert "该通话已失败" in panel_text
+    assert "Unknown / 未知状态" in panel_text
+    assert "readableAcceptError" in panel_text
+    assert "raw provider" not in panel_text.lower()
+    assert "secret" not in panel_text.lower()
+    assert "visitor_token" not in panel_text
+
+
 def test_visitor_webcall_route_is_registered_and_click_to_join_only():
     route_text = WEBCALL_ROUTE.read_text(encoding="utf-8")
     router_text = ROUTER.read_text(encoding="utf-8")
