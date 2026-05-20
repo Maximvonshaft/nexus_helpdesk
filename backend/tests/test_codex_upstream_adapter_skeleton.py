@@ -100,8 +100,9 @@ def test_upstream_adapter_contract_fixture_returns_strict_reply(monkeypatch):
 
 def test_upstream_adapter_auth_status_does_not_expose_secret(monkeypatch, tmp_path):
     auth_file = tmp_path / "codex_auth_profile.json"
+    sample_value = "sample-profile-value"
     auth_file.write_text(
-        '{"profiles":{"p":{"type":"token","provider":"openai-codex","access":"profile-secret"}}}',
+        '{"profiles":{"p":{"type":"token","provider":"openai-codex","access":"sample-profile-value"}}}',
         encoding="utf-8",
     )
     monkeypatch.setenv("CODEX_UPSTREAM_ADAPTER_MODE", "contract_fixture")
@@ -121,15 +122,22 @@ def test_upstream_adapter_auth_status_does_not_expose_secret(monkeypatch, tmp_pa
     assert selected["credential_kind"] == "token"
     assert selected["login_type"] == "chatgptAuthTokens"
     assert selected["fingerprint"].startswith("sha256:")
+    login_boundary = data["login_payload_boundary"]
+    assert login_boundary["source_kind"] == "auth_profile_file"
+    assert login_boundary["login_type"] == "chatgptAuthTokens"
+    assert login_boundary["payload_ready"] is True
+    assert login_boundary["secret_fingerprint"].startswith("sha256:")
     assert data["boundary"] == {
         "browser_cookie_scraping": False,
         "chatgpt_session_scraping": False,
         "shell_execution": False,
         "file_write": False,
         "tool_execution": False,
+        "account_login_start_request": False,
+        "external_network_call": False,
     }
     assert "expected" not in response.text
-    assert "profile-secret" not in response.text
+    assert sample_value not in response.text
 
 
 def test_upstream_adapter_codex_mode_requires_auth_source(monkeypatch):
@@ -148,8 +156,9 @@ def test_upstream_adapter_codex_mode_requires_auth_source(monkeypatch):
 
 def test_upstream_adapter_codex_mode_is_explicitly_not_implemented(monkeypatch, tmp_path):
     auth_file = tmp_path / "codex_auth_profile.json"
+    sample_value = "sample-profile-value"
     auth_file.write_text(
-        '{"profiles":{"p":{"type":"token","provider":"openai-codex","access":"profile-secret"}}}',
+        '{"profiles":{"p":{"type":"token","provider":"openai-codex","access":"sample-profile-value"}}}',
         encoding="utf-8",
     )
     monkeypatch.setenv("CODEX_UPSTREAM_ADAPTER_MODE", "codex_app_server")
@@ -161,4 +170,4 @@ def test_upstream_adapter_codex_mode_is_explicitly_not_implemented(monkeypatch, 
 
     assert response.status_code == 501
     assert response.json()["error_code"] == "codex_app_server_transport_not_implemented"
-    assert "profile-secret" not in response.text
+    assert sample_value not in response.text
