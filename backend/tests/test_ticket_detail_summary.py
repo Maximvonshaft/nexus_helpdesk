@@ -112,7 +112,7 @@ def seed_large_ticket(db, *, admin: User, ticket: Ticket) -> None:
     db.commit()
 
 
-def test_ticket_summary_large_fixture_counts_query_count_and_omits_heavy_collections(db_context):
+def test_ticket_summary_large_fixture_counts_query_count_and_returns_bounded_previews(db_context):
     db_session, engine = db_context
     admin = make_admin(db_session)
     ticket = make_ticket(db_session, admin)
@@ -121,7 +121,7 @@ def test_ticket_summary_large_fixture_counts_query_count_and_omits_heavy_collect
     with query_counter(engine) as queries:
         payload = get_ticket_summary(ticket.id, db=db_session, current_user=admin)
 
-    assert queries["value"] <= 12
+    assert queries["value"] <= 14
     assert payload["id"] == ticket.id
     assert payload["counts"]["comments_count"] == 500
     assert payload["counts"]["internal_notes_count"] == 200
@@ -129,12 +129,20 @@ def test_ticket_summary_large_fixture_counts_query_count_and_omits_heavy_collect
     assert payload["counts"]["outbound_messages_count"] == 100
     assert payload["counts"]["ai_intakes_count"] == 100
     assert payload["counts"]["events_count"] == 80
+    assert payload["evidence_summary"]["loaded"] is True
+    assert payload["evidence_summary"]["attachments_count"] == 25
+    assert payload["evidence_summary"]["openclaw_transcript_count"] == 0
+    assert payload["evidence_summary"]["openclaw_attachment_references_count"] == 0
+    assert payload["evidence_summary"]["active_market_bulletins_count"] == 0
     assert "comments" not in payload
     assert "internal_notes" not in payload
     assert "outbound_messages" not in payload
     assert "ai_intakes" not in payload
-    assert payload["attachments"] == []
+    assert len(payload["attachments"]) == 3
+    assert payload["attachments"][0]["file_name"].startswith("file")
     assert payload["openclaw_transcript"] == []
+    assert payload["openclaw_attachment_references"] == []
+    assert payload["active_market_bulletins"] == []
     assert payload["latest_ai_summary"] is not None
     assert payload["latest_outbound_status"] == "sent"
     assert payload["latest_timeline_event"]["event_type"] == "field_updated"

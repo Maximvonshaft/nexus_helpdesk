@@ -5,6 +5,7 @@ import type {
   Bulletin,
   CaseDetail,
   CaseListItem,
+  CaseListPage,
   ChannelAccount,
   ChannelOnboardingTaskList,
   LiteMeta,
@@ -176,6 +177,21 @@ export type TicketTimelinePage = {
   has_more: boolean
 }
 
+type CaseQueryParams = { q?: string; status?: string; priority?: string; assignee_id?: number; team_id?: number; overdue?: boolean; cursor?: string | null; limit?: number }
+
+function buildCaseSearch(params?: CaseQueryParams) {
+  const search = new URLSearchParams()
+  search.set('limit', String(params?.limit ?? 50))
+  if (params?.q) search.set('q', params.q)
+  if (params?.status) search.set('status', params.status)
+  if (params?.priority) search.set('priority', params.priority)
+  if (typeof params?.assignee_id === 'number') search.set('assignee_id', String(params.assignee_id))
+  if (typeof params?.team_id === 'number') search.set('team_id', String(params.team_id))
+  if (typeof params?.overdue === 'boolean') search.set('overdue', String(params.overdue))
+  if (params?.cursor) search.set('cursor', params.cursor)
+  return search
+}
+
 export const api = {
   login: (username: string, password: string) => request<{access_token: string; user: AuthUser}>('/api/auth/login', {
     method: 'POST',
@@ -202,12 +218,10 @@ export const api = {
   capabilityCatalog: () => request<string[]>('/api/admin/capabilities/catalog'),
 
   liteMeta: () => request<LiteMeta>('/api/lite/meta'),
-  cases: (params?: { q?: string; status?: string }) => {
-    const search = new URLSearchParams()
-    search.set('legacy', 'true')
-    if (params?.q) search.set('q', params.q)
-    if (params?.status) search.set('status', params.status)
-    return request<CaseListItem[]>(`/api/lite/cases?${search.toString()}`)
+  casesPage: (params?: CaseQueryParams) => request<CaseListPage>(`/api/lite/cases?${buildCaseSearch(params).toString()}`),
+  cases: async (params?: CaseQueryParams): Promise<CaseListItem[]> => {
+    const page = await request<CaseListPage>(`/api/lite/cases?${buildCaseSearch(params).toString()}`)
+    return page.items
   },
   caseDetail: (ticketId: number) => request<CaseDetail>(`/api/tickets/${ticketId}/summary`),
   ticketTimeline: (ticketId: number, params?: { cursor?: string | null; limit?: number }) => {

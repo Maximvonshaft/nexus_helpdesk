@@ -42,16 +42,31 @@ export interface LiteMeta {
 
 export interface CaseListItem {
   id: number
+  ticket_no?: string | null
   title: string
   status: string
   priority: string
+  source_channel?: string | null
+  category?: string | null
+  sub_category?: string | null
+  tracking_number?: string | null
   customer_name?: string | null
   assignee_name?: string | null
   team_name?: string | null
+  market_id?: number | null
   market_code?: string | null
   country_code?: string | null
   conversation_state?: string | null
   updated_at: string
+  resolution_due_at?: string | null
+  overdue?: boolean
+}
+
+export interface CaseListPage {
+  items: CaseListItem[]
+  next_cursor: string | null
+  has_more: boolean
+  filters?: Record<string, unknown>
 }
 
 export interface TranscriptMessage {
@@ -78,7 +93,9 @@ export interface AttachmentReference {
 export interface SystemAttachment {
   id: number
   file_name: string
+  download_url?: string | null
   mime_type?: string | null
+  file_size?: number | null
   visibility?: string
   created_at: string
 }
@@ -115,6 +132,15 @@ export interface ChannelAccount {
   updated_at: string
 }
 
+export interface EvidenceSummary {
+  loaded: boolean
+  preview_limit: number
+  attachments_count: number
+  openclaw_transcript_count: number
+  openclaw_attachment_references_count: number
+  active_market_bulletins_count: number
+}
+
 export interface CaseDetail {
   id: number
   title: string
@@ -141,6 +167,11 @@ export interface CaseDetail {
   missing_fields?: string | null
   customer_update?: string | null
   resolution_summary?: string | null
+  evidence_summary?: EvidenceSummary
+  attachments_count?: number
+  openclaw_transcript_count?: number
+  openclaw_attachment_references_count?: number
+  active_market_bulletins_count?: number
   openclaw_conversation?: {
     session_key: string
     channel?: string | null

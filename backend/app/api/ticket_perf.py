@@ -12,6 +12,9 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import (
     Customer,
+    MarketBulletin,
+    OpenClawAttachmentReference,
+    OpenClawTranscriptMessage,
     Team,
     Ticket,
     TicketAIIntake,
@@ -139,6 +142,8 @@ def _counts(db: Session, ticket_id: int) -> dict[str, int]:
             select(func.count(TicketComment.id)).where(TicketComment.ticket_id == ticket_id).scalar_subquery().label("comments_count"),
             select(func.count(TicketInternalNote.id)).where(TicketInternalNote.ticket_id == ticket_id).scalar_subquery().label("internal_notes_count"),
             select(func.count(TicketAttachment.id)).where(TicketAttachment.ticket_id == ticket_id).scalar_subquery().label("attachments_count"),
+            select(func.count(OpenClawTranscriptMessage.id)).where(OpenClawTranscriptMessage.ticket_id == ticket_id).scalar_subquery().label("openclaw_transcript_count"),
+            select(func.count(OpenClawAttachmentReference.id)).where(OpenClawAttachmentReference.ticket_id == ticket_id).scalar_subquery().label("openclaw_attachment_references_count"),
             select(func.count(TicketOutboundMessage.id)).where(TicketOutboundMessage.ticket_id == ticket_id).scalar_subquery().label("outbound_messages_count"),
             select(func.count(TicketAIIntake.id)).where(TicketAIIntake.ticket_id == ticket_id).scalar_subquery().label("ai_intakes_count"),
             select(func.count(TicketEvent.id)).where(TicketEvent.ticket_id == ticket_id).scalar_subquery().label("events_count"),
@@ -159,6 +164,119 @@ def _is_overdue(ticket: Ticket) -> bool:
     )
 
 
+def _attachment_preview(db: Session, ticket_id: int, limit: int = 3) -> list[dict[str, Any]]:
+    rows = (
+        db.query(TicketAttachment)
+        .filter(TicketAttachment.ticket_id == ticket_id)
+        .order_by(TicketAttachment.created_at.desc(), TicketAttachment.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "file_name": row.file_name,
+            "download_url": row.download_url,
+            "mime_type": row.mime_type,
+            "file_size": row.file_size,
+            "visibility": _value(row.visibility),
+            "created_at": _dt(row.created_at),
+        }
+        for row in rows
+    ]
+
+
+def _openclaw_transcript_preview(db: Session, ticket_id: int, limit: int = 5) -> list[dict[str, Any]]:
+    rows = (
+        db.query(OpenClawTranscriptMessage)
+        .filter(OpenClawTranscriptMessage.ticket_id == ticket_id)
+        .order_by(OpenClawTranscriptMessage.created_at.desc(), OpenClawTranscriptMessage.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "role": row.role,
+            "author_name": row.author_name,
+            "body_text": row.body_text,
+            "received_at": _dt(row.received_at),
+            "created_at": _dt(row.created_at),
+        }
+        for row in rows
+    ]
+
+
+def _openclaw_attachment_preview(db: Session, ticket_id: int, limit: int = 3) -> list[dict[str, Any]]:
+    rows = (
+        db.query(OpenClawAttachmentReference)
+        .filter(OpenClawAttachmentReference.ticket_id == ticket_id)
+        .order_by(OpenClawAttachmentReference.created_at.desc(), OpenClawAttachmentReference.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "ticket_id": row.ticket_id,
+            "transcript_message_id": row.transcript_message_id,
+            "remote_attachment_id": row.remote_attachment_id,
+            "content_type": row.content_type,
+            "filename": row.filename,
+            "storage_status": row.storage_status,
+            "storage_key": row.storage_key,
+            "created_at": _dt(row.created_at),
+        }
+        for row in rows
+    ]
+
+
+def _effective_bulletin_query(db: Session, ticket: Ticket):
+    now = utc_now()
+    query = db.query(MarketBulletin).filter(MarketBulletin.is_active.is_(True))
+    query = query.filter(or_(MarketBulletin.starts_at.is_(None), MarketBulletin.starts_at <= now))
+    query = query.filter(or_(MarketBulletin.ends_at.is_(None), MarketBulletin.ends_at >= now))
+    if ticket.market_id is not None:
+        query = query.filter(or_(MarketBulletin.market_id.is_(None), MarketBulletin.market_id == ticket.market_id))
+    else:
+        query = query.filter(MarketBulletin.market_id.is_(None))
+    if ticket.country_code:
+        query = query.filter(or_(MarketBulletin.country_code.is_(None), MarketBulletin.country_code == ticket.country_code))
+    else:
+        query = query.filter(MarketBulletin.country_code.is_(None))
+    return query
+
+
+def _active_market_bulletins(db: Session, ticket: Ticket, limit: int = 5) -> list[dict[str, Any]]:
+    rows = (
+        _effective_bulletin_query(db, ticket)
+        .order_by(MarketBulletin.severity.desc(), MarketBulletin.updated_at.desc(), MarketBulletin.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "market_id": row.market_id,
+            "country_code": row.country_code,
+            "title": row.title,
+            "body": row.body,
+            "summary": row.summary,
+            "category": row.category,
+            "channels_csv": row.channels_csv,
+            "audience": row.audience,
+            "severity": row.severity,
+            "auto_inject_to_ai": row.auto_inject_to_ai,
+            "is_active": row.is_active,
+            "starts_at": _dt(row.starts_at),
+            "ends_at": _dt(row.ends_at),
+            "created_at": _dt(row.created_at),
+            "updated_at": _dt(row.updated_at),
+        }
+        for row in rows
+    ]
+
+
 @router.get("/{ticket_id}/summary")
 def get_ticket_summary(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     result = (
@@ -175,6 +293,11 @@ def get_ticket_summary(ticket_id: int, db: Session = Depends(get_db), current_us
     ensure_ticket_visible(current_user, ticket, db)
 
     counts = _counts(db, ticket_id)
+    attachments = _attachment_preview(db, ticket_id)
+    openclaw_transcript = _openclaw_transcript_preview(db, ticket_id)
+    openclaw_attachment_references = _openclaw_attachment_preview(db, ticket_id)
+    active_market_bulletins = _active_market_bulletins(db, ticket)
+    active_market_bulletins_count = _effective_bulletin_query(db, ticket).count()
     latest_ai = (
         db.query(TicketAIIntake)
         .filter(TicketAIIntake.ticket_id == ticket_id)
@@ -233,6 +356,14 @@ def get_ticket_summary(ticket_id: int, db: Session = Depends(get_db), current_us
         },
         "tags": _load_ticket_tags(db, ticket_id),
         "counts": counts,
+        "evidence_summary": {
+            "loaded": True,
+            "preview_limit": 5,
+            "attachments_count": counts["attachments_count"],
+            "openclaw_transcript_count": counts["openclaw_transcript_count"],
+            "openclaw_attachment_references_count": counts["openclaw_attachment_references_count"],
+            "active_market_bulletins_count": active_market_bulletins_count,
+        },
         "latest_ai_summary": latest_ai.summary if latest_ai else ticket.ai_summary,
         "latest_outbound_status": _value(latest_outbound.status) if latest_outbound else None,
         "latest_timeline_event": {
@@ -243,18 +374,19 @@ def get_ticket_summary(ticket_id: int, db: Session = Depends(get_db), current_us
         "customer_name": customer.name if customer else None,
         "assignee_name": assignee.display_name if assignee else None,
         "team_name": team.name if team else None,
-        "market_code": None,
+        "market_code": ticket.market.code if ticket.market else None,
         "country_code": ticket.country_code,
         "ai_summary": ticket.ai_summary,
         "ai_classification": ticket.ai_classification,
         "preferred_reply_channel": ticket.preferred_reply_channel,
         "preferred_reply_contact": ticket.preferred_reply_contact,
-        "openclaw_transcript": [],
-        "attachments": [],
-        "openclaw_attachment_references": [],
-        "active_market_bulletins": [],
+        "openclaw_transcript": openclaw_transcript,
+        "attachments": attachments,
+        "openclaw_attachment_references": openclaw_attachment_references,
+        "active_market_bulletins": active_market_bulletins,
     }
     payload.update(counts)
+    payload["active_market_bulletins_count"] = active_market_bulletins_count
     return payload
 
 
