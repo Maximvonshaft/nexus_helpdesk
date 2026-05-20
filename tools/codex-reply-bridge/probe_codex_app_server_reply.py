@@ -29,6 +29,18 @@ SECRET_PATTERNS = [
     re.compile(r"auth\.json", re.IGNORECASE),
 ]
 
+SENSITIVE_FIELD_NAMES = {
+    "authorization",
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "token",
+    "password",
+    "secret",
+    "credential",
+}
+
 INTERNAL_OUTPUT_TERMS = [
     "OpenClaw",
     "Codex",
@@ -63,12 +75,18 @@ def redact_secret_text(value: Any) -> str:
     return text[:8000]
 
 
+def _is_sensitive_field_name(key: str) -> bool:
+    normalized = key.strip().lower().replace("-", "_")
+    if normalized in SENSITIVE_FIELD_NAMES:
+        return True
+    return normalized.endswith("_token") or normalized.endswith("_secret") or normalized.endswith("_password")
+
+
 def redact_json(value: Any) -> Any:
     if isinstance(value, dict):
         result: dict[str, Any] = {}
         for key, item in value.items():
-            lowered = str(key).lower()
-            if any(marker in lowered for marker in ("token", "secret", "password", "authorization", "api_key", "apikey", "refresh")):
+            if _is_sensitive_field_name(str(key)):
                 result[str(key)] = "[REDACTED_SECRET]"
             else:
                 result[str(key)] = redact_json(item)
