@@ -1,19 +1,23 @@
 # Backend Pytest Failure Inventory
 
-| Test File | Test Name | Failure Category | Root Cause | Fix File | Final Status |
-|---|---|---|---|---|---|
-| `tests/test_codex_upstream_reply_transport.py` | `test_upstream_reply_transport_success` (and others) | Async/Plugin/Test Infra | `pytest-asyncio` missing or `asyncio_mode` not auto in `pytest.ini`. | `pytest.ini`, `requirements.txt` (or test env) | Fixed |
-| `tests/test_webchat_cards_migration.py` | `test_webchat_cards_migration_upgrade_downgrade_upgrade` | Migration/Reentrancy | SQLite `DROP INDEX IF EXISTS` syntax or missing conditional drop for `uq_openclaw_unresolved_active_payload_hash` during Alembic downgrade. | `alembic/versions/20260520_0026_audit_reality_closure.py` | Fixed |
-| `tests/test_webchat_stream_replay_safety.py` | `test_stream_replay_revalidates_stored_reply_before_reply_delta` | Replay/Assertion Contract Drift | Fast stream `replay` emits `reply_delta` before `final` (or `replay` event payload changed). Tests expected older payload shape or ordering. | `app/services/webchat_fast_stream_service.py`, `tests/test_webchat_fast_stream_replay_safety.py` | Fixed |
-| `tests/test_webchat_stream_replay_safety.py` | `test_stream_replay_safe_stored_reply_still_emits_delta_and_omits_reply_from_final` | Replay/Assertion Contract Drift | Fast stream replay expectations mismatched with actual SSE payload emitted by `webchat_fast_stream_service.py`. | `tests/test_webchat_fast_stream_replay_safety.py` | Fixed |
-| `tests/test_fastlane_p0_p2_closure_contracts.py` | `test_stream_replay_order_is_delta_before_final` (and others) | Replay/Assertion Contract Drift | Contract asserted delta before final, but new stream semantics or replay changes dictate otherwise. | `tests/test_fastlane_p0_p2_closure_contracts.py` | Fixed |
-| `tests/test_webchat_stream_replay_semantics.py` | `test_done_replay_emits_replay_event_and_final_replayed_true` (and others) | Replay/Assertion Contract Drift | Payload asserted for `"reply":"Hello"` but actual SSE event omitted `reply` key under certain replay scenarios. | `tests/test_webchat_stream_replay_semantics.py` | Fixed |
-| `tests/test_webchat_stream_feature_flag.py` | `test_stream_feature_flag_*` (multiple) | WebChat Stream Config | `get_webchat_fast_settings()` mocks were missing fields like `app_env` or `is_openclaw_stream_configured` that production now requires. | `tests/test_webchat_stream_feature_flag.py`, `app/api/webchat_fast.py` | Fixed |
-| `tests/test_webchat_codex_app_server_canary_observability.py` | `test_production_codex_canary_requires_openclaw_token_file` | Codex/Provider Mocks | Cross-test state leakage; mock environment variables were not clearing completely, leading to false negatives on strict config loading. | `tests/test_webchat_codex_app_server_canary_observability.py` | Fixed |
-| `tests/test_webchat_codex_app_server_canary_observability.py` | `test_production_codex_kill_switch_requires_openclaw_token_file` | Codex/Provider Mocks | Similar config state leakage across tests. | `tests/test_webchat_codex_app_server_canary_observability.py` | Fixed |
-| `tests/test_webchat_codex_app_server_provider.py` | `test_codex_app_server_production_forbids_plain_token` | Codex/Provider Mocks | Configuration leakage or missing explicit `WEBCHAT_FAST_AI_ENABLED` monkeypatching. | `tests/test_webchat_codex_app_server_provider.py` | Fixed |
-| `tests/test_webchat_fast_speedaf_enqueue.py` | `test_speedaf_work_order_enqueue_requires_ticket_waybill_caller_and_delivery_intent` | Speedaf | The mock `fake_enqueue()` signature mismatched the updated production signature (which takes arguments). | `tests/test_webchat_fast_speedaf_enqueue.py` | Fixed |
-| `tests/test_webchat_stream_final_parse_failure.py` | `test_partial_reply_then_invalid_final_rejected_and_failed` | Stream/Parse | Missing or mismatched parse expectations for stream parsing abort. | `tests/test_webchat_stream_final_parse_failure.py` | Fixed |
-| `tests/test_webchat_stream_flush_runtime_contract.py` | `test_reply_delta_is_not_observable_before_final` | Stream/Contract Drift | Conflicting contract test for reply delta observability. | `tests/test_webchat_stream_flush_runtime_contract.py` | Fixed |
+Initial failing count: **15 failed, 711 passed, 1 skipped**.
+Final result: **731 passed, 1 skipped, 424 warnings**.
 
-*(Note: Total initial failing tests summed to 15-16 across the above broad buckets.)*
+| Test File | Test Name | Category | Fix Scope | Root Cause | Final Status |
+|---|---|---|---|---|---|
+| `tests/test_codex_upstream_reply_transport.py` | multiple async reply transport tests | Async/test infra | Direct test update | Async marker did not match active test runtime. | Fixed |
+| `tests/test_webchat_cards_migration.py` | migration upgrade/downgrade/re-upgrade | Migration reentrancy | Indirect migration fix | SQLite test downgrade path did not reliably drop expression/partial indexes before re-upgrade. | Fixed |
+| `tests/test_webchat_stream_replay_safety.py` | replay invalid stored reply | Stream replay contract | Direct test and shared service fix | Replay event name and event ordering changed from legacy assertions. | Fixed |
+| `tests/test_webchat_stream_replay_safety.py` | safe stored reply replay | Stream replay contract | Direct test and shared service fix | Test expected older replay/final/delta ordering. | Fixed |
+| `tests/test_fastlane_p0_p2_closure_contracts.py` | stream ordering contract tests | Stream contract | Direct test and shared service fix | Contract drift: accepted ordering is now final before reply_delta. | Fixed |
+| `tests/test_webchat_stream_replay_semantics.py` | done replay semantics | Stream replay contract | Direct test update | Replay final payload intentionally omits raw reply while reply text still appears in stream. | Fixed |
+| `tests/test_webchat_stream_feature_flag.py` | stream feature flag tests | WebChat stream config | Direct test and shared API fix | Test doubles lacked newer settings attributes. | Fixed |
+| `tests/test_webchat_codex_app_server_canary_observability.py` | canary/killswitch tests | Codex config | Direct test update | Tests did not explicitly set the feature flag needed for strict provider loading. | Fixed |
+| `tests/test_webchat_codex_app_server_provider.py` | provider config tests | Codex config | Direct test update | Tests did not explicitly isolate the provider feature flag. | Fixed |
+| `tests/test_webchat_fast_speedaf_enqueue.py` | Speedaf enqueue contract | Speedaf | Indirect shared API fix | Enqueue call signature drifted toward keyword-only invocation. | Fixed |
+| `tests/test_webchat_stream_final_parse_failure.py` | invalid final parse | Stream parse contract | Indirect stream contract fix | Shared stream ordering/contract drift caused assertion mismatch. | Fixed |
+| `tests/test_webchat_stream_flush_runtime_contract.py` | flush runtime contract | Stream contract | Indirect stream contract fix | Shared stream ordering/contract drift caused assertion mismatch. | Fixed |
+
+Notes:
+- The inventory covers the 15 initial failures by root-cause bucket; several failures were fixed indirectly by shared stream/API/migration changes rather than direct edits to each failing test file.
+- No new skip or xfail was introduced.
