@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import ipaddress
 import time
 from dataclasses import dataclass
 from typing import Any
