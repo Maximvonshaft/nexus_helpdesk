@@ -62,19 +62,24 @@ def _fingerprint_secret(value: str, *, purpose: str) -> str:
     return "sha256:" + digest
 
 
+def _normalize_key(value: str) -> str:
+    return value.strip().lower().replace("-", "_")
+
+
 def _deep_find_first_string(value: Any, keys: set[str]) -> str | None:
+    normalized_keys = {_normalize_key(key) for key in keys}
     if isinstance(value, dict):
         for key, item in value.items():
-            normalized = str(key).strip().lower().replace("-", "_")
-            if normalized in keys and isinstance(item, str) and item.strip():
+            normalized = _normalize_key(str(key))
+            if normalized in normalized_keys and isinstance(item, str) and item.strip():
                 return item.strip()
         for item in value.values():
-            found = _deep_find_first_string(item, keys)
+            found = _deep_find_first_string(item, normalized_keys)
             if found:
                 return found
     elif isinstance(value, list):
         for item in value:
-            found = _deep_find_first_string(item, keys)
+            found = _deep_find_first_string(item, normalized_keys)
             if found:
                 return found
     return None
@@ -105,11 +110,11 @@ def _deep_find_profile(value: Any) -> dict[str, Any] | None:
 
 
 def _account_hint_present(value: Any) -> bool:
-    return bool(_deep_find_first_string(value, {"account_id", "accountid", "chatgpt_account_id", "email"}))
+    return bool(_deep_find_first_string(value, {"account_id", "accountid", "chatgpt_account_id", "chatgptaccountid", "email"}))
 
 
 def _plan_hint_present(value: Any) -> bool:
-    return bool(_deep_find_first_string(value, {"chatgpt_plan_type", "plantype", "plan_type"}))
+    return bool(_deep_find_first_string(value, {"chatgpt_plan_type", "chatgptplantype", "plantype", "plan_type"}))
 
 
 def _profile_secret_for_kind(profile: dict[str, Any], credential_kind: CredentialKind) -> str | None:
