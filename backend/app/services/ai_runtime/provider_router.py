@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ..webchat_fast_config import WebchatFastSettings
+from .codex_app_server_provider import CodexAppServerProvider
 from .codex_auth_provider import CodexAuthProvider
 from .openai_responses_provider import OpenAIResponsesProvider
 from .openclaw_responses_provider import OpenClawResponsesProvider
@@ -13,6 +14,8 @@ def _provider_for(name: str, settings: WebchatFastSettings) -> BaseFastAIProvide
         return OpenClawResponsesProvider(settings)
     if name == "codex_auth":
         return CodexAuthProvider(settings)
+    if name == "codex_app_server":
+        return CodexAppServerProvider(settings)
     if name == "openai_responses":
         return OpenAIResponsesProvider(settings)
     raise ValueError(f"Unsupported WEBCHAT_FAST_AI_PROVIDER: {name}")
