@@ -179,6 +179,8 @@ export type TicketTimelinePage = {
 
 type CaseQueryParams = { q?: string; status?: string; priority?: string; assignee_id?: number; team_id?: number; overdue?: boolean; cursor?: string | null; limit?: number }
 
+type OutboundSendPayload = { channel: string; body: string }
+
 function buildCaseSearch(params?: CaseQueryParams) {
   const search = new URLSearchParams()
   search.set('limit', String(params?.limit ?? 50))
@@ -230,6 +232,11 @@ export const api = {
     if (params?.cursor) search.set('cursor', params.cursor)
     return request<TicketTimelinePage>(`/api/tickets/${ticketId}/timeline?${search.toString()}`)
   },
+  ticketOutboundChannelCapabilities: (ticketId: number) => request<OutboundChannelCapabilitiesResponse>(`/api/tickets/${ticketId}/outbound/channels/capabilities`),
+  sendOutboundMessage: (ticketId: number, payload: OutboundSendPayload) => request<Record<string, unknown>>(`/api/tickets/${ticketId}/outbound/send`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   workflowUpdate: (ticketId: number, payload: unknown) => request<CaseDetail>(`/api/lite/cases/${ticketId}/workflow-update`, {
     method: 'POST',
     body: JSON.stringify(payload),
