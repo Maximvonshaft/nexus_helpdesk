@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ SIDECAR_PATH = REPO_ROOT / "tools" / "codex-reply-bridge" / "sidecar.py"
 spec = importlib.util.spec_from_file_location("codex_reply_sidecar", SIDECAR_PATH)
 assert spec is not None
 sidecar = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = sidecar
 assert spec.loader is not None
 spec.loader.exec_module(sidecar)
 
