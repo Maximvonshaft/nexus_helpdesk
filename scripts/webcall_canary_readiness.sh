@@ -200,20 +200,77 @@ PY
 cat "$OUT/click_to_accept_static_check.txt" | tee -a "$OUT/summary.txt"
 
 log ""
-log "===== 6. OPTIONAL LIVE HTTP READINESS ====="
-if [ -n "$BASE_URL" ]; then
-  curl -fsS "$BASE_URL/api/webchat/voice/runtime-config" > "$OUT/runtime_config.json" || fail "runtime-config endpoint failed"
-  cat "$OUT/runtime_config.json" | grep -E 'LIVEKIT_API_SECRET|api_secret|secret|password|refresh_token' && fail "runtime-config exposed forbidden secret marker"
-  grep -q 'livekit_url' "$OUT/runtime_config.json" || fail "runtime-config missing livekit_url"
-  log "runtime_config_http=PASS"
-
-  curl -fsSI "$BASE_URL/webchat-voice" > "$OUT/webchat_voice_headers.txt" || fail "webchat-voice page not reachable"
-  log "webchat_voice_http=PASS"
-else
-  log "live_http_readiness=SKIPPED_NO_NEXUS_CANARY_BASE_URL"
-fi
-
 log ""
+log "===== 6. OPTIONAL LIVE HTTP READINESS ====="
+if [ -z "${NEXUS_CANARY_BASE_URL:-}" ]; then
+  log "live_http_readiness=SKIPPED_NO_NEXUS_CANARY_BASE_URL"
+else
+  BASE_URL="${NEXUS_CANARY_BASE_URL%/}"
+  log "live_http_base_url=$BASE_URL"
+
+  http_code_probe() {
+    local label="$1"
+    local url="$2"
+    local body="$OUT/${label}_body.txt"
+    local meta="$OUT/${label}_meta.txt"
+    local err="$OUT/${label}_err.txt"
+    local code
+    local rc
+
+    set +e
+    code="$(curl -sS -L -m 12 -X GET -w '%{http_code}' -o "$body" "$url" 2>"$err")"
+    rc=$?
+    set -e
+
+    {
+      echo "label=$label"
+      echo "method=GET"
+      echo "url=$url"
+      echo "curl_rc=$rc"
+      echo "http_code=$code"
+      echo "error_begin"
+      cat "$err" || true
+      echo "error_end"
+      echo "body_head_begin"
+      head -c 800 "$body" 2>/dev/null || true
+      echo
+      echo "body_head_end"
+    } > "$meta"
+
+    log "${label}_curl_rc=$rc"
+    log "${label}_http_code=$code"
+
+    if [ "$rc" -ne 0 ]; then
+      return 1
+    fi
+
+    echo "$code" | grep -Eq '^(2|3)[0-9][0-9]$'
+  }
+
+  if http_code_probe "runtime_config_http" "$BASE_URL/api/webchat/voice/runtime-config"; then
+    log "runtime_config_http=PASS"
+  else
+    log "CANARY_RESULT=FAIL"
+    log "FAIL_REASON=runtime-config endpoint not reachable"
+    exit 1
+  fi
+
+  if grep -RIE 'LIVEKIT_API_SECRET|api_secret|secret|password|refresh_token' "$OUT/runtime_config_http_body.txt" >/dev/null 2>&1; then
+    log "CANARY_RESULT=FAIL"
+    log "FAIL_REASON=runtime-config exposed forbidden secret marker"
+    exit 1
+  fi
+
+  if http_code_probe "webchat_voice_page_http" "$BASE_URL/webchat-voice"; then
+    log "webchat_voice_page_http=PASS"
+  else
+    log "CANARY_RESULT=FAIL"
+    log "FAIL_REASON=webchat-voice page not reachable"
+    exit 1
+  fi
+
+  log "live_http_readiness=PASS"
+fi
 log "===== FINAL ====="
 log "CANARY_RESULT=PASS"
 log "OUT=$OUT"
