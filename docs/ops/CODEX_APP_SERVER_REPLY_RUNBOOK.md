@@ -4,7 +4,7 @@
 
 Validate and operate the private Codex reply bridge path without changing production WebChat traffic.
 
-The current implementation has six layers:
+The current implementation has seven layers:
 
 1. Probe: `scripts/probe_codex_app_server_reply.sh`
 2. Private sidecar: `tools/codex-reply-bridge/sidecar.py`
@@ -12,6 +12,7 @@ The current implementation has six layers:
 4. Router controls: canary percent, kill switch, and low-cardinality metrics
 5. Upstream adapter skeleton: `tools/codex-reply-bridge/upstream_adapter.py`
 6. Upstream auth discovery: `tools/codex-reply-bridge/upstream_auth_discovery.py`
+7. Login payload boundary: `tools/codex-reply-bridge/upstream_login_payload_boundary.py`
 
 The sidecar can run in `disabled`, `stub`, or `upstream` mode. The upstream adapter can run in `disabled`, `contract_fixture`, or future `codex_app_server` mode.
 
@@ -36,8 +37,39 @@ PYTHONPATH=backend pytest -q \
   backend/tests/test_webchat_codex_app_server_provider.py \
   backend/tests/test_webchat_codex_app_server_canary_observability.py \
   backend/tests/test_codex_upstream_adapter_skeleton.py \
-  backend/tests/test_codex_upstream_auth_discovery.py
+  backend/tests/test_codex_upstream_auth_discovery.py \
+  backend/tests/test_codex_upstream_login_payload_boundary.py
 ```
+
+## Login payload boundary
+
+OpenClaw's Codex app-server auth bridge sends `account/login/start` with one of these payload shapes:
+
+```json
+{ "type": "chatgptAuthTokens", "accessToken": "...", "chatgptAccountId": "...", "chatgptPlanType": "..." }
+```
+
+or:
+
+```json
+{ "type": "apiKey", "apiKey": "..." }
+```
+
+The local boundary module constructs this internal payload from explicit auth sources, but `/auth/status` exposes only a safe summary:
+
+```json
+{
+  "source_kind": "auth_profile_file",
+  "login_type": "chatgptAuthTokens",
+  "payload_ready": true,
+  "secret_fingerprint": "sha256:...",
+  "chatgpt_account_id_present": true,
+  "chatgpt_plan_type_present": true,
+  "error_code": null
+}
+```
+
+No access token or API key is returned in `/auth/status`.
 
 ## Start sidecar in local stub mode
 
@@ -99,6 +131,18 @@ account_hint_present
 plan_hint_present
 fingerprint
 usable
+error_code
+```
+
+Login payload boundary output reports only:
+
+```text
+source_kind
+login_type
+payload_ready
+secret_fingerprint
+chatgpt_account_id_present
+chatgpt_plan_type_present
 error_code
 ```
 
@@ -172,6 +216,19 @@ Expected auth discovery fields:
   "account_hint_present": true,
   "plan_hint_present": true,
   "fingerprint": "sha256:..."
+}
+```
+
+Expected login payload boundary fields:
+
+```json
+{
+  "source_kind": "auth_profile_file",
+  "login_type": "chatgptAuthTokens",
+  "payload_ready": true,
+  "secret_fingerprint": "sha256:...",
+  "chatgpt_account_id_present": true,
+  "chatgpt_plan_type_present": true
 }
 ```
 
@@ -356,13 +413,13 @@ Production note: if kill switch is true or canary percent is below 100, OpenClaw
 
 ## Future real Codex app-server mode
 
-`CODEX_UPSTREAM_ADAPTER_MODE=codex_app_server` currently performs auth discovery only and returns:
+`CODEX_UPSTREAM_ADAPTER_MODE=codex_app_server` currently performs auth discovery and login payload boundary construction only. It still returns:
 
 ```text
 codex_app_server_transport_not_implemented
 ```
 
-The future real mode must use the discovered login type:
+The future real mode must send the constructed payload to `account/login/start` using the discovered login type:
 
 ```text
 chatgptAuthTokens for oauth/token credentials
@@ -391,7 +448,7 @@ artifacts/codex_reply_probe/final_verdict.txt
 
 ## Safety validation
 
-The probe, sidecar, backend provider, router controls, upstream adapter skeleton, and auth discovery enforce these rules:
+The probe, sidecar, backend provider, router controls, upstream adapter skeleton, auth discovery, and login payload boundary enforce these rules:
 
 - HTTP probe URLs are allowed only for loopback hosts such as `127.0.0.1` and `localhost`.
 - Remote probe URLs must use HTTPS.
@@ -403,6 +460,7 @@ The probe, sidecar, backend provider, router controls, upstream adapter skeleton
 - Backend provider returns only safe summaries, not raw upstream payloads.
 - Upstream adapter `/auth/status` never echoes secrets.
 - Auth discovery returns only source kind, credential kind, login type, hints, and fingerprint.
+- Login payload boundary returns only source kind, login type, readiness, hints, and fingerprint in status output.
 - Artifact output is sanitized before writing.
 
 ## Production controls
@@ -426,8 +484,9 @@ Do not connect the sidecar to a real Codex upstream adapter until:
 4. canary/kill switch tests pass;
 5. upstream contract fixture probe returns `PASS`;
 6. auth discovery tests pass and `/auth/status` shows no secret exposure;
-7. upstream real Codex mode returns `PASS` against explicit auth sources;
-8. sanitized artifacts show no secret exposure.
+7. login payload boundary tests pass and `/auth/status` shows no secret exposure;
+8. upstream real Codex mode returns `PASS` against explicit auth sources;
+9. sanitized artifacts show no secret exposure.
 
 ## Rollback
 
