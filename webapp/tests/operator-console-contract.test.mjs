@@ -7,6 +7,9 @@ const root = resolve(process.cwd())
 const apiClient = readFileSync(resolve(root, 'src/lib/api.ts'), 'utf8')
 const types = readFileSync(resolve(root, 'src/lib/types.ts'), 'utf8')
 const workspaceRoute = readFileSync(resolve(root, 'src/routes/workspace.tsx'), 'utf8')
+const webchatRoute = readFileSync(resolve(root, 'src/routes/webchat.tsx'), 'utf8')
+const webchatVoiceApi = readFileSync(resolve(root, 'src/lib/webchatVoiceApi.ts'), 'utf8')
+const agentWebCallPanel = readFileSync(resolve(root, 'src/components/webcall/AgentWebCallPanel.tsx'), 'utf8')
 const replyPanel = readFileSync(resolve(root, 'src/components/operator/CustomerReplyPanel.tsx'), 'utf8')
 
 test('workspace case list uses non-legacy paginated API contract', () => {
@@ -69,4 +72,41 @@ test('customer reply panel shows send semantics and refreshes workspace after se
   assert.match(replyPanel, /invalidateQueries\(\{ queryKey: \['caseDetail', activeCase\.id\] \}\)/)
   assert.match(replyPanel, /invalidateQueries\(\{ queryKey: \['ticketTimeline', activeCase\.id\] \}\)/)
   assert.match(replyPanel, /invalidateQueries\(\{ queryKey: \['cases'\] \}\)/)
+})
+
+test('webchat admin events are routed through unified api client', () => {
+  assert.match(apiClient, /export type WebchatEventsPage = \{/)
+  assert.match(apiClient, /webchatEvents: \(ticketId: number, afterId: number, init\?: RequestInit\)/)
+  assert.match(apiClient, /\/api\/webchat\/admin\/tickets\/\$\{ticketId\}\/events/)
+  assert.match(webchatRoute, /api\.webchatEvents\(selectedTicketId as number, lastEventId, \{ signal \}\)/)
+  assert.doesNotMatch(webchatRoute, /fetch\(/)
+  assert.doesNotMatch(webchatRoute, /Authorization/)
+})
+
+test('webchat voice admin calls delegate to unified api client', () => {
+  assert.match(apiClient, /webchatVoiceRuntimeConfig: \(init\?: RequestInit\)/)
+  assert.match(apiClient, /webchatVoiceSessions: \(ticketId: number, init\?: RequestInit\)/)
+  assert.match(apiClient, /webchatVoiceAcceptSession: \(ticketId: number, voiceSessionId: string\)/)
+  assert.match(apiClient, /webchatVoiceEndSession: \(ticketId: number, voiceSessionId: string\)/)
+  assert.match(webchatVoiceApi, /runtimeConfig: api\.webchatVoiceRuntimeConfig/)
+  assert.match(webchatVoiceApi, /listSessions: api\.webchatVoiceSessions/)
+  assert.match(webchatVoiceApi, /acceptSession: api\.webchatVoiceAcceptSession/)
+  assert.match(webchatVoiceApi, /endSession: api\.webchatVoiceEndSession/)
+  assert.doesNotMatch(webchatVoiceApi, /fetch\(/)
+  assert.doesNotMatch(webchatVoiceApi, /buildApiUrl/)
+  assert.doesNotMatch(webchatVoiceApi, /adminRequest/)
+})
+
+test('admin operator surfaces do not bypass unified api client with raw fetch', () => {
+  const checkedFiles = [
+    ['src/routes/workspace.tsx', workspaceRoute],
+    ['src/routes/webchat.tsx', webchatRoute],
+    ['src/components/operator/CustomerReplyPanel.tsx', replyPanel],
+    ['src/components/webcall/AgentWebCallPanel.tsx', agentWebCallPanel],
+    ['src/lib/webchatVoiceApi.ts', webchatVoiceApi],
+  ]
+  const offenders = checkedFiles
+    .filter(([, text]) => /\bfetch\s*\(/.test(text))
+    .map(([name]) => name)
+  assert.deepEqual(offenders, [])
 })
