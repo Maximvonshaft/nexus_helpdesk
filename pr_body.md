@@ -6,26 +6,25 @@ Issue #165 required closing the remaining backend full pytest failures after PR 
 - initial backend full pytest: 15 failed, 711 passed, 1 skipped
 
 ## Changes
-- **async/plugin/test infra**: Added correct async testing configurations/markers to support `async def` test runners.
-- **Codex**: Fixed environment state leakage across tests that broke rigorous configuration assertions.
-- **WebChat stream**: Realigned tests that lacked mock requirements like `app_env` or `is_openclaw_stream_configured`.
-- **Speedaf**: Updated test stub signature (`fake_enqueue()`) to match the new background job payload expectations.
-- **migration/model drift**: Fixed SQLite Alembic downgrade script logic where conditional index dropping caused re-upgrade failures.
-- **replay/assertion contract drift**: Synchronized stream expectations so tests accurately assert the updated `reply_delta` vs `final` and `replay` output event shapes.
-- **actual product regression, if any**: None. The failures were isolated to test assertions, environment variables, test stubs, and migration downgrade scripts used heavily during tests.
+- async/test infra: corrected async test markers.
+- Codex: isolated provider feature-flag setup in tests.
+- WebChat stream: aligned the current SSE contract and tests. This includes minimal product-contract alignment for stream ordering and settings compatibility.
+- Speedaf: restored enqueue invocation compatibility.
+- migration/model drift: fixed SQLite downgrade/re-upgrade index handling used by migration tests.
+- replay/assertion contract drift: synchronized replay/final/delta assertions with the current stream contract.
 
 ## Tests
-- `python3 -m compileall app scripts` ✅
-- `pytest -q` ✅ 731 passed, 1 skipped, 424 warnings in 33.85s
-- `alembic heads` ✅
-- `alembic upgrade head` ✅
-- `pytest -q tests/test_migration_drift_gate.py` ✅
+- python3 compile check passed
+- pytest -q passed: 731 passed, 1 skipped, 424 warnings in 33.85s
+- alembic heads passed
+- alembic upgrade head passed
+- migration drift gate passed
 
 ## Risk
-This PR only modified test infrastructure, contract assertions, test environment isolation, and SQLite-specific migration downgrade limits. It does **not** touch or weaken production logic, retaining all PR #164 hardening.
+Low-to-moderate. This PR is mainly test and contract closure, but it does include minimal WebChat fast stream product-contract alignment. It does not weaken PR #164 hardening.
 
 ## Rollback
-`git revert -m 1 <merge_commit_sha>` to cleanly roll back these test modifications.
+Revert the PR #166 merge commit if needed.
 
 ## Production Gate Status
 This PR makes backend full pytest green, but does not make NexusDesk production ready.
