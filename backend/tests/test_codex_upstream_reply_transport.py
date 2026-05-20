@@ -67,7 +67,7 @@ def test_normalize_reply_path_rejects_parent_segment():
     assert error == "reply_path_parent_segment_forbidden"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_post_reply_turn_rejects_missing_base_url():
     result = await reply_transport.post_reply_turn(
         settings=reply_transport.ReplyTransportSettings(app_server_base_url=None),
@@ -80,7 +80,7 @@ async def test_post_reply_turn_rejects_missing_base_url():
     assert result.safe_summary["error_code"] == "app_server_base_url_missing"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_post_reply_turn_rejects_invalid_payload_before_network(monkeypatch):
     called = False
 
@@ -101,7 +101,7 @@ async def test_post_reply_turn_rejects_invalid_payload_before_network(monkeypatc
     assert called is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_post_reply_turn_success_returns_payload_and_safe_summary(monkeypatch):
     strict_reply = {
         "reply": "Please share your tracking number so I can check your parcel status.",
@@ -137,7 +137,7 @@ async def test_post_reply_turn_success_returns_payload_and_safe_summary(monkeypa
     assert sent["headers"]["x-nexus-provider-runtime"] == "codex-app-server-reply-v1"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_post_reply_turn_http_error_returns_safe_summary(monkeypatch):
     fake_client = _FakeAsyncClient(status_code=503, payload={"detail": "downstream unavailable"})
     monkeypatch.setattr(reply_transport.httpx, "AsyncClient", lambda *args, **kwargs: fake_client)
@@ -153,7 +153,7 @@ async def test_post_reply_turn_http_error_returns_safe_summary(monkeypatch):
     assert result.safe_summary["response_keys"] == ["detail"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_post_reply_turn_timeout_returns_safe_error(monkeypatch):
     fake_client = _FakeAsyncClient(exc=httpx.TimeoutException("timeout"))
     monkeypatch.setattr(reply_transport.httpx, "AsyncClient", lambda *args, **kwargs: fake_client)

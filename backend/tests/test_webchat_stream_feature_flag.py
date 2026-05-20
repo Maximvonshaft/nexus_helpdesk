@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api import webchat_fast
-from app.main import app
+from app.main import app as fastapi_app
 from app.services.webchat_fast_ai_service import WebchatFastReplyResult
 from app.services.webchat_fast_config import get_webchat_fast_settings
 from app.services.webchat_fast_stream_service import StreamBeginOutcome
@@ -18,7 +18,7 @@ from app.services.webchat_fast_idempotency_db import IdempotencyBeginResult, Web
 
 pytestmark = pytest.mark.fast_lane_v2_2_2
 
-client = TestClient(app)
+client = TestClient(fastapi_app)
 
 
 def _payload(client_message_id: str = 'stream-flag-1') -> dict:
@@ -146,8 +146,6 @@ def test_stream_canary_override_fails_for_public_ip_in_production(monkeypatch):
     get_webchat_fast_settings.cache_clear()
     
     # We patch the request client host to simulate a non-loopback IP
-    original_receive = client.app
-    
     class FakeHostMiddleware:
         def __init__(self, app):
             self.app = app
@@ -157,7 +155,7 @@ def test_stream_canary_override_fails_for_public_ip_in_production(monkeypatch):
                 scope["client"] = ("172.18.0.10", 12345)
             await self.app(scope, receive, send)
             
-    client_prod = TestClient(FakeHostMiddleware(app))
+    client_prod = TestClient(FakeHostMiddleware(fastapi_app))
 
     response = client_prod.post('/api/webchat/fast-reply/stream', json=_payload('stream-override-prod'), headers={'Accept': 'text/event-stream', 'X-Nexus-Stream-Canary': '1'})
     assert response.status_code == 503
@@ -192,7 +190,7 @@ def test_stream_canary_override_allows_bypass_for_loopback_in_production(monkeyp
                 scope["client"] = ("127.0.0.1", 12345)
             await self.app(scope, receive, send)
             
-    client_loopback = TestClient(FakeHostMiddlewareLoopback(app))
+    client_loopback = TestClient(FakeHostMiddlewareLoopback(fastapi_app))
 
     response = client_loopback.post('/api/webchat/fast-reply/stream', json=_payload('stream-override-loopback'), headers={'Accept': 'text/event-stream', 'X-Nexus-Stream-Canary': '1'})
     assert response.status_code == 200

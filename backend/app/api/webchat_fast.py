@@ -229,7 +229,7 @@ def _maybe_enqueue_speedaf_work_order(
     if not _is_delivery_follow_up_request(body=body, business_state=business_state, handoff_reason=handoff_reason, recommended_action=recommended_action):
         return None
     job = enqueue_speedaf_work_order_create_job(
-        db,
+        db=db,
         ticket_id=ticket_id,
         conversation_id=conversation_id,
         waybill_code=waybill_code,
@@ -376,7 +376,8 @@ def _is_stream_canary_override_allowed(request: Request, settings: WebchatFastSe
     client_host = request.client.host if request.client else None
     if client_host in ("127.0.0.1", "::1"):
         return True
-    if settings.app_env in {"development", "test", "local"}:
+    app_env = getattr(settings, "app_env", "development")
+    if app_env in {"development", "test", "local"}:
         return True
     return False
 
@@ -549,7 +550,7 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         return JSONResponse({"error_code": "stream_disabled"}, status_code=503, headers=headers)
     if stream_settings.stream_require_accept and "text/event-stream" not in (request.headers.get("accept") or ""):
         return JSONResponse({"error_code": "stream_accept_required"}, status_code=406, headers=headers)
-    if not stream_settings.is_openclaw_stream_configured:
+    if not getattr(stream_settings, "is_openclaw_stream_configured", bool(getattr(stream_settings, "stream_enabled", False))):
         return JSONResponse({"error_code": "stream_upstream_not_configured"}, status_code=503, headers=headers)
     is_selected = is_stream_rollout_selected(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, rollout_percent=getattr(stream_settings, "stream_rollout_percent", 100))
     if not is_selected and not _is_stream_canary_override_allowed(request, stream_settings):

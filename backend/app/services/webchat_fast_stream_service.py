@@ -192,18 +192,18 @@ async def stream_webchat_fast_reply_events(
 ) -> AsyncIterator[str]:
     if begin.status == "replay":
         stored = dict(begin.response_json or {})
-        yield sse_event("meta", {"replayed": True})
+        yield sse_event("replay", {"replayed": True})
         try:
             replay_reply = _validated_replay_reply(stored)
         except FastReplyParseError:
             record_fast_reply_metric(status="replay_invalid_output", elapsed_ms=0)
             yield sse_event("error", {"error_code": "ai_invalid_output", "retry_after_ms": 1500, "replayed": True})
             return
-        if replay_reply:
-            yield sse_event("reply_delta", {"text": replay_reply})
         final = {k: v for k, v in stored.items() if k != "reply"}
         final["replayed"] = True
         yield sse_event("final", final)
+        if replay_reply:
+            yield sse_event("reply_delta", {"text": replay_reply})
         return
 
     if begin.row_id is None:
@@ -263,9 +263,9 @@ async def stream_webchat_fast_reply_events(
         final["elapsed_ms"] = elapsed_ms
         _mark_done(begin.row_id, {**final, "reply": parsed.reply})
         record_fast_reply_metric(status="ok", intent=parsed.intent, handoff_required=parsed.handoff_required, elapsed_ms=elapsed_ms)
+        yield sse_event("final", final)
         if parsed.reply:
             yield sse_event("reply_delta", {"text": parsed.reply})
-        yield sse_event("final", final)
     except StreamingReplyAbort as exc:
         _mark_failed(begin.row_id, exc.error_code)
         record_fast_reply_metric(status=exc.error_code, elapsed_ms=int((time.monotonic() - started) * 1000))

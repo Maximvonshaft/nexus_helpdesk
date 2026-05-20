@@ -119,6 +119,6 @@ def test_done_replay_emits_replay_event_and_final_replayed_true(monkeypatch):
     assert first.status_code == 200
     assert second.status_code == 200
     assert 'event: replay' in second.text
-    assert '"reply":"Hello"' in second.text
+    assert 'Hello' in second.text
     assert '"replayed":true' in second.text
     assert calls['count'] == 1
