@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from app.main import app
 from app.models import User
 from app.services.livekit_voice_provider import LiveKitVoiceProvider
 from app.services.voice_provider import VoiceParticipantToken
+from app.utils.time import utc_now
 from app.voice_models import WebchatVoiceSession
 from app.webchat_models import WebchatEvent, WebchatMessage  # noqa: F401 - ensure metadata registration
 
@@ -84,6 +86,42 @@ def _create_webchat_conversation(client: TestClient, name: str = "Voice Visitor"
     return conversation_id, visitor_token, ticket_id
 
 
+def _create_voice_session(client: TestClient, *, name: str = "Voice Visitor") -> tuple[str, str, int, str]:
+    conversation_id, visitor_token, ticket_id = _create_webchat_conversation(client, name=name)
+    created = client.post(
+        f"/api/webchat/conversations/{conversation_id}/voice/sessions",
+        headers={"X-Webchat-Visitor-Token": visitor_token},
+        json={},
+    )
+    assert created.status_code == 200, created.text
+    return conversation_id, visitor_token, ticket_id, created.json()["voice_session_id"]
+
+
+def _set_voice_session_state(voice_session_id: str, *, status: str | None = None, expires_delta: timedelta | None = None) -> None:
+    db = SessionLocal()
+    try:
+        row = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.public_id == voice_session_id).one()
+        now = utc_now()
+        if status is not None:
+            row.status = status
+            if status in {"ended", "missed", "failed", "cancelled"}:
+                row.ended_at = row.ended_at or now
+        if expires_delta is not None:
+            row.expires_at = now + expires_delta
+        row.updated_at = now
+        db.commit()
+    finally:
+        db.close()
+
+
+def _event_types_for_ticket(ticket_id: int) -> list[str]:
+    db = SessionLocal()
+    try:
+        return [event.event_type for event in db.query(WebchatEvent).filter(WebchatEvent.ticket_id == ticket_id).order_by(WebchatEvent.id.asc()).all()]
+    finally:
+        db.close()
+
+
 def test_voice_runtime_config_exposes_livekit_url_without_secrets(monkeypatch):
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "livekit")
     monkeypatch.setenv("LIVEKIT_URL", "wss://voice.example.test")
@@ -123,6 +161,9 @@ def test_public_create_voice_session_binds_conversation_and_ticket():
     assert payload["voice_page_url"].endswith(payload["voice_session_id"])
     assert payload["participant_token"].startswith("mock_voice_token_")
     assert "ticket_id" not in payload
+    assert payload["recording_status"] == "disabled"
+    assert payload["transcript_status"] == "disabled"
+    assert payload["summary_status"] == "pending"
 
     db = SessionLocal()
     try:
@@ -172,14 +213,7 @@ def test_public_create_voice_session_returns_existing_active_session():
 
 def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
     client = TestClient(app)
-    conversation_id, visitor_token, ticket_id = _create_webchat_conversation(client)
-    created = client.post(
-        f"/api/webchat/conversations/{conversation_id}/voice/sessions",
-        headers={"X-Webchat-Visitor-Token": visitor_token},
-        json={},
-    )
-    assert created.status_code == 200, created.text
-    voice_session_id = created.json()["voice_session_id"]
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client)
 
     accepted = client.post(
         f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
@@ -188,12 +222,23 @@ def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["status"] == "active"
     assert accepted.json()["accepted_by_user_id"] == 9202
+    assert accepted.json().get("participant_token")
+
+    accepted_again = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        headers=_admin_headers(9202),
+    )
+    assert accepted_again.status_code == 200, accepted_again.text
+    assert accepted_again.json()["status"] == "active"
+    assert accepted_again.json()["accepted_by_user_id"] == 9202
 
     second_accept = client.post(
         f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
         headers=_admin_headers(9203),
     )
     assert second_accept.status_code == 409
+    assert second_accept.json()["detail"] == "voice session already accepted by another agent"
+    assert "participant_token" not in second_accept.text
 
     ended = client.post(
         f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/end",
@@ -208,14 +253,92 @@ def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
 
     db = SessionLocal()
     try:
+        row = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.public_id == voice_session_id).one()
+        assert row.accepted_by_user_id == 9202
         final_messages = db.query(WebchatMessage).filter(WebchatMessage.ticket_id == ticket_id, WebchatMessage.message_type == "voice_call").all()
         assert len(final_messages) == 1
         assert final_messages[0].client_message_id == f"voice-call-ended:{voice_session_id}"
-        events = db.query(WebchatEvent).filter(WebchatEvent.ticket_id == ticket_id).all()
-        event_types = [event.event_type for event in events]
-        assert "voice.session.accepted" in event_types
-        assert "voice.session.active" in event_types
-        assert "voice.session.ended" in event_types
+        event_types = [event.event_type for event in db.query(WebchatEvent).filter(WebchatEvent.ticket_id == ticket_id).all()]
+        assert event_types.count("voice.session.accepted") == 1
+        assert event_types.count("voice.session.active") == 1
+        assert event_types.count("voice.session.ended") == 1
+    finally:
+        db.close()
+
+
+def test_expired_ringing_session_accept_marks_missed_without_agent_token():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client)
+    _set_voice_session_state(voice_session_id, expires_delta=timedelta(seconds=-1))
+
+    response = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        headers=_admin_headers(9202),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "voice session expired"
+    assert "participant_token" not in response.text
+
+    db = SessionLocal()
+    try:
+        row = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.public_id == voice_session_id).one()
+        assert row.status == "missed"
+        assert row.accepted_by_user_id is None
+        assert row.ended_at is not None
+    finally:
+        db.close()
+    assert "voice.session.missed" in _event_types_for_ticket(ticket_id)
+
+
+@pytest.mark.parametrize(
+    ("terminal_status", "detail"),
+    [
+        ("ended", "voice session ended"),
+        ("missed", "voice session missed"),
+        ("failed", "voice session failed"),
+        ("cancelled", "voice session cancelled"),
+    ],
+)
+def test_terminal_voice_sessions_cannot_be_accepted(terminal_status: str, detail: str):
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name=f"Terminal {terminal_status}")
+    _set_voice_session_state(voice_session_id, status=terminal_status)
+
+    response = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        headers=_admin_headers(9202),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == detail
+    assert "participant_token" not in response.text
+
+
+def test_end_ringing_session_is_cancelled_and_idempotent_with_single_final_message():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Cancel Visitor")
+
+    first = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/end",
+        headers=_admin_headers(9202),
+    )
+    second = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/end",
+        headers=_admin_headers(9202),
+    )
+
+    assert first.status_code == 200, first.text
+    assert first.json()["status"] == "cancelled"
+    assert second.status_code == 200, second.text
+    assert second.json()["status"] == "cancelled"
+
+    db = SessionLocal()
+    try:
+        messages = db.query(WebchatMessage).filter(WebchatMessage.ticket_id == ticket_id, WebchatMessage.message_type == "voice_call").all()
+        assert len(messages) == 1
+        events = [event.event_type for event in db.query(WebchatEvent).filter(WebchatEvent.ticket_id == ticket_id).all()]
+        assert events.count("voice.session.cancelled") == 1
     finally:
         db.close()
 
@@ -309,13 +432,7 @@ def test_livekit_provider_create_accept_end_without_external_api(monkeypatch):
 
 def test_admin_voice_endpoint_requires_ticket_visibility():
     client = TestClient(app)
-    conversation_id, visitor_token, ticket_id = _create_webchat_conversation(client)
-    created = client.post(
-        f"/api/webchat/conversations/{conversation_id}/voice/sessions",
-        headers={"X-Webchat-Visitor-Token": visitor_token},
-        json={},
-    )
-    voice_session_id = created.json()["voice_session_id"]
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client)
 
     response = client.post(
         f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
@@ -327,13 +444,7 @@ def test_admin_voice_endpoint_requires_ticket_visibility():
 
 def test_admin_voice_end_requires_auth():
     client = TestClient(app)
-    conversation_id, visitor_token, ticket_id = _create_webchat_conversation(client)
-    created = client.post(
-        f"/api/webchat/conversations/{conversation_id}/voice/sessions",
-        headers={"X-Webchat-Visitor-Token": visitor_token},
-        json={},
-    )
-    voice_session_id = created.json()["voice_session_id"]
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client)
 
     response = client.post(f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/end")
 

@@ -8,6 +8,7 @@ from ..unit_of_work import managed_session
 from ..voice_schemas import WebchatVoiceCreateRequest
 from ..webchat_voice_config import load_webchat_voice_runtime_config
 from ..services.webchat_voice_service import (
+    DETAIL_EXPIRED,
     accept_admin_voice_session,
     create_public_voice_session,
     end_admin_voice_session,
@@ -78,8 +79,24 @@ def accept_ticket_voice_session(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict:
-    with managed_session(db):
-        return accept_admin_voice_session(db, ticket_id=ticket_id, voice_session_public_id=voice_session_id, current_user=current_user)
+    try:
+        result = accept_admin_voice_session(
+            db,
+            ticket_id=ticket_id,
+            voice_session_public_id=voice_session_id,
+            current_user=current_user,
+        )
+        db.commit()
+        return result
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_409_CONFLICT and exc.detail == DETAIL_EXPIRED:
+            db.commit()
+        else:
+            db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.post("/admin/tickets/{ticket_id}/voice/{voice_session_id}/end")

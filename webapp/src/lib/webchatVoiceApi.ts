@@ -1,6 +1,16 @@
 import { getToken } from '@/lib/api'
 import type { WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
 
+export class WebchatVoiceApiError extends Error {
+  status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'WebchatVoiceApiError'
+    this.status = status
+  }
+}
+
 function buildApiUrl(path: string) {
   const rawBase = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/+$/, '').replace(/\/api$/i, '')
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
@@ -23,7 +33,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(buildApiUrl(path), { ...init, headers })
   if (!res.ok) {
     const msg = await readErrorMessage(res, `${res.status} ${res.statusText}`)
-    throw new Error(msg)
+    throw new WebchatVoiceApiError(msg, res.status)
   }
   return res.json() as Promise<T>
 }
