@@ -13,7 +13,7 @@ WebChat customer
 -> /api/webchat/fast-reply
 -> webchat_fast_ai_service
 -> provider_router
--> codex_app_server provider
+-> codex_app_server provider or OpenClaw fallback route
 -> private local reply bridge
 -> Codex app-server adapter or stub/upstream sidecar
 -> strict JSON reply
@@ -67,6 +67,39 @@ Default production behavior remains unchanged:
 ```text
 WEBCHAT_FAST_AI_PROVIDER=openclaw_responses
 WEBCHAT_FAST_AI_FALLBACK_PROVIDER=none
+```
+
+### PR-4: Canary, kill switch, and observability
+
+The provider router now supports controlled routing when the configured provider is `codex_app_server`:
+
+```text
+CODEX_APP_SERVER_CANARY_PERCENT=0..100
+CODEX_APP_SERVER_KILL_SWITCH=true|false
+```
+
+Routing behavior:
+
+- `CODEX_APP_SERVER_KILL_SWITCH=true` routes to `openclaw_responses` immediately.
+- `CODEX_APP_SERVER_CANARY_PERCENT=0` routes all traffic to `openclaw_responses`.
+- `CODEX_APP_SERVER_CANARY_PERCENT=1..99` uses stable hash bucket routing based on tenant/session/request.
+- `CODEX_APP_SERVER_CANARY_PERCENT=100` routes all eligible traffic to `codex_app_server`.
+
+Observability is emitted through low-cardinality log metrics:
+
+```text
+webchat_codex_app_server_metric
+```
+
+Metric payload includes:
+
+```json
+{
+  "status": "route|ok|error|fallback_ok|fallback_failed",
+  "route": "canary_full|canary_selected|canary_skipped_openclaw|kill_switch_openclaw|configured_provider",
+  "elapsed_ms": 0,
+  "error_code": null
+}
 ```
 
 ## Strict reply schema
@@ -142,19 +175,20 @@ In production:
 - `CODEX_APP_SERVER_TOKEN` is forbidden.
 - `CODEX_APP_SERVER_TOKEN_FILE` is required when provider is `codex_app_server`.
 - `CODEX_APP_SERVER_BRIDGE_URL` must point to private, loopback, link-local, or tailnet/CGNAT address space.
+- `CODEX_APP_SERVER_CANARY_PERCENT` must be between 0 and 100.
+- If `CODEX_APP_SERVER_KILL_SWITCH=true` or `CODEX_APP_SERVER_CANARY_PERCENT<100`, OpenClaw route configuration is required because traffic can be routed to `openclaw_responses`.
 - `openclaw_responses` fallback still requires its own production token file and private URL validation.
 
 ## Later implementation phases
 
 1. Real private Codex app-server adapter behind the sidecar upstream mode.
-2. Canary percentage and kill switch.
-3. Metrics for request count, parse failure, timeout, fallback, elapsed time, and unsafe-output blocks.
-4. Production credential storage and rotation outside the repository.
-5. Optional admin UI to inspect provider status without exposing secrets.
+2. Production credential storage and rotation outside the repository.
+3. Optional admin UI to inspect provider status without exposing secrets.
+4. Optional Prometheus counters/histograms wired to the existing low-cardinality metric call sites.
 
 ## Non-goals
 
 - Replacing OpenClaw Responses immediately.
-- Sending all customer traffic to Codex.
+- Sending all customer traffic to Codex without canary controls.
 - Enabling Codex-native coding tools.
 - Building full agent runtime, approval bridge, or tool governance in this PR.
