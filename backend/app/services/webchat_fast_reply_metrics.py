@@ -28,3 +28,21 @@ def record_openclaw_responses_metric(*, status: str, agent_id: str, elapsed_ms: 
             "elapsed_ms": elapsed_ms,
         }},
     )
+
+
+def record_codex_app_server_metric(
+    *,
+    status: str,
+    route: str,
+    elapsed_ms: int | None = None,
+    error_code: str | None = None,
+) -> None:
+    LOGGER.info(
+        "webchat_codex_app_server_metric",
+        extra={"event_payload": {
+            "status": status,
+            "route": route,
+            "elapsed_ms": elapsed_ms,
+            "error_code": error_code,
+        }},
+    )
