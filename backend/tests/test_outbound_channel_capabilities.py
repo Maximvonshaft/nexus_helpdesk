@@ -18,9 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
+from app.api.tickets import ticket_outbound_channel_capabilities  # noqa: E402
 from app.db import Base  # noqa: E402
-from app.enums import ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus  # noqa: E402
-from app.models import ChannelAccount, Customer, Team, Ticket  # noqa: E402
+from app.enums import ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
+from app.models import ChannelAccount, Customer, Team, Ticket, User  # noqa: E402
 from app.services.outbound_channel_registry import (  # noqa: E402
     get_outbound_channel_capability,
     list_outbound_channel_capabilities,
@@ -46,6 +47,20 @@ def db_session(tmp_path):
 
 def _uid() -> str:
     return uuid.uuid4().hex[:10]
+
+
+def _admin(db_session) -> User:
+    row = User(
+        username=f"admin-{_uid()}",
+        display_name="Admin",
+        email=f"admin-{_uid()}@example.test",
+        password_hash="x",
+        role=UserRole.admin,
+        is_active=True,
+    )
+    db_session.add(row)
+    db_session.flush()
+    return row
 
 
 def _ticket(db_session, *, channel=SourceChannel.whatsapp, contact="+15550123456") -> Ticket:
@@ -148,3 +163,20 @@ def test_sms_requires_e164_target_even_when_runtime_and_account_are_ready(db_ses
     assert cap.status == "configurable"
     assert cap.supports_send is False
     assert "valid_e164_phone" in cap.missing
+
+
+def test_ticket_outbound_capabilities_endpoint_is_ticket_scoped(db_session, monkeypatch):
+    _reset_settings(monkeypatch, dispatch=True, provider="openclaw")
+    admin = _admin(db_session)
+    ticket = _ticket(db_session, channel=SourceChannel.whatsapp, contact="+15550123456")
+    db_session.add(ChannelAccount(provider="whatsapp", account_id=f"wa-{_uid()}", is_active=True, priority=10))
+    db_session.flush()
+
+    payload = ticket_outbound_channel_capabilities(ticket.id, db=db_session, current_user=admin)
+    rows = {item["channel"]: item for item in payload["channels"]}
+
+    assert rows["whatsapp"]["supports_send"] is True
+    assert rows["whatsapp"]["external_send"] is True
+    assert rows["whatsapp"]["missing"] == []
+    assert rows["internal"]["customer_sendable"] is False
+    assert rows["email"]["supports_send"] is False
