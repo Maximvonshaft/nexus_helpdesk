@@ -26,11 +26,25 @@ def test_validate_private_app_server_url_accepts_loopback_http():
     assert error is None
 
 
+def test_validate_private_app_server_url_accepts_docker_bridge_private_http():
+    value, error = transport.validate_private_app_server_url("http://172.18.0.1:18793")
+
+    assert value == "http://172.18.0.1:18793"
+    assert error is None
+
+
+def test_validate_private_app_server_url_accepts_tailnet_cgnat_http():
+    value, error = transport.validate_private_app_server_url("http://100.106.75.61:18792")
+
+    assert value == "http://100.106.75.61:18792"
+    assert error is None
+
+
 def test_validate_private_app_server_url_rejects_public_http():
-    value, error = transport.validate_private_app_server_url("http://example.com")
+    value, error = transport.validate_private_app_server_url("http://93.184.216.34")
 
     assert value is None
-    assert error == "app_server_http_requires_loopback"
+    assert error == "app_server_url_must_be_private"
 
 
 def test_validate_private_app_server_url_rejects_userinfo():
