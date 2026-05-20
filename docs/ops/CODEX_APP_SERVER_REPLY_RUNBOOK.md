@@ -4,13 +4,14 @@
 
 Validate and operate the private Codex reply bridge path without changing production WebChat traffic.
 
-The current implementation has five layers:
+The current implementation has six layers:
 
 1. Probe: `scripts/probe_codex_app_server_reply.sh`
 2. Private sidecar: `tools/codex-reply-bridge/sidecar.py`
 3. Backend provider: `backend/app/services/ai_runtime/codex_app_server_provider.py`
 4. Router controls: canary percent, kill switch, and low-cardinality metrics
 5. Upstream adapter skeleton: `tools/codex-reply-bridge/upstream_adapter.py`
+6. Upstream auth discovery: `tools/codex-reply-bridge/upstream_auth_discovery.py`
 
 The sidecar can run in `disabled`, `stub`, or `upstream` mode. The upstream adapter can run in `disabled`, `contract_fixture`, or future `codex_app_server` mode.
 
@@ -21,6 +22,7 @@ You need one of the following on the server or local dev host:
 - a working private upstream Codex app-server adapter endpoint;
 - a bridge shared token file for Nexus-to-sidecar authentication;
 - an upstream token file if the upstream adapter requires authentication;
+- an explicit Codex auth source file for future real mode;
 - the Nexus repository checkout.
 
 Do not paste credentials into shell history. Prefer files under `/run/nexus/` with root-only permissions.
@@ -33,7 +35,8 @@ PYTHONPATH=backend pytest -q \
   backend/tests/test_codex_reply_bridge_sidecar.py \
   backend/tests/test_webchat_codex_app_server_provider.py \
   backend/tests/test_webchat_codex_app_server_canary_observability.py \
-  backend/tests/test_codex_upstream_adapter_skeleton.py
+  backend/tests/test_codex_upstream_adapter_skeleton.py \
+  backend/tests/test_codex_upstream_auth_discovery.py
 ```
 
 ## Start sidecar in local stub mode
@@ -73,6 +76,106 @@ cat artifacts/codex_reply_probe/report.md
 ```
 
 Expected result in stub mode: `PASS`.
+
+## Upstream auth discovery validation
+
+This validates explicit auth source recognition only. It does not log in, refresh tokens, or call Codex.
+
+Supported explicit source files:
+
+```text
+CODEX_UPSTREAM_AUTH_PROFILE_FILE
+CODEX_CLI_AUTH_FILE
+CODEX_UPSTREAM_API_KEY_FILE
+```
+
+Discovery output reports only:
+
+```text
+source_kind
+credential_kind
+login_type
+account_hint_present
+plan_hint_present
+fingerprint
+usable
+error_code
+```
+
+It never echoes access tokens, refresh tokens, or API keys.
+
+Example local synthetic validation:
+
+```bash
+set -Eeuo pipefail
+
+cd /opt/nexus_helpdesk || cd ~/nexus_helpdesk
+. .venv/bin/activate
+
+mkdir -p /tmp/codex_auth_discovery_demo
+cat > /tmp/codex_auth_discovery_demo/auth_profile.json <<'JSON'
+{
+  "profiles": {
+    "openai-codex:default": {
+      "type": "token",
+      "provider": "openai-codex",
+      "access": "synthetic-access-token-for-discovery-test-only",
+      "accountId": "acct_demo",
+      "chatgptPlanType": "plus"
+    }
+  }
+}
+JSON
+
+mkdir -p /run/nexus
+umask 077
+if [ ! -s /run/nexus/codex_reply_bridge_upstream_token ]; then
+  python - <<'PY' > /run/nexus/codex_reply_bridge_upstream_token
+import secrets
+print(secrets.token_urlsafe(48), end='')
+PY
+fi
+
+export PYTHONPATH=backend
+export APP_ENV=development
+export CODEX_UPSTREAM_ADAPTER_MODE=codex_app_server
+export CODEX_UPSTREAM_ADAPTER_REQUIRE_AUTH=true
+export CODEX_UPSTREAM_ADAPTER_SHARED_TOKEN_FILE=/run/nexus/codex_reply_bridge_upstream_token
+export CODEX_UPSTREAM_AUTH_PROFILE_FILE=/tmp/codex_auth_discovery_demo/auth_profile.json
+export CODEX_UPSTREAM_ADAPTER_HOST=127.0.0.1
+export CODEX_UPSTREAM_ADAPTER_PORT=18794
+
+pkill -f 'tools/codex-reply-bridge/upstream_adapter.py' >/dev/null 2>&1 || true
+python tools/codex-reply-bridge/upstream_adapter.py > /tmp/codex_upstream_adapter.log 2>&1 &
+UPSTREAM_PID=$!
+trap 'kill "$UPSTREAM_PID" >/dev/null 2>&1 || true' EXIT
+
+for i in $(seq 1 30); do
+  curl -fsS http://127.0.0.1:18794/healthz >/dev/null 2>&1 && break
+  sleep 1
+done
+
+curl -fsS http://127.0.0.1:18794/readyz
+curl -fsS \
+  -H "X-Nexus-Upstream-Token: $(cat /run/nexus/codex_reply_bridge_upstream_token)" \
+  http://127.0.0.1:18794/auth/status
+```
+
+Expected auth discovery fields:
+
+```json
+{
+  "source_kind": "auth_profile_file",
+  "usable": true,
+  "credential_kind": "token",
+  "login_type": "chatgptAuthTokens",
+  "account_hint_present": true,
+  "plan_hint_present": true,
+  "fingerprint": "sha256:..."
+}
+```
+
+The synthetic secret string must not appear in output.
 
 ## Upstream adapter contract fixture E2E
 
@@ -253,18 +356,17 @@ Production note: if kill switch is true or canary percent is below 100, OpenClaw
 
 ## Future real Codex app-server mode
 
-`CODEX_UPSTREAM_ADAPTER_MODE=codex_app_server` is intentionally not implemented in this skeleton PR. It will return:
+`CODEX_UPSTREAM_ADAPTER_MODE=codex_app_server` currently performs auth discovery only and returns:
 
 ```text
 codex_app_server_transport_not_implemented
 ```
 
-The future real mode must only use explicit auth sources, such as:
+The future real mode must use the discovered login type:
 
 ```text
-CODEX_UPSTREAM_AUTH_PROFILE_FILE
-CODEX_CLI_AUTH_FILE
-CODEX_UPSTREAM_API_KEY_FILE
+chatgptAuthTokens for oauth/token credentials
+apiKey for api_key credentials
 ```
 
 It must not scrape browser cookies or ChatGPT sessions.
@@ -289,7 +391,7 @@ artifacts/codex_reply_probe/final_verdict.txt
 
 ## Safety validation
 
-The probe, sidecar, backend provider, router controls, and upstream adapter skeleton enforce these rules:
+The probe, sidecar, backend provider, router controls, upstream adapter skeleton, and auth discovery enforce these rules:
 
 - HTTP probe URLs are allowed only for loopback hosts such as `127.0.0.1` and `localhost`.
 - Remote probe URLs must use HTTPS.
@@ -300,6 +402,7 @@ The probe, sidecar, backend provider, router controls, and upstream adapter skel
 - Sidecar `/reply` returns only the six strict reply fields on success.
 - Backend provider returns only safe summaries, not raw upstream payloads.
 - Upstream adapter `/auth/status` never echoes secrets.
+- Auth discovery returns only source kind, credential kind, login type, hints, and fingerprint.
 - Artifact output is sanitized before writing.
 
 ## Production controls
@@ -322,8 +425,9 @@ Do not connect the sidecar to a real Codex upstream adapter until:
 3. backend provider smoke returns `reply_source=codex_app_server`;
 4. canary/kill switch tests pass;
 5. upstream contract fixture probe returns `PASS`;
-6. upstream real Codex mode returns `PASS` against explicit auth sources;
-7. sanitized artifacts show no secret exposure.
+6. auth discovery tests pass and `/auth/status` shows no secret exposure;
+7. upstream real Codex mode returns `PASS` against explicit auth sources;
+8. sanitized artifacts show no secret exposure.
 
 ## Rollback
 
