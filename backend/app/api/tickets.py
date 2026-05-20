@@ -56,7 +56,7 @@ from ..services.ticket_service import (
 from ..services.timeline_service import build_unified_timeline
 from ..services.permissions import ensure_ticket_visible
 from ..services.sla_service import compute_sla_snapshot
-from ..services.outbound_channel_registry import require_outbound_channel_sendable
+from ..services.outbound_channel_registry import list_outbound_channel_capabilities, require_outbound_channel_sendable
 from ..services.outbound_semantics import outbound_is_external_send, outbound_ui_label
 from ..settings import get_settings
 from .deps import get_current_user
@@ -299,6 +299,15 @@ def upload_attachment_endpoint(
         )
         db.flush()
     return item
+
+
+@router.get("/{ticket_id}/outbound/channels/capabilities")
+def ticket_outbound_channel_capabilities(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ticket = get_ticket_or_404(db, ticket_id)
+    ensure_ticket_visible(current_user, ticket, db)
+    return {
+        "channels": [item.to_dict() for item in list_outbound_channel_capabilities(db=db, ticket=ticket)],
+    }
 
 
 @router.post("/{ticket_id}/outbound/draft", response_model=OutboundMessageRead)
