@@ -22,6 +22,10 @@ from upstream_auth_discovery import (  # noqa: E402
     discover_auth_sources,
     select_best_auth_source,
 )
+from upstream_login_payload_boundary import (  # noqa: E402
+    build_best_login_payload,
+    login_payload_safe_summary,
+)
 
 
 AdapterMode = Literal["disabled", "contract_fixture", "codex_app_server"]
@@ -159,6 +163,15 @@ def _auth_discovery(settings: UpstreamAdapterSettings) -> dict[str, Any]:
     }
 
 
+def _login_payload_boundary(settings: UpstreamAdapterSettings) -> dict[str, Any]:
+    result = build_best_login_payload(
+        auth_profile_file=settings.auth_profile_file,
+        codex_cli_auth_file=settings.codex_cli_auth_file,
+        api_key_file=settings.api_key_file,
+    )
+    return login_payload_safe_summary(result)
+
+
 app = FastAPI(title="NexusDesk Codex Upstream Adapter", version="0.1.0")
 
 
@@ -190,12 +203,15 @@ def auth_status(authorization: str | None = Header(default=None), x_nexus_upstre
         "shared_token_configured": bool(settings.shared_token),
         "request_token_present": bool(supplied),
         "discovery": _auth_discovery(settings),
+        "login_payload_boundary": _login_payload_boundary(settings),
         "boundary": {
             "browser_cookie_scraping": False,
             "chatgpt_session_scraping": False,
             "shell_execution": False,
             "file_write": False,
             "tool_execution": False,
+            "account_login_start_request": False,
+            "external_network_call": False,
         },
     }
 
