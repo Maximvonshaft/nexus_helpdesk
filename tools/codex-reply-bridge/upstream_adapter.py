@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -11,6 +12,16 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.services.webchat_fast_output_parser import parse_openclaw_fast_reply
+
+CURRENT_DIR = Path(__file__).resolve().parent
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+from upstream_auth_discovery import (  # noqa: E402
+    auth_source_public_summary,
+    discover_auth_sources,
+    select_best_auth_source,
+)
 
 
 AdapterMode = Literal["disabled", "contract_fixture", "codex_app_server"]
@@ -56,10 +67,6 @@ def _read_secret_file(path_value: str | None) -> str | None:
     if value.lower().startswith("bearer "):
         value = value.split(None, 1)[1].strip()
     return value or None
-
-
-def _path_exists(path_value: str | None) -> bool:
-    return bool(path_value and Path(path_value).is_file())
 
 
 def _load_settings() -> UpstreamAdapterSettings:
@@ -139,11 +146,16 @@ def _normalize_strict_reply(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _auth_sources(settings: UpstreamAdapterSettings) -> dict[str, bool]:
+def _auth_discovery(settings: UpstreamAdapterSettings) -> dict[str, Any]:
+    candidates = discover_auth_sources(
+        auth_profile_file=settings.auth_profile_file,
+        codex_cli_auth_file=settings.codex_cli_auth_file,
+        api_key_file=settings.api_key_file,
+    )
+    selected = select_best_auth_source(candidates)
     return {
-        "auth_profile_file_present": _path_exists(settings.auth_profile_file),
-        "codex_cli_auth_file_present": _path_exists(settings.codex_cli_auth_file),
-        "api_key_file_present": _path_exists(settings.api_key_file),
+        "selected": auth_source_public_summary(selected),
+        "candidates": [auth_source_public_summary(candidate) for candidate in candidates],
     }
 
 
@@ -162,7 +174,7 @@ def readyz():
         return _safe_error(503, "upstream_adapter_disabled")
     if settings.require_auth and not settings.shared_token:
         return _safe_error(503, "upstream_adapter_auth_not_configured")
-    if settings.mode == "codex_app_server" and not any(_auth_sources(settings).values()):
+    if settings.mode == "codex_app_server" and not _auth_discovery(settings)["selected"]["usable"]:
         return _safe_error(503, "codex_auth_source_missing")
     return {"ok": True, "mode": settings.mode, "auth_required": settings.require_auth}
 
@@ -177,7 +189,7 @@ def auth_status(authorization: str | None = Header(default=None), x_nexus_upstre
         "auth_required": settings.require_auth,
         "shared_token_configured": bool(settings.shared_token),
         "request_token_present": bool(supplied),
-        "sources": _auth_sources(settings),
+        "discovery": _auth_discovery(settings),
         "boundary": {
             "browser_cookie_scraping": False,
             "chatgpt_session_scraping": False,
@@ -201,6 +213,8 @@ def reply(
     if settings.mode == "contract_fixture":
         return _normalize_strict_reply(_fixture_reply(request))
     if settings.mode == "codex_app_server":
+        if not _auth_discovery(settings)["selected"]["usable"]:
+            return _safe_error(503, "codex_auth_source_missing")
         return _safe_error(501, "codex_app_server_transport_not_implemented")
     return _safe_error(503, "upstream_adapter_disabled")
 
