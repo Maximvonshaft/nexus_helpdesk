@@ -56,7 +56,7 @@ def test_discover_rejects_public_http_url():
     )
 
     assert result.ok is False
-    assert result.error_code == "app_server_http_requires_loopback"
+    assert result.error_code == "app_server_url_must_be_private"
 
 
 def test_discover_default_methods_do_not_post(monkeypatch):
