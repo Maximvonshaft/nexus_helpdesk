@@ -32,12 +32,33 @@ def _table_exists(name: str) -> bool:
 
 
 def _index_exists(name: str, table: str) -> bool:
-    return name in {idx["name"] for idx in _inspector().get_indexes(table)}
+    inspector_names = {idx["name"] for idx in _inspector().get_indexes(table)}
+    if name in inspector_names:
+        return True
+    dialect = _dialect_name()
+    if dialect == "sqlite":
+        row = op.get_bind().execute(
+            sa.text("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = :table AND name = :name"),
+            {"table": table, "name": name},
+        ).first()
+        return row is not None
+    if dialect == "postgresql":
+        row = op.get_bind().execute(
+            sa.text("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND tablename = :table AND indexname = :name"),
+            {"table": table, "name": name},
+        ).first()
+        return row is not None
+    return False
 
 
 def _drop_index_if_exists(name: str, table: str) -> None:
-    if _index_exists(name, table):
-        op.drop_index(name, table_name=table)
+    if not _index_exists(name, table):
+        return
+    dialect = _dialect_name()
+    if dialect == "sqlite":
+        _execute(f"DROP INDEX IF EXISTS {name}")
+        return
+    op.drop_index(name, table_name=table)
 
 
 def _create_partial_unique_index_if_missing(name: str, table: str, columns: list[object], where_sql: str) -> None:

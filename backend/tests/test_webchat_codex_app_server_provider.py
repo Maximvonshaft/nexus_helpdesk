@@ -118,6 +118,7 @@ def test_codex_app_server_provider_missing_config_is_safe():
 
 def test_codex_app_server_config_requires_feature_flag(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "codex_app_server")
     monkeypatch.delenv("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", raising=False)
     _clear_settings()
@@ -128,6 +129,7 @@ def test_codex_app_server_config_requires_feature_flag(monkeypatch):
 
 def test_codex_app_server_config_allows_development_plain_token(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "codex_app_server")
     monkeypatch.setenv("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", "true")
     monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18793/reply")
@@ -143,6 +145,7 @@ def test_codex_app_server_config_allows_development_plain_token(monkeypatch):
 
 def test_codex_app_server_production_forbids_plain_token(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "codex_app_server")
     monkeypatch.setenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "none")
     monkeypatch.setenv("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", "true")
@@ -159,6 +162,7 @@ def test_codex_app_server_production_accepts_private_url_and_token_file(monkeypa
     token_file = tmp_path / "codex_app_server_token"
     token_file.write_text("file-token", encoding="utf-8")
     monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "codex_app_server")
     monkeypatch.setenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "none")
     monkeypatch.setenv("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", "true")

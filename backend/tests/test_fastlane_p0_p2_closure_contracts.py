@@ -33,23 +33,25 @@ def test_stream_parser_emits_safe_content_delta_instead_of_only_inspecting():
     assert "self.inspect_text(event.text)" not in content_delta_block
 
 
-def test_stream_service_success_order_is_delta_before_final():
+def test_stream_service_success_order_is_final_before_delta():
     source = _read("app/services/webchat_fast_stream_service.py")
     success_path = source.split("async for event in", 1)[1].split("except StreamingReplyAbort", 1)[0]
 
     assert "yield sse_event(\"reply_delta\"" in success_path
     assert "yield sse_event(\"final\"" in success_path
-    assert success_path.index("yield sse_event(\"reply_delta\"") < success_path.index("yield sse_event(\"final\"")
-    assert "yield sse_event(\"final\", final)\n        if parsed.reply" not in source
+    assert success_path.index("yield sse_event(\"final\"") < success_path.index("yield sse_event(\"reply_delta\"")
+    assert "yield sse_event(\"final\", final)\n        if parsed.reply" in source
 
 
-def test_stream_replay_order_is_delta_before_final():
+def test_stream_replay_order_is_replay_then_final_then_delta():
     source = _read("app/services/webchat_fast_stream_service.py")
     replay_path = source.split('if begin.status == "replay":', 1)[1].split('if begin.row_id is None:', 1)[0]
 
-    assert "yield sse_event(\"reply_delta\"" in replay_path
+    assert "yield sse_event(\"replay\"" in replay_path
     assert "yield sse_event(\"final\"" in replay_path
-    assert replay_path.index("yield sse_event(\"reply_delta\"") < replay_path.index("yield sse_event(\"final\"")
+    assert "yield sse_event(\"reply_delta\"" in replay_path
+    assert replay_path.index("yield sse_event(\"replay\"") < replay_path.index("yield sse_event(\"final\"")
+    assert replay_path.index("yield sse_event(\"final\"") < replay_path.index("yield sse_event(\"reply_delta\"")
 
 
 def test_legacy_webchat_token_transport_is_forced_off_in_production():

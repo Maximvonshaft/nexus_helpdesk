@@ -187,6 +187,7 @@ def test_generate_fast_reply_codex_failure_fallback_ok_records_metric(monkeypatc
 
 def test_codex_canary_percent_config_validation(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "codex_app_server")
     monkeypatch.setenv("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", "true")
     monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18793/reply")
@@ -200,6 +201,7 @@ def test_codex_canary_percent_config_validation(monkeypatch):
 
 def test_codex_kill_switch_config(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "codex_app_server")
     monkeypatch.setenv("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", "true")
     monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18793/reply")
@@ -216,6 +218,7 @@ def test_production_codex_canary_requires_openclaw_token_file(monkeypatch, tmp_p
     codex_token_file = tmp_path / "codex_app_server_token"
     codex_token_file.write_text("codex-file-token", encoding="utf-8")
     monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "codex_app_server")
     monkeypatch.setenv("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", "true")
     monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18793/reply")
@@ -233,6 +236,7 @@ def test_production_codex_kill_switch_requires_openclaw_token_file(monkeypatch, 
     codex_token_file = tmp_path / "codex_app_server_token"
     codex_token_file.write_text("codex-file-token", encoding="utf-8")
     monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "codex_app_server")
     monkeypatch.setenv("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", "true")
     monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18793/reply")

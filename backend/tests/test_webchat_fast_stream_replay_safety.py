@@ -127,7 +127,7 @@ def test_stream_replay_revalidates_stored_reply_before_reply_delta(monkeypatch):
     assert response.status_code == 200
     events = _parse_sse(response.text)
 
-    assert ("meta", {"replayed": True}) in events
+    assert ("replay", {"replayed": True}) in events
     assert any(event == "error" and data.get("error_code") == "ai_invalid_output" and data.get("replayed") is True for event, data in events)
     assert not any(event == "reply_delta" for event, _ in events)
     assert not any(event == "final" for event, _ in events)
@@ -157,10 +157,13 @@ def test_stream_replay_safe_stored_reply_still_emits_delta_and_omits_reply_from_
     assert response.status_code == 200
     events = _parse_sse(response.text)
 
+    replays = [data for event, data in events if event == "replay"]
     deltas = [data["text"] for event, data in events if event == "reply_delta"]
     finals = [data for event, data in events if event == "final"]
+    assert replays == [{"replayed": True}]
     assert deltas == ["Hi, this is Speedy. Please share your tracking number so I can help check it."]
     assert len(finals) == 1
+    assert events.index(("replay", replays[0])) < events.index(("final", finals[0])) < events.index(("reply_delta", {"text": deltas[0]}))
     assert finals[0]["replayed"] is True
     assert finals[0]["intent"] == "tracking_missing_number"
     assert "reply" not in finals[0]
