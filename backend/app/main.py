@@ -220,23 +220,22 @@ if webchat_static_dir.exists():
 
 frontend_dir = settings.frontend_root
 assets_dir = frontend_dir / "assets"
-if assets_dir.exists():
-    app.mount('/assets', StaticFiles(directory=str(assets_dir)), name='frontend_assets')
+if frontend_dir.exists():
+    if assets_dir.exists():
+        app.mount('/assets', StaticFiles(directory=str(assets_dir)), name='assets')
 
+    @app.get('/', include_in_schema=False)
+    def serve_spa_root():
+        index_file = frontend_dir / 'index.html'
+        if index_file.exists():
+            return FileResponse(index_file)
+        return JSONResponse(status_code=404, content={'detail': 'frontend build not found'})
 
-@app.get('/', response_class=HTMLResponse)
-def serve_frontend_root():
-    index = frontend_dir / "index.html"
-    if index.exists():
-        return FileResponse(index)
-    return HTMLResponse('<h1>NexusDesk Helpdesk API</h1><p>Frontend build not found.</p>')
-
-
-@app.get('/{full_path:path}', response_class=HTMLResponse)
-def serve_frontend_spa(full_path: str):
-    if full_path.startswith('api/'):
-        return JSONResponse(status_code=404, content={'detail': 'Not Found'})
-    index = frontend_dir / "index.html"
-    if index.exists():
-        return FileResponse(index)
-    return HTMLResponse('<h1>NexusDesk Helpdesk API</h1><p>Frontend build not found.</p>')
+    @app.get('/{full_path:path}', include_in_schema=False)
+    def serve_spa_fallback(full_path: str):
+        if full_path.startswith(('api/', 'docs', 'openapi.json', 'healthz', 'readyz', 'metrics', 'webchat/', 'static/')):
+            return JSONResponse(status_code=404, content={'detail': 'not found'})
+        index_file = frontend_dir / 'index.html'
+        if index_file.exists():
+            return FileResponse(index_file)
+        return JSONResponse(status_code=404, content={'detail': 'frontend build not found'})
