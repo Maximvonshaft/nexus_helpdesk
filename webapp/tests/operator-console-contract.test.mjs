@@ -7,6 +7,7 @@ const root = resolve(process.cwd())
 const apiClient = readFileSync(resolve(root, 'src/lib/api.ts'), 'utf8')
 const types = readFileSync(resolve(root, 'src/lib/types.ts'), 'utf8')
 const workspaceRoute = readFileSync(resolve(root, 'src/routes/workspace.tsx'), 'utf8')
+const runtimeRoute = readFileSync(resolve(root, 'src/routes/runtime.tsx'), 'utf8')
 const webchatRoute = readFileSync(resolve(root, 'src/routes/webchat.tsx'), 'utf8')
 const webchatVoiceApi = readFileSync(resolve(root, 'src/lib/webchatVoiceApi.ts'), 'utf8')
 const agentWebCallPanel = readFileSync(resolve(root, 'src/components/webcall/AgentWebCallPanel.tsx'), 'utf8')
@@ -97,9 +98,37 @@ test('webchat voice admin calls delegate to unified api client', () => {
   assert.doesNotMatch(webchatVoiceApi, /adminRequest/)
 })
 
+test('runtime recovery actions use safe api client endpoints', () => {
+  assert.match(apiClient, /export type RuntimeRecoveryResult = \{/)
+  assert.match(apiClient, /requeueJob: \(jobId: number\) => request<RuntimeRecoveryResult>/)
+  assert.match(apiClient, /\/api\/admin\/jobs\/\$\{jobId\}\/requeue/)
+  assert.match(apiClient, /requeueDeadJobs: \(params\?: \{ job_type\?: string; limit\?: number \}\)/)
+  assert.match(apiClient, /\/api\/admin\/jobs\/requeue-dead/)
+  assert.match(apiClient, /requeueOutboundMessage: \(messageId: number\) => request<RuntimeRecoveryResult>/)
+  assert.match(apiClient, /\/api\/admin\/outbound\/\$\{messageId\}\/requeue/)
+  assert.match(apiClient, /requeueDeadOutbound: \(params\?: \{ limit\?: number \}\)/)
+  assert.match(apiClient, /\/api\/admin\/outbound\/requeue-dead/)
+})
+
+test('runtime page exposes confirmed recovery actions and refreshes runtime views', () => {
+  assert.match(runtimeRoute, /data-testid="runtime-recovery-actions"/)
+  assert.match(runtimeRoute, /window\.confirm/)
+  assert.match(runtimeRoute, /api\.requeueDeadJobs\(\{ limit: 50 \}\)/)
+  assert.match(runtimeRoute, /api\.requeueDeadOutbound\(\{ limit: 50 \}\)/)
+  assert.match(runtimeRoute, /api\.requeueJob\(job\.id\)/)
+  assert.match(runtimeRoute, /重排 dead 后台任务/)
+  assert.match(runtimeRoute, /重排 dead outbound/)
+  assert.match(runtimeRoute, /重排此任务/)
+  assert.match(runtimeRoute, /不会删除任务，不会跳过权限，不会绕过后端审计/)
+  for (const key of ['runtimeHealth', 'readiness', 'signoff', 'jobs', 'queueSummary', 'openclawConnectivity']) {
+    assert.match(runtimeRoute, new RegExp(`invalidateQueries\\(\\{ queryKey: \\['${key}'\\] \\}\\)`))
+  }
+})
+
 test('admin operator surfaces do not bypass unified api client with raw fetch', () => {
   const checkedFiles = [
     ['src/routes/workspace.tsx', workspaceRoute],
+    ['src/routes/runtime.tsx', runtimeRoute],
     ['src/routes/webchat.tsx', webchatRoute],
     ['src/components/operator/CustomerReplyPanel.tsx', replyPanel],
     ['src/components/webcall/AgentWebCallPanel.tsx', agentWebCallPanel],
