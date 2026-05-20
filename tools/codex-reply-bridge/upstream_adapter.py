@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from dataclasses import dataclass
@@ -25,6 +26,11 @@ from upstream_auth_discovery import (  # noqa: E402
 from upstream_login_payload_boundary import (  # noqa: E402
     build_best_login_payload,
     login_payload_safe_summary,
+)
+from upstream_transport_boundary import (  # noqa: E402
+    TransportBoundarySettings,
+    post_account_login_start,
+    validate_private_app_server_url,
 )
 
 
@@ -52,6 +58,10 @@ class UpstreamAdapterSettings:
     auth_profile_file: str | None
     codex_cli_auth_file: str | None
     api_key_file: str | None
+    app_server_base_url: str | None
+    app_server_timeout_ms: int
+    app_server_allow_public_url: bool
+    app_server_login_dry_run: bool
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -59,6 +69,15 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name)
+    try:
+        value = int(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
 
 
 def _read_secret_file(path_value: str | None) -> str | None:
@@ -86,6 +105,10 @@ def _load_settings() -> UpstreamAdapterSettings:
         auth_profile_file=(os.getenv("CODEX_UPSTREAM_AUTH_PROFILE_FILE") or "").strip() or None,
         codex_cli_auth_file=(os.getenv("CODEX_CLI_AUTH_FILE") or "").strip() or None,
         api_key_file=(os.getenv("CODEX_UPSTREAM_API_KEY_FILE") or "").strip() or None,
+        app_server_base_url=(os.getenv("CODEX_UPSTREAM_APP_SERVER_BASE_URL") or "").strip() or None,
+        app_server_timeout_ms=_env_int("CODEX_UPSTREAM_APP_SERVER_TIMEOUT_MS", 15000, minimum=500, maximum=30000),
+        app_server_allow_public_url=_env_bool("CODEX_UPSTREAM_APP_SERVER_ALLOW_PUBLIC_URL", False),
+        app_server_login_dry_run=_env_bool("CODEX_UPSTREAM_APP_SERVER_LOGIN_DRY_RUN", True),
     )
 
 
@@ -163,13 +186,33 @@ def _auth_discovery(settings: UpstreamAdapterSettings) -> dict[str, Any]:
     }
 
 
-def _login_payload_boundary(settings: UpstreamAdapterSettings) -> dict[str, Any]:
-    result = build_best_login_payload(
+def _login_payload_result(settings: UpstreamAdapterSettings):
+    return build_best_login_payload(
         auth_profile_file=settings.auth_profile_file,
         codex_cli_auth_file=settings.codex_cli_auth_file,
         api_key_file=settings.api_key_file,
     )
-    return login_payload_safe_summary(result)
+
+
+def _login_payload_boundary(settings: UpstreamAdapterSettings) -> dict[str, Any]:
+    return login_payload_safe_summary(_login_payload_result(settings))
+
+
+def _transport_boundary_status(settings: UpstreamAdapterSettings) -> dict[str, Any]:
+    normalized_url, error_code = validate_private_app_server_url(
+        settings.app_server_base_url,
+        allow_public_url=settings.app_server_allow_public_url,
+    )
+    return {
+        "configured": bool(settings.app_server_base_url),
+        "base_url_accepted": bool(normalized_url and not error_code),
+        "error_code": error_code,
+        "timeout_ms": settings.app_server_timeout_ms,
+        "allow_public_url": settings.app_server_allow_public_url,
+        "login_dry_run": settings.app_server_login_dry_run,
+        "account_login_start_request": False,
+        "external_network_call": False,
+    }
 
 
 app = FastAPI(title="NexusDesk Codex Upstream Adapter", version="0.1.0")
@@ -204,6 +247,7 @@ def auth_status(authorization: str | None = Header(default=None), x_nexus_upstre
         "request_token_present": bool(supplied),
         "discovery": _auth_discovery(settings),
         "login_payload_boundary": _login_payload_boundary(settings),
+        "transport_boundary": _transport_boundary_status(settings),
         "boundary": {
             "browser_cookie_scraping": False,
             "chatgpt_session_scraping": False,
@@ -214,6 +258,47 @@ def auth_status(authorization: str | None = Header(default=None), x_nexus_upstre
             "external_network_call": False,
         },
     }
+
+
+@app.get("/transport/status")
+def transport_status(authorization: str | None = Header(default=None), x_nexus_upstream_token: str | None = Header(default=None)) -> dict[str, Any]:
+    settings = _load_settings()
+    _assert_authorized(settings, authorization, x_nexus_upstream_token)
+    return {
+        "ok": True,
+        "mode": settings.mode,
+        "login_payload_boundary": _login_payload_boundary(settings),
+        "transport_boundary": _transport_boundary_status(settings),
+    }
+
+
+@app.post("/transport/login-start", response_model=None)
+def transport_login_start(authorization: str | None = Header(default=None), x_nexus_upstream_token: str | None = Header(default=None)):
+    settings = _load_settings()
+    _assert_authorized(settings, authorization, x_nexus_upstream_token)
+    if settings.mode != "codex_app_server":
+        return _safe_error(409, "codex_app_server_mode_required")
+    login_result = _login_payload_result(settings)
+    if not login_result.payload:
+        return _safe_error(503, login_result.error_code or "login_payload_not_ready")
+    if settings.app_server_login_dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "login_payload_boundary": login_payload_safe_summary(login_result),
+            "transport_boundary": _transport_boundary_status(settings),
+        }
+    result = asyncio.run(
+        post_account_login_start(
+            settings=TransportBoundarySettings(
+                app_server_base_url=settings.app_server_base_url,
+                timeout_ms=settings.app_server_timeout_ms,
+                allow_public_url=settings.app_server_allow_public_url,
+            ),
+            login_payload=login_result.payload,
+        )
+    )
+    return JSONResponse(status_code=200 if result.ok else 502, content={"ok": result.ok, "dry_run": False, "transport": result.safe_summary})
 
 
 @app.post("/reply", response_model=None)
@@ -231,7 +316,7 @@ def reply(
     if settings.mode == "codex_app_server":
         if not _auth_discovery(settings)["selected"]["usable"]:
             return _safe_error(503, "codex_auth_source_missing")
-        return _safe_error(501, "codex_app_server_transport_not_implemented")
+        return _safe_error(501, "codex_app_server_reply_transport_not_implemented")
     return _safe_error(503, "upstream_adapter_disabled")
 
 
