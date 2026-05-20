@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, call
+from unittest.mock import Mock, AsyncMock
 from app.services.provider_runtime.oauth_refresh_manager import OAuthRefreshManager
 from datetime import datetime, timezone, timedelta
 
@@ -25,16 +25,12 @@ async def test_oauth_refresh_concurrency():
             return Mock()
             
         mock_result = Mock()
-        
-        # We need to distinguish between the fast path read and the lock path read.
-        # But both queries are identical in structure (mostly).
-        # Fast path returns all columns, lock path returns fewer.
-        if "encrypted_refresh_token" in query_str: # fast path
+        if "encrypted_refresh_token" in query_str:
             mock_result.mappings.return_value.first.return_value = {
                 'status': 'active', 'expires_at': expired_time,
                 'encrypted_access_token': 'old_access', 'encrypted_refresh_token': 'old_refresh', 'provider': 'openai-codex'
             }
-        else: # lock path
+        else:
             nonlocal lock_read_count
             lock_read_count += 1
             if lock_read_count == 1:
@@ -50,6 +46,11 @@ async def test_oauth_refresh_concurrency():
         return mock_result
         
     mock_db.execute.side_effect = mock_db_execute
+    
+    # Mock dialect to bypass lock error for tests
+    mock_bind = Mock()
+    mock_bind.dialect.name = "sqlite"
+    mock_db.get_bind.return_value = mock_bind
     
     async def simulate_req():
         return await mgr.get_valid_access_token("tenant_1", "cred_1")

@@ -11,7 +11,7 @@ from .openai_responses_provider import OpenAIResponsesProvider
 from .openclaw_responses_provider import OpenClawResponsesProvider
 from .provider_base import BaseFastAIProvider
 from .schemas import FastAIProviderRequest, FastAIProviderResult
-from ..db import SessionLocal
+from app.db import SessionLocal
 from ..provider_runtime.schemas import ProviderRequest
 from ..provider_runtime.router import ProviderRuntimeRouter
 
