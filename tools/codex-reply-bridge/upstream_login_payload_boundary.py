@@ -44,7 +44,7 @@ def _read_json(path_value: str | None) -> tuple[Any | None, str | None]:
     if error:
         return None, error
     try:
-        return json.loads(text or "")
+        return json.loads(text or ""), None
     except json.JSONDecodeError:
         return None, "json_invalid"
 
