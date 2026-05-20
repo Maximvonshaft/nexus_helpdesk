@@ -127,6 +127,11 @@ def test_upstream_adapter_auth_status_does_not_expose_secret(monkeypatch, tmp_pa
     assert login_boundary["login_type"] == "chatgptAuthTokens"
     assert login_boundary["payload_ready"] is True
     assert login_boundary["secret_fingerprint"].startswith("sha256:")
+    transport_boundary = data["transport_boundary"]
+    assert transport_boundary["configured"] is False
+    assert transport_boundary["error_code"] == "app_server_base_url_missing"
+    assert transport_boundary["account_login_start_request"] is False
+    assert transport_boundary["external_network_call"] is False
     assert data["boundary"] == {
         "browser_cookie_scraping": False,
         "chatgpt_session_scraping": False,
@@ -137,6 +142,43 @@ def test_upstream_adapter_auth_status_does_not_expose_secret(monkeypatch, tmp_pa
         "external_network_call": False,
     }
     assert "expected" not in response.text
+    assert sample_value not in response.text
+
+
+def test_upstream_adapter_transport_status_requires_auth(monkeypatch):
+    monkeypatch.setenv("CODEX_UPSTREAM_ADAPTER_MODE", "codex_app_server")
+    monkeypatch.setenv("CODEX_UPSTREAM_ADAPTER_REQUIRE_AUTH", "true")
+    monkeypatch.setenv("CODEX_UPSTREAM_ADAPTER_SHARED_TOKEN", "expected")
+
+    response = _client().get("/transport/status", headers={"X-Nexus-Upstream-Token": "wrong"})
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "upstream_adapter_auth_failed"
+
+
+def test_upstream_adapter_transport_login_start_dry_run(monkeypatch, tmp_path):
+    auth_file = tmp_path / "codex_auth_profile.json"
+    sample_value = "sample-profile-value"
+    auth_file.write_text(
+        '{"profiles":{"p":{"type":"token","provider":"openai-codex","access":"sample-profile-value"}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_UPSTREAM_ADAPTER_MODE", "codex_app_server")
+    monkeypatch.setenv("CODEX_UPSTREAM_ADAPTER_REQUIRE_AUTH", "true")
+    monkeypatch.setenv("CODEX_UPSTREAM_ADAPTER_SHARED_TOKEN", "expected")
+    monkeypatch.setenv("CODEX_UPSTREAM_AUTH_PROFILE_FILE", str(auth_file))
+    monkeypatch.setenv("CODEX_UPSTREAM_APP_SERVER_BASE_URL", "http://127.0.0.1:18795")
+    monkeypatch.setenv("CODEX_UPSTREAM_APP_SERVER_LOGIN_DRY_RUN", "true")
+
+    response = _client().post("/transport/login-start", headers={"X-Nexus-Upstream-Token": "expected"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["dry_run"] is True
+    assert data["login_payload_boundary"]["payload_ready"] is True
+    assert data["transport_boundary"]["base_url_accepted"] is True
+    assert data["transport_boundary"]["account_login_start_request"] is False
     assert sample_value not in response.text
 
 
@@ -154,7 +196,7 @@ def test_upstream_adapter_codex_mode_requires_auth_source(monkeypatch):
     assert response.json()["error_code"] == "codex_auth_source_missing"
 
 
-def test_upstream_adapter_codex_mode_is_explicitly_not_implemented(monkeypatch, tmp_path):
+def test_upstream_adapter_codex_mode_reply_transport_is_explicitly_not_implemented(monkeypatch, tmp_path):
     auth_file = tmp_path / "codex_auth_profile.json"
     sample_value = "sample-profile-value"
     auth_file.write_text(
@@ -169,5 +211,5 @@ def test_upstream_adapter_codex_mode_is_explicitly_not_implemented(monkeypatch, 
     response = _client().post("/reply", json=_payload(), headers={"X-Nexus-Upstream-Token": "expected"})
 
     assert response.status_code == 501
-    assert response.json()["error_code"] == "codex_app_server_transport_not_implemented"
+    assert response.json()["error_code"] == "codex_app_server_reply_transport_not_implemented"
     assert sample_value not in response.text
