@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
-_ALLOWED_FAST_AI_PROVIDERS = {"openclaw_responses", "codex_auth", "openai_responses"}
+_ALLOWED_FAST_AI_PROVIDERS = {"openclaw_responses", "codex_auth", "codex_app_server", "openai_responses"}
 _ALLOWED_FAST_AI_FALLBACK_PROVIDERS = {"openclaw_responses", "none"}
 
 
@@ -63,6 +63,7 @@ class WebchatFastSettings:
     provider: str
     fallback_provider: str
     codex_enabled: bool
+    codex_app_server_enabled: bool
     openai_enabled: bool
     timeout_ms: int
     max_timeout_ms: int
@@ -96,6 +97,12 @@ class WebchatFastSettings:
 
     codex_auth_token_file: str | None
     codex_auth_token: str | None
+    codex_app_server_bridge_url: str | None
+    codex_app_server_token_file: str | None
+    codex_app_server_token_value: str | None
+    codex_app_server_timeout_ms: int
+    codex_app_server_canary_percent: int
+    codex_app_server_kill_switch: bool
     openai_api_key_file: str | None
     openai_api_key: str | None
 
@@ -139,6 +146,19 @@ class WebchatFastSettings:
         return bool(self.codex_enabled and self.codex_token)
 
     @property
+    def codex_app_server_token(self) -> str | None:
+        file_token = _read_secret_file(self.codex_app_server_token_file)
+        if file_token:
+            return file_token
+        if self.app_env in {"development", "test", "local"}:
+            return _normalize_secret_value(self.codex_app_server_token_value)
+        return None
+
+    @property
+    def is_codex_app_server_configured(self) -> bool:
+        return bool(self.codex_app_server_enabled and self.codex_app_server_bridge_url and self.codex_app_server_token)
+
+    @property
     def openai_token(self) -> str | None:
         file_token = _read_secret_file(self.openai_api_key_file)
         if file_token:
@@ -161,12 +181,18 @@ class WebchatFastSettings:
             raise RuntimeError("WEBCHAT_FAST_AI_FALLBACK_PROVIDER must be openclaw_responses or none")
         if self.provider == "codex_auth" and not self.codex_enabled:
             raise RuntimeError("WEBCHAT_FAST_AI_CODEX_ENABLED=true is required for WEBCHAT_FAST_AI_PROVIDER=codex_auth")
+        if self.provider == "codex_app_server" and not self.codex_app_server_enabled:
+            raise RuntimeError("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED=true is required for WEBCHAT_FAST_AI_PROVIDER=codex_app_server")
         if self.provider == "openai_responses" and not self.openai_enabled:
             raise RuntimeError("WEBCHAT_FAST_AI_OPENAI_ENABLED=true is required for WEBCHAT_FAST_AI_PROVIDER=openai_responses")
         if self.timeout_ms < 500 or self.timeout_ms > self.max_timeout_ms:
             raise RuntimeError("WEBCHAT_FAST_AI_TIMEOUT_MS must be between 500 and WEBCHAT_FAST_AI_MAX_TIMEOUT_MS")
         if self.max_timeout_ms > 30000:
             raise RuntimeError("WEBCHAT_FAST_AI_MAX_TIMEOUT_MS must not exceed 30000")
+        if self.codex_app_server_timeout_ms < 500 or self.codex_app_server_timeout_ms > self.max_timeout_ms:
+            raise RuntimeError("CODEX_APP_SERVER_TIMEOUT_MS must be between 500 and WEBCHAT_FAST_AI_MAX_TIMEOUT_MS")
+        if self.codex_app_server_canary_percent < 0 or self.codex_app_server_canary_percent > 100:
+            raise RuntimeError("CODEX_APP_SERVER_CANARY_PERCENT must be between 0 and 100")
         if self.stream_rollout_percent < 0 or self.stream_rollout_percent > 100:
             raise RuntimeError("WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT must be between 0 and 100")
         for cidr in self.trusted_proxy_cidrs:
@@ -180,19 +206,35 @@ class WebchatFastSettings:
         if self.app_env == "production":
             if self.codex_auth_token:
                 raise RuntimeError("CODEX_AUTH_TOKEN is forbidden in production; use CODEX_AUTH_TOKEN_FILE")
+            if self.codex_app_server_token_value:
+                raise RuntimeError("CODEX_APP_SERVER_TOKEN is forbidden in production; use CODEX_APP_SERVER_TOKEN_FILE")
             if self.openai_api_key:
                 raise RuntimeError("OPENAI_API_KEY is forbidden in production for this phase; use OPENAI_API_KEY_FILE")
             if self.provider == "codex_auth" and not self.codex_auth_token_file:
                 raise RuntimeError("CODEX_AUTH_TOKEN_FILE is required in production when provider=codex_auth")
+            if self.provider == "codex_app_server":
+                if not self.codex_app_server_token_file:
+                    raise RuntimeError("CODEX_APP_SERVER_TOKEN_FILE is required in production when provider=codex_app_server")
+                if not self.codex_app_server_bridge_url:
+                    raise RuntimeError("CODEX_APP_SERVER_BRIDGE_URL is required in production when provider=codex_app_server")
+                _validate_private_runtime_url(self.codex_app_server_bridge_url, setting_name="CODEX_APP_SERVER_BRIDGE_URL")
             if self.provider == "openai_responses" and not self.openai_api_key_file:
                 raise RuntimeError("OPENAI_API_KEY_FILE is required in production when provider=openai_responses")
 
-            if self.provider == "openclaw_responses" or self.fallback_provider == "openclaw_responses":
+            openclaw_route_required = (
+                self.provider == "openclaw_responses"
+                or self.fallback_provider == "openclaw_responses"
+                or (
+                    self.provider == "codex_app_server"
+                    and (self.codex_app_server_kill_switch or self.codex_app_server_canary_percent < 100)
+                )
+            )
+            if openclaw_route_required:
                 if self.openclaw_responses_token:
                     raise RuntimeError("OPENCLAW_RESPONSES_TOKEN is forbidden in production; use OPENCLAW_RESPONSES_TOKEN_FILE")
                 if not self.openclaw_responses_token_file:
                     raise RuntimeError("OPENCLAW_RESPONSES_TOKEN_FILE is required in production")
-                _validate_private_responses_url(self.openclaw_responses_url)
+                _validate_private_runtime_url(self.openclaw_responses_url, setting_name="OPENCLAW_RESPONSES_URL")
 
             if self.stream_enabled:
                 if not self.openclaw_responses_stream_url:
@@ -201,14 +243,14 @@ class WebchatFastSettings:
                     raise RuntimeError("OPENCLAW_RESPONSES_STREAM_TOKEN is forbidden in production; use OPENCLAW_RESPONSES_STREAM_TOKEN_FILE")
                 if not self.openclaw_responses_stream_token_file:
                     raise RuntimeError("OPENCLAW_RESPONSES_STREAM_TOKEN_FILE is required in production when stream is enabled")
-                _validate_private_responses_url(self.openclaw_responses_stream_url)
+                _validate_private_runtime_url(self.openclaw_responses_stream_url, setting_name="OPENCLAW_RESPONSES_STREAM_URL")
 
 
-def _validate_private_responses_url(value: str) -> None:
+def _validate_private_runtime_url(value: str, *, setting_name: str) -> None:
     parsed = urlparse(value or "")
 
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise RuntimeError("OPENCLAW_RESPONSES_URL must be a valid http(s) URL")
+        raise RuntimeError(f"{setting_name} must be a valid http(s) URL")
 
     host = parsed.hostname
 
@@ -223,7 +265,7 @@ def _validate_private_responses_url(value: str) -> None:
             )
             resolved_ips = {ipaddress.ip_address(item[4][0]) for item in infos}
         except Exception as exc:
-            raise RuntimeError("OPENCLAW_RESPONSES_URL host could not be resolved in production") from exc
+            raise RuntimeError(f"{setting_name} host could not be resolved in production") from exc
 
     tailnet_or_cgnat = ipaddress.ip_network("100.64.0.0/10")
 
@@ -231,7 +273,7 @@ def _validate_private_responses_url(value: str) -> None:
         return ip.is_private or ip.is_loopback or ip.is_link_local or ip in tailnet_or_cgnat
 
     if not any(allowed(ip) for ip in resolved_ips):
-        raise RuntimeError("OPENCLAW_RESPONSES_URL must point to a private or tailnet host in production")
+        raise RuntimeError(f"{setting_name} must point to a private or tailnet host in production")
 
 
 @lru_cache(maxsize=1)
@@ -242,6 +284,7 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         provider=os.getenv("WEBCHAT_FAST_AI_PROVIDER", "openclaw_responses").strip().lower() or "openclaw_responses",
         fallback_provider=os.getenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "none").strip().lower() or "none",
         codex_enabled=_env_bool("WEBCHAT_FAST_AI_CODEX_ENABLED", False),
+        codex_app_server_enabled=_env_bool("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", False),
         openai_enabled=_env_bool("WEBCHAT_FAST_AI_OPENAI_ENABLED", False),
         timeout_ms=_env_int("WEBCHAT_FAST_AI_TIMEOUT_MS", 3000, minimum=500, maximum=max_timeout_ms),
         max_timeout_ms=max_timeout_ms,
@@ -273,6 +316,12 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         openclaw_stream_total_timeout_ms=_env_int("OPENCLAW_RESPONSES_STREAM_TOTAL_TIMEOUT_MS", 30000, minimum=1000, maximum=60000),
         codex_auth_token_file=os.getenv("CODEX_AUTH_TOKEN_FILE", "").strip() or None,
         codex_auth_token=os.getenv("CODEX_AUTH_TOKEN", "").strip() or None,
+        codex_app_server_bridge_url=os.getenv("CODEX_APP_SERVER_BRIDGE_URL", "").strip() or None,
+        codex_app_server_token_file=(os.getenv("CODEX_APP_SERVER_TOKEN_FILE") or os.getenv("CODEX_REPLY_BRIDGE_TOKEN_FILE") or "").strip() or None,
+        codex_app_server_token_value=(os.getenv("CODEX_APP_SERVER_TOKEN") or os.getenv("CODEX_REPLY_BRIDGE_TOKEN") or "").strip() or None,
+        codex_app_server_timeout_ms=_env_int("CODEX_APP_SERVER_TIMEOUT_MS", 15000, minimum=500, maximum=max_timeout_ms),
+        codex_app_server_canary_percent=_env_int("CODEX_APP_SERVER_CANARY_PERCENT", 0, minimum=0),
+        codex_app_server_kill_switch=_env_bool("CODEX_APP_SERVER_KILL_SWITCH", False),
         openai_api_key_file=os.getenv("OPENAI_API_KEY_FILE", "").strip() or None,
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip() or None,
     )
