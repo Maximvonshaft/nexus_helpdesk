@@ -193,4 +193,3 @@ def test_result_summary_does_not_include_response_body_or_probe_payload(monkeypa
 
     assert "sensitive response body should not be copied" not in str(safe)
     assert safe["results"][-1]["response_keys"] == ["ok", "text"]
-}
