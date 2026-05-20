@@ -95,6 +95,46 @@ def _normalize_q(q: str | None) -> str | None:
     return value
 
 
+def _enum_value(value: Any) -> Any:
+    return value.value if hasattr(value, "value") else value
+
+
+def _ticket_overdue(ticket: Ticket) -> bool:
+    if ticket.resolution_due_at is None:
+        return False
+    if ticket.status in {TicketStatus.closed, TicketStatus.canceled}:
+        return False
+    return ticket.resolution_due_at < utc_now()
+
+
+def _serialize_workspace_list_item(ticket: Ticket) -> dict[str, Any]:
+    customer = ticket.customer
+    assignee = ticket.assignee
+    team = ticket.team
+    market = ticket.market
+    return {
+        "id": ticket.id,
+        "ticket_no": ticket.ticket_no,
+        "title": ticket.issue_summary or ticket.title,
+        "status": _enum_value(ticket.status),
+        "priority": _enum_value(ticket.priority),
+        "source_channel": _enum_value(ticket.source_channel),
+        "category": ticket.category,
+        "sub_category": ticket.sub_category,
+        "tracking_number": ticket.tracking_number,
+        "customer_name": customer.name if customer else None,
+        "assignee_name": assignee.display_name if assignee else None,
+        "team_name": team.name if team else None,
+        "market_id": ticket.market_id,
+        "market_code": market.code if market else None,
+        "country_code": ticket.country_code,
+        "conversation_state": _enum_value(ticket.conversation_state),
+        "updated_at": ticket.updated_at.isoformat() if ticket.updated_at else None,
+        "resolution_due_at": ticket.resolution_due_at.isoformat() if ticket.resolution_due_at else None,
+        "overdue": _ticket_overdue(ticket),
+    }
+
+
 def list_lite_cases_page(
     db: Session,
     current_user: User,
@@ -112,7 +152,12 @@ def list_lite_cases_page(
     status_value, status_in = _lite_status_filter(status)
     normalized_q = _normalize_q(q)
 
-    query = db.query(Ticket).options(joinedload(Ticket.customer), joinedload(Ticket.assignee), joinedload(Ticket.team))
+    query = db.query(Ticket).options(
+        joinedload(Ticket.customer),
+        joinedload(Ticket.assignee),
+        joinedload(Ticket.team),
+        joinedload(Ticket.market),
+    )
     if current_user.role not in {UserRole.admin, UserRole.manager, UserRole.auditor}:
         query = query.filter(or_(Ticket.team_id == current_user.team_id, Ticket.assignee_id == current_user.id))
 
@@ -166,7 +211,7 @@ def list_lite_cases_page(
         next_cursor = _encode_cursor(updated_at=last.updated_at, ticket_id=last.id)
 
     return {
-        "items": [serialize_lite_list(ticket) for ticket in visible],
+        "items": [_serialize_workspace_list_item(ticket) for ticket in visible],
         "next_cursor": next_cursor,
         "has_more": has_more,
         "filters": {
