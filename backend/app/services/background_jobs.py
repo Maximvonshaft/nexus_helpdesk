@@ -5,6 +5,7 @@ import uuid
 from datetime import timedelta
 
 from sqlalchemy import or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..enums import EventType, JobStatus, MessageStatus, SourceChannel
@@ -22,6 +23,15 @@ WEBCHAT_HANDOFF_SNAPSHOT_JOB = 'webchat.handoff_snapshot'
 SPEEDAF_WORK_ORDER_CREATE_JOB = 'speedaf.work_order.create'
 
 
+def _find_active_dedupe_job(db: Session, *, dedupe_key: str) -> BackgroundJob | None:
+    return (
+        db.query(BackgroundJob)
+        .filter(BackgroundJob.dedupe_key == dedupe_key, BackgroundJob.status.in_([JobStatus.pending, JobStatus.processing]))
+        .order_by(BackgroundJob.id.desc())
+        .first()
+    )
+
+
 def enqueue_background_job(
     db: Session,
     *,
@@ -33,12 +43,7 @@ def enqueue_background_job(
     dedupe_key: str | None = None,
 ) -> BackgroundJob:
     if dedupe_key:
-        existing = (
-            db.query(BackgroundJob)
-            .filter(BackgroundJob.dedupe_key == dedupe_key, BackgroundJob.status.in_([JobStatus.pending, JobStatus.processing]))
-            .order_by(BackgroundJob.id.desc())
-            .first()
-        )
+        existing = _find_active_dedupe_job(db, dedupe_key=dedupe_key)
         if existing is not None:
             return existing
     job = BackgroundJob(
@@ -50,8 +55,16 @@ def enqueue_background_job(
         max_attempts=max_attempts or settings.job_max_retries,
         next_run_at=next_run_at,
     )
-    db.add(job)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(job)
+            db.flush()
+    except IntegrityError:
+        if dedupe_key:
+            existing = _find_active_dedupe_job(db, dedupe_key=dedupe_key)
+            if existing is not None:
+                return existing
+        raise
     return job
 
 

@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -271,8 +271,33 @@ class AdminAuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
 
 
+class AdminActionRateLimitBucket(Base):
+    __tablename__ = "admin_action_rate_limits"
+    __table_args__ = (
+        UniqueConstraint("bucket_key", name="ux_admin_action_rate_limits_bucket_key"),
+        Index("ix_admin_action_rate_limits_window_start", "window_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bucket_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    window_start: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    request_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+
 class OpenClawUnresolvedEvent(Base):
     __tablename__ = "openclaw_unresolved_events"
+    __table_args__ = (
+        Index(
+            "uq_openclaw_unresolved_active_payload_hash",
+            "source",
+            "session_key",
+            "payload_hash",
+            unique=True,
+            sqlite_where=text("payload_hash IS NOT NULL AND status IN ('pending', 'failed', 'replaying')"),
+            postgresql_where=text("payload_hash IS NOT NULL AND status IN ('pending', 'failed', 'replaying')"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source: Mapped[str] = mapped_column(String(80), index=True)
@@ -539,6 +564,15 @@ class TicketAIIntake(Base):
 
 class BackgroundJob(Base):
     __tablename__ = "background_jobs"
+    __table_args__ = (
+        Index(
+            "uq_background_jobs_active_dedupe_key",
+            "dedupe_key",
+            unique=True,
+            sqlite_where=text("dedupe_key IS NOT NULL AND status IN ('pending', 'processing')"),
+            postgresql_where=text("dedupe_key IS NOT NULL AND status IN ('pending', 'processing')"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     queue_name: Mapped[str] = mapped_column(String(80), index=True)

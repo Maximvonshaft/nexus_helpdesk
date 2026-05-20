@@ -33,7 +33,7 @@ This handoff creates the review package only. It must not change production beha
 ## Current facts
 
 - Frontend app lives under `webapp/`.
-- Current stack includes React 19, Vite, TypeScript, TanStack Router, TanStack Query, and Tailwind CSS.
+- Current stack includes React 18.3.1 at runtime, Vite, TypeScript, TanStack Router, TanStack Query, and Tailwind CSS (`@types/react` is currently 19.x).
 - Main app entry is `webapp/src/main.tsx`.
 - Router is `webapp/src/router.tsx`.
 - Large business routes include `workspace.tsx`, `webchat.tsx`, and `ai-control.tsx`.

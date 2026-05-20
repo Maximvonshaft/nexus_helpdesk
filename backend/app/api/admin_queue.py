@@ -1,18 +1,21 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..enums import JobStatus, MessageStatus
 from ..models import BackgroundJob, TicketOutboundMessage
 from ..services.audit_service import log_admin_audit
+from ..services.admin_action_rate_limit import enforce_admin_action_rate_limit
 from ..services.message_dispatch import requeue_dead_outbound_message
 from ..services.permissions import ensure_can_manage_runtime
+from ..settings import get_settings
 from ..unit_of_work import managed_session
 from ..utils.time import utc_now
 from .deps import get_current_user
 
+settings = get_settings()
 router = APIRouter(prefix='/api/admin', tags=['admin-queue'])
 
 
@@ -30,8 +33,9 @@ def _requeue_dead_job_row(job: BackgroundJob) -> BackgroundJob:
 
 
 @router.post('/jobs/{job_id}/requeue')
-def requeue_job(job_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def requeue_job(job_id: int, request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
+    enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='background_job.requeue', max_requests=settings.admin_action_rate_limit_single_max, request_id=getattr(request.state, 'request_id', None))
     job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Background job not found')
@@ -52,8 +56,9 @@ def requeue_job(job_id: int, db: Session = Depends(get_db), current_user=Depends
 
 
 @router.post('/jobs/requeue-dead')
-def requeue_dead_jobs(job_type: str | None = None, limit: int = 50, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def requeue_dead_jobs(request: Request, job_type: str | None = None, limit: int = 50, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
+    enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='background_job.requeue_dead_batch', max_requests=settings.admin_action_rate_limit_batch_max, request_id=getattr(request.state, 'request_id', None))
     query = db.query(BackgroundJob).filter(BackgroundJob.status == JobStatus.dead)
     if job_type:
         query = query.filter(BackgroundJob.job_type == job_type)
@@ -75,8 +80,9 @@ def requeue_dead_jobs(job_type: str | None = None, limit: int = 50, db: Session 
 
 
 @router.post('/outbound/{message_id}/requeue')
-def requeue_outbound(message_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def requeue_outbound(message_id: int, request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
+    enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='outbound_message.requeue', max_requests=settings.admin_action_rate_limit_single_max, request_id=getattr(request.state, 'request_id', None))
     with managed_session(db):
         message = requeue_dead_outbound_message(db, message_id=message_id)
         log_admin_audit(
@@ -93,8 +99,9 @@ def requeue_outbound(message_id: int, db: Session = Depends(get_db), current_use
 
 
 @router.post('/outbound/requeue-dead')
-def requeue_dead_outbound(limit: int = 50, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def requeue_dead_outbound(request: Request, limit: int = 50, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
+    enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='outbound_message.requeue_dead_batch', max_requests=settings.admin_action_rate_limit_batch_max, request_id=getattr(request.state, 'request_id', None))
     rows = db.query(TicketOutboundMessage).filter(TicketOutboundMessage.status == MessageStatus.dead).order_by(TicketOutboundMessage.updated_at.asc()).limit(max(1, min(limit, 200))).all()
     with managed_session(db):
         count = 0

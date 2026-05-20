@@ -109,6 +109,11 @@ class Settings:
         self.webchat_rate_limit_backend = os.getenv("WEBCHAT_RATE_LIMIT_BACKEND", "database" if self.app_env == "production" else "memory").strip().lower() or "database"
         self.webchat_rate_limit_window_seconds = int(os.getenv("WEBCHAT_RATE_LIMIT_WINDOW_SECONDS", "60"))
         self.webchat_rate_limit_max_requests = int(os.getenv("WEBCHAT_RATE_LIMIT_MAX_REQUESTS", "20"))
+        self.admin_action_rate_limit_enabled = os.getenv("ADMIN_ACTION_RATE_LIMIT_ENABLED", "true").strip().lower() == "true"
+        self.admin_action_rate_limit_window_seconds = int(os.getenv("ADMIN_ACTION_RATE_LIMIT_WINDOW_SECONDS", "60"))
+        self.admin_action_rate_limit_single_max = int(os.getenv("ADMIN_ACTION_RATE_LIMIT_SINGLE_MAX", "20"))
+        self.admin_action_rate_limit_batch_max = int(os.getenv("ADMIN_ACTION_RATE_LIMIT_BATCH_MAX", "3"))
+        self.admin_action_rate_limit_consume_once_max = int(os.getenv("ADMIN_ACTION_RATE_LIMIT_CONSUME_ONCE_MAX", "5"))
         self.webchat_ai_auto_reply_mode = os.getenv("WEBCHAT_AI_AUTO_REPLY_MODE", "safe_ack" if self.app_env == "production" else "safe_ai").strip().lower() or "safe_ack"
         self.webchat_ai_reconciler_enabled = _env_bool("WEBCHAT_AI_RECONCILER_ENABLED", True)
         try:
@@ -153,6 +158,14 @@ class Settings:
         self.upload_root.mkdir(parents=True, exist_ok=True)
         if self.webchat_rate_limit_backend not in {"memory", "database"}:
             raise RuntimeError("WEBCHAT_RATE_LIMIT_BACKEND must be memory or database")
+        if self.admin_action_rate_limit_window_seconds < 1 or self.admin_action_rate_limit_window_seconds > 3600:
+            raise RuntimeError("ADMIN_ACTION_RATE_LIMIT_WINDOW_SECONDS must be between 1 and 3600")
+        if self.admin_action_rate_limit_single_max < 1 or self.admin_action_rate_limit_single_max > 1000:
+            raise RuntimeError("ADMIN_ACTION_RATE_LIMIT_SINGLE_MAX must be between 1 and 1000")
+        if self.admin_action_rate_limit_batch_max < 1 or self.admin_action_rate_limit_batch_max > 1000:
+            raise RuntimeError("ADMIN_ACTION_RATE_LIMIT_BATCH_MAX must be between 1 and 1000")
+        if self.admin_action_rate_limit_consume_once_max < 1 or self.admin_action_rate_limit_consume_once_max > 1000:
+            raise RuntimeError("ADMIN_ACTION_RATE_LIMIT_CONSUME_ONCE_MAX must be between 1 and 1000")
         if self.webchat_ai_auto_reply_mode not in {"off", "safe_ack", "safe_ai"}:
             raise RuntimeError("WEBCHAT_AI_AUTO_REPLY_MODE must be off, safe_ack, or safe_ai")
         if self.webchat_static_quick_replies_mode not in {"off", "legacy"}:

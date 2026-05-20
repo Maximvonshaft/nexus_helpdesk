@@ -23,7 +23,7 @@ The target architecture is a phased, non-rewrite migration.
 
 Accepted direction:
 
-- Keep React 19 + Vite for the authenticated console.
+- Keep React 18.3.1 + Vite for the authenticated console.
 - Keep TanStack Router and TanStack Query.
 - Introduce feature/domain/shared layering.
 - Introduce a governed design system.

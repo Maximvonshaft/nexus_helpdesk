@@ -23,6 +23,10 @@ def reset_current_request_id(token) -> None:
     _current_request_id.reset(token)
 
 
+def get_current_request_id() -> str | None:
+    return _current_request_id.get()
+
+
 def _db_query_timing_enabled() -> bool:
     return os.getenv('DB_QUERY_TIMING_ENABLED', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
 

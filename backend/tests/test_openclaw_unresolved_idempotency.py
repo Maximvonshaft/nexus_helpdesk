@@ -135,3 +135,31 @@ def test_openclaw_bridge_live_function_is_rebound_to_hash_store(db_session):
     assert first.id == second.id
     assert db_session.query(OpenClawUnresolvedEvent).count() == 1
     assert db_session.query(OpenClawUnresolvedEvent).one().payload_hash == payload_hash(payload_a)
+
+
+def test_integrity_error_recovery_returns_existing_active_row_without_rolling_back_outer_work(db_session, monkeypatch):
+    existing = _persist(db_session, {"type": "message", "message": {"body": "hello", "sessionKey": "s1"}})
+    db_session.commit()
+
+    pending_outer = _persist(db_session, {"type": "message", "message": {"body": "other", "sessionKey": "s2"}}, session_key="session-outer")
+
+    import app.services.openclaw_unresolved_store as unresolved_store
+
+    original_find = unresolved_store._find_existing_active_row
+    calls = {"count": 0}
+
+    def _race_find(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return None
+        return original_find(*args, **kwargs)
+
+    monkeypatch.setattr(unresolved_store, "_find_existing_active_row", _race_find)
+
+    recovered = _persist(db_session, {"type": "message", "message": {"body": "hello", "sessionKey": "s1"}})
+    db_session.commit()
+
+    assert recovered.id == existing.id
+    assert pending_outer.id is not None
+    assert db_session.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == pending_outer.id).one().session_key == "session-outer"
+    assert db_session.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.source == "default", OpenClawUnresolvedEvent.session_key == "session-1", OpenClawUnresolvedEvent.payload_hash == existing.payload_hash, OpenClawUnresolvedEvent.status.in_(["pending", "failed", "replaying"])).count() == 1
