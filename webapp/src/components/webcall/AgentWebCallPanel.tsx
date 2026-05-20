@@ -31,6 +31,14 @@ const STATUS_TONES: Record<string, 'default' | 'warning' | 'success' | 'danger'>
   failed: 'danger',
   cancelled: 'danger',
 }
+const ACCEPT_ERROR_MESSAGES: Array<[string, string]> = [
+  ['already accepted by another agent', '该通话已被其他客服接起。请刷新来电队列。'],
+  ['expired', '该来电已超时，请等待客户重新发起。'],
+  ['missed', '该来电已超时，请等待客户重新发起。'],
+  ['ended', '该通话已结束。'],
+  ['cancelled', '该通话已取消。'],
+  ['failed', '该通话已失败，请重新发起。'],
+]
 
 type AgentCallState = 'idle' | 'accepting' | 'requesting_mic' | 'connecting' | 'connected' | 'ended' | 'error'
 
@@ -64,7 +72,9 @@ function roomNameFor(session: WebchatVoiceSession | null) {
 
 function readableStatus(status?: string | null) {
   const raw = String(status || '').toLowerCase()
-  return STATUS_LABELS[raw] || valueOrDash(status)
+  if (STATUS_LABELS[raw]) return STATUS_LABELS[raw]
+  if (!raw) return 'Unknown / 未知状态'
+  return `Unknown / 未知状态 (${valueOrDash(status)})`
 }
 
 function statusTone(status?: string | null) {
@@ -72,11 +82,23 @@ function statusTone(status?: string | null) {
   return STATUS_TONES[raw] || 'default'
 }
 
-function safeErrorMessage(err: unknown) {
-  if (err instanceof WebchatVoiceApiError && err.status === 409) {
-    return 'This WebCall has already been accepted by another agent, or the call is no longer available. Refresh the session list before trying again.'
+function readableAcceptError(detail: string) {
+  const lowered = detail.toLowerCase()
+  for (const [needle, message] of ACCEPT_ERROR_MESSAGES) {
+    if (lowered.includes(needle)) return message
   }
-  if (err instanceof Error && err.message) return err.message
+  return '当前来电状态已变化，无法接起。请刷新来电队列后重试。'
+}
+
+function safeErrorMessage(err: unknown) {
+  if (err instanceof WebchatVoiceApiError) {
+    if (err.status === 409) return readableAcceptError(err.message)
+    return 'WebCall request failed. Please refresh and try again.'
+  }
+  if (err instanceof Error) {
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') return 'Microphone permission was denied. Allow microphone access and accept the WebCall again.'
+    return 'WebCall request failed. Please refresh and try again.'
+  }
   return 'WebCall request failed. Please refresh and try again.'
 }
 
@@ -214,11 +236,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
     onError: async (err: unknown) => {
       await cleanupRoom()
       setCallState('error')
-      if (err instanceof Error && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
-        setMessage('Microphone permission was denied. Allow microphone access and accept the WebCall again.')
-      } else {
-        setMessage(safeErrorMessage(err))
-      }
+      setMessage(safeErrorMessage(err))
     },
   })
 
