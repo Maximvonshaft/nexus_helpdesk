@@ -49,6 +49,7 @@
 - Judgment: **准确**
 - Why:
   - Sensitive admin replay/requeue/drop/consume-once flows did not have server-enforced per-user action buckets.
+  - The first implementation also left a select-then-update race window in the bucket table.
 - Closure status: **已修复**
 
 ### 3.3 OpenClaw unresolved event idempotency gap
@@ -56,6 +57,7 @@
 - Why:
   - Payload-hash application-layer idempotency already existed.
   - The missing part was the database-level active uniqueness guard and safe savepoint-based recovery on insert race.
+  - The first index shape also allowed a `session_key IS NULL` bypass because SQL unique semantics do not treat `NULL` values as equal.
 - Closure status: **已修复**
 
 ### 3.4 Frontend React version claim
@@ -90,6 +92,7 @@ Rollback:
 Implemented:
 - new `admin_action_rate_limits` table and model
 - new server-side enforcement service
+- atomic bucket mutation via `INSERT ... ON CONFLICT ... DO UPDATE ... RETURNING`
 - backend wiring across:
   - job requeue
   - dead-job batch requeue
@@ -101,6 +104,7 @@ Implemented:
 - 429 responses include `request_id`
 - audit/log trail exists
 - counters are isolated by user and by action key
+- first-hit concurrency no longer depends on a select-then-insert/update race path
 
 Rollback:
 - downgrade migration to drop `admin_action_rate_limits`
@@ -110,11 +114,12 @@ Rollback:
 
 Implemented:
 - partial unique index: `uq_openclaw_unresolved_active_payload_hash`
-- guarded keys: `source`, `session_key`, `payload_hash`
+- guarded keys: `source`, `COALESCE(session_key, '')`, `payload_hash`
 - guarded statuses: `pending`, `failed`, `replaying`
 - duplicate-active-row normalization before index creation
 - `persist_unresolved_openclaw_event_by_hash()` now uses savepoint recovery and returns the surviving active row on `IntegrityError`
 - resolved rows remain able to admit a new active row
+- `session_key=NULL` and `session_key=''` are now intentionally unified into the same active dedupe bucket
 
 Rollback:
 - downgrade the migration to remove the partial unique index
@@ -145,7 +150,7 @@ Rollback:
 
 ## Backend targeted validation
 - `pytest -q backend/tests/test_openclaw_unresolved_idempotency.py backend/tests/test_background_job_dedupe_idempotency.py backend/tests/test_admin_action_rate_limit.py`
-- Result: **13 passed**
+- Result after follow-up blocking-fix pass: **18 passed**
 
 ## Required backend commands
 - `cd backend && python -m compileall app scripts`

@@ -97,6 +97,7 @@ Hardening added:
 - new `admin_action_rate_limits` table
 - new `AdminActionRateLimitBucket` model
 - new `admin_action_rate_limit.py` service
+- PostgreSQL/SQLite atomic bucket mutation via `INSERT ... ON CONFLICT ... DO UPDATE ... RETURNING`
 - endpoint wiring for:
   - background job requeue
   - background job requeue-dead
@@ -127,8 +128,10 @@ backend/app/api/admin_queue.py
 Validation:
 - `backend/tests/test_admin_action_rate_limit.py` passes
 - coverage proves:
+  - first-hit concurrency does not 500
   - different users have independent counters
   - different action keys have independent counters
+  - expired windows reset correctly
   - limited requests return `429`
   - responses include `request_id`
   - audit/log records exist
@@ -141,16 +144,18 @@ Problem confirmed:
 
 Hardening added:
 - partial unique index `uq_openclaw_unresolved_active_payload_hash`
-- key columns: `source`, `session_key`, `payload_hash`
+- key columns: `source`, `COALESCE(session_key, '')`, `payload_hash`
 - active statuses guarded: `pending`, `failed`, `replaying`
 - `persist_unresolved_openclaw_event_by_hash()` keeps the existing lookup, inserts inside `begin_nested()`, and on `IntegrityError` safely re-reads the existing active row
 - resolved rows do not block a new active row
+- `session_key=NULL` and `session_key=''` now intentionally collapse into the same active dedupe bucket so `NULL` can no longer bypass the DB uniqueness guard
 
 Reference snippets:
 
 ```text
 backend/app/models.py
 - uq_openclaw_unresolved_active_payload_hash
+- COALESCE(session_key, '')
 - payload_hash IS NOT NULL AND status IN ('pending', 'failed', 'replaying')
 
 backend/app/services/openclaw_unresolved_store.py
@@ -160,6 +165,7 @@ backend/app/services/openclaw_unresolved_store.py
 
 backend/alembic/versions/20260520_0026_audit_reality_closure.py
 - uq_openclaw_unresolved_active_payload_hash
+- PARTITION BY source, COALESCE(session_key, ''), payload_hash
 ```
 
 Validation:
@@ -167,6 +173,7 @@ Validation:
 - coverage proves:
   - same semantic payload key-order changes hash identically
   - same active payload/hash produces one active row
+  - `session_key=None` and `session_key=''` cannot create parallel active rows
   - resolved rows do not block a new active row
   - `IntegrityError` recovery returns the existing row instead of surfacing a 500
 

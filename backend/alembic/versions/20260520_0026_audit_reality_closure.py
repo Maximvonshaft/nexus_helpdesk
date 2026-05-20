@@ -40,7 +40,7 @@ def _drop_index_if_exists(name: str, table: str) -> None:
         op.drop_index(name, table_name=table)
 
 
-def _create_partial_unique_index_if_missing(name: str, table: str, columns: list[str], where_sql: str) -> None:
+def _create_partial_unique_index_if_missing(name: str, table: str, columns: list[object], where_sql: str) -> None:
     if _index_exists(name, table):
         return
     kwargs = {"unique": True}
@@ -118,7 +118,7 @@ def _normalize_unresolved_duplicates() -> None:
                 WITH ranked AS (
                     SELECT id,
                            row_number() OVER (
-                               PARTITION BY source, session_key, payload_hash
+                               PARTITION BY source, COALESCE(session_key, ''), payload_hash
                                ORDER BY id ASC
                            ) AS rn
                     FROM openclaw_unresolved_events
@@ -142,7 +142,7 @@ def _normalize_unresolved_duplicates() -> None:
                 WITH ranked AS (
                     SELECT id,
                            row_number() OVER (
-                               PARTITION BY source, session_key, payload_hash
+                               PARTITION BY source, COALESCE(session_key, ''), payload_hash
                                ORDER BY id ASC
                            ) AS rn
                     FROM openclaw_unresolved_events
@@ -185,7 +185,7 @@ def upgrade() -> None:
     _create_partial_unique_index_if_missing(
         "uq_openclaw_unresolved_active_payload_hash",
         "openclaw_unresolved_events",
-        ["source", "session_key", "payload_hash"],
+        ["source", sa.text("COALESCE(session_key, '')"), "payload_hash"],
         OPENCLAW_UNRESOLVED_ACTIVE_WHERE,
     )
 

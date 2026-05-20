@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,10 @@ from .openclaw_payload_hash import payload_hash as compute_payload_hash
 ACTIVE_UNRESOLVED_STATUSES = ("pending", "failed", "replaying")
 
 
+def _normalized_session_key(session_key: str | None) -> str:
+    return session_key or ""
+
+
 def _find_existing_active_row(
     db: Session,
     *,
@@ -20,11 +25,12 @@ def _find_existing_active_row(
     session_key: str | None,
     payload_hash: str,
 ) -> OpenClawUnresolvedEvent | None:
+    normalized_session_key = _normalized_session_key(session_key)
     return (
         db.query(OpenClawUnresolvedEvent)
         .filter(
             OpenClawUnresolvedEvent.source == source,
-            OpenClawUnresolvedEvent.session_key == session_key,
+            func.coalesce(OpenClawUnresolvedEvent.session_key, "") == normalized_session_key,
             OpenClawUnresolvedEvent.payload_hash == payload_hash,
             OpenClawUnresolvedEvent.status.in_(list(ACTIVE_UNRESOLVED_STATUSES)),
         )

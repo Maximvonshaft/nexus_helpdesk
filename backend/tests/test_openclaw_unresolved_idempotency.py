@@ -54,6 +54,22 @@ def _persist(db, payload: dict, *, source: str = "default", session_key: str = "
     )
 
 
+def _active_count(db_session, *, source: str, session_key: str | None, payload_hash_value: str) -> int:
+    from sqlalchemy import func
+
+    normalized_session_key = session_key or ""
+    return (
+        db_session.query(OpenClawUnresolvedEvent)
+        .filter(
+            OpenClawUnresolvedEvent.source == source,
+            func.coalesce(OpenClawUnresolvedEvent.session_key, "") == normalized_session_key,
+            OpenClawUnresolvedEvent.payload_hash == payload_hash_value,
+            OpenClawUnresolvedEvent.status.in_(["pending", "failed", "replaying"]),
+        )
+        .count()
+    )
+
+
 def test_payload_hash_is_key_order_independent():
     payload_a = {"type": "message", "message": {"body": "hello", "sessionKey": "s1"}, "route": {"b": 2, "a": 1}}
     payload_b = {"route": {"a": 1, "b": 2}, "message": {"sessionKey": "s1", "body": "hello"}, "type": "message"}
@@ -162,4 +178,42 @@ def test_integrity_error_recovery_returns_existing_active_row_without_rolling_ba
     assert recovered.id == existing.id
     assert pending_outer.id is not None
     assert db_session.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == pending_outer.id).one().session_key == "session-outer"
-    assert db_session.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.source == "default", OpenClawUnresolvedEvent.session_key == "session-1", OpenClawUnresolvedEvent.payload_hash == existing.payload_hash, OpenClawUnresolvedEvent.status.in_(["pending", "failed", "replaying"])).count() == 1
+    assert _active_count(db_session, source="default", session_key="session-1", payload_hash_value=existing.payload_hash) == 1
+
+
+def test_none_session_key_active_rows_are_deduped(db_session):
+    payload = {"type": "message", "message": {"body": "hello"}}
+
+    first = _persist(db_session, payload, session_key=None)
+    second = _persist(db_session, payload, session_key=None)
+    db_session.commit()
+
+    assert first.id == second.id
+    assert _active_count(db_session, source="default", session_key=None, payload_hash_value=first.payload_hash) == 1
+
+
+def test_none_and_empty_session_key_share_same_active_bucket(db_session):
+    payload = {"type": "message", "message": {"body": "hello"}}
+
+    first = _persist(db_session, payload, session_key=None)
+    second = _persist(db_session, payload, session_key="")
+    db_session.commit()
+
+    assert first.id == second.id
+    assert _active_count(db_session, source="default", session_key=None, payload_hash_value=first.payload_hash) == 1
+    assert _active_count(db_session, source="default", session_key="", payload_hash_value=first.payload_hash) == 1
+
+
+def test_dropped_duplicate_terminal_row_does_not_block_new_none_session_key_row(db_session):
+    payload = {"type": "message", "message": {"body": "hello"}}
+
+    first = _persist(db_session, payload, session_key=None)
+    first.status = "dropped_duplicate"
+    db_session.commit()
+
+    second = _persist(db_session, payload, session_key="")
+    db_session.commit()
+
+    assert first.id != second.id
+    assert second.status == "pending"
+    assert _active_count(db_session, source="default", session_key=None, payload_hash_value=second.payload_hash) == 1

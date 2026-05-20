@@ -291,7 +291,7 @@ class OpenClawUnresolvedEvent(Base):
         Index(
             "uq_openclaw_unresolved_active_payload_hash",
             "source",
-            "session_key",
+            text("COALESCE(session_key, '')"),
             "payload_hash",
             unique=True,
             sqlite_where=text("payload_hash IS NOT NULL AND status IN ('pending', 'failed', 'replaying')"),

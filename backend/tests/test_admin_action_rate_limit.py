@@ -3,10 +3,13 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 os.environ.setdefault("APP_ENV", "development")
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/admin_action_rate_limit_tests.db")
@@ -89,7 +92,7 @@ def test_rate_limit_response_contains_request_id_and_audit_log(client, caplog):
     with SessionLocal() as db:
         audit = db.query(AdminAuditLog).filter(AdminAuditLog.action == "admin_action.rate_limited").one()
         assert audit.actor_id == admin.id
-        assert db.query(AdminActionRateLimitBucket).filter(AdminActionRateLimitBucket.bucket_key == f"{admin.id}:openclaw.events.consume_once").one().request_count == 1
+        assert db.query(AdminActionRateLimitBucket).filter(AdminActionRateLimitBucket.bucket_key == f"{admin.id}:openclaw.events.consume_once").one().request_count == 2
 
     assert any(record.message == "admin_action_rate_limited" for record in caplog.records)
 
@@ -143,3 +146,72 @@ def test_requeue_endpoint_is_guarded_by_rate_limit(client):
     assert first.status_code == 200
     assert second.status_code == 429
     assert second.json()["detail"]["action"] == "background_job.requeue"
+
+
+def test_rate_limit_window_expiry_resets_bucket(monkeypatch):
+    actor_id = 77
+    action_key = "background_job.requeue"
+    base_now = rate_limit_service.utc_now()
+
+    monkeypatch.setattr(rate_limit_service, "utc_now", lambda: base_now)
+    with SessionLocal() as db:
+        rate_limit_service.enforce_admin_action_rate_limit(
+            db,
+            actor_id=actor_id,
+            action_key=action_key,
+            max_requests=1,
+            request_id="req-1",
+        )
+
+    monkeypatch.setattr(rate_limit_service, "utc_now", lambda: base_now + timedelta(seconds=61))
+    with SessionLocal() as db:
+        rate_limit_service.enforce_admin_action_rate_limit(
+            db,
+            actor_id=actor_id,
+            action_key=action_key,
+            max_requests=1,
+            request_id="req-2",
+        )
+
+    with SessionLocal() as db:
+        bucket = db.query(AdminActionRateLimitBucket).filter(AdminActionRateLimitBucket.bucket_key == f"{actor_id}:{action_key}").one()
+        assert bucket.request_count == 1
+
+
+def test_first_concurrent_requests_do_not_500_and_limit_stays_stable():
+    actor_id = 91
+    action_key = "openclaw.events.consume_once"
+
+    def _attempt(request_suffix: int):
+        with SessionLocal() as db:
+            try:
+                rate_limit_service.enforce_admin_action_rate_limit(
+                    db,
+                    actor_id=actor_id,
+                    action_key=action_key,
+                    max_requests=1,
+                    request_id=f"race-{request_suffix}",
+                )
+                return "allowed"
+            except HTTPException as exc:
+                return exc.status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = sorted(pool.map(_attempt, [1, 2]), key=str)
+
+    assert results == [429, "allowed"]
+
+    with SessionLocal() as db:
+        bucket = db.query(AdminActionRateLimitBucket).filter(AdminActionRateLimitBucket.bucket_key == f"{actor_id}:{action_key}").one()
+        assert bucket.request_count >= 2
+
+    with SessionLocal() as db:
+        with pytest.raises(HTTPException) as excinfo:
+            rate_limit_service.enforce_admin_action_rate_limit(
+                db,
+                actor_id=actor_id,
+                action_key=action_key,
+                max_requests=1,
+                request_id="race-3",
+            )
+    assert excinfo.value.status_code == 429

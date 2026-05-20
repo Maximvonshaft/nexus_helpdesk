@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from fastapi import HTTPException, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..db import get_current_request_id
@@ -34,6 +35,93 @@ def _normalize_for_compare(value):
     if tzinfo is not None and value.utcoffset() is not None:
         return value.replace(tzinfo=None)
     return value
+
+
+def _log_rate_limit_hit(
+    db: Session,
+    *,
+    actor_id: int,
+    action_key: str,
+    request_id: str | None,
+    request_count: int,
+    max_requests: int,
+) -> None:
+    effective_request_id = request_id or get_current_request_id()
+    detail = _rate_limit_detail(action_key=action_key, request_id=effective_request_id)
+    log_admin_audit(
+        db,
+        actor_id=actor_id,
+        action="admin_action.rate_limited",
+        target_type="admin_action",
+        target_id=None,
+        old_value={
+            "action_key": action_key,
+            "request_count": request_count,
+            "window_seconds": settings.admin_action_rate_limit_window_seconds,
+            "limit": max_requests,
+        },
+        new_value=detail,
+    )
+    db.commit()
+    LOGGER.warning(
+        "admin_action_rate_limited",
+        extra={"event_payload": {
+            "actor_id": actor_id,
+            "action_key": action_key,
+            "request_id": effective_request_id or "unknown",
+            "request_count": request_count,
+            "limit": max_requests,
+            "window_seconds": settings.admin_action_rate_limit_window_seconds,
+        }},
+    )
+    raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=detail)
+
+
+def _enforce_with_atomic_upsert(
+    db: Session,
+    *,
+    actor_id: int,
+    action_key: str,
+    max_requests: int,
+    request_id: str | None,
+) -> bool:
+    now = utc_now()
+    window_start = now - timedelta(seconds=settings.admin_action_rate_limit_window_seconds)
+    bucket_key = _bucket_key(actor_id=actor_id, action_key=action_key)
+
+    row = db.execute(
+        text(
+            """
+            INSERT INTO admin_action_rate_limits (bucket_key, window_start, request_count, updated_at)
+            VALUES (:bucket_key, :now, 1, :now)
+            ON CONFLICT(bucket_key) DO UPDATE SET
+                window_start = CASE
+                    WHEN admin_action_rate_limits.window_start < :window_start THEN excluded.window_start
+                    ELSE admin_action_rate_limits.window_start
+                END,
+                request_count = CASE
+                    WHEN admin_action_rate_limits.window_start < :window_start THEN 1
+                    ELSE admin_action_rate_limits.request_count + 1
+                END,
+                updated_at = excluded.updated_at
+            RETURNING request_count, window_start
+            """
+        ),
+        {"bucket_key": bucket_key, "now": now, "window_start": window_start},
+    ).mappings().one()
+    db.commit()
+
+    request_count = int(row["request_count"] or 0)
+    if request_count > max_requests:
+        _log_rate_limit_hit(
+            db,
+            actor_id=actor_id,
+            action_key=action_key,
+            request_id=request_id,
+            request_count=request_count,
+            max_requests=max_requests,
+        )
+    return True
 
 
 def enforce_admin_action_rate_limit(
@@ -71,6 +159,16 @@ def _enforce_with_session(
     max_requests: int,
     request_id: str | None,
 ) -> None:
+    dialect = db.bind.dialect.name if db.bind is not None else None
+    if dialect in {"postgresql", "sqlite"}:
+        _enforce_with_atomic_upsert(
+            db,
+            actor_id=actor_id,
+            action_key=action_key,
+            max_requests=max_requests,
+            request_id=request_id,
+        )
+        return
 
     now = utc_now()
     window_start = now - timedelta(seconds=settings.admin_action_rate_limit_window_seconds)
@@ -105,35 +203,14 @@ def _enforce_with_session(
 
     request_count = int(existing.request_count or 0)
     if request_count >= max_requests:
-        effective_request_id = request_id or get_current_request_id()
-        detail = _rate_limit_detail(action_key=action_key, request_id=effective_request_id)
-        log_admin_audit(
+        _log_rate_limit_hit(
             db,
             actor_id=actor_id,
-            action="admin_action.rate_limited",
-            target_type="admin_action",
-            target_id=None,
-            old_value={
-                "action_key": action_key,
-                "request_count": request_count,
-                "window_seconds": settings.admin_action_rate_limit_window_seconds,
-                "limit": max_requests,
-            },
-            new_value=detail,
+            action_key=action_key,
+            request_id=request_id,
+            request_count=request_count,
+            max_requests=max_requests,
         )
-        db.commit()
-        LOGGER.warning(
-            "admin_action_rate_limited",
-            extra={"event_payload": {
-                "actor_id": actor_id,
-                "action_key": action_key,
-                "request_id": effective_request_id or "unknown",
-                "request_count": request_count,
-                "limit": max_requests,
-                "window_seconds": settings.admin_action_rate_limit_window_seconds,
-            }},
-        )
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=detail)
 
     existing.request_count = request_count + 1
     existing.updated_at = now
