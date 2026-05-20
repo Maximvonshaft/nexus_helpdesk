@@ -91,17 +91,6 @@ function MessageCard({ msg }: { msg: WebchatMessage }) {
   )
 }
 
-async function fetchWebchatEvents(ticketId: number, afterId: number, signal?: AbortSignal) {
-  const token = getToken()
-  const params = new URLSearchParams({ after_id: String(afterId), limit: '50', wait_ms: '1500' })
-  const response = await fetch(`/api/webchat/admin/tickets/${ticketId}/events?${params.toString()}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    signal,
-  })
-  if (!response.ok) throw new Error(`events_poll_failed:${response.status}`)
-  return response.json() as Promise<{ events: { id: number; event_type: string }[]; last_event_id: number }>
-}
-
 function backoffMs(failures: number, baseMs: number, maxMs: number) {
   if (failures <= 0) return baseMs
   return Math.min(maxMs, baseMs * 2 ** Math.min(failures, 4))
@@ -158,7 +147,7 @@ function WebchatInboxPage() {
 
   const events = useQuery({
     queryKey: ['webchatEvents', selectedTicketId, lastEventId],
-    queryFn: ({ signal }) => fetchWebchatEvents(selectedTicketId as number, lastEventId, signal),
+    queryFn: ({ signal }) => api.webchatEvents(selectedTicketId as number, lastEventId, { signal }),
     enabled: !!selectedTicketId,
     refetchInterval: backoffMs(eventPollFailures, 2500, 30000),
     retry: false,

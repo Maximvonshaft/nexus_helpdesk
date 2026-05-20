@@ -26,11 +26,12 @@ import type {
   WebchatThread,
   WebchatReplyResult,
 } from '@/lib/types'
+import type { WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
 const REQUEST_ID_HEADER = 'X-Request-Id'
 const DEFAULT_API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000)
-const PUBLIC_API_PATHS = ['/api/auth/login', '/auth/login', '/api/auth/register', '/auth/register', '/healthz', '/readyz']
+const PUBLIC_API_PATHS = ['/api/auth/login', '/auth/login', '/api/auth/register', '/auth/register', '/healthz', '/readyz', '/api/webchat/voice/runtime-config']
 const SAFE_RETRY_METHODS = new Set(['GET', 'HEAD'])
 
 let authExpiryHandled = false
@@ -177,6 +178,11 @@ export type TicketTimelinePage = {
   has_more: boolean
 }
 
+export type WebchatEventsPage = {
+  events: { id: number; event_type: string }[]
+  last_event_id: number
+}
+
 type CaseQueryParams = { q?: string; status?: string; priority?: string; assignee_id?: number; team_id?: number; overdue?: boolean; cursor?: string | null; limit?: number }
 
 type OutboundSendPayload = { channel: string; body: string }
@@ -191,6 +197,14 @@ function buildCaseSearch(params?: CaseQueryParams) {
   if (typeof params?.team_id === 'number') search.set('team_id', String(params.team_id))
   if (typeof params?.overdue === 'boolean') search.set('overdue', String(params.overdue))
   if (params?.cursor) search.set('cursor', params.cursor)
+  return search
+}
+
+function buildWebchatEventsSearch(afterId: number, limit = 50, waitMs = 1500) {
+  const search = new URLSearchParams()
+  search.set('after_id', String(afterId))
+  search.set('limit', String(limit))
+  search.set('wait_ms', String(waitMs))
   return search
 }
 
@@ -305,10 +319,15 @@ export const api = {
 
   webchatConversations: (init?: RequestInit) => request<WebchatConversation[]>('/api/webchat/admin/conversations', init),
   webchatThread: (ticketId: number, init?: RequestInit) => request<WebchatThread>(`/api/webchat/admin/tickets/${ticketId}/thread`, init),
+  webchatEvents: (ticketId: number, afterId: number, init?: RequestInit) => request<WebchatEventsPage>(`/api/webchat/admin/tickets/${ticketId}/events?${buildWebchatEventsSearch(afterId).toString()}`, init),
   webchatReply: (ticketId: number, payload: { body: string; has_fact_evidence?: boolean; confirm_review?: boolean }) => request<WebchatReplyResult>(`/api/webchat/admin/tickets/${ticketId}/reply`, {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
+  webchatVoiceRuntimeConfig: (init?: RequestInit) => request<WebchatVoiceRuntimeConfig>('/api/webchat/voice/runtime-config', init),
+  webchatVoiceSessions: (ticketId: number, init?: RequestInit) => request<{ items: WebchatVoiceSession[] }>(`/api/webchat/admin/tickets/${ticketId}/voice/sessions`, init),
+  webchatVoiceAcceptSession: (ticketId: number, voiceSessionId: string) => request<WebchatVoiceSession>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/accept`, { method: 'POST' }),
+  webchatVoiceEndSession: (ticketId: number, voiceSessionId: string) => request<{ ok: boolean; status: string; voice_session_id: string; accepted_by_user_id?: number | null }>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/end`, { method: 'POST' }),
 
   unresolvedEvents: () => request<OpenClawUnresolvedEvent[]>('/api/admin/openclaw/unresolved-events'),
   replayUnresolvedEvent: (eventId: number) => request<{ ok: boolean; linked_ticket_id?: number | null }>(`/api/admin/openclaw/unresolved-events/${eventId}/replay`, {
