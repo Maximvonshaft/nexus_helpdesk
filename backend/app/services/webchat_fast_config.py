@@ -221,7 +221,15 @@ class WebchatFastSettings:
             if self.provider == "openai_responses" and not self.openai_api_key_file:
                 raise RuntimeError("OPENAI_API_KEY_FILE is required in production when provider=openai_responses")
 
-            if self.provider == "openclaw_responses" or self.fallback_provider == "openclaw_responses":
+            openclaw_route_required = (
+                self.provider == "openclaw_responses"
+                or self.fallback_provider == "openclaw_responses"
+                or (
+                    self.provider == "codex_app_server"
+                    and (self.codex_app_server_kill_switch or self.codex_app_server_canary_percent < 100)
+                )
+            )
+            if openclaw_route_required:
                 if self.openclaw_responses_token:
                     raise RuntimeError("OPENCLAW_RESPONSES_TOKEN is forbidden in production; use OPENCLAW_RESPONSES_TOKEN_FILE")
                 if not self.openclaw_responses_token_file:
