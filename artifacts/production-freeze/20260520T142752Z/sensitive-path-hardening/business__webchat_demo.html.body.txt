@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="refresh" content="0; url=/webchat/demo/" />
+    <title>Redirecting to Showcase</title>
+</head>
+<body>
+    <p>Redirecting to the <a href="/webchat/demo/">Speedaf Showcase</a>...</p>
+</body>
+</html>

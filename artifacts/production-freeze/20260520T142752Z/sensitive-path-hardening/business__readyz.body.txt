@@ -1,0 +1,1 @@
+{"status":"ready","database":"ok","migration_revision":"20260516_0024","app_version":"main","git_sha":"unknown","image_tag":"nexusdesk/helpdesk:server","build_time":"unknown","frontend_build_sha":"unknown"}
