@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..models import OpenClawUnresolvedEvent
@@ -10,6 +12,31 @@ from ..utils.time import utc_now
 from .openclaw_payload_hash import payload_hash as compute_payload_hash
 
 ACTIVE_UNRESOLVED_STATUSES = ("pending", "failed", "replaying")
+
+
+def _normalized_session_key(session_key: str | None) -> str:
+    return session_key or ""
+
+
+def _find_existing_active_row(
+    db: Session,
+    *,
+    source: str,
+    session_key: str | None,
+    payload_hash: str,
+) -> OpenClawUnresolvedEvent | None:
+    normalized_session_key = _normalized_session_key(session_key)
+    return (
+        db.query(OpenClawUnresolvedEvent)
+        .filter(
+            OpenClawUnresolvedEvent.source == source,
+            func.coalesce(OpenClawUnresolvedEvent.session_key, "") == normalized_session_key,
+            OpenClawUnresolvedEvent.payload_hash == payload_hash,
+            OpenClawUnresolvedEvent.status.in_(list(ACTIVE_UNRESOLVED_STATUSES)),
+        )
+        .order_by(OpenClawUnresolvedEvent.id.desc())
+        .first()
+    )
 
 
 def persist_unresolved_openclaw_event_by_hash(
@@ -31,17 +58,7 @@ def persist_unresolved_openclaw_event_by_hash(
     """
     payload_json = json.dumps(payload, ensure_ascii=False)
     current_payload_hash = compute_payload_hash(payload)
-    existing = (
-        db.query(OpenClawUnresolvedEvent)
-        .filter(
-            OpenClawUnresolvedEvent.source == source,
-            OpenClawUnresolvedEvent.session_key == session_key,
-            OpenClawUnresolvedEvent.payload_hash == current_payload_hash,
-            OpenClawUnresolvedEvent.status.in_(list(ACTIVE_UNRESOLVED_STATUSES)),
-        )
-        .order_by(OpenClawUnresolvedEvent.id.desc())
-        .first()
-    )
+    existing = _find_existing_active_row(db, source=source, session_key=session_key, payload_hash=current_payload_hash)
     if existing is not None:
         existing.event_type = event_type
         existing.recipient = recipient
@@ -61,8 +78,20 @@ def persist_unresolved_openclaw_event_by_hash(
         status="pending",
         replay_count=0,
     )
-    db.add(row)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        existing = _find_existing_active_row(db, source=source, session_key=session_key, payload_hash=current_payload_hash)
+        if existing is not None:
+            existing.event_type = event_type
+            existing.recipient = recipient
+            existing.source_chat_id = source_chat_id
+            existing.preferred_reply_contact = preferred_reply_contact
+            existing.updated_at = utc_now()
+            return existing
+        raise
     return row
 
 

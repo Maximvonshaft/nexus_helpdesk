@@ -11,7 +11,7 @@ The package exists to make sure product intent, architecture, UX, API contracts,
 ## Current main-branch facts
 
 - Main console is a Vite React webapp under `webapp/`.
-- The frontend stack currently uses React 19, Vite, TypeScript, TanStack Router, TanStack Query, and Tailwind CSS.
+- The frontend stack currently uses React 18.3.1 at runtime, with Vite, TypeScript, TanStack Router, TanStack Query, and Tailwind CSS. (`@types/react` remains on the 19.x line.)
 - The current route surface includes dashboard, workspace, webchat, bulletins, AI control, control plane, accounts, users, and runtime pages.
 - WebChat is currently served as a static browser widget at `backend/app/static/webchat/widget.js`.
 - The WebChat admin and Workspace pages are already production-shaped but should be modularized before large-scale feature expansion.

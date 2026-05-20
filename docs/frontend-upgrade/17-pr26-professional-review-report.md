@@ -48,7 +48,7 @@ The package is sufficiently complete to merge into `main` as the execution-readi
 
 Result: Pass.
 
-The audit correctly identifies the current frontend as a Vite React SPA under `webapp/`, with React 19, TypeScript, TanStack Router, TanStack Query, Tailwind CSS, centralized API client, centralized global CSS, page-heavy route modules, and a static WebChat widget under backend static assets.
+The audit correctly identifies the current frontend as a Vite React SPA under `webapp/`, with React 18.3.1 at runtime, TypeScript, TanStack Router, TanStack Query, Tailwind CSS, centralized API client, centralized global CSS, page-heavy route modules, and a static WebChat widget under backend static assets. The original React 19 wording is outdated and should be treated as a version-fact error, not an architectural one.
 
 The audit properly identifies the main risk: the stack is not obsolete; the architecture needs modularization and runtime hardening.
 

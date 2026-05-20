@@ -345,7 +345,7 @@ That extension should only happen after:
 Build a control-tower frontend that fully represents the current backend capabilities: queue operations, case workspace, OpenClaw transcript and route context, evidence handling, market bulletins, channel-account control, and production sign-off visibility.
 
 ### Recommended long-term stack
-- React 19
+- React 18.3.1 (current runtime baseline)
 - TypeScript
 - Vite
 - TanStack Router
@@ -364,12 +364,12 @@ Build a control-tower frontend that fully represents the current backend capabil
 This package still ships a static frontend for immediate compatibility, but the structure, sections, and data model are aligned to the long-term blueprint above.
 
 
-## React 19 / TypeScript / Vite migration blueprint
+## React 18.3.1 / TypeScript / Vite migration blueprint
 
 This repository now includes a formal next-generation frontend scaffold in `webapp/` for the final control-console architecture.
 
 ### Target stack
-- React 19
+- React 18.3.1
 - TypeScript
 - Vite
 - TanStack Router
@@ -393,7 +393,7 @@ The system is an authenticated, data-dense operations console, not an SEO-first 
 
 
 ## Round 24 status
-The project now includes a significantly more complete React 19 / TypeScript / Vite control-console frontend in `webapp/`, with authenticated multi-view workflows for Overview, Case Workspace, Bulletins, Channel Accounts, and Runtime & Sign-off.
+The project now includes a significantly more complete React 18.3.1 / TypeScript / Vite control-console frontend in `webapp/`, with authenticated multi-view workflows for Overview, Case Workspace, Bulletins, Channel Accounts, and Runtime & Sign-off.
 
 
 ## Local OpenClaw-first operator deployment

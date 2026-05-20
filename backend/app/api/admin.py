@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -23,6 +23,7 @@ from ..services.permissions import (
     _base_capabilities,
 )
 from ..services.audit_service import log_admin_audit
+from ..services.admin_action_rate_limit import enforce_admin_action_rate_limit
 from ..services.ai_config_service import create_resource as create_ai_config_resource, list_admin_resources, list_versions as list_ai_config_versions, publish_resource, rollback_resource, update_resource as update_ai_config_resource
 from ..services.background_jobs import enqueue_openclaw_sync_job, enqueue_stale_openclaw_sync_jobs
 from ..unit_of_work import managed_session
@@ -509,8 +510,9 @@ def openclaw_connectivity_check(db: Session = Depends(get_db), current_user=Depe
 
 
 @router.post('/openclaw/events/consume-once')
-def consume_openclaw_events(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def consume_openclaw_events(request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
+    enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='openclaw.events.consume_once', max_requests=settings.admin_action_rate_limit_consume_once_max, request_id=getattr(request.state, 'request_id', None))
     with managed_session(db):
         processed = consume_openclaw_events_once(db)
         db.flush()
@@ -744,8 +746,9 @@ def list_unresolved_events(db: Session = Depends(get_db), current_user=Depends(g
     return [OpenClawUnresolvedEventRead.model_validate(x) for x in rows]
 
 @router.post('/openclaw/unresolved-events/{event_id}/replay')
-def replay_unresolved_event(event_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def replay_unresolved_event(event_id: int, request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
+    enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='unresolved_event.replay', max_requests=settings.admin_action_rate_limit_single_max, request_id=getattr(request.state, 'request_id', None))
     row = db.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == event_id).first()
     if not row: raise HTTPException(404, "Event not found")
     with managed_session(db):
@@ -756,8 +759,9 @@ def replay_unresolved_event(event_id: int, db: Session = Depends(get_db), curren
     return {"ok": processed, 'status': row.status, 'replay_count': row.replay_count, 'last_error': row.last_error}
 
 @router.post('/openclaw/unresolved-events/{event_id}/drop')
-def drop_unresolved_event(event_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def drop_unresolved_event(event_id: int, request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
+    enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='unresolved_event.drop', max_requests=settings.admin_action_rate_limit_single_max, request_id=getattr(request.state, 'request_id', None))
     row = db.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == event_id).first()
     if not row: raise HTTPException(404, "Event not found")
     with managed_session(db):

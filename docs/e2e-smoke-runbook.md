@@ -35,6 +35,31 @@ export NEXUSDESK_ADMIN_PASSWORD=...
 bash scripts/smoke/smoke_all_round_a.sh --dry-run
 ```
 
+## Webapp Playwright smoke
+
+The authenticated console now has a minimal Playwright smoke suite under `webapp/e2e/`.
+It uses mocked `/api/**` responses and `sessionStorage` token fixtures, so it does **not** require a real admin account or production credentials.
+
+Run locally:
+
+```bash
+cd webapp
+npm ci
+npm run build
+npm run e2e
+```
+
+Current smoke coverage:
+
+- login page renders
+- unauthenticated protected route redirects to `/login`
+- agent navigation does not expose management entry points
+- admin/capability user navigation exposes management entry points
+
+CI note:
+
+- The suite is runnable today but is not yet required to block `main`.
+
 ## Run mock-only checks
 
 ```bash
