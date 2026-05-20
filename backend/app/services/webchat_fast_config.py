@@ -101,6 +101,8 @@ class WebchatFastSettings:
     codex_app_server_token_file: str | None
     codex_app_server_token_value: str | None
     codex_app_server_timeout_ms: int
+    codex_app_server_canary_percent: int
+    codex_app_server_kill_switch: bool
     openai_api_key_file: str | None
     openai_api_key: str | None
 
@@ -189,6 +191,8 @@ class WebchatFastSettings:
             raise RuntimeError("WEBCHAT_FAST_AI_MAX_TIMEOUT_MS must not exceed 30000")
         if self.codex_app_server_timeout_ms < 500 or self.codex_app_server_timeout_ms > self.max_timeout_ms:
             raise RuntimeError("CODEX_APP_SERVER_TIMEOUT_MS must be between 500 and WEBCHAT_FAST_AI_MAX_TIMEOUT_MS")
+        if self.codex_app_server_canary_percent < 0 or self.codex_app_server_canary_percent > 100:
+            raise RuntimeError("CODEX_APP_SERVER_CANARY_PERCENT must be between 0 and 100")
         if self.stream_rollout_percent < 0 or self.stream_rollout_percent > 100:
             raise RuntimeError("WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT must be between 0 and 100")
         for cidr in self.trusted_proxy_cidrs:
@@ -308,6 +312,8 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         codex_app_server_token_file=(os.getenv("CODEX_APP_SERVER_TOKEN_FILE") or os.getenv("CODEX_REPLY_BRIDGE_TOKEN_FILE") or "").strip() or None,
         codex_app_server_token_value=(os.getenv("CODEX_APP_SERVER_TOKEN") or os.getenv("CODEX_REPLY_BRIDGE_TOKEN") or "").strip() or None,
         codex_app_server_timeout_ms=_env_int("CODEX_APP_SERVER_TIMEOUT_MS", 15000, minimum=500, maximum=max_timeout_ms),
+        codex_app_server_canary_percent=_env_int("CODEX_APP_SERVER_CANARY_PERCENT", 0, minimum=0, maximum=100),
+        codex_app_server_kill_switch=_env_bool("CODEX_APP_SERVER_KILL_SWITCH", False),
         openai_api_key_file=os.getenv("OPENAI_API_KEY_FILE", "").strip() or None,
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip() or None,
     )
