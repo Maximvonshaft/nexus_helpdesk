@@ -26,6 +26,7 @@ from .api.lite import router as lite_router
 from .api.operator_queue import router as operator_queue_router
 from .api.outbound_channels import router as outbound_channels_router
 from .api.persona_profiles import router as persona_profiles_router
+from .api.speedaf_cancel import router as speedaf_cancel_router
 from .api.stats import router as stats_router
 from .api.ticket_perf import router as ticket_perf_router
 from .api.tickets import router as tickets_router
@@ -186,6 +187,7 @@ app.include_router(customers_router)
 app.include_router(persona_profiles_router)
 app.include_router(stats_router)
 app.include_router(tickets_router)
+app.include_router(speedaf_cancel_router)
 app.include_router(webchat_fast_router)
 app.include_router(webchat_events_router)
 app.include_router(webchat_voice_router)
