@@ -12,7 +12,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app.services.webchat_fast_output_parser import parse_openclaw_fast_reply
+from app.services.webchat_fast_output_parser import FastReplyParseError, parse_openclaw_fast_reply
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -26,6 +26,11 @@ from upstream_auth_discovery import (  # noqa: E402
 from upstream_login_payload_boundary import (  # noqa: E402
     build_best_login_payload,
     login_payload_safe_summary,
+)
+from upstream_reply_transport import (  # noqa: E402
+    ReplyTransportSettings,
+    normalize_reply_path,
+    post_reply_turn,
 )
 from upstream_transport_boundary import (  # noqa: E402
     TransportBoundarySettings,
@@ -62,6 +67,9 @@ class UpstreamAdapterSettings:
     app_server_timeout_ms: int
     app_server_allow_public_url: bool
     app_server_login_dry_run: bool
+    app_server_reply_enabled: bool
+    app_server_reply_path: str
+    app_server_reply_token: str | None
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -97,6 +105,8 @@ def _load_settings() -> UpstreamAdapterSettings:
     mode: AdapterMode = raw_mode if raw_mode in {"disabled", "contract_fixture", "codex_app_server"} else "disabled"  # type: ignore[assignment]
     shared_token = _read_secret_file(os.getenv("CODEX_UPSTREAM_ADAPTER_SHARED_TOKEN_FILE"))
     shared_token = shared_token or (os.getenv("CODEX_UPSTREAM_ADAPTER_SHARED_TOKEN") or "").strip() or None
+    reply_token = _read_secret_file(os.getenv("CODEX_UPSTREAM_APP_SERVER_REPLY_TOKEN_FILE"))
+    reply_token = reply_token or (os.getenv("CODEX_UPSTREAM_APP_SERVER_REPLY_TOKEN") or "").strip() or None
     return UpstreamAdapterSettings(
         mode=mode,
         app_env=(os.getenv("APP_ENV") or "development").strip().lower(),
@@ -109,6 +119,9 @@ def _load_settings() -> UpstreamAdapterSettings:
         app_server_timeout_ms=_env_int("CODEX_UPSTREAM_APP_SERVER_TIMEOUT_MS", 15000, minimum=500, maximum=30000),
         app_server_allow_public_url=_env_bool("CODEX_UPSTREAM_APP_SERVER_ALLOW_PUBLIC_URL", False),
         app_server_login_dry_run=_env_bool("CODEX_UPSTREAM_APP_SERVER_LOGIN_DRY_RUN", True),
+        app_server_reply_enabled=_env_bool("CODEX_UPSTREAM_APP_SERVER_REPLY_ENABLED", False),
+        app_server_reply_path=(os.getenv("CODEX_UPSTREAM_APP_SERVER_REPLY_PATH") or "/reply").strip() or "/reply",
+        app_server_reply_token=reply_token,
     )
 
 
@@ -161,7 +174,7 @@ def _fixture_reply(request: ReplyRequest) -> dict[str, Any]:
     }
 
 
-def _normalize_strict_reply(payload: dict[str, Any]) -> dict[str, Any]:
+def _normalize_strict_reply(payload: Any) -> dict[str, Any]:
     parsed = parse_openclaw_fast_reply(payload)
     return {
         "reply": parsed.reply,
@@ -203,6 +216,7 @@ def _transport_boundary_status(settings: UpstreamAdapterSettings) -> dict[str, A
         settings.app_server_base_url,
         allow_public_url=settings.app_server_allow_public_url,
     )
+    reply_path, reply_path_error = normalize_reply_path(settings.app_server_reply_path)
     return {
         "configured": bool(settings.app_server_base_url),
         "base_url_accepted": bool(normalized_url and not error_code),
@@ -211,7 +225,46 @@ def _transport_boundary_status(settings: UpstreamAdapterSettings) -> dict[str, A
         "allow_public_url": settings.app_server_allow_public_url,
         "login_dry_run": settings.app_server_login_dry_run,
         "account_login_start_request": False,
+        "reply_enabled": settings.app_server_reply_enabled,
+        "reply_path": reply_path,
+        "reply_path_error_code": reply_path_error,
+        "reply_bearer_token_configured": bool(settings.app_server_reply_token),
         "external_network_call": False,
+    }
+
+
+def _provider_capabilities(settings: UpstreamAdapterSettings) -> dict[str, Any]:
+    transport = _transport_boundary_status(settings)
+    auth = _auth_discovery(settings)
+    return {
+        "provider": "codex_app_server",
+        "runtime": "private_upstream_adapter",
+        "mode": settings.mode,
+        "capabilities": {
+            "webchat_fast_reply": bool(
+                settings.mode == "codex_app_server"
+                and settings.app_server_reply_enabled
+                and auth["selected"]["usable"]
+                and transport["base_url_accepted"]
+                and transport["reply_path"]
+                and not transport["reply_path_error_code"]
+            ),
+            "account_login_start": bool(settings.mode == "codex_app_server" and auth["selected"]["usable"] and transport["base_url_accepted"]),
+            "streaming": False,
+            "tool_execution": False,
+            "ticket_action": False,
+            "handoff_decision": True,
+        },
+        "safety_level": "reply_only",
+        "boundary": {
+            "browser_cookie_scraping": False,
+            "chatgpt_session_scraping": False,
+            "shell_execution": False,
+            "file_write": False,
+            "tool_execution": False,
+            "direct_ticket_action": False,
+            "direct_customer_outbound_send": False,
+        },
     }
 
 
@@ -232,7 +285,7 @@ def readyz():
         return _safe_error(503, "upstream_adapter_auth_not_configured")
     if settings.mode == "codex_app_server" and not _auth_discovery(settings)["selected"]["usable"]:
         return _safe_error(503, "codex_auth_source_missing")
-    return {"ok": True, "mode": settings.mode, "auth_required": settings.require_auth}
+    return {"ok": True, "mode": settings.mode, "auth_required": settings.require_auth, "capabilities": _provider_capabilities(settings)["capabilities"]}
 
 
 @app.get("/auth/status")
@@ -248,16 +301,15 @@ def auth_status(authorization: str | None = Header(default=None), x_nexus_upstre
         "discovery": _auth_discovery(settings),
         "login_payload_boundary": _login_payload_boundary(settings),
         "transport_boundary": _transport_boundary_status(settings),
-        "boundary": {
-            "browser_cookie_scraping": False,
-            "chatgpt_session_scraping": False,
-            "shell_execution": False,
-            "file_write": False,
-            "tool_execution": False,
-            "account_login_start_request": False,
-            "external_network_call": False,
-        },
+        "provider_runtime": _provider_capabilities(settings),
     }
+
+
+@app.get("/provider/status")
+def provider_status(authorization: str | None = Header(default=None), x_nexus_upstream_token: str | None = Header(default=None)) -> dict[str, Any]:
+    settings = _load_settings()
+    _assert_authorized(settings, authorization, x_nexus_upstream_token)
+    return {"ok": True, "provider_runtime": _provider_capabilities(settings), "transport_boundary": _transport_boundary_status(settings)}
 
 
 @app.get("/transport/status")
@@ -316,7 +368,26 @@ def reply(
     if settings.mode == "codex_app_server":
         if not _auth_discovery(settings)["selected"]["usable"]:
             return _safe_error(503, "codex_auth_source_missing")
-        return _safe_error(501, "codex_app_server_reply_transport_not_implemented")
+        if not settings.app_server_reply_enabled:
+            return _safe_error(503, "codex_app_server_reply_transport_disabled")
+        result = asyncio.run(
+            post_reply_turn(
+                settings=ReplyTransportSettings(
+                    app_server_base_url=settings.app_server_base_url,
+                    reply_path=settings.app_server_reply_path,
+                    timeout_ms=settings.app_server_timeout_ms,
+                    allow_public_url=settings.app_server_allow_public_url,
+                    bearer_token=settings.app_server_reply_token,
+                ),
+                reply_payload=request.model_dump(),
+            )
+        )
+        if not result.ok:
+            return JSONResponse(status_code=502, content={"ok": False, "error_code": result.error_code or "app_server_reply_failed", "transport": result.safe_summary})
+        try:
+            return _normalize_strict_reply(result.response_payload)
+        except FastReplyParseError:
+            return JSONResponse(status_code=502, content={"ok": False, "error_code": "upstream_invalid_fast_reply", "transport": result.safe_summary})
     return _safe_error(503, "upstream_adapter_disabled")
 
 
