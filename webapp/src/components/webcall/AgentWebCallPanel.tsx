@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Room, RoomEvent, Track, createLocalAudioTrack } from 'livekit-client'
-import { webchatVoiceApi } from '@/lib/webchatVoiceApi'
+import { WebchatVoiceApiError, webchatVoiceApi } from '@/lib/webchatVoiceApi'
 import type { WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
 import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
 import { Badge } from '@/components/ui/Badge'
@@ -11,15 +11,43 @@ import { EmptyState } from '@/components/ui/EmptyState'
 
 const ACTIVE_STATUSES = new Set(['created', 'ringing', 'accepted', 'active'])
 const TERMINAL_STATUSES = new Set(['ended', 'failed', 'cancelled', 'missed'])
+const STATUS_LABELS: Record<string, string> = {
+  created: 'Created',
+  ringing: 'Ringing — waiting for agent',
+  accepted: 'Accepted — joining room',
+  active: 'Active — in call',
+  ended: 'Ended',
+  missed: 'Missed',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+}
+const STATUS_TONES: Record<string, 'default' | 'warning' | 'success' | 'danger'> = {
+  created: 'warning',
+  ringing: 'warning',
+  accepted: 'success',
+  active: 'success',
+  ended: 'default',
+  missed: 'danger',
+  failed: 'danger',
+  cancelled: 'danger',
+}
 
 type AgentCallState = 'idle' | 'accepting' | 'requesting_mic' | 'connecting' | 'connected' | 'ended' | 'error'
 
 type AgentWebCallPanelProps = {
   ticketId: number | null
+  conversationId?: string | null
+  ticketNo?: string | null
+  visitorLabel?: string | null
   onActivity?: () => void
 }
 
 type LocalAudioTrack = Awaited<ReturnType<typeof createLocalAudioTrack>>
+type SessionWithOptionalOpsFields = WebchatVoiceSession & {
+  recording_status?: string | null
+  transcript_status?: string | null
+  summary_status?: string | null
+}
 
 function activeVoiceSession(items?: WebchatVoiceSession[]) {
   return (items ?? []).find((item) => ACTIVE_STATUSES.has(String(item.status))) ?? items?.[0] ?? null
@@ -34,7 +62,29 @@ function roomNameFor(session: WebchatVoiceSession | null) {
   return session?.provider_room_name || session?.room_name || '-'
 }
 
-export function AgentWebCallPanel({ ticketId, onActivity }: AgentWebCallPanelProps) {
+function readableStatus(status?: string | null) {
+  const raw = String(status || '').toLowerCase()
+  return STATUS_LABELS[raw] || valueOrDash(status)
+}
+
+function statusTone(status?: string | null) {
+  const raw = String(status || '').toLowerCase()
+  return STATUS_TONES[raw] || 'default'
+}
+
+function safeErrorMessage(err: unknown) {
+  if (err instanceof WebchatVoiceApiError && err.status === 409) {
+    return 'This WebCall has already been accepted by another agent, or the call is no longer available. Refresh the session list before trying again.'
+  }
+  if (err instanceof Error && err.message) return err.message
+  return 'WebCall request failed. Please refresh and try again.'
+}
+
+function DetailField({ label, value }: { label: string; value?: string | number | null }) {
+  return <div className="kv"><label>{label}</label><div>{valueOrDash(value)}</div></div>
+}
+
+export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorLabel, onActivity }: AgentWebCallPanelProps) {
   const client = useQueryClient()
   const [callState, setCallState] = useState<AgentCallState>('idle')
   const [message, setMessage] = useState('Waiting for an incoming WebCall on this ticket.')
@@ -59,11 +109,13 @@ export function AgentWebCallPanel({ ticketId, onActivity }: AgentWebCallPanelPro
     retry: false,
   })
 
-  const currentSession = useMemo(() => activeVoiceSession(sessions.data?.items), [sessions.data?.items])
+  const allSessions = sessions.data?.items ?? []
+  const currentSession = useMemo(() => activeVoiceSession(sessions.data?.items), [sessions.data?.items]) as SessionWithOptionalOpsFields | null
   const terminal = currentSession ? TERMINAL_STATUSES.has(String(currentSession.status)) : false
   const hasLiveCall = Boolean(currentSession && !terminal)
   const connected = callState === 'connected'
-  const canAccept = Boolean(ticketId && currentSession && !terminal && !connected && callState !== 'accepting' && callState !== 'requesting_mic' && callState !== 'connecting')
+  const busyAccepting = callState === 'accepting' || callState === 'requesting_mic' || callState === 'connecting'
+  const canAccept = Boolean(ticketId && currentSession && !terminal && !connected && !busyAccepting)
 
   async function cleanupRoom() {
     try {
@@ -92,7 +144,7 @@ export function AgentWebCallPanel({ ticketId, onActivity }: AgentWebCallPanelPro
       if (!connected) setMessage('Waiting for an incoming WebCall on this ticket.')
       return
     }
-    if (terminal && !connected) setMessage(`WebCall is ${currentSession.status}.`)
+    if (terminal && !connected) setMessage(`WebCall status: ${readableStatus(currentSession.status)}.`)
   }, [connected, currentSession, terminal])
 
   async function invalidateVoiceViews() {
@@ -117,7 +169,7 @@ export function AgentWebCallPanel({ ticketId, onActivity }: AgentWebCallPanelPro
       }
       const livekitUrl = runtimeConfig.data?.livekit_url
       if (!livekitUrl) throw new Error('LiveKit URL is missing from runtime config')
-      if (!accepted.participant_token) throw new Error('Agent participant token missing from accept response')
+      if (!accepted.participant_token) throw new Error('Agent participant credential missing from accept response')
 
       setCallState('requesting_mic')
       setMessage('Requesting microphone permission...')
@@ -159,13 +211,13 @@ export function AgentWebCallPanel({ ticketId, onActivity }: AgentWebCallPanelPro
     onSuccess: async () => {
       await invalidateVoiceViews()
     },
-    onError: async (err: Error) => {
+    onError: async (err: unknown) => {
       await cleanupRoom()
       setCallState('error')
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      if (err instanceof Error && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
         setMessage('Microphone permission was denied. Allow microphone access and accept the WebCall again.')
       } else {
-        setMessage(err.message || 'Unable to accept WebCall')
+        setMessage(safeErrorMessage(err))
       }
     },
   })
@@ -186,7 +238,7 @@ export function AgentWebCallPanel({ ticketId, onActivity }: AgentWebCallPanelPro
     onSuccess: async () => {
       await invalidateVoiceViews()
     },
-    onError: (err: Error) => setMessage(err.message || 'Unable to end WebCall'),
+    onError: (err: unknown) => setMessage(safeErrorMessage(err)),
   })
 
   async function toggleMute() {
@@ -205,29 +257,49 @@ export function AgentWebCallPanel({ ticketId, onActivity }: AgentWebCallPanelPro
 
   return (
     <Card>
-      <CardHeader title="Agent WebCall" subtitle="Accept browser voice calls from the selected WebChat ticket. Microphone access is requested only after Accept WebCall." />
+      <CardHeader title="Agent WebCall" subtitle="Incoming-call queue for the selected WebChat ticket. Microphone access is requested only after Accept WebCall." />
       <CardBody>
         {!ticketId ? <EmptyState text="Select a WebChat ticket to monitor WebCall sessions." /> : null}
-        {ticketId && sessions.isLoading ? <div className="section-subtitle">Loading WebCall sessions...</div> : null}
-        {ticketId && !sessions.isLoading && !currentSession ? <EmptyState text="No WebCall session exists for this ticket yet." /> : null}
+        {ticketId && sessions.isLoading ? <div className="section-subtitle" data-testid="webcall-loading-state">Loading WebCall sessions...</div> : null}
+        {ticketId && sessions.isError ? (
+          <div className="message" data-testid="webcall-error-state" data-role="agent">
+            Unable to load WebCall sessions: {safeErrorMessage(sessions.error)}
+            <div className="inline-actions" style={{ marginTop: 8 }}><Button variant="secondary" onClick={() => void sessions.refetch()}>Retry</Button></div>
+          </div>
+        ) : null}
+        {ticketId && !sessions.isLoading && !sessions.isError && !currentSession ? <EmptyState text="No incoming WebCall sessions for this ticket." /> : null}
         {currentSession ? (
           <div className="stack compact" data-testid="agent-webcall-panel">
             <div className="badges">
               <Badge tone={hasLiveCall ? 'warning' : 'default'}>{hasLiveCall ? 'Incoming WebCall' : 'WebCall history'}</Badge>
+              <Badge tone={statusTone(currentSession.status)}>{readableStatus(currentSession.status)}</Badge>
               <Badge tone={connected ? 'success' : callState === 'error' ? 'danger' : 'default'}>{callState}</Badge>
               <Badge>{sanitizeDisplayText(currentSession.provider)}</Badge>
-              <Badge>{sanitizeDisplayText(currentSession.status)}</Badge>
             </div>
-            <div className="kv-grid">
-              <div className="kv"><label>Session</label><div>{valueOrDash(currentSession.voice_session_id)}</div></div>
-              <div className="kv"><label>Room</label><div>{valueOrDash(roomNameFor(currentSession))}</div></div>
-              <div className="kv"><label>Accepted by</label><div>{valueOrDash(currentSession.accepted_by_user_id)}</div></div>
-              <div className="kv"><label>Started</label><div>{valueOrDash(formatDateTime(currentSession.started_at || undefined))}</div></div>
-              <div className="kv"><label>Ringing</label><div>{valueOrDash(formatDateTime(currentSession.ringing_at || undefined))}</div></div>
-              <div className="kv"><label>Accepted</label><div>{valueOrDash(formatDateTime(currentSession.accepted_at || undefined))}</div></div>
-              <div className="kv"><label>Ended</label><div>{valueOrDash(formatDateTime(currentSession.ended_at || undefined))}</div></div>
-              <div className="kv"><label>LiveKit</label><div>{valueOrDash(runtimeConfig.data?.livekit_url || (runtimeConfig.isError ? 'runtime config unavailable' : 'loading'))}</div></div>
+
+            <div className="kv-grid" data-testid="webcall-current-card">
+              <DetailField label="Ticket ID" value={ticketId} />
+              <DetailField label="Ticket" value={ticketNo} />
+              <DetailField label="Conversation ID" value={conversationId} />
+              <DetailField label="Visitor" value={visitorLabel} />
+              <DetailField label="Voice session ID" value={currentSession.voice_session_id} />
+              <DetailField label="Room" value={roomNameFor(currentSession)} />
+              <DetailField label="Provider" value={currentSession.provider} />
+              <DetailField label="Status" value={readableStatus(currentSession.status)} />
+              <DetailField label="Accepted by user ID" value={currentSession.accepted_by_user_id} />
+              <DetailField label="Started" value={formatDateTime(currentSession.started_at || undefined)} />
+              <DetailField label="Ringing" value={formatDateTime(currentSession.ringing_at || undefined)} />
+              <DetailField label="Accepted" value={formatDateTime(currentSession.accepted_at || undefined)} />
+              <DetailField label="Active" value={formatDateTime(currentSession.active_at || undefined)} />
+              <DetailField label="Ended" value={formatDateTime(currentSession.ended_at || undefined)} />
+              <DetailField label="Expires" value={formatDateTime(currentSession.expires_at || undefined)} />
+              <DetailField label="LiveKit URL" value={runtimeConfig.data?.livekit_url || (runtimeConfig.isError ? 'runtime config unavailable' : 'loading')} />
+              <DetailField label="Recording status" value={currentSession.recording_status} />
+              <DetailField label="Transcript status" value={currentSession.transcript_status} />
+              <DetailField label="Summary status" value={currentSession.summary_status} />
             </div>
+
+            {runtimeConfig.isError ? <div className="section-subtitle">Runtime config is unavailable. Accept may fail until the page can refresh the LiveKit URL.</div> : null}
             <div role="status" className="section-subtitle">{sanitizeDisplayText(message)}</div>
             <div ref={remoteAudioRef} aria-hidden="true" />
             <div className="inline-actions">
@@ -238,6 +310,21 @@ export function AgentWebCallPanel({ ticketId, onActivity }: AgentWebCallPanelPro
               <Button variant="secondary" disabled={!currentSession || terminal || endMutation.isPending} onClick={() => endMutation.mutate()}>
                 {endMutation.isPending ? 'Ending...' : 'End WebCall'}
               </Button>
+              <Button variant="secondary" disabled={sessions.isFetching} onClick={() => void sessions.refetch()}>{sessions.isFetching ? 'Refreshing...' : 'Refresh sessions'}</Button>
+            </div>
+
+            <div className="stack compact" data-testid="webcall-session-queue">
+              <strong>Session queue · {allSessions.length}</strong>
+              {allSessions.map((session) => (
+                <div key={session.voice_session_id} className="queue-card">
+                  <div className="badges">
+                    <Badge tone={statusTone(session.status)}>{readableStatus(session.status)}</Badge>
+                    <Badge>{sanitizeDisplayText(session.provider)}</Badge>
+                  </div>
+                  <div className="queue-card-title">{valueOrDash(session.voice_session_id)}</div>
+                  <div className="queue-card-meta">Room {valueOrDash(roomNameFor(session))} · Ringing {valueOrDash(formatDateTime(session.ringing_at || undefined))} · Ended {valueOrDash(formatDateTime(session.ended_at || undefined))}</div>
+                </div>
+              ))}
             </div>
           </div>
         ) : null}
