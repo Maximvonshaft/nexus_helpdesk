@@ -6,6 +6,9 @@ import { resolve } from 'node:path'
 const root = resolve(process.cwd())
 const apiClient = readFileSync(resolve(root, 'src/lib/api.ts'), 'utf8')
 const types = readFileSync(resolve(root, 'src/lib/types.ts'), 'utf8')
+const appShell = readFileSync(resolve(root, 'src/layouts/AppShell.tsx'), 'utf8')
+const commandPalette = readFileSync(resolve(root, 'src/components/ui/CommandPalette.tsx'), 'utf8')
+const overviewRoute = readFileSync(resolve(root, 'src/routes/index.tsx'), 'utf8')
 const workspaceRoute = readFileSync(resolve(root, 'src/routes/workspace.tsx'), 'utf8')
 const runtimeRoute = readFileSync(resolve(root, 'src/routes/runtime.tsx'), 'utf8')
 const webchatRoute = readFileSync(resolve(root, 'src/routes/webchat.tsx'), 'utf8')
@@ -125,11 +128,50 @@ test('runtime page exposes confirmed recovery actions and refreshes runtime view
   }
 })
 
+test('operator navigation uses workflow-oriented entrypoints', () => {
+  assert.match(appShell, /data-testid="operator-primary-navigation"/)
+  assert.match(appShell, /处理工单/)
+  assert.match(appShell, /WebChat 收件箱/)
+  assert.match(appShell, /运行恢复/)
+  assert.match(appShell, /dead\/requeue 自助处理/)
+  assert.match(appShell, /runtimeNeedsAttention/)
+  assert.match(appShell, /需处理 \{runtimeAttentionCount\}/)
+  assert.match(appShell, /运行需处理/)
+})
+
+test('command palette exposes high-frequency operator workflow shortcuts', () => {
+  assert.match(commandPalette, /data-testid="operator-command-palette-actions"/)
+  assert.match(commandPalette, /处理工单 \/ 客户回复/)
+  assert.match(commandPalette, /打开 WebChat 收件箱/)
+  assert.match(commandPalette, /进入运行恢复 \/ dead 重排/)
+  assert.match(commandPalette, /刷新运行状态/)
+  assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['runtimeHealth'\] \}\)/)
+  assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['queueSummary'\] \}\)/)
+  assert.match(commandPalette, /navigate\(\{ to: '\/runtime' \}\)/)
+})
+
+test('overview page provides priority action entrypoints', () => {
+  assert.match(overviewRoute, /data-testid="overview-priority-actions"/)
+  assert.match(overviewRoute, /处理客户工单/)
+  assert.match(overviewRoute, /打开工单处理/)
+  assert.match(overviewRoute, /查看 WebChat 来信/)
+  assert.match(overviewRoute, /打开 WebChat 收件箱/)
+  assert.match(overviewRoute, /运行恢复待处理/)
+  assert.match(overviewRoute, /打开运行恢复/)
+  assert.match(overviewRoute, /needsRuntimeRecovery/)
+  assert.match(overviewRoute, /navigate\(\{ to: '\/workspace' \}\)/)
+  assert.match(overviewRoute, /navigate\(\{ to: '\/webchat' \}\)/)
+  assert.match(overviewRoute, /navigate\(\{ to: '\/runtime' \}\)/)
+})
+
 test('admin operator surfaces do not bypass unified api client with raw fetch', () => {
   const checkedFiles = [
     ['src/routes/workspace.tsx', workspaceRoute],
     ['src/routes/runtime.tsx', runtimeRoute],
     ['src/routes/webchat.tsx', webchatRoute],
+    ['src/routes/index.tsx', overviewRoute],
+    ['src/layouts/AppShell.tsx', appShell],
+    ['src/components/ui/CommandPalette.tsx', commandPalette],
     ['src/components/operator/CustomerReplyPanel.tsx', replyPanel],
     ['src/components/webcall/AgentWebCallPanel.tsx', agentWebCallPanel],
     ['src/lib/webchatVoiceApi.ts', webchatVoiceApi],

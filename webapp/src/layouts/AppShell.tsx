@@ -11,15 +11,15 @@ import { labelize } from '@/lib/format'
 import { canManageAIConfig, canManageChannels, canManageUsers, canViewControlPlane, canViewOps, roleWorkspaceHint } from '@/lib/access'
 
 const nav = [
-  { to: '/', label: '首页总览' },
-  { to: '/workspace', label: '工单处理' },
-  { to: '/webchat', label: '网站聊天' },
-  { to: '/bulletins', label: '通知公告', permission: 'bulletins' },
-  { to: '/ai-control', label: 'AI规则', permission: 'ai' },
-  { to: '/control-plane', label: '控制面', permission: 'control-plane' },
-  { to: '/accounts', label: '发送线路', permission: 'channels' },
-  { to: '/users', label: '账号管理', permission: 'users' },
-  { to: '/runtime', label: '运营保障', permission: 'ops' },
+  { to: '/', label: '今日总览', hint: '异常与优先入口' },
+  { to: '/workspace', label: '处理工单', hint: '回复、分配、闭环' },
+  { to: '/webchat', label: 'WebChat 收件箱', hint: '客户实时来信' },
+  { to: '/runtime', label: '运行恢复', hint: 'dead/requeue 自助处理', permission: 'ops', attention: 'runtime' },
+  { to: '/accounts', label: '发送线路', hint: '账号与兜底线路', permission: 'channels' },
+  { to: '/bulletins', label: '公告口径', hint: '统一客服话术', permission: 'bulletins' },
+  { to: '/ai-control', label: 'AI 规则', hint: '助手口径治理', permission: 'ai' },
+  { to: '/control-plane', label: '控制面', hint: '高级治理入口', permission: 'control-plane' },
+  { to: '/users', label: '账号权限', hint: '人员与权限', permission: 'users' },
 ]
 
 export function AppShell({ children }: PropsWithChildren) {
@@ -33,6 +33,12 @@ export function AppShell({ children }: PropsWithChildren) {
   const runtime = useQuery({
     queryKey: ['runtimeHealth-shell'],
     queryFn: api.runtimeHealth,
+    refetchInterval: autoRefresh.enabled ? 15000 : false,
+    enabled: !!session.data && canSeeOps,
+  })
+  const queue = useQuery({
+    queryKey: ['queueSummary-shell'],
+    queryFn: api.queueSummary,
     refetchInterval: autoRefresh.enabled ? 15000 : false,
     enabled: !!session.data && canSeeOps,
   })
@@ -69,6 +75,16 @@ export function AppShell({ children }: PropsWithChildren) {
     return true
   }), [session.data])
 
+  const runtimeNeedsAttention = Boolean(
+    canSeeOps
+    && ((runtime.data?.warnings?.length ?? 0) > 0
+      || (queue.data?.dead_jobs ?? 0) > 0
+      || (queue.data?.dead_outbound ?? 0) > 0
+      || (runtime.data?.dead_sync_jobs ?? 0) > 0
+      || (runtime.data?.dead_attachment_jobs ?? 0) > 0)
+  )
+  const runtimeAttentionCount = (queue.data?.dead_jobs ?? 0) + (queue.data?.dead_outbound ?? 0) + (runtime.data?.dead_sync_jobs ?? 0) + (runtime.data?.dead_attachment_jobs ?? 0)
+
   if (!session.data && (session.isLoading || session.isFetching)) {
     return <div className="auth-shell"><div className="auth-card">正在确认登录状态…</div></div>
   }
@@ -83,12 +99,18 @@ export function AppShell({ children }: PropsWithChildren) {
           <h1>客服工作台</h1>
           <div className="subtle">工单、客户消息、公告与渠道统一处理</div>
         </div>
-        <nav className="nav">
-          {availableNav.map((item) => (
-            <Link key={item.to} to={item.to} data-active={location.pathname === item.to || (item.to !== '/' && location.pathname.startsWith(item.to)) ? 'true' : 'false'}>
-              <span>{item.label}</span>
-            </Link>
-          ))}
+        <nav className="nav" data-testid="operator-primary-navigation">
+          {availableNav.map((item) => {
+            const active = location.pathname === item.to || (item.to !== '/' && location.pathname.startsWith(item.to))
+            const showRuntimeAttention = item.attention === 'runtime' && runtimeNeedsAttention
+            return (
+              <Link key={item.to} to={item.to} data-active={active ? 'true' : 'false'}>
+                <span>{item.label}</span>
+                <small>{item.hint}</small>
+                {showRuntimeAttention ? <Badge tone="danger">需处理 {runtimeAttentionCount}</Badge> : null}
+              </Link>
+            )
+          })}
         </nav>
         <div className="card soft sidebar-card">
           <div className="section-title">当前账号</div>
@@ -104,10 +126,10 @@ export function AppShell({ children }: PropsWithChildren) {
         <div className="topbar">
           <div>
             <div className="section-title">客服运营台</div>
-            <div className="section-subtitle">先看客户诉求，再看处理建议，再看运营保障；客服无需理解后台技术名词。</div>
+            <div className="section-subtitle">先看今日总览，再进工单/WebChat；出现 dead 或同步异常时直接进入运行恢复。</div>
           </div>
           <div className="button-row topbar-status">
-            <Badge tone={!canSeeOps ? 'default' : runtime.data?.warnings?.length ? 'warning' : 'success'}>{!canSeeOps ? '客服模式' : runtime.data?.warnings?.length ? '需要关注' : '运行正常'}</Badge>
+            <Badge tone={!canSeeOps ? 'default' : runtimeNeedsAttention ? 'danger' : runtime.data?.warnings?.length ? 'warning' : 'success'}>{!canSeeOps ? '客服模式' : runtimeNeedsAttention ? '运行需处理' : runtime.data?.warnings?.length ? '需要关注' : '运行正常'}</Badge>
             <Badge>{autoRefresh.enabled ? '自动刷新已开启' : '自动刷新已暂停'}</Badge>
             <Button variant="secondary" onClick={() => autoRefresh.setEnabled(!autoRefresh.enabled)}>{autoRefresh.enabled ? '暂停刷新' : '恢复刷新'}</Button>
             <Button variant="secondary" onClick={() => setCommandOpen(true)}>快捷键 ⌘/Ctrl + K</Button>

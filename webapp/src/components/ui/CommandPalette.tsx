@@ -7,14 +7,16 @@ import { useSession } from '@/hooks/useAuth'
 import { canEditBulletins, canManageChannels, canViewOps } from '@/lib/access'
 
 const actions = [
-  { id: 'overview', label: '前往首页总览', to: '/' },
-  { id: 'workspace', label: '前往工单处理', to: '/workspace' },
-  { id: 'bulletins', label: '前往通知公告', to: '/bulletins' },
-  { id: 'accounts', label: '前往发送线路', to: '/accounts', permission: 'channels' },
-  { id: 'runtime', label: '前往运营保障', to: '/runtime', permission: 'ops' },
-  { id: 'refresh', label: '刷新全部数据', action: 'refresh' },
-  { id: 'new-bulletin', label: '新建公告', to: '/bulletins', permission: 'bulletinsManage' },
-  { id: 'new-account', label: '新建渠道账号', to: '/accounts', permission: 'channels' },
+  { id: 'overview', label: '查看今日总览', keywords: '首页 总览 今日 优先', to: '/' },
+  { id: 'workspace', label: '处理工单 / 客户回复', keywords: '工单 回复 客户 闭环', to: '/workspace' },
+  { id: 'webchat', label: '打开 WebChat 收件箱', keywords: 'webchat 网站聊天 收件箱 客户来信', to: '/webchat' },
+  { id: 'runtime', label: '进入运行恢复 / dead 重排', keywords: 'runtime 运行恢复 dead requeue 重排 队列', to: '/runtime', permission: 'ops' },
+  { id: 'accounts', label: '检查发送线路', keywords: '发送线路 渠道 账号 outbound', to: '/accounts', permission: 'channels' },
+  { id: 'bulletins', label: '查看公告口径', keywords: '公告 口径 通知', to: '/bulletins' },
+  { id: 'refresh', label: '刷新全部数据', keywords: '刷新 reload invalidate', action: 'refresh' },
+  { id: 'runtime-refresh', label: '刷新运行状态', keywords: '刷新 runtime 运行 状态', action: 'runtime-refresh', permission: 'ops' },
+  { id: 'new-bulletin', label: '新建公告', keywords: '公告 新建 口径', to: '/bulletins', permission: 'bulletinsManage' },
+  { id: 'new-account', label: '新建渠道账号', keywords: '渠道 账号 新建', to: '/accounts', permission: 'channels' },
 ]
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -28,7 +30,11 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     if (item.permission === 'bulletinsManage') return canEditBulletins(session.data)
     return true
   }), [session.data])
-  const filtered = useMemo(() => visibleActions.filter((item) => item.label.toLowerCase().includes(query.toLowerCase())), [visibleActions, query])
+  const normalizedQuery = query.trim().toLowerCase()
+  const filtered = useMemo(() => visibleActions.filter((item) => {
+    if (!normalizedQuery) return true
+    return `${item.label} ${item.keywords || ''}`.toLowerCase().includes(normalizedQuery)
+  }), [visibleActions, normalizedQuery])
 
   if (!open) return null
 
@@ -36,8 +42,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     <div className="command-backdrop" onClick={onClose}>
       <div className="command-card" onClick={(e) => e.stopPropagation()}>
         <div className="command-head">快捷操作</div>
-        <Input autoFocus placeholder="输入关键词，例如：工单、公告、刷新" value={query} onChange={(e) => setQuery(e.target.value)} />
-        <div className="command-list">
+        <Input autoFocus placeholder="输入关键词，例如：工单、WebChat、dead、重排、公告" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <div className="command-list" data-testid="operator-command-palette-actions">
           {filtered.map((item) => (
             <button
               key={item.id}
@@ -45,6 +51,17 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
               onClick={async () => {
                 if (item.action === 'refresh') {
                   await queryClient.invalidateQueries()
+                  onClose()
+                  return
+                }
+                if (item.action === 'runtime-refresh') {
+                  await Promise.all([
+                    queryClient.invalidateQueries({ queryKey: ['runtimeHealth'] }),
+                    queryClient.invalidateQueries({ queryKey: ['queueSummary'] }),
+                    queryClient.invalidateQueries({ queryKey: ['jobs'] }),
+                    queryClient.invalidateQueries({ queryKey: ['openclawConnectivity'] }),
+                  ])
+                  navigate({ to: '/runtime' })
                   onClose()
                   return
                 }
