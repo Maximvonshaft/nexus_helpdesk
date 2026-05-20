@@ -15,6 +15,7 @@ import { Toast } from '@/components/ui/Toast'
 import { SegmentedControl, ToolbarAction } from '@/components/ui/SegmentedControl'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
+import { CustomerReplyPanel } from '@/components/operator/CustomerReplyPanel'
 
 function timelineTitle(item: Record<string, unknown>) {
   const sourceType = String(item.source_type || '')
@@ -486,6 +487,8 @@ function WorkspacePage() {
                       {saveMutation.isPending ? '保存中…' : '保存处理结果'}
                     </Button>
                   </div>
+
+                  <CustomerReplyPanel activeCase={activeCase} onToast={setToast} />
 
                   <Card className="soft">
                     <CardHeader title="智能提炼" subtitle="把客户消息沉淀成结构化摘要，方便下一位客服快速接手。" />
