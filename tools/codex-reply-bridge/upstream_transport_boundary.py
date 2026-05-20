@@ -34,6 +34,18 @@ def _private_or_tailnet_ip(value: str) -> bool:
     return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip in tailnet_or_cgnat)
 
 
+def _resolve_host_to_ips(host: str, port: int) -> tuple[set[ipaddress._BaseAddress] | None, str | None]:
+    try:
+        return {ipaddress.ip_address(host)}, None
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        return {ipaddress.ip_address(item[4][0]) for item in infos}, None
+    except Exception:
+        return None, "app_server_host_unresolvable"
+
+
 def validate_private_app_server_url(base_url: str | None, *, allow_public_url: bool = False) -> tuple[str | None, str | None]:
     value = (base_url or "").strip()
     if not value:
@@ -43,20 +55,14 @@ def validate_private_app_server_url(base_url: str | None, *, allow_public_url: b
         return None, "app_server_base_url_invalid"
     if parsed.username or parsed.password:
         return None, "app_server_base_url_userinfo_forbidden"
-    if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
-        return None, "app_server_http_requires_loopback"
     if allow_public_url:
         return value.rstrip("/"), None
+
     host = parsed.hostname
-    try:
-        resolved_ips = {ipaddress.ip_address(host)}
-    except ValueError:
-        try:
-            infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
-            resolved_ips = {ipaddress.ip_address(item[4][0]) for item in infos}
-        except Exception:
-            return None, "app_server_host_unresolvable"
-    if not any(_private_or_tailnet_ip(str(ip)) for ip in resolved_ips):
+    resolved_ips, resolve_error = _resolve_host_to_ips(host, parsed.port or (443 if parsed.scheme == "https" else 80))
+    if resolve_error:
+        return None, resolve_error
+    if not resolved_ips or not any(_private_or_tailnet_ip(str(ip)) for ip in resolved_ips):
         return None, "app_server_url_must_be_private"
     return value.rstrip("/"), None
 
