@@ -4,7 +4,7 @@
 
 Validate and operate the private Codex reply bridge path without changing production WebChat traffic.
 
-The current implementation has eight layers:
+The current implementation has nine layers:
 
 1. Probe: `scripts/probe_codex_app_server_reply.sh`
 2. Private sidecar: `tools/codex-reply-bridge/sidecar.py`
@@ -14,18 +14,20 @@ The current implementation has eight layers:
 6. Upstream auth discovery: `tools/codex-reply-bridge/upstream_auth_discovery.py`
 7. Login payload boundary: `tools/codex-reply-bridge/upstream_login_payload_boundary.py`
 8. Transport boundary: `tools/codex-reply-bridge/upstream_transport_boundary.py`
+9. Local app-server contract fixture: `tools/codex-reply-bridge/app_server_contract_fixture.py`
 
 The sidecar can run in `disabled`, `stub`, or `upstream` mode. The upstream adapter can run in `disabled`, `contract_fixture`, or `codex_app_server` mode.
 
 ## Required operator inputs
 
-You need one of the following on the server or local dev host:
+You need:
 
-- a working private upstream Codex app-server adapter endpoint;
 - a bridge shared token file for Nexus-to-sidecar authentication;
 - an upstream token file if the upstream adapter requires authentication;
 - an explicit Codex auth source file for future real mode;
 - the Nexus repository checkout.
+
+For real OpenClaw/Codex integration, use only an explicit local auth source and a private app-server endpoint. Do not scrape browser cookies or ChatGPT sessions.
 
 Do not paste credentials into shell history. Prefer files under `/run/nexus/` with root-only permissions.
 
@@ -40,7 +42,8 @@ PYTHONPATH=backend pytest -q \
   backend/tests/test_codex_upstream_adapter_skeleton.py \
   backend/tests/test_codex_upstream_auth_discovery.py \
   backend/tests/test_codex_upstream_login_payload_boundary.py \
-  backend/tests/test_codex_upstream_transport_boundary.py
+  backend/tests/test_codex_upstream_transport_boundary.py \
+  backend/tests/test_codex_app_server_contract_fixture.py
 ```
 
 ## Login payload boundary
@@ -99,9 +102,24 @@ Rules:
 - `/transport/login-start` returns dry-run output by default and does not send `account/login/start`.
 - When dry-run is false, it posts the internal login payload to `account/login/start` on the configured private base URL.
 - Transport status and result summaries never echo credential material.
-- Reply generation transport remains explicitly not implemented in this PR.
+- Reply generation transport remains explicitly not implemented in this PR line.
 
-Synthetic transport status validation:
+## Local app-server contract fixture
+
+The local fixture implements only:
+
+```text
+GET  /healthz
+POST /account/login/start
+```
+
+It validates the `account/login/start` payload shape and returns a sanitized success response. It does not implement reply generation, model calls, shell execution, browser access, session scraping, or tool execution.
+
+Use it to prove the non-dry-run HTTP path before connecting to any real OpenClaw/Codex endpoint.
+
+## Synthetic transport dry-run validation
+
+This validates readiness without sending `account/login/start`:
 
 ```bash
 set -Eeuo pipefail
@@ -109,14 +127,14 @@ set -Eeuo pipefail
 cd /opt/nexus_helpdesk || cd ~/nexus_helpdesk
 . .venv/bin/activate
 
-mkdir -p /tmp/codex_auth_discovery_demo
-cat > /tmp/codex_auth_discovery_demo/auth_profile.json <<'JSON'
+mkdir -p /tmp/codex_transport_demo
+cat > /tmp/codex_transport_demo/auth_profile.json <<'JSON'
 {
   "profiles": {
     "openai-codex:default": {
       "type": "token",
       "provider": "openai-codex",
-      "access": "synthetic-access-token-for-discovery-test-only",
+      "access": "synthetic-access-token-for-transport-test-only",
       "accountId": "acct_demo",
       "chatgptPlanType": "plus"
     }
@@ -138,7 +156,7 @@ export APP_ENV=development
 export CODEX_UPSTREAM_ADAPTER_MODE=codex_app_server
 export CODEX_UPSTREAM_ADAPTER_REQUIRE_AUTH=true
 export CODEX_UPSTREAM_ADAPTER_SHARED_TOKEN_FILE=/run/nexus/codex_reply_bridge_upstream_token
-export CODEX_UPSTREAM_AUTH_PROFILE_FILE=/tmp/codex_auth_discovery_demo/auth_profile.json
+export CODEX_UPSTREAM_AUTH_PROFILE_FILE=/tmp/codex_transport_demo/auth_profile.json
 export CODEX_UPSTREAM_APP_SERVER_BASE_URL=http://127.0.0.1:18795
 export CODEX_UPSTREAM_APP_SERVER_LOGIN_DRY_RUN=true
 export CODEX_UPSTREAM_ADAPTER_HOST=127.0.0.1
@@ -154,10 +172,12 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
-curl -fsS -H "X-Nexus-Upstream-Token: $(cat /run/nexus/codex_reply_bridge_upstream_token)" \
+TOKEN="$(cat /run/nexus/codex_reply_bridge_upstream_token)"
+
+curl -fsS -H "X-Nexus-Upstream-Token: $TOKEN" \
   http://127.0.0.1:18794/transport/status
 
-curl -fsS -X POST -H "X-Nexus-Upstream-Token: $(cat /run/nexus/codex_reply_bridge_upstream_token)" \
+curl -fsS -X POST -H "X-Nexus-Upstream-Token: $TOKEN" \
   http://127.0.0.1:18794/transport/login-start
 ```
 
@@ -179,7 +199,123 @@ Expected dry-run fields:
 }
 ```
 
-The synthetic secret string must not appear in output.
+The synthetic value must not appear in output.
+
+## Local non-dry-run fixture validation
+
+This validates the real HTTP path against the local contract fixture only:
+
+```bash
+set -Eeuo pipefail
+
+cd /opt/nexus_helpdesk || cd ~/nexus_helpdesk
+. .venv/bin/activate
+
+mkdir -p /tmp/codex_fixture_demo
+cat > /tmp/codex_fixture_demo/auth_profile.json <<'JSON'
+{
+  "profiles": {
+    "openai-codex:default": {
+      "type": "token",
+      "provider": "openai-codex",
+      "access": "synthetic-access-token-for-fixture-test-only",
+      "accountId": "acct_demo",
+      "chatgptPlanType": "plus"
+    }
+  }
+}
+JSON
+
+mkdir -p /run/nexus
+umask 077
+if [ ! -s /run/nexus/codex_reply_bridge_upstream_token ]; then
+  python - <<'PY' > /run/nexus/codex_reply_bridge_upstream_token
+import secrets
+print(secrets.token_urlsafe(48), end='')
+PY
+fi
+
+export PYTHONPATH=backend
+export APP_ENV=development
+
+pkill -f 'tools/codex-reply-bridge/app_server_contract_fixture.py' >/dev/null 2>&1 || true
+pkill -f 'tools/codex-reply-bridge/upstream_adapter.py' >/dev/null 2>&1 || true
+
+export CODEX_CONTRACT_FIXTURE_HOST=127.0.0.1
+export CODEX_CONTRACT_FIXTURE_PORT=18795
+python tools/codex-reply-bridge/app_server_contract_fixture.py > /tmp/codex_app_server_contract_fixture.log 2>&1 &
+FIXTURE_PID=$!
+
+export CODEX_UPSTREAM_ADAPTER_MODE=codex_app_server
+export CODEX_UPSTREAM_ADAPTER_REQUIRE_AUTH=true
+export CODEX_UPSTREAM_ADAPTER_SHARED_TOKEN_FILE=/run/nexus/codex_reply_bridge_upstream_token
+export CODEX_UPSTREAM_AUTH_PROFILE_FILE=/tmp/codex_fixture_demo/auth_profile.json
+export CODEX_UPSTREAM_APP_SERVER_BASE_URL=http://127.0.0.1:18795
+export CODEX_UPSTREAM_APP_SERVER_LOGIN_DRY_RUN=false
+export CODEX_UPSTREAM_ADAPTER_HOST=127.0.0.1
+export CODEX_UPSTREAM_ADAPTER_PORT=18794
+python tools/codex-reply-bridge/upstream_adapter.py > /tmp/codex_upstream_adapter.log 2>&1 &
+UPSTREAM_PID=$!
+
+cleanup() {
+  kill "$UPSTREAM_PID" >/dev/null 2>&1 || true
+  kill "$FIXTURE_PID" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+for i in $(seq 1 30); do
+  curl -fsS http://127.0.0.1:18795/healthz >/dev/null 2>&1 && break
+  sleep 1
+done
+for i in $(seq 1 30); do
+  curl -fsS http://127.0.0.1:18794/healthz >/dev/null 2>&1 && break
+  sleep 1
+done
+
+TOKEN="$(cat /run/nexus/codex_reply_bridge_upstream_token)"
+
+curl -fsS -H "X-Nexus-Upstream-Token: $TOKEN" \
+  http://127.0.0.1:18794/transport/status
+
+curl -fsS -X POST -H "X-Nexus-Upstream-Token: $TOKEN" \
+  http://127.0.0.1:18794/transport/login-start
+
+{
+  curl -fsS -H "X-Nexus-Upstream-Token: $TOKEN" \
+    http://127.0.0.1:18794/transport/status
+  curl -fsS -X POST -H "X-Nexus-Upstream-Token: $TOKEN" \
+    http://127.0.0.1:18794/transport/login-start
+} | grep -q 'synthetic-access-token-for-fixture-test-only' \
+  && { echo 'SECRET_LEAK_FAIL'; exit 1; } \
+  || echo 'SECRET_LEAK_PASS'
+
+echo '===== FIXTURE LOG ====='
+cat /tmp/codex_app_server_contract_fixture.log
+
+echo '===== UPSTREAM LOG ====='
+cat /tmp/codex_upstream_adapter.log
+```
+
+Expected non-dry-run fields:
+
+```json
+{
+  "ok": true,
+  "dry_run": false,
+  "transport": {
+    "ok": true,
+    "endpoint_path": "account/login/start",
+    "status_code": 200,
+    "response_keys": ["account", "capabilities", "ok", "sessionId"]
+  }
+}
+```
+
+Expected leak check:
+
+```text
+SECRET_LEAK_PASS
+```
 
 ## Start sidecar in local stub mode
 
@@ -219,203 +355,19 @@ cat artifacts/codex_reply_probe/report.md
 
 Expected result in stub mode: `PASS`.
 
-## Upstream auth discovery validation
-
-This validates explicit auth source recognition only. It does not log in, refresh tokens, or call Codex.
-
-Supported explicit source files:
-
-```text
-CODEX_UPSTREAM_AUTH_PROFILE_FILE
-CODEX_CLI_AUTH_FILE
-CODEX_UPSTREAM_API_KEY_FILE
-```
-
-Discovery output reports only:
-
-```text
-source_kind
-credential_kind
-login_type
-account_hint_present
-plan_hint_present
-fingerprint
-usable
-error_code
-```
-
-Login payload boundary output reports only:
-
-```text
-source_kind
-login_type
-payload_ready
-secret_fingerprint
-chatgpt_account_id_present
-chatgpt_plan_type_present
-error_code
-```
-
-It never echoes access tokens, refresh tokens, or API keys.
-
 ## Upstream adapter contract fixture E2E
 
-This validates the full local chain without using real Codex credentials:
+This validates the full local reply chain without using real Codex credentials:
 
 ```text
 probe -> sidecar upstream mode on 18793 -> upstream adapter contract fixture on 18794 -> strict JSON
-```
-
-Run in one shell:
-
-```bash
-set -Eeuo pipefail
-
-cd /opt/nexus_helpdesk || cd ~/nexus_helpdesk
-. .venv/bin/activate
-
-mkdir -p /run/nexus
-umask 077
-if [ ! -s /run/nexus/codex_reply_bridge_shared_token ]; then
-  python - <<'PY' > /run/nexus/codex_reply_bridge_shared_token
-import secrets
-print(secrets.token_urlsafe(48), end='')
-PY
-fi
-if [ ! -s /run/nexus/codex_reply_bridge_upstream_token ]; then
-  python - <<'PY' > /run/nexus/codex_reply_bridge_upstream_token
-import secrets
-print(secrets.token_urlsafe(48), end='')
-PY
-fi
-
-export PYTHONPATH=backend
-export APP_ENV=development
-
-pkill -f 'tools/codex-reply-bridge/upstream_adapter.py' >/dev/null 2>&1 || true
-pkill -f 'tools/codex-reply-bridge/sidecar.py' >/dev/null 2>&1 || true
-
-export CODEX_UPSTREAM_ADAPTER_MODE=contract_fixture
-export CODEX_UPSTREAM_ADAPTER_REQUIRE_AUTH=true
-export CODEX_UPSTREAM_ADAPTER_SHARED_TOKEN_FILE=/run/nexus/codex_reply_bridge_upstream_token
-export CODEX_UPSTREAM_ADAPTER_HOST=127.0.0.1
-export CODEX_UPSTREAM_ADAPTER_PORT=18794
-python tools/codex-reply-bridge/upstream_adapter.py > /tmp/codex_upstream_adapter.log 2>&1 &
-UPSTREAM_PID=$!
-
-export CODEX_REPLY_BRIDGE_MODE=upstream
-export CODEX_REPLY_BRIDGE_REQUIRE_AUTH=true
-export CODEX_REPLY_BRIDGE_SHARED_TOKEN_FILE=/run/nexus/codex_reply_bridge_shared_token
-export CODEX_REPLY_BRIDGE_UPSTREAM_URL='http://127.0.0.1:18794/reply'
-export CODEX_REPLY_BRIDGE_UPSTREAM_TOKEN_FILE=/run/nexus/codex_reply_bridge_upstream_token
-export CODEX_REPLY_BRIDGE_UPSTREAM_TIMEOUT_MS=15000
-export CODEX_REPLY_BRIDGE_HOST=127.0.0.1
-export CODEX_REPLY_BRIDGE_PORT=18793
-python tools/codex-reply-bridge/sidecar.py > /tmp/codex_reply_bridge_sidecar.log 2>&1 &
-SIDECAR_PID=$!
-
-cleanup() {
-  kill "$SIDECAR_PID" >/dev/null 2>&1 || true
-  kill "$UPSTREAM_PID" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
-
-for i in $(seq 1 30); do
-  curl -fsS http://127.0.0.1:18794/healthz >/dev/null 2>&1 && break
-  sleep 1
-done
-for i in $(seq 1 30); do
-  curl -fsS http://127.0.0.1:18793/healthz >/dev/null 2>&1 && break
-  sleep 1
-done
-
-curl -fsS http://127.0.0.1:18794/readyz
-curl -fsS http://127.0.0.1:18793/readyz
-
-export CODEX_REPLY_BRIDGE_URL='http://127.0.0.1:18793/reply'
-export CODEX_REPLY_BRIDGE_TOKEN_FILE='/run/nexus/codex_reply_bridge_shared_token'
-export CODEX_REPLY_PROBE_TIMEOUT_MS='15000'
-
-bash scripts/probe_codex_app_server_reply.sh --strict
-cat artifacts/codex_reply_probe/final_verdict.txt
-cat artifacts/codex_reply_probe/report.md
-
-echo '===== UPSTREAM LOG ====='
-cat /tmp/codex_upstream_adapter.log
-
-echo '===== SIDECAR LOG ====='
-cat /tmp/codex_reply_bridge_sidecar.log
 ```
 
 Expected result: `PASS`.
 
 ## Backend provider validation against local stub
 
-After the sidecar is running in `stub` mode, validate that the backend provider can call it:
-
-```bash
-set -Eeuo pipefail
-
-cd /opt/nexus_helpdesk || cd ~/nexus_helpdesk
-. .venv/bin/activate
-
-export PYTHONPATH=backend
-export APP_ENV=development
-export WEBCHAT_FAST_AI_PROVIDER=codex_app_server
-export WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED=true
-export WEBCHAT_FAST_AI_FALLBACK_PROVIDER=none
-export CODEX_APP_SERVER_BRIDGE_URL='http://127.0.0.1:18793/reply'
-export CODEX_APP_SERVER_TOKEN_FILE='/run/nexus/codex_reply_bridge_shared_token'
-export CODEX_APP_SERVER_TIMEOUT_MS='15000'
-export CODEX_APP_SERVER_CANARY_PERCENT='100'
-export CODEX_APP_SERVER_KILL_SWITCH='false'
-
-python - <<'PY'
-import asyncio
-import json
-from app.services.webchat_fast_config import get_webchat_fast_settings
-from app.services.ai_runtime.provider_router import generate_fast_reply
-from app.services.ai_runtime.schemas import FastAIProviderRequest
-
-get_webchat_fast_settings.cache_clear()
-settings = get_webchat_fast_settings()
-
-result = asyncio.run(generate_fast_reply(
-    request=FastAIProviderRequest(
-        tenant_key='default',
-        channel_key='website',
-        session_id='provider-smoke-session',
-        body='Hello, where is my parcel?',
-        recent_context=[],
-        request_id='provider-smoke-1',
-    ),
-    settings=settings,
-))
-
-print(json.dumps({
-    'ok': result.ok,
-    'reply_source': result.reply_source,
-    'raw_provider': result.raw_provider,
-    'intent': result.intent,
-    'reply': result.reply,
-    'error_code': result.error_code,
-    'safe_summary': result.raw_payload_safe_summary,
-}, ensure_ascii=False, indent=2, sort_keys=True))
-
-raise SystemExit(0 if result.ok and result.reply_source == 'codex_app_server' else 1)
-PY
-```
-
-Expected result:
-
-```json
-{
-  "ok": true,
-  "reply_source": "codex_app_server",
-  "raw_provider": "codex_app_server",
-  "intent": "tracking_missing_number"
-}
-```
+After the sidecar is running in `stub` mode, validate that the backend provider can call it and return `reply_source=codex_app_server`.
 
 ## Canary and kill switch controls
 
@@ -433,7 +385,7 @@ When `WEBCHAT_FAST_AI_PROVIDER=codex_app_server`, router behavior is:
 - canary 1..99 -> stable hash by tenant/session/request
 - canary 100 -> `codex_app_server`
 
-Production note: if kill switch is true or canary percent is below 100, OpenClaw production config must be valid because some or all traffic can route there.
+Production note: if kill switch is true or canary percent is below 100, OpenClaw route config is required because some or all traffic can route there.
 
 ## Current real Codex app-server mode
 
@@ -455,16 +407,6 @@ The next real mode must implement reply/turn transport only after the private ap
 
 It must not scrape browser cookies or ChatGPT sessions.
 
-## Probe-only environment variables
-
-```bash
-export CODEX_REPLY_BRIDGE_URL='http://127.0.0.1:18793/reply'
-export CODEX_REPLY_BRIDGE_TOKEN_FILE='/run/nexus/codex_reply_bridge_shared_token'
-export CODEX_REPLY_PROBE_TIMEOUT_MS='15000'
-```
-
-The probe also accepts `CODEX_APP_SERVER_BRIDGE_URL`, `CODEX_APP_SERVER_TOKEN_FILE`, and `CODEX_APP_SERVER_TIMEOUT_MS` aliases.
-
 ## Probe artifacts
 
 ```text
@@ -475,7 +417,7 @@ artifacts/codex_reply_probe/final_verdict.txt
 
 ## Safety validation
 
-The probe, sidecar, backend provider, router controls, upstream adapter skeleton, auth discovery, login payload boundary, and transport boundary enforce these rules:
+The probe, sidecar, backend provider, router controls, upstream adapter skeleton, auth discovery, login payload boundary, transport boundary, and local app-server contract fixture enforce these rules:
 
 - HTTP probe URLs are allowed only for loopback hosts such as `127.0.0.1` and `localhost`.
 - Remote probe URLs must use HTTPS.
@@ -489,6 +431,7 @@ The probe, sidecar, backend provider, router controls, upstream adapter skeleton
 - Auth discovery returns only source kind, credential kind, login type, hints, and fingerprint.
 - Login payload boundary returns only source kind, login type, readiness, hints, and fingerprint in status output.
 - Transport boundary returns only endpoint path, status, response key names, and error code.
+- Local app-server contract fixture returns only session/capability metadata and credential fingerprints.
 - Artifact output is sanitized before writing.
 
 ## Production controls
@@ -511,13 +454,13 @@ Do not connect the sidecar to a real Codex reply/turn transport until:
 3. backend provider smoke returns `reply_source=codex_app_server`;
 4. canary/kill switch tests pass;
 5. upstream contract fixture probe returns `PASS`;
-6. auth discovery tests pass and `/auth/status` shows no secret exposure;
-7. login payload boundary tests pass and `/auth/status` shows no secret exposure;
+6. auth discovery tests pass and `/auth/status` shows no credential exposure;
+7. login payload boundary tests pass and `/auth/status` shows no credential exposure;
 8. transport boundary tests pass;
-9. dry-run `/transport/login-start` shows no secret exposure;
-10. optional real private `account/login/start` returns a sanitized success summary;
+9. dry-run `/transport/login-start` shows no credential exposure;
+10. local non-dry-run fixture `/transport/login-start` returns a sanitized success summary;
 11. private reply/turn protocol is confirmed;
-12. sanitized artifacts show no secret exposure.
+12. sanitized artifacts show no credential exposure.
 
 ## Rollback
 
@@ -526,6 +469,6 @@ Preferred rollback order:
 1. Set `CODEX_APP_SERVER_KILL_SWITCH=true`.
 2. Or set `CODEX_APP_SERVER_CANARY_PERCENT=0`.
 3. Or set `WEBCHAT_FAST_AI_PROVIDER=openclaw_responses`.
-4. Stop the sidecar/upstream processes if no longer needed.
+4. Stop the sidecar/upstream/fixture processes if no longer needed.
 
 The default provider remains unchanged unless explicitly configured.
