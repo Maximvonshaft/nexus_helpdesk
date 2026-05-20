@@ -18,6 +18,9 @@ export interface WebchatVoiceSession {
   active_at?: string | null
   ended_at?: string | null
   expires_at?: string | null
+  recording_status?: string | null
+  transcript_status?: string | null
+  summary_status?: string | null
 }
 
 export interface WebchatVoiceRuntimeConfig {
