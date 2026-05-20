@@ -312,7 +312,7 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         codex_app_server_token_file=(os.getenv("CODEX_APP_SERVER_TOKEN_FILE") or os.getenv("CODEX_REPLY_BRIDGE_TOKEN_FILE") or "").strip() or None,
         codex_app_server_token_value=(os.getenv("CODEX_APP_SERVER_TOKEN") or os.getenv("CODEX_REPLY_BRIDGE_TOKEN") or "").strip() or None,
         codex_app_server_timeout_ms=_env_int("CODEX_APP_SERVER_TIMEOUT_MS", 15000, minimum=500, maximum=max_timeout_ms),
-        codex_app_server_canary_percent=_env_int("CODEX_APP_SERVER_CANARY_PERCENT", 0, minimum=0, maximum=100),
+        codex_app_server_canary_percent=_env_int("CODEX_APP_SERVER_CANARY_PERCENT", 0, minimum=0),
         codex_app_server_kill_switch=_env_bool("CODEX_APP_SERVER_KILL_SWITCH", False),
         openai_api_key_file=os.getenv("OPENAI_API_KEY_FILE", "").strip() or None,
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip() or None,
