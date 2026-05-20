@@ -198,8 +198,8 @@ def healthz() -> dict[str, Any]:
     return {"ok": True, "service": "codex-reply-bridge"}
 
 
-@app.get("/readyz")
-def readyz() -> JSONResponse | dict[str, Any]:
+@app.get("/readyz", response_model=None)
+def readyz():
     settings = _load_settings()
     if settings.mode == "disabled":
         return _safe_error(503, "bridge_disabled")
@@ -225,12 +225,12 @@ def auth_status(authorization: str | None = Header(default=None), x_nexus_bridge
     }
 
 
-@app.post("/reply")
+@app.post("/reply", response_model=None)
 async def reply(
     request: ReplyRequest,
     authorization: str | None = Header(default=None),
     x_nexus_bridge_token: str | None = Header(default=None),
-) -> JSONResponse | dict[str, Any]:
+):
     settings = _load_settings()
     started = time.monotonic()
     _assert_authorized(settings, authorization, x_nexus_bridge_token)
