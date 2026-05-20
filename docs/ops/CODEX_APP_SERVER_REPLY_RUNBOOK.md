@@ -4,11 +4,12 @@
 
 Validate and operate the private Codex reply bridge path without changing production WebChat traffic.
 
-The current implementation has three layers:
+The current implementation has four layers:
 
 1. Probe: `scripts/probe_codex_app_server_reply.sh`
 2. Private sidecar: `tools/codex-reply-bridge/sidecar.py`
 3. Backend provider: `backend/app/services/ai_runtime/codex_app_server_provider.py`
+4. Router controls: canary percent, kill switch, and low-cardinality metrics
 
 The sidecar can run in `disabled`, `stub`, or `upstream` mode. `stub` is only for local contract testing. `upstream` forwards to a later Codex app-server adapter endpoint and still normalizes the response through the Nexus strict parser.
 
@@ -29,7 +30,8 @@ Do not paste credentials into shell history. Prefer files under `/run/nexus/` wi
 PYTHONPATH=backend pytest -q \
   backend/tests/test_codex_app_server_reply_probe.py \
   backend/tests/test_codex_reply_bridge_sidecar.py \
-  backend/tests/test_webchat_codex_app_server_provider.py
+  backend/tests/test_webchat_codex_app_server_provider.py \
+  backend/tests/test_webchat_codex_app_server_canary_observability.py
 ```
 
 ## Start sidecar in local stub mode
@@ -88,6 +90,8 @@ export WEBCHAT_FAST_AI_FALLBACK_PROVIDER=none
 export CODEX_APP_SERVER_BRIDGE_URL='http://127.0.0.1:18793/reply'
 export CODEX_APP_SERVER_TOKEN_FILE='/run/nexus/codex_reply_bridge_shared_token'
 export CODEX_APP_SERVER_TIMEOUT_MS='15000'
+export CODEX_APP_SERVER_CANARY_PERCENT='100'
+export CODEX_APP_SERVER_KILL_SWITCH='false'
 
 python - <<'PY'
 import asyncio
@@ -135,6 +139,24 @@ Expected result:
   "intent": "tracking_missing_number"
 }
 ```
+
+## Canary and kill switch controls
+
+```bash
+export CODEX_APP_SERVER_CANARY_PERCENT='0'     # all routed to OpenClaw route
+export CODEX_APP_SERVER_CANARY_PERCENT='1'     # 1 percent stable hash canary
+export CODEX_APP_SERVER_CANARY_PERCENT='100'   # all routed to codex_app_server
+export CODEX_APP_SERVER_KILL_SWITCH='true'     # immediate OpenClaw route
+```
+
+When `WEBCHAT_FAST_AI_PROVIDER=codex_app_server`, router behavior is:
+
+- kill switch true -> `openclaw_responses`
+- canary 0 -> `openclaw_responses`
+- canary 1..99 -> stable hash by tenant/session/request
+- canary 100 -> `codex_app_server`
+
+Production note: if kill switch is true or canary percent is below 100, OpenClaw production config must be valid because some or all traffic can route there.
 
 ## Start sidecar in upstream mode
 
@@ -201,7 +223,7 @@ CODEX_REPLY_PROBE_ARTIFACT_DIR=/tmp/codex_reply_probe \
 
 ## Safety validation
 
-The probe, sidecar, and backend provider enforce these rules:
+The probe, sidecar, backend provider, and router controls enforce these rules:
 
 - HTTP probe URLs are allowed only for loopback hosts such as `127.0.0.1` and `localhost`.
 - Remote probe URLs must use HTTPS.
@@ -211,6 +233,7 @@ The probe, sidecar, and backend provider enforce these rules:
 - Customer-visible internal terms are rejected by the existing parser.
 - Sidecar `/reply` returns only the six strict reply fields on success.
 - Backend provider returns only safe summaries, not raw upstream payloads.
+- Router emits low-cardinality `webchat_codex_app_server_metric` events for route, success, error, and fallback outcomes.
 - Artifact output is sanitized before writing.
 
 ## Production controls
@@ -220,6 +243,8 @@ In production:
 - `CODEX_APP_SERVER_TOKEN` is forbidden.
 - `CODEX_APP_SERVER_TOKEN_FILE` is required when provider is `codex_app_server`.
 - `CODEX_APP_SERVER_BRIDGE_URL` must point to private, loopback, link-local, or tailnet/CGNAT address space.
+- `CODEX_APP_SERVER_CANARY_PERCENT` must be 0..100.
+- If `CODEX_APP_SERVER_KILL_SWITCH=true` or `CODEX_APP_SERVER_CANARY_PERCENT<100`, OpenClaw route config is required.
 - Production default provider remains unchanged unless explicitly configured.
 
 ## Release gate before real upstream integration
@@ -229,9 +254,17 @@ Do not connect the sidecar to a real Codex upstream adapter until:
 1. sidecar static tests pass;
 2. stub mode probe returns `PASS`;
 3. backend provider smoke returns `reply_source=codex_app_server`;
-4. upstream mode probe returns `PASS` against a private adapter;
-5. sanitized artifacts show no secret exposure.
+4. canary/kill switch tests pass;
+5. upstream mode probe returns `PASS` against a private adapter;
+6. sanitized artifacts show no secret exposure.
 
 ## Rollback
 
-Unset `WEBCHAT_FAST_AI_PROVIDER=codex_app_server`, stop the sidecar process, or set the provider back to `openclaw_responses`. The default provider remains unchanged unless explicitly configured.
+Preferred rollback order:
+
+1. Set `CODEX_APP_SERVER_KILL_SWITCH=true`.
+2. Or set `CODEX_APP_SERVER_CANARY_PERCENT=0`.
+3. Or set `WEBCHAT_FAST_AI_PROVIDER=openclaw_responses`.
+4. Stop the sidecar process if no longer needed.
+
+The default provider remains unchanged unless explicitly configured.
