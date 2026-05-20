@@ -210,3 +210,38 @@ def test_codex_kill_switch_config(monkeypatch):
     settings = get_webchat_fast_settings()
 
     assert settings.codex_app_server_kill_switch is True
+
+
+def test_production_codex_canary_requires_openclaw_token_file(monkeypatch, tmp_path):
+    codex_token_file = tmp_path / "codex_app_server_token"
+    codex_token_file.write_text("codex-file-token", encoding="utf-8")
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "codex_app_server")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", "true")
+    monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18793/reply")
+    monkeypatch.setenv("CODEX_APP_SERVER_TOKEN_FILE", str(codex_token_file))
+    monkeypatch.setenv("CODEX_APP_SERVER_CANARY_PERCENT", "1")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "none")
+    monkeypatch.delenv("OPENCLAW_RESPONSES_TOKEN_FILE", raising=False)
+    _clear_settings()
+
+    with pytest.raises(RuntimeError, match="OPENCLAW_RESPONSES_TOKEN_FILE"):
+        get_webchat_fast_settings()
+
+
+def test_production_codex_kill_switch_requires_openclaw_token_file(monkeypatch, tmp_path):
+    codex_token_file = tmp_path / "codex_app_server_token"
+    codex_token_file.write_text("codex-file-token", encoding="utf-8")
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "codex_app_server")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", "true")
+    monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18793/reply")
+    monkeypatch.setenv("CODEX_APP_SERVER_TOKEN_FILE", str(codex_token_file))
+    monkeypatch.setenv("CODEX_APP_SERVER_KILL_SWITCH", "true")
+    monkeypatch.setenv("CODEX_APP_SERVER_CANARY_PERCENT", "100")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "none")
+    monkeypatch.delenv("OPENCLAW_RESPONSES_TOKEN_FILE", raising=False)
+    _clear_settings()
+
+    with pytest.raises(RuntimeError, match="OPENCLAW_RESPONSES_TOKEN_FILE"):
+        get_webchat_fast_settings()
