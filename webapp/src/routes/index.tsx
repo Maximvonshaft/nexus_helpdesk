@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { createRoute, redirect } from '@tanstack/react-router'
+import { createRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
@@ -18,6 +18,7 @@ import { canManageChannels, canViewOps } from '@/lib/access'
 
 function OverviewPage() {
   const client = useQueryClient()
+  const navigate = useNavigate()
   const autoRefresh = useAutoRefresh(true)
   const session = useSession()
   const canSeeOps = canViewOps(session.data)
@@ -39,6 +40,8 @@ function OverviewPage() {
   const rt = runtime.data
   const rd = readiness.data
   const so = signoff.data
+  const runtimeRecoveryCount = (q?.dead_jobs ?? 0) + (q?.dead_outbound ?? 0) + (rt?.dead_sync_jobs ?? 0) + (rt?.dead_attachment_jobs ?? 0)
+  const needsRuntimeRecovery = canSeeOps && runtimeRecoveryCount > 0
 
   return (
     <AppShell>
@@ -56,6 +59,36 @@ function OverviewPage() {
             <div className="guide-item"><strong>1. 先看待处理任务</strong><span>优先处理最新客户来信、紧急单和等待中的客户回复。</span></div>
             <div className="guide-item"><strong>2. 再看当前公告</strong><span>确认今天是否有延误、清关、异常公告影响回复口径。</span></div>
             <div className="guide-item"><strong>3. 最后补看运营保障</strong><span>{canSeeOps ? '你当前有权限查看发送线路与系统健康。' : '运营保障页面由主管或管理员处理，普通客服优先专注工单。'}</span></div>
+          </div>
+        </CardBody>
+      </Card>
+
+      <Card className="soft">
+        <CardHeader title="优先处理入口" subtitle="把高频动作直接放到首页，避免客服主管在多个页面之间来回找入口。" />
+        <CardBody>
+          <div className="guide-grid" data-testid="overview-priority-actions">
+            <div className="guide-item">
+              <strong>处理客户工单</strong>
+              <span>进入 Workspace，完成分配、回复、证据核对和处理结果保存。</span>
+              <Button variant="primary" onClick={() => navigate({ to: '/workspace' })}>打开工单处理</Button>
+            </div>
+            <div className="guide-item">
+              <strong>查看 WebChat 来信</strong>
+              <span>处理网站实时会话、handoff、客户 action 和 WebChat 本地回复。</span>
+              <Button variant="secondary" onClick={() => navigate({ to: '/webchat' })}>打开 WebChat 收件箱</Button>
+            </div>
+            {canSeeOps ? (
+              <div className="guide-item">
+                <strong>{needsRuntimeRecovery ? `运行恢复待处理 ${runtimeRecoveryCount}` : '运行恢复'}</strong>
+                <span>{needsRuntimeRecovery ? '当前存在 dead/requeue 类异常，建议主管优先处理。' : '检查同步、队列、OpenClaw 连接与恢复动作。'}</span>
+                <Button variant={needsRuntimeRecovery ? 'primary' : 'secondary'} onClick={() => navigate({ to: '/runtime' })}>打开运行恢复</Button>
+              </div>
+            ) : (
+              <div className="guide-item">
+                <strong>需要主管协助</strong>
+                <span>发送失败、同步异常、线路不可用时，备注清楚后交给主管处理。</span>
+              </div>
+            )}
           </div>
         </CardBody>
       </Card>
@@ -89,6 +122,7 @@ function OverviewPage() {
             <CardBody>
               <div className="button-row" style={{ marginBottom: 12 }}>
                 <Button variant="secondary" onClick={async () => { const res = await api.consumeOpenClawEventsOnce(); setToast({ message: `已执行一次消息同步，处理 ${res.processed} 批`, tone: 'success' }); await client.invalidateQueries({ queryKey: ['runtimeHealth'] }); }}>执行一次消息同步</Button>
+                {needsRuntimeRecovery ? <Button variant="primary" onClick={() => navigate({ to: '/runtime' })}>处理运行异常</Button> : null}
               </div>
               <div className="kv-grid">
                 <div className="kv"><label>环境</label><div>{sanitizeDisplayText(rd?.app_env)}</div></div>
