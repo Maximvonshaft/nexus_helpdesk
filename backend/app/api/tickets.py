@@ -249,7 +249,7 @@ def change_status_endpoint(ticket_id: int, payload: TicketStatusChangeRequest, d
     return _serialize_ticket(ticket, db)
 
 
-@router.post("/{ticket_id}/escalate", response_model=TicketEscalateRequest)
+@router.post("/{ticket_id}/escalate", response_model=TicketRead)
 def escalate_ticket_endpoint(ticket_id: int, payload: TicketEscalateRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     with managed_session(db):
         ticket = escalate_ticket(db, ticket_id, payload, current_user)
