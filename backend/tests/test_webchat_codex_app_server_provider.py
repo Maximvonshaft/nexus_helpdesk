@@ -164,7 +164,10 @@ def test_codex_app_server_production_accepts_private_url_and_token_file(monkeypa
     monkeypatch.setenv("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", "true")
     monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18793/reply")
     monkeypatch.setenv("CODEX_APP_SERVER_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("CODEX_APP_SERVER_CANARY_PERCENT", "100")
+    monkeypatch.setenv("CODEX_APP_SERVER_KILL_SWITCH", "false")
     monkeypatch.delenv("CODEX_APP_SERVER_TOKEN", raising=False)
+    monkeypatch.delenv("OPENCLAW_RESPONSES_TOKEN_FILE", raising=False)
     _clear_settings()
 
     settings = get_webchat_fast_settings()
