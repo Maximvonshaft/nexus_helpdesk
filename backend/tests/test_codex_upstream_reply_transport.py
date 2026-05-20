@@ -67,15 +67,8 @@ def test_normalize_reply_path_rejects_parent_segment():
     assert error == "reply_path_parent_segment_forbidden"
 
 
-def test_post_reply_turn_rejects_missing_base_url():
-    result = pytest.run(async_call=reply_transport.post_reply_turn(
-        settings=reply_transport.ReplyTransportSettings(app_server_base_url=None),
-        reply_payload=_payload(),
-    )) if False else None
-
-
 @pytest.mark.asyncio
-async def test_post_reply_turn_rejects_missing_base_url_async():
+async def test_post_reply_turn_rejects_missing_base_url():
     result = await reply_transport.post_reply_turn(
         settings=reply_transport.ReplyTransportSettings(app_server_base_url=None),
         reply_payload=_payload(),
