@@ -64,21 +64,53 @@ jobs:
             backend/app/services/tracking_fact_service.py \
             backend/app/services/background_jobs.py
 
-      - name: Speedaf safety grep
+      - name: Speedaf safety scan
         run: |
           set -Eeuo pipefail
-          if git grep -nE 'SPEEDAF_(CANCEL|UPDATE_ADDRESS|WORK_ORDER_CREATE)_ENABLED\s*=\s*(true|TRUE|1|yes|YES|on|ON)' -- ':!docs/**' ':!.github/workflows/speedaf-contract-gate.yml'; then
-            echo 'ERROR: Speedaf write feature flag must not be enabled in repository files.'
-            exit 1
-          fi
-          if git grep -nE '(appCode|secretKey|SPEEDAF_[A-Z0-9_]*(SECRET|TOKEN|KEY)|SPEEDAF_[A-Z0-9_]*SIGN)\s*[:=]\s*["'"'']?[A-Za-z0-9_\-]{20,}' -- backend docs ':!docs/speedaf-mcp-full-closure/**' ':!.github/workflows/speedaf-contract-gate.yml'; then
-            echo 'ERROR: possible Speedaf credential-like material found.'
-            exit 1
-          fi
-          if git grep -n 'SPEEDAF_VOICE_CALLBACK_ENABLED.*true' -- backend docs; then
-            echo 'ERROR: voice callback must remain disabled/excluded.'
-            exit 1
-          fi
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          roots = [Path('backend'), Path('docs')]
+          exclude_prefixes = ('docs/speedaf-mcp-full-closure/',)
+          workflow_path = '.github/workflows/speedaf-contract-gate.yml'
+
+          write_flag = re.compile(r'SPEEDAF_(CANCEL|UPDATE_ADDRESS|WORK_ORDER_CREATE)_ENABLED\s*=\s*(true|TRUE|1|yes|YES|on|ON)')
+          credential = re.compile(r'(appCode|secretKey|SPEEDAF_[A-Z0-9_]*(SECRET|TOKEN|KEY)|SPEEDAF_[A-Z0-9_]*SIGN)\s*[:=]\s*[\"\']?[A-Za-z0-9_\-]{20,}')
+          voice_enabled = re.compile(r'SPEEDAF_VOICE_CALLBACK_ENABLED.*true')
+
+          violations: list[str] = []
+
+          def should_skip(path: Path) -> bool:
+              value = path.as_posix()
+              if value == workflow_path:
+                  return True
+              return any(value.startswith(prefix) for prefix in exclude_prefixes)
+
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in root.rglob('*'):
+                  if not path.is_file() or should_skip(path):
+                      continue
+                  try:
+                      text = path.read_text(encoding='utf-8')
+                  except UnicodeDecodeError:
+                      continue
+                  for idx, line in enumerate(text.splitlines(), 1):
+                      if write_flag.search(line):
+                          violations.append(f'{path}:{idx}: Speedaf write feature flag enabled in repository file')
+                      if credential.search(line):
+                          violations.append(f'{path}:{idx}: possible Speedaf credential-like material')
+                      if voice_enabled.search(line):
+                          violations.append(f'{path}:{idx}: Speedaf voice callback must remain disabled/excluded')
+
+          if violations:
+              print('\n'.join(violations))
+              sys.exit(1)
+          print('speedaf_safety_scan_ok')
+          PY
 
       - name: Speedaf static contract assertions
         run: |
