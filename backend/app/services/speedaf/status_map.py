@@ -12,10 +12,23 @@ class CodeLabel:
 
 # Conservative labels. Unknown values must be surfaced as safe codes rather than
 # invented operational meanings.
+ORDER_STATUS_LABELS: dict[str, CodeLabel] = {
+    "10": CodeLabel("10", "pending_pickup", "pending pickup"),
+    "3750": CodeLabel("3750", "in_transit_to_destination_country", "in transit to destination country"),
+    "3751": CodeLabel("3751", "destination_country_received", "received in destination country"),
+    "1": CodeLabel("1", "picked_up", "picked up"),
+    "2": CodeLabel("2", "in_transit", "in transit"),
+    "11": CodeLabel("11", "pending_delivery", "pending delivery"),
+    "18": CodeLabel("18", "available_for_pickup", "available for pickup"),
+    "4": CodeLabel("4", "out_for_delivery", "out for delivery"),
+    "5": CodeLabel("5", "delivered", "delivered"),
+    "730": CodeLabel("730", "return_delivered", "return delivered"),
+    "-2": CodeLabel("-2", "exception_signed", "exception signed"),
+}
+
 ORDER_CLASS_LABELS: dict[str, CodeLabel] = {
-    "1": CodeLabel("1", "standard", "standard shipment"),
-    "2": CodeLabel("2", "return", "return shipment"),
-    "3": CodeLabel("3", "pickup", "pickup shipment"),
+    "1": CodeLabel("1", "local", "local shipment"),
+    "2": CodeLabel("2", "international", "international shipment"),
 }
 
 WORK_ORDER_TYPE_LABELS: dict[str, CodeLabel] = {
@@ -35,6 +48,12 @@ ACTION_STATUS_LABELS: dict[str, CodeLabel] = {
     "FAILED": CodeLabel("FAILED", "failed", "failed"),
 }
 
+TERMINAL_CANCEL_STATUS_CODES = {"5", "730", "-2"}
+TERMINAL_CANCEL_STATUS_LABELS = {
+    ORDER_STATUS_LABELS[code].customer_label for code in TERMINAL_CANCEL_STATUS_CODES
+}
+TERMINAL_CANCEL_STATUS_LABELS.update({ORDER_STATUS_LABELS[code].label for code in TERMINAL_CANCEL_STATUS_CODES})
+
 
 def safe_label(mapping: dict[str, CodeLabel], code: str | None, *, unknown_prefix: str = "unknown") -> str | None:
     cleaned = (code or "").strip()
@@ -47,12 +66,7 @@ def safe_label(mapping: dict[str, CodeLabel], code: str | None, *, unknown_prefi
 
 
 def safe_order_status_label(status: str | None) -> str | None:
-    cleaned = (status or "").strip()
-    if not cleaned:
-        return None
-    # The Speedaf document does not provide a complete status dictionary. Keep
-    # labels conservative until Speedaf confirms the official code table.
-    return f"status:{cleaned}"
+    return safe_label(ORDER_STATUS_LABELS, status, unknown_prefix="status")
 
 
 def safe_order_class_label(order_class: str | None) -> str | None:
@@ -61,6 +75,22 @@ def safe_order_class_label(order_class: str | None) -> str | None:
 
 def safe_work_order_type_label(work_order_type: str | None) -> str | None:
     return safe_label(WORK_ORDER_TYPE_LABELS, work_order_type, unknown_prefix="work_order")
+
+
+def safe_cancel_reason_label(reason_code: str | None) -> str | None:
+    return safe_label(CANCEL_REASON_LABELS, reason_code, unknown_prefix="cancel_reason")
+
+
+def is_cancel_reason_code_allowed(reason_code: str | None) -> bool:
+    return (reason_code or "").strip().upper() in CANCEL_REASON_LABELS
+
+
+def is_cancel_terminal_status(status: str | None, status_label: str | None = None) -> bool:
+    cleaned_status = (status or "").strip()
+    if cleaned_status in TERMINAL_CANCEL_STATUS_CODES:
+        return True
+    cleaned_label = (status_label or "").strip().lower()
+    return bool(cleaned_label and cleaned_label in {item.lower() for item in TERMINAL_CANCEL_STATUS_LABELS})
 
 
 def is_auto_work_order_type_allowed(work_order_type: str | None) -> bool:

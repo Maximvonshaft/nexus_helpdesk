@@ -15,6 +15,18 @@ def hash_tracking_number(tracking_number: str | None) -> str | None:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def safe_tracking_candidate(waybill_code: str | None, suffix: str | None = None) -> dict[str, str]:
+    cleaned = (waybill_code or "").strip().upper()
+    safe_suffix = (suffix or cleaned[-4:]).strip()[-4:] if (suffix or cleaned) else ""
+    payload: dict[str, str] = {}
+    if safe_suffix:
+        payload["waybill_suffix"] = safe_suffix
+    hashed = hash_tracking_number(cleaned)
+    if hashed:
+        payload["waybill_hash"] = hashed
+    return payload
+
+
 @dataclass(frozen=True)
 class TrackingFactEvent:
     event_time: str | None = None
@@ -47,6 +59,7 @@ class TrackingFactResult:
     pii_redacted: bool = False
     fact_evidence_present: bool = False
     failure_reason: str | None = None
+    safe_candidates: list[dict[str, Any]] = field(default_factory=list)
 
     def metadata_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -58,11 +71,24 @@ class TrackingFactResult:
             "checked_at": self.checked_at,
             "tracking_number_hash": hash_tracking_number(self.tracking_number),
         }
+        if self.safe_candidates:
+            payload["safe_candidates"] = self.safe_candidates[:10]
+            payload["candidate_count"] = len(self.safe_candidates)
         if self.failure_reason:
             payload["tracking_fact_failure_reason"] = self.failure_reason
         return {key: value for key, value in payload.items() if value is not None}
 
     def prompt_summary(self) -> str:
+        if self.failure_reason == "multiple_waybill_candidates" and self.safe_candidates:
+            suffixes = ", ".join(str(item.get("waybill_suffix")) for item in self.safe_candidates if item.get("waybill_suffix"))
+            return (
+                "Trusted tracking lookup result:\n"
+                "- Multiple shipments are linked to this caller.\n"
+                f"- Safe candidate suffixes: {suffixes or 'available'}\n"
+                "Rules:\n"
+                "Ask the customer to confirm the last four digits before giving a parcel status.\n"
+                "Do not reveal or infer the full waybill number."
+            )
         if not self.fact_evidence_present:
             return ""
         lines = [
