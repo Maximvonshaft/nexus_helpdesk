@@ -49,4 +49,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    pass
+    if not _table_exists("speedaf_address_update_idempotency"):
+        return
+    names = _index_names("speedaf_address_update_idempotency")
+    if "ix_speedaf_address_update_status" in names:
+        op.drop_index("ix_speedaf_address_update_status", table_name="speedaf_address_update_idempotency")
+    if "ix_speedaf_address_update_ticket_id" in names:
+        op.drop_index("ix_speedaf_address_update_ticket_id", table_name="speedaf_address_update_idempotency")
+    op.drop_table("speedaf_address_update_idempotency")
