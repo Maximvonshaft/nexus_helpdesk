@@ -1,7 +1,7 @@
 """provider_runtime_tables
 
-Revision ID: 20260521_0027
-Revises: 20260520_0026
+Revision ID: 20260521_0029
+Revises: 20260521_0028
 Create Date: 2026-05-21 00:00:00.000000
 
 """
@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = '20260521_0027'
-down_revision = '20260520_0026'
+revision = '20260521_0029'
+down_revision = '20260521_0028'
 branch_labels = None
 depends_on = None
 
