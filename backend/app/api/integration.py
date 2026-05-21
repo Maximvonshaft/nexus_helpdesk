@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
@@ -15,8 +16,8 @@ from ..schemas import CustomerInput, TicketCreate
 from ..services.integration_auth import (
     AuthenticatedIntegrationClient,
     authenticate_integration_client,
+    begin_integration_idempotency,
     enforce_rate_limit,
-    get_idempotent_response,
     record_integration_response,
     require_scope,
     stable_request_hash,
@@ -225,6 +226,20 @@ def _record_integration_error(
     db.commit()
 
 
+def _idempotency_begin_response(kind: str, response_json: dict | None = None, error_code: str | None = None) -> JSONResponse | dict | None:
+    if kind == 'owner':
+        return None
+    if kind == 'replay':
+        payload = dict(response_json or {})
+        payload['idempotent'] = True
+        return payload
+    if kind == 'processing':
+        return JSONResponse({'ok': False, 'error_code': 'request_processing', 'retry_after_ms': 1500}, status_code=202)
+    if kind == 'conflict':
+        return JSONResponse({'ok': False, 'error_code': error_code or 'idempotency_key_reused_with_different_payload'}, status_code=409)
+    return JSONResponse({'ok': False, 'error_code': error_code or 'request_failed'}, status_code=409)
+
+
 @router.get('/profile/{contact_id}')
 def nexusdesk_customer_profile(
     contact_id: str,
@@ -307,9 +322,10 @@ def nexusdesk_escalate_task(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Idempotency-Key is required for integration writes')
 
             if idempotency_key:
-                existing_response = get_idempotent_response(db, client, 'integration.task', idempotency_key, request_hash)
-                if existing_response is not None:
-                    return existing_response
+                begin = begin_integration_idempotency(db, client=client, endpoint='integration.task', method='POST', idempotency_key=idempotency_key, request_hash=request_hash)
+                begin_response = _idempotency_begin_response(begin.kind, begin.response_json, begin.error_code)
+                if begin_response is not None:
+                    return begin_response
 
             actor = _pick_actor(db)
             market = _resolve_market(db, country_code=payload.country_code, market_code=payload.market_code)
