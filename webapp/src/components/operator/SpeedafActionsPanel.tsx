@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/lib/api'
-import type { CaseDetail, SpeedafActionResponse, SpeedafCancelPreviewResponse } from '@/lib/types'
+import type { CaseDetail } from '@/lib/types'
+import { speedafApi } from '@/lib/speedafApi'
+import type { SpeedafActionResponse, SpeedafCancelPreviewResponse } from '@/lib/speedafTypes'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
@@ -47,6 +48,14 @@ export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseD
   const callerID = defaultCallerId(activeCase)
   const hasMinimumData = Boolean(waybillCode && callerID)
 
+  useEffect(() => {
+    setAddressPhone(defaultCallerId(activeCase))
+    setWorkOrderResult(null)
+    setAddressResult(null)
+    setCancelPreview(null)
+    setConfirmCancel(false)
+  }, [activeCase.id])
+
   const refresh = async () => {
     await client.invalidateQueries({ queryKey: ['caseDetail', activeCase.id] })
     await client.invalidateQueries({ queryKey: ['ticketTimeline', activeCase.id] })
@@ -56,7 +65,7 @@ export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseD
   const basePayload = useMemo(() => ({ waybillCode, callerID }), [waybillCode, callerID])
 
   const workOrderMutation = useMutation({
-    mutationFn: () => api.speedafCreateWorkOrder(activeCase.id, {
+    mutationFn: () => speedafApi.createWorkOrder(activeCase.id, {
       ...basePayload,
       workOrderType: 'WT0103-05',
       description: workOrderDescription,
@@ -70,7 +79,7 @@ export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseD
   })
 
   const addressMutation = useMutation({
-    mutationFn: () => api.speedafAddressUpdate(activeCase.id, {
+    mutationFn: () => speedafApi.addressUpdate(activeCase.id, {
       ...basePayload,
       whatsAppPhone: addressPhone,
     }),
@@ -83,7 +92,7 @@ export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseD
   })
 
   const cancelPreviewMutation = useMutation({
-    mutationFn: () => api.speedafCancelPreview(activeCase.id, { ...basePayload, reasonCode }),
+    mutationFn: () => speedafApi.cancelPreview(activeCase.id, { ...basePayload, reasonCode }),
     onSuccess: async (result) => {
       setCancelPreview(result)
       setConfirmCancel(false)
@@ -94,7 +103,7 @@ export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseD
   })
 
   const cancelMutation = useMutation({
-    mutationFn: () => api.speedafCancel(activeCase.id, {
+    mutationFn: () => speedafApi.cancel(activeCase.id, {
       ...basePayload,
       reasonCode,
       confirmToken: cancelPreview?.confirmToken || '',
