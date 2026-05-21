@@ -191,6 +191,25 @@ export interface CaseDetail {
   } | null
 }
 
+export interface SpeedafActionResponse {
+  ok: boolean
+  status: string
+  message: string
+  jobId?: number | null
+  dedupeKey?: string | null
+}
+
+export interface SpeedafCancelPreviewResponse {
+  ok: boolean
+  cancelAllowed: boolean
+  currentStatus?: string | null
+  currentStatusLabel?: string | null
+  reason?: string | null
+  reasonLabel?: string | null
+  confirmToken?: string | null
+  expiresInSeconds?: number | null
+}
+
 export interface QueueSummary {
   pending_outbound: number
   dead_outbound: number
@@ -258,33 +277,53 @@ export interface OutboundChannelCapabilitiesResponse {
 
 export interface OpenClawConnectivityProbe {
   deployment_mode: string
-  transport: string
-  command?: string | null
-  url?: string | null
-  token_auth_configured: boolean
-  password_auth_configured: boolean
-  bridge_started: boolean
-  conversations_tool_ok: boolean
-  conversations_seen: number
-  sample_session_key?: string | null
-  warnings: string[]
+  base_url?: string | null
+  bridge_url?: string | null
+  ok: boolean
+  status?: string | null
+  latency_ms?: number | null
+  error?: string | null
 }
 
-export interface ProductionReadiness {
-  app_env: string
-  database_url_scheme: string
-  is_postgres: boolean
-  storage_backend: string
-  openclaw_transport: string
-  metrics_enabled: boolean
-  openclaw_sync_enabled: boolean
-  warnings: string[]
+export interface WebchatConversation {
+  id: number
+  session_id: string
+  visitor_name?: string | null
+  visitor_email?: string | null
+  visitor_phone?: string | null
+  status: string
+  ticket_id?: number | null
+  created_at: string
+  updated_at: string
 }
 
-export interface SignoffChecklist {
-  status: 'ready' | 'not_ready'
-  checks: Record<string, boolean>
-  warnings: string[]
+export interface WebchatThread {
+  ticket: CaseDetail
+  conversation?: WebchatConversation | null
+  messages: Array<Record<string, unknown>>
+}
+
+export interface WebchatReplyResult {
+  ok: boolean
+  message_id?: number | null
+  status?: string | null
+  delivery_semantics?: string | null
+}
+
+export interface WebchatVoiceRuntimeConfig {
+  enabled: boolean
+  provider?: string | null
+  server_url?: string | null
+  public_base_url?: string | null
+}
+
+export interface WebchatVoiceSession {
+  id: string
+  ticket_id?: number | null
+  status: string
+  accepted_by_user_id?: number | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export interface BackgroundJob {
@@ -292,260 +331,65 @@ export interface BackgroundJob {
   queue_name: string
   job_type: string
   status: string
-  dedupe_key?: string | null
   attempt_count: number
   max_attempts: number
-  next_run_at?: string | null
-  locked_at?: string | null
-  locked_by?: string | null
   last_error?: string | null
   created_at: string
   updated_at: string
 }
 
-export interface AIConfigResource {
-  id: number
-  resource_key: string
-  config_type: string
-  name: string
-  description?: string | null
-  scope_type: string
-  scope_value?: string | null
-  market_id?: number | null
-  is_active: boolean
-  draft_summary?: string | null
-  draft_content_json?: Record<string, unknown> | null
-  published_summary?: string | null
-  published_content_json?: Record<string, unknown> | null
-  published_version: number
-  published_at?: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface AIConfigVersion {
-  id: number
-  resource_id: number
-  version: number
-  snapshot_json: Record<string, unknown>
-  summary?: string | null
-  notes?: string | null
-  published_by?: number | null
-  published_at: string
-}
-
-export interface PersonaProfile {
-  id: number
-  profile_key: string
-  name: string
-  description?: string | null
-  market_id?: number | null
-  channel?: string | null
-  language?: string | null
-  is_active: boolean
-  draft_summary?: string | null
-  published_summary?: string | null
-  published_version: number
-  published_at?: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface PersonaProfileList {
-  profiles: PersonaProfile[]
-  total: number
-}
-
-export interface KnowledgeItem {
-  id: number
-  item_key: string
-  title: string
-  summary?: string | null
+export interface ProductionReadiness {
+  ok: boolean
   status: string
-  source_type: string
-  market_id?: number | null
-  channel?: string | null
-  audience_scope: string
-  priority: number
-  published_version: number
-  published_at?: string | null
-  created_at: string
-  updated_at: string
+  checks?: Record<string, unknown>
+  warnings?: string[]
 }
 
-export interface KnowledgeItemList {
-  items: KnowledgeItem[]
-  total: number
+export interface SignoffChecklist {
+  ok: boolean
+  checks: Array<Record<string, unknown>>
 }
 
-export interface ChannelOnboardingTask {
-  id: number
-  provider: string
-  status: string
-  requested_by?: number | null
-  market_id?: number | null
-  target_slot?: string | null
-  desired_display_name?: string | null
-  desired_channel_account_binding?: string | null
-  openclaw_account_id?: string | null
-  last_error?: string | null
-  created_at: string
-  updated_at: string
-  started_at?: string | null
-  completed_at?: string | null
-}
-
-export interface ChannelOnboardingTaskList {
-  tasks: ChannelOnboardingTask[]
-  total: number
+export interface RuntimeRecoveryResult {
+  ok: boolean
+  requeued?: number
+  job_id?: number
+  message_id?: number
+  status?: string
+  job_type?: string | null
 }
 
 export interface OpenClawUnresolvedEvent {
   id: number
-  source: string
+  source?: string | null
   session_key?: string | null
-  event_type?: string | null
-  recipient?: string | null
-  source_chat_id?: string | null
-  preferred_reply_contact?: string | null
   status: string
-  replay_count: number
-  last_error?: string | null
+  failure_reason?: string | null
   created_at: string
-  updated_at: string
 }
 
-export type WebchatMessageType = 'text' | 'system' | 'card' | 'action' | 'attachment'
-
-export type WebchatCardType =
-  | 'quick_replies'
-  | 'tracking_status'
-  | 'address_confirmation'
-  | 'reschedule_picker'
-  | 'photo_upload_request'
-  | 'handoff'
-  | 'csat'
-
-export interface WebchatCardAction {
-  id: string
-  label: string
-  value?: string | null
-  action_type: string
-  payload?: Record<string, unknown>
+export interface AIConfigResource {
+  id: number
+  name: string
+  config_type: string
+  is_active: boolean
 }
 
-export interface WebchatCardPayload {
-  card_id: string
-  card_type: WebchatCardType
+export interface AIConfigVersion {
+  id: number
   version: number
-  title: string
-  body?: string | null
-  actions: WebchatCardAction[]
-  metadata?: Record<string, unknown>
+  notes?: string | null
+  created_at?: string
 }
 
-export interface WebchatAIRuntimeSnapshot {
-  ai_pending?: boolean
-  ai_status?: string | null
-  ai_turn_id?: number | null
-  ai_pending_for_message_id?: number | null
-  last_ai_reply_source?: string | null
-  last_ai_fallback_reason?: string | null
-  last_bridge_elapsed_ms?: number | null
+export interface KnowledgeItemList {
+  items: Array<Record<string, unknown>>
 }
 
-export interface WebchatConversation extends WebchatAIRuntimeSnapshot {
-  conversation_id: string
-  ticket_id: number
-  ticket_no: string
-  title: string
-  status: string
-  visitor_name?: string | null
-  visitor_email?: string | null
-  visitor_phone?: string | null
-  origin?: string | null
-  page_url?: string | null
-  last_seen_at?: string | null
-  updated_at?: string | null
-  last_message_type?: WebchatMessageType | null
-  last_action_status?: string | null
-  needs_human?: boolean
+export interface PersonaProfileList {
+  items: Array<Record<string, unknown>>
 }
 
-export interface WebchatMessage {
-  id: number
-  direction: 'visitor' | 'agent' | 'ai' | 'system' | 'action' | string
-  body: string
-  body_text?: string | null
-  message_type?: WebchatMessageType
-  payload_json?: WebchatCardPayload | Record<string, unknown> | null
-  metadata_json?: Record<string, unknown> | null
-  client_message_id?: string | null
-  delivery_status?: string | null
-  action_status?: string | null
-  author_label?: string | null
-  created_at?: string | null
-}
-
-export interface WebchatActionAudit {
-  id: number
-  message_id: number
-  action_type: string
-  status: string
-  payload: Record<string, unknown>
-  submitted_by: string
-  origin?: string | null
-  created_at?: string | null
-}
-
-export interface WebchatAITurnSummary {
-  id: number
-  status: string
-  trigger_message_id?: number | null
-  latest_visitor_message_id?: number | null
-  context_cutoff_message_id?: number | null
-  reply_message_id?: number | null
-  reply_source?: string | null
-  fallback_reason?: string | null
-  bridge_elapsed_ms?: number | null
-}
-
-export interface WebchatEventSummary {
-  id: number
-  event_type: string
-  payload_json?: Record<string, unknown> | null
-  created_at?: string | null
-}
-
-export interface WebchatThread extends WebchatAIRuntimeSnapshot {
-  conversation_id: string
-  ticket_id: number
-  ticket_no: string
-  origin?: string | null
-  page_url?: string | null
-  status?: string | null
-  conversation_state?: string | null
-  required_action?: string | null
-  visitor: {
-    name?: string | null
-    email?: string | null
-    phone?: string | null
-    ref?: string | null
-  }
-  messages: WebchatMessage[]
-  actions?: WebchatActionAudit[]
-  ai_turns?: WebchatAITurnSummary[]
-  events?: WebchatEventSummary[]
-}
-
-export interface WebchatReplyResult {
-  ok: boolean
-  safety: {
-    allowed: boolean
-    level: 'allow' | 'review' | 'block' | string
-    reasons: string[]
-    requires_human_review: boolean
-    normalized_body: string
-  }
-  message: WebchatMessage
+export interface ChannelOnboardingTaskList {
+  items: Array<Record<string, unknown>>
 }
