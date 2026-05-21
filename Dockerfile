@@ -1,12 +1,12 @@
-FROM m.daocloud.io/docker.io/library/node:22-bookworm-slim AS webapp-builder
+FROM docker.io/library/node:22-bookworm-slim AS webapp-builder
 WORKDIR /build/webapp
 COPY webapp/package*.json ./
-RUN npm config set registry https://registry.npmmirror.com
+RUN npm config set registry https://registry.npmjs.org/
 RUN npm ci
 COPY webapp/ ./
 RUN npm run build
 
-FROM m.daocloud.io/docker.io/library/python:3.11-slim
+FROM docker.io/library/python:3.11-slim
 
 ARG GIT_SHA=unknown
 ARG BUILD_TIME=unknown
@@ -19,7 +19,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_DEFAULT_TIMEOUT=180 \
-    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
     GIT_SHA=${GIT_SHA} \
     BUILD_TIME=${BUILD_TIME} \
     IMAGE_TAG=${IMAGE_TAG} \

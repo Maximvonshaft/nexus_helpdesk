@@ -3,7 +3,7 @@
 
 services:
   postgres:
-    image: m.daocloud.io/docker.io/library/postgres:16-alpine
+    image: docker.io/library/postgres:16-alpine
     env_file:
       - .env.prod
     environment:
