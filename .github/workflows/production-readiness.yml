@@ -65,3 +65,41 @@ jobs:
           METRICS_TOKEN: ci-metrics-token
           REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
         run: cd backend && python scripts/validate_production_readiness.py
+
+      - name: Manual staging smoke workflow contract check
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/manual-staging-smoke.yml')
+          if not path.exists():
+              print('manual_staging_smoke_workflow_absent=ok')
+              raise SystemExit(0)
+          text = path.read_text(encoding='utf-8')
+          required = [
+              'workflow_dispatch:',
+              'base_url:',
+              '/healthz',
+              '/readyz',
+              'content-security-policy:',
+              'permissions-policy:',
+              'STAGING_METRICS_TOKEN',
+          ]
+          missing = [item for item in required if item not in text]
+          if missing:
+              raise SystemExit(f'MISSING_MANUAL_STAGING_SMOKE_CONTRACTS={missing}')
+          forbidden = [
+              'SPEEDAF_CANCEL_ENABLED: true',
+              'SPEEDAF_UPDATE_ADDRESS_ENABLED: true',
+              'SPEEDAF_WORK_ORDER_CREATE_ENABLED: true',
+              '/open-api/mcp/workOrder/create',
+              '/open-api/mcp/order/updateAddress',
+              '/open-api/mcp/order/cancel',
+              '/open-api/mcp/callData/voice/callBack',
+          ]
+          found = [item for item in forbidden if item in text]
+          if found:
+              raise SystemExit(f'FORBIDDEN_MANUAL_STAGING_SMOKE_CONTENT={found}')
+          print('manual_staging_smoke_workflow_contracts_ok')
+          PY

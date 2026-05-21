@@ -1,0 +1,163 @@
+name: manual-staging-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Deployed NexusDesk base URL, for example https://support.example.com'
+        required: true
+      expected_status:
+        description: 'Expected /readyz status value'
+        required: true
+        default: 'ready'
+      check_webchat_assets:
+        description: 'Check WebChat static demo/widget assets'
+        required: true
+        default: true
+        type: boolean
+      check_metrics:
+        description: 'Check /metrics with X-Metrics-Token from secret STAGING_METRICS_TOKEN'
+        required: true
+        default: false
+        type: boolean
+      cors_origin:
+        description: 'Optional Origin for CORS preflight check; leave blank to skip'
+        required: false
+        default: ''
+
+jobs:
+  manual-staging-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Normalize target
+        id: target
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base="${{ inputs.base_url }}"
+          base="${base%/}"
+          if ! [[ "$base" =~ ^https?:// ]]; then
+            echo 'base_url must start with http:// or https://'
+            exit 2
+          fi
+          echo "base_url=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Check healthz and readyz
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base='${{ steps.target.outputs.base_url }}'
+          curl -fsS --max-time 8 "$base/healthz" -o /tmp/healthz.json
+          curl -fsS --max-time 8 "$base/readyz" -o /tmp/readyz.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          expected = '${{ inputs.expected_status }}'
+          health = json.loads(Path('/tmp/healthz.json').read_text())
+          ready = json.loads(Path('/tmp/readyz.json').read_text())
+          if health.get('status') != 'ok':
+              raise SystemExit(f'healthz_status_not_ok={health.get("status")}')
+          if ready.get('status') != expected:
+              raise SystemExit(f'readyz_status_unexpected={ready.get("status")} expected={expected}')
+          print('healthz_ok')
+          print('readyz_ok')
+          print('migration_revision=' + str(ready.get('migration_revision')))
+          print('app_version=' + str(health.get('app_version') or health.get('version') or 'unknown'))
+          PY
+
+      - name: Check security headers on root
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base='${{ steps.target.outputs.base_url }}'
+          curl -fsSI --max-time 8 "$base/" -o /tmp/root_headers.txt
+          python - <<'PY'
+          from pathlib import Path
+          raw = Path('/tmp/root_headers.txt').read_text(errors='ignore')
+          lower = raw.lower()
+          required = [
+              'x-content-type-options:',
+              'x-frame-options:',
+              'referrer-policy:',
+              'content-security-policy:',
+              'permissions-policy:',
+          ]
+          missing = [item for item in required if item not in lower]
+          if missing:
+              raise SystemExit('missing_security_headers=' + ','.join(missing))
+          print('security_headers_ok')
+          PY
+
+      - name: Check WebChat assets
+        if: ${{ inputs.check_webchat_assets }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base='${{ steps.target.outputs.base_url }}'
+          curl -fsSI --max-time 8 "$base/webchat/demo.html" -o /tmp/webchat_demo_headers.txt
+          curl -fsSI --max-time 8 "$base/webchat/widget.js" -o /tmp/webchat_widget_headers.txt
+          if ! grep -qi 'content-type:' /tmp/webchat_demo_headers.txt; then
+            echo 'missing webchat demo content-type'
+            exit 3
+          fi
+          if ! grep -qi 'content-type:' /tmp/webchat_widget_headers.txt; then
+            echo 'missing webchat widget content-type'
+            exit 3
+          fi
+          echo 'webchat_assets_ok'
+
+      - name: Check optional CORS preflight
+        if: ${{ inputs.cors_origin != '' }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base='${{ steps.target.outputs.base_url }}'
+          origin='${{ inputs.cors_origin }}'
+          curl -fsSI --max-time 8 \
+            -X OPTIONS \
+            -H "Origin: $origin" \
+            -H 'Access-Control-Request-Method: POST' \
+            -H 'Access-Control-Request-Headers: content-type,x-request-id' \
+            "$base/api/webchat/fast-reply" -o /tmp/cors_headers.txt
+          if ! grep -qi '^access-control-allow-origin:' /tmp/cors_headers.txt; then
+            echo 'missing access-control-allow-origin header'
+            cat /tmp/cors_headers.txt
+            exit 4
+          fi
+          echo 'cors_preflight_ok'
+
+      - name: Check optional metrics endpoint
+        if: ${{ inputs.check_metrics }}
+        env:
+          STAGING_METRICS_TOKEN: ${{ secrets.STAGING_METRICS_TOKEN }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [ -z "${STAGING_METRICS_TOKEN:-}" ]; then
+            echo 'STAGING_METRICS_TOKEN secret is required when check_metrics=true'
+            exit 5
+          fi
+          base='${{ steps.target.outputs.base_url }}'
+          curl -fsS --max-time 8 -H "X-Metrics-Token: $STAGING_METRICS_TOKEN" "$base/metrics" -o /tmp/metrics.txt
+          if ! grep -q '^# HELP' /tmp/metrics.txt; then
+            echo 'metrics output does not look like Prometheus text exposition'
+            exit 6
+          fi
+          echo 'metrics_endpoint_ok'
+
+      - name: Summarize smoke result
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          {
+            echo '## Manual staging smoke summary'
+            echo ''
+            echo '- Target: `${{ steps.target.outputs.base_url }}`'
+            echo '- Health/ready: checked'
+            echo '- Security headers: checked'
+            echo '- WebChat assets: `${{ inputs.check_webchat_assets }}`'
+            echo '- CORS origin: `${{ inputs.cors_origin }}`'
+            echo '- Metrics check: `${{ inputs.check_metrics }}`'
+          } >> "$GITHUB_STEP_SUMMARY"
