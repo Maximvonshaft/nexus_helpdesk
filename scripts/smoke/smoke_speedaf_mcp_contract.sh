@@ -18,6 +18,17 @@ redact() {
     -e 's/(SPEEDAF_MCP_APP_CODE=).*/\1[REDACTED]/g' \
     -e 's/(SPEEDAF_MCP_SECRET_KEY=).*/\1[REDACTED]/g' \
     -e 's/(callerID[^A-Za-z0-9]*[A-Za-z0-9+_.@-]+)/callerID=[REDACTED]/g' \
+    -e 's/("callerID"[[:space:]]*:[[:space:]]*")[^"]*/\1[REDACTED]/g' \
+    -e 's/("acceptAddress"[[:space:]]*:[[:space:]]*")[^"]*/\1[ADDRESS-REDACTED]/g' \
+    -e 's/("acceptName"[[:space:]]*:[[:space:]]*")[^"]*/\1[NAME-REDACTED]/g' \
+    -e 's/("acceptMobile"[[:space:]]*:[[:space:]]*")[^"]*/\1[PHONE-REDACTED]/g' \
+    -e 's/("waybillCode"[[:space:]]*:[[:space:]]*")[^"]*/\1[WAYBILL-REDACTED]/g' \
+    -e 's/("senderAddress"[[:space:]]*:[[:space:]]*")[^"]*/\1[ADDRESS-REDACTED]/g' \
+    -e 's/("senderName"[[:space:]]*:[[:space:]]*")[^"]*/\1[NAME-REDACTED]/g' \
+    -e 's/("senderMobile"[[:space:]]*:[[:space:]]*")[^"]*/\1[PHONE-REDACTED]/g' \
+    -e 's/("receiverAddress"[[:space:]]*:[[:space:]]*")[^"]*/\1[ADDRESS-REDACTED]/g' \
+    -e 's/("receiverName"[[:space:]]*:[[:space:]]*")[^"]*/\1[NAME-REDACTED]/g' \
+    -e 's/("receiverMobile"[[:space:]]*:[[:space:]]*")[^"]*/\1[PHONE-REDACTED]/g' \
     -e 's/([0-9]{6,})/[DIGITS-REDACTED]/g'
 }
 
@@ -99,6 +110,11 @@ set -e
 if grep -E "${SPEEDAF_MCP_APP_CODE:-__NO_APP_CODE__}|${SPEEDAF_MCP_SECRET_KEY:-__NO_SECRET__}" "$REPORT" >/dev/null 2>&1; then
   echo "FAIL: secret leak detected in report" >&2
   exit 2
+fi
+
+if grep -Ei 'accept(Address|Name|Mobile)|sender(Address|Name|Mobile)|receiver(Address|Name|Mobile)' "$REPORT" | grep -Ev '\[(ADDRESS|NAME|PHONE)-REDACTED\]' >/dev/null 2>&1; then
+  echo "FAIL: PII field leak detected in report" >&2
+  exit 3
 fi
 
 echo "Report: $REPORT"
