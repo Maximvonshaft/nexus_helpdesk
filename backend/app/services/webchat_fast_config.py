@@ -72,7 +72,6 @@ class WebchatFastSettings:
     max_prompt_chars: int
     rate_limit_window_seconds: int
     rate_limit_max_requests: int
-    tracking_dedupe_scope: str
     hard_fail_on_non_ai_reply: bool
     stream_enabled: bool
     stream_rollout_percent: int
@@ -107,6 +106,7 @@ class WebchatFastSettings:
     codex_app_server_kill_switch: bool
     openai_api_key_file: str | None
     openai_api_key: str | None
+    tracking_dedupe_scope: str = "tenant_channel_customer"
 
     @property
     def stream_token(self) -> str | None:
