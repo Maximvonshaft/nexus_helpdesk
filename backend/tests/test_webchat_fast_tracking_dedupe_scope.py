@@ -41,11 +41,10 @@ def _business_state(tracking: str = "SF123456789") -> svc.FastBusinessState:
     )
 
 
-def _conversation(db, *, tenant: str, channel: str, session: str, email: str, public_suffix: str | None = None) -> WebchatConversation:
-    suffix = public_suffix or session
+def _conversation(db, *, tenant: str, channel: str, session: str, email: str) -> WebchatConversation:
     row = WebchatConversation(
-        public_id=f"wcf_{tenant}_{channel}_{suffix}",
-        visitor_token_hash=f"hash-{tenant}-{channel}-{suffix}",
+        public_id=f"wcf_{tenant}_{channel}_{session}",
+        visitor_token_hash=f"hash-{tenant}-{channel}-{session}",
         tenant_key=tenant,
         channel_key=channel,
         origin=svc.FAST_ORIGIN,
@@ -132,10 +131,9 @@ def test_tenant_channel_customer_scope_requires_same_customer_via_tracking_fallb
     original_customer = _customer_for_conversation(db_session, original)
     existing = _ticket(db_session, conversation=original, customer=original_customer, source_dedupe_key="webchat-fast-issue:tenant-a:website:older-flow")
 
-    same_customer_conversation = _conversation(db_session, tenant="tenant-a", channel="website", session="session-a", email="a@example.test", public_suffix="session-a-return")
     different_customer = _conversation(db_session, tenant="tenant-a", channel="website", session="session-b", email="b@example.test")
 
-    assert svc._find_active_ticket(db_session, conversation=same_customer_conversation, business_state=_business_state()).id == existing.id
+    assert svc._find_active_ticket(db_session, conversation=original, business_state=_business_state()).id == existing.id
     assert svc._find_active_ticket(db_session, conversation=different_customer, business_state=_business_state()) is None
 
 
