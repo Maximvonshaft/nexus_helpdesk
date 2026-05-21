@@ -12,7 +12,9 @@ on:
       - 'backend/alembic/versions/*speedaf*.py'
       - 'backend/tests/test_speedaf*.py'
       - 'docs/speedaf-mcp-full-closure/**'
+      - 'docs/speedaf-mcp-uat-github-workflow.md'
       - '.github/workflows/speedaf-contract-gate.yml'
+      - '.github/workflows/speedaf-uat-smoke.yml'
   push:
     branches: [main]
   workflow_dispatch:
@@ -121,6 +123,41 @@ jobs:
               print('\n'.join(violations))
               sys.exit(1)
           print('speedaf_safety_scan_ok')
+          PY
+
+      - name: Speedaf UAT workflow contract assertions
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/speedaf-uat-smoke.yml')
+          text = path.read_text(encoding='utf-8')
+          required = [
+              'workflow_dispatch:',
+              'SPEEDAF_UAT_APP_CODE',
+              'SPEEDAF_UAT_SECRET_KEY',
+              'SPEEDAF_UAT_TEST_CALLER_ID',
+              'SPEEDAF_UAT_TEST_WAYBILL_CODE',
+              'smoke_speedaf_mcp_contract.sh',
+              'Upload sanitized smoke report',
+          ]
+          missing = [item for item in required if item not in text]
+          if missing:
+              raise SystemExit(f'MISSING_SPEEDAF_UAT_WORKFLOW_CONTRACTS={missing}')
+          forbidden = [
+              'SPEEDAF_CANCEL_ENABLED: true',
+              'SPEEDAF_UPDATE_ADDRESS_ENABLED: true',
+              'SPEEDAF_WORK_ORDER_CREATE_ENABLED: true',
+              '/open-api/mcp/workOrder/create',
+              '/open-api/mcp/order/updateAddress',
+              '/open-api/mcp/order/cancel',
+              '/open-api/mcp/callData/voice/callBack',
+          ]
+          found = [item for item in forbidden if item in text]
+          if found:
+              raise SystemExit(f'FORBIDDEN_SPEEDAF_UAT_WORKFLOW_CONTENT={found}')
+          print('speedaf_uat_workflow_contracts_ok')
           PY
 
       - name: Speedaf static contract assertions
