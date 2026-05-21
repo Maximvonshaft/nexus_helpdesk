@@ -41,10 +41,11 @@ def _business_state(tracking: str = "SF123456789") -> svc.FastBusinessState:
     )
 
 
-def _conversation(db, *, tenant: str, channel: str, session: str, email: str) -> WebchatConversation:
+def _conversation(db, *, tenant: str, channel: str, session: str, email: str, public_suffix: str | None = None) -> WebchatConversation:
+    suffix = public_suffix or session
     row = WebchatConversation(
-        public_id=f"wcf_{tenant}_{channel}_{session}",
-        visitor_token_hash=f"hash-{tenant}-{channel}-{session}",
+        public_id=f"wcf_{tenant}_{channel}_{suffix}",
+        visitor_token_hash=f"hash-{tenant}-{channel}-{suffix}",
         tenant_key=tenant,
         channel_key=channel,
         origin=svc.FAST_ORIGIN,
@@ -57,7 +58,7 @@ def _conversation(db, *, tenant: str, channel: str, session: str, email: str) ->
     return row
 
 
-def _ticket(db, *, conversation: WebchatConversation, customer: Customer, tracking: str = "SF123456789") -> Ticket:
+def _ticket(db, *, conversation: WebchatConversation, customer: Customer, tracking: str = "SF123456789", source_dedupe_key: str | None = None) -> Ticket:
     business_state = _business_state(tracking)
     ticket = Ticket(
         ticket_no=f"T-{conversation.tenant_key}-{conversation.channel_key}-{customer.id}",
@@ -71,7 +72,7 @@ def _ticket(db, *, conversation: WebchatConversation, customer: Customer, tracki
         conversation_state=ConversationState.human_review_required,
         tracking_number=tracking,
         source_chat_id=f"webchat-fast:{conversation.public_id}",
-        source_dedupe_key=svc._fast_ticket_source_dedupe_key(conversation=conversation, business_state=business_state),
+        source_dedupe_key=source_dedupe_key if source_dedupe_key is not None else svc._fast_ticket_source_dedupe_key(conversation=conversation, business_state=business_state),
         case_type=business_state.issue_type,
         preferred_reply_channel=SourceChannel.web_chat.value,
         preferred_reply_contact=conversation.public_id,
@@ -110,12 +111,12 @@ def test_legacy_tracking_scope_reuses_across_tenant_channel_customer(db_session,
     assert found.id == existing.id
 
 
-def test_tenant_channel_scope_reuses_only_same_tenant_channel(db_session, monkeypatch):
+def test_tenant_channel_scope_reuses_only_same_tenant_channel_via_tracking_fallback(db_session, monkeypatch):
     monkeypatch.setenv("WEBCHAT_FAST_TRACKING_DEDUPE_SCOPE", "tenant_channel")
     get_webchat_fast_settings.cache_clear()
     original = _conversation(db_session, tenant="tenant-a", channel="website", session="session-a", email="a@example.test")
     original_customer = _customer_for_conversation(db_session, original)
-    existing = _ticket(db_session, conversation=original, customer=original_customer)
+    existing = _ticket(db_session, conversation=original, customer=original_customer, source_dedupe_key="webchat-fast-issue:tenant-a:website:older-flow")
 
     same_channel_other_customer = _conversation(db_session, tenant="tenant-a", channel="website", session="session-b", email="b@example.test")
     other_channel = _conversation(db_session, tenant="tenant-a", channel="mobile", session="session-c", email="c@example.test")
@@ -124,14 +125,14 @@ def test_tenant_channel_scope_reuses_only_same_tenant_channel(db_session, monkey
     assert svc._find_active_ticket(db_session, conversation=other_channel, business_state=_business_state()) is None
 
 
-def test_tenant_channel_customer_scope_requires_same_customer(db_session, monkeypatch):
+def test_tenant_channel_customer_scope_requires_same_customer_via_tracking_fallback(db_session, monkeypatch):
     monkeypatch.setenv("WEBCHAT_FAST_TRACKING_DEDUPE_SCOPE", "tenant_channel_customer")
     get_webchat_fast_settings.cache_clear()
     original = _conversation(db_session, tenant="tenant-a", channel="website", session="session-a", email="a@example.test")
     original_customer = _customer_for_conversation(db_session, original)
-    existing = _ticket(db_session, conversation=original, customer=original_customer)
+    existing = _ticket(db_session, conversation=original, customer=original_customer, source_dedupe_key="webchat-fast-issue:tenant-a:website:older-flow")
 
-    same_customer_conversation = _conversation(db_session, tenant="tenant-a", channel="website", session="session-a", email="a@example.test")
+    same_customer_conversation = _conversation(db_session, tenant="tenant-a", channel="website", session="session-a", email="a@example.test", public_suffix="session-a-return")
     different_customer = _conversation(db_session, tenant="tenant-a", channel="website", session="session-b", email="b@example.test")
 
     assert svc._find_active_ticket(db_session, conversation=same_customer_conversation, business_state=_business_state()).id == existing.id
@@ -143,7 +144,7 @@ def test_tenant_channel_customer_scope_does_not_create_cross_customer_ticket(db_
     get_webchat_fast_settings.cache_clear()
     original = _conversation(db_session, tenant="tenant-a", channel="website", session="session-a", email="a@example.test")
     original_customer = _customer_for_conversation(db_session, original)
-    existing = _ticket(db_session, conversation=original, customer=original_customer)
+    existing = _ticket(db_session, conversation=original, customer=original_customer, source_dedupe_key="webchat-fast-issue:tenant-a:website:older-flow")
 
     incoming = _conversation(db_session, tenant="tenant-a", channel="website", session="session-b", email="b@example.test")
     created = svc.get_or_create_fast_ticket(
