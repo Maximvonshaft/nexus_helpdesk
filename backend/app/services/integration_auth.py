@@ -4,8 +4,10 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth_service import verify_secret
@@ -24,6 +26,14 @@ class AuthenticatedIntegrationClient:
     key_id: str
     rate_limit_per_minute: int
     is_legacy: bool = False
+
+
+@dataclass(frozen=True)
+class IntegrationIdempotencyBegin:
+    kind: str
+    row: IntegrationRequestLog | None = None
+    response_json: dict[str, Any] | None = None
+    error_code: str | None = None
 
 
 def _parse_scopes(raw: str | None) -> set[str]:
@@ -84,15 +94,90 @@ def error_code_from_status(status_code: int) -> str:
     return mapping.get(status_code, 'error')
 
 
+def _integration_log_query(db: Session, client: AuthenticatedIntegrationClient, endpoint: str, idempotency_key: str):
+    query = db.query(IntegrationRequestLog).filter(
+        IntegrationRequestLog.endpoint == endpoint,
+        IntegrationRequestLog.idempotency_key == idempotency_key,
+    )
+    if client.client_id is None:
+        query = query.filter(IntegrationRequestLog.client_id.is_(None))
+    else:
+        query = query.filter(IntegrationRequestLog.client_id == client.client_id)
+    return query
+
+
+def _decode_response_json(raw: str | None) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else {'data': data}
+
+
+def _classify_idempotency_row(row: IntegrationRequestLog, request_hash: str) -> IntegrationIdempotencyBegin:
+    if row.request_hash and row.request_hash != request_hash:
+        return IntegrationIdempotencyBegin(kind='conflict', row=row, error_code='idempotency_key_reused_with_different_payload')
+    response_payload = _decode_response_json(row.response_json)
+    if response_payload is not None:
+        return IntegrationIdempotencyBegin(kind='replay', row=row, response_json=response_payload)
+    if row.status_code is None:
+        return IntegrationIdempotencyBegin(kind='processing', row=row, error_code='request_processing')
+    return IntegrationIdempotencyBegin(kind='failed', row=row, error_code=row.error_code or 'request_failed')
+
+
+def begin_integration_idempotency(
+    db: Session,
+    *,
+    client: AuthenticatedIntegrationClient,
+    endpoint: str,
+    method: str,
+    idempotency_key: str,
+    request_hash: str,
+) -> IntegrationIdempotencyBegin:
+    """Reserve an integration idempotency key before executing side effects.
+
+    Existing behavior wrote the idempotency log after creating a ticket. Under
+    concurrent POST /integration/task requests, two workers could observe no log
+    and both enter business execution. This function flips the order: insert the
+    log row first with status_code/response_json NULL, then treat that row as a
+    processing reservation until record_integration_response writes the result.
+    """
+
+    existing = _integration_log_query(db, client, endpoint, idempotency_key).with_for_update().first()
+    if existing is not None:
+        return _classify_idempotency_row(existing, request_hash)
+
+    row = IntegrationRequestLog(
+        client_id=client.client_id,
+        endpoint=endpoint,
+        method=method,
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+        status_code=None,
+        error_code=None,
+        response_json=None,
+    )
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        existing = _integration_log_query(db, client, endpoint, idempotency_key).with_for_update().first()
+        if existing is None:
+            raise
+        return _classify_idempotency_row(existing, request_hash)
+    return IntegrationIdempotencyBegin(kind='owner', row=row)
+
+
 def get_idempotent_response(db: Session, client: AuthenticatedIntegrationClient, endpoint: str, idempotency_key: str, request_hash: str):
-    log = db.query(IntegrationRequestLog).filter(IntegrationRequestLog.client_id == client.client_id, IntegrationRequestLog.endpoint == endpoint, IntegrationRequestLog.idempotency_key == idempotency_key).first()
+    log = _integration_log_query(db, client, endpoint, idempotency_key).first()
     if not log:
         return None
     if log.request_hash and log.request_hash != request_hash:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Idempotency-Key was reused with a different payload')
-    if log.response_json:
-        return json.loads(log.response_json)
-    return None
+    return _decode_response_json(log.response_json)
 
 
 def record_integration_response(
@@ -108,8 +193,11 @@ def record_integration_response(
     error_code: str | None = None,
 ) -> None:
     if idempotency_key:
-        existing = db.query(IntegrationRequestLog).filter(IntegrationRequestLog.client_id == client.client_id, IntegrationRequestLog.endpoint == endpoint, IntegrationRequestLog.idempotency_key == idempotency_key).first()
+        existing = _integration_log_query(db, client, endpoint, idempotency_key).first()
         if existing:
+            if existing.request_hash and request_hash and existing.request_hash != request_hash and existing.response_json:
+                db.flush()
+                return
             existing.method = method
             existing.request_hash = request_hash
             existing.status_code = status_code
