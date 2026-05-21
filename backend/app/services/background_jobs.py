@@ -21,40 +21,19 @@ ATTACHMENT_PERSIST_JOB = 'openclaw.persist_attachment'
 WEBCHAT_AI_REPLY_JOB = 'webchat.ai_reply'
 WEBCHAT_HANDOFF_SNAPSHOT_JOB = 'webchat.handoff_snapshot'
 SPEEDAF_WORK_ORDER_CREATE_JOB = 'speedaf.work_order.create'
+SPEEDAF_WORK_ORDER_DESCRIPTION_MAX_LENGTH = 200
 
 
 def _find_active_dedupe_job(db: Session, *, dedupe_key: str) -> BackgroundJob | None:
-    return (
-        db.query(BackgroundJob)
-        .filter(BackgroundJob.dedupe_key == dedupe_key, BackgroundJob.status.in_([JobStatus.pending, JobStatus.processing]))
-        .order_by(BackgroundJob.id.desc())
-        .first()
-    )
+    return db.query(BackgroundJob).filter(BackgroundJob.dedupe_key == dedupe_key, BackgroundJob.status.in_([JobStatus.pending, JobStatus.processing])).order_by(BackgroundJob.id.desc()).first()
 
 
-def enqueue_background_job(
-    db: Session,
-    *,
-    queue_name: str,
-    job_type: str,
-    payload: dict,
-    max_attempts: int | None = None,
-    next_run_at=None,
-    dedupe_key: str | None = None,
-) -> BackgroundJob:
+def enqueue_background_job(db: Session, *, queue_name: str, job_type: str, payload: dict, max_attempts: int | None = None, next_run_at=None, dedupe_key: str | None = None) -> BackgroundJob:
     if dedupe_key:
         existing = _find_active_dedupe_job(db, dedupe_key=dedupe_key)
         if existing is not None:
             return existing
-    job = BackgroundJob(
-        queue_name=queue_name,
-        job_type=job_type,
-        payload_json=json.dumps(payload, ensure_ascii=False),
-        dedupe_key=dedupe_key,
-        status=JobStatus.pending,
-        max_attempts=max_attempts or settings.job_max_retries,
-        next_run_at=next_run_at,
-    )
+    job = BackgroundJob(queue_name=queue_name, job_type=job_type, payload_json=json.dumps(payload, ensure_ascii=False), dedupe_key=dedupe_key, status=JobStatus.pending, max_attempts=max_attempts or settings.job_max_retries, next_run_at=next_run_at)
     try:
         with db.begin_nested():
             db.add(job)
@@ -69,13 +48,7 @@ def enqueue_background_job(
 
 
 def enqueue_auto_reply_job(db: Session, *, ticket_id: int, user_id: int) -> BackgroundJob:
-    return enqueue_background_job(
-        db,
-        queue_name='auto_reply',
-        job_type=AUTO_REPLY_JOB,
-        payload={'ticket_id': ticket_id, 'user_id': user_id},
-        dedupe_key=f'auto-reply:{ticket_id}',
-    )
+    return enqueue_background_job(db, queue_name='auto_reply', job_type=AUTO_REPLY_JOB, payload={'ticket_id': ticket_id, 'user_id': user_id}, dedupe_key=f'auto-reply:{ticket_id}')
 
 
 def enqueue_openclaw_sync_job(db: Session, *, ticket_id: int, session_key: str, transcript_limit: int | None = None, dedupe: bool = True) -> BackgroundJob:
@@ -88,59 +61,19 @@ def enqueue_attachment_persist_job(db: Session, *, attachment_ref_id: int, dedup
 
 
 def enqueue_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id: int, visitor_message_id: int) -> BackgroundJob:
-    return enqueue_background_job(
-        db,
-        queue_name='webchat_ai_reply',
-        job_type=WEBCHAT_AI_REPLY_JOB,
-        payload={
-            'conversation_id': conversation_id,
-            'ticket_id': ticket_id,
-            'visitor_message_id': visitor_message_id,
-        },
-        dedupe_key=f'webchat-ai-reply:{visitor_message_id}',
-    )
+    return enqueue_background_job(db, queue_name='webchat_ai_reply', job_type=WEBCHAT_AI_REPLY_JOB, payload={'conversation_id': conversation_id, 'ticket_id': ticket_id, 'visitor_message_id': visitor_message_id}, dedupe_key=f'webchat-ai-reply:{visitor_message_id}')
 
 
-def enqueue_speedaf_work_order_create_job(
-    db: Session,
-    *,
-    ticket_id: int,
-    waybill_code: str,
-    caller_id: str,
-    description: str,
-    work_order_type: str = 'WT0103-05',
-    conversation_id: int | None = None,
-) -> BackgroundJob:
-    payload = {
-        'ticket_id': ticket_id,
-        'conversation_id': conversation_id,
-        'waybillCode': waybill_code,
-        'callerID': caller_id,
-        'workOrderType': work_order_type,
-        'description': description,
-    }
-    return enqueue_background_job(
-        db,
-        queue_name='speedaf_work_order',
-        job_type=SPEEDAF_WORK_ORDER_CREATE_JOB,
-        payload=payload,
-        dedupe_key=f'speedaf-workorder:ticket:{ticket_id}:{work_order_type}',
-    )
+def enqueue_speedaf_work_order_create_job(db: Session, *, ticket_id: int, waybill_code: str, caller_id: str, description: str, work_order_type: str = 'WT0103-05', conversation_id: int | None = None) -> BackgroundJob:
+    payload = {'ticket_id': ticket_id, 'conversation_id': conversation_id, 'waybillCode': waybill_code, 'callerID': caller_id, 'workOrderType': work_order_type, 'description': description[:SPEEDAF_WORK_ORDER_DESCRIPTION_MAX_LENGTH]}
+    return enqueue_background_job(db, queue_name='speedaf_work_order', job_type=SPEEDAF_WORK_ORDER_CREATE_JOB, payload=payload, dedupe_key=f'speedaf-workorder:ticket:{ticket_id}:{work_order_type}')
 
 
 def enqueue_stale_openclaw_sync_jobs(db: Session, *, limit: int | None = None) -> list[BackgroundJob]:
     if not settings.openclaw_sync_enabled:
         return []
     cutoff = utc_now() - timedelta(seconds=settings.openclaw_sync_stale_seconds)
-    rows = (
-        db.query(OpenClawConversationLink)
-        .join(OpenClawConversationLink.ticket)
-        .filter(OpenClawConversationLink.session_key.is_not(None))
-        .filter((OpenClawConversationLink.last_synced_at.is_(None)) | (OpenClawConversationLink.last_synced_at < cutoff))
-        .order_by(OpenClawConversationLink.last_synced_at.asc().nullsfirst(), OpenClawConversationLink.id.asc())
-        .limit(limit or settings.openclaw_sync_batch_size)
-        .all()
-    )
+    rows = db.query(OpenClawConversationLink).join(OpenClawConversationLink.ticket).filter(OpenClawConversationLink.session_key.is_not(None)).filter((OpenClawConversationLink.last_synced_at.is_(None)) | (OpenClawConversationLink.last_synced_at < cutoff)).order_by(OpenClawConversationLink.last_synced_at.asc().nullsfirst(), OpenClawConversationLink.id.asc()).limit(limit or settings.openclaw_sync_batch_size).all()
     jobs: list[BackgroundJob] = []
     seen: set[str] = set()
     for row in rows:
@@ -160,7 +93,6 @@ def claim_pending_jobs(db: Session, *, limit: int | None = None, worker_id: str 
     pending_filters = [BackgroundJob.status == JobStatus.pending, or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now), or_(BackgroundJob.locked_at.is_(None), BackgroundJob.locked_at < lock_deadline)]
     if normalized_job_types:
         pending_filters.append(BackgroundJob.job_type.in_(normalized_job_types))
-
     if db.bind and db.bind.dialect.name.startswith('postgresql'):
         rows = db.execute(select(BackgroundJob.id).where(*pending_filters).order_by(BackgroundJob.created_at.asc()).limit(limit).with_for_update(skip_locked=True)).all()
         claimed_ids = [row[0] for row in rows]
@@ -208,34 +140,14 @@ def _mark_retry(job: BackgroundJob, reason: str) -> None:
 
 
 def _draft_ai_auto_reply(db: Session, *, ticket, user, body: str, channel: SourceChannel) -> TicketOutboundMessage:
-    message = TicketOutboundMessage(
-        ticket_id=ticket.id,
-        channel=channel,
-        status=MessageStatus.draft,
-        body=body,
-        provider_status='ai_review_required',
-        error_message='AI-generated auto reply saved as draft by outbound safety gate',
-        failure_code='ai_review_required',
-        failure_reason='AI-generated outbound requires human review before direct send',
-        created_by=user.id,
-        max_retries=settings.outbox_max_retries,
-    )
+    message = TicketOutboundMessage(ticket_id=ticket.id, channel=channel, status=MessageStatus.draft, body=body, provider_status='ai_review_required', error_message='AI-generated auto reply saved as draft by outbound safety gate', failure_code='ai_review_required', failure_reason='AI-generated outbound requires human review before direct send', created_by=user.id, max_retries=settings.outbox_max_retries)
     db.add(message)
     db.flush()
     return message
 
 
 def _append_ticket_event(db: Session, *, ticket_id: int, note: str, payload: dict) -> None:
-    db.add(
-        TicketEvent(
-            ticket_id=ticket_id,
-            event_type=EventType.field_updated,
-            field_name='speedaf_work_order',
-            note=note,
-            payload_json=json.dumps(payload, ensure_ascii=False),
-            created_at=utc_now(),
-        )
-    )
+    db.add(TicketEvent(ticket_id=ticket_id, event_type=EventType.field_updated, field_name='speedaf_work_order', note=note, payload_json=json.dumps(payload, ensure_ascii=False), created_at=utc_now()))
     db.flush()
 
 
@@ -249,46 +161,18 @@ def _int_or_none(value) -> int | None:
 
 def _process_speedaf_work_order_create_job(db: Session, job: BackgroundJob, payload: dict) -> None:
     from .speedaf.action_service import SpeedafActionDisabled, SpeedafActionService
-
     ticket_id = int(payload['ticket_id'])
     conversation_id = _int_or_none(payload.get('conversation_id'))
-    result_payload: dict = {
-        'job_id': job.id,
-        'job_type': SPEEDAF_WORK_ORDER_CREATE_JOB,
-        'ticket_id': ticket_id,
-        'conversation_id': conversation_id,
-        'workOrderType': payload.get('workOrderType') or 'WT0103-05',
-    }
+    result_payload: dict = {'job_id': job.id, 'job_type': SPEEDAF_WORK_ORDER_CREATE_JOB, 'ticket_id': ticket_id, 'conversation_id': conversation_id, 'workOrderType': payload.get('workOrderType') or 'WT0103-05'}
     try:
-        result = SpeedafActionService(
-            ticket_id=ticket_id,
-            webchat_conversation_id=conversation_id,
-            background_job_id=job.id,
-        ).create_work_order(
-            waybill_code=str(payload['waybillCode']),
-            work_order_type=str(payload.get('workOrderType') or 'WT0103-05'),
-            description=str(payload.get('description') or '')[:1000],
-            caller_id=str(payload['callerID']),
-        )
+        result = SpeedafActionService(ticket_id=ticket_id, webchat_conversation_id=conversation_id, background_job_id=job.id).create_work_order(waybill_code=str(payload['waybillCode']), work_order_type=str(payload.get('workOrderType') or 'WT0103-05'), description=str(payload.get('description') or '')[:SPEEDAF_WORK_ORDER_DESCRIPTION_MAX_LENGTH], caller_id=str(payload['callerID']))
     except SpeedafActionDisabled as exc:
         result_payload.update({'ok': False, 'status': 'disabled', 'error_code': type(exc).__name__, 'error_message': str(exc)})
         _append_ticket_event(db, ticket_id=ticket_id, note='Speedaf work order creation skipped by feature gate.', payload=result_payload)
         _mark_done(job)
         return
-    result_payload.update({
-        'ok': result.ok,
-        'status': result.status,
-        'external_id': result.external_id,
-        'error_code': result.error_code,
-        'error_message': result.error_message,
-        'safe_payload': result.safe_payload,
-    })
-    _append_ticket_event(
-        db,
-        ticket_id=ticket_id,
-        note='Speedaf work order creation completed.' if result.ok else 'Speedaf work order creation failed.',
-        payload=result_payload,
-    )
+    result_payload.update({'ok': result.ok, 'status': result.status, 'external_id': result.external_id, 'error_code': result.error_code, 'error_message': result.error_message, 'safe_payload': result.safe_payload})
+    _append_ticket_event(db, ticket_id=ticket_id, note='Speedaf work order creation completed.' if result.ok else 'Speedaf work order creation failed.', payload=result_payload)
     if not result.ok:
         raise RuntimeError(result.error_code or 'speedaf_work_order_create_failed')
 
@@ -300,7 +184,6 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             from .ticket_service import get_ticket_or_404, get_user_or_404
             from .llm_service import polish_reply_text
             from .bulletin_service import build_bulletin_context
-
             ticket = get_ticket_or_404(db, int(payload['ticket_id']))
             user = get_user_or_404(db, int(payload['user_id']))
             if not ticket.preferred_reply_contact and ticket.openclaw_link is None:
@@ -323,10 +206,8 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             _draft_ai_auto_reply(db, ticket=ticket, user=user, body=polished_text, channel=channel)
             _mark_done(job)
             return job
-
         if job.job_type == ATTACHMENT_PERSIST_JOB:
             from ..models import OpenClawAttachmentReference
-
             row = db.query(OpenClawAttachmentReference).filter(OpenClawAttachmentReference.id == int(payload['attachment_ref_id'])).first()
             if row is None:
                 _mark_done(job)
@@ -335,49 +216,31 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             row.updated_at = utc_now()
             _mark_done(job)
             return job
-
         if job.job_type == WEBCHAT_AI_REPLY_JOB:
             from .webchat_ai_safe_service import process_webchat_ai_reply_job
-
-            process_webchat_ai_reply_job(
-                db,
-                conversation_id=int(payload['conversation_id']),
-                ticket_id=int(payload['ticket_id']),
-                visitor_message_id=int(payload['visitor_message_id']),
-            )
+            process_webchat_ai_reply_job(db, conversation_id=int(payload['conversation_id']), ticket_id=int(payload['ticket_id']), visitor_message_id=int(payload['visitor_message_id']))
             _mark_done(job)
             return job
-
         if job.job_type == WEBCHAT_HANDOFF_SNAPSHOT_JOB:
             from .webchat_handoff_snapshot_service import process_webchat_handoff_snapshot_job
-
             snapshot = payload.get('snapshot')
             if not isinstance(snapshot, dict):
                 raise RuntimeError('webchat handoff snapshot payload is required')
             process_webchat_handoff_snapshot_job(db, snapshot=snapshot)
             _mark_done(job)
             return job
-
         if job.job_type == SPEEDAF_WORK_ORDER_CREATE_JOB:
             _process_speedaf_work_order_create_job(db, job, payload)
             _mark_done(job)
             return job
-
         if job.job_type == OPENCLAW_SYNC_JOB:
             if not settings.openclaw_sync_enabled:
                 _mark_done(job)
                 return job
             with openclaw_client_factory.get_openclaw_runtime_client() as client:
-                openclaw_bridge.sync_openclaw_conversation(
-                    db,
-                    ticket_id=int(payload['ticket_id']),
-                    session_key=str(payload['session_key']),
-                    limit=int(payload.get('transcript_limit') or settings.openclaw_sync_transcript_limit),
-                    client=client,
-                )
+                openclaw_bridge.sync_openclaw_conversation(db, ticket_id=int(payload['ticket_id']), session_key=str(payload['session_key']), limit=int(payload.get('transcript_limit') or settings.openclaw_sync_transcript_limit), client=client)
             _mark_done(job)
             return job
-
         raise RuntimeError(f'Unsupported job type: {job.job_type}')
     except Exception as exc:
         _mark_retry(job, str(exc))
