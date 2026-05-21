@@ -1,0 +1,52 @@
+"""speedaf address update idempotency
+
+Revision ID: 20260521_0028
+Revises: 20260521_0027
+Create Date: 2026-05-21
+"""
+from __future__ import annotations
+
+from alembic import op
+import sqlalchemy as sa
+
+revision = "20260521_0028"
+down_revision = "20260521_0027"
+branch_labels = None
+depends_on = None
+
+
+def _table_exists(name: str) -> bool:
+    return sa.inspect(op.get_bind()).has_table(name)
+
+
+def _index_names(table: str) -> set[str]:
+    if not _table_exists(table):
+        return set()
+    return {item["name"] for item in sa.inspect(op.get_bind()).get_indexes(table)}
+
+
+def upgrade() -> None:
+    if not _table_exists("speedaf_address_update_idempotency"):
+        op.create_table(
+            "speedaf_address_update_idempotency",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("dedupe_key", sa.String(length=255), nullable=False),
+            sa.Column("ticket_id", sa.Integer(), nullable=False),
+            sa.Column("waybill_hash", sa.String(length=64), nullable=False),
+            sa.Column("phone_hash", sa.String(length=64), nullable=False),
+            sa.Column("actor_id", sa.Integer(), nullable=False),
+            sa.Column("status", sa.String(length=40), nullable=False),
+            sa.Column("request_id", sa.String(length=160), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+            sa.UniqueConstraint("dedupe_key", name="ux_speedaf_address_update_dedupe_key"),
+        )
+    names = _index_names("speedaf_address_update_idempotency")
+    if "ix_speedaf_address_update_ticket_id" not in names:
+        op.create_index("ix_speedaf_address_update_ticket_id", "speedaf_address_update_idempotency", ["ticket_id"])
+    if "ix_speedaf_address_update_status" not in names:
+        op.create_index("ix_speedaf_address_update_status", "speedaf_address_update_idempotency", ["status"])
+
+
+def downgrade() -> None:
+    pass
