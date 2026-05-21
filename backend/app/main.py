@@ -37,6 +37,7 @@ from .api.webchat_events import router as webchat_events_router
 from .api.webchat_voice import router as webchat_voice_router
 from .db import engine, reset_current_request_id, set_current_request_id
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
+from .services.release_metadata import runtime_identity
 from .services.webchat_openclaw_responses_client import close_openclaw_clients
 from .settings import get_settings
 from .webchat_voice_config import is_webchat_voice_path, load_webchat_voice_runtime_config, webchat_voice_connect_sources
@@ -65,7 +66,7 @@ DEFAULT_CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsaf
 
 
 def _runtime_identity() -> dict[str, str]:
-    return {'app_version': os.getenv('APP_VERSION', app.version), 'git_sha': os.getenv('GIT_SHA', 'unknown'), 'image_tag': os.getenv('IMAGE_TAG', 'unknown'), 'build_time': os.getenv('BUILD_TIME', 'unknown'), 'frontend_build_sha': os.getenv('FRONTEND_BUILD_SHA', 'unknown')}
+    return runtime_identity(default_app_version=app.version)
 
 
 def _migration_revision(conn: Connection) -> str | None:
