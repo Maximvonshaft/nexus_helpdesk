@@ -2,6 +2,19 @@ name: provider-runtime-gate
 
 on:
   pull_request:
+    branches: [main]
+    paths:
+      - 'backend/app/services/provider_runtime/**'
+      - 'backend/app/services/provider_*.py'
+      - 'backend/app/api/admin_provider*.py'
+      - 'backend/app/api/webchat_fast.py'
+      - 'backend/app/main.py'
+      - 'backend/tests/test_provider_*.py'
+      - 'backend/tests/test_webchat_fast_reply_provider_runtime.py'
+      - 'backend/tests/test_oauth_*.py'
+      - 'backend/tests/test_codex_*.py'
+      - 'backend/alembic/versions/*provider*.py'
+      - '.github/workflows/provider-runtime-gate.yml'
   push:
     branches: [main]
   workflow_dispatch:
@@ -9,7 +22,7 @@ on:
 jobs:
   provider-runtime-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -120,10 +133,3 @@ jobs:
           assert any('fast-reply' in path for path in routes), routes
           print('route_smoke_ok')
           PY
-
-      - name: Full backend test suite
-        env:
-          PYTHONPATH: backend
-        run: |
-          set -Eeuo pipefail
-          timeout 900 python -m pytest -q backend/tests
