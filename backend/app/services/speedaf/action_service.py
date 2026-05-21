@@ -15,6 +15,7 @@ WORK_ORDER_CREATE_PATH = "/open-api/mcp/workOrder/create"
 ORDER_CANCEL_PATH = "/open-api/mcp/order/cancel"
 UPDATE_ADDRESS_PATH = "/open-api/mcp/order/updateAddress"
 VOICE_CALLBACK_PATH = "/open-api/mcp/callData/voice/callBack"
+WORK_ORDER_DESCRIPTION_MAX_LENGTH = 200
 
 ACTION_TOOL_NAMES = {
     "work_order_create": "speedaf.work_order.create",
@@ -83,7 +84,7 @@ class SpeedafActionService:
         payload = {
             "waybillCode": waybill_code,
             "workOrderType": work_order_type,
-            "description": description[:1000],
+            "description": description[:WORK_ORDER_DESCRIPTION_MAX_LENGTH],
             "callerID": caller_id,
         }
         started = time.monotonic()
@@ -120,12 +121,7 @@ class SpeedafActionService:
             status="success",
             elapsed_ms=int((time.monotonic() - started) * 1000),
         )
-        return SpeedafWorkOrderResult(
-            ok=True,
-            status="created",
-            external_id=external_id,
-            safe_payload=safe_payload,
-        )
+        return SpeedafWorkOrderResult(ok=True, status="created", external_id=external_id, safe_payload=safe_payload)
 
     def cancel_order(self, *, waybill_code: str, reason_code: str, caller_id: str) -> SpeedafActionResult:
         if not _enabled("SPEEDAF_CANCEL_ENABLED", False):
@@ -149,37 +145,11 @@ class SpeedafActionService:
         try:
             response = self.client.post(path, payload)
         except SpeedafMcpClientError as exc:
-            self._record_action_audit(
-                action_type=action_type,
-                payload=payload,
-                output_payload=exc.safe_payload,
-                status="failed",
-                error_code=exc.error.code,
-                error_message=exc.error.message,
-                elapsed_ms=int((time.monotonic() - started) * 1000),
-            )
-            return SpeedafActionResult(
-                ok=False,
-                action_type=action_type,
-                status="failed",
-                error_code=exc.error.code,
-                error_message=exc.error.message,
-                safe_payload=exc.safe_payload,
-            )
+            self._record_action_audit(action_type=action_type, payload=payload, output_payload=exc.safe_payload, status="failed", error_code=exc.error.code, error_message=exc.error.message, elapsed_ms=int((time.monotonic() - started) * 1000))
+            return SpeedafActionResult(ok=False, action_type=action_type, status="failed", error_code=exc.error.code, error_message=exc.error.message, safe_payload=exc.safe_payload)
         safe_payload = {"request": redact_mapping(payload), "response": response.safe_summary.get("response")}
-        self._record_action_audit(
-            action_type=action_type,
-            payload=payload,
-            output_payload=safe_payload,
-            status="success",
-            elapsed_ms=int((time.monotonic() - started) * 1000),
-        )
-        return SpeedafActionResult(
-            ok=True,
-            action_type=action_type,
-            status="success",
-            safe_payload=safe_payload,
-        )
+        self._record_action_audit(action_type=action_type, payload=payload, output_payload=safe_payload, status="success", elapsed_ms=int((time.monotonic() - started) * 1000))
+        return SpeedafActionResult(ok=True, action_type=action_type, status="success", safe_payload=safe_payload)
 
     def _record_action_audit(
         self,
