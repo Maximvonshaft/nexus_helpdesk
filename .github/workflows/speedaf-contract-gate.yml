@@ -71,7 +71,7 @@ jobs:
             echo 'ERROR: Speedaf write feature flag must not be enabled in repository files.'
             exit 1
           fi
-          if git grep -nE '(secretKey|appCode|sign|token)\s*[:=]\s*[A-Za-z0-9_\-]{20,}' -- backend docs ':!docs/speedaf-mcp-full-closure/**'; then
+          if git grep -nE '(appCode|secretKey|SPEEDAF_[A-Z0-9_]*(SECRET|TOKEN|KEY)|SPEEDAF_[A-Z0-9_]*SIGN)\s*[:=]\s*["'"'']?[A-Za-z0-9_\-]{20,}' -- backend docs ':!docs/speedaf-mcp-full-closure/**' ':!.github/workflows/speedaf-contract-gate.yml'; then
             echo 'ERROR: possible Speedaf credential-like material found.'
             exit 1
           fi
