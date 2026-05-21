@@ -64,6 +64,10 @@ Updated focused tests cover:
 - address update worker executes Speedaf action and writes completion event
 - duplicate address update remains blocked by DB-backed idempotency
 
+## CI Gate
+
+GitHub Actions must pass on this PR head before merge. If checks are not automatically triggered by the first PR creation event, this documentation-only update intentionally refreshes the branch head without changing runtime behavior.
+
 ## Remaining Production Gates
 
 - Real Speedaf UAT.
