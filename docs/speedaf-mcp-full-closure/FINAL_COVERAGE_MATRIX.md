@@ -10,8 +10,8 @@
 |---|---|---|
 | `order/query` | implemented read path | Used by tracking facts and cancel preview/confirm status checks. |
 | `order/waybillCode/query` | implemented WebChat read path | CallerID can resolve one shipment automatically or return safe suffix/hash candidates. |
-| `workOrder/create` | existing backend job path | Full operator flow remains for PR-B. |
-| `order/updateAddress` | action method exists | Controlled operator flow remains for PR-B. |
+| `workOrder/create` | implemented controlled backend path | Feature-flagged, operator-controlled, queued via BackgroundJob, only `WT0103-05` in this phase. |
+| `order/updateAddress` | implemented controlled backend path | Feature-flagged, operator-controlled, submits WhatsApp/address confirmation request; does not claim address changed. |
 | `order/cancel` | implemented backend path | Feature-flagged, capability-gated, preview-token-confirm flow. |
 | `callData/voice/callBack` | excluded | Not part of this closure phase. |
 
@@ -26,5 +26,6 @@
 
 ## Remaining Work
 
-- PR-B: work order and address update controlled operator flow.
-- Staging UAT and production whitelist validation.
+- Real Speedaf UAT and production whitelist validation.
+- Operator UI wiring after backend approval.
+- Voice callback remains excluded by product decision.
