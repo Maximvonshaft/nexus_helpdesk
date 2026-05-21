@@ -79,10 +79,10 @@ jobs:
               'docs/production-gates/',
           )
 
-          write_flag = re.compile(r'SPEEDAF_(CANCEL|UPDATE_ADDRESS|WORK_ORDER_CREATE)_ENABLED\s*=\s*(true|TRUE|1|yes|YES|on|ON)')
-          credential = re.compile(r'(appCode|secretKey|SPEEDAF_[A-Z0-9_]*(SECRET|TOKEN|KEY)|SPEEDAF_[A-Z0-9_]*SIGN)\s*[:=]\s*[\"\']?([A-Za-z0-9_\-]{20,})')
+          write_flag = re.compile(r'SPEEDAF_(?:CANCEL|UPDATE_ADDRESS|WORK_ORDER_CREATE)_ENABLED\s*=\s*(?:true|TRUE|1|yes|YES|on|ON)')
+          credential = re.compile(r'(?:appCode|secretKey|SPEEDAF_[A-Z0-9_]*(?:SECRET|TOKEN|KEY)|SPEEDAF_[A-Z0-9_]*SIGN)\s*[:=]\s*[\"\']?(?P<value>[A-Za-z0-9_\-]{20,})')
           voice_enabled = re.compile(r'SPEEDAF_VOICE_CALLBACK_ENABLED.*true')
-          placeholder = re.compile(r'(PASTE|PLACEHOLDER|EXAMPLE|DUMMY|REDACTED|CHANGEME|YOUR_|_HERE)', re.IGNORECASE)
+          placeholder = re.compile(r'(?:PASTE|PLACEHOLDER|EXAMPLE|DUMMY|REDACTED|CHANGEME|YOUR_|_HERE)', re.IGNORECASE)
 
           violations: list[str] = []
 
@@ -105,7 +105,7 @@ jobs:
                   if voice_enabled.search(line):
                       violations.append(f'{path}:{idx}: Speedaf voice callback must remain disabled/excluded')
                   match = credential.search(line)
-                  if match and not placeholder.search(match.group(2)):
+                  if match and not placeholder.search(match.group('value')):
                       violations.append(f'{path}:{idx}: possible Speedaf credential-like material')
 
           for path, text in read_text_files(docs_roots):
@@ -114,7 +114,7 @@ jobs:
                   continue
               for idx, line in enumerate(text.splitlines(), 1):
                   match = credential.search(line)
-                  if match and not placeholder.search(match.group(2)):
+                  if match and not placeholder.search(match.group('value')):
                       violations.append(f'{path}:{idx}: possible Speedaf credential-like material')
 
           if violations:
