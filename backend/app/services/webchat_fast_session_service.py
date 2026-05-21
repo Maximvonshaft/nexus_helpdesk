@@ -15,6 +15,7 @@ from ..models import ChannelAccount, Customer, Market, Ticket
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
 from .ticket_service import generate_ticket_no
+from .webchat_fast_config import get_webchat_fast_settings
 
 FAST_ORIGIN = "webchat-fast"
 FAST_CONTEXT_LIMIT = 10
@@ -456,12 +457,16 @@ def update_fast_business_state(db: Session, *, conversation: WebchatConversation
     db.flush()
 
 
-def _find_or_create_customer(db: Session, *, conversation: WebchatConversation) -> Customer:
+def _find_customer_by_conversation_identity(db: Session, *, conversation: WebchatConversation) -> Customer | None:
     ext_ref = _fast_customer_external_ref(conversation)
-    existing = db.execute(select(Customer).where(Customer.external_ref == ext_ref).limit(1)).scalar_one_or_none()
+    return db.execute(select(Customer).where(Customer.external_ref == ext_ref).limit(1)).scalar_one_or_none()
+
+
+def _find_or_create_customer(db: Session, *, conversation: WebchatConversation) -> Customer:
+    existing = _find_customer_by_conversation_identity(db, conversation=conversation)
     if existing is not None:
         return existing
-    customer = Customer(name=conversation.visitor_name or conversation.visitor_email or conversation.visitor_phone or f"Webchat Visitor {conversation.public_id[-6:]}", email=conversation.visitor_email, email_normalized=conversation.visitor_email.lower() if conversation.visitor_email else None, phone=conversation.visitor_phone, phone_normalized=conversation.visitor_phone.lower() if conversation.visitor_phone else None, external_ref=ext_ref)
+    customer = Customer(name=conversation.visitor_name or conversation.visitor_email or conversation.visitor_phone or f"Webchat Visitor {conversation.public_id[-6:]}", email=conversation.visitor_email, email_normalized=conversation.visitor_email.lower() if conversation.visitor_email else None, phone=conversation.visitor_phone, phone_normalized=conversation.visitor_phone.lower() if conversation.visitor_phone else None, external_ref=_fast_customer_external_ref(conversation))
     db.add(customer)
     db.flush()
     return customer
@@ -482,6 +487,10 @@ def _fast_ticket_source_dedupe_key(*, conversation: WebchatConversation, busines
     return f"webchat-fast-issue:{conversation.tenant_key}:{conversation.channel_key}:{business_state.fast_issue_key}"[:300]
 
 
+def _fast_ticket_scope_prefix(conversation: WebchatConversation) -> str:
+    return f"webchat-fast-issue:{conversation.tenant_key}:{conversation.channel_key}:%"[:300]
+
+
 def _backfill_fast_ticket_linkage(
     db: Session,
     *,
@@ -500,6 +509,29 @@ def _backfill_fast_ticket_linkage(
     db.flush()
 
 
+def _find_tracking_scoped_ticket(db: Session, *, conversation: WebchatConversation, business_state: FastBusinessState) -> Ticket | None:
+    if not business_state.tracking_number:
+        return None
+    scope = get_webchat_fast_settings().tracking_dedupe_scope
+    predicates = [
+        Ticket.tracking_number == business_state.tracking_number,
+        Ticket.case_type == business_state.issue_type,
+        Ticket.source_channel == SourceChannel.web_chat,
+        Ticket.status.in_(ACTIVE_TICKET_STATUSES),
+    ]
+    if scope == "legacy":
+        pass
+    elif scope == "tenant_channel":
+        predicates.append(Ticket.source_dedupe_key.like(_fast_ticket_scope_prefix(conversation)))
+    else:
+        customer = _find_customer_by_conversation_identity(db, conversation=conversation)
+        if customer is None:
+            return None
+        predicates.append(Ticket.source_dedupe_key.like(_fast_ticket_scope_prefix(conversation)))
+        predicates.append(Ticket.customer_id == customer.id)
+    return db.execute(select(Ticket).where(*predicates).order_by(Ticket.id.asc()).limit(1)).scalar_one_or_none()
+
+
 def _find_active_ticket(db: Session, *, conversation: WebchatConversation, business_state: FastBusinessState) -> Ticket | None:
     if conversation.ticket_id is not None:
         ticket = db.get(Ticket, conversation.ticket_id)
@@ -509,9 +541,7 @@ def _find_active_ticket(db: Session, *, conversation: WebchatConversation, busin
     ticket = db.execute(select(Ticket).where(Ticket.source_dedupe_key == dedupe_key, Ticket.status.in_(ACTIVE_TICKET_STATUSES)).limit(1)).scalar_one_or_none()
     if ticket is not None:
         return ticket
-    if business_state.tracking_number:
-        return db.execute(select(Ticket).where(Ticket.tracking_number == business_state.tracking_number, Ticket.case_type == business_state.issue_type, Ticket.source_channel == SourceChannel.web_chat, Ticket.status.in_(ACTIVE_TICKET_STATUSES)).limit(1)).scalar_one_or_none()
-    return None
+    return _find_tracking_scoped_ticket(db, conversation=conversation, business_state=business_state)
 
 
 def get_or_create_fast_ticket(
