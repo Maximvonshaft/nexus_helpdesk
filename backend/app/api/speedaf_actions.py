@@ -17,9 +17,8 @@ from ..enums import EventType, UserRole
 from ..models import Ticket, TicketEvent
 from ..settings import get_settings
 from ..services.admin_action_rate_limit import enforce_admin_action_rate_limit
-from ..services.background_jobs import enqueue_speedaf_work_order_create_job
+from ..services.background_jobs import enqueue_speedaf_address_update_job, enqueue_speedaf_work_order_create_job
 from ..services.permissions import ensure_ticket_visible, resolve_capabilities
-from ..services.speedaf.action_service import SpeedafActionDisabled, SpeedafActionResult, SpeedafActionService
 from ..services.speedaf.redactor import safe_caller_payload, safe_waybill_payload
 from ..services.speedaf.status_map import is_auto_work_order_type_allowed
 from ..utils.time import utc_now
@@ -30,13 +29,15 @@ CAP_SPEEDAF_WORK_ORDER_WRITE = "tool:speedaf.work_order.create:write"
 CAP_SPEEDAF_ADDRESS_UPDATE_WRITE = "tool:speedaf.order.update_address:write"
 WORK_ORDER_ACTION_KEY = "speedaf.work_order.create"
 ADDRESS_UPDATE_ACTION_KEY = "speedaf.address_update.submit"
+WORK_ORDER_INPUT_DESCRIPTION_MAX_LENGTH = 1000
+WORK_ORDER_SPEEDAF_DESCRIPTION_MAX_LENGTH = 200
 
 
 class SpeedafWorkOrderRequest(BaseModel):
     waybillCode: str = Field(min_length=1, max_length=80)
     callerID: str = Field(min_length=1, max_length=80)
     workOrderType: str = Field(default="WT0103-05", max_length=32)
-    description: str = Field(min_length=1, max_length=1000)
+    description: str = Field(min_length=1, max_length=WORK_ORDER_INPUT_DESCRIPTION_MAX_LENGTH)
 
 
 class SpeedafAddressUpdateRequest(BaseModel):
@@ -149,7 +150,7 @@ def _reserve_address_update(db: Session, *, dedupe_key: str, ticket_id: int, way
                     INSERT INTO speedaf_address_update_idempotency
                         (dedupe_key, ticket_id, waybill_hash, phone_hash, actor_id, status, request_id, created_at, updated_at)
                     VALUES
-                        (:dedupe_key, :ticket_id, :waybill_hash, :phone_hash, :actor_id, 'processing', :request_id, :now, :now)
+                        (:dedupe_key, :ticket_id, :waybill_hash, :phone_hash, :actor_id, 'queued', :request_id, :now, :now)
                 """),
                 {
                     "dedupe_key": dedupe_key,
@@ -163,10 +164,6 @@ def _reserve_address_update(db: Session, *, dedupe_key: str, ticket_id: int, way
             )
     except IntegrityError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="speedaf_address_update_already_requested")
-
-
-def _update_address_status(db: Session, *, dedupe_key: str, status_value: str) -> None:
-    db.execute(text("UPDATE speedaf_address_update_idempotency SET status = :status, updated_at = :now WHERE dedupe_key = :dedupe_key"), {"status": status_value, "now": utc_now(), "dedupe_key": dedupe_key})
 
 
 @router.post("/{ticket_id}/speedaf/work-orders", response_model=SpeedafActionResponse)
@@ -183,7 +180,7 @@ def create_speedaf_work_order(ticket_id: int, payload: SpeedafWorkOrderRequest, 
         ticket_id=ticket_id,
         waybill_code=_clean(payload.waybillCode, limit=80).upper(),
         caller_id=_clean(payload.callerID, limit=80),
-        description=_clean(payload.description, limit=200),
+        description=_clean(payload.description, limit=WORK_ORDER_SPEEDAF_DESCRIPTION_MAX_LENGTH),
         work_order_type=work_order_type,
     )
     _append_event(
@@ -209,27 +206,17 @@ def submit_speedaf_address_update(ticket_id: int, payload: SpeedafAddressUpdateR
     caller = _clean(payload.callerID, limit=80)
     phone = _clean(payload.whatsAppPhone, limit=80)
     dedupe_key = _address_dedupe_key(ticket_id=ticket_id, waybill_code=waybill, whatsapp_phone=phone)
-    _reserve_address_update(db, dedupe_key=dedupe_key, ticket_id=ticket_id, waybill_code=waybill, whatsapp_phone=phone, actor_id=current_user.id, request_id=_request_id(request))
-    service = SpeedafActionService(ticket_id=ticket_id, request_id=dedupe_key)
-    try:
-        result = service.submit_update_address_flow(waybill_code=waybill, whatsapp_phone=phone, caller_id=caller)
-    except SpeedafActionDisabled:
-        _update_address_status(db, dedupe_key=dedupe_key, status_value="failed")
-        db.commit()
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="speedaf_update_address_disabled")
-    if not result.ok:
-        _update_address_status(db, dedupe_key=dedupe_key, status_value="failed")
-        db.commit()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result.error_code or "speedaf_update_address_failed")
-    _update_address_status(db, dedupe_key=dedupe_key, status_value="success")
+    request_id = _request_id(request)
+    _reserve_address_update(db, dedupe_key=dedupe_key, ticket_id=ticket_id, waybill_code=waybill, whatsapp_phone=phone, actor_id=current_user.id, request_id=request_id)
+    job = enqueue_speedaf_address_update_job(db, ticket_id=ticket_id, waybill_code=waybill, caller_id=caller, whatsapp_phone=phone, dedupe_key=dedupe_key, request_id=request_id)
     _append_event(
         db,
         ticket_id=ticket_id,
         actor_id=current_user.id,
         field_name="speedaf_address_update",
-        new_value="submitted",
-        note="Speedaf address update confirmation request submitted. Final Speedaf confirmation is still required.",
-        payload={"dedupe_key": dedupe_key, "speedaf_safe_payload": result.safe_payload, **safe_waybill_payload(waybill), "whatsapp_phone": {"redacted": True, "suffix": phone[-4:]}},
+        new_value="queued",
+        note="Speedaf address update confirmation request queued. Final address change remains pending Speedaf/customer confirmation.",
+        payload={"job_id": job.id, "dedupe_key": dedupe_key, **safe_waybill_payload(waybill), "whatsapp_phone": {"redacted": True, "suffix": phone[-4:]}},
     )
     db.commit()
-    return SpeedafActionResponse(ok=True, status="submitted", message="Address update confirmation request submitted. Final Speedaf confirmation is still required.", dedupeKey=dedupe_key)
+    return SpeedafActionResponse(ok=True, status="queued", message="Address update confirmation request queued. Final address change remains pending Speedaf/customer confirmation.", jobId=job.id, dedupeKey=dedupe_key)
