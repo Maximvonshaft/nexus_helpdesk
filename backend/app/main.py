@@ -26,6 +26,7 @@ from .api.lite import router as lite_router
 from .api.operator_queue import router as operator_queue_router
 from .api.outbound_channels import router as outbound_channels_router
 from .api.persona_profiles import router as persona_profiles_router
+from .api.speedaf_actions import router as speedaf_actions_router
 from .api.speedaf_cancel import router as speedaf_cancel_router
 from .api.stats import router as stats_router
 from .api.ticket_perf import router as ticket_perf_router
@@ -64,13 +65,7 @@ DEFAULT_CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsaf
 
 
 def _runtime_identity() -> dict[str, str]:
-    return {
-        'app_version': os.getenv('APP_VERSION', app.version),
-        'git_sha': os.getenv('GIT_SHA', 'unknown'),
-        'image_tag': os.getenv('IMAGE_TAG', 'unknown'),
-        'build_time': os.getenv('BUILD_TIME', 'unknown'),
-        'frontend_build_sha': os.getenv('FRONTEND_BUILD_SHA', 'unknown'),
-    }
+    return {'app_version': os.getenv('APP_VERSION', app.version), 'git_sha': os.getenv('GIT_SHA', 'unknown'), 'image_tag': os.getenv('IMAGE_TAG', 'unknown'), 'build_time': os.getenv('BUILD_TIME', 'unknown'), 'frontend_build_sha': os.getenv('FRONTEND_BUILD_SHA', 'unknown')}
 
 
 def _migration_revision(conn: Connection) -> str | None:
@@ -90,17 +85,7 @@ def _content_security_policy_for_request(path: str) -> str:
     if not _voice_runtime_headers_enabled(path):
         return DEFAULT_CSP
     connect_src = ["'self'", *webchat_voice_connect_sources()]
-    return (
-        "default-src 'self'; "
-        "img-src 'self' data:; "
-        "style-src 'self' 'unsafe-inline'; "
-        "script-src 'self'; "
-        f"connect-src {' '.join(connect_src)}; "
-        "object-src 'none'; "
-        "base-uri 'self'; "
-        "form-action 'self'; "
-        "frame-ancestors 'none'"
-    )
+    return "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; " + f"connect-src {' '.join(connect_src)}; " + "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
 
 def _permissions_policy_for_request(path: str) -> str:
@@ -161,13 +146,9 @@ def readyz():
         return {'status': 'ready', 'database': 'ok', 'migration_revision': migration_revision, **_runtime_identity()}
     except Exception as exc:
         app_log_event(40, 'readiness_check_failed', error=str(exc))
-        # Keep the failure response deliberately minimal. Runtime identity is
-        # exposed on /healthz and successful /readyz, but not on readiness
-        # failures so the response cannot leak incidental error context.
         return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error'})
 
 
-# Semantic/performance overrides must be registered before broader legacy routers.
 app.include_router(admin_outbound_semantics_router)
 app.include_router(admin_perf_router)
 app.include_router(admin_provider_runtime_router)
@@ -187,6 +168,7 @@ app.include_router(customers_router)
 app.include_router(persona_profiles_router)
 app.include_router(stats_router)
 app.include_router(tickets_router)
+app.include_router(speedaf_actions_router)
 app.include_router(speedaf_cancel_router)
 app.include_router(webchat_fast_router)
 app.include_router(webchat_events_router)
@@ -203,16 +185,7 @@ def serve_webchat_voice_placeholder(voice_session_id: str):
     safe_session_id = ''.join(ch for ch in voice_session_id if ch.isalnum() or ch in {'_', '-'})[:80]
     if not safe_session_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='WebChat voice session not found')
-    return HTMLResponse(
-        "<!doctype html>"
-        "<html lang='en'>"
-        "<head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>NexusDesk WebChat Voice</title></head>"
-        "<body><main><h1>WebChat Voice</h1>"
-        "<p>Voice runtime readiness is enabled. Real media is not implemented in this phase.</p>"
-        f"<p data-voice-session-id='{safe_session_id}'>Session: {safe_session_id}</p>"
-        "</main></body></html>"
-    )
+    return HTMLResponse("<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>NexusDesk WebChat Voice</title></head><body><main><h1>WebChat Voice</h1><p>Voice runtime readiness is enabled. Real media is not implemented in this phase.</p>" + f"<p data-voice-session-id='{safe_session_id}'>Session: {safe_session_id}</p>" + "</main></body></html>")
 
 
 webchat_static_dir = settings.backend_root / 'app' / 'static' / 'webchat'
