@@ -19,16 +19,27 @@ redact() {
     -e 's/(SPEEDAF_MCP_SECRET_KEY=).*/\1[REDACTED]/g' \
     -e 's/(callerID[^A-Za-z0-9]*[A-Za-z0-9+_.@-]+)/callerID=[REDACTED]/g' \
     -e 's/("callerID"[[:space:]]*:[[:space:]]*")[^"]*/\1[REDACTED]/g' \
+    -e 's/(\\"callerID\\"[[:space:]]*:[[:space:]]*\\")[^\\"]*/\1[REDACTED]/g' \
     -e 's/("acceptAddress"[[:space:]]*:[[:space:]]*")[^"]*/\1[ADDRESS-REDACTED]/g' \
+    -e 's/(\\"acceptAddress\\"[[:space:]]*:[[:space:]]*\\")[^\\"]*/\1[ADDRESS-REDACTED]/g' \
     -e 's/("acceptName"[[:space:]]*:[[:space:]]*")[^"]*/\1[NAME-REDACTED]/g' \
+    -e 's/(\\"acceptName\\"[[:space:]]*:[[:space:]]*\\")[^\\"]*/\1[NAME-REDACTED]/g' \
     -e 's/("acceptMobile"[[:space:]]*:[[:space:]]*")[^"]*/\1[PHONE-REDACTED]/g' \
+    -e 's/(\\"acceptMobile\\"[[:space:]]*:[[:space:]]*\\")[^\\"]*/\1[PHONE-REDACTED]/g' \
     -e 's/("waybillCode"[[:space:]]*:[[:space:]]*")[^"]*/\1[WAYBILL-REDACTED]/g' \
+    -e 's/(\\"waybillCode\\"[[:space:]]*:[[:space:]]*\\")[^\\"]*/\1[WAYBILL-REDACTED]/g' \
     -e 's/("senderAddress"[[:space:]]*:[[:space:]]*")[^"]*/\1[ADDRESS-REDACTED]/g' \
+    -e 's/(\\"senderAddress\\"[[:space:]]*:[[:space:]]*\\")[^\\"]*/\1[ADDRESS-REDACTED]/g' \
     -e 's/("senderName"[[:space:]]*:[[:space:]]*")[^"]*/\1[NAME-REDACTED]/g' \
+    -e 's/(\\"senderName\\"[[:space:]]*:[[:space:]]*\\")[^\\"]*/\1[NAME-REDACTED]/g' \
     -e 's/("senderMobile"[[:space:]]*:[[:space:]]*")[^"]*/\1[PHONE-REDACTED]/g' \
+    -e 's/(\\"senderMobile\\"[[:space:]]*:[[:space:]]*\\")[^\\"]*/\1[PHONE-REDACTED]/g' \
     -e 's/("receiverAddress"[[:space:]]*:[[:space:]]*")[^"]*/\1[ADDRESS-REDACTED]/g' \
+    -e 's/(\\"receiverAddress\\"[[:space:]]*:[[:space:]]*\\")[^\\"]*/\1[ADDRESS-REDACTED]/g' \
     -e 's/("receiverName"[[:space:]]*:[[:space:]]*")[^"]*/\1[NAME-REDACTED]/g' \
+    -e 's/(\\"receiverName\\"[[:space:]]*:[[:space:]]*\\")[^\\"]*/\1[NAME-REDACTED]/g' \
     -e 's/("receiverMobile"[[:space:]]*:[[:space:]]*")[^"]*/\1[PHONE-REDACTED]/g' \
+    -e 's/(\\"receiverMobile\\"[[:space:]]*:[[:space:]]*\\")[^\\"]*/\1[PHONE-REDACTED]/g' \
     -e 's/([0-9]{6,})/[DIGITS-REDACTED]/g'
 }
 
