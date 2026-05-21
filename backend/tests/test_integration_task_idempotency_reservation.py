@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
+from app.api.integration import IntegrationTaskRequest  # noqa: E402
 from app.auth_service import hash_password, hash_secret  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.enums import UserRole  # noqa: E402
@@ -90,6 +91,10 @@ def _payload(contact_id: str = "+41790000001", tracking_number: str = "SF1234567
         "metadata": {"source": "pytest"},
         "country_code": "CH",
     }
+
+
+def _api_request_hash(payload: dict) -> str:
+    return stable_request_hash(IntegrationTaskRequest(**payload).model_dump())
 
 
 def _auth_client(client_id: int) -> AuthenticatedIntegrationClient:
@@ -206,7 +211,7 @@ def test_integration_task_processing_reservation_returns_202_without_ticket():
     _make_actor()
     integration_client = _make_integration_client()
     payload = _payload(contact_id="+41790000004", tracking_number="SF987654321")
-    request_hash = stable_request_hash(payload)
+    request_hash = _api_request_hash(payload)
     with SessionLocal() as db:
         db.add(
             IntegrationRequestLog(
