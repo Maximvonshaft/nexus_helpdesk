@@ -1,0 +1,43 @@
+name: backend-full-regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-full-regression.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  backend-full-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PYTHONPATH: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r backend/requirements.txt
+          python -m pip install pytest pytest-asyncio jsonschema cryptography httpx
+
+      - name: Compile backend
+        run: |
+          set -Eeuo pipefail
+          python -m compileall backend/app backend/scripts
+
+      - name: Run full backend test suite
+        run: |
+          set -Eeuo pipefail
+          timeout 900 python -m pytest -q backend/tests
