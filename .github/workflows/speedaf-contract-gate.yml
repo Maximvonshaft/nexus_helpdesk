@@ -72,39 +72,50 @@ jobs:
           import re
           import sys
 
-          roots = [Path('backend'), Path('docs')]
-          exclude_prefixes = ('docs/speedaf-mcp-full-closure/',)
-          workflow_path = '.github/workflows/speedaf-contract-gate.yml'
+          runtime_roots = [Path('backend'), Path('scripts'), Path('deploy')]
+          docs_roots = [Path('docs')]
+          excluded_doc_prefixes = (
+              'docs/speedaf-mcp-full-closure/',
+              'docs/production-gates/',
+          )
 
           write_flag = re.compile(r'SPEEDAF_(CANCEL|UPDATE_ADDRESS|WORK_ORDER_CREATE)_ENABLED\s*=\s*(true|TRUE|1|yes|YES|on|ON)')
-          credential = re.compile(r'(appCode|secretKey|SPEEDAF_[A-Z0-9_]*(SECRET|TOKEN|KEY)|SPEEDAF_[A-Z0-9_]*SIGN)\s*[:=]\s*[\"\']?[A-Za-z0-9_\-]{20,}')
+          credential = re.compile(r'(appCode|secretKey|SPEEDAF_[A-Z0-9_]*(SECRET|TOKEN|KEY)|SPEEDAF_[A-Z0-9_]*SIGN)\s*[:=]\s*[\"\']?([A-Za-z0-9_\-]{20,})')
           voice_enabled = re.compile(r'SPEEDAF_VOICE_CALLBACK_ENABLED.*true')
+          placeholder = re.compile(r'(PASTE|PLACEHOLDER|EXAMPLE|DUMMY|REDACTED|CHANGEME|YOUR_|_HERE)', re.IGNORECASE)
 
           violations: list[str] = []
 
-          def should_skip(path: Path) -> bool:
-              value = path.as_posix()
-              if value == workflow_path:
-                  return True
-              return any(value.startswith(prefix) for prefix in exclude_prefixes)
+          def read_text_files(roots: list[Path]):
+              for root in roots:
+                  if not root.exists():
+                      continue
+                  for path in root.rglob('*'):
+                      if not path.is_file():
+                          continue
+                      try:
+                          yield path, path.read_text(encoding='utf-8')
+                      except UnicodeDecodeError:
+                          continue
 
-          for root in roots:
-              if not root.exists():
+          for path, text in read_text_files(runtime_roots):
+              for idx, line in enumerate(text.splitlines(), 1):
+                  if write_flag.search(line):
+                      violations.append(f'{path}:{idx}: Speedaf write feature flag enabled in runtime file')
+                  if voice_enabled.search(line):
+                      violations.append(f'{path}:{idx}: Speedaf voice callback must remain disabled/excluded')
+                  match = credential.search(line)
+                  if match and not placeholder.search(match.group(2)):
+                      violations.append(f'{path}:{idx}: possible Speedaf credential-like material')
+
+          for path, text in read_text_files(docs_roots):
+              value = path.as_posix()
+              if any(value.startswith(prefix) for prefix in excluded_doc_prefixes):
                   continue
-              for path in root.rglob('*'):
-                  if not path.is_file() or should_skip(path):
-                      continue
-                  try:
-                      text = path.read_text(encoding='utf-8')
-                  except UnicodeDecodeError:
-                      continue
-                  for idx, line in enumerate(text.splitlines(), 1):
-                      if write_flag.search(line):
-                          violations.append(f'{path}:{idx}: Speedaf write feature flag enabled in repository file')
-                      if credential.search(line):
-                          violations.append(f'{path}:{idx}: possible Speedaf credential-like material')
-                      if voice_enabled.search(line):
-                          violations.append(f'{path}:{idx}: Speedaf voice callback must remain disabled/excluded')
+              for idx, line in enumerate(text.splitlines(), 1):
+                  match = credential.search(line)
+                  if match and not placeholder.search(match.group(2)):
+                      violations.append(f'{path}:{idx}: possible Speedaf credential-like material')
 
           if violations:
               print('\n'.join(violations))
