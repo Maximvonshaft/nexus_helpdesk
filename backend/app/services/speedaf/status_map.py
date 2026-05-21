@@ -11,24 +11,17 @@ class CodeLabel:
 
 
 # Conservative labels. Unknown values must be surfaced as safe codes rather than
-# invented operational meanings.
+# invented operational meanings. Only terminal cancel-protection statuses are mapped.
 ORDER_STATUS_LABELS: dict[str, CodeLabel] = {
-    "10": CodeLabel("10", "pending_pickup", "pending pickup"),
-    "3750": CodeLabel("3750", "in_transit_to_destination_country", "in transit to destination country"),
-    "3751": CodeLabel("3751", "destination_country_received", "received in destination country"),
-    "1": CodeLabel("1", "picked_up", "picked up"),
-    "2": CodeLabel("2", "in_transit", "in transit"),
-    "11": CodeLabel("11", "pending_delivery", "pending delivery"),
-    "18": CodeLabel("18", "available_for_pickup", "available for pickup"),
-    "4": CodeLabel("4", "out_for_delivery", "out for delivery"),
     "5": CodeLabel("5", "delivered", "delivered"),
     "730": CodeLabel("730", "return_delivered", "return delivered"),
     "-2": CodeLabel("-2", "exception_signed", "exception signed"),
 }
 
 ORDER_CLASS_LABELS: dict[str, CodeLabel] = {
-    "1": CodeLabel("1", "local", "local shipment"),
-    "2": CodeLabel("2", "international", "international shipment"),
+    "1": CodeLabel("1", "standard", "standard shipment"),
+    "2": CodeLabel("2", "return", "return shipment"),
+    "3": CodeLabel("3", "pickup", "pickup shipment"),
 }
 
 WORK_ORDER_TYPE_LABELS: dict[str, CodeLabel] = {
@@ -50,9 +43,10 @@ ACTION_STATUS_LABELS: dict[str, CodeLabel] = {
 
 TERMINAL_CANCEL_STATUS_CODES = {"5", "730", "-2"}
 TERMINAL_CANCEL_STATUS_LABELS = {
-    ORDER_STATUS_LABELS[code].customer_label for code in TERMINAL_CANCEL_STATUS_CODES
+    "delivered",
+    "return delivered",
+    "exception signed",
 }
-TERMINAL_CANCEL_STATUS_LABELS.update({ORDER_STATUS_LABELS[code].label for code in TERMINAL_CANCEL_STATUS_CODES})
 
 
 def safe_label(mapping: dict[str, CodeLabel], code: str | None, *, unknown_prefix: str = "unknown") -> str | None:
@@ -66,7 +60,13 @@ def safe_label(mapping: dict[str, CodeLabel], code: str | None, *, unknown_prefi
 
 
 def safe_order_status_label(status: str | None) -> str | None:
-    return safe_label(ORDER_STATUS_LABELS, status, unknown_prefix="status")
+    cleaned = (status or "").strip()
+    if not cleaned:
+        return None
+    item = ORDER_STATUS_LABELS.get(cleaned)
+    if item:
+        return item.customer_label
+    return f"status:{cleaned}"
 
 
 def safe_order_class_label(order_class: str | None) -> str | None:
