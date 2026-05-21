@@ -17,15 +17,17 @@ branch_labels = None
 depends_on = None
 
 
-def _active_credential_index_kwargs() -> dict:
-    """Return dialect-specific partial-index kwargs.
+def _dialect_name() -> str:
+    return op.get_bind().dialect.name
 
-    Production runs on PostgreSQL, while several contract tests run Alembic against
-    SQLite. SQLAlchemy ignores unknown dialect kwargs poorly in some migration
-    paths, so keep the predicate explicit per supported dialect.
-    """
-    dialect_name = op.get_bind().dialect.name
+
+def _now_default():
+    return sa.text('CURRENT_TIMESTAMP') if _dialect_name() == 'sqlite' else sa.text('now()')
+
+
+def _active_credential_index_kwargs() -> dict:
     where_clause = sa.text("revoked_at IS NULL")
+    dialect_name = _dialect_name()
     if dialect_name == "postgresql":
         return {"postgresql_where": where_clause}
     if dialect_name == "sqlite":
@@ -34,6 +36,7 @@ def _active_credential_index_kwargs() -> dict:
 
 
 def upgrade() -> None:
+    now_default = _now_default()
     op.create_table(
         'provider_credentials',
         sa.Column('id', sa.String(length=36), nullable=False),
@@ -56,8 +59,8 @@ def upgrade() -> None:
         sa.Column('last_error_code', sa.String(length=255), nullable=True),
         sa.Column('token_fingerprint', sa.String(length=255), nullable=True),
         sa.Column('created_by', sa.String(length=36), nullable=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-        sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=now_default, nullable=False),
+        sa.Column('updated_at', sa.DateTime(timezone=True), server_default=now_default, nullable=False),
         sa.Column('revoked_at', sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint('id'),
     )
@@ -87,7 +90,7 @@ def upgrade() -> None:
         sa.Column('status', sa.String(length=50), nullable=False),
         sa.Column('error_code', sa.String(length=255), nullable=True),
         sa.Column('created_by', sa.String(length=36), nullable=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=now_default, nullable=False),
         sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint('id'),
     )
@@ -106,7 +109,7 @@ def upgrade() -> None:
         sa.Column('safe_summary', sa.JSON(), nullable=True),
         sa.Column('error_code', sa.String(length=255), nullable=True),
         sa.Column('elapsed_ms', sa.Integer(), nullable=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=now_default, nullable=False),
         sa.PrimaryKeyConstraint('id'),
     )
 
@@ -123,8 +126,8 @@ def upgrade() -> None:
         sa.Column('canary_percent', sa.Integer(), nullable=False, server_default='0'),
         sa.Column('kill_switch', sa.Boolean(), nullable=False, server_default=sa.text('false')),
         sa.Column('enabled', sa.Boolean(), nullable=False, server_default=sa.text('true')),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-        sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=now_default, nullable=False),
+        sa.Column('updated_at', sa.DateTime(timezone=True), server_default=now_default, nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('tenant_id', 'channel_key', 'scenario', name='uq_provider_routing_rules_tenant_channel_scenario'),
     )
