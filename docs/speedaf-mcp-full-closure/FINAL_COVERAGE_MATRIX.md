@@ -8,11 +8,11 @@
 
 | Interface | Current Status | Notes |
 |---|---|---|
-| `order/query` | existing read adapter | Used by tracking facts and cancel preview/confirm status checks. |
-| `order/waybillCode/query` | existing read adapter | Full WebChat candidate-selection value path remains for PR-A. |
+| `order/query` | implemented read path | Used by tracking facts and cancel preview/confirm status checks. |
+| `order/waybillCode/query` | implemented WebChat read path | CallerID can resolve one shipment automatically or return safe suffix/hash candidates. |
 | `workOrder/create` | existing backend job path | Full operator flow remains for PR-B. |
 | `order/updateAddress` | action method exists | Controlled operator flow remains for PR-B. |
-| `order/cancel` | implemented in this PR-C backend path | Feature-flagged, capability-gated, preview-token-confirm flow. |
+| `order/cancel` | implemented backend path | Feature-flagged, capability-gated, preview-token-confirm flow. |
 | `callData/voice/callBack` | excluded | Not part of this closure phase. |
 
 ## Global Boundaries
@@ -22,9 +22,9 @@
 - LLMs do not directly execute Speedaf write actions.
 - Frontend never calls Speedaf directly.
 - Tool and ticket audit records must use redacted payloads.
+- Multiple-candidate waybill results expose only suffix/hash, not full waybill codes.
 
 ## Remaining Work
 
-- PR-A: Speedaf read tracking full value path.
 - PR-B: work order and address update controlled operator flow.
 - Staging UAT and production whitelist validation.

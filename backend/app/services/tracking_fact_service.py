@@ -100,13 +100,14 @@ def lookup_tracking_fact(
     ticket_id: int | str | None = None,
     request_id: str | None = None,
     caller_id: str | None = None,
+    country_code: str | None = None,
 ) -> TrackingFactResult:
     tracking_number = (tracking_number or "").strip().upper()
     started = time.monotonic()
     timeout_seconds = max(1, min(int(getattr(settings, "webchat_tracking_fact_timeout_seconds", 8) or 8), 30))
     timeout_ms = timeout_seconds * 1000
     source = _current_tracking_fact_source()
-    if not tracking_number:
+    if not tracking_number and source != "speedaf_api":
         result = TrackingFactResult(ok=False, tool_status="skipped", pii_redacted=True, failure_reason="missing_tracking_number")
         _audit_tracking_lookup(
             tracking_number=tracking_number,
@@ -136,6 +137,7 @@ def lookup_tracking_fact(
         return lookup_speedaf_tracking_fact(
             tracking_number=tracking_number,
             caller_id=caller_id,
+            country_code=country_code,
             conversation_id=conversation_id,
             ticket_id=ticket_id,
             request_id=request_id,
@@ -176,81 +178,25 @@ def lookup_tracking_fact(
         elapsed_ms = int((time.monotonic() - started) * 1000)
         LOGGER.warning(
             "webchat_tracking_fact_lookup_http_failed",
-            extra={"event_payload": {
-                "ticket_id": ticket_id,
-                "conversation_id": conversation_id,
-                "status_code": exc.code,
-                "error_preview": body[:200],
-            }},
+            extra={"event_payload": {"ticket_id": ticket_id, "conversation_id": conversation_id, "status_code": exc.code, "error_preview": body[:200]}},
         )
-        _audit_tracking_lookup(
-            tracking_number=tracking_number,
-            conversation_id=conversation_id,
-            ticket_id=ticket_id,
-            request_id=request_id,
-            status="failed",
-            output_payload={"status_code": exc.code},
-            error_code=f"bridge_http_{exc.code}",
-            error_message=body[:300],
-            elapsed_ms=elapsed_ms,
-            timeout_ms=timeout_ms,
-        )
+        _audit_tracking_lookup(tracking_number=tracking_number, conversation_id=conversation_id, ticket_id=ticket_id, request_id=request_id, status="failed", output_payload={"status_code": exc.code}, error_code=f"bridge_http_{exc.code}", error_message=body[:300], elapsed_ms=elapsed_ms, timeout_ms=timeout_ms)
         return TrackingFactResult(ok=False, tracking_number=tracking_number, tool_status="http_error", pii_redacted=True, failure_reason=f"bridge_http_{exc.code}")
     except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         reason = "timeout" if "timed out" in str(exc).lower() or isinstance(exc, TimeoutError) else "bridge_error"
         elapsed_ms = int((time.monotonic() - started) * 1000)
-        LOGGER.warning(
-            "webchat_tracking_fact_lookup_failed",
-            extra={"event_payload": {
-                "ticket_id": ticket_id,
-                "conversation_id": conversation_id,
-                "error_type": type(exc).__name__,
-                "failure_reason": reason,
-            }},
-        )
-        _audit_tracking_lookup(
-            tracking_number=tracking_number,
-            conversation_id=conversation_id,
-            ticket_id=ticket_id,
-            request_id=request_id,
-            status="timeout" if reason == "timeout" else "failed",
-            output_payload={"failure_reason": reason},
-            error_code=type(exc).__name__,
-            error_message=str(exc),
-            elapsed_ms=elapsed_ms,
-            timeout_ms=timeout_ms,
-        )
+        LOGGER.warning("webchat_tracking_fact_lookup_failed", extra={"event_payload": {"ticket_id": ticket_id, "conversation_id": conversation_id, "error_type": type(exc).__name__, "failure_reason": reason}})
+        _audit_tracking_lookup(tracking_number=tracking_number, conversation_id=conversation_id, ticket_id=ticket_id, request_id=request_id, status="timeout" if reason == "timeout" else "failed", output_payload={"failure_reason": reason}, error_code=type(exc).__name__, error_message=str(exc), elapsed_ms=elapsed_ms, timeout_ms=timeout_ms)
         return TrackingFactResult(ok=False, tracking_number=tracking_number, tool_status="error", pii_redacted=True, failure_reason=reason)
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
     if not isinstance(parsed, dict):
-        _audit_tracking_lookup(
-            tracking_number=tracking_number,
-            conversation_id=conversation_id,
-            ticket_id=ticket_id,
-            request_id=request_id,
-            status="failed",
-            output_payload={"failure_reason": "invalid_bridge_response"},
-            error_code="invalid_bridge_response",
-            elapsed_ms=elapsed_ms,
-            timeout_ms=timeout_ms,
-        )
+        _audit_tracking_lookup(tracking_number=tracking_number, conversation_id=conversation_id, ticket_id=ticket_id, request_id=request_id, status="failed", output_payload={"failure_reason": "invalid_bridge_response"}, error_code="invalid_bridge_response", elapsed_ms=elapsed_ms, timeout_ms=timeout_ms)
         return TrackingFactResult(ok=False, tracking_number=tracking_number, tool_status="invalid", pii_redacted=True, failure_reason="invalid_bridge_response")
     if not parsed.get("ok", False):
         normalized = normalize_tracking_fact(parsed, tracking_number=tracking_number)
         failure_reason = normalized.failure_reason or str(parsed.get("error") or "tool_lookup_failed")
-        _audit_tracking_lookup(
-            tracking_number=tracking_number,
-            conversation_id=conversation_id,
-            ticket_id=ticket_id,
-            request_id=request_id,
-            status="failed",
-            output_payload={"tool_status": normalized.tool_status, "failure_reason": failure_reason},
-            error_code=str(parsed.get("error_code") or parsed.get("tool_status") or "tool_lookup_failed"),
-            error_message=failure_reason,
-            elapsed_ms=elapsed_ms,
-            timeout_ms=timeout_ms,
-        )
+        _audit_tracking_lookup(tracking_number=tracking_number, conversation_id=conversation_id, ticket_id=ticket_id, request_id=request_id, status="failed", output_payload={"tool_status": normalized.tool_status, "failure_reason": failure_reason}, error_code=str(parsed.get("error_code") or parsed.get("tool_status") or "tool_lookup_failed"), error_message=failure_reason, elapsed_ms=elapsed_ms, timeout_ms=timeout_ms)
         if normalized.failure_reason:
             return normalized
         return TrackingFactResult(ok=False, tracking_number=tracking_number, tool_status=str(parsed.get("tool_status") or "error"), pii_redacted=True, failure_reason=failure_reason)
@@ -265,16 +211,5 @@ def lookup_tracking_fact(
     if "tool_status" not in raw_result:
         raw_result["tool_status"] = parsed.get("tool_status") or "success"
     normalized = normalize_tracking_fact(raw_result, tracking_number=tracking_number)
-    _audit_tracking_lookup(
-        tracking_number=tracking_number,
-        conversation_id=conversation_id,
-        ticket_id=ticket_id,
-        request_id=request_id,
-        status="success" if normalized.ok else "failed",
-        output_payload=normalized.metadata_payload(),
-        error_code=None if normalized.ok else normalized.tool_status,
-        error_message=normalized.failure_reason,
-        elapsed_ms=elapsed_ms,
-        timeout_ms=timeout_ms,
-    )
+    _audit_tracking_lookup(tracking_number=tracking_number, conversation_id=conversation_id, ticket_id=ticket_id, request_id=request_id, status="success" if normalized.ok else "failed", output_payload=normalized.metadata_payload(), error_code=None if normalized.ok else normalized.tool_status, error_message=normalized.failure_reason, elapsed_ms=elapsed_ms, timeout_ms=timeout_ms)
     return normalized
