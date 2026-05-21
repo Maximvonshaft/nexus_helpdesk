@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -13,6 +15,7 @@ from app.db import Base, get_db
 from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole
 from app.main import app
 from app.models import BackgroundJob, Ticket, TicketEvent, User
+from app.services.background_jobs import SPEEDAF_ADDRESS_UPDATE_JOB, process_background_job
 from app.services.speedaf.action_service import SpeedafActionResult, SpeedafActionService
 from app.tool_models import ToolCallLog  # noqa: F401
 
@@ -85,7 +88,7 @@ def test_work_order_enabled_queues_job_and_truncates_description(harness, monkey
     with harness.SessionLocal() as db:
         job = db.query(BackgroundJob).one()
         assert job.job_type == "speedaf.work_order.create"
-        assert len(__import__("json").loads(job.payload_json)["description"]) == 200
+        assert len(json.loads(job.payload_json)["description"]) == 200
         assert db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_work_order").count() == 1
 
 
@@ -95,7 +98,24 @@ def test_address_update_disabled_by_default(harness):
     assert res.json()["detail"] == "speedaf_update_address_disabled"
 
 
-def test_address_update_success_message_does_not_claim_changed(harness, monkeypatch):
+def test_address_update_enabled_queues_job_without_synchronous_submit(harness, monkeypatch):
+    monkeypatch.setenv("SPEEDAF_UPDATE_ADDRESS_ENABLED", "true")
+    calls = []
+    monkeypatch.setattr(SpeedafActionService, "submit_update_address_flow", lambda self, **kwargs: calls.append(kwargs) or SpeedafActionResult(ok=True, action_type="update_address_flow", status="success", safe_payload={"ok": True}))
+    res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/address-update", json=address_payload())
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "queued"
+    assert "already changed" not in body["message"].lower()
+    assert calls == []
+    with harness.SessionLocal() as db:
+        job = db.query(BackgroundJob).one()
+        assert job.job_type == SPEEDAF_ADDRESS_UPDATE_JOB
+        assert json.loads(job.payload_json)["addressUpdateDedupeKey"] == body["dedupeKey"]
+        assert db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_address_update", TicketEvent.new_value == "queued").count() == 1
+
+
+def test_address_update_worker_executes_speedaf_action_and_writes_completion(harness, monkeypatch):
     monkeypatch.setenv("SPEEDAF_UPDATE_ADDRESS_ENABLED", "true")
     calls = []
 
@@ -106,26 +126,19 @@ def test_address_update_success_message_does_not_claim_changed(harness, monkeypa
     monkeypatch.setattr(SpeedafActionService, "submit_update_address_flow", fake_submit)
     res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/address-update", json=address_payload())
     assert res.status_code == 200
-    body = res.json()
-    assert body["status"] == "submitted"
-    assert "already changed" not in body["message"].lower()
+    with harness.SessionLocal() as db:
+        job = db.query(BackgroundJob).filter(BackgroundJob.job_type == SPEEDAF_ADDRESS_UPDATE_JOB).one()
+        process_background_job(db, job)
+        db.commit()
     assert calls == [{"waybill_code": "WB123", "whatsapp_phone": "41790000000", "caller_id": "41000000000"}]
     with harness.SessionLocal() as db:
-        assert db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_address_update").count() == 1
+        assert db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_address_update", TicketEvent.new_value == "completed").count() == 1
 
 
 def test_address_update_dedupe_blocks_duplicate(harness, monkeypatch):
     monkeypatch.setenv("SPEEDAF_UPDATE_ADDRESS_ENABLED", "true")
-    count = {"value": 0}
-
-    def fake_submit(self, **kwargs):
-        count["value"] += 1
-        return SpeedafActionResult(ok=True, action_type="update_address_flow", status="success", safe_payload={"ok": True})
-
-    monkeypatch.setattr(SpeedafActionService, "submit_update_address_flow", fake_submit)
     first = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/address-update", json=address_payload())
     second = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/address-update", json=address_payload())
     assert first.status_code == 200
     assert second.status_code == 409
     assert second.json()["detail"] == "speedaf_address_update_already_requested"
-    assert count["value"] == 1
