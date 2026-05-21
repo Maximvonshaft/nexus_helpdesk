@@ -36,7 +36,7 @@ class SpeedafWorkOrderRequest(BaseModel):
     waybillCode: str = Field(min_length=1, max_length=80)
     callerID: str = Field(min_length=1, max_length=80)
     workOrderType: str = Field(default="WT0103-05", max_length=32)
-    description: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=1000)
 
 
 class SpeedafAddressUpdateRequest(BaseModel):
@@ -228,8 +228,8 @@ def submit_speedaf_address_update(ticket_id: int, payload: SpeedafAddressUpdateR
         actor_id=current_user.id,
         field_name="speedaf_address_update",
         new_value="submitted",
-        note="Speedaf address update confirmation request submitted. This does not mean the address has already changed.",
+        note="Speedaf address update confirmation request submitted. Final Speedaf confirmation is still required.",
         payload={"dedupe_key": dedupe_key, "speedaf_safe_payload": result.safe_payload, **safe_waybill_payload(waybill), "whatsapp_phone": {"redacted": True, "suffix": phone[-4:]}},
     )
     db.commit()
-    return SpeedafActionResponse(ok=True, status="submitted", message="Address update confirmation request submitted. This does not mean the address has already changed.", dedupeKey=dedupe_key)
+    return SpeedafActionResponse(ok=True, status="submitted", message="Address update confirmation request submitted. Final Speedaf confirmation is still required.", dedupeKey=dedupe_key)

@@ -83,3 +83,5 @@ deploy/runtime_secrets/*
 probe_reports/
 deploy/secrets/
 deploy/*.broken.*
+
+.venv/

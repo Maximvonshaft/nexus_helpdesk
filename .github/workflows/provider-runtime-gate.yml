@@ -1,0 +1,129 @@
+name: provider-runtime-gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  provider-runtime-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r backend/requirements.txt
+          python -m pip install pytest pytest-asyncio jsonschema cryptography httpx
+
+      - name: Repository hygiene gate
+        run: |
+          set -Eeuo pipefail
+          if git ls-files | grep -E '^(\.venv/|__pycache__/|\.pytest_cache/)'; then
+            echo 'ERROR: generated local artifacts are tracked by Git.'
+            exit 1
+          fi
+          if ! grep -qxF '.venv/' .gitignore; then
+            echo 'ERROR: .venv/ must be ignored.'
+            exit 1
+          fi
+
+      - name: Admin provider credential API exposure gate
+        run: |
+          set -Eeuo pipefail
+          if git grep -n 'admin_provider_credentials_router' -- backend/app/main.py; then
+            echo 'ERROR: admin_provider_credentials_router is mounted in app.main.'
+            exit 1
+          fi
+          if git grep -n 'from \.api\.admin_provider_credentials' -- backend/app/main.py; then
+            echo 'ERROR: admin_provider_credentials router is imported in app.main.'
+            exit 1
+          fi
+
+      - name: Alembic revision integrity gate
+        run: |
+          set -Eeuo pipefail
+          test -f backend/alembic/versions/20260521_0029_provider_runtime_tables.py
+          grep -n "revision = '20260521_0029'" backend/alembic/versions/20260521_0029_provider_runtime_tables.py
+          grep -n "down_revision = '20260521_0028'" backend/alembic/versions/20260521_0029_provider_runtime_tables.py
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          from collections import defaultdict
+
+          seen = defaultdict(list)
+          for path in sorted(Path('backend/alembic/versions').glob('*.py')):
+              text = path.read_text(encoding='utf-8')
+              match = re.search(r"^revision\s*=\s*['\"]([^'\"]+)['\"]", text, re.M)
+              if match:
+                  seen[match.group(1)].append(str(path))
+          duplicates = {rev: files for rev, files in seen.items() if len(files) > 1}
+          if duplicates:
+              print('DUPLICATE_REVISIONS_FOUND')
+              for rev, files in duplicates.items():
+                  print(rev, files)
+              raise SystemExit(1)
+          print(f'alembic_revision_count={len(seen)}')
+          print('duplicate_revisions=0')
+          PY
+
+      - name: Direct Alembic SQLite upgrade gate
+        env:
+          APP_ENV: development
+          DATABASE_URL: sqlite:////tmp/nexus_provider_runtime_gate.db
+          ALLOW_DEV_AUTH: 'false'
+          PYTHONPATH: ${{ github.workspace }}/backend
+        run: |
+          set -Eeuo pipefail
+          rm -f /tmp/nexus_provider_runtime_gate.db
+          cd backend
+          python -m alembic upgrade head
+
+      - name: Provider Runtime targeted tests
+        env:
+          PYTHONPATH: backend
+        run: |
+          set -Eeuo pipefail
+          timeout 600 python -m pytest -q \
+            backend/tests/test_provider_runtime_output_contracts.py \
+            backend/tests/test_provider_runtime_router.py \
+            backend/tests/test_provider_credentials_crypto.py \
+            backend/tests/test_provider_runtime_token_leakage.py \
+            backend/tests/test_provider_runtime_tenant_isolation.py \
+            backend/tests/test_webchat_fast_reply_provider_runtime.py \
+            backend/tests/test_provider_runtime_backward_compat.py \
+            backend/tests/test_oauth_refresh_manager.py \
+            backend/tests/test_oauth_refresh_concurrency.py \
+            backend/tests/test_codex_device_auth_service.py \
+            backend/tests/test_codex_auth_profile_importer.py \
+            backend/tests/test_codex_app_server_provider_credential_store.py
+
+      - name: Route safety smoke
+        env:
+          PYTHONPATH: backend
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from app.main import app
+          routes = sorted(getattr(route, 'path', '') for route in app.routes)
+          assert not any(path.startswith('/api/admin/provider-credentials') for path in routes), routes
+          assert any('fast-reply' in path for path in routes), routes
+          print('route_smoke_ok')
+          PY
+
+      - name: Full backend test suite
+        env:
+          PYTHONPATH: backend
+        run: |
+          set -Eeuo pipefail
+          timeout 900 python -m pytest -q backend/tests

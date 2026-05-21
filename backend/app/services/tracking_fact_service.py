@@ -134,14 +134,16 @@ def lookup_tracking_fact(
         )
         return result
     if source == "speedaf_api":
-        return lookup_speedaf_tracking_fact(
-            tracking_number=tracking_number,
-            caller_id=caller_id,
-            country_code=country_code,
-            conversation_id=conversation_id,
-            ticket_id=ticket_id,
-            request_id=request_id,
-        )
+        kwargs = {
+            "tracking_number": tracking_number,
+            "caller_id": caller_id,
+            "conversation_id": conversation_id,
+            "ticket_id": ticket_id,
+            "request_id": request_id,
+        }
+        if country_code is not None:
+            kwargs["country_code"] = country_code
+        return lookup_speedaf_tracking_fact(**kwargs)
     if source != "openclaw_bridge":
         result = TrackingFactResult(ok=False, tracking_number=tracking_number, tool_status="unsupported_source", pii_redacted=True, failure_reason="unsupported_tracking_fact_source")
         _audit_tracking_lookup(
