@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 _ALLOWED_FAST_AI_PROVIDERS = {"openclaw_responses", "codex_auth", "codex_app_server", "openai_responses"}
 _ALLOWED_FAST_AI_FALLBACK_PROVIDERS = {"openclaw_responses", "none"}
+_ALLOWED_TRACKING_DEDUPE_SCOPES = {"legacy", "tenant_channel", "tenant_channel_customer"}
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -71,6 +72,7 @@ class WebchatFastSettings:
     max_prompt_chars: int
     rate_limit_window_seconds: int
     rate_limit_max_requests: int
+    tracking_dedupe_scope: str
     hard_fail_on_non_ai_reply: bool
     stream_enabled: bool
     stream_rollout_percent: int
@@ -179,6 +181,11 @@ class WebchatFastSettings:
             )
         if self.fallback_provider not in _ALLOWED_FAST_AI_FALLBACK_PROVIDERS:
             raise RuntimeError("WEBCHAT_FAST_AI_FALLBACK_PROVIDER must be openclaw_responses or none")
+        if self.tracking_dedupe_scope not in _ALLOWED_TRACKING_DEDUPE_SCOPES:
+            raise RuntimeError(
+                "WEBCHAT_FAST_TRACKING_DEDUPE_SCOPE must be one of: "
+                + ", ".join(sorted(_ALLOWED_TRACKING_DEDUPE_SCOPES))
+            )
         if self.provider == "codex_auth" and not self.codex_enabled:
             raise RuntimeError("WEBCHAT_FAST_AI_CODEX_ENABLED=true is required for WEBCHAT_FAST_AI_PROVIDER=codex_auth")
         if self.provider == "codex_app_server" and not self.codex_app_server_enabled:
@@ -292,6 +299,7 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         max_prompt_chars=_env_int("WEBCHAT_FAST_AI_MAX_PROMPT_CHARS", 2500, minimum=500, maximum=4000),
         rate_limit_window_seconds=_env_int("WEBCHAT_FAST_RATE_LIMIT_WINDOW_SECONDS", 60, minimum=10, maximum=3600),
         rate_limit_max_requests=_env_int("WEBCHAT_FAST_RATE_LIMIT_MAX_REQUESTS", 30, minimum=1, maximum=300),
+        tracking_dedupe_scope=os.getenv("WEBCHAT_FAST_TRACKING_DEDUPE_SCOPE", "tenant_channel_customer").strip().lower() or "tenant_channel_customer",
         hard_fail_on_non_ai_reply=_env_bool("WEBCHAT_FAST_HARD_FAIL_ON_NON_AI_REPLY", True),
         stream_enabled=_env_bool("WEBCHAT_FAST_STREAM_ENABLED", False),
         stream_rollout_percent=_env_int("WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT", 0, minimum=0, maximum=100),
