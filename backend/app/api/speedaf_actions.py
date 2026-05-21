@@ -29,13 +29,15 @@ CAP_SPEEDAF_WORK_ORDER_WRITE = "tool:speedaf.work_order.create:write"
 CAP_SPEEDAF_ADDRESS_UPDATE_WRITE = "tool:speedaf.order.update_address:write"
 WORK_ORDER_ACTION_KEY = "speedaf.work_order.create"
 ADDRESS_UPDATE_ACTION_KEY = "speedaf.address_update.submit"
+WORK_ORDER_INPUT_DESCRIPTION_MAX_LENGTH = 1000
+WORK_ORDER_SPEEDAF_DESCRIPTION_MAX_LENGTH = 200
 
 
 class SpeedafWorkOrderRequest(BaseModel):
     waybillCode: str = Field(min_length=1, max_length=80)
     callerID: str = Field(min_length=1, max_length=80)
     workOrderType: str = Field(default="WT0103-05", max_length=32)
-    description: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=WORK_ORDER_INPUT_DESCRIPTION_MAX_LENGTH)
 
 
 class SpeedafAddressUpdateRequest(BaseModel):
@@ -178,7 +180,7 @@ def create_speedaf_work_order(ticket_id: int, payload: SpeedafWorkOrderRequest, 
         ticket_id=ticket_id,
         waybill_code=_clean(payload.waybillCode, limit=80).upper(),
         caller_id=_clean(payload.callerID, limit=80),
-        description=_clean(payload.description, limit=200),
+        description=_clean(payload.description, limit=WORK_ORDER_SPEEDAF_DESCRIPTION_MAX_LENGTH),
         work_order_type=work_order_type,
     )
     _append_event(
@@ -213,8 +215,8 @@ def submit_speedaf_address_update(ticket_id: int, payload: SpeedafAddressUpdateR
         actor_id=current_user.id,
         field_name="speedaf_address_update",
         new_value="queued",
-        note="Speedaf address update confirmation request queued. This does not mean the address has already changed.",
+        note="Speedaf address update confirmation request queued. Final address change remains pending Speedaf/customer confirmation.",
         payload={"job_id": job.id, "dedupe_key": dedupe_key, **safe_waybill_payload(waybill), "whatsapp_phone": {"redacted": True, "suffix": phone[-4:]}},
     )
     db.commit()
-    return SpeedafActionResponse(ok=True, status="queued", message="Address update confirmation request queued. This does not mean the address has already changed.", jobId=job.id, dedupeKey=dedupe_key)
+    return SpeedafActionResponse(ok=True, status="queued", message="Address update confirmation request queued. Final address change remains pending Speedaf/customer confirmation.", jobId=job.id, dedupeKey=dedupe_key)
