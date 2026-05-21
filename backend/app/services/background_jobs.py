@@ -4,7 +4,7 @@ import json
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,7 @@ ATTACHMENT_PERSIST_JOB = 'openclaw.persist_attachment'
 WEBCHAT_AI_REPLY_JOB = 'webchat.ai_reply'
 WEBCHAT_HANDOFF_SNAPSHOT_JOB = 'webchat.handoff_snapshot'
 SPEEDAF_WORK_ORDER_CREATE_JOB = 'speedaf.work_order.create'
+SPEEDAF_ADDRESS_UPDATE_JOB = 'speedaf.address_update.submit'
 SPEEDAF_WORK_ORDER_DESCRIPTION_MAX_LENGTH = 200
 
 
@@ -67,6 +68,11 @@ def enqueue_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
 def enqueue_speedaf_work_order_create_job(db: Session, *, ticket_id: int, waybill_code: str, caller_id: str, description: str, work_order_type: str = 'WT0103-05', conversation_id: int | None = None) -> BackgroundJob:
     payload = {'ticket_id': ticket_id, 'conversation_id': conversation_id, 'waybillCode': waybill_code, 'callerID': caller_id, 'workOrderType': work_order_type, 'description': description[:SPEEDAF_WORK_ORDER_DESCRIPTION_MAX_LENGTH]}
     return enqueue_background_job(db, queue_name='speedaf_work_order', job_type=SPEEDAF_WORK_ORDER_CREATE_JOB, payload=payload, dedupe_key=f'speedaf-workorder:ticket:{ticket_id}:{work_order_type}')
+
+
+def enqueue_speedaf_address_update_job(db: Session, *, ticket_id: int, waybill_code: str, caller_id: str, whatsapp_phone: str, dedupe_key: str, request_id: str | None = None) -> BackgroundJob:
+    payload = {'ticket_id': ticket_id, 'waybillCode': waybill_code, 'callerID': caller_id, 'whatsAppPhone': whatsapp_phone, 'addressUpdateDedupeKey': dedupe_key, 'request_id': request_id}
+    return enqueue_background_job(db, queue_name='speedaf_address_update', job_type=SPEEDAF_ADDRESS_UPDATE_JOB, payload=payload, dedupe_key=dedupe_key)
 
 
 def enqueue_stale_openclaw_sync_jobs(db: Session, *, limit: int | None = None) -> list[BackgroundJob]:
@@ -146,8 +152,8 @@ def _draft_ai_auto_reply(db: Session, *, ticket, user, body: str, channel: Sourc
     return message
 
 
-def _append_ticket_event(db: Session, *, ticket_id: int, note: str, payload: dict) -> None:
-    db.add(TicketEvent(ticket_id=ticket_id, event_type=EventType.field_updated, field_name='speedaf_work_order', note=note, payload_json=json.dumps(payload, ensure_ascii=False), created_at=utc_now()))
+def _append_ticket_event(db: Session, *, ticket_id: int, note: str, payload: dict, field_name: str = 'speedaf_work_order', new_value: str | None = None) -> None:
+    db.add(TicketEvent(ticket_id=ticket_id, event_type=EventType.field_updated, field_name=field_name, new_value=new_value, note=note, payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str), created_at=utc_now()))
     db.flush()
 
 
@@ -159,6 +165,10 @@ def _int_or_none(value) -> int | None:
     return None
 
 
+def _update_speedaf_address_idempotency_status(db: Session, *, dedupe_key: str, status_value: str) -> None:
+    db.execute(text('UPDATE speedaf_address_update_idempotency SET status = :status, updated_at = :now WHERE dedupe_key = :dedupe_key'), {'status': status_value, 'now': utc_now(), 'dedupe_key': dedupe_key})
+
+
 def _process_speedaf_work_order_create_job(db: Session, job: BackgroundJob, payload: dict) -> None:
     from .speedaf.action_service import SpeedafActionDisabled, SpeedafActionService
     ticket_id = int(payload['ticket_id'])
@@ -168,13 +178,38 @@ def _process_speedaf_work_order_create_job(db: Session, job: BackgroundJob, payl
         result = SpeedafActionService(ticket_id=ticket_id, webchat_conversation_id=conversation_id, background_job_id=job.id).create_work_order(waybill_code=str(payload['waybillCode']), work_order_type=str(payload.get('workOrderType') or 'WT0103-05'), description=str(payload.get('description') or '')[:SPEEDAF_WORK_ORDER_DESCRIPTION_MAX_LENGTH], caller_id=str(payload['callerID']))
     except SpeedafActionDisabled as exc:
         result_payload.update({'ok': False, 'status': 'disabled', 'error_code': type(exc).__name__, 'error_message': str(exc)})
-        _append_ticket_event(db, ticket_id=ticket_id, note='Speedaf work order creation skipped by feature gate.', payload=result_payload)
+        _append_ticket_event(db, ticket_id=ticket_id, note='Speedaf work order creation skipped by feature gate.', payload=result_payload, new_value='skipped')
         _mark_done(job)
         return
     result_payload.update({'ok': result.ok, 'status': result.status, 'external_id': result.external_id, 'error_code': result.error_code, 'error_message': result.error_message, 'safe_payload': result.safe_payload})
-    _append_ticket_event(db, ticket_id=ticket_id, note='Speedaf work order creation completed.' if result.ok else 'Speedaf work order creation failed.', payload=result_payload)
+    _append_ticket_event(db, ticket_id=ticket_id, note='Speedaf work order creation completed.' if result.ok else 'Speedaf work order creation failed.', payload=result_payload, new_value='completed' if result.ok else 'failed')
     if not result.ok:
         raise RuntimeError(result.error_code or 'speedaf_work_order_create_failed')
+
+
+def _process_speedaf_address_update_job(db: Session, job: BackgroundJob, payload: dict) -> None:
+    from .speedaf.action_service import SpeedafActionDisabled, SpeedafActionService
+    from .speedaf.redactor import safe_waybill_payload
+    ticket_id = int(payload['ticket_id'])
+    dedupe_key = str(payload['addressUpdateDedupeKey'])
+    phone = str(payload['whatsAppPhone'])
+    result_payload: dict = {'job_id': job.id, 'job_type': SPEEDAF_ADDRESS_UPDATE_JOB, 'ticket_id': ticket_id, 'dedupe_key': dedupe_key, **safe_waybill_payload(str(payload['waybillCode'])), 'whatsapp_phone': {'redacted': True, 'suffix': phone[-4:]}}
+    try:
+        result = SpeedafActionService(ticket_id=ticket_id, background_job_id=job.id, request_id=dedupe_key).submit_update_address_flow(waybill_code=str(payload['waybillCode']), whatsapp_phone=phone, caller_id=str(payload['callerID']))
+    except SpeedafActionDisabled as exc:
+        _update_speedaf_address_idempotency_status(db, dedupe_key=dedupe_key, status_value='skipped')
+        result_payload.update({'ok': False, 'status': 'disabled', 'error_code': type(exc).__name__, 'error_message': str(exc)})
+        _append_ticket_event(db, ticket_id=ticket_id, field_name='speedaf_address_update', new_value='skipped', note='Speedaf address update confirmation request skipped by feature gate.', payload=result_payload)
+        _mark_done(job)
+        return
+    result_payload.update({'ok': result.ok, 'status': result.status, 'error_code': result.error_code, 'error_message': result.error_message, 'safe_payload': result.safe_payload})
+    if result.ok:
+        _update_speedaf_address_idempotency_status(db, dedupe_key=dedupe_key, status_value='success')
+        _append_ticket_event(db, ticket_id=ticket_id, field_name='speedaf_address_update', new_value='completed', note='Speedaf address update confirmation request completed. Final Speedaf confirmation may still be required.', payload=result_payload)
+        return
+    _update_speedaf_address_idempotency_status(db, dedupe_key=dedupe_key, status_value='failed')
+    _append_ticket_event(db, ticket_id=ticket_id, field_name='speedaf_address_update', new_value='failed', note='Speedaf address update confirmation request failed.', payload=result_payload)
+    raise RuntimeError(result.error_code or 'speedaf_address_update_failed')
 
 
 def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
@@ -233,6 +268,10 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             _process_speedaf_work_order_create_job(db, job, payload)
             _mark_done(job)
             return job
+        if job.job_type == SPEEDAF_ADDRESS_UPDATE_JOB:
+            _process_speedaf_address_update_job(db, job, payload)
+            _mark_done(job)
+            return job
         if job.job_type == OPENCLAW_SYNC_JOB:
             if not settings.openclaw_sync_enabled:
                 _mark_done(job)
@@ -251,7 +290,7 @@ def dispatch_pending_background_jobs(db: Session, *, limit: int | None = None, w
     if settings.openclaw_sync_enabled:
         enqueue_stale_openclaw_sync_jobs(db, limit=settings.openclaw_sync_batch_size)
         db.commit()
-    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB, WEBCHAT_AI_REPLY_JOB, WEBCHAT_HANDOFF_SNAPSHOT_JOB, SPEEDAF_WORK_ORDER_CREATE_JOB])
+    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB, WEBCHAT_AI_REPLY_JOB, WEBCHAT_HANDOFF_SNAPSHOT_JOB, SPEEDAF_WORK_ORDER_CREATE_JOB, SPEEDAF_ADDRESS_UPDATE_JOB])
     processed: list[BackgroundJob] = []
     for job in claimed:
         process_background_job(db, job)
