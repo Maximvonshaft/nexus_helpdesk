@@ -161,7 +161,7 @@ def readyz():
         return payload
     except Exception as exc:
         app_log_event(40, 'readiness_check_failed', error=str(exc), storage=storage_readiness.as_dict())
-        return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error', 'storage': storage_readiness.as_dict()})
+        return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error'})
 
 
 app.include_router(admin_outbound_semantics_router)
