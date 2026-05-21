@@ -1,0 +1,76 @@
+name: speedaf-readonly-uat-probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      waybill_code:
+        description: 'Optional UAT waybill code for order/query'
+        required: false
+        type: string
+      caller_id:
+        description: 'Optional UAT callerID for waybillCode/query'
+        required: false
+        type: string
+      country_code:
+        description: 'Country code for waybillCode/query'
+        required: false
+        default: 'CH'
+        type: string
+      strict:
+        description: 'Fail workflow if any requested read-only probe fails'
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  speedaf-readonly-uat-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: backend
+      SPEEDAF_MCP_ENABLED: ${{ secrets.SPEEDAF_UAT_MCP_ENABLED }}
+      SPEEDAF_MCP_BASE_URL: ${{ secrets.SPEEDAF_UAT_MCP_BASE_URL }}
+      SPEEDAF_MCP_APP_CODE: ${{ secrets.SPEEDAF_UAT_MCP_APP_CODE }}
+      SPEEDAF_MCP_SECRET_KEY: ${{ secrets.SPEEDAF_UAT_MCP_SECRET_KEY }}
+      SPEEDAF_MCP_CONTENT_TYPE: ${{ vars.SPEEDAF_UAT_MCP_CONTENT_TYPE || 'text/plain' }}
+      SPEEDAF_MCP_DATA_MODE: ${{ vars.SPEEDAF_UAT_MCP_DATA_MODE || 'string' }}
+      SPEEDAF_MCP_REQUIRE_SIGN: ${{ vars.SPEEDAF_UAT_MCP_REQUIRE_SIGN || 'false' }}
+      SPEEDAF_WORK_ORDER_CREATE_ENABLED: 'false'
+      SPEEDAF_UPDATE_ADDRESS_ENABLED: 'false'
+      SPEEDAF_CANCEL_ENABLED: 'false'
+      SPEEDAF_VOICE_CALLBACK_ENABLED: 'false'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r backend/requirements.txt
+
+      - name: Run readonly Speedaf UAT probe
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts
+          STRICT_FLAG=''
+          if [ '${{ inputs.strict }}' = 'true' ]; then STRICT_FLAG='--strict'; fi
+          python backend/scripts/speedaf_readonly_uat_probe.py \
+            --waybill-code '${{ inputs.waybill_code }}' \
+            --caller-id '${{ inputs.caller_id }}' \
+            --country-code '${{ inputs.country_code }}' \
+            --output-json artifacts/speedaf-readonly-uat-report.json \
+            $STRICT_FLAG
+
+      - name: Upload redacted UAT report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: speedaf-readonly-uat-report
+          path: artifacts/speedaf-readonly-uat-report.json
+          if-no-files-found: warn
