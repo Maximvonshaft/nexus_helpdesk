@@ -5,9 +5,10 @@ Revises: 20260520_0026
 Create Date: 2026-05-21 00:00:00.000000
 
 """
+from __future__ import annotations
+
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = '20260521_0027'
@@ -15,8 +16,24 @@ down_revision = '20260520_0026'
 branch_labels = None
 depends_on = None
 
+
+def _active_credential_index_kwargs() -> dict:
+    """Return dialect-specific partial-index kwargs.
+
+    Production runs on PostgreSQL, while several contract tests run Alembic against
+    SQLite. SQLAlchemy ignores unknown dialect kwargs poorly in some migration
+    paths, so keep the predicate explicit per supported dialect.
+    """
+    dialect_name = op.get_bind().dialect.name
+    where_clause = sa.text("revoked_at IS NULL")
+    if dialect_name == "postgresql":
+        return {"postgresql_where": where_clause}
+    if dialect_name == "sqlite":
+        return {"sqlite_where": where_clause}
+    return {}
+
+
 def upgrade() -> None:
-    # provider_credentials
     op.create_table(
         'provider_credentials',
         sa.Column('id', sa.String(length=36), nullable=False),
@@ -42,21 +59,19 @@ def upgrade() -> None:
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
         sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
         sa.Column('revoked_at', sa.DateTime(timezone=True), nullable=True),
-        sa.PrimaryKeyConstraint('id')
+        sa.PrimaryKeyConstraint('id'),
     )
-    # create unique index for active credentials
     op.create_index(
         'ix_provider_credentials_tenant_provider_profile_active',
         'provider_credentials',
         ['tenant_id', 'provider', 'profile_id'],
         unique=True,
-        postgresql_where=sa.text("revoked_at IS NULL")
+        **_active_credential_index_kwargs(),
     )
     op.create_index('ix_provider_credentials_tenant_provider_status', 'provider_credentials', ['tenant_id', 'provider', 'status'])
     op.create_index('ix_provider_credentials_expires_at', 'provider_credentials', ['expires_at'])
     op.create_index('ix_provider_credentials_token_fingerprint', 'provider_credentials', ['token_fingerprint'])
 
-    # provider_auth_sessions
     op.create_table(
         'provider_auth_sessions',
         sa.Column('id', sa.String(length=36), nullable=False),
@@ -74,10 +89,9 @@ def upgrade() -> None:
         sa.Column('created_by', sa.String(length=36), nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
         sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
-        sa.PrimaryKeyConstraint('id')
+        sa.PrimaryKeyConstraint('id'),
     )
 
-    # provider_runtime_audit_logs
     op.create_table(
         'provider_runtime_audit_logs',
         sa.Column('id', sa.String(length=36), nullable=False),
@@ -89,14 +103,13 @@ def upgrade() -> None:
         sa.Column('session_id', sa.String(length=100), nullable=True),
         sa.Column('operation', sa.String(length=50), nullable=False),
         sa.Column('status', sa.String(length=50), nullable=False),
-        sa.Column('safe_summary', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column('safe_summary', sa.JSON(), nullable=True),
         sa.Column('error_code', sa.String(length=255), nullable=True),
         sa.Column('elapsed_ms', sa.Integer(), nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-        sa.PrimaryKeyConstraint('id')
+        sa.PrimaryKeyConstraint('id'),
     )
-    
-    # provider_routing_rules
+
     op.create_table(
         'provider_routing_rules',
         sa.Column('id', sa.String(length=36), nullable=False),
@@ -104,19 +117,25 @@ def upgrade() -> None:
         sa.Column('channel_key', sa.String(length=100), nullable=False),
         sa.Column('scenario', sa.String(length=100), nullable=False),
         sa.Column('primary_provider', sa.String(length=100), nullable=False),
-        sa.Column('fallback_providers', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column('fallback_providers', sa.JSON(), nullable=True),
         sa.Column('output_contract', sa.String(length=100), nullable=False),
         sa.Column('timeout_ms', sa.Integer(), nullable=False),
         sa.Column('canary_percent', sa.Integer(), nullable=False, server_default='0'),
-        sa.Column('kill_switch', sa.Boolean(), nullable=False, server_default='false'),
-        sa.Column('enabled', sa.Boolean(), nullable=False, server_default='true'),
+        sa.Column('kill_switch', sa.Boolean(), nullable=False, server_default=sa.text('false')),
+        sa.Column('enabled', sa.Boolean(), nullable=False, server_default=sa.text('true')),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
         sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-        sa.PrimaryKeyConstraint('id')
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('tenant_id', 'channel_key', 'scenario', name='uq_provider_routing_rules_tenant_channel_scenario'),
     )
+
 
 def downgrade() -> None:
     op.drop_table('provider_routing_rules')
     op.drop_table('provider_runtime_audit_logs')
     op.drop_table('provider_auth_sessions')
+    op.drop_index('ix_provider_credentials_token_fingerprint', table_name='provider_credentials')
+    op.drop_index('ix_provider_credentials_expires_at', table_name='provider_credentials')
+    op.drop_index('ix_provider_credentials_tenant_provider_status', table_name='provider_credentials')
+    op.drop_index('ix_provider_credentials_tenant_provider_profile_active', table_name='provider_credentials')
     op.drop_table('provider_credentials')
