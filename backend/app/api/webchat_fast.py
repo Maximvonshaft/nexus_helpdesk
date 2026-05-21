@@ -43,6 +43,7 @@ from ..services.webchat_fast_session_service import (
     resolve_fast_routing_context,
     update_fast_business_state,
 )
+from app.services.webchat_fast_policy import match_support_hours_policy_reply
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat-fast"])
 settings = get_settings()
@@ -381,6 +382,12 @@ def webchat_fast_reply_stream_options(request: Request):
 
 @router.post("/fast-reply")
 async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request, response: Response) -> Response:
+    # SERVER_SUPPORT_HOURS_POLICY_GUARD_V2: deterministic business-owned answer; do not send this to LLM.
+    __support_hours_body = payload.get("body") if isinstance(payload, dict) else getattr(payload, "body", None)
+    __support_hours_policy_reply = match_support_hours_policy_reply(__support_hours_body)
+    if __support_hours_policy_reply is not None:
+        return __support_hours_policy_reply
+
     _set_public_cors(response, request)
     enforce_webchat_fast_rate_limit(request, tenant_key=payload.tenant_key, session_id=payload.session_id)
     headers = _public_cors_headers(request)
