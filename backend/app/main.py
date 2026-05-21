@@ -12,6 +12,7 @@ from sqlalchemy.engine import Connection
 
 from .api.admin_outbound_semantics import router as admin_outbound_semantics_router
 from .api.admin_perf import router as admin_perf_router
+from .api.admin_provider_credentials import router as admin_provider_credentials_router
 from .api.admin_provider_runtime import router as admin_provider_runtime_router
 from .api.admin import router as admin_router
 from .api.admin_queue import router as admin_queue_router
@@ -160,9 +161,6 @@ def readyz():
         return {'status': 'ready', 'database': 'ok', 'migration_revision': migration_revision, **_runtime_identity()}
     except Exception as exc:
         app_log_event(40, 'readiness_check_failed', error=str(exc))
-        # Keep the failure response deliberately minimal. Runtime identity is
-        # exposed on /healthz and successful /readyz, but not on readiness
-        # failures so the response cannot leak incidental error context.
         return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error'})
 
 
@@ -170,6 +168,7 @@ def readyz():
 app.include_router(admin_outbound_semantics_router)
 app.include_router(admin_perf_router)
 app.include_router(admin_provider_runtime_router)
+app.include_router(admin_provider_credentials_router)
 app.include_router(ticket_perf_router)
 app.include_router(admin_router)
 app.include_router(admin_queue_router)
