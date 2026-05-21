@@ -38,6 +38,7 @@ from .api.webchat_voice import router as webchat_voice_router
 from .db import engine, reset_current_request_id, set_current_request_id
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
 from .services.release_metadata import runtime_identity
+from .services.storage_readiness import check_storage_readiness
 from .services.webchat_openclaw_responses_client import close_openclaw_clients
 from .settings import get_settings
 from .webchat_voice_config import is_webchat_voice_path, load_webchat_voice_runtime_config, webchat_voice_connect_sources
@@ -140,14 +141,27 @@ def metrics(x_metrics_token: str | None = Header(default=None, alias='X-Metrics-
 
 @app.get('/readyz')
 def readyz():
+    storage_readiness = check_storage_readiness()
     try:
         with engine.connect() as conn:
             conn.execute(text('SELECT 1'))
             migration_revision = _migration_revision(conn)
-        return {'status': 'ready', 'database': 'ok', 'migration_revision': migration_revision, **_runtime_identity()}
+        payload = {
+            'status': 'ready' if storage_readiness.ok else 'not_ready',
+            'database': 'ok',
+            'migration_revision': migration_revision,
+            'storage': storage_readiness.as_dict(),
+            **_runtime_identity(),
+        }
+        if not storage_readiness.ok:
+            app_log_event(40, 'readiness_storage_check_failed', storage=storage_readiness.as_dict())
+            return JSONResponse(status_code=503, content=payload)
+        if storage_readiness.warnings:
+            app_log_event(30, 'readiness_storage_warning', storage=storage_readiness.as_dict())
+        return payload
     except Exception as exc:
-        app_log_event(40, 'readiness_check_failed', error=str(exc))
-        return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error'})
+        app_log_event(40, 'readiness_check_failed', error=str(exc), storage=storage_readiness.as_dict())
+        return JSONResponse(status_code=503, content={'status': 'not_ready', 'database': 'error', 'storage': storage_readiness.as_dict()})
 
 
 app.include_router(admin_outbound_semantics_router)
