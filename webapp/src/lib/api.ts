@@ -167,7 +167,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       }
       if (!res.ok) {
         const msg = await readErrorMessage(res, `${res.status} ${res.statusText}`)
-        throw new Error(msg)
+        throw new ApiError(msg, res.status)
       }
       if (res.status === 204) return undefined as T
       return res.json() as Promise<T>
