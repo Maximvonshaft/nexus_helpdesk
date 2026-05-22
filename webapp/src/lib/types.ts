@@ -455,6 +455,25 @@ export interface CodexAuthorizationStart {
   provider: string
 }
 
+export interface CodexManualAuthorizationStart extends CodexAuthorizationStart {
+  state: string
+  redirect_uri: string
+}
+
+export interface CodexManualAuthorizationCompleteRequest {
+  session_id: string
+  authorization_response: string
+}
+
+export interface CodexManualAuthorizationCompleteResult {
+  ok: boolean
+  status: string
+  credential_id?: string | null
+  provider: string
+  elapsed_ms?: number
+  secret_values_exposed: false
+}
+
 export interface CodexDeviceStart {
   session_id: string
   verification_url: string

@@ -60,6 +60,10 @@ jobs:
             echo 'ERROR: provider credential API may expose raw token values.'
             exit 1
           fi
+          if git grep -nE "(access_token|refresh_token)" -- backend/app/api/admin_provider_credentials.py; then
+            echo 'ERROR: provider credential API routes must not return raw OAuth token field names.'
+            exit 1
+          fi
 
       - name: Alembic revision integrity gate
         run: |
@@ -119,6 +123,7 @@ jobs:
             backend/tests/test_codex_auth_profile_importer.py \
             backend/tests/test_codex_app_server_provider_credential_store.py \
             backend/tests/test_codex_oauth_config.py \
+            backend/tests/test_codex_openclaw_manual_flow.py \
             backend/tests/test_provider_credentials_api.py
 
       - name: Route safety smoke
@@ -131,6 +136,8 @@ jobs:
           routes = sorted(getattr(route, 'path', '') for route in app.routes)
           assert '/api/admin/provider-credentials/codex/status' in routes, routes
           assert '/api/admin/provider-credentials/codex/callback' in routes, routes
+          assert '/api/admin/provider-credentials/codex/manual/start' in routes, routes
+          assert '/api/admin/provider-credentials/codex/manual/complete' in routes, routes
           assert any('fast-reply' in path for path in routes), routes
           print('route_smoke_ok')
           PY
