@@ -4,6 +4,7 @@ ROOT = Path(__file__).resolve().parents[2]
 OBSERVABILITY = ROOT / "backend" / "app" / "services" / "observability.py"
 VOICE_SERVICE = ROOT / "backend" / "app" / "services" / "webchat_voice_service.py"
 VOICE_API = ROOT / "backend" / "app" / "api" / "webchat_voice.py"
+RATE_LIMIT = ROOT / "backend" / "app" / "services" / "webchat_rate_limit.py"
 AGENT_PANEL = ROOT / "webapp" / "src" / "components" / "webcall" / "AgentWebCallPanel.tsx"
 AGENT_ROUTE = ROOT / "webapp" / "src" / "routes" / "webchat-voice.tsx"
 VOICE_ENTRY = ROOT / "backend" / "app" / "static" / "webchat" / "voice-entry.js"
@@ -42,3 +43,28 @@ def test_frontend_p0_queue_reject_and_text_fallback_are_present():
     assert "Continue with WebChat text" in webcall
     assert "visitor_token" not in panel
     assert "LIVEKIT_API_SECRET" not in panel
+
+
+def test_voice_entry_has_click_cooldown_to_prevent_duplicate_incoming_calls():
+    entry = VOICE_ENTRY.read_text(encoding="utf-8")
+
+    assert "lastVoiceStartedAt" in entry
+    assert "lastVoiceStartedKey" in entry
+    assert "data-voice-cooldown-ms" in entry
+    assert "cooldownRemainingMs" in entry
+    assert "recordVoiceStarted" in entry
+    assert "A WebCall was just started" in entry
+    assert "wait " in entry and " seconds before starting another one" in entry
+
+
+def test_database_rate_limit_resets_expired_bucket_instead_of_duplicate_insert():
+    rate_limit = RATE_LIMIT.read_text(encoding="utf-8")
+
+    assert "if existing is None:" in rate_limit
+    assert 'if existing["window_start"] is None or existing["window_start"] < window_start:' in rate_limit
+    assert "SET window_start = :window_start, request_count = 1, updated_at = :updated_at" in rate_limit
+
+    expired_block = rate_limit.split('if existing["window_start"] is None or existing["window_start"] < window_start:', 1)[1]
+    expired_block = expired_block.split("request_count = int", 1)[0]
+    assert "UPDATE webchat_rate_limits" in expired_block
+    assert "INSERT INTO webchat_rate_limits" not in expired_block
