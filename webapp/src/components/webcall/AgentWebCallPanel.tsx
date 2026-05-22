@@ -107,6 +107,10 @@ function safeErrorMessage(err: unknown) {
   }
   if (err instanceof Error) {
     if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') return 'Microphone permission was denied. Allow microphone access and accept the WebCall again.'
+    if (err.name === 'SecurityError') return 'Microphone is blocked by system or browser security policy. Please enable microphone access for this site.'
+    if (err.name === 'NotReadableError' || err.name === 'TrackStartError') return 'Microphone is currently in use by another application. Close other apps and retry.'
+    if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') return 'No microphone device was found. Connect a microphone and retry.'
+    if (err.name === 'NotSupportedError' || err.name === 'TypeError') return 'This browser does not support required microphone APIs for WebCall.'
     return 'WebCall request failed. Please refresh and try again.'
   }
   return 'WebCall request failed. Please refresh and try again.'
@@ -201,6 +205,15 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
   const acceptMutation = useMutation({
     mutationFn: async (session: WebchatVoiceSession) => {
       if (!ticketId) throw new Error('No ticket selected')
+      setCallState('requesting_mic')
+      setMessage('Requesting microphone permission...')
+      const audioTrack = await createLocalAudioTrack({
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      })
+      localAudioRef.current = audioTrack
+
       setCallState('accepting')
       setMessage('Accepting WebCall...')
       const accepted = await webchatVoiceApi.acceptSession(ticketId, session.voice_session_id)
@@ -212,15 +225,6 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
       const livekitUrl = runtimeConfig.data?.livekit_url
       if (!livekitUrl) throw new Error('LiveKit URL is missing from runtime config')
       if (!accepted.participant_token) throw new Error('Agent participant credential missing from accept response')
-
-      setCallState('requesting_mic')
-      setMessage('Requesting microphone permission...')
-      const audioTrack = await createLocalAudioTrack({
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      })
-      localAudioRef.current = audioTrack
 
       setCallState('connecting')
       setMessage('Joining WebCall room...')

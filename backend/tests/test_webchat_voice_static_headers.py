@@ -122,7 +122,7 @@ def test_voice_enabled_custom_prefix_controls_voice_header_scope(monkeypatch):
     assert "wss://voice.example.test" in _csp(custom_prefix_response)
 
 
-def test_webchat_demo_and_non_voice_api_keep_default_security_headers(monkeypatch):
+def test_webchat_demo_and_non_voice_api_headers_follow_new_webchat_voice_scope(monkeypatch):
     client = _client(
         monkeypatch,
         WEBCHAT_VOICE_ENABLED="true",
@@ -133,7 +133,7 @@ def test_webchat_demo_and_non_voice_api_keep_default_security_headers(monkeypatc
     api_response = client.post("/api/webchat/fast-reply", json={})
 
     assert demo_response.status_code in {200, 404}
-    assert _permissions(demo_response) == "camera=(), microphone=(), geolocation=()"
+    assert _permissions(demo_response) == "camera=(), microphone=(self), geolocation=()"
     assert api_response.status_code == 422
     assert _permissions(api_response) == "camera=(), microphone=(), geolocation=()"
     assert "wss://voice.example.test" not in _csp(api_response)
@@ -150,3 +150,21 @@ def test_voice_connect_src_rejects_wildcard(monkeypatch):
 
     with pytest.raises(RuntimeError, match="must not contain wildcard"):
         load_webchat_voice_runtime_config()
+
+
+def test_voice_enabled_webchat_and_webchat_voice_paths_allow_microphone(monkeypatch):
+    client = _client(
+        monkeypatch,
+        WEBCHAT_VOICE_ENABLED="true",
+        WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test https://voice.example.test",
+    )
+
+    webchat_response = client.get("/webchat")
+    webchat_voice_response = client.get("/webchat-voice")
+
+    assert webchat_response.status_code in {200, 404}
+    assert webchat_voice_response.status_code in {200, 404}
+    assert _permissions(webchat_response) == "camera=(), microphone=(self), geolocation=()"
+    assert _permissions(webchat_voice_response) == "camera=(), microphone=(self), geolocation=()"
+    assert "connect-src 'self' wss://voice.example.test https://voice.example.test" in _csp(webchat_response)
+    assert "connect-src 'self' wss://voice.example.test https://voice.example.test" in _csp(webchat_voice_response)
