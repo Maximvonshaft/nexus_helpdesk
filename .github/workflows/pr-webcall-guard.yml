@@ -1,0 +1,205 @@
+name: WebCall PR Guard
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "webapp/src/components/webcall/AgentWebCallPanel.tsx"
+      - "webapp/tests/operator-console-contract.test.mjs"
+      - "webapp/package.json"
+      - "webapp/package-lock.json"
+      - "backend/app/webchat_voice_config.py"
+      - "backend/tests/test_webchat_voice_static_headers.py"
+      - ".github/workflows/pr-webcall-guard.yml"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  scope-guard:
+    name: scope-guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate changed file scope
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" | sort > /tmp/changed_files.txt
+
+          echo "Changed files:"
+          cat /tmp/changed_files.txt
+
+          fail=0
+          while IFS= read -r file; do
+            case "$file" in
+              webapp/src/components/webcall/AgentWebCallPanel.tsx) ;;
+              webapp/tests/operator-console-contract.test.mjs) ;;
+              webapp/package.json) ;;
+              webapp/package-lock.json) ;;
+              backend/app/webchat_voice_config.py) ;;
+              backend/tests/test_webchat_voice_static_headers.py) ;;
+              .github/workflows/pr-webcall-guard.yml) ;;
+              "") ;;
+              *)
+                echo "::error file=$file::Out-of-scope file changed in WebCall guarded PR."
+                fail=1
+                ;;
+            esac
+          done < /tmp/changed_files.txt
+
+          if [ "$fail" -ne 0 ]; then
+            echo "Scope guard failed. This PR includes files outside the approved WebCall single-mic/header/test scope."
+            exit 1
+          fi
+
+          echo "Scope guard passed."
+
+  webcall-blocking-fix-guard:
+    name: webcall-blocking-fix-guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Verify WebCall blocking fix markers
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          PANEL="webapp/src/components/webcall/AgentWebCallPanel.tsx"
+          TEST="webapp/tests/operator-console-contract.test.mjs"
+
+          test -f "$PANEL"
+          test -f "$TEST"
+
+          non_livekit_branch="$(python - <<'PY'
+from pathlib import Path
+import re
+text = Path('webapp/src/components/webcall/AgentWebCallPanel.tsx').read_text(encoding='utf-8')
+m = re.search(r"if \(accepted\.provider !== 'livekit'\) \{[\s\S]*?return accepted\n\s*\}", text)
+print(m.group(0) if m else "")
+PY
+)"
+
+          if [ -z "$non_livekit_branch" ]; then
+            echo "::error file=$PANEL::Could not find non-LiveKit accept branch."
+            exit 1
+          fi
+
+          if ! grep -q "await cleanupRoom()" <<<"$non_livekit_branch"; then
+            echo "::error file=$PANEL::Expected await cleanupRoom() in non-LiveKit accept branch."
+            exit 1
+          fi
+
+          if ! grep -q "webcall non-livekit accept path cleans up acquired microphone track" "$TEST"; then
+            echo "::error file=$TEST::Expected non-livekit cleanup contract test is missing."
+            exit 1
+          fi
+
+          if ! grep -q "await cleanupRoom\\(\\)" "$TEST"; then
+            echo "::error file=$TEST::Expected cleanup assertion marker is missing from contract tests."
+            exit 1
+          fi
+
+          echo "Blocking fix guard passed."
+
+  webapp-quality:
+    name: webapp-quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            webapp/package-lock.json
+            package-lock.json
+
+      - name: Install webapp dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [ -f webapp/package-lock.json ]; then
+            npm --prefix webapp ci
+          else
+            npm --prefix webapp install
+          fi
+
+      - name: Lint
+        run: npm --prefix webapp run lint
+
+      - name: Typecheck
+        run: npm --prefix webapp run typecheck
+
+      - name: Test
+        run: npm --prefix webapp test
+
+      - name: Build
+        run: npm --prefix webapp run build
+
+  backend-webcall-tests:
+    name: backend-webcall-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install backend dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          python -m pip install --upgrade pip
+
+          if [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt
+          fi
+          if [ -f requirements-dev.txt ]; then
+            python -m pip install -r requirements-dev.txt
+          fi
+          if [ -f backend/requirements.txt ]; then
+            python -m pip install -r backend/requirements.txt
+          fi
+          if [ -f backend/requirements-dev.txt ]; then
+            python -m pip install -r backend/requirements-dev.txt
+          fi
+          if [ -f pyproject.toml ]; then
+            python -m pip install -e ".[test]" || python -m pip install -e .
+          fi
+          if [ -f backend/pyproject.toml ]; then
+            python -m pip install -e "backend[test]" || python -m pip install -e backend
+          fi
+
+          python -m pip install pytest
+
+      - name: Run backend WebCall tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          pytest -q \
+            backend/tests/test_webchat_voice_static_headers.py \
+            backend/tests/test_webchat_voice_p0_static.py \
+            backend/tests/test_webchat_voice_api.py \
+            backend/tests/test_webchat_voice_p0_gap_closure.py \
+            backend/tests/test_webchat_voice_room_compensation.py
