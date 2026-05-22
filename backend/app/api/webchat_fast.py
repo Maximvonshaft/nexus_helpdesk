@@ -592,20 +592,40 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
     support_payload = _support_hours_policy_payload(payload.body)
     if support_payload is not None:
         return StreamingResponse(_support_hours_policy_stream_events(row_id=begin.row_id, payload=payload, result_payload=support_payload, request=request), media_type="text/event-stream", headers=headers)
-    if not getattr(stream_settings, "is_openclaw_stream_configured", bool(getattr(stream_settings, "stream_enabled", False))):
-        return JSONResponse({"error_code": "stream_upstream_not_configured"}, status_code=503, headers=headers)
-    is_selected = is_stream_rollout_selected(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, rollout_percent=getattr(stream_settings, "stream_rollout_percent", 100))
-    if not is_selected and not _is_stream_canary_override_allowed(request, stream_settings):
-        return JSONResponse({"error_code": "stream_not_in_rollout"}, status_code=503, headers=headers)
+
+    # SERVER_OWNED_STREAM_BEFORE_OPENCLAW_SETTINGS_BEGIN
+    # These deterministic server-owned responses must work even when generic OpenClaw streaming is not configured.
     server_policy = decide_server_handoff_policy(body=payload.body, recent_context=merged_context, configured_rules=configured_rules)
     if server_policy.handoff_required:
-        return StreamingResponse(_server_policy_stream_events(row_id=begin.row_id, payload=payload, context_payload=merged_context, server_policy=server_policy, routing_context=routing_context), media_type="text/event-stream", headers=headers)
+        return StreamingResponse(
+            _server_policy_stream_events(
+                row_id=begin.row_id,
+                payload=payload,
+                context_payload=merged_context,
+                server_policy=server_policy,
+                routing_context=routing_context,
+            ),
+            media_type="text/event-stream",
+            headers=headers,
+        )
 
     tracking_number = _tracking_candidate(body=payload.body, context=merged_context, tracking_number=business_state.tracking_number)
-    tracking_fact = _lookup_fast_tracking_fact(tracking_number=tracking_number, conversation_id=conversation_id, ticket_id=None, request_id=getattr(request.state, "request_id", None), caller_id=caller_id, country_code=payload.country_code or routing_context.country_code)
+    tracking_fact = _lookup_fast_tracking_fact(
+        tracking_number=tracking_number,
+        conversation_id=conversation_id,
+        ticket_id=None,
+        request_id=getattr(request.state, "request_id", None),
+        caller_id=caller_id,
+        country_code=payload.country_code or routing_context.country_code,
+    )
     candidate_payload = _tracking_candidate_selection_payload(tracking_fact)
     if candidate_payload:
-        return StreamingResponse(_tracking_candidate_selection_stream_events(row_id=begin.row_id, payload=payload, result_payload=candidate_payload), media_type="text/event-stream", headers=headers)
+        return StreamingResponse(
+            _tracking_candidate_selection_stream_events(row_id=begin.row_id, payload=payload, result_payload=candidate_payload),
+            media_type="text/event-stream",
+            headers=headers,
+        )
+
     forced_payload = _tracking_fact_forced_reply_payload(tracking_number=tracking_number, result=tracking_fact)
     if forced_payload:
         return StreamingResponse(
@@ -619,6 +639,13 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
             media_type="text/event-stream",
             headers=headers,
         )
+    # SERVER_OWNED_STREAM_BEFORE_OPENCLAW_SETTINGS_END
+
+    if not getattr(stream_settings, "is_openclaw_stream_configured", bool(getattr(stream_settings, "stream_enabled", False))):
+        return JSONResponse({"error_code": "stream_upstream_not_configured"}, status_code=503, headers=headers)
+    is_selected = is_stream_rollout_selected(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, rollout_percent=getattr(stream_settings, "stream_rollout_percent", 100))
+    if not is_selected and not _is_stream_canary_override_allowed(request, stream_settings):
+        return JSONResponse({"error_code": "stream_not_in_rollout"}, status_code=503, headers=headers)
 
     tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _tracking_fact_provider_fields(tracking_fact)
     generator = stream_webchat_fast_reply_events(begin=begin, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=merged_context, visitor=payload.visitor, request_id=getattr(request.state, "request_id", None), settings=stream_settings, routing_context=routing_context, tracking_fact_summary=tracking_fact_summary, tracking_fact_metadata=tracking_fact_metadata, tracking_fact_evidence_present=tracking_fact_evidence_present)
