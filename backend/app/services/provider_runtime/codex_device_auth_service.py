@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -19,7 +20,7 @@ class CodexDeviceAuthService:
         self.client_id = os.environ.get("CODEX_OAUTH_CLIENT_ID", "").strip()
         self.usercode_path = os.environ.get("CODEX_OAUTH_DEVICE_USERCODE_PATH", "").strip()
         self.device_token_path = os.environ.get("CODEX_OAUTH_DEVICE_TOKEN_PATH", "").strip()
-        self.token_path = os.environ.get("CODEX_OAUTH_TOKEN_PATH", "").strip()
+        self.token_path = (os.environ.get("CODEX_OAUTH_TOKEN_URL") or os.environ.get("CODEX_OAUTH_TOKEN_PATH", "")).strip()
 
     def _require_enabled(self) -> None:
         if not self.enabled:
@@ -34,7 +35,7 @@ class CodexDeviceAuthService:
         if not self.device_token_path:
             missing.append("CODEX_OAUTH_DEVICE_TOKEN_PATH")
         if not self.token_path:
-            missing.append("CODEX_OAUTH_TOKEN_PATH")
+            missing.append("CODEX_OAUTH_TOKEN_URL or CODEX_OAUTH_TOKEN_PATH")
         if missing:
             raise ValueError("Codex device flow missing configuration: " + ", ".join(missing))
 
@@ -43,12 +44,15 @@ class CodexDeviceAuthService:
             return path_or_url
         return f"{self.auth_base_url}/{path_or_url.lstrip('/')}"
 
-    async def start_device_flow(self, tenant_id: str, user_id: str) -> dict[str, Any]:
+    async def start_device_flow(self, tenant_id: str, user_id: str, scope: str | None = None) -> dict[str, Any]:
         self._require_enabled()
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        payload = {"client_id": self.client_id}
+        if scope:
+            payload["scope"] = scope
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             response = await client.post(
                 self._url(self.usercode_path),
-                json={"client_id": self.client_id},
+                json=payload,
                 headers={"Accept": "application/json"},
             )
             response.raise_for_status()
@@ -63,18 +67,22 @@ class CodexDeviceAuthService:
             raise ValueError("Codex device flow response missing required fields")
 
         session_id = str(uuid.uuid4())
+        state = secrets.token_urlsafe(32)
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
         self.db.execute(text("""
             INSERT INTO provider_auth_sessions
-            (id, tenant_id, provider, flow_type, state, device_auth_id, user_code, verification_url, expires_at, status, created_by)
-            VALUES (:id, :tenant_id, 'openai-codex', 'device_code', :state, :device_auth_id, :user_code, :verification_url, :expires_at, 'pending', :created_by)
+            (id, tenant_id, provider, flow_type, state, device_auth_id, user_code, verification_url,
+             scope, expires_at, status, created_by)
+            VALUES (:id, :tenant_id, 'openai-codex', 'device_code', :state, :device_auth_id, :user_code, :verification_url,
+                    :scope, :expires_at, 'pending', :created_by)
         """), {
             "id": session_id,
             "tenant_id": tenant_id,
-            "state": f"interval:{interval}",
+            "state": state,
             "device_auth_id": device_auth_id,
             "user_code": user_code,
             "verification_url": verification_url,
+            "scope": scope,
             "expires_at": expires_at,
             "created_by": user_id,
         })
@@ -85,6 +93,7 @@ class CodexDeviceAuthService:
             "user_code": user_code,
             "expires_at": expires_at.isoformat(),
             "interval": interval,
+            "scope": scope,
         }
 
     async def status_device_flow(self, tenant_id: str, session_id: str) -> dict[str, Any]:
@@ -107,7 +116,7 @@ class CodexDeviceAuthService:
     async def poll_device_flow(self, tenant_id: str, session_id: str) -> dict[str, Any]:
         self._require_enabled()
         session = self.db.execute(text("""
-            SELECT id, device_auth_id, user_code, status, expires_at, created_by
+            SELECT id, device_auth_id, user_code, status, expires_at, created_by, scope
             FROM provider_auth_sessions
             WHERE id = :id AND tenant_id = :tenant_id
         """), {"id": session_id, "tenant_id": tenant_id}).mappings().first()
@@ -116,7 +125,7 @@ class CodexDeviceAuthService:
         if session["status"] != "pending":
             return {"status": session["status"]}
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             response = await client.post(
                 self._url(self.device_token_path),
                 json={"client_id": self.client_id, "device_code": session["device_auth_id"]},
@@ -149,6 +158,7 @@ class CodexDeviceAuthService:
             account_id=token_data.get("account_id") or token_data.get("accountId"),
             email=token_data.get("email"),
             plan_type=token_data.get("chatgpt_plan_type") or token_data.get("chatgptPlanType"),
+            scope=token_data.get("scope") or session["scope"],
         )
         self._mark_session(session_id=session_id, tenant_id=tenant_id, status="authorized", error_code=None)
         return {"status": "authorized", "credential_id": credential_id}
@@ -167,12 +177,12 @@ class CodexDeviceAuthService:
         }
         if code_verifier:
             payload["code_verifier"] = code_verifier
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             response = await client.post(self._url(self.token_path), data=payload, headers={"Accept": "application/json"})
             response.raise_for_status()
             return response.json()
 
-    def _upsert_credential(self, *, tenant_id: str, created_by: str, access_token: str, refresh_token: str | None, expires_in: int, account_id: str | None, email: str | None, plan_type: str | None) -> str:
+    def _upsert_credential(self, *, tenant_id: str, created_by: str, access_token: str, refresh_token: str | None, expires_in: int, account_id: str | None, email: str | None, plan_type: str | None, scope: str | None = None) -> str:
         credential_id = str(uuid.uuid4())
         profile_id = account_id or email or credential_id
         encrypted_access = self.crypto_service.encrypt(access_token)
@@ -182,14 +192,15 @@ class CodexDeviceAuthService:
         row = self.db.execute(text("""
             INSERT INTO provider_credentials
             (id, tenant_id, provider, provider_runtime, credential_type, profile_id, account_id, email, chatgpt_plan_type,
-             encrypted_access_token, encrypted_refresh_token, expires_at, status, token_fingerprint, created_by)
+             encrypted_access_token, encrypted_refresh_token, expires_at, status, token_fingerprint, created_by, scope)
             VALUES
             (:id, :tenant_id, 'openai-codex', 'codex_app_server', 'oauth', :profile_id, :account_id, :email, :plan_type,
-             :access, :refresh, :expires_at, 'active', :fingerprint, :created_by)
+             :access, :refresh, :expires_at, 'active', :fingerprint, :created_by, :scope)
             ON CONFLICT (tenant_id, provider, profile_id) WHERE revoked_at IS NULL
             DO UPDATE SET encrypted_access_token = EXCLUDED.encrypted_access_token,
                           encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
                           expires_at = EXCLUDED.expires_at,
+                          scope = EXCLUDED.scope,
                           status = 'active',
                           last_error_code = NULL,
                           updated_at = now()
@@ -206,6 +217,7 @@ class CodexDeviceAuthService:
             "expires_at": expires_at,
             "fingerprint": fingerprint,
             "created_by": created_by,
+            "scope": scope,
         }).first()
         self.db.commit()
         return str(row[0]) if row else credential_id

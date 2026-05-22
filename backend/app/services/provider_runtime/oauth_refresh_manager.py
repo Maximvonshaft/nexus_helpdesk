@@ -5,7 +5,9 @@ import hashlib
 import logging
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional, Tuple
+from urllib.parse import urljoin
 
 import httpx
 from sqlalchemy import text
@@ -149,7 +151,7 @@ class OAuthRefreshManager:
         if provider != "openai-codex":
             return None, None, 0
 
-        token_url = os.environ.get("CODEX_OAUTH_TOKEN_PATH") or os.environ.get("CODEX_OAUTH_TOKEN_URL")
+        token_url = _codex_token_url()
         client_id = os.environ.get("CODEX_OAUTH_CLIENT_ID", "").strip()
         if not client_id or not token_url:
             logger.error("codex_oauth_refresh_disabled_or_misconfigured")
@@ -160,8 +162,11 @@ class OAuthRefreshManager:
             "refresh_token": refresh_token,
             "client_id": client_id,
         }
+        client_secret = _codex_client_secret()
+        if client_secret:
+            payload["client_secret"] = client_secret
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
                 response = await client.post(token_url, data=payload, headers={"Accept": "application/json"})
                 response.raise_for_status()
                 data = response.json()
@@ -178,3 +183,28 @@ class OAuthRefreshManager:
         if not access_token:
             return None, None, 0
         return access_token, new_refresh, expires_in
+
+
+def _codex_token_url() -> str | None:
+    raw = (os.environ.get("CODEX_OAUTH_TOKEN_URL") or os.environ.get("CODEX_OAUTH_TOKEN_PATH") or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("http://") or raw.startswith("https://"):
+        return raw
+    base = os.environ.get("CODEX_OAUTH_AUTH_BASE_URL", "").strip().rstrip("/")
+    if not base:
+        return raw
+    return urljoin(base + "/", raw.lstrip("/"))
+
+
+def _codex_client_secret() -> str | None:
+    file_path = os.environ.get("CODEX_OAUTH_CLIENT_SECRET_FILE", "").strip()
+    if file_path:
+        try:
+            return Path(file_path).read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
+    raw = os.environ.get("CODEX_OAUTH_CLIENT_SECRET", "").strip()
+    if raw and os.environ.get("APP_ENV", "development").strip().lower() != "production":
+        return raw
+    return None

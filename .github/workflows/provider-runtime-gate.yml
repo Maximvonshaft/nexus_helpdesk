@@ -51,15 +51,13 @@ jobs:
             exit 1
           fi
 
-      - name: Admin provider credential API exposure gate
+      - name: Admin provider credential API surface gate
         run: |
           set -Eeuo pipefail
-          if git grep -n 'admin_provider_credentials_router' -- backend/app/main.py; then
-            echo 'ERROR: admin_provider_credentials_router is mounted in app.main.'
-            exit 1
-          fi
-          if git grep -n 'from \.api\.admin_provider_credentials' -- backend/app/main.py; then
-            echo 'ERROR: admin_provider_credentials router is imported in app.main.'
+          grep -n "prefix=\"/api/admin/provider-credentials\"" backend/app/api/admin_provider_credentials.py
+          grep -n "secret_values_exposed.*False" backend/app/services/provider_runtime/codex_credential_broker.py
+          if git grep -nE "return .*access_token|return .*refresh_token|access_token.*JSONResponse|refresh_token.*JSONResponse" -- backend/app/api/admin_provider_credentials.py backend/app/services/provider_runtime/codex_credential_broker.py; then
+            echo 'ERROR: provider credential API may expose raw token values.'
             exit 1
           fi
 
@@ -119,7 +117,9 @@ jobs:
             backend/tests/test_oauth_refresh_concurrency.py \
             backend/tests/test_codex_device_auth_service.py \
             backend/tests/test_codex_auth_profile_importer.py \
-            backend/tests/test_codex_app_server_provider_credential_store.py
+            backend/tests/test_codex_app_server_provider_credential_store.py \
+            backend/tests/test_codex_oauth_config.py \
+            backend/tests/test_provider_credentials_api.py
 
       - name: Route safety smoke
         env:
@@ -129,7 +129,8 @@ jobs:
           python - <<'PY'
           from app.main import app
           routes = sorted(getattr(route, 'path', '') for route in app.routes)
-          assert not any(path.startswith('/api/admin/provider-credentials') for path in routes), routes
+          assert '/api/admin/provider-credentials/codex/status' in routes, routes
+          assert '/api/admin/provider-credentials/codex/callback' in routes, routes
           assert any('fast-reply' in path for path in routes), routes
           print('route_smoke_ok')
           PY
