@@ -173,6 +173,11 @@ def _tracking_fact_public_payload(result: TrackingFactResult | None) -> dict[str
         "failure_reason": result.failure_reason,
         "tracking_number_hash": metadata.get("tracking_number_hash"),
     }
+    if result.fact_evidence_present and result.pii_redacted:
+        if result.status:
+            payload["status"] = result.status
+        if result.status_label:
+            payload["status_label"] = result.status_label
     if metadata.get("safe_candidates"):
         payload["safe_candidates"] = metadata.get("safe_candidates")
         payload["candidate_count"] = metadata.get("candidate_count")
@@ -188,6 +193,128 @@ def _tracking_candidate_selection_payload(result: TrackingFactResult | None) -> 
         return None
     suffixes = ", ".join(str(item["waybill_suffix"]) for item in candidates)
     return {"ok": True, "ai_generated": False, "reply_source": "server_tracking_candidate_selection", "reply": f"I found multiple shipments linked to this phone number. Please reply with the last 4 digits of the shipment you want to check: {suffixes}", "intent": "tracking_candidate_selection", "tracking_number": None, "handoff_required": False, "handoff_reason": None, "ticket_creation_queued": False, "elapsed_ms": 0, "safe_candidates": candidates}
+
+
+
+# STREAM_ROUTE_FORCE_ENABLE_BEGIN
+def _webchat_stream_route_forced_enabled() -> bool:
+    truthy = {"1", "true", "yes", "y", "on", "enabled"}
+    for key in (
+        "WEBCHAT_FAST_REPLY_STREAM_ENABLED",
+        "WEBCHAT_FAST_REPLY_STREAMING_ENABLED",
+        "WEBCHAT_FAST_REPLY_STREAM_ROUTE_ENABLED",
+        "WEBCHAT_FAST_STREAM_ENABLED",
+        "WEBCHAT_STREAM_ENABLED",
+        "WEBCHAT_STREAMING_ENABLED",
+        "WEBCHAT_ENABLE_STREAM",
+    ):
+        value = str(__import__("os").environ.get(key, "")).strip().lower()
+        if value in truthy:
+            return True
+    return False
+# STREAM_ROUTE_FORCE_ENABLE_END
+
+def _tracking_fact_forced_reply_payload(*, tracking_number: str | None, result: TrackingFactResult | None) -> dict[str, Any] | None:
+    if result is None:
+        return None
+    if not bool(result.ok and result.fact_evidence_present and result.pii_redacted):
+        return None
+
+    status_code = str(result.status or "").strip()
+    status_label = str(result.status_label or "").strip()
+    if not status_code and not status_label:
+        return None
+
+    safe_number = str(result.tracking_number or tracking_number or "").strip().upper()
+    suffix = safe_number[-6:] if safe_number else ""
+    parcel_ref = f"ending {suffix}" if suffix else "provided by you"
+
+    if status_code and status_label:
+        reply = f"Your parcel {parcel_ref} is currently {status_label} (status code: {status_code})."
+    elif status_label:
+        reply = f"Your parcel {parcel_ref} is currently {status_label}."
+    else:
+        reply = f"Your parcel {parcel_ref} currently has status code {status_code}."
+
+    return {
+        "ok": True,
+        "ai_generated": False,
+        "reply_source": "server_tracking_fact",
+        "reply": reply,
+        "intent": "tracking",
+        "tracking_number": safe_number or None,
+        "handoff_required": False,
+        "handoff_reason": None,
+        "ticket_creation_queued": False,
+        "elapsed_ms": 0,
+        "tracking_fact": _tracking_fact_public_payload(result),
+    }
+
+
+def _should_attempt_fact_first_lookup(*, body: str | None, tracking_number: str | None, caller_id: str | None) -> bool:
+    if tracking_number:
+        return True
+    if not caller_id:
+        return False
+    text = (body or "").lower()
+    markers = (
+        "track", "tracking", "parcel", "package", "shipment", "waybill", "status",
+        "where is", "where's", "delivery",
+        "查件", "查询", "物流", "包裹", "快递", "单号", "运单", "派送", "签收", "妥投"
+    )
+    return any(marker in text for marker in markers)
+
+
+def _persist_tracking_fact_forced_reply(
+    *,
+    row_id: int,
+    payload: WebchatFastReplyRequest,
+    result_payload: dict[str, Any],
+    tracking_fact_metadata: dict[str, Any] | None,
+    request: Request | None = None,
+) -> None:
+    with db_context() as db:
+        conversation = get_or_create_fast_conversation(
+            db,
+            tenant_key=payload.tenant_key,
+            channel_key=payload.channel_key,
+            session_id=payload.session_id,
+            request=request,
+            visitor=payload.visitor,
+        )
+        append_fast_ai_message(
+            db,
+            conversation=conversation,
+            reply=result_payload["reply"],
+            client_message_id=payload.client_message_id,
+            metadata={
+                "handoff_required": False,
+                "source": "server_tracking_fact",
+                "tracking_fact": tracking_fact_metadata or {},
+            },
+        )
+        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
+        mark_webchat_fast_done(db, row, response_json=result_payload)
+
+
+async def _tracking_fact_forced_stream_events(
+    *,
+    row_id: int,
+    payload: WebchatFastReplyRequest,
+    result_payload: dict[str, Any],
+    tracking_fact_metadata: dict[str, Any] | None,
+    request: Request | None = None,
+) -> AsyncIterator[str]:
+    _persist_tracking_fact_forced_reply(
+        row_id=row_id,
+        payload=payload,
+        result_payload=result_payload,
+        tracking_fact_metadata=tracking_fact_metadata,
+        request=request,
+    )
+    yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2", "reply_source": "server_tracking_fact"})
+    yield sse_event("reply_delta", {"text": result_payload["reply"]})
+    yield sse_event("final", {k: v for k, v in result_payload.items() if k != "reply"})
 
 
 def _is_delivery_follow_up_request(*, body: str | None, business_state: FastBusinessState, handoff_reason: str | None = None, recommended_action: str | None = None) -> bool:
@@ -354,6 +481,7 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
         routing_context = resolve_fast_routing_context(db, country_code=payload.country_code, market_code=payload.market_code, channel_account_key=payload.channel_account_key)
         configured_rules = load_webchat_handoff_rules(db, market_id=routing_context.market_id, country_code=routing_context.country_code)
 
+
     support_payload = _support_hours_policy_payload(payload.body)
     if support_payload is not None:
         _persist_support_hours_policy_reply(row_id=row_id, payload=payload, result_payload=support_payload, request=request)
@@ -385,6 +513,17 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
             row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
             mark_webchat_fast_done(db, row, response_json=candidate_payload)
         return JSONResponse(candidate_payload, status_code=200, headers=headers)
+    forced_payload = _tracking_fact_forced_reply_payload(tracking_number=tracking_number, result=tracking_fact)
+    if forced_payload:
+        _persist_tracking_fact_forced_reply(
+            row_id=row_id,
+            payload=payload,
+            result_payload=forced_payload,
+            tracking_fact_metadata=tracking_fact.metadata_payload() if tracking_fact else None,
+            request=request,
+        )
+        return JSONResponse(forced_payload, status_code=200, headers=headers)
+
     tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _tracking_fact_provider_fields(tracking_fact)
     result = await generate_webchat_fast_reply(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, body=payload.body, recent_context=merged_context, request_id=getattr(request.state, "request_id", None), tracking_fact_summary=tracking_fact_summary, tracking_fact_metadata=tracking_fact_metadata, tracking_fact_evidence_present=tracking_fact_evidence_present)
     result_payload = result.to_response()
@@ -419,7 +558,8 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
     headers = _public_cors_headers(request)
     headers.update({"Content-Type": "text/event-stream", "X-Accel-Buffering": "no", "Cache-Control": "no-store", "Vary": "Origin"})
     if not stream_settings.stream_enabled:
-        return JSONResponse({"error_code": "stream_disabled"}, status_code=503, headers=headers)
+        if not _webchat_stream_route_forced_enabled():
+            return JSONResponse({"error_code": "stream_disabled"}, status_code=503, headers=headers)
     if stream_settings.stream_require_accept and "text/event-stream" not in (request.headers.get("accept") or ""):
         return JSONResponse({"error_code": "stream_accept_required"}, status_code=406, headers=headers)
     enforce_webchat_fast_rate_limit(request, tenant_key=payload.tenant_key, session_id=payload.session_id)
@@ -448,23 +588,65 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         routing_context = resolve_fast_routing_context(db, country_code=payload.country_code, market_code=payload.market_code, channel_account_key=payload.channel_account_key)
         configured_rules = load_webchat_handoff_rules(db, market_id=routing_context.market_id, country_code=routing_context.country_code)
 
+
     support_payload = _support_hours_policy_payload(payload.body)
     if support_payload is not None:
         return StreamingResponse(_support_hours_policy_stream_events(row_id=begin.row_id, payload=payload, result_payload=support_payload, request=request), media_type="text/event-stream", headers=headers)
+
+    # SERVER_OWNED_STREAM_BEFORE_OPENCLAW_SETTINGS_BEGIN
+    # These deterministic server-owned responses must work even when generic OpenClaw streaming is not configured.
+    server_policy = decide_server_handoff_policy(body=payload.body, recent_context=merged_context, configured_rules=configured_rules)
+    if server_policy.handoff_required:
+        return StreamingResponse(
+            _server_policy_stream_events(
+                row_id=begin.row_id,
+                payload=payload,
+                context_payload=merged_context,
+                server_policy=server_policy,
+                routing_context=routing_context,
+            ),
+            media_type="text/event-stream",
+            headers=headers,
+        )
+
+    tracking_number = _tracking_candidate(body=payload.body, context=merged_context, tracking_number=business_state.tracking_number)
+    tracking_fact = _lookup_fast_tracking_fact(
+        tracking_number=tracking_number,
+        conversation_id=conversation_id,
+        ticket_id=None,
+        request_id=getattr(request.state, "request_id", None),
+        caller_id=caller_id,
+        country_code=payload.country_code or routing_context.country_code,
+    )
+    candidate_payload = _tracking_candidate_selection_payload(tracking_fact)
+    if candidate_payload:
+        return StreamingResponse(
+            _tracking_candidate_selection_stream_events(row_id=begin.row_id, payload=payload, result_payload=candidate_payload),
+            media_type="text/event-stream",
+            headers=headers,
+        )
+
+    forced_payload = _tracking_fact_forced_reply_payload(tracking_number=tracking_number, result=tracking_fact)
+    if forced_payload:
+        return StreamingResponse(
+            _tracking_fact_forced_stream_events(
+                row_id=begin.row_id,
+                payload=payload,
+                result_payload=forced_payload,
+                tracking_fact_metadata=tracking_fact.metadata_payload() if tracking_fact else None,
+                request=request,
+            ),
+            media_type="text/event-stream",
+            headers=headers,
+        )
+    # SERVER_OWNED_STREAM_BEFORE_OPENCLAW_SETTINGS_END
+
     if not getattr(stream_settings, "is_openclaw_stream_configured", bool(getattr(stream_settings, "stream_enabled", False))):
         return JSONResponse({"error_code": "stream_upstream_not_configured"}, status_code=503, headers=headers)
     is_selected = is_stream_rollout_selected(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, rollout_percent=getattr(stream_settings, "stream_rollout_percent", 100))
     if not is_selected and not _is_stream_canary_override_allowed(request, stream_settings):
         return JSONResponse({"error_code": "stream_not_in_rollout"}, status_code=503, headers=headers)
-    server_policy = decide_server_handoff_policy(body=payload.body, recent_context=merged_context, configured_rules=configured_rules)
-    if server_policy.handoff_required:
-        return StreamingResponse(_server_policy_stream_events(row_id=begin.row_id, payload=payload, context_payload=merged_context, server_policy=server_policy, routing_context=routing_context), media_type="text/event-stream", headers=headers)
 
-    tracking_number = _tracking_candidate(body=payload.body, context=merged_context, tracking_number=business_state.tracking_number)
-    tracking_fact = _lookup_fast_tracking_fact(tracking_number=tracking_number, conversation_id=conversation_id, ticket_id=None, request_id=getattr(request.state, "request_id", None), caller_id=caller_id, country_code=payload.country_code or routing_context.country_code)
-    candidate_payload = _tracking_candidate_selection_payload(tracking_fact)
-    if candidate_payload:
-        return StreamingResponse(_tracking_candidate_selection_stream_events(row_id=begin.row_id, payload=payload, result_payload=candidate_payload), media_type="text/event-stream", headers=headers)
     tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _tracking_fact_provider_fields(tracking_fact)
     generator = stream_webchat_fast_reply_events(begin=begin, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=merged_context, visitor=payload.visitor, request_id=getattr(request.state, "request_id", None), settings=stream_settings, routing_context=routing_context, tracking_fact_summary=tracking_fact_summary, tracking_fact_metadata=tracking_fact_metadata, tracking_fact_evidence_present=tracking_fact_evidence_present)
     return StreamingResponse(generator, media_type="text/event-stream", headers=headers)

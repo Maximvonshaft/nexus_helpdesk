@@ -15,17 +15,28 @@
   var locale = (script.getAttribute('data-locale') || navigator.language || 'en').toLowerCase();
   var buttonLabel = script.getAttribute('data-voice-label') || (locale.indexOf('zh') === 0 ? '网页语音' : 'WebCall');
   var storageKey = 'nexusdesk:webchat:' + apiBase + ':' + tenantKey + ':' + channelKey;
-  var state = { conversationId: null, visitorToken: null, busy: false, enabled: false, provider: 'mock', livekitUrl: null };
+  var lastVoiceStartedKey = storageKey + ':last_voice_started_at';
+  var voiceCooldownMs = Number(script.getAttribute('data-voice-cooldown-ms') || '60000');
+  if (!Number.isFinite(voiceCooldownMs) || voiceCooldownMs < 0) voiceCooldownMs = 60000;
+  var state = { conversationId: null, visitorToken: null, busy: false, enabled: false, provider: 'mock', livekitUrl: null, lastVoiceStartedAt: 0 };
 
   function loadCache() {
     try {
       var cached = JSON.parse(window.sessionStorage.getItem(storageKey) || '{}');
       state.conversationId = cached.conversationId || null;
       state.visitorToken = cached.visitorToken || null;
+      state.lastVoiceStartedAt = Number(window.sessionStorage.getItem(lastVoiceStartedKey) || cached.lastVoiceStartedAt || 0) || 0;
     } catch (err) {}
   }
   function persist() {
-    try { window.sessionStorage.setItem(storageKey, JSON.stringify({ conversationId: state.conversationId, visitorToken: state.visitorToken })); } catch (err) {}
+    try {
+      window.sessionStorage.setItem(storageKey, JSON.stringify({
+        conversationId: state.conversationId,
+        visitorToken: state.visitorToken,
+        lastVoiceStartedAt: state.lastVoiceStartedAt || 0
+      }));
+      if (state.lastVoiceStartedAt) window.sessionStorage.setItem(lastVoiceStartedKey, String(state.lastVoiceStartedAt));
+    } catch (err) {}
   }
   loadCache();
 
@@ -55,6 +66,14 @@
   }
   function textFallbackMessage(message) {
     return (message || 'WebCall unavailable') + '. Continue in WebChat text support from this page.';
+  }
+  function cooldownRemainingMs() {
+    var elapsed = Date.now() - (state.lastVoiceStartedAt || 0);
+    return Math.max(0, voiceCooldownMs - elapsed);
+  }
+  function recordVoiceStarted() {
+    state.lastVoiceStartedAt = Date.now();
+    persist();
   }
   function api(path, options, timeoutMs) {
     options = options || {};
@@ -121,6 +140,12 @@
   }
   function startVoiceCall() {
     if (!state.enabled || state.busy) return;
+    var remainingMs = cooldownRemainingMs();
+    if (remainingMs > 0) {
+      var remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+      setStatus('A WebCall was just started. Please use the opened call window or wait ' + remainingSeconds + ' seconds before starting another one.', true);
+      return;
+    }
     state.busy = true;
     button.disabled = true;
     setStatus('Starting WebCall session...', true);
@@ -131,11 +156,12 @@
         body: JSON.stringify({ locale: locale, recording_consent: false })
       }, 12000);
     }).then(function (data) {
+      recordVoiceStarted();
       setStatus('WebCall session created. Opening call room...', true);
       var url = buildWebCallUrl(data);
       var opened = window.open(apiBase + url, 'nexusdesk_webcall_' + data.voice_session_id, 'noopener,noreferrer,width=460,height=720');
       if (!opened) {
-        setStatus('Popup blocked. Please allow popups and click WebCall again.', true);
+        setStatus('Popup blocked. Please allow popups and use the opened WebCall request or wait before starting another one.', true);
         return;
       }
       setTimeout(function () { setStatus('', false); }, 2600);

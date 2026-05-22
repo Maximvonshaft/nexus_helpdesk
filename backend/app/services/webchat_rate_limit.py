@@ -52,7 +52,7 @@ def _enforce_database(db: Session, bucket_key: str) -> None:
         ),
         {"bucket_key": bucket_key},
     ).mappings().first()
-    if existing is None or existing["window_start"] is None or existing["window_start"] < window_start:
+    if existing is None:
         db.execute(
             text(
                 "INSERT INTO webchat_rate_limits "
@@ -63,6 +63,19 @@ def _enforce_database(db: Session, bucket_key: str) -> None:
         )
         db.flush()
         return
+
+    if existing["window_start"] is None or existing["window_start"] < window_start:
+        db.execute(
+            text(
+                "UPDATE webchat_rate_limits "
+                "SET window_start = :window_start, request_count = 1, updated_at = :updated_at "
+                "WHERE id = :id"
+            ),
+            {"id": existing["id"], "window_start": now, "updated_at": now},
+        )
+        db.flush()
+        return
+
     request_count = int(existing["request_count"] or 0)
     if request_count >= max_requests:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="too many webchat requests")

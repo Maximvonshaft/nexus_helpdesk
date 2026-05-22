@@ -8,6 +8,11 @@ from urllib.parse import urljoin
 
 CODEX_PROVIDER = "openai-codex"
 DEFAULT_TENANT_ID = "default"
+OPENCLAW_CODEX_AUTHORIZATION_URL = "https://auth.openai.com/oauth/authorize"
+OPENCLAW_CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token"
+OPENCLAW_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+OPENCLAW_CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback"
+OPENCLAW_CODEX_SCOPE = "openid profile email offline_access"
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -143,6 +148,18 @@ class CodexOAuthConfig:
             missing.append("CODEX_OAUTH_CLIENT_ID")
         if missing:
             raise ValueError("Codex token endpoint missing configuration: " + ", ".join(missing))
+
+    def openclaw_manual_authorization_url(self) -> str:
+        return os.environ.get("CODEX_OPENCLAW_AUTHORIZATION_URL", "").strip() or OPENCLAW_CODEX_AUTHORIZATION_URL
+
+    def openclaw_manual_token_url(self) -> str:
+        return os.environ.get("CODEX_OPENCLAW_TOKEN_URL", "").strip() or OPENCLAW_CODEX_TOKEN_URL
+
+    def openclaw_manual_redirect_uri(self) -> str:
+        return os.environ.get("CODEX_OPENCLAW_REDIRECT_URI", "").strip() or OPENCLAW_CODEX_REDIRECT_URI
+
+    def openclaw_manual_scope(self) -> str:
+        return os.environ.get("CODEX_OPENCLAW_SCOPE", "").strip() or OPENCLAW_CODEX_SCOPE
 
     def normalize_scope(self, requested_scopes: list[str] | tuple[str, ...] | None = None) -> str:
         scopes = list(requested_scopes or self.default_scopes)
