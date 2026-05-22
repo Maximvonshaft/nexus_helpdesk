@@ -79,6 +79,9 @@ class OutputContracts:
             raise ValueError("Output must be valid JSON") from exc
         if not isinstance(parsed, dict):
             raise ValueError("Output must be a JSON object")
+        if contract_name == "speedaf_webchat_fast_reply_v1":
+            parsed = OutputContracts._normalize_fast_reply_v1(parsed)
+            raw_output = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
 
         schema = OutputContracts.get_schema(contract_name)
         if schema:
@@ -88,6 +91,22 @@ class OutputContracts:
                 raise ValueError(f"Schema validation failed: {exc.message}") from exc
 
         OutputContracts.check_security_rules(raw_output=raw_output, parsed=parsed, evidence_present=evidence_present)
+        return parsed
+
+    @staticmethod
+    def _normalize_fast_reply_v1(parsed: dict[str, Any]) -> dict[str, Any]:
+        if "customer_reply" in parsed or not isinstance(parsed.get("reply"), str):
+            return parsed
+        parsed = {**parsed, "customer_reply": parsed["reply"]}
+        parsed.pop("reply", None)
+        parsed.setdefault("language", "en")
+        parsed.setdefault("ticket_should_create", False)
+        parsed.setdefault("handoff_required", False)
+        parsed.setdefault("tracking_number", None)
+        parsed.setdefault("handoff_reason", None)
+        parsed.setdefault("recommended_agent_action", None)
+        parsed.setdefault("internal_summary", None)
+        parsed.setdefault("risk_flags", [])
         return parsed
 
     @staticmethod
