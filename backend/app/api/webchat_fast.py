@@ -173,6 +173,11 @@ def _tracking_fact_public_payload(result: TrackingFactResult | None) -> dict[str
         "failure_reason": result.failure_reason,
         "tracking_number_hash": metadata.get("tracking_number_hash"),
     }
+    if result.fact_evidence_present and result.pii_redacted:
+        if result.status:
+            payload["status"] = result.status
+        if result.status_label:
+            payload["status_label"] = result.status_label
     if metadata.get("safe_candidates"):
         payload["safe_candidates"] = metadata.get("safe_candidates")
         payload["candidate_count"] = metadata.get("candidate_count")
@@ -225,6 +230,20 @@ def _tracking_fact_forced_reply_payload(*, tracking_number: str | None, result: 
         "elapsed_ms": 0,
         "tracking_fact": _tracking_fact_public_payload(result),
     }
+
+
+def _should_attempt_fact_first_lookup(*, body: str | None, tracking_number: str | None, caller_id: str | None) -> bool:
+    if tracking_number:
+        return True
+    if not caller_id:
+        return False
+    text = (body or "").lower()
+    markers = (
+        "track", "tracking", "parcel", "package", "shipment", "waybill", "status",
+        "where is", "where's", "delivery",
+        "查件", "查询", "物流", "包裹", "快递", "单号", "运单", "派送", "签收", "妥投"
+    )
+    return any(marker in text for marker in markers)
 
 
 def _persist_tracking_fact_forced_reply(
@@ -443,6 +462,78 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
         routing_context = resolve_fast_routing_context(db, country_code=payload.country_code, market_code=payload.market_code, channel_account_key=payload.channel_account_key)
         configured_rules = load_webchat_handoff_rules(db, market_id=routing_context.market_id, country_code=routing_context.country_code)
 
+    # FACT_FIRST_TRACKING_NON_STREAM_BEGIN
+    fact_first_tracking_number = _tracking_candidate(
+        body=payload.body,
+        context=merged_context,
+        tracking_number=business_state.tracking_number,
+    )
+    fact_first_tracking_fact = None
+    if _should_attempt_fact_first_lookup(
+        body=payload.body,
+        tracking_number=fact_first_tracking_number,
+        caller_id=caller_id,
+    ):
+        fact_first_tracking_fact = _lookup_fast_tracking_fact(
+            tracking_number=fact_first_tracking_number,
+            conversation_id=conversation_id,
+            ticket_id=None,
+            request_id=getattr(request.state, "request_id", None),
+            caller_id=caller_id,
+            country_code=payload.country_code or routing_context.country_code,
+        )
+
+    candidate_payload = _tracking_candidate_selection_payload(fact_first_tracking_fact)
+    if candidate_payload:
+        with db_context() as db:
+            conversation = get_or_create_fast_conversation(
+                db,
+                tenant_key=payload.tenant_key,
+                channel_key=payload.channel_key,
+                session_id=payload.session_id,
+                request=request,
+                visitor=payload.visitor,
+            )
+            append_fast_ai_message(
+                db,
+                conversation=conversation,
+                reply=candidate_payload["reply"],
+                client_message_id=payload.client_message_id,
+                metadata={
+                    "source": "server_tracking_candidate_selection",
+                    "safe_candidates": candidate_payload.get("safe_candidates"),
+                },
+            )
+            row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
+            mark_webchat_fast_done(db, row, response_json=candidate_payload)
+        return JSONResponse(candidate_payload, status_code=200, headers=headers)
+
+    forced_payload = _tracking_fact_forced_reply_payload(
+        tracking_number=fact_first_tracking_number,
+        result=fact_first_tracking_fact,
+    )
+    if forced_payload:
+        LOGGER.info(
+            "webchat_fast_tracking_fact_short_circuited",
+            extra={
+                "event_payload": {
+                    "reply_source": "server_tracking_fact",
+                    "tracking_number_hash": hash_tracking_number(fact_first_tracking_number),
+                    "request_id": getattr(request.state, "request_id", None),
+                    "conversation_id": conversation_id,
+                }
+            },
+        )
+        _persist_tracking_fact_forced_reply(
+            row_id=row_id,
+            payload=payload,
+            result_payload=forced_payload,
+            tracking_fact_metadata=fact_first_tracking_fact.metadata_payload() if fact_first_tracking_fact else None,
+            request=request,
+        )
+        return JSONResponse(forced_payload, status_code=200, headers=headers)
+    # FACT_FIRST_TRACKING_NON_STREAM_END
+
     support_payload = _support_hours_policy_payload(payload.body)
     if support_payload is not None:
         _persist_support_hours_policy_reply(row_id=row_id, payload=payload, result_payload=support_payload, request=request)
@@ -547,6 +638,68 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         conversation_id = conversation.id
         routing_context = resolve_fast_routing_context(db, country_code=payload.country_code, market_code=payload.market_code, channel_account_key=payload.channel_account_key)
         configured_rules = load_webchat_handoff_rules(db, market_id=routing_context.market_id, country_code=routing_context.country_code)
+
+    # FACT_FIRST_TRACKING_STREAM_BEGIN
+    fact_first_tracking_number = _tracking_candidate(
+        body=payload.body,
+        context=merged_context,
+        tracking_number=business_state.tracking_number,
+    )
+    fact_first_tracking_fact = None
+    if _should_attempt_fact_first_lookup(
+        body=payload.body,
+        tracking_number=fact_first_tracking_number,
+        caller_id=caller_id,
+    ):
+        fact_first_tracking_fact = _lookup_fast_tracking_fact(
+            tracking_number=fact_first_tracking_number,
+            conversation_id=conversation_id,
+            ticket_id=None,
+            request_id=getattr(request.state, "request_id", None),
+            caller_id=caller_id,
+            country_code=payload.country_code or routing_context.country_code,
+        )
+
+    candidate_payload = _tracking_candidate_selection_payload(fact_first_tracking_fact)
+    if candidate_payload:
+        return StreamingResponse(
+            _tracking_candidate_selection_stream_events(
+                row_id=begin.row_id,
+                payload=payload,
+                result_payload=candidate_payload,
+            ),
+            media_type="text/event-stream",
+            headers=headers,
+        )
+
+    forced_payload = _tracking_fact_forced_reply_payload(
+        tracking_number=fact_first_tracking_number,
+        result=fact_first_tracking_fact,
+    )
+    if forced_payload:
+        LOGGER.info(
+            "webchat_fast_tracking_fact_stream_short_circuited",
+            extra={
+                "event_payload": {
+                    "reply_source": "server_tracking_fact",
+                    "tracking_number_hash": hash_tracking_number(fact_first_tracking_number),
+                    "request_id": getattr(request.state, "request_id", None),
+                    "conversation_id": conversation_id,
+                }
+            },
+        )
+        return StreamingResponse(
+            _tracking_fact_forced_stream_events(
+                row_id=begin.row_id,
+                payload=payload,
+                result_payload=forced_payload,
+                tracking_fact_metadata=fact_first_tracking_fact.metadata_payload() if fact_first_tracking_fact else None,
+                request=request,
+            ),
+            media_type="text/event-stream",
+            headers=headers,
+        )
+    # FACT_FIRST_TRACKING_STREAM_END
 
     support_payload = _support_hours_policy_payload(payload.body)
     if support_payload is not None:
