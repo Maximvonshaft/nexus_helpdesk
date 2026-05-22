@@ -181,3 +181,32 @@ test('admin operator surfaces do not bypass unified api client with raw fetch', 
     .map(([name]) => name)
   assert.deepEqual(offenders, [])
 })
+
+
+test('webcall accept flow uses single microphone acquisition before accept and reuse for publish', () => {
+  const micRequestIndex = agentWebCallPanel.indexOf("setCallState('requesting_mic')")
+  const acceptIndex = agentWebCallPanel.indexOf('webchatVoiceApi.acceptSession')
+  const publishIndex = agentWebCallPanel.indexOf('publishTrack(audioTrack)')
+  assert.ok(micRequestIndex >= 0)
+  assert.ok(acceptIndex > micRequestIndex)
+  assert.ok(publishIndex > acceptIndex)
+  assert.match(agentWebCallPanel, /localAudioRef\.current = audioTrack/)
+  assert.doesNotMatch(agentWebCallPanel, /navigator\.mediaDevices\.getUserMedia/)
+  assert.doesNotMatch(agentWebCallPanel, /stop\(\)[\s\S]{0,300}createLocalAudioTrack/)
+})
+
+test('webcall accept failure paths clean up media resources', () => {
+  assert.match(agentWebCallPanel, /onError: async \(err: unknown\) => \{\s*await cleanupRoom\(\)/)
+  assert.match(agentWebCallPanel, /room\.localParticipant\.publishTrack\(audioTrack\)/)
+  assert.match(agentWebCallPanel, /if \(localAudioRef\.current\) \{\s*localAudioRef\.current\.stop\(\)/)
+  assert.match(agentWebCallPanel, /if \(roomRef\.current\) \{\s*roomRef\.current\.disconnect\(\)/)
+})
+
+test('webcall non-livekit accept path cleans up acquired microphone track before return', () => {
+  const nonLiveKitBranch = agentWebCallPanel.match(/if \(accepted\.provider !== 'livekit'\) \{[\s\S]*?return accepted\n\s*\}/)?.[0] ?? ''
+  assert.ok(nonLiveKitBranch)
+  const cleanupIndex = nonLiveKitBranch.indexOf('await cleanupRoom()')
+  const returnIndex = nonLiveKitBranch.indexOf('return accepted')
+  assert.ok(cleanupIndex >= 0)
+  assert.ok(returnIndex > cleanupIndex)
+})
