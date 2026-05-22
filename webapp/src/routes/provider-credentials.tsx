@@ -13,7 +13,7 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Field, Input } from '@/components/ui/Field'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Toast } from '@/components/ui/Toast'
-import type { CodexDeviceStart, CodexSessionStatus, ProviderCredentialStatus } from '@/lib/types'
+import type { CodexDeviceStart, CodexManualAuthorizationStart, CodexSessionStatus, ProviderCredentialStatus } from '@/lib/types'
 
 function scopeList(raw: string) {
   return raw.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean)
@@ -57,6 +57,8 @@ function ProviderCredentialsPage() {
   const permitted = canViewOps(session.data)
   const [scopes, setScopes] = useState('')
   const [device, setDevice] = useState<CodexDeviceStart | null>(null)
+  const [manual, setManual] = useState<CodexManualAuthorizationStart | null>(null)
+  const [manualResponse, setManualResponse] = useState('')
   const [sessionStatus, setSessionStatus] = useState<CodexSessionStatus | null>(null)
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
 
@@ -83,6 +85,32 @@ function ProviderCredentialsPage() {
       setToast({ message: '已启动 Device 授权，请使用验证码完成 Code X 授权。', tone: 'success' })
     },
     onError: (err: Error) => setToast({ message: err.message || '启动 Device 授权失败', tone: 'danger' }),
+  })
+
+  const startManual = useMutation({
+    mutationFn: api.startCodexManualAuthorization,
+    onSuccess: (data) => {
+      setManual(data)
+      setManualResponse('')
+      setSessionStatus({ status: 'pending', session_id: data.session_id, expires_at: data.expires_at, scope: data.scope })
+      setToast({ message: '已生成 OpenClaw 授权链接，请在浏览器完成登录后粘贴 redirect URL 或 code。', tone: 'success' })
+      window.open(data.authorization_url, '_blank', 'noopener,noreferrer')
+    },
+    onError: (err: Error) => setToast({ message: err.message || '生成 OpenClaw 授权链接失败', tone: 'danger' }),
+  })
+
+  const completeManual = useMutation({
+    mutationFn: async () => {
+      if (!manual?.session_id) throw new Error('没有待完成的 OpenClaw 授权会话')
+      return api.completeCodexManualAuthorization(manual.session_id, manualResponse)
+    },
+    onSuccess: async (data) => {
+      setSessionStatus({ status: data.status, session_id: manual?.session_id, credential_id: data.credential_id })
+      setToast({ message: 'OpenClaw-style ChatGPT 授权成功，Token 已加密保存。', tone: 'success' })
+      setManualResponse('')
+      await refreshStatus()
+    },
+    onError: (err: Error) => setToast({ message: err.message || '完成 OpenClaw 授权失败', tone: 'danger' }),
   })
 
   const pollDevice = useMutation({
@@ -120,7 +148,7 @@ function ProviderCredentialsPage() {
   if (session.data && !permitted) navigate({ to: '/' })
 
   const credentials = status.data?.credentials ?? []
-  const pending = authorize.isPending || startDevice.isPending || pollDevice.isPending || action.isPending
+  const pending = authorize.isPending || startDevice.isPending || startManual.isPending || completeManual.isPending || pollDevice.isPending || action.isPending
 
   return <AppShell>
     <PageHeader
@@ -143,6 +171,38 @@ function ProviderCredentialsPage() {
             <div className="button-row" style={{ marginTop: 8 }}><Button onClick={() => pollDevice.mutate()} disabled={pending}>轮询授权结果</Button></div>
           </div> : null}
           {sessionStatus ? <div className="section-subtitle" style={{ marginTop: 8 }}>当前授权会话：{sessionStatus.session_id || device?.session_id || '—'} · {sessionStatus.status} · {sessionStatus.error_code || 'no_error'}</div> : null}
+        </CardBody>
+      </Card>
+      <Card className="soft">
+        <CardHeader title="OpenClaw-style ChatGPT 订阅授权" subtitle="适用于云端、远程或 localhost callback 无法自动返回 Nexus 的场景。" />
+        <CardBody>
+          <div className="message">
+            如果浏览器跳转到 localhost 页面失败，请复制地址栏里的完整 URL 粘贴回来。
+          </div>
+          <div className="button-row" style={{ marginTop: 12 }}>
+            <Button onClick={() => startManual.mutate()} disabled={pending}>生成 OpenClaw 授权链接</Button>
+            {manual?.authorization_url ? <Button variant="secondary" onClick={() => window.open(manual.authorization_url, '_blank', 'noopener,noreferrer')} disabled={pending}>打开授权链接</Button> : null}
+          </div>
+          {manual ? <div className="message" style={{ marginTop: 12 }}>
+            <div><strong>Redirect URI:</strong> {sanitizeDisplayText(manual.redirect_uri)}</div>
+            <div><strong>Scope:</strong> {sanitizeDisplayText(manual.scope || '—')}</div>
+            <div><strong>Expires:</strong> {formatDateTime(manual.expires_at)}</div>
+            <div style={{ marginTop: 8, wordBreak: 'break-all' }}>
+              <a href={manual.authorization_url} target="_blank" rel="noreferrer">{manual.authorization_url}</a>
+            </div>
+          </div> : null}
+          <Field label="Redirect URL 或 Code" hint="支持完整 localhost redirect URL、code=...&state=... query string，或裸 code。">
+            <textarea
+              value={manualResponse}
+              onChange={(e) => setManualResponse(e.target.value)}
+              placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+              rows={5}
+              style={{ width: '100%', resize: 'vertical' }}
+            />
+          </Field>
+          <div className="button-row" style={{ marginTop: 8 }}>
+            <Button onClick={() => completeManual.mutate()} disabled={pending || !manual?.session_id || !manualResponse.trim()}>完成授权</Button>
+          </div>
         </CardBody>
       </Card>
       <Card>

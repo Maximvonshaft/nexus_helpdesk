@@ -27,6 +27,8 @@ import type {
   WebchatReplyResult,
   ProviderCredentialStatusResponse,
   CodexAuthorizationStart,
+  CodexManualAuthorizationCompleteResult,
+  CodexManualAuthorizationStart,
   CodexDeviceStart,
   CodexSessionStatus,
   CodexCredentialActionResult,
@@ -361,6 +363,13 @@ export const api = {
   startCodexAuthorization: (scopes?: string[]) => request<CodexAuthorizationStart>('/api/admin/provider-credentials/codex/authorize', {
     method: 'POST',
     body: JSON.stringify({ scopes: scopes?.length ? scopes : null }),
+  }),
+  startCodexManualAuthorization: () => request<CodexManualAuthorizationStart>('/api/admin/provider-credentials/codex/manual/start', {
+    method: 'POST',
+  }),
+  completeCodexManualAuthorization: (sessionId: string, authorizationResponse: string) => request<CodexManualAuthorizationCompleteResult>('/api/admin/provider-credentials/codex/manual/complete', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId, authorization_response: authorizationResponse }),
   }),
   startCodexDeviceFlow: (scopes?: string[]) => request<CodexDeviceStart>('/api/admin/provider-credentials/codex/device/start', {
     method: 'POST',

@@ -8,14 +8,14 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..audit_service import log_admin_audit
-from .codex_oauth_config import CODEX_PROVIDER, CodexOAuthConfig
+from .codex_oauth_config import CODEX_PROVIDER, OPENCLAW_CODEX_CLIENT_ID, CodexOAuthConfig
 from .credential_crypto import CredentialCryptoService
 from .oauth_refresh_manager import OAuthRefreshManager
 
@@ -96,6 +96,157 @@ class CodexCredentialBroker:
             "scope": scope,
             "provider": CODEX_PROVIDER,
         }
+
+    def start_openclaw_manual_paste_flow(self, *, tenant_id: str, user_id: str) -> dict[str, Any]:
+        scope = self.config.openclaw_manual_scope()
+        redirect_uri = self.config.openclaw_manual_redirect_uri()
+        state = secrets.token_urlsafe(32)
+        code_verifier = secrets.token_urlsafe(64)
+        code_challenge = _pkce_s256(code_verifier)
+        session_id = str(uuid.uuid4())
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=self.config.state_ttl_seconds)
+
+        self.db.execute(text("""
+            INSERT INTO provider_auth_sessions
+            (id, tenant_id, provider, flow_type, state, code_verifier, redirect_uri, scope,
+             expires_at, status, created_by)
+            VALUES
+            (:id, :tenant_id, :provider, 'openclaw_manual_paste', :state, :code_verifier, :redirect_uri, :scope,
+             :expires_at, 'pending', :created_by)
+        """), {
+            "id": session_id,
+            "tenant_id": tenant_id,
+            "provider": CODEX_PROVIDER,
+            "state": state,
+            "code_verifier": code_verifier,
+            "redirect_uri": redirect_uri,
+            "scope": scope,
+            "expires_at": expires_at,
+            "created_by": user_id,
+        })
+        self._audit(user_id, "codex_oauth_manual_started", {
+            "session_id": session_id,
+            "tenant_id": tenant_id,
+            "scope": scope,
+            "redirect_uri": redirect_uri,
+        })
+        self.db.commit()
+
+        params = {
+            "response_type": "code",
+            "client_id": OPENCLAW_CODEX_CLIENT_ID,
+            "redirect_uri": redirect_uri,
+            "scope": scope,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "state": state,
+            "id_token_add_organizations": "true",
+            "codex_cli_simplified_flow": "true",
+            "originator": "openclaw",
+        }
+        authorization_url = f"{self.config.openclaw_manual_authorization_url()}?{urlencode(params)}"
+        return {
+            "session_id": session_id,
+            "authorization_url": authorization_url,
+            "state": state,
+            "expires_at": expires_at.isoformat(),
+            "redirect_uri": redirect_uri,
+            "scope": scope,
+            "provider": CODEX_PROVIDER,
+        }
+
+    async def complete_openclaw_manual_paste_flow(
+        self,
+        *,
+        tenant_id: str,
+        session_id: str,
+        authorization_response: str,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        started = time.monotonic()
+        session = self._read_manual_session(tenant_id=tenant_id, session_id=session_id)
+        if not session:
+            raise ValueError("manual OAuth session not found")
+        if session["status"] != "pending":
+            raise ValueError("manual OAuth session is not pending")
+
+        expires_at = _normalize_dt(session["expires_at"])
+        if expires_at and expires_at < datetime.now(timezone.utc):
+            self._mark_session(session_id=session_id, tenant_id=tenant_id, status="expired", error_code="expired")
+            self._audit(actor_id, "codex_oauth_manual_failed", {
+                "session_id": session_id,
+                "tenant_id": tenant_id,
+                "error_code": "expired",
+            })
+            self.db.commit()
+            raise ValueError("manual OAuth session expired")
+
+        parsed = _parse_authorization_response(authorization_response)
+        code = parsed.get("code")
+        response_state = parsed.get("state")
+        expected_state = str(session["state"])
+        if response_state and response_state != expected_state:
+            self._mark_session(session_id=session_id, tenant_id=tenant_id, status="failed", error_code="state_mismatch")
+            self._audit(actor_id, "codex_oauth_manual_failed", {
+                "session_id": session_id,
+                "tenant_id": tenant_id,
+                "error_code": "state_mismatch",
+            })
+            self.db.commit()
+            raise ValueError("manual OAuth state mismatch")
+        if not code:
+            self._mark_session(session_id=session_id, tenant_id=tenant_id, status="failed", error_code="missing_code")
+            self._audit(actor_id, "codex_oauth_manual_failed", {
+                "session_id": session_id,
+                "tenant_id": tenant_id,
+                "error_code": "missing_code",
+            })
+            self.db.commit()
+            raise ValueError("manual OAuth response missing code")
+
+        try:
+            token_data = await self._exchange_authorization_code(
+                code=code,
+                code_verifier=str(session["code_verifier"]),
+                redirect_uri=str(session["redirect_uri"]),
+                token_url=self.config.openclaw_manual_token_url(),
+                client_id=OPENCLAW_CODEX_CLIENT_ID,
+                include_client_secret=False,
+                require_refresh_token=True,
+            )
+            credential_id = self._upsert_credential(
+                tenant_id=tenant_id,
+                created_by=actor_id,
+                token_data=token_data,
+                session_scope=session["scope"],
+            )
+            self._mark_session(session_id=session_id, tenant_id=tenant_id, status="authorized", error_code=None)
+            self._audit(actor_id, "codex_oauth_manual_completed", {
+                "session_id": session_id,
+                "credential_id": credential_id,
+                "tenant_id": tenant_id,
+                "scope": token_data.get("scope") or session["scope"],
+            })
+            self.db.commit()
+            return {
+                "ok": True,
+                "status": "authorized",
+                "credential_id": credential_id,
+                "provider": CODEX_PROVIDER,
+                "elapsed_ms": _elapsed_ms(started),
+                "secret_values_exposed": False,
+            }
+        except Exception as exc:
+            self.db.rollback()
+            self._mark_session(session_id=session_id, tenant_id=tenant_id, status="failed", error_code="token_exchange_failed")
+            self._audit(actor_id, "codex_oauth_manual_failed", {
+                "session_id": session_id,
+                "tenant_id": tenant_id,
+                "error_code": "token_exchange_failed",
+                "error_type": type(exc).__name__,
+            })
+            self.db.commit()
+            raise ValueError("manual OAuth token exchange failed") from exc
 
     async def complete_authorization_code_callback(
         self,
@@ -280,23 +431,50 @@ class CodexCredentialBroker:
             LIMIT 1
         """), {"provider": CODEX_PROVIDER, "state": state}).mappings().first()
 
-    async def _exchange_authorization_code(self, *, code: str, code_verifier: str, redirect_uri: str) -> dict[str, Any]:
-        self.config.require_token_endpoint()
+    def _read_manual_session(self, *, tenant_id: str, session_id: str):
+        return self.db.execute(text("""
+            SELECT id, tenant_id, provider, flow_type, state, code_verifier, redirect_uri, scope,
+                   expires_at, status, error_code, created_by
+            FROM provider_auth_sessions
+            WHERE tenant_id = :tenant_id AND id = :id AND provider = :provider
+              AND flow_type = 'openclaw_manual_paste'
+            LIMIT 1
+        """), {"tenant_id": tenant_id, "id": session_id, "provider": CODEX_PROVIDER}).mappings().first()
+
+    async def _exchange_authorization_code(
+        self,
+        *,
+        code: str,
+        code_verifier: str,
+        redirect_uri: str,
+        token_url: str | None = None,
+        client_id: str | None = None,
+        include_client_secret: bool = True,
+        require_refresh_token: bool = False,
+    ) -> dict[str, Any]:
+        if token_url is None or client_id is None:
+            self.config.require_token_endpoint()
+        resolved_token_url = token_url or self.config.token_url
+        resolved_client_id = client_id or self.config.client_id
+        if not resolved_token_url or not resolved_client_id:
+            raise ValueError("Codex token endpoint missing configuration")
         payload = {
             "grant_type": "authorization_code",
             "code": code,
-            "client_id": self.config.client_id,
+            "client_id": resolved_client_id,
             "redirect_uri": redirect_uri,
             "code_verifier": code_verifier,
         }
-        if self.config.client_secret:
+        if include_client_secret and self.config.client_secret:
             payload["client_secret"] = self.config.client_secret
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
-            response = await client.post(self.config.token_url, data=payload, headers={"Accept": "application/json"})
+            response = await client.post(resolved_token_url, data=payload, headers={"Accept": "application/json"})
             response.raise_for_status()
             data = response.json()
         if not (data.get("access_token") or data.get("access")):
             raise ValueError("Codex token response missing access token")
+        if require_refresh_token and not (data.get("refresh_token") or data.get("refresh")):
+            raise ValueError("Codex token response missing refresh token")
         return data
 
     def _upsert_credential(self, *, tenant_id: str, created_by: str, token_data: dict[str, Any], session_scope: str | None) -> str:
@@ -305,14 +483,16 @@ class CodexCredentialBroker:
         expires_in = int(token_data.get("expires_in") or token_data.get("expires") or 3600)
         if not access_token:
             raise ValueError("Codex token response missing access token")
-        account_id = token_data.get("account_id") or token_data.get("accountId")
-        email = token_data.get("email")
-        plan_type = token_data.get("chatgpt_plan_type") or token_data.get("chatgptPlanType")
+        identity = _extract_codex_identity(access_token)
+        account_id = token_data.get("account_id") or token_data.get("accountId") or identity.get("account_id")
+        email = token_data.get("email") or identity.get("email")
+        plan_type = token_data.get("chatgpt_plan_type") or token_data.get("chatgptPlanType") or identity.get("chatgpt_plan_type")
         profile_id = account_id or email or self.crypto_service.get_safe_fingerprint(CODEX_PROVIDER, tenant_id, "profile", access_token) or str(uuid.uuid4())
         credential_id = str(uuid.uuid4())
         encrypted_access = self.crypto_service.encrypt(access_token)
         encrypted_refresh = self.crypto_service.encrypt(refresh_token) if refresh_token else None
-        expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=expires_in)
         fingerprint = self.crypto_service.get_safe_fingerprint(CODEX_PROVIDER, tenant_id, profile_id, access_token)
         scope = token_data.get("scope") or session_scope
         row = self.db.execute(text("""
@@ -329,7 +509,7 @@ class CodexCredentialBroker:
                           scope = EXCLUDED.scope,
                           status = 'active',
                           last_error_code = NULL,
-                          updated_at = now()
+                          updated_at = :updated_at
             RETURNING id
         """), {
             "id": credential_id,
@@ -345,6 +525,7 @@ class CodexCredentialBroker:
             "fingerprint": fingerprint,
             "created_by": created_by,
             "scope": scope,
+            "updated_at": now,
         }).first()
         return str(row[0]) if row else credential_id
 
@@ -402,6 +583,53 @@ def _pkce_s256(code_verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
+def _parse_authorization_response(value: str) -> dict[str, str]:
+    trimmed = (value or "").strip()
+    if not trimmed:
+        return {}
+    if "://" in trimmed:
+        parsed = urlparse(trimmed)
+        params = parse_qs(parsed.query, keep_blank_values=False)
+        return {key: values[-1] for key, values in params.items() if values}
+    if "code=" in trimmed or "state=" in trimmed:
+        params = parse_qs(trimmed.lstrip("?"), keep_blank_values=False)
+        return {key: values[-1] for key, values in params.items() if values}
+    return {"code": trimmed}
+
+
+def _decode_jwt_payload(token: str) -> dict[str, Any]:
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return {}
+        payload = parts[1]
+        padding = "=" * (-len(payload) % 4)
+        decoded = base64.urlsafe_b64decode((payload + padding).encode("ascii")).decode("utf-8")
+        data = json.loads(decoded)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _extract_codex_identity(access_token: str) -> dict[str, str]:
+    payload = _decode_jwt_payload(access_token)
+    auth_claim = payload.get("https://api.openai.com/auth")
+    profile_claim = payload.get("https://api.openai.com/profile")
+    auth = auth_claim if isinstance(auth_claim, dict) else {}
+    profile = profile_claim if isinstance(profile_claim, dict) else {}
+    identity: dict[str, str] = {}
+    account_id = auth.get("chatgpt_account_id")
+    if isinstance(account_id, str) and account_id.strip():
+        identity["account_id"] = account_id.strip()
+    plan_type = auth.get("chatgpt_plan_type")
+    if isinstance(plan_type, str) and plan_type.strip():
+        identity["chatgpt_plan_type"] = plan_type.strip()
+    email = profile.get("email")
+    if isinstance(email, str) and email.strip():
+        identity["email"] = email.strip()
+    return identity
+
+
 def _actor_id(value: str | int | None) -> int | None:
     try:
         return int(value) if value is not None and str(value).strip() else None
@@ -421,6 +649,11 @@ def _safe_error_code(value: str) -> str:
 def _normalize_dt(value):
     if value is None:
         return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
     if getattr(value, "tzinfo", None) is None:
         return value.replace(tzinfo=timezone.utc)
     return value
