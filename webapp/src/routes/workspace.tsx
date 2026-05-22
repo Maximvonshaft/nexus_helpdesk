@@ -19,6 +19,7 @@ import { CustomerReplyPanel } from '@/components/operator/CustomerReplyPanel'
 
 function timelineTitle(item: Record<string, unknown>) {
   const sourceType = String(item.source_type || '')
+  if (sourceType === 'voice_call' || item.kind === 'voice_call') return 'WebCall evidence'
   if (sourceType === 'comment') return '客户消息'
   if (sourceType === 'internal_note') return '内部备注'
   if (sourceType === 'outbound_message') return '回复发送'
@@ -26,6 +27,36 @@ function timelineTitle(item: Record<string, unknown>) {
   if (sourceType === 'ticket_event') return '工单事件'
   if (sourceType === 'webchat_event') return 'WebChat 事件'
   return '时间线项目'
+}
+
+function timelinePayload(item: Record<string, unknown>) {
+  const payload = item.payload
+  return payload && typeof payload === 'object' ? payload as Record<string, unknown> : null
+}
+
+function timelineEvidenceValue(payload: Record<string, unknown> | null, key: string) {
+  const value = payload?.[key]
+  if (value === null || value === undefined || value === '') return '-'
+  return sanitizeDisplayText(String(value))
+}
+
+function VoiceCallTimelineEvidence({ item }: { item: Record<string, unknown> }) {
+  const payload = timelinePayload(item)
+  return (
+    <div className="kv-grid" style={{ marginTop: 10 }} data-testid="ticket-timeline-voice-call-evidence-card">
+      <div className="kv"><label>status</label><div>{timelineEvidenceValue(payload, 'status')}</div></div>
+      <div className="kv"><label>voice_session_id</label><div>{timelineEvidenceValue(payload, 'voice_session_id')}</div></div>
+      <div className="kv"><label>provider</label><div>{timelineEvidenceValue(payload, 'provider')}</div></div>
+      <div className="kv"><label>accepted_by</label><div>{timelineEvidenceValue(payload, 'accepted_by')}</div></div>
+      <div className="kv"><label>ended_by</label><div>{timelineEvidenceValue(payload, 'ended_by')}</div></div>
+      <div className="kv"><label>ringing_duration_seconds</label><div>{timelineEvidenceValue(payload, 'ringing_duration_seconds')}</div></div>
+      <div className="kv"><label>talk_duration_seconds</label><div>{timelineEvidenceValue(payload, 'talk_duration_seconds')}</div></div>
+      <div className="kv"><label>total_duration_seconds</label><div>{timelineEvidenceValue(payload, 'total_duration_seconds')}</div></div>
+      <div className="kv"><label>recording status</label><div>{timelineEvidenceValue(payload, 'recording_status')}</div></div>
+      <div className="kv"><label>transcript status</label><div>{timelineEvidenceValue(payload, 'transcript_status')}</div></div>
+      <div className="kv"><label>summary status</label><div>{timelineEvidenceValue(payload, 'summary_status')}</div></div>
+    </div>
+  )
 }
 
 function timelineBody(item: Record<string, unknown>) {
@@ -378,6 +409,7 @@ function WorkspacePage() {
                                 <span>{formatDateTime(String(item.created_at || ''))}</span>
                               </div>
                               <div>{timelineBody(item)}</div>
+                              {String(item.source_type || item.kind || '') === 'voice_call' ? <VoiceCallTimelineEvidence item={item} /> : null}
                             </div>
                           ))}
                           {!timelineItems.length && !timeline.isLoading ? <EmptyState text="当前还没有可展示的时间线记录。" /> : null}

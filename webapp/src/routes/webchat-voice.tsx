@@ -132,6 +132,7 @@ function WebCallAgentConsolePage() {
           ticketNo={selectedConversation?.ticket_no || selectedIncomingSession?.ticket_no}
           conversationId={selectedConversation?.conversation_id || selectedIncomingSession?.conversation_id}
           visitorLabel={selectedConversation ? visitorLabel(selectedConversation) : incomingVisitorLabel(selectedIncomingSession)}
+          onSelectTicket={setSelectedTicketId}
           onActivity={() => void refreshAll()}
         />
       </div>

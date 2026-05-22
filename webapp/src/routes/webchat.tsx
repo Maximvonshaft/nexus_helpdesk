@@ -7,6 +7,8 @@ import { api, getToken } from '@/lib/api'
 import { formatDateTime, sanitizeDisplayText, statusTone } from '@/lib/format'
 import { findReplyChannelCapability, isCustomerSendableReplyChannel, outboundChannelMissingText, replyPanelVisibleChannels } from '@/lib/outboundChannels'
 import type { WebchatCardAction, WebchatCardPayload, WebchatMessage } from '@/lib/types'
+import { webchatVoiceApi } from '@/lib/webchatVoiceApi'
+import { AgentWebCallPanel } from '@/components/webcall/AgentWebCallPanel'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
@@ -45,9 +47,39 @@ function AIStatusBadge({ status, pending, turnId }: { status?: string | null; pe
   return <Badge tone={aiStatusTone(status, pending)}>AI {sanitizeDisplayText(label)}{suffix}</Badge>
 }
 
+function voiceEvidenceValue(payload: Record<string, unknown> | null | undefined, key: string) {
+  const value = payload?.[key]
+  if (value === null || value === undefined || value === '') return '-'
+  return sanitizeDisplayText(String(value))
+}
+
 function MessageCard({ msg }: { msg: WebchatMessage }) {
   const messageType = msg.message_type || 'text'
   const cardPayload = isCardPayload(msg.payload_json) ? msg.payload_json : null
+  if (messageType === 'voice_call') {
+    const payload = msg.payload_json && typeof msg.payload_json === 'object' ? msg.payload_json as Record<string, unknown> : null
+    return (
+      <div className="message" data-role="agent" data-testid="voice-call-evidence-card">
+        <div className="message-head">
+          <strong>WebCall evidence · {voiceEvidenceValue(payload, 'status')}</strong>
+          <span>{formatDateTime(msg.created_at)}</span>
+        </div>
+        <div>{sanitizeDisplayText(msg.body_text || msg.body)}</div>
+        <div className="kv-grid" style={{ marginTop: 10 }}>
+          <div className="kv"><label>voice_session_id</label><div>{voiceEvidenceValue(payload, 'voice_session_id')}</div></div>
+          <div className="kv"><label>provider</label><div>{voiceEvidenceValue(payload, 'provider')}</div></div>
+          <div className="kv"><label>accepted_by</label><div>{voiceEvidenceValue(payload, 'accepted_by')}</div></div>
+          <div className="kv"><label>ended_by</label><div>{voiceEvidenceValue(payload, 'ended_by')}</div></div>
+          <div className="kv"><label>ringing_duration_seconds</label><div>{voiceEvidenceValue(payload, 'ringing_duration_seconds')}</div></div>
+          <div className="kv"><label>talk_duration_seconds</label><div>{voiceEvidenceValue(payload, 'talk_duration_seconds')}</div></div>
+          <div className="kv"><label>total_duration_seconds</label><div>{voiceEvidenceValue(payload, 'total_duration_seconds')}</div></div>
+          <div className="kv"><label>recording status</label><div>{voiceEvidenceValue(payload, 'recording_status')}</div></div>
+          <div className="kv"><label>transcript status</label><div>{voiceEvidenceValue(payload, 'transcript_status')}</div></div>
+          <div className="kv"><label>summary status</label><div>{voiceEvidenceValue(payload, 'summary_status')}</div></div>
+        </div>
+      </div>
+    )
+  }
   if (messageType === 'card') {
     const actions: WebchatCardAction[] = cardPayload?.actions ?? []
     return (
@@ -121,6 +153,13 @@ function WebchatInboxPage() {
     retry: false,
   })
 
+  const incomingVoiceSessions = useQuery({
+    queryKey: ['webchatVoiceIncomingSessions', 'webchat-integrated-entry'],
+    queryFn: ({ signal }) => webchatVoiceApi.incomingSessions({ status: 'incoming', limit: 50 }, { signal }),
+    refetchInterval: 4000,
+    retry: false,
+  })
+
   useEffect(() => {
     if (conversations.isSuccess) setConversationPollFailures(0)
     if (conversations.isError) setConversationPollFailures((value) => Math.min(value + 1, 6))
@@ -163,12 +202,20 @@ function WebchatInboxPage() {
     setLastEventId(events.data.last_event_id || events.data.events[events.data.events.length - 1].id)
     void client.invalidateQueries({ queryKey: ['webchatThread', selectedTicketId] })
     void client.invalidateQueries({ queryKey: ['webchatConversations'] })
+    void client.invalidateQueries({ queryKey: ['webchatVoiceIncomingSessions'] })
   }, [client, events.data, selectedTicketId])
 
   const selectedConversation = useMemo(
     () => (conversations.data ?? []).find((item) => item.ticket_id === selectedTicketId),
     [conversations.data, selectedTicketId],
   )
+  const incomingVoiceByTicket = useMemo(() => {
+    const values = new Map<number, number>()
+    for (const item of incomingVoiceSessions.data?.items ?? []) {
+      values.set(item.ticket_id, (values.get(item.ticket_id) ?? 0) + 1)
+    }
+    return values
+  }, [incomingVoiceSessions.data?.items])
   const threadData = thread.data
   const visibleReplyChannels = useMemo(
     () => replyPanelVisibleChannels(outboundCapabilities.data?.channels),
@@ -244,6 +291,7 @@ function WebchatInboxPage() {
                     <AIStatusBadge status={item.ai_status} pending={item.ai_pending} turnId={item.ai_turn_id} />
                     {item.last_message_type ? <Badge>{sanitizeDisplayText(item.last_message_type)}</Badge> : null}
                     {item.needs_human ? <Badge tone="warning">Needs human</Badge> : null}
+                    {incomingVoiceByTicket.get(item.ticket_id) ? <Badge tone="warning">Incoming WebCall</Badge> : null}
                   </div></div>
                   <div className="queue-card-title">{sanitizeDisplayText(item.ticket_no)} · {sanitizeDisplayText(item.title)}</div>
                   <div className="queue-card-meta">{sanitizeDisplayText(item.visitor_name || item.visitor_email || item.visitor_phone || 'Anonymous visitor')}</div>
@@ -256,6 +304,19 @@ function WebchatInboxPage() {
         </Card>
 
         <div className="stack">
+          <AgentWebCallPanel
+            ticketId={selectedTicketId}
+            ticketNo={selectedConversation?.ticket_no}
+            conversationId={selectedConversation?.conversation_id}
+            visitorLabel={selectedConversation?.visitor_name || selectedConversation?.visitor_email || selectedConversation?.visitor_phone || 'Anonymous visitor'}
+            onSelectTicket={setSelectedTicketId}
+            onActivity={() => {
+              void client.invalidateQueries({ queryKey: ['webchatThread', selectedTicketId] })
+              void client.invalidateQueries({ queryKey: ['webchatConversations'] })
+              void client.invalidateQueries({ queryKey: ['webchatVoiceIncomingSessions'] })
+            }}
+          />
+
           <Card>
             <CardHeader title="会话详情" subtitle="展示访客来源、结构化卡片、客户 action、handoff 和完整消息。" />
             <CardBody>

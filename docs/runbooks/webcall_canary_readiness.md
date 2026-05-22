@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This runbook defines the pre-release canary gate for the WebCall operator console and voice lifecycle path after PR-B1 and PR-B2.
+This runbook defines the pre-release canary gate for the WebCall operator console and voice lifecycle path after PR-WC-1 through PR-WC-5.
 
 The canary is intentionally non-deploying. It validates readiness before any production rollout decision.
 
@@ -16,7 +16,8 @@ The canary must not:
 - modify LiveKit provider credentials;
 - modify database migrations;
 - request microphone permission during page load;
-- render provider credentials or voice participant credentials into operator UI.
+- render provider credentials or voice participant credentials into operator UI;
+- enable SIP/PSTN, recording, transcription, AI voice, or outbound calling.
 
 ## Required local command
 
@@ -59,10 +60,35 @@ The canary verifies:
    - session list does not create local audio track;
    - runtime config does not create local audio track;
    - local audio track is created only after operator accept path.
-6. Optional HTTP readiness:
+6. /webchat integrated entry static guarantee:
+   - the main WebChat operator workspace renders `AgentWebCallPanel`;
+   - conversation list shows an Incoming WebCall badge for tickets with ringing WebCall sessions;
+   - `/webchat-voice` remains available as fallback.
+7. WebCall Operational Queue tabs:
+   - Incoming;
+   - My Active;
+   - All Active;
+   - Missed;
+   - Closed Recent.
+8. Voice call evidence card:
+   - WebChat thread displays status, voice_session_id, provider, accepted_by, ended_by, ringing_duration_seconds, talk_duration_seconds, total_duration_seconds, recording status, transcript status, and summary status;
+   - ticket timeline receives the same `voice_call` payload.
+9. Missed cleanup:
+   - admin list queries clean expired ringing sessions to missed;
+   - cleanup writes `voice.session.missed`;
+   - cleanup writes final `voice_call` evidence.
+10. Runtime config no-secret policy:
+   - `/api/webchat/voice/runtime-config` may expose enabled/provider/livekit_url and capability booleans only;
+   - it must not expose LiveKit API key, LiveKit API secret, participant token, visitor token, password, refresh token, or provider credentials.
+11. Two-browser proof output:
+   - Browser A visitor opens `/webcall/{voice_session_id}` and clicks Join;
+   - Browser B operator opens `/webchat`, sees Incoming WebCall badge, accepts, ends, and continues text follow-up in the same ticket;
+   - the same ticket shows the `voice_call` evidence card.
+12. Optional HTTP readiness:
    - runtime config is reachable;
    - runtime config exposes only safe public runtime values;
-   - /webchat-voice is reachable.
+   - /webchat integrated entry is reachable;
+   - /webchat-voice fallback is reachable.
 
 ## Expected result
 
