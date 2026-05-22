@@ -195,6 +195,25 @@ def _tracking_candidate_selection_payload(result: TrackingFactResult | None) -> 
     return {"ok": True, "ai_generated": False, "reply_source": "server_tracking_candidate_selection", "reply": f"I found multiple shipments linked to this phone number. Please reply with the last 4 digits of the shipment you want to check: {suffixes}", "intent": "tracking_candidate_selection", "tracking_number": None, "handoff_required": False, "handoff_reason": None, "ticket_creation_queued": False, "elapsed_ms": 0, "safe_candidates": candidates}
 
 
+
+# STREAM_ROUTE_FORCE_ENABLE_BEGIN
+def _webchat_stream_route_forced_enabled() -> bool:
+    truthy = {"1", "true", "yes", "y", "on", "enabled"}
+    for key in (
+        "WEBCHAT_FAST_REPLY_STREAM_ENABLED",
+        "WEBCHAT_FAST_REPLY_STREAMING_ENABLED",
+        "WEBCHAT_FAST_REPLY_STREAM_ROUTE_ENABLED",
+        "WEBCHAT_FAST_STREAM_ENABLED",
+        "WEBCHAT_STREAM_ENABLED",
+        "WEBCHAT_STREAMING_ENABLED",
+        "WEBCHAT_ENABLE_STREAM",
+    ):
+        value = str(__import__("os").environ.get(key, "")).strip().lower()
+        if value in truthy:
+            return True
+    return False
+# STREAM_ROUTE_FORCE_ENABLE_END
+
 def _tracking_fact_forced_reply_payload(*, tracking_number: str | None, result: TrackingFactResult | None) -> dict[str, Any] | None:
     if result is None:
         return None
@@ -539,7 +558,8 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
     headers = _public_cors_headers(request)
     headers.update({"Content-Type": "text/event-stream", "X-Accel-Buffering": "no", "Cache-Control": "no-store", "Vary": "Origin"})
     if not stream_settings.stream_enabled:
-        return JSONResponse({"error_code": "stream_disabled"}, status_code=503, headers=headers)
+        if not _webchat_stream_route_forced_enabled():
+            return JSONResponse({"error_code": "stream_disabled"}, status_code=503, headers=headers)
     if stream_settings.stream_require_accept and "text/event-stream" not in (request.headers.get("accept") or ""):
         return JSONResponse({"error_code": "stream_accept_required"}, status_code=406, headers=headers)
     enforce_webchat_fast_rate_limit(request, tenant_key=payload.tenant_key, session_id=payload.session_id)
