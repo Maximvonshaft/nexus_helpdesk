@@ -59,6 +59,10 @@ _OUTBOUND_PROVIDER_DISPATCH = Histogram('nexusdesk_outbound_provider_dispatch_ms
 _OUTBOUND_PROVIDER_RESULT = Counter('nexusdesk_outbound_provider_result_total', 'Outbound provider dispatch result count', ['provider', 'status'], registry=_PROM_REGISTRY) if Counter else None
 _FRONTEND_API_LATENCY = Histogram('nexusdesk_frontend_api_latency_ms', 'Frontend-observed API latency in milliseconds', ['method', 'path', 'status'], registry=_PROM_REGISTRY, buckets=(25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 15000)) if Histogram else None
 _WEB_VITALS = Histogram('nexusdesk_web_vitals_value', 'Frontend Web Vitals values reported without PII', ['name', 'rating'], registry=_PROM_REGISTRY, buckets=(0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10)) if Histogram else None
+_VOICE_SESSION_EVENTS = Counter('nexusdesk_voice_session_events_total', 'WebCall voice lifecycle events without credentials', ['provider', 'status', 'event_type'], registry=_PROM_REGISTRY) if Counter else None
+_VOICE_PROVIDER_ERRORS = Counter('nexusdesk_voice_provider_errors_total', 'WebCall voice provider operation errors', ['provider', 'operation'], registry=_PROM_REGISTRY) if Counter else None
+_VOICE_CALL_DURATION = Histogram('nexusdesk_voice_call_duration_seconds', 'Completed WebCall duration in seconds', ['provider', 'status'], registry=_PROM_REGISTRY, buckets=(1, 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600)) if Histogram else None
+_VOICE_RINGING_DURATION = Histogram('nexusdesk_voice_ringing_duration_seconds', 'WebCall ringing duration before accept or terminal state in seconds', ['provider', 'status'], registry=_PROM_REGISTRY, buckets=(1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 900)) if Histogram else None
 
 _ID_SEGMENT_RE = re.compile(r"/\d+(?=/|$)")
 _UUID_SEGMENT_RE = re.compile(r"/[0-9a-fA-F]{8,}(?=/|$)")
@@ -235,6 +239,25 @@ def record_web_vital(name: str, rating: str, value: int | float | None) -> None:
     if value is not None and _WEB_VITALS:
         _WEB_VITALS.labels(name=_label(name), rating=_label(rating)).observe(max(float(value), 0.0))
 
+
+def record_voice_session_event(provider: str | None, status: str | None, event_type: str | None) -> None:
+    if _VOICE_SESSION_EVENTS:
+        _VOICE_SESSION_EVENTS.labels(provider=_label(provider), status=_label(status), event_type=_label(event_type)).inc()
+
+
+def record_voice_provider_error(provider: str | None, operation: str | None) -> None:
+    if _VOICE_PROVIDER_ERRORS:
+        _VOICE_PROVIDER_ERRORS.labels(provider=_label(provider), operation=_label(operation)).inc()
+
+
+def record_voice_call_duration(provider: str | None, status: str | None, duration_seconds: int | float | None) -> None:
+    if duration_seconds is not None and _VOICE_CALL_DURATION:
+        _VOICE_CALL_DURATION.labels(provider=_label(provider), status=_label(status)).observe(max(float(duration_seconds), 0.0))
+
+
+def record_voice_ringing_duration(provider: str | None, status: str | None, duration_seconds: int | float | None) -> None:
+    if duration_seconds is not None and _VOICE_RINGING_DURATION:
+        _VOICE_RINGING_DURATION.labels(provider=_label(provider), status=_label(status)).observe(max(float(duration_seconds), 0.0))
 
 def log_signoff_state(state: str, **fields) -> None:
     log_event(20, "production_signoff_state", state=state, **fields)

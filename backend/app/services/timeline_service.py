@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..enums import EventType, MessageStatus
 from ..models import Ticket, TicketAIIntake, TicketAttachment, TicketComment, TicketEvent, TicketInternalNote, TicketOutboundMessage
+from ..webchat_models import WebchatMessage
 from .outbound_semantics import outbound_is_external_send, outbound_ui_label
 
 
@@ -15,6 +16,16 @@ def _actor_name(obj, fallback: Optional[str] = None) -> Optional[str]:
     if actor:
         return actor.display_name
     return fallback
+
+
+def _json_payload(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {"raw": raw}
+    return parsed if isinstance(parsed, dict) else {"raw": parsed}
 
 
 def serialize_event(event: TicketEvent) -> dict:
@@ -166,6 +177,24 @@ def serialize_ai_intake(ai_intake: TicketAIIntake) -> dict:
     }
 
 
+
+def serialize_webchat_voice_message(message: WebchatMessage) -> dict:
+    payload = _json_payload(message.payload_json)
+    status = str(payload.get("status") or "").lower()
+    title = "Voice call ended" if status == "ended" else "Voice call closed"
+    summary = message.body_text or message.body or title
+    return {
+        "id": f"webchat-voice-{message.id}",
+        "kind": "voice_call",
+        "title": title,
+        "summary": summary,
+        "visibility": "internal",
+        "actor_id": None,
+        "actor_display_name": message.author_label or "NexusDesk Voice",
+        "created_at": message.created_at,
+        "payload": payload,
+    }
+
 def build_unified_timeline(db: Session, ticket_id: int) -> list[dict]:
     ticket = (
         db.query(Ticket)
@@ -183,6 +212,14 @@ def build_unified_timeline(db: Session, ticket_id: int) -> list[dict]:
     if not ticket:
         return []
 
+    voice_messages = (
+        db.query(WebchatMessage)
+        .filter(WebchatMessage.ticket_id == ticket_id, WebchatMessage.message_type == "voice_call")
+        .order_by(WebchatMessage.created_at.desc())
+        .limit(50)
+        .all()
+    )
+
     items = []
     items.extend(serialize_event(x) for x in ticket.events)
     items.extend(serialize_comment(x) for x in ticket.comments)
@@ -190,5 +227,6 @@ def build_unified_timeline(db: Session, ticket_id: int) -> list[dict]:
     items.extend(serialize_attachment(x) for x in ticket.attachments)
     items.extend(serialize_outbound(x) for x in ticket.outbound_messages)
     items.extend(serialize_ai_intake(x) for x in ticket.ai_intakes)
+    items.extend(serialize_webchat_voice_message(x) for x in voice_messages)
     items.sort(key=lambda x: x["created_at"], reverse=True)
     return items

@@ -67,10 +67,12 @@ log "PYTEST_CMD=$PYTEST_CMD"
 
 $PYTEST_CMD \
   backend/tests/test_webchat_voice_api.py \
+  backend/tests/test_webchat_voice_p0_gap_closure.py \
   backend/tests/test_livekit_voice_provider.py \
   backend/tests/test_webchat_voice_room_compensation.py \
   backend/tests/test_webchat_voice_static_headers.py \
   backend/tests/test_webchat_voice_mock_ui_static.py \
+  backend/tests/test_webchat_voice_p0_static.py \
   backend/tests/test_webchat_voice_canary_readiness_static.py \
   > "$OUT/backend_voice_tests.txt" 2>&1 || {
     tail -n 220 "$OUT/backend_voice_tests.txt" | tee -a "$OUT/summary.txt"

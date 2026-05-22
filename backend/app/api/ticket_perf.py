@@ -27,7 +27,7 @@ from ..models import (
 )
 from ..services.permissions import ensure_ticket_visible
 from ..utils.time import utc_now
-from ..webchat_models import WebchatEvent
+from ..webchat_models import WebchatEvent, WebchatMessage
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
@@ -41,6 +41,7 @@ SOURCE_ORDER = {
     "ai_intake": 3,
     "ticket_event": 4,
     "webchat_event": 5,
+    "voice_call": 6,
 }
 
 
@@ -466,6 +467,30 @@ def _timeline_items(db: Session, ticket_id: int, cursor_key: tuple[datetime, int
         items.append({"source_type": "ticket_event", "source_id": row.id, "id": f"ticket_event:{row.id}", "created_at": _dt(row.created_at), "event_type": _value(row.event_type), "field_name": row.field_name, "note": row.note})
     for row in _base_timeline_query(db.query(WebchatEvent), WebchatEvent, "webchat_event", ticket_id, cursor_key, limit):
         items.append({"source_type": "webchat_event", "source_id": row.id, "id": f"webchat_event:{row.id}", "created_at": _dt(row.created_at), "event_type": row.event_type})
+    voice_query = db.query(WebchatMessage).filter(WebchatMessage.ticket_id == ticket_id, WebchatMessage.message_type == "voice_call")
+    voice_predicate = _cursor_predicate(WebchatMessage, "voice_call", cursor_key)
+    if voice_predicate is not None:
+        voice_query = voice_query.filter(voice_predicate)
+    for row in voice_query.order_by(WebchatMessage.created_at.desc(), WebchatMessage.id.desc()).limit(limit + 1).all():
+        try:
+            payload = json.loads(row.payload_json or "{}")
+        except Exception:
+            payload = {"raw": row.payload_json}
+        if not isinstance(payload, dict):
+            payload = {"raw": payload}
+        items.append(
+            {
+                "source_type": "voice_call",
+                "kind": "voice_call",
+                "source_id": row.id,
+                "id": f"voice_call:{row.id}",
+                "created_at": _dt(row.created_at),
+                "body": row.body_text or row.body,
+                "summary": row.body_text or row.body,
+                "status": payload.get("status"),
+                "payload": payload,
+            }
+        )
     items.sort(key=_item_key, reverse=True)
     return items
 
