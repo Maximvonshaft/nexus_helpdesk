@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 from datetime import timedelta
 from pathlib import Path
 
@@ -108,6 +109,21 @@ def _set_voice_session_state(voice_session_id: str, *, status: str | None = None
                 row.ended_at = row.ended_at or now
         if expires_delta is not None:
             row.expires_at = now + expires_delta
+        row.updated_at = now
+        db.commit()
+    finally:
+        db.close()
+
+
+def _set_voice_session_duration_fixture(voice_session_id: str) -> None:
+    db = SessionLocal()
+    try:
+        row = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.public_id == voice_session_id).one()
+        now = utc_now()
+        row.started_at = now - timedelta(seconds=45)
+        row.ringing_at = now - timedelta(seconds=45)
+        row.accepted_at = now - timedelta(seconds=30)
+        row.active_at = now - timedelta(seconds=30)
         row.updated_at = now
         db.commit()
     finally:
@@ -231,6 +247,7 @@ def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
     assert accepted_again.status_code == 200, accepted_again.text
     assert accepted_again.json()["status"] == "active"
     assert accepted_again.json()["accepted_by_user_id"] == 9202
+    assert accepted_again.json().get("participant_token")
 
     second_accept = client.post(
         f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
@@ -240,6 +257,7 @@ def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
     assert second_accept.json()["detail"] == "voice session already accepted by another agent"
     assert "participant_token" not in second_accept.text
 
+    _set_voice_session_duration_fixture(voice_session_id)
     ended = client.post(
         f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/end",
         headers=_admin_headers(9202),
@@ -258,6 +276,21 @@ def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
         final_messages = db.query(WebchatMessage).filter(WebchatMessage.ticket_id == ticket_id, WebchatMessage.message_type == "voice_call").all()
         assert len(final_messages) == 1
         assert final_messages[0].client_message_id == f"voice-call-ended:{voice_session_id}"
+        evidence = json.loads(final_messages[0].payload_json)
+        assert evidence["voice_session_id"] == voice_session_id
+        assert evidence["status"] == "ended"
+        assert evidence["provider"] == "mock"
+        assert evidence["accepted_by"] == 9202
+        assert evidence["accepted_by_user_id"] == 9202
+        assert evidence["ended_by"] == 9202
+        assert evidence["ended_by_user_id"] == 9202
+        assert evidence["ringing_duration_seconds"] >= 10
+        assert evidence["talk_duration_seconds"] >= 20
+        assert evidence["total_duration_seconds"] >= 40
+        assert evidence["duration_seconds"] == evidence["total_duration_seconds"]
+        assert evidence["recording_status"] == "disabled"
+        assert evidence["transcript_status"] == "disabled"
+        assert evidence["summary_status"] == "pending"
         event_types = [event.event_type for event in db.query(WebchatEvent).filter(WebchatEvent.ticket_id == ticket_id).all()]
         assert event_types.count("voice.session.accepted") == 1
         assert event_types.count("voice.session.active") == 1
@@ -289,6 +322,41 @@ def test_expired_ringing_session_accept_marks_missed_without_agent_token():
     finally:
         db.close()
     assert "voice.session.missed" in _event_types_for_ticket(ticket_id)
+
+
+def test_admin_voice_list_cleans_expired_ringing_session_to_missed_and_persists_evidence():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Expired Queue Visitor")
+    _set_voice_session_state(voice_session_id, expires_delta=timedelta(seconds=-1))
+
+    response = client.get("/api/webchat/admin/voice/sessions?status=incoming&limit=20", headers=_admin_headers(9202))
+
+    assert response.status_code == 200, response.text
+    assert all(item["voice_session_id"] != voice_session_id for item in response.json()["items"])
+    db = SessionLocal()
+    try:
+        row = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.public_id == voice_session_id).one()
+        assert row.status == "missed"
+        assert row.ended_at is not None
+        messages = db.query(WebchatMessage).filter(WebchatMessage.ticket_id == ticket_id, WebchatMessage.message_type == "voice_call").all()
+        assert len(messages) == 1
+        evidence = json.loads(messages[0].payload_json)
+        assert evidence["voice_session_id"] == voice_session_id
+        assert evidence["status"] == "missed"
+        assert "ringing_duration_seconds" in evidence
+        assert "talk_duration_seconds" in evidence
+        assert "total_duration_seconds" in evidence
+        events = [event.event_type for event in db.query(WebchatEvent).filter(WebchatEvent.ticket_id == ticket_id).all()]
+        assert events.count("voice.session.missed") == 1
+    finally:
+        db.close()
+
+    db = SessionLocal()
+    try:
+        persisted = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.public_id == voice_session_id).one()
+        assert persisted.status == "missed"
+    finally:
+        db.close()
 
 
 @pytest.mark.parametrize(

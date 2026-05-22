@@ -13,6 +13,13 @@ import { EmptyState } from '@/components/ui/EmptyState'
 const ACTIVE_STATUSES = new Set(['created', 'ringing', 'accepted', 'active'])
 const REJECT_READY_STATUSES = new Set(['created', 'ringing'])
 const TERMINAL_STATUSES = new Set(['ended', 'failed', 'cancelled', 'missed'])
+const QUEUE_TABS = [
+  { key: 'incoming', label: 'Incoming' },
+  { key: 'my_active', label: 'My Active' },
+  { key: 'all_active', label: 'All Active' },
+  { key: 'missed', label: 'Missed' },
+  { key: 'closed_recent', label: 'Closed Recent' },
+] as const
 const STATUS_LABELS: Record<string, string> = {
   created: 'Created',
   ringing: 'Ringing — waiting for agent',
@@ -50,6 +57,7 @@ type AgentWebCallPanelProps = {
   ticketNo?: string | null
   visitorLabel?: string | null
   onActivity?: () => void
+  onSelectTicket?: (ticketId: number) => void
 }
 
 type LocalAudioTrack = Awaited<ReturnType<typeof createLocalAudioTrack>>
@@ -108,12 +116,13 @@ function DetailField({ label, value }: { label: string; value?: string | number 
   return <div className="kv"><label>{label}</label><div>{valueOrDash(value)}</div></div>
 }
 
-export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorLabel, onActivity }: AgentWebCallPanelProps) {
+export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorLabel, onActivity, onSelectTicket }: AgentWebCallPanelProps) {
   const client = useQueryClient()
   const [callState, setCallState] = useState<AgentCallState>('idle')
   const [message, setMessage] = useState('Waiting for an incoming WebCall on this ticket.')
   const [muted, setMuted] = useState(false)
   const [joinedVoiceSessionId, setJoinedVoiceSessionId] = useState<string | null>(null)
+  const [queueTab, setQueueTab] = useState<(typeof QUEUE_TABS)[number]['key']>('incoming')
   const roomRef = useRef<Room | null>(null)
   const localAudioRef = useRef<LocalAudioTrack | null>(null)
   const remoteAudioRef = useRef<HTMLDivElement | null>(null)
@@ -130,6 +139,13 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
     queryFn: ({ signal }) => webchatVoiceApi.listSessions(ticketId as number, { signal }),
     enabled: !!ticketId,
     refetchInterval: callState === 'connected' ? 8000 : 4000,
+    retry: false,
+  })
+
+  const operationalQueue = useQuery({
+    queryKey: ['webchatVoiceOperationalQueue', queueTab],
+    queryFn: ({ signal }) => webchatVoiceApi.incomingSessions({ status: queueTab, limit: 50 }, { signal }),
+    refetchInterval: queueTab === 'incoming' ? 4000 : 8000,
     retry: false,
   })
 
@@ -178,6 +194,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
       await client.invalidateQueries({ queryKey: ['webchatThread', ticketId] })
     }
     await client.invalidateQueries({ queryKey: ['webchatConversations'] })
+    await client.invalidateQueries({ queryKey: ['webchatVoiceOperationalQueue'] })
     onActivity?.()
   }
 
@@ -308,6 +325,36 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
           </div>
         ) : null}
         {ticketId && !sessions.isLoading && !sessions.isError && !currentSession ? <EmptyState text="No incoming WebCall sessions for this ticket." /> : null}
+        {!currentSession ? (
+          <div className="stack compact" data-testid="webcall-operational-queue">
+            <strong>WebCall Operational Queue</strong>
+            <div className="inline-actions" role="tablist" aria-label="WebCall Operational Queue tabs">
+              {QUEUE_TABS.map((tab) => (
+                <Button key={tab.key} variant={queueTab === tab.key ? 'primary' : 'secondary'} onClick={() => setQueueTab(tab.key)}>
+                  {tab.label}
+                </Button>
+              ))}
+            </div>
+            {operationalQueue.isLoading ? <div className="section-subtitle">Loading WebCall queue...</div> : null}
+            {operationalQueue.isError ? <div className="section-subtitle">Unable to load WebCall queue.</div> : null}
+            {!operationalQueue.isLoading && !operationalQueue.isError && !(operationalQueue.data?.items ?? []).length ? <EmptyState text="No WebCall sessions in this queue." /> : null}
+            {(operationalQueue.data?.items ?? []).map((item) => (
+              <button
+                key={`${queueTab}-${item.voice_session_id}`}
+                className={`queue-card ${ticketId === item.ticket_id ? 'selected' : ''}`}
+                onClick={() => onSelectTicket?.(item.ticket_id)}
+              >
+                <div className="badges">
+                  <Badge tone={statusTone(item.status)}>{readableStatus(item.status)}</Badge>
+                  <Badge>{sanitizeDisplayText(item.provider)}</Badge>
+                  {item.ticket_no ? <Badge>{sanitizeDisplayText(item.ticket_no)}</Badge> : null}
+                </div>
+                <div className="queue-card-title">{valueOrDash(item.visitor_label)} · {valueOrDash(item.voice_session_id)}</div>
+                <div className="queue-card-meta">Ticket {valueOrDash(item.ticket_id)} · Ringing {valueOrDash(formatDateTime(item.ringing_at || undefined))} · Ended {valueOrDash(formatDateTime(item.ended_at || undefined))}</div>
+              </button>
+            ))}
+          </div>
+        ) : null}
         {currentSession ? (
           <div className="stack compact" data-testid="agent-webcall-panel">
             <div className="badges">
@@ -327,6 +374,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
               <DetailField label="Provider" value={currentSession.provider} />
               <DetailField label="Status" value={readableStatus(currentSession.status)} />
               <DetailField label="Accepted by user ID" value={currentSession.accepted_by_user_id} />
+              <DetailField label="Ended by user ID" value={currentSession.ended_by_user_id} />
               <DetailField label="Started" value={formatDateTime(currentSession.started_at || undefined)} />
               <DetailField label="Ringing" value={formatDateTime(currentSession.ringing_at || undefined)} />
               <DetailField label="Accepted" value={formatDateTime(currentSession.accepted_at || undefined)} />
@@ -334,6 +382,9 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
               <DetailField label="Ended" value={formatDateTime(currentSession.ended_at || undefined)} />
               <DetailField label="Expires" value={formatDateTime(currentSession.expires_at || undefined)} />
               <DetailField label="LiveKit URL" value={runtimeConfig.data?.livekit_url || (runtimeConfig.isError ? 'runtime config unavailable' : 'loading')} />
+              <DetailField label="Ringing duration seconds" value={currentSession.ringing_duration_seconds} />
+              <DetailField label="Talk duration seconds" value={currentSession.talk_duration_seconds} />
+              <DetailField label="Total duration seconds" value={currentSession.total_duration_seconds} />
               <DetailField label="Recording status" value={currentSession.recording_status} />
               <DetailField label="Transcript status" value={currentSession.transcript_status} />
               <DetailField label="Summary status" value={currentSession.summary_status} />
@@ -367,6 +418,35 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
                   <div className="queue-card-title">{valueOrDash(session.voice_session_id)}</div>
                   <div className="queue-card-meta">Room {valueOrDash(roomNameFor(session))} · Ringing {valueOrDash(formatDateTime(session.ringing_at || undefined))} · Ended {valueOrDash(formatDateTime(session.ended_at || undefined))}</div>
                 </div>
+              ))}
+            </div>
+
+            <div className="stack compact" data-testid="webcall-operational-queue">
+              <strong>WebCall Operational Queue</strong>
+              <div className="inline-actions" role="tablist" aria-label="WebCall Operational Queue tabs">
+                {QUEUE_TABS.map((tab) => (
+                  <Button key={tab.key} variant={queueTab === tab.key ? 'primary' : 'secondary'} onClick={() => setQueueTab(tab.key)}>
+                    {tab.label}
+                  </Button>
+                ))}
+              </div>
+              {operationalQueue.isLoading ? <div className="section-subtitle">Loading WebCall queue...</div> : null}
+              {operationalQueue.isError ? <div className="section-subtitle">Unable to load WebCall queue.</div> : null}
+              {!operationalQueue.isLoading && !operationalQueue.isError && !(operationalQueue.data?.items ?? []).length ? <EmptyState text="No WebCall sessions in this queue." /> : null}
+              {(operationalQueue.data?.items ?? []).map((item) => (
+                <button
+                  key={`${queueTab}-${item.voice_session_id}`}
+                  className={`queue-card ${ticketId === item.ticket_id ? 'selected' : ''}`}
+                  onClick={() => onSelectTicket?.(item.ticket_id)}
+                >
+                  <div className="badges">
+                    <Badge tone={statusTone(item.status)}>{readableStatus(item.status)}</Badge>
+                    <Badge>{sanitizeDisplayText(item.provider)}</Badge>
+                    {item.ticket_no ? <Badge>{sanitizeDisplayText(item.ticket_no)}</Badge> : null}
+                  </div>
+                  <div className="queue-card-title">{valueOrDash(item.visitor_label)} · {valueOrDash(item.voice_session_id)}</div>
+                  <div className="queue-card-meta">Ticket {valueOrDash(item.ticket_id)} · Ringing {valueOrDash(formatDateTime(item.ringing_at || undefined))} · Ended {valueOrDash(formatDateTime(item.ended_at || undefined))}</div>
+                </button>
               ))}
             </div>
           </div>

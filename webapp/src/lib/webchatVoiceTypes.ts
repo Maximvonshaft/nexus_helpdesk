@@ -12,6 +12,7 @@ export interface WebchatVoiceSession {
   participant_token?: string | null
   expires_in_seconds?: number | null
   accepted_by_user_id?: number | null
+  ended_by_user_id?: number | null
   started_at?: string | null
   ringing_at?: string | null
   accepted_at?: string | null
@@ -21,6 +22,9 @@ export interface WebchatVoiceSession {
   recording_status?: string | null
   transcript_status?: string | null
   summary_status?: string | null
+  ringing_duration_seconds?: number | null
+  talk_duration_seconds?: number | null
+  total_duration_seconds?: number | null
 }
 
 export interface WebchatVoiceIncomingSession extends WebchatVoiceSession {

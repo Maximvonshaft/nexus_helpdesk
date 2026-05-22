@@ -20,6 +20,17 @@ fail() {
   exit 1
 }
 
+venv_python() {
+  local venv_dir="$1"
+  if [ -x "$venv_dir/bin/python" ]; then
+    printf '%s\n' "$venv_dir/bin/python"
+  elif [ -x "$venv_dir/Scripts/python.exe" ]; then
+    printf '%s\n' "$venv_dir/Scripts/python.exe"
+  else
+    return 1
+  fi
+}
+
 cd "$ROOT"
 
 log "===== NEXUSDESK WEBCALL CANARY READINESS ====="
@@ -57,10 +68,11 @@ elif python3 -m pytest --version >/dev/null 2>&1; then
   PYTEST_CMD="python3 -m pytest"
 else
   python3 -m venv "$OUT/.venv-test"
-  "$OUT/.venv-test/bin/python" -m pip install --upgrade pip setuptools wheel >/dev/null
-  "$OUT/.venv-test/bin/python" -m pip install -r backend/requirements.txt >/dev/null
-  "$OUT/.venv-test/bin/python" -m pip install pytest >/dev/null
-  PYTEST_CMD="$OUT/.venv-test/bin/python -m pytest"
+  VENV_PYTHON="$(venv_python "$OUT/.venv-test")" || fail "python venv was created without a runnable interpreter"
+  "$VENV_PYTHON" -m pip install --upgrade pip setuptools wheel >/dev/null
+  "$VENV_PYTHON" -m pip install -r backend/requirements.txt >/dev/null
+  "$VENV_PYTHON" -m pip install pytest >/dev/null
+  PYTEST_CMD="$VENV_PYTHON -m pytest"
 fi
 
 log "PYTEST_CMD=$PYTEST_CMD"
@@ -125,6 +137,7 @@ cd "$ROOT"
 log ""
 log "===== 4. TOKEN / SECRET STATIC SCAN ====="
 grep -RInE 'participant_token|visitor_token|LIVEKIT_API_SECRET|livekit_api_secret|api_secret|access_token|refresh_token|password|secret' \
+  webapp/src/routes/webchat.tsx \
   webapp/src/routes/webchat-voice.tsx \
   webapp/src/components/webcall/AgentWebCallPanel.tsx \
   webapp/src/lib/webchatVoiceApi.ts \
@@ -145,6 +158,7 @@ python3 - <<'PY' > "$OUT/token_secret_classification.txt" 2>&1
 from pathlib import Path
 
 ui_files = [
+    Path("webapp/src/routes/webchat.tsx"),
     Path("webapp/src/routes/webchat-voice.tsx"),
     Path("webapp/src/components/webcall/AgentWebCallPanel.tsx"),
 ]
@@ -202,8 +216,48 @@ PY
 cat "$OUT/click_to_accept_static_check.txt" | tee -a "$OUT/summary.txt"
 
 log ""
+log "===== 6. /WEBCHAT INTEGRATED ENTRY AND EVIDENCE STATIC CHECK ====="
+python3 - <<'PY' > "$OUT/webchat_integrated_entry_static_check.txt" 2>&1
+from pathlib import Path
+
+webchat = Path("webapp/src/routes/webchat.tsx").read_text(encoding="utf-8")
+panel = Path("webapp/src/components/webcall/AgentWebCallPanel.tsx").read_text(encoding="utf-8")
+service = Path("backend/app/services/webchat_voice_service.py").read_text(encoding="utf-8")
+api = Path("backend/app/api/webchat_voice.py").read_text(encoding="utf-8")
+
+checks = {
+    "webchat_integrated_entry": "AgentWebCallPanel" in webchat and "Incoming WebCall" in webchat,
+    "voice_call_evidence_card": "voice-call-evidence-card" in webchat and "ringing_duration_seconds" in webchat and "talk_duration_seconds" in webchat and "total_duration_seconds" in webchat,
+    "operational_queue_tabs": "WebCall Operational Queue" in panel and "My Active" in panel and "Closed Recent" in panel,
+    "missed_cleanup_on_list": "_mark_missed_if_expired" in service and "voice.session.missed" in service and "_ensure_final_voice_call_message(db, session=session)" in service,
+    "runtime_config_no_secret": "LIVEKIT_API_SECRET" not in api and "LIVEKIT_API_KEY" not in api and "api_secret" not in api.lower(),
+}
+failed = [k for k, v in checks.items() if not v]
+for k, v in checks.items():
+    print(f"{k}={'PASS' if v else 'FAIL'}")
+if failed:
+    raise SystemExit("FAIL " + ",".join(failed))
+print("WEBCHAT_INTEGRATED_ENTRY_STATIC_CHECK=PASS")
+print("VOICE_CALL_EVIDENCE_CARD_STATIC_CHECK=PASS")
+print("MISSED_CLEANUP_STATIC_CHECK=PASS")
+print("RUNTIME_CONFIG_NO_SECRET_STATIC_CHECK=PASS")
+PY
+cat "$OUT/webchat_integrated_entry_static_check.txt" | tee -a "$OUT/summary.txt"
+
 log ""
-log "===== 6. OPTIONAL LIVE HTTP READINESS ====="
+log "===== 7. TWO-BROWSER PROOF REQUIREMENT ====="
+cat > "$OUT/two_browser_proof_required.txt" <<'EOF'
+TWO_BROWSER_PROOF_REQUIRED=YES
+Required manual/API evidence before canary promotion:
+- Browser A visitor opens /webcall/{voice_session_id} and clicks Join.
+- Browser B operator opens /webchat, sees Incoming WebCall badge, accepts, ends, and continues text follow-up in the same ticket.
+- Same ticket shows a voice_call evidence card with status, voice_session_id, provider, accepted_by, ended_by, ringing_duration_seconds, talk_duration_seconds, total_duration_seconds, recording status, transcript status, and summary status.
+EOF
+cat "$OUT/two_browser_proof_required.txt" | tee -a "$OUT/summary.txt"
+
+log ""
+log ""
+log "===== 8. OPTIONAL LIVE HTTP READINESS ====="
 if [ -z "${NEXUS_CANARY_BASE_URL:-}" ]; then
   log "live_http_readiness=SKIPPED_NO_NEXUS_CANARY_BASE_URL"
 else
@@ -268,6 +322,14 @@ else
   else
     log "CANARY_RESULT=FAIL"
     log "FAIL_REASON=webchat-voice page not reachable"
+    exit 1
+  fi
+
+  if http_code_probe "webchat_integrated_entry_http" "$BASE_URL/webchat"; then
+    log "webchat_integrated_entry_http=PASS"
+  else
+    log "CANARY_RESULT=FAIL"
+    log "FAIL_REASON=/webchat integrated entry page not reachable"
     exit 1
   fi
 

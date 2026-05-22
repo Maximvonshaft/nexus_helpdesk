@@ -505,7 +505,7 @@ export interface CodexCredentialActionResult {
   upstream_revoke?: string | null
 }
 
-export type WebchatMessageType = 'text' | 'system' | 'card' | 'action' | 'attachment'
+export type WebchatMessageType = 'text' | 'system' | 'card' | 'action' | 'attachment' | 'voice_call'
 
 export type WebchatCardType =
   | 'quick_replies'

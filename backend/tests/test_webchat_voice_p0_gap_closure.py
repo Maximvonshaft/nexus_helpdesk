@@ -146,3 +146,12 @@ def test_ticket_timeline_contains_voice_call_after_end():
     voice_items = [item for item in timeline_items if item.get("kind") == "voice_call" or item.get("source_type") == "voice_call"]
     assert len(voice_items) == 1
     assert voice_items[0]["payload"]["voice_session_id"] == voice_session_id
+    assert voice_items[0]["payload"]["status"] == "ended"
+    assert voice_items[0]["payload"]["accepted_by"] == 9302
+    assert voice_items[0]["payload"]["ended_by"] == 9302
+    assert "ringing_duration_seconds" in voice_items[0]["payload"]
+    assert "talk_duration_seconds" in voice_items[0]["payload"]
+    assert "total_duration_seconds" in voice_items[0]["payload"]
+    assert voice_items[0]["payload"]["recording_status"] == "disabled"
+    assert voice_items[0]["payload"]["transcript_status"] == "disabled"
+    assert voice_items[0]["payload"]["summary_status"] == "pending"

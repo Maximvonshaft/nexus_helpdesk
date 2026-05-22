@@ -151,8 +151,30 @@ def _serialize_dt(value: Any) -> str | None:
     return value.isoformat() if value else None
 
 
-def _serialize_session(session: WebchatVoiceSession, *, participant_token: str | None = None, expires_in_seconds: int | None = None, participant_identity: str | None = None) -> dict[str, Any]:
+def _voice_evidence_payload(session: WebchatVoiceSession) -> dict[str, Any]:
+    ringing_duration_seconds = _voice_duration_seconds(session.ringing_at, session.accepted_at or session.ended_at)
+    talk_duration_seconds = _voice_duration_seconds(session.accepted_at or session.active_at, session.ended_at)
+    total_duration_seconds = _voice_duration_seconds(session.started_at, session.ended_at)
     return {
+        "voice_session_id": session.public_id,
+        "status": session.status,
+        "provider": session.provider,
+        "accepted_by": session.accepted_by_user_id,
+        "accepted_by_user_id": session.accepted_by_user_id,
+        "ended_by": session.ended_by_user_id,
+        "ended_by_user_id": session.ended_by_user_id,
+        "ringing_duration_seconds": ringing_duration_seconds,
+        "talk_duration_seconds": talk_duration_seconds,
+        "total_duration_seconds": total_duration_seconds,
+        "duration_seconds": total_duration_seconds,
+        "recording_status": session.recording_status,
+        "transcript_status": session.transcript_status,
+        "summary_status": session.summary_status,
+    }
+
+
+def _serialize_session(session: WebchatVoiceSession, *, participant_token: str | None = None, expires_in_seconds: int | None = None, participant_identity: str | None = None) -> dict[str, Any]:
+    payload = {
         "ok": True,
         "voice_session_id": session.public_id,
         "status": session.status,
@@ -164,6 +186,7 @@ def _serialize_session(session: WebchatVoiceSession, *, participant_token: str |
         "participant_token": participant_token,
         "expires_in_seconds": expires_in_seconds,
         "accepted_by_user_id": session.accepted_by_user_id,
+        "ended_by_user_id": session.ended_by_user_id,
         "started_at": _serialize_dt(session.started_at),
         "ringing_at": _serialize_dt(session.ringing_at),
         "accepted_at": _serialize_dt(session.accepted_at),
@@ -174,6 +197,8 @@ def _serialize_session(session: WebchatVoiceSession, *, participant_token: str |
         "transcript_status": session.transcript_status,
         "summary_status": session.summary_status,
     }
+    payload.update({k: v for k, v in _voice_evidence_payload(session).items() if k.endswith("_duration_seconds")})
+    return payload
 
 
 def _conflict(detail: str) -> HTTPException:
@@ -218,7 +243,32 @@ def _mark_missed_if_expired(db: Session, *, session: WebchatVoiceSession, now: A
         payload={"voice_session_id": session.public_id, "reason": "expired"},
     )
     _emit_voice_observability(session, "voice.session.missed")
+    record_voice_call_duration(session.provider, session.status, _voice_duration_seconds(session.started_at, session.ended_at))
+    record_voice_ringing_duration(session.provider, session.status, _voice_duration_seconds(session.ringing_at, session.ended_at))
+    _ensure_final_voice_call_message(db, session=session)
     return True
+
+
+def _cleanup_expired_ringing_sessions(db: Session, *, limit: int = 200) -> int:
+    current = utc_now()
+    rows = (
+        db.query(WebchatVoiceSession)
+        .filter(
+            WebchatVoiceSession.status.in_(["created", "ringing"]),
+            WebchatVoiceSession.expires_at.isnot(None),
+            WebchatVoiceSession.expires_at <= current,
+        )
+        .order_by(WebchatVoiceSession.expires_at.asc(), WebchatVoiceSession.id.asc())
+        .limit(max(1, min(int(limit or 200), 500)))
+        .all()
+    )
+    changed = 0
+    for session in rows:
+        if _mark_missed_if_expired(db, session=session, now=current):
+            changed += 1
+    if changed:
+        db.flush()
+    return changed
 
 
 def _load_public_conversation(db: Session, public_id: str) -> WebchatConversation:
@@ -354,10 +404,14 @@ def list_admin_voice_sessions(db: Session, *, ticket_id: int, current_user: User
 
 def list_admin_incoming_voice_sessions(db: Session, *, current_user: User, status_filter: str = "ringing", limit: int = 50) -> dict[str, Any]:
     requested = (status_filter or "ringing").strip().lower()
-    if requested == "incoming":
+    if requested in {"incoming", "ringing"}:
         statuses = {"created", "ringing"}
-    elif requested == "live":
-        statuses = ACTIVE_STATUSES
+    elif requested in {"my_active", "mine"}:
+        statuses = ACCEPTED_STATUSES
+    elif requested in {"all_active", "live"}:
+        statuses = ACCEPTED_STATUSES
+    elif requested == "closed_recent":
+        statuses = TERMINAL_STATUSES
     elif requested == "all":
         statuses = None
     elif requested in TERMINAL_STATUSES or requested in ACTIVE_STATUSES:
@@ -366,14 +420,20 @@ def list_admin_incoming_voice_sessions(db: Session, *, current_user: User, statu
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid voice session status filter")
 
     safe_limit = max(1, min(int(limit or 50), 100))
+    _cleanup_expired_ringing_sessions(db)
     query = (
         db.query(WebchatVoiceSession, Ticket, WebchatConversation)
         .join(Ticket, Ticket.id == WebchatVoiceSession.ticket_id)
         .join(WebchatConversation, WebchatConversation.id == WebchatVoiceSession.conversation_id)
-        .order_by(WebchatVoiceSession.id.desc())
     )
     if statuses is not None:
         query = query.filter(WebchatVoiceSession.status.in_(list(statuses)))
+    if requested in {"my_active", "mine"}:
+        query = query.filter(WebchatVoiceSession.accepted_by_user_id == current_user.id)
+    if requested in {"closed_recent"}:
+        query = query.order_by(WebchatVoiceSession.ended_at.desc().nullslast(), WebchatVoiceSession.id.desc())
+    else:
+        query = query.order_by(WebchatVoiceSession.id.desc())
 
     items: list[dict[str, Any]] = []
     for session, ticket, conversation in query.limit(safe_limit * 4).all():
@@ -383,6 +443,12 @@ def list_admin_incoming_voice_sessions(db: Session, *, current_user: User, statu
             if exc.status_code in {status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND}:
                 continue
             raise
+        if _mark_missed_if_expired(db, session=session):
+            db.flush()
+            if requested in {"incoming", "ringing"}:
+                continue
+            if statuses is not None and session.status not in statuses:
+                continue
         items.append(_serialize_incoming_session(session, ticket, conversation))
         if len(items) >= safe_limit:
             break
@@ -503,7 +569,7 @@ def _ensure_final_voice_call_message(db: Session, *, session: WebchatVoiceSessio
     ended_at = _ensure_aware_utc(session.ended_at)
     if started_at and ended_at:
         duration_seconds = max(0, int((ended_at - started_at).total_seconds()))
-    body = "Voice call ended" if session.status == "ended" else "Voice call cancelled"
+    body = "Voice call ended" if session.status == "ended" else "Voice call closed"
     if duration_seconds is not None:
         body = f"{body} · {duration_seconds}s"
     db.add(WebchatMessage(
@@ -513,7 +579,7 @@ def _ensure_final_voice_call_message(db: Session, *, session: WebchatVoiceSessio
         body=body,
         body_text=body,
         message_type="voice_call",
-        payload_json=json.dumps({"voice_session_id": session.public_id, "status": session.status, "provider": session.provider, "duration_seconds": duration_seconds, "accepted_by_user_id": session.accepted_by_user_id, "recording_status": session.recording_status, "transcript_status": session.transcript_status, "summary_status": session.summary_status}, ensure_ascii=False),
+        payload_json=json.dumps(_voice_evidence_payload(session), ensure_ascii=False),
         metadata_json=json.dumps({"generated_by": "system", "external_send": False}, ensure_ascii=False),
         client_message_id=client_message_id,
         delivery_status="sent",

@@ -81,7 +81,8 @@ def list_incoming_voice_sessions(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict:
-    return list_admin_incoming_voice_sessions(db, current_user=current_user, status_filter=status, limit=limit)
+    with managed_session(db):
+        return list_admin_incoming_voice_sessions(db, current_user=current_user, status_filter=status, limit=limit)
 
 
 @router.post("/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept")
