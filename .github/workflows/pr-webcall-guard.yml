@@ -4,14 +4,12 @@ on:
   pull_request:
     branches:
       - main
-    paths:
-      - "webapp/src/components/webcall/AgentWebCallPanel.tsx"
-      - "webapp/tests/operator-console-contract.test.mjs"
-      - "webapp/package.json"
-      - "webapp/package-lock.json"
-      - "backend/app/webchat_voice_config.py"
-      - "backend/tests/test_webchat_voice_static_headers.py"
-      - ".github/workflows/pr-webcall-guard.yml"
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,6 +19,9 @@ jobs:
   scope-guard:
     name: scope-guard
     runs-on: ubuntu-latest
+    outputs:
+      webcall_relevant: ${{ steps.changed-files.outputs.webcall_relevant }}
+      webcall_checks_required: ${{ steps.changed-files.outputs.webcall_checks_required }}
     steps:
       - name: Checkout PR
         uses: actions/checkout@v4
@@ -28,17 +29,47 @@ jobs:
           fetch-depth: 0
 
       - name: Validate changed file scope
+        id: changed-files
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          BASE_SHA="${{ github.event.pull_request.base.sha || 'HEAD~1' }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha || 'HEAD' }}"
 
           git diff --name-only "$BASE_SHA" "$HEAD_SHA" | sort > /tmp/changed_files.txt
 
           echo "Changed files:"
           cat /tmp/changed_files.txt
+
+          webcall_relevant=0
+          webcall_checks_required=0
+          while IFS= read -r file; do
+            case "$file" in
+              webapp/src/components/webcall/AgentWebCallPanel.tsx) webcall_relevant=1; webcall_checks_required=1 ;;
+              webapp/tests/operator-console-contract.test.mjs) webcall_relevant=1; webcall_checks_required=1 ;;
+              webapp/package.json) webcall_relevant=1; webcall_checks_required=1 ;;
+              webapp/package-lock.json) webcall_relevant=1; webcall_checks_required=1 ;;
+              backend/app/webchat_voice_config.py) webcall_relevant=1; webcall_checks_required=1 ;;
+              backend/tests/test_webchat_voice_static_headers.py) webcall_relevant=1; webcall_checks_required=1 ;;
+              .github/workflows/pr-webcall-guard.yml) webcall_relevant=1 ;;
+              "") ;;
+            esac
+          done < /tmp/changed_files.txt
+
+          if [ "$webcall_relevant" -eq 0 ]; then
+            echo "webcall_relevant=false" >> "$GITHUB_OUTPUT"
+            echo "webcall_checks_required=false" >> "$GITHUB_OUTPUT"
+            echo "No WebCall guarded files changed; scope guard passed without strict allowlist enforcement."
+            exit 0
+          fi
+
+          echo "webcall_relevant=true" >> "$GITHUB_OUTPUT"
+          if [ "$webcall_checks_required" -eq 1 ]; then
+            echo "webcall_checks_required=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "webcall_checks_required=false" >> "$GITHUB_OUTPUT"
+          fi
 
           fail=0
           while IFS= read -r file; do
@@ -68,6 +99,8 @@ jobs:
   webcall-blocking-fix-guard:
     name: webcall-blocking-fix-guard
     runs-on: ubuntu-latest
+    needs: scope-guard
+    if: needs.scope-guard.outputs.webcall_checks_required == 'true'
     steps:
       - name: Checkout PR
         uses: actions/checkout@v4
@@ -117,6 +150,8 @@ PY
   webapp-quality:
     name: webapp-quality
     runs-on: ubuntu-latest
+    needs: scope-guard
+    if: needs.scope-guard.outputs.webcall_checks_required == 'true'
     steps:
       - name: Checkout PR
         uses: actions/checkout@v4
@@ -155,6 +190,8 @@ PY
   backend-webcall-tests:
     name: backend-webcall-tests
     runs-on: ubuntu-latest
+    needs: scope-guard
+    if: needs.scope-guard.outputs.webcall_checks_required == 'true'
     steps:
       - name: Checkout PR
         uses: actions/checkout@v4
