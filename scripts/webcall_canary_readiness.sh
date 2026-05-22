@@ -20,6 +20,17 @@ fail() {
   exit 1
 }
 
+venv_python() {
+  local venv_dir="$1"
+  if [ -x "$venv_dir/bin/python" ]; then
+    printf '%s\n' "$venv_dir/bin/python"
+  elif [ -x "$venv_dir/Scripts/python.exe" ]; then
+    printf '%s\n' "$venv_dir/Scripts/python.exe"
+  else
+    return 1
+  fi
+}
+
 cd "$ROOT"
 
 log "===== NEXUSDESK WEBCALL CANARY READINESS ====="
@@ -57,10 +68,11 @@ elif python3 -m pytest --version >/dev/null 2>&1; then
   PYTEST_CMD="python3 -m pytest"
 else
   python3 -m venv "$OUT/.venv-test"
-  "$OUT/.venv-test/bin/python" -m pip install --upgrade pip setuptools wheel >/dev/null
-  "$OUT/.venv-test/bin/python" -m pip install -r backend/requirements.txt >/dev/null
-  "$OUT/.venv-test/bin/python" -m pip install pytest >/dev/null
-  PYTEST_CMD="$OUT/.venv-test/bin/python -m pytest"
+  VENV_PYTHON="$(venv_python "$OUT/.venv-test")" || fail "python venv was created without a runnable interpreter"
+  "$VENV_PYTHON" -m pip install --upgrade pip setuptools wheel >/dev/null
+  "$VENV_PYTHON" -m pip install -r backend/requirements.txt >/dev/null
+  "$VENV_PYTHON" -m pip install pytest >/dev/null
+  PYTEST_CMD="$VENV_PYTHON -m pytest"
 fi
 
 log "PYTEST_CMD=$PYTEST_CMD"
