@@ -143,6 +143,95 @@ def _contains_phrase(haystack: str, phrase: str) -> bool:
     return re.search(r"(?<![a-z0-9])" + re.escape(needle) + r"(?![a-z0-9])", haystack, flags=re.IGNORECASE) is not None
 
 
+# ADDRESS_CHANGE_SEMANTIC_MATCH_BEGIN
+_ADDRESS_CHANGE_ACTION_RE = re.compile(
+    r"\b(?:change|update|modify|correct|fix|replace|edit|revise|changed|updated|modified|corrected|fixed|replaced|edited|revised)\b",
+    re.IGNORECASE,
+)
+_ADDRESS_OBJECT_RE = re.compile(
+    r"\b(?:(?:delivery|shipping|receiver|recipient|consignee)\s+)?address\b",
+    re.IGNORECASE,
+)
+_ADDRESS_BAD_OR_NEW_RE = re.compile(
+    r"\b(?:wrong|incorrect|bad|invalid|new)\s+(?:(?:delivery|shipping|receiver|recipient|consignee)\s+)?address\b",
+    re.IGNORECASE,
+)
+_ADDRESS_BAD_AFTER_RE = re.compile(
+    r"\b(?:(?:delivery|shipping|receiver|recipient|consignee)\s+)?address\s+(?:is|was|looks|seems|appears|entered|typed)?\s*(?:wrong|incorrect|bad|invalid)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_address_change_request(haystack: str) -> bool:
+    normalized = _normalize(haystack)
+    if not normalized:
+        return False
+
+    direct_phrases = (
+        "change delivery address",
+        "change the delivery address",
+        "change my delivery address",
+        "change shipping address",
+        "change the shipping address",
+        "change my shipping address",
+        "update address",
+        "update delivery address",
+        "update the delivery address",
+        "update my delivery address",
+        "update shipping address",
+        "update the shipping address",
+        "update my shipping address",
+        "correct address",
+        "correct delivery address",
+        "correct the delivery address",
+        "correct shipping address",
+        "correct the shipping address",
+        "fix address",
+        "fix delivery address",
+        "fix the delivery address",
+        "modify delivery address",
+        "modify the delivery address",
+        "edit delivery address",
+        "edit the delivery address",
+        "wrong delivery address",
+        "wrong shipping address",
+        "incorrect delivery address",
+        "incorrect shipping address",
+        "delivery address is wrong",
+        "shipping address is wrong",
+        "recipient address is wrong",
+        "receiver address is wrong",
+        "delivery address is incorrect",
+        "shipping address is incorrect",
+        "recipient address is incorrect",
+        "receiver address is incorrect",
+    )
+    if any(_contains_phrase(normalized, phrase) for phrase in direct_phrases):
+        return True
+
+    latin_text = " ".join(_WORDY_LATIN.findall(normalized))
+    if not latin_text:
+        return False
+
+    address_matches = list(_ADDRESS_OBJECT_RE.finditer(latin_text))
+    if not address_matches:
+        return False
+
+    if _ADDRESS_BAD_OR_NEW_RE.search(latin_text) or _ADDRESS_BAD_AFTER_RE.search(latin_text):
+        return True
+
+    action_matches = list(_ADDRESS_CHANGE_ACTION_RE.finditer(latin_text))
+    if not action_matches:
+        return False
+
+    for address_match in address_matches:
+        for action_match in action_matches:
+            if abs(action_match.start() - address_match.start()) <= 96:
+                return True
+
+    return False
+# ADDRESS_CHANGE_SEMANTIC_MATCH_END
+
 def _configured_rule_from_payload(item: Any) -> ConfiguredHandoffRule | None:
     if isinstance(item, ConfiguredHandoffRule):
         return item if item.enabled and item.phrases else None
@@ -206,6 +295,15 @@ def decide_server_handoff_policy(
             )
 
     for rule_id, phrases, reason, action in _RULES:
+        if rule_id == "address_change_request" and _looks_like_address_change_request(joined):
+            return HandoffPolicyDecision(
+                handoff_required=True,
+                rule_id=rule_id,
+                handoff_reason=reason,
+                recommended_agent_action=f"[{rule_id}] {action}",
+                customer_reply=_DEFAULT_CUSTOMER_REPLY,
+            )
+
         if any(_contains_phrase(joined, phrase) for phrase in phrases):
             return HandoffPolicyDecision(
                 handoff_required=True,

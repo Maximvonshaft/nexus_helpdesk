@@ -31,11 +31,11 @@ def setup_function():
         db.close()
 
 
-def _payload(client_message_id: str, body: str) -> dict:
+def _payload(client_message_id: str, body: str, session_id: str | None = None) -> dict:
     return {
         "tenant_key": "default",
         "channel_key": "website",
-        "session_id": "session-handoff-policy",
+        "session_id": session_id or f"session-handoff-policy-{client_message_id}",
         "client_message_id": client_message_id,
         "body": body,
         "recent_context": [],
@@ -97,7 +97,7 @@ def test_non_stream_server_policy_handoff_skips_ai_and_creates_ticket(monkeypatc
         assert handoff_reason == "address_change_requires_human_review"
         assert recommended_agent_action.startswith("[address_change_request]")
         assert customer_message == "Please change address for this parcel"
-        assert conversation.fast_session_id == "session-handoff-policy"
+        assert conversation.fast_session_id.startswith("session-handoff-policy-")
         return SimpleNamespace(id=9001)
 
     monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fail_if_ai_called)
@@ -141,7 +141,7 @@ def test_stream_server_policy_handoff_skips_openclaw_and_creates_ticket(monkeypa
         calls["ticket"] += 1
         assert handoff_reason == "refund_or_compensation_requires_human_review"
         assert recommended_agent_action.startswith("[refund_compensation_claim]")
-        assert conversation.fast_session_id == "session-handoff-policy"
+        assert conversation.fast_session_id.startswith("session-handoff-policy-")
         return SimpleNamespace(id=9002)
 
     monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", _stream_settings)
@@ -178,3 +178,84 @@ def test_stream_server_policy_handoff_skips_openclaw_and_creates_ticket(monkeypa
         assert row.response_json["reply_source"] == "server_handoff_policy"
     finally:
         db.close()
+
+
+# PR193_ADDRESS_CHANGE_SEMANTIC_REGRESSION_BEGIN
+def test_server_policy_detects_natural_language_address_change_with_waybill():
+    cases = [
+        "I need to change the delivery address for CH020000008030.",
+        "Please update my shipping address for CH020000008030.",
+        "Can you correct the recipient address on CH020000008030?",
+        "The delivery address is wrong for CH020000008030.",
+    ]
+
+    for body in cases:
+        decision = decide_server_handoff_policy(body=body, recent_context=[])
+        assert decision.handoff_required is True
+        assert decision.rule_id == "address_change_request"
+        assert decision.handoff_reason == "address_change_requires_human_review"
+
+
+def test_refund_compensation_keeps_priority_over_prior_address_context():
+    decision = decide_server_handoff_policy(
+        body="I want compensation for this lost parcel",
+        recent_context=[
+            {"role": "user", "content": "I need to change the delivery address for CH020000008030."}
+        ],
+    )
+
+    assert decision.handoff_required is True
+    assert decision.rule_id == "refund_compensation_claim"
+    assert decision.handoff_reason == "refund_or_compensation_requires_human_review"
+
+
+def test_non_stream_address_change_with_waybill_skips_tracking_fact_short_circuit(monkeypatch):
+    calls = {"ai": 0, "tracking": 0, "ticket": 0}
+    body = "I need to change the delivery address for CH020000008030."
+
+    async def fail_if_ai_called(**kwargs):
+        calls["ai"] += 1
+        raise AssertionError("server policy address-change handoff must not call AI")
+
+    def fail_if_tracking_lookup_called(**kwargs):
+        calls["tracking"] += 1
+        raise AssertionError("address-change handoff must not run tracking fact lookup")
+
+    def fake_get_or_create_ticket(
+        db,
+        *,
+        conversation,
+        business_state,
+        handoff_reason,
+        recommended_agent_action,
+        customer_message,
+        routing_context=None,
+    ):
+        calls["ticket"] += 1
+        assert handoff_reason == "address_change_requires_human_review"
+        assert recommended_agent_action.startswith("[address_change_request]")
+        assert customer_message == body
+        assert conversation.fast_session_id.startswith("session-handoff-policy-")
+        return SimpleNamespace(id=9010)
+
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fail_if_ai_called)
+    monkeypatch.setattr(webchat_fast, "_lookup_fast_tracking_fact", fail_if_tracking_lookup_called)
+    monkeypatch.setattr(webchat_fast, "get_or_create_fast_ticket", fake_get_or_create_ticket)
+
+    response = client.post(
+        "/api/webchat/fast-reply",
+        json=_payload("server-policy-address-with-waybill", body),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["ai_generated"] is False
+    assert data["reply_source"] == "server_handoff_policy"
+    assert data["handoff_required"] is True
+    assert data["handoff_reason"] == "address_change_requires_human_review"
+    assert data["ticket_creation_queued"] is False
+    assert data["ticket_id"] == 9010
+    assert "tracking_fact" not in data
+    assert calls == {"ai": 0, "tracking": 0, "ticket": 1}
+# PR193_ADDRESS_CHANGE_SEMANTIC_REGRESSION_END
