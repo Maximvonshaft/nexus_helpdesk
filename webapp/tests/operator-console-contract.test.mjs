@@ -201,3 +201,12 @@ test('webcall accept failure paths clean up media resources', () => {
   assert.match(agentWebCallPanel, /if \(localAudioRef\.current\) \{\s*localAudioRef\.current\.stop\(\)/)
   assert.match(agentWebCallPanel, /if \(roomRef\.current\) \{\s*roomRef\.current\.disconnect\(\)/)
 })
+
+test('webcall non-livekit accept path cleans up acquired microphone track before return', () => {
+  const nonLiveKitBranch = agentWebCallPanel.match(/if \(accepted\.provider !== 'livekit'\) \{[\s\S]*?return accepted\n\s*\}/)?.[0] ?? ''
+  assert.ok(nonLiveKitBranch)
+  const cleanupIndex = nonLiveKitBranch.indexOf('await cleanupRoom()')
+  const returnIndex = nonLiveKitBranch.indexOf('return accepted')
+  assert.ok(cleanupIndex >= 0)
+  assert.ok(returnIndex > cleanupIndex)
+})

@@ -218,6 +218,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
       setMessage('Accepting WebCall...')
       const accepted = await webchatVoiceApi.acceptSession(ticketId, session.voice_session_id)
       if (accepted.provider !== 'livekit') {
+        await cleanupRoom()
         setMessage(`WebCall accepted with provider ${accepted.provider}. Real browser audio requires provider=livekit.`)
         setCallState('idle')
         return accepted
