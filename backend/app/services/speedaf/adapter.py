@@ -58,6 +58,18 @@ class SpeedafCoreAdapter:
         return SpeedafWaybillLookupResult(ok=True, candidates=tuple(candidates), safe_summary=safe_summary)
 
     def query_order_tracking_fact(self, *, waybill_code: str, caller_id: str | None = None) -> TrackingFactResult:
+        # WAYBILL_ONLY_PUBLIC_STATUS_CALLER_FALLBACK_BEGIN
+        # Exact waybill lookup may use a configured UAT/public-status caller fallback,
+        # but only redacted tracking status is exposed by WebChat fact-first replies.
+        if waybill_code and not caller_id:
+            import os
+            caller_id = (
+                os.getenv("SPEEDAF_WAYBILL_ONLY_LOOKUP_CALLER_ID")
+                or os.getenv("SPEEDAF_UAT_CALLER_ID")
+                or os.getenv("SPEEDAF_MCP_TEST_CALLER_ID")
+                or ""
+            ).strip() or None
+        # WAYBILL_ONLY_PUBLIC_STATUS_CALLER_FALLBACK_END
         caller = (caller_id or "").strip()
         if not caller:
             return TrackingFactResult(
