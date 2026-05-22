@@ -20,8 +20,8 @@ jobs:
     name: scope-guard
     runs-on: ubuntu-latest
     outputs:
-      webcall_relevant: ${{ steps.changed-files.outputs.webcall_relevant }}
-      webcall_checks_required: ${{ steps.changed-files.outputs.webcall_checks_required }}
+      webcall_relevant: ${{ steps.changed_files.outputs.webcall_relevant }}
+      webcall_checks_required: ${{ steps.changed_files.outputs.webcall_checks_required }}
     steps:
       - name: Checkout PR
         uses: actions/checkout@v4
@@ -29,13 +29,18 @@ jobs:
           fetch-depth: 0
 
       - name: Validate changed file scope
-        id: changed-files
+        id: changed_files
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          BASE_SHA="${{ github.event.pull_request.base.sha || 'HEAD~1' }}"
-          HEAD_SHA="${{ github.event.pull_request.head.sha || 'HEAD' }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE_SHA="$(git rev-parse HEAD~1)"
+            HEAD_SHA="$(git rev-parse HEAD)"
+          fi
 
           git diff --name-only "$BASE_SHA" "$HEAD_SHA" | sort > /tmp/changed_files.txt
 
