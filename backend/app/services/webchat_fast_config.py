@@ -9,8 +9,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
-_ALLOWED_FAST_AI_PROVIDERS = {"openclaw_responses", "codex_auth", "codex_app_server", "openai_responses"}
-_ALLOWED_FAST_AI_FALLBACK_PROVIDERS = {"openclaw_responses", "none"}
+_ALLOWED_FAST_AI_PROVIDERS = {"openclaw_responses", "codex_auth", "codex_app_server", "openai_responses", "provider_runtime"}
+_ALLOWED_FAST_AI_FALLBACK_PROVIDERS = {"openclaw_responses", "rule_engine", "none"}
 _ALLOWED_TRACKING_DEDUPE_SCOPES = {"legacy", "tenant_channel", "tenant_channel_customer"}
 
 
@@ -180,7 +180,7 @@ class WebchatFastSettings:
                 + ", ".join(sorted(_ALLOWED_FAST_AI_PROVIDERS))
             )
         if self.fallback_provider not in _ALLOWED_FAST_AI_FALLBACK_PROVIDERS:
-            raise RuntimeError("WEBCHAT_FAST_AI_FALLBACK_PROVIDER must be openclaw_responses or none")
+            raise RuntimeError("WEBCHAT_FAST_AI_FALLBACK_PROVIDER must be openclaw_responses, rule_engine, or none")
         if self.tracking_dedupe_scope not in _ALLOWED_TRACKING_DEDUPE_SCOPES:
             raise RuntimeError(
                 "WEBCHAT_FAST_TRACKING_DEDUPE_SCOPE must be one of: "
@@ -215,7 +215,7 @@ class WebchatFastSettings:
                 raise RuntimeError("CODEX_AUTH_TOKEN is forbidden in production; use CODEX_AUTH_TOKEN_FILE")
             if self.codex_app_server_token_value:
                 raise RuntimeError("CODEX_APP_SERVER_TOKEN is forbidden in production; use CODEX_APP_SERVER_TOKEN_FILE")
-            if self.openai_api_key:
+            if self.openai_api_key and (self.provider == "openai_responses" or self.openai_enabled):
                 raise RuntimeError("OPENAI_API_KEY is forbidden in production for this phase; use OPENAI_API_KEY_FILE")
             if self.provider == "codex_auth" and not self.codex_auth_token_file:
                 raise RuntimeError("CODEX_AUTH_TOKEN_FILE is required in production when provider=codex_auth")
@@ -224,6 +224,8 @@ class WebchatFastSettings:
                     raise RuntimeError("CODEX_APP_SERVER_TOKEN_FILE is required in production when provider=codex_app_server")
                 if not self.codex_app_server_bridge_url:
                     raise RuntimeError("CODEX_APP_SERVER_BRIDGE_URL is required in production when provider=codex_app_server")
+                _validate_private_runtime_url(self.codex_app_server_bridge_url, setting_name="CODEX_APP_SERVER_BRIDGE_URL")
+            if self.provider == "provider_runtime" and self.codex_app_server_bridge_url:
                 _validate_private_runtime_url(self.codex_app_server_bridge_url, setting_name="CODEX_APP_SERVER_BRIDGE_URL")
             if self.provider == "openai_responses" and not self.openai_api_key_file:
                 raise RuntimeError("OPENAI_API_KEY_FILE is required in production when provider=openai_responses")

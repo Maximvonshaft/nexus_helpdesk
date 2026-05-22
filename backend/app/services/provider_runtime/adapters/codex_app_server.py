@@ -6,6 +6,8 @@ import os
 import socket
 import time
 import urllib.parse
+from pathlib import Path
+from typing import Any
 
 import httpx
 from sqlalchemy import text
@@ -30,14 +32,31 @@ class CodexAppServerAdapter(ProviderAdapter):
         self.crypto_service = crypto_service
         self.bridge_url = bridge_url
         self.app_env = os.environ.get("APP_ENV", os.environ.get("ENV", "development")).strip().lower()
-        self.shared_token = os.environ.get("CODEX_APP_SERVER_TOKEN", "").strip()
+        self.shared_token = self._load_shared_token()
         self.login_url = os.environ.get("CODEX_APP_SERVER_LOGIN_URL", "").strip()
         self.allow_combined_login_reply = os.environ.get("CODEX_APP_SERVER_ALLOW_COMBINED_LOGIN_REPLY", "false").lower() == "true"
         self._validate_bridge_url(bridge_url)
         if self.login_url:
             self._validate_bridge_url(self.login_url)
         if self.app_env == "production" and not self.shared_token:
-            raise RuntimeError("CODEX_APP_SERVER_TOKEN is required for codex_app_server provider in production")
+            raise RuntimeError("CODEX_APP_SERVER_TOKEN_FILE is required for codex_app_server provider in production")
+
+    def _load_shared_token(self) -> str:
+        token_file = os.environ.get("CODEX_APP_SERVER_TOKEN_FILE", "").strip()
+        if token_file:
+            try:
+                value = Path(token_file).read_text(encoding="utf-8").strip()
+                if value.lower().startswith("bearer "):
+                    value = value.split(None, 1)[1].strip()
+                return value
+            except OSError:
+                return ""
+        if self.app_env in {"development", "test", "local"}:
+            value = os.environ.get("CODEX_APP_SERVER_TOKEN", "").strip()
+            if value.lower().startswith("bearer "):
+                value = value.split(None, 1)[1].strip()
+            return value
+        return ""
 
     def _validate_bridge_url(self, url: str) -> None:
         if not url:
@@ -88,6 +107,30 @@ class CodexAppServerAdapter(ProviderAdapter):
             headers["Authorization"] = f"Bearer {self.shared_token}"
         return headers
 
+    def _readyz_url(self) -> str:
+        parsed = urllib.parse.urlparse(self.login_url or self.bridge_url)
+        return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, "/readyz", "", "", ""))
+
+    @staticmethod
+    def _safe_readyz_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
+        payload = payload or {}
+        return {
+            "bridge_mode": payload.get("mode"),
+            "real_upstream_configured": bool(payload.get("real_upstream_configured")),
+            "accepts_oauth_login": bool(payload.get("accepts_oauth_login")),
+            "reply_generation_backend": payload.get("reply_generation_backend"),
+            "token_file_configured": bool(payload.get("token_file_configured")),
+        }
+
+    async def _get_bridge_readyz(self, client: httpx.AsyncClient) -> dict[str, Any] | None:
+        response = await client.get(self._readyz_url(), headers=self._headers())
+        if response.status_code not in {200, 503}:
+            response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("bridge_readyz_must_be_object")
+        return payload
+
     async def generate(self, db: Session, request: ProviderRequest) -> ProviderResult:
         started = time.monotonic()
         refresh_manager = OAuthRefreshManager(db, self.crypto_service)
@@ -97,6 +140,8 @@ class CodexAppServerAdapter(ProviderAdapter):
             FROM provider_credentials
             WHERE tenant_id = :tenant_id
               AND provider = 'openai-codex'
+              AND provider_runtime = 'codex_app_server'
+              AND credential_type = 'oauth'
               AND status = 'active'
               AND revoked_at IS NULL
             ORDER BY created_at DESC
@@ -119,6 +164,22 @@ class CodexAppServerAdapter(ProviderAdapter):
 
         try:
             async with httpx.AsyncClient(timeout=request.timeout_ms / 1000.0) as client:
+                bridge_readyz = await self._get_bridge_readyz(client)
+                bridge_summary = self._safe_readyz_summary(bridge_readyz)
+                if (
+                    bridge_summary["bridge_mode"] == "stub"
+                    or not bridge_summary["real_upstream_configured"]
+                    or bridge_summary["reply_generation_backend"] in {None, "", "stub", "unconfigured"}
+                ):
+                    return ProviderResult(
+                        ok=False,
+                        provider=self.name,
+                        elapsed_ms=int((time.monotonic() - started) * 1000),
+                        error_code="bridge_not_production_ready",
+                        retryable=False,
+                        fallback_allowed=True,
+                        raw_payload_safe_summary=bridge_summary,
+                    )
                 if self.login_url:
                     await self._post_login(client, login_payload)
                     reply_payload = self._reply_payload(request)
@@ -138,6 +199,7 @@ class CodexAppServerAdapter(ProviderAdapter):
                         "bridge_status": response.status_code,
                         "bridge_host_hash": self._host_hash(self.bridge_url),
                         "login_mode": "two_step" if self.login_url else "combined",
+                        **bridge_summary,
                     },
                 )
         except httpx.TimeoutException:

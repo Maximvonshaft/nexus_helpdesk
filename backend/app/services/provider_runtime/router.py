@@ -66,12 +66,12 @@ class ProviderRuntimeRouter:
         }).mappings().first()
 
         if not rule:
-            primary_provider = "openai_responses"
-            fallbacks = ["codex_app_server", "rule_engine"]
+            primary_provider = "codex_app_server"
+            fallbacks = ["rule_engine", "openclaw_responses"]
             output_contract = "speedaf_webchat_fast_reply_v1"
-            timeout_ms = 3000
+            timeout_ms = 10000
             kill_switch = False
-            canary_percent = 0
+            canary_percent = 100
         else:
             primary_provider = rule["primary_provider"]
             fallbacks = rule["fallback_providers"] or []
@@ -84,9 +84,9 @@ class ProviderRuntimeRouter:
             self._write_audit(request, "generate", "skipped", "router", 0, {"kill_switch": True}, "kill_switch_active")
             return ProviderResult.unavailable("router", "kill_switch_active", 0)
 
-        if canary_percent > 0:
+        if 0 < canary_percent < 100 and fallbacks:
             bucket = self._stable_percent_bucket(request.tenant_id, request.session_id, request.request_id)
-            if bucket < canary_percent and fallbacks:
+            if bucket >= canary_percent:
                 primary_provider = fallbacks[0]
 
         request.output_contract = output_contract

@@ -81,6 +81,7 @@ async def generate_fast_reply(
             output = res.structured_output
             safe_summary = res.raw_payload_safe_summary or {}
             safe_summary["provider_runtime"] = True
+            reply = output.get("customer_reply") or output.get("reply")
             
             return FastAIProviderResult(
                 ok=True,
@@ -88,7 +89,7 @@ async def generate_fast_reply(
                 reply_source=res.provider,
                 raw_provider=res.provider,
                 raw_payload_safe_summary=safe_summary,
-                reply=output.get("customer_reply"),
+                reply=reply,
                 intent=output.get("intent"),
                 tracking_number=output.get("tracking_number"),
                 handoff_required=output.get("handoff_required", False),
