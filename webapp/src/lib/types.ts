@@ -415,6 +415,77 @@ export interface OpenClawUnresolvedEvent {
   updated_at: string
 }
 
+export interface ProviderCredentialStatus {
+  id: string
+  tenant_id: string
+  provider: string
+  provider_runtime: string
+  credential_type: string
+  profile_id: string
+  account_id?: string | null
+  email?: string | null
+  chatgpt_plan_type?: string | null
+  scope?: string | null
+  expires_at?: string | null
+  status: string
+  last_used_at?: string | null
+  last_refresh_at?: string | null
+  last_error_code?: string | null
+  token_fingerprint_prefix?: string | null
+  created_by?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  revoked_at?: string | null
+  secret_values_exposed: false
+}
+
+export interface ProviderCredentialStatusResponse {
+  provider: string
+  tenant_id: string
+  credentials: ProviderCredentialStatus[]
+  active_count: number
+  secret_values_exposed: false
+}
+
+export interface CodexAuthorizationStart {
+  session_id: string
+  authorization_url: string
+  expires_at: string
+  scope?: string | null
+  provider: string
+}
+
+export interface CodexDeviceStart {
+  session_id: string
+  verification_url: string
+  user_code: string
+  expires_at: string
+  interval: number
+  scope?: string | null
+}
+
+export interface CodexSessionStatus {
+  session_id?: string
+  provider?: string
+  flow_type?: string
+  status: string
+  error_code?: string | null
+  expires_at?: string | null
+  completed_at?: string | null
+  scope?: string | null
+  user_code?: string | null
+  verification_url?: string | null
+  credential_id?: string | null
+}
+
+export interface CodexCredentialActionResult {
+  ok: boolean
+  status: string
+  credential_id?: string | null
+  error_code?: string | null
+  upstream_revoke?: string | null
+}
+
 export type WebchatMessageType = 'text' | 'system' | 'card' | 'action' | 'attachment'
 
 export type WebchatCardType =

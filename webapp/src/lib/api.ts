@@ -25,6 +25,11 @@ import type {
   WebchatConversation,
   WebchatThread,
   WebchatReplyResult,
+  ProviderCredentialStatusResponse,
+  CodexAuthorizationStart,
+  CodexDeviceStart,
+  CodexSessionStatus,
+  CodexCredentialActionResult,
 } from '@/lib/types'
 import type { WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
 
@@ -341,6 +346,21 @@ export const api = {
     return request<RuntimeRecoveryResult>(`/api/admin/outbound/requeue-dead${search ? `?${search}` : ''}`, { method: 'POST' })
   },
   consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
+
+  codexCredentialStatus: () => request<ProviderCredentialStatusResponse>('/api/admin/provider-credentials/codex/status'),
+  startCodexAuthorization: (scopes?: string[]) => request<CodexAuthorizationStart>('/api/admin/provider-credentials/codex/authorize', {
+    method: 'POST',
+    body: JSON.stringify({ scopes: scopes?.length ? scopes : null }),
+  }),
+  startCodexDeviceFlow: (scopes?: string[]) => request<CodexDeviceStart>('/api/admin/provider-credentials/codex/device/start', {
+    method: 'POST',
+    body: JSON.stringify({ scopes: scopes?.length ? scopes : null }),
+  }),
+  codexDeviceFlowStatus: (sessionId: string) => request<CodexSessionStatus>(`/api/admin/provider-credentials/codex/device/status/${sessionId}`),
+  pollCodexDeviceFlow: (sessionId: string) => request<CodexSessionStatus>(`/api/admin/provider-credentials/codex/device/poll/${sessionId}`, { method: 'POST' }),
+  refreshCodexCredential: (credentialId: string) => request<CodexCredentialActionResult>(`/api/admin/provider-credentials/codex/refresh/${credentialId}`, { method: 'POST' }),
+  revokeCodexCredential: (credentialId: string) => request<CodexCredentialActionResult>(`/api/admin/provider-credentials/codex/revoke/${credentialId}`, { method: 'POST' }),
+  disconnectCodexCredential: (credentialId: string) => request<CodexCredentialActionResult>(`/api/admin/provider-credentials/codex/disconnect/${credentialId}`, { method: 'POST' }),
   outboundChannelCapabilities: () => request<OutboundChannelCapabilitiesResponse>('/api/outbound/channels/capabilities'),
 
   webchatConversations: (init?: RequestInit) => request<WebchatConversation[]>('/api/webchat/admin/conversations', init),
