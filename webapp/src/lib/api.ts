@@ -26,7 +26,7 @@ import type {
   WebchatThread,
   WebchatReplyResult,
 } from '@/lib/types'
-import type { WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
+import type { WebchatVoiceIncomingSession, WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
 const REQUEST_ID_HEADER = 'X-Request-Id'
@@ -40,6 +40,16 @@ export class AuthExpiredError extends Error {
   constructor(message = '登录状态已失效，请重新登录') {
     super(message)
     this.name = 'AuthExpiredError'
+  }
+}
+
+export class ApiError extends Error {
+  status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
   }
 }
 
@@ -147,7 +157,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       if (res.status === 401) {
         if (publicRequest) {
           const msg = await readErrorMessage(res, '登录失败，请检查账号或密码')
-          throw new Error(msg)
+          throw new ApiError(msg, res.status)
         }
         if (!authExpiryHandled) {
           authExpiryHandled = true
@@ -351,8 +361,18 @@ export const api = {
     body: JSON.stringify(payload),
   }),
   webchatVoiceRuntimeConfig: (init?: RequestInit) => request<WebchatVoiceRuntimeConfig>('/api/webchat/voice/runtime-config', init),
+  webchatVoiceIncomingSessions: (params?: { status?: string; limit?: number }, init?: RequestInit) => {
+    const search = new URLSearchParams()
+    search.set('status', params?.status || 'ringing')
+    search.set('limit', String(params?.limit ?? 50))
+    return request<{ items: WebchatVoiceIncomingSession[] }>(`/api/webchat/admin/voice/sessions?${search.toString()}`, init)
+  },
   webchatVoiceSessions: (ticketId: number, init?: RequestInit) => request<{ items: WebchatVoiceSession[] }>(`/api/webchat/admin/tickets/${ticketId}/voice/sessions`, init),
   webchatVoiceAcceptSession: (ticketId: number, voiceSessionId: string) => request<WebchatVoiceSession>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/accept`, { method: 'POST' }),
+  webchatVoiceRejectSession: (ticketId: number, voiceSessionId: string, reason?: string) => request<{ ok: boolean; status: string; voice_session_id: string; accepted_by_user_id?: number | null }>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason: reason || null }),
+  }),
   webchatVoiceEndSession: (ticketId: number, voiceSessionId: string) => request<{ ok: boolean; status: string; voice_session_id: string; accepted_by_user_id?: number | null }>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/end`, { method: 'POST' }),
 
   unresolvedEvents: () => request<OpenClawUnresolvedEvent[]>('/api/admin/openclaw/unresolved-events'),

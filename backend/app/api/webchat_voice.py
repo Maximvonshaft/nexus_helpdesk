@@ -5,15 +5,17 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..unit_of_work import managed_session
-from ..voice_schemas import WebchatVoiceCreateRequest
+from ..voice_schemas import WebchatVoiceCreateRequest, WebchatVoiceRejectRequest
 from ..webchat_voice_config import load_webchat_voice_runtime_config
 from ..services.webchat_voice_service import (
     DETAIL_EXPIRED,
     accept_admin_voice_session,
     create_public_voice_session,
     end_admin_voice_session,
+    list_admin_incoming_voice_sessions,
     end_public_voice_session,
     list_admin_voice_sessions,
+    reject_admin_voice_session,
 )
 from .deps import get_current_user
 
@@ -72,6 +74,16 @@ def list_ticket_voice_sessions(
     return list_admin_voice_sessions(db, ticket_id=ticket_id, current_user=current_user)
 
 
+@router.get("/admin/voice/sessions")
+def list_incoming_voice_sessions(
+    status: str = "ringing",
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict:
+    return list_admin_incoming_voice_sessions(db, current_user=current_user, status_filter=status, limit=limit)
+
+
 @router.post("/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept")
 def accept_ticket_voice_session(
     ticket_id: int,
@@ -97,6 +109,24 @@ def accept_ticket_voice_session(
     except Exception:
         db.rollback()
         raise
+
+
+@router.post("/admin/tickets/{ticket_id}/voice/{voice_session_id}/reject")
+def reject_ticket_voice_session(
+    ticket_id: int,
+    voice_session_id: str,
+    payload: WebchatVoiceRejectRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict:
+    with managed_session(db):
+        return reject_admin_voice_session(
+            db,
+            ticket_id=ticket_id,
+            voice_session_public_id=voice_session_id,
+            current_user=current_user,
+            reason=payload.reason if payload else None,
+        )
 
 
 @router.post("/admin/tickets/{ticket_id}/voice/{voice_session_id}/end")

@@ -23,6 +23,16 @@ export interface WebchatVoiceSession {
   summary_status?: string | null
 }
 
+export interface WebchatVoiceIncomingSession extends WebchatVoiceSession {
+  ticket_id: number
+  ticket_no?: string | null
+  ticket_title?: string | null
+  conversation_id?: string | null
+  visitor_label?: string | null
+  origin?: string | null
+  page_url?: string | null
+}
+
 export interface WebchatVoiceRuntimeConfig {
   enabled: boolean
   provider: string

@@ -165,6 +165,15 @@ function WebCallVisitorRoomPage() {
     setMessage('WebCall ended. The ticket timeline will receive the call evidence from NexusDesk.')
   }
 
+  function continueTextSupport() {
+    setMessage('Continue with WebChat text support in the original chat window. This WebCall popup can be closed.')
+    try {
+      window.close()
+    } catch {
+      // Browser may refuse to close a non-popup tab.
+    }
+  }
+
   return (
     <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#f8fafc', color: '#101828', padding: 24 }}>
       <section style={{ width: 'min(680px, 100%)', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 24, padding: 28, boxShadow: '0 20px 60px rgba(15,23,42,.08)' }}>
@@ -183,6 +192,7 @@ function WebCallVisitorRoomPage() {
           <button type="button" disabled={!canJoin} onClick={() => void joinCall()} style={{ border: 0, borderRadius: 999, padding: '12px 18px', background: canJoin ? '#f97316' : '#cbd5e1', color: '#fff', fontWeight: 800, cursor: canJoin ? 'pointer' : 'not-allowed' }}>Join WebCall</button>
           <button type="button" disabled={!connected} onClick={() => void toggleMute()} style={{ border: '1px solid #cbd5e1', borderRadius: 999, padding: '12px 18px', background: '#fff', color: '#101828', fontWeight: 700, cursor: connected ? 'pointer' : 'not-allowed' }}>{muted ? 'Unmute' : 'Mute'}</button>
           <button type="button" disabled={!context || ended} onClick={() => void endCall()} style={{ border: '1px solid #fecaca', borderRadius: 999, padding: '12px 18px', background: '#fff1f2', color: '#be123c', fontWeight: 800, cursor: context && !ended ? 'pointer' : 'not-allowed' }}>End call</button>
+          <button type="button" onClick={() => continueTextSupport()} style={{ border: '1px solid #cbd5e1', borderRadius: 999, padding: '12px 18px', background: '#fff', color: '#101828', fontWeight: 700 }}>Continue with WebChat text</button>
         </div>
       </section>
     </main>

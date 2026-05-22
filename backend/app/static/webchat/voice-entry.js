@@ -53,6 +53,9 @@
     statusEl.textContent = text || '';
     statusEl.setAttribute('data-visible', visible ? 'true' : 'false');
   }
+  function textFallbackMessage(message) {
+    return (message || 'WebCall unavailable') + '. Continue in WebChat text support from this page.';
+  }
   function api(path, options, timeoutMs) {
     options = options || {};
     timeoutMs = timeoutMs || 12000;
@@ -137,7 +140,7 @@
       }
       setTimeout(function () { setStatus('', false); }, 2600);
     }).catch(function (err) {
-      setStatus(err && err.message ? err.message : 'WebCall unavailable', true);
+      setStatus(textFallbackMessage(err && err.message ? err.message : 'WebCall unavailable'), true);
     }).finally(function () {
       state.busy = false;
       button.disabled = false;

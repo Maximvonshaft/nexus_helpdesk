@@ -10,6 +10,12 @@ class WebchatVoiceCreateRequest(BaseModel):
     recording_consent: bool = False
 
 
+class WebchatVoiceRejectRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=240)
+
+
 class WebchatVoiceSessionRead(BaseModel):
     ok: bool = True
     voice_session_id: str
@@ -32,6 +38,20 @@ class WebchatVoiceSessionRead(BaseModel):
 
 class WebchatVoiceSessionList(BaseModel):
     items: list[WebchatVoiceSessionRead]
+
+
+class WebchatVoiceIncomingSessionRead(WebchatVoiceSessionRead):
+    ticket_id: int
+    ticket_no: str | None = None
+    ticket_title: str | None = None
+    conversation_id: str | None = None
+    visitor_label: str | None = None
+    origin: str | None = None
+    page_url: str | None = None
+
+
+class WebchatVoiceIncomingSessionList(BaseModel):
+    items: list[WebchatVoiceIncomingSessionRead]
 
 
 class WebchatVoiceStatusResponse(BaseModel):

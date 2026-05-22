@@ -1,0 +1,44 @@
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+OBSERVABILITY = ROOT / "backend" / "app" / "services" / "observability.py"
+VOICE_SERVICE = ROOT / "backend" / "app" / "services" / "webchat_voice_service.py"
+VOICE_API = ROOT / "backend" / "app" / "api" / "webchat_voice.py"
+AGENT_PANEL = ROOT / "webapp" / "src" / "components" / "webcall" / "AgentWebCallPanel.tsx"
+AGENT_ROUTE = ROOT / "webapp" / "src" / "routes" / "webchat-voice.tsx"
+VOICE_ENTRY = ROOT / "backend" / "app" / "static" / "webchat" / "voice-entry.js"
+WEBCALL_ROUTE = ROOT / "webapp" / "src" / "routes" / "webcall.tsx"
+
+
+def test_backend_p0_routes_and_metrics_are_present():
+    obs = OBSERVABILITY.read_text(encoding="utf-8")
+    service = VOICE_SERVICE.read_text(encoding="utf-8")
+    api = VOICE_API.read_text(encoding="utf-8")
+
+    assert "nexusdesk_voice_session_events_total" in obs
+    assert "nexusdesk_voice_provider_errors_total" in obs
+    assert "nexusdesk_voice_call_duration_seconds" in obs
+    assert "nexusdesk_voice_ringing_duration_seconds" in obs
+    assert "list_admin_incoming_voice_sessions" in service
+    assert "reject_admin_voice_session" in service
+    assert "voice.session.rejected" in service
+    assert '"/admin/voice/sessions"' in api
+    assert '"/admin/tickets/{ticket_id}/voice/{voice_session_id}/reject"' in api
+
+
+def test_frontend_p0_queue_reject_and_text_fallback_are_present():
+    panel = AGENT_PANEL.read_text(encoding="utf-8")
+    route = AGENT_ROUTE.read_text(encoding="utf-8")
+    entry = VOICE_ENTRY.read_text(encoding="utf-8")
+    webcall = WEBCALL_ROUTE.read_text(encoding="utf-8")
+
+    assert "Reject WebCall" in panel
+    assert "webchatVoiceApi.rejectSession" in panel
+    assert "Rejecting WebCall" in panel
+    assert "Incoming WebCall Queue" in route
+    assert "webchatVoiceApi.incomingSessions" in route
+    assert "Continue in WebChat text support" in entry
+    assert "textFallbackMessage" in entry
+    assert "Continue with WebChat text" in webcall
+    assert "visitor_token" not in panel
+    assert "LIVEKIT_API_SECRET" not in panel

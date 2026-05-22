@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Room, RoomEvent, Track, createLocalAudioTrack } from 'livekit-client'
-import { WebchatVoiceApiError, webchatVoiceApi } from '@/lib/webchatVoiceApi'
+import { ApiError } from '@/lib/api'
+import { webchatVoiceApi } from '@/lib/webchatVoiceApi'
 import type { WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
 import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
 import { Badge } from '@/components/ui/Badge'
@@ -10,6 +11,7 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 
 const ACTIVE_STATUSES = new Set(['created', 'ringing', 'accepted', 'active'])
+const REJECT_READY_STATUSES = new Set(['created', 'ringing'])
 const TERMINAL_STATUSES = new Set(['ended', 'failed', 'cancelled', 'missed'])
 const STATUS_LABELS: Record<string, string> = {
   created: 'Created',
@@ -91,7 +93,7 @@ function readableAcceptError(detail: string) {
 }
 
 function safeErrorMessage(err: unknown) {
-  if (err instanceof WebchatVoiceApiError) {
+  if (err instanceof ApiError) {
     if (err.status === 409) return readableAcceptError(err.message)
     return 'WebCall request failed. Please refresh and try again.'
   }
@@ -138,6 +140,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
   const connected = callState === 'connected'
   const busyAccepting = callState === 'accepting' || callState === 'requesting_mic' || callState === 'connecting'
   const canAccept = Boolean(ticketId && currentSession && !terminal && !connected && !busyAccepting)
+  const canReject = Boolean(ticketId && currentSession && REJECT_READY_STATUSES.has(String(currentSession.status)) && !connected && !busyAccepting)
 
   async function cleanupRoom() {
     try {
@@ -259,6 +262,25 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
     onError: (err: unknown) => setMessage(safeErrorMessage(err)),
   })
 
+  const rejectMutation = useMutation({
+    mutationFn: async () => {
+      if (!ticketId || !currentSession) return null
+      setMessage('Rejecting WebCall...')
+      const response = await webchatVoiceApi.rejectSession(ticketId, currentSession.voice_session_id, 'agent_rejected')
+      await cleanupRoom()
+      setCallState('ended')
+      setJoinedVoiceSessionId(null)
+      setMuted(false)
+      setMessage('WebCall rejected. The visitor can continue in WebChat text support.')
+      return response
+    },
+    onSuccess: async () => {
+      await invalidateVoiceViews()
+      await client.invalidateQueries({ queryKey: ['webchatVoiceIncomingSessions'] })
+    },
+    onError: (err: unknown) => setMessage(safeErrorMessage(err)),
+  })
+
   async function toggleMute() {
     const audioTrack = localAudioRef.current
     if (!audioTrack || !connected) return
@@ -323,6 +345,9 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
             <div className="inline-actions">
               <Button variant="primary" disabled={!canAccept} onClick={() => currentSession && acceptMutation.mutate(currentSession)}>
                 {acceptMutation.isPending ? 'Accepting...' : 'Accept WebCall'}
+              </Button>
+              <Button variant="secondary" disabled={!canReject || rejectMutation.isPending} onClick={() => rejectMutation.mutate()}>
+                {rejectMutation.isPending ? 'Rejecting...' : 'Reject WebCall'}
               </Button>
               <Button variant="secondary" disabled={!connected} onClick={() => void toggleMute()}>{muted ? 'Unmute' : 'Mute'}</Button>
               <Button variant="secondary" disabled={!currentSession || terminal || endMutation.isPending} onClick={() => endMutation.mutate()}>
