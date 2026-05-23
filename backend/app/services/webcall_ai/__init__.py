@@ -17,6 +17,7 @@ from .lifecycle import (
     heartbeat_webcall_ai_session,
     release_webcall_ai_session,
 )
+from .mock_turn_executor import execute_mock_turn_for_claimed_session
 from .schemas import (
     WebCallAIActionDecision,
     WebCallAIAllowedAction,
@@ -38,6 +39,7 @@ __all__ = [
     "WEBCALL_AI_STATUS_SKIPPED",
     "claim_webcall_ai_sessions",
     "fail_webcall_ai_session",
+    "execute_mock_turn_for_claimed_session",
     "get_webcall_ai_settings",
     "heartbeat_webcall_ai_session",
     "release_webcall_ai_session",

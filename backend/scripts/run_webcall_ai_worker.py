@@ -30,6 +30,7 @@ def run_once(worker_id: str, *, limit: int, lease_seconds: int) -> dict[str, int
 def _format_result(result: dict[str, int]) -> str:
     return (
         f"claimed={int(result.get('claimed', 0))} "
+        f"turns={int(result.get('turns', 0))} "
         f"released={int(result.get('released', 0))} "
         f"failed={int(result.get('failed', 0))} "
         f"skipped={int(result.get('skipped', 0))}"
