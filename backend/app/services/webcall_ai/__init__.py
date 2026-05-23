@@ -36,7 +36,7 @@ from .media_schemas import (
     WebCallTTSResult,
 )
 from .mock_media_provider import MockSTTProvider, MockTTSProvider
-from .mock_turn_executor import MockTurnExecutionResult, execute_mock_turn_for_claimed_session
+from .mock_turn_executor import MockTurnExecutionResult, MockTurnRuntimeFailure, execute_mock_turn_for_claimed_session
 from .orchestrator import WebCallAIOrchestratorResult, run_webcall_ai_orchestrator
 from .participant_service import (
     ai_participant_identity,
@@ -78,6 +78,13 @@ from .transcript_writer import (
     TranscriptWriteResult,
     write_stt_transcript_segment,
 )
+from .tts_runtime import WebCallTTSRuntimeResult, run_tts_runtime_for_turn
+from .voice_egress_client import (
+    FakeAudioReferenceEgressClient,
+    LiveKitAudioPublishStubClient,
+    WebCallVoiceEgressResult,
+    get_webcall_voice_egress_client,
+)
 
 __all__ = [
     "WebCallAIActionDecision",
@@ -98,11 +105,14 @@ __all__ = [
     "MockTTSProvider",
     "MockTTSResult",
     "MockTurnExecutionResult",
+    "MockTurnRuntimeFailure",
     "WebCallSTTInput",
     "WebCallSTTResult",
     "WebCallSTTRuntimeResult",
     "WebCallTTSInput",
     "WebCallTTSResult",
+    "WebCallTTSRuntimeResult",
+    "WebCallVoiceEgressResult",
     "WEBCALL_AI_STATUS_CLAIMED",
     "WEBCALL_AI_STATUS_FAILED",
     "WEBCALL_AI_STATUS_PENDING",
@@ -110,8 +120,10 @@ __all__ = [
     "WEBCALL_AI_STATUS_SKIPPED",
     "FakeWebCallAIRoomClient",
     "FakeNoMediaPresenceClient",
+    "FakeAudioReferenceEgressClient",
     "LiveKitTokenIssuerRoomClient",
     "LiveKitNoMediaPresenceClient",
+    "LiveKitAudioPublishStubClient",
     "WebCallAIPresenceJoinResult",
     "WebCallAIPresenceLeaveResult",
     "WebCallAIRoomJoinResult",
@@ -128,6 +140,7 @@ __all__ = [
     "execute_mock_turn_for_claimed_session",
     "get_webcall_ai_settings",
     "get_webcall_ai_presence_client",
+    "get_webcall_voice_egress_client",
     "get_stt_provider",
     "get_tts_provider",
     "heartbeat_webcall_ai_session",
@@ -138,6 +151,7 @@ __all__ = [
     "reject_forbidden_action",
     "resolve_audio_reference_for_session",
     "run_stt_runtime_for_session",
+    "run_tts_runtime_for_turn",
     "run_webcall_ai_orchestrator",
     "TranscriptWriteResult",
     "write_stt_transcript_segment",

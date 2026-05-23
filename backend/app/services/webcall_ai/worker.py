@@ -12,7 +12,7 @@ from .lifecycle import (
     heartbeat_webcall_ai_session,
     release_webcall_ai_session,
 )
-from .mock_turn_executor import execute_mock_turn_for_claimed_session
+from .mock_turn_executor import MockTurnRuntimeFailure, execute_mock_turn_for_claimed_session
 from .participant_service import (
     ai_participant_identity,
     ensure_ai_participant_record,
@@ -51,6 +51,9 @@ def run_webcall_ai_worker_once(
     presence_failures = 0
     transcript_segments = 0
     stt_runtime_failures = 0
+    tts_runtime_events = 0
+    voice_egress_sent = 0
+    voice_egress_failures = 0
     if noop_release:
         for session in claimed_sessions:
             presence_joined = False
@@ -116,6 +119,9 @@ def run_webcall_ai_worker_once(
                 stt_events += turn_result.stt_events
                 tts_events += turn_result.tts_events
                 transcript_segments += turn_result.transcript_segments
+                tts_runtime_events += turn_result.tts_runtime_events
+                voice_egress_sent += turn_result.voice_egress_sent
+                voice_egress_failures += turn_result.voice_egress_failures
                 heartbeat_webcall_ai_session(db, session.id, worker_id, lease_seconds=lease_seconds)
                 if settings.room_presence_enabled:
                     leave_result = presence_client.leave(session=session, participant_identity=participant_identity)
@@ -161,6 +167,9 @@ def run_webcall_ai_worker_once(
                 failed += 1
                 if settings.stt_runtime_enabled:
                     stt_runtime_failures += 1
+                if isinstance(exc, MockTurnRuntimeFailure):
+                    tts_runtime_events += exc.tts_runtime_events
+                    voice_egress_failures += exc.voice_egress_failures
                 fail_webcall_ai_session(
                     db,
                     session.id,
@@ -191,6 +200,10 @@ def run_webcall_ai_worker_once(
     if settings.stt_runtime_enabled:
         result_dict["transcript_segments"] = transcript_segments
         result_dict["stt_runtime_failures"] = stt_runtime_failures
+    if settings.tts_runtime_enabled:
+        result_dict["tts_runtime_events"] = tts_runtime_events
+        result_dict["voice_egress_sent"] = voice_egress_sent
+        result_dict["voice_egress_failures"] = voice_egress_failures
     update_service_heartbeat(
         db,
         service_name="webcall_ai_worker",
