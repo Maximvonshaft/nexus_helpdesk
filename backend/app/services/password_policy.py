@@ -81,7 +81,7 @@ def validate_admin_password_policy(password: str) -> None:
         raise PasswordPolicyError("Password has too little character variety")
     if password.isdigit() or password.isalpha():
         raise PasswordPolicyError("Password must include at least two character types")
-    if _character_class_count(password) < 3:
-        raise PasswordPolicyError("Password must include at least three character types")
+    if _character_class_count(password) < 4:
+        raise PasswordPolicyError("Password must include lowercase, uppercase, digit, and special character types")
     if _has_sequential_run(password):
         raise PasswordPolicyError("Password contains an unsafe sequence")
