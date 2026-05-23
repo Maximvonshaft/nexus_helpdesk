@@ -149,6 +149,33 @@ def test_worker_orchestrator_tracking_lookup_writes_safe_action_evidence(db, mon
     assert "SF123456789CN" not in (action.result_status or "")
 
 
+def test_worker_tracking_reply_disabled_handoffs_without_lookup(db, monkeypatch):
+    _voice_session(db)
+    monkeypatch.setenv("WEBCALL_AI_ORCHESTRATOR_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_TRACKING_LOOKUP_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_TRACKING_REPLY_ENABLED", "false")
+    get_webcall_ai_settings.cache_clear()
+    monkeypatch.setattr(
+        "app.services.webcall_ai.mock_turn_executor.get_stt_provider",
+        lambda: TextSTTProvider("Track SF123456789CN please"),
+    )
+    monkeypatch.setattr(
+        "app.services.webcall_ai.orchestrator.lookup_tracking_fact",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("lookup should not be called")),
+    )
+
+    run_webcall_ai_worker_once(db, "worker-a", limit=10, lease_seconds=30)
+    turn = db.query(WebchatVoiceAITurn).one()
+    action = db.query(WebchatVoiceAIAction).one()
+
+    assert turn.action == "handoff_to_human"
+    assert turn.intent == "tracking_reply_disabled"
+    assert turn.handoff_required is True
+    assert action.nexus_decision == "handoff"
+    assert action.speedaf_tool_name is None
+    assert action.result_status == "tracking_reply_disabled"
+
+
 def test_worker_orchestrator_forbidden_request_handoffs_without_lookup(db, monkeypatch):
     _voice_session(db)
     monkeypatch.setenv("WEBCALL_AI_ORCHESTRATOR_ENABLED", "true")

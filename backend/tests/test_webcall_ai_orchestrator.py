@@ -145,6 +145,29 @@ def test_lookup_disabled_does_not_call_tracking_service(monkeypatch):
     assert result.speedaf_tool_name is None
 
 
+def test_tracking_reply_disabled_handoffs_without_lookup(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_ORCHESTRATOR_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_TRACKING_LOOKUP_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_TRACKING_REPLY_ENABLED", "false")
+    get_webcall_ai_settings.cache_clear()
+    monkeypatch.setattr(
+        "app.services.webcall_ai.orchestrator.lookup_tracking_fact",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("lookup should not be called")),
+    )
+
+    result = run_webcall_ai_orchestrator(
+        customer_text_redacted="Track SF123456789CN",
+        session=_session(),
+        worker_id="worker-a",
+    )
+
+    assert result.action == "handoff_to_human"
+    assert result.intent == "tracking_reply_disabled"
+    assert result.handoff_required is True
+    assert result.tracking_failure_reason == "tracking_reply_disabled"
+    assert result.speedaf_tool_name is None
+
+
 @pytest.mark.parametrize(
     "text",
     [

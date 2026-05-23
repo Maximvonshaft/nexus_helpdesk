@@ -50,6 +50,23 @@ def run_webcall_ai_orchestrator(
 ) -> WebCallAIOrchestratorResult:
     resolved = settings or get_webcall_ai_settings()
     text = customer_text_redacted or ""
+    if not resolved.tracking_reply_enabled:
+        return WebCallAIOrchestratorResult(
+            action="handoff_to_human",
+            intent="tracking_reply_disabled",
+            ai_response_text_redacted=build_handoff_reply(),
+            handoff_required=True,
+            handoff_reason="tracking_reply_disabled",
+            tracking_number_hash=None,
+            tracking_number_suffix=None,
+            tracking_fact_ok=False,
+            tracking_tool_status=None,
+            tracking_failure_reason="tracking_reply_disabled",
+            speedaf_tool_name=None,
+            nexus_decision="handoff",
+            decision_reason="tracking_reply_disabled",
+            result_status="tracking_reply_disabled",
+        )
     if _HANDOFF_WORDS.search(text):
         return WebCallAIOrchestratorResult(
             action="handoff_to_human",
