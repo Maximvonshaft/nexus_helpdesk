@@ -12,7 +12,6 @@ from ..enums import MessageStatus
 from ..utils.time import utc_now
 
 _PATCHED = False
-_REDACTED = "[redacted]"
 _REDACTED_COMMAND = "[redacted_command]"
 _REDACTED_MESSAGE = "[redacted_message_body]"
 _FINGERPRINT_PREFIX = "sha256:"
@@ -67,7 +66,7 @@ def sanitize_event_payload(value: Any, *, key: str | None = None) -> Any:
     normalized = _normalized_key(key or "")
     if normalized in {"command"}:
         return _REDACTED_COMMAND
-    if normalized in {"body", "message", "text", "content", "contenttext", "content_text"}:
+    if normalized in {"body", "message", "message_body", "messagebody", "text", "content", "contenttext", "content_text"}:
         return _REDACTED_MESSAGE
     if normalized in {"target", "recipient", "preferred_reply_contact", "source_chat_id"}:
         return mask_target(value)
@@ -231,33 +230,47 @@ def _safe_dispatch_via_openclaw_cli(
     if thread_id:
         cmd.extend(["--thread-id", thread_id])
 
-    safe_payload = {
-        "dispatch": "cli_fallback",
-        "channel": channel,
-        "target": target,
-        "account_id": account_id,
-        "thread_id": thread_id,
-        "message_body": _REDACTED_MESSAGE,
-    }
-    openclaw_bridge.LOGGER.warning("openclaw_cli_fallback_invoked", extra={"event_payload": safe_payload})
+    openclaw_bridge.LOGGER.warning(
+        "openclaw_cli_fallback_invoked",
+        extra={
+            "event_payload": sanitize_event_payload(
+                {
+                    "dispatch": "cli_fallback",
+                    "channel": channel,
+                    "target": target,
+                    "account_id": account_id,
+                    "thread_id": thread_id,
+                    "message_body": _REDACTED_MESSAGE,
+                }
+            )
+        },
+    )
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
         openclaw_bridge.LOGGER.info(
             "openclaw_cli_fallback_success",
-            extra={"event_payload": {"dispatch": "cli_fallback", "channel": channel, "target": target}},
+            extra={"event_payload": sanitize_event_payload({"dispatch": "cli_fallback", "channel": channel, "target": target})},
         )
         return MessageStatus.sent, "sent_via_openclaw_cli_fallback", utc_now()
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.strip()[:500] if exc.stderr else "openclaw send failed"
         openclaw_bridge.LOGGER.warning(
             "openclaw_cli_fallback_failed",
-            extra={"event_payload": {"dispatch": "cli_fallback", "channel": channel, "target": target, "error": stderr}},
+            extra={
+                "event_payload": sanitize_event_payload(
+                    {"dispatch": "cli_fallback", "channel": channel, "target": target, "error": stderr}
+                )
+            },
         )
         return MessageStatus.failed, stderr, None
     except Exception as exc:
         openclaw_bridge.LOGGER.warning(
             "openclaw_cli_fallback_failed",
-            extra={"event_payload": {"dispatch": "cli_fallback", "channel": channel, "target": target, "error": str(exc)}},
+            extra={
+                "event_payload": sanitize_event_payload(
+                    {"dispatch": "cli_fallback", "channel": channel, "target": target, "error": str(exc)}
+                )
+            },
         )
         return MessageStatus.failed, str(exc), None
 
