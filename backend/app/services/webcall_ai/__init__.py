@@ -1,8 +1,8 @@
 """WebCall AI foundation contracts.
 
-PR-0/PR-2 adds guarded config, schemas, persistence, and worker claim
-lifecycle only. It does not start an AI voice agent or connect STT/TTS
-providers.
+This package exposes guarded config, schemas, persistence helpers, worker
+claim lifecycle, deterministic mock turn execution, and mock media boundary
+contracts. It does not start a functional AI voice agent.
 """
 
 from .config import WebCallAISettings, get_webcall_ai_settings
@@ -17,7 +17,9 @@ from .lifecycle import (
     heartbeat_webcall_ai_session,
     release_webcall_ai_session,
 )
-from .mock_turn_executor import execute_mock_turn_for_claimed_session
+from .media_schemas import MockSTTInput, MockSTTResult, MockTTSInput, MockTTSResult
+from .mock_media_provider import MockSTTProvider, MockTTSProvider
+from .mock_turn_executor import MockTurnExecutionResult, execute_mock_turn_for_claimed_session
 from .schemas import (
     WebCallAIActionDecision,
     WebCallAIAllowedAction,
@@ -32,6 +34,13 @@ __all__ = [
     "WebCallAIForbiddenAction",
     "WebCallAISettings",
     "WebCallAITurnDecision",
+    "MockSTTInput",
+    "MockSTTProvider",
+    "MockSTTResult",
+    "MockTTSInput",
+    "MockTTSProvider",
+    "MockTTSResult",
+    "MockTurnExecutionResult",
     "WEBCALL_AI_STATUS_CLAIMED",
     "WEBCALL_AI_STATUS_FAILED",
     "WEBCALL_AI_STATUS_PENDING",

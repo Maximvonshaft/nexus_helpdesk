@@ -29,19 +29,23 @@ def run_webcall_ai_worker_once(
         lease_seconds=lease_seconds,
     )
     turns = 0
+    stt_events = 0
+    tts_events = 0
     released = 0
     failed = 0
     if noop_release:
         for session in claimed_sessions:
             try:
-                execute_mock_turn_for_claimed_session(db, session=session, worker_id=worker_id)
+                turn_result = execute_mock_turn_for_claimed_session(db, session=session, worker_id=worker_id)
                 turns += 1
+                stt_events += turn_result.stt_events
+                tts_events += turn_result.tts_events
                 heartbeat_webcall_ai_session(db, session.id, worker_id, lease_seconds=lease_seconds)
                 if release_webcall_ai_session(
                     db,
                     session.id,
                     worker_id,
-                    reason="pr3_mock_turn_complete",
+                    reason="pr4_mock_media_turn_complete",
                 ):
                     released += 1
             except Exception as exc:
@@ -64,6 +68,8 @@ def run_webcall_ai_worker_once(
     )
     result_dict = result.as_dict()
     result_dict["turns"] = turns
+    result_dict["stt_events"] = stt_events
+    result_dict["tts_events"] = tts_events
     update_service_heartbeat(
         db,
         service_name="webcall_ai_worker",

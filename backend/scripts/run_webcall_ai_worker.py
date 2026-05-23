@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: F401,E402
 from app.db import db_context  # noqa: E402
 from app.services.observability import configure_logging  # noqa: E402
 from app.services.webcall_ai.worker import run_webcall_ai_worker_once  # noqa: E402
@@ -31,6 +32,8 @@ def _format_result(result: dict[str, int]) -> str:
     return (
         f"claimed={int(result.get('claimed', 0))} "
         f"turns={int(result.get('turns', 0))} "
+        f"stt_events={int(result.get('stt_events', 0))} "
+        f"tts_events={int(result.get('tts_events', 0))} "
         f"released={int(result.get('released', 0))} "
         f"failed={int(result.get('failed', 0))} "
         f"skipped={int(result.get('skipped', 0))}"

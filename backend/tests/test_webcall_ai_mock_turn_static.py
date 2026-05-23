@@ -45,7 +45,7 @@ def test_mock_executor_contains_deterministic_safe_contract():
     assert "execute_mock_turn_for_claimed_session" in source
     assert "Hello, this is Speedaf AI support. Please provide your tracking number." in source
     assert 'provider="mock"' in source
-    assert 'stt_provider="mock"' in source
+    assert "stt_provider=stt_result.provider" in source
     assert 'tts_provider="mock"' in source
     assert 'latency_ms=0' in source
     assert 'nexus_decision="allowed"' in source
@@ -55,11 +55,13 @@ def test_mock_executor_contains_deterministic_safe_contract():
     assert 'tool_call_log_id=None' in source
 
 
-def test_docs_state_pr3_is_deterministic_mock_turn_only():
+def test_docs_state_pr3_and_pr4_are_deterministic_mock_only():
     docs = (ARCH_DOC.read_text(encoding="utf-8") + "\n" + ROLLOUT_DOC.read_text(encoding="utf-8")).lower()
 
     assert "pr-3" in docs
     assert "deterministic mock turn" in docs
+    assert "pr-4" in docs
+    assert "deterministic mock stt/tts boundaries" in docs
     assert "does not make webcall ai functional" in docs
     assert "does not read audio" in docs or "no audio" in docs
     assert "no audio, stt, tts, llm, openclaw, or speedaf calls" in docs

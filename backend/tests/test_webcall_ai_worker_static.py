@@ -19,6 +19,8 @@ def test_worker_script_exists_and_supports_required_flags():
     assert "--limit" in script
     assert "--lease-seconds" in script
     assert "claimed=" in script
+    assert "stt_events=" in script
+    assert "tts_events=" in script
     assert "released=" in script
 
 
@@ -27,8 +29,6 @@ def test_worker_script_has_no_forbidden_runtime_integrations():
 
     for forbidden in [
         "livekit",
-        "stt",
-        "tts",
         "speedaf",
         "openclaw",
         "provider_runtime",
