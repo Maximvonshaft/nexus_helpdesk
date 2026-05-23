@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 from ...utils.time import utc_now
 from ...voice_models import WebchatVoiceAIAction, WebchatVoiceAITurn, WebchatVoiceSession
 from .lifecycle import WEBCALL_AI_STATUS_CLAIMED
-from .media_schemas import MockSTTInput, MockTTSInput
-from .mock_media_provider import MockSTTProvider, MockTTSProvider
+from .media_schemas import WebCallSTTInput, WebCallTTSInput
+from .provider_router import get_stt_provider, get_tts_provider
 
 MOCK_AI_RESPONSE = "Hello, this is Speedaf AI support. Please provide your tracking number."
 MOCK_ACTION = "ask_tracking_number"
@@ -33,15 +33,22 @@ def execute_mock_turn_for_claimed_session(
     if session.ai_agent_status != WEBCALL_AI_STATUS_CLAIMED or session.ai_agent_worker_id != worker_id:
         raise ValueError("mock turn requires claimed WebCall AI session owned by worker")
 
-    stt_result = MockSTTProvider().transcribe(
-        MockSTTInput(
+    stt_provider = get_stt_provider()
+    stt_result = stt_provider.transcribe(
+        WebCallSTTInput(
             voice_session_id=session.id,
             worker_id=worker_id,
             locale=session.ai_language,
         )
     )
-    if not stt_result.is_final:
-        raise ValueError("mock STT boundary must return a final transcript")
+    if (
+        stt_result.status != "ok"
+        or not stt_result.is_final
+        or not stt_result.text_redacted
+        or not stt_result.language
+        or stt_result.confidence is None
+    ):
+        raise ValueError("STT provider did not return a usable final transcript")
 
     now = utc_now()
     next_turn_index = int(session.ai_turn_count or 0) + 1
@@ -68,14 +75,17 @@ def execute_mock_turn_for_claimed_session(
     db.add(turn)
     db.flush()
 
-    tts_result = MockTTSProvider().synthesize(
-        MockTTSInput(
+    tts_provider = get_tts_provider()
+    tts_result = tts_provider.synthesize(
+        WebCallTTSInput(
             voice_session_id=session.id,
             worker_id=worker_id,
             text_redacted=MOCK_AI_RESPONSE,
             language=stt_result.language,
         )
     )
+    if tts_result.synthesis_status != "mock_synthesized" and tts_result.synthesis_status != "ok":
+        raise ValueError("TTS provider did not return usable synthesis metadata")
 
     action = WebchatVoiceAIAction(
         voice_session_id=session.id,

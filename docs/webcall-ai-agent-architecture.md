@@ -2,7 +2,7 @@
 
 ## Scope
 
-PR-0/PR-1 does not make WebCall AI functional yet. PR-0/PR-2 does not make WebCall AI functional yet. PR-3 does not make WebCall AI functional yet. PR-4 does not implement functional AI voice. It only adds the guarded architecture, schema, config, tests, no-op worker claim lifecycle, deterministic mock turn persistence, and deterministic mock STT/TTS boundaries. No real AI voice, real STT, real TTS, LiveKit AI worker media join, or Speedaf write automation is introduced here.
+PR-0/PR-1 does not make WebCall AI functional yet. PR-0/PR-2 does not make WebCall AI functional yet. PR-3 does not make WebCall AI functional yet. PR-4 does not implement functional AI voice. PR-5 does not implement functional AI voice. These PRs only add the guarded architecture, schema, config, tests, no-op worker claim lifecycle, deterministic mock turn persistence, deterministic mock STT/TTS boundaries, and the real STT/TTS provider contract skeleton. No real AI voice, real STT, real TTS, LiveKit AI worker media join, or Speedaf write automation is introduced here.
 
 The target product is WebCall AI Front Desk: a customer starts a WebCall, an AI voice agent joins as the first support participant, asks for tracking information and caller confirmation, lets NexusDesk check trusted Speedaf facts, answers low-risk tracking questions, and hands complex or high-risk cases to a human agent.
 
@@ -13,6 +13,8 @@ WebCall remains the voice channel. LiveKit remains the real-time media room. PR-
 PR-3 adds deterministic mock turn execution only. A claimed worker-owned session can write one redacted `webchat_voice_ai_turns` row and one safe `webchat_voice_ai_actions` decision row, then release. It does not read audio, publish audio, call STT/TTS, call an LLM/provider, call OpenClaw, or call Speedaf.
 
 PR-4 adds deterministic mock STT/TTS boundaries only. The worker obtains a fixed redacted customer utterance from the mock STT boundary, writes it into the audited AI turn, obtains fixed TTS metadata for the deterministic AI response, and releases the session. PR-4 does not implement functional AI voice. It does not read audio, publish audio, or join LiveKit media. It does not join LiveKit media, does not connect real STT/TTS, does not call LLM/provider runtime, does not call OpenClaw, does not call Speedaf, and does not change frontend. Future real providers must implement the provider interfaces and remain behind feature flags.
+
+PR-5 adds a real STT/TTS provider contract skeleton only. It introduces provider-neutral media schema names, provider routing for `mock`, `disabled`, and `contract_stub`, and fail-closed token-file, timeout, and canary configuration. PR-5 does not implement real STT/TTS. PR-5 does not implement functional AI voice. It does not join LiveKit, does not read/publish real audio, does not import real provider SDKs, does not perform external network calls, does not call LLM/provider runtime, does not call OpenClaw, does not call Speedaf, and does not change frontend. Real provider SDK/network integration is reserved for PR-6 or later.
 
 The intended flow is:
 
@@ -96,10 +98,11 @@ PR-2 extends `webchat_voice_sessions` with worker claim metadata: worker id, cla
 2. PR-2: webcall-ai-worker skeleton and AI session claim lifecycle only; this is a no-op claim lifecycle only and does not connect media, STT, TTS, LLM, or Speedaf.
 3. PR-3: deterministic mock turn execution only, writing auditable mock turn/action rows with no external runtime.
 4. PR-4: deterministic mock STT/TTS boundaries only, with no audio, STT, TTS, LLM, OpenClaw, or Speedaf calls to real providers.
-5. Real STT/TTS provider integration behind feature flags.
-6. Trusted Speedaf tracking lookup through backend policy.
-7. Human handoff workflows and operator evidence.
-8. Summary, callback, and evidence hardening.
+5. PR-5: real STT/TTS provider contract skeleton and fail-closed provider router only, with no SDK or network integration.
+6. Real STT/TTS provider integration behind feature flags and canary controls.
+7. Trusted Speedaf tracking lookup through backend policy.
+8. Human handoff workflows and operator evidence.
+9. Summary, callback, and evidence hardening.
 
 ## Non-Goals
 

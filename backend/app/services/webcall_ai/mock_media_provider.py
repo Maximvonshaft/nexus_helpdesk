@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .media_schemas import MockSTTInput, MockSTTResult, MockTTSInput, MockTTSResult
+from .media_schemas import WebCallSTTInput, WebCallSTTResult, WebCallTTSInput, WebCallTTSResult
 
 MOCK_CUSTOMER_TEXT = "I want to check my parcel status."
 MOCK_TTS_AUDIO_REFERENCE = "mock://tts/webcall-ai-support-greeting"
@@ -10,8 +10,8 @@ MOCK_TTS_SYNTHESIS_STATUS = "mock_synthesized"
 class MockSTTProvider:
     name = "mock"
 
-    def transcribe(self, input: MockSTTInput) -> MockSTTResult:
-        return MockSTTResult(
+    def transcribe(self, input: WebCallSTTInput) -> WebCallSTTResult:
+        return WebCallSTTResult(
             text_redacted=MOCK_CUSTOMER_TEXT,
             language=input.locale or "en",
             confidence=100,
@@ -24,8 +24,8 @@ class MockSTTProvider:
 class MockTTSProvider:
     name = "mock"
 
-    def synthesize(self, input: MockTTSInput) -> MockTTSResult:
-        return MockTTSResult(
+    def synthesize(self, input: WebCallTTSInput) -> WebCallTTSResult:
+        return WebCallTTSResult(
             provider=self.name,
             voice=input.voice,
             language=input.language,

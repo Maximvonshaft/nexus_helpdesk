@@ -13,6 +13,16 @@ WEBCALL_ENV_KEYS = [
     "WEBCALL_AI_AGENT_MAX_CALL_SECONDS",
     "WEBCALL_STT_PROVIDER",
     "WEBCALL_TTS_PROVIDER",
+    "WEBCALL_STT_TIMEOUT_MS",
+    "WEBCALL_TTS_TIMEOUT_MS",
+    "WEBCALL_STT_CONTRACT_STUB_ENABLED",
+    "WEBCALL_TTS_CONTRACT_STUB_ENABLED",
+    "WEBCALL_STT_TOKEN_FILE",
+    "WEBCALL_TTS_TOKEN_FILE",
+    "WEBCALL_STT_TOKEN",
+    "WEBCALL_TTS_TOKEN",
+    "WEBCALL_STT_CANARY_PERCENT",
+    "WEBCALL_TTS_CANARY_PERCENT",
     "WEBCALL_AI_PROVIDER",
     "WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER",
     "WEBCALL_AI_ALLOW_CANCEL",
@@ -41,6 +51,16 @@ def test_webcall_ai_defaults_are_disabled_and_mock():
     assert settings.max_call_seconds == 180
     assert settings.stt_provider == "mock"
     assert settings.tts_provider == "mock"
+    assert settings.stt_timeout_ms == 5000
+    assert settings.tts_timeout_ms == 5000
+    assert settings.stt_contract_stub_enabled is False
+    assert settings.tts_contract_stub_enabled is False
+    assert settings.stt_token_file is None
+    assert settings.tts_token_file is None
+    assert settings.stt_inline_token is None
+    assert settings.tts_inline_token is None
+    assert settings.stt_canary_percent == 0
+    assert settings.tts_canary_percent == 0
     assert settings.ai_provider == "provider_runtime"
     assert settings.allow_speedaf_work_order is False
     assert settings.allow_cancel is False
