@@ -12,6 +12,7 @@ from .contract_stub_provider import (
     DisabledSTTProvider,
     DisabledTTSProvider,
 )
+from .deepgram_stt_provider import DeepgramSTTProvider
 from .lifecycle import (
     WEBCALL_AI_STATUS_CLAIMED,
     WEBCALL_AI_STATUS_FAILED,
@@ -54,6 +55,7 @@ __all__ = [
     "ContractStubTTSProvider",
     "DisabledSTTProvider",
     "DisabledTTSProvider",
+    "DeepgramSTTProvider",
     "MockSTTInput",
     "MockSTTProvider",
     "MockSTTResult",

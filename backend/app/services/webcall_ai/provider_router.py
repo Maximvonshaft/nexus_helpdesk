@@ -7,6 +7,7 @@ from .contract_stub_provider import (
     DisabledSTTProvider,
     DisabledTTSProvider,
 )
+from .deepgram_stt_provider import DeepgramSTTProvider
 from .mock_media_provider import MockSTTProvider, MockTTSProvider
 from .stt_provider import STTProvider
 from .tts_provider import TTSProvider
@@ -20,7 +21,9 @@ def get_stt_provider(settings: WebCallAISettings | None = None) -> STTProvider:
         return DisabledSTTProvider()
     if resolved.stt_provider == "contract_stub":
         return ContractStubSTTProvider()
-    raise RuntimeError("WEBCALL_STT_PROVIDER is not allowed in PR-5")
+    if resolved.stt_provider == "deepgram":
+        return DeepgramSTTProvider(resolved)
+    raise RuntimeError("WEBCALL_STT_PROVIDER is not allowed in PR-6")
 
 
 def get_tts_provider(settings: WebCallAISettings | None = None) -> TTSProvider:
