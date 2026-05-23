@@ -51,6 +51,11 @@ WEBCALL_ENV_KEYS = [
     "WEBCALL_AI_TRACKING_REPLY_ENABLED",
     "WEBCALL_AI_TRACKING_COUNTRY_CODE",
     "WEBCALL_AI_TRACKING_LOOKUP_TIMEOUT_MS",
+    "WEBCALL_AI_TTS_RUNTIME_ENABLED",
+    "WEBCALL_AI_TTS_RUNTIME_MODE",
+    "WEBCALL_AI_VOICE_EGRESS_ENABLED",
+    "WEBCALL_AI_VOICE_EGRESS_MODE",
+    "WEBCALL_AI_VOICE_EGRESS_SMOKE_ENABLED",
     "WEBCALL_AI_PROVIDER",
     "WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER",
     "WEBCALL_AI_ALLOW_CANCEL",
@@ -117,6 +122,11 @@ def test_webcall_ai_defaults_are_disabled_and_mock():
     assert settings.tracking_reply_enabled is False
     assert settings.tracking_country_code == "CH"
     assert settings.tracking_lookup_timeout_ms == 8000
+    assert settings.tts_runtime_enabled is False
+    assert settings.tts_runtime_mode == "mock_audio_reference"
+    assert settings.voice_egress_enabled is False
+    assert settings.voice_egress_mode == "fake_audio_reference"
+    assert settings.voice_egress_smoke_enabled is False
     assert settings.ai_provider == "provider_runtime"
     assert settings.allow_speedaf_work_order is False
     assert settings.allow_cancel is False
@@ -358,6 +368,67 @@ def test_production_rejects_orchestrator_enabled(monkeypatch):
     get_webcall_ai_settings.cache_clear()
 
     with pytest.raises(RuntimeError, match="WEBCALL_AI_ORCHESTRATOR_ENABLED"):
+        get_webcall_ai_settings()
+
+
+def test_tts_runtime_mock_audio_reference_allowed_when_enabled(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_TTS_RUNTIME_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    settings = get_webcall_ai_settings()
+
+    assert settings.tts_runtime_enabled is True
+    assert settings.tts_runtime_mode == "mock_audio_reference"
+
+
+def test_voice_egress_requires_tts_runtime_enabled(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_VOICE_EGRESS_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_TTS_RUNTIME_ENABLED"):
+        get_webcall_ai_settings()
+
+
+def test_voice_egress_fake_mode_allowed_with_tts_runtime(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_TTS_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_VOICE_EGRESS_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_VOICE_EGRESS_MODE", "fake_audio_reference")
+    get_webcall_ai_settings.cache_clear()
+
+    settings = get_webcall_ai_settings()
+
+    assert settings.voice_egress_enabled is True
+    assert settings.voice_egress_mode == "fake_audio_reference"
+
+
+def test_tts_runtime_and_voice_egress_invalid_modes_fail_closed(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_TTS_RUNTIME_MODE", "live_provider")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_TTS_RUNTIME_MODE"):
+        get_webcall_ai_settings()
+
+    monkeypatch.setenv("WEBCALL_AI_TTS_RUNTIME_MODE", "mock_audio_reference")
+    monkeypatch.setenv("WEBCALL_AI_VOICE_EGRESS_MODE", "livekit_publish_track")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_VOICE_EGRESS_MODE"):
+        get_webcall_ai_settings()
+
+
+def test_production_rejects_tts_runtime_and_voice_egress(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("WEBCALL_AI_TTS_RUNTIME_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_TTS_RUNTIME_ENABLED"):
+        get_webcall_ai_settings()
+
+    monkeypatch.setenv("WEBCALL_AI_TTS_RUNTIME_ENABLED", "false")
+    monkeypatch.setenv("WEBCALL_AI_VOICE_EGRESS_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_TTS_RUNTIME_ENABLED|WEBCALL_AI_VOICE_EGRESS_ENABLED"):
         get_webcall_ai_settings()
 
 

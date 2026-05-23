@@ -14,6 +14,8 @@ _ALLOWED_ROOM_PRESENCE_MODES = {"fake_no_media", "livekit_no_media"}
 _ALLOWED_STT_RUNTIME_MODES = {"mock_text", "audio_reference"}
 _ALLOWED_STT_TRANSCRIPT_PROVIDER_SESSION_ID_SOURCES = {"voice_session_public_id"}
 _ALLOWED_ORCHESTRATOR_MODES = {"deterministic_tracking"}
+_ALLOWED_TTS_RUNTIME_MODES = {"mock_audio_reference", "provider_audio_reference"}
+_ALLOWED_VOICE_EGRESS_MODES = {"fake_audio_reference", "livekit_audio_publish_stub"}
 _LOCAL_AUDIO_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -83,6 +85,11 @@ class WebCallAISettings:
     tracking_reply_enabled: bool
     tracking_country_code: str
     tracking_lookup_timeout_ms: int
+    tts_runtime_enabled: bool
+    tts_runtime_mode: str
+    voice_egress_enabled: bool
+    voice_egress_mode: str
+    voice_egress_smoke_enabled: bool
     ai_provider: str
     allow_speedaf_work_order: bool
     allow_cancel: bool
@@ -159,6 +166,16 @@ class WebCallAISettings:
             raise RuntimeError("WEBCALL_AI_TRACKING_LOOKUP_TIMEOUT_MS must be between 1000 and 30000")
         if not self.tracking_country_code:
             raise RuntimeError("WEBCALL_AI_TRACKING_COUNTRY_CODE must not be empty")
+        if self.tts_runtime_mode not in _ALLOWED_TTS_RUNTIME_MODES:
+            raise RuntimeError("WEBCALL_AI_TTS_RUNTIME_MODE must be mock_audio_reference or provider_audio_reference")
+        if self.voice_egress_mode not in _ALLOWED_VOICE_EGRESS_MODES:
+            raise RuntimeError("WEBCALL_AI_VOICE_EGRESS_MODE must be fake_audio_reference or livekit_audio_publish_stub")
+        if self.voice_egress_enabled and not self.tts_runtime_enabled:
+            raise RuntimeError("WEBCALL_AI_TTS_RUNTIME_ENABLED must be true for voice egress")
+        if self.app_env == "production" and self.tts_runtime_enabled:
+            raise RuntimeError("WEBCALL_AI_TTS_RUNTIME_ENABLED must be false in production for Acceleration Pack D")
+        if self.app_env == "production" and self.voice_egress_enabled:
+            raise RuntimeError("WEBCALL_AI_VOICE_EGRESS_ENABLED must be false in production for Acceleration Pack D")
         if self.max_turns < 1 or self.max_turns > 12:
             raise RuntimeError("WEBCALL_AI_AGENT_MAX_TURNS must be between 1 and 12")
         if self.max_call_seconds < 30 or self.max_call_seconds > 600:
@@ -283,6 +300,13 @@ def get_webcall_ai_settings() -> WebCallAISettings:
             minimum=1000,
             maximum=30000,
         ),
+        tts_runtime_enabled=_env_bool("WEBCALL_AI_TTS_RUNTIME_ENABLED", False),
+        tts_runtime_mode=os.getenv("WEBCALL_AI_TTS_RUNTIME_MODE", "mock_audio_reference").strip().lower()
+        or "mock_audio_reference",
+        voice_egress_enabled=_env_bool("WEBCALL_AI_VOICE_EGRESS_ENABLED", False),
+        voice_egress_mode=os.getenv("WEBCALL_AI_VOICE_EGRESS_MODE", "fake_audio_reference").strip().lower()
+        or "fake_audio_reference",
+        voice_egress_smoke_enabled=_env_bool("WEBCALL_AI_VOICE_EGRESS_SMOKE_ENABLED", False),
         ai_provider=os.getenv("WEBCALL_AI_PROVIDER", "provider_runtime").strip().lower() or "provider_runtime",
         allow_speedaf_work_order=_env_bool("WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER", False),
         allow_cancel=_env_bool("WEBCALL_AI_ALLOW_CANCEL", False),

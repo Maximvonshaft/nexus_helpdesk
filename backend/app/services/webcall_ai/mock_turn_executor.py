@@ -13,7 +13,9 @@ from .media_schemas import WebCallSTTInput, WebCallTTSInput
 from .orchestrator import run_webcall_ai_orchestrator
 from .provider_router import get_stt_provider, get_tts_provider
 from .stt_runtime import run_stt_runtime_for_session
+from .tts_runtime import run_tts_runtime_for_turn
 from .transcript_writer import CUSTOMER_PARTICIPANT_IDENTITY
+from .voice_egress_client import get_webcall_voice_egress_client
 
 MOCK_AI_RESPONSE = "Hello, this is Speedaf AI support. Please provide your tracking number."
 MOCK_ACTION = "ask_tracking_number"
@@ -28,6 +30,16 @@ class MockTurnExecutionResult:
     stt_events: int
     tts_events: int
     transcript_segments: int = 0
+    tts_runtime_events: int = 0
+    voice_egress_sent: int = 0
+    voice_egress_failures: int = 0
+
+
+class MockTurnRuntimeFailure(ValueError):
+    def __init__(self, message: str, *, tts_runtime_events: int = 0, voice_egress_failures: int = 0) -> None:
+        super().__init__(message)
+        self.tts_runtime_events = tts_runtime_events
+        self.voice_egress_failures = voice_egress_failures
 
 
 def execute_mock_turn_for_claimed_session(
@@ -136,17 +148,51 @@ def execute_mock_turn_for_claimed_session(
     db.add(turn)
     db.flush()
 
-    tts_provider = get_tts_provider()
-    tts_result = tts_provider.synthesize(
-        WebCallTTSInput(
-            voice_session_id=session.id,
+    tts_runtime_events = 0
+    voice_egress_sent = 0
+    voice_egress_failures = 0
+    if settings.tts_runtime_enabled:
+        tts_runtime_result = run_tts_runtime_for_turn(
+            turn=turn,
+            session=session,
             worker_id=worker_id,
-            text_redacted=ai_response_text_redacted,
-            language=stt_language,
+            settings=settings,
         )
-    )
-    if tts_result.synthesis_status != "mock_synthesized" and tts_result.synthesis_status != "ok":
-        raise ValueError("TTS provider did not return usable synthesis metadata")
+        tts_events = tts_runtime_result.tts_events
+        tts_runtime_events = tts_runtime_result.tts_events
+        turn.tts_provider = tts_runtime_result.provider
+        if not tts_runtime_result.usable or not tts_runtime_result.audio_reference:
+            raise MockTurnRuntimeFailure(
+                "TTS runtime did not return usable audio reference",
+                tts_runtime_events=tts_runtime_events,
+            )
+        if settings.voice_egress_enabled:
+            egress_result = get_webcall_voice_egress_client(settings).send_audio_reference(
+                audio_reference=tts_runtime_result.audio_reference,
+                participant_identity=None,
+            )
+            if egress_result.sent:
+                voice_egress_sent = 1
+            else:
+                voice_egress_failures = 1
+                raise MockTurnRuntimeFailure(
+                    "Voice egress did not send audio reference",
+                    tts_runtime_events=tts_runtime_events,
+                    voice_egress_failures=voice_egress_failures,
+                )
+    else:
+        tts_provider = get_tts_provider()
+        tts_result = tts_provider.synthesize(
+            WebCallTTSInput(
+                voice_session_id=session.id,
+                worker_id=worker_id,
+                text_redacted=ai_response_text_redacted,
+                language=stt_language,
+            )
+        )
+        if tts_result.synthesis_status != "mock_synthesized" and tts_result.synthesis_status != "ok":
+            raise ValueError("TTS provider did not return usable synthesis metadata")
+        tts_events = tts_result.event_count
 
     action = WebchatVoiceAIAction(
         voice_session_id=session.id,
@@ -172,6 +218,9 @@ def execute_mock_turn_for_claimed_session(
     return MockTurnExecutionResult(
         turn=turn,
         stt_events=stt_events,
-        tts_events=tts_result.event_count,
+        tts_events=tts_events,
         transcript_segments=transcript_segments,
+        tts_runtime_events=tts_runtime_events,
+        voice_egress_sent=voice_egress_sent,
+        voice_egress_failures=voice_egress_failures,
     )

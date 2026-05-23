@@ -58,6 +58,13 @@ def _format_result(result: dict[str, int]) -> str:
             f"transcript_segments={int(result.get('transcript_segments', 0))} "
             f"stt_runtime_failures={int(result.get('stt_runtime_failures', 0))}"
         )
+    if "tts_runtime_events" in result:
+        formatted = (
+            f"{formatted} "
+            f"tts_runtime_events={int(result.get('tts_runtime_events', 0))} "
+            f"voice_egress_sent={int(result.get('voice_egress_sent', 0))} "
+            f"voice_egress_failures={int(result.get('voice_egress_failures', 0))}"
+        )
     return formatted
 
 
