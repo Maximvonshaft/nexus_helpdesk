@@ -16,6 +16,7 @@ def bootstrap_provider_runtime() -> None:
 
     from .adapters.codex_app_server import CodexAppServerAdapter
     from .adapters.openai_responses import OpenAIResponsesAdapter
+    from .adapters.openclaw_responses import OpenClawResponsesAdapter
 
     def codex_factory(db):
         bridge_url = os.environ.get("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18794/reply")
@@ -27,6 +28,7 @@ def bootstrap_provider_runtime() -> None:
 
     ProviderRegistry.register("codex_app_server", codex_factory)
     ProviderRegistry.register("openai_responses", openai_factory)
+    ProviderRegistry.register("openclaw_responses", lambda db: OpenClawResponsesAdapter())
 
     class SkeletonAdapter(ProviderAdapter):
         capabilities = ProviderCapabilities()
