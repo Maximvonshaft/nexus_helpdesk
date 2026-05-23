@@ -8,3 +8,12 @@ except Exception:
     # Service package import must remain resilient. Detailed failures are covered
     # by the OpenClaw unresolved idempotency tests and runtime CI gates.
     pass
+
+try:
+    from .openclaw_p0_runtime_security import apply_openclaw_p0_runtime_security_patch
+
+    apply_openclaw_p0_runtime_security_patch()
+except Exception:
+    # Runtime hardening must never prevent the service package from importing.
+    # Dedicated P0 regression tests cover the expected live rebinding behavior.
+    pass
