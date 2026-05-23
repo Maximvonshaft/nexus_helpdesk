@@ -204,7 +204,16 @@ def serve_webchat_voice_placeholder(voice_session_id: str):
     safe_session_id = ''.join(ch for ch in voice_session_id if ch.isalnum() or ch in {'_', '-'})[:80]
     if not safe_session_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='WebChat voice session not found')
-    return HTMLResponse("<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>NexusDesk WebChat Voice</title></head><body><main><h1>WebChat Voice</h1><p>Voice runtime readiness is enabled. Real media is not implemented in this phase.</p>" + f"<p data-voice-session-id='{safe_session_id}'>Session: {safe_session_id}</p>" + "</main></body></html>")
+    return HTMLResponse(
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>NexusDesk WebCall</title></head><body><main>"
+        "<h1>NexusDesk WebCall</h1>"
+        "<p>Opening the secure WebCall room...</p>"
+        f"<p><a href='/webcall/{safe_session_id}'>Continue to WebCall</a></p>"
+        f"<script src='/static/webchat/voice-redirect.js' data-voice-session-id='{safe_session_id}' defer></script>"
+        "</main></body></html>"
+    )
 
 
 webchat_static_dir = settings.backend_root / 'app' / 'static' / 'webchat'

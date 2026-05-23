@@ -303,7 +303,6 @@ def enqueue_stale_openclaw_sync(limit: int = 25, db: Session = Depends(get_db), 
     return [BackgroundJobRead.model_validate(x) for x in rows]
 
 
-@router.get('/queues/summary', response_model=QueueSummaryRead)
 def get_queue_summary(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
     return QueueSummaryRead(
@@ -460,7 +459,6 @@ def update_channel_account(account_id: int, payload: ChannelAccountUpdate, db: S
     return ChannelAccountRead.model_validate(row)
 
 
-@router.get('/openclaw/runtime-health', response_model=OpenClawRuntimeHealthRead)
 def openclaw_runtime_health(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
     cursor = db.query(OpenClawSyncCursor).filter(OpenClawSyncCursor.source == 'default').first()
@@ -665,7 +663,6 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), current_user
     return _serialize_user(new_user, db)
 
 
-@router.get('/users', response_model=list[UserRead])
 def list_admin_users(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_users(current_user, db)
     rows = db.query(User).order_by(User.is_active.desc(), User.role.asc(), User.username.asc()).all()

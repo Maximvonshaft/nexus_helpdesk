@@ -344,7 +344,7 @@ def list_ai_intakes(ticket_id: int, db: Session = Depends(get_db), current_user=
     return [AIIntakeRead.model_validate(x) for x in ticket.ai_intakes]
 
 
-@router.get("/{ticket_id}/timeline", response_model=list[TimelineItemRead])
+@router.get("/{ticket_id}/timeline-legacy", response_model=list[TimelineItemRead], deprecated=True)
 def get_ticket_timeline(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
