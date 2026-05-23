@@ -2,7 +2,7 @@
 
 ## Scope
 
-PR-0/PR-9 and Acceleration Packs A/B/C/D do not make WebCall AI full voice yet. They only add the guarded architecture, schema, config, tests, no-op worker claim lifecycle, deterministic mock turn persistence, deterministic mock STT/TTS boundaries, a real STT/TTS provider contract skeleton, the first Deepgram STT adapter behind feature flags, a controlled static HTTPS audio reference source for STT input, a fake LiveKit AI participant ownership skeleton, a server-side LiveKit AI participant token issuer wrapper, a backend no-media AI presence runtime, controlled audio ingress plus STT transcript persistence, deterministic text-only tracking orchestration with read-only tracking fact lookup, and a governed TTS runtime plus voice egress boundary. Acceleration Pack D does not implement full production AI voice. It does not enable real audio publish by default, change frontend, call LLM/provider runtime/OpenClaw/OpenAI/Codex, execute Speedaf writes, create work orders, cancel orders, update addresses, persist tokens, log tokens, expose tokens to browsers, or persist raw audio bytes.
+PR-0/PR-9, Acceleration Packs A/B/C/D, and the final pilot closure do not make WebCall AI full production voice. They only add the guarded architecture, schema, config, tests, no-op worker claim lifecycle, deterministic mock turn persistence, deterministic mock STT/TTS boundaries, a real STT/TTS provider contract skeleton, the first Deepgram STT adapter behind feature flags, a controlled static HTTPS audio reference source for STT input, a fake LiveKit AI participant ownership skeleton, a server-side LiveKit AI participant token issuer wrapper, a backend no-media AI presence runtime, controlled audio ingress plus STT transcript persistence, deterministic text-only tracking orchestration with read-only tracking fact lookup, a governed TTS runtime plus voice egress boundary, and a backend-only pilot closure smoke path. The final pilot closure does not enable full production AI voice by default, change frontend, call LLM/provider runtime/OpenClaw/OpenAI/Codex, execute Speedaf writes, create work orders, cancel orders, update addresses, persist tokens, log tokens, expose tokens to browsers, persist raw audio bytes, or enable production traffic by default.
 
 ## Feature Flags
 
@@ -41,6 +41,20 @@ WEBCALL_AI_TTS_RUNTIME_MODE=mock_audio_reference
 WEBCALL_AI_VOICE_EGRESS_ENABLED=false
 WEBCALL_AI_VOICE_EGRESS_MODE=fake_audio_reference
 WEBCALL_AI_VOICE_EGRESS_SMOKE_ENABLED=false
+WEBCALL_AI_PILOT_CLOSURE_ENABLED=false
+WEBCALL_AI_PILOT_MODE=simulated_full_loop
+WEBCALL_AI_PILOT_KILL_SWITCH=true
+WEBCALL_AI_PILOT_INTERNAL_ONLY=true
+WEBCALL_AI_PILOT_SESSION_ALLOWLIST=
+WEBCALL_AI_PILOT_TENANT_ALLOWLIST=
+WEBCALL_AI_PILOT_CANARY_PERCENT=0
+WEBCALL_AI_PILOT_EVIDENCE_ENABLED=false
+WEBCALL_AI_PILOT_HANDOFF_ENABLED=false
+WEBCALL_AI_PILOT_REAL_MEDIA_ENABLED=false
+WEBCALL_AI_PILOT_FAKE_TRACKING_ENABLED=false
+WEBCALL_AI_PILOT_FIXTURE_ENABLED=false
+WEBCALL_AI_PILOT_FIXTURE_ALLOW_DB_WRITE=false
+WEBCALL_AI_PILOT_SESSION_PUBLIC_ID=
 WEBCALL_AI_PROVIDER=provider_runtime
 WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER=false
 WEBCALL_AI_ALLOW_CANCEL=false
@@ -66,6 +80,8 @@ WEBCALL_AI_ORCHESTRATOR_ENABLED=true
 WEBCALL_AI_TRACKING_LOOKUP_ENABLED=true
 WEBCALL_AI_TTS_RUNTIME_ENABLED=true
 WEBCALL_AI_VOICE_EGRESS_ENABLED=true
+WEBCALL_AI_PILOT_CLOSURE_ENABLED=true
+WEBCALL_AI_PILOT_FIXTURE_ENABLED=true
 ```
 
 ## Rollout Stages
@@ -83,9 +99,10 @@ WEBCALL_AI_VOICE_EGRESS_ENABLED=true
 11. Controlled audio ingress and STT transcript persistence: Acceleration Pack B can resolve controlled audio input, run STT, persist final redacted transcript segments, and use the STT text in the existing mock turn. It remains disabled by default, rejected in production, and does not publish AI audio or query Speedaf.
 12. Deterministic tracking orchestration: Acceleration Pack C can ask for a missing tracking number, call read-only tracking facts when explicitly enabled, explain safe tracking status, or hand off high-risk requests. It remains disabled by default, rejected in production, and does not execute Speedaf writes.
 13. Governed TTS runtime and voice egress boundary: Acceleration Pack D can convert a redacted AI reply into a governed audio reference and pass that reference to a fake or stubbed voice egress client. It remains disabled by default, rejected in production, and does not publish real audio by default or persist raw audio bytes.
-14. Real media: later PRs connect LiveKit/WebRTC capture and TTS providers behind feature flags and canaries.
-15. Handoff: route cancel, address change, compensation/refund, complaint, driver/DSP responsibility, customs/payment disputes, legal/privacy questions, low confidence, and unsupported-language cases to a human agent.
-16. Evidence: add transcript summaries, evidence cards, callback tasks, and operational dashboards.
+14. Backend pilot closure: the final closure can run a controlled backend-only simulated full-loop smoke, handoff safety smoke, sanitized evidence report, and optional non-blocking real media smoke behind canary and kill-switch gates. It remains disabled by default, rejected in production, and requires explicit session/tenant allowlist or canary.
+15. Real media: later PRs connect LiveKit/WebRTC capture and TTS providers behind feature flags and canaries.
+16. Handoff: route cancel, address change, compensation/refund, complaint, driver/DSP responsibility, customs/payment disputes, legal/privacy questions, low confidence, and unsupported-language cases to a human agent.
+17. Evidence: add transcript summaries, evidence cards, callback tasks, and operational dashboards.
 
 ## Deployment Checks
 
@@ -126,6 +143,14 @@ WEBCALL_AI_TRACKING_REPLY_ENABLED=false
 WEBCALL_AI_TTS_RUNTIME_ENABLED=false
 WEBCALL_AI_VOICE_EGRESS_ENABLED=false
 WEBCALL_AI_VOICE_EGRESS_SMOKE_ENABLED=false
+WEBCALL_AI_PILOT_CLOSURE_ENABLED=false
+WEBCALL_AI_PILOT_KILL_SWITCH=true
+WEBCALL_AI_PILOT_EVIDENCE_ENABLED=false
+WEBCALL_AI_PILOT_HANDOFF_ENABLED=false
+WEBCALL_AI_PILOT_REAL_MEDIA_ENABLED=false
+WEBCALL_AI_PILOT_FAKE_TRACKING_ENABLED=false
+WEBCALL_AI_PILOT_FIXTURE_ENABLED=false
+WEBCALL_AI_PILOT_FIXTURE_ALLOW_DB_WRITE=false
 ```
 
 If code rollback is required, run the deterministic Alembic downgrade only as part of a planned database rollback window, not as a first response to a runtime incident.
