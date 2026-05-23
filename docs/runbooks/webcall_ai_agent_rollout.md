@@ -2,7 +2,7 @@
 
 ## Scope
 
-PR-0/PR-8 does not make WebCall AI functional yet. It only adds the guarded architecture, schema, config, tests, no-op worker claim lifecycle, deterministic mock turn persistence, deterministic mock STT/TTS boundaries, a real STT/TTS provider contract skeleton, the first Deepgram STT adapter behind feature flags, a controlled static HTTPS audio reference source for STT input, and a fake LiveKit AI participant ownership skeleton. PR-8 does not implement functional AI voice. It does not join LiveKit media, subscribe/publish audio, read WebRTC tracks, change frontend, call LLM/provider runtime/OpenClaw/OpenAI/Codex, call Speedaf, execute Speedaf writes, expose AI participant tokens to browsers, or enable Deepgram by default. Keep all real AI voice execution disabled until a later worker PR explicitly adds and validates runtime behavior.
+PR-0/PR-9 does not make WebCall AI functional yet. It only adds the guarded architecture, schema, config, tests, no-op worker claim lifecycle, deterministic mock turn persistence, deterministic mock STT/TTS boundaries, a real STT/TTS provider contract skeleton, the first Deepgram STT adapter behind feature flags, a controlled static HTTPS audio reference source for STT input, a fake LiveKit AI participant ownership skeleton, and a server-side LiveKit AI participant token issuer wrapper. PR-9 does not implement functional AI voice. It does not join LiveKit media, subscribe/publish audio, read WebRTC tracks, change frontend, call LLM/provider runtime/OpenClaw/OpenAI/Codex, call Speedaf, execute Speedaf writes, persist participant tokens, log participant tokens, expose AI participant tokens to browsers, or enable Deepgram by default. Keep all real AI voice execution disabled until a later worker PR explicitly adds and validates runtime behavior.
 
 ## Feature Flags
 
@@ -21,6 +21,7 @@ WEBCALL_AI_PARTICIPANT_ENABLED=false
 WEBCALL_AI_PARTICIPANT_MODE=fake_room_client
 WEBCALL_AI_PARTICIPANT_TOKEN_TTL_SECONDS=300
 WEBCALL_AI_PARTICIPANT_ID_PREFIX=ai_webcall
+WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED=false
 WEBCALL_AI_PROVIDER=provider_runtime
 WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER=false
 WEBCALL_AI_ALLOW_CANCEL=false
@@ -39,6 +40,7 @@ WEBCALL_AI_ALLOW_ADDRESS_UPDATE=true
 WEBCALL_AI_RECORD_RAW_AUDIO=true
 WEBCALL_AI_AUDIO_REFERENCE_SOURCE=static_fixture
 WEBCALL_AI_PARTICIPANT_ENABLED=true
+WEBCALL_AI_PARTICIPANT_MODE=livekit_token_issuer
 ```
 
 ## Rollout Stages
@@ -51,10 +53,11 @@ WEBCALL_AI_PARTICIPANT_ENABLED=true
 6. Deepgram STT: PR-6 adds a Deepgram pre-recorded STT adapter behind `WEBCALL_STT_PROVIDER=deepgram`, `WEBCALL_STT_DEEPGRAM_ENABLED=true`, token-file rules, HTTPS remote audio reference controls, and canary config. It does not enable real STT by default.
 7. Controlled audio reference: PR-7 wires an optional static HTTPS `audio_reference` into STT input behind `WEBCALL_AI_AUDIO_REFERENCE_SOURCE=static_fixture`, `WEBCALL_AI_AUDIO_REFERENCE_STATIC_ENABLED=true`, and exact-host allowlist controls. It remains disabled by default and rejected in production.
 8. Fake AI participant ownership: PR-8 creates a deterministic AI participant identity and participant row, issues fake token metadata, and performs fake join/leave transitions. It does not join LiveKit media and does not expose AI participant tokens to browsers.
-9. Real media: later PRs connect LiveKit/WebRTC capture and TTS providers behind feature flags and canaries.
-10. Tracking facts: allow backend-governed tracking lookup after redaction and caller confirmation.
-11. Handoff: route cancel, address change, compensation/refund, complaint, driver/DSP responsibility, customs/payment disputes, legal/privacy questions, low confidence, and unsupported-language cases to a human agent.
-12. Evidence: add transcript summaries, evidence cards, callback tasks, and operational dashboards.
+9. LiveKit token issuer wrapper: PR-9 can issue a server-side AI participant token through the existing backend voice provider boundary when `WEBCALL_AI_PARTICIPANT_MODE=livekit_token_issuer` and `WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED=true`. It still does not join LiveKit media, stores no token, logs no token, and exposes no token to browsers.
+10. Real media: later PRs connect LiveKit/WebRTC capture and TTS providers behind feature flags and canaries.
+11. Tracking facts: allow backend-governed tracking lookup after redaction and caller confirmation.
+12. Handoff: route cancel, address change, compensation/refund, complaint, driver/DSP responsibility, customs/payment disputes, legal/privacy questions, low confidence, and unsupported-language cases to a human agent.
+13. Evidence: add transcript summaries, evidence cards, callback tasks, and operational dashboards.
 
 ## Deployment Checks
 
@@ -84,6 +87,7 @@ WEBCALL_AI_RECORD_RAW_AUDIO=false
 WEBCALL_AI_AUDIO_REFERENCE_SOURCE=disabled
 WEBCALL_AI_AUDIO_REFERENCE_STATIC_ENABLED=false
 WEBCALL_AI_PARTICIPANT_ENABLED=false
+WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED=false
 ```
 
 If code rollback is required, run the deterministic Alembic downgrade only as part of a planned database rollback window, not as a first response to a runtime incident.

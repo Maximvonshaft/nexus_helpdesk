@@ -7,11 +7,46 @@ import pytest
 
 from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: F401,E402
 from app.db import Base, SessionLocal, engine
+from app.services.voice_provider import VoiceParticipantToken, VoiceProvider
 from app.services.webcall_ai.config import get_webcall_ai_settings
 from app.services.webcall_ai.participant_service import ai_participant_identity
-from app.services.webcall_ai.room_client import FakeWebCallAIRoomClient, get_webcall_ai_room_client
+from app.services.webcall_ai.room_client import (
+    FakeWebCallAIRoomClient,
+    LiveKitTokenIssuerRoomClient,
+    build_livekit_token_issuer_client,
+    get_webcall_ai_room_client,
+)
 from app.utils.time import utc_now
 from app.voice_models import WebchatVoiceSession
+
+
+class RecordingVoiceProvider(VoiceProvider):
+    provider_name = "recording_livekit"
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    def issue_participant_token(
+        self,
+        *,
+        room_name: str,
+        participant_identity: str,
+        ttl_seconds: int,
+    ) -> VoiceParticipantToken:
+        self.calls.append(
+            {
+                "room_name": room_name,
+                "participant_identity": participant_identity,
+                "ttl_seconds": ttl_seconds,
+            }
+        )
+        return VoiceParticipantToken(
+            provider=self.provider_name,
+            room_name=room_name,
+            participant_identity=participant_identity,
+            participant_token="secret-recording-token",
+            expires_in_seconds=ttl_seconds,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -73,3 +108,28 @@ def test_fake_room_client_issue_join_leave_returns_safe_results(db):
 
 def test_room_client_router_returns_fake_client_by_default():
     assert isinstance(get_webcall_ai_room_client(), FakeWebCallAIRoomClient)
+
+
+def test_livekit_token_issuer_client_uses_voice_provider_without_media_join(db):
+    session = _voice_session(db)
+    identity = ai_participant_identity(session)
+    voice_provider = RecordingVoiceProvider()
+    client = build_livekit_token_issuer_client(voice_provider)
+
+    token = client.issue_ai_token(session=session, participant_identity=identity, ttl_seconds=300)
+    join_result = client.join(session=session, participant_identity=identity, token=token)
+    leave_result = client.leave(session=session, participant_identity=identity)
+
+    assert isinstance(client, LiveKitTokenIssuerRoomClient)
+    assert voice_provider.calls == [
+        {
+            "room_name": session.provider_room_name,
+            "participant_identity": identity,
+            "ttl_seconds": 300,
+        }
+    ]
+    assert token.participant_token == "secret-recording-token"
+    assert join_result.joined is True
+    assert join_result.status == "token_issued_no_media_join"
+    assert leave_result.left is True
+    assert leave_result.status == "left_no_media_join"

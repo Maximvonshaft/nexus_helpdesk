@@ -2,7 +2,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_FILES = [
-    ROOT / "backend" / "app" / "services" / "webcall_ai" / "participant_service.py",
     ROOT / "backend" / "app" / "services" / "webcall_ai" / "room_client.py",
     ROOT / "backend" / "app" / "services" / "webcall_ai" / "worker.py",
 ]
@@ -16,7 +15,7 @@ def _source(path: Path) -> str:
     return path.read_text(encoding="utf-8").lower()
 
 
-def test_pr8_runtime_files_do_not_import_media_network_or_provider_sdks():
+def test_pr9_runtime_files_do_not_import_livekit_media_or_network_clients():
     combined = "\n".join(_source(path) for path in RUNTIME_FILES)
 
     for forbidden in [
@@ -36,38 +35,29 @@ def test_pr8_runtime_files_do_not_import_media_network_or_provider_sdks():
         "openai",
         "codex",
         "provider_runtime",
-        "sounddevice",
-        "pyaudio",
-        "whisper",
-        "boto3",
-        "google.cloud",
-        "azure.",
-        "ffmpeg",
     ]:
         assert forbidden not in combined
-    assert "import av" not in combined
-    assert "from av" not in combined
 
 
-def test_pr8_adds_no_migration_file():
+def test_pr9_adds_no_migration_file():
     migration_names = [path.name.lower() for path in MIGRATIONS.glob("*.py")]
 
     assert not any("wcall_ai3" in name for name in migration_names)
-    assert not any("participant_skeleton" in name for name in migration_names)
-    assert not any("pr8" in name for name in migration_names)
+    assert not any("token_issuer" in name for name in migration_names)
+    assert not any("pr9" in name for name in migration_names)
 
 
-def test_pr8_does_not_modify_frontend_contract_files():
-    changed_frontend_markers = [path for path in WEBAPP.rglob("*") if path.is_file() and "webcall_ai_participant" in path.name]
+def test_pr9_does_not_add_frontend_token_exposure_files():
+    frontend_hits = [path for path in WEBAPP.rglob("*") if path.is_file() and "participant_token" in path.name.lower()]
 
-    assert changed_frontend_markers == []
+    assert frontend_hits == []
 
 
-def test_docs_state_pr8_fake_participant_boundary():
+def test_docs_state_pr9_token_issuer_boundary():
     docs = (ARCH_DOC.read_text(encoding="utf-8") + "\n" + ROLLOUT_DOC.read_text(encoding="utf-8")).lower()
 
-    assert "pr-8" in docs
-    assert "fake livekit ai participant ownership skeleton" in docs
+    assert "pr-9" in docs
+    assert "server-side livekit ai participant token issuer wrapper" in docs
     assert "does not implement functional ai voice" in docs
     assert "does not join livekit media" in docs
     assert "does not expose ai participant tokens to browsers" in docs

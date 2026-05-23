@@ -106,7 +106,7 @@ def run_webcall_ai_worker_once(
                     session.id,
                     worker_id,
                     error_code="mock_turn_failed",
-                    error_message=str(exc),
+                    error_message=type(exc).__name__,
                 )
                 log_event(40, "webcall_ai_worker_mock_turn_failed", worker_id=worker_id, voice_session_id=session.id)
 

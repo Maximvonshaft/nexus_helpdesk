@@ -2,7 +2,7 @@
 
 ## Scope
 
-PR-0/PR-1 does not make WebCall AI functional yet. PR-0/PR-2 does not make WebCall AI functional yet. PR-3 does not make WebCall AI functional yet. PR-4 does not implement functional AI voice. PR-5 does not implement functional AI voice. PR-6 does not implement functional AI voice. PR-7 does not implement functional AI voice. PR-8 does not implement functional AI voice. These PRs only add the guarded architecture, schema, config, tests, no-op worker claim lifecycle, deterministic mock turn persistence, deterministic mock STT/TTS boundaries, the real STT/TTS provider contract skeleton, the first Deepgram STT adapter behind feature flags, a controlled static HTTPS audio reference source for STT input, and a fake LiveKit AI participant ownership skeleton. No LiveKit AI worker media join, WebRTC audio read/publish path, TTS provider, LLM/runtime integration, or Speedaf write automation is introduced here.
+PR-0/PR-1 does not make WebCall AI functional yet. PR-0/PR-2 does not make WebCall AI functional yet. PR-3 does not make WebCall AI functional yet. PR-4 does not implement functional AI voice. PR-5 does not implement functional AI voice. PR-6 does not implement functional AI voice. PR-7 does not implement functional AI voice. PR-8 does not implement functional AI voice. PR-9 does not implement functional AI voice. These PRs only add the guarded architecture, schema, config, tests, no-op worker claim lifecycle, deterministic mock turn persistence, deterministic mock STT/TTS boundaries, the real STT/TTS provider contract skeleton, the first Deepgram STT adapter behind feature flags, a controlled static HTTPS audio reference source for STT input, a fake LiveKit AI participant ownership skeleton, and a server-side LiveKit AI participant token issuer wrapper. No LiveKit AI worker media join, WebRTC audio read/publish path, TTS provider, LLM/runtime integration, or Speedaf write automation is introduced here.
 
 The target product is WebCall AI Front Desk: a customer starts a WebCall, an AI voice agent joins as the first support participant, asks for tracking information and caller confirmation, lets NexusDesk check trusted Speedaf facts, answers low-risk tracking questions, and hands complex or high-risk cases to a human agent.
 
@@ -21,6 +21,8 @@ PR-6 adds the first Deepgram STT adapter only. It is disabled by default, requir
 PR-7 adds a controlled `audio_reference` resolver only. It is disabled by default with `WEBCALL_AI_AUDIO_REFERENCE_SOURCE=disabled`. The only non-default source is `static_fixture`, which requires `WEBCALL_AI_AUDIO_REFERENCE_STATIC_ENABLED=true`, an HTTPS `WEBCALL_AI_AUDIO_REFERENCE_STATIC_URL`, optional exact-host `WEBCALL_AI_AUDIO_REFERENCE_ALLOWLIST`, and is rejected in production. PR-7 does not implement functional AI voice. It does not join LiveKit, does not read/publish WebRTC audio, does not upload or read audio files, does not change frontend, does not call LLM/provider runtime/OpenClaw/OpenAI/Codex, does not call Speedaf, and does not enable Deepgram by default.
 
 PR-8 adds a fake LiveKit AI participant ownership skeleton only. It can create an AI participant identity and DB participant record, issue a fake token, perform fake join/leave ownership transitions, run the existing mock turn path, and mark the participant left. It is disabled by default with `WEBCALL_AI_PARTICIPANT_ENABLED=false`, supports only `WEBCALL_AI_PARTICIPANT_MODE=fake_room_client`, and rejects participant enablement in production. PR-8 does not implement functional AI voice. It does not join LiveKit media, subscribe/publish audio, read WebRTC tracks, change frontend, call LLM/provider runtime/OpenClaw/OpenAI/Codex, call Speedaf, execute Speedaf writes, or expose AI participant tokens to browsers.
+
+PR-9 adds a server-side LiveKit AI participant token issuer wrapper only. It extends participant mode to `fake_room_client | livekit_token_issuer`, requires `WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED=true` for token issuer mode, and rejects token issuer mode in production. The wrapper can call the existing backend `VoiceProvider.issue_participant_token` boundary and then performs no-media join/leave state transitions only. PR-9 does not implement functional AI voice. It does not join LiveKit media, subscribe/publish audio, read WebRTC tracks, change frontend, call LLM/provider runtime/OpenClaw/OpenAI/Codex, call Speedaf, execute Speedaf writes, persist participant tokens, log participant tokens, or expose AI participant tokens to browsers.
 
 The intended flow is:
 
@@ -108,10 +110,11 @@ PR-2 extends `webchat_voice_sessions` with worker claim metadata: worker id, cla
 6. PR-6: Deepgram pre-recorded STT adapter behind feature flags, fake transport tests, and HTTPS remote audio reference controls.
 7. PR-7: controlled static HTTPS audio reference resolver wired into STT input, disabled by default and rejected in production.
 8. PR-8: fake LiveKit AI participant ownership skeleton with deterministic identity, fake token, and fake join/leave state transitions, disabled by default and rejected in production.
-9. TTS provider integration behind feature flags and canary controls.
-10. Trusted Speedaf tracking lookup through backend policy.
-11. Human handoff workflows and operator evidence.
-12. Summary, callback, and evidence hardening.
+9. PR-9: server-side LiveKit AI participant token issuer wrapper, explicitly enabled only, no media join, no token persistence, and rejected in production.
+10. TTS provider integration behind feature flags and canary controls.
+11. Trusted Speedaf tracking lookup through backend policy.
+12. Human handoff workflows and operator evidence.
+13. Summary, callback, and evidence hardening.
 
 ## Non-Goals
 
