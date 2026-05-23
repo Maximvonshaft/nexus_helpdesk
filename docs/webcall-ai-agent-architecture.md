@@ -2,7 +2,7 @@
 
 ## Scope
 
-PR-0/PR-1 does not make WebCall AI functional yet. PR-0/PR-2 does not make WebCall AI functional yet. PR-3 does not make WebCall AI functional yet. It only adds the guarded architecture, schema, config, tests, no-op worker claim lifecycle, and deterministic mock turn persistence. No real AI voice, STT, TTS, LiveKit AI worker media join, or Speedaf write automation is introduced here.
+PR-0/PR-1 does not make WebCall AI functional yet. PR-0/PR-2 does not make WebCall AI functional yet. PR-3 does not make WebCall AI functional yet. PR-4 does not implement functional AI voice. It only adds the guarded architecture, schema, config, tests, no-op worker claim lifecycle, deterministic mock turn persistence, and deterministic mock STT/TTS boundaries. No real AI voice, real STT, real TTS, LiveKit AI worker media join, or Speedaf write automation is introduced here.
 
 The target product is WebCall AI Front Desk: a customer starts a WebCall, an AI voice agent joins as the first support participant, asks for tracking information and caller confirmation, lets NexusDesk check trusted Speedaf facts, answers low-risk tracking questions, and hands complex or high-risk cases to a human agent.
 
@@ -11,6 +11,8 @@ The target product is WebCall AI Front Desk: a customer starts a WebCall, an AI 
 WebCall remains the voice channel. LiveKit remains the real-time media room. PR-2 adds only a backend AI worker claim lifecycle skeleton: eligible sessions can be claimed, heartbeated, released, or failed with a lease, but the worker does not join media. In a later PR, a backend AI worker will join the LiveKit room as an AI participant. NexusDesk remains the control plane and system of record for state, facts, action decisions, audit, evidence, and human handoff.
 
 PR-3 adds deterministic mock turn execution only. A claimed worker-owned session can write one redacted `webchat_voice_ai_turns` row and one safe `webchat_voice_ai_actions` decision row, then release. It does not read audio, publish audio, call STT/TTS, call an LLM/provider, call OpenClaw, or call Speedaf.
+
+PR-4 adds deterministic mock STT/TTS boundaries only. The worker obtains a fixed redacted customer utterance from the mock STT boundary, writes it into the audited AI turn, obtains fixed TTS metadata for the deterministic AI response, and releases the session. PR-4 does not implement functional AI voice. It does not read audio, publish audio, or join LiveKit media. It does not join LiveKit media, does not connect real STT/TTS, does not call LLM/provider runtime, does not call OpenClaw, does not call Speedaf, and does not change frontend. Future real providers must implement the provider interfaces and remain behind feature flags.
 
 The intended flow is:
 
@@ -93,7 +95,7 @@ PR-2 extends `webchat_voice_sessions` with worker claim metadata: worker id, cla
 1. PR-0/PR-1: guarded architecture, config, schema, data model, and tests.
 2. PR-2: webcall-ai-worker skeleton and AI session claim lifecycle only; this is a no-op claim lifecycle only and does not connect media, STT, TTS, LLM, or Speedaf.
 3. PR-3: deterministic mock turn execution only, writing auditable mock turn/action rows with no external runtime.
-4. Mock STT/TTS integration with deterministic fixtures.
+4. PR-4: deterministic mock STT/TTS boundaries only, with no audio, STT, TTS, LLM, OpenClaw, or Speedaf calls to real providers.
 5. Real STT/TTS provider integration behind feature flags.
 6. Trusted Speedaf tracking lookup through backend policy.
 7. Human handoff workflows and operator evidence.

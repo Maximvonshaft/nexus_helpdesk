@@ -188,7 +188,15 @@ def test_worker_once_cycle_claims_and_releases(db):
 
     result = run_webcall_ai_worker_once(db, "worker-a", limit=10, lease_seconds=30)
 
-    assert result == {"claimed": 1, "released": 1, "failed": 0, "skipped": 0, "turns": 1}
+    assert result == {
+        "claimed": 1,
+        "released": 1,
+        "failed": 0,
+        "skipped": 0,
+        "turns": 1,
+        "stt_events": 1,
+        "tts_events": 1,
+    }
     db.refresh(session)
     assert session.ai_agent_status == WEBCALL_AI_STATUS_RELEASED
     assert session.ai_turn_count == 1
