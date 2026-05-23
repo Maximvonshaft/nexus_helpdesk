@@ -56,6 +56,20 @@ WEBCALL_ENV_KEYS = [
     "WEBCALL_AI_VOICE_EGRESS_ENABLED",
     "WEBCALL_AI_VOICE_EGRESS_MODE",
     "WEBCALL_AI_VOICE_EGRESS_SMOKE_ENABLED",
+    "WEBCALL_AI_PILOT_CLOSURE_ENABLED",
+    "WEBCALL_AI_PILOT_MODE",
+    "WEBCALL_AI_PILOT_KILL_SWITCH",
+    "WEBCALL_AI_PILOT_INTERNAL_ONLY",
+    "WEBCALL_AI_PILOT_SESSION_ALLOWLIST",
+    "WEBCALL_AI_PILOT_TENANT_ALLOWLIST",
+    "WEBCALL_AI_PILOT_CANARY_PERCENT",
+    "WEBCALL_AI_PILOT_EVIDENCE_ENABLED",
+    "WEBCALL_AI_PILOT_HANDOFF_ENABLED",
+    "WEBCALL_AI_PILOT_REAL_MEDIA_ENABLED",
+    "WEBCALL_AI_PILOT_FAKE_TRACKING_ENABLED",
+    "WEBCALL_AI_PILOT_FIXTURE_ENABLED",
+    "WEBCALL_AI_PILOT_FIXTURE_ALLOW_DB_WRITE",
+    "WEBCALL_AI_PILOT_SESSION_PUBLIC_ID",
     "WEBCALL_AI_PROVIDER",
     "WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER",
     "WEBCALL_AI_ALLOW_CANCEL",
@@ -127,6 +141,20 @@ def test_webcall_ai_defaults_are_disabled_and_mock():
     assert settings.voice_egress_enabled is False
     assert settings.voice_egress_mode == "fake_audio_reference"
     assert settings.voice_egress_smoke_enabled is False
+    assert settings.pilot_closure_enabled is False
+    assert settings.pilot_mode == "simulated_full_loop"
+    assert settings.pilot_kill_switch is True
+    assert settings.pilot_internal_only is True
+    assert settings.pilot_session_allowlist is None
+    assert settings.pilot_tenant_allowlist is None
+    assert settings.pilot_canary_percent == 0
+    assert settings.pilot_evidence_enabled is False
+    assert settings.pilot_handoff_enabled is False
+    assert settings.pilot_real_media_enabled is False
+    assert settings.pilot_fake_tracking_enabled is False
+    assert settings.pilot_fixture_enabled is False
+    assert settings.pilot_fixture_allow_db_write is False
+    assert settings.pilot_session_public_id is None
     assert settings.ai_provider == "provider_runtime"
     assert settings.allow_speedaf_work_order is False
     assert settings.allow_cancel is False
@@ -429,6 +457,37 @@ def test_production_rejects_tts_runtime_and_voice_egress(monkeypatch):
     get_webcall_ai_settings.cache_clear()
 
     with pytest.raises(RuntimeError, match="WEBCALL_AI_TTS_RUNTIME_ENABLED|WEBCALL_AI_VOICE_EGRESS_ENABLED"):
+        get_webcall_ai_settings()
+
+
+def test_pilot_closure_flags_validate_fail_closed(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_PILOT_CLOSURE_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_PILOT_KILL_SWITCH", "false")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_PILOT_EVIDENCE_ENABLED"):
+        get_webcall_ai_settings()
+
+    monkeypatch.setenv("WEBCALL_AI_PILOT_EVIDENCE_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_PILOT_CANARY_PERCENT", "99")
+    get_webcall_ai_settings.cache_clear()
+
+    assert get_webcall_ai_settings().pilot_canary_percent == 1
+
+
+def test_production_rejects_pilot_closure_and_fixture(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("WEBCALL_AI_PILOT_CLOSURE_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_PILOT_CLOSURE_ENABLED"):
+        get_webcall_ai_settings()
+
+    monkeypatch.setenv("WEBCALL_AI_PILOT_CLOSURE_ENABLED", "false")
+    monkeypatch.setenv("WEBCALL_AI_PILOT_FIXTURE_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_PILOT_FIXTURE_ENABLED"):
         get_webcall_ai_settings()
 
 

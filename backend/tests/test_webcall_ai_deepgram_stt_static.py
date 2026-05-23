@@ -23,6 +23,7 @@ def _source(path: Path) -> str:
     source = source.replace("livekit_token_issuer", "")
     source = source.replace("livekit_no_media", "")
     source = source.replace("livekit_audio_publish_stub", "")
+    source = source.replace("livekit_real_media_smoke", "")
     source = source.replace("allow_speedaf_work_order", "")
     source = source.replace("webcall_ai_allow_speedaf_work_order", "")
     return source

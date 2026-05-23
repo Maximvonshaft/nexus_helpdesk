@@ -68,11 +68,17 @@ def _apply_row_lock(query, db: Session):
     return query
 
 
+def is_webcall_ai_session_claimable(db: Session, voice_session_id: int) -> bool:
+    now = utc_now()
+    return _base_claim_query(db, now=now).filter(WebchatVoiceSession.id == voice_session_id).first() is not None
+
+
 def claim_webcall_ai_sessions(
     db: Session,
     worker_id: str,
     limit: int = 10,
     lease_seconds: int = 30,
+    session_public_id: str | None = None,
 ) -> list[WebchatVoiceSession]:
     settings = get_webcall_ai_settings()
     safe_limit = max(0, min(int(limit), 100))
@@ -82,7 +88,10 @@ def claim_webcall_ai_sessions(
 
     now = utc_now()
     lease_expires_at = _lease_deadline(lease_seconds)
-    query = _base_claim_query(db, now=now).order_by(WebchatVoiceSession.id.asc()).limit(safe_limit)
+    query = _base_claim_query(db, now=now)
+    if session_public_id:
+        query = query.filter(WebchatVoiceSession.public_id == session_public_id)
+    query = query.order_by(WebchatVoiceSession.id.asc()).limit(safe_limit)
     sessions = list(_apply_row_lock(query, db).all())
 
     for session in sessions:

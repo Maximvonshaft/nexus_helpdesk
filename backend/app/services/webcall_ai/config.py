@@ -16,6 +16,7 @@ _ALLOWED_STT_TRANSCRIPT_PROVIDER_SESSION_ID_SOURCES = {"voice_session_public_id"
 _ALLOWED_ORCHESTRATOR_MODES = {"deterministic_tracking"}
 _ALLOWED_TTS_RUNTIME_MODES = {"mock_audio_reference", "provider_audio_reference"}
 _ALLOWED_VOICE_EGRESS_MODES = {"fake_audio_reference", "livekit_audio_publish_stub"}
+_ALLOWED_PILOT_MODES = {"simulated_full_loop", "handoff_safety", "livekit_real_media_smoke"}
 _LOCAL_AUDIO_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -90,6 +91,20 @@ class WebCallAISettings:
     voice_egress_enabled: bool
     voice_egress_mode: str
     voice_egress_smoke_enabled: bool
+    pilot_closure_enabled: bool
+    pilot_mode: str
+    pilot_kill_switch: bool
+    pilot_internal_only: bool
+    pilot_session_allowlist: str | None
+    pilot_tenant_allowlist: str | None
+    pilot_canary_percent: int
+    pilot_evidence_enabled: bool
+    pilot_handoff_enabled: bool
+    pilot_real_media_enabled: bool
+    pilot_fake_tracking_enabled: bool
+    pilot_fixture_enabled: bool
+    pilot_fixture_allow_db_write: bool
+    pilot_session_public_id: str | None
     ai_provider: str
     allow_speedaf_work_order: bool
     allow_cancel: bool
@@ -176,6 +191,23 @@ class WebCallAISettings:
             raise RuntimeError("WEBCALL_AI_TTS_RUNTIME_ENABLED must be false in production for Acceleration Pack D")
         if self.app_env == "production" and self.voice_egress_enabled:
             raise RuntimeError("WEBCALL_AI_VOICE_EGRESS_ENABLED must be false in production for Acceleration Pack D")
+        if self.pilot_mode not in _ALLOWED_PILOT_MODES:
+            raise RuntimeError("WEBCALL_AI_PILOT_MODE must be simulated_full_loop, handoff_safety, or livekit_real_media_smoke")
+        if self.pilot_canary_percent < 0 or self.pilot_canary_percent > 1:
+            raise RuntimeError("WEBCALL_AI_PILOT_CANARY_PERCENT must be between 0 and 1")
+        if self.app_env == "production" and self.pilot_closure_enabled:
+            raise RuntimeError("WEBCALL_AI_PILOT_CLOSURE_ENABLED must be false in production")
+        if self.app_env == "production" and self.pilot_fixture_enabled:
+            raise RuntimeError("WEBCALL_AI_PILOT_FIXTURE_ENABLED must be false in production")
+        if self.pilot_mode == "simulated_full_loop" and self.pilot_closure_enabled and not self.pilot_evidence_enabled:
+            raise RuntimeError("WEBCALL_AI_PILOT_EVIDENCE_ENABLED must be true for simulated_full_loop")
+        if self.pilot_mode == "handoff_safety" and self.pilot_closure_enabled:
+            if not self.pilot_handoff_enabled:
+                raise RuntimeError("WEBCALL_AI_PILOT_HANDOFF_ENABLED must be true for handoff_safety")
+            if not self.pilot_evidence_enabled:
+                raise RuntimeError("WEBCALL_AI_PILOT_EVIDENCE_ENABLED must be true for handoff_safety")
+        if self.pilot_mode == "livekit_real_media_smoke" and self.pilot_closure_enabled and not self.pilot_real_media_enabled:
+            raise RuntimeError("WEBCALL_AI_PILOT_REAL_MEDIA_ENABLED must be true for livekit_real_media_smoke")
         if self.max_turns < 1 or self.max_turns > 12:
             raise RuntimeError("WEBCALL_AI_AGENT_MAX_TURNS must be between 1 and 12")
         if self.max_call_seconds < 30 or self.max_call_seconds > 600:
@@ -307,6 +339,21 @@ def get_webcall_ai_settings() -> WebCallAISettings:
         voice_egress_mode=os.getenv("WEBCALL_AI_VOICE_EGRESS_MODE", "fake_audio_reference").strip().lower()
         or "fake_audio_reference",
         voice_egress_smoke_enabled=_env_bool("WEBCALL_AI_VOICE_EGRESS_SMOKE_ENABLED", False),
+        pilot_closure_enabled=_env_bool("WEBCALL_AI_PILOT_CLOSURE_ENABLED", False),
+        pilot_mode=os.getenv("WEBCALL_AI_PILOT_MODE", "simulated_full_loop").strip().lower()
+        or "simulated_full_loop",
+        pilot_kill_switch=_env_bool("WEBCALL_AI_PILOT_KILL_SWITCH", True),
+        pilot_internal_only=_env_bool("WEBCALL_AI_PILOT_INTERNAL_ONLY", True),
+        pilot_session_allowlist=(os.getenv("WEBCALL_AI_PILOT_SESSION_ALLOWLIST") or "").strip() or None,
+        pilot_tenant_allowlist=(os.getenv("WEBCALL_AI_PILOT_TENANT_ALLOWLIST") or "").strip() or None,
+        pilot_canary_percent=_env_int("WEBCALL_AI_PILOT_CANARY_PERCENT", 0, minimum=0, maximum=1),
+        pilot_evidence_enabled=_env_bool("WEBCALL_AI_PILOT_EVIDENCE_ENABLED", False),
+        pilot_handoff_enabled=_env_bool("WEBCALL_AI_PILOT_HANDOFF_ENABLED", False),
+        pilot_real_media_enabled=_env_bool("WEBCALL_AI_PILOT_REAL_MEDIA_ENABLED", False),
+        pilot_fake_tracking_enabled=_env_bool("WEBCALL_AI_PILOT_FAKE_TRACKING_ENABLED", False),
+        pilot_fixture_enabled=_env_bool("WEBCALL_AI_PILOT_FIXTURE_ENABLED", False),
+        pilot_fixture_allow_db_write=_env_bool("WEBCALL_AI_PILOT_FIXTURE_ALLOW_DB_WRITE", False),
+        pilot_session_public_id=(os.getenv("WEBCALL_AI_PILOT_SESSION_PUBLIC_ID") or "").strip() or None,
         ai_provider=os.getenv("WEBCALL_AI_PROVIDER", "provider_runtime").strip().lower() or "provider_runtime",
         allow_speedaf_work_order=_env_bool("WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER", False),
         allow_cancel=_env_bool("WEBCALL_AI_ALLOW_CANCEL", False),

@@ -29,6 +29,7 @@ def run_webcall_ai_worker_once(
     limit: int = 10,
     noop_release: bool = True,
     lease_seconds: int = 30,
+    session_public_id: str | None = None,
 ) -> dict[str, int]:
     record_worker_poll(worker_id)
     settings = get_webcall_ai_settings()
@@ -37,6 +38,7 @@ def run_webcall_ai_worker_once(
         worker_id=worker_id,
         limit=limit,
         lease_seconds=lease_seconds,
+        session_public_id=session_public_id,
     )
     turns = 0
     stt_events = 0

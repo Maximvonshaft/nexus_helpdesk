@@ -24,7 +24,10 @@ from .lifecycle import (
     fail_webcall_ai_session,
     heartbeat_webcall_ai_session,
     release_webcall_ai_session,
+    is_webcall_ai_session_claimable,
 )
+from .evidence_builder import WebCallAIEvidenceReport, build_webcall_ai_evidence_report, evidence_report_to_safe_dict
+from .handoff_service import mark_webcall_ai_handoff_required
 from .media_schemas import (
     MockSTTInput,
     MockSTTResult,
@@ -38,6 +41,10 @@ from .media_schemas import (
 from .mock_media_provider import MockSTTProvider, MockTTSProvider
 from .mock_turn_executor import MockTurnExecutionResult, MockTurnRuntimeFailure, execute_mock_turn_for_claimed_session
 from .orchestrator import WebCallAIOrchestratorResult, run_webcall_ai_orchestrator
+from .pilot_canary_gate import WebCallAIPilotGateDecision, evaluate_webcall_ai_pilot_gate
+from .pilot_closure import WebCallAIPilotClosureResult, run_webcall_ai_pilot_closure_once
+from .pilot_fake_tracking import fake_tracking_fact_for_pilot
+from .pilot_session_source import resolve_or_create_pilot_voice_session
 from .participant_service import (
     ai_participant_identity,
     ensure_ai_participant_record,
@@ -52,6 +59,7 @@ from .presence_client import (
     get_webcall_ai_presence_client,
 )
 from .provider_router import get_stt_provider, get_tts_provider
+from .real_media_smoke import WebCallAIRealMediaSmokeResult, run_webcall_ai_real_media_smoke
 from .reply_builder import (
     build_handoff_reply,
     build_missing_tracking_reply,
@@ -93,6 +101,10 @@ __all__ = [
     "WebCallAIOrchestratorResult",
     "WebCallAISettings",
     "WebCallAITurnDecision",
+    "WebCallAIEvidenceReport",
+    "WebCallAIPilotClosureResult",
+    "WebCallAIPilotGateDecision",
+    "WebCallAIRealMediaSmokeResult",
     "ContractStubSTTProvider",
     "ContractStubTTSProvider",
     "DisabledSTTProvider",
@@ -138,6 +150,10 @@ __all__ = [
     "CUSTOMER_PARTICIPANT_IDENTITY",
     "fail_webcall_ai_session",
     "execute_mock_turn_for_claimed_session",
+    "build_webcall_ai_evidence_report",
+    "evidence_report_to_safe_dict",
+    "evaluate_webcall_ai_pilot_gate",
+    "fake_tracking_fact_for_pilot",
     "get_webcall_ai_settings",
     "get_webcall_ai_presence_client",
     "get_webcall_voice_egress_client",
@@ -145,11 +161,16 @@ __all__ = [
     "get_tts_provider",
     "heartbeat_webcall_ai_session",
     "ensure_ai_participant_record",
+    "is_webcall_ai_session_claimable",
+    "mark_webcall_ai_handoff_required",
     "mark_ai_participant_joined",
     "mark_ai_participant_left",
     "release_webcall_ai_session",
     "reject_forbidden_action",
     "resolve_audio_reference_for_session",
+    "resolve_or_create_pilot_voice_session",
+    "run_webcall_ai_pilot_closure_once",
+    "run_webcall_ai_real_media_smoke",
     "run_stt_runtime_for_session",
     "run_tts_runtime_for_turn",
     "run_webcall_ai_orchestrator",
