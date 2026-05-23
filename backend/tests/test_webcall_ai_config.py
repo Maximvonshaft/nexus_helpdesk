@@ -36,6 +36,7 @@ WEBCALL_ENV_KEYS = [
     "WEBCALL_AI_PARTICIPANT_MODE",
     "WEBCALL_AI_PARTICIPANT_TOKEN_TTL_SECONDS",
     "WEBCALL_AI_PARTICIPANT_ID_PREFIX",
+    "WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED",
     "WEBCALL_AI_PROVIDER",
     "WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER",
     "WEBCALL_AI_ALLOW_CANCEL",
@@ -87,6 +88,7 @@ def test_webcall_ai_defaults_are_disabled_and_mock():
     assert settings.participant_mode == "fake_room_client"
     assert settings.participant_token_ttl_seconds == 300
     assert settings.participant_id_prefix == "ai_webcall"
+    assert settings.livekit_token_issuer_enabled is False
     assert settings.ai_provider == "provider_runtime"
     assert settings.allow_speedaf_work_order is False
     assert settings.allow_cancel is False
@@ -154,6 +156,35 @@ def test_participant_mode_allows_fake_room_client_only(monkeypatch):
     get_webcall_ai_settings.cache_clear()
 
     with pytest.raises(RuntimeError, match="WEBCALL_AI_PARTICIPANT_MODE"):
+        get_webcall_ai_settings()
+
+
+def test_livekit_token_issuer_requires_enable_flag(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_PARTICIPANT_MODE", "livekit_token_issuer")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED"):
+        get_webcall_ai_settings()
+
+
+def test_livekit_token_issuer_mode_allowed_when_enabled(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_PARTICIPANT_MODE", "livekit_token_issuer")
+    monkeypatch.setenv("WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    settings = get_webcall_ai_settings()
+
+    assert settings.participant_mode == "livekit_token_issuer"
+    assert settings.livekit_token_issuer_enabled is True
+
+
+def test_production_rejects_livekit_token_issuer_mode(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("WEBCALL_AI_PARTICIPANT_MODE", "livekit_token_issuer")
+    monkeypatch.setenv("WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="livekit_token_issuer"):
         get_webcall_ai_settings()
 
 

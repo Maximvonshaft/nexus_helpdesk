@@ -44,7 +44,13 @@ from .participant_service import (
     mark_ai_participant_left,
 )
 from .provider_router import get_stt_provider, get_tts_provider
-from .room_client import FakeWebCallAIRoomClient, WebCallAIRoomJoinResult, WebCallAIRoomLeaveResult
+from .room_client import (
+    FakeWebCallAIRoomClient,
+    LiveKitTokenIssuerRoomClient,
+    WebCallAIRoomJoinResult,
+    WebCallAIRoomLeaveResult,
+    build_livekit_token_issuer_client,
+)
 from .schemas import (
     WebCallAIActionDecision,
     WebCallAIAllowedAction,
@@ -81,9 +87,11 @@ __all__ = [
     "WEBCALL_AI_STATUS_RELEASED",
     "WEBCALL_AI_STATUS_SKIPPED",
     "FakeWebCallAIRoomClient",
+    "LiveKitTokenIssuerRoomClient",
     "WebCallAIRoomJoinResult",
     "WebCallAIRoomLeaveResult",
     "ai_participant_identity",
+    "build_livekit_token_issuer_client",
     "claim_webcall_ai_sessions",
     "fail_webcall_ai_session",
     "execute_mock_turn_for_claimed_session",

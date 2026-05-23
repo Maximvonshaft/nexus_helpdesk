@@ -9,7 +9,7 @@ _ALLOWED_STT_PROVIDERS = {"mock", "disabled", "contract_stub", "deepgram"}
 _ALLOWED_TTS_PROVIDERS = {"mock", "disabled", "contract_stub"}
 _ALLOWED_AI_PROVIDERS = {"provider_runtime"}
 _ALLOWED_AUDIO_REFERENCE_SOURCES = {"disabled", "static_fixture"}
-_ALLOWED_PARTICIPANT_MODES = {"fake_room_client"}
+_ALLOWED_PARTICIPANT_MODES = {"fake_room_client", "livekit_token_issuer"}
 _LOCAL_AUDIO_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -64,6 +64,7 @@ class WebCallAISettings:
     participant_mode: str
     participant_token_ttl_seconds: int
     participant_id_prefix: str
+    livekit_token_issuer_enabled: bool
     ai_provider: str
     allow_speedaf_work_order: bool
     allow_cancel: bool
@@ -95,13 +96,17 @@ class WebCallAISettings:
         if self.audio_reference_source == "static_fixture":
             self._validate_static_audio_reference()
         if self.participant_mode not in _ALLOWED_PARTICIPANT_MODES:
-            raise RuntimeError("WEBCALL_AI_PARTICIPANT_MODE must be fake_room_client in PR-8")
+            raise RuntimeError("WEBCALL_AI_PARTICIPANT_MODE must be fake_room_client or livekit_token_issuer in PR-9")
+        if self.participant_mode == "livekit_token_issuer" and not self.livekit_token_issuer_enabled:
+            raise RuntimeError("WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED must be true for livekit_token_issuer")
         if self.participant_token_ttl_seconds < 60 or self.participant_token_ttl_seconds > 900:
             raise RuntimeError("WEBCALL_AI_PARTICIPANT_TOKEN_TTL_SECONDS must be between 60 and 900")
         if not self.participant_id_prefix:
             raise RuntimeError("WEBCALL_AI_PARTICIPANT_ID_PREFIX must not be empty")
         if self.app_env == "production" and self.participant_enabled:
             raise RuntimeError("WEBCALL_AI_PARTICIPANT_ENABLED must be false in production for PR-8")
+        if self.app_env == "production" and self.participant_mode == "livekit_token_issuer":
+            raise RuntimeError("WEBCALL_AI_PARTICIPANT_MODE livekit_token_issuer is not allowed in production for PR-9")
         if self.max_turns < 1 or self.max_turns > 12:
             raise RuntimeError("WEBCALL_AI_AGENT_MAX_TURNS must be between 1 and 12")
         if self.max_call_seconds < 30 or self.max_call_seconds > 600:
@@ -195,6 +200,7 @@ def get_webcall_ai_settings() -> WebCallAISettings:
         ),
         participant_id_prefix=os.getenv("WEBCALL_AI_PARTICIPANT_ID_PREFIX", "ai_webcall").strip()
         or "ai_webcall",
+        livekit_token_issuer_enabled=_env_bool("WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED", False),
         ai_provider=os.getenv("WEBCALL_AI_PROVIDER", "provider_runtime").strip().lower() or "provider_runtime",
         allow_speedaf_work_order=_env_bool("WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER", False),
         allow_cancel=_env_bool("WEBCALL_AI_ALLOW_CANCEL", False),
