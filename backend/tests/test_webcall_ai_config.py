@@ -491,5 +491,16 @@ def test_production_rejects_pilot_closure_and_fixture(monkeypatch):
         get_webcall_ai_settings()
 
 
+def test_production_pilot_closure_gate_message_is_stable(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("WEBCALL_AI_PILOT_CLOSURE_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError) as exc_info:
+        get_webcall_ai_settings()
+
+    assert str(exc_info.value) == "WEBCALL_AI_PILOT_CLOSURE_ENABLED must be false in production"
+
+
 def test_no_test_leaks_webcall_ai_environment():
     assert not any(key for key in WEBCALL_ENV_KEYS if key != "APP_ENV" and key in os.environ)
