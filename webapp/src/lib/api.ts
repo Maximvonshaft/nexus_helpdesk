@@ -209,6 +209,56 @@ export type RuntimeRecoveryResult = {
   job_type?: string | null
 }
 
+export type WebCallAIDemoStatus = {
+  ok: boolean
+  status: 'disabled' | 'ready' | 'degraded' | 'blocked'
+  enabled: boolean
+  kill_switch: boolean
+  internal_only: boolean
+  public_customer_entry_enabled: boolean
+  recording_enabled: boolean
+  transcription_enabled: boolean
+  ai_agent_enabled: boolean
+  demo_mode: string
+  allow_browser_speech: boolean
+  allow_real_media: boolean
+  active_demo_sessions: number
+  max_active_sessions: number
+  max_turns_per_session: number
+  blockers: string[]
+  warnings: string[]
+}
+
+export type WebCallAIDemoSession = {
+  public_id: string
+  mode: string
+  status: string
+  locale?: string | null
+  recording_status?: string | null
+  transcript_status?: string | null
+  summary_status?: string | null
+  ai_agent_status?: string | null
+  ai_turn_count: number
+  created_at?: string | null
+  ended_at?: string | null
+}
+
+export type WebCallAIDemoEvent = { id?: number | string; type: string; summary?: string; created_at?: string | null }
+export type WebCallAIDemoTurn = {
+  id: number
+  turn_index: number
+  status: string
+  customer_text_redacted: string
+  ai_response_text_redacted: string
+  language?: string | null
+  intent?: string | null
+  action?: string | null
+  handoff_required: boolean
+  confidence?: number | null
+  tts_mode?: string | null
+  created_at?: string | null
+}
+
 type CaseQueryParams = { q?: string; status?: string; priority?: string; assignee_id?: number; team_id?: number; overdue?: boolean; cursor?: string | null; limit?: number }
 
 type OutboundSendPayload = { channel: string; body: string }
@@ -358,6 +408,21 @@ export const api = {
     return request<RuntimeRecoveryResult>(`/api/admin/outbound/requeue-dead${search ? `?${search}` : ''}`, { method: 'POST' })
   },
   consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
+
+  webcallAIDemoStatus: () => request<WebCallAIDemoStatus>('/api/admin/webcall-ai-demo/status'),
+  webcallAIDemoCreateSession: (payload: { locale?: string; display_name?: string; scenario?: string; initial_text?: string }) => request<{ ok: boolean; session: WebCallAIDemoSession; events: WebCallAIDemoEvent[] }>('/api/admin/webcall-ai-demo/sessions', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  webcallAIDemoTurn: (sessionId: string, payload: { client_turn_id: string; input_mode: string; locale?: string; text: string; browser_speech_supported?: boolean }) => request<{ ok: boolean; voice_session_public_id: string; turn: WebCallAIDemoTurn; events: WebCallAIDemoEvent[]; evidence: { voice_ai_turn_id: number; transcript_segment_id: number; tool_call_log_id: number | null } }>(`/api/admin/webcall-ai-demo/sessions/${sessionId}/turns`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  webcallAIDemoEndSession: (sessionId: string, reason = 'operator_end') => request<{ ok: boolean; session: WebCallAIDemoSession }>(`/api/admin/webcall-ai-demo/sessions/${sessionId}/end`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  }),
+  webcallAIDemoEvents: (sessionId: string) => request<{ ok: boolean; session: Pick<WebCallAIDemoSession, 'public_id' | 'status' | 'mode'>; events: WebCallAIDemoEvent[]; turns: Array<Pick<WebCallAIDemoTurn, 'turn_index' | 'customer_text_redacted' | 'ai_response_text_redacted' | 'handoff_required' | 'created_at'> & { turn_id: number }> }>(`/api/admin/webcall-ai-demo/sessions/${sessionId}/events`),
 
   codexCredentialStatus: () => request<ProviderCredentialStatusResponse>('/api/admin/provider-credentials/codex/status'),
   startCodexAuthorization: (scopes?: string[]) => request<CodexAuthorizationStart>('/api/admin/provider-credentials/codex/authorize', {
