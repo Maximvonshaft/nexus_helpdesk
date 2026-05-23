@@ -107,8 +107,11 @@ def create_session(
     idempotency_key: str | None,
 ) -> dict[str, Any]:
     settings = get_webcall_ai_production_settings()
-    if not settings.production_enabled:
+    if settings.status != "ready":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="WebCall AI production is disabled")
+    origin = request.headers.get("origin")
+    if settings.allowed_origins and origin and origin not in settings.allowed_origins:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="origin is not allowed for WebCall AI")
 
     request_payload = {
         "tenant_key": payload.tenant_key,

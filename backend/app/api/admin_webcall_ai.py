@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..services.permissions import ensure_ticket_visible
+from ..services.webcall_ai_production.agent_worker import health as worker_health
 from ..services.webcall_ai_production.session_service import TERMINAL_STATUSES, get_session, list_events
 from ..services.webchat_voice_service import end_admin_voice_session
 from ..unit_of_work import managed_session
@@ -13,6 +14,11 @@ from ..models import Ticket
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/admin/webcall-ai", tags=["admin-webcall-ai"])
+
+
+@router.get("/health")
+def read_admin_webcall_ai_health(current_user=Depends(get_current_user)) -> dict:
+    return worker_health()
 
 
 @router.get("/sessions")

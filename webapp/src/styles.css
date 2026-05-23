@@ -197,6 +197,10 @@ button, input, textarea, select { font: inherit; }
 .webcall-ai-band { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 440px); gap: 24px; align-items: end; max-width: 1120px; margin: 0 auto; padding: 0 24px 56px; }
 .tracking-input-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
 .tracking-input-row input { min-height: 42px; border: 1px solid #cfd4dc; border-radius: 8px; padding: 0 12px; }
+.webcall-ai-events { display: grid; gap: 10px; }
+.webcall-ai-events article { display: grid; gap: 4px; padding: 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; }
+.webcall-ai-events strong { text-transform: capitalize; }
+.webcall-ai-events span { color: #475467; overflow-wrap: anywhere; }
 
 @media (max-width: 1280px) {
   .page-grid.workspace { grid-template-columns: 1fr; }

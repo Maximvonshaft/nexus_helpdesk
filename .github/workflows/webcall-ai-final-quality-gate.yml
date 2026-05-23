@@ -1,0 +1,64 @@
+name: webcall-ai-final-quality-gate
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/services/webcall_ai_production/**"
+      - "backend/app/api/webcall_ai.py"
+      - "backend/app/api/admin_webcall_ai.py"
+      - "backend/app/webchat_voice_config.py"
+      - "backend/.env.example"
+      - "backend/tests/test_webcall_ai_production.py"
+      - "webapp/src/routes/webcall-ai.tsx"
+      - "webapp/src/styles.css"
+      - "deploy/docker-compose.server.yml"
+      - ".github/workflows/webcall-ai-final-quality-gate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend-webcall-ai:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt pytest
+
+      - name: Run WebCall AI production contract tests
+        env:
+          APP_ENV: development
+          DATABASE_URL: sqlite:////tmp/webcall_ai_final_quality_gate.db
+        run: pytest -q backend/tests/test_webcall_ai_production.py
+
+      - name: Scan changed WebCall AI files for leaked secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -RInE "(LIVEKIT_API_SECRET|STT_API_KEY|LLM_API_KEY|TTS_API_KEY)=.{8,}|unit-secret|sk-[A-Za-z0-9]{20,}" \
+            backend/app/services/webcall_ai_production backend/.env.example webapp/src/routes/webcall-ai.tsx
+
+  frontend-webcall-ai:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Typecheck webapp
+        run: |
+          npm --prefix webapp ci
+          npm --prefix webapp run typecheck

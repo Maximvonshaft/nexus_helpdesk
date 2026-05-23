@@ -19,6 +19,13 @@ type CreatedSession = {
   join: { participant_token: string; participant_identity: string; room_name: string; expires_in_seconds: number }
 }
 
+type WebCallEvent = {
+  id: number
+  event_type: string
+  payload: Record<string, any>
+  created_at: string | null
+}
+
 type CallState = 'loading' | 'disabled' | 'ready' | 'requesting_mic' | 'connecting' | 'connected' | 'handoff' | 'ended' | 'error'
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -44,6 +51,7 @@ function WebCallAIProductionPage() {
   const [state, setState] = useState<CallState>('loading')
   const [message, setMessage] = useState('Checking voice runtime...')
   const [trackingNumber, setTrackingNumber] = useState('')
+  const [events, setEvents] = useState<WebCallEvent[]>([])
   const [muted, setMuted] = useState(false)
   const roomRef = useRef<Room | null>(null)
   const localAudioRef = useRef<any>(null)
@@ -81,6 +89,28 @@ function WebCallAIProductionPage() {
       void disconnectRoom()
     }
   }, [])
+
+  useEffect(() => {
+    if (!created || state === 'ended') return
+    let cancelled = false
+    const activeSession = created
+    async function pollEvents() {
+      try {
+        const payload = await apiRequest<{ events: WebCallEvent[] }>(`/api/webcall-ai/sessions/${activeSession.session.public_id}/events`, {
+          headers: { 'X-WebCall-AI-Visitor-Token': activeSession.visitor_token },
+        })
+        if (!cancelled) setEvents(payload.events)
+      } catch {
+        // Event polling is best-effort; the call room stays authoritative for media.
+      }
+    }
+    void pollEvents()
+    const timer = window.setInterval(() => void pollEvents(), 2500)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [created, state])
 
   async function startCall() {
     if (!runtime?.livekit_url || state !== 'ready') return
@@ -206,6 +236,24 @@ function WebCallAIProductionPage() {
         <div className="tracking-input-row">
           <input value={trackingNumber} onChange={(event) => setTrackingNumber(event.target.value)} placeholder="Tracking number" />
           <button type="button" disabled={!trackingNumber.trim() || !created} onClick={() => setMessage(`Tracking fallback captured: ${trackingNumber.trim().slice(0, 4)}...`)}>Save</button>
+        </div>
+      </section>
+      <section className="webcall-ai-band">
+        <div>
+          <h2>Call timeline</h2>
+          <p>Redacted transcript, AI replies, handoff, and tool events appear here when the worker writes evidence.</p>
+        </div>
+        <div className="webcall-ai-events">
+          {events.length === 0 ? (
+            <p>No persisted AI events yet.</p>
+          ) : (
+            events.slice(-6).map((event) => (
+              <article key={event.id}>
+                <strong>{event.event_type.replace('webcall_ai.', '').replaceAll('.', ' ')}</strong>
+                <span>{event.payload.text_redacted || event.payload.reason || event.payload.tool || event.payload.tts_provider || event.payload.status || 'Recorded'}</span>
+              </article>
+            ))
+          )}
         </div>
       </section>
       <div ref={remoteAudioRef} aria-hidden="true" />

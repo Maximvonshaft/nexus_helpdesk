@@ -1,0 +1,106 @@
+# WebCall AI Final Production Report
+
+## 1. Branch
+
+`codex/webcall-ai-infra-skeleton`
+
+## 2. Base SHA
+
+`fc390eb690718cf7a9faa89950a9a26f34a052f1`
+
+## 3. Final SHA
+
+Pending commit.
+
+## 4. PR URL
+
+Pending draft PR.
+
+## 5. Files changed
+
+- Backend production config, worker, provider contracts, session guardrails, admin health, evidence persistence.
+- Frontend `/webcall-ai` timeline polling and persisted event display.
+- GitHub Actions WebCall AI final quality gate.
+- Environment example and voice path/CSP defaults.
+
+## 6. What was implemented
+
+- Kill switch, rollout mode, allowed origins, agent lease seconds, and external provider readiness checks.
+- Production worker no longer runs fake heartbeat by default; fake heartbeat requires `WEBCALL_AI_TEST_FAKE_HEARTBEAT=true`.
+- Claim/lease lifecycle for `livekit_ai_agent` sessions.
+- Provider router plus fail-closed external STT/LLM/TTS adapter boundaries.
+- Redacted transcript, AI turn, AI action, and timeline event persistence path.
+- Admin health endpoint and customer timeline polling.
+- CI gate for backend contracts, frontend typecheck, and secret scanning.
+
+## 7. What remains out of scope
+
+- Real LiveKit RTC audio collection/publication is isolated behind `LiveKitAgentIO`, but this build still fails closed until the approved RTC runtime dependency and provider-specific implementation are wired.
+- Real external STT/LLM/TTS provider adapters intentionally fail closed until provider credentials/endpoints are approved.
+- Production spoken smoke on `https://www.leakle.com/webcall-ai` has not been executed from this local environment.
+
+## 8. New env flags
+
+- `WEBCALL_AI_KILL_SWITCH`
+- `WEBCALL_AI_PUBLIC_ROLLOUT_MODE`
+- `WEBCALL_AI_ALLOWED_ORIGINS`
+- `WEBCALL_AI_AGENT_LEASE_SECONDS`
+- `STT_ENDPOINT`, `STT_API_KEY_FILE`
+- `LLM_ENDPOINT`, `LLM_API_KEY_FILE`
+- `TTS_ENDPOINT`, `TTS_API_KEY_FILE`
+
+## 9. Tests run and results
+
+- `npm --prefix webapp run typecheck` passed.
+- `py -3.12 -m py_compile ...` passed for changed backend Python files.
+- `py -3.12 -m pytest -q backend/tests/test_webcall_ai_production.py` was not run locally because `pytest` is not installed in the local Python 3.12 environment. The new GitHub Actions gate runs it in CI.
+
+## 10. Manual smoke steps
+
+Not executed locally. Required smoke remains:
+
+1. Enable LiveKit and provider secrets through file-mounted secrets.
+2. Start API and `webcall-ai-agent` profile.
+3. Open `https://www.leakle.com/webcall-ai`.
+4. Start call, confirm AI joins, voice greeting is heard, tracking question is answered by voice, handoff/end work.
+
+## 11. DB evidence queries
+
+Use redacted evidence only:
+
+```sql
+select public_id, ai_agent_status, ai_turn_count, ai_agent_error_code
+from webchat_voice_sessions
+where mode = 'livekit_ai_agent'
+order by id desc
+limit 10;
+
+select turn_index, customer_text_redacted, ai_response_text_redacted, intent, handoff_required
+from webchat_voice_ai_turns
+where voice_session_id = :voice_session_id
+order by turn_index;
+
+select event_type, payload_json, created_at
+from webchat_events
+where conversation_id = :conversation_id
+order by id;
+```
+
+## 12. Security/privacy evidence
+
+- Raw audio storage remains disabled.
+- Dangerous write actions remain rejected by config validation.
+- Production rejects inline STT/LLM/TTS API keys; use `*_FILE` secrets.
+- Runtime config does not expose LiveKit API key/secret or provider secrets.
+
+## 13. Deployment notes
+
+Deploy as a draft/canary only. Keep `WEBCALL_AI_PUBLIC_ROLLOUT_MODE=internal` until real RTC/provider adapters pass smoke. Use `WEBCALL_AI_KILL_SWITCH=true` for immediate disable.
+
+## 14. Rollback plan
+
+Set `WEBCALL_AI_KILL_SWITCH=true`, stop the `webcall-ai-agent` profile, and leave DB evidence tables intact. No DB rollback is required for this additive change.
+
+## 15. Merge readiness verdict
+
+READY_FOR_REVIEW

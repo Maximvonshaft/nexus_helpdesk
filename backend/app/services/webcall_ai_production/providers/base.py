@@ -8,6 +8,7 @@ class STTResult:
     text: str
     language: str | None = None
     confidence: int | None = None
+    provider_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,7 @@ class LLMResult:
     intent: str
     handoff_required: bool = False
     handoff_reason: str | None = None
+    provider_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,7 @@ class TTSResult:
     audio_bytes: bytes
     mime_type: str
     text: str
+    provider_name: str | None = None
 
 
 class STTProvider:
@@ -44,4 +47,3 @@ class TTSProvider:
 
     def synthesize(self, text: str, *, language: str | None = None) -> TTSResult:
         raise NotImplementedError
-
