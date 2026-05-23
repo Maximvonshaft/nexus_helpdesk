@@ -17,3 +17,12 @@ except Exception:
     # Runtime hardening must never prevent the service package from importing.
     # Dedicated P0 regression tests cover the expected live rebinding behavior.
     pass
+
+try:
+    from .outbound_dispatch_transaction_boundary import apply_outbound_dispatch_transaction_boundary_patch
+
+    apply_outbound_dispatch_transaction_boundary_patch()
+except Exception:
+    # Preserve service import resilience; transaction-boundary behavior is locked
+    # by outbound dispatch regression tests and CI.
+    pass
