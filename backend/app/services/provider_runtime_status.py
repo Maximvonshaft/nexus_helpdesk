@@ -4,9 +4,17 @@ import os
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from ..utils.time import utc_now
+from ..voice_models import WebchatVoiceSession
+from ..webchat_voice_config import load_webchat_voice_runtime_config
 from .webchat_fast_config import get_webchat_fast_settings
+
+
+HUMAN_WEBCALL_RINGING_STATUSES = {"created", "ringing"}
+HUMAN_WEBCALL_ACTIVE_STATUSES = {"accepted", "active"}
 
 
 def _provider_capabilities(*, webchat_fast_reply: bool, handoff_decision: bool = True) -> dict[str, bool]:
@@ -113,6 +121,73 @@ def _bridge_readiness_from_env() -> dict[str, Any]:
         "bridge_mode": mode,
         "real_upstream_configured": real_upstream_configured,
         "reply_generation_backend": backend or ("stub" if mode == "stub" else "unconfigured"),
+    }
+
+
+def _human_webcall_count(db: Session | None, statuses: set[str], *, stale: bool = False) -> int:
+    if db is None:
+        return 0
+    query = db.query(WebchatVoiceSession).filter(
+        WebchatVoiceSession.status.in_(sorted(statuses)),
+        WebchatVoiceSession.ended_at.is_(None),
+    )
+    if stale:
+        query = query.filter(
+            WebchatVoiceSession.expires_at.isnot(None),
+            WebchatVoiceSession.expires_at < utc_now(),
+        )
+    return int(query.count())
+
+
+def get_human_webcall_runtime_status(db: Session | None = None) -> dict[str, Any]:
+    warnings: list[str] = []
+    try:
+        config = load_webchat_voice_runtime_config()
+        webchat_voice_enabled = config.enabled
+        provider = config.provider
+        recording_enabled = config.recording_enabled
+        transcription_enabled = config.transcription_enabled
+        if recording_enabled:
+            warnings.append("human_webcall recording is enabled")
+        if transcription_enabled:
+            warnings.append("human_webcall transcription is enabled")
+    except RuntimeError as exc:
+        webchat_voice_enabled = False
+        provider = "unknown"
+        recording_enabled = False
+        transcription_enabled = False
+        warnings.append(str(exc))
+
+    try:
+        active_session_count = _human_webcall_count(db, {"active"})
+        ringing_session_count = _human_webcall_count(db, HUMAN_WEBCALL_RINGING_STATUSES)
+        stale_active_session_count = _human_webcall_count(db, HUMAN_WEBCALL_ACTIVE_STATUSES, stale=True)
+        stale_ringing_session_count = _human_webcall_count(db, HUMAN_WEBCALL_RINGING_STATUSES, stale=True)
+    except (AttributeError, TypeError, SQLAlchemyError) as exc:
+        active_session_count = 0
+        ringing_session_count = 0
+        stale_active_session_count = 0
+        stale_ringing_session_count = 0
+        warnings.append(f"human_webcall status unavailable: {type(exc).__name__}")
+
+    if not webchat_voice_enabled:
+        readiness_verdict = "disabled"
+    elif warnings:
+        readiness_verdict = "warning"
+    else:
+        readiness_verdict = "ready"
+
+    return {
+        "webchat_voice_enabled": webchat_voice_enabled,
+        "provider": provider,
+        "recording_enabled": recording_enabled,
+        "transcription_enabled": transcription_enabled,
+        "active_session_count": active_session_count,
+        "ringing_session_count": ringing_session_count,
+        "stale_active_session_count": stale_active_session_count,
+        "stale_ringing_session_count": stale_ringing_session_count,
+        "readiness_verdict": readiness_verdict,
+        "warnings": warnings,
     }
 
 
@@ -263,6 +338,7 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
         "fast_lane_enabled": settings.enabled,
         "configured_provider": settings.provider,
         "fallback_provider": settings.fallback_provider,
+        "human_webcall": get_human_webcall_runtime_status(db),
         "providers": providers,
         "warnings": warnings,
         "boundary": {
