@@ -5,6 +5,7 @@ import uuid
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
@@ -15,6 +16,7 @@ from .api.admin_perf import router as admin_perf_router
 from .api.admin_provider_runtime import router as admin_provider_runtime_router
 from .api.admin_provider_credentials import router as admin_provider_credentials_router
 from .api.admin_webcall_ai_demo import router as admin_webcall_ai_demo_router
+from .api import admin as admin_api
 from .api.admin import router as admin_router
 from .api.admin_queue import router as admin_queue_router
 from .api.auth import router as auth_router
@@ -39,6 +41,7 @@ from .api.webchat_events import router as webchat_events_router
 from .api.webchat_voice import router as webchat_voice_router
 from .db import engine, reset_current_request_id, set_current_request_id
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
+from .services.password_policy import MIN_PASSWORD_LENGTH, PasswordPolicyError, validate_admin_password_policy
 from .services.release_metadata import runtime_identity
 from .services.storage_readiness import check_storage_readiness
 from .services.webchat_openclaw_responses_client import close_openclaw_clients
@@ -48,6 +51,31 @@ from .webchat_voice_config import is_webchat_voice_path, load_webchat_voice_runt
 settings = get_settings()
 configure_logging(get_settings().log_json)
 app = FastAPI(title='NexusDesk Helpdesk', version='20.4.0-round-b')
+
+
+def _validate_admin_password_or_http(password: str) -> None:
+    try:
+        validate_admin_password_policy(password)
+    except PasswordPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _custom_openapi() -> dict:
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    schemas = openapi_schema.get('components', {}).get('schemas', {})
+    for schema_name in ('UserCreate', 'PasswordResetRequest'):
+        password_schema = schemas.get(schema_name, {}).get('properties', {}).get('password')
+        if isinstance(password_schema, dict):
+            password_schema['minLength'] = MIN_PASSWORD_LENGTH
+            password_schema['description'] = 'Admin password must satisfy the production password policy.'
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+admin_api._validate_password_length = _validate_admin_password_or_http
+app.openapi = _custom_openapi
 
 
 @app.on_event('shutdown')
