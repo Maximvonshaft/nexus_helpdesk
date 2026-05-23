@@ -15,6 +15,7 @@ from .api.admin_outbound_semantics import router as admin_outbound_semantics_rou
 from .api.admin_perf import router as admin_perf_router
 from .api.admin_provider_runtime import router as admin_provider_runtime_router
 from .api.admin_provider_credentials import router as admin_provider_credentials_router
+from .api.admin_webcall_ai import router as admin_webcall_ai_router
 from .api.admin_webcall_ai_demo import router as admin_webcall_ai_demo_router
 from .api import admin as admin_api
 from .api.admin import router as admin_router
@@ -39,6 +40,7 @@ from .api.webchat_fast import router as webchat_fast_router
 from .api.webchat import router as webchat_router
 from .api.webchat_events import router as webchat_events_router
 from .api.webchat_voice import router as webchat_voice_router
+from .api.webcall_ai import router as webcall_ai_router
 from .db import engine, reset_current_request_id, set_current_request_id
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
 from .services.password_policy import MIN_PASSWORD_LENGTH, PasswordPolicyError, validate_admin_password_policy
@@ -198,6 +200,7 @@ app.include_router(admin_outbound_semantics_router)
 app.include_router(admin_perf_router)
 app.include_router(admin_provider_runtime_router)
 app.include_router(admin_provider_credentials_router)
+app.include_router(admin_webcall_ai_router)
 app.include_router(admin_webcall_ai_demo_router)
 app.include_router(ticket_perf_router)
 app.include_router(admin_router)
@@ -219,6 +222,7 @@ app.include_router(speedaf_actions_router)
 app.include_router(speedaf_cancel_router)
 app.include_router(webchat_fast_router)
 app.include_router(webchat_events_router)
+app.include_router(webcall_ai_router)
 app.include_router(webchat_voice_router)
 app.include_router(webchat_router)
 

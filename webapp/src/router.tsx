@@ -7,6 +7,7 @@ import { Route as WorkspaceRoute } from '@/routes/workspace'
 import { Route as WebchatRoute } from '@/routes/webchat'
 import { Route as WebchatVoiceRoute } from '@/routes/webchat-voice'
 import { Route as WebCallRoute } from '@/routes/webcall'
+import { Route as WebCallAIProductionRoute } from '@/routes/webcall-ai'
 import { Route as WebCallAIDemoRoute } from '@/routes/webcall-ai-demo'
 import { Route as ProviderCredentialsRoute } from '@/routes/provider-credentials'
 import { Route as BulletinsRoute } from '@/routes/bulletins'
@@ -25,6 +26,7 @@ const routeTree = RootRoute.addChildren([
   // Internal operator console for human WebCall handling; intentionally absent from primary nav.
   WebchatVoiceRoute,
   WebCallRoute,
+  WebCallAIProductionRoute,
   // Internal ops-only AI sandbox; AppShell exposes it only to ops-capable users.
   WebCallAIDemoRoute,
   ProviderCredentialsRoute,
