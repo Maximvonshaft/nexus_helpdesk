@@ -21,6 +21,7 @@ def _source(path: Path) -> str:
     source = source.replace('"provider_runtime"', "")
     source = source.replace("provider_runtime in this foundation pr", "")
     source = source.replace("livekit_token_issuer", "")
+    source = source.replace("livekit_no_media", "")
     source = source.replace("allow_speedaf_work_order", "")
     source = source.replace("webcall_ai_allow_speedaf_work_order", "")
     return source

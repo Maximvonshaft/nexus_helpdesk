@@ -45,6 +45,13 @@ def _format_result(result: dict[str, int]) -> str:
             f"participant_joins={int(result.get('participant_joins', 0))} "
             f"participant_leaves={int(result.get('participant_leaves', 0))}"
         )
+    if "presence_joins" in result:
+        formatted = (
+            f"{formatted} "
+            f"presence_joins={int(result.get('presence_joins', 0))} "
+            f"presence_leaves={int(result.get('presence_leaves', 0))} "
+            f"presence_failures={int(result.get('presence_failures', 0))}"
+        )
     return formatted
 
 

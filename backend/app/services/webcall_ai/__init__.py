@@ -43,6 +43,13 @@ from .participant_service import (
     mark_ai_participant_joined,
     mark_ai_participant_left,
 )
+from .presence_client import (
+    FakeNoMediaPresenceClient,
+    LiveKitNoMediaPresenceClient,
+    WebCallAIPresenceJoinResult,
+    WebCallAIPresenceLeaveResult,
+    get_webcall_ai_presence_client,
+)
 from .provider_router import get_stt_provider, get_tts_provider
 from .room_client import (
     FakeWebCallAIRoomClient,
@@ -87,7 +94,11 @@ __all__ = [
     "WEBCALL_AI_STATUS_RELEASED",
     "WEBCALL_AI_STATUS_SKIPPED",
     "FakeWebCallAIRoomClient",
+    "FakeNoMediaPresenceClient",
     "LiveKitTokenIssuerRoomClient",
+    "LiveKitNoMediaPresenceClient",
+    "WebCallAIPresenceJoinResult",
+    "WebCallAIPresenceLeaveResult",
     "WebCallAIRoomJoinResult",
     "WebCallAIRoomLeaveResult",
     "ai_participant_identity",
@@ -96,6 +107,7 @@ __all__ = [
     "fail_webcall_ai_session",
     "execute_mock_turn_for_claimed_session",
     "get_webcall_ai_settings",
+    "get_webcall_ai_presence_client",
     "get_stt_provider",
     "get_tts_provider",
     "heartbeat_webcall_ai_session",
