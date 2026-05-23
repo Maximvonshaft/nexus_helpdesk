@@ -23,6 +23,11 @@ WEBCALL_ENV_KEYS = [
     "WEBCALL_TTS_TOKEN",
     "WEBCALL_STT_CANARY_PERCENT",
     "WEBCALL_TTS_CANARY_PERCENT",
+    "WEBCALL_STT_DEEPGRAM_ENABLED",
+    "WEBCALL_STT_DEEPGRAM_MODEL",
+    "WEBCALL_STT_DEEPGRAM_SMART_FORMAT",
+    "WEBCALL_STT_DEEPGRAM_ENDPOINT",
+    "WEBCALL_STT_DEEPGRAM_REMOTE_URL_ALLOWLIST",
     "WEBCALL_AI_PROVIDER",
     "WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER",
     "WEBCALL_AI_ALLOW_CANCEL",
@@ -61,6 +66,11 @@ def test_webcall_ai_defaults_are_disabled_and_mock():
     assert settings.tts_inline_token is None
     assert settings.stt_canary_percent == 0
     assert settings.tts_canary_percent == 0
+    assert settings.stt_deepgram_enabled is False
+    assert settings.stt_deepgram_model == "nova-3"
+    assert settings.stt_deepgram_smart_format is True
+    assert settings.stt_deepgram_endpoint == "https://api.deepgram.com/v1/listen"
+    assert settings.stt_deepgram_remote_url_allowlist is None
     assert settings.ai_provider == "provider_runtime"
     assert settings.allow_speedaf_work_order is False
     assert settings.allow_cancel is False
@@ -91,7 +101,7 @@ def test_production_rejects_foundation_forbidden_flags(monkeypatch, flag):
 @pytest.mark.parametrize(
     ("key", "value", "message"),
     [
-        ("WEBCALL_STT_PROVIDER", "deepgram", "WEBCALL_STT_PROVIDER"),
+        ("WEBCALL_STT_PROVIDER", "azure", "WEBCALL_STT_PROVIDER"),
         ("WEBCALL_TTS_PROVIDER", "elevenlabs", "WEBCALL_TTS_PROVIDER"),
         ("WEBCALL_AI_PROVIDER", "openai_responses", "WEBCALL_AI_PROVIDER"),
     ],

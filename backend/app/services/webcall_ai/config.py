@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 _ALLOWED_AGENT_MODES = {"ai_first_human_fallback"}
-_ALLOWED_STT_PROVIDERS = {"mock", "disabled", "contract_stub"}
+_ALLOWED_STT_PROVIDERS = {"mock", "disabled", "contract_stub", "deepgram"}
 _ALLOWED_TTS_PROVIDERS = {"mock", "disabled", "contract_stub"}
 _ALLOWED_AI_PROVIDERS = {"provider_runtime"}
 
@@ -48,6 +48,11 @@ class WebCallAISettings:
     tts_inline_token: str | None
     stt_canary_percent: int
     tts_canary_percent: int
+    stt_deepgram_enabled: bool
+    stt_deepgram_model: str
+    stt_deepgram_smart_format: bool
+    stt_deepgram_endpoint: str
+    stt_deepgram_remote_url_allowlist: str | None
     ai_provider: str
     allow_speedaf_work_order: bool
     allow_cancel: bool
@@ -61,11 +66,13 @@ class WebCallAISettings:
         if self.agent_mode not in _ALLOWED_AGENT_MODES:
             raise RuntimeError("WEBCALL_AI_AGENT_MODE must be ai_first_human_fallback")
         if self.stt_provider not in _ALLOWED_STT_PROVIDERS:
-            raise RuntimeError("WEBCALL_STT_PROVIDER must be mock, disabled, or contract_stub in PR-5")
+            raise RuntimeError("WEBCALL_STT_PROVIDER must be mock, disabled, contract_stub, or deepgram in PR-6")
         if self.tts_provider not in _ALLOWED_TTS_PROVIDERS:
             raise RuntimeError("WEBCALL_TTS_PROVIDER must be mock, disabled, or contract_stub in PR-5")
         if self.stt_provider == "contract_stub" and not self.stt_contract_stub_enabled:
             raise RuntimeError("WEBCALL_STT_CONTRACT_STUB_ENABLED must be true for contract_stub")
+        if self.stt_provider == "deepgram" and not self.stt_deepgram_enabled:
+            raise RuntimeError("WEBCALL_STT_DEEPGRAM_ENABLED must be true for deepgram")
         if self.tts_provider == "contract_stub" and not self.tts_contract_stub_enabled:
             raise RuntimeError("WEBCALL_TTS_CONTRACT_STUB_ENABLED must be true for contract_stub")
         if self.ai_provider not in _ALLOWED_AI_PROVIDERS:
@@ -82,6 +89,10 @@ class WebCallAISettings:
             raise RuntimeError("WEBCALL_STT_CANARY_PERCENT must be between 0 and 100")
         if self.tts_canary_percent < 0 or self.tts_canary_percent > 100:
             raise RuntimeError("WEBCALL_TTS_CANARY_PERCENT must be between 0 and 100")
+        if not self.stt_deepgram_endpoint:
+            raise RuntimeError("WEBCALL_STT_DEEPGRAM_ENDPOINT must not be empty")
+        if self.stt_deepgram_model.strip() == "":
+            raise RuntimeError("WEBCALL_STT_DEEPGRAM_MODEL must not be empty")
         if self.app_env == "production":
             if self.stt_inline_token:
                 raise RuntimeError("WEBCALL_STT_TOKEN must not be set inline in production")
@@ -95,6 +106,11 @@ class WebCallAISettings:
                 raise RuntimeError("WEBCALL_AI_ALLOW_ADDRESS_UPDATE must be false in production")
             if self.record_raw_audio:
                 raise RuntimeError("WEBCALL_AI_RECORD_RAW_AUDIO must be false in production")
+            if self.stt_provider == "deepgram":
+                if not self.stt_token_file:
+                    raise RuntimeError("WEBCALL_STT_TOKEN_FILE is required for deepgram in production")
+                if not self.stt_deepgram_endpoint.startswith("https://"):
+                    raise RuntimeError("WEBCALL_STT_DEEPGRAM_ENDPOINT must be https in production")
 
 
 @lru_cache(maxsize=1)
@@ -117,6 +133,12 @@ def get_webcall_ai_settings() -> WebCallAISettings:
         tts_inline_token=os.getenv("WEBCALL_TTS_TOKEN") or None,
         stt_canary_percent=_env_int("WEBCALL_STT_CANARY_PERCENT", 0, minimum=0, maximum=100),
         tts_canary_percent=_env_int("WEBCALL_TTS_CANARY_PERCENT", 0, minimum=0, maximum=100),
+        stt_deepgram_enabled=_env_bool("WEBCALL_STT_DEEPGRAM_ENABLED", False),
+        stt_deepgram_model=os.getenv("WEBCALL_STT_DEEPGRAM_MODEL", "nova-3").strip() or "nova-3",
+        stt_deepgram_smart_format=_env_bool("WEBCALL_STT_DEEPGRAM_SMART_FORMAT", True),
+        stt_deepgram_endpoint=os.getenv("WEBCALL_STT_DEEPGRAM_ENDPOINT", "https://api.deepgram.com/v1/listen").strip()
+        or "https://api.deepgram.com/v1/listen",
+        stt_deepgram_remote_url_allowlist=os.getenv("WEBCALL_STT_DEEPGRAM_REMOTE_URL_ALLOWLIST") or None,
         ai_provider=os.getenv("WEBCALL_AI_PROVIDER", "provider_runtime").strip().lower() or "provider_runtime",
         allow_speedaf_work_order=_env_bool("WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER", False),
         allow_cancel=_env_bool("WEBCALL_AI_ALLOW_CANCEL", False),

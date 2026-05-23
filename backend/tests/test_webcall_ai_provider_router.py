@@ -14,6 +14,7 @@ from app.services.webcall_ai.contract_stub_provider import (
     DisabledSTTProvider,
     DisabledTTSProvider,
 )
+from app.services.webcall_ai.deepgram_stt_provider import DeepgramSTTProvider
 from app.services.webcall_ai.media_schemas import WebCallSTTInput, WebCallTTSInput
 from app.services.webcall_ai.mock_media_provider import MockSTTProvider, MockTTSProvider
 from app.services.webcall_ai.provider_router import get_stt_provider, get_tts_provider
@@ -31,6 +32,8 @@ def clean_db_and_env(monkeypatch):
         "WEBCALL_TTS_PROVIDER",
         "WEBCALL_STT_CONTRACT_STUB_ENABLED",
         "WEBCALL_TTS_CONTRACT_STUB_ENABLED",
+        "WEBCALL_STT_DEEPGRAM_ENABLED",
+        "WEBCALL_STT_TOKEN",
     ]:
         monkeypatch.delenv(key, raising=False)
     Base.metadata.drop_all(bind=engine)
@@ -106,6 +109,15 @@ def test_contract_stub_router_returns_contract_stub_providers(monkeypatch):
     ).error_code
 
 
+def test_deepgram_router_returns_deepgram_provider_when_enabled(monkeypatch):
+    monkeypatch.setenv("WEBCALL_STT_PROVIDER", "deepgram")
+    monkeypatch.setenv("WEBCALL_STT_DEEPGRAM_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_STT_TOKEN", "local-token")
+    get_webcall_ai_settings.cache_clear()
+
+    assert isinstance(get_stt_provider(), DeepgramSTTProvider)
+
+
 def test_disabled_provider_fails_worker_safely_without_turn_or_action(db, monkeypatch):
     session = _voice_session(db)
     monkeypatch.setenv("WEBCALL_STT_PROVIDER", "disabled")
@@ -161,6 +173,27 @@ def test_tts_unavailable_after_stt_flush_rolls_back_turn_and_action(db, monkeypa
     assert result["claimed"] == 1
     assert result["failed"] == 1
     assert result["released"] == 0
+    assert result["turns"] == 0
+    assert result["stt_events"] == 0
+    assert result["tts_events"] == 0
+    assert session.ai_agent_status == "failed"
+    assert session.ai_agent_error_code == "mock_turn_failed"
+    assert db.query(WebchatVoiceAITurn).count() == 0
+    assert db.query(WebchatVoiceAIAction).count() == 0
+
+
+def test_deepgram_worker_without_audio_reference_fails_safely_without_rows(db, monkeypatch):
+    session = _voice_session(db)
+    monkeypatch.setenv("WEBCALL_STT_PROVIDER", "deepgram")
+    monkeypatch.setenv("WEBCALL_STT_DEEPGRAM_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_STT_TOKEN", "local-token")
+    get_webcall_ai_settings.cache_clear()
+
+    result = run_webcall_ai_worker_once(db, "worker-a", limit=10, lease_seconds=30)
+    db.refresh(session)
+
+    assert result["claimed"] == 1
+    assert result["failed"] == 1
     assert result["turns"] == 0
     assert result["stt_events"] == 0
     assert result["tts_events"] == 0

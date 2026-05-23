@@ -17,6 +17,11 @@ WEBCALL_PROVIDER_ENV_KEYS = [
     "WEBCALL_TTS_TOKEN",
     "WEBCALL_STT_CANARY_PERCENT",
     "WEBCALL_TTS_CANARY_PERCENT",
+    "WEBCALL_STT_DEEPGRAM_ENABLED",
+    "WEBCALL_STT_DEEPGRAM_MODEL",
+    "WEBCALL_STT_DEEPGRAM_SMART_FORMAT",
+    "WEBCALL_STT_DEEPGRAM_ENDPOINT",
+    "WEBCALL_STT_DEEPGRAM_REMOTE_URL_ALLOWLIST",
 ]
 
 
@@ -66,7 +71,6 @@ def test_contract_stub_provider_requires_explicit_enable_flag(monkeypatch):
 @pytest.mark.parametrize(
     ("key", "value"),
     [
-        ("WEBCALL_STT_PROVIDER", "deepgram"),
         ("WEBCALL_STT_PROVIDER", "azure"),
         ("WEBCALL_STT_PROVIDER", "openai_realtime"),
         ("WEBCALL_TTS_PROVIDER", "elevenlabs"),
@@ -74,11 +78,19 @@ def test_contract_stub_provider_requires_explicit_enable_flag(monkeypatch):
         ("WEBCALL_TTS_PROVIDER", "aws"),
     ],
 )
-def test_real_provider_names_are_rejected_in_pr5(monkeypatch, key, value):
+def test_unenabled_or_unimplemented_provider_names_are_rejected(monkeypatch, key, value):
     monkeypatch.setenv(key, value)
     get_webcall_ai_settings.cache_clear()
 
     with pytest.raises(RuntimeError, match=key):
+        get_webcall_ai_settings()
+
+
+def test_deepgram_provider_requires_explicit_enable_flag(monkeypatch):
+    monkeypatch.setenv("WEBCALL_STT_PROVIDER", "deepgram")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_STT_DEEPGRAM_ENABLED"):
         get_webcall_ai_settings()
 
 

@@ -2,7 +2,7 @@
 
 ## Scope
 
-PR-0/PR-1 does not make WebCall AI functional yet. PR-0/PR-2 does not make WebCall AI functional yet. PR-3 does not make WebCall AI functional yet. PR-4 does not implement functional AI voice. PR-5 does not implement functional AI voice. These PRs only add the guarded architecture, schema, config, tests, no-op worker claim lifecycle, deterministic mock turn persistence, deterministic mock STT/TTS boundaries, and the real STT/TTS provider contract skeleton. No real AI voice, real STT, real TTS, LiveKit AI worker media join, or Speedaf write automation is introduced here.
+PR-0/PR-1 does not make WebCall AI functional yet. PR-0/PR-2 does not make WebCall AI functional yet. PR-3 does not make WebCall AI functional yet. PR-4 does not implement functional AI voice. PR-5 does not implement functional AI voice. PR-6 does not implement functional AI voice. These PRs only add the guarded architecture, schema, config, tests, no-op worker claim lifecycle, deterministic mock turn persistence, deterministic mock STT/TTS boundaries, the real STT/TTS provider contract skeleton, and the first Deepgram STT adapter behind feature flags. No LiveKit AI worker media join, WebRTC audio read/publish path, TTS provider, LLM/runtime integration, or Speedaf write automation is introduced here.
 
 The target product is WebCall AI Front Desk: a customer starts a WebCall, an AI voice agent joins as the first support participant, asks for tracking information and caller confirmation, lets NexusDesk check trusted Speedaf facts, answers low-risk tracking questions, and hands complex or high-risk cases to a human agent.
 
@@ -15,6 +15,8 @@ PR-3 adds deterministic mock turn execution only. A claimed worker-owned session
 PR-4 adds deterministic mock STT/TTS boundaries only. The worker obtains a fixed redacted customer utterance from the mock STT boundary, writes it into the audited AI turn, obtains fixed TTS metadata for the deterministic AI response, and releases the session. PR-4 does not implement functional AI voice. It does not read audio, publish audio, or join LiveKit media. It does not join LiveKit media, does not connect real STT/TTS, does not call LLM/provider runtime, does not call OpenClaw, does not call Speedaf, and does not change frontend. Future real providers must implement the provider interfaces and remain behind feature flags.
 
 PR-5 adds a real STT/TTS provider contract skeleton only. It introduces provider-neutral media schema names, provider routing for `mock`, `disabled`, and `contract_stub`, and fail-closed token-file, timeout, and canary configuration. PR-5 does not implement real STT/TTS. PR-5 does not implement functional AI voice. It does not join LiveKit, does not read/publish real audio, does not import real provider SDKs, does not perform external network calls, does not call LLM/provider runtime, does not call OpenClaw, does not call Speedaf, and does not change frontend. Real provider SDK/network integration is reserved for PR-6 or later.
+
+PR-6 adds the first Deepgram STT adapter only. It is disabled by default, requires explicit `WEBCALL_STT_PROVIDER=deepgram` and `WEBCALL_STT_DEEPGRAM_ENABLED=true`, and uses token-file rules, timeouts, canary config, HTTPS remote audio references, and fake-transport-tested boundaries. PR-6 does not implement functional AI voice. It does not join LiveKit, does not read/publish WebRTC audio, does not change frontend, does not call LLM/provider runtime, does not call OpenClaw, does not call Speedaf, and does not enable real STT by default.
 
 The intended flow is:
 
@@ -99,10 +101,11 @@ PR-2 extends `webchat_voice_sessions` with worker claim metadata: worker id, cla
 3. PR-3: deterministic mock turn execution only, writing auditable mock turn/action rows with no external runtime.
 4. PR-4: deterministic mock STT/TTS boundaries only, with no audio, STT, TTS, LLM, OpenClaw, or Speedaf calls to real providers.
 5. PR-5: real STT/TTS provider contract skeleton and fail-closed provider router only, with no SDK or network integration.
-6. Real STT/TTS provider integration behind feature flags and canary controls.
-7. Trusted Speedaf tracking lookup through backend policy.
-8. Human handoff workflows and operator evidence.
-9. Summary, callback, and evidence hardening.
+6. PR-6: Deepgram pre-recorded STT adapter behind feature flags, fake transport tests, and HTTPS remote audio reference controls.
+7. TTS provider integration behind feature flags and canary controls.
+8. Trusted Speedaf tracking lookup through backend policy.
+9. Human handoff workflows and operator evidence.
+10. Summary, callback, and evidence hardening.
 
 ## Non-Goals
 
