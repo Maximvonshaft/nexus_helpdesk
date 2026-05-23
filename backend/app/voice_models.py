@@ -30,6 +30,12 @@ class WebchatVoiceSession(Base):
     recording_status: Mapped[str] = mapped_column(String(40), default="disabled", index=True)
     transcript_status: Mapped[str] = mapped_column(String(40), default="disabled", index=True)
     summary_status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    ai_agent_status: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
+    ai_agent_started_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True)
+    ai_agent_ended_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True)
+    ai_handoff_reason: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
+    ai_language: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    ai_turn_count: Mapped[int] = mapped_column(Integer, default=0)
     accepted_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     ended_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True)
@@ -95,4 +101,51 @@ class WebchatVoiceTranscriptSegment(Base):
     text_redacted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     confidence: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     redaction_status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+
+
+class WebchatVoiceAITurn(Base):
+    """Redacted AI turn record for future WebCall AI worker execution."""
+
+    __tablename__ = "webchat_voice_ai_turns"
+    __table_args__ = (
+        UniqueConstraint("voice_session_id", "turn_index", name="uq_voice_ai_turn_session_index"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    voice_session_id: Mapped[int] = mapped_column(ForeignKey("webchat_voice_sessions.id"), index=True)
+    conversation_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_conversations.id"), nullable=True, index=True)
+    ticket_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tickets.id"), nullable=True, index=True)
+    turn_index: Mapped[int] = mapped_column(Integer, index=True)
+    customer_text_redacted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ai_response_text_redacted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    language: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    intent: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    action: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    tracking_number_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    handoff_required: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    handoff_reason: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    confidence: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    provider: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    stt_provider: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    tts_provider: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+
+
+class WebchatVoiceAIAction(Base):
+    """NexusDesk decision record for AI-requested WebCall actions."""
+
+    __tablename__ = "webchat_voice_ai_actions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    voice_session_id: Mapped[int] = mapped_column(ForeignKey("webchat_voice_sessions.id"), index=True)
+    turn_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_voice_ai_turns.id"), nullable=True, index=True)
+    model_action: Mapped[str] = mapped_column(String(80), index=True)
+    nexus_decision: Mapped[str] = mapped_column(String(40), index=True)
+    decision_reason: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
+    speedaf_tool_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
+    background_job_id: Mapped[Optional[int]] = mapped_column(ForeignKey("background_jobs.id"), nullable=True, index=True)
+    tool_call_log_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    result_status: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
