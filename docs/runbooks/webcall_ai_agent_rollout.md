@@ -2,7 +2,7 @@
 
 ## Scope
 
-PR-0/PR-4 does not make WebCall AI functional yet. It only adds the guarded architecture, schema, config, tests, no-op claim lifecycle, deterministic mock turn persistence, and deterministic mock STT/TTS boundaries. PR-4 does not implement functional AI voice. It does not read audio, publish audio, or join LiveKit media. It does not join LiveKit media, does not connect real STT/TTS, does not call LLM/provider runtime, does not call OpenClaw, does not call Speedaf, and does not change frontend. Keep all real AI voice execution disabled until a later worker PR explicitly adds and validates runtime behavior.
+PR-0/PR-5 does not make WebCall AI functional yet. It only adds the guarded architecture, schema, config, tests, no-op claim lifecycle, deterministic mock turn persistence, deterministic mock STT/TTS boundaries, and a real STT/TTS provider contract skeleton. PR-5 does not implement functional AI voice. PR-5 does not implement real STT/TTS. It does not join LiveKit, does not read/publish real audio, does not import real provider SDKs, does not perform external network calls, does not call LLM/provider runtime, does not call OpenClaw, does not call Speedaf, and does not change frontend. Keep all real AI voice execution disabled until a later worker PR explicitly adds and validates runtime behavior.
 
 ## Feature Flags
 
@@ -39,10 +39,11 @@ WEBCALL_AI_RECORD_RAW_AUDIO=true
 2. Worker skeleton: add a backend worker that can claim AI session lifecycle state without joining LiveKit media. PR-2 is no-op claim lifecycle only: claim, heartbeat, release, fail, and lease recovery metadata, with no media, STT, TTS, LLM, or Speedaf execution.
 3. Deterministic mock turn: write one safe mock AI turn and one safe NexusDesk action decision for a claimed session, with no audio, STT, TTS, LLM, OpenClaw, or Speedaf calls.
 4. Mock media: PR-4 adds deterministic mock STT/TTS boundaries so tests can validate turn lifecycle and handoff without external calls. It uses no audio, STT, TTS, LLM, OpenClaw, or Speedaf calls to real providers.
-5. Real media: connect real STT/TTS providers behind feature flags and canaries.
-6. Tracking facts: allow backend-governed tracking lookup after redaction and caller confirmation.
-7. Handoff: route cancel, address change, compensation/refund, complaint, driver/DSP responsibility, customs/payment disputes, legal/privacy questions, low confidence, and unsupported-language cases to a human agent.
-8. Evidence: add transcript summaries, evidence cards, callback tasks, and operational dashboards.
+5. Provider contracts: PR-5 adds the real STT/TTS provider contract skeleton, fail-closed provider router, token-file config, timeout bounds, and canary config. It does not connect real provider SDKs or networks.
+6. Real media: PR-6 or later connects real STT/TTS providers behind feature flags and canaries.
+7. Tracking facts: allow backend-governed tracking lookup after redaction and caller confirmation.
+8. Handoff: route cancel, address change, compensation/refund, complaint, driver/DSP responsibility, customs/payment disputes, legal/privacy questions, low confidence, and unsupported-language cases to a human agent.
+9. Evidence: add transcript summaries, evidence cards, callback tasks, and operational dashboards.
 
 ## Deployment Checks
 
@@ -75,4 +76,4 @@ If code rollback is required, run the deterministic Alembic downgrade only as pa
 
 ## Next PR
 
-The next PR should keep real providers behind feature flags and canaries, then add the first real STT/TTS adapter contract implementation without changing frontend or Speedaf behavior.
+PR-6 should implement the first real provider adapter behind feature flags/canary, or add provider-specific adapter skeleton tests if PR-5 reveals additional contract gaps.

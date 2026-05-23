@@ -80,13 +80,15 @@ def test_mock_stt_provider_returns_deterministic_final_text():
         "is_final": True,
         "provider": "mock",
         "event_count": 1,
+        "status": "ok",
+        "error_code": None,
     }
 
 
 def test_mock_stt_boundary_does_not_accept_raw_audio_bytes():
     fields = MockSTTInput.__dataclass_fields__
 
-    assert set(fields) == {"voice_session_id", "worker_id", "locale"}
+    assert set(fields) == {"voice_session_id", "worker_id", "locale", "audio_reference"}
     assert "audio" not in fields
     assert "audio_bytes" not in fields
 
@@ -109,6 +111,7 @@ def test_mock_tts_provider_returns_safe_metadata_only():
         "synthesis_status": MOCK_TTS_SYNTHESIS_STATUS,
         "audio_reference": MOCK_TTS_AUDIO_REFERENCE,
         "event_count": 1,
+        "error_code": None,
     }
     assert not hasattr(result, "audio_bytes")
     assert not hasattr(result, "audio_base64")

@@ -6,6 +6,12 @@ contracts. It does not start a functional AI voice agent.
 """
 
 from .config import WebCallAISettings, get_webcall_ai_settings
+from .contract_stub_provider import (
+    ContractStubSTTProvider,
+    ContractStubTTSProvider,
+    DisabledSTTProvider,
+    DisabledTTSProvider,
+)
 from .lifecycle import (
     WEBCALL_AI_STATUS_CLAIMED,
     WEBCALL_AI_STATUS_FAILED,
@@ -17,9 +23,19 @@ from .lifecycle import (
     heartbeat_webcall_ai_session,
     release_webcall_ai_session,
 )
-from .media_schemas import MockSTTInput, MockSTTResult, MockTTSInput, MockTTSResult
+from .media_schemas import (
+    MockSTTInput,
+    MockSTTResult,
+    MockTTSInput,
+    MockTTSResult,
+    WebCallSTTInput,
+    WebCallSTTResult,
+    WebCallTTSInput,
+    WebCallTTSResult,
+)
 from .mock_media_provider import MockSTTProvider, MockTTSProvider
 from .mock_turn_executor import MockTurnExecutionResult, execute_mock_turn_for_claimed_session
+from .provider_router import get_stt_provider, get_tts_provider
 from .schemas import (
     WebCallAIActionDecision,
     WebCallAIAllowedAction,
@@ -34,6 +50,10 @@ __all__ = [
     "WebCallAIForbiddenAction",
     "WebCallAISettings",
     "WebCallAITurnDecision",
+    "ContractStubSTTProvider",
+    "ContractStubTTSProvider",
+    "DisabledSTTProvider",
+    "DisabledTTSProvider",
     "MockSTTInput",
     "MockSTTProvider",
     "MockSTTResult",
@@ -41,6 +61,10 @@ __all__ = [
     "MockTTSProvider",
     "MockTTSResult",
     "MockTurnExecutionResult",
+    "WebCallSTTInput",
+    "WebCallSTTResult",
+    "WebCallTTSInput",
+    "WebCallTTSResult",
     "WEBCALL_AI_STATUS_CLAIMED",
     "WEBCALL_AI_STATUS_FAILED",
     "WEBCALL_AI_STATUS_PENDING",
@@ -50,6 +74,8 @@ __all__ = [
     "fail_webcall_ai_session",
     "execute_mock_turn_for_claimed_session",
     "get_webcall_ai_settings",
+    "get_stt_provider",
+    "get_tts_provider",
     "heartbeat_webcall_ai_session",
     "release_webcall_ai_session",
     "reject_forbidden_action",
