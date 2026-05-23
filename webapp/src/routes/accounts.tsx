@@ -15,9 +15,12 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { Toast } from '@/components/ui/Toast'
 import { MetricCard } from '@/components/ui/MetricCard'
 import { SegmentedControl } from '@/components/ui/SegmentedControl'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { ErrorSummary } from '@/components/ui/ErrorSummary'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { useSession } from '@/hooks/useAuth'
 import { canManageChannels } from '@/lib/access'
+import { accountHealthLabels } from '@/lib/uxCopy'
 
 const PROVIDERS = [
   { label: 'WhatsApp', value: 'whatsapp' },
@@ -51,6 +54,8 @@ function AccountsPage() {
   const [health, setHealth] = useState('all')
   const [form, setForm] = useState<Partial<ChannelAccount>>(emptyForm())
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
+  const [dirty, setDirty] = useState(false)
+  const [confirmReset, setConfirmReset] = useState(false)
 
   useEffect(() => {
     if (session.data && !permitted) navigate({ to: '/' })
@@ -59,6 +64,11 @@ function AccountsPage() {
   const filteredAccounts = useMemo(() => (accounts.data ?? []).filter((item) => (provider === 'all' || item.provider === provider) && (health === 'all' || item.health_status === health)), [accounts.data, provider, health])
   const selected = useMemo(() => filteredAccounts.find((item) => item.id === selectedId) ?? (accounts.data ?? []).find((item) => item.id === selectedId) ?? null, [filteredAccounts, accounts.data, selectedId])
   const marketMap = useMemo(() => new Map((markets.data ?? []).map((market) => [market.id, `${market.code} · ${market.name}`])), [markets.data])
+  const fallbackOptions = useMemo(() => (accounts.data ?? []).filter((item) => {
+    if (selected && item.id === selected.id) return false
+    if (form.provider && item.provider !== form.provider) return false
+    return item.is_active
+  }), [accounts.data, form.provider, selected])
 
   useEffect(() => {
     if (selected) {
@@ -72,10 +82,24 @@ function AccountsPage() {
         health_status: selected.health_status,
         fallback_account_id: selected.fallback_account_id ?? '',
       })
+      setDirty(false)
     } else {
       setForm(emptyForm())
+      setDirty(false)
     }
   }, [selected])
+
+  const patchForm = (patch: Partial<ChannelAccount>) => {
+    setForm((current) => ({ ...current, ...patch }))
+    setDirty(true)
+  }
+
+  const resetForm = () => {
+    setSelectedId(null)
+    setForm(emptyForm())
+    setDirty(false)
+    setConfirmReset(false)
+  }
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -98,6 +122,7 @@ function AccountsPage() {
     },
     onSuccess: async (saved) => {
       setSelectedId(saved.id)
+      setDirty(false)
       setToast({ message: selectedId ? '发送线路已更新' : '发送线路已创建', tone: 'success' })
       await client.invalidateQueries({ queryKey: ['channelAccounts'] })
     },
@@ -110,7 +135,7 @@ function AccountsPage() {
         eyebrow="发送线路"
         title="渠道账号与备用线路"
         description="渠道账号页面必须只暴露真实有效的后端能力。本版创建态只提交基础字段，编辑态维护启停与健康状态。"
-        actions={<div className="button-row"><Button variant="secondary" onClick={() => autoRefresh.setEnabled(!autoRefresh.enabled)}>{autoRefresh.enabled ? '暂停刷新' : '恢复刷新'}</Button><Button onClick={() => { setSelectedId(null); setForm(emptyForm()) }} disabled={!permitted}>新建发送线路</Button></div>}
+        actions={<div className="button-row"><Button variant="secondary" onClick={() => autoRefresh.setEnabled(!autoRefresh.enabled)}>{autoRefresh.enabled ? '暂停刷新' : '恢复刷新'}</Button><Button onClick={() => dirty ? setConfirmReset(true) : resetForm()} disabled={!permitted}>新建发送线路</Button></div>}
       />
       {!permitted ? (
         <Card>
@@ -149,7 +174,7 @@ function AccountsPage() {
                       <div className="queue-card-meta">备用账号：{sanitizeDisplayText(account.fallback_account_id || '未配置')} · 更新时间：{formatDateTime(account.updated_at)}</div>
                     </button>
                   ))}
-                  {!filteredAccounts.length ? <EmptyState text="当前筛选条件下没有发送线路。" /> : null}
+                  {!filteredAccounts.length ? <EmptyState title="没有符合条件的发送线路" description="当前渠道或健康状态筛选下没有账号。" reason="可以清空筛选，或创建新的发送线路。" action={<Button variant="secondary" onClick={() => { setProvider('all'); setHealth('all') }}>清空筛选</Button>} /> : null}
                 </div>
               </CardBody>
             </Card>
@@ -158,17 +183,23 @@ function AccountsPage() {
               <CardBody>
                 <div className="stack">
                   {!selectedId ? <div className="message" data-role="agent">创建后再维护健康状态和启停，避免出现“前端可填但后端创建根本不认”的假字段。</div> : null}
+                  {saveMutation.isError ? <ErrorSummary errors={[saveMutation.error?.message || '保存发送线路失败，请检查账号编号、市场和备用线路后重试。']} /> : null}
                   <div className="form-grid">
-                    <Field label="渠道类型"><Select value={form.provider ?? 'whatsapp'} onChange={(e) => setForm((s) => ({ ...s, provider: e.target.value }))}>{PROVIDERS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
-                    <Field label="账号编号"><Input value={form.account_id ?? ''} onChange={(e) => setForm((s) => ({ ...s, account_id: e.target.value }))} /></Field>
-                    <Field label="账号名称"><Input value={form.display_name ?? ''} onChange={(e) => setForm((s) => ({ ...s, display_name: e.target.value }))} /></Field>
-                    <Field label="绑定市场"><Select value={String(form.market_id ?? '')} onChange={(e) => setForm((s) => ({ ...s, market_id: e.target.value ? Number(e.target.value) : undefined }))}><option value="">不绑定市场 / 全局通用</option>{(markets.data ?? []).map((market) => <option key={market.id} value={market.id}>{market.code} · {market.name}</option>)}</Select></Field>
-                    <Field label="优先级"><Input type="number" value={String(form.priority ?? 100)} onChange={(e) => setForm((s) => ({ ...s, priority: Number(e.target.value) }))} /></Field>
-                    <Field label="备用账号编号" hint="主账号不可用时自动切换。后台应校验不能指向自己、必须真实存在、provider 要一致。"><Input value={form.fallback_account_id ?? ''} onChange={(e) => setForm((s) => ({ ...s, fallback_account_id: e.target.value }))} /></Field>
-                    {selectedId ? <Field label="账号状态"><Select value={form.health_status ?? 'unknown'} onChange={(e) => setForm((s) => ({ ...s, health_status: e.target.value }))}><option value="unknown">未知</option><option value="healthy">正常</option><option value="degraded">受限</option><option value="offline">离线</option></Select></Field> : null}
+                    <Field label="渠道类型" required><Select value={form.provider ?? 'whatsapp'} onChange={(e) => patchForm({ provider: e.target.value, fallback_account_id: '' })}>{PROVIDERS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
+                    <Field label="账号编号" required example="whatsapp-ch-main"><Input value={form.account_id ?? ''} onChange={(e) => patchForm({ account_id: e.target.value })} /></Field>
+                    <Field label="账号名称" example="瑞士 WhatsApp 主线路"><Input value={form.display_name ?? ''} onChange={(e) => patchForm({ display_name: e.target.value })} /></Field>
+                    <Field label="绑定市场"><Select value={String(form.market_id ?? '')} onChange={(e) => patchForm({ market_id: e.target.value ? Number(e.target.value) : undefined })}><option value="">不绑定市场 / 全局通用</option>{(markets.data ?? []).map((market) => <option key={market.id} value={market.id}>{market.code} · {market.name}</option>)}</Select></Field>
+                    <Field label="优先级" hint="数字越小越优先。"><Input type="number" value={String(form.priority ?? 100)} onChange={(e) => patchForm({ priority: Number(e.target.value) })} /></Field>
+                    <Field label="备用发送线路" description="主账号不可用时自动切换到这里，避免让客服手填不可验证的账号编号。">
+                      <Select value={form.fallback_account_id ?? ''} onChange={(e) => patchForm({ fallback_account_id: e.target.value })}>
+                        <option value="">不配置备用线路</option>
+                        {fallbackOptions.map((account) => <option key={account.id} value={account.account_id}>{sanitizeDisplayText(account.display_name || account.account_id)} · {accountHealthLabels[account.health_status] ?? labelize(account.health_status)}</option>)}
+                      </Select>
+                    </Field>
+                    {selectedId ? <Field label="账号状态"><Select value={form.health_status ?? 'unknown'} onChange={(e) => patchForm({ health_status: e.target.value })}><option value="unknown">未知</option><option value="healthy">正常</option><option value="degraded">受限</option><option value="offline">离线</option></Select></Field> : null}
                   </div>
-                  {selectedId ? <label className="toggle-row"><input type="checkbox" checked={Boolean(form.is_active)} onChange={(e) => setForm((s) => ({ ...s, is_active: e.target.checked }))} /> 当前账号启用</label> : null}
-                  <div className="button-row"><Button variant="primary" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>{saveMutation.isPending ? '保存中…' : selectedId ? '保存修改' : '创建线路'}</Button><Button onClick={() => { setSelectedId(null); setForm(emptyForm()) }}>重置</Button></div>
+                  {selectedId ? <label className="toggle-row"><input type="checkbox" checked={Boolean(form.is_active)} onChange={(e) => patchForm({ is_active: e.target.checked })} /> 当前账号启用</label> : null}
+                  <div className="button-row"><Button variant="primary" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>{saveMutation.isPending ? '保存中…' : selectedId ? '保存修改' : '创建线路'}</Button><Button onClick={() => dirty ? setConfirmReset(true) : resetForm()}>重置</Button></div>
                 </div>
               </CardBody>
             </Card>
@@ -176,6 +207,16 @@ function AccountsPage() {
         </>
       )}
       {toast ? <Toast message={toast.message} tone={toast.tone} onClose={() => setToast(null)} /> : null}
+      <ConfirmDialog
+        open={confirmReset}
+        title="放弃当前发送线路编辑？"
+        description="当前表单还有未保存内容。继续重置会丢弃账号名称、市场、备用线路和启停状态的编辑。"
+        consequence="如需保留，请先保存修改。"
+        confirmLabel="放弃并重置"
+        tone="danger"
+        onCancel={() => setConfirmReset(false)}
+        onConfirm={resetForm}
+      />
     </AppShell>
   )
 }
