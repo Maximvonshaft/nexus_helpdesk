@@ -92,7 +92,7 @@ def test_parser_accepts_reply_schema():
 
 
 @pytest.mark.asyncio
-async def test_provider_runtime_default_route_uses_codex_app_server_and_writes_audit(monkeypatch):
+async def test_provider_runtime_default_route_uses_openclaw_fallback_at_zero_canary_and_writes_audit(monkeypatch):
     import app.services.provider_runtime as provider_runtime_module
 
     monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
@@ -106,7 +106,11 @@ async def test_provider_runtime_default_route_uses_codex_app_server_and_writes_a
         return select_result
 
     mock_db.execute.side_effect = db_execute
+    class OpenClawSuccessAdapter(SuccessAdapter):
+        name = "openclaw_responses"
+
     ProviderRegistry.register("codex_app_server", lambda db: SuccessAdapter())
+    ProviderRegistry.register("openclaw_responses", lambda db: OpenClawSuccessAdapter())
 
     req = ProviderRequest(
         request_id="req1",
@@ -123,7 +127,7 @@ async def test_provider_runtime_default_route_uses_codex_app_server_and_writes_a
     result = await ProviderRuntimeRouter(mock_db).route(req)
 
     assert result.ok is True
-    assert result.provider == "codex_app_server"
+    assert result.provider == "openclaw_responses"
     assert result.structured_output["customer_reply"] == "I can help with that."
     assert mock_db.commit.called
 

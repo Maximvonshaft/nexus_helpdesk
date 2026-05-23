@@ -111,11 +111,15 @@ jobs:
           set -Eeuo pipefail
           timeout 600 python -m pytest -q \
             backend/tests/test_provider_runtime_output_contracts.py \
+            backend/tests/test_provider_runtime_openclaw_fallback_adapter.py \
             backend/tests/test_provider_runtime_router.py \
+            backend/tests/test_provider_runtime_router_fallback_e2e.py \
+            backend/tests/test_provider_runtime_kill_switch_canary.py \
             backend/tests/test_provider_credentials_crypto.py \
             backend/tests/test_provider_runtime_token_leakage.py \
             backend/tests/test_provider_runtime_tenant_isolation.py \
             backend/tests/test_webchat_fast_reply_provider_runtime.py \
+            backend/tests/test_admin_provider_runtime_routing_api.py \
             backend/tests/test_provider_runtime_backward_compat.py \
             backend/tests/test_oauth_refresh_manager.py \
             backend/tests/test_oauth_refresh_concurrency.py \
@@ -138,6 +142,7 @@ jobs:
           assert '/api/admin/provider-credentials/codex/callback' in routes, routes
           assert '/api/admin/provider-credentials/codex/manual/start' in routes, routes
           assert '/api/admin/provider-credentials/codex/manual/complete' in routes, routes
+          assert '/api/admin/provider-runtime/routing/webchat-fast-reply' in routes, routes
           assert any('fast-reply' in path for path in routes), routes
           print('route_smoke_ok')
           PY

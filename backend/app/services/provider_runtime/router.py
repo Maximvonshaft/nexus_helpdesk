@@ -67,27 +67,35 @@ class ProviderRuntimeRouter:
 
         if not rule:
             primary_provider = "codex_app_server"
-            fallbacks = ["rule_engine", "openclaw_responses"]
+            fallbacks = ["openclaw_responses", "rule_engine"]
             output_contract = "speedaf_webchat_fast_reply_v1"
             timeout_ms = 10000
             kill_switch = False
-            canary_percent = 100
+            canary_percent = 0
         else:
             primary_provider = rule["primary_provider"]
-            fallbacks = rule["fallback_providers"] or []
+            fallbacks = _coerce_fallbacks(rule["fallback_providers"])
             output_contract = rule["output_contract"]
             timeout_ms = rule["timeout_ms"]
             kill_switch = rule["kill_switch"]
             canary_percent = rule["canary_percent"] or 0
 
-        if kill_switch:
-            self._write_audit(request, "generate", "skipped", "router", 0, {"kill_switch": True}, "kill_switch_active")
-            return ProviderResult.unavailable("router", "kill_switch_active", 0)
+        if kill_switch and primary_provider == "codex_app_server":
+            self._write_audit(request, "generate", "skipped", primary_provider, 0, {"kill_switch": True}, "kill_switch_active")
+            if fallbacks:
+                primary_provider = fallbacks[0]
+                fallbacks = fallbacks[1:]
+            else:
+                return ProviderResult.unavailable("router", "kill_switch_active", 0)
 
-        if 0 < canary_percent < 100 and fallbacks:
+        if primary_provider == "codex_app_server" and canary_percent <= 0 and fallbacks:
+            primary_provider = fallbacks[0]
+            fallbacks = fallbacks[1:]
+        elif primary_provider == "codex_app_server" and 0 < canary_percent < 100 and fallbacks:
             bucket = self._stable_percent_bucket(request.tenant_id, request.session_id, request.request_id)
             if bucket >= canary_percent:
                 primary_provider = fallbacks[0]
+                fallbacks = fallbacks[1:]
 
         request.output_contract = output_contract
         request.timeout_ms = timeout_ms
@@ -125,3 +133,18 @@ class ProviderRuntimeRouter:
 
         self._write_audit(request, "generate", "failed", "router", 0, {}, "all_providers_failed")
         return ProviderResult.unavailable("router", "all_providers_failed", 0)
+
+
+def _coerce_fallbacks(value) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return [value]
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed if item]
+    return []

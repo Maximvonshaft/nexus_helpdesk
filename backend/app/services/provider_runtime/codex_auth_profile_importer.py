@@ -14,8 +14,9 @@ class CodexAuthProfileImporter:
         # Expected OpenClaw format
         # {"type": "oauth", "provider": "openai-codex", "access": "...", "refresh": "...", "expires": "ISO8601", "accountId": "...", "chatgptPlanType": "..."}
         
-        provider = profile_data.get("provider", "openai-codex")
-        cred_type = profile_data.get("type", "oauth")
+        provider = "openai-codex"
+        provider_runtime = "codex_app_server"
+        cred_type = "oauth"
         access = profile_data.get("access")
         refresh = profile_data.get("refresh")
         expires_str = profile_data.get("expires")
@@ -60,7 +61,7 @@ class CodexAuthProfileImporter:
                 "id": cred_id,
                 "tenant_id": tenant_id,
                 "provider": provider,
-                "runtime": cred_type,
+                "runtime": provider_runtime,
                 "cred_type": cred_type,
                 "profile_id": profile_id,
                 "account_id": profile_data.get("accountId"),
