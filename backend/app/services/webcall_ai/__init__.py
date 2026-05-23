@@ -37,7 +37,14 @@ from .media_schemas import (
 )
 from .mock_media_provider import MockSTTProvider, MockTTSProvider
 from .mock_turn_executor import MockTurnExecutionResult, execute_mock_turn_for_claimed_session
+from .participant_service import (
+    ai_participant_identity,
+    ensure_ai_participant_record,
+    mark_ai_participant_joined,
+    mark_ai_participant_left,
+)
 from .provider_router import get_stt_provider, get_tts_provider
+from .room_client import FakeWebCallAIRoomClient, WebCallAIRoomJoinResult, WebCallAIRoomLeaveResult
 from .schemas import (
     WebCallAIActionDecision,
     WebCallAIAllowedAction,
@@ -73,6 +80,10 @@ __all__ = [
     "WEBCALL_AI_STATUS_PENDING",
     "WEBCALL_AI_STATUS_RELEASED",
     "WEBCALL_AI_STATUS_SKIPPED",
+    "FakeWebCallAIRoomClient",
+    "WebCallAIRoomJoinResult",
+    "WebCallAIRoomLeaveResult",
+    "ai_participant_identity",
     "claim_webcall_ai_sessions",
     "fail_webcall_ai_session",
     "execute_mock_turn_for_claimed_session",
@@ -80,6 +91,9 @@ __all__ = [
     "get_stt_provider",
     "get_tts_provider",
     "heartbeat_webcall_ai_session",
+    "ensure_ai_participant_record",
+    "mark_ai_participant_joined",
+    "mark_ai_participant_left",
     "release_webcall_ai_session",
     "reject_forbidden_action",
     "resolve_audio_reference_for_session",
