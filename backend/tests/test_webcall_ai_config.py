@@ -45,6 +45,12 @@ WEBCALL_ENV_KEYS = [
     "WEBCALL_AI_STT_RUNTIME_MODE",
     "WEBCALL_AI_STT_TRANSCRIPT_WRITE_ENABLED",
     "WEBCALL_AI_STT_TRANSCRIPT_PROVIDER_SESSION_ID_SOURCE",
+    "WEBCALL_AI_ORCHESTRATOR_ENABLED",
+    "WEBCALL_AI_ORCHESTRATOR_MODE",
+    "WEBCALL_AI_TRACKING_LOOKUP_ENABLED",
+    "WEBCALL_AI_TRACKING_REPLY_ENABLED",
+    "WEBCALL_AI_TRACKING_COUNTRY_CODE",
+    "WEBCALL_AI_TRACKING_LOOKUP_TIMEOUT_MS",
     "WEBCALL_AI_PROVIDER",
     "WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER",
     "WEBCALL_AI_ALLOW_CANCEL",
@@ -105,6 +111,12 @@ def test_webcall_ai_defaults_are_disabled_and_mock():
     assert settings.stt_runtime_mode == "mock_text"
     assert settings.stt_transcript_write_enabled is False
     assert settings.stt_transcript_provider_session_id_source == "voice_session_public_id"
+    assert settings.orchestrator_enabled is False
+    assert settings.orchestrator_mode == "deterministic_tracking"
+    assert settings.tracking_lookup_enabled is False
+    assert settings.tracking_reply_enabled is False
+    assert settings.tracking_country_code == "CH"
+    assert settings.tracking_lookup_timeout_ms == 8000
     assert settings.ai_provider == "provider_runtime"
     assert settings.allow_speedaf_work_order is False
     assert settings.allow_cancel is False
@@ -302,6 +314,50 @@ def test_production_rejects_stt_runtime_enabled(monkeypatch):
     get_webcall_ai_settings.cache_clear()
 
     with pytest.raises(RuntimeError, match="WEBCALL_AI_STT_RUNTIME_ENABLED"):
+        get_webcall_ai_settings()
+
+
+def test_orchestrator_deterministic_mode_allowed_when_enabled(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_ORCHESTRATOR_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    settings = get_webcall_ai_settings()
+
+    assert settings.orchestrator_enabled is True
+    assert settings.orchestrator_mode == "deterministic_tracking"
+    assert settings.tracking_country_code == "CH"
+
+
+def test_tracking_lookup_requires_orchestrator_enabled(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_TRACKING_LOOKUP_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_ORCHESTRATOR_ENABLED"):
+        get_webcall_ai_settings()
+
+
+def test_tracking_lookup_allowed_with_orchestrator_enabled(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_ORCHESTRATOR_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_TRACKING_LOOKUP_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_TRACKING_REPLY_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_TRACKING_COUNTRY_CODE", "nl")
+    monkeypatch.setenv("WEBCALL_AI_TRACKING_LOOKUP_TIMEOUT_MS", "999999")
+    get_webcall_ai_settings.cache_clear()
+
+    settings = get_webcall_ai_settings()
+
+    assert settings.tracking_lookup_enabled is True
+    assert settings.tracking_reply_enabled is True
+    assert settings.tracking_country_code == "NL"
+    assert settings.tracking_lookup_timeout_ms == 30000
+
+
+def test_production_rejects_orchestrator_enabled(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("WEBCALL_AI_ORCHESTRATOR_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_ORCHESTRATOR_ENABLED"):
         get_webcall_ai_settings()
 
 

@@ -48,9 +48,12 @@ def test_mock_executor_contains_deterministic_safe_contract():
     assert "stt_provider=stt_provider_name" in source
     assert 'tts_provider="mock"' in source
     assert 'latency_ms=0' in source
-    assert 'nexus_decision="allowed"' in source
-    assert 'result_status=MOCK_RESULT_STATUS' in source
-    assert 'speedaf_tool_name=None' in source
+    assert 'nexus_decision = "allowed"' in source
+    assert "nexus_decision=nexus_decision" in source
+    assert "result_status = MOCK_RESULT_STATUS" in source
+    assert "result_status=result_status" in source
+    assert "speedaf_tool_name = None" in source
+    assert "speedaf_tool_name=speedaf_tool_name" in source
     assert 'background_job_id=None' in source
     assert 'tool_call_log_id=None' in source
 
