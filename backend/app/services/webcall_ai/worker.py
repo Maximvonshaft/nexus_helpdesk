@@ -49,6 +49,8 @@ def run_webcall_ai_worker_once(
     presence_joins = 0
     presence_leaves = 0
     presence_failures = 0
+    transcript_segments = 0
+    stt_runtime_failures = 0
     if noop_release:
         for session in claimed_sessions:
             presence_joined = False
@@ -113,6 +115,7 @@ def run_webcall_ai_worker_once(
                 turns += 1
                 stt_events += turn_result.stt_events
                 tts_events += turn_result.tts_events
+                transcript_segments += turn_result.transcript_segments
                 heartbeat_webcall_ai_session(db, session.id, worker_id, lease_seconds=lease_seconds)
                 if settings.room_presence_enabled:
                     leave_result = presence_client.leave(session=session, participant_identity=participant_identity)
@@ -156,6 +159,8 @@ def run_webcall_ai_worker_once(
                         presence_failures += 1
                 db.rollback()
                 failed += 1
+                if settings.stt_runtime_enabled:
+                    stt_runtime_failures += 1
                 fail_webcall_ai_session(
                     db,
                     session.id,
@@ -183,6 +188,9 @@ def run_webcall_ai_worker_once(
         result_dict["presence_joins"] = presence_joins
         result_dict["presence_leaves"] = presence_leaves
         result_dict["presence_failures"] = presence_failures
+    if settings.stt_runtime_enabled:
+        result_dict["transcript_segments"] = transcript_segments
+        result_dict["stt_runtime_failures"] = stt_runtime_failures
     update_service_heartbeat(
         db,
         service_name="webcall_ai_worker",

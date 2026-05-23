@@ -65,6 +65,12 @@ from .schemas import (
     WebCallAITurnDecision,
     reject_forbidden_action,
 )
+from .stt_runtime import WebCallSTTRuntimeResult, run_stt_runtime_for_session
+from .transcript_writer import (
+    CUSTOMER_PARTICIPANT_IDENTITY,
+    TranscriptWriteResult,
+    write_stt_transcript_segment,
+)
 
 __all__ = [
     "WebCallAIActionDecision",
@@ -86,6 +92,7 @@ __all__ = [
     "MockTurnExecutionResult",
     "WebCallSTTInput",
     "WebCallSTTResult",
+    "WebCallSTTRuntimeResult",
     "WebCallTTSInput",
     "WebCallTTSResult",
     "WEBCALL_AI_STATUS_CLAIMED",
@@ -104,6 +111,7 @@ __all__ = [
     "ai_participant_identity",
     "build_livekit_token_issuer_client",
     "claim_webcall_ai_sessions",
+    "CUSTOMER_PARTICIPANT_IDENTITY",
     "fail_webcall_ai_session",
     "execute_mock_turn_for_claimed_session",
     "get_webcall_ai_settings",
@@ -117,4 +125,7 @@ __all__ = [
     "release_webcall_ai_session",
     "reject_forbidden_action",
     "resolve_audio_reference_for_session",
+    "run_stt_runtime_for_session",
+    "TranscriptWriteResult",
+    "write_stt_transcript_segment",
 ]

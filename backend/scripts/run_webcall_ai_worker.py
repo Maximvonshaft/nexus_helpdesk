@@ -52,6 +52,12 @@ def _format_result(result: dict[str, int]) -> str:
             f"presence_leaves={int(result.get('presence_leaves', 0))} "
             f"presence_failures={int(result.get('presence_failures', 0))}"
         )
+    if "transcript_segments" in result:
+        formatted = (
+            f"{formatted} "
+            f"transcript_segments={int(result.get('transcript_segments', 0))} "
+            f"stt_runtime_failures={int(result.get('stt_runtime_failures', 0))}"
+        )
     return formatted
 
 

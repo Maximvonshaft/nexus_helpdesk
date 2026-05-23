@@ -11,6 +11,8 @@ _ALLOWED_AI_PROVIDERS = {"provider_runtime"}
 _ALLOWED_AUDIO_REFERENCE_SOURCES = {"disabled", "static_fixture"}
 _ALLOWED_PARTICIPANT_MODES = {"fake_room_client", "livekit_token_issuer"}
 _ALLOWED_ROOM_PRESENCE_MODES = {"fake_no_media", "livekit_no_media"}
+_ALLOWED_STT_RUNTIME_MODES = {"mock_text", "audio_reference"}
+_ALLOWED_STT_TRANSCRIPT_PROVIDER_SESSION_ID_SOURCES = {"voice_session_public_id"}
 _LOCAL_AUDIO_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -70,6 +72,10 @@ class WebCallAISettings:
     room_presence_mode: str
     room_presence_join_timeout_ms: int
     room_presence_smoke_enabled: bool
+    stt_runtime_enabled: bool
+    stt_runtime_mode: str
+    stt_transcript_write_enabled: bool
+    stt_transcript_provider_session_id_source: str
     ai_provider: str
     allow_speedaf_work_order: bool
     allow_cancel: bool
@@ -125,6 +131,17 @@ class WebCallAISettings:
                 raise RuntimeError("WEBCALL_AI_PARTICIPANT_MODE must be livekit_token_issuer for livekit_no_media presence")
             if not self.livekit_token_issuer_enabled:
                 raise RuntimeError("WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED must be true for livekit_no_media presence")
+        if self.stt_runtime_mode not in _ALLOWED_STT_RUNTIME_MODES:
+            raise RuntimeError("WEBCALL_AI_STT_RUNTIME_MODE must be mock_text or audio_reference")
+        if (
+            self.stt_transcript_provider_session_id_source
+            not in _ALLOWED_STT_TRANSCRIPT_PROVIDER_SESSION_ID_SOURCES
+        ):
+            raise RuntimeError(
+                "WEBCALL_AI_STT_TRANSCRIPT_PROVIDER_SESSION_ID_SOURCE must be voice_session_public_id"
+            )
+        if self.app_env == "production" and self.stt_runtime_enabled:
+            raise RuntimeError("WEBCALL_AI_STT_RUNTIME_ENABLED must be false in production for Acceleration Pack B")
         if self.max_turns < 1 or self.max_turns > 12:
             raise RuntimeError("WEBCALL_AI_AGENT_MAX_TURNS must be between 1 and 12")
         if self.max_call_seconds < 30 or self.max_call_seconds > 600:
@@ -229,6 +246,14 @@ def get_webcall_ai_settings() -> WebCallAISettings:
             maximum=30000,
         ),
         room_presence_smoke_enabled=_env_bool("WEBCALL_AI_ROOM_PRESENCE_SMOKE_ENABLED", False),
+        stt_runtime_enabled=_env_bool("WEBCALL_AI_STT_RUNTIME_ENABLED", False),
+        stt_runtime_mode=os.getenv("WEBCALL_AI_STT_RUNTIME_MODE", "mock_text").strip().lower() or "mock_text",
+        stt_transcript_write_enabled=_env_bool("WEBCALL_AI_STT_TRANSCRIPT_WRITE_ENABLED", False),
+        stt_transcript_provider_session_id_source=os.getenv(
+            "WEBCALL_AI_STT_TRANSCRIPT_PROVIDER_SESSION_ID_SOURCE",
+            "voice_session_public_id",
+        ).strip().lower()
+        or "voice_session_public_id",
         ai_provider=os.getenv("WEBCALL_AI_PROVIDER", "provider_runtime").strip().lower() or "provider_runtime",
         allow_speedaf_work_order=_env_bool("WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER", False),
         allow_cancel=_env_bool("WEBCALL_AI_ALLOW_CANCEL", False),

@@ -45,7 +45,7 @@ def test_mock_executor_contains_deterministic_safe_contract():
     assert "execute_mock_turn_for_claimed_session" in source
     assert "Hello, this is Speedaf AI support. Please provide your tracking number." in source
     assert 'provider="mock"' in source
-    assert "stt_provider=stt_result.provider" in source
+    assert "stt_provider=stt_provider_name" in source
     assert 'tts_provider="mock"' in source
     assert 'latency_ms=0' in source
     assert 'nexus_decision="allowed"' in source
