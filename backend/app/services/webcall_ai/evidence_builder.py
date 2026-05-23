@@ -65,7 +65,7 @@ def build_webcall_ai_evidence_report(
         handoff_required=any(turn.handoff_required for turn in turns)
         or any(action.nexus_decision == "handoff" for action in actions),
         tracking_hashes=tracking_hashes,
-        safe_waybill_suffixes=[item[-4:] for item in tracking_hashes if len(item) >= 4],
+        safe_waybill_suffixes=[],
         providers=providers,
         failure_reasons=failure_reasons,
     )

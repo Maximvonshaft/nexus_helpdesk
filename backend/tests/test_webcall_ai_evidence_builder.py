@@ -92,10 +92,14 @@ def test_evidence_report_excludes_text_tokens_raw_audio_and_full_tracking(db):
     report = build_webcall_ai_evidence_report(db, session=session)
     payload = evidence_report_to_safe_dict(report)
     rendered = repr(payload).lower()
+    tracking_hash = hash_tracking_number(full_tracking)
 
     assert payload["transcript_segment_count"] == 1
     assert payload["ai_turn_count"] == 1
     assert payload["ai_action_count"] == 1
+    assert payload["tracking_hashes"] == [tracking_hash]
+    assert payload["safe_waybill_suffixes"] == []
+    assert tracking_hash[-4:] not in payload["safe_waybill_suffixes"]
     assert full_tracking.lower() not in rendered
     assert "raw transcript" not in rendered
     assert "safe reply" not in rendered
