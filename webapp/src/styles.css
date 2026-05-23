@@ -178,6 +178,26 @@ button, input, textarea, select { font: inherit; }
 .skeleton-line { height: 14px; border-radius: 999px; background: linear-gradient(90deg, rgba(148,163,184,.15), rgba(148,163,184,.32), rgba(148,163,184,.15)); animation: pulse 1.5s infinite; }
 @keyframes pulse { 0% { opacity: .55 } 50% { opacity: 1 } 100% { opacity: .55 } }
 
+/* Production WebCall AI customer surface */
+.webcall-ai-page { min-height: 100vh; background: #f7f8fb; color: #111827; }
+.webcall-ai-hero { min-height: 72vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 32px; align-items: center; max-width: 1120px; margin: 0 auto; padding: 56px 24px 32px; }
+.webcall-ai-main h1 { margin: 8px 0; font-size: 56px; line-height: 1; }
+.webcall-ai-main .lead { max-width: 620px; color: #475467; font-size: 18px; line-height: 1.6; }
+.call-status { margin: 28px 0 18px; padding: 14px 16px; border: 1px solid #d0d5dd; background: #fff; border-radius: 8px; color: #344054; }
+.call-status.connected { border-color: #86efac; background: #f0fdf4; color: #166534; }
+.call-status.error, .call-status.disabled { border-color: #fecaca; background: #fff1f2; color: #be123c; }
+.call-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.call-actions button, .tracking-input-row button { min-height: 42px; border: 1px solid #cfd4dc; border-radius: 8px; background: #fff; color: #111827; font-weight: 700; padding: 0 14px; }
+.call-actions button:disabled, .tracking-input-row button:disabled { opacity: .45; cursor: not-allowed; }
+.call-actions .primary-action { border-color: #0f766e; background: #0f766e; color: #fff; }
+.webcall-ai-side { display: grid; gap: 12px; padding: 18px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; }
+.webcall-ai-side div { display: grid; gap: 4px; }
+.webcall-ai-side span, .webcall-ai-band p { color: #667085; }
+.webcall-ai-side strong { overflow-wrap: anywhere; }
+.webcall-ai-band { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 440px); gap: 24px; align-items: end; max-width: 1120px; margin: 0 auto; padding: 0 24px 56px; }
+.tracking-input-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+.tracking-input-row input { min-height: 42px; border: 1px solid #cfd4dc; border-radius: 8px; padding: 0 12px; }
+
 @media (max-width: 1280px) {
   .page-grid.workspace { grid-template-columns: 1fr; }
   .split-grid, .split-grid-wide, .kv-grid-three, .metrics-grid, .metrics-grid-wide, .form-grid, .guide-grid, .guided-workflow { grid-template-columns: 1fr 1fr; }
@@ -187,4 +207,6 @@ button, input, textarea, select { font: inherit; }
   .sidebar { border-bottom: 1px solid rgba(255,255,255,0.08); }
   .split-grid, .split-grid-wide, .kv-grid, .kv-grid-three, .metrics-grid, .metrics-grid-wide, .form-grid, .guide-grid, .guided-workflow { grid-template-columns: 1fr; }
   .page-header, .topbar, .workspace-toolbar { flex-direction: column; align-items: stretch; }
+  .webcall-ai-hero, .webcall-ai-band { grid-template-columns: 1fr; }
+  .webcall-ai-main h1 { font-size: 42px; }
 }
