@@ -425,6 +425,7 @@ def list_admin_incoming_voice_sessions(db: Session, *, current_user: User, statu
         db.query(WebchatVoiceSession, Ticket, WebchatConversation)
         .join(Ticket, Ticket.id == WebchatVoiceSession.ticket_id)
         .join(WebchatConversation, WebchatConversation.id == WebchatVoiceSession.conversation_id)
+        .filter(WebchatVoiceSession.mode != "internal_ai_demo")
     )
     if statuses is not None:
         query = query.filter(WebchatVoiceSession.status.in_(list(statuses)))

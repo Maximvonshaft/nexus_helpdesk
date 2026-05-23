@@ -15,6 +15,7 @@ const nav = [
   { to: '/workspace', label: '处理工单', hint: '回复、分配、闭环' },
   { to: '/webchat', label: 'WebChat 收件箱', hint: '客户实时来信' },
   { to: '/runtime', label: '运行恢复', hint: 'dead/requeue 自助处理', permission: 'ops', attention: 'runtime' },
+  { to: '/webcall-ai-demo', label: 'WebCall AI Demo', hint: '内部语音 AI 沙盒', permission: 'ops' },
   { to: '/provider-credentials', label: 'Code X 授权', hint: '云端授权与 Token 托管', permission: 'ops' },
   { to: '/accounts', label: '发送线路', hint: '账号与兜底线路', permission: 'channels' },
   { to: '/bulletins', label: '公告口径', hint: '统一客服话术', permission: 'bulletins' },

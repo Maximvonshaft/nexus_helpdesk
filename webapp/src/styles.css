@@ -100,6 +100,12 @@ button, input, textarea, select { font: inherit; }
 .input, .textarea, .select { width:100%; border:1px solid rgba(188,200,216,0.95); background:#fff; border-radius:14px; padding:10px 12px; min-height: 44px; color: var(--text); }
 .input:focus, .textarea:focus, .select:focus { outline: 2px solid rgba(37,99,235,0.14); border-color: rgba(37,99,235,0.36); }
 .textarea { min-height: 110px; resize: vertical; }
+.detail-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.detail-grid > div { border:1px solid var(--border); border-radius:10px; padding:10px 12px; background:#fff; display:flex; flex-direction:column; gap:4px; min-width:0; }
+.detail-grid span { color: var(--muted); font-size: 12px; }
+.detail-grid strong { font-size: 14px; overflow-wrap:anywhere; }
+.timeline-list { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
+.timeline-list > div { display:flex; align-items:center; gap:8px; min-height:32px; }
 .button-row { display:flex; gap:10px; flex-wrap:wrap; }
 .button { border:1px solid rgba(188,200,216,0.95); background:#fff; color:var(--text); border-radius:14px; padding:10px 14px; font-weight:700; cursor:pointer; transition: .16s ease; }
 .button:hover { transform: translateY(-1px); }
