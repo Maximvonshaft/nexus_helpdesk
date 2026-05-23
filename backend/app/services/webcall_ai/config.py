@@ -13,6 +13,7 @@ _ALLOWED_PARTICIPANT_MODES = {"fake_room_client", "livekit_token_issuer"}
 _ALLOWED_ROOM_PRESENCE_MODES = {"fake_no_media", "livekit_no_media"}
 _ALLOWED_STT_RUNTIME_MODES = {"mock_text", "audio_reference"}
 _ALLOWED_STT_TRANSCRIPT_PROVIDER_SESSION_ID_SOURCES = {"voice_session_public_id"}
+_ALLOWED_ORCHESTRATOR_MODES = {"deterministic_tracking"}
 _LOCAL_AUDIO_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -76,6 +77,12 @@ class WebCallAISettings:
     stt_runtime_mode: str
     stt_transcript_write_enabled: bool
     stt_transcript_provider_session_id_source: str
+    orchestrator_enabled: bool
+    orchestrator_mode: str
+    tracking_lookup_enabled: bool
+    tracking_reply_enabled: bool
+    tracking_country_code: str
+    tracking_lookup_timeout_ms: int
     ai_provider: str
     allow_speedaf_work_order: bool
     allow_cancel: bool
@@ -142,6 +149,16 @@ class WebCallAISettings:
             )
         if self.app_env == "production" and self.stt_runtime_enabled:
             raise RuntimeError("WEBCALL_AI_STT_RUNTIME_ENABLED must be false in production for Acceleration Pack B")
+        if self.orchestrator_mode not in _ALLOWED_ORCHESTRATOR_MODES:
+            raise RuntimeError("WEBCALL_AI_ORCHESTRATOR_MODE must be deterministic_tracking")
+        if self.app_env == "production" and self.orchestrator_enabled:
+            raise RuntimeError("WEBCALL_AI_ORCHESTRATOR_ENABLED must be false in production for Acceleration Pack C")
+        if self.tracking_lookup_enabled and not self.orchestrator_enabled:
+            raise RuntimeError("WEBCALL_AI_ORCHESTRATOR_ENABLED must be true for tracking lookup")
+        if self.tracking_lookup_timeout_ms < 1000 or self.tracking_lookup_timeout_ms > 30000:
+            raise RuntimeError("WEBCALL_AI_TRACKING_LOOKUP_TIMEOUT_MS must be between 1000 and 30000")
+        if not self.tracking_country_code:
+            raise RuntimeError("WEBCALL_AI_TRACKING_COUNTRY_CODE must not be empty")
         if self.max_turns < 1 or self.max_turns > 12:
             raise RuntimeError("WEBCALL_AI_AGENT_MAX_TURNS must be between 1 and 12")
         if self.max_call_seconds < 30 or self.max_call_seconds > 600:
@@ -254,6 +271,18 @@ def get_webcall_ai_settings() -> WebCallAISettings:
             "voice_session_public_id",
         ).strip().lower()
         or "voice_session_public_id",
+        orchestrator_enabled=_env_bool("WEBCALL_AI_ORCHESTRATOR_ENABLED", False),
+        orchestrator_mode=os.getenv("WEBCALL_AI_ORCHESTRATOR_MODE", "deterministic_tracking").strip().lower()
+        or "deterministic_tracking",
+        tracking_lookup_enabled=_env_bool("WEBCALL_AI_TRACKING_LOOKUP_ENABLED", False),
+        tracking_reply_enabled=_env_bool("WEBCALL_AI_TRACKING_REPLY_ENABLED", False),
+        tracking_country_code=os.getenv("WEBCALL_AI_TRACKING_COUNTRY_CODE", "CH").strip().upper() or "CH",
+        tracking_lookup_timeout_ms=_env_int(
+            "WEBCALL_AI_TRACKING_LOOKUP_TIMEOUT_MS",
+            8000,
+            minimum=1000,
+            maximum=30000,
+        ),
         ai_provider=os.getenv("WEBCALL_AI_PROVIDER", "provider_runtime").strip().lower() or "provider_runtime",
         allow_speedaf_work_order=_env_bool("WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER", False),
         allow_cancel=_env_bool("WEBCALL_AI_ALLOW_CANCEL", False),

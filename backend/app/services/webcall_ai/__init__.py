@@ -37,6 +37,7 @@ from .media_schemas import (
 )
 from .mock_media_provider import MockSTTProvider, MockTTSProvider
 from .mock_turn_executor import MockTurnExecutionResult, execute_mock_turn_for_claimed_session
+from .orchestrator import WebCallAIOrchestratorResult, run_webcall_ai_orchestrator
 from .participant_service import (
     ai_participant_identity,
     ensure_ai_participant_record,
@@ -51,6 +52,12 @@ from .presence_client import (
     get_webcall_ai_presence_client,
 )
 from .provider_router import get_stt_provider, get_tts_provider
+from .reply_builder import (
+    build_handoff_reply,
+    build_missing_tracking_reply,
+    build_tracking_lookup_disabled_reply,
+    build_tracking_reply,
+)
 from .room_client import (
     FakeWebCallAIRoomClient,
     LiveKitTokenIssuerRoomClient,
@@ -76,6 +83,7 @@ __all__ = [
     "WebCallAIActionDecision",
     "WebCallAIAllowedAction",
     "WebCallAIForbiddenAction",
+    "WebCallAIOrchestratorResult",
     "WebCallAISettings",
     "WebCallAITurnDecision",
     "ContractStubSTTProvider",
@@ -110,6 +118,10 @@ __all__ = [
     "WebCallAIRoomLeaveResult",
     "ai_participant_identity",
     "build_livekit_token_issuer_client",
+    "build_handoff_reply",
+    "build_missing_tracking_reply",
+    "build_tracking_lookup_disabled_reply",
+    "build_tracking_reply",
     "claim_webcall_ai_sessions",
     "CUSTOMER_PARTICIPANT_IDENTITY",
     "fail_webcall_ai_session",
@@ -126,6 +138,7 @@ __all__ = [
     "reject_forbidden_action",
     "resolve_audio_reference_for_session",
     "run_stt_runtime_for_session",
+    "run_webcall_ai_orchestrator",
     "TranscriptWriteResult",
     "write_stt_transcript_segment",
 ]
