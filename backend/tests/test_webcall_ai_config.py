@@ -41,6 +41,10 @@ WEBCALL_ENV_KEYS = [
     "WEBCALL_AI_ROOM_PRESENCE_MODE",
     "WEBCALL_AI_ROOM_PRESENCE_JOIN_TIMEOUT_MS",
     "WEBCALL_AI_ROOM_PRESENCE_SMOKE_ENABLED",
+    "WEBCALL_AI_STT_RUNTIME_ENABLED",
+    "WEBCALL_AI_STT_RUNTIME_MODE",
+    "WEBCALL_AI_STT_TRANSCRIPT_WRITE_ENABLED",
+    "WEBCALL_AI_STT_TRANSCRIPT_PROVIDER_SESSION_ID_SOURCE",
     "WEBCALL_AI_PROVIDER",
     "WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER",
     "WEBCALL_AI_ALLOW_CANCEL",
@@ -97,6 +101,10 @@ def test_webcall_ai_defaults_are_disabled_and_mock():
     assert settings.room_presence_mode == "fake_no_media"
     assert settings.room_presence_join_timeout_ms == 5000
     assert settings.room_presence_smoke_enabled is False
+    assert settings.stt_runtime_enabled is False
+    assert settings.stt_runtime_mode == "mock_text"
+    assert settings.stt_transcript_write_enabled is False
+    assert settings.stt_transcript_provider_session_id_source == "voice_session_public_id"
     assert settings.ai_provider == "provider_runtime"
     assert settings.allow_speedaf_work_order is False
     assert settings.allow_cancel is False
@@ -253,6 +261,47 @@ def test_production_rejects_room_presence_enabled(monkeypatch):
     get_webcall_ai_settings.cache_clear()
 
     with pytest.raises(RuntimeError, match="WEBCALL_AI_ROOM_PRESENCE_ENABLED"):
+        get_webcall_ai_settings()
+
+
+def test_stt_runtime_mock_text_allowed_when_enabled(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_STT_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_STT_RUNTIME_MODE", "mock_text")
+    get_webcall_ai_settings.cache_clear()
+
+    settings = get_webcall_ai_settings()
+
+    assert settings.stt_runtime_enabled is True
+    assert settings.stt_runtime_mode == "mock_text"
+    assert settings.stt_transcript_write_enabled is False
+
+
+def test_stt_transcript_write_requires_explicit_flag(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_STT_RUNTIME_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    assert get_webcall_ai_settings().stt_transcript_write_enabled is False
+
+    monkeypatch.setenv("WEBCALL_AI_STT_TRANSCRIPT_WRITE_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    assert get_webcall_ai_settings().stt_transcript_write_enabled is True
+
+
+def test_invalid_stt_runtime_mode_fails_closed(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_STT_RUNTIME_MODE", "live_audio")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_STT_RUNTIME_MODE"):
+        get_webcall_ai_settings()
+
+
+def test_production_rejects_stt_runtime_enabled(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("WEBCALL_AI_STT_RUNTIME_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_STT_RUNTIME_ENABLED"):
         get_webcall_ai_settings()
 
 

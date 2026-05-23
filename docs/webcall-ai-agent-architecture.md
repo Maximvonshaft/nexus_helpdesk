@@ -2,7 +2,7 @@
 
 ## Scope
 
-PR-0/PR-1 does not make WebCall AI functional yet. PR-0/PR-2 does not make WebCall AI functional yet. PR-3 does not make WebCall AI functional yet. PR-4 does not implement functional AI voice. PR-5 does not implement functional AI voice. PR-6 does not implement functional AI voice. PR-7 does not implement functional AI voice. PR-8 does not implement functional AI voice. PR-9 does not implement functional AI voice. Acceleration Pack A does not implement functional AI voice. These PRs only add the guarded architecture, schema, config, tests, no-op worker claim lifecycle, deterministic mock turn persistence, deterministic mock STT/TTS boundaries, the real STT/TTS provider contract skeleton, the first Deepgram STT adapter behind feature flags, a controlled static HTTPS audio reference source for STT input, a fake LiveKit AI participant ownership skeleton, a server-side LiveKit AI participant token issuer wrapper, and a backend no-media AI presence runtime. No WebRTC audio read/publish path, TTS provider, LLM/runtime integration, or Speedaf write automation is introduced here.
+PR-0/PR-1 does not make WebCall AI functional yet. PR-0/PR-2 does not make WebCall AI functional yet. PR-3 does not make WebCall AI functional yet. PR-4 does not implement functional AI voice. PR-5 does not implement functional AI voice. PR-6 does not implement functional AI voice. PR-7 does not implement functional AI voice. PR-8 does not implement functional AI voice. PR-9 does not implement functional AI voice. Acceleration Pack A does not implement functional AI voice. Acceleration Pack B does not implement full AI voice. These PRs only add the guarded architecture, schema, config, tests, no-op worker claim lifecycle, deterministic mock turn persistence, deterministic mock STT/TTS boundaries, the real STT/TTS provider contract skeleton, the first Deepgram STT adapter behind feature flags, a controlled static HTTPS audio reference source for STT input, a fake LiveKit AI participant ownership skeleton, a server-side LiveKit AI participant token issuer wrapper, a backend no-media AI presence runtime, and controlled audio ingress plus STT transcript persistence. No WebRTC audio subscription by default, AI audio publish path, TTS provider, LLM/runtime integration, or Speedaf write automation is introduced here.
 
 The target product is WebCall AI Front Desk: a customer starts a WebCall, an AI voice agent joins as the first support participant, asks for tracking information and caller confirmation, lets NexusDesk check trusted Speedaf facts, answers low-risk tracking questions, and hands complex or high-risk cases to a human agent.
 
@@ -25,6 +25,8 @@ PR-8 adds a fake LiveKit AI participant ownership skeleton only. It can create a
 PR-9 adds a server-side LiveKit AI participant token issuer wrapper only. It extends participant mode to `fake_room_client | livekit_token_issuer`, requires `WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED=true` for token issuer mode, and rejects token issuer mode in production. The wrapper can call the existing backend `VoiceProvider.issue_participant_token` boundary and then performs no-media join/leave state transitions only. PR-9 does not implement functional AI voice. It does not join LiveKit media, subscribe/publish audio, read WebRTC tracks, change frontend, call LLM/provider runtime/OpenClaw/OpenAI/Codex, call Speedaf, execute Speedaf writes, persist participant tokens, log participant tokens, or expose AI participant tokens to browsers.
 
 Acceleration Pack A adds an AI no-media presence runtime only. It is disabled by default with `WEBCALL_AI_ROOM_PRESENCE_ENABLED=false`, supports `WEBCALL_AI_ROOM_PRESENCE_MODE=fake_no_media | livekit_no_media`, bounds join timeout with `WEBCALL_AI_ROOM_PRESENCE_JOIN_TIMEOUT_MS`, and rejects presence enablement in production. In fake mode the worker issues a fake AI participant token, marks no-media presence joined, runs the existing mock turn, marks no-media presence left, and releases the session. In LiveKit mode it requires `WEBCALL_AI_PARTICIPANT_ENABLED=true`, `WEBCALL_AI_PARTICIPANT_MODE=livekit_token_issuer`, and `WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED=true`; it issues the server-side AI participant token and attempts a LiveKit room presence connection with no audio publish or subscription. Acceleration Pack A does not implement functional AI voice. It does not subscribe to audio, publish audio, read WebRTC tracks, change frontend, call LLM/provider runtime/OpenClaw/OpenAI/Codex, call Speedaf, execute Speedaf writes, persist participant tokens, log participant tokens, or expose AI participant tokens to browsers.
+
+Acceleration Pack B adds controlled audio ingress plus STT runtime and transcript persistence only. It is disabled by default with `WEBCALL_AI_STT_RUNTIME_ENABLED=false`, supports `WEBCALL_AI_STT_RUNTIME_MODE=mock_text | audio_reference`, and writes `webchat_voice_transcript_segments` only when `WEBCALL_AI_STT_TRANSCRIPT_WRITE_ENABLED=true`. The worker can resolve a controlled static audio reference, run the configured STT provider, persist a redacted final transcript segment idempotently, use the redacted STT text in the existing mock AI turn, and release safely. Acceleration Pack B does not implement full AI voice. It does not query Speedaf, generate or publish AI audio, change frontend, call LLM/provider runtime/OpenClaw/OpenAI/Codex, execute Speedaf writes, persist tokens, log tokens, or expose AI participant tokens/transcripts to browsers.
 
 The intended flow is:
 
@@ -100,6 +102,8 @@ PR-2 extends `webchat_voice_sessions` with worker claim metadata: worker id, cla
 
 `webchat_voice_ai_turns` stores redacted AI conversation turns only. It must not store raw unredacted customer speech. Raw/final transcript storage remains the responsibility of transcript segment tables and later redaction pipelines.
 
+Acceleration Pack B writes final customer transcript segments into `webchat_voice_transcript_segments` only behind explicit STT runtime and transcript write flags. It stores redacted text in both `text_raw` and `text_redacted` for this controlled milestone, marks `redaction_status=redacted`, and keeps provider payloads, raw audio, tokens, and secrets out of persistence.
+
 `webchat_voice_ai_actions` records model-requested actions and NexusDesk decisions. `tool_call_log_id` is an indexed nullable integer without a foreign key in this foundation PR to keep audit linkage low-coupling and avoid cross-module migration coupling.
 
 ## Rollout Path
@@ -114,11 +118,12 @@ PR-2 extends `webchat_voice_sessions` with worker claim metadata: worker id, cla
 8. PR-8: fake LiveKit AI participant ownership skeleton with deterministic identity, fake token, and fake join/leave state transitions, disabled by default and rejected in production.
 9. PR-9: server-side LiveKit AI participant token issuer wrapper, explicitly enabled only, no media join, no token persistence, and rejected in production.
 10. Acceleration Pack A: backend AI no-media presence runtime, disabled by default and rejected in production.
-11. TTS provider integration behind feature flags and canary controls.
-12. Trusted Speedaf tracking lookup through backend policy.
-13. Human handoff workflows and operator evidence.
-14. Summary, callback, and evidence hardening.
+11. Acceleration Pack B: controlled audio ingress plus STT runtime and transcript persistence, disabled by default and rejected in production.
+12. TTS provider integration behind feature flags and canary controls.
+13. Trusted Speedaf tracking lookup through backend policy.
+14. Human handoff workflows and operator evidence.
+15. Summary, callback, and evidence hardening.
 
 ## Non-Goals
 
-This foundation does not implement real STT. It does not implement real TTS. It also does not implement a real LiveKit AI participant join, real OpenClaw/LLM voice calls, frontend WebCall UI changes, AI handoff UI, or any Speedaf write action execution from AI. This PR does not implement functional AI voice.
+This foundation does not implement full AI voice. It does not implement real TTS. It also does not implement production LiveKit audio subscription by default, real OpenClaw/LLM voice calls, frontend WebCall UI changes, AI handoff UI, or any Speedaf write action execution from AI.
