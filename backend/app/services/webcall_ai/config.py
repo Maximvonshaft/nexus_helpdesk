@@ -10,6 +10,7 @@ _ALLOWED_TTS_PROVIDERS = {"mock", "disabled", "contract_stub"}
 _ALLOWED_AI_PROVIDERS = {"provider_runtime"}
 _ALLOWED_AUDIO_REFERENCE_SOURCES = {"disabled", "static_fixture"}
 _ALLOWED_PARTICIPANT_MODES = {"fake_room_client", "livekit_token_issuer"}
+_ALLOWED_ROOM_PRESENCE_MODES = {"fake_no_media", "livekit_no_media"}
 _LOCAL_AUDIO_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -65,6 +66,10 @@ class WebCallAISettings:
     participant_token_ttl_seconds: int
     participant_id_prefix: str
     livekit_token_issuer_enabled: bool
+    room_presence_enabled: bool
+    room_presence_mode: str
+    room_presence_join_timeout_ms: int
+    room_presence_smoke_enabled: bool
     ai_provider: str
     allow_speedaf_work_order: bool
     allow_cancel: bool
@@ -107,6 +112,19 @@ class WebCallAISettings:
             raise RuntimeError("WEBCALL_AI_PARTICIPANT_ENABLED must be false in production for PR-8")
         if self.app_env == "production" and self.participant_mode == "livekit_token_issuer":
             raise RuntimeError("WEBCALL_AI_PARTICIPANT_MODE livekit_token_issuer is not allowed in production for PR-9")
+        if self.room_presence_mode not in _ALLOWED_ROOM_PRESENCE_MODES:
+            raise RuntimeError("WEBCALL_AI_ROOM_PRESENCE_MODE must be fake_no_media or livekit_no_media")
+        if self.room_presence_join_timeout_ms < 1000 or self.room_presence_join_timeout_ms > 30000:
+            raise RuntimeError("WEBCALL_AI_ROOM_PRESENCE_JOIN_TIMEOUT_MS must be between 1000 and 30000")
+        if self.app_env == "production" and self.room_presence_enabled:
+            raise RuntimeError("WEBCALL_AI_ROOM_PRESENCE_ENABLED must be false in production for Acceleration Pack A")
+        if self.room_presence_enabled and self.room_presence_mode == "livekit_no_media":
+            if not self.participant_enabled:
+                raise RuntimeError("WEBCALL_AI_PARTICIPANT_ENABLED must be true for livekit_no_media presence")
+            if self.participant_mode != "livekit_token_issuer":
+                raise RuntimeError("WEBCALL_AI_PARTICIPANT_MODE must be livekit_token_issuer for livekit_no_media presence")
+            if not self.livekit_token_issuer_enabled:
+                raise RuntimeError("WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED must be true for livekit_no_media presence")
         if self.max_turns < 1 or self.max_turns > 12:
             raise RuntimeError("WEBCALL_AI_AGENT_MAX_TURNS must be between 1 and 12")
         if self.max_call_seconds < 30 or self.max_call_seconds > 600:
@@ -201,6 +219,16 @@ def get_webcall_ai_settings() -> WebCallAISettings:
         participant_id_prefix=os.getenv("WEBCALL_AI_PARTICIPANT_ID_PREFIX", "ai_webcall").strip()
         or "ai_webcall",
         livekit_token_issuer_enabled=_env_bool("WEBCALL_AI_LIVEKIT_TOKEN_ISSUER_ENABLED", False),
+        room_presence_enabled=_env_bool("WEBCALL_AI_ROOM_PRESENCE_ENABLED", False),
+        room_presence_mode=os.getenv("WEBCALL_AI_ROOM_PRESENCE_MODE", "fake_no_media").strip().lower()
+        or "fake_no_media",
+        room_presence_join_timeout_ms=_env_int(
+            "WEBCALL_AI_ROOM_PRESENCE_JOIN_TIMEOUT_MS",
+            5000,
+            minimum=1000,
+            maximum=30000,
+        ),
+        room_presence_smoke_enabled=_env_bool("WEBCALL_AI_ROOM_PRESENCE_SMOKE_ENABLED", False),
         ai_provider=os.getenv("WEBCALL_AI_PROVIDER", "provider_runtime").strip().lower() or "provider_runtime",
         allow_speedaf_work_order=_env_bool("WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER", False),
         allow_cancel=_env_bool("WEBCALL_AI_ALLOW_CANCEL", False),

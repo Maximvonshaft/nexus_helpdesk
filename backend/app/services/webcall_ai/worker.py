@@ -19,6 +19,7 @@ from .participant_service import (
     mark_ai_participant_joined,
     mark_ai_participant_left,
 )
+from .presence_client import get_webcall_ai_presence_client
 from .room_client import get_webcall_ai_room_client
 
 
@@ -45,10 +46,44 @@ def run_webcall_ai_worker_once(
     participants = 0
     participant_joins = 0
     participant_leaves = 0
+    presence_joins = 0
+    presence_leaves = 0
+    presence_failures = 0
     if noop_release:
         for session in claimed_sessions:
+            presence_joined = False
+            participant_identity = None
+            presence_client = None
             try:
-                if settings.participant_enabled:
+                if settings.room_presence_enabled:
+                    room_client = get_webcall_ai_room_client(settings)
+                    presence_client = get_webcall_ai_presence_client(settings)
+                    participant_identity = ai_participant_identity(session, settings)
+                    token = room_client.issue_ai_token(
+                        session=session,
+                        participant_identity=participant_identity,
+                        ttl_seconds=settings.participant_token_ttl_seconds,
+                    )
+                    ensure_ai_participant_record(
+                        db,
+                        session=session,
+                        worker_id=worker_id,
+                        token=token,
+                        settings=settings,
+                    )
+                    join_result = presence_client.join_no_media(
+                        session=session,
+                        participant_identity=participant_identity,
+                        token=token,
+                        timeout_ms=settings.room_presence_join_timeout_ms,
+                    )
+                    if not join_result.joined:
+                        presence_failures += 1
+                        raise RuntimeError("AI participant no-media presence join failed")
+                    mark_ai_participant_joined(db, session=session, worker_id=worker_id, settings=settings)
+                    presence_joined = True
+                    presence_joins += 1
+                elif settings.participant_enabled:
                     room_client = get_webcall_ai_room_client(settings)
                     participant_identity = ai_participant_identity(session, settings)
                     token = room_client.issue_ai_token(
@@ -79,7 +114,21 @@ def run_webcall_ai_worker_once(
                 stt_events += turn_result.stt_events
                 tts_events += turn_result.tts_events
                 heartbeat_webcall_ai_session(db, session.id, worker_id, lease_seconds=lease_seconds)
-                if settings.participant_enabled:
+                if settings.room_presence_enabled:
+                    leave_result = presence_client.leave(session=session, participant_identity=participant_identity)
+                    if not leave_result.left:
+                        presence_failures += 1
+                        raise RuntimeError("AI participant no-media presence leave failed")
+                    mark_ai_participant_left(
+                        db,
+                        session=session,
+                        worker_id=worker_id,
+                        reason="mock_turn_complete",
+                        settings=settings,
+                    )
+                    presence_leaves += 1
+                    presence_joined = False
+                elif settings.participant_enabled:
                     leave_result = room_client.leave(session=session, participant_identity=participant_identity)
                     if not leave_result.left:
                         raise RuntimeError("AI participant fake room leave failed")
@@ -99,6 +148,12 @@ def run_webcall_ai_worker_once(
                 ):
                     released += 1
             except Exception as exc:
+                if settings.room_presence_enabled and presence_joined and presence_client is not None and participant_identity:
+                    try:
+                        presence_client.leave(session=session, participant_identity=participant_identity)
+                        presence_leaves += 1
+                    except Exception:
+                        presence_failures += 1
                 db.rollback()
                 failed += 1
                 fail_webcall_ai_session(
@@ -124,6 +179,10 @@ def run_webcall_ai_worker_once(
         result_dict["participants"] = participants
         result_dict["participant_joins"] = participant_joins
         result_dict["participant_leaves"] = participant_leaves
+    if settings.room_presence_enabled:
+        result_dict["presence_joins"] = presence_joins
+        result_dict["presence_leaves"] = presence_leaves
+        result_dict["presence_failures"] = presence_failures
     update_service_heartbeat(
         db,
         service_name="webcall_ai_worker",
