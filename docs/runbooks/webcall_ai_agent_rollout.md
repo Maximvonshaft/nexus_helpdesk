@@ -2,7 +2,7 @@
 
 ## Scope
 
-PR-0/PR-1 does not make WebCall AI functional yet. It only adds the guarded architecture, schema, config, and tests. Keep all AI voice execution disabled until a later worker PR explicitly adds and validates runtime behavior.
+PR-0/PR-2 does not make WebCall AI functional yet. It only adds the guarded architecture, schema, config, tests, and no-op claim lifecycle. Keep all AI voice execution disabled until a later worker PR explicitly adds and validates runtime behavior.
 
 ## Feature Flags
 
@@ -36,7 +36,7 @@ WEBCALL_AI_RECORD_RAW_AUDIO=true
 ## Rollout Stages
 
 1. Foundation: merge docs, models, migration, config, schema, and safety tests with the agent disabled.
-2. Worker skeleton: add a backend worker that can claim AI session lifecycle state without joining LiveKit media.
+2. Worker skeleton: add a backend worker that can claim AI session lifecycle state without joining LiveKit media. PR-2 is no-op claim lifecycle only: claim, heartbeat, release, fail, and lease recovery metadata, with no media, STT, TTS, LLM, or Speedaf execution.
 3. Mock media: add deterministic mock STT/TTS so tests can validate turn lifecycle and handoff without external calls.
 4. Real media: connect real STT/TTS providers behind feature flags and canaries.
 5. Tracking facts: allow backend-governed tracking lookup after redaction and caller confirmation.
@@ -73,4 +73,4 @@ If code rollback is required, run the deterministic Alembic downgrade only as pa
 
 ## Next PR
 
-PR-2 should implement webcall-ai-worker skeleton and AI session claim lifecycle only. It should not connect real STT/TTS yet.
+PR-3 should add deterministic mock turn execution on top of the worker claim lifecycle. It should not connect real STT/TTS yet.
