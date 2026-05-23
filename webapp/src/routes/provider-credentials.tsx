@@ -13,7 +13,12 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Field, Input } from '@/components/ui/Field'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Toast } from '@/components/ui/Toast'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { TechnicalDetails } from '@/components/ui/TechnicalDetails'
+import { GuidedWorkflow } from '@/components/ui/GuidedWorkflow'
 import type { CodexDeviceStart, CodexManualAuthorizationStart, CodexSessionStatus, ProviderCredentialStatus } from '@/lib/types'
+import { credentialTermLabels } from '@/lib/uxCopy'
 
 function scopeList(raw: string) {
   return raw.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean)
@@ -35,18 +40,26 @@ function CredentialCard({ credential, onRefresh, onRevoke, onDisconnect, pending
 }) {
   return <div className="list-item">
     <div className="badges">
-      <Badge tone={credentialTone(credential.status, credential.revoked_at)}>{credential.status}</Badge>
-      <Badge>{sanitizeDisplayText(credential.provider_runtime)}</Badge>
-      {credential.scope ? <Badge>{sanitizeDisplayText(credential.scope)}</Badge> : <Badge tone="warning">scope 未声明</Badge>}
+      <Badge tone={credentialTone(credential.status, credential.revoked_at)}>{credentialTermLabels[credential.status] ?? credential.status}</Badge>
+      <Badge>{sanitizeDisplayText(credential.email ? '已绑定邮箱' : '服务账号')}</Badge>
+      {credential.chatgpt_plan_type ? <Badge>{sanitizeDisplayText(credential.chatgpt_plan_type)}</Badge> : null}
     </div>
     <div><strong>{sanitizeDisplayText(credential.email || credential.account_id || credential.profile_id)}</strong></div>
-    <div className="section-subtitle">Credential: {credential.id} · Fingerprint: {credential.token_fingerprint_prefix || '—'}</div>
-    <div className="section-subtitle">Expires: {formatDateTime(credential.expires_at)} · Last refresh: {formatDateTime(credential.last_refresh_at)} · Error: {sanitizeDisplayText(credential.last_error_code || '—')}</div>
+    <div className="section-subtitle">可用于云端授权调用；Token 明文不会在前端展示。</div>
+    <div className="section-subtitle">有效期：{formatDateTime(credential.expires_at)} · 最近刷新：{formatDateTime(credential.last_refresh_at)} · 最近错误：{sanitizeDisplayText(credential.last_error_code || '无')}</div>
     <div className="button-row" style={{ marginTop: 8 }}>
       <Button variant="secondary" disabled={pending || credential.status !== 'active'} onClick={() => onRefresh(credential.id)}>刷新 Token</Button>
       <Button variant="secondary" disabled={pending || credential.status === 'revoked'} onClick={() => onDisconnect(credential.id)}>本地断开</Button>
       <Button disabled={pending || credential.status === 'revoked'} onClick={() => onRevoke(credential.id)}>上游撤销</Button>
     </div>
+    <TechnicalDetails title="凭证技术详情" summary="排查 OAuth、scope、fingerprint 时查看">
+      <div className="kv-grid">
+        <div className="kv"><label>Credential ID</label><div>{sanitizeDisplayText(credential.id)}</div></div>
+        <div className="kv"><label>Provider Runtime</label><div>{sanitizeDisplayText(credential.provider_runtime)}</div></div>
+        <div className="kv"><label>Scope</label><div>{sanitizeDisplayText(credential.scope || '未声明')}</div></div>
+        <div className="kv"><label>Fingerprint</label><div>{sanitizeDisplayText(credential.token_fingerprint_prefix || '—')}</div></div>
+      </div>
+    </TechnicalDetails>
   </div>
 }
 
@@ -61,6 +74,7 @@ function ProviderCredentialsPage() {
   const [manualResponse, setManualResponse] = useState('')
   const [sessionStatus, setSessionStatus] = useState<CodexSessionStatus | null>(null)
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
+  const [confirmAction, setConfirmAction] = useState<{ id: string; op: 'revoke' | 'disconnect' } | null>(null)
 
   const status = useQuery({ queryKey: ['codex-credential-status'], queryFn: api.codexCredentialStatus, enabled: permitted })
 
@@ -154,23 +168,37 @@ function ProviderCredentialsPage() {
     <PageHeader
       eyebrow="Provider Credentials"
       title="Code X / Codex 云端授权"
-      description="由 Nexus 后端生成授权会话、校验 state/PKCE、完成 token exchange，并加密保存 access/refresh token。前端只显示 masked 状态。"
+      description="连接一个可用的 Code X 授权账号，让后台可以安全刷新授权并支持相关自动化。OAuth 细节默认收起。"
       actions={<div className="button-row"><Button variant="secondary" onClick={() => refreshStatus()}>刷新状态</Button><Button onClick={() => authorize.mutate()} disabled={pending}>浏览器授权</Button><Button variant="secondary" onClick={() => startDevice.mutate()} disabled={pending}>Device 授权</Button></div>}
     />
+    <Card className="soft">
+      <CardHeader title="推荐处理步骤" subtitle="正常授权只需要按步骤走；排障时再展开高级技术详情。" />
+      <CardBody>
+        <GuidedWorkflow steps={[
+          { title: '确认连接状态', description: '先看是否已有可用授权。', status: credentials.length ? 'done' : 'active' },
+          { title: '选择授权方式', description: '优先浏览器授权，远程环境用手动授权。', status: 'active' },
+          { title: '完成登录', description: '按页面提示完成 Code X 登录。', status: sessionStatus?.status === 'authorized' ? 'done' : 'todo' },
+          { title: '刷新状态', description: '授权后回到本页确认已连接。', status: 'todo' },
+          { title: '排查高级信息', description: '仅在授权失败或 scope 异常时查看。', status: 'todo' },
+        ]} />
+      </CardBody>
+    </Card>
     <div className="page-grid split-grid">
       <Card className="soft">
-        <CardHeader title="授权范围" subtitle="留空则使用后端 CODEX_OAUTH_DEFAULT_SCOPES；若后端配置 CODEX_OAUTH_ALLOWED_SCOPES，未列入 allowlist 的 scope 会被拒绝。" />
+        <CardHeader title="开始 Code X 授权" subtitle="多数情况下直接使用后端默认授权范围，不需要手动填写 scope。" />
         <CardBody>
-          <Field label="Scopes" hint="空格或逗号分隔；例如 read:profile reply:write。不要在前端配置 client_secret。">
-            <Input value={scopes} onChange={(e) => setScopes(e.target.value)} placeholder="后端默认 scope" />
-          </Field>
+          <TechnicalDetails title="高级授权范围" summary="只有排查 scope 拒绝或最小权限时填写">
+            <Field label="Scopes" hint="空格或逗号分隔；例如 read:profile reply:write。不要在前端配置 client_secret。">
+              <Input value={scopes} onChange={(e) => setScopes(e.target.value)} placeholder="后端默认 scope" />
+            </Field>
+          </TechnicalDetails>
           {device ? <div className="message" style={{ marginTop: 12 }}>
-            <div><strong>Device Code:</strong> {sanitizeDisplayText(device.user_code)}</div>
-            <div><strong>Verification:</strong> <a href={device.verification_url} target="_blank" rel="noreferrer">打开 Code X 授权页</a></div>
-            <div><strong>Expires:</strong> {formatDateTime(device.expires_at)}</div>
+            <div><strong>验证码：</strong> {sanitizeDisplayText(device.user_code)}</div>
+            <div><strong>授权页面：</strong> <a href={device.verification_url} target="_blank" rel="noreferrer">打开 Code X 授权页</a></div>
+            <div><strong>过期时间：</strong> {formatDateTime(device.expires_at)}</div>
             <div className="button-row" style={{ marginTop: 8 }}><Button onClick={() => pollDevice.mutate()} disabled={pending}>轮询授权结果</Button></div>
           </div> : null}
-          {sessionStatus ? <div className="section-subtitle" style={{ marginTop: 8 }}>当前授权会话：{sessionStatus.session_id || device?.session_id || '—'} · {sessionStatus.status} · {sessionStatus.error_code || 'no_error'}</div> : null}
+          {sessionStatus ? <TechnicalDetails title="当前授权会话详情" summary={credentialTermLabels[sessionStatus.status] ?? sessionStatus.status}><div className="section-subtitle">Session：{sessionStatus.session_id || device?.session_id || '—'} · {sessionStatus.status} · {sessionStatus.error_code || 'no_error'}</div></TechnicalDetails> : null}
         </CardBody>
       </Card>
       <Card className="soft">
@@ -183,15 +211,13 @@ function ProviderCredentialsPage() {
             <Button onClick={() => startManual.mutate()} disabled={pending}>生成 OpenClaw 授权链接</Button>
             {manual?.authorization_url ? <Button variant="secondary" onClick={() => window.open(manual.authorization_url, '_blank', 'noopener,noreferrer')} disabled={pending}>打开授权链接</Button> : null}
           </div>
-          {manual ? <div className="message" style={{ marginTop: 12 }}>
+          {manual ? <TechnicalDetails title="手动授权技术详情" summary="复制回调 URL 或 code 时查看"><div className="message" style={{ marginTop: 12 }}>
             <div><strong>Redirect URI:</strong> {sanitizeDisplayText(manual.redirect_uri)}</div>
             <div><strong>Scope:</strong> {sanitizeDisplayText(manual.scope || '—')}</div>
             <div><strong>Expires:</strong> {formatDateTime(manual.expires_at)}</div>
-            <div style={{ marginTop: 8, wordBreak: 'break-all' }}>
-              <a href={manual.authorization_url} target="_blank" rel="noreferrer">{manual.authorization_url}</a>
-            </div>
-          </div> : null}
-          <Field label="Redirect URL 或 Code" hint="支持完整 localhost redirect URL、code=...&state=... query string，或裸 code。">
+            <div style={{ marginTop: 8, wordBreak: 'break-all' }}><a href={manual.authorization_url} target="_blank" rel="noreferrer">{manual.authorization_url}</a></div>
+          </div></TechnicalDetails> : null}
+          <Field label="授权返回内容" hint="支持完整 localhost redirect URL、code=...&state=... query string，或裸 code。">
             <textarea
               value={manualResponse}
               onChange={(e) => setManualResponse(e.target.value)}
@@ -206,16 +232,31 @@ function ProviderCredentialsPage() {
         </CardBody>
       </Card>
       <Card>
-        <CardHeader title="连接状态" subtitle={`Active credentials: ${status.data?.active_count ?? 0}；不会展示任何 token 明文。`} />
+        <CardHeader title="连接状态" subtitle={`当前可用授权 ${status.data?.active_count ?? 0} 个；不会展示任何 token 明文。`} />
         <CardBody>
           <div className="list">
-            {credentials.map((credential) => <CredentialCard key={credential.id} credential={credential} pending={pending} onRefresh={(id) => action.mutate({ id, op: 'refresh' })} onRevoke={(id) => action.mutate({ id, op: 'revoke' })} onDisconnect={(id) => action.mutate({ id, op: 'disconnect' })} />)}
-            {!credentials.length ? <div className="message">还没有 Code X credential。请先发起授权。</div> : null}
+            {credentials.map((credential) => <CredentialCard key={credential.id} credential={credential} pending={pending} onRefresh={(id) => action.mutate({ id, op: 'refresh' })} onRevoke={(id) => setConfirmAction({ id, op: 'revoke' })} onDisconnect={(id) => setConfirmAction({ id, op: 'disconnect' })} />)}
+            {!credentials.length ? <EmptyState title="还没有连接 Code X 授权" description="完成授权后，这里会显示连接状态、身份和有效期。" reason="请先使用浏览器授权；远程环境无法自动回调时再使用手动授权。" action={<Button onClick={() => authorize.mutate()} disabled={pending}>浏览器授权</Button>} /> : null}
           </div>
         </CardBody>
       </Card>
     </div>
     {toast ? <Toast message={toast.message} tone={toast.tone} onClose={() => setToast(null)} /> : null}
+    <ConfirmDialog
+      open={confirmAction !== null}
+      title={confirmAction?.op === 'revoke' ? '撤销上游授权？' : '断开本地授权？'}
+      description={confirmAction?.op === 'revoke' ? '撤销后，上游授权也会失效，相关自动化将无法继续使用该账号。' : '断开后，本系统将停止使用该凭证；上游授权可能仍存在。'}
+      consequence="该操作会影响生产授权能力。确认前请确保已有替代授权或业务允许暂停。"
+      confirmLabel={confirmAction?.op === 'revoke' ? '确认撤销' : '确认断开'}
+      tone="danger"
+      pending={action.isPending}
+      onCancel={() => setConfirmAction(null)}
+      onConfirm={() => {
+        const next = confirmAction
+        setConfirmAction(null)
+        if (next) action.mutate(next)
+      }}
+    />
   </AppShell>
 }
 

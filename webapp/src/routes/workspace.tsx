@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoute, redirect } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
@@ -14,8 +14,13 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { Toast } from '@/components/ui/Toast'
 import { SegmentedControl, ToolbarAction } from '@/components/ui/SegmentedControl'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { ErrorSummary } from '@/components/ui/ErrorSummary'
+import { GuidedWorkflow } from '@/components/ui/GuidedWorkflow'
+import { TechnicalDetails } from '@/components/ui/TechnicalDetails'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { CustomerReplyPanel } from '@/components/operator/CustomerReplyPanel'
+import { formatDurationSeconds, voiceCallLabels } from '@/lib/uxCopy'
 
 function timelineTitle(item: Record<string, unknown>) {
   const sourceType = String(item.source_type || '')
@@ -42,19 +47,31 @@ function timelineEvidenceValue(payload: Record<string, unknown> | null, key: str
 
 function VoiceCallTimelineEvidence({ item }: { item: Record<string, unknown> }) {
   const payload = timelinePayload(item)
+  const businessRows = [
+    'status',
+    'provider',
+    'accepted_by',
+    'ended_by',
+    'ringing_duration_seconds',
+    'talk_duration_seconds',
+    'total_duration_seconds',
+    'recording_status',
+    'transcript_status',
+    'summary_status',
+  ]
   return (
-    <div className="kv-grid" style={{ marginTop: 10 }} data-testid="ticket-timeline-voice-call-evidence-card">
-      <div className="kv"><label>status</label><div>{timelineEvidenceValue(payload, 'status')}</div></div>
-      <div className="kv"><label>voice_session_id</label><div>{timelineEvidenceValue(payload, 'voice_session_id')}</div></div>
-      <div className="kv"><label>provider</label><div>{timelineEvidenceValue(payload, 'provider')}</div></div>
-      <div className="kv"><label>accepted_by</label><div>{timelineEvidenceValue(payload, 'accepted_by')}</div></div>
-      <div className="kv"><label>ended_by</label><div>{timelineEvidenceValue(payload, 'ended_by')}</div></div>
-      <div className="kv"><label>ringing_duration_seconds</label><div>{timelineEvidenceValue(payload, 'ringing_duration_seconds')}</div></div>
-      <div className="kv"><label>talk_duration_seconds</label><div>{timelineEvidenceValue(payload, 'talk_duration_seconds')}</div></div>
-      <div className="kv"><label>total_duration_seconds</label><div>{timelineEvidenceValue(payload, 'total_duration_seconds')}</div></div>
-      <div className="kv"><label>recording status</label><div>{timelineEvidenceValue(payload, 'recording_status')}</div></div>
-      <div className="kv"><label>transcript status</label><div>{timelineEvidenceValue(payload, 'transcript_status')}</div></div>
-      <div className="kv"><label>summary status</label><div>{timelineEvidenceValue(payload, 'summary_status')}</div></div>
+    <div className="stack" style={{ marginTop: 10 }} data-testid="ticket-timeline-voice-call-evidence-card">
+      <div className="kv-grid">
+        {businessRows.map((key) => (
+          <div className="kv" key={key}>
+            <label>{voiceCallLabels[key]}</label>
+            <div>{key.endsWith('_duration_seconds') ? formatDurationSeconds(payload?.[key]) : timelineEvidenceValue(payload, key)}</div>
+          </div>
+        ))}
+      </div>
+      <TechnicalDetails title="语音通话技术详情" summary="仅运维排障时查看">
+        <div className="section-subtitle">客服处理无需查看内部语音追踪信息。</div>
+      </TechnicalDetails>
     </div>
   )
 }
@@ -96,7 +113,7 @@ function SyncCountdown({ onRefresh }: { onRefresh: () => void }) {
 
   return (
     <Button variant="secondary" onClick={() => { setCountdown(10); onRefresh(); }}>
-      🔄 同步中 ({countdown}s)
+      同步中 ({countdown}s)
     </Button>
   )
 }
@@ -109,6 +126,7 @@ function WorkspacePage() {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const autoRefresh = useAutoRefresh(true)
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
+  const [pendingCaseId, setPendingCaseId] = useState<number | null>(null)
 
   const meta = useQuery({ queryKey: ['liteMeta'], queryFn: api.liteMeta, refetchInterval: autoRefresh.enabled ? 30000 : false })
   const cases = useQuery({
@@ -161,13 +179,14 @@ function WorkspacePage() {
     ai_missing_fields: '',
   })
 
-  const handleSelectCase = (id: number) => {
+  const handleSelectCase = useCallback((id: number) => {
     if (isDirty) {
-      if (!window.confirm('当前工单有未保存的编辑，切换后将丢失。确定要切换吗？')) return
+      setPendingCaseId(id)
+      return
     }
     setSelectedId(id)
     setIsDirty(false)
-  }
+  }, [isDirty])
 
   useEffect(() => {
     const d = detail.data
@@ -254,7 +273,7 @@ function WorkspacePage() {
       <div className="queue-card-meta">{sanitizeDisplayText(item.customer_name || '未填写客户姓名')} · {sanitizeDisplayText(item.assignee_name || '未分配客服')}</div>
       <div className="queue-card-meta">{labelize(item.conversation_state || 'no_conversation_state')} · {formatDateTime(item.updated_at)}</div>
     </button>
-  )), [cases.data, selectedId])
+  )), [cases.data, handleSelectCase, selectedId])
 
   return (
     <AppShell>
@@ -295,13 +314,15 @@ function WorkspacePage() {
       </div>
 
       <Card className="soft">
-        <CardHeader title="处理顺序提示" subtitle="让新同事也能按统一动作处理工单。" />
+        <CardHeader title="处理顺序提示" subtitle="新同事按这 5 步处理，避免漏看消息、公告和证据。" />
         <CardBody>
-          <div className="guide-grid">
-            <div className="guide-item"><strong>先看客户最新消息</strong><span>不要急着回，先确认客户最新诉求、运单号和附件证据。</span></div>
-            <div className="guide-item"><strong>再看公告与证据</strong><span>有延误、清关或异常公告时，先按统一口径处理。</span></div>
-            <div className="guide-item"><strong>最后保存处理结果</strong><span>把下一步动作、缺失信息和客户更新内容一次写完整。</span></div>
-          </div>
+          <GuidedWorkflow steps={[
+            { title: '读最新消息', description: '先确认客户这次真正要解决的问题。', status: activeCase?.last_customer_message ? 'done' : 'active' },
+            { title: '查公告证据', description: '查看公告、附件、语音和聊天证据。', status: activeCase ? 'active' : 'todo' },
+            { title: '填写下一步', description: '写清动作、缺失资料和客户更新。', status: isDirty ? 'active' : 'todo' },
+            { title: '保存或回复', description: '保存处理结果，需要时直接发给客户。', status: saveMutation.isSuccess ? 'done' : 'todo' },
+            { title: '处理下一单', description: '保存后切到下一单，保持队列流动。', status: 'todo' },
+          ]} />
         </CardBody>
       </Card>
 
@@ -327,7 +348,7 @@ function WorkspacePage() {
                 </div>
                 <div className="list">
                   {cases.isLoading ? <Skeleton lines={6} /> : queueCards}
-                  {!queueCards.length && !cases.isLoading ? <EmptyState text="当前筛选条件下没有工单。" /> : null}
+                  {!queueCards.length && !cases.isLoading ? <EmptyState title="没有符合条件的工单" description="当前筛选组合下没有待处理内容。" reason="可以放宽状态、市场或搜索条件，也可以刷新确认是否已有新工单进入。" action={<Button variant="secondary" onClick={() => { setQuery(''); setStatus(''); setMarket('') }}>清空筛选</Button>} /> : null}
                 </div>
               </div>
             </CardBody>
@@ -412,7 +433,7 @@ function WorkspacePage() {
                               {String(item.source_type || item.kind || '') === 'voice_call' ? <VoiceCallTimelineEvidence item={item} /> : null}
                             </div>
                           ))}
-                          {!timelineItems.length && !timeline.isLoading ? <EmptyState text="当前还没有可展示的时间线记录。" /> : null}
+                          {!timelineItems.length && !timeline.isLoading ? <EmptyState title="还没有客户消息记录" description="这通常表示工单刚创建，或外部聊天同步还没有完成。" reason="可以稍后刷新，或先查看工单摘要和附件证据。" action={<Button variant="secondary" onClick={refreshConversation}>刷新记录</Button>} /> : null}
                           {timeline.isLoading ? <Skeleton lines={4} /> : null}
                         </div>
                       </CardBody>
@@ -433,7 +454,7 @@ function WorkspacePage() {
                               <div className="section-subtitle">{sanitizeDisplayText(bulletin.summary || bulletin.body)}</div>
                             </div>
                           ))}
-                          {!(activeCase.active_market_bulletins?.length) ? <EmptyState text="这单工单当前没有关联公告。" /> : null}
+                          {!(activeCase.active_market_bulletins?.length) ? <EmptyState title="没有关联公告" description="当前市场和工单类型没有生效公告。" reason="可以按常规 SOP 处理；如果发现大面积异常，请联系主管发布公告口径。" /> : null}
                         </div>
                       </CardBody>
                     </Card>
@@ -452,7 +473,7 @@ function WorkspacePage() {
                                 <div className="section-subtitle">{sanitizeDisplayText(item.mime_type || '文件')} · {formatDateTime(item.created_at)}</div>
                               </div>
                             ))}
-                            {!(activeCase.attachments?.length) ? <div className="empty">当前没有系统附件。</div> : null}
+                            {!(activeCase.attachments?.length) ? <EmptyState title="没有系统附件" description="客户或客服暂未上传附件。" reason="如处理需要凭证，请在客户更新中说明需要补充的材料。" /> : null}
                           </div>
                         </div>
                         <div>
@@ -464,7 +485,7 @@ function WorkspacePage() {
                                 <div className="section-subtitle">{sanitizeDisplayText(item.content_type || '未知类型')} · {sanitizeDisplayText(item.storage_status)}</div>
                               </div>
                             ))}
-                            {!(activeCase.openclaw_attachment_references?.length) ? <div className="empty">当前没有聊天证据。</div> : null}
+                            {!(activeCase.openclaw_attachment_references?.length) ? <EmptyState title="没有聊天证据" description="外部聊天侧暂未同步附件或图片。" reason="如客户已发送，请刷新或检查来信来源同步状态。" /> : null}
                           </div>
                         </div>
                       </div>
@@ -472,7 +493,7 @@ function WorkspacePage() {
                   </Card>
                 </div>
               ) : (
-                <EmptyState text="请先从左侧选择一条工单。" />
+                <EmptyState title="请选择一条工单" description="选择后这里会显示客户信息、最新消息、公告证据和处理动作。" reason="如果列表为空，请调整筛选条件或刷新队列。" />
               )}
             </CardBody>
           </Card>
@@ -485,7 +506,8 @@ function WorkspacePage() {
               {detail.isLoading && !activeCase ? <Skeleton lines={10} /> : null}
               {activeCase ? (
                 <div className="stack">
-                  <Field label="工单状态">
+                  {saveMutation.isError ? <ErrorSummary errors={[saveMutation.error?.message || '保存处理结果失败，请检查网络和必填内容后重试。']} /> : null}
+                  <Field label="工单状态" required>
                     <Select value={form.status} onChange={(e) => setForm((s) => ({ ...s, status: e.target.value }))}>
                       {statuses.map((s) => <option key={s} value={s}>{labelize(s)}</option>)}
                     </Select>
@@ -498,13 +520,13 @@ function WorkspacePage() {
                     </Select>
                   </Field>
 
-                  <Field label="下一步动作" hint="例如：联系网点、催件、核实客户资料。">
+                  <Field label="下一步动作" hint="例如：联系网点、催件、核实客户资料。" example="已联系目的国网点核实派送状态，预计今天内回传结果。">
                     <Textarea value={form.required_action} onChange={(e) => setForm((s) => ({ ...s, required_action: e.target.value }))} />
                   </Field>
                   <Field label="待补信息" hint="例如：缺运单照片、缺清关资料、缺客户电话。">
                     <Textarea value={form.missing_fields} onChange={(e) => setForm((s) => ({ ...s, missing_fields: e.target.value }))} />
                   </Field>
-                  <Field label="给客户的更新说明">
+                  <Field label="给客户的更新说明" description="这里写客户能直接看懂的进展，不放内部编号或系统错误。">
                     <Textarea value={form.customer_update} onChange={(e) => setForm((s) => ({ ...s, customer_update: e.target.value }))} />
                   </Field>
                   <Field label="解决结果摘要">
@@ -546,13 +568,27 @@ function WorkspacePage() {
                   </Card>
                 </div>
               ) : (
-                <EmptyState text="请选择一条工单后再执行处理动作。" />
+                <EmptyState title="请选择工单后再处理" description="处理动作需要明确绑定到一条工单，避免把更新保存到错误对象。" />
               )}
             </CardBody>
           </Card>
         </div>
       </div>
       {toast ? <Toast message={toast.message} tone={toast.tone} onClose={() => setToast(null)} /> : null}
+      <ConfirmDialog
+        open={pendingCaseId !== null}
+        title="切换工单并放弃未保存编辑？"
+        description="当前工单的处理动作还没有保存。切换后，刚才填写的下一步动作、客户更新和内部备注会被放弃。"
+        consequence="建议先保存处理结果；如果只是误填，可以确认切换。"
+        confirmLabel="放弃编辑并切换"
+        tone="danger"
+        onCancel={() => setPendingCaseId(null)}
+        onConfirm={() => {
+          if (pendingCaseId !== null) setSelectedId(pendingCaseId)
+          setPendingCaseId(null)
+          setIsDirty(false)
+        }}
+      />
     </AppShell>
   )
 }

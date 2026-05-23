@@ -1,0 +1,105 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+const root = resolve(process.cwd())
+const read = (path) => readFileSync(resolve(root, path), 'utf8')
+
+const field = read('src/components/ui/Field.tsx')
+const emptyState = read('src/components/ui/EmptyState.tsx')
+const toast = read('src/components/ui/Toast.tsx')
+const dataTable = read('src/components/ui/DataTable.tsx')
+const errorSummary = read('src/components/ui/ErrorSummary.tsx')
+const confirmDialog = read('src/components/ui/ConfirmDialog.tsx')
+const technicalDetails = read('src/components/ui/TechnicalDetails.tsx')
+const guidedWorkflow = read('src/components/ui/GuidedWorkflow.tsx')
+const uxCopy = read('src/lib/uxCopy.ts')
+const workspace = read('src/routes/workspace.tsx')
+const accounts = read('src/routes/accounts.tsx')
+const aiControl = read('src/routes/ai-control.tsx')
+const providerCredentials = read('src/routes/provider-credentials.tsx')
+const appShell = read('src/layouts/AppShell.tsx')
+
+test('shared UX primitives expose production novice guidance and accessibility contracts', () => {
+  assert.match(field, /required/)
+  assert.match(field, /aria-invalid/)
+  assert.match(field, /aria-describedby/)
+  assert.match(emptyState, /reason/)
+  assert.match(emptyState, /action/)
+  assert.match(toast, /role=\{tone === 'danger' \? 'alert' : 'status'\}/)
+  assert.match(toast, /durationMs/)
+  assert.match(errorSummary, /role="alert"/)
+  assert.match(confirmDialog, /role="dialog"/)
+  assert.match(confirmDialog, /aria-modal="true"/)
+  assert.match(technicalDetails, /<details/)
+  assert.match(guidedWorkflow, /aria-label="处理步骤"/)
+  assert.match(dataTable, /caption/)
+  assert.match(dataTable, /loading/)
+})
+
+test('workspace voice call evidence is business-readable before technical details', () => {
+  assert.match(uxCopy, /通话状态/)
+  assert.doesNotMatch(uxCopy, /voice_session_id/)
+  assert.doesNotMatch(uxCopy, /语音会话编号/)
+  assert.match(workspace, /voiceCallLabels\[key\]/)
+  assert.match(workspace, /formatDurationSeconds/)
+  assert.match(workspace, /<TechnicalDetails title="语音通话技术详情"/)
+  for (const forbidden of ['会话编号', 'voice_session_id', 'session_key', '原始载荷']) {
+    assert.doesNotMatch(workspace, new RegExp(forbidden))
+  }
+  const firstLevelEvidence = workspace.slice(workspace.indexOf('function VoiceCallTimelineEvidence'), workspace.indexOf('function timelineBody'))
+  assert.doesNotMatch(firstLevelEvidence, /<label>voice_session_id<\/label>/)
+  assert.doesNotMatch(firstLevelEvidence, /<label>ringing_duration_seconds<\/label>/)
+})
+
+test('workspace has guided workflow, actionable empty states, and dirty switch confirmation', () => {
+  assert.match(workspace, /<GuidedWorkflow steps=/)
+  assert.match(workspace, /读最新消息/)
+  assert.match(workspace, /查公告证据/)
+  assert.match(workspace, /<ErrorSummary/)
+  assert.match(workspace, /<ConfirmDialog/)
+  assert.match(workspace, /切换工单并放弃未保存编辑/)
+  assert.match(workspace, /title="没有符合条件的工单"/)
+  assert.doesNotMatch(workspace, /window\.confirm/)
+})
+
+test('accounts fallback account is selected from valid accounts instead of free text', () => {
+  assert.match(accounts, /fallbackOptions/)
+  assert.match(accounts, /item\.provider !== form\.provider/)
+  assert.match(accounts, /item\.is_active/)
+  assert.match(accounts, /<Field label="备用发送线路"/)
+  assert.match(accounts, /<Select value=\{form\.fallback_account_id \?\? ''\}/)
+  assert.doesNotMatch(accounts, /<Field label="备用账号编号"[\s\S]*<Input/)
+  assert.match(accounts, /放弃当前发送线路编辑/)
+})
+
+test('ai control hides raw JSON behind advanced details and confirms risky actions', () => {
+  assert.match(aiControl, /templateDrafts/)
+  assert.match(aiControl, /套用\{aiConfigTypeLabels\[item\]\}模板/)
+  assert.match(aiControl, /<TechnicalDetails title="高级 JSON 配置"/)
+  assert.match(aiControl, /jsonError/)
+  assert.match(aiControl, /发布当前 AI 规则/)
+  assert.match(aiControl, /回滚并重新发布规则/)
+  assert.doesNotMatch(aiControl, /label="草稿内容\(JSON\)"/)
+})
+
+test('provider credentials presents normal mode first and protects high-impact actions', () => {
+  assert.match(providerCredentials, /推荐处理步骤/)
+  assert.match(providerCredentials, /<TechnicalDetails title="高级授权范围"/)
+  assert.match(providerCredentials, /<TechnicalDetails title="凭证技术详情"/)
+  assert.match(providerCredentials, /撤销上游授权/)
+  assert.match(providerCredentials, /断开本地授权/)
+  assert.match(providerCredentials, /Token 明文不会在前端展示/)
+  assert.doesNotMatch(providerCredentials, /Credential: \{credential\.id\}/)
+  assert.doesNotMatch(providerCredentials, /Fingerprint: \{credential\.token_fingerprint_prefix/)
+})
+
+test('navigation is grouped by operator mental model without route changes', () => {
+  assert.match(appShell, /const navGroups/)
+  assert.match(appShell, /日常处理/)
+  assert.match(appShell, /渠道与授权/)
+  assert.match(appShell, /治理与运维/)
+  assert.match(appShell, /to: '\/provider-credentials'/)
+  assert.match(appShell, /to: '\/ai-control'/)
+})

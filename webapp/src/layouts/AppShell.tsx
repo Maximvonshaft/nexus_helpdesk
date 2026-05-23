@@ -24,6 +24,12 @@ const nav = [
   { to: '/users', label: '账号权限', hint: '人员与权限', permission: 'users' },
 ]
 
+const navGroups = [
+  { label: '日常处理', items: ['/', '/workspace', '/webchat', '/bulletins'] },
+  { label: '渠道与授权', items: ['/accounts', '/provider-credentials'] },
+  { label: '治理与运维', items: ['/runtime', '/ai-control', '/control-plane', '/users', '/webcall-ai-demo'] },
+]
+
 export function AppShell({ children }: PropsWithChildren) {
   const { location } = useRouterState()
   const navigate = useNavigate()
@@ -102,15 +108,24 @@ export function AppShell({ children }: PropsWithChildren) {
           <div className="subtle">工单、客户消息、公告与渠道统一处理</div>
         </div>
         <nav className="nav" data-testid="operator-primary-navigation">
-          {availableNav.map((item) => {
-            const active = location.pathname === item.to || (item.to !== '/' && location.pathname.startsWith(item.to))
-            const showRuntimeAttention = item.attention === 'runtime' && runtimeNeedsAttention
+          {navGroups.map((group) => {
+            const groupItems = group.items.map((to) => availableNav.find((item) => item.to === to)).filter(Boolean) as typeof nav
+            if (!groupItems.length) return null
             return (
-              <Link key={item.to} to={item.to} data-active={active ? 'true' : 'false'}>
-                <span>{item.label}</span>
-                <small>{item.hint}</small>
-                {showRuntimeAttention ? <Badge tone="danger">需处理 {runtimeAttentionCount}</Badge> : null}
-              </Link>
+              <div className="nav-group" key={group.label}>
+                <div className="nav-group-label">{group.label}</div>
+                {groupItems.map((item) => {
+                  const active = location.pathname === item.to || (item.to !== '/' && location.pathname.startsWith(item.to))
+                  const showRuntimeAttention = item.attention === 'runtime' && runtimeNeedsAttention
+                  return (
+                    <Link key={item.to} to={item.to} data-active={active ? 'true' : 'false'}>
+                      <span>{item.label}</span>
+                      <small>{item.hint}</small>
+                      {showRuntimeAttention ? <Badge tone="danger">需处理 {runtimeAttentionCount}</Badge> : null}
+                    </Link>
+                  )
+                })}
+              </div>
             )
           })}
         </nav>
