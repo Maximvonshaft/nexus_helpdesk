@@ -8,6 +8,8 @@ _ALLOWED_AGENT_MODES = {"ai_first_human_fallback"}
 _ALLOWED_STT_PROVIDERS = {"mock", "disabled", "contract_stub", "deepgram"}
 _ALLOWED_TTS_PROVIDERS = {"mock", "disabled", "contract_stub"}
 _ALLOWED_AI_PROVIDERS = {"provider_runtime"}
+_ALLOWED_AUDIO_REFERENCE_SOURCES = {"disabled", "static_fixture"}
+_LOCAL_AUDIO_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -53,6 +55,10 @@ class WebCallAISettings:
     stt_deepgram_smart_format: bool
     stt_deepgram_endpoint: str
     stt_deepgram_remote_url_allowlist: str | None
+    audio_reference_source: str
+    audio_reference_static_url: str | None
+    audio_reference_allowlist: str | None
+    audio_reference_static_enabled: bool
     ai_provider: str
     allow_speedaf_work_order: bool
     allow_cancel: bool
@@ -77,6 +83,12 @@ class WebCallAISettings:
             raise RuntimeError("WEBCALL_TTS_CONTRACT_STUB_ENABLED must be true for contract_stub")
         if self.ai_provider not in _ALLOWED_AI_PROVIDERS:
             raise RuntimeError("WEBCALL_AI_PROVIDER must be provider_runtime in this foundation PR")
+        if self.audio_reference_source not in _ALLOWED_AUDIO_REFERENCE_SOURCES:
+            raise RuntimeError("WEBCALL_AI_AUDIO_REFERENCE_SOURCE must be disabled or static_fixture in PR-7")
+        if self.app_env == "production" and self.audio_reference_source == "static_fixture":
+            raise RuntimeError("WEBCALL_AI_AUDIO_REFERENCE_SOURCE static_fixture is not allowed in production")
+        if self.audio_reference_source == "static_fixture":
+            self._validate_static_audio_reference()
         if self.max_turns < 1 or self.max_turns > 12:
             raise RuntimeError("WEBCALL_AI_AGENT_MAX_TURNS must be between 1 and 12")
         if self.max_call_seconds < 30 or self.max_call_seconds > 600:
@@ -112,6 +124,21 @@ class WebCallAISettings:
                 if not self.stt_deepgram_endpoint.startswith("https://"):
                     raise RuntimeError("WEBCALL_STT_DEEPGRAM_ENDPOINT must be https in production")
 
+    def _validate_static_audio_reference(self) -> None:
+        if not self.audio_reference_static_enabled:
+            raise RuntimeError("WEBCALL_AI_AUDIO_REFERENCE_STATIC_ENABLED must be true for static_fixture")
+        if not self.audio_reference_static_url:
+            raise RuntimeError("WEBCALL_AI_AUDIO_REFERENCE_STATIC_URL is required for static_fixture")
+        if not self.audio_reference_static_url.startswith("https://"):
+            raise RuntimeError("WEBCALL_AI_AUDIO_REFERENCE_STATIC_URL must be https")
+        host = _host_from_https_url(self.audio_reference_static_url)
+        if not host or host in _LOCAL_AUDIO_REFERENCE_HOSTS:
+            raise RuntimeError("WEBCALL_AI_AUDIO_REFERENCE_STATIC_URL must use a non-local https host")
+        if self.audio_reference_allowlist:
+            allowed_hosts = _csv_hosts(self.audio_reference_allowlist)
+            if host not in allowed_hosts:
+                raise RuntimeError("WEBCALL_AI_AUDIO_REFERENCE_STATIC_URL host must be in allowlist")
+
 
 @lru_cache(maxsize=1)
 def get_webcall_ai_settings() -> WebCallAISettings:
@@ -139,6 +166,11 @@ def get_webcall_ai_settings() -> WebCallAISettings:
         stt_deepgram_endpoint=os.getenv("WEBCALL_STT_DEEPGRAM_ENDPOINT", "https://api.deepgram.com/v1/listen").strip()
         or "https://api.deepgram.com/v1/listen",
         stt_deepgram_remote_url_allowlist=os.getenv("WEBCALL_STT_DEEPGRAM_REMOTE_URL_ALLOWLIST") or None,
+        audio_reference_source=os.getenv("WEBCALL_AI_AUDIO_REFERENCE_SOURCE", "disabled").strip().lower()
+        or "disabled",
+        audio_reference_static_url=(os.getenv("WEBCALL_AI_AUDIO_REFERENCE_STATIC_URL") or "").strip() or None,
+        audio_reference_allowlist=(os.getenv("WEBCALL_AI_AUDIO_REFERENCE_ALLOWLIST") or "").strip() or None,
+        audio_reference_static_enabled=_env_bool("WEBCALL_AI_AUDIO_REFERENCE_STATIC_ENABLED", False),
         ai_provider=os.getenv("WEBCALL_AI_PROVIDER", "provider_runtime").strip().lower() or "provider_runtime",
         allow_speedaf_work_order=_env_bool("WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER", False),
         allow_cancel=_env_bool("WEBCALL_AI_ALLOW_CANCEL", False),
@@ -150,3 +182,15 @@ def get_webcall_ai_settings() -> WebCallAISettings:
     )
     settings.validate_runtime()
     return settings
+
+
+def _host_from_https_url(value: str) -> str:
+    without_scheme = value[len("https://") :]
+    authority = without_scheme.split("/", 1)[0]
+    if authority.startswith("["):
+        return authority.split("]", 1)[0][1:].lower()
+    return authority.split(":", 1)[0].lower()
+
+
+def _csv_hosts(value: str) -> set[str]:
+    return {item.strip().lower() for item in value.split(",") if item.strip()}

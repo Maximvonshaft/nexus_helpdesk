@@ -5,6 +5,7 @@ claim lifecycle, deterministic mock turn execution, and mock media boundary
 contracts. It does not start a functional AI voice agent.
 """
 
+from .audio_reference_resolver import resolve_audio_reference_for_session
 from .config import WebCallAISettings, get_webcall_ai_settings
 from .contract_stub_provider import (
     ContractStubSTTProvider,
@@ -81,4 +82,5 @@ __all__ = [
     "heartbeat_webcall_ai_session",
     "release_webcall_ai_session",
     "reject_forbidden_action",
+    "resolve_audio_reference_for_session",
 ]

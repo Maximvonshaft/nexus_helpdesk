@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from ...utils.time import utc_now
 from ...voice_models import WebchatVoiceAIAction, WebchatVoiceAITurn, WebchatVoiceSession
+from .audio_reference_resolver import resolve_audio_reference_for_session
 from .lifecycle import WEBCALL_AI_STATUS_CLAIMED
 from .media_schemas import WebCallSTTInput, WebCallTTSInput
 from .provider_router import get_stt_provider, get_tts_provider
@@ -34,11 +35,13 @@ def execute_mock_turn_for_claimed_session(
         raise ValueError("mock turn requires claimed WebCall AI session owned by worker")
 
     stt_provider = get_stt_provider()
+    audio_reference = resolve_audio_reference_for_session(session, worker_id)
     stt_result = stt_provider.transcribe(
         WebCallSTTInput(
             voice_session_id=session.id,
             worker_id=worker_id,
             locale=session.ai_language,
+            audio_reference=audio_reference,
         )
     )
     if (

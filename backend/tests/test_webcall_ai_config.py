@@ -28,6 +28,10 @@ WEBCALL_ENV_KEYS = [
     "WEBCALL_STT_DEEPGRAM_SMART_FORMAT",
     "WEBCALL_STT_DEEPGRAM_ENDPOINT",
     "WEBCALL_STT_DEEPGRAM_REMOTE_URL_ALLOWLIST",
+    "WEBCALL_AI_AUDIO_REFERENCE_SOURCE",
+    "WEBCALL_AI_AUDIO_REFERENCE_STATIC_URL",
+    "WEBCALL_AI_AUDIO_REFERENCE_ALLOWLIST",
+    "WEBCALL_AI_AUDIO_REFERENCE_STATIC_ENABLED",
     "WEBCALL_AI_PROVIDER",
     "WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER",
     "WEBCALL_AI_ALLOW_CANCEL",
@@ -71,6 +75,10 @@ def test_webcall_ai_defaults_are_disabled_and_mock():
     assert settings.stt_deepgram_smart_format is True
     assert settings.stt_deepgram_endpoint == "https://api.deepgram.com/v1/listen"
     assert settings.stt_deepgram_remote_url_allowlist is None
+    assert settings.audio_reference_source == "disabled"
+    assert settings.audio_reference_static_url is None
+    assert settings.audio_reference_allowlist is None
+    assert settings.audio_reference_static_enabled is False
     assert settings.ai_provider == "provider_runtime"
     assert settings.allow_speedaf_work_order is False
     assert settings.allow_cancel is False
