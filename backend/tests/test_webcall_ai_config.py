@@ -32,6 +32,10 @@ WEBCALL_ENV_KEYS = [
     "WEBCALL_AI_AUDIO_REFERENCE_STATIC_URL",
     "WEBCALL_AI_AUDIO_REFERENCE_ALLOWLIST",
     "WEBCALL_AI_AUDIO_REFERENCE_STATIC_ENABLED",
+    "WEBCALL_AI_PARTICIPANT_ENABLED",
+    "WEBCALL_AI_PARTICIPANT_MODE",
+    "WEBCALL_AI_PARTICIPANT_TOKEN_TTL_SECONDS",
+    "WEBCALL_AI_PARTICIPANT_ID_PREFIX",
     "WEBCALL_AI_PROVIDER",
     "WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER",
     "WEBCALL_AI_ALLOW_CANCEL",
@@ -79,6 +83,10 @@ def test_webcall_ai_defaults_are_disabled_and_mock():
     assert settings.audio_reference_static_url is None
     assert settings.audio_reference_allowlist is None
     assert settings.audio_reference_static_enabled is False
+    assert settings.participant_enabled is False
+    assert settings.participant_mode == "fake_room_client"
+    assert settings.participant_token_ttl_seconds == 300
+    assert settings.participant_id_prefix == "ai_webcall"
     assert settings.ai_provider == "provider_runtime"
     assert settings.allow_speedaf_work_order is False
     assert settings.allow_cancel is False
@@ -138,6 +146,23 @@ def test_invalid_agent_mode_fails_closed(monkeypatch):
     get_webcall_ai_settings.cache_clear()
 
     with pytest.raises(RuntimeError, match="WEBCALL_AI_AGENT_MODE"):
+        get_webcall_ai_settings()
+
+
+def test_participant_mode_allows_fake_room_client_only(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_PARTICIPANT_MODE", "real_room_client")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_PARTICIPANT_MODE"):
+        get_webcall_ai_settings()
+
+
+def test_production_rejects_participant_enabled(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("WEBCALL_AI_PARTICIPANT_ENABLED", "true")
+    get_webcall_ai_settings.cache_clear()
+
+    with pytest.raises(RuntimeError, match="WEBCALL_AI_PARTICIPANT_ENABLED"):
         get_webcall_ai_settings()
 
 

@@ -9,6 +9,7 @@ _ALLOWED_STT_PROVIDERS = {"mock", "disabled", "contract_stub", "deepgram"}
 _ALLOWED_TTS_PROVIDERS = {"mock", "disabled", "contract_stub"}
 _ALLOWED_AI_PROVIDERS = {"provider_runtime"}
 _ALLOWED_AUDIO_REFERENCE_SOURCES = {"disabled", "static_fixture"}
+_ALLOWED_PARTICIPANT_MODES = {"fake_room_client"}
 _LOCAL_AUDIO_REFERENCE_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -59,6 +60,10 @@ class WebCallAISettings:
     audio_reference_static_url: str | None
     audio_reference_allowlist: str | None
     audio_reference_static_enabled: bool
+    participant_enabled: bool
+    participant_mode: str
+    participant_token_ttl_seconds: int
+    participant_id_prefix: str
     ai_provider: str
     allow_speedaf_work_order: bool
     allow_cancel: bool
@@ -89,6 +94,14 @@ class WebCallAISettings:
             raise RuntimeError("WEBCALL_AI_AUDIO_REFERENCE_SOURCE static_fixture is not allowed in production")
         if self.audio_reference_source == "static_fixture":
             self._validate_static_audio_reference()
+        if self.participant_mode not in _ALLOWED_PARTICIPANT_MODES:
+            raise RuntimeError("WEBCALL_AI_PARTICIPANT_MODE must be fake_room_client in PR-8")
+        if self.participant_token_ttl_seconds < 60 or self.participant_token_ttl_seconds > 900:
+            raise RuntimeError("WEBCALL_AI_PARTICIPANT_TOKEN_TTL_SECONDS must be between 60 and 900")
+        if not self.participant_id_prefix:
+            raise RuntimeError("WEBCALL_AI_PARTICIPANT_ID_PREFIX must not be empty")
+        if self.app_env == "production" and self.participant_enabled:
+            raise RuntimeError("WEBCALL_AI_PARTICIPANT_ENABLED must be false in production for PR-8")
         if self.max_turns < 1 or self.max_turns > 12:
             raise RuntimeError("WEBCALL_AI_AGENT_MAX_TURNS must be between 1 and 12")
         if self.max_call_seconds < 30 or self.max_call_seconds > 600:
@@ -171,6 +184,17 @@ def get_webcall_ai_settings() -> WebCallAISettings:
         audio_reference_static_url=(os.getenv("WEBCALL_AI_AUDIO_REFERENCE_STATIC_URL") or "").strip() or None,
         audio_reference_allowlist=(os.getenv("WEBCALL_AI_AUDIO_REFERENCE_ALLOWLIST") or "").strip() or None,
         audio_reference_static_enabled=_env_bool("WEBCALL_AI_AUDIO_REFERENCE_STATIC_ENABLED", False),
+        participant_enabled=_env_bool("WEBCALL_AI_PARTICIPANT_ENABLED", False),
+        participant_mode=os.getenv("WEBCALL_AI_PARTICIPANT_MODE", "fake_room_client").strip().lower()
+        or "fake_room_client",
+        participant_token_ttl_seconds=_env_int(
+            "WEBCALL_AI_PARTICIPANT_TOKEN_TTL_SECONDS",
+            300,
+            minimum=60,
+            maximum=900,
+        ),
+        participant_id_prefix=os.getenv("WEBCALL_AI_PARTICIPANT_ID_PREFIX", "ai_webcall").strip()
+        or "ai_webcall",
         ai_provider=os.getenv("WEBCALL_AI_PROVIDER", "provider_runtime").strip().lower() or "provider_runtime",
         allow_speedaf_work_order=_env_bool("WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER", False),
         allow_cancel=_env_bool("WEBCALL_AI_ALLOW_CANCEL", False),
