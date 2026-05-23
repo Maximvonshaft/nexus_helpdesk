@@ -163,7 +163,7 @@ def get_human_webcall_runtime_status(db: Session | None = None) -> dict[str, Any
         ringing_session_count = _human_webcall_count(db, HUMAN_WEBCALL_RINGING_STATUSES)
         stale_active_session_count = _human_webcall_count(db, HUMAN_WEBCALL_ACTIVE_STATUSES, stale=True)
         stale_ringing_session_count = _human_webcall_count(db, HUMAN_WEBCALL_RINGING_STATUSES, stale=True)
-    except SQLAlchemyError as exc:
+    except (AttributeError, TypeError, SQLAlchemyError) as exc:
         active_session_count = 0
         ringing_session_count = 0
         stale_active_session_count = 0
