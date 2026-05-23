@@ -35,3 +35,12 @@ except Exception:
     # Preserve service import resilience; background job attempt isolation is
     # locked by background job transaction-boundary regression tests and CI.
     pass
+
+try:
+    from .openclaw_event_transaction_boundary import apply_openclaw_event_transaction_boundary_patch
+
+    apply_openclaw_event_transaction_boundary_patch()
+except Exception:
+    # Preserve service import resilience; event attempt isolation is locked by
+    # OpenClaw event transaction-boundary regression tests and CI.
+    pass
