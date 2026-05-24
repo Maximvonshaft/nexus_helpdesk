@@ -215,12 +215,25 @@ services:
       retries: 5
       start_period: 10s
 
+  codex-openclaw-home-permissions:
+    <<: *app_image
+    profiles:
+      - codex-app-server
+    user: "0:0"
+    restart: "no"
+    volumes:
+      - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_codex_home:/home/appuser/.openclaw:rw
+    command: sh -c "mkdir -p /home/appuser/.openclaw && chown -R appuser:appgroup /home/appuser/.openclaw && chmod 700 /home/appuser/.openclaw"
+
   codex-private-model-runtime:
     <<: *app_image
     profiles:
       - codex-app-server
     environment:
       APP_ENV: production
+      HOME: /home/appuser
+      OPENCLAW_HOME: /home/appuser/.openclaw
+      XDG_CONFIG_HOME: /home/appuser/.openclaw
       BIND_HOST: 0.0.0.0
       PORT: "18800"
       OPENCLAW_CODEX_RUNTIME_ENABLED: ${OPENCLAW_CODEX_RUNTIME_ENABLED:-false}
@@ -233,6 +246,16 @@ services:
       OPENCLAW_CODEX_AGENT: ${OPENCLAW_CODEX_AGENT:-}
       OPENCLAW_CODEX_READY_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_READY_TIMEOUT_SECONDS:-5}
       OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS:-60}
+    volumes:
+      - /run/secrets:/run/secrets:ro
+      - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_responses_token:/run/openclaw_responses_token:ro
+      - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_native_responses_token:/run/openclaw_native_responses_token:ro
+      - /opt/nexus_helpdesk/deploy/runtime_secrets/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
+      - ../data/uploads:/app/backend/uploads
+      - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_codex_home:/home/appuser/.openclaw:rw
+    depends_on:
+      codex-openclaw-home-permissions:
+        condition: service_completed_successfully
     expose:
       - "18800"
     command: python /app/deploy/codex_openclaw_codex_harness_adapter.py

@@ -198,6 +198,9 @@ The 18800 adapter exposes:
 Required adapter env:
 
 ```bash
+HOME=/home/appuser
+OPENCLAW_HOME=/home/appuser/.openclaw
+XDG_CONFIG_HOME=/home/appuser/.openclaw
 OPENCLAW_CODEX_RUNTIME_ENABLED=true
 OPENCLAW_CODEX_CLI=openclaw
 OPENCLAW_CODEX_AUTH_PROVIDER=openai-codex
@@ -208,13 +211,27 @@ OPENCLAW_CODEX_INFER_TRANSPORT=gateway
 OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS=60
 ```
 
-Before enabling the service, install and authenticate OpenClaw through the official route:
+The 18800 service persists the official OpenClaw auth/profile home through this read/write bind mount:
+
+```text
+/opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_codex_home:/home/appuser/.openclaw:rw
+```
+
+The compose profile includes `codex-openclaw-home-permissions`, a one-shot root init container that creates the mount target and applies `appuser:appgroup` ownership before `codex-private-model-runtime` starts. Do not log or copy files from this directory; it may contain OAuth material after login.
+
+Before enabling the service, install and authenticate OpenClaw through the official route inside the same mounted home:
 
 ```bash
-npm install -g openclaw @openclaw/codex
-openclaw models auth login --provider openai-codex --set-default
-openclaw models auth list --provider openai-codex --json
-openclaw models status --json
+docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up -d codex-openclaw-home-permissions codex-private-model-runtime
+
+docker compose -f deploy/docker-compose.server.yml exec codex-private-model-runtime \
+  openclaw models auth login --provider openai-codex --set-default
+
+docker compose -f deploy/docker-compose.server.yml exec -T codex-private-model-runtime \
+  openclaw models auth list --provider openai-codex --json
+
+docker compose -f deploy/docker-compose.server.yml exec -T codex-private-model-runtime \
+  openclaw models status --json
 ```
 
 The adapter may be promoted later:
@@ -276,6 +293,9 @@ export CODEX_APP_SERVER_PRIVATE_REPLY_URL=http://codex-private-reply-engine:1879
 export CODEX_APP_SERVER_REPLY_GENERATION_BACKEND=nexus_private_reply_engine
 export CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL=http://codex-private-model-runtime:18800/reply
 export CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://codex-app-server-upstream:18795/reply
+export HOME=/home/appuser
+export OPENCLAW_HOME=/home/appuser/.openclaw
+export XDG_CONFIG_HOME=/home/appuser/.openclaw
 export OPENCLAW_CODEX_RUNTIME_ENABLED=true
 export OPENCLAW_CODEX_AUTH_PROVIDER=openai-codex
 export OPENCLAW_CODEX_PLUGIN_PACKAGE=@openclaw/codex
@@ -283,6 +303,7 @@ export OPENCLAW_CODEX_MODEL=openai/gpt-5.5
 export OPENCLAW_CODEX_INFER_TRANSPORT=gateway
 
 docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up -d \
+  codex-openclaw-home-permissions \
   codex-private-model-runtime \
   codex-private-reply-engine \
   codex-app-server-upstream \

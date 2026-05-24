@@ -66,10 +66,10 @@ RUN node --version \
 RUN mkdir -p /app/frontend_dist/static/webchat \
     && cp -r /app/backend/app/static/webchat/. /app/frontend_dist/static/webchat/
 
-RUN mkdir -p /app/backend/uploads \
+RUN mkdir -p /app/backend/uploads /home/appuser/.openclaw \
     && addgroup --system appgroup \
     && adduser --system --ingroup appgroup --home /app --shell /usr/sbin/nologin appuser \
-    && chown -R appuser:appgroup /app
+    && chown -R appuser:appgroup /app /home/appuser
 
 WORKDIR /app/backend
 

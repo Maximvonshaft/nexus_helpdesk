@@ -59,3 +59,22 @@ def test_runtime_image_validates_openclaw_cli_at_build_time():
     assert "npm list -g --depth=0 openclaw @openclaw/codex" in dockerfile
     assert "/usr/local/lib/node_modules/openclaw/dist/entry.mjs" in dockerfile
     assert "/usr/local/lib/node_modules/openclaw/openclaw.mjs" in dockerfile
+
+
+def test_codex_private_model_runtime_uses_persistent_openclaw_home():
+    dockerfile = _read("Dockerfile")
+    compose = _read("deploy/docker-compose.server.yml")
+
+    assert "/home/appuser/.openclaw" in dockerfile
+    assert "chown -R appuser:appgroup /app /home/appuser" in dockerfile
+    assert "codex-openclaw-home-permissions:" in compose
+    assert "user: \"0:0\"" in compose
+    assert "chown -R appuser:appgroup /home/appuser/.openclaw" in compose
+    assert (
+        "/opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_codex_home:/home/appuser/.openclaw:rw"
+        in compose
+    )
+    assert "HOME: /home/appuser" in compose
+    assert "OPENCLAW_HOME: /home/appuser/.openclaw" in compose
+    assert "XDG_CONFIG_HOME: /home/appuser/.openclaw" in compose
+    assert "condition: service_completed_successfully" in compose
