@@ -69,6 +69,7 @@ jobs:
               backend/app/services/provider_runtime/codex_llm_client.py) webcall_relevant=1 ;;
               backend/app/services/provider_runtime/codex_smoke_chat.py) webcall_relevant=1 ;;
               backend/app/services/provider_runtime/oauth_refresh_manager.py) webcall_relevant=1 ;;
+              backend/app/services/provider_runtime/router.py) webcall_relevant=1 ;;
               backend/app/services/webcall_ai_production/**) webcall_relevant=1 ;;
               backend/app/webcall_ai_schemas.py) webcall_relevant=1 ;;
               backend/tests/test_codex_app_server_image_contract.py) webcall_relevant=1 ;;
@@ -78,6 +79,7 @@ jobs:
               backend/tests/test_codex_private_reply_engine.py) webcall_relevant=1 ;;
               backend/tests/test_codex_smoke_chat.py) webcall_relevant=1 ;;
               backend/tests/test_provider_runtime_codex_oauth_webchat.py) webcall_relevant=1 ;;
+              backend/tests/test_provider_runtime_kill_switch_canary.py) webcall_relevant=1 ;;
               backend/tests/test_provider_runtime_router_fallback_e2e.py) webcall_relevant=1 ;;
               backend/tests/test_webchat_fast_reply_api.py) webcall_relevant=1 ;;
               backend/tests/test_webcall_ai_production.py) webcall_relevant=1 ;;
@@ -132,6 +134,7 @@ jobs:
               backend/app/services/provider_runtime/codex_llm_client.py) ;;
               backend/app/services/provider_runtime/codex_smoke_chat.py) ;;
               backend/app/services/provider_runtime/oauth_refresh_manager.py) ;;
+              backend/app/services/provider_runtime/router.py) ;;
               backend/app/services/webcall_ai_production/**) ;;
               backend/app/webcall_ai_schemas.py) ;;
               backend/tests/test_codex_app_server_image_contract.py) ;;
@@ -141,6 +144,7 @@ jobs:
               backend/tests/test_codex_private_reply_engine.py) ;;
               backend/tests/test_codex_smoke_chat.py) ;;
               backend/tests/test_provider_runtime_codex_oauth_webchat.py) ;;
+              backend/tests/test_provider_runtime_kill_switch_canary.py) ;;
               backend/tests/test_provider_runtime_router_fallback_e2e.py) ;;
               backend/tests/test_webchat_fast_reply_api.py) ;;
               backend/tests/test_webcall_ai_production.py) ;;

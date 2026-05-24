@@ -396,6 +396,104 @@ canary_percent=0
 OpenClaw fallback remains configured
 ```
 
+## Controlled WebChat 1% Canary Smoke
+
+Do not run this step until owner approval is explicit. The route must be restored to `canary_percent=0` after the smoke, regardless of success or failure.
+
+Canary hit selection is session-stable. It must use the same identity as production:
+
+```text
+tenant_id:channel_key:session_id
+```
+
+Do not include `request_id`; WebChat request ids are dynamic and will make precomputed sessions unreliable.
+
+Compute one hit session for the 1% bucket and one skip session for fallback verification:
+
+```bash
+python - <<'PY'
+import hashlib
+
+def bucket(session_id):
+    raw = f"default:website:{session_id}"
+    return int(hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:8], 16) % 100
+
+hit = None
+skip = None
+for idx in range(20000):
+    candidate = f"codex-canary-session-{idx}"
+    value = bucket(candidate)
+    if value == 0 and hit is None:
+        hit = candidate
+    if value >= 1 and skip is None:
+        skip = candidate
+    if hit and skip:
+        break
+
+if not hit or not skip:
+    raise SystemExit("failed to find deterministic canary sessions")
+
+print(f"HIT_SESSION={hit}")
+print(f"SKIP_SESSION={skip}")
+print(f"HIT_BUCKET={bucket(hit)}")
+print(f"SKIP_BUCKET={bucket(skip)}")
+PY
+```
+
+Temporarily set `canary_percent=1`, run one valid-Origin WebChat probe with `HIT_SESSION`, and verify the audit log includes a `codex_app_server` generate attempt for that exact session:
+
+```sql
+SELECT provider, operation, status, error_code, session_id, request_id, created_at
+FROM provider_runtime_audit_logs
+WHERE tenant_id = 'default'
+  AND channel_key = 'website'
+  AND session_id = '<HIT_SESSION>'
+ORDER BY created_at DESC
+LIMIT 20;
+```
+
+Expected hit-path evidence:
+
+```text
+provider=codex_app_server
+operation=generate
+```
+
+Then run one valid-Origin probe with `SKIP_SESSION` and verify fallback remains intact:
+
+```sql
+SELECT provider, operation, status, error_code, session_id, request_id, created_at
+FROM provider_runtime_audit_logs
+WHERE tenant_id = 'default'
+  AND channel_key = 'website'
+  AND session_id = '<SKIP_SESSION>'
+ORDER BY created_at DESC
+LIMIT 20;
+```
+
+Expected skip-path evidence:
+
+```text
+no codex_app_server generate row
+openclaw_responses and/or rule_engine attempted according to configured fallback order
+```
+
+Always restore and verify:
+
+```sql
+UPDATE provider_routing_rules
+SET canary_percent = 0
+WHERE tenant_id = 'default'
+  AND channel_key = 'website'
+  AND scenario = 'webchat_fast_reply';
+
+SELECT primary_provider, fallback_providers, canary_percent, kill_switch, enabled
+FROM provider_routing_rules
+WHERE tenant_id = 'default'
+  AND channel_key = 'website'
+  AND scenario = 'webchat_fast_reply';
+```
+
 ## Bridge Probes
 
 ```bash
