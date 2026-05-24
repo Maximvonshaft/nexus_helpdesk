@@ -70,6 +70,7 @@ jobs:
               backend/app/services/provider_runtime/oauth_refresh_manager.py) webcall_relevant=1 ;;
               backend/app/services/webcall_ai_production/**) webcall_relevant=1 ;;
               backend/app/webcall_ai_schemas.py) webcall_relevant=1 ;;
+              backend/tests/test_codex_app_server_image_contract.py) webcall_relevant=1 ;;
               backend/tests/test_codex_app_server_bridge_proxy.py) webcall_relevant=1 ;;
               backend/tests/test_codex_app_server_private_upstream_proxy.py) webcall_relevant=1 ;;
               backend/tests/test_codex_smoke_chat.py) webcall_relevant=1 ;;
@@ -126,6 +127,7 @@ jobs:
               backend/app/services/provider_runtime/oauth_refresh_manager.py) ;;
               backend/app/services/webcall_ai_production/**) ;;
               backend/app/webcall_ai_schemas.py) ;;
+              backend/tests/test_codex_app_server_image_contract.py) ;;
               backend/tests/test_codex_app_server_bridge_proxy.py) ;;
               backend/tests/test_codex_app_server_private_upstream_proxy.py) ;;
               backend/tests/test_codex_smoke_chat.py) ;;
