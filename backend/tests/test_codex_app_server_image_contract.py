@@ -103,3 +103,24 @@ def test_codex_private_reply_engine_uses_30_second_ready_timeout():
     assert "min(READYZ_TIMEOUT_SECONDS, 60.0)" in engine
     assert "min(READYZ_TIMEOUT_SECONDS, 5.0)" not in engine
     assert "CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS=30" in runbook
+
+
+def test_codex_app_server_upstream_and_bridge_use_30_second_ready_timeout():
+    compose = _read("deploy/docker-compose.server.yml")
+    private_upstream = _read("deploy/codex_app_server_private_upstream_proxy.py")
+    bridge = _read("deploy/codex_app_server_bridge_proxy.py")
+    runbook = _read("docs/engineering/codex_chat_smoke_runbook.md")
+
+    assert (
+        "CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS: "
+        "${CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS:-30}"
+    ) in compose
+    assert "CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS:-30}" in compose
+    assert 'CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS", "30"' in private_upstream
+    assert 'CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS", "30"' in bridge
+    assert "min(READYZ_TIMEOUT_SECONDS, 60.0)" in private_upstream
+    assert "min(READYZ_TIMEOUT_SECONDS, 60.0)" in bridge
+    assert "min(READYZ_TIMEOUT_SECONDS, 5.0)" not in private_upstream
+    assert "min(READYZ_TIMEOUT_SECONDS, 5.0)" not in bridge
+    assert "CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS=30" in runbook
+    assert "CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS=30" in runbook

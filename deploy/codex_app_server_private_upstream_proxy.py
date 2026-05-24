@@ -14,19 +14,22 @@ BIND_HOST = os.environ.get("BIND_HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "18795"))
 PRIVATE_REPLY_URL = os.environ.get("CODEX_APP_SERVER_PRIVATE_REPLY_URL", "").strip()
 PRIVATE_TIMEOUT_SECONDS = float(os.environ.get("CODEX_APP_SERVER_PRIVATE_TIMEOUT_SECONDS", "30"))
-READYZ_TIMEOUT_SECONDS = float(os.environ.get("CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS", "2"))
+READYZ_TIMEOUT_SECONDS = float(os.environ.get("CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS", "30"))
 BACKEND_LABEL = os.environ.get("CODEX_APP_SERVER_REPLY_GENERATION_BACKEND", "unconfigured").strip() or "unconfigured"
 VERSION = "0.1"
 
 
 def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
     raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.send_header("Content-Length", str(len(raw)))
-    handler.send_header("Cache-Control", "no-store")
-    handler.end_headers()
-    handler.wfile.write(raw)
+    try:
+        handler.send_response(status)
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        handler.send_header("Content-Length", str(len(raw)))
+        handler.send_header("Cache-Control", "no-store")
+        handler.end_headers()
+        handler.wfile.write(raw)
+    except (BrokenPipeError, ConnectionResetError):
+        return
 
 
 def safe_log(handler: BaseHTTPRequestHandler, message: str) -> None:
@@ -37,7 +40,10 @@ def safe_log(handler: BaseHTTPRequestHandler, message: str) -> None:
         "path": getattr(handler, "path", None),
         "message": message,
     }
-    print(json.dumps(record, ensure_ascii=False), flush=True)
+    try:
+        print(json.dumps(record, ensure_ascii=False), flush=True)
+    except (BrokenPipeError, OSError):
+        return
 
 
 def check_bind_host() -> None:
@@ -84,7 +90,7 @@ def private_ready() -> bool:
         return False
     try:
         req = request.Request(readyz_url, method="GET", headers={"Accept": "application/json"})
-        with request.urlopen(req, timeout=max(0.2, min(READYZ_TIMEOUT_SECONDS, 5.0))) as resp:
+        with request.urlopen(req, timeout=max(0.2, min(READYZ_TIMEOUT_SECONDS, 60.0))) as resp:
             raw = resp.read()
             if resp.status != 200:
                 return False

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import socket
+import time
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,7 +15,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _load_bridge_module(monkeypatch, tmp_path, *, upstream_url: str = "http://127.0.0.1:18795/reply", token: str | None = "bridge-token"):
+def _load_bridge_module(
+    monkeypatch,
+    tmp_path,
+    *,
+    upstream_url: str = "http://127.0.0.1:18795/reply",
+    token: str | None = "bridge-token",
+    readyz_timeout: str = "1",
+):
     token_file = tmp_path / "codex_app_server_bridge_token"
     if token is not None:
         token_file.write_text(token, encoding="utf-8")
@@ -28,6 +37,7 @@ def _load_bridge_module(monkeypatch, tmp_path, *, upstream_url: str = "http://12
         monkeypatch.delenv("CODEX_APP_SERVER_REAL_UPSTREAM_URL", raising=False)
     monkeypatch.setenv("CODEX_APP_SERVER_REPLY_GENERATION_BACKEND", "codex_app_server")
     monkeypatch.setenv("CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS", "1")
+    monkeypatch.setenv("CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS", readyz_timeout)
     spec = importlib.util.spec_from_file_location(
         f"codex_app_server_bridge_proxy_test_{id(tmp_path)}",
         ROOT / "deploy" / "codex_app_server_bridge_proxy.py",
@@ -139,6 +149,90 @@ def test_bridge_readyz_returns_200_when_upstream_configured_and_reachable(monkey
     assert payload["real_upstream_configured"] is True
     assert payload["real_upstream_reachable"] is True
     assert payload["reason"] is None
+
+
+def test_bridge_honors_30_second_readyz_timeout(monkeypatch, tmp_path):
+    bridge = _load_bridge_module(
+        monkeypatch,
+        tmp_path,
+        upstream_url="http://codex-app-server-upstream:18795/reply",
+        readyz_timeout="30",
+    )
+    observed: dict[str, float] = {}
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"ok":true}'
+
+    def fake_urlopen(req, timeout):
+        observed["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(bridge.request, "urlopen", fake_urlopen)
+
+    assert bridge.upstream_ready() is True
+    assert observed["timeout"] == 30
+
+
+def test_bridge_slow_upstream_readyz_within_timeout_is_reachable(monkeypatch, tmp_path):
+    class UpstreamHandler(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args) -> None:
+            return None
+
+        def do_GET(self) -> None:
+            time.sleep(0.2)
+            raw = json.dumps({"ok": True}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+    upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    upstream_thread.start()
+    try:
+        bridge = _load_bridge_module(
+            monkeypatch,
+            tmp_path,
+            upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}/reply",
+            readyz_timeout="1",
+        )
+        payload = bridge.readiness_payload()
+    finally:
+        upstream.shutdown()
+        upstream.server_close()
+        upstream_thread.join(timeout=2)
+
+    assert payload["ok"] is True
+    assert payload["real_upstream_reachable"] is True
+
+
+def test_bridge_upstream_readyz_timeout_is_not_reachable(monkeypatch, tmp_path):
+    bridge = _load_bridge_module(
+        monkeypatch,
+        tmp_path,
+        upstream_url="http://codex-app-server-upstream:18795/reply",
+        readyz_timeout="30",
+    )
+
+    def fake_urlopen(req, timeout):
+        raise socket.timeout("timed out")
+
+    monkeypatch.setattr(bridge.request, "urlopen", fake_urlopen)
+    payload = bridge.readiness_payload()
+
+    assert payload["ok"] is False
+    assert payload["real_upstream_reachable"] is False
+    assert payload["reason"] == "codex_app_server_real_upstream_unreachable"
 
 
 def test_bridge_readyz_returns_503_when_upstream_configured_but_unreachable(monkeypatch, tmp_path):
