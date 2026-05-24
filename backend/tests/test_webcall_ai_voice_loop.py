@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import os
+import sys
 import wave
 from io import BytesIO
+from pathlib import Path
 from uuid import uuid4
 
 os.environ.setdefault("APP_ENV", "development")
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webcall_ai_voice_loop_tests.db")
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT.parent))
 
 import pytest
 
