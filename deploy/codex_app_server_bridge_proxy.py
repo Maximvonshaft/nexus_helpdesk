@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib import error, request
+from urllib.parse import urlparse, urlunparse
 
 BIND_HOST = os.environ.get("BIND_HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "18794"))
@@ -21,6 +22,7 @@ MODE = os.environ.get("CODEX_APP_SERVER_BRIDGE_MODE", "real").strip().lower()
 REAL_UPSTREAM_URL = os.environ.get("CODEX_APP_SERVER_REAL_UPSTREAM_URL", "").strip()
 REPLY_GENERATION_BACKEND = os.environ.get("CODEX_APP_SERVER_REPLY_GENERATION_BACKEND", "unconfigured").strip() or "unconfigured"
 UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get("CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS", "30"))
+READYZ_TIMEOUT_SECONDS = float(os.environ.get("CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS", "2"))
 VERSION = "1.2"
 
 _LOGIN_STATE: dict[str, Any] = {
@@ -104,10 +106,39 @@ def health_payload() -> dict[str, Any]:
     }
 
 
+def upstream_readyz_url() -> str | None:
+    if not REAL_UPSTREAM_URL:
+        return None
+    parsed = urlparse(REAL_UPSTREAM_URL)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return urlunparse((parsed.scheme, parsed.netloc, "/readyz", "", "", ""))
+
+
+def upstream_ready() -> bool:
+    readyz_url = upstream_readyz_url()
+    if not readyz_url:
+        return False
+    try:
+        req = request.Request(readyz_url, method="GET", headers={"Accept": "application/json"})
+        with request.urlopen(req, timeout=max(0.2, min(READYZ_TIMEOUT_SECONDS, 5.0))) as resp:
+            raw = resp.read()
+            if resp.status != 200:
+                return False
+    except Exception:
+        return False
+    try:
+        decoded = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return True
+    return not isinstance(decoded, dict) or decoded.get("ok") is not False
+
+
 def readiness_payload() -> dict[str, Any]:
     token_configured = bool(load_bridge_token())
     real_upstream_configured = MODE == "real" and bool(REAL_UPSTREAM_URL)
-    ok = token_configured and real_upstream_configured
+    real_upstream_reachable = real_upstream_configured and upstream_ready()
+    ok = token_configured and real_upstream_configured and real_upstream_reachable
     reason = None
     if not token_configured:
         reason = "bridge_token_not_configured"
@@ -115,11 +146,14 @@ def readiness_payload() -> dict[str, Any]:
         reason = "codex_app_server_bridge_not_real"
     elif not REAL_UPSTREAM_URL:
         reason = "codex_app_server_real_upstream_not_configured"
+    elif not real_upstream_reachable:
+        reason = "codex_app_server_real_upstream_unreachable"
     return {
         "ok": ok,
         "service": "nexus-codex-app-server-bridge-proxy",
         "mode": MODE,
         "real_upstream_configured": real_upstream_configured,
+        "real_upstream_reachable": real_upstream_reachable,
         "reason": reason,
         "accepts_oauth_login": True,
         "reply_generation_backend": REPLY_GENERATION_BACKEND if real_upstream_configured else "unconfigured",

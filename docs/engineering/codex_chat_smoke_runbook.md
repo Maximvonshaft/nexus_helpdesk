@@ -4,7 +4,7 @@ This runbook proves Nexus can use an authorized Code X credential for a real adm
 
 Current deployment fact: the status endpoint is proven and `smoke-chat` is deployed. The previous blocker was `codex_llm_endpoint_not_configured`, which means the OAuth credential is authorized but no callable Code X LLM runtime endpoint was configured for the backend.
 
-The current runtime blocker is still `codex_llm_endpoint_not_configured`: the server has the Code X bridge proxy source, but no managed `codex-app-server-bridge` service is running on `18794` and no real Code X app-server upstream is running on `18795`.
+Current deployed state after the bridge service rollout: the `18794` `codex-app-server-bridge` process is alive, but `/readyz` returns `503 codex_app_server_real_upstream_not_configured` because no real Code X app-server upstream is running or configured on `18795`.
 
 ## Preconditions
 
@@ -13,8 +13,8 @@ The current runtime blocker is still `codex_llm_endpoint_not_configured`: the se
 - `PROVIDER_CREDENTIAL_ENCRYPTION_KEY_FILE` is mounted and readable by the backend.
 - At least one active `openai-codex` OAuth credential exists for the tenant.
 - Preferred existing runtime path:
-  - `CODEX_APP_SERVER_BRIDGE_URL=http://172.18.0.1:18794/reply`.
-  - `CODEX_APP_SERVER_LOGIN_URL=http://172.18.0.1:18794/login`.
+  - `CODEX_APP_SERVER_BRIDGE_URL=http://codex-app-server-bridge:18794/reply`.
+  - `CODEX_APP_SERVER_LOGIN_URL=http://codex-app-server-bridge:18794/login`.
   - `CODEX_APP_SERVER_TOKEN_FILE=/run/nexus/codex_app_server_bridge_token`.
   - Optional: `CODEX_APP_SERVER_TIMEOUT_MS`.
 - Direct approved LLM endpoint path:
@@ -42,12 +42,13 @@ BIND_HOST=0.0.0.0
 PORT=18794
 CODEX_APP_SERVER_TOKEN_FILE=/run/nexus/codex_app_server_bridge_token
 CODEX_APP_SERVER_BRIDGE_MODE=real
-CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://172.18.0.1:18795/reply
+CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://codex-app-server-upstream:18795/reply
 CODEX_APP_SERVER_REPLY_GENERATION_BACKEND=codex_app_server
 CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS=30
+CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS=2
 ```
 
-If the real app-server upstream is host-local instead of Docker-host reachable, run the bridge as a host/systemd service and set:
+If the real app-server upstream is host-local instead of Docker-network reachable, set:
 
 ```bash
 CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://127.0.0.1:18795/reply
@@ -55,11 +56,36 @@ CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://127.0.0.1:18795/reply
 
 Do not point this bridge at the OpenClaw Responses proxy on `18793`; that is not accepted as Code X proof.
 
+`/healthz` is liveness only and returns `200` when the bridge process is alive. `/readyz` is strict and checks the token file, `CODEX_APP_SERVER_BRIDGE_MODE=real`, `CODEX_APP_SERVER_REAL_UPSTREAM_URL`, and the upstream `/readyz` endpoint. It may return `503` while `/healthz` returns `200`.
+
 If no real upstream is configured, `/readyz` and `/reply` fail closed with:
 
 ```text
 codex_app_server_real_upstream_not_configured
 ```
+
+If a real upstream URL is configured but not reachable or not ready, `/readyz` fails closed with:
+
+```text
+codex_app_server_real_upstream_unreachable
+```
+
+## Required 18795 Upstream
+
+The repository contains bridge and upstream-adapter scaffolding under `tools/codex-reply-bridge/`, but there is no self-contained, fake-free Code X app-server process in this PR that can produce a real model nonce echo by itself. A real private Code X app-server upstream must be provided and bound to the bridge as:
+
+```bash
+CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://codex-app-server-upstream:18795/reply
+```
+
+Required upstream contract:
+
+- `GET /healthz`: process liveness.
+- `GET /readyz`: returns HTTP `200` with ready state only when the upstream can call the real Code X app-server runtime.
+- `POST /login`: accepts the refreshed Code X OAuth token or establishes the upstream session without exposing it.
+- `POST /reply`: performs the actual Code X-backed LLM call and returns model text, for example `{ "reply": "..." }`.
+
+The upstream must not require an OpenAI API key and must not use OpenClaw `18793` as proof. If this upstream is absent, the correct state is blocked, not successful.
 
 ## Bridge Probes
 
@@ -96,8 +122,8 @@ Expected:
 Set the Nexus backend environment and restart the backend:
 
 ```bash
-CODEX_APP_SERVER_BRIDGE_URL=http://172.18.0.1:18794/reply
-CODEX_APP_SERVER_LOGIN_URL=http://172.18.0.1:18794/login
+CODEX_APP_SERVER_BRIDGE_URL=http://codex-app-server-bridge:18794/reply
+CODEX_APP_SERVER_LOGIN_URL=http://codex-app-server-bridge:18794/login
 CODEX_APP_SERVER_TOKEN_FILE=/run/nexus/codex_app_server_bridge_token
 ```
 
@@ -143,6 +169,7 @@ VERDICT=CODEX_AUTH_AND_CHAT_MODEL_CALL_CONNECTED
 - `409 credential_refresh_required`: stored credential could not be refreshed or is expired.
 - `503 codex_llm_endpoint_not_configured`: credential is authorized, but no callable `CODEX_APP_SERVER_BRIDGE_URL`, `CODEX_LLM_ENDPOINT`, or backward-compatible `CODEX_SMOKE_ENDPOINT` is configured.
 - `503 codex_app_server_real_upstream_not_configured`: bridge is running but no real Code X app-server upstream is configured.
+- `503 codex_app_server_real_upstream_unreachable`: bridge has an upstream URL, but the upstream `/readyz` is not reachable or not ready.
 - `502 codex_provider_call_failed`: configured endpoint failed, timed out, returned invalid JSON, or returned an HTTP error.
 
 The response must never include `access_token`, `refresh_token`, authorization headers, client secret, encryption key, or raw credential payload.

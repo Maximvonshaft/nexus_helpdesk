@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import importlib.util
 import json
+import threading
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import httpx
 import pytest
@@ -15,6 +19,9 @@ from app.enums import UserRole
 from app.main import app
 from app.models import AdminAuditLog, User, UserCapabilityOverride
 from app.services.provider_runtime.credential_crypto import CredentialCryptoService
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture()
@@ -127,6 +134,26 @@ def _insert_credential(db_session, *, access_token: str = "opaque-access-value",
 
 def _post(client: TestClient, nonce: str = "nonce-123"):
     return client.post("/api/admin/provider-credentials/codex/smoke-chat", json={"prompt": "smoke only", "nonce": nonce, "mode": "smoke"})
+
+
+def _load_bridge_module(monkeypatch, tmp_path, *, upstream_url: str):
+    token_file = tmp_path / "codex_app_server_bridge_token"
+    token_file.write_text("bridge-shared", encoding="utf-8")
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("CODEX_APP_SERVER_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_MODE", "real")
+    monkeypatch.setenv("CODEX_APP_SERVER_REAL_UPSTREAM_URL", upstream_url)
+    monkeypatch.setenv("CODEX_APP_SERVER_REPLY_GENERATION_BACKEND", "codex_app_server")
+    monkeypatch.setenv("CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS", "1")
+    monkeypatch.setenv("CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS", "1")
+    spec = importlib.util.spec_from_file_location(
+        f"codex_app_server_bridge_proxy_smoke_test_{id(tmp_path)}",
+        ROOT / "deploy" / "codex_app_server_bridge_proxy.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_smoke_chat_requires_authentication(db_session):
@@ -521,3 +548,104 @@ def test_smoke_chat_bridge_real_upstream_missing_is_safe_503(client, db_session,
     assert body["reason"] == "codex_app_server_real_upstream_not_configured"
     assert "opaque-access-value" not in json.dumps(body)
     assert "bridge-shared" not in json.dumps(body)
+
+
+def test_smoke_chat_through_bridge_and_reachable_upstream_echoes_nonce(client, db_session, monkeypatch, tmp_path):
+    _insert_credential(db_session)
+    captured: dict = {}
+
+    class UpstreamHandler(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args) -> None:
+            return None
+
+        def do_GET(self) -> None:
+            raw = json.dumps({"ok": True}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            captured["authorization"] = self.headers.get("Authorization")
+            captured["payload"] = json.loads(self.rfile.read(length).decode("utf-8"))
+            raw = json.dumps({"reply": "actual upstream response nonce-live"}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+    upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    upstream_thread.start()
+    bridge = _load_bridge_module(monkeypatch, tmp_path, upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}/reply")
+    bridge_server = bridge.ThreadingHTTPServer(("127.0.0.1", 0), bridge.Handler)
+    bridge_thread = threading.Thread(target=bridge_server.serve_forever, daemon=True)
+    bridge_thread.start()
+    bridge_base_url = f"http://127.0.0.1:{bridge_server.server_address[1]}"
+    monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_URL", bridge_base_url + "/reply")
+    monkeypatch.setenv("CODEX_APP_SERVER_LOGIN_URL", bridge_base_url + "/login")
+
+    try:
+        response = _post(client, nonce="nonce-live")
+    finally:
+        bridge_server.shutdown()
+        bridge_server.server_close()
+        bridge_thread.join(timeout=2)
+        upstream.shutdown()
+        upstream.server_close()
+        upstream_thread.join(timeout=2)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["nonce_echoed"] is True
+    assert captured["authorization"].split(" ", 1) == ["Bearer", "opaque-access-value"]
+    assert "nonce-live" in json.dumps(captured["payload"])
+    rendered = json.dumps(body)
+    assert "opaque-access-value" not in rendered
+    assert "bridge-shared" not in rendered
+
+
+def test_smoke_chat_bridge_upstream_timeout_is_safe_502(client, db_session, monkeypatch):
+    _insert_credential(db_session)
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18794/reply")
+    monkeypatch.setenv("CODEX_APP_SERVER_LOGIN_URL", "http://127.0.0.1:18794/login")
+    monkeypatch.setenv("CODEX_APP_SERVER_TOKEN", "bridge-shared")
+
+    class FakeResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError("failed", request=httpx.Request("POST", "http://127.0.0.1:18794/reply"), response=httpx.Response(self.status_code))
+
+        def json(self):
+            return self._payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json, headers):
+            if url.endswith("/login"):
+                return FakeResponse(200, {"ok": True})
+            return FakeResponse(504, {"ok": False, "error": "upstream_timeout"})
+
+    monkeypatch.setattr("app.services.provider_runtime.codex_llm_client.httpx.AsyncClient", FakeAsyncClient)
+    response = _post(client)
+
+    assert response.status_code == 502
+    body = response.json()["detail"]
+    assert body["reason"] == "codex_provider_call_failed"
+    assert "opaque-access-value" not in json.dumps(body)

@@ -255,7 +255,12 @@ def _raise_bridge_not_ready(response: httpx.Response) -> None:
         readiness = payload.get("readiness")
         if isinstance(readiness, dict) and isinstance(readiness.get("reason"), str):
             reason = readiness["reason"]
-    if reason in {"codex_app_server_real_upstream_not_configured", "bridge_token_not_configured", "codex_app_server_bridge_not_real"}:
+    if reason in {
+        "codex_app_server_real_upstream_not_configured",
+        "codex_app_server_real_upstream_unreachable",
+        "bridge_token_not_configured",
+        "codex_app_server_bridge_not_real",
+    }:
         raise CodexLLMBridgeNotReady(reason)
 
 

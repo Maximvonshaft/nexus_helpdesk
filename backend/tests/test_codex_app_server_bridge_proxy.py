@@ -46,7 +46,7 @@ def _load_bridge_module(monkeypatch, tmp_path, *, upstream_url: str = "http://12
 
 @pytest.fixture()
 def bridge_server(monkeypatch, tmp_path):
-    bridge = _load_bridge_module(monkeypatch, tmp_path)
+    bridge = _load_bridge_module(monkeypatch, tmp_path, upstream_url="")
     server = bridge.ThreadingHTTPServer(("127.0.0.1", 0), bridge.Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -93,11 +93,52 @@ def test_bridge_readyz_reports_real_upstream_status(bridge_server):
 
     status, payload = _read_json(base_url + "/readyz")
 
-    assert status == 200
+    assert status == 503
+    assert payload["ok"] is False
+    assert payload["reason"] == "codex_app_server_real_upstream_not_configured"
+    assert payload["real_upstream_configured"] is False
+    assert "bridge-token" not in json.dumps(payload)
+
+
+def test_bridge_readyz_returns_200_when_upstream_configured_and_reachable(monkeypatch, tmp_path):
+    class UpstreamHandler(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args) -> None:
+            return None
+
+        def do_GET(self) -> None:
+            raw = json.dumps({"ok": True}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+    upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    upstream_thread.start()
+    try:
+        bridge = _load_bridge_module(monkeypatch, tmp_path, upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}/reply")
+        payload = bridge.readiness_payload()
+    finally:
+        upstream.shutdown()
+        upstream.server_close()
+        upstream_thread.join(timeout=2)
+
     assert payload["ok"] is True
     assert payload["real_upstream_configured"] is True
-    assert payload["reply_generation_backend"] == "codex_app_server"
-    assert "bridge-token" not in json.dumps(payload)
+    assert payload["real_upstream_reachable"] is True
+    assert payload["reason"] is None
+
+
+def test_bridge_readyz_returns_503_when_upstream_configured_but_unreachable(monkeypatch, tmp_path):
+    bridge = _load_bridge_module(monkeypatch, tmp_path, upstream_url="http://127.0.0.1:9/reply")
+
+    payload = bridge.readiness_payload()
+
+    assert payload["ok"] is False
+    assert payload["real_upstream_configured"] is True
+    assert payload["real_upstream_reachable"] is False
+    assert payload["reason"] == "codex_app_server_real_upstream_unreachable"
 
 
 def test_bridge_readyz_fails_closed_without_real_upstream(monkeypatch, tmp_path):
@@ -108,6 +149,13 @@ def test_bridge_readyz_fails_closed_without_real_upstream(monkeypatch, tmp_path)
     assert payload["ok"] is False
     assert payload["reason"] == "codex_app_server_real_upstream_not_configured"
     assert payload["real_upstream_configured"] is False
+
+
+def test_bridge_allows_container_compatible_bind_host(monkeypatch, tmp_path):
+    bridge = _load_bridge_module(monkeypatch, tmp_path, upstream_url="")
+    monkeypatch.setattr(bridge, "BIND_HOST", "0.0.0.0")
+
+    bridge.check_bind_host()
 
 
 def test_bridge_reply_rejects_missing_bearer_token(bridge_server):
@@ -155,6 +203,14 @@ def test_bridge_reply_forwards_prompt_to_real_upstream(monkeypatch, tmp_path):
             self.end_headers()
             self.wfile.write(raw)
 
+        def do_GET(self) -> None:
+            raw = json.dumps({"ok": True}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
     upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
     upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
     upstream_thread.start()
@@ -190,15 +246,42 @@ def test_bridge_reply_forwards_prompt_to_real_upstream(monkeypatch, tmp_path):
     assert "bridge-token" not in rendered
 
 
-def test_bridge_upstream_timeout_is_safe_504(monkeypatch, bridge_server):
-    bridge, base_url = bridge_server
+def test_bridge_upstream_timeout_is_safe_504(monkeypatch, tmp_path):
+    class UpstreamHandler(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args) -> None:
+            return None
+
+        def do_GET(self) -> None:
+            raw = json.dumps({"ok": True}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+    upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    upstream_thread.start()
+    bridge = _load_bridge_module(monkeypatch, tmp_path, upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}/reply")
+    server = bridge.ThreadingHTTPServer(("127.0.0.1", 0), bridge.Handler)
+    bridge_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    bridge_thread.start()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
 
     def fake_call_real_upstream(payload):
         raise TimeoutError("timed out")
 
-    _post_json(base_url + "/login", {"login": {"type": "chatgptAuthTokens", "accessToken": "oauth-access"}})
-    monkeypatch.setattr(bridge, "call_real_upstream", fake_call_real_upstream)
-    status, payload = _post_json(base_url + "/reply", {"body": "hello"})
+    try:
+        _post_json(base_url + "/login", {"login": {"type": "chatgptAuthTokens", "accessToken": "oauth-access"}})
+        monkeypatch.setattr(bridge, "call_real_upstream", fake_call_real_upstream)
+        status, payload = _post_json(base_url + "/reply", {"body": "hello"})
+    finally:
+        server.shutdown()
+        server.server_close()
+        bridge_thread.join(timeout=2)
+        upstream.shutdown()
+        upstream.server_close()
+        upstream_thread.join(timeout=2)
 
     assert status == 504
     assert payload == {"ok": False, "error": "upstream_timeout"}
