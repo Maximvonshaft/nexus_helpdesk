@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 os.environ.setdefault("APP_ENV", "development")
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_fast_reply_api_tests.db")
@@ -15,8 +16,10 @@ from app.db import Base, SessionLocal, engine
 from app.main import app
 from app.models import Customer, Ticket, WebchatRateLimitBucket
 from app.services.webchat_fast_ai_service import WebchatFastReplyResult
+from app.services.webchat_fast_config import get_webchat_fast_settings
 from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency
 from app.services.webchat_fast_rate_limit import reset_webchat_fast_rate_limit_for_tests
+from app.services.provider_runtime.schemas import ProviderResult
 from app.webchat_models import WebchatConversation, WebchatMessage
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -108,6 +111,42 @@ def test_fast_reply_same_session_reuses_conversation_and_uses_server_context(mon
         assert [m.direction for m in messages].count("ai") == 2
     finally:
         db.close()
+
+
+def test_fast_reply_provider_runtime_unavailable_returns_controlled_non_500(monkeypatch):
+    monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "provider_runtime")
+    get_webchat_fast_settings.cache_clear()
+    monkeypatch.setattr(
+        "app.services.ai_runtime.provider_router.ProviderRuntimeRouter.route",
+        AsyncMock(
+            return_value=ProviderResult(
+                ok=False,
+                provider="provider_runtime",
+                elapsed_ms=13,
+                error_code="openclaw_responses_unavailable",
+                structured_output=None,
+                raw_payload_safe_summary={"safe": True},
+            )
+        ),
+    )
+
+    response = client.post(
+        "/api/webchat/fast-reply",
+        json=_payload(
+            "provider-runtime-unavailable",
+            session_id="provider-runtime-unavailable-session",
+            body="Hello, I need help.",
+        ),
+        headers={"Origin": "http://localhost"},
+    )
+
+    get_webchat_fast_settings.cache_clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error_code"] == "openclaw_responses_unavailable"
 
 
 def test_fast_handoff_same_session_does_not_create_duplicate_ticket():
