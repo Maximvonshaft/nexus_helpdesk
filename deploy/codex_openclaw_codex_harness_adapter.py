@@ -8,6 +8,7 @@ import shutil
 import socket
 import subprocess
 import time
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -220,6 +221,19 @@ def profile_usable(profile: dict[str, Any]) -> bool:
     status = profile.get("status") or profile.get("state")
     if isinstance(status, str):
         return status.strip().lower() in {"active", "authorized", "authenticated", "ready", "ok", "valid"}
+    profile_type = profile.get("type") or profile.get("credentialType") or profile.get("credential_type")
+    expires_at = profile.get("expiresAt") or profile.get("expires_at") or profile.get("expires")
+    if isinstance(profile_type, str) and profile_type.strip().lower() == "oauth" and isinstance(expires_at, str):
+        try:
+            normalized = expires_at.strip()
+            if normalized.endswith("Z"):
+                normalized = f"{normalized[:-1]}+00:00"
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return False
+        return parsed > datetime.now(timezone.utc)
     return False
 
 

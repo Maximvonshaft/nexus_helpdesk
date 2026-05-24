@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
 import subprocess
@@ -172,6 +173,65 @@ def test_openclaw_codex_auth_active_profile_is_ready(monkeypatch, tmp_path):
         ),
     )
     assert adapter.auth_ready() is True
+
+
+def test_openclaw_codex_auth_oauth_profile_with_future_expires_at_is_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    monkeypatch.setattr(
+        adapter,
+        "run_openclaw",
+        lambda args, timeout_seconds, input_text=None: _completed(
+            args,
+            json.dumps({"profiles": [{"provider": "openai-codex", "type": "oauth", "expiresAt": expires_at}]}),
+        ),
+    )
+    assert adapter.auth_ready() is True
+
+
+def test_openclaw_codex_auth_oauth_profile_with_expired_expires_at_is_not_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    expires_at = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    monkeypatch.setattr(
+        adapter,
+        "run_openclaw",
+        lambda args, timeout_seconds, input_text=None: _completed(
+            args,
+            json.dumps({"profiles": [{"provider": "openai-codex", "type": "oauth", "expiresAt": expires_at}]}),
+        ),
+    )
+    assert adapter.auth_ready() is False
+
+
+def test_openclaw_codex_auth_oauth_profile_without_expires_at_or_status_is_not_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    monkeypatch.setattr(
+        adapter,
+        "run_openclaw",
+        lambda args, timeout_seconds, input_text=None: _completed(
+            args,
+            json.dumps({"profiles": [{"provider": "openai-codex", "type": "oauth"}]}),
+        ),
+    )
+    assert adapter.auth_ready() is False
+
+
+def test_openclaw_codex_auth_wrong_provider_with_future_expires_at_is_not_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    monkeypatch.setattr(
+        adapter,
+        "run_openclaw",
+        lambda args, timeout_seconds, input_text=None: _completed(
+            args,
+            json.dumps({"profiles": [{"provider": "openai", "type": "oauth", "expiresAt": expires_at}]}),
+        ),
+    )
+    assert adapter.auth_ready() is False
 
 
 def test_openclaw_codex_auth_wrong_provider_is_not_ready(monkeypatch, tmp_path):
