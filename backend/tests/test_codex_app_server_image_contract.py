@@ -138,3 +138,22 @@ def test_codex_app_server_upstream_and_bridge_use_30_second_ready_timeout():
     assert "min(READYZ_TIMEOUT_SECONDS, 5.0)" not in bridge
     assert "CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS=30" in runbook
     assert "CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS=30" in runbook
+
+
+def test_codex_no_traffic_smoke_runbook_waits_for_chain_readiness_in_order():
+    runbook = _read("docs/engineering/codex_chat_smoke_runbook.md")
+
+    assert "READY_WAIT_DEADLINE_SECONDS=180" in runbook
+    assert "wait_readyz()" in runbook
+    assert "readyz_timeout service=$service" in runbook
+    assert "--max-time 35" in runbook
+    assert "Do not run the admin nonce smoke until the readiness waits pass in this order" in runbook
+
+    expected_order = [
+        "wait_readyz codex-private-model-runtime http://127.0.0.1:18800/readyz",
+        "wait_readyz codex-private-reply-engine http://127.0.0.1:18796/readyz",
+        "wait_readyz codex-app-server-upstream http://127.0.0.1:18795/readyz",
+        "wait_readyz codex-app-server-bridge http://127.0.0.1:18794/readyz",
+    ]
+    positions = [runbook.index(entry) for entry in expected_order]
+    assert positions == sorted(positions)

@@ -328,22 +328,43 @@ docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up
 Required readiness before nonce smoke:
 
 ```bash
-docker compose -f deploy/docker-compose.server.yml exec -T codex-private-model-runtime \
-  curl -fsS http://127.0.0.1:18800/readyz
+READY_WAIT_DEADLINE_SECONDS=180
+
+wait_readyz() {
+  service="$1"
+  url="$2"
+  started_at="$(date +%s)"
+  while true; do
+    if docker compose -f deploy/docker-compose.server.yml exec -T "$service" \
+      curl -fsS --max-time 35 "$url" >/tmp/"$service"-readyz.json; then
+      cat /tmp/"$service"-readyz.json
+      echo
+      return 0
+    fi
+    now="$(date +%s)"
+    elapsed="$((now - started_at))"
+    if [ "$elapsed" -ge "$READY_WAIT_DEADLINE_SECONDS" ]; then
+      echo "readyz_timeout service=$service url=$url elapsed_seconds=$elapsed" >&2
+      return 1
+    fi
+    sleep 5
+  done
+}
+
+wait_readyz codex-private-model-runtime http://127.0.0.1:18800/readyz
+# HTTP 200, ok=true, infer_transport=local, local_infer_smoke_ready=true
+
+wait_readyz codex-private-reply-engine http://127.0.0.1:18796/readyz
 # HTTP 200, ok=true
 
-docker compose -f deploy/docker-compose.server.yml exec -T codex-private-reply-engine \
-  curl -fsS http://127.0.0.1:18796/readyz
+wait_readyz codex-app-server-upstream http://127.0.0.1:18795/readyz
 # HTTP 200, ok=true
 
-docker compose -f deploy/docker-compose.server.yml exec -T codex-app-server-upstream \
-  curl -fsS http://127.0.0.1:18795/readyz
-# HTTP 200, ok=true
-
-docker compose -f deploy/docker-compose.server.yml exec -T codex-app-server-bridge \
-  curl -fsS http://127.0.0.1:18794/readyz
+wait_readyz codex-app-server-bridge http://127.0.0.1:18794/readyz
 # HTTP 200, ok=true
 ```
+
+Do not run the admin nonce smoke until the readiness waits pass in this order. A connection refused immediately after `compose up -d` is a startup race, not success or proof of readiness; let the bounded wait fail closed if any service does not become ready within the deadline.
 
 Then run the admin-only nonce smoke. The smoke does not enable WebChat customer traffic:
 
