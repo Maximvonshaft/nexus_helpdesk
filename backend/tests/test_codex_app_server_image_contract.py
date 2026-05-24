@@ -78,3 +78,13 @@ def test_codex_private_model_runtime_uses_persistent_openclaw_home():
     assert "OPENCLAW_HOME: /home/appuser/.openclaw" in compose
     assert "XDG_CONFIG_HOME: /home/appuser/.openclaw" in compose
     assert "condition: service_completed_successfully" in compose
+
+
+def test_codex_private_model_runtime_uses_30_second_ready_timeout():
+    compose = _read("deploy/docker-compose.server.yml")
+    adapter = _read("deploy/codex_openclaw_codex_harness_adapter.py")
+    runbook = _read("docs/engineering/codex_chat_smoke_runbook.md")
+
+    assert "OPENCLAW_CODEX_READY_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_READY_TIMEOUT_SECONDS:-30}" in compose
+    assert 'OPENCLAW_CODEX_READY_TIMEOUT_SECONDS", "30"' in adapter
+    assert "OPENCLAW_CODEX_READY_TIMEOUT_SECONDS=30" in runbook

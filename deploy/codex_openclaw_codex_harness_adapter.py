@@ -22,7 +22,7 @@ REQUIRE_PLUGIN = os.environ.get("OPENCLAW_CODEX_REQUIRE_PLUGIN", "true").strip()
 MODEL = os.environ.get("OPENCLAW_CODEX_MODEL", "").strip()
 INFER_TRANSPORT = os.environ.get("OPENCLAW_CODEX_INFER_TRANSPORT", "gateway").strip().lower() or "gateway"
 AGENT_ID = os.environ.get("OPENCLAW_CODEX_AGENT", "").strip()
-READY_TIMEOUT_SECONDS = float(os.environ.get("OPENCLAW_CODEX_READY_TIMEOUT_SECONDS", "5"))
+READY_TIMEOUT_SECONDS = float(os.environ.get("OPENCLAW_CODEX_READY_TIMEOUT_SECONDS", "30"))
 REPLY_TIMEOUT_SECONDS = float(os.environ.get("OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS", "60"))
 VERSION = "0.1"
 

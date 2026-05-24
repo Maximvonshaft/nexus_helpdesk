@@ -208,6 +208,7 @@ OPENCLAW_CODEX_PLUGIN_PACKAGE=@openclaw/codex
 OPENCLAW_CODEX_REQUIRE_PLUGIN=true
 OPENCLAW_CODEX_MODEL=openai/gpt-5.5
 OPENCLAW_CODEX_INFER_TRANSPORT=gateway
+OPENCLAW_CODEX_READY_TIMEOUT_SECONDS=30
 OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS=60
 ```
 
@@ -301,6 +302,7 @@ export OPENCLAW_CODEX_AUTH_PROVIDER=openai-codex
 export OPENCLAW_CODEX_PLUGIN_PACKAGE=@openclaw/codex
 export OPENCLAW_CODEX_MODEL=openai/gpt-5.5
 export OPENCLAW_CODEX_INFER_TRANSPORT=gateway
+export OPENCLAW_CODEX_READY_TIMEOUT_SECONDS=30
 
 docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up -d \
   codex-openclaw-home-permissions \
