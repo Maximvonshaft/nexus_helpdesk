@@ -166,6 +166,63 @@ async def test_fast_provider_runtime_reads_reply_or_customer_reply():
     assert "refresh_token" not in str(result.raw_payload_safe_summary)
 
 
+@pytest.mark.asyncio
+async def test_fast_provider_runtime_router_exception_returns_unavailable_result():
+    req = FastAIProviderRequest(
+        tenant_key="default",
+        channel_key="website",
+        session_id="sess-router-exception",
+        body="hello",
+        recent_context=[],
+        request_id="req-router-exception",
+    )
+    settings = Mock(provider="provider_runtime")
+
+    with patch("app.services.ai_runtime.provider_router.SessionLocal"), patch(
+        "app.services.ai_runtime.provider_router.ProviderRuntimeRouter.route",
+        new=AsyncMock(side_effect=RuntimeError("route failed")),
+    ):
+        result = await generate_fast_reply(request=req, settings=settings)
+
+    assert result.ok is False
+    assert result.raw_provider == "provider_runtime"
+    assert result.error_code == "router_exception"
+    assert result.elapsed_ms == 0
+
+
+@pytest.mark.asyncio
+async def test_fast_provider_runtime_all_failed_preserves_error_code_without_typeerror():
+    req = FastAIProviderRequest(
+        tenant_key="default",
+        channel_key="website",
+        session_id="sess-all-failed",
+        body="hello",
+        recent_context=[],
+        request_id="req-all-failed",
+    )
+    settings = Mock(provider="provider_runtime")
+
+    with patch("app.services.ai_runtime.provider_router.SessionLocal"), patch(
+        "app.services.ai_runtime.provider_router.ProviderRuntimeRouter.route",
+        new=AsyncMock(
+            return_value=ProviderResult(
+                ok=False,
+                provider="provider_runtime",
+                elapsed_ms=42,
+                error_code="openclaw_responses_unavailable",
+                structured_output=None,
+                raw_payload_safe_summary={"safe": True},
+            )
+        ),
+    ):
+        result = await generate_fast_reply(request=req, settings=settings)
+
+    assert result.ok is False
+    assert result.raw_provider == "provider_runtime"
+    assert result.error_code == "openclaw_responses_unavailable"
+    assert result.elapsed_ms == 42
+
+
 def test_provider_runtime_status_credential_summary_has_no_raw_tokens(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "provider_runtime")
@@ -255,6 +312,8 @@ def test_bridge_reply_calls_mocked_upstream_and_passes_oauth_session(monkeypatch
                 "intent": "other",
                 "tracking_number": None,
                 "handoff_required": False,
+                "handoff_reason": None,
+                "recommended_agent_action": None,
             }).encode("utf-8")
 
     def fake_urlopen(req, timeout):
@@ -270,7 +329,7 @@ def test_bridge_reply_calls_mocked_upstream_and_passes_oauth_session(monkeypatch
 
     assert reply["reply"] == "dynamic upstream reply"
     assert captured["url"] == "http://127.0.0.1:18795/reply"
-    assert captured["authorization"] == "Bearer oauth-access-token"
+    assert captured["authorization"].split(" ", 1) == ["Bearer", "oauth-access-token"]
     assert captured["payload"]["chatgptAccountId"] == "acct-1"
     assert captured["payload"]["chatgptPlanType"] == "plus"
     assert reply["reply"] != "Thanks. I received your message and will help with this request."
@@ -289,10 +348,12 @@ def test_bridge_readyz_safe_fields_do_not_expose_tokens(monkeypatch, tmp_path):
     assert payload["mode"] == "stub"
     assert payload["real_upstream_configured"] is False
     assert payload["accepts_oauth_login"] is True
-    assert payload["reply_generation_backend"] == "stub"
+    assert payload["reply_generation_backend"] == "unconfigured"
     assert payload["token_file_configured"] is True
+    assert payload["oauth_session_present"] is True
     rendered = str(payload)
     assert "oauth-access-token" not in rendered
+    assert "access_token" not in rendered
     assert "internal-bridge-token" not in rendered
 
 

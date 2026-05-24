@@ -18,6 +18,9 @@ from ..oauth_refresh_manager import OAuthRefreshManager
 from ..registry import ProviderAdapter
 from ..schemas import ProviderCapabilities, ProviderRequest, ProviderResult
 
+_DEFAULT_TIMEOUT_SECONDS = 120.0
+_MAX_TIMEOUT_SECONDS = 300.0
+
 
 class CodexAppServerAdapter(ProviderAdapter):
     name = "codex_app_server"
@@ -163,7 +166,8 @@ class CodexAppServerAdapter(ProviderAdapter):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=request.timeout_ms / 1000.0) as client:
+            timeout_seconds = _timeout_seconds(request.timeout_ms)
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
                 bridge_readyz = await self._get_bridge_readyz(client)
                 bridge_summary = self._safe_readyz_summary(bridge_readyz)
                 if (
@@ -198,6 +202,7 @@ class CodexAppServerAdapter(ProviderAdapter):
                     raw_payload_safe_summary={
                         "bridge_status": response.status_code,
                         "bridge_host_hash": self._host_hash(self.bridge_url),
+                        "codex_timeout_seconds": timeout_seconds,
                         "login_mode": "two_step" if self.login_url else "combined",
                         **bridge_summary,
                     },
@@ -227,3 +232,19 @@ class CodexAppServerAdapter(ProviderAdapter):
     def _host_hash(url: str) -> str:
         host = urllib.parse.urlparse(url).hostname or ""
         return hashlib.sha256(host.encode("utf-8")).hexdigest()[:16]
+
+
+def _timeout_seconds(request_timeout_ms: int | None) -> float:
+    raw = os.getenv("CODEX_LLM_TIMEOUT_SECONDS") or os.getenv("CODEX_APP_SERVER_TIMEOUT_MS") or ""
+    if not raw and request_timeout_ms:
+        raw = str(request_timeout_ms)
+    if not raw:
+        value = _DEFAULT_TIMEOUT_SECONDS
+    else:
+        try:
+            value = float(raw)
+        except ValueError:
+            value = _DEFAULT_TIMEOUT_SECONDS
+    if value > 1000:
+        value = value / 1000.0
+    return max(1.0, min(value, _MAX_TIMEOUT_SECONDS))

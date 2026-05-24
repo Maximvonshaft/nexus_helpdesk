@@ -184,7 +184,7 @@ button, input, textarea, select { font: inherit; }
 .webcall-ai-main h1 { margin: 8px 0; font-size: 56px; line-height: 1; }
 .webcall-ai-main .lead { max-width: 620px; color: #475467; font-size: 18px; line-height: 1.6; }
 .call-status { margin: 28px 0 18px; padding: 14px 16px; border: 1px solid #d0d5dd; background: #fff; border-radius: 8px; color: #344054; }
-.call-status.connected { border-color: #86efac; background: #f0fdf4; color: #166534; }
+.call-status.connected, .call-status.ai_joined, .call-status.listening, .call-status.thinking, .call-status.speaking { border-color: #86efac; background: #f0fdf4; color: #166534; }
 .call-status.error, .call-status.disabled { border-color: #fecaca; background: #fff1f2; color: #be123c; }
 .call-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .call-actions button, .tracking-input-row button { min-height: 42px; border: 1px solid #cfd4dc; border-radius: 8px; background: #fff; color: #111827; font-weight: 700; padding: 0 14px; }
@@ -197,6 +197,10 @@ button, input, textarea, select { font: inherit; }
 .webcall-ai-band { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 440px); gap: 24px; align-items: end; max-width: 1120px; margin: 0 auto; padding: 0 24px 56px; }
 .tracking-input-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
 .tracking-input-row input { min-height: 42px; border: 1px solid #cfd4dc; border-radius: 8px; padding: 0 12px; }
+.webcall-ai-events { display: grid; gap: 10px; }
+.webcall-ai-events article { display: grid; gap: 4px; padding: 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; }
+.webcall-ai-events strong { text-transform: capitalize; }
+.webcall-ai-events span { color: #475467; overflow-wrap: anywhere; }
 
 @media (max-width: 1280px) {
   .page-grid.workspace { grid-template-columns: 1fr; }

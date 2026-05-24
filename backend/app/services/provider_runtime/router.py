@@ -46,8 +46,8 @@ class ProviderRuntimeRouter:
             self.db.rollback()
 
     @staticmethod
-    def _stable_percent_bucket(tenant_id: str, session_id: str, request_id: str) -> int:
-        raw = f"{tenant_id}:{session_id}:{request_id}"
+    def _stable_percent_bucket(tenant_id: str, channel_key: str, session_id: str) -> int:
+        raw = f"{tenant_id}:{channel_key}:{session_id}"
         digest = hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()
         return int(digest[:8], 16) % 100
 
@@ -92,7 +92,7 @@ class ProviderRuntimeRouter:
             primary_provider = fallbacks[0]
             fallbacks = fallbacks[1:]
         elif primary_provider == "codex_app_server" and 0 < canary_percent < 100 and fallbacks:
-            bucket = self._stable_percent_bucket(request.tenant_id, request.session_id, request.request_id)
+            bucket = self._stable_percent_bucket(request.tenant_id, request.channel_key, request.session_id)
             if bucket >= canary_percent:
                 primary_provider = fallbacks[0]
                 fallbacks = fallbacks[1:]

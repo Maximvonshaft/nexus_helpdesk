@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import os
 from typing import Any
 
 
@@ -18,9 +19,16 @@ def lookup_tracking(payload: dict[str, Any]) -> dict[str, Any]:
     tracking_number = extract_tracking_number(str(payload.get("tracking_number") or payload.get("text") or ""))
     if not tracking_number:
         return {"status": "tracking_number_required"}
+    endpoint = (os.getenv("TRACKING_LOOKUP_ENDPOINT") or "").strip()
+    token_file = (os.getenv("TRACKING_LOOKUP_API_KEY_FILE") or "").strip()
+    if not endpoint or not token_file:
+        return {
+            "status": "not_configured",
+            "tracking_number_redacted": f"{tracking_number[:3]}...{tracking_number[-2:]}",
+            "summary": "Tracking lookup is not configured. I cannot verify this shipment right now and will hand the request to a human agent.",
+        }
     return {
-        "status": "mock_tracking_ready",
+        "status": "not_configured",
         "tracking_number_redacted": f"{tracking_number[:3]}...{tracking_number[-2:]}",
-        "summary": "Tracking lookup is configured as a controlled pilot mock until the approved Speedaf read-only API is enabled.",
+        "summary": "Tracking lookup provider interface is configured but the approved read-only adapter has not been enabled in this build.",
     }
-

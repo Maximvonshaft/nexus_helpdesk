@@ -14,10 +14,13 @@ from ..webchat_service import create_or_resume_conversation
 from ..webchat_voice_service import create_public_voice_session, end_public_voice_session
 from .config import get_webcall_ai_production_settings
 from .event_service import serialize_event, write_event
+from .evidence import hash_tracking_number
 from .livekit_service import issue_join_token
+from .tools.tracking_lookup import extract_tracking_number
 
 
 TERMINAL_STATUSES = {"ended", "missed", "failed", "cancelled"}
+AI_ACTIVE_STATUSES = {"waiting_for_worker", "claimed", "joining", "joined", "listening", "thinking", "speaking"}
 
 
 @dataclass
@@ -61,7 +64,7 @@ def _active_ai_session(db: Session, conversation: WebchatConversation) -> Webcha
         .filter(
             WebchatVoiceSession.conversation_id == conversation.id,
             WebchatVoiceSession.mode == "livekit_ai_agent",
-            WebchatVoiceSession.status.notin_(list(TERMINAL_STATUSES)),
+            WebchatVoiceSession.ai_agent_status.in_(list(AI_ACTIVE_STATUSES)),
         )
         .order_by(WebchatVoiceSession.id.desc())
         .first()
@@ -107,8 +110,11 @@ def create_session(
     idempotency_key: str | None,
 ) -> dict[str, Any]:
     settings = get_webcall_ai_production_settings()
-    if not settings.production_enabled:
+    if settings.status != "ready":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="WebCall AI production is disabled")
+    origin = request.headers.get("origin")
+    if settings.allowed_origins and origin and origin not in settings.allowed_origins:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="origin is not allowed for WebCall AI")
 
     request_payload = {
         "tenant_key": payload.tenant_key,
@@ -142,7 +148,7 @@ def create_session(
 
     active_count = (
         db.query(WebchatVoiceSession)
-        .filter(WebchatVoiceSession.mode == "livekit_ai_agent", WebchatVoiceSession.status.notin_(list(TERMINAL_STATUSES)))
+        .filter(WebchatVoiceSession.mode == "livekit_ai_agent", WebchatVoiceSession.ai_agent_status.in_(list(AI_ACTIVE_STATUSES)))
         .count()
     )
     if active_count >= settings.max_active_sessions:
@@ -233,6 +239,26 @@ def request_handoff(db: Session, session_public_id: str, visitor_token: str | No
         payload={"voice_session_id": session.public_id, "reason": session.ai_handoff_reason},
     )
     return {"ok": True, "session": _serialize_session(session)}
+
+
+def save_tracking_fallback(db: Session, session_public_id: str, visitor_token: str | None, tracking_number: str) -> dict[str, Any]:
+    session = _load_ai_session(db, session_public_id)
+    _validate_visitor_token(db, session, visitor_token)
+    normalized = extract_tracking_number(tracking_number)
+    if not normalized:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="tracking number is invalid")
+    write_event(
+        db,
+        conversation_id=session.conversation_id,
+        ticket_id=session.ticket_id,
+        event_type="webcall_ai.tracking_fallback.saved",
+        payload={
+            "voice_session_id": session.public_id,
+            "tracking_number_hash": hash_tracking_number(normalized),
+            "tracking_number_redacted": f"{normalized[:3]}...{normalized[-2:]}",
+        },
+    )
+    return {"ok": True, "tracking_number_redacted": f"{normalized[:3]}...{normalized[-2:]}"}
 
 
 def list_events(db: Session, session_public_id: str, visitor_token: str | None = None, *, require_visitor_token: bool = True) -> dict[str, Any]:

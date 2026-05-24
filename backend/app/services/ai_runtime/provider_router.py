@@ -76,7 +76,11 @@ async def generate_fast_reply(
             )
             res = await router.route(pr_req)
             if not res.ok or not res.structured_output:
-                return FastAIProviderResult.unavailable("provider_runtime", res.error_code or "all_failed", res.elapsed_ms)
+                return FastAIProviderResult.unavailable(
+                    provider="provider_runtime",
+                    error_code=res.error_code or "all_failed",
+                    elapsed_ms=res.elapsed_ms,
+                )
             
             output = res.structured_output
             safe_summary = res.raw_payload_safe_summary or {}
@@ -100,7 +104,11 @@ async def generate_fast_reply(
             )
         except Exception as e:
             logger.exception("ProviderRuntimeRouter failed")
-            return FastAIProviderResult.unavailable("provider_runtime", "router_exception", 0)
+            return FastAIProviderResult.unavailable(
+                provider="provider_runtime",
+                error_code="router_exception",
+                elapsed_ms=0,
+            )
         finally:
             db.close()
             

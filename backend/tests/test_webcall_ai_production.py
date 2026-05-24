@@ -21,6 +21,7 @@ from app.enums import UserRole
 from app.main import app
 from app.models import User
 from app.services.webcall_ai_production.config import get_webcall_ai_production_settings
+from app.services.webcall_ai_production.agent_worker import run_worker_once
 from app.services.webcall_ai_production.orchestrator import run_fake_turn
 from app.services.webcall_ai_production.tool_registry import default_registry
 from app.voice_models import WebchatVoiceSession
@@ -111,6 +112,46 @@ def test_default_runtime_is_fail_closed(monkeypatch):
     assert payload["record_raw_audio"] is False
 
 
+def test_kill_switch_disables_runtime(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_KILL_SWITCH", "true")
+    get_webcall_ai_production_settings.cache_clear()
+
+    payload = get_webcall_ai_production_settings().public_runtime_config()
+
+    assert payload["status"] == "kill_switch"
+    assert payload["agent_enabled"] is False
+
+
+def test_external_provider_profile_requires_config(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_PROVIDER_PROFILE", "external")
+    monkeypatch.setenv("STT_PROVIDER", "external")
+    monkeypatch.setenv("LLM_PROVIDER", "external")
+    monkeypatch.setenv("TTS_PROVIDER", "external")
+    get_webcall_ai_production_settings.cache_clear()
+
+    with pytest.raises(ValueError, match="external WebCall AI providers"):
+        get_webcall_ai_production_settings()
+
+
+def test_production_rejects_inline_external_provider_secret(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("STT_API_KEY", "inline-secret")
+    get_webcall_ai_production_settings.cache_clear()
+
+    with pytest.raises(ValueError, match="STT_API_KEY"):
+        get_webcall_ai_production_settings()
+
+
+def test_worker_once_does_not_run_fake_heartbeat_when_disabled(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_AGENT_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_KILL_SWITCH", "true")
+    get_webcall_ai_production_settings.cache_clear()
+
+    result = run_worker_once("unit-worker")
+
+    assert result == {"claimed": 0, "processed": 0, "failed": 0, "status": "kill_switch"}
+
+
 @pytest.mark.parametrize("flag", ["WEBCALL_AI_RECORD_RAW_AUDIO", "WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER", "WEBCALL_AI_ALLOW_CANCEL", "WEBCALL_AI_ALLOW_ADDRESS_UPDATE"])
 def test_unsafe_flags_are_rejected(monkeypatch, flag: str):
     monkeypatch.setenv(flag, "true")
@@ -169,6 +210,30 @@ def test_admin_session_events_require_auth():
     assert unauthenticated.status_code == 401
     assert authenticated.status_code == 200, authenticated.text
     assert any(item["event_type"] == "webcall_ai.session.created" for item in authenticated.json()["events"])
+
+
+def test_admin_health_reports_smoke_readiness_block():
+    response = TestClient(app).get("/api/admin/webcall-ai/health", headers=_admin_headers())
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    readiness = payload["readiness"]
+    for key in [
+        "livekit_configured",
+        "stt_configured",
+        "llm_configured",
+        "tts_configured",
+        "tracking_bridge_configured",
+        "kill_switch",
+        "rollout_mode",
+        "fake_heartbeat_enabled",
+        "recording_enabled",
+        "raw_audio_persistence",
+        "dangerous_write_actions_enabled",
+        "final_status",
+    ]:
+        assert key in readiness
+    assert readiness["final_status"] in {"blocked", "degraded", "ready_for_internal_smoke"}
 
 
 def test_fake_orchestrator_and_tool_registry_contract():

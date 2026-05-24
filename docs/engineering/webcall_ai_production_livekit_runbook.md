@@ -12,16 +12,21 @@ Required staging validation flags, applied only after CI is green and runtime se
 ```text
 WEBCALL_AI_PRODUCTION_ENABLED=true
 WEBCALL_AI_AGENT_ENABLED=true
-WEBCALL_AI_PROVIDER_PROFILE=fake
+WEBCALL_AI_PROVIDER_PROFILE=external
+WEBCALL_AI_KILL_SWITCH=false
+WEBCALL_AI_PUBLIC_ROLLOUT_MODE=internal
 WEBCALL_AI_RECORD_RAW_AUDIO=false
 WEBCHAT_VOICE_PROVIDER=livekit
 WEBCHAT_VOICE_ENABLED=true
 LIVEKIT_URL=wss://voice.leakle.com
-LIVEKIT_API_KEY=<runtime secret>
-LIVEKIT_API_SECRET=<runtime secret>
-STT_PROVIDER=fake
-LLM_PROVIDER=fake
-TTS_PROVIDER=fake
+LIVEKIT_API_KEY_FILE=/run/secrets/livekit_api_key
+LIVEKIT_API_SECRET_FILE=/run/secrets/livekit_api_secret
+STT_PROVIDER=external
+LLM_PROVIDER=external
+TTS_PROVIDER=external
+STT_API_KEY_FILE=/run/secrets/webcall_stt_api_key
+LLM_API_KEY_FILE=/run/secrets/webcall_llm_api_key
+TTS_API_KEY_FILE=/run/secrets/webcall_tts_api_key
 ```
 
 Keep these disabled for the initial rollout:
@@ -60,6 +65,7 @@ docker compose -f deploy/docker-compose.server.yml --profile webcall-ai up -d we
 Set:
 
 ```text
+WEBCALL_AI_KILL_SWITCH=true
 WEBCALL_AI_PRODUCTION_ENABLED=false
 WEBCALL_AI_AGENT_ENABLED=false
 ```
@@ -68,4 +74,4 @@ Then restart the app and stop the `webcall-ai-agent` service. Human WebCall and 
 
 ## Current Limitation
 
-The checked-in provider profile is deterministic `fake` for CI and safe staging. Real STT, LLM, and TTS providers are not enabled by this PR. This PR must be merged only as an infrastructure skeleton and must not be described as production-ready.
+The checked-in runtime remains fail-closed until approved LiveKit, STT, LLM, TTS, and read-only tracking provider configuration is present and a real browser voice smoke test passes.
