@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -12,6 +13,10 @@ from sqlalchemy.orm import Session
 from .credential_crypto import CredentialCryptoService
 from .oauth_refresh_manager import OAuthRefreshManager
 
+LOGGER = logging.getLogger(__name__)
+_DEFAULT_TIMEOUT_SECONDS = 120.0
+_MAX_TIMEOUT_SECONDS = 300.0
+
 
 class CodexLLMEndpointNotConfigured(RuntimeError):
     pass
@@ -22,7 +27,10 @@ class CodexLLMCredentialRefreshRequired(RuntimeError):
 
 
 class CodexLLMProviderCallFailed(RuntimeError):
-    pass
+    def __init__(self, reason: str, *, last_error_type: str | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.last_error_type = last_error_type
 
 
 class CodexLLMBridgeNotReady(RuntimeError):
@@ -77,8 +85,9 @@ class CodexLLMClient:
         style = _api_style(endpoint)
         started = time.monotonic()
         timeout = _timeout_seconds()
+        retries = _retries()
         last_error: Exception | None = None
-        for attempt in range(_retries() + 1):
+        for attempt in range(retries + 1):
             try:
                 async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
                     if style == "codex_app_server":
@@ -113,9 +122,24 @@ class CodexLLMClient:
                 raise
             except Exception as exc:
                 last_error = exc
-                if attempt >= _retries():
+                LOGGER.warning(
+                    "codex_llm_provider_call_attempt_failed",
+                    extra={
+                        "request_id": request_id,
+                        "api_style": style,
+                        "attempt": attempt + 1,
+                        "max_attempts": retries + 1,
+                        "timeout_seconds": timeout,
+                        "elapsed_ms": int((time.monotonic() - started) * 1000),
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                if attempt >= retries:
                     break
-        raise CodexLLMProviderCallFailed("codex_provider_call_failed") from last_error
+        raise CodexLLMProviderCallFailed(
+            "codex_provider_call_failed",
+            last_error_type=type(last_error).__name__ if last_error else None,
+        ) from last_error
 
     async def _call_codex_app_server(
         self,
@@ -201,14 +225,14 @@ def _api_style(endpoint: str) -> str:
 
 
 def _timeout_seconds() -> float:
-    raw = os.getenv("CODEX_LLM_TIMEOUT_SECONDS") or os.getenv("CODEX_SMOKE_TIMEOUT_MS") or os.getenv("CODEX_APP_SERVER_TIMEOUT_MS") or "15"
+    raw = os.getenv("CODEX_LLM_TIMEOUT_SECONDS") or os.getenv("CODEX_SMOKE_TIMEOUT_MS") or os.getenv("CODEX_APP_SERVER_TIMEOUT_MS") or str(_DEFAULT_TIMEOUT_SECONDS)
     try:
         value = float(raw)
     except ValueError:
-        value = 15.0
+        value = _DEFAULT_TIMEOUT_SECONDS
     if value > 1000:
         value = value / 1000.0
-    return max(1.0, min(value, 60.0))
+    return max(1.0, min(value, _MAX_TIMEOUT_SECONDS))
 
 
 def _retries() -> int:
