@@ -43,6 +43,7 @@ def _request_shutdown(signum, frame) -> None:
 
 def health() -> dict[str, object]:
     settings = get_webcall_ai_production_settings()
+    readiness = _smoke_readiness(settings)
     db = SessionLocal()
     try:
         active_sessions = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.mode == "livekit_ai_agent", WebchatVoiceSession.ai_agent_status.in_(list(AI_ACTIVE_STATUSES))).count()
@@ -67,13 +68,78 @@ def health() -> dict[str, object]:
         "llm_provider": settings.llm_provider,
         "tts_provider": settings.tts_provider,
         "status": settings.status,
+        "smoke_status": readiness["final_status"],
+        "readiness": readiness,
         "kill_switch": settings.kill_switch,
+        "rollout_mode": settings.public_rollout_mode,
         "livekit_configured": settings.livekit_configured,
+        "stt_configured": readiness["stt_configured"],
+        "llm_configured": readiness["llm_configured"],
+        "tts_configured": readiness["tts_configured"],
         "provider_configured": settings.provider_configured,
+        "tracking_bridge_configured": readiness["tracking_bridge_configured"],
+        "fake_heartbeat_enabled": readiness["fake_heartbeat_enabled"],
+        "recording_enabled": readiness["recording_enabled"],
+        "raw_audio_persistence": readiness["raw_audio_persistence"],
+        "dangerous_write_actions_enabled": readiness["dangerous_write_actions_enabled"],
         "active_sessions": active_sessions,
         "stale_leases": stale_leases,
         "failed_sessions": failed_sessions,
         "last_heartbeat": last_heartbeat.isoformat() if last_heartbeat else None,
+    }
+
+
+def _smoke_readiness(settings) -> dict[str, object]:
+    stt_configured = settings.stt_provider == "external" and settings.external_stt_configured
+    llm_configured = settings.llm_provider == "external" and settings.external_llm_configured
+    tts_configured = settings.tts_provider == "external" and settings.external_tts_configured
+    tracking_bridge_configured = bool((os.getenv("TRACKING_LOOKUP_ENDPOINT") or "").strip() and (os.getenv("TRACKING_LOOKUP_API_KEY_FILE") or "").strip())
+    fake_heartbeat_enabled = _test_fake_heartbeat_enabled()
+    recording_enabled = (os.getenv("WEBCHAT_VOICE_RECORDING_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
+    dangerous_write_actions_enabled = bool(settings.allow_speedaf_work_order or settings.allow_cancel or settings.allow_address_update)
+    raw_audio_persistence = bool(settings.record_raw_audio)
+    blockers = []
+    degraded = []
+    if not settings.production_enabled:
+        blockers.append("production_disabled")
+    if not settings.agent_enabled:
+        blockers.append("agent_disabled")
+    if settings.kill_switch:
+        blockers.append("kill_switch")
+    if settings.public_rollout_mode == "off":
+        blockers.append("rollout_off")
+    if not settings.livekit_configured:
+        blockers.append("livekit_not_configured")
+    if fake_heartbeat_enabled:
+        blockers.append("fake_heartbeat_enabled")
+    if recording_enabled or raw_audio_persistence:
+        blockers.append("raw_audio_or_recording_enabled")
+    if dangerous_write_actions_enabled:
+        blockers.append("dangerous_write_actions_enabled")
+    if not stt_configured:
+        blockers.append("stt_not_configured")
+    if not llm_configured:
+        blockers.append("llm_not_configured")
+    if not tts_configured:
+        blockers.append("tts_not_configured")
+    if not tracking_bridge_configured:
+        degraded.append("tracking_bridge_not_configured")
+    final_status = "blocked" if blockers else ("degraded" if degraded else "ready_for_internal_smoke")
+    return {
+        "livekit_configured": settings.livekit_configured,
+        "stt_configured": stt_configured,
+        "llm_configured": llm_configured,
+        "tts_configured": tts_configured,
+        "tracking_bridge_configured": tracking_bridge_configured,
+        "kill_switch": settings.kill_switch,
+        "rollout_mode": settings.public_rollout_mode,
+        "fake_heartbeat_enabled": fake_heartbeat_enabled,
+        "recording_enabled": recording_enabled,
+        "raw_audio_persistence": raw_audio_persistence,
+        "dangerous_write_actions_enabled": dangerous_write_actions_enabled,
+        "blockers": blockers,
+        "degraded": degraded,
+        "final_status": final_status,
     }
 
 

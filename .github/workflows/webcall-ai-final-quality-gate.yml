@@ -16,6 +16,7 @@ on:
       - "deploy/docker-compose.server.yml"
       - "docs/engineering/webcall_ai_production_livekit_runbook.md"
       - "docs/engineering/webcall_ai_voice_loop_env.md"
+      - "docs/engineering/webcall_ai_real_voice_smoke_runbook.md"
       - "docs/engineering/voice_provider_bridge_contract.md"
       - ".github/workflows/webcall-ai-final-quality-gate.yml"
   workflow_dispatch:

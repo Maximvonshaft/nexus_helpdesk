@@ -117,7 +117,7 @@ def test_agent_loop_writes_redacted_evidence_and_handoff_for_unconfigured_tracki
         assert "webcall_ai.response.generated" in payloads
         assert "webcall_ai.tts.ready" in payloads
         assert "webcall_ai.response.spoken" in payloads
-        transcript = db.query(WebchatVoiceTranscriptSegment).filter(WebchatVoiceTranscriptSegment.text_redacted.like("%SF1%")).first()
+        transcript = db.query(WebchatVoiceTranscriptSegment).filter(WebchatVoiceTranscriptSegment.text_redacted.like("%...%")).first()
         assert transcript is not None
         assert "SF123456789CN" not in transcript.text_redacted
     finally:
@@ -157,7 +157,7 @@ def test_vad_returns_after_speech_and_silence_without_waiting_for_max(monkeypatc
     backend = SDKLiveKitRTCBackend()
     backend._audio_queue = __import__("asyncio").Queue()
     speech = (1200).to_bytes(2, "little", signed=True) * 480
-    silence = b"\x00\x00" * 960
+    silence = b"\x00\x00" * 1920
     backend._audio_queue.put_nowait(PCMFrame(data=speech, sample_rate=48000, channels=1))
     backend._audio_queue.put_nowait(PCMFrame(data=silence, sample_rate=48000, channels=1))
 

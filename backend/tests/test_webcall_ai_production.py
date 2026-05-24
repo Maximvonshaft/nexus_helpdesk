@@ -212,6 +212,30 @@ def test_admin_session_events_require_auth():
     assert any(item["event_type"] == "webcall_ai.session.created" for item in authenticated.json()["events"])
 
 
+def test_admin_health_reports_smoke_readiness_block():
+    response = TestClient(app).get("/api/admin/webcall-ai/health", headers=_admin_headers())
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    readiness = payload["readiness"]
+    for key in [
+        "livekit_configured",
+        "stt_configured",
+        "llm_configured",
+        "tts_configured",
+        "tracking_bridge_configured",
+        "kill_switch",
+        "rollout_mode",
+        "fake_heartbeat_enabled",
+        "recording_enabled",
+        "raw_audio_persistence",
+        "dangerous_write_actions_enabled",
+        "final_status",
+    ]:
+        assert key in readiness
+    assert readiness["final_status"] in {"blocked", "degraded", "ready_for_internal_smoke"}
+
+
 def test_fake_orchestrator_and_tool_registry_contract():
     turn = run_fake_turn("Please track SF123456789CN", language="en")
     assert turn["response"]["intent"] == "tracking_lookup"
