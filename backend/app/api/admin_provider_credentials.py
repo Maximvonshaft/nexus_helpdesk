@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Literal
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -9,10 +9,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..enums import UserRole
 from ..services.permissions import ensure_can_manage_runtime
 from ..services.provider_runtime.codex_credential_broker import CodexCredentialBroker
 from ..services.provider_runtime.codex_device_auth_service import CodexDeviceAuthService
 from ..services.provider_runtime.codex_oauth_config import CodexOAuthConfig, resolve_provider_tenant_id
+from ..services.provider_runtime.codex_smoke_chat import CodexSmokeChatError, CodexSmokeChatRequest, CodexSmokeChatService
 from ..services.provider_runtime.credential_crypto import CredentialCryptoService
 from .deps import get_current_user
 
@@ -37,6 +39,12 @@ class CodexCredentialActionResponse(BaseModel):
     upstream_revoke: str | None = None
 
 
+class CodexSmokeChatRequestBody(BaseModel):
+    prompt: str = Field(min_length=1, max_length=1000)
+    nonce: str | None = Field(default=None, max_length=120)
+    mode: Literal["smoke"] = "smoke"
+
+
 def _broker(db: Session) -> CodexCredentialBroker:
     return CodexCredentialBroker(db, CredentialCryptoService(), CodexOAuthConfig.from_env())
 
@@ -53,10 +61,42 @@ def _ensure_manage(current_user, db: Session) -> None:
     ensure_can_manage_runtime(current_user, db)
 
 
+def _ensure_admin_manage(current_user, db: Session) -> None:
+    if current_user.role != UserRole.admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    ensure_can_manage_runtime(current_user, db)
+
+
 @router.get("/codex/status")
 def codex_credentials_status(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     _ensure_manage(current_user, db)
     return _broker(db).list_credentials(tenant_id=_tenant_id(current_user))
+
+
+@router.post("/codex/smoke-chat")
+async def codex_smoke_chat(payload: CodexSmokeChatRequestBody, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    _ensure_admin_manage(current_user, db)
+    try:
+        return await CodexSmokeChatService(db).smoke_chat(
+            CodexSmokeChatRequest(
+                prompt=payload.prompt,
+                nonce=payload.nonce,
+                actor_id=current_user.id,
+                tenant_id=_tenant_id(current_user),
+            )
+        )
+    except CodexSmokeChatError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "ok": False,
+                "provider": "codex",
+                "credential_status": exc.credential_status,
+                "model_call_status": "failed",
+                "reason": exc.reason,
+                "request_id": exc.request_id,
+            },
+        ) from exc
 
 
 @router.post("/codex/authorize")

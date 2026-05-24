@@ -63,6 +63,11 @@ class OAuthRefreshManager:
     def _normalize_dt(value):
         if value is None:
             return None
+        if isinstance(value, str):
+            try:
+                value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
         if getattr(value, "tzinfo", None) is None:
             return value.replace(tzinfo=timezone.utc)
         return value
