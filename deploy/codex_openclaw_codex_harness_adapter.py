@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import urlparse
 
 BIND_HOST = os.environ.get("BIND_HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "18800"))
@@ -20,11 +21,15 @@ AUTH_PROVIDER = os.environ.get("OPENCLAW_CODEX_AUTH_PROVIDER", "openai-codex").s
 PLUGIN_PACKAGE = os.environ.get("OPENCLAW_CODEX_PLUGIN_PACKAGE", "@openclaw/codex").strip() or "@openclaw/codex"
 REQUIRE_PLUGIN = os.environ.get("OPENCLAW_CODEX_REQUIRE_PLUGIN", "true").strip().lower() in {"1", "true", "yes", "on"}
 MODEL = os.environ.get("OPENCLAW_CODEX_MODEL", "").strip()
-INFER_TRANSPORT = os.environ.get("OPENCLAW_CODEX_INFER_TRANSPORT", "gateway").strip().lower() or "gateway"
+INFER_TRANSPORT = os.environ.get("OPENCLAW_CODEX_INFER_TRANSPORT", "local").strip().lower() or "local"
 AGENT_ID = os.environ.get("OPENCLAW_CODEX_AGENT", "").strip()
 READY_TIMEOUT_SECONDS = float(os.environ.get("OPENCLAW_CODEX_READY_TIMEOUT_SECONDS", "30"))
+READY_SMOKE_TIMEOUT_SECONDS = float(os.environ.get("OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS", "30"))
+READY_SMOKE_TTL_SECONDS = float(os.environ.get("OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS", "60"))
 REPLY_TIMEOUT_SECONDS = float(os.environ.get("OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS", "60"))
+GATEWAY_URL = os.environ.get("OPENCLAW_CODEX_GATEWAY_URL", "ws://127.0.0.1:18789").strip() or "ws://127.0.0.1:18789"
 VERSION = "0.1"
+_LOCAL_INFER_SMOKE_CACHE: dict[str, Any] = {"checked_at": 0.0, "ok": False, "reason": None}
 
 _ALLOWED_INTENTS = {
     "greeting",
@@ -271,6 +276,70 @@ def model_configured() -> bool:
     return bool(MODEL and "/" in MODEL and not MODEL.lower().startswith(("stub/", "fixture/", "mock/")))
 
 
+def gateway_reachable() -> bool:
+    try:
+        parsed = urlparse(GATEWAY_URL)
+        host = parsed.hostname
+        if not host:
+            return False
+        port = parsed.port
+        if port is None:
+            port = 443 if parsed.scheme in {"wss", "https"} else 80
+        timeout = max(0.2, min(READY_TIMEOUT_SECONDS, 10.0))
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def build_ready_smoke_payload(nonce: str) -> dict[str, Any]:
+    body = f"Admin readiness smoke. Echo this nonce in the reply field exactly: {nonce}"
+    return {
+        "body": body,
+        "messages": [{"role": "user", "content": body}],
+        "contract": "speedaf_webchat_fast_reply_v1",
+        "tracking_fact_summary": None,
+        "tracking_fact_evidence_present": False,
+        "chatgptAccountId": "readiness-smoke",
+        "chatgptPlanType": "codex",
+        "response_contract": {
+            "reply": "string",
+            "intent": "greeting|tracking|tracking_missing_number|tracking_unresolved|complaint|address_change|handoff|other",
+            "tracking_number": "string|null",
+            "handoff_required": "boolean",
+            "handoff_reason": "string|null",
+            "recommended_agent_action": "string|null",
+        },
+    }
+
+
+def local_infer_smoke_ready() -> tuple[bool, str | None]:
+    now = time.monotonic()
+    checked_at = float(_LOCAL_INFER_SMOKE_CACHE.get("checked_at") or 0.0)
+    if checked_at > 0.0 and now - checked_at < max(0.0, READY_SMOKE_TTL_SECONDS):
+        return bool(_LOCAL_INFER_SMOKE_CACHE.get("ok")), _LOCAL_INFER_SMOKE_CACHE.get("reason")
+    nonce = f"ready-{int(time.time() * 1000)}"
+    reason: str | None = None
+    ok = False
+    try:
+        result = run_openclaw(infer_args(build_prompt(build_ready_smoke_payload(nonce))), READY_SMOKE_TIMEOUT_SECONDS)
+        if result.returncode != 0:
+            reason = "openclaw_codex_local_infer_failed"
+        else:
+            envelope = decode_json_output(result)
+            reply_text = extract_model_text(envelope)
+            reply = strict_reply(parse_json_object(reply_text))
+            ok = nonce in reply["reply"]
+            if not ok:
+                reason = "openclaw_codex_local_infer_nonce_missing"
+    except subprocess.TimeoutExpired:
+        reason = "openclaw_codex_local_infer_timeout"
+    except Exception:
+        reason = "openclaw_codex_local_infer_failed"
+    _LOCAL_INFER_SMOKE_CACHE.update({"checked_at": now, "ok": ok, "reason": reason})
+    return ok, reason
+
+
 def health_payload() -> dict[str, Any]:
     return {
         "ok": True,
@@ -287,7 +356,19 @@ def readiness_payload() -> dict[str, Any]:
     auth_configured = auth_ready() if enabled and cli_configured else False
     model_ok = model_configured()
     transport_ok = INFER_TRANSPORT in {"local", "gateway"}
-    ok = enabled and cli_configured and plugin_configured and auth_configured and model_ok and transport_ok
+    local_smoke_ok = False
+    local_smoke_reason = None
+    gateway_ready = False
+    prerequisites_ok = enabled and cli_configured and plugin_configured and auth_configured and model_ok and transport_ok
+    if prerequisites_ok and INFER_TRANSPORT == "local":
+        local_smoke_ok, local_smoke_reason = local_infer_smoke_ready()
+    elif prerequisites_ok and INFER_TRANSPORT == "gateway":
+        gateway_ready = gateway_reachable()
+    transport_ready = (
+        (INFER_TRANSPORT == "local" and local_smoke_ok)
+        or (INFER_TRANSPORT == "gateway" and gateway_ready)
+    )
+    ok = prerequisites_ok and transport_ready
     reason = None
     if not enabled:
         reason = "openclaw_codex_runtime_disabled"
@@ -301,6 +382,10 @@ def readiness_payload() -> dict[str, Any]:
         reason = "openclaw_codex_model_not_configured"
     elif not transport_ok:
         reason = "openclaw_codex_transport_invalid"
+    elif INFER_TRANSPORT == "local" and not local_smoke_ok:
+        reason = local_smoke_reason or "openclaw_codex_local_infer_smoke_failed"
+    elif INFER_TRANSPORT == "gateway" and not gateway_ready:
+        reason = "openclaw_codex_gateway_not_ready"
     return {
         "ok": ok,
         "service": "nexus-openclaw-codex-harness-adapter",
@@ -314,6 +399,10 @@ def readiness_payload() -> dict[str, Any]:
         "model_configured": model_ok,
         "model": MODEL if model_ok else None,
         "infer_transport": INFER_TRANSPORT if transport_ok else "invalid",
+        "gateway_required": INFER_TRANSPORT == "gateway",
+        "gateway_ready": gateway_ready,
+        "local_infer_smoke_ready": local_smoke_ok,
+        "ready_smoke_ttl_seconds": READY_SMOKE_TTL_SECONDS,
         "capabilities": {
             "strict_fast_reply_json": True,
             "reply_only": True,

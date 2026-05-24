@@ -109,8 +109,10 @@ OPENCLAW_CODEX_CLI=openclaw
 OPENCLAW_CODEX_AUTH_PROVIDER=openai-codex
 OPENCLAW_CODEX_PLUGIN_PACKAGE=@openclaw/codex
 OPENCLAW_CODEX_MODEL=openai/gpt-5.5
-OPENCLAW_CODEX_INFER_TRANSPORT=gateway
+OPENCLAW_CODEX_INFER_TRANSPORT=local
 OPENCLAW_CODEX_READY_TIMEOUT_SECONDS=30
+OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS=30
+OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS=60
 OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS=60
 ```
 
@@ -162,13 +164,14 @@ The adapter runs `deploy/codex_openclaw_codex_harness_adapter.py` on port `18800
 - OpenClaw CLI package: `openclaw`.
 - Codex plugin package: `@openclaw/codex`.
 - Auth profile: `openclaw models auth login --provider openai-codex`.
-- P0 reply proof: `openclaw infer model run ... --json` through the OpenClaw-managed provider/auth/runtime path.
+- P0 reply proof: `openclaw infer model run --local ... --json` through the OpenClaw-managed provider/auth/runtime path.
 
 OpenClaw documentation backing this shape:
 
 - `openclaw models auth list --provider openai-codex` and `openclaw models status` are the documented Codex OAuth checks.
-- `openclaw infer model run --json` is the documented headless provider-backed inference surface.
+- `openclaw infer model run --local --json` is the documented headless provider-backed inference surface used by Nexus production smoke.
 - Codex harness mode keeps OpenClaw responsible for routing/delivery while Codex owns the native model loop.
+- OpenClaw Gateway is not part of the production path. If `OPENCLAW_CODEX_INFER_TRANSPORT=gateway` is explicitly configured, the adapter fails closed unless the gateway socket is reachable.
 
 The 18796 engine derives readiness from the origin of that URL and probes:
 
@@ -179,7 +182,7 @@ GET http://codex-private-model-runtime:18800/readyz
 The 18800 adapter exposes:
 
 - `GET /healthz`: process liveness only.
-- `GET /readyz`: strict readiness. It returns HTTP `200` only when the OpenClaw CLI is installed, `@openclaw/codex` is visible, `openai-codex` auth is present, a real model is configured, and the adapter is explicitly enabled.
+- `GET /readyz`: strict readiness. It returns HTTP `200` only when the OpenClaw CLI is installed, `@openclaw/codex` is visible, `openai-codex` auth is present, a real model is configured, the adapter is explicitly enabled, and the configured transport passes its gate. For the default `local` transport, this includes a lightweight real `openclaw infer model run --local` nonce smoke.
 - `POST /reply`, accepting the 18796-forwarded payload:
   - `body`
   - `messages`
@@ -210,8 +213,10 @@ OPENCLAW_CODEX_AUTH_PROVIDER=openai-codex
 OPENCLAW_CODEX_PLUGIN_PACKAGE=@openclaw/codex
 OPENCLAW_CODEX_REQUIRE_PLUGIN=true
 OPENCLAW_CODEX_MODEL=openai/gpt-5.5
-OPENCLAW_CODEX_INFER_TRANSPORT=gateway
+OPENCLAW_CODEX_INFER_TRANSPORT=local
 OPENCLAW_CODEX_READY_TIMEOUT_SECONDS=30
+OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS=30
+OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS=60
 OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS=60
 ```
 
@@ -304,8 +309,10 @@ export OPENCLAW_CODEX_RUNTIME_ENABLED=true
 export OPENCLAW_CODEX_AUTH_PROVIDER=openai-codex
 export OPENCLAW_CODEX_PLUGIN_PACKAGE=@openclaw/codex
 export OPENCLAW_CODEX_MODEL=openai/gpt-5.5
-export OPENCLAW_CODEX_INFER_TRANSPORT=gateway
+export OPENCLAW_CODEX_INFER_TRANSPORT=local
 export OPENCLAW_CODEX_READY_TIMEOUT_SECONDS=30
+export OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS=30
+export OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS=60
 export CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS=30
 export CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS=30
 export CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS=30

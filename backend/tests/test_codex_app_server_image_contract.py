@@ -90,6 +90,20 @@ def test_codex_private_model_runtime_uses_30_second_ready_timeout():
     assert "OPENCLAW_CODEX_READY_TIMEOUT_SECONDS=30" in runbook
 
 
+def test_codex_private_model_runtime_defaults_to_local_infer_transport():
+    compose = _read("deploy/docker-compose.server.yml")
+    adapter = _read("deploy/codex_openclaw_codex_harness_adapter.py")
+    runbook = _read("docs/engineering/codex_chat_smoke_runbook.md")
+
+    assert "OPENCLAW_CODEX_INFER_TRANSPORT: ${OPENCLAW_CODEX_INFER_TRANSPORT:-local}" in compose
+    assert 'OPENCLAW_CODEX_INFER_TRANSPORT", "local"' in adapter
+    assert "OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS:-30}" in compose
+    assert "OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS: ${OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS:-60}" in compose
+    assert "export OPENCLAW_CODEX_INFER_TRANSPORT=gateway" not in runbook
+    assert "OPENCLAW_CODEX_INFER_TRANSPORT=local" in runbook
+    assert "openclaw infer model run --local" in runbook
+
+
 def test_codex_private_reply_engine_uses_30_second_ready_timeout():
     compose = _read("deploy/docker-compose.server.yml")
     engine = _read("deploy/codex_private_reply_engine.py")

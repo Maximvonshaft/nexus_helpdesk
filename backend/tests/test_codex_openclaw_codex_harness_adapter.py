@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
+import re
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler
@@ -13,15 +14,24 @@ from urllib import error, request
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _load_adapter(monkeypatch, tmp_path, *, enabled: bool = True, model: str = "openai/gpt-5.5"):
+def _load_adapter(
+    monkeypatch,
+    tmp_path,
+    *,
+    enabled: bool = True,
+    model: str = "openai/gpt-5.5",
+    transport: str = "local",
+):
     monkeypatch.setenv("OPENCLAW_CODEX_RUNTIME_ENABLED", "true" if enabled else "false")
     monkeypatch.setenv("OPENCLAW_CODEX_CLI", "openclaw")
     monkeypatch.setenv("OPENCLAW_CODEX_AUTH_PROVIDER", "openai-codex")
     monkeypatch.setenv("OPENCLAW_CODEX_PLUGIN_PACKAGE", "@openclaw/codex")
     monkeypatch.setenv("OPENCLAW_CODEX_REQUIRE_PLUGIN", "true")
     monkeypatch.setenv("OPENCLAW_CODEX_MODEL", model)
-    monkeypatch.setenv("OPENCLAW_CODEX_INFER_TRANSPORT", "gateway")
+    monkeypatch.setenv("OPENCLAW_CODEX_INFER_TRANSPORT", transport)
     monkeypatch.setenv("OPENCLAW_CODEX_READY_TIMEOUT_SECONDS", "1")
+    monkeypatch.setenv("OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS", "1")
+    monkeypatch.setenv("OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS", "0")
     monkeypatch.setenv("OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS", "1")
     spec = importlib.util.spec_from_file_location(
         f"codex_openclaw_codex_harness_adapter_test_{id(tmp_path)}",
@@ -88,6 +98,10 @@ def _completed(args: list[str], stdout: str = "{}") -> subprocess.CompletedProce
     return subprocess.CompletedProcess(args=args, returncode=0, stdout=stdout, stderr="")
 
 
+def _infer_envelope(reply: dict) -> str:
+    return json.dumps({"ok": True, "outputs": [{"text": json.dumps(reply)}]})
+
+
 def test_openclaw_codex_adapter_healthz_is_liveness(monkeypatch, tmp_path):
     adapter = _load_adapter(monkeypatch, tmp_path, enabled=False, model="")
     server = adapter.ThreadingHTTPServer(("127.0.0.1", 0), adapter.Handler)
@@ -120,6 +134,7 @@ def test_openclaw_codex_adapter_readyz_200_with_official_cli_plugin_auth_and_mod
     adapter = _load_adapter(monkeypatch, tmp_path)
     calls: list[list[str]] = []
     monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    monkeypatch.setattr(adapter, "gateway_reachable", lambda: (_ for _ in ()).throw(AssertionError("gateway not required for local transport")))
 
     def fake_run(args, timeout_seconds, input_text=None):
         calls.append(args)
@@ -127,6 +142,11 @@ def test_openclaw_codex_adapter_readyz_200_with_official_cli_plugin_auth_and_mod
             return _completed(args, json.dumps({"plugins": [{"id": "codex", "package": "@openclaw/codex", "enabled": True}]}))
         if args[:3] == ["models", "auth", "list"]:
             return _completed(args, json.dumps({"profiles": [{"provider": "openai-codex", "status": "ok"}]}))
+        if args[:3] == ["infer", "model", "run"]:
+            prompt = args[args.index("--prompt") + 1]
+            nonce = re.search(r"ready-\d+", prompt)
+            assert nonce
+            return _completed(args, _infer_envelope(_strict_reply(f"Readiness nonce {nonce.group(0)}")))
         raise AssertionError(args)
 
     monkeypatch.setattr(adapter, "run_openclaw", fake_run)
@@ -137,8 +157,77 @@ def test_openclaw_codex_adapter_readyz_200_with_official_cli_plugin_auth_and_mod
     assert payload["auth_provider"] == "openai-codex"
     assert payload["codex_plugin_package"] == "@openclaw/codex"
     assert payload["model"] == "openai/gpt-5.5"
+    assert payload["infer_transport"] == "local"
+    assert payload["gateway_required"] is False
+    assert payload["local_infer_smoke_ready"] is True
     assert ["plugins", "list", "--json"] in calls
     assert ["models", "auth", "list", "--provider", "openai-codex", "--json"] in calls
+    assert any(args[:4] == ["infer", "model", "run", "--local"] for args in calls)
+
+
+def test_openclaw_codex_adapter_readyz_gateway_fails_closed_when_gateway_unreachable(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path, transport="gateway")
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    monkeypatch.setattr(adapter, "gateway_reachable", lambda: False)
+
+    def fake_run(args, timeout_seconds, input_text=None):
+        if args[:2] == ["plugins", "list"]:
+            return _completed(args, json.dumps({"plugins": [{"id": "codex", "package": "@openclaw/codex", "enabled": True}]}))
+        if args[:3] == ["models", "auth", "list"]:
+            return _completed(args, json.dumps({"profiles": [{"provider": "openai-codex", "status": "ok"}]}))
+        raise AssertionError(args)
+
+    monkeypatch.setattr(adapter, "run_openclaw", fake_run)
+    payload = adapter.readiness_payload()
+
+    assert payload["ok"] is False
+    assert payload["infer_transport"] == "gateway"
+    assert payload["gateway_required"] is True
+    assert payload["gateway_ready"] is False
+    assert payload["local_infer_smoke_ready"] is False
+    assert payload["reason"] == "openclaw_codex_gateway_not_ready"
+
+
+def test_openclaw_codex_adapter_readyz_gateway_ok_when_gateway_reachable(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path, transport="gateway")
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    monkeypatch.setattr(adapter, "gateway_reachable", lambda: True)
+
+    def fake_run(args, timeout_seconds, input_text=None):
+        if args[:2] == ["plugins", "list"]:
+            return _completed(args, json.dumps({"plugins": [{"id": "codex", "package": "@openclaw/codex", "enabled": True}]}))
+        if args[:3] == ["models", "auth", "list"]:
+            return _completed(args, json.dumps({"profiles": [{"provider": "openai-codex", "status": "ok"}]}))
+        raise AssertionError(args)
+
+    monkeypatch.setattr(adapter, "run_openclaw", fake_run)
+    payload = adapter.readiness_payload()
+
+    assert payload["ok"] is True
+    assert payload["infer_transport"] == "gateway"
+    assert payload["gateway_ready"] is True
+    assert payload["local_infer_smoke_ready"] is False
+
+
+def test_openclaw_codex_adapter_readyz_local_smoke_nonce_missing_fails(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+
+    def fake_run(args, timeout_seconds, input_text=None):
+        if args[:2] == ["plugins", "list"]:
+            return _completed(args, json.dumps({"plugins": [{"id": "codex", "package": "@openclaw/codex", "enabled": True}]}))
+        if args[:3] == ["models", "auth", "list"]:
+            return _completed(args, json.dumps({"profiles": [{"provider": "openai-codex", "status": "ok"}]}))
+        if args[:3] == ["infer", "model", "run"]:
+            return _completed(args, _infer_envelope(_strict_reply("Readiness model response without nonce")))
+        raise AssertionError(args)
+
+    monkeypatch.setattr(adapter, "run_openclaw", fake_run)
+    payload = adapter.readiness_payload()
+
+    assert payload["ok"] is False
+    assert payload["local_infer_smoke_ready"] is False
+    assert payload["reason"] == "openclaw_codex_local_infer_nonce_missing"
 
 
 def test_openclaw_codex_auth_profiles_empty_is_not_ready(monkeypatch, tmp_path):
@@ -422,7 +511,7 @@ def test_openclaw_codex_adapter_reply_invokes_official_infer_and_returns_strict_
 
     assert status == 200
     assert payload == _strict_reply("Echo nonce-openclaw")
-    assert captured["args"][:4] == ["infer", "model", "run", "--gateway"]
+    assert captured["args"][:4] == ["infer", "model", "run", "--local"]
     assert "--model" in captured["args"]
     assert "openai/gpt-5.5" in captured["args"]
     assert "--json" in captured["args"]
