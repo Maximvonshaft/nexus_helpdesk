@@ -190,6 +190,37 @@ def test_openclaw_codex_auth_oauth_profile_with_future_expires_at_is_ready(monke
     assert adapter.auth_ready() is True
 
 
+def test_openclaw_codex_auth_real_oauth_profile_shape_with_future_expires_at_is_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 5, 24, 12, 0, 0, tzinfo=tz or timezone.utc)
+
+    monkeypatch.setattr(adapter, "datetime", FixedDateTime)
+    monkeypatch.setattr(
+        adapter,
+        "run_openclaw",
+        lambda args, timeout_seconds, input_text=None: _completed(
+            args,
+            json.dumps(
+                {
+                    "profiles": [
+                        {
+                            "provider": "openai-codex",
+                            "type": "oauth",
+                            "expiresAt": "2026-06-03T19:45:44.586Z",
+                        }
+                    ]
+                }
+            ),
+        ),
+    )
+    assert adapter.auth_ready() is True
+
+
 def test_openclaw_codex_auth_oauth_profile_with_expired_expires_at_is_not_ready(monkeypatch, tmp_path):
     adapter = _load_adapter(monkeypatch, tmp_path)
     monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
@@ -200,6 +231,37 @@ def test_openclaw_codex_auth_oauth_profile_with_expired_expires_at_is_not_ready(
         lambda args, timeout_seconds, input_text=None: _completed(
             args,
             json.dumps({"profiles": [{"provider": "openai-codex", "type": "oauth", "expiresAt": expires_at}]}),
+        ),
+    )
+    assert adapter.auth_ready() is False
+
+
+def test_openclaw_codex_auth_real_oauth_profile_shape_with_expired_expires_at_is_not_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 6, 4, 12, 0, 0, tzinfo=tz or timezone.utc)
+
+    monkeypatch.setattr(adapter, "datetime", FixedDateTime)
+    monkeypatch.setattr(
+        adapter,
+        "run_openclaw",
+        lambda args, timeout_seconds, input_text=None: _completed(
+            args,
+            json.dumps(
+                {
+                    "profiles": [
+                        {
+                            "provider": "openai-codex",
+                            "type": "oauth",
+                            "expiresAt": "2026-06-03T19:45:44.586Z",
+                        }
+                    ]
+                }
+            ),
         ),
     )
     assert adapter.auth_ready() is False

@@ -231,7 +231,7 @@ def profile_usable(profile: dict[str, Any]) -> bool:
             parsed = datetime.fromisoformat(normalized)
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=timezone.utc)
-        except ValueError:
+        except (ValueError, TypeError, OSError):
             return False
         return parsed > datetime.now(timezone.utc)
     return False
