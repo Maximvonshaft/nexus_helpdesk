@@ -38,7 +38,15 @@ class TTSResult:
 class STTProvider:
     provider_name = "base"
 
-    def transcribe(self, audio: bytes, *, language: str | None = None) -> STTResult:
+    def transcribe(
+        self,
+        audio: bytes,
+        *,
+        language: str | None = None,
+        sample_rate: int | None = None,
+        channels: int | None = None,
+        mime_type: str | None = None,
+    ) -> STTResult:
         raise NotImplementedError
 
 

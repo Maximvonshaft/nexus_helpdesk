@@ -32,6 +32,10 @@ https://github.com/Maximvonshaft/nexus_helpdesk/pull/232
 - Provider router plus fail-closed external STT/LLM/TTS adapter boundaries.
 - External STT/LLM/TTS HTTP adapters with token-file secret loading, timeout/retry handling, and provider error classification.
 - LiveKit SDK-backed media I/O path with AI participant join, visitor audio collection, and TTS audio publication support.
+- LiveKit audio turns now carry PCM metadata (`sample_rate`, `channels`, `mime_type`) and raw PCM is wrapped in-memory as WAV for STT bridge uploads.
+- Energy-based VAD/silence cut detects utterance end before the max utterance timeout.
+- Evidence semantics now separate `response.generated`, `tts.ready`, successful `response.spoken`, and `response.publish_failed`.
+- Session release clears AI quota for handoff and terminalizes visitor disconnect/max duration/session ended cases.
 - Bounded multi-turn call loop with greeting, heartbeat/lease refresh, max-turn/max-duration/handoff/visitor-disconnect/kill-switch exits.
 - Redacted transcript, AI turn, AI action, and timeline event persistence path.
 - Admin health endpoint and customer timeline polling.
@@ -53,12 +57,17 @@ https://github.com/Maximvonshaft/nexus_helpdesk/pull/232
 - `TTS_ENDPOINT`, `TTS_API_KEY_FILE`
 - `LIVEKIT_API_KEY_FILE`, `LIVEKIT_API_SECRET_FILE`
 - `TRACKING_LOOKUP_ENDPOINT`, `TRACKING_LOOKUP_API_KEY_FILE`
+- `WEBCALL_AI_MIN_UTTERANCE_SECONDS`
+- `WEBCALL_AI_MAX_UTTERANCE_SECONDS`
+- `WEBCALL_AI_SILENCE_END_MS`
+- `WEBCALL_AI_AUDIO_SAMPLE_RATE`
 
 ## 9. Tests run and results
 
 - `npm --prefix webapp run typecheck` passed.
 - `py -3.12 -m py_compile ...` passed for changed backend Python files.
 - `git diff --check` passed.
+- Secret scan command passed with only the CI grep line itself matching.
 - `py -3.12 -m pytest -q backend/tests/test_webcall_ai_production.py backend/tests/test_webcall_ai_voice_loop.py` was not run locally because `pytest` is not installed in the local Python 3.12 environment. The GitHub Actions gate installs dependencies and runs both test files in CI.
 
 ## 10. Manual smoke steps

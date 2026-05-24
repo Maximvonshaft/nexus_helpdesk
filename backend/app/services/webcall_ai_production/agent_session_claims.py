@@ -94,6 +94,9 @@ def mark_status(db: Session, *, session_id: int, worker_id: str, status: str, le
     return True
 
 
+TERMINAL_RELEASE_REASONS = {"visitor_disconnected", "max_session_seconds", "max_turns", "session_ended", "kill_switch"}
+
+
 def release_session(db: Session, *, session_id: int, worker_id: str, reason: str | None = None) -> bool:
     session = (
         db.query(WebchatVoiceSession)
@@ -107,6 +110,11 @@ def release_session(db: Session, *, session_id: int, worker_id: str, reason: str
     session.ai_agent_ended_at = now
     session.ai_handoff_reason = reason
     session.ai_agent_lease_expires_at = None
+    if reason in TERMINAL_RELEASE_REASONS:
+        session.status = "ended"
+        session.ended_at = session.ended_at or now
+    elif reason == "handoff_required":
+        session.ai_agent_status = AI_STATUS_HANDOFF_REQUESTED
     session.updated_at = now
     db.commit()
     return True

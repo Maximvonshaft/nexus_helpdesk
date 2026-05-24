@@ -26,7 +26,7 @@ def run_fake_turn(audio_or_text: bytes | str, *, language: str | None = None) ->
         "transcript": stt.__dict__,
         "response": llm.__dict__,
         "tool_result": tool_result,
-        "tts": {"mime_type": tts.mime_type, "bytes": len(tts.audio_bytes), "text": tts.text, "_audio_bytes": tts.audio_bytes},
+        "tts": {"mime_type": tts.mime_type, "bytes": len(tts.audio_bytes), "text": tts.text, "provider": tts.provider_name, "_audio_bytes": tts.audio_bytes},
     }
 
 
@@ -37,13 +37,22 @@ def run_session_turn(
     audio: bytes,
     worker_id: str,
     language: str | None = None,
+    sample_rate: int | None = None,
+    channels: int | None = None,
+    mime_type: str | None = None,
 ) -> dict[str, object]:
     from .config import get_webcall_ai_production_settings
 
     settings = get_webcall_ai_production_settings()
     started = time.monotonic()
     try:
-        stt = get_stt_provider(settings.stt_provider).transcribe(audio, language=language or session.ai_language)
+        stt = get_stt_provider(settings.stt_provider).transcribe(
+            audio,
+            language=language or session.ai_language,
+            sample_rate=sample_rate,
+            channels=channels,
+            mime_type=mime_type,
+        )
     except ProviderError as exc:
         return build_handoff_turn(
             db,
@@ -99,7 +108,7 @@ def run_session_turn(
         "transcript": stt.__dict__,
         "response": llm.__dict__,
         "tool_result": tool_result,
-        "tts": {"mime_type": tts.mime_type, "bytes": len(tts.audio_bytes), "text": tts.text, "_audio_bytes": tts.audio_bytes},
+        "tts": {"mime_type": tts.mime_type, "bytes": len(tts.audio_bytes), "text": tts.text, "provider": tts.provider_name, "_audio_bytes": tts.audio_bytes},
         "worker_id": worker_id,
         "handoff_required": llm.handoff_required,
         "handoff_reason": llm.handoff_reason,
@@ -156,7 +165,7 @@ def build_handoff_turn(
     return {
         "turn_id": evidence.turn.id,
         "response": llm.__dict__,
-        "tts": {"mime_type": tts.mime_type, "bytes": len(tts.audio_bytes), "text": tts.text, "_audio_bytes": tts.audio_bytes},
+        "tts": {"mime_type": tts.mime_type, "bytes": len(tts.audio_bytes), "text": tts.text, "provider": tts.provider_name, "_audio_bytes": tts.audio_bytes},
         "worker_id": worker_id,
         "handoff_required": handoff_required,
         "handoff_reason": handoff_reason,

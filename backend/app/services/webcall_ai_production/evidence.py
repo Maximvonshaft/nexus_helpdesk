@@ -136,7 +136,14 @@ def persist_turn_evidence(
         db,
         conversation_id=session.conversation_id,
         ticket_id=session.ticket_id,
-        event_type="webcall_ai.response.spoken",
+        event_type="webcall_ai.response.generated",
+        payload={"voice_session_id": session.public_id, "turn_index": turn_index, "intent": llm.intent, "handoff_required": llm.handoff_required},
+    )
+    write_event(
+        db,
+        conversation_id=session.conversation_id,
+        ticket_id=session.ticket_id,
+        event_type="webcall_ai.tts.ready",
         payload={"voice_session_id": session.public_id, "turn_index": turn_index, "tts_provider": tts.provider_name, "mime_type": tts.mime_type},
     )
     db.flush()

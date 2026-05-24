@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import wave
+from io import BytesIO
 from uuid import uuid4
 
 os.environ.setdefault("APP_ENV", "development")
@@ -10,10 +12,11 @@ import pytest
 
 from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: F401,E402
 from app.db import Base, SessionLocal, engine
-from app.services.webcall_ai_production.agent_session_claims import AI_STATUS_CLAIMED
+from app.services.webcall_ai_production.agent_session_claims import AI_STATUS_CLAIMED, release_session
 from app.services.webcall_ai_production.agent_worker import run_claimed_session_loop
-from app.services.webcall_ai_production.audio.livekit_io import LiveKitMediaTurn, decode_audio_for_livekit
+from app.services.webcall_ai_production.audio.livekit_io import LiveKitMediaTurn, PCMFrame, SDKLiveKitRTCBackend, decode_audio_for_livekit, pcm16_to_wav
 from app.services.webcall_ai_production.config import get_webcall_ai_production_settings
+from app.services.webcall_ai_production.session_service import AI_ACTIVE_STATUSES
 from app.services.webcall_ai_production.providers.external_llm import ExternalLLMProvider
 from app.services.webcall_ai_production.providers.external_stt import ExternalSTTProvider
 from app.services.webcall_ai_production.providers.external_tts import ExternalTTSProvider
@@ -44,11 +47,12 @@ def clean_db_and_env(monkeypatch):
 
 
 class FakeAgentIO:
-    def __init__(self, utterances: list[bytes]):
+    def __init__(self, utterances: list[bytes], *, fail_publish_after: int | None = None):
         self.utterances = list(utterances)
         self.published: list[tuple[bytes, str]] = []
         self.connected = False
         self.closed = False
+        self.fail_publish_after = fail_publish_after
 
     def connect(self):
         self.connected = True
@@ -56,9 +60,11 @@ class FakeAgentIO:
     def collect_next_customer_utterance(self, *, timeout_seconds=20.0, max_seconds=12.0):
         if not self.utterances:
             raise RuntimeError("no more utterances")
-        return LiveKitMediaTurn(customer_audio=self.utterances.pop(0), language="en")
+        return LiveKitMediaTurn(audio_bytes=self.utterances.pop(0), sample_rate=48000, channels=1, mime_type="audio/pcm", language="en")
 
     def publish_ai_audio(self, audio_bytes: bytes, *, mime_type: str):
+        if self.fail_publish_after is not None and len(self.published) >= self.fail_publish_after:
+            raise RuntimeError("publish failed")
         self.published.append((audio_bytes, mime_type))
 
     def close(self):
@@ -108,6 +114,9 @@ def test_agent_loop_writes_redacted_evidence_and_handoff_for_unconfigured_tracki
         assert "webcall_ai.transcript.final" in payloads
         assert "webcall_ai.tool.called" in payloads
         assert "webcall_ai.handoff.requested" in payloads
+        assert "webcall_ai.response.generated" in payloads
+        assert "webcall_ai.tts.ready" in payloads
+        assert "webcall_ai.response.spoken" in payloads
         transcript = db.query(WebchatVoiceTranscriptSegment).filter(WebchatVoiceTranscriptSegment.text_redacted.like("%SF1%")).first()
         assert transcript is not None
         assert "SF123456789CN" not in transcript.text_redacted
@@ -129,6 +138,72 @@ def test_livekit_audio_decoder_accepts_pcm_bytes(monkeypatch):
     assert len(pcm) == 480
     assert sample_rate == 24000
     assert channels == 1
+
+
+def test_pcm16_to_wav_wraps_livekit_raw_pcm_for_stt_contract():
+    pcm = b"\x01\x00" * 480
+    wav_bytes = pcm16_to_wav(pcm, sample_rate=48000, channels=1)
+
+    with wave.open(BytesIO(wav_bytes), "rb") as wav:
+        assert wav.getframerate() == 48000
+        assert wav.getnchannels() == 1
+        assert wav.getsampwidth() == 2
+        assert wav.readframes(480) == pcm
+
+
+def test_vad_returns_after_speech_and_silence_without_waiting_for_max(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_MIN_UTTERANCE_SECONDS", "0")
+    monkeypatch.setenv("WEBCALL_AI_SILENCE_END_MS", "40")
+    backend = SDKLiveKitRTCBackend()
+    backend._audio_queue = __import__("asyncio").Queue()
+    speech = (1200).to_bytes(2, "little", signed=True) * 480
+    silence = b"\x00\x00" * 960
+    backend._audio_queue.put_nowait(PCMFrame(data=speech, sample_rate=48000, channels=1))
+    backend._audio_queue.put_nowait(PCMFrame(data=silence, sample_rate=48000, channels=1))
+
+    turn = __import__("asyncio").run(backend._collect_next_customer_utterance(timeout_seconds=1, max_seconds=12))
+
+    assert turn.audio_bytes == speech + silence
+    assert turn.sample_rate == 48000
+    assert turn.channels == 1
+
+
+def test_publish_failure_does_not_write_response_spoken():
+    db = SessionLocal()
+    try:
+        session = _claimed_session(db)
+        io = FakeAgentIO([b"Please track SF123456789CN"], fail_publish_after=1)
+
+        result = run_claimed_session_loop(session.id, worker_id="worker-test", io=io)
+
+        assert result["status"] == "failed"
+        event_types = [event.event_type for event in db.query(WebchatEvent).order_by(WebchatEvent.id).all()]
+        assert "webcall_ai.response.publish_failed" in event_types
+        assert "webcall_ai.response.spoken" not in event_types
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("reason", ["handoff_required", "max_session_seconds", "visitor_disconnected", "session_ended"])
+def test_release_reasons_clear_ai_active_quota(reason):
+    db = SessionLocal()
+    try:
+        session = _claimed_session(db)
+
+        assert release_session(db, session_id=session.id, worker_id="worker-test", reason=reason) is True
+        db.refresh(session)
+
+        assert session.ai_agent_lease_expires_at is None
+        if reason == "handoff_required":
+            assert session.ai_agent_status == "handoff_requested"
+            assert session.ended_at is None
+            assert session.ai_agent_status not in AI_ACTIVE_STATUSES
+        else:
+            assert session.status == "ended"
+            assert session.ended_at is not None
+            assert session.ai_agent_status not in AI_ACTIVE_STATUSES
+    finally:
+        db.close()
 
 
 def test_external_provider_adapters_require_secret_files(monkeypatch):
@@ -178,7 +253,7 @@ def test_external_provider_adapters_parse_mocked_http(monkeypatch, tmp_path):
 
     monkeypatch.setattr("httpx.Client", Client)
 
-    stt = ExternalSTTProvider(endpoint="https://stt.example.test", token_file=str(secret)).transcribe(b"audio")
+    stt = ExternalSTTProvider(endpoint="https://stt.example.test", token_file=str(secret)).transcribe(b"\x00\x00" * 20, sample_rate=16000, channels=1, mime_type="audio/pcm")
     llm = ExternalLLMProvider(endpoint="https://llm.example.test", token_file=str(secret)).respond(stt.text)
     tts = ExternalTTSProvider(endpoint="https://tts.example.test", token_file=str(secret)).synthesize(llm.response_text)
 

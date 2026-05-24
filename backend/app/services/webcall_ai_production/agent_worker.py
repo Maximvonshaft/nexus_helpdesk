@@ -12,11 +12,13 @@ from ...db import SessionLocal
 from ...utils.time import utc_now
 from ...voice_models import WebchatVoiceSession
 from .agent_session_claims import (
+    AI_STATUS_CLAIMED,
     AI_STATUS_JOINED,
     AI_STATUS_JOINING,
     AI_STATUS_LISTENING,
     AI_STATUS_SPEAKING,
     AI_STATUS_THINKING,
+    AI_STATUS_WAITING,
     fail_session,
     mark_status,
     release_session,
@@ -30,6 +32,7 @@ from .orchestrator import build_handoff_turn, run_fake_turn, run_session_turn
 
 logger = logging.getLogger(__name__)
 SHUTDOWN_REQUESTED = False
+AI_ACTIVE_STATUSES = {AI_STATUS_WAITING, AI_STATUS_CLAIMED, AI_STATUS_JOINING, AI_STATUS_JOINED, AI_STATUS_LISTENING, AI_STATUS_THINKING, AI_STATUS_SPEAKING}
 
 
 def _request_shutdown(signum, frame) -> None:
@@ -42,7 +45,7 @@ def health() -> dict[str, object]:
     settings = get_webcall_ai_production_settings()
     db = SessionLocal()
     try:
-        active_sessions = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.mode == "livekit_ai_agent", WebchatVoiceSession.ended_at.is_(None)).count()
+        active_sessions = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.mode == "livekit_ai_agent", WebchatVoiceSession.ai_agent_status.in_(list(AI_ACTIVE_STATUSES))).count()
         failed_sessions = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.mode == "livekit_ai_agent", WebchatVoiceSession.ai_agent_status == "failed").count()
         stale_leases = (
             db.query(WebchatVoiceSession)
@@ -138,14 +141,23 @@ def run_claimed_session_loop(session_id: int, *, worker_id: str, io: LiveKitAgen
             try:
                 media_turn = managed_io.collect_next_customer_utterance(
                     timeout_seconds=float(os.getenv("WEBCALL_AI_UTTERANCE_TIMEOUT_SECONDS", "20")),
-                    max_seconds=float(os.getenv("WEBCALL_AI_MAX_UTTERANCE_SECONDS", "12")),
+                    max_seconds=float(settings.max_utterance_seconds),
                 )
             except VisitorDisconnected:
                 release_session(db, session_id=session_id, worker_id=worker_id, reason="visitor_disconnected")
                 return {"claimed": 1, "processed": turns, "failed": 0, "status": "visitor_disconnected"}
             mark_status(db, session_id=session_id, worker_id=worker_id, status=AI_STATUS_THINKING)
             db.refresh(claimed_session)
-            result = run_session_turn(db, session=claimed_session, audio=media_turn.customer_audio, worker_id=worker_id, language=media_turn.language)
+            result = run_session_turn(
+                db,
+                session=claimed_session,
+                audio=media_turn.audio_bytes,
+                worker_id=worker_id,
+                language=media_turn.language,
+                sample_rate=media_turn.sample_rate,
+                channels=media_turn.channels,
+                mime_type=media_turn.mime_type,
+            )
             turns += 1
             mark_status(db, session_id=session_id, worker_id=worker_id, status=AI_STATUS_SPEAKING)
             write_event(
@@ -158,7 +170,27 @@ def run_claimed_session_loop(session_id: int, *, worker_id: str, io: LiveKitAgen
             db.commit()
             tts_payload = result["tts"]
             audio_bytes = tts_payload.get("_audio_bytes") if isinstance(tts_payload, dict) else None
-            managed_io.publish_ai_audio(audio_bytes or b"", mime_type=tts_payload["mime_type"])
+            try:
+                managed_io.publish_ai_audio(audio_bytes or b"", mime_type=tts_payload["mime_type"])
+                write_event(
+                    db,
+                    conversation_id=claimed_session.conversation_id,
+                    ticket_id=claimed_session.ticket_id,
+                    event_type="webcall_ai.response.spoken",
+                    payload={"voice_session_id": claimed_session.public_id, "turn_id": result.get("turn_id"), "tts_provider": tts_payload.get("provider"), "mime_type": tts_payload["mime_type"]},
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+                write_event(
+                    db,
+                    conversation_id=claimed_session.conversation_id,
+                    ticket_id=claimed_session.ticket_id,
+                    event_type="webcall_ai.response.publish_failed",
+                    payload={"voice_session_id": claimed_session.public_id, "turn_id": result.get("turn_id")},
+                )
+                db.commit()
+                raise
             if bool(result.get("handoff_required")):
                 release_session(db, session_id=session_id, worker_id=worker_id, reason=str(result.get("handoff_reason") or "handoff_required"))
                 return {"claimed": 1, "processed": turns, "failed": 0, "status": "handoff_required"}

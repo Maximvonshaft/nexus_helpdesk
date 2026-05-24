@@ -20,6 +20,7 @@ from .tools.tracking_lookup import extract_tracking_number
 
 
 TERMINAL_STATUSES = {"ended", "missed", "failed", "cancelled"}
+AI_ACTIVE_STATUSES = {"waiting_for_worker", "claimed", "joining", "joined", "listening", "thinking", "speaking"}
 
 
 @dataclass
@@ -63,7 +64,7 @@ def _active_ai_session(db: Session, conversation: WebchatConversation) -> Webcha
         .filter(
             WebchatVoiceSession.conversation_id == conversation.id,
             WebchatVoiceSession.mode == "livekit_ai_agent",
-            WebchatVoiceSession.status.notin_(list(TERMINAL_STATUSES)),
+            WebchatVoiceSession.ai_agent_status.in_(list(AI_ACTIVE_STATUSES)),
         )
         .order_by(WebchatVoiceSession.id.desc())
         .first()
@@ -147,7 +148,7 @@ def create_session(
 
     active_count = (
         db.query(WebchatVoiceSession)
-        .filter(WebchatVoiceSession.mode == "livekit_ai_agent", WebchatVoiceSession.status.notin_(list(TERMINAL_STATUSES)))
+        .filter(WebchatVoiceSession.mode == "livekit_ai_agent", WebchatVoiceSession.ai_agent_status.in_(list(AI_ACTIVE_STATUSES)))
         .count()
     )
     if active_count >= settings.max_active_sessions:
