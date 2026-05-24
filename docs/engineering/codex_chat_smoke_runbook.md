@@ -2,17 +2,28 @@
 
 This runbook proves Nexus can use an authorized Code X credential for a real admin-only chat call. It does not mark the system production-ready; that requires a deployed nonce smoke call to pass.
 
+Current deployment fact: the status endpoint is proven and `smoke-chat` is deployed. The previous blocker was `codex_llm_endpoint_not_configured`, which means the OAuth credential is authorized but no callable Code X LLM runtime endpoint was configured for the backend.
+
 ## Preconditions
 
 - Admin authentication is available.
 - The admin user has `runtime.manage`.
 - `PROVIDER_CREDENTIAL_ENCRYPTION_KEY_FILE` is mounted and readable by the backend.
 - At least one active `openai-codex` OAuth credential exists for the tenant.
-- `CODEX_SMOKE_ENDPOINT` points to the approved Code X callable chat/LLM endpoint.
-- Optional: `CODEX_SMOKE_MODEL` if the endpoint requires an explicit model.
-- Optional: `CODEX_SMOKE_TIMEOUT_MS`, default `15000`.
+- Preferred existing runtime path:
+  - `CODEX_APP_SERVER_BRIDGE_URL`, for example the approved internal bridge `/reply` endpoint.
+  - `CODEX_APP_SERVER_LOGIN_URL`, if the bridge separates OAuth login from reply calls.
+  - `CODEX_APP_SERVER_TOKEN_FILE`, if the bridge requires its own shared service token.
+  - Optional: `CODEX_APP_SERVER_TIMEOUT_MS`.
+- Direct approved LLM endpoint path:
+  - `CODEX_LLM_ENDPOINT`.
+  - `CODEX_LLM_API_STYLE=openai_chat` or `CODEX_LLM_API_STYLE=responses`.
+  - Optional: `CODEX_LLM_MODEL`, `CODEX_LLM_TIMEOUT_SECONDS`, `CODEX_LLM_RETRIES`.
+- Backward compatibility only: `CODEX_SMOKE_ENDPOINT`, `CODEX_SMOKE_MODEL`, and `CODEX_SMOKE_TIMEOUT_MS` are still accepted, but new deployments should use `CODEX_APP_SERVER_*` or `CODEX_LLM_*`.
 
 Do not configure provider access tokens, refresh tokens, client secrets, or encryption keys inline.
+
+The backend obtains the Code X OAuth access token through the existing provider credential encryption/decryption and `OAuthRefreshManager` path. Do not configure an OpenAI API key for this probe.
 
 ## Status Probe
 
@@ -58,7 +69,11 @@ Expected success:
 
 Operational verdict after success:
 
-`CODEX_STATUS_OK_REAL_CHAT_SMOKE_NONCE_ECHOED`
+```bash
+SMOKE_HTTP_CODE=200
+nonce_echoed=True
+VERDICT=CODEX_AUTH_AND_CHAT_MODEL_CALL_CONNECTED
+```
 
 ## Failure Verdicts
 
@@ -66,7 +81,7 @@ Operational verdict after success:
 - `403`: admin or `runtime.manage` required.
 - `404 codex_credential_not_found`: no active authorized Code X credential for the tenant.
 - `409 credential_refresh_required`: stored credential could not be refreshed or is expired.
-- `503 codex_llm_endpoint_not_configured`: credential is authorized, but no callable `CODEX_SMOKE_ENDPOINT` is configured.
+- `503 codex_llm_endpoint_not_configured`: credential is authorized, but no callable `CODEX_APP_SERVER_BRIDGE_URL`, `CODEX_LLM_ENDPOINT`, or backward-compatible `CODEX_SMOKE_ENDPOINT` is configured.
 - `502 codex_provider_call_failed`: configured endpoint failed, timed out, returned invalid JSON, or returned an HTTP error.
 
 The response must never include `access_token`, `refresh_token`, authorization headers, client secret, encryption key, or raw credential payload.
@@ -88,9 +103,12 @@ Raw prompt, raw nonce, access token, refresh token, authorization headers, and c
 
 ## Rollback
 
-Unset the smoke endpoint and restart the backend:
+Unset the callable endpoint/bridge and restart the backend:
 
 ```bash
+unset CODEX_APP_SERVER_BRIDGE_URL
+unset CODEX_APP_SERVER_LOGIN_URL
+unset CODEX_LLM_ENDPOINT
 unset CODEX_SMOKE_ENDPOINT
 docker compose -f deploy/docker-compose.server.yml up -d --no-deps backend
 ```

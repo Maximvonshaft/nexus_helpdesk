@@ -68,9 +68,22 @@ def users(db_session):
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("ENV", raising=False)
+    monkeypatch.delenv("CODEX_LLM_ENDPOINT", raising=False)
+    monkeypatch.delenv("CODEX_LLM_API_STYLE", raising=False)
+    monkeypatch.delenv("CODEX_LLM_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("CODEX_LLM_RETRIES", raising=False)
+    monkeypatch.delenv("CODEX_LLM_MODEL", raising=False)
     monkeypatch.delenv("CODEX_SMOKE_ENDPOINT", raising=False)
     monkeypatch.delenv("CODEX_SMOKE_MODEL", raising=False)
     monkeypatch.delenv("CODEX_SMOKE_TIMEOUT_MS", raising=False)
+    monkeypatch.delenv("CODEX_APP_SERVER_BRIDGE_URL", raising=False)
+    monkeypatch.delenv("CODEX_APP_SERVER_LOGIN_URL", raising=False)
+    monkeypatch.delenv("CODEX_APP_SERVER_TOKEN", raising=False)
+    monkeypatch.delenv("CODEX_APP_SERVER_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("CODEX_REPLY_BRIDGE_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("CODEX_APP_SERVER_TIMEOUT_MS", raising=False)
     monkeypatch.delenv("CODEX_OAUTH_CLIENT_ID", raising=False)
     monkeypatch.delenv("CODEX_OAUTH_TOKEN_URL", raising=False)
 
@@ -173,7 +186,7 @@ def test_smoke_chat_credential_present_endpoint_not_configured(client, db_sessio
 
 def test_smoke_chat_provider_returns_nonce(client, db_session, monkeypatch):
     _insert_credential(db_session)
-    monkeypatch.setenv("CODEX_SMOKE_ENDPOINT", "https://codex-smoke.internal/chat")
+    monkeypatch.setenv("CODEX_LLM_ENDPOINT", "https://codex-smoke.internal/chat")
     captured: dict = {}
 
     class FakeResponse:
@@ -201,7 +214,7 @@ def test_smoke_chat_provider_returns_nonce(client, db_session, monkeypatch):
             captured["headers"] = headers
             return FakeResponse()
 
-    monkeypatch.setattr("app.services.provider_runtime.codex_smoke_chat.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("app.services.provider_runtime.codex_llm_client.httpx.AsyncClient", FakeAsyncClient)
     response = _post(client, nonce="nonce-abc")
 
     assert response.status_code == 200
@@ -219,7 +232,7 @@ def test_smoke_chat_provider_returns_nonce(client, db_session, monkeypatch):
 
 def test_smoke_chat_provider_without_nonce_reports_false(client, db_session, monkeypatch):
     _insert_credential(db_session)
-    monkeypatch.setenv("CODEX_SMOKE_ENDPOINT", "https://codex-smoke.internal/chat")
+    monkeypatch.setenv("CODEX_LLM_ENDPOINT", "https://codex-smoke.internal/chat")
 
     class FakeResponse:
         status_code = 200
@@ -243,7 +256,7 @@ def test_smoke_chat_provider_without_nonce_reports_false(client, db_session, mon
         async def post(self, url, json, headers):
             return FakeResponse()
 
-    monkeypatch.setattr("app.services.provider_runtime.codex_smoke_chat.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("app.services.provider_runtime.codex_llm_client.httpx.AsyncClient", FakeAsyncClient)
     response = _post(client, nonce="nonce-missing")
     assert response.status_code == 200
     assert response.json()["nonce_echoed"] is False
@@ -251,7 +264,7 @@ def test_smoke_chat_provider_without_nonce_reports_false(client, db_session, mon
 
 def test_smoke_chat_provider_error_is_safe_502(client, db_session, monkeypatch):
     _insert_credential(db_session)
-    monkeypatch.setenv("CODEX_SMOKE_ENDPOINT", "https://codex-smoke.internal/chat")
+    monkeypatch.setenv("CODEX_LLM_ENDPOINT", "https://codex-smoke.internal/chat")
 
     class FakeAsyncClient:
         def __init__(self, *args, **kwargs):
@@ -266,7 +279,7 @@ def test_smoke_chat_provider_error_is_safe_502(client, db_session, monkeypatch):
         async def post(self, url, json, headers):
             raise httpx.ConnectError("connect failed")
 
-    monkeypatch.setattr("app.services.provider_runtime.codex_smoke_chat.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("app.services.provider_runtime.codex_llm_client.httpx.AsyncClient", FakeAsyncClient)
     response = _post(client)
     assert response.status_code == 502
     body = response.json()["detail"]
@@ -276,7 +289,7 @@ def test_smoke_chat_provider_error_is_safe_502(client, db_session, monkeypatch):
 
 def test_smoke_chat_refresh_required_is_safe_409(client, db_session, monkeypatch):
     _insert_credential(db_session, expires_at=datetime.now(timezone.utc) - timedelta(minutes=10), refresh_token=None)
-    monkeypatch.setenv("CODEX_SMOKE_ENDPOINT", "https://codex-smoke.internal/chat")
+    monkeypatch.setenv("CODEX_LLM_ENDPOINT", "https://codex-smoke.internal/chat")
     response = _post(client)
     assert response.status_code == 409
     body = response.json()["detail"]
@@ -286,7 +299,7 @@ def test_smoke_chat_refresh_required_is_safe_409(client, db_session, monkeypatch
 
 def test_smoke_chat_response_redacts_secret_markers(client, db_session, monkeypatch):
     _insert_credential(db_session)
-    monkeypatch.setenv("CODEX_SMOKE_ENDPOINT", "https://codex-smoke.internal/chat")
+    monkeypatch.setenv("CODEX_LLM_ENDPOINT", "https://codex-smoke.internal/chat")
 
     class FakeResponse:
         status_code = 200
@@ -310,7 +323,7 @@ def test_smoke_chat_response_redacts_secret_markers(client, db_session, monkeypa
         async def post(self, url, json, headers):
             return FakeResponse()
 
-    monkeypatch.setattr("app.services.provider_runtime.codex_smoke_chat.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("app.services.provider_runtime.codex_llm_client.httpx.AsyncClient", FakeAsyncClient)
     response = _post(client, nonce="nonce-redact")
     assert response.status_code == 200
     text = response.json()["response_text_redacted"]
@@ -321,7 +334,7 @@ def test_smoke_chat_response_redacts_secret_markers(client, db_session, monkeypa
 
 def test_smoke_chat_audit_uses_hashes_not_raw_prompt(client, db_session, monkeypatch):
     _insert_credential(db_session)
-    monkeypatch.setenv("CODEX_SMOKE_ENDPOINT", "https://codex-smoke.internal/chat")
+    monkeypatch.setenv("CODEX_LLM_ENDPOINT", "https://codex-smoke.internal/chat")
 
     class FakeResponse:
         status_code = 200
@@ -345,7 +358,7 @@ def test_smoke_chat_audit_uses_hashes_not_raw_prompt(client, db_session, monkeyp
         async def post(self, url, json, headers):
             return FakeResponse()
 
-    monkeypatch.setattr("app.services.provider_runtime.codex_smoke_chat.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("app.services.provider_runtime.codex_llm_client.httpx.AsyncClient", FakeAsyncClient)
     response = client.post(
         "/api/admin/provider-credentials/codex/smoke-chat",
         json={"prompt": "sensitive operator prompt", "nonce": "nonce-audit", "mode": "smoke"},
@@ -356,4 +369,111 @@ def test_smoke_chat_audit_uses_hashes_not_raw_prompt(client, db_session, monkeyp
     audit_blob = audit.new_value_json or ""
     assert "sensitive operator prompt" not in audit_blob
     assert "nonce-audit" not in audit_blob
+    assert "opaque-access-value" not in audit_blob
     assert "prompt_hash" in audit_blob
+
+
+def test_smoke_chat_codex_app_server_bridge_uses_existing_runtime(client, db_session, monkeypatch):
+    _insert_credential(db_session)
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18794/reply")
+    monkeypatch.setenv("CODEX_APP_SERVER_LOGIN_URL", "http://127.0.0.1:18794/login")
+    monkeypatch.setenv("CODEX_APP_SERVER_TOKEN", "bridge-shared")
+    calls: list[dict] = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json, headers):
+            calls.append({"url": url, "payload": json, "headers": headers})
+            if url.endswith("/login"):
+                return FakeResponse({"ok": True})
+            return FakeResponse({"reply": "bridge said nonce-bridge"})
+
+    monkeypatch.setattr("app.services.provider_runtime.codex_llm_client.httpx.AsyncClient", FakeAsyncClient)
+    response = _post(client, nonce="nonce-bridge")
+
+    assert response.status_code == 200
+    assert response.json()["nonce_echoed"] is True
+    assert [call["url"] for call in calls] == ["http://127.0.0.1:18794/login", "http://127.0.0.1:18794/reply"]
+    assert calls[0]["headers"]["Authorization"].split(" ", 1) == ["Bearer", "bridge-shared"]
+    assert calls[0]["payload"]["login"]["accessToken"] == "opaque-access-value"
+    assert calls[0]["payload"]["login"]["chatgptAccountId"] == "acct-1"
+    assert "login" not in calls[1]["payload"]
+    assert "opaque-access-value" not in json.dumps(response.json())
+
+
+def test_smoke_chat_provider_unauthorized_is_safe_409(client, db_session, monkeypatch):
+    _insert_credential(db_session)
+    monkeypatch.setenv("CODEX_LLM_ENDPOINT", "https://codex-smoke.internal/chat")
+
+    class FakeResponse:
+        status_code = 401
+
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError("unauthorized", request=httpx.Request("POST", "https://codex-smoke.internal/chat"), response=httpx.Response(401))
+
+        def json(self):
+            return {"error": "denied"}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json, headers):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.provider_runtime.codex_llm_client.httpx.AsyncClient", FakeAsyncClient)
+    response = _post(client)
+    assert response.status_code == 409
+    body = response.json()["detail"]
+    assert body["reason"] == "credential_refresh_required"
+    assert "opaque-access-value" not in json.dumps(body)
+
+
+def test_smoke_chat_provider_timeout_is_safe_502(client, db_session, monkeypatch):
+    _insert_credential(db_session)
+    monkeypatch.setenv("CODEX_LLM_ENDPOINT", "https://codex-smoke.internal/chat")
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json, headers):
+            raise httpx.TimeoutException("timed out")
+
+    monkeypatch.setattr("app.services.provider_runtime.codex_llm_client.httpx.AsyncClient", FakeAsyncClient)
+    response = _post(client)
+    assert response.status_code == 502
+    assert response.json()["detail"]["reason"] == "codex_provider_call_failed"

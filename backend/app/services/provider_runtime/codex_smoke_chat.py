@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import re
 import time
 import uuid
@@ -10,14 +9,19 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..audit_service import log_admin_audit
+from .codex_llm_client import (
+    CodexLLMClient,
+    CodexLLMCredential,
+    CodexLLMCredentialRefreshRequired,
+    CodexLLMEndpointNotConfigured,
+    CodexLLMProviderCallFailed,
+)
 from .codex_oauth_config import CODEX_PROVIDER
 from .credential_crypto import CredentialCryptoService
-from .oauth_refresh_manager import OAuthRefreshManager
 
 logger = logging.getLogger(__name__)
 
@@ -61,21 +65,28 @@ class CodexSmokeChatService:
             self._audit(request, request_id, "credential_not_found", 0, nonce=nonce, model_call_status="not_started")
             raise CodexSmokeChatError(404, "codex_credential_not_found", credential_status="not_found", request_id=request_id)
 
-        endpoint = (os.getenv("CODEX_SMOKE_ENDPOINT") or "").strip()
-        if not endpoint:
+        codex_credential = CodexLLMCredential(
+            id=credential["id"],
+            tenant_id=credential["tenant_id"],
+            account_id=credential.get("account_id"),
+            chatgpt_plan_type=credential.get("chatgpt_plan_type"),
+        )
+        try:
+            result = await CodexLLMClient(self.db, self.crypto_service).call_codex_smoke_chat(
+                prompt=request.prompt,
+                nonce=nonce,
+                credential=codex_credential,
+                request_id=request_id,
+            )
+        except CodexLLMEndpointNotConfigured as exc:
             elapsed_ms = _elapsed_ms(started)
             self._audit(request, request_id, "codex_llm_endpoint_not_configured", elapsed_ms, nonce=nonce, model_call_status="not_started", credential_id=credential["id"])
-            raise CodexSmokeChatError(503, "codex_llm_endpoint_not_configured", credential_status="authorized", request_id=request_id)
-
-        token = await OAuthRefreshManager(self.db, self.crypto_service).get_valid_access_token(request.tenant_id, credential["id"])
-        if not token:
+            raise CodexSmokeChatError(503, "codex_llm_endpoint_not_configured", credential_status="authorized", request_id=request_id) from exc
+        except CodexLLMCredentialRefreshRequired as exc:
             elapsed_ms = _elapsed_ms(started)
             self._audit(request, request_id, "credential_refresh_required", elapsed_ms, nonce=nonce, model_call_status="not_started", credential_id=credential["id"])
-            raise CodexSmokeChatError(409, "credential_refresh_required", credential_status="refresh_required", request_id=request_id)
-
-        try:
-            response_text, provider_status = await self._call_provider(endpoint, token, prompt=request.prompt, nonce=nonce, request_id=request_id)
-        except Exception as exc:
+            raise CodexSmokeChatError(409, "credential_refresh_required", credential_status="refresh_required", request_id=request_id) from exc
+        except CodexLLMProviderCallFailed as exc:
             elapsed_ms = _elapsed_ms(started)
             logger.warning(
                 "codex_smoke_chat_provider_failed",
@@ -85,7 +96,7 @@ class CodexSmokeChatService:
             raise CodexSmokeChatError(502, "codex_provider_call_failed", credential_status="authorized", request_id=request_id) from exc
 
         elapsed_ms = _elapsed_ms(started)
-        nonce_echoed = nonce in response_text
+        nonce_echoed = nonce in result.response_text
         self._mark_credential_used(request.tenant_id, credential["id"])
         self._audit(
             request,
@@ -95,8 +106,9 @@ class CodexSmokeChatService:
             nonce=nonce,
             model_call_status="completed",
             credential_id=credential["id"],
-            provider_status=provider_status,
+            provider_status=result.provider_status,
             nonce_echoed=nonce_echoed,
+            api_style=result.api_style,
         )
         self.db.commit()
         return {
@@ -105,7 +117,7 @@ class CodexSmokeChatService:
             "credential_status": "authorized",
             "model_call_status": "completed",
             "nonce_echoed": nonce_echoed,
-            "response_text_redacted": _redact_text(response_text),
+            "response_text_redacted": _redact_text(result.response_text),
             "latency_ms": elapsed_ms,
             "request_id": request_id,
             "warnings": [],
@@ -113,7 +125,7 @@ class CodexSmokeChatService:
 
     def _read_active_credential(self, tenant_id: str):
         return self.db.execute(text("""
-            SELECT id, expires_at
+            SELECT id, tenant_id, account_id, chatgpt_plan_type, expires_at
             FROM provider_credentials
             WHERE tenant_id = :tenant_id
               AND provider = :provider
@@ -124,39 +136,6 @@ class CodexSmokeChatService:
             ORDER BY created_at DESC
             LIMIT 1
         """), {"tenant_id": tenant_id, "provider": CODEX_PROVIDER}).mappings().first()
-
-    async def _call_provider(self, endpoint: str, access_token: str, *, prompt: str, nonce: str, request_id: str) -> tuple[str, int]:
-        timeout_ms = _int_env("CODEX_SMOKE_TIMEOUT_MS", 15000, minimum=1000, maximum=60000)
-        payload: dict[str, Any] = {
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are running a Nexus admin Code X smoke test. Reply with the supplied nonce exactly once, and no secrets.",
-                },
-                {
-                    "role": "user",
-                    "content": f"Echo this nonce exactly: {nonce}\n\nOperator prompt: {prompt}",
-                },
-            ],
-            "metadata": {"request_id": request_id, "purpose": "nexus_codex_smoke_chat"},
-        }
-        model = (os.getenv("CODEX_SMOKE_MODEL") or "").strip()
-        if model:
-            payload["model"] = model
-        async with httpx.AsyncClient(timeout=timeout_ms / 1000.0, follow_redirects=False) as client:
-            response = await client.post(
-                endpoint,
-                json=payload,
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {access_token}",
-                    "X-Nexus-Request-Id": request_id,
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-        return _extract_response_text(data), response.status_code
 
     def _mark_credential_used(self, tenant_id: str, credential_id: str) -> None:
         self.db.execute(text("""
@@ -177,6 +156,7 @@ class CodexSmokeChatService:
         credential_id: str | None = None,
         provider_status: int | None = None,
         nonce_echoed: bool | None = None,
+        api_style: str | None = None,
     ) -> None:
         try:
             log_admin_audit(
@@ -196,6 +176,7 @@ class CodexSmokeChatService:
                     "provider_status": provider_status,
                     "model_call_status": model_call_status,
                     "nonce_echoed": nonce_echoed,
+                    "api_style": api_style,
                     "latency_ms": elapsed_ms,
                 },
             )
@@ -203,40 +184,6 @@ class CodexSmokeChatService:
         except Exception as exc:
             logger.warning("codex_smoke_chat_audit_failed", extra={"request_id": request_id, "error_type": type(exc).__name__})
             self.db.rollback()
-
-
-def _extract_response_text(payload: Any) -> str:
-    if not isinstance(payload, dict):
-        return ""
-    choices = payload.get("choices")
-    if isinstance(choices, list) and choices:
-        first = choices[0]
-        if isinstance(first, dict):
-            message = first.get("message")
-            if isinstance(message, dict) and isinstance(message.get("content"), str):
-                return message["content"]
-            if isinstance(first.get("text"), str):
-                return first["text"]
-    for key in ("response_text", "output_text", "reply", "text"):
-        value = payload.get(key)
-        if isinstance(value, str):
-            return value
-    output = payload.get("output")
-    if isinstance(output, list):
-        parts: list[str] = []
-        for item in output:
-            if not isinstance(item, dict):
-                continue
-            content = item.get("content")
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and isinstance(block.get("text"), str):
-                        parts.append(block["text"])
-            elif isinstance(content, str):
-                parts.append(content)
-        return "\n".join(parts)
-    return ""
-
 
 def _hash_value(value: str | None) -> str | None:
     if not value:
@@ -262,11 +209,3 @@ def _redact_text(value: str) -> str:
 
 def _elapsed_ms(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
-
-
-def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
-    try:
-        value = int(os.getenv(name, str(default)))
-    except ValueError:
-        return default
-    return max(minimum, min(maximum, value))
