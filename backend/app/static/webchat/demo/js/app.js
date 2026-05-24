@@ -1,59 +1,46 @@
 (function () {
   'use strict';
 
-  const STORAGE_PREFIX = 'speedaf-demo:webchat';
-  const SESSION_KEY = STORAGE_PREFIX + ':session-id';
-  const CONTEXT_KEY = STORAGE_PREFIX + ':recent-context';
-  const MAX_CONTEXT_TURNS = 10;
-
-  const SiteConfig = Object.freeze({
-    API_BASE_URL: window.location.origin,
-    tenant_key: 'speedaf_public_site',
-    channel_key: 'speedaf_webchat',
-    session_id: loadSessionId(),
-    requestTimeoutMs: 90000
+  const CONFIG = Object.freeze({
+    apiBase: window.location.origin.replace(/\/$/, ''),
+    tenantKey: 'default',
+    channelKey: 'website',
+    timeoutMs: 240000,
+    sessionKey: 'speedaf-demo:webchat:session-id',
+    contextKey: 'speedaf-demo:webchat:recent-context'
   });
 
-  window.SpeedafSiteConfig = SiteConfig;
-
   const panel = document.getElementById('chatPanel');
-  const closeChat = document.getElementById('closeChat');
-  const floatingChat = document.getElementById('floatingChat');
-  const chatBackdrop = document.getElementById('chatBackdrop');
-  const messageLog = document.getElementById('messageLog');
+  const closeBtn = document.getElementById('closeChat');
+  const openBtn = document.getElementById('floatingChat');
+  const backdrop = document.getElementById('chatBackdrop');
+  const log = document.getElementById('messageLog');
   const input = document.getElementById('chatInput');
   const sendBtn = document.getElementById('sendBtn');
   const mobileMenuBtn = document.getElementById('mobileMenuBtn');
   const mobileNav = document.getElementById('mobileNav');
   const trackForm = document.getElementById('trackForm');
   const trackingInput = document.getElementById('trackingInput');
-  const trackResult = document.getElementById('trackResult');
-  const openChatTriggers = Array.from(document.querySelectorAll('[data-open-chat]'));
 
-  let lastIntent = 'general';
   let busy = false;
-  let recentContext = loadRecentContext();
+  let recentContext = loadContext();
+  const sessionId = loadSessionId();
 
-  const quickActionMessages = Object.freeze({
-    track: 'I want to track a parcel.',
-    redelivery: 'I need help with redelivery.',
-    refuse: 'I want to refuse a delivery.',
-    problem: 'I have a delivery issue.',
-    human: 'I need a human agent.'
-  });
+  window.SpeedafSiteConfig = {
+    API_BASE_URL: CONFIG.apiBase,
+    tenant_key: CONFIG.tenantKey,
+    channel_key: CONFIG.channelKey,
+    session_id: sessionId,
+    requestTimeoutMs: CONFIG.timeoutMs
+  };
 
-  Array.from(document.querySelectorAll('.chat-panel .quick-btn[data-action]')).forEach((button) => {
-    button.addEventListener('click', () => {
-      const action = button.dataset.action || 'general';
-      lastIntent = action;
-      input.value = quickActionMessages[action] || 'I need help.';
-      submitMessage();
-    });
-  });
-
+  if (openBtn) openBtn.addEventListener('click', openChat);
+  if (closeBtn) closeBtn.addEventListener('click', closeChat);
+  if (backdrop) backdrop.addEventListener('click', closeChat);
   if (sendBtn) sendBtn.addEventListener('click', submitMessage);
+
   if (input) {
-    input.addEventListener('keydown', (event) => {
+    input.addEventListener('keydown', function (event) {
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         submitMessage();
@@ -61,75 +48,59 @@
     });
   }
 
-  if (floatingChat) floatingChat.addEventListener('click', openChat);
-  if (closeChat) closeChat.addEventListener('click', closeChatPanel);
-  if (chatBackdrop) chatBackdrop.addEventListener('click', closeChatPanel);
-
-  openChatTriggers.forEach((trigger) => {
-    trigger.addEventListener('click', (event) => {
+  Array.from(document.querySelectorAll('[data-open-chat]')).forEach(function (node) {
+    node.addEventListener('click', function (event) {
       event.preventDefault();
       closeMobileMenu();
       openChat();
     });
   });
 
-  if (mobileMenuBtn && mobileNav) {
-    mobileMenuBtn.addEventListener('click', () => {
-      const open = mobileNav.classList.toggle('is-open');
-      mobileNav.hidden = !open;
-      mobileMenuBtn.setAttribute('aria-expanded', String(open));
+  Array.from(document.querySelectorAll('.quick-btn[data-action]')).forEach(function (button) {
+    button.addEventListener('click', function () {
+      const action = button.getAttribute('data-action') || 'general';
+      const message = button.textContent ? button.textContent.trim() : action;
+      if (input) input.value = message;
+      submitMessage();
     });
-    mobileNav.querySelectorAll('a').forEach((link) => link.addEventListener('click', closeMobileMenu));
-  }
+  });
 
   if (trackForm && trackingInput) {
-    trackForm.addEventListener('submit', (event) => {
+    trackForm.addEventListener('submit', function (event) {
       event.preventDefault();
       const value = trackingInput.value.trim();
-      if (!value) {
-        trackingInput.focus();
-        return;
-      }
-      if (trackResult) trackResult.hidden = false;
-      lastIntent = 'track';
+      if (!value) return trackingInput.focus();
       openChat();
-      input.value = 'Track parcel ' + value;
+      if (input) input.value = 'Track parcel ' + value;
       submitMessage();
     });
   }
 
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
-      if (panel && !panel.classList.contains('is-closed')) {
-        closeChatPanel();
-        floatingChat && floatingChat.focus();
-      } else {
-        closeMobileMenu();
-      }
-    }
-  });
+  if (mobileMenuBtn && mobileNav) {
+    mobileMenuBtn.addEventListener('click', function () {
+      const open = mobileNav.classList.toggle('is-open');
+      mobileNav.hidden = !open;
+      mobileMenuBtn.setAttribute('aria-expanded', String(open));
+    });
+  }
 
   function openChat() {
     if (!panel) return;
     panel.classList.remove('is-closed');
     panel.setAttribute('aria-hidden', 'false');
-    floatingChat && floatingChat.setAttribute('aria-expanded', 'true');
     document.body.classList.add('chat-open');
-    if (chatBackdrop) chatBackdrop.hidden = false;
-    window.setTimeout(() => input && input.focus(), 180);
+    if (openBtn) openBtn.setAttribute('aria-expanded', 'true');
+    if (backdrop) backdrop.hidden = false;
+    setTimeout(function () { if (input) input.focus(); }, 100);
   }
 
-  function closeChatPanel() {
+  function closeChat() {
     if (!panel) return;
     panel.classList.add('is-closed');
     panel.setAttribute('aria-hidden', 'true');
-    floatingChat && floatingChat.setAttribute('aria-expanded', 'false');
     document.body.classList.remove('chat-open');
-    if (chatBackdrop) {
-      window.setTimeout(() => {
-        if (panel.classList.contains('is-closed')) chatBackdrop.hidden = true;
-      }, 240);
-    }
+    if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
+    if (backdrop) backdrop.hidden = true;
   }
 
   function closeMobileMenu() {
@@ -140,83 +111,107 @@
   }
 
   function submitMessage() {
-    if (busy || !input || !messageLog) return;
-    const raw = input.value.trim();
-    if (!raw) {
-      input.focus();
-      return;
-    }
-    appendMessage('user', raw);
+    if (busy || !input || !log) return;
+    const body = input.value.trim();
+    if (!body) return;
+
+    appendMessage('user', body);
     input.value = '';
     busy = true;
-    addTyping();
-    getReply(raw)
-      .then((reply) => {
-        removeTyping();
-        appendMessage('bot', reply.message, { handoff: Boolean(reply.handoff_required) });
-        rememberTurn(raw, reply.message);
-        if (reply.intent) lastIntent = reply.intent;
+    if (sendBtn) sendBtn.disabled = true;
+    showTyping();
+
+    sendFastReply(body)
+      .then(function (data) {
+        hideTyping();
+        const reply = data && data.ok === true && data.reply ? String(data.reply).trim() : '';
+        if (!reply) throw new Error('empty_reply');
+        appendMessage('bot', reply, { handoff: Boolean(data.handoff_required) });
+        remember(body, reply);
       })
-      .catch(() => {
-        removeTyping();
+      .catch(function () {
+        hideTyping();
         appendMessage('bot', 'Connection issue. Please try again.');
       })
-      .finally(() => {
+      .finally(function () {
         busy = false;
-        input.focus();
+        if (sendBtn) sendBtn.disabled = false;
+        if (input) input.focus();
       });
   }
 
-  async function getReply(text) {
+  function sendFastReply(body) {
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), SiteConfig.requestTimeoutMs);
+    const timer = setTimeout(function () { controller.abort(); }, CONFIG.timeoutMs);
     const payload = {
-      tenant_key: SiteConfig.tenant_key,
-      channel_key: SiteConfig.channel_key,
-      session_id: SiteConfig.session_id,
+      tenant_key: CONFIG.tenantKey,
+      channel_key: CONFIG.channelKey,
+      session_id: sessionId,
       client_message_id: makeId('msg'),
-      body: text,
-      recent_context: recentContext.slice(-MAX_CONTEXT_TURNS)
+      body: body,
+      recent_context: recentContext.slice(-10)
     };
 
-    try {
-      const res = await fetch(SiteConfig.API_BASE_URL.replace(/\/$/, '') + '/api/webchat/fast-reply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: controller.signal
+    return fetch(CONFIG.apiBase + '/api/webchat/fast-reply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    }).then(function (res) {
+      return res.json().then(function (data) {
+        if (!res.ok) throw new Error('http_' + res.status);
+        return data;
       });
-
-      if (!res.ok) throw new Error('support_api_http_error');
-      const data = await res.json();
-      return normalizeSupportReply(data);
-    } finally {
-      window.clearTimeout(timer);
-    }
+    }).finally(function () {
+      clearTimeout(timer);
+    });
   }
 
-  function normalizeSupportReply(data) {
-    if (!data || data.ok !== true || typeof data.reply !== 'string' || !data.reply.trim()) {
-      throw new Error('invalid_support_reply');
-    }
-    return {
-      message: data.reply.trim(),
-      handoff_required: Boolean(data.handoff_required),
-      intent: data.intent || lastIntent || 'general'
-    };
+  function appendMessage(role, text, options) {
+    const row = document.createElement('div');
+    row.className = 'message-row ' + (role === 'user' ? 'user' : 'bot');
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble ' + (role === 'user' ? 'user-bubble' : '');
+    if (options && options.handoff && role !== 'user') bubble.classList.add('handoff-bubble');
+    bubble.appendChild(document.createTextNode(text));
+    const time = document.createElement('span');
+    time.className = 'time';
+    time.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    bubble.appendChild(time);
+    row.appendChild(bubble);
+    log.appendChild(row);
+    log.scrollTop = log.scrollHeight;
   }
 
-  function rememberTurn(visitorText, assistantText) {
-    recentContext.push({ role: 'visitor', text: String(visitorText || '').slice(0, 500) });
-    recentContext.push({ role: 'agent', text: String(assistantText || '').slice(0, 500) });
-    recentContext = recentContext.filter((item) => item && item.text).slice(-(MAX_CONTEXT_TURNS * 2));
-    try { window.sessionStorage.setItem(CONTEXT_KEY, JSON.stringify(recentContext)); } catch (_) {}
+  function showTyping() {
+    hideTyping();
+    if (!log) return;
+    const row = document.createElement('div');
+    row.className = 'message-row bot dynamic-typing';
+    const typing = document.createElement('div');
+    typing.className = 'typing';
+    for (let i = 0; i < 3; i += 1) typing.appendChild(document.createElement('i'));
+    row.appendChild(typing);
+    log.appendChild(row);
+    log.scrollTop = log.scrollHeight;
   }
 
-  function loadRecentContext() {
+  function hideTyping() {
+    if (!log) return;
+    log.querySelectorAll('.dynamic-typing').forEach(function (node) { node.remove(); });
+  }
+
+  function remember(userText, replyText) {
+    recentContext.push({ role: 'visitor', text: String(userText || '').slice(0, 500) });
+    recentContext.push({ role: 'agent', text: String(replyText || '').slice(0, 500) });
+    recentContext = recentContext.filter(function (item) { return item && item.text; }).slice(-20);
+    try { sessionStorage.setItem(CONFIG.contextKey, JSON.stringify(recentContext)); } catch (_) {}
+  }
+
+  function loadContext() {
     try {
-      const parsed = JSON.parse(window.sessionStorage.getItem(CONTEXT_KEY) || '[]');
-      return Array.isArray(parsed) ? parsed.slice(-(MAX_CONTEXT_TURNS * 2)) : [];
+      const parsed = JSON.parse(sessionStorage.getItem(CONFIG.contextKey) || '[]');
+      return Array.isArray(parsed) ? parsed.slice(-20) : [];
     } catch (_) {
       return [];
     }
@@ -224,71 +219,14 @@
 
   function loadSessionId() {
     try {
-      const existing = window.sessionStorage.getItem(SESSION_KEY);
+      const existing = sessionStorage.getItem(CONFIG.sessionKey);
       if (existing) return existing;
       const created = makeId('session');
-      window.sessionStorage.setItem(SESSION_KEY, created);
+      sessionStorage.setItem(CONFIG.sessionKey, created);
       return created;
     } catch (_) {
       return makeId('session');
     }
-  }
-
-  function appendMessage(role, text, options) {
-    if (!messageLog) return;
-    const row = document.createElement('div');
-    row.className = 'message-row ' + (role === 'user' ? 'user' : 'bot');
-    if (role !== 'user') {
-      const avatar = document.createElement('div');
-      avatar.className = 'mini-avatar';
-      const img = document.createElement('img');
-      img.src = 'assets/speedaf-ai-bot-avatar.png';
-      img.alt = '';
-      avatar.appendChild(img);
-      row.appendChild(avatar);
-    }
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble ' + (role === 'user' ? 'user-bubble' : '');
-    if (options && options.handoff && role !== 'user') bubble.classList.add('handoff-bubble');
-    bubble.appendChild(document.createTextNode(text));
-    const time = document.createElement('span');
-    time.className = 'time';
-    time.textContent = currentTime() + (role === 'user' ? ' ✓✓' : '');
-    bubble.appendChild(time);
-    row.appendChild(bubble);
-    messageLog.appendChild(row);
-    messageLog.scrollTop = messageLog.scrollHeight;
-  }
-
-  function addTyping() {
-    if (!messageLog) return;
-    removeTyping();
-    const row = document.createElement('div');
-    row.className = 'message-row bot dynamic-typing';
-    const avatar = document.createElement('div');
-    avatar.className = 'mini-avatar';
-    const img = document.createElement('img');
-    img.src = 'assets/speedaf-ai-bot-avatar.png';
-    img.alt = '';
-    avatar.appendChild(img);
-    const typing = document.createElement('div');
-    typing.className = 'typing';
-    typing.setAttribute('aria-label', 'AI is typing');
-    for (let i = 0; i < 3; i += 1) typing.appendChild(document.createElement('i'));
-    row.appendChild(avatar);
-    row.appendChild(typing);
-    messageLog.appendChild(row);
-    messageLog.scrollTop = messageLog.scrollHeight;
-  }
-
-  function removeTyping() {
-    if (!messageLog) return;
-    messageLog.querySelectorAll('.dynamic-typing').forEach((node) => node.remove());
-  }
-
-  function currentTime() {
-    const now = new Date();
-    return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
 
   function makeId(prefix) {
