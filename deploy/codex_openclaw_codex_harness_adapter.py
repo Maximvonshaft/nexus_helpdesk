@@ -177,6 +177,11 @@ def normalized_plugin_values(plugin: dict[str, Any]) -> set[str]:
         value = plugin.get(key)
         if isinstance(value, str) and value.strip():
             values.add(value.strip().lower())
+    provider_ids = plugin.get("providerIds") or plugin.get("provider_ids") or plugin.get("providers")
+    if isinstance(provider_ids, list):
+        for value in provider_ids:
+            if isinstance(value, str) and value.strip():
+                values.add(value.strip().lower())
     return values
 
 
@@ -192,7 +197,7 @@ def plugin_enabled(plugin: dict[str, Any]) -> bool:
 
 
 def plugin_payload_ready(payload: Any) -> bool:
-    wanted = {PLUGIN_PACKAGE.lower(), "codex"}
+    wanted = {PLUGIN_PACKAGE.lower(), "codex", AUTH_PROVIDER.lower()}
     for plugin in iter_items(payload, ("plugins", "items", "data")):
         if normalized_plugin_values(plugin) & wanted and plugin_enabled(plugin):
             return True

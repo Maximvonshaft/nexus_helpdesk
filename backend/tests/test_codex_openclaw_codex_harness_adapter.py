@@ -230,6 +230,48 @@ def test_openclaw_codex_plugin_enabled_by_package_status_is_ready(monkeypatch, t
     assert adapter.plugin_ready() is True
 
 
+def test_openclaw_codex_provider_capability_on_openai_plugin_is_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    monkeypatch.setattr(
+        adapter,
+        "run_openclaw",
+        lambda args, timeout_seconds, input_text=None: _completed(
+            args,
+            json.dumps({"plugins": [{"id": "openai", "enabled": True, "status": "loaded", "providerIds": ["openai", "openai-codex"]}]}),
+        ),
+    )
+    assert adapter.plugin_ready() is True
+
+
+def test_openclaw_openai_plugin_without_codex_provider_is_not_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    monkeypatch.setattr(
+        adapter,
+        "run_openclaw",
+        lambda args, timeout_seconds, input_text=None: _completed(
+            args,
+            json.dumps({"plugins": [{"id": "openai", "enabled": True, "status": "loaded", "providerIds": ["openai"]}]}),
+        ),
+    )
+    assert adapter.plugin_ready() is False
+
+
+def test_openclaw_disabled_openai_plugin_with_codex_provider_is_not_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    monkeypatch.setattr(
+        adapter,
+        "run_openclaw",
+        lambda args, timeout_seconds, input_text=None: _completed(
+            args,
+            json.dumps({"plugins": [{"id": "openai", "enabled": False, "status": "loaded", "providerIds": ["openai", "openai-codex"]}]}),
+        ),
+    )
+    assert adapter.plugin_ready() is False
+
+
 def test_openclaw_codex_adapter_reply_invokes_official_infer_and_returns_strict_json(monkeypatch, tmp_path):
     adapter = _load_adapter(monkeypatch, tmp_path)
     captured: dict = {}
