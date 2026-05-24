@@ -21,6 +21,7 @@ x-app-image: &app_image
     - /run/secrets:/run/secrets:ro
     - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_responses_token:/run/openclaw_responses_token:ro
     - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_native_responses_token:/run/openclaw_native_responses_token:ro
+    - /opt/nexus_helpdesk/deploy/runtime_secrets/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
     - ../data/uploads:/app/backend/uploads
   logging: &json_logging
     driver: json-file
@@ -143,6 +144,31 @@ services:
     depends_on:
       app:
         condition: service_healthy
+
+  codex-app-server-bridge:
+    <<: *app_image
+    profiles:
+      - codex-app-server
+    environment:
+      APP_ENV: production
+      BIND_HOST: 0.0.0.0
+      PORT: "18794"
+      CODEX_APP_SERVER_TOKEN_FILE: /run/nexus/codex_app_server_bridge_token
+      CODEX_APP_SERVER_BRIDGE_MODE: ${CODEX_APP_SERVER_BRIDGE_MODE:-real}
+      CODEX_APP_SERVER_REAL_UPSTREAM_URL: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL:-}
+      CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: ${CODEX_APP_SERVER_REPLY_GENERATION_BACKEND:-codex_app_server}
+      CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS:-30}
+    volumes:
+      - /opt/nexus_helpdesk/deploy/runtime_secrets/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
+    ports:
+      - "172.18.0.1:18794:18794"
+    command: python /app/deploy/codex_app_server_bridge_proxy.py
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18794/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   worker-openclaw-inbound:
     <<: *app_image

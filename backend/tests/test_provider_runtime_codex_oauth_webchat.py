@@ -270,7 +270,7 @@ def test_bridge_reply_calls_mocked_upstream_and_passes_oauth_session(monkeypatch
 
     assert reply["reply"] == "dynamic upstream reply"
     assert captured["url"] == "http://127.0.0.1:18795/reply"
-    assert captured["authorization"] == "Bearer oauth-access-token"
+    assert captured["authorization"].split(" ", 1) == ["Bearer", "oauth-access-token"]
     assert captured["payload"]["chatgptAccountId"] == "acct-1"
     assert captured["payload"]["chatgptPlanType"] == "plus"
     assert reply["reply"] != "Thanks. I received your message and will help with this request."
@@ -289,10 +289,12 @@ def test_bridge_readyz_safe_fields_do_not_expose_tokens(monkeypatch, tmp_path):
     assert payload["mode"] == "stub"
     assert payload["real_upstream_configured"] is False
     assert payload["accepts_oauth_login"] is True
-    assert payload["reply_generation_backend"] == "stub"
+    assert payload["reply_generation_backend"] == "unconfigured"
     assert payload["token_file_configured"] is True
+    assert payload["oauth_session_present"] is True
     rendered = str(payload)
     assert "oauth-access-token" not in rendered
+    assert "access_token" not in rendered
     assert "internal-bridge-token" not in rendered
 
 

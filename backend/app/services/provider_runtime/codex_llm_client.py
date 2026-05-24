@@ -25,6 +25,12 @@ class CodexLLMProviderCallFailed(RuntimeError):
     pass
 
 
+class CodexLLMBridgeNotReady(RuntimeError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 @dataclass(frozen=True)
 class CodexLLMCredential:
     id: str
@@ -103,6 +109,8 @@ class CodexLLMClient:
                 )
             except CodexLLMCredentialRefreshRequired:
                 raise
+            except CodexLLMBridgeNotReady:
+                raise
             except Exception as exc:
                 last_error = exc
                 if attempt >= _retries():
@@ -132,6 +140,7 @@ class CodexLLMClient:
             login_response = await client.post(login_url, json={"login": login_payload}, headers=headers)
             if login_response.status_code in {401, 403}:
                 raise CodexLLMCredentialRefreshRequired("credential_refresh_required")
+            _raise_bridge_not_ready(login_response)
             login_response.raise_for_status()
             payload = _reply_payload(prompt=prompt, nonce=nonce, request_id=request_id)
         else:
@@ -139,6 +148,7 @@ class CodexLLMClient:
         response = await client.post(endpoint, json=payload, headers=headers)
         if response.status_code in {401, 403}:
             raise CodexLLMCredentialRefreshRequired("credential_refresh_required")
+        _raise_bridge_not_ready(response)
         response.raise_for_status()
         return _extract_response_text(response.json()), response.status_code
 
@@ -229,6 +239,24 @@ def _read_shared_token() -> str:
     if value.lower().startswith("bearer "):
         return value.split(None, 1)[1].strip()
     return value
+
+
+def _raise_bridge_not_ready(response: httpx.Response) -> None:
+    if response.status_code != 503:
+        return
+    try:
+        payload = response.json()
+    except ValueError:
+        return
+    if not isinstance(payload, dict):
+        return
+    reason = payload.get("error") or payload.get("reason")
+    if not isinstance(reason, str) or not reason:
+        readiness = payload.get("readiness")
+        if isinstance(readiness, dict) and isinstance(readiness.get("reason"), str):
+            reason = readiness["reason"]
+    if reason in {"codex_app_server_real_upstream_not_configured", "bridge_token_not_configured", "codex_app_server_bridge_not_real"}:
+        raise CodexLLMBridgeNotReady(reason)
 
 
 def _reply_payload(*, prompt: str, nonce: str, request_id: str) -> dict[str, Any]:

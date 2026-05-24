@@ -477,3 +477,47 @@ def test_smoke_chat_provider_timeout_is_safe_502(client, db_session, monkeypatch
     response = _post(client)
     assert response.status_code == 502
     assert response.json()["detail"]["reason"] == "codex_provider_call_failed"
+
+
+def test_smoke_chat_bridge_real_upstream_missing_is_safe_503(client, db_session, monkeypatch):
+    _insert_credential(db_session)
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18794/reply")
+    monkeypatch.setenv("CODEX_APP_SERVER_LOGIN_URL", "http://127.0.0.1:18794/login")
+    monkeypatch.setenv("CODEX_APP_SERVER_TOKEN", "bridge-shared")
+
+    class FakeResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError("failed", request=httpx.Request("POST", "http://127.0.0.1:18794/reply"), response=httpx.Response(self.status_code))
+
+        def json(self):
+            return self._payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json, headers):
+            if url.endswith("/login"):
+                return FakeResponse(200, {"ok": True})
+            return FakeResponse(503, {"ok": False, "error": "codex_app_server_real_upstream_not_configured"})
+
+    monkeypatch.setattr("app.services.provider_runtime.codex_llm_client.httpx.AsyncClient", FakeAsyncClient)
+    response = _post(client)
+    body = response.json()["detail"]
+
+    assert response.status_code == 503
+    assert body["reason"] == "codex_app_server_real_upstream_not_configured"
+    assert "opaque-access-value" not in json.dumps(body)
+    assert "bridge-shared" not in json.dumps(body)

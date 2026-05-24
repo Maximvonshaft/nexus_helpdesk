@@ -1,0 +1,205 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib import error, request
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_bridge_module(monkeypatch, tmp_path, *, upstream_url: str = "http://127.0.0.1:18795/reply", token: str | None = "bridge-token"):
+    token_file = tmp_path / "codex_app_server_bridge_token"
+    if token is not None:
+        token_file.write_text(token, encoding="utf-8")
+        monkeypatch.setenv("CODEX_APP_SERVER_TOKEN_FILE", str(token_file))
+    else:
+        monkeypatch.delenv("CODEX_APP_SERVER_TOKEN_FILE", raising=False)
+        monkeypatch.setenv("TOKEN_FILE", str(tmp_path / "missing-token"))
+    monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_MODE", "real")
+    if upstream_url:
+        monkeypatch.setenv("CODEX_APP_SERVER_REAL_UPSTREAM_URL", upstream_url)
+    else:
+        monkeypatch.delenv("CODEX_APP_SERVER_REAL_UPSTREAM_URL", raising=False)
+    monkeypatch.setenv("CODEX_APP_SERVER_REPLY_GENERATION_BACKEND", "codex_app_server")
+    monkeypatch.setenv("CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS", "1")
+    spec = importlib.util.spec_from_file_location(
+        f"codex_app_server_bridge_proxy_test_{id(tmp_path)}",
+        ROOT / "deploy" / "codex_app_server_bridge_proxy.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    module._LOGIN_STATE.update({
+        "access_token": None,
+        "chatgpt_account_id": None,
+        "chatgpt_plan_type": None,
+        "updated_at": None,
+    })
+    return module
+
+
+@pytest.fixture()
+def bridge_server(monkeypatch, tmp_path):
+    bridge = _load_bridge_module(monkeypatch, tmp_path)
+    server = bridge.ThreadingHTTPServer(("127.0.0.1", 0), bridge.Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield bridge, f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def _read_json(url: str) -> tuple[int, dict]:
+    try:
+        with request.urlopen(url, timeout=2) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
+
+
+def _post_json(url: str, payload: dict, *, token: str | None = "bridge-token") -> tuple[int, dict]:
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    req = request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST", headers=headers)
+    try:
+        with request.urlopen(req, timeout=2) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
+
+
+def test_bridge_healthz_is_liveness_only(bridge_server):
+    _bridge, base_url = bridge_server
+
+    status, payload = _read_json(base_url + "/healthz")
+
+    assert status == 200
+    assert payload["ok"] is True
+    assert payload["service"] == "nexus-codex-app-server-bridge-proxy"
+
+
+def test_bridge_readyz_reports_real_upstream_status(bridge_server):
+    _bridge, base_url = bridge_server
+
+    status, payload = _read_json(base_url + "/readyz")
+
+    assert status == 200
+    assert payload["ok"] is True
+    assert payload["real_upstream_configured"] is True
+    assert payload["reply_generation_backend"] == "codex_app_server"
+    assert "bridge-token" not in json.dumps(payload)
+
+
+def test_bridge_readyz_fails_closed_without_real_upstream(monkeypatch, tmp_path):
+    bridge = _load_bridge_module(monkeypatch, tmp_path, upstream_url="")
+
+    payload = bridge.readiness_payload()
+
+    assert payload["ok"] is False
+    assert payload["reason"] == "codex_app_server_real_upstream_not_configured"
+    assert payload["real_upstream_configured"] is False
+
+
+def test_bridge_reply_rejects_missing_bearer_token(bridge_server):
+    _bridge, base_url = bridge_server
+
+    status, payload = _post_json(base_url + "/reply", {"body": "hello"}, token=None)
+
+    assert status == 401
+    assert payload == {"ok": False, "error": "unauthorized"}
+
+
+def test_bridge_reply_fails_closed_when_upstream_not_configured(monkeypatch, tmp_path):
+    bridge = _load_bridge_module(monkeypatch, tmp_path, upstream_url="")
+    server = bridge.ThreadingHTTPServer(("127.0.0.1", 0), bridge.Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, payload = _post_json(f"http://127.0.0.1:{server.server_address[1]}/reply", {"body": "hello"})
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert status == 503
+    assert payload["error"] == "codex_app_server_real_upstream_not_configured"
+    assert "access_token" not in json.dumps(payload)
+
+
+def test_bridge_reply_forwards_prompt_to_real_upstream(monkeypatch, tmp_path):
+    captured: dict = {}
+
+    class UpstreamHandler(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args) -> None:
+            return None
+
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            captured["url"] = self.path
+            captured["authorization"] = self.headers.get("Authorization")
+            captured["payload"] = json.loads(self.rfile.read(length).decode("utf-8"))
+            raw = json.dumps({"reply": "nonce-from-upstream", "intent": "other"}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+    upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    upstream_thread.start()
+    bridge = _load_bridge_module(monkeypatch, tmp_path, upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}/reply")
+    server = bridge.ThreadingHTTPServer(("127.0.0.1", 0), bridge.Handler)
+    bridge_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    bridge_thread.start()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+
+    try:
+        login_status, login_payload = _post_json(
+            base_url + "/login",
+            {"login": {"type": "chatgptAuthTokens", "accessToken": "oauth-access", "chatgptAccountId": "acct-1"}},
+        )
+        reply_status, reply_payload = _post_json(base_url + "/reply", {"body": "Echo nonce-from-upstream", "messages": []})
+    finally:
+        server.shutdown()
+        server.server_close()
+        bridge_thread.join(timeout=2)
+        upstream.shutdown()
+        upstream.server_close()
+        upstream_thread.join(timeout=2)
+
+    assert login_status == 200
+    assert login_payload == {"ok": True}
+    assert reply_status == 200
+    assert reply_payload["reply"] == "nonce-from-upstream"
+    assert captured["url"] == "/reply"
+    assert captured["authorization"].split(" ", 1) == ["Bearer", "oauth-access"]
+    assert captured["payload"]["body"] == "Echo nonce-from-upstream"
+    rendered = json.dumps(reply_payload) + json.dumps(login_payload)
+    assert "oauth-access" not in rendered
+    assert "bridge-token" not in rendered
+
+
+def test_bridge_upstream_timeout_is_safe_504(monkeypatch, bridge_server):
+    bridge, base_url = bridge_server
+
+    def fake_call_real_upstream(payload):
+        raise TimeoutError("timed out")
+
+    _post_json(base_url + "/login", {"login": {"type": "chatgptAuthTokens", "accessToken": "oauth-access"}})
+    monkeypatch.setattr(bridge, "call_real_upstream", fake_call_real_upstream)
+    status, payload = _post_json(base_url + "/reply", {"body": "hello"})
+
+    assert status == 504
+    assert payload == {"ok": False, "error": "upstream_timeout"}
+    assert "oauth-access" not in json.dumps(payload)

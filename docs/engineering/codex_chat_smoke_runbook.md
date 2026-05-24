@@ -4,6 +4,8 @@ This runbook proves Nexus can use an authorized Code X credential for a real adm
 
 Current deployment fact: the status endpoint is proven and `smoke-chat` is deployed. The previous blocker was `codex_llm_endpoint_not_configured`, which means the OAuth credential is authorized but no callable Code X LLM runtime endpoint was configured for the backend.
 
+The current runtime blocker is still `codex_llm_endpoint_not_configured`: the server has the Code X bridge proxy source, but no managed `codex-app-server-bridge` service is running on `18794` and no real Code X app-server upstream is running on `18795`.
+
 ## Preconditions
 
 - Admin authentication is available.
@@ -11,9 +13,9 @@ Current deployment fact: the status endpoint is proven and `smoke-chat` is deplo
 - `PROVIDER_CREDENTIAL_ENCRYPTION_KEY_FILE` is mounted and readable by the backend.
 - At least one active `openai-codex` OAuth credential exists for the tenant.
 - Preferred existing runtime path:
-  - `CODEX_APP_SERVER_BRIDGE_URL`, for example the approved internal bridge `/reply` endpoint.
-  - `CODEX_APP_SERVER_LOGIN_URL`, if the bridge separates OAuth login from reply calls.
-  - `CODEX_APP_SERVER_TOKEN_FILE`, if the bridge requires its own shared service token.
+  - `CODEX_APP_SERVER_BRIDGE_URL=http://172.18.0.1:18794/reply`.
+  - `CODEX_APP_SERVER_LOGIN_URL=http://172.18.0.1:18794/login`.
+  - `CODEX_APP_SERVER_TOKEN_FILE=/run/nexus/codex_app_server_bridge_token`.
   - Optional: `CODEX_APP_SERVER_TIMEOUT_MS`.
 - Direct approved LLM endpoint path:
   - `CODEX_LLM_ENDPOINT`.
@@ -24,6 +26,56 @@ Current deployment fact: the status endpoint is proven and `smoke-chat` is deplo
 Do not configure provider access tokens, refresh tokens, client secrets, or encryption keys inline.
 
 The backend obtains the Code X OAuth access token through the existing provider credential encryption/decryption and `OAuthRefreshManager` path. Do not configure an OpenAI API key for this probe.
+
+## Bridge Service
+
+Start the production-managed bridge service:
+
+```bash
+docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up -d codex-app-server-bridge
+```
+
+The compose service runs `deploy/codex_app_server_bridge_proxy.py` on port `18794`, bound to the Docker bridge host address:
+
+```bash
+BIND_HOST=0.0.0.0
+PORT=18794
+CODEX_APP_SERVER_TOKEN_FILE=/run/nexus/codex_app_server_bridge_token
+CODEX_APP_SERVER_BRIDGE_MODE=real
+CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://172.18.0.1:18795/reply
+CODEX_APP_SERVER_REPLY_GENERATION_BACKEND=codex_app_server
+CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS=30
+```
+
+If the real app-server upstream is host-local instead of Docker-host reachable, run the bridge as a host/systemd service and set:
+
+```bash
+CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://127.0.0.1:18795/reply
+```
+
+Do not point this bridge at the OpenClaw Responses proxy on `18793`; that is not accepted as Code X proof.
+
+If no real upstream is configured, `/readyz` and `/reply` fail closed with:
+
+```text
+codex_app_server_real_upstream_not_configured
+```
+
+## Bridge Probes
+
+```bash
+curl -fsS http://172.18.0.1:18794/healthz
+curl -fsS http://172.18.0.1:18794/readyz
+```
+
+Expected `/readyz` before running smoke:
+
+- HTTP `200`
+- `ok=true`
+- `mode=real`
+- `real_upstream_configured=true`
+- `reply_generation_backend=codex_app_server`
+- `token_file_configured=true`
 
 ## Status Probe
 
@@ -40,6 +92,14 @@ Expected:
 - at least one credential with `status=active`
 
 ## Smoke Chat Probe
+
+Set the Nexus backend environment and restart the backend:
+
+```bash
+CODEX_APP_SERVER_BRIDGE_URL=http://172.18.0.1:18794/reply
+CODEX_APP_SERVER_LOGIN_URL=http://172.18.0.1:18794/login
+CODEX_APP_SERVER_TOKEN_FILE=/run/nexus/codex_app_server_bridge_token
+```
 
 ```bash
 NONCE="codex-smoke-$(date +%s)"
@@ -82,6 +142,7 @@ VERDICT=CODEX_AUTH_AND_CHAT_MODEL_CALL_CONNECTED
 - `404 codex_credential_not_found`: no active authorized Code X credential for the tenant.
 - `409 credential_refresh_required`: stored credential could not be refreshed or is expired.
 - `503 codex_llm_endpoint_not_configured`: credential is authorized, but no callable `CODEX_APP_SERVER_BRIDGE_URL`, `CODEX_LLM_ENDPOINT`, or backward-compatible `CODEX_SMOKE_ENDPOINT` is configured.
+- `503 codex_app_server_real_upstream_not_configured`: bridge is running but no real Code X app-server upstream is configured.
 - `502 codex_provider_call_failed`: configured endpoint failed, timed out, returned invalid JSON, or returned an HTTP error.
 
 The response must never include `access_token`, `refresh_token`, authorization headers, client secret, encryption key, or raw credential payload.
@@ -110,7 +171,8 @@ unset CODEX_APP_SERVER_BRIDGE_URL
 unset CODEX_APP_SERVER_LOGIN_URL
 unset CODEX_LLM_ENDPOINT
 unset CODEX_SMOKE_ENDPOINT
-docker compose -f deploy/docker-compose.server.yml up -d --no-deps backend
+docker compose -f deploy/docker-compose.server.yml up -d --no-deps app
+docker compose -f deploy/docker-compose.server.yml --profile codex-app-server stop codex-app-server-bridge
 ```
 
 After rollback, `smoke-chat` should fail closed with `503 codex_llm_endpoint_not_configured` when an authorized credential exists.

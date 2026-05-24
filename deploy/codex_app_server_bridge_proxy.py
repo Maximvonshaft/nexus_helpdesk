@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -11,12 +12,16 @@ from urllib import error, request
 
 BIND_HOST = os.environ.get("BIND_HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "18794"))
-TOKEN_FILE = os.environ.get("TOKEN_FILE", "/run/nexus/codex_app_server_bridge_token")
+TOKEN_FILE = (
+    os.environ.get("CODEX_APP_SERVER_TOKEN_FILE")
+    or os.environ.get("TOKEN_FILE")
+    or "/run/nexus/codex_app_server_bridge_token"
+)
 MODE = os.environ.get("CODEX_APP_SERVER_BRIDGE_MODE", "real").strip().lower()
 REAL_UPSTREAM_URL = os.environ.get("CODEX_APP_SERVER_REAL_UPSTREAM_URL", "").strip()
 REPLY_GENERATION_BACKEND = os.environ.get("CODEX_APP_SERVER_REPLY_GENERATION_BACKEND", "unconfigured").strip() or "unconfigured"
 UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get("CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS", "30"))
-VERSION = "1.1"
+VERSION = "1.2"
 
 _LOGIN_STATE: dict[str, Any] = {
     "access_token": None,
@@ -58,8 +63,8 @@ def safe_log(handler: BaseHTTPRequestHandler, message: str) -> None:
 
 
 def check_bind_host() -> None:
-    if BIND_HOST not in {"127.0.0.1", "172.18.0.1", "::1"}:
-        raise SystemExit("BIND_HOST must be 127.0.0.1, 172.18.0.1, or ::1")
+    if BIND_HOST not in {"0.0.0.0", "127.0.0.1", "172.18.0.1", "::1"}:
+        raise SystemExit("BIND_HOST must be 0.0.0.0, 127.0.0.1, 172.18.0.1, or ::1")
 
 
 def check_auth(handler: BaseHTTPRequestHandler) -> bool:
@@ -91,17 +96,35 @@ def read_json(handler: BaseHTTPRequestHandler) -> tuple[dict[str, Any] | None, s
     return payload, None
 
 
-def readiness_payload() -> dict[str, Any]:
-    real_upstream_configured = MODE == "real" and bool(REAL_UPSTREAM_URL)
+def health_payload() -> dict[str, Any]:
     return {
-        "ok": real_upstream_configured,
+        "ok": True,
+        "service": "nexus-codex-app-server-bridge-proxy",
+        "version": VERSION,
+    }
+
+
+def readiness_payload() -> dict[str, Any]:
+    token_configured = bool(load_bridge_token())
+    real_upstream_configured = MODE == "real" and bool(REAL_UPSTREAM_URL)
+    ok = token_configured and real_upstream_configured
+    reason = None
+    if not token_configured:
+        reason = "bridge_token_not_configured"
+    elif MODE != "real":
+        reason = "codex_app_server_bridge_not_real"
+    elif not REAL_UPSTREAM_URL:
+        reason = "codex_app_server_real_upstream_not_configured"
+    return {
+        "ok": ok,
         "service": "nexus-codex-app-server-bridge-proxy",
         "mode": MODE,
         "real_upstream_configured": real_upstream_configured,
+        "reason": reason,
         "accepts_oauth_login": True,
-        "reply_generation_backend": REPLY_GENERATION_BACKEND if real_upstream_configured else "stub" if MODE == "stub" else "unconfigured",
-        "token_file_configured": bool(load_bridge_token()),
-        "login_access_token_present": bool(_LOGIN_STATE["access_token"]),
+        "reply_generation_backend": REPLY_GENERATION_BACKEND if real_upstream_configured else "unconfigured",
+        "token_file_configured": token_configured,
+        "oauth_session_present": bool(_LOGIN_STATE["access_token"]),
         "version": VERSION,
     }
 
@@ -160,7 +183,10 @@ class Handler(BaseHTTPRequestHandler):
         safe_log(self, fmt % args)
 
     def do_GET(self) -> None:
-        if self.path in {"/healthz", "/readyz"}:
+        if self.path == "/healthz":
+            json_response(self, 200, health_payload())
+            return
+        if self.path == "/readyz":
             payload = readiness_payload()
             json_response(self, 200 if payload["ok"] else 503, payload)
             return
@@ -194,13 +220,13 @@ class Handler(BaseHTTPRequestHandler):
 
         ready = readiness_payload()
         if not ready["ok"]:
-            json_response(self, 503, {"ok": False, "error": "real_upstream_not_configured", "readiness": ready})
+            json_response(self, 503, {"ok": False, "error": ready.get("reason") or "bridge_not_ready", "readiness": ready})
             return
         try:
             json_response(self, 200, call_real_upstream(payload))
         except error.HTTPError as exc:
             json_response(self, 502, {"ok": False, "error": "upstream_http_error", "upstream_status": exc.code})
-        except TimeoutError:
+        except (TimeoutError, socket.timeout):
             json_response(self, 504, {"ok": False, "error": "upstream_timeout"})
         except Exception as exc:
             json_response(self, 502, {"ok": False, "error": str(exc)[:120]})

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..audit_service import log_admin_audit
 from .codex_llm_client import (
+    CodexLLMBridgeNotReady,
     CodexLLMClient,
     CodexLLMCredential,
     CodexLLMCredentialRefreshRequired,
@@ -86,6 +87,10 @@ class CodexSmokeChatService:
             elapsed_ms = _elapsed_ms(started)
             self._audit(request, request_id, "credential_refresh_required", elapsed_ms, nonce=nonce, model_call_status="not_started", credential_id=credential["id"])
             raise CodexSmokeChatError(409, "credential_refresh_required", credential_status="refresh_required", request_id=request_id) from exc
+        except CodexLLMBridgeNotReady as exc:
+            elapsed_ms = _elapsed_ms(started)
+            self._audit(request, request_id, exc.reason, elapsed_ms, nonce=nonce, model_call_status="failed", credential_id=credential["id"])
+            raise CodexSmokeChatError(503, exc.reason, credential_status="authorized", request_id=request_id) from exc
         except CodexLLMProviderCallFailed as exc:
             elapsed_ms = _elapsed_ms(started)
             logger.warning(
