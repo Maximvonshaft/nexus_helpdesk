@@ -86,12 +86,12 @@ Run the proxy on `18795` through compose:
 docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up -d codex-app-server-upstream
 ```
 
-The preferred Nexus-owned private reply endpoint is `codex-private-reply-engine` on `18796`. It is still reply-only and does not generate fake replies. It accepts the OAuth bearer from the 18795 proxy, calls the configured private Code X model/reply runtime, validates strict Fast Reply JSON, and fails closed if the runtime is missing, unhealthy, slow, or returns invalid output.
+The preferred Nexus-owned private reply endpoint is `codex-private-reply-engine` on `18796`. It is still reply-only and does not generate fake replies. It accepts the OAuth bearer from the 18795 proxy, calls the configured official OpenClaw Codex harness adapter on `18800`, validates strict Fast Reply JSON, and fails closed if the runtime is missing, unhealthy, slow, or returns invalid output.
 
-Run the 18796 engine and point the 18795 proxy at it:
+Run the 18796 engine, the 18800 OpenClaw Codex harness adapter, and point the 18795 proxy at 18796:
 
 ```bash
-docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up -d codex-private-reply-engine codex-app-server-upstream codex-app-server-bridge
+docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up -d codex-private-model-runtime codex-private-reply-engine codex-app-server-upstream codex-app-server-bridge
 ```
 
 Required server env for the Nexus-owned endpoint:
@@ -102,6 +102,13 @@ CODEX_APP_SERVER_REPLY_GENERATION_BACKEND=nexus_private_reply_engine
 CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL=http://codex-private-model-runtime:18800/reply
 CODEX_PRIVATE_REPLY_ENGINE_MODEL_TIMEOUT_SECONDS=30
 CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS=2
+OPENCLAW_CODEX_RUNTIME_ENABLED=true
+OPENCLAW_CODEX_CLI=openclaw
+OPENCLAW_CODEX_AUTH_PROVIDER=openai-codex
+OPENCLAW_CODEX_PLUGIN_PACKAGE=@openclaw/codex
+OPENCLAW_CODEX_MODEL=openai/gpt-5.5
+OPENCLAW_CODEX_INFER_TRANSPORT=gateway
+OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS=60
 ```
 
 Then point the `18794` bridge at the proxy:
@@ -137,15 +144,28 @@ Required private reply endpoint contract:
   - `handoff_reason`
   - `recommended_agent_action`
 
-The endpoint must not use browser cookie scraping, ChatGPT session scraping, shell/tool execution, direct customer/ticket/order actions, an OpenAI API key, or OpenClaw `18793` as proof. If the model runtime behind `CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL` is absent, the correct state is blocked, not successful.
+The endpoint must not use browser cookie scraping, ChatGPT session scraping, shell/tool execution, direct customer/ticket/order actions, an OpenAI API key, fixture output, hardcoded nonce echo, or OpenClaw `18793` as proof. If the OpenClaw Codex harness adapter behind `CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL` is absent, the correct state is blocked, not successful.
 
-## Required Private Model Runtime Behind 18796
+## Official OpenClaw Codex Harness Adapter Behind 18796
 
-`CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL` is the private deployment target for the real Code X model/reply runtime. It is not the 18796 engine itself and it must not be a fixture, stub, or hardcoded nonce echo service. The expected production shape is a private HTTP service reachable only inside the Docker network, host private network, or equivalent VPC segment:
+`CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL` is the private deployment target for `codex-private-model-runtime`, the Nexus HTTP adapter around the official OpenClaw Codex runtime. It is not the 18796 engine itself and it must not be a fixture, stub, or hardcoded nonce echo service. The expected production shape is a private HTTP service reachable only inside the Docker network, host private network, or equivalent VPC segment:
 
 ```bash
 CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL=http://codex-private-model-runtime:18800/reply
 ```
+
+The adapter runs `deploy/codex_openclaw_codex_harness_adapter.py` on port `18800`. It uses the official OpenClaw CLI and plugin path:
+
+- OpenClaw CLI package: `openclaw`.
+- Codex plugin package: `@openclaw/codex`.
+- Auth profile: `openclaw models auth login --provider openai-codex`.
+- P0 reply proof: `openclaw infer model run ... --json` through the OpenClaw-managed provider/auth/runtime path.
+
+OpenClaw documentation backing this shape:
+
+- `openclaw models auth list --provider openai-codex` and `openclaw models status` are the documented Codex OAuth checks.
+- `openclaw infer model run --json` is the documented headless provider-backed inference surface.
+- Codex harness mode keeps OpenClaw responsible for routing/delivery while Codex owns the native model loop.
 
 The 18796 engine derives readiness from the origin of that URL and probes:
 
@@ -153,9 +173,10 @@ The 18796 engine derives readiness from the origin of that URL and probes:
 GET http://codex-private-model-runtime:18800/readyz
 ```
 
-The model runtime must expose:
+The 18800 adapter exposes:
 
-- `GET /healthz` or `GET /readyz`. `GET /readyz` is the readiness contract used by 18796.
+- `GET /healthz`: process liveness only.
+- `GET /readyz`: strict readiness. It returns HTTP `200` only when the OpenClaw CLI is installed, `@openclaw/codex` is visible, `openai-codex` auth is present, a real model is configured, and the adapter is explicitly enabled.
 - `POST /reply`, accepting the 18796-forwarded payload:
   - `body`
   - `messages`
@@ -165,7 +186,7 @@ The model runtime must expose:
   - `chatgptAccountId`
   - `chatgptPlanType`
   - `response_contract`
-- `POST /reply` must use the forwarded OAuth bearer token to perform the real Code X-backed model call.
+- `POST /reply` requires the forwarded OAuth bearer token for the Nexus chain boundary, then calls OpenClaw's official Codex runtime through fixed argv with `shell=False`.
 - `POST /reply` must return strict Fast Reply JSON:
   - `reply`
   - `intent`
@@ -174,7 +195,35 @@ The model runtime must expose:
   - `handoff_reason`
   - `recommended_agent_action`
 
-The model runtime may wrap a private Code X SDK, app-server API, or internal service, but it must be the component that actually calls the model. It must not use browser cookie scraping, ChatGPT session scraping, shell/tool execution, direct ticket/order/customer writes, OpenClaw `18793`, OpenAI API keys, fixture responses, or hardcoded nonce echo logic.
+Required adapter env:
+
+```bash
+OPENCLAW_CODEX_RUNTIME_ENABLED=true
+OPENCLAW_CODEX_CLI=openclaw
+OPENCLAW_CODEX_AUTH_PROVIDER=openai-codex
+OPENCLAW_CODEX_PLUGIN_PACKAGE=@openclaw/codex
+OPENCLAW_CODEX_REQUIRE_PLUGIN=true
+OPENCLAW_CODEX_MODEL=openai/gpt-5.5
+OPENCLAW_CODEX_INFER_TRANSPORT=gateway
+OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS=60
+```
+
+Before enabling the service, install and authenticate OpenClaw through the official route:
+
+```bash
+npm install -g openclaw @openclaw/codex
+openclaw models auth login --provider openai-codex --set-default
+openclaw models auth list --provider openai-codex --json
+openclaw models status --json
+```
+
+The adapter may be promoted later:
+
+- P0: CLI adapter proof using official OpenClaw Codex auth/profile/runtime.
+- P1: persistent OpenClaw Gateway adapter.
+- P2: direct Codex app-server protocol adapter.
+
+The adapter must not use browser cookie scraping, ChatGPT session scraping, shell command strings, arbitrary tool execution, direct ticket/order/customer writes, OpenClaw `18793`, OpenAI API keys, fixture responses, or hardcoded nonce echo logic.
 
 When the admin smoke prompt asks the model to echo a nonce, `nonce_echoed=true` is valid only if the real model output includes that nonce. A deterministic service that copies the nonce out of the request is not acceptable as production proof.
 
@@ -227,8 +276,14 @@ export CODEX_APP_SERVER_PRIVATE_REPLY_URL=http://codex-private-reply-engine:1879
 export CODEX_APP_SERVER_REPLY_GENERATION_BACKEND=nexus_private_reply_engine
 export CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL=http://codex-private-model-runtime:18800/reply
 export CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://codex-app-server-upstream:18795/reply
+export OPENCLAW_CODEX_RUNTIME_ENABLED=true
+export OPENCLAW_CODEX_AUTH_PROVIDER=openai-codex
+export OPENCLAW_CODEX_PLUGIN_PACKAGE=@openclaw/codex
+export OPENCLAW_CODEX_MODEL=openai/gpt-5.5
+export OPENCLAW_CODEX_INFER_TRANSPORT=gateway
 
 docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up -d \
+  codex-private-model-runtime \
   codex-private-reply-engine \
   codex-app-server-upstream \
   codex-app-server-bridge
@@ -237,6 +292,10 @@ docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up
 Required readiness before nonce smoke:
 
 ```bash
+docker compose -f deploy/docker-compose.server.yml exec -T codex-private-model-runtime \
+  curl -fsS http://127.0.0.1:18800/readyz
+# HTTP 200, ok=true
+
 docker compose -f deploy/docker-compose.server.yml exec -T codex-private-reply-engine \
   curl -fsS http://127.0.0.1:18796/readyz
 # HTTP 200, ok=true
@@ -287,6 +346,8 @@ curl -fsS http://172.18.0.1:18794/healthz
 curl -fsS http://172.18.0.1:18794/readyz
 curl -fsS http://172.18.0.1:18795/healthz
 curl -fsS http://172.18.0.1:18795/readyz
+docker compose -f deploy/docker-compose.server.yml exec -T codex-private-model-runtime curl -fsS http://127.0.0.1:18800/healthz
+docker compose -f deploy/docker-compose.server.yml exec -T codex-private-model-runtime curl -fsS http://127.0.0.1:18800/readyz
 docker compose -f deploy/docker-compose.server.yml exec -T codex-private-reply-engine curl -fsS http://127.0.0.1:18796/healthz
 docker compose -f deploy/docker-compose.server.yml exec -T codex-private-reply-engine curl -fsS http://127.0.0.1:18796/readyz
 ```
@@ -371,6 +432,10 @@ VERDICT=CODEX_AUTH_AND_CHAT_MODEL_CALL_CONNECTED
 - `503 codex_private_reply_endpoint_unreachable`: the private Code X reply endpoint is configured but not ready or unreachable.
 - `503 codex_private_reply_model_not_configured`: the `18796` Nexus private reply engine is alive but no private Code X model/reply runtime is configured.
 - `503 codex_private_reply_model_unreachable`: the `18796` Nexus private reply engine has a model URL, but that runtime is not ready.
+- `503 openclaw_codex_runtime_disabled`: the `18800` OpenClaw Codex harness adapter is installed but not explicitly enabled.
+- `503 openclaw_codex_plugin_not_ready`: the `18800` adapter cannot see the official `@openclaw/codex` plugin.
+- `503 openclaw_codex_auth_not_ready`: the `18800` adapter cannot confirm an `openai-codex` auth profile through OpenClaw.
+- `503 openclaw_codex_model_not_configured`: the `18800` adapter has no real `OPENCLAW_CODEX_MODEL`.
 - `502 codex_provider_call_failed`: configured endpoint failed, timed out, returned invalid JSON, or returned an HTTP error.
 
 The response must never include `access_token`, `refresh_token`, authorization headers, client secret, encryption key, or raw credential payload.

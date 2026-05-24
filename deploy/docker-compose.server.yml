@@ -215,6 +215,34 @@ services:
       retries: 5
       start_period: 10s
 
+  codex-private-model-runtime:
+    <<: *app_image
+    profiles:
+      - codex-app-server
+    environment:
+      APP_ENV: production
+      BIND_HOST: 0.0.0.0
+      PORT: "18800"
+      OPENCLAW_CODEX_RUNTIME_ENABLED: ${OPENCLAW_CODEX_RUNTIME_ENABLED:-false}
+      OPENCLAW_CODEX_CLI: ${OPENCLAW_CODEX_CLI:-openclaw}
+      OPENCLAW_CODEX_AUTH_PROVIDER: ${OPENCLAW_CODEX_AUTH_PROVIDER:-openai-codex}
+      OPENCLAW_CODEX_PLUGIN_PACKAGE: ${OPENCLAW_CODEX_PLUGIN_PACKAGE:-@openclaw/codex}
+      OPENCLAW_CODEX_REQUIRE_PLUGIN: ${OPENCLAW_CODEX_REQUIRE_PLUGIN:-true}
+      OPENCLAW_CODEX_MODEL: ${OPENCLAW_CODEX_MODEL:-}
+      OPENCLAW_CODEX_INFER_TRANSPORT: ${OPENCLAW_CODEX_INFER_TRANSPORT:-gateway}
+      OPENCLAW_CODEX_AGENT: ${OPENCLAW_CODEX_AGENT:-}
+      OPENCLAW_CODEX_READY_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_READY_TIMEOUT_SECONDS:-5}
+      OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS:-60}
+    expose:
+      - "18800"
+    command: python /app/deploy/codex_openclaw_codex_harness_adapter.py
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18800/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   worker-openclaw-inbound:
     <<: *app_image
     profiles:

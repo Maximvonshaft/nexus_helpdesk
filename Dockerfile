@@ -3,6 +3,7 @@ WORKDIR /build/webapp
 COPY webapp/package*.json ./
 RUN npm config set registry https://registry.npmjs.org/
 RUN npm ci
+RUN npm install -g openclaw @openclaw/codex
 COPY webapp/ ./
 RUN npm run build
 
@@ -42,7 +43,13 @@ COPY scripts/ /app/scripts/
 COPY deploy/codex_app_server_bridge_proxy.py /app/deploy/
 COPY deploy/codex_app_server_private_upstream_proxy.py /app/deploy/
 COPY deploy/codex_private_reply_engine.py /app/deploy/
+COPY deploy/codex_openclaw_codex_harness_adapter.py /app/deploy/
 COPY --from=webapp-builder /build/frontend_dist /app/frontend_dist
+COPY --from=webapp-builder /usr/local/bin/node /usr/local/bin/node
+COPY --from=webapp-builder /usr/local/bin/npm /usr/local/bin/npm
+COPY --from=webapp-builder /usr/local/bin/npx /usr/local/bin/npx
+COPY --from=webapp-builder /usr/local/bin/openclaw /usr/local/bin/openclaw
+COPY --from=webapp-builder /usr/local/lib/node_modules /usr/local/lib/node_modules
 
 # Round B webchat widget static export
 # Keep embeddable public webchat files outside SPA fallback.

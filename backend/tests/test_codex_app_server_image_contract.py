@@ -18,6 +18,7 @@ def test_codex_app_server_proxy_scripts_are_copied_into_runtime_image():
         "deploy/codex_app_server_bridge_proxy.py": "/app/deploy/",
         "deploy/codex_app_server_private_upstream_proxy.py": "/app/deploy/",
         "deploy/codex_private_reply_engine.py": "/app/deploy/",
+        "deploy/codex_openclaw_codex_harness_adapter.py": "/app/deploy/",
     }
     for source, target in expected_copies.items():
         pattern = rf"^COPY\s+{re.escape(source)}\s+{re.escape(target)}\s*$"
@@ -34,4 +35,13 @@ def test_codex_app_server_compose_commands_point_to_copied_scripts():
     assert "codex_app_server_bridge_proxy.py" in command_scripts
     assert "codex_app_server_private_upstream_proxy.py" in command_scripts
     assert "codex_private_reply_engine.py" in command_scripts
+    assert "codex_openclaw_codex_harness_adapter.py" in command_scripts
     assert command_scripts <= copied_scripts
+
+
+def test_runtime_image_installs_official_openclaw_codex_cli():
+    dockerfile = _read("Dockerfile")
+
+    assert "npm install -g openclaw @openclaw/codex" in dockerfile
+    assert "COPY --from=webapp-builder /usr/local/bin/openclaw /usr/local/bin/openclaw" in dockerfile
+    assert "COPY --from=webapp-builder /usr/local/lib/node_modules /usr/local/lib/node_modules" in dockerfile
