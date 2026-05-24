@@ -88,3 +88,18 @@ def test_codex_private_model_runtime_uses_30_second_ready_timeout():
     assert "OPENCLAW_CODEX_READY_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_READY_TIMEOUT_SECONDS:-30}" in compose
     assert 'OPENCLAW_CODEX_READY_TIMEOUT_SECONDS", "30"' in adapter
     assert "OPENCLAW_CODEX_READY_TIMEOUT_SECONDS=30" in runbook
+
+
+def test_codex_private_reply_engine_uses_30_second_ready_timeout():
+    compose = _read("deploy/docker-compose.server.yml")
+    engine = _read("deploy/codex_private_reply_engine.py")
+    runbook = _read("docs/engineering/codex_chat_smoke_runbook.md")
+
+    assert (
+        "CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS: "
+        "${CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS:-30}"
+    ) in compose
+    assert 'CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS", "30"' in engine
+    assert "min(READYZ_TIMEOUT_SECONDS, 60.0)" in engine
+    assert "min(READYZ_TIMEOUT_SECONDS, 5.0)" not in engine
+    assert "CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS=30" in runbook

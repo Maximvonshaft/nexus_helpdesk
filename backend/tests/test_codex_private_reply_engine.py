@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import socket
+import time
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -11,10 +13,17 @@ from urllib import error, request
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _load_engine_module(monkeypatch, tmp_path, *, model_url: str = "", backend: str = "nexus_private_reply_engine"):
+def _load_engine_module(
+    monkeypatch,
+    tmp_path,
+    *,
+    model_url: str = "",
+    backend: str = "nexus_private_reply_engine",
+    readyz_timeout: str = "1",
+):
     monkeypatch.setenv("CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL", model_url)
     monkeypatch.setenv("CODEX_PRIVATE_REPLY_ENGINE_MODEL_TIMEOUT_SECONDS", "1")
-    monkeypatch.setenv("CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS", "1")
+    monkeypatch.setenv("CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS", readyz_timeout)
     monkeypatch.setenv("CODEX_APP_SERVER_REPLY_GENERATION_BACKEND", backend)
     spec = importlib.util.spec_from_file_location(
         f"codex_private_reply_engine_test_{id(tmp_path)}",
@@ -131,6 +140,90 @@ def test_private_reply_engine_readyz_is_200_when_model_configured(monkeypatch, t
     assert payload["reply_generation_backend"] == "nexus_private_reply_engine"
     assert payload["capabilities"]["reply_only"] is True
     assert payload["capabilities"]["shell_execution"] is False
+
+
+def test_private_reply_engine_readyz_timeout_30_is_honored(monkeypatch, tmp_path):
+    engine = _load_engine_module(
+        monkeypatch,
+        tmp_path,
+        model_url="http://codex-private-model-runtime:18800/reply",
+        readyz_timeout="30",
+    )
+    observed: dict[str, float] = {}
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"ok":true}'
+
+    def fake_urlopen(req, timeout):
+        observed["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(engine.request, "urlopen", fake_urlopen)
+
+    assert engine.model_ready() is True
+    assert observed["timeout"] == 30
+
+
+def test_private_reply_engine_slow_model_readyz_within_timeout_is_reachable(monkeypatch, tmp_path):
+    class ModelHandler(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args) -> None:
+            return None
+
+        def do_GET(self) -> None:
+            time.sleep(0.2)
+            raw = json.dumps({"ok": True}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    model = ThreadingHTTPServer(("127.0.0.1", 0), ModelHandler)
+    thread = threading.Thread(target=model.serve_forever, daemon=True)
+    thread.start()
+    try:
+        engine = _load_engine_module(
+            monkeypatch,
+            tmp_path,
+            model_url=f"http://127.0.0.1:{model.server_address[1]}/reply",
+            readyz_timeout="1",
+        )
+        payload = engine.readiness_payload()
+    finally:
+        model.shutdown()
+        model.server_close()
+        thread.join(timeout=2)
+
+    assert payload["ok"] is True
+    assert payload["model_reachable"] is True
+
+
+def test_private_reply_engine_model_readyz_timeout_is_not_reachable(monkeypatch, tmp_path):
+    engine = _load_engine_module(
+        monkeypatch,
+        tmp_path,
+        model_url="http://codex-private-model-runtime:18800/reply",
+        readyz_timeout="30",
+    )
+
+    def fake_urlopen(req, timeout):
+        raise socket.timeout("timed out")
+
+    monkeypatch.setattr(engine.request, "urlopen", fake_urlopen)
+    payload = engine.readiness_payload()
+
+    assert payload["ok"] is False
+    assert payload["model_reachable"] is False
+    assert payload["reason"] == "codex_private_reply_model_unreachable"
 
 
 def test_private_reply_engine_rejects_stub_backend_labels(monkeypatch, tmp_path):
