@@ -17,6 +17,7 @@ def test_codex_app_server_proxy_scripts_are_copied_into_runtime_image():
     expected_copies = {
         "deploy/codex_app_server_bridge_proxy.py": "/app/deploy/",
         "deploy/codex_app_server_private_upstream_proxy.py": "/app/deploy/",
+        "deploy/codex_private_reply_engine.py": "/app/deploy/",
     }
     for source, target in expected_copies.items():
         pattern = rf"^COPY\s+{re.escape(source)}\s+{re.escape(target)}\s*$"
@@ -32,4 +33,5 @@ def test_codex_app_server_compose_commands_point_to_copied_scripts():
 
     assert "codex_app_server_bridge_proxy.py" in command_scripts
     assert "codex_app_server_private_upstream_proxy.py" in command_scripts
+    assert "codex_private_reply_engine.py" in command_scripts
     assert command_scripts <= copied_scripts

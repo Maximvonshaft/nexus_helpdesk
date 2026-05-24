@@ -193,6 +193,28 @@ services:
       retries: 5
       start_period: 10s
 
+  codex-private-reply-engine:
+    <<: *app_image
+    profiles:
+      - codex-app-server
+    environment:
+      APP_ENV: production
+      BIND_HOST: 0.0.0.0
+      PORT: "18796"
+      CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL: ${CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL:-}
+      CODEX_PRIVATE_REPLY_ENGINE_MODEL_TIMEOUT_SECONDS: ${CODEX_PRIVATE_REPLY_ENGINE_MODEL_TIMEOUT_SECONDS:-30}
+      CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS: ${CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS:-2}
+      CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: ${CODEX_APP_SERVER_REPLY_GENERATION_BACKEND:-unconfigured}
+    expose:
+      - "18796"
+    command: python /app/deploy/codex_private_reply_engine.py
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18796/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   worker-openclaw-inbound:
     <<: *app_image
     profiles:

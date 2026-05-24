@@ -41,6 +41,7 @@ COPY backend/ /app/backend/
 COPY scripts/ /app/scripts/
 COPY deploy/codex_app_server_bridge_proxy.py /app/deploy/
 COPY deploy/codex_app_server_private_upstream_proxy.py /app/deploy/
+COPY deploy/codex_private_reply_engine.py /app/deploy/
 COPY --from=webapp-builder /build/frontend_dist /app/frontend_dist
 
 # Round B webchat widget static export

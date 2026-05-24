@@ -86,11 +86,22 @@ Run the proxy on `18795` through compose:
 docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up -d codex-app-server-upstream
 ```
 
-The upstream proxy needs a real private Code X reply endpoint behind it:
+The preferred Nexus-owned private reply endpoint is `codex-private-reply-engine` on `18796`. It is still reply-only and does not generate fake replies. It accepts the OAuth bearer from the 18795 proxy, calls the configured private Code X model/reply runtime, validates strict Fast Reply JSON, and fails closed if the runtime is missing, unhealthy, slow, or returns invalid output.
+
+Run the 18796 engine and point the 18795 proxy at it:
 
 ```bash
-CODEX_APP_SERVER_PRIVATE_REPLY_URL=<private Code X /reply endpoint>
-CODEX_APP_SERVER_REPLY_GENERATION_BACKEND=<real backend label>
+docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up -d codex-private-reply-engine codex-app-server-upstream codex-app-server-bridge
+```
+
+Required server env for the Nexus-owned endpoint:
+
+```bash
+CODEX_APP_SERVER_PRIVATE_REPLY_URL=http://codex-private-reply-engine:18796/reply
+CODEX_APP_SERVER_REPLY_GENERATION_BACKEND=nexus_private_reply_engine
+CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL=<private Code X model/reply runtime URL>
+CODEX_PRIVATE_REPLY_ENGINE_MODEL_TIMEOUT_SECONDS=30
+CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS=2
 ```
 
 Then point the `18794` bridge at the proxy:
@@ -126,7 +137,7 @@ Required private reply endpoint contract:
   - `handoff_reason`
   - `recommended_agent_action`
 
-The endpoint must not use browser cookie scraping, ChatGPT session scraping, shell/tool execution, direct customer/ticket/order actions, an OpenAI API key, or OpenClaw `18793` as proof. If this endpoint is absent, the correct state is blocked, not successful.
+The endpoint must not use browser cookie scraping, ChatGPT session scraping, shell/tool execution, direct customer/ticket/order actions, an OpenAI API key, or OpenClaw `18793` as proof. If the model runtime behind `CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL` is absent, the correct state is blocked, not successful.
 
 ## Bridge Probes
 
@@ -135,6 +146,8 @@ curl -fsS http://172.18.0.1:18794/healthz
 curl -fsS http://172.18.0.1:18794/readyz
 curl -fsS http://172.18.0.1:18795/healthz
 curl -fsS http://172.18.0.1:18795/readyz
+docker compose -f deploy/docker-compose.server.yml exec -T codex-private-reply-engine curl -fsS http://127.0.0.1:18796/healthz
+docker compose -f deploy/docker-compose.server.yml exec -T codex-private-reply-engine curl -fsS http://127.0.0.1:18796/readyz
 ```
 
 Expected `/readyz` before running smoke:
@@ -215,6 +228,8 @@ VERDICT=CODEX_AUTH_AND_CHAT_MODEL_CALL_CONNECTED
 - `503 codex_app_server_real_upstream_unreachable`: bridge has an upstream URL, but the upstream `/readyz` is not reachable or not ready.
 - `503 codex_private_reply_endpoint_not_configured`: the `18795` proxy is alive but no private Code X reply endpoint is configured.
 - `503 codex_private_reply_endpoint_unreachable`: the private Code X reply endpoint is configured but not ready or unreachable.
+- `503 codex_private_reply_model_not_configured`: the `18796` Nexus private reply engine is alive but no private Code X model/reply runtime is configured.
+- `503 codex_private_reply_model_unreachable`: the `18796` Nexus private reply engine has a model URL, but that runtime is not ready.
 - `502 codex_provider_call_failed`: configured endpoint failed, timed out, returned invalid JSON, or returned an HTTP error.
 
 The response must never include `access_token`, `refresh_token`, authorization headers, client secret, encryption key, or raw credential payload.
