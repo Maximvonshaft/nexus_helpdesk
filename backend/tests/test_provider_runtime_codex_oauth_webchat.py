@@ -255,6 +255,8 @@ def test_bridge_reply_calls_mocked_upstream_and_passes_oauth_session(monkeypatch
                 "intent": "other",
                 "tracking_number": None,
                 "handoff_required": False,
+                "handoff_reason": None,
+                "recommended_agent_action": None,
             }).encode("utf-8")
 
     def fake_urlopen(req, timeout):

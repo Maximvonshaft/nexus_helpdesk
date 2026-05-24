@@ -116,6 +116,24 @@ async def test_codex_failure_falls_back_to_openclaw_e2e(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_codex_upstream_timeout_falls_back_to_openclaw_e2e(monkeypatch):
+    import app.services.provider_runtime as provider_runtime_module
+
+    monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
+    codex = E2EAdapter("codex_app_server", ProviderResult.unavailable("codex_app_server", "bridge_timeout", 15000))
+    openclaw = E2EAdapter("openclaw_responses", _success("openclaw_responses"))
+    ProviderRegistry.register("codex_app_server", lambda db: codex)
+    ProviderRegistry.register("openclaw_responses", lambda db: openclaw)
+
+    result = await ProviderRuntimeRouter(_db(_rule(canary_percent=100))).route(_request())
+
+    assert result.ok is True
+    assert result.provider == "openclaw_responses"
+    assert codex.calls == 1
+    assert openclaw.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_kill_switch_bypasses_codex_e2e(monkeypatch):
     import app.services.provider_runtime as provider_runtime_module
 

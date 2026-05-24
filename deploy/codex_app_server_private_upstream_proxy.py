@@ -6,41 +6,17 @@ import os
 import socket
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import Any
 from urllib import error, request
 from urllib.parse import urlparse, urlunparse
 
-BIND_HOST = os.environ.get("BIND_HOST", "127.0.0.1")
-PORT = int(os.environ.get("PORT", "18794"))
-TOKEN_FILE = (
-    os.environ.get("CODEX_APP_SERVER_TOKEN_FILE")
-    or os.environ.get("TOKEN_FILE")
-    or "/run/nexus/codex_app_server_bridge_token"
-)
-MODE = os.environ.get("CODEX_APP_SERVER_BRIDGE_MODE", "real").strip().lower()
-REAL_UPSTREAM_URL = os.environ.get("CODEX_APP_SERVER_REAL_UPSTREAM_URL", "").strip()
-REPLY_GENERATION_BACKEND = os.environ.get("CODEX_APP_SERVER_REPLY_GENERATION_BACKEND", "unconfigured").strip() or "unconfigured"
-UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get("CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS", "30"))
-READYZ_TIMEOUT_SECONDS = float(os.environ.get("CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS", "2"))
-VERSION = "1.2"
-
-_LOGIN_STATE: dict[str, Any] = {
-    "access_token": None,
-    "chatgpt_account_id": None,
-    "chatgpt_plan_type": None,
-    "updated_at": None,
-}
-
-
-def load_bridge_token() -> str:
-    try:
-        value = Path(TOKEN_FILE).read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-    if value.lower().startswith("bearer "):
-        value = value.split(None, 1)[1].strip()
-    return value
+BIND_HOST = os.environ.get("BIND_HOST", "0.0.0.0")
+PORT = int(os.environ.get("PORT", "18795"))
+PRIVATE_REPLY_URL = os.environ.get("CODEX_APP_SERVER_PRIVATE_REPLY_URL", "").strip()
+PRIVATE_TIMEOUT_SECONDS = float(os.environ.get("CODEX_APP_SERVER_PRIVATE_TIMEOUT_SECONDS", "30"))
+READYZ_TIMEOUT_SECONDS = float(os.environ.get("CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS", "2"))
+BACKEND_LABEL = os.environ.get("CODEX_APP_SERVER_REPLY_GENERATION_BACKEND", "unconfigured").strip() or "unconfigured"
+VERSION = "0.1"
 
 
 def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
@@ -69,19 +45,6 @@ def check_bind_host() -> None:
         raise SystemExit("BIND_HOST must be 0.0.0.0, 127.0.0.1, 172.18.0.1, or ::1")
 
 
-def check_auth(handler: BaseHTTPRequestHandler) -> bool:
-    expected = load_bridge_token()
-    if not expected:
-        json_response(handler, 503, {"ok": False, "error": "bridge_token_not_configured"})
-        return False
-    auth = handler.headers.get("Authorization", "")
-    token = auth.split(" ", 1)[1].strip() if auth.lower().startswith("bearer ") else ""
-    if token != expected:
-        json_response(handler, 401, {"ok": False, "error": "unauthorized"})
-        return False
-    return True
-
-
 def read_json(handler: BaseHTTPRequestHandler) -> tuple[dict[str, Any] | None, str | None]:
     try:
         length = int(handler.headers.get("Content-Length", "0") or "0")
@@ -98,25 +61,25 @@ def read_json(handler: BaseHTTPRequestHandler) -> tuple[dict[str, Any] | None, s
     return payload, None
 
 
-def health_payload() -> dict[str, Any]:
-    return {
-        "ok": True,
-        "service": "nexus-codex-app-server-bridge-proxy",
-        "version": VERSION,
-    }
-
-
-def upstream_readyz_url() -> str | None:
-    if not REAL_UPSTREAM_URL:
+def bearer_token(handler: BaseHTTPRequestHandler) -> str | None:
+    auth = handler.headers.get("Authorization", "")
+    if not auth.lower().startswith("bearer "):
         return None
-    parsed = urlparse(REAL_UPSTREAM_URL)
+    token = auth.split(" ", 1)[1].strip()
+    return token or None
+
+
+def private_readyz_url() -> str | None:
+    if not PRIVATE_REPLY_URL:
+        return None
+    parsed = urlparse(PRIVATE_REPLY_URL)
     if not parsed.scheme or not parsed.netloc:
         return None
     return urlunparse((parsed.scheme, parsed.netloc, "/readyz", "", "", ""))
 
 
-def upstream_ready() -> bool:
-    readyz_url = upstream_readyz_url()
+def private_ready() -> bool:
+    readyz_url = private_readyz_url()
     if not readyz_url:
         return False
     try:
@@ -134,36 +97,36 @@ def upstream_ready() -> bool:
     return not isinstance(decoded, dict) or decoded.get("ok") is not False
 
 
+def health_payload() -> dict[str, Any]:
+    return {"ok": True, "service": "nexus-codex-app-server-private-upstream-proxy", "version": VERSION}
+
+
 def readiness_payload() -> dict[str, Any]:
-    token_configured = bool(load_bridge_token())
-    real_upstream_configured = MODE == "real" and bool(REAL_UPSTREAM_URL)
-    real_upstream_reachable = real_upstream_configured and upstream_ready()
-    ok = token_configured and real_upstream_configured and real_upstream_reachable
+    private_configured = bool(PRIVATE_REPLY_URL)
+    private_reachable = private_configured and private_ready()
+    backend_configured = BACKEND_LABEL not in {"", "unconfigured", "stub", "contract_fixture"}
+    ok = private_configured and private_reachable and backend_configured
     reason = None
-    if not token_configured:
-        reason = "bridge_token_not_configured"
-    elif MODE != "real":
-        reason = "codex_app_server_bridge_not_real"
-    elif not REAL_UPSTREAM_URL:
-        reason = "codex_app_server_real_upstream_not_configured"
-    elif not real_upstream_reachable:
-        reason = "codex_app_server_real_upstream_unreachable"
+    if not private_configured:
+        reason = "codex_private_reply_endpoint_not_configured"
+    elif not backend_configured:
+        reason = "codex_reply_generation_backend_not_configured"
+    elif not private_reachable:
+        reason = "codex_private_reply_endpoint_unreachable"
     return {
         "ok": ok,
-        "service": "nexus-codex-app-server-bridge-proxy",
-        "mode": MODE,
-        "real_upstream_configured": real_upstream_configured,
-        "real_upstream_reachable": real_upstream_reachable,
+        "service": "nexus-codex-app-server-private-upstream-proxy",
+        "private_reply_configured": private_configured,
+        "private_reply_reachable": private_reachable,
+        "reply_generation_backend": BACKEND_LABEL if backend_configured else "unconfigured",
         "reason": reason,
-        "accepts_oauth_login": True,
-        "reply_generation_backend": REPLY_GENERATION_BACKEND if real_upstream_configured else "unconfigured",
-        "token_file_configured": token_configured,
-        "oauth_session_present": bool(_LOGIN_STATE["access_token"]),
         "version": VERSION,
     }
 
 
-def normalize_reply(payload: dict[str, Any]) -> dict[str, Any]:
+def strict_reply(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("private_reply_response_must_be_object")
     required = {
         "reply",
         "intent",
@@ -174,22 +137,21 @@ def normalize_reply(payload: dict[str, Any]) -> dict[str, Any]:
     }
     missing = sorted(required - set(payload.keys()))
     if missing:
-        raise ValueError("upstream_strict_reply_missing_fields")
-    reply = payload.get("reply")
-    if not isinstance(reply, str) or not reply.strip():
-        raise ValueError("upstream_reply_missing")
+        raise ValueError("private_reply_missing_required_fields")
+    if not isinstance(payload.get("reply"), str) or not payload.get("reply", "").strip():
+        raise ValueError("private_reply_text_invalid")
     if not isinstance(payload.get("intent"), str):
-        raise ValueError("upstream_intent_invalid")
+        raise ValueError("private_reply_intent_invalid")
     if payload.get("tracking_number") is not None and not isinstance(payload.get("tracking_number"), str):
-        raise ValueError("upstream_tracking_number_invalid")
+        raise ValueError("private_reply_tracking_number_invalid")
     if not isinstance(payload.get("handoff_required"), bool):
-        raise ValueError("upstream_handoff_required_invalid")
+        raise ValueError("private_reply_handoff_required_invalid")
     if payload.get("handoff_reason") is not None and not isinstance(payload.get("handoff_reason"), str):
-        raise ValueError("upstream_handoff_reason_invalid")
+        raise ValueError("private_reply_handoff_reason_invalid")
     if payload.get("recommended_agent_action") is not None and not isinstance(payload.get("recommended_agent_action"), str):
-        raise ValueError("upstream_recommended_agent_action_invalid")
+        raise ValueError("private_reply_recommended_agent_action_invalid")
     return {
-        "reply": reply.strip(),
+        "reply": payload["reply"].strip(),
         "intent": payload["intent"],
         "tracking_number": payload.get("tracking_number"),
         "handoff_required": payload["handoff_required"],
@@ -198,41 +160,41 @@ def normalize_reply(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def call_real_upstream(payload: dict[str, Any]) -> dict[str, Any]:
-    access_token = _LOGIN_STATE.get("access_token")
-    if not isinstance(access_token, str) or not access_token:
-        raise RuntimeError("codex_login_required")
-    upstream_payload = {
+def forwarded_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
         "body": payload.get("body"),
         "messages": payload.get("messages") or [],
         "contract": payload.get("contract"),
         "tracking_fact_summary": payload.get("tracking_fact_summary"),
         "tracking_fact_evidence_present": payload.get("tracking_fact_evidence_present"),
-        "chatgptAccountId": _LOGIN_STATE.get("chatgpt_account_id"),
-        "chatgptPlanType": _LOGIN_STATE.get("chatgpt_plan_type"),
+        "chatgptAccountId": payload.get("chatgptAccountId"),
+        "chatgptPlanType": payload.get("chatgptPlanType"),
     }
-    raw_body = json.dumps(upstream_payload, ensure_ascii=False).encode("utf-8")
+
+
+def call_private_reply(payload: dict[str, Any], token: str) -> dict[str, Any]:
+    if not PRIVATE_REPLY_URL:
+        raise RuntimeError("codex_private_reply_endpoint_not_configured")
+    raw_body = json.dumps(forwarded_payload(payload), ensure_ascii=False).encode("utf-8")
     req = request.Request(
-        REAL_UPSTREAM_URL,
+        PRIVATE_REPLY_URL,
         data=raw_body,
         method="POST",
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "Authorization": f"Bearer {access_token}",
-            "X-Nexus-Codex-Bridge": "oauth-session",
+            "Authorization": f"Bearer {token}",
+            "X-Nexus-Codex-Upstream": "private-reply-v1",
         },
     )
-    with request.urlopen(req, timeout=UPSTREAM_TIMEOUT_SECONDS) as resp:
+    with request.urlopen(req, timeout=PRIVATE_TIMEOUT_SECONDS) as resp:
         raw = resp.read()
     decoded = json.loads(raw.decode("utf-8"))
-    if not isinstance(decoded, dict):
-        raise ValueError("upstream_response_must_be_object")
-    return normalize_reply(decoded)
+    return strict_reply(decoded)
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "NexusCodexAppServerBridgeProxy/" + VERSION
+    server_version = "NexusCodexAppServerPrivateUpstreamProxy/" + VERSION
 
     def log_message(self, fmt: str, *args) -> None:
         safe_log(self, fmt % args)
@@ -248,43 +210,32 @@ class Handler(BaseHTTPRequestHandler):
         json_response(self, 404, {"ok": False, "error": "not_found"})
 
     def do_POST(self) -> None:
-        if self.path not in {"/login", "/reply"}:
+        if self.path != "/reply":
             json_response(self, 404, {"ok": False, "error": "not_found"})
             return
-        if not check_auth(self):
+        token = bearer_token(self)
+        if not token:
+            json_response(self, 401, {"ok": False, "error": "oauth_bearer_required"})
             return
         payload, err = read_json(self)
         if err:
             json_response(self, 400, {"ok": False, "error": err})
             return
         assert payload is not None
-
-        if self.path == "/login":
-            login = payload.get("login")
-            if not isinstance(login, dict) or login.get("type") != "chatgptAuthTokens" or not login.get("accessToken"):
-                json_response(self, 400, {"ok": False, "error": "invalid_login_payload"})
-                return
-            _LOGIN_STATE.update({
-                "access_token": str(login["accessToken"]),
-                "chatgpt_account_id": login.get("chatgptAccountId"),
-                "chatgpt_plan_type": login.get("chatgptPlanType"),
-                "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            })
-            json_response(self, 200, {"ok": True})
-            return
-
         ready = readiness_payload()
         if not ready["ok"]:
-            json_response(self, 503, {"ok": False, "error": ready.get("reason") or "bridge_not_ready", "readiness": ready})
+            json_response(self, 503, {"ok": False, "error": ready.get("reason") or "private_upstream_not_ready"})
             return
         try:
-            json_response(self, 200, call_real_upstream(payload))
+            json_response(self, 200, call_private_reply(payload, token))
         except error.HTTPError as exc:
-            json_response(self, 502, {"ok": False, "error": "upstream_http_error", "upstream_status": exc.code})
+            json_response(self, 502, {"ok": False, "error": "private_reply_http_error", "upstream_status": exc.code})
         except (TimeoutError, socket.timeout):
-            json_response(self, 504, {"ok": False, "error": "upstream_timeout"})
-        except Exception as exc:
+            json_response(self, 504, {"ok": False, "error": "private_reply_timeout"})
+        except ValueError as exc:
             json_response(self, 502, {"ok": False, "error": str(exc)[:120]})
+        except Exception:
+            json_response(self, 502, {"ok": False, "error": "private_reply_unavailable"})
 
 
 def main() -> None:

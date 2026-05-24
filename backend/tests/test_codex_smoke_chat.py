@@ -570,7 +570,14 @@ def test_smoke_chat_through_bridge_and_reachable_upstream_echoes_nonce(client, d
             length = int(self.headers.get("Content-Length", "0"))
             captured["authorization"] = self.headers.get("Authorization")
             captured["payload"] = json.loads(self.rfile.read(length).decode("utf-8"))
-            raw = json.dumps({"reply": "actual upstream response nonce-live"}).encode("utf-8")
+            raw = json.dumps({
+                "reply": "actual upstream response nonce-live",
+                "intent": "other",
+                "tracking_number": None,
+                "handoff_required": False,
+                "handoff_reason": None,
+                "recommended_agent_action": None,
+            }).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(raw)))

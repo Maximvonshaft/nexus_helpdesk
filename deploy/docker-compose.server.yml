@@ -171,6 +171,28 @@ services:
       retries: 5
       start_period: 10s
 
+  codex-app-server-upstream:
+    <<: *app_image
+    profiles:
+      - codex-app-server
+    environment:
+      APP_ENV: production
+      BIND_HOST: 0.0.0.0
+      PORT: "18795"
+      CODEX_APP_SERVER_PRIVATE_REPLY_URL: ${CODEX_APP_SERVER_PRIVATE_REPLY_URL:-}
+      CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: ${CODEX_APP_SERVER_REPLY_GENERATION_BACKEND:-unconfigured}
+      CODEX_APP_SERVER_PRIVATE_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_PRIVATE_TIMEOUT_SECONDS:-30}
+      CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS:-2}
+    ports:
+      - "172.18.0.1:18795:18795"
+    command: python /app/deploy/codex_app_server_private_upstream_proxy.py
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18795/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   worker-openclaw-inbound:
     <<: *app_image
     profiles:

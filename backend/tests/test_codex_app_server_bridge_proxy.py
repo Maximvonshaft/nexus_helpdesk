@@ -78,6 +78,17 @@ def _post_json(url: str, payload: dict, *, token: str | None = "bridge-token") -
         return exc.code, json.loads(exc.read().decode("utf-8"))
 
 
+def _strict_reply(reply: str = "nonce-from-upstream") -> dict:
+    return {
+        "reply": reply,
+        "intent": "other",
+        "tracking_number": None,
+        "handoff_required": False,
+        "handoff_reason": None,
+        "recommended_agent_action": None,
+    }
+
+
 def test_bridge_healthz_is_liveness_only(bridge_server):
     _bridge, base_url = bridge_server
 
@@ -196,7 +207,7 @@ def test_bridge_reply_forwards_prompt_to_real_upstream(monkeypatch, tmp_path):
             captured["url"] = self.path
             captured["authorization"] = self.headers.get("Authorization")
             captured["payload"] = json.loads(self.rfile.read(length).decode("utf-8"))
-            raw = json.dumps({"reply": "nonce-from-upstream", "intent": "other"}).encode("utf-8")
+            raw = json.dumps(_strict_reply()).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(raw)))
@@ -244,6 +255,52 @@ def test_bridge_reply_forwards_prompt_to_real_upstream(monkeypatch, tmp_path):
     rendered = json.dumps(reply_payload) + json.dumps(login_payload)
     assert "oauth-access" not in rendered
     assert "bridge-token" not in rendered
+
+
+def test_bridge_reply_rejects_invalid_upstream_reply(monkeypatch, tmp_path):
+    class UpstreamHandler(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args) -> None:
+            return None
+
+        def do_POST(self) -> None:
+            raw = json.dumps({"reply": "missing strict fields"}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_GET(self) -> None:
+            raw = json.dumps({"ok": True}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+    upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    upstream_thread.start()
+    bridge = _load_bridge_module(monkeypatch, tmp_path, upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}/reply")
+    server = bridge.ThreadingHTTPServer(("127.0.0.1", 0), bridge.Handler)
+    bridge_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    bridge_thread.start()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+
+    try:
+        _post_json(base_url + "/login", {"login": {"type": "chatgptAuthTokens", "accessToken": "oauth-access"}})
+        status, payload = _post_json(base_url + "/reply", {"body": "hello", "messages": []})
+    finally:
+        server.shutdown()
+        server.server_close()
+        bridge_thread.join(timeout=2)
+        upstream.shutdown()
+        upstream.server_close()
+        upstream_thread.join(timeout=2)
+
+    assert status == 502
+    assert payload["error"] == "upstream_strict_reply_missing_fields"
+    assert "oauth-access" not in json.dumps(payload)
 
 
 def test_bridge_upstream_timeout_is_safe_504(monkeypatch, tmp_path):

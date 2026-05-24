@@ -6,6 +6,8 @@ Current deployment fact: the status endpoint is proven and `smoke-chat` is deplo
 
 Current deployed state after the bridge service rollout: the `18794` `codex-app-server-bridge` process is alive, but `/readyz` returns `503 codex_app_server_real_upstream_not_configured` because no real Code X app-server upstream is running or configured on `18795`.
 
+This PR now includes a production-manageable `18795` upstream proxy. The proxy still does not generate replies by itself. It forwards the bridge payload and OAuth bearer token to a configured private Code X reply endpoint, validates the strict Fast Reply JSON response, and fails closed when the private endpoint is missing, unhealthy, slow, or returns invalid output.
+
 ## Preconditions
 
 - Admin authentication is available.
@@ -32,7 +34,7 @@ The backend obtains the Code X OAuth access token through the existing provider 
 Start the production-managed bridge service:
 
 ```bash
-docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up -d codex-app-server-bridge
+docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up -d codex-app-server-upstream codex-app-server-bridge
 ```
 
 The compose service runs `deploy/codex_app_server_bridge_proxy.py` on port `18794`, bound to the Docker bridge host address:
@@ -72,26 +74,67 @@ codex_app_server_real_upstream_unreachable
 
 ## Required 18795 Upstream
 
-The repository contains bridge and upstream-adapter scaffolding under `tools/codex-reply-bridge/`, but there is no self-contained, fake-free Code X app-server process in this PR that can produce a real model nonce echo by itself. A real private Code X app-server upstream must be provided and bound to the bridge as:
+The repository contains a production-managed upstream proxy at `deploy/codex_app_server_private_upstream_proxy.py`. It exposes:
+
+- `GET /healthz`: process liveness.
+- `GET /readyz`: strict readiness. It returns HTTP `200` only when a private reply endpoint is configured, reachable through its `/readyz`, and `CODEX_APP_SERVER_REPLY_GENERATION_BACKEND` is not `unconfigured`.
+- `POST /reply`: requires the bridge-forwarded OAuth bearer token, forwards the turn payload to the private Code X reply endpoint, and returns only strict Fast Reply JSON.
+
+Run the proxy on `18795` through compose:
+
+```bash
+docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up -d codex-app-server-upstream
+```
+
+The upstream proxy needs a real private Code X reply endpoint behind it:
+
+```bash
+CODEX_APP_SERVER_PRIVATE_REPLY_URL=<private Code X /reply endpoint>
+CODEX_APP_SERVER_REPLY_GENERATION_BACKEND=<real backend label>
+```
+
+Then point the `18794` bridge at the proxy:
 
 ```bash
 CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://codex-app-server-upstream:18795/reply
 ```
 
-Required upstream contract:
+If the private endpoint already exposes the exact bridge contract and strict JSON response, the bridge can point directly at it instead:
+
+```bash
+CODEX_APP_SERVER_REAL_UPSTREAM_URL=<private Code X /reply endpoint>
+CODEX_APP_SERVER_REPLY_GENERATION_BACKEND=<real backend label>
+```
+
+Required private reply endpoint contract:
 
 - `GET /healthz`: process liveness.
-- `GET /readyz`: returns HTTP `200` with ready state only when the upstream can call the real Code X app-server runtime.
-- `POST /login`: accepts the refreshed Code X OAuth token or establishes the upstream session without exposing it.
-- `POST /reply`: performs the actual Code X-backed LLM call and returns model text, for example `{ "reply": "..." }`.
+- `GET /readyz`: returns HTTP `200` with ready state only when the endpoint can call the real Code X app-server runtime.
+- `POST /reply`: accepts the OAuth bearer token and the bridge payload:
+  - `body`
+  - `messages`
+  - `contract`
+  - `tracking_fact_summary`
+  - `tracking_fact_evidence_present`
+  - `chatgptAccountId`
+  - `chatgptPlanType`
+- `POST /reply`: performs the actual Code X-backed LLM call and returns strict Fast Reply JSON:
+  - `reply`
+  - `intent`
+  - `tracking_number`
+  - `handoff_required`
+  - `handoff_reason`
+  - `recommended_agent_action`
 
-The upstream must not require an OpenAI API key and must not use OpenClaw `18793` as proof. If this upstream is absent, the correct state is blocked, not successful.
+The endpoint must not use browser cookie scraping, ChatGPT session scraping, shell/tool execution, direct customer/ticket/order actions, an OpenAI API key, or OpenClaw `18793` as proof. If this endpoint is absent, the correct state is blocked, not successful.
 
 ## Bridge Probes
 
 ```bash
 curl -fsS http://172.18.0.1:18794/healthz
 curl -fsS http://172.18.0.1:18794/readyz
+curl -fsS http://172.18.0.1:18795/healthz
+curl -fsS http://172.18.0.1:18795/readyz
 ```
 
 Expected `/readyz` before running smoke:
@@ -170,6 +213,8 @@ VERDICT=CODEX_AUTH_AND_CHAT_MODEL_CALL_CONNECTED
 - `503 codex_llm_endpoint_not_configured`: credential is authorized, but no callable `CODEX_APP_SERVER_BRIDGE_URL`, `CODEX_LLM_ENDPOINT`, or backward-compatible `CODEX_SMOKE_ENDPOINT` is configured.
 - `503 codex_app_server_real_upstream_not_configured`: bridge is running but no real Code X app-server upstream is configured.
 - `503 codex_app_server_real_upstream_unreachable`: bridge has an upstream URL, but the upstream `/readyz` is not reachable or not ready.
+- `503 codex_private_reply_endpoint_not_configured`: the `18795` proxy is alive but no private Code X reply endpoint is configured.
+- `503 codex_private_reply_endpoint_unreachable`: the private Code X reply endpoint is configured but not ready or unreachable.
 - `502 codex_provider_call_failed`: configured endpoint failed, timed out, returned invalid JSON, or returned an HTTP error.
 
 The response must never include `access_token`, `refresh_token`, authorization headers, client secret, encryption key, or raw credential payload.
@@ -196,10 +241,12 @@ Unset the callable endpoint/bridge and restart the backend:
 ```bash
 unset CODEX_APP_SERVER_BRIDGE_URL
 unset CODEX_APP_SERVER_LOGIN_URL
+unset CODEX_APP_SERVER_REAL_UPSTREAM_URL
+unset CODEX_APP_SERVER_PRIVATE_REPLY_URL
 unset CODEX_LLM_ENDPOINT
 unset CODEX_SMOKE_ENDPOINT
 docker compose -f deploy/docker-compose.server.yml up -d --no-deps app
-docker compose -f deploy/docker-compose.server.yml --profile codex-app-server stop codex-app-server-bridge
+docker compose -f deploy/docker-compose.server.yml --profile codex-app-server stop codex-app-server-bridge codex-app-server-upstream
 ```
 
 After rollback, `smoke-chat` should fail closed with `503 codex_llm_endpoint_not_configured` when an authorized credential exists.
