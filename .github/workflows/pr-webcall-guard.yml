@@ -64,6 +64,7 @@ jobs:
               backend/app/api/webcall_ai.py) webcall_relevant=1 ;;
               backend/app/api/admin_webcall_ai.py) webcall_relevant=1 ;;
               backend/app/api/admin_provider_credentials.py) webcall_relevant=1 ;;
+              backend/app/services/provider_runtime/codex_llm_client.py) webcall_relevant=1 ;;
               backend/app/services/provider_runtime/codex_smoke_chat.py) webcall_relevant=1 ;;
               backend/app/services/provider_runtime/oauth_refresh_manager.py) webcall_relevant=1 ;;
               backend/app/services/webcall_ai_production/**) webcall_relevant=1 ;;
@@ -111,6 +112,7 @@ jobs:
               backend/app/api/webcall_ai.py) ;;
               backend/app/api/admin_webcall_ai.py) ;;
               backend/app/api/admin_provider_credentials.py) ;;
+              backend/app/services/provider_runtime/codex_llm_client.py) ;;
               backend/app/services/provider_runtime/codex_smoke_chat.py) ;;
               backend/app/services/provider_runtime/oauth_refresh_manager.py) ;;
               backend/app/services/webcall_ai_production/**) ;;
