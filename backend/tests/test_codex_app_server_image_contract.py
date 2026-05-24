@@ -42,6 +42,20 @@ def test_codex_app_server_compose_commands_point_to_copied_scripts():
 def test_runtime_image_installs_official_openclaw_codex_cli():
     dockerfile = _read("Dockerfile")
 
+    assert "FROM docker.io/library/node:22-bookworm-slim AS openclaw-runtime" in dockerfile
     assert "npm install -g openclaw @openclaw/codex" in dockerfile
-    assert "COPY --from=webapp-builder /usr/local/bin/openclaw /usr/local/bin/openclaw" in dockerfile
-    assert "COPY --from=webapp-builder /usr/local/lib/node_modules /usr/local/lib/node_modules" in dockerfile
+    assert "COPY --from=openclaw-runtime /usr/local/ /usr/local/" in dockerfile
+    assert "COPY --from=webapp-builder /usr/local/bin/openclaw /usr/local/bin/openclaw" not in dockerfile
+    assert "COPY --from=webapp-builder /usr/local/bin/npm /usr/local/bin/npm" not in dockerfile
+    assert "COPY --from=webapp-builder /usr/local/lib/node_modules /usr/local/lib/node_modules" not in dockerfile
+
+
+def test_runtime_image_validates_openclaw_cli_at_build_time():
+    dockerfile = _read("Dockerfile")
+
+    assert "node --version" in dockerfile
+    assert "npm --version" in dockerfile
+    assert "openclaw --version" in dockerfile
+    assert "npm list -g --depth=0 openclaw @openclaw/codex" in dockerfile
+    assert "/usr/local/lib/node_modules/openclaw/dist/entry.mjs" in dockerfile
+    assert "/usr/local/lib/node_modules/openclaw/openclaw.mjs" in dockerfile
