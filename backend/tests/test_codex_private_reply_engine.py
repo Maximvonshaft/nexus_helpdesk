@@ -133,6 +133,40 @@ def test_private_reply_engine_readyz_is_200_when_model_configured(monkeypatch, t
     assert payload["capabilities"]["shell_execution"] is False
 
 
+def test_private_reply_engine_rejects_stub_backend_labels(monkeypatch, tmp_path):
+    class ModelHandler(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args) -> None:
+            return None
+
+        def do_GET(self) -> None:
+            raw = json.dumps({"ok": True}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    model = ThreadingHTTPServer(("127.0.0.1", 0), ModelHandler)
+    thread = threading.Thread(target=model.serve_forever, daemon=True)
+    thread.start()
+    try:
+        for label in ("unconfigured", "stub", "contract_fixture"):
+            engine = _load_engine_module(
+                monkeypatch,
+                tmp_path,
+                model_url=f"http://127.0.0.1:{model.server_address[1]}/reply",
+                backend=label,
+            )
+            payload = engine.readiness_payload()
+            assert payload["ok"] is False
+            assert payload["reason"] == "codex_reply_generation_backend_not_configured"
+            assert payload["reply_generation_backend"] == "unconfigured"
+    finally:
+        model.shutdown()
+        model.server_close()
+        thread.join(timeout=2)
+
+
 def test_private_reply_engine_reply_returns_strict_json(monkeypatch, tmp_path):
     captured: dict = {}
 
@@ -181,6 +215,9 @@ def test_private_reply_engine_reply_returns_strict_json(monkeypatch, tmp_path):
     assert captured["authorization"].split(" ", 1) == ["Bearer", "oauth-access"]
     assert captured["payload"]["contract"] == "speedaf_webchat_fast_reply_v1"
     assert captured["payload"]["chatgptAccountId"] == "acct-1"
+    assert captured["payload"]["response_contract"]["handoff_required"] == "boolean"
+    assert "Return only strict JSON" in captured["payload"]["messages"][0]["content"]
+    assert "Do not perform actions" in captured["payload"]["messages"][0]["content"]
     assert "oauth-access" not in json.dumps(payload)
 
 
@@ -366,3 +403,20 @@ def test_private_reply_engine_does_not_mutate_canary_configuration():
     assert "provider_routing_rules" not in source
     assert "canary_percent" not in source
     assert "CODEX_APP_SERVER_CANARY_PERCENT" not in compose
+
+
+def test_codex_chat_smoke_runbook_documents_real_private_model_gate():
+    runbook = (ROOT / "docs" / "engineering" / "codex_chat_smoke_runbook.md").read_text(encoding="utf-8")
+
+    assert "CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL=http://codex-private-model-runtime:18800/reply" in runbook
+    assert "GET http://codex-private-model-runtime:18800/readyz" in runbook
+    assert "18796 /readyz" in runbook or "http://127.0.0.1:18796/readyz" in runbook
+    assert "18795/readyz" in runbook
+    assert "18794/readyz" in runbook
+    assert "SMOKE_HTTP_CODE=200" in runbook
+    assert "nonce_echoed=True" in runbook
+    assert "VERDICT=CODEX_AUTH_AND_CHAT_MODEL_CALL_CONNECTED" in runbook
+    assert "canary_percent=0" in runbook
+    assert "OpenClaw fallback remains configured" in runbook
+    assert "fixture responses" in runbook
+    assert "hardcoded nonce echo" in runbook

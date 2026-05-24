@@ -99,7 +99,7 @@ Required server env for the Nexus-owned endpoint:
 ```bash
 CODEX_APP_SERVER_PRIVATE_REPLY_URL=http://codex-private-reply-engine:18796/reply
 CODEX_APP_SERVER_REPLY_GENERATION_BACKEND=nexus_private_reply_engine
-CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL=<private Code X model/reply runtime URL>
+CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL=http://codex-private-model-runtime:18800/reply
 CODEX_PRIVATE_REPLY_ENGINE_MODEL_TIMEOUT_SECONDS=30
 CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS=2
 ```
@@ -138,6 +138,147 @@ Required private reply endpoint contract:
   - `recommended_agent_action`
 
 The endpoint must not use browser cookie scraping, ChatGPT session scraping, shell/tool execution, direct customer/ticket/order actions, an OpenAI API key, or OpenClaw `18793` as proof. If the model runtime behind `CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL` is absent, the correct state is blocked, not successful.
+
+## Required Private Model Runtime Behind 18796
+
+`CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL` is the private deployment target for the real Code X model/reply runtime. It is not the 18796 engine itself and it must not be a fixture, stub, or hardcoded nonce echo service. The expected production shape is a private HTTP service reachable only inside the Docker network, host private network, or equivalent VPC segment:
+
+```bash
+CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL=http://codex-private-model-runtime:18800/reply
+```
+
+The 18796 engine derives readiness from the origin of that URL and probes:
+
+```text
+GET http://codex-private-model-runtime:18800/readyz
+```
+
+The model runtime must expose:
+
+- `GET /healthz` or `GET /readyz`. `GET /readyz` is the readiness contract used by 18796.
+- `POST /reply`, accepting the 18796-forwarded payload:
+  - `body`
+  - `messages`
+  - `contract`
+  - `tracking_fact_summary`
+  - `tracking_fact_evidence_present`
+  - `chatgptAccountId`
+  - `chatgptPlanType`
+  - `response_contract`
+- `POST /reply` must use the forwarded OAuth bearer token to perform the real Code X-backed model call.
+- `POST /reply` must return strict Fast Reply JSON:
+  - `reply`
+  - `intent`
+  - `tracking_number`
+  - `handoff_required`
+  - `handoff_reason`
+  - `recommended_agent_action`
+
+The model runtime may wrap a private Code X SDK, app-server API, or internal service, but it must be the component that actually calls the model. It must not use browser cookie scraping, ChatGPT session scraping, shell/tool execution, direct ticket/order/customer writes, OpenClaw `18793`, OpenAI API keys, fixture responses, or hardcoded nonce echo logic.
+
+When the admin smoke prompt asks the model to echo a nonce, `nonce_echoed=true` is valid only if the real model output includes that nonce. A deterministic service that copies the nonce out of the request is not acceptable as production proof.
+
+Safe readiness labels:
+
+```bash
+CODEX_APP_SERVER_REPLY_GENERATION_BACKEND=nexus_private_reply_engine
+```
+
+The 18796 engine treats `unconfigured`, `stub`, and `contract_fixture` backend labels as not ready even if a URL is present.
+
+## Deployed No-Traffic Smoke Gate
+
+Keep production routing safe before and during this smoke:
+
+```bash
+# DB route must remain no-traffic for Code X.
+# Expected: primary_provider=codex_app_server, fallback includes openclaw_responses, canary_percent=0.
+docker compose -f deploy/docker-compose.server.yml exec -T app \
+  python - <<'PY'
+from app.db import SessionLocal
+from sqlalchemy import text
+db = SessionLocal()
+try:
+    row = db.execute(text("""
+        SELECT primary_provider, fallback_providers, canary_percent
+        FROM provider_routing_rules
+        WHERE route_name = 'webchat_fast_reply'
+        ORDER BY updated_at DESC
+        LIMIT 1
+    """)).mappings().first()
+    print(dict(row or {}))
+finally:
+    db.close()
+PY
+```
+
+Expected route state:
+
+```text
+canary_percent=0
+fallback_providers contains openclaw_responses
+```
+
+Start the Code X private path without enabling customer traffic:
+
+```bash
+export WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED=false
+export CODEX_APP_SERVER_PRIVATE_REPLY_URL=http://codex-private-reply-engine:18796/reply
+export CODEX_APP_SERVER_REPLY_GENERATION_BACKEND=nexus_private_reply_engine
+export CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL=http://codex-private-model-runtime:18800/reply
+export CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://codex-app-server-upstream:18795/reply
+
+docker compose -f deploy/docker-compose.server.yml --profile codex-app-server up -d \
+  codex-private-reply-engine \
+  codex-app-server-upstream \
+  codex-app-server-bridge
+```
+
+Required readiness before nonce smoke:
+
+```bash
+docker compose -f deploy/docker-compose.server.yml exec -T codex-private-reply-engine \
+  curl -fsS http://127.0.0.1:18796/readyz
+# HTTP 200, ok=true
+
+docker compose -f deploy/docker-compose.server.yml exec -T codex-app-server-upstream \
+  curl -fsS http://127.0.0.1:18795/readyz
+# HTTP 200, ok=true
+
+docker compose -f deploy/docker-compose.server.yml exec -T codex-app-server-bridge \
+  curl -fsS http://127.0.0.1:18794/readyz
+# HTTP 200, ok=true
+```
+
+Then run the admin-only nonce smoke. The smoke does not enable WebChat customer traffic:
+
+```bash
+NONCE="codex-smoke-$(date +%s)"
+SMOKE_BODY="$(curl -sS -w '\n%{http_code}' \
+  -X POST \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  https://www.leakle.com/api/admin/provider-credentials/codex/smoke-chat \
+  -d "{\"mode\":\"smoke\",\"nonce\":\"$NONCE\",\"prompt\":\"Echo the nonce exactly for Nexus runtime verification.\"}")"
+SMOKE_HTTP_CODE="$(printf '%s' "$SMOKE_BODY" | tail -n1)"
+printf '%s\n' "$SMOKE_BODY" | sed '$d'
+```
+
+Expected success:
+
+```bash
+SMOKE_HTTP_CODE=200
+nonce_echoed=True
+VERDICT=CODEX_AUTH_AND_CHAT_MODEL_CALL_CONNECTED
+```
+
+After the smoke, re-check that customer traffic stayed on fallback:
+
+```text
+WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED=false
+canary_percent=0
+OpenClaw fallback remains configured
+```
 
 ## Bridge Probes
 
