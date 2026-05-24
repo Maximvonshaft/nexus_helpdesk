@@ -8,10 +8,14 @@ on:
       - "backend/app/api/admin_webcall_ai.py"
       - "backend/app/webchat_voice_config.py"
       - "backend/.env.example"
+      - "backend/requirements.txt"
       - "backend/tests/test_webcall_ai_production.py"
+      - "backend/tests/test_webcall_ai_voice_loop.py"
       - "webapp/src/routes/webcall-ai.tsx"
       - "webapp/src/styles.css"
       - "deploy/docker-compose.server.yml"
+      - "docs/engineering/webcall_ai_production_livekit_runbook.md"
+      - "docs/engineering/webcall_ai_voice_loop_env.md"
       - ".github/workflows/webcall-ai-final-quality-gate.yml"
   workflow_dispatch:
 
@@ -38,12 +42,15 @@ jobs:
         env:
           APP_ENV: development
           DATABASE_URL: sqlite:////tmp/webcall_ai_final_quality_gate.db
-        run: pytest -q backend/tests/test_webcall_ai_production.py
+        run: |
+          pytest -q backend/tests/test_webcall_ai_production.py
+          pytest -q backend/tests/test_webcall_ai_voice_loop.py
 
       - name: Scan changed WebCall AI files for leaked secrets
         shell: bash
         run: |
           set -euo pipefail
+          git diff --check
           ! grep -RInE "(LIVEKIT_API_SECRET|STT_API_KEY|LLM_API_KEY|TTS_API_KEY)=.{8,}|unit-secret|sk-[A-Za-z0-9]{20,}" \
             backend/app/services/webcall_ai_production backend/.env.example webapp/src/routes/webcall-ai.tsx
 

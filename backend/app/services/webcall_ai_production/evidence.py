@@ -124,6 +124,14 @@ def persist_turn_evidence(
             event_type="webcall_ai.tool.called",
             payload={"voice_session_id": session.public_id, "turn_index": turn_index, "tool": "tracking_lookup", "result": tool_result},
         )
+    if llm.handoff_required:
+        write_event(
+            db,
+            conversation_id=session.conversation_id,
+            ticket_id=session.ticket_id,
+            event_type="webcall_ai.handoff.requested",
+            payload={"voice_session_id": session.public_id, "turn_index": turn_index, "reason": llm.handoff_reason or "handoff_required"},
+        )
     write_event(
         db,
         conversation_id=session.conversation_id,

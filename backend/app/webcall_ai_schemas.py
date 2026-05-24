@@ -23,3 +23,9 @@ class WebCallAIHandoffRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     visitor_token: str | None = Field(default=None, min_length=20, max_length=160)
     reason: str | None = Field(default=None, max_length=240)
+
+
+class WebCallAITrackingFallbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    visitor_token: str | None = Field(default=None, min_length=20, max_length=160)
+    tracking_number: str = Field(min_length=4, max_length=80)

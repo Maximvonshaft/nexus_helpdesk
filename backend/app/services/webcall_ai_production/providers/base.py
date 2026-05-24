@@ -3,6 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+class ProviderError(RuntimeError):
+    def __init__(self, provider: str, code: str, message: str = "provider_error") -> None:
+        super().__init__(message)
+        self.provider = provider
+        self.code = code
+
+
 @dataclass(frozen=True)
 class STTResult:
     text: str

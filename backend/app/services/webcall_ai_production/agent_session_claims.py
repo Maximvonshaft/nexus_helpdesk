@@ -112,6 +112,26 @@ def release_session(db: Session, *, session_id: int, worker_id: str, reason: str
     return True
 
 
+def should_continue_session(db: Session, *, session_id: int, worker_id: str) -> tuple[bool, str]:
+    settings = get_webcall_ai_production_settings()
+    if settings.kill_switch:
+        return False, "kill_switch"
+    session = (
+        db.query(WebchatVoiceSession)
+        .filter(WebchatVoiceSession.id == session_id, WebchatVoiceSession.ai_agent_worker_id == worker_id)
+        .first()
+    )
+    if session is None:
+        return False, "session_missing"
+    if session.status in TERMINAL_SESSION_STATUSES or session.ended_at is not None:
+        return False, "session_ended"
+    if session.ai_agent_status == AI_STATUS_HANDOFF_REQUESTED:
+        return False, "handoff_requested"
+    if int(session.ai_turn_count or 0) >= settings.max_turns_per_session:
+        return False, "max_turns"
+    return True, "continue"
+
+
 def fail_session(db: Session, *, session_id: int, worker_id: str, error_code: str, error_message: str | None = None) -> bool:
     session = (
         db.query(WebchatVoiceSession)

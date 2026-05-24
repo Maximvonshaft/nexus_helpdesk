@@ -38,6 +38,10 @@ def _provider_env(name: str, default: str = "fake") -> str:
     return value
 
 
+def _secret_configured(name: str, file_name: str) -> bool:
+    return bool((os.getenv(name) or "").strip() or (os.getenv(file_name) or "").strip())
+
+
 @dataclass(frozen=True)
 class WebCallAIProductionSettings:
     production_enabled: bool
@@ -109,7 +113,7 @@ class WebCallAIProductionSettings:
         if self.production_enabled and self.agent_enabled and self.provider_profile == "external" and not self.provider_configured:
             raise ValueError("external WebCall AI providers require STT, LLM, and TTS provider configuration")
         if app_env == "production":
-            for name in ["STT_API_KEY", "LLM_API_KEY", "TTS_API_KEY"]:
+            for name in ["STT_API_KEY", "LLM_API_KEY", "TTS_API_KEY", "LIVEKIT_API_SECRET"]:
                 if (os.getenv(name) or "").strip():
                     raise ValueError(f"{name} must not be configured inline in production; use the matching *_FILE secret")
 
@@ -151,14 +155,14 @@ def get_webcall_ai_production_settings() -> WebCallAIProductionSettings:
         webchat_voice_provider=_provider_env("WEBCHAT_VOICE_PROVIDER", "mock"),
         webchat_voice_enabled=_bool_env("WEBCHAT_VOICE_ENABLED", False),
         livekit_url=(os.getenv("LIVEKIT_URL") or "").strip() or None,
-        livekit_api_key_configured=bool((os.getenv("LIVEKIT_API_KEY") or "").strip()),
-        livekit_api_secret_configured=bool((os.getenv("LIVEKIT_API_SECRET") or "").strip()),
+        livekit_api_key_configured=_secret_configured("LIVEKIT_API_KEY", "LIVEKIT_API_KEY_FILE"),
+        livekit_api_secret_configured=_secret_configured("LIVEKIT_API_SECRET", "LIVEKIT_API_SECRET_FILE"),
         stt_provider=_provider_env("STT_PROVIDER", "fake"),
         llm_provider=_provider_env("LLM_PROVIDER", "fake"),
         tts_provider=_provider_env("TTS_PROVIDER", "fake"),
-        external_stt_configured=bool((os.getenv("STT_API_KEY_FILE") or os.getenv("STT_API_KEY") or os.getenv("STT_ENDPOINT") or "").strip()),
-        external_llm_configured=bool((os.getenv("LLM_API_KEY_FILE") or os.getenv("LLM_API_KEY") or os.getenv("LLM_ENDPOINT") or "").strip()),
-        external_tts_configured=bool((os.getenv("TTS_API_KEY_FILE") or os.getenv("TTS_API_KEY") or os.getenv("TTS_ENDPOINT") or "").strip()),
+        external_stt_configured=bool((os.getenv("STT_API_KEY_FILE") or "").strip() and (os.getenv("STT_ENDPOINT") or "").strip()),
+        external_llm_configured=bool((os.getenv("LLM_API_KEY_FILE") or "").strip() and (os.getenv("LLM_ENDPOINT") or "").strip()),
+        external_tts_configured=bool((os.getenv("TTS_API_KEY_FILE") or "").strip() and (os.getenv("TTS_ENDPOINT") or "").strip()),
     )
     settings.validate()
     return settings

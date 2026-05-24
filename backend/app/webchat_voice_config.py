@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 
@@ -25,6 +26,16 @@ def _parse_sources(raw: str) -> list[str]:
 def _normalize_url(raw: str | None) -> str | None:
     value = (raw or "").strip().rstrip("/")
     return value or None
+
+
+def _secret_value(name: str, file_name: str) -> str | None:
+    inline = (os.getenv(name) or "").strip()
+    if inline:
+        return inline
+    path = (os.getenv(file_name) or "").strip()
+    if not path:
+        return None
+    return Path(path).read_text(encoding="utf-8").strip() or None
 
 
 def _livekit_wss_source(livekit_url: str | None) -> str | None:
@@ -68,8 +79,8 @@ def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
         recording_enabled=_env_bool("WEBCHAT_VOICE_RECORDING_ENABLED", False),
         transcription_enabled=_env_bool("WEBCHAT_VOICE_TRANSCRIPTION_ENABLED", False),
         livekit_url=_normalize_url(os.getenv("LIVEKIT_URL")),
-        livekit_api_key=(os.getenv("LIVEKIT_API_KEY") or "").strip() or None,
-        livekit_api_secret=(os.getenv("LIVEKIT_API_SECRET") or "").strip() or None,
+        livekit_api_key=_secret_value("LIVEKIT_API_KEY", "LIVEKIT_API_KEY_FILE"),
+        livekit_api_secret=_secret_value("LIVEKIT_API_SECRET", "LIVEKIT_API_SECRET_FILE"),
     )
     validate_webchat_voice_runtime_config(config)
     return config

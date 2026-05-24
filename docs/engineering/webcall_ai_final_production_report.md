@@ -10,15 +10,16 @@
 
 ## 3. Final SHA
 
-Pending commit.
+Pending next commit.
 
 ## 4. PR URL
 
-Pending draft PR.
+https://github.com/Maximvonshaft/nexus_helpdesk/pull/232
 
 ## 5. Files changed
 
 - Backend production config, worker, provider contracts, session guardrails, admin health, evidence persistence.
+- LiveKit RTC I/O boundary, continuous bounded worker loop, tracking fallback API, and provider HTTP adapters.
 - Frontend `/webcall-ai` timeline polling and persisted event display.
 - GitHub Actions WebCall AI final quality gate.
 - Environment example and voice path/CSP defaults.
@@ -29,15 +30,17 @@ Pending draft PR.
 - Production worker no longer runs fake heartbeat by default; fake heartbeat requires `WEBCALL_AI_TEST_FAKE_HEARTBEAT=true`.
 - Claim/lease lifecycle for `livekit_ai_agent` sessions.
 - Provider router plus fail-closed external STT/LLM/TTS adapter boundaries.
+- External STT/LLM/TTS HTTP adapters with token-file secret loading, timeout/retry handling, and provider error classification.
+- LiveKit SDK-backed media I/O path with AI participant join, visitor audio collection, and TTS audio publication support.
+- Bounded multi-turn call loop with greeting, heartbeat/lease refresh, max-turn/max-duration/handoff/visitor-disconnect/kill-switch exits.
 - Redacted transcript, AI turn, AI action, and timeline event persistence path.
 - Admin health endpoint and customer timeline polling.
 - CI gate for backend contracts, frontend typecheck, and secret scanning.
 
 ## 7. What remains out of scope
 
-- Real LiveKit RTC audio collection/publication is isolated behind `LiveKitAgentIO`, but this build still fails closed until the approved RTC runtime dependency and provider-specific implementation are wired.
-- Real external STT/LLM/TTS provider adapters intentionally fail closed until provider credentials/endpoints are approved.
 - Production spoken smoke on `https://www.leakle.com/webcall-ai` has not been executed from this local environment.
+- Read-only tracking lookup remains fail-closed as `not_configured` until an approved Speedaf read-only endpoint and token-file secret are configured.
 
 ## 8. New env flags
 
@@ -48,12 +51,15 @@ Pending draft PR.
 - `STT_ENDPOINT`, `STT_API_KEY_FILE`
 - `LLM_ENDPOINT`, `LLM_API_KEY_FILE`
 - `TTS_ENDPOINT`, `TTS_API_KEY_FILE`
+- `LIVEKIT_API_KEY_FILE`, `LIVEKIT_API_SECRET_FILE`
+- `TRACKING_LOOKUP_ENDPOINT`, `TRACKING_LOOKUP_API_KEY_FILE`
 
 ## 9. Tests run and results
 
 - `npm --prefix webapp run typecheck` passed.
 - `py -3.12 -m py_compile ...` passed for changed backend Python files.
-- `py -3.12 -m pytest -q backend/tests/test_webcall_ai_production.py` was not run locally because `pytest` is not installed in the local Python 3.12 environment. The new GitHub Actions gate runs it in CI.
+- `git diff --check` passed.
+- `py -3.12 -m pytest -q backend/tests/test_webcall_ai_production.py backend/tests/test_webcall_ai_voice_loop.py` was not run locally because `pytest` is not installed in the local Python 3.12 environment. The GitHub Actions gate installs dependencies and runs both test files in CI.
 
 ## 10. Manual smoke steps
 
@@ -95,7 +101,7 @@ order by id;
 
 ## 13. Deployment notes
 
-Deploy as a draft/canary only. Keep `WEBCALL_AI_PUBLIC_ROLLOUT_MODE=internal` until real RTC/provider adapters pass smoke. Use `WEBCALL_AI_KILL_SWITCH=true` for immediate disable.
+Deploy as internal canary only. Keep `WEBCALL_AI_PUBLIC_ROLLOUT_MODE=internal` until real RTC/provider adapters and read-only tracking pass smoke. Use `WEBCALL_AI_KILL_SWITCH=true` for immediate disable.
 
 ## 14. Rollback plan
 

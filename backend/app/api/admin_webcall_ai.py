@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..services.permissions import ensure_ticket_visible
+from ..services.permissions import ensure_can_manage_runtime, ensure_ticket_visible
 from ..services.webcall_ai_production.agent_worker import health as worker_health
+from ..services.webcall_ai_production.event_service import write_event
 from ..services.webcall_ai_production.session_service import TERMINAL_STATUSES, get_session, list_events
 from ..services.webchat_voice_service import end_admin_voice_session
 from ..unit_of_work import managed_session
@@ -17,7 +18,8 @@ router = APIRouter(prefix="/api/admin/webcall-ai", tags=["admin-webcall-ai"])
 
 
 @router.get("/health")
-def read_admin_webcall_ai_health(current_user=Depends(get_current_user)) -> dict:
+def read_admin_webcall_ai_health(db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict:
+    ensure_can_manage_runtime(current_user, db)
     return worker_health()
 
 
@@ -70,4 +72,12 @@ def force_end_admin_webcall_ai_session(session_public_id: str, db: Session = Dep
     if ticket is not None:
         ensure_ticket_visible(current_user, ticket, db)
     with managed_session(db):
-        return end_admin_voice_session(db, ticket_id=result["session"]["ticket_id"], voice_session_public_id=session_public_id, current_user=current_user)
+        ended = end_admin_voice_session(db, ticket_id=result["session"]["ticket_id"], voice_session_public_id=session_public_id, current_user=current_user)
+        write_event(
+            db,
+            conversation_id=result["session"]["conversation_id"],
+            ticket_id=result["session"]["ticket_id"],
+            event_type="webcall_ai.session.ended",
+            payload={"voice_session_id": session_public_id, "reason": "admin_force_end"},
+        )
+        return ended
