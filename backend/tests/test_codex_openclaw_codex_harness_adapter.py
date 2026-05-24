@@ -123,7 +123,7 @@ def test_openclaw_codex_adapter_readyz_200_with_official_cli_plugin_auth_and_mod
     def fake_run(args, timeout_seconds, input_text=None):
         calls.append(args)
         if args[:2] == ["plugins", "list"]:
-            return _completed(args, json.dumps({"plugins": [{"package": "@openclaw/codex"}]}))
+            return _completed(args, json.dumps({"plugins": [{"id": "codex", "package": "@openclaw/codex", "enabled": True}]}))
         if args[:3] == ["models", "auth", "list"]:
             return _completed(args, json.dumps({"profiles": [{"provider": "openai-codex", "status": "ok"}]}))
         raise AssertionError(args)
@@ -138,6 +138,96 @@ def test_openclaw_codex_adapter_readyz_200_with_official_cli_plugin_auth_and_mod
     assert payload["model"] == "openai/gpt-5.5"
     assert ["plugins", "list", "--json"] in calls
     assert ["models", "auth", "list", "--provider", "openai-codex", "--json"] in calls
+
+
+def test_openclaw_codex_auth_profiles_empty_is_not_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+
+    def fake_run(args, timeout_seconds, input_text=None):
+        if args[:2] == ["plugins", "list"]:
+            return _completed(args, json.dumps({"plugins": [{"id": "codex", "package": "@openclaw/codex", "enabled": True}]}))
+        if args[:3] == ["models", "auth", "list"]:
+            return _completed(args, json.dumps({"profiles": []}))
+        raise AssertionError(args)
+
+    monkeypatch.setattr(adapter, "run_openclaw", fake_run)
+    assert adapter.auth_ready() is False
+    payload = adapter.readiness_payload()
+    assert payload["ok"] is False
+    assert payload["codex_plugin_ready"] is True
+    assert payload["auth_ready"] is False
+    assert payload["reason"] == "openclaw_codex_auth_not_ready"
+
+
+def test_openclaw_codex_auth_active_profile_is_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    monkeypatch.setattr(
+        adapter,
+        "run_openclaw",
+        lambda args, timeout_seconds, input_text=None: _completed(
+            args,
+            json.dumps({"profiles": [{"provider": "openai-codex", "status": "active"}]}),
+        ),
+    )
+    assert adapter.auth_ready() is True
+
+
+def test_openclaw_codex_auth_wrong_provider_is_not_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    monkeypatch.setattr(
+        adapter,
+        "run_openclaw",
+        lambda args, timeout_seconds, input_text=None: _completed(
+            args,
+            json.dumps({"profiles": [{"provider": "openai", "status": "active"}]}),
+        ),
+    )
+    assert adapter.auth_ready() is False
+
+
+def test_openclaw_codex_plugin_installed_but_not_enabled_is_not_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    monkeypatch.setattr(
+        adapter,
+        "run_openclaw",
+        lambda args, timeout_seconds, input_text=None: _completed(
+            args,
+            json.dumps({"plugins": [{"id": "codex", "package": "@openclaw/codex", "enabled": False}]}),
+        ),
+    )
+    assert adapter.plugin_ready() is False
+
+
+def test_openclaw_codex_plugin_enabled_by_id_is_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    monkeypatch.setattr(
+        adapter,
+        "run_openclaw",
+        lambda args, timeout_seconds, input_text=None: _completed(
+            args,
+            json.dumps({"plugins": [{"id": "codex", "package": "@openclaw/codex", "enabled": True}]}),
+        ),
+    )
+    assert adapter.plugin_ready() is True
+
+
+def test_openclaw_codex_plugin_enabled_by_package_status_is_ready(monkeypatch, tmp_path):
+    adapter = _load_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
+    monkeypatch.setattr(
+        adapter,
+        "run_openclaw",
+        lambda args, timeout_seconds, input_text=None: _completed(
+            args,
+            json.dumps({"plugins": [{"package": "@openclaw/codex", "status": "enabled"}]}),
+        ),
+    )
+    assert adapter.plugin_ready() is True
 
 
 def test_openclaw_codex_adapter_reply_invokes_official_infer_and_returns_strict_json(monkeypatch, tmp_path):

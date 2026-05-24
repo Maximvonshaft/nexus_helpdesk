@@ -140,12 +140,89 @@ def run_openclaw(args: list[str], timeout_seconds: float, input_text: str | None
     )
 
 
-def command_ok(args: list[str], timeout_seconds: float) -> bool:
+def decode_json_output(result: subprocess.CompletedProcess[str]) -> Any:
+    text = (result.stdout or "").strip()
+    if not text:
+        text = (result.stderr or "").strip()
+    if not text:
+        return None
     try:
-        result = run_openclaw(args, timeout_seconds)
-    except Exception:
-        return False
-    return result.returncode == 0
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                return json.loads(text[start : end + 1])
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
+def iter_items(payload: Any, keys: tuple[str, ...]) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def normalized_plugin_values(plugin: dict[str, Any]) -> set[str]:
+    values: set[str] = set()
+    for key in ("id", "name", "package", "packageName", "npmPackage", "plugin", "slug"):
+        value = plugin.get(key)
+        if isinstance(value, str) and value.strip():
+            values.add(value.strip().lower())
+    return values
+
+
+def plugin_enabled(plugin: dict[str, Any]) -> bool:
+    for key in ("enabled", "active", "loaded", "usable", "ready"):
+        value = plugin.get(key)
+        if isinstance(value, bool):
+            return value
+    status = plugin.get("status") or plugin.get("state")
+    if isinstance(status, str):
+        return status.strip().lower() in {"enabled", "active", "loaded", "ready", "ok"}
+    return False
+
+
+def plugin_payload_ready(payload: Any) -> bool:
+    wanted = {PLUGIN_PACKAGE.lower(), "codex"}
+    for plugin in iter_items(payload, ("plugins", "items", "data")):
+        if normalized_plugin_values(plugin) & wanted and plugin_enabled(plugin):
+            return True
+    return False
+
+
+def profile_provider_matches(profile: dict[str, Any]) -> bool:
+    for key in ("provider", "providerId", "provider_id", "id", "name"):
+        value = profile.get(key)
+        if isinstance(value, str) and value.strip().lower() == AUTH_PROVIDER.lower():
+            return True
+    return False
+
+
+def profile_usable(profile: dict[str, Any]) -> bool:
+    for key in ("usable", "active", "authenticated", "authorized", "enabled", "ready"):
+        value = profile.get(key)
+        if isinstance(value, bool):
+            return value
+    status = profile.get("status") or profile.get("state")
+    if isinstance(status, str):
+        return status.strip().lower() in {"active", "authorized", "authenticated", "ready", "ok", "valid"}
+    return False
+
+
+def auth_payload_ready(payload: Any) -> bool:
+    for profile in iter_items(payload, ("profiles", "items", "data", "accounts")):
+        if profile_provider_matches(profile) and profile_usable(profile):
+            return True
+    return False
 
 
 def plugin_ready() -> bool:
@@ -157,13 +234,18 @@ def plugin_ready() -> bool:
         return False
     if result.returncode != 0:
         return False
-    output = (result.stdout or "") + "\n" + (result.stderr or "")
-    return PLUGIN_PACKAGE in output
+    return plugin_payload_ready(decode_json_output(result))
 
 
 def auth_ready() -> bool:
     args = ["models", "auth", "list", "--provider", AUTH_PROVIDER, "--json"]
-    return command_ok(args, READY_TIMEOUT_SECONDS)
+    try:
+        result = run_openclaw(args, READY_TIMEOUT_SECONDS)
+    except Exception:
+        return False
+    if result.returncode != 0:
+        return False
+    return auth_payload_ready(decode_json_output(result))
 
 
 def model_configured() -> bool:
