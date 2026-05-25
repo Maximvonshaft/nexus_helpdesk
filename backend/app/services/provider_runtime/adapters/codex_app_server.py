@@ -325,6 +325,12 @@ class CodexAppServerAdapter(ProviderAdapter):
             "contract": request.output_contract,
             "tracking_fact_summary": request.tracking_fact_summary,
             "tracking_fact_evidence_present": request.tracking_fact_evidence_present,
+            "persona_context": (request.metadata or {}).get("persona_context"),
+            "knowledge_context": (request.metadata or {}).get("knowledge_context"),
+            "safety_policy": (request.metadata or {}).get("safety_policy"),
+            "tenant_id": request.tenant_id,
+            "channel_key": request.channel_key,
+            "session_id": request.session_id,
         }
 
     @staticmethod

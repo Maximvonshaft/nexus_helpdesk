@@ -28,3 +28,16 @@ test("request validation rejects missing token", () => {
     /missing_access_token/,
   );
 });
+
+test("request validation sanitizes runtime context before prompt compilation", () => {
+  const request = validateReplyRequest({
+    login: { type: "chatgptAuthTokens", accessToken: "token", chatgptAccountId: "acct" },
+    body: "provider_runtime http://localhost:8000 api_key=secret-value",
+    messages: [{ role: "user", content: "OpenClaw bridge codex_app_server" }],
+    persona_context: { summary: "system prompt" },
+  });
+
+  assert.doesNotMatch(request.body, /provider_runtime|localhost|secret-value/i);
+  assert.doesNotMatch(request.messages[0]?.content || "", /OpenClaw|bridge|codex_app_server/i);
+  assert.doesNotMatch(String(request.persona_context?.summary || ""), /system prompt/i);
+});

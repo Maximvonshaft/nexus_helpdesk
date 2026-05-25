@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -11,13 +11,17 @@ from ..schemas_control_plane import (
     KnowledgeItemOut,
     KnowledgeItemUpdate,
     KnowledgeItemVersionOut,
+    KnowledgeChunkHitOut,
     KnowledgePublishRequest,
+    KnowledgeRetrievalTestOut,
+    KnowledgeRetrievalTestRequest,
     KnowledgeRollbackRequest,
     KnowledgeSearchPublishedOut,
     KnowledgeSearchPublishedRequest,
 )
 from ..services.permissions import ensure_can_manage_ai_configs, ensure_can_read_ai_configs
 from ..services import knowledge_service
+from ..services.knowledge_retrieval_service import search_published_chunks
 from ..unit_of_work import managed_session
 from .deps import get_current_user
 
@@ -74,6 +78,31 @@ def create_knowledge_item(
     return _item_out(row)
 
 
+@router.post("/upload", response_model=KnowledgeItemOut)
+def create_knowledge_item_from_upload(
+    file: UploadFile = File(...),
+    item_key: str | None = Form(default=None),
+    title: str | None = Form(default=None),
+    channel: str | None = Form(default="website"),
+    audience_scope: str | None = Form(default="customer"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_ai_configs(current_user, db)
+    with managed_session(db):
+        row = knowledge_service.create_file_item_from_upload(
+            db,
+            file=file,
+            actor=current_user,
+            item_key=item_key,
+            title=title,
+            channel=channel,
+            audience_scope=audience_scope or "customer",
+        )
+    db.refresh(row)
+    return _item_out(row)
+
+
 @router.post("/search-published", response_model=KnowledgeSearchPublishedOut)
 def search_published_knowledge_items(
     payload: KnowledgeSearchPublishedRequest,
@@ -90,6 +119,39 @@ def search_published_knowledge_items(
         limit=payload.limit,
     )
     return KnowledgeSearchPublishedOut(items=[_item_out(row) for row in rows], total=total)
+
+
+@router.post("/retrieve-test", response_model=KnowledgeRetrievalTestOut)
+def test_knowledge_retrieval(
+    payload: KnowledgeRetrievalTestRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_read_ai_configs(current_user, db)
+    hits, total = search_published_chunks(
+        db,
+        q=payload.q,
+        market_id=payload.market_id,
+        channel=payload.channel,
+        audience_scope=payload.audience_scope,
+        limit=payload.limit,
+    )
+    return KnowledgeRetrievalTestOut(
+        hits=[
+            KnowledgeChunkHitOut(
+                item_id=hit.item_id,
+                item_key=hit.item_key,
+                title=hit.title,
+                published_version=hit.published_version,
+                chunk_index=hit.chunk_index,
+                score=hit.score,
+                text=hit.text,
+                metadata=hit.metadata,
+            )
+            for hit in hits
+        ],
+        total=total,
+    )
 
 
 @router.get("/{item_id}", response_model=KnowledgeItemDetailOut)
@@ -114,6 +176,21 @@ def update_knowledge_item(
     row = knowledge_service.get_item_or_404(db, item_id)
     with managed_session(db):
         row = knowledge_service.update_item(db, row, payload, current_user)
+    db.refresh(row)
+    return _item_out(row)
+
+
+@router.post("/{item_id}/upload", response_model=KnowledgeItemOut)
+def upload_knowledge_item_document(
+    item_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_ai_configs(current_user, db)
+    row = knowledge_service.get_item_or_404(db, item_id)
+    with managed_session(db):
+        row = knowledge_service.upload_document(db, row, file, current_user)
     db.refresh(row)
     return _item_out(row)
 

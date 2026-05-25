@@ -17,6 +17,9 @@ class FastAIProviderRequest:
     tracking_fact_summary: str | None = None
     tracking_fact_metadata: dict[str, Any] | None = None
     tracking_fact_evidence_present: bool = False
+    market_id: int | None = None
+    language: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

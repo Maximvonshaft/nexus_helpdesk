@@ -18,9 +18,16 @@ import type {
   SignoffChecklist,
   AIConfigResource,
   AIConfigVersion,
+  KnowledgeItem,
+  KnowledgeItemDetail,
   KnowledgeItemList,
+  KnowledgeItemVersion,
+  KnowledgeRetrievalTestResult,
   OpenClawUnresolvedEvent,
+  PersonaProfile,
+  PersonaProfileDetail,
   PersonaProfileList,
+  PersonaProfileVersion,
   Team,
   WebchatConversation,
   WebchatThread,
@@ -377,8 +384,83 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ notes: notes || null }),
   }),
-  personaProfiles: () => request<PersonaProfileList>('/api/persona-profiles?limit=200'),
-  knowledgeItems: () => request<KnowledgeItemList>('/api/knowledge-items?limit=200'),
+  personaProfiles: (params?: { q?: string; channel?: string; language?: string; is_active?: boolean }) => {
+    const search = new URLSearchParams()
+    search.set('limit', '200')
+    if (params?.q) search.set('q', params.q)
+    if (params?.channel) search.set('channel', params.channel)
+    if (params?.language) search.set('language', params.language)
+    if (typeof params?.is_active === 'boolean') search.set('is_active', String(params.is_active))
+    return request<PersonaProfileList>(`/api/persona-profiles?${search.toString()}`)
+  },
+  personaProfile: (profileId: number) => request<PersonaProfileDetail>(`/api/persona-profiles/${profileId}`),
+  createPersonaProfile: (payload: Partial<PersonaProfile>) => request<PersonaProfile>('/api/persona-profiles', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updatePersonaProfile: (profileId: number, payload: Partial<PersonaProfile>) => request<PersonaProfile>(`/api/persona-profiles/${profileId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  publishPersonaProfile: (profileId: number, notes?: string) => request<PersonaProfileVersion>(`/api/persona-profiles/${profileId}/publish`, {
+    method: 'POST',
+    body: JSON.stringify({ notes: notes || null }),
+  }),
+  rollbackPersonaProfile: (profileId: number, version: number, notes?: string) => request<PersonaProfileVersion>(`/api/persona-profiles/${profileId}/rollback`, {
+    method: 'POST',
+    body: JSON.stringify({ version, notes: notes || null }),
+  }),
+  knowledgeItems: (params?: { q?: string; status?: string; source_type?: string; channel?: string; audience_scope?: string }) => {
+    const search = new URLSearchParams()
+    search.set('limit', '200')
+    if (params?.q) search.set('q', params.q)
+    if (params?.status) search.set('status', params.status)
+    if (params?.source_type) search.set('source_type', params.source_type)
+    if (params?.channel) search.set('channel', params.channel)
+    if (params?.audience_scope) search.set('audience_scope', params.audience_scope)
+    return request<KnowledgeItemList>(`/api/knowledge-items?${search.toString()}`)
+  },
+  knowledgeItem: (itemId: number) => request<KnowledgeItemDetail>(`/api/knowledge-items/${itemId}`),
+  createKnowledgeItem: (payload: Partial<KnowledgeItem>) => request<KnowledgeItem>('/api/knowledge-items', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateKnowledgeItem: (itemId: number, payload: Partial<KnowledgeItem>) => request<KnowledgeItem>(`/api/knowledge-items/${itemId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  uploadKnowledgeDocument: (itemId: number, file: File) => {
+    const form = new FormData()
+    form.set('file', file)
+    return request<KnowledgeItem>(`/api/knowledge-items/${itemId}/upload`, {
+      method: 'POST',
+      body: form,
+    })
+  },
+  createKnowledgeItemFromUpload: (file: File, params?: { item_key?: string; title?: string; channel?: string; audience_scope?: string }) => {
+    const form = new FormData()
+    form.set('file', file)
+    if (params?.item_key) form.set('item_key', params.item_key)
+    if (params?.title) form.set('title', params.title)
+    if (params?.channel) form.set('channel', params.channel)
+    if (params?.audience_scope) form.set('audience_scope', params.audience_scope)
+    return request<KnowledgeItem>('/api/knowledge-items/upload', {
+      method: 'POST',
+      body: form,
+    })
+  },
+  publishKnowledgeItem: (itemId: number, notes?: string) => request<KnowledgeItemVersion>(`/api/knowledge-items/${itemId}/publish`, {
+    method: 'POST',
+    body: JSON.stringify({ notes: notes || null }),
+  }),
+  rollbackKnowledgeItem: (itemId: number, version: number, notes?: string) => request<KnowledgeItemVersion>(`/api/knowledge-items/${itemId}/rollback`, {
+    method: 'POST',
+    body: JSON.stringify({ version, notes: notes || null }),
+  }),
+  testKnowledgeRetrieval: (payload: { q: string; market_id?: number | null; channel?: string | null; audience_scope?: string | null; limit?: number }) => request<KnowledgeRetrievalTestResult>('/api/knowledge-items/retrieve-test', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   channelOnboardingTasks: () => request<ChannelOnboardingTaskList>('/api/channel-control/onboarding-tasks?limit=200'),
 
   channelAccounts: () => request<ChannelAccount[]>('/api/admin/channel-accounts'),

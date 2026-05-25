@@ -8,6 +8,8 @@ import pytest
 from app.services.ai_runtime.codex_app_server_provider import CodexAppServerProvider
 from app.services.ai_runtime.provider_router import _provider_for
 from app.services.ai_runtime.schemas import FastAIProviderRequest
+from app.services.provider_runtime.adapters.codex_app_server import CodexAppServerAdapter
+from app.services.provider_runtime.schemas import ProviderRequest
 from app.services.webchat_fast_config import get_webchat_fast_settings
 
 
@@ -38,6 +40,35 @@ def test_provider_router_supports_codex_app_server():
     provider = _provider_for("codex_app_server", _Settings())  # type: ignore[arg-type]
 
     assert isinstance(provider, CodexAppServerProvider)
+
+
+def test_provider_runtime_codex_payload_includes_persona_and_knowledge_context():
+    request = ProviderRequest(
+        request_id="req1",
+        tenant_id="default",
+        tenant_key="default",
+        channel_key="website",
+        session_id="s1",
+        scenario="webchat_fast_reply",
+        body="Can I change address?",
+        recent_context=[],
+        tracking_fact_summary=None,
+        tracking_fact_evidence_present=False,
+        output_contract="speedaf_webchat_fast_reply_v1",
+        timeout_ms=1000,
+        metadata={
+            "persona_context": {"profile_key": "default.website.en"},
+            "knowledge_context": {"hits": [{"item_key": "address.policy", "text": "Before dispatch only."}]},
+            "safety_policy": {"knowledge_scope": "policy_sop_faq_only"},
+        },
+    )
+
+    payload = CodexAppServerAdapter._reply_payload(request)
+
+    assert payload["persona_context"]["profile_key"] == "default.website.en"
+    assert payload["knowledge_context"]["hits"][0]["item_key"] == "address.policy"
+    assert payload["safety_policy"]["knowledge_scope"] == "policy_sop_faq_only"
+    assert payload["tracking_fact_evidence_present"] is False
 
 
 def test_codex_app_server_provider_success(monkeypatch):
