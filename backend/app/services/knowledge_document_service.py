@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import HTTPException, UploadFile
 
 from ..settings import get_settings
+from .text_decoding import TextDecodingError, decode_text_upload
 
 SUPPORTED_DOCUMENT_MIME_TYPES = {"text/plain", "application/pdf"}
 SUPPORTED_DOCUMENT_EXTENSIONS = {".txt", ".pdf"}
@@ -51,9 +52,9 @@ def parse_document_bytes(*, content: bytes, filename: str | None, mime_type: str
 
 def _extract_plain_text(content: bytes) -> str:
     try:
-        return content.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=400, detail="Uploaded text file must be valid UTF-8") from exc
+        return decode_text_upload(content)
+    except TextDecodingError as exc:
+        raise HTTPException(status_code=400, detail="Uploaded text file must be encoded as UTF-8, UTF-16, GB18030, or GBK") from exc
 
 
 def _extract_pdf_text(content: bytes) -> str:
