@@ -11,7 +11,7 @@ import { runEphemeralThread } from "./thread-runner.js";
 
 type QueueWaiter = () => void;
 
-class Semaphore {
+export class Semaphore {
   private active = 0;
   private readonly waiters: QueueWaiter[] = [];
 
@@ -25,7 +25,7 @@ class Semaphore {
     return await new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.remove(waiter);
-        reject(new RuntimeError(429, "codex_overloaded", "codex_queue_full", "queue"));
+        reject(new RuntimeError(429, "codex_queue_timeout", "codex_queue_timeout", "queue"));
       }, timeoutMs);
       const waiter = () => {
         clearTimeout(timer);
@@ -109,6 +109,7 @@ async function handleReply(
     const run = await runEphemeralThread(lookup.client, config, request, Math.min(remainingMs(deadlineMs), config.replyTimeoutMs));
     timer.set("thread_start", run.threadStartMs);
     timer.set("turn_start", run.turnStartMs);
+    timer.set("terminal_wait", run.terminalWaitMs);
     const parsed = await timer.measure("parse", async () => parseStrictReply(run.assistantText));
     const stages = timer.snapshot();
     return sendJson(
@@ -129,7 +130,7 @@ async function handleReply(
     return sendJson(
       res,
       normalized.status,
-      { ok: false, error: normalized.code, stage_ms: stages },
+      { ok: false, error: normalized.code, error_stage: normalized.stage ?? null, stage_ms: stages },
       {
         "X-Nexus-Codex-Backend": "nexus_codex_appserver_runtime",
         "X-Nexus-Codex-Elapsed-Ms": String(stages.total),
@@ -176,6 +177,9 @@ function readyPayload(config: RuntimeConfig): Record<string, unknown> {
     ok: config.enabled,
     enabled: config.enabled,
     model: config.model,
+    performance_profile: config.performanceProfile,
+    service_tier: config.serviceTier,
+    reasoning_effort: config.reasoningEffort,
     thread_mode: config.threadMode,
     runtime_start_options_hash: config.runtimeStartOptionsHash,
   };

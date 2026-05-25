@@ -6,14 +6,14 @@ export type CompiledPrompt = {
 };
 
 const DEVELOPER_INSTRUCTIONS =
-  "You are NexusDesk WebChat AI. Return JSON only matching the required schema. No markdown, tools, shell, browser, runtime details, token details, or unsupported parcel status claims. If tracking evidence is absent, do not invent shipment status. Keep reply under 600 characters.";
+  "NexusDesk WebChat. Return strict JSON only. No markdown, tools, runtime, token, or unsupported parcel-status claims. Without tracking evidence, ask for the tracking number. Reply under 600 characters.";
 
 export function compilePrompt(request: ReplyRequest): CompiledPrompt {
   const history = request.messages
-    .slice(-3)
+    .slice(-1)
     .map((message) => {
       const role = typeof message.role === "string" ? message.role.slice(0, 16) : "user";
-      const content = typeof message.content === "string" ? message.content : "";
+      const content = typeof message.content === "string" ? truncate(message.content.replace(/\s+/g, " ").trim(), 90) : "";
       return `${role}: ${content}`;
     })
     .join("\n");
@@ -22,18 +22,18 @@ export function compilePrompt(request: ReplyRequest): CompiledPrompt {
     : "Tracking evidence: absent. Do not claim parcel status.";
   const body = request.body || "";
   const schema =
-    '{"reply":"string","intent":"greeting|tracking|tracking_missing_number|tracking_unresolved|complaint|address_change|handoff|other","tracking_number":null,"handoff_required":false,"handoff_reason":null,"recommended_agent_action":null}';
+    '{"reply":"string","intent":"greeting|tracking|tracking_missing_number|tracking_unresolved|complaint|address_change|handoff|other","tracking_number":"string|null","handoff_required":boolean,"handoff_reason":"string|null","recommended_agent_action":"string|null"}';
   const userText = truncate(
     [
-      `Contract: ${request.contract || "speedaf_webchat_fast_reply_v1"}`,
+      `Contract=${request.contract || "speedaf_webchat_fast_reply_v1"}`,
       facts,
-      history ? `Recent context:\n${history}` : "",
-      `Customer message:\n${body}`,
-      `Return only strict JSON shaped exactly like: ${schema}`,
+      history ? `Context:\n${history}` : "",
+      `Customer:\n${truncate(body.replace(/\s+/g, " ").trim(), 220)}`,
+      `JSON schema: ${schema}`,
     ]
       .filter(Boolean)
       .join("\n\n"),
-    1500,
+    720,
   );
   return {
     developerInstructions: truncateWords(DEVELOPER_INSTRUCTIONS, 120),

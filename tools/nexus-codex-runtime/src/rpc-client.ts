@@ -52,7 +52,12 @@ export class RpcClient {
     return await new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new RuntimeError(504, method === "turn/start" ? "codex_turn_timeout" : "codex_runtime_error", `${method}_timeout`));
+        reject(new RuntimeError(
+          504,
+          method === "turn/start" ? "codex_turn_timeout" : "codex_runtime_error",
+          `${method}_timeout`,
+          method.replace("/", "_"),
+        ));
       }, timeoutMs);
       this.pending.set(id, { method, resolve: resolve as (value: unknown) => void, reject, timer });
       this.process.stdin.write(payload, "utf8", (error) => {

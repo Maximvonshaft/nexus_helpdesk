@@ -82,7 +82,7 @@ def read_token_from_env() -> tuple[str | None, str | None]:
 VALID_ACCESS_TOKEN, VALID_TOKEN_SOURCE = read_token_from_env()
 VALID_ACCOUNT_ID = (os.getenv("NEXUS_CODEX_ACCOUNT_ID") or os.getenv("CODEX_APPSERVER_ACCOUNT_ID") or "").strip()
 VALID_PLAN_TYPE = (os.getenv("NEXUS_CODEX_PLAN_TYPE") or os.getenv("CODEX_APPSERVER_PLAN_TYPE") or "").strip() or None
-MODEL = (os.getenv("CODEX_APPSERVER_MODEL") or "openai/gpt-5.5").strip()
+MODEL = (os.getenv("CODEX_APPSERVER_MODEL") or "gpt-5.5").strip()
 PROBE_TIMEOUT_SECONDS = max(3.0, min(float(os.getenv("CODEX_APPSERVER_DISCOVERY_TIMEOUT_SECONDS", "30")), 120.0))
 
 
