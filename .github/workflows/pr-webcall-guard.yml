@@ -78,6 +78,7 @@ jobs:
               backend/app/services/knowledge_document_service.py) return 0 ;;
               backend/app/services/knowledge_retrieval_service.py) return 0 ;;
               backend/app/services/knowledge_service.py) return 0 ;;
+              backend/app/services/storage.py) return 0 ;;
               backend/app/services/text_decoding.py) return 0 ;;
               backend/app/services/provider_runtime/adapters/codex_app_server.py) return 0 ;;
               backend/app/services/provider_runtime/codex_llm_client.py) return 0 ;;
