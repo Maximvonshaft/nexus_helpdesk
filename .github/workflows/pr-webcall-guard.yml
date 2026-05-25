@@ -63,6 +63,7 @@ jobs:
               webapp/src/styles.css) return 0 ;;
               backend/.env.example) return 0 ;;
               backend/requirements.txt) return 0 ;;
+              backend/app/api/webchat_fast.py) return 0 ;;
               backend/app/api/webcall_ai.py) return 0 ;;
               backend/app/api/admin_webcall_ai.py) return 0 ;;
               backend/app/api/admin_provider_credentials.py) return 0 ;;
