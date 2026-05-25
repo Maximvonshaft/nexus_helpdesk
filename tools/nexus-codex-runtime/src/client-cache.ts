@@ -12,10 +12,14 @@ export type CacheLookup = {
   initializeMs: number;
 };
 
+export type LoginState = "performed" | "skipped";
+
 type Entry = {
   client: RpcClient;
   expiresAt: number;
   promise?: Promise<CacheLookup>;
+  loginFingerprint?: string;
+  loginPromise?: Promise<void>;
 };
 
 export function clientCacheKey(input: {
@@ -28,9 +32,17 @@ export function clientCacheKey(input: {
     tenant_id: input.tenantId,
     chatgptAccountId: input.login.chatgptAccountId,
     chatgptPlanType: input.login.chatgptPlanType ?? null,
-    token_fingerprint: fingerprintSecret(input.login.accessToken),
     model: input.model,
     runtime_start_options_hash: input.runtimeStartOptionsHash,
+  });
+}
+
+export function loginFingerprint(login: LoginPayload): string {
+  return stableHash({
+    type: login.type,
+    chatgptAccountId: login.chatgptAccountId,
+    chatgptPlanType: login.chatgptPlanType ?? null,
+    token_fingerprint: fingerprintSecret(login.accessToken),
   });
 }
 
@@ -64,6 +76,39 @@ export class ClientCache {
     } catch (error) {
       this.entries.delete(key);
       throw error;
+    }
+  }
+
+  async ensureLoggedIn(key: string, fingerprint: string, login: () => Promise<void>): Promise<LoginState> {
+    const entry = this.entries.get(key);
+    if (!entry?.client) {
+      throw new Error("client_cache_entry_missing");
+    }
+    if (entry.loginFingerprint === fingerprint) {
+      entry.expiresAt = Date.now() + this.config.clientCacheTtlSeconds * 1000;
+      return "skipped";
+    }
+    if (entry.loginPromise) {
+      await entry.loginPromise;
+      if (entry.loginFingerprint === fingerprint) {
+        entry.expiresAt = Date.now() + this.config.clientCacheTtlSeconds * 1000;
+        return "skipped";
+      }
+    }
+
+    const loginPromise = (async () => {
+      await login();
+      entry.loginFingerprint = fingerprint;
+      entry.expiresAt = Date.now() + this.config.clientCacheTtlSeconds * 1000;
+    })();
+    entry.loginPromise = loginPromise;
+    try {
+      await loginPromise;
+      return "performed";
+    } finally {
+      if (entry.loginPromise === loginPromise) {
+        delete entry.loginPromise;
+      }
     }
   }
 

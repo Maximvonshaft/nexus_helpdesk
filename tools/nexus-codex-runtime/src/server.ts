@@ -1,7 +1,7 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { loadConfig, type RuntimeConfig } from "./env.js";
 import { RuntimeError, normalizeError } from "./errors.js";
-import { ClientCache, clientCacheKey } from "./client-cache.js";
+import { ClientCache, clientCacheKey, loginFingerprint, type LoginState } from "./client-cache.js";
 import { loginAccount } from "./account-login.js";
 import { deadlineFromHeader, remainingMs } from "./deadline.js";
 import { StageTimer } from "./metrics.js";
@@ -91,6 +91,7 @@ async function handleReply(
   const release = await semaphore.acquire(Math.min(config.queueTimeoutMs, remainingMs(deadlineMs)));
   timer.set("queue", Date.now() - queueStarted);
   let cacheState: "hit" | "miss" = "miss";
+  let loginState: LoginState | "unknown" = "unknown";
   try {
     const request = validateReplyRequest(await readBody(req));
     const key = clientCacheKey({
@@ -105,7 +106,12 @@ async function handleReply(
     cacheState = lookup.cache;
     timer.set("appserver_start", lookup.appserverStartMs);
     timer.set("initialize", lookup.initializeMs);
-    await timer.measure("login", () => loginAccount(lookup.client, request.login, Math.min(remainingMs(deadlineMs), 3000)));
+    const currentLoginFingerprint = loginFingerprint(request.login);
+    loginState = await timer.measure("login", () =>
+      cache.ensureLoggedIn(key, currentLoginFingerprint, () =>
+        loginAccount(lookup.client, request.login, Math.min(remainingMs(deadlineMs), 3000)),
+      ),
+    );
     const run = await runEphemeralThread(lookup.client, config, request, Math.min(remainingMs(deadlineMs), config.replyTimeoutMs));
     timer.set("thread_start", run.threadStartMs);
     timer.set("turn_start", run.turnStartMs);
@@ -120,6 +126,7 @@ async function handleReply(
         "X-Nexus-Codex-Backend": "nexus_codex_appserver_runtime",
         "X-Nexus-Codex-Elapsed-Ms": String(stages.total),
         "X-Nexus-Codex-Client-Cache": cacheState,
+        "X-Nexus-Codex-Login": loginState,
         "X-Nexus-Codex-Thread-Mode": "ephemeral",
         "X-Nexus-Codex-Upstream-SHA": "none",
       },
@@ -135,6 +142,7 @@ async function handleReply(
         "X-Nexus-Codex-Backend": "nexus_codex_appserver_runtime",
         "X-Nexus-Codex-Elapsed-Ms": String(stages.total),
         "X-Nexus-Codex-Client-Cache": cacheState,
+        "X-Nexus-Codex-Login": loginState,
         "X-Nexus-Codex-Thread-Mode": "ephemeral",
         "X-Nexus-Codex-Upstream-SHA": "none",
       },
@@ -146,9 +154,12 @@ async function handleReply(
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
   for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    if (Buffer.concat(chunks).length > 128 * 1024) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    chunks.push(buffer);
+    totalBytes += buffer.length;
+    if (totalBytes > 128 * 1024) {
       throw new RuntimeError(400, "codex_request_invalid", "request_too_large");
     }
   }

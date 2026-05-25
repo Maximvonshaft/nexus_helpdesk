@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Tuple
@@ -15,6 +16,8 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+_ACCESS_TOKEN_CACHE: dict[str, tuple[float, str]] = {}
+
 
 class OAuthRefreshManager:
     _locks: dict[str, asyncio.Lock] = {}
@@ -23,6 +26,7 @@ class OAuthRefreshManager:
     def __init__(self, db: Session, crypto_service):
         self.db = db
         self.crypto_service = crypto_service
+        self.access_token_cache_ttl_seconds = _int_env("CODEX_OAUTH_ACCESS_TOKEN_CACHE_TTL_SECONDS", 30, minimum=0, maximum=300)
 
     async def _get_lock(self, key: str) -> asyncio.Lock:
         async with self._locks_lock:
@@ -31,24 +35,37 @@ class OAuthRefreshManager:
             return self._locks[key]
 
     async def get_valid_access_token(self, tenant_id: str, credential_id: str) -> Optional[str]:
+        cache_key = self._access_token_cache_key(tenant_id, credential_id)
+        cached = self._get_cached_access_token(cache_key)
+        if cached:
+            return cached
+
         result = self._read_credential(tenant_id=tenant_id, credential_id=credential_id, include_refresh=True)
         if not result or result["status"] in {"revoked", "error", "pending"}:
+            self._clear_access_token_cache(cache_key)
             return None
 
         expires_at = self._normalize_dt(result["expires_at"])
         if expires_at is None:
-            return self.crypto_service.decrypt(result["encrypted_access_token"])
+            token = self.crypto_service.decrypt(result["encrypted_access_token"])
+            self._store_access_token(cache_key, token, None)
+            return token
 
         now = datetime.now(timezone.utc)
         if expires_at > now + timedelta(minutes=5):
-            return self.crypto_service.decrypt(result["encrypted_access_token"])
+            token = self.crypto_service.decrypt(result["encrypted_access_token"])
+            self._store_access_token(cache_key, token, expires_at)
+            return token
 
-        return await self._refresh_with_lock(
+        token = await self._refresh_with_lock(
             tenant_id=tenant_id,
             credential_id=credential_id,
             provider=result["provider"],
             encrypted_refresh_token=result["encrypted_refresh_token"],
         )
+        if not token:
+            self._clear_access_token_cache(cache_key)
+        return token
 
     def _read_credential(self, *, tenant_id: str, credential_id: str, include_refresh: bool):
         refresh_col = ", encrypted_refresh_token" if include_refresh else ""
@@ -96,29 +113,43 @@ class OAuthRefreshManager:
 
     async def _refresh_with_lock(self, *, tenant_id: str, credential_id: str, provider: str, encrypted_refresh_token: str) -> Optional[str]:
         lock_key = f"oauth-refresh:{tenant_id}:{provider}:{credential_id}"
+        cache_key = self._access_token_cache_key(tenant_id, credential_id)
+        cached = self._get_cached_access_token(cache_key)
+        if cached:
+            return cached
+
         process_lock = await self._get_lock(lock_key)
 
         async with process_lock:
+            cached = self._get_cached_access_token(cache_key)
+            if cached:
+                return cached
+
             if not self._obtain_pg_lock(lock_key):
                 return None
 
             refreshed = self._read_credential(tenant_id=tenant_id, credential_id=credential_id, include_refresh=False)
             if not refreshed or refreshed["status"] in {"revoked", "error", "pending"}:
+                self._clear_access_token_cache(cache_key)
                 return None
 
             expires_at = self._normalize_dt(refreshed["expires_at"])
             now = datetime.now(timezone.utc)
             if expires_at and expires_at > now + timedelta(minutes=5):
-                return self.crypto_service.decrypt(refreshed["encrypted_access_token"])
+                token = self.crypto_service.decrypt(refreshed["encrypted_access_token"])
+                self._store_access_token(cache_key, token, expires_at)
+                return token
 
             refresh_token = self.crypto_service.decrypt(encrypted_refresh_token)
             if not refresh_token:
                 self._mark_refresh_failed(tenant_id=tenant_id, credential_id=credential_id, now=now)
+                self._clear_access_token_cache(cache_key)
                 return None
 
             new_access_token, new_refresh_token, new_expires_in = await self._perform_http_refresh(provider, refresh_token)
             if not new_access_token:
                 self._mark_refresh_failed(tenant_id=tenant_id, credential_id=credential_id, now=now)
+                self._clear_access_token_cache(cache_key)
                 return None
 
             new_expires_at = now + timedelta(seconds=int(new_expires_in or 3600))
@@ -142,7 +173,40 @@ class OAuthRefreshManager:
                 "now": now,
             })
             self.db.commit()
+            self._store_access_token(cache_key, new_access_token, new_expires_at)
             return new_access_token
+
+    @staticmethod
+    def _access_token_cache_key(tenant_id: str, credential_id: str) -> str:
+        return f"{tenant_id}:{credential_id}"
+
+    def _get_cached_access_token(self, cache_key: str) -> Optional[str]:
+        if self.access_token_cache_ttl_seconds <= 0:
+            return None
+        cached = _ACCESS_TOKEN_CACHE.get(cache_key)
+        if not cached:
+            return None
+        expires_at, token = cached
+        if expires_at <= time.monotonic():
+            _ACCESS_TOKEN_CACHE.pop(cache_key, None)
+            return None
+        return token
+
+    def _store_access_token(self, cache_key: str, token: Optional[str], expires_at: Optional[datetime]) -> None:
+        if self.access_token_cache_ttl_seconds <= 0 or not token:
+            return
+        ttl_seconds = self.access_token_cache_ttl_seconds
+        if expires_at:
+            usable_seconds = int((expires_at - timedelta(minutes=5) - datetime.now(timezone.utc)).total_seconds())
+            ttl_seconds = min(ttl_seconds, usable_seconds)
+        if ttl_seconds <= 0:
+            _ACCESS_TOKEN_CACHE.pop(cache_key, None)
+            return
+        _ACCESS_TOKEN_CACHE[cache_key] = (time.monotonic() + ttl_seconds, token)
+
+    @staticmethod
+    def _clear_access_token_cache(cache_key: str) -> None:
+        _ACCESS_TOKEN_CACHE.pop(cache_key, None)
 
     def _mark_refresh_failed(self, *, tenant_id: str, credential_id: str, now: datetime) -> None:
         self.db.execute(text("""
@@ -213,3 +277,11 @@ def _codex_client_secret() -> str | None:
     if raw and os.environ.get("APP_ENV", "development").strip().lower() != "production":
         return raw
     return None
+
+
+def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(value, maximum))

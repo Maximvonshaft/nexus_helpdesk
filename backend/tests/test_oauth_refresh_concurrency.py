@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 from unittest.mock import Mock, AsyncMock
-from app.services.provider_runtime.oauth_refresh_manager import OAuthRefreshManager
+from app.services.provider_runtime.oauth_refresh_manager import OAuthRefreshManager, _ACCESS_TOKEN_CACHE
 from datetime import datetime, timezone, timedelta
 
 @pytest.mark.asyncio
@@ -60,3 +60,34 @@ async def test_oauth_refresh_concurrency():
     
     assert all(r == "new_access" for r in results)
     mgr._perform_http_refresh.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_oauth_access_token_cache_avoids_repeated_db_decrypt(monkeypatch):
+    monkeypatch.setenv("CODEX_OAUTH_ACCESS_TOKEN_CACHE_TTL_SECONDS", "30")
+    _ACCESS_TOKEN_CACHE.clear()
+    mock_db = Mock()
+    mock_crypto = Mock()
+    mock_crypto.decrypt.return_value = "plain_access"
+
+    future_time = datetime.now(timezone.utc) + timedelta(minutes=30)
+    result = Mock()
+    result.mappings.return_value.first.return_value = {
+        "provider": "openai-codex",
+        "status": "active",
+        "expires_at": future_time,
+        "encrypted_access_token": "encrypted_access",
+        "encrypted_refresh_token": "encrypted_refresh",
+    }
+    mock_db.execute.return_value = result
+
+    mgr = OAuthRefreshManager(mock_db, mock_crypto)
+
+    first = await mgr.get_valid_access_token("tenant_cache", "cred_cache")
+    second = await mgr.get_valid_access_token("tenant_cache", "cred_cache")
+
+    assert first == "plain_access"
+    assert second == "plain_access"
+    assert mock_db.execute.call_count == 1
+    assert mock_crypto.decrypt.call_count == 1
+    _ACCESS_TOKEN_CACHE.clear()

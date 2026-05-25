@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clientCacheKey } from "../src/client-cache.js";
+import { clientCacheKey, loginFingerprint } from "../src/client-cache.js";
 
-test("client cache key separates accounts and token fingerprints", () => {
+test("client cache key separates accounts without splitting refreshed access tokens", () => {
   const base = {
     tenantId: "tenant-a",
     model: "gpt-5.5",
@@ -36,6 +36,19 @@ test("client cache key separates accounts and token fingerprints", () => {
     },
   });
 
-  assert.notEqual(first, second);
+  assert.equal(first, second);
   assert.notEqual(first, third);
+});
+
+test("login fingerprint changes when access token rotates", () => {
+  const base = {
+    type: "chatgptAuthTokens" as const,
+    chatgptAccountId: "acct-one",
+    chatgptPlanType: "plus",
+  };
+
+  assert.notEqual(
+    loginFingerprint({ ...base, accessToken: "token-one" }),
+    loginFingerprint({ ...base, accessToken: "token-two" }),
+  );
 });
