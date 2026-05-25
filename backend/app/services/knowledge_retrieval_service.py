@@ -88,12 +88,23 @@ def index_published_item(db: Session, item: KnowledgeItem) -> int:
                 chunk_text=chunk_text,
                 normalized_text=normalized,
                 content_hash=hashlib.sha256(normalized.encode("utf-8", errors="ignore")).hexdigest(),
+                market_id=item.market_id,
+                channel=item.channel,
+                audience_scope=item.audience_scope,
+                starts_at=item.starts_at,
+                ends_at=item.ends_at,
+                status=item.status,
+                priority=item.priority,
+                source_type=item.source_type,
+                file_name=item.file_name,
                 metadata_json={
                     "source_type": item.source_type,
                     "file_name": item.file_name,
                     "audience_scope": item.audience_scope,
                     "channel": item.channel,
                     "market_id": item.market_id,
+                    "priority": item.priority,
+                    "published_at": item.published_at.isoformat() if item.published_at else None,
                 },
             )
         )
@@ -116,22 +127,22 @@ def search_published_chunks(
 ) -> tuple[list[KnowledgeChunkHit], int]:
     now = utc_now()
     query = (
-        db.query(KnowledgeChunk, KnowledgeItem)
+        db.query(KnowledgeChunk)
         .join(KnowledgeItem, KnowledgeItem.id == KnowledgeChunk.item_id)
         .filter(
-            KnowledgeItem.status == "active",
-            KnowledgeItem.published_version > 0,
+            KnowledgeChunk.status == "active",
+            KnowledgeChunk.published_version > 0,
             KnowledgeChunk.published_version == KnowledgeItem.published_version,
-            or_(KnowledgeItem.starts_at.is_(None), KnowledgeItem.starts_at <= now),
-            or_(KnowledgeItem.ends_at.is_(None), KnowledgeItem.ends_at >= now),
+            or_(KnowledgeChunk.starts_at.is_(None), KnowledgeChunk.starts_at <= now),
+            or_(KnowledgeChunk.ends_at.is_(None), KnowledgeChunk.ends_at >= now),
         )
     )
     if market_id is not None:
-        query = query.filter(or_(KnowledgeItem.market_id.is_(None), KnowledgeItem.market_id == market_id))
+        query = query.filter(or_(KnowledgeChunk.market_id.is_(None), KnowledgeChunk.market_id == market_id))
     if channel:
-        query = query.filter(or_(KnowledgeItem.channel.is_(None), KnowledgeItem.channel == channel.strip()))
+        query = query.filter(or_(KnowledgeChunk.channel.is_(None), KnowledgeChunk.channel == channel.strip()))
     if audience_scope:
-        query = query.filter(KnowledgeItem.audience_scope == audience_scope.strip())
+        query = query.filter(KnowledgeChunk.audience_scope == audience_scope.strip())
 
     terms = _query_terms(q)
     if terms:
@@ -141,15 +152,13 @@ def search_published_chunks(
             predicates.extend(
                 [
                     KnowledgeChunk.normalized_text.ilike(needle),
-                    KnowledgeItem.title.ilike(needle),
-                    KnowledgeItem.summary.ilike(needle),
-                    KnowledgeItem.published_normalized_text.ilike(needle),
+                    KnowledgeChunk.title.ilike(needle),
                 ]
             )
         query = query.filter(or_(*predicates))
 
-    candidates = query.order_by(KnowledgeItem.priority.asc(), KnowledgeChunk.chunk_index.asc()).limit(max(limit * 8, 40)).all()
-    hits = [_hit_from_row(chunk, item, terms=terms, q=q, market_id=market_id, channel=channel) for chunk, item in candidates]
+    candidates = query.order_by(KnowledgeChunk.priority.asc(), KnowledgeChunk.chunk_index.asc()).limit(max(limit * 8, 40)).all()
+    hits = [_hit_from_row(chunk, terms=terms, q=q, market_id=market_id, channel=channel) for chunk in candidates]
     if terms:
         hits = [hit for hit in hits if hit.score > 0]
     hits.sort(key=lambda hit: (-hit.score, hit.metadata.get("priority", 10000), hit.item_key, hit.chunk_index))
@@ -186,7 +195,6 @@ def _query_terms(value: str | None) -> list[str]:
 
 def _hit_from_row(
     chunk: KnowledgeChunk,
-    item: KnowledgeItem,
     *,
     terms: Iterable[str],
     q: str | None,
@@ -195,8 +203,7 @@ def _hit_from_row(
 ) -> KnowledgeChunkHit:
     term_list = list(terms)
     normalized_text = (chunk.normalized_text or "").lower()
-    title = (item.title or "").lower()
-    summary = (item.summary or "").lower()
+    title = (chunk.title or "").lower()
     query_phrase = normalize_document_text(q).lower()
     score = 0.0
     if query_phrase and query_phrase in normalized_text:
@@ -204,33 +211,30 @@ def _hit_from_row(
     for term in term_list:
         if term in title:
             score += 4.0
-        if term in summary:
-            score += 2.0
         if term in normalized_text:
             score += 1.0 + min(normalized_text.count(term), 3) * 0.35
     if not term_list:
-        score += max(0.0, 10.0 - min(item.priority or 100, 1000) / 100.0)
-    if market_id is not None and item.market_id == market_id:
+        score += max(0.0, 10.0 - min(chunk.priority or 100, 1000) / 100.0)
+    if market_id is not None and chunk.market_id == market_id:
         score += 0.75
-    if channel and item.channel == channel:
+    if channel and chunk.channel == channel:
         score += 0.75
 
     metadata = dict(chunk.metadata_json or {})
     metadata.update(
         {
-            "summary": item.summary,
-            "source_type": item.source_type,
-            "file_name": item.file_name,
-            "market_id": item.market_id,
-            "channel": item.channel,
-            "audience_scope": item.audience_scope,
-            "priority": item.priority,
+            "source_type": chunk.source_type,
+            "file_name": chunk.file_name,
+            "market_id": chunk.market_id,
+            "channel": chunk.channel,
+            "audience_scope": chunk.audience_scope,
+            "priority": chunk.priority,
         }
     )
     return KnowledgeChunkHit(
-        item_id=item.id,
-        item_key=item.item_key,
-        title=item.title,
+        item_id=chunk.item_id,
+        item_key=chunk.item_key,
+        title=chunk.title,
         published_version=chunk.published_version,
         chunk_index=chunk.chunk_index,
         score=round(score, 3),
