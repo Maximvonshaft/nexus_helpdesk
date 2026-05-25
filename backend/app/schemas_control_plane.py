@@ -167,12 +167,10 @@ class KnowledgeItemBase(BaseModel):
     file_storage_key: Optional[str] = Field(default=None, max_length=255)
     mime_type: Optional[str] = Field(default=None, max_length=120)
     file_size: Optional[int] = Field(default=None, ge=0)
-    parsing_status: Optional[str] = Field(default=None, max_length=40)
-    parsing_error: Optional[str] = Field(default=None, max_length=4000)
     draft_body: Optional[str] = Field(default=None, max_length=120000)
     draft_normalized_text: Optional[str] = Field(default=None, max_length=120000)
 
-    @field_validator("title", "summary", "status", "source_type", "channel", "audience_scope", "source_url", "file_name", "file_storage_key", "mime_type", "parsing_status", "parsing_error", "draft_body", "draft_normalized_text", mode="before")
+    @field_validator("title", "summary", "status", "source_type", "channel", "audience_scope", "source_url", "file_name", "file_storage_key", "mime_type", "draft_body", "draft_normalized_text", mode="before")
     @classmethod
     def strip_optional_strings(cls, value):
         if isinstance(value, str):
@@ -209,12 +207,10 @@ class KnowledgeItemUpdate(BaseModel):
     file_storage_key: Optional[str] = Field(default=None, max_length=255)
     mime_type: Optional[str] = Field(default=None, max_length=120)
     file_size: Optional[int] = Field(default=None, ge=0)
-    parsing_status: Optional[str] = Field(default=None, max_length=40)
-    parsing_error: Optional[str] = Field(default=None, max_length=4000)
     draft_body: Optional[str] = Field(default=None, max_length=120000)
     draft_normalized_text: Optional[str] = Field(default=None, max_length=120000)
 
-    @field_validator("title", "summary", "status", "source_type", "channel", "audience_scope", "source_url", "file_name", "file_storage_key", "mime_type", "parsing_status", "parsing_error", "draft_body", "draft_normalized_text", mode="before")
+    @field_validator("title", "summary", "status", "source_type", "channel", "audience_scope", "source_url", "file_name", "file_storage_key", "mime_type", "draft_body", "draft_normalized_text", mode="before")
     @classmethod
     def strip_optional_strings(cls, value):
         if isinstance(value, str):
