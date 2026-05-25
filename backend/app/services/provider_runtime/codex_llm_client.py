@@ -166,9 +166,7 @@ class CodexLLMClient:
                 raise CodexLLMCredentialRefreshRequired("credential_refresh_required")
             _raise_bridge_not_ready(login_response)
             login_response.raise_for_status()
-            payload = _reply_payload(prompt=prompt, nonce=nonce, request_id=request_id)
-        else:
-            payload = {"login": login_payload, **_reply_payload(prompt=prompt, nonce=nonce, request_id=request_id)}
+        payload = {"login": login_payload, **_reply_payload(prompt=prompt, nonce=nonce, request_id=request_id)}
         response = await client.post(endpoint, json=payload, headers=headers)
         if response.status_code in {401, 403}:
             raise CodexLLMCredentialRefreshRequired("credential_refresh_required")
