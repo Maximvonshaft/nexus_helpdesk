@@ -28,6 +28,13 @@ def _normalize_key(value: str) -> str:
     return value.strip().lower()
 
 
+def _clean_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
 def _validate_shape(*, status: str, source_type: str) -> None:
     if status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail="Unsupported knowledge status")
@@ -150,19 +157,19 @@ def create_item(db: Session, payload, actor) -> KnowledgeItem:
     return row
 
 
-def create_file_item_from_upload(db: Session, *, file: UploadFile, actor, item_key: str | None = None, title: str | None = None, channel: str | None = "website", audience_scope: str = "customer") -> KnowledgeItem:
+def create_file_item_from_upload(db: Session, *, file: UploadFile, actor, item_key: str | None = None, title: str | None = None, channel: str | None = "website", audience_scope: str | None = "customer") -> KnowledgeItem:
     filename = file.filename or "knowledge.txt"
-    key = _normalize_key(item_key or _safe_item_key_from_filename(filename))
+    key = _normalize_key(_clean_optional_text(item_key) or _safe_item_key_from_filename(filename))
     if db.query(KnowledgeItem).filter(KnowledgeItem.item_key == key).first() is not None:
         raise HTTPException(status_code=409, detail="item_key already exists")
     row = KnowledgeItem(
         item_key=key,
-        title=title or filename,
+        title=_clean_optional_text(title) or filename,
         summary=None,
         status="draft",
         source_type="file",
-        channel=channel,
-        audience_scope=audience_scope,
+        channel=_clean_optional_text(channel),
+        audience_scope=_clean_optional_text(audience_scope) or "customer",
         priority=100,
         parsing_status="unparsed",
         parsing_error=None,

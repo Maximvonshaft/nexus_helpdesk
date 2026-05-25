@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -74,6 +74,31 @@ def create_knowledge_item(
     ensure_can_manage_ai_configs(current_user, db)
     with managed_session(db):
         row = knowledge_service.create_item(db, payload, current_user)
+    db.refresh(row)
+    return _item_out(row)
+
+
+@router.post("/upload", response_model=KnowledgeItemOut)
+def create_knowledge_item_from_upload(
+    file: UploadFile = File(...),
+    item_key: str | None = Form(default=None),
+    title: str | None = Form(default=None),
+    channel: str | None = Form(default="website"),
+    audience_scope: str | None = Form(default="customer"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_ai_configs(current_user, db)
+    with managed_session(db):
+        row = knowledge_service.create_file_item_from_upload(
+            db,
+            file=file,
+            actor=current_user,
+            item_key=item_key,
+            title=title,
+            channel=channel,
+            audience_scope=audience_scope or "customer",
+        )
     db.refresh(row)
     return _item_out(row)
 

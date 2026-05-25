@@ -437,6 +437,18 @@ export const api = {
       body: form,
     })
   },
+  createKnowledgeItemFromUpload: (file: File, params?: { item_key?: string; title?: string; channel?: string; audience_scope?: string }) => {
+    const form = new FormData()
+    form.set('file', file)
+    if (params?.item_key) form.set('item_key', params.item_key)
+    if (params?.title) form.set('title', params.title)
+    if (params?.channel) form.set('channel', params.channel)
+    if (params?.audience_scope) form.set('audience_scope', params.audience_scope)
+    return request<KnowledgeItem>('/api/knowledge-items/upload', {
+      method: 'POST',
+      body: form,
+    })
+  },
   publishKnowledgeItem: (itemId: number, notes?: string) => request<KnowledgeItemVersion>(`/api/knowledge-items/${itemId}/publish`, {
     method: 'POST',
     body: JSON.stringify({ notes: notes || null }),

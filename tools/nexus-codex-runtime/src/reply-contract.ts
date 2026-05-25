@@ -68,11 +68,16 @@ export function validateReplyRequest(value: unknown): ReplyRequest {
       chatgptAccountId: login.chatgptAccountId,
       chatgptPlanType: typeof login.chatgptPlanType === "string" ? login.chatgptPlanType : null,
     },
-    body: typeof value.body === "string" ? value.body : "",
-    messages: Array.isArray(value.messages) ? value.messages.filter(isRecord) : [],
-    contract: typeof value.contract === "string" ? value.contract : undefined,
+    body: typeof value.body === "string" ? sanitizeRuntimeText(value.body) : "",
+    messages: Array.isArray(value.messages)
+      ? value.messages.filter(isRecord).map((message) => ({
+          role: typeof message.role === "string" ? sanitizeRuntimeText(message.role) : undefined,
+          content: typeof message.content === "string" ? sanitizeRuntimeText(message.content) : undefined,
+        }))
+      : [],
+    contract: typeof value.contract === "string" ? sanitizeRuntimeText(value.contract) : undefined,
     tracking_fact_summary:
-      typeof value.tracking_fact_summary === "string" ? value.tracking_fact_summary : null,
+      typeof value.tracking_fact_summary === "string" ? sanitizeRuntimeText(value.tracking_fact_summary) : null,
     tracking_fact_evidence_present: value.tracking_fact_evidence_present === true,
     persona_context: isRecord(value.persona_context) ? sanitizeRecord(value.persona_context, 2600) : null,
     knowledge_context: isRecord(value.knowledge_context) ? sanitizeRecord(value.knowledge_context, 5000) : null,
@@ -131,10 +136,54 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
+export function sanitizeRuntimeText(value: string): string {
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi, "[REDACTED_SECRET]")
+    .replace(/\b(sk|pk|rk)-[A-Za-z0-9_-]{12,}\b/g, "[REDACTED_SECRET]")
+    .replace(
+      /(["']?\b(?:access[_-]?token|api[_-]?key|secret|password|authorization)\b["']?\s*[:=]\s*["']?)[^"'\s,;)\]}]{4,}/gi,
+      "$1[REDACTED_SECRET]",
+    )
+    .replace(
+      /\bhttps?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|[^/\s"')]+(?:\.internal|\.local|\.lan|\.svc|\.cluster\.local))(?:[^\s"')<>{}]*)?/gi,
+      "[REDACTED_INTERNAL_URL]",
+    )
+    .replace(/provider[_-]?runtime/gi, "[REDACTED_INTERNAL_TERM]")
+    .replace(/codex[_-]?app[_-]?server/gi, "[REDACTED_INTERNAL_TERM]")
+    .replace(/\bcodex\s+app\s+server\b/gi, "[REDACTED_INTERNAL_TERM]")
+    .replace(/\bsystem\s+prompt\b/gi, "[REDACTED_INTERNAL_TERM]")
+    .replace(/\bopenclaw\b/gi, "[REDACTED_INTERNAL_TERM]")
+    .replace(/\bbridge\b/gi, "[REDACTED_INTERNAL_TERM]");
+}
+
 function sanitizeRecord(value: Record<string, unknown>, maxJsonChars: number): Record<string, unknown> {
-  const json = JSON.stringify(value);
+  const sanitized = sanitizeRuntimeValue(value);
+  const json = JSON.stringify(sanitized);
   if (json.length <= maxJsonChars) {
-    return value;
+    return sanitized as Record<string, unknown>;
   }
-  return { truncated: true, preview: json.slice(0, maxJsonChars - 16) };
+  return { truncated: true, preview: sanitizeRuntimeText(json.slice(0, maxJsonChars - 16)) };
+}
+
+function sanitizeRuntimeValue(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") {
+    return sanitizeRuntimeText(value);
+  }
+  if (Array.isArray(value)) {
+    if (depth >= 6) {
+      return "[REDACTED_NESTED_CONTEXT]";
+    }
+    return value.slice(0, 50).map((item) => sanitizeRuntimeValue(item, depth + 1));
+  }
+  if (isRecord(value)) {
+    if (depth >= 6) {
+      return { redacted: true };
+    }
+    const output: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value).slice(0, 80)) {
+      output[sanitizeRuntimeText(key).slice(0, 120)] = sanitizeRuntimeValue(entry, depth + 1);
+    }
+    return output;
+  }
+  return value;
 }

@@ -1,19 +1,24 @@
 import sys
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from app.db import Base  # noqa: E402
+from app.db import get_db  # noqa: E402
 from app import models  # noqa: F401,E402
 from app import models_control_plane  # noqa: F401,E402
+from app.api.deps import get_current_user  # noqa: E402
 from app.api.knowledge_items import (  # noqa: E402
     create_knowledge_item,
     get_knowledge_item,
@@ -24,6 +29,7 @@ from app.api.knowledge_items import (  # noqa: E402
     update_knowledge_item,
 )
 from app.enums import UserRole  # noqa: E402
+from app.main import app  # noqa: E402
 from app.models import User  # noqa: E402
 from app.schemas_control_plane import (  # noqa: E402
     KnowledgeItemCreate,
@@ -32,6 +38,7 @@ from app.schemas_control_plane import (  # noqa: E402
     KnowledgeRollbackRequest,
     KnowledgeSearchPublishedRequest,
 )
+from app.services import knowledge_service  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
 
 
@@ -111,6 +118,65 @@ def test_admin_can_create_knowledge_item(db_session):
     assert item.created_by == admin.id
     assert item.updated_by == admin.id
     assert item.published_version == 0
+
+
+def test_one_step_upload_api_creates_file_item(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+    with SessionLocal() as session:
+        admin = _user(session, UserRole.admin, "upload-admin")
+        session.commit()
+        admin_id = admin.id
+
+    def override_get_db():
+        session = SessionLocal()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    def override_user():
+        with SessionLocal() as session:
+            return session.get(User, admin_id)
+
+    monkeypatch.setattr(
+        knowledge_service.file_service,
+        "save_upload",
+        lambda file: SimpleNamespace(
+            stored_name=file.filename,
+            storage_key="stored-upload-faq.txt",
+            file_size=48,
+            mime_type="text/plain",
+        ),
+    )
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = override_user
+    try:
+        response = TestClient(app).post(
+            "/api/knowledge-items/upload",
+            data={
+                "item_key": "upload.one-step",
+                "title": "One Step Upload",
+                "channel": "website",
+                "audience_scope": "customer",
+            },
+            files={"file": ("upload-faq.txt", b"Customers may change address before dispatch.", "text/plain")},
+        )
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["item_key"] == "upload.one-step"
+    assert payload["title"] == "One Step Upload"
+    assert payload["source_type"] == "file"
+    assert payload["file_storage_key"] == "stored-upload-faq.txt"
+    assert payload["parsing_status"] == "parsed"
+    assert payload["draft_body"] == "Customers may change address before dispatch."
+    assert payload["published_version"] == 0
 
 
 def test_duplicate_item_key_returns_409(db_session):

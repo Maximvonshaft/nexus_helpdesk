@@ -19,10 +19,12 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import { TechnicalDetails } from '@/components/ui/TechnicalDetails'
 import { Toast } from '@/components/ui/Toast'
-import type { BadgeTone, KnowledgeChunkHit, KnowledgeItem, PersonaProfile } from '@/lib/types'
+import type { AIConfigResource, BadgeTone, KnowledgeChunkHit, KnowledgeItem, PersonaProfile } from '@/lib/types'
 import { aiConfigTypeLabels } from '@/lib/uxCopy'
 
 const configTypes = ['persona', 'knowledge'] as const
+type ControlTab = 'persona' | 'knowledge' | 'rules'
+const ruleTypes = ['sop', 'policy'] as const
 const knowledgeStatuses = ['draft', 'active', 'archived'] as const
 const channelOptions = ['website', 'webchat', 'whatsapp', 'email'] as const
 
@@ -39,6 +41,14 @@ const templateDrafts: Record<string, { summary: string; content: Record<string, 
     summary: '客户可在包裹发出前申请改地址；发出后必须由客服核实承运商能力。',
     content: { category: 'faq', source: 'admin_entered' },
     body: 'Customers may request address changes before dispatch. After dispatch, support must verify carrier options before promising any change.',
+  },
+  rules: {
+    summary: '业务规则、SOP 和执行边界，用于约束助手何时回答、何时转人工、何时只读事实证据。',
+    content: {
+      scope: 'business_rules_sop_policy',
+      rules: ['Never promise parcel status without tracking fact evidence', 'Escalate compensation and address-change execution'],
+      execution_boundary: 'AI may explain SOP/policy, but controlled actions require verified workflow tools or human handoff.',
+    },
   },
 }
 
@@ -69,6 +79,20 @@ function emptyKnowledgeForm() {
   }
 }
 
+function emptyRuleForm() {
+  return {
+    resource_key: '',
+    config_type: 'sop',
+    name: '',
+    description: '',
+    scope_type: 'global',
+    scope_value: '',
+    is_active: true,
+    draft_summary: templateDrafts.rules.summary,
+    draft_content_text: JSON.stringify(templateDrafts.rules.content, null, 2),
+  }
+}
+
 function stringifyDraft(value: unknown) {
   try {
     return JSON.stringify(value ?? {}, null, 2)
@@ -89,27 +113,40 @@ function AIControlPage() {
   const navigate = useNavigate()
   const client = useQueryClient()
   const permitted = canManageAIConfig(session.data)
-  const [tab, setTab] = useState<typeof configTypes[number]>('persona')
+  const [tab, setTab] = useState<ControlTab>('persona')
   const [selectedPersonaId, setSelectedPersonaId] = useState<number | null>(null)
   const [selectedKnowledgeId, setSelectedKnowledgeId] = useState<number | null>(null)
+  const [selectedRuleId, setSelectedRuleId] = useState<number | null>(null)
   const [personaForm, setPersonaForm] = useState(emptyPersonaForm())
   const [knowledgeForm, setKnowledgeForm] = useState(emptyKnowledgeForm())
+  const [ruleForm, setRuleForm] = useState(emptyRuleForm())
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [retrievalQuery, setRetrievalQuery] = useState('')
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
-  const [confirmAction, setConfirmAction] = useState<null | { kind: 'publish-persona' | 'disable-persona' | 'publish-knowledge' | 'archive-knowledge'; title: string; description: string; consequence: string }>(null)
-  const [confirmRollback, setConfirmRollback] = useState<null | { target: 'persona' | 'knowledge'; version: number }>(null)
+  const [confirmAction, setConfirmAction] = useState<null | { kind: 'publish-persona' | 'disable-persona' | 'publish-knowledge' | 'archive-knowledge' | 'publish-rule' | 'disable-rule'; title: string; description: string; consequence: string }>(null)
+  const [confirmRollback, setConfirmRollback] = useState<null | { target: 'persona' | 'knowledge' | 'rule'; version: number }>(null)
 
   const personas = useQuery({ queryKey: ['persona-profiles'], queryFn: () => api.personaProfiles(), enabled: permitted })
   const knowledge = useQuery({ queryKey: ['knowledge-items'], queryFn: () => api.knowledgeItems(), enabled: permitted })
+  const rules = useQuery({
+    queryKey: ['ai-config-business-rules'],
+    queryFn: async () => {
+      const [sop, policy] = await Promise.all([api.aiConfigs('sop'), api.aiConfigs('policy')])
+      return [...sop, ...policy].sort((a, b) => a.config_type.localeCompare(b.config_type) || a.name.localeCompare(b.name))
+    },
+    enabled: permitted,
+  })
   const markets = useQuery({ queryKey: ['markets-ai-control'], queryFn: api.markets, enabled: permitted })
   const personaDetail = useQuery({ queryKey: ['persona-profile', selectedPersonaId], queryFn: () => api.personaProfile(selectedPersonaId as number), enabled: permitted && !!selectedPersonaId })
   const knowledgeDetail = useQuery({ queryKey: ['knowledge-item', selectedKnowledgeId], queryFn: () => api.knowledgeItem(selectedKnowledgeId as number), enabled: permitted && !!selectedKnowledgeId })
+  const ruleVersions = useQuery({ queryKey: ['ai-config-rule-versions', selectedRuleId], queryFn: () => api.aiConfigVersions(selectedRuleId as number), enabled: permitted && !!selectedRuleId })
 
   const selectedPersona = personaDetail.data ?? null
   const selectedKnowledge = knowledgeDetail.data ?? null
+  const selectedRule = useMemo(() => (rules.data ?? []).find((item) => item.id === selectedRuleId) ?? null, [rules.data, selectedRuleId])
   const personaRows = personas.data?.profiles ?? []
   const knowledgeRows = knowledge.data?.items ?? []
+  const ruleRows = rules.data ?? []
 
   const jsonError = useMemo(() => {
     try {
@@ -119,6 +156,15 @@ function AIControlPage() {
       return err instanceof Error ? err.message : 'JSON 格式无效'
     }
   }, [personaForm.draft_content_text])
+
+  const ruleJsonError = useMemo(() => {
+    try {
+      JSON.parse(ruleForm.draft_content_text || '{}')
+      return ''
+    } catch (err) {
+      return err instanceof Error ? err.message : 'JSON 格式无效'
+    }
+  }, [ruleForm.draft_content_text])
 
   useEffect(() => {
     if (session.data && !permitted) navigate({ to: '/' })
@@ -153,6 +199,21 @@ function AIControlPage() {
     })
   }, [selectedKnowledge])
 
+  useEffect(() => {
+    if (!selectedRule) return
+    setRuleForm({
+      resource_key: selectedRule.resource_key,
+      config_type: ruleTypes.includes(selectedRule.config_type as typeof ruleTypes[number]) ? selectedRule.config_type : 'sop',
+      name: selectedRule.name,
+      description: selectedRule.description ?? '',
+      scope_type: selectedRule.scope_type || 'global',
+      scope_value: selectedRule.scope_value ?? '',
+      is_active: selectedRule.is_active,
+      draft_summary: selectedRule.draft_summary ?? selectedRule.published_summary ?? '',
+      draft_content_text: stringifyDraft(selectedRule.draft_content_json ?? selectedRule.published_content_json),
+    })
+  }, [selectedRule])
+
   const invalidatePersona = async (id?: number | null) => {
     await client.invalidateQueries({ queryKey: ['persona-profiles'] })
     if (id) await client.invalidateQueries({ queryKey: ['persona-profile', id] })
@@ -161,6 +222,11 @@ function AIControlPage() {
   const invalidateKnowledge = async (id?: number | null) => {
     await client.invalidateQueries({ queryKey: ['knowledge-items'] })
     if (id) await client.invalidateQueries({ queryKey: ['knowledge-item', id] })
+  }
+
+  const invalidateRules = async (id?: number | null) => {
+    await client.invalidateQueries({ queryKey: ['ai-config-business-rules'] })
+    if (id) await client.invalidateQueries({ queryKey: ['ai-config-rule-versions', id] })
   }
 
   const savePersona = useMutation({
@@ -255,14 +321,22 @@ function AIControlPage() {
 
   const uploadKnowledge = useMutation({
     mutationFn: async () => {
-      if (!selectedKnowledgeId) throw new Error('请先保存知识条目')
       if (!uploadFile) throw new Error('请选择要上传的文档')
+      if (!selectedKnowledgeId) {
+        return api.createKnowledgeItemFromUpload(uploadFile, {
+          item_key: knowledgeForm.item_key || undefined,
+          title: knowledgeForm.title || undefined,
+          channel: knowledgeForm.channel || undefined,
+          audience_scope: knowledgeForm.audience_scope || undefined,
+        })
+      }
       return api.uploadKnowledgeDocument(selectedKnowledgeId, uploadFile)
     },
-    onSuccess: async () => {
+    onSuccess: async (saved) => {
+      setSelectedKnowledgeId(saved.id)
       setUploadFile(null)
       setToast({ message: '文档已解析到草稿，可预览后发布', tone: 'success' })
-      await invalidateKnowledge(selectedKnowledgeId)
+      await invalidateKnowledge(saved.id)
     },
     onError: (err: Error) => setToast({ message: err.message || '上传解析失败', tone: 'danger' }),
   })
@@ -313,6 +387,69 @@ function AIControlPage() {
     onError: (err: Error) => setToast({ message: err.message || '检索测试失败', tone: 'danger' }),
   })
 
+  const saveRule = useMutation({
+    mutationFn: async () => {
+      const payload: Partial<AIConfigResource> = {
+        resource_key: ruleForm.resource_key.trim(),
+        config_type: ruleForm.config_type,
+        name: ruleForm.name.trim(),
+        description: ruleForm.description.trim() || null,
+        scope_type: ruleForm.scope_type.trim() || 'global',
+        scope_value: ruleForm.scope_value.trim() || null,
+        is_active: ruleForm.is_active,
+        draft_summary: ruleForm.draft_summary.trim() || null,
+        draft_content_json: JSON.parse(ruleForm.draft_content_text || '{}') as Record<string, unknown>,
+      }
+      if (selectedRuleId) {
+        const { resource_key: _resourceKey, ...updatePayload } = payload
+        return api.updateAIConfig(selectedRuleId, updatePayload)
+      }
+      return api.createAIConfig(payload)
+    },
+    onSuccess: async (saved) => {
+      setSelectedRuleId(saved.id)
+      setToast({ message: '业务规则草稿已保存', tone: 'success' })
+      await invalidateRules(saved.id)
+    },
+    onError: (err: Error) => setToast({ message: err.message || '保存业务规则失败', tone: 'danger' }),
+  })
+
+  const publishRule = useMutation({
+    mutationFn: async () => {
+      if (!selectedRuleId) throw new Error('请先保存业务规则草稿')
+      return api.publishAIConfig(selectedRuleId, 'publish from AI Control Center')
+    },
+    onSuccess: async (version) => {
+      setToast({ message: `业务规则已发布 v${version.version}`, tone: 'success' })
+      await invalidateRules(selectedRuleId)
+    },
+    onError: (err: Error) => setToast({ message: err.message || '发布业务规则失败', tone: 'danger' }),
+  })
+
+  const updateRule = useMutation({
+    mutationFn: (payload: Partial<AIConfigResource>) => {
+      if (!selectedRuleId) throw new Error('请选择业务规则')
+      return api.updateAIConfig(selectedRuleId, payload)
+    },
+    onSuccess: async () => {
+      setToast({ message: '业务规则已停用', tone: 'success' })
+      await invalidateRules(selectedRuleId)
+    },
+    onError: (err: Error) => setToast({ message: err.message || '更新业务规则失败', tone: 'danger' }),
+  })
+
+  const rollbackRule = useMutation({
+    mutationFn: (version: number) => {
+      if (!selectedRuleId) throw new Error('请选择业务规则')
+      return api.rollbackAIConfig(selectedRuleId, version, `rollback to v${version}`)
+    },
+    onSuccess: async (version) => {
+      setToast({ message: `业务规则已回滚并发布为 v${version.version}`, tone: 'success' })
+      await invalidateRules(selectedRuleId)
+    },
+    onError: (err: Error) => setToast({ message: err.message || '回滚业务规则失败', tone: 'danger' }),
+  })
+
   const runConfirmedAction = () => {
     const action = confirmAction?.kind
     setConfirmAction(null)
@@ -320,6 +457,8 @@ function AIControlPage() {
     if (action === 'disable-persona') updatePersona.mutate({ is_active: false })
     if (action === 'publish-knowledge') publishKnowledge.mutate()
     if (action === 'archive-knowledge') updateKnowledge.mutate({ status: 'archived' })
+    if (action === 'publish-rule') publishRule.mutate()
+    if (action === 'disable-rule') updateRule.mutate({ is_active: false })
   }
 
   return (
@@ -328,7 +467,7 @@ function AIControlPage() {
         eyebrow="AI Control Center"
         title="AI 控制中心"
         description="智能助手规则与知识配置：配置助手人格、业务知识、发布版本和运行时检索。只有已发布、启用、渠道匹配且未过期的内容会进入 WebChat/Codex 运行时。"
-        actions={<div className="button-row"><Button variant="secondary" onClick={() => { if (tab === 'persona') { setSelectedPersonaId(null); setPersonaForm(emptyPersonaForm()) } else { setSelectedKnowledgeId(null); setKnowledgeForm(emptyKnowledgeForm()) } }}>新建{tab === 'persona' ? ' Persona' : '知识'}</Button><Button variant="primary" onClick={() => tab === 'persona' ? savePersona.mutate() : saveKnowledge.mutate()} disabled={tab === 'persona' ? savePersona.isPending || !!jsonError : saveKnowledge.isPending}>{tab === 'persona' ? '保存 Persona 草稿' : '保存知识草稿'}</Button></div>}
+        actions={<div className="button-row"><Button variant="secondary" onClick={() => { if (tab === 'persona') { setSelectedPersonaId(null); setPersonaForm(emptyPersonaForm()) } else if (tab === 'knowledge') { setSelectedKnowledgeId(null); setKnowledgeForm(emptyKnowledgeForm()) } else { setSelectedRuleId(null); setRuleForm(emptyRuleForm()) } }}>新建{tab === 'persona' ? ' Persona' : tab === 'knowledge' ? '知识' : '业务规则'}</Button><Button variant="primary" onClick={() => tab === 'persona' ? savePersona.mutate() : tab === 'knowledge' ? saveKnowledge.mutate() : saveRule.mutate()} disabled={tab === 'persona' ? savePersona.isPending || !!jsonError : tab === 'knowledge' ? saveKnowledge.isPending : saveRule.isPending || !!ruleJsonError}>{tab === 'persona' ? '保存 Persona 草稿' : tab === 'knowledge' ? '保存知识草稿' : '保存规则草稿'}</Button></div>}
       />
 
       {!permitted ? (
@@ -338,6 +477,7 @@ function AIControlPage() {
           <div className="metrics-grid metrics-grid-wide">
             <div className="metric-card"><div className="metric-label">Persona</div><div className="metric-value">{personaRows.length}</div><div className="metric-hint">已发布 {personaRows.filter((item) => item.published_version > 0).length}</div></div>
             <div className="metric-card"><div className="metric-label">Knowledge</div><div className="metric-value">{knowledgeRows.length}</div><div className="metric-hint">生效 {knowledgeRows.filter((item) => item.status === 'active' && item.published_version > 0).length}</div></div>
+            <div className="metric-card"><div className="metric-label">Business Rules</div><div className="metric-value">{ruleRows.length}</div><div className="metric-hint">已发布 {ruleRows.filter((item) => item.published_version > 0).length}</div></div>
             <div className="metric-card"><div className="metric-label">分段索引</div><div className="metric-value">{knowledgeRows.reduce((sum, item) => sum + (item.chunk_count || 0), 0)}</div><div className="metric-hint">发布时生成</div></div>
             <div className="metric-card"><div className="metric-label">事实边界</div><div className="metric-value">强制</div><div className="metric-hint">物流状态只信 tracking fact</div></div>
           </div>
@@ -347,6 +487,7 @@ function AIControlPage() {
             <CardBody>
               <GuidedWorkflow steps={[
                 { title: '维护 Persona', description: '定义语气、边界和升级原则。', status: personaRows.some((item) => item.published_version > 0) ? 'done' : 'active' },
+                { title: '发布业务规则', description: '保留 SOP、Policy 和执行边界。', status: ruleRows.some((item) => item.published_version > 0) ? 'done' : 'todo' },
                 { title: '上传知识', description: '解析文档并预览草稿。', status: knowledgeRows.some((item) => item.source_type === 'file') ? 'done' : 'todo' },
                 { title: '发布索引', description: '发布后生成 KnowledgeChunk。', status: knowledgeRows.some((item) => item.chunk_count > 0) ? 'done' : 'todo' },
                 { title: '检索测试', description: '确认命中内容和过滤条件。', status: retrieval.data ? 'done' : 'todo' },
@@ -356,7 +497,7 @@ function AIControlPage() {
           </Card>
 
           <div className="workspace-toolbar">
-            <SegmentedControl value={tab} onChange={(value) => setTab(value as typeof configTypes[number])} options={[{ label: 'Persona', value: 'persona' }, { label: 'Knowledge Base', value: 'knowledge' }]} />
+            <SegmentedControl value={tab} onChange={(value) => setTab(value as ControlTab)} options={[{ label: 'Persona', value: 'persona' }, { label: 'Knowledge Base', value: 'knowledge' }, { label: 'Business Rules', value: 'rules' }]} />
             <div className="workspace-toolbar-meta">当前市场数据 {markets.data?.length ?? 0} 个</div>
           </div>
 
@@ -409,7 +550,7 @@ function AIControlPage() {
                 </CardBody>
               </Card>
             </div>
-          ) : (
+          ) : tab === 'knowledge' ? (
             <div className="page-grid split-grid-wide">
               <Card>
                 <CardHeader title="Knowledge Items" subtitle="知识只回答政策、SOP、FAQ；不会作为包裹实时状态证据。" />
@@ -452,7 +593,7 @@ function AIControlPage() {
                       <Field label="上传知识文档" hint="支持 UTF-8 文本和 PDF。上传后会覆盖当前草稿正文。"><Input type="file" accept=".txt,.pdf,text/plain,application/pdf" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} /></Field>
                       <Field label="已选文件"><Input value={uploadFile?.name || selectedKnowledge?.file_name || ''} readOnly /></Field>
                     </div>
-                    <div className="button-row"><Button variant="primary" onClick={() => saveKnowledge.mutate()} disabled={saveKnowledge.isPending}>保存草稿</Button><Button onClick={() => uploadKnowledge.mutate()} disabled={!selectedKnowledgeId || !uploadFile || uploadKnowledge.isPending}>上传并解析</Button><Button onClick={() => setConfirmAction({ kind: 'publish-knowledge', title: '发布当前知识？', description: '发布后会生成 KnowledgeChunk，并允许匹配渠道的运行时检索。', consequence: '请确认正文不包含未核实的包裹实时状态。' })} disabled={!selectedKnowledgeId || publishKnowledge.isPending}>发布并索引</Button><Button variant="danger" onClick={() => setConfirmAction({ kind: 'archive-knowledge', title: '归档当前知识？', description: '归档后运行时不会再检索这条知识。', consequence: '已发布版本仍保留在历史中，可回滚后重新发布。' })} disabled={!selectedKnowledgeId || selectedKnowledge?.status === 'archived'}>归档</Button></div>
+                    <div className="button-row"><Button variant="primary" onClick={() => saveKnowledge.mutate()} disabled={saveKnowledge.isPending}>保存草稿</Button><Button onClick={() => uploadKnowledge.mutate()} disabled={!uploadFile || uploadKnowledge.isPending}>{selectedKnowledgeId ? '上传并解析' : '上传并创建'}</Button><Button onClick={() => setConfirmAction({ kind: 'publish-knowledge', title: '发布当前知识？', description: '发布后会生成 KnowledgeChunk，并允许匹配渠道的运行时检索。', consequence: '请确认正文不包含未核实的包裹实时状态。' })} disabled={!selectedKnowledgeId || publishKnowledge.isPending}>发布并索引</Button><Button variant="danger" onClick={() => setConfirmAction({ kind: 'archive-knowledge', title: '归档当前知识？', description: '归档后运行时不会再检索这条知识。', consequence: '已发布版本仍保留在历史中，可回滚后重新发布。' })} disabled={!selectedKnowledgeId || selectedKnowledge?.status === 'archived'}>归档</Button></div>
                   </div>
                 </CardBody>
               </Card>
@@ -483,13 +624,61 @@ function AIControlPage() {
                 <CardBody><VersionList versions={selectedKnowledge?.versions ?? []} onRollback={(version) => setConfirmRollback({ target: 'knowledge', version })} /></CardBody>
               </Card>
             </div>
+          ) : (
+            <div className="page-grid split-grid-wide">
+              <Card>
+                <CardHeader title="Business Rules / SOP / Policy" subtitle="沿用 AIConfigResource 管理 SOP 与执行边界；这些规则用于治理，不替代 KnowledgeChunk 检索。" />
+                <CardBody>
+                  <div className="list">
+                    {ruleRows.map((item) => (
+                      <button key={item.id} className={`queue-card ${selectedRuleId === item.id ? 'selected' : ''}`} onClick={() => setSelectedRuleId(item.id)}>
+                        <div className="badges"><Badge>{(aiConfigTypeLabels as Record<string, string>)[item.config_type] || labelize(item.config_type)}</Badge>{item.is_active ? <Badge tone="success">启用</Badge> : <Badge>停用</Badge>}{item.published_version > 0 ? <Badge tone="success">v{item.published_version}</Badge> : <Badge tone="warning">未发布</Badge>}</div>
+                        <div className="queue-card-title">{sanitizeDisplayText(item.name)}</div>
+                        <div className="queue-card-meta">{sanitizeDisplayText(item.resource_key)} · {sanitizeDisplayText(item.scope_type)} · {formatDateTime(item.updated_at)}</div>
+                        <div className="queue-card-meta">{sanitizeDisplayText(item.draft_summary || item.published_summary || item.description || '暂无摘要')}</div>
+                      </button>
+                    ))}
+                    {!ruleRows.length ? <EmptyState title="还没有业务规则" description="创建 SOP 或 Policy，维护助手执行边界、升级条件和业务流程。" reason="这里保留旧 AIConfigResource 能力，不与 KnowledgeItem 文档库混用。" /> : null}
+                  </div>
+                </CardBody>
+              </Card>
+
+              <Card>
+                <CardHeader title={selectedRuleId ? '编辑业务规则草稿' : '新建业务规则'} subtitle="SOP/Policy 用来声明流程和边界；客户可见事实仍由 Knowledge 与 tracking fact gate 控制。" />
+                <CardBody>
+                  <div className="stack">
+                    {ruleJsonError ? <ErrorSummary title="业务规则 JSON 暂时不能保存" errors={[`JSON 格式无效：${ruleJsonError}`]} /> : null}
+                    <div className="button-row"><Button variant="secondary" onClick={() => setRuleForm((s) => ({ ...s, draft_summary: templateDrafts.rules.summary, draft_content_text: stringifyDraft(templateDrafts.rules.content) }))}>套用 SOP/Policy 模板</Button></div>
+                    <div className="form-grid">
+                      <Field label="Resource Key" required example="webchat.address-change.sop"><Input value={ruleForm.resource_key} onChange={(e) => setRuleForm((s) => ({ ...s, resource_key: e.target.value }))} /></Field>
+                      <Field label="类型"><Select value={ruleForm.config_type} onChange={(e) => setRuleForm((s) => ({ ...s, config_type: e.target.value }))}>{ruleTypes.map((item) => <option key={item} value={item}>{aiConfigTypeLabels[item]}</option>)}</Select></Field>
+                      <Field label="名称" required><Input value={ruleForm.name} onChange={(e) => setRuleForm((s) => ({ ...s, name: e.target.value }))} /></Field>
+                      <Field label="Scope"><Input value={ruleForm.scope_type} onChange={(e) => setRuleForm((s) => ({ ...s, scope_type: e.target.value }))} /></Field>
+                      <Field label="Scope Value"><Input value={ruleForm.scope_value} onChange={(e) => setRuleForm((s) => ({ ...s, scope_value: e.target.value }))} /></Field>
+                    </div>
+                    <Field label="说明"><Textarea value={ruleForm.description} onChange={(e) => setRuleForm((s) => ({ ...s, description: e.target.value }))} /></Field>
+                    <Field label="发布摘要" required><Textarea value={ruleForm.draft_summary} onChange={(e) => setRuleForm((s) => ({ ...s, draft_summary: e.target.value }))} /></Field>
+                    <TechnicalDetails title="SOP / Policy JSON" summary="维护业务规则、执行边界、转人工条件和工具使用限制">
+                      <Field label="草稿内容 JSON" error={ruleJsonError || undefined}><Textarea rows={12} value={ruleForm.draft_content_text} onChange={(e) => setRuleForm((s) => ({ ...s, draft_content_text: e.target.value }))} /></Field>
+                    </TechnicalDetails>
+                    <label className="toggle-row"><input type="checkbox" checked={ruleForm.is_active} onChange={(e) => setRuleForm((s) => ({ ...s, is_active: e.target.checked }))} /> 当前业务规则启用</label>
+                    <div className="button-row"><Button variant="primary" onClick={() => saveRule.mutate()} disabled={saveRule.isPending || !!ruleJsonError}>保存草稿</Button><Button onClick={() => setConfirmAction({ kind: 'publish-rule', title: '发布当前业务规则？', description: '发布后治理视图和运行策略可读取这条 SOP/Policy 规则。', consequence: '请确认执行边界、升级条件和事实边界已经检查。' })} disabled={!selectedRuleId || publishRule.isPending || !!ruleJsonError}>发布</Button><Button variant="danger" onClick={() => setConfirmAction({ kind: 'disable-rule', title: '停用当前业务规则？', description: '停用后这条 SOP/Policy 不再作为当前治理规则。', consequence: '历史发布版本仍保留，可回滚后重新发布。' })} disabled={!selectedRuleId || !selectedRule?.is_active}>停用</Button></div>
+                  </div>
+                </CardBody>
+              </Card>
+
+              <Card>
+                <CardHeader title="业务规则发布历史" subtitle="回滚会复制历史快照并发布为新版本。" />
+                <CardBody><VersionList versions={ruleVersions.data ?? []} onRollback={(version) => setConfirmRollback({ target: 'rule', version })} /></CardBody>
+              </Card>
+            </div>
           )}
         </>
       )}
 
       {toast ? <Toast message={toast.message} tone={toast.tone} onClose={() => setToast(null)} /> : null}
-      <ConfirmDialog open={!!confirmAction} title={confirmAction?.title || ''} description={confirmAction?.description || ''} consequence={confirmAction?.consequence || ''} confirmLabel="确认" tone={confirmAction?.kind.includes('archive') || confirmAction?.kind.includes('disable') ? 'danger' : 'default'} pending={publishPersona.isPending || publishKnowledge.isPending || updatePersona.isPending || updateKnowledge.isPending} onCancel={() => setConfirmAction(null)} onConfirm={runConfirmedAction} />
-      <ConfirmDialog open={!!confirmRollback} title="回滚并重新发布规则？" description={`将当前${confirmRollback?.target === 'persona' ? ' Persona' : '知识'}回滚到 v${confirmRollback?.version ?? ''}，并作为新的线上版本发布。`} consequence="这会改变线上助手当前可读取的发布内容。" confirmLabel="确认回滚" tone="danger" pending={rollbackPersona.isPending || rollbackKnowledge.isPending} onCancel={() => setConfirmRollback(null)} onConfirm={() => { const action = confirmRollback; setConfirmRollback(null); if (!action) return; if (action.target === 'persona') rollbackPersona.mutate(action.version); else rollbackKnowledge.mutate(action.version) }} />
+      <ConfirmDialog open={!!confirmAction} title={confirmAction?.title || ''} description={confirmAction?.description || ''} consequence={confirmAction?.consequence || ''} confirmLabel="确认" tone={confirmAction?.kind.includes('archive') || confirmAction?.kind.includes('disable') ? 'danger' : 'default'} pending={publishPersona.isPending || publishKnowledge.isPending || publishRule.isPending || updatePersona.isPending || updateKnowledge.isPending || updateRule.isPending} onCancel={() => setConfirmAction(null)} onConfirm={runConfirmedAction} />
+      <ConfirmDialog open={!!confirmRollback} title="回滚并重新发布规则？" description={`将当前${confirmRollback?.target === 'persona' ? ' Persona' : confirmRollback?.target === 'knowledge' ? '知识' : '业务规则'}回滚到 v${confirmRollback?.version ?? ''}，并作为新的线上版本发布。`} consequence="这会改变线上助手当前可读取的发布内容。" confirmLabel="确认回滚" tone="danger" pending={rollbackPersona.isPending || rollbackKnowledge.isPending || rollbackRule.isPending} onCancel={() => setConfirmRollback(null)} onConfirm={() => { const action = confirmRollback; setConfirmRollback(null); if (!action) return; if (action.target === 'persona') rollbackPersona.mutate(action.version); else if (action.target === 'knowledge') rollbackKnowledge.mutate(action.version); else rollbackRule.mutate(action.version) }} />
     </AppShell>
   )
 }
