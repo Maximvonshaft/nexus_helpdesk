@@ -19,6 +19,24 @@ logger = logging.getLogger(__name__)
 _ACCESS_TOKEN_CACHE: dict[str, tuple[float, str]] = {}
 
 
+def clear_oauth_access_token_cache(tenant_id: str | None = None, credential_id: str | None = None) -> None:
+    if tenant_id is None and credential_id is None:
+        _ACCESS_TOKEN_CACHE.clear()
+        return
+    if tenant_id is not None and credential_id is not None:
+        _ACCESS_TOKEN_CACHE.pop(f"{tenant_id}:{credential_id}", None)
+        return
+    if tenant_id is not None:
+        prefix = f"{tenant_id}:"
+        for key in list(_ACCESS_TOKEN_CACHE):
+            if key.startswith(prefix):
+                _ACCESS_TOKEN_CACHE.pop(key, None)
+
+
+def clear_oauth_access_token_cache_for_tests() -> None:
+    clear_oauth_access_token_cache()
+
+
 class OAuthRefreshManager:
     _locks: dict[str, asyncio.Lock] = {}
     _locks_lock = asyncio.Lock()
@@ -36,7 +54,7 @@ class OAuthRefreshManager:
 
     async def get_valid_access_token(self, tenant_id: str, credential_id: str) -> Optional[str]:
         cache_key = self._access_token_cache_key(tenant_id, credential_id)
-        cached = self._get_cached_access_token(cache_key)
+        cached = self._get_usable_cached_access_token(tenant_id=tenant_id, credential_id=credential_id, cache_key=cache_key)
         if cached:
             return cached
 
@@ -71,6 +89,14 @@ class OAuthRefreshManager:
         refresh_col = ", encrypted_refresh_token" if include_refresh else ""
         query = text(f"""
             SELECT provider, status, expires_at, encrypted_access_token{refresh_col}
+            FROM provider_credentials
+            WHERE tenant_id = :tenant_id AND id = :credential_id AND revoked_at IS NULL
+        """)
+        return self.db.execute(query, {"tenant_id": tenant_id, "credential_id": credential_id}).mappings().first()
+
+    def _read_credential_state(self, *, tenant_id: str, credential_id: str):
+        query = text("""
+            SELECT status, expires_at
             FROM provider_credentials
             WHERE tenant_id = :tenant_id AND id = :credential_id AND revoked_at IS NULL
         """)
@@ -114,14 +140,14 @@ class OAuthRefreshManager:
     async def _refresh_with_lock(self, *, tenant_id: str, credential_id: str, provider: str, encrypted_refresh_token: str) -> Optional[str]:
         lock_key = f"oauth-refresh:{tenant_id}:{provider}:{credential_id}"
         cache_key = self._access_token_cache_key(tenant_id, credential_id)
-        cached = self._get_cached_access_token(cache_key)
+        cached = self._get_usable_cached_access_token(tenant_id=tenant_id, credential_id=credential_id, cache_key=cache_key)
         if cached:
             return cached
 
         process_lock = await self._get_lock(lock_key)
 
         async with process_lock:
-            cached = self._get_cached_access_token(cache_key)
+            cached = self._get_usable_cached_access_token(tenant_id=tenant_id, credential_id=credential_id, cache_key=cache_key)
             if cached:
                 return cached
 
@@ -192,6 +218,24 @@ class OAuthRefreshManager:
             return None
         return token
 
+    def _get_usable_cached_access_token(self, *, tenant_id: str, credential_id: str, cache_key: str) -> Optional[str]:
+        cached = self._get_cached_access_token(cache_key)
+        if not cached:
+            return None
+        if self._credential_allows_cached_access_token(tenant_id=tenant_id, credential_id=credential_id):
+            return cached
+        self._clear_access_token_cache(cache_key)
+        return None
+
+    def _credential_allows_cached_access_token(self, *, tenant_id: str, credential_id: str) -> bool:
+        state = self._read_credential_state(tenant_id=tenant_id, credential_id=credential_id)
+        if not state or state["status"] in {"revoked", "error", "pending"}:
+            return False
+        expires_at = self._normalize_dt(state["expires_at"])
+        if expires_at is None:
+            return True
+        return expires_at > datetime.now(timezone.utc) + timedelta(minutes=5)
+
     def _store_access_token(self, cache_key: str, token: Optional[str], expires_at: Optional[datetime]) -> None:
         if self.access_token_cache_ttl_seconds <= 0 or not token:
             return
@@ -251,7 +295,7 @@ class OAuthRefreshManager:
         expires_in = int(data.get("expires_in") or data.get("expires") or 3600)
         if not access_token:
             return None, None, 0
-        return new_access_token, new_refresh, expires_in
+        return access_token, new_refresh, expires_in
 
 
 def _codex_token_url() -> str | None:
