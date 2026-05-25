@@ -291,12 +291,6 @@ def test_stub_bridge_is_not_accepted_as_production_ready(monkeypatch):
 
 def test_bridge_reply_calls_mocked_upstream_and_passes_oauth_session(monkeypatch):
     bridge = _load_bridge_module(monkeypatch)
-    bridge._LOGIN_STATE.update({
-        "access_token": "oauth-access-token",
-        "chatgpt_account_id": "acct-1",
-        "chatgpt_plan_type": "plus",
-        "updated_at": "2026-05-22T00:00:00Z",
-    })
     captured = {}
 
     class UpstreamResponse:
@@ -325,7 +319,22 @@ def test_bridge_reply_calls_mocked_upstream_and_passes_oauth_session(monkeypatch
 
     monkeypatch.setattr(bridge.request, "urlopen", fake_urlopen)
 
-    reply = bridge.call_real_upstream({"body": "hello", "messages": [], "contract": "speedaf_webchat_fast_reply_v1"})
+    handler = Mock()
+    handler.headers = {}
+    reply = bridge.call_real_upstream(
+        handler,
+        {
+            "login": {
+                "type": "chatgptAuthTokens",
+                "accessToken": "oauth-access-token",
+                "chatgptAccountId": "acct-1",
+                "chatgptPlanType": "plus",
+            },
+            "body": "hello",
+            "messages": [],
+            "contract": "speedaf_webchat_fast_reply_v1",
+        },
+    )
 
     assert reply["reply"] == "dynamic upstream reply"
     assert captured["url"] == "http://127.0.0.1:18795/reply"
@@ -424,15 +433,7 @@ async def test_expired_credential_uses_oauth_refresh_manager(monkeypatch):
             return None
 
         async def get(self, *args, **kwargs):
-            response = Response()
-            response.json = lambda: {
-                "mode": "real",
-                "real_upstream_configured": True,
-                "accepts_oauth_login": True,
-                "reply_generation_backend": "mocked-runtime",
-                "token_file_configured": True,
-            }
-            return response
+            raise AssertionError("fast reply hot path must not call bridge readyz")
 
         async def post(self, *args, **kwargs):
             return Response()
@@ -461,11 +462,12 @@ async def test_expired_credential_uses_oauth_refresh_manager(monkeypatch):
     assert result.ok is True
     refresh.assert_awaited_once_with("default", "cred1")
     assert "fresh-access-token" not in str(result.raw_payload_safe_summary)
-    assert result.raw_payload_safe_summary["real_upstream_configured"] is True
+    assert result.raw_payload_safe_summary["auth_mode"] == "per_request"
+    assert result.raw_payload_safe_summary["hotpath_readyz"] is False
 
 
 @pytest.mark.asyncio
-async def test_adapter_rejects_stub_bridge_without_token_leakage(monkeypatch):
+async def test_adapter_hot_path_sends_per_request_login_without_readyz_or_legacy_login(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("CODEX_APP_SERVER_TOKEN", "bridge-token")
     monkeypatch.setenv("CODEX_APP_SERVER_LOGIN_URL", "http://127.0.0.1:18794/login")
@@ -479,23 +481,9 @@ async def test_adapter_rejects_stub_bridge_without_token_leakage(monkeypatch):
     }
     mock_db.execute.return_value = select_result
 
-    class ReadyzResponse:
-        status_code = 503
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "mode": "stub",
-                "real_upstream_configured": False,
-                "accepts_oauth_login": True,
-                "reply_generation_backend": "stub",
-                "token_file_configured": True,
-            }
-
     class Client:
-        post_called = False
+        def __init__(self):
+            self.calls = []
 
         async def __aenter__(self):
             return self
@@ -504,11 +492,34 @@ async def test_adapter_rejects_stub_bridge_without_token_leakage(monkeypatch):
             return None
 
         async def get(self, *args, **kwargs):
-            return ReadyzResponse()
+            raise AssertionError("fast reply hot path must not call bridge readyz")
 
         async def post(self, *args, **kwargs):
-            self.post_called = True
-            raise AssertionError("stub bridge must be rejected before login or reply")
+            if args and str(args[0]).endswith("/login"):
+                raise AssertionError("fast reply hot path must not call legacy /login")
+            self.calls.append({"args": args, "kwargs": kwargs})
+
+            class Response:
+                status_code = 200
+                headers = {
+                    "X-Nexus-Codex-Elapsed-Ms": "123",
+                    "X-Nexus-Codex-Backend": "openclaw_codex_local_warm_pool",
+                }
+
+                def raise_for_status(self):
+                    return None
+
+                def json(self):
+                    return {
+                        "reply": "ok",
+                        "intent": "other",
+                        "tracking_number": None,
+                        "handoff_required": False,
+                        "handoff_reason": None,
+                        "recommended_agent_action": None,
+                    }
+
+            return Response()
 
     client = Client()
     req = ProviderRequest(
@@ -532,9 +543,16 @@ async def test_adapter_rejects_stub_bridge_without_token_leakage(monkeypatch):
     ):
         result = await adapter.generate(mock_db, req)
 
-    assert result.ok is False
-    assert result.error_code == "bridge_not_production_ready"
-    assert client.post_called is False
+    assert result.ok is True
+    assert len(client.calls) == 1
+    call = client.calls[0]
+    assert str(call["args"][0]).endswith("/reply")
+    assert call["kwargs"]["json"]["login"]["accessToken"] == "fresh-access-token"
+    assert call["kwargs"]["headers"]["X-Nexus-Request-Id"] == "req1"
+    assert "X-Nexus-Request-Deadline-Ms" in call["kwargs"]["headers"]
+    assert result.raw_payload_safe_summary["auth_mode"] == "per_request"
+    assert result.raw_payload_safe_summary["hotpath_readyz"] is False
+    assert result.raw_payload_safe_summary["bridge_elapsed_ms"] == 123
     rendered = str(result.raw_payload_safe_summary)
     assert "fresh-access-token" not in rendered
     assert "bridge-token" not in rendered

@@ -445,7 +445,8 @@ def test_smoke_chat_codex_app_server_bridge_uses_existing_runtime(client, db_ses
     assert calls[0]["headers"]["Authorization"].split(" ", 1) == ["Bearer", "bridge-shared"]
     assert calls[0]["payload"]["login"]["accessToken"] == "opaque-access-value"
     assert calls[0]["payload"]["login"]["chatgptAccountId"] == "acct-1"
-    assert "login" not in calls[1]["payload"]
+    assert calls[1]["payload"]["login"]["accessToken"] == "opaque-access-value"
+    assert calls[1]["payload"]["login"]["chatgptAccountId"] == "acct-1"
     assert "opaque-access-value" not in json.dumps(response.json())
 
 
