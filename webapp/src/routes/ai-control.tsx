@@ -327,7 +327,7 @@ function AIControlPage() {
       <PageHeader
         eyebrow="AI Control Center"
         title="AI 控制中心"
-        description="配置助手人格、业务知识、发布版本和运行时检索。只有已发布、启用、渠道匹配且未过期的内容会进入 WebChat/Codex 运行时。"
+        description="智能助手规则与知识配置：配置助手人格、业务知识、发布版本和运行时检索。只有已发布、启用、渠道匹配且未过期的内容会进入 WebChat/Codex 运行时。"
         actions={<div className="button-row"><Button variant="secondary" onClick={() => { if (tab === 'persona') { setSelectedPersonaId(null); setPersonaForm(emptyPersonaForm()) } else { setSelectedKnowledgeId(null); setKnowledgeForm(emptyKnowledgeForm()) } }}>新建{tab === 'persona' ? ' Persona' : '知识'}</Button><Button variant="primary" onClick={() => tab === 'persona' ? savePersona.mutate() : saveKnowledge.mutate()} disabled={tab === 'persona' ? savePersona.isPending || !!jsonError : saveKnowledge.isPending}>{tab === 'persona' ? '保存 Persona 草稿' : '保存知识草稿'}</Button></div>}
       />
 
