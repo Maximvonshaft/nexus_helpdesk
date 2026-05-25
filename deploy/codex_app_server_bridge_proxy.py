@@ -19,8 +19,11 @@ TOKEN_FILE = (
     or "/run/nexus/codex_app_server_bridge_token"
 )
 MODE = os.environ.get("CODEX_APP_SERVER_BRIDGE_MODE", "real").strip().lower()
-REAL_UPSTREAM_URL = os.environ.get("CODEX_APP_SERVER_REAL_UPSTREAM_URL", "").strip()
-REPLY_GENERATION_BACKEND = os.environ.get("CODEX_APP_SERVER_REPLY_GENERATION_BACKEND", "unconfigured").strip() or "unconfigured"
+RUNTIME_BACKEND = os.environ.get("CODEX_APP_SERVER_RUNTIME_BACKEND", "python_cli_pool").strip().lower() or "python_cli_pool"
+LEGACY_REAL_UPSTREAM_URL = os.environ.get("CODEX_APP_SERVER_REAL_UPSTREAM_URL", "").strip()
+REAL_UPSTREAM_URL_PYTHON = os.environ.get("CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON", "").strip()
+REAL_UPSTREAM_URL_NODE = os.environ.get("CODEX_APP_SERVER_REAL_UPSTREAM_URL_NODE", "").strip()
+REPLY_GENERATION_BACKEND = os.environ.get("CODEX_APP_SERVER_REPLY_GENERATION_BACKEND", "").strip()
 UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get("CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS", "9"))
 READYZ_TIMEOUT_SECONDS = float(os.environ.get("CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS", "30"))
 AUTH_MODE = os.environ.get("CODEX_APP_SERVER_AUTH_MODE", "per_request").strip().lower() or "per_request"
@@ -29,6 +32,26 @@ GIT_SHA = os.environ.get("GIT_SHA", "unknown")
 IMAGE_TAG = os.environ.get("IMAGE_TAG", "unknown")
 APP_VERSION = os.environ.get("APP_VERSION", "unknown")
 VERSION = "1.2"
+
+
+def resolve_real_upstream_url() -> str:
+    if RUNTIME_BACKEND == "node_appserver":
+        return REAL_UPSTREAM_URL_NODE or "http://codex-appserver-runtime:18810/reply"
+    return REAL_UPSTREAM_URL_PYTHON or LEGACY_REAL_UPSTREAM_URL or "http://codex-private-model-runtime:18800/reply"
+
+
+def resolve_reply_generation_backend() -> str:
+    if REPLY_GENERATION_BACKEND:
+        return REPLY_GENERATION_BACKEND
+    if RUNTIME_BACKEND == "node_appserver":
+        return "nexus_codex_appserver_runtime"
+    if RUNTIME_BACKEND == "python_cli_pool":
+        return "python_cli_pool"
+    return "unconfigured"
+
+
+REAL_UPSTREAM_URL = resolve_real_upstream_url()
+EFFECTIVE_REPLY_GENERATION_BACKEND = resolve_reply_generation_backend()
 
 _LOGIN_STATE: dict[str, Any] = {
     "access_token": None,
@@ -152,7 +175,8 @@ def upstream_ready() -> bool:
 
 def readiness_payload() -> dict[str, Any]:
     token_configured = bool(load_bridge_token())
-    real_upstream_configured = MODE == "real" and bool(REAL_UPSTREAM_URL)
+    backend_supported = RUNTIME_BACKEND in {"python_cli_pool", "node_appserver"}
+    real_upstream_configured = MODE == "real" and backend_supported and bool(REAL_UPSTREAM_URL)
     real_upstream_reachable = real_upstream_configured and upstream_ready()
     ok = token_configured and real_upstream_configured and real_upstream_reachable
     reason = None
@@ -160,6 +184,8 @@ def readiness_payload() -> dict[str, Any]:
         reason = "bridge_token_not_configured"
     elif MODE != "real":
         reason = "codex_app_server_bridge_not_real"
+    elif not backend_supported:
+        reason = "codex_app_server_runtime_backend_invalid"
     elif not REAL_UPSTREAM_URL:
         reason = "codex_app_server_real_upstream_not_configured"
     elif not real_upstream_reachable:
@@ -170,9 +196,11 @@ def readiness_payload() -> dict[str, Any]:
         "mode": MODE,
         "real_upstream_configured": real_upstream_configured,
         "real_upstream_reachable": real_upstream_reachable,
+        "runtime_backend": RUNTIME_BACKEND,
+        "real_upstream_url": REAL_UPSTREAM_URL,
         "reason": reason,
         "accepts_oauth_login": True,
-        "reply_generation_backend": REPLY_GENERATION_BACKEND if real_upstream_configured else "unconfigured",
+        "reply_generation_backend": EFFECTIVE_REPLY_GENERATION_BACKEND if real_upstream_configured else "unconfigured",
         "token_file_configured": token_configured,
         "oauth_session_present": bool(_LOGIN_STATE["access_token"]),
         "auth_mode": AUTH_MODE,
@@ -282,11 +310,20 @@ def call_real_upstream(handler: BaseHTTPRequestHandler, payload: dict[str, Any])
     timeout, budget_ms = _remaining_timeout_seconds(handler, UPSTREAM_TIMEOUT_SECONDS)
     setattr(handler, "_nexus_codex_budget_ms", budget_ms)
     upstream_payload = {
+        "login": {
+            "type": "chatgptAuthTokens",
+            "accessToken": access_token,
+            "chatgptAccountId": login.get("chatgptAccountId"),
+            "chatgptPlanType": login.get("chatgptPlanType"),
+        },
         "body": payload.get("body"),
         "messages": payload.get("messages") or [],
         "contract": payload.get("contract"),
         "tracking_fact_summary": payload.get("tracking_fact_summary"),
         "tracking_fact_evidence_present": payload.get("tracking_fact_evidence_present"),
+        "tenant_id": payload.get("tenant_id"),
+        "channel_key": payload.get("channel_key"),
+        "session_id": payload.get("session_id"),
         "chatgptAccountId": login.get("chatgptAccountId"),
         "chatgptPlanType": login.get("chatgptPlanType"),
     }
@@ -358,7 +395,10 @@ class Handler(BaseHTTPRequestHandler):
         if not REAL_UPSTREAM_URL:
             json_response(self, 503, {"ok": False, "error": "codex_app_server_real_upstream_not_configured"})
             return
-        if REPLY_GENERATION_BACKEND in {"", "stub", "unconfigured", "contract_fixture"}:
+        if RUNTIME_BACKEND not in {"python_cli_pool", "node_appserver"}:
+            json_response(self, 503, {"ok": False, "error": "codex_app_server_runtime_backend_invalid"})
+            return
+        if EFFECTIVE_REPLY_GENERATION_BACKEND in {"", "stub", "unconfigured", "contract_fixture"}:
             json_response(self, 503, {"ok": False, "error": "codex_reply_generation_backend_not_configured"})
             return
         try:
@@ -371,16 +411,16 @@ class Handler(BaseHTTPRequestHandler):
                 reply,
                 {
                     "X-Nexus-Codex-Elapsed-Ms": str(elapsed_ms),
-                    "X-Nexus-Codex-Backend": REPLY_GENERATION_BACKEND,
+                    "X-Nexus-Codex-Backend": EFFECTIVE_REPLY_GENERATION_BACKEND,
                     "X-Nexus-Codex-Timeout-Budget-Ms": budget_ms,
                 },
             )
         except error.HTTPError as exc:
-            json_response(self, 502, {"ok": False, "error": "upstream_http_error", "upstream_status": exc.code}, {"X-Nexus-Codex-Elapsed-Ms": str(int((time.monotonic() - started) * 1000)), "X-Nexus-Codex-Backend": REPLY_GENERATION_BACKEND})
+            json_response(self, 502, {"ok": False, "error": "upstream_http_error", "upstream_status": exc.code}, {"X-Nexus-Codex-Elapsed-Ms": str(int((time.monotonic() - started) * 1000)), "X-Nexus-Codex-Backend": EFFECTIVE_REPLY_GENERATION_BACKEND})
         except (TimeoutError, socket.timeout):
-            json_response(self, 504, {"ok": False, "error": "upstream_timeout"}, {"X-Nexus-Codex-Elapsed-Ms": str(int((time.monotonic() - started) * 1000)), "X-Nexus-Codex-Backend": REPLY_GENERATION_BACKEND})
+            json_response(self, 504, {"ok": False, "error": "upstream_timeout"}, {"X-Nexus-Codex-Elapsed-Ms": str(int((time.monotonic() - started) * 1000)), "X-Nexus-Codex-Backend": EFFECTIVE_REPLY_GENERATION_BACKEND})
         except Exception as exc:
-            json_response(self, 502, {"ok": False, "error": str(exc)[:120]}, {"X-Nexus-Codex-Elapsed-Ms": str(int((time.monotonic() - started) * 1000)), "X-Nexus-Codex-Backend": REPLY_GENERATION_BACKEND})
+            json_response(self, 502, {"ok": False, "error": str(exc)[:120]}, {"X-Nexus-Codex-Elapsed-Ms": str(int((time.monotonic() - started) * 1000)), "X-Nexus-Codex-Backend": EFFECTIVE_REPLY_GENERATION_BACKEND})
 
 
 def main() -> None:
