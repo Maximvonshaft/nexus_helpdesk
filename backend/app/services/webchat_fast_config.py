@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 
 
 _ALLOWED_FAST_AI_PROVIDERS = {"openclaw_responses", "codex_auth", "codex_app_server", "openai_responses", "provider_runtime"}
+_PRODUCTION_FAST_AI_PROVIDER = "provider_runtime"
+_PRODUCTION_FORBIDDEN_DIRECT_PROVIDERS = {"codex_auth", "codex_app_server", "openclaw_responses", "openai_responses"}
 _ALLOWED_FAST_AI_FALLBACK_PROVIDERS = {"openclaw_responses", "rule_engine", "none"}
 _ALLOWED_TRACKING_DEDUPE_SCOPES = {"legacy", "tenant_channel", "tenant_channel_customer"}
 
@@ -185,6 +187,12 @@ class WebchatFastSettings:
             raise RuntimeError(
                 "WEBCHAT_FAST_TRACKING_DEDUPE_SCOPE must be one of: "
                 + ", ".join(sorted(_ALLOWED_TRACKING_DEDUPE_SCOPES))
+            )
+        if self.enabled and self.app_env == "production" and self.provider != _PRODUCTION_FAST_AI_PROVIDER:
+            raise RuntimeError(
+                "Production WebChat Fast Reply requires WEBCHAT_FAST_AI_PROVIDER=provider_runtime; "
+                "legacy direct providers are forbidden in production: "
+                + ", ".join(sorted(_PRODUCTION_FORBIDDEN_DIRECT_PROVIDERS))
             )
         if self.provider == "codex_auth" and not self.codex_enabled:
             raise RuntimeError("WEBCHAT_FAST_AI_CODEX_ENABLED=true is required for WEBCHAT_FAST_AI_PROVIDER=codex_auth")

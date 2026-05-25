@@ -15,6 +15,8 @@ from .provider_base import BaseFastAIProvider
 from .schemas import FastAIProviderRequest, FastAIProviderResult
 
 
+# Deprecated legacy direct WebChat Fast Reply provider. Production traffic must
+# enter through WEBCHAT_FAST_AI_PROVIDER=provider_runtime instead.
 def _clip(value: str | None, limit: int) -> str:
     cleaned = (value or "").strip()
     return cleaned[:limit]

@@ -143,6 +143,7 @@ def test_stream_canary_override_fails_for_public_ip_in_production(monkeypatch):
 
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT', '0')
     monkeypatch.setenv('APP_ENV', 'production')
+    monkeypatch.setenv('WEBCHAT_FAST_AI_PROVIDER', 'provider_runtime')
     get_webchat_fast_settings.cache_clear()
     
     # We patch the request client host to simulate a non-loopback IP
@@ -171,6 +172,7 @@ def test_stream_canary_override_allows_bypass_for_loopback_in_production(monkeyp
 
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT', '0')
     monkeypatch.setenv('APP_ENV', 'production')
+    monkeypatch.setenv('WEBCHAT_FAST_AI_PROVIDER', 'provider_runtime')
     get_webchat_fast_settings.cache_clear()
     
     monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
@@ -219,7 +221,8 @@ def test_config_rules():
     # Production stream disabled
     with patch.dict(os.environ, {
         "APP_ENV": "production",
-            "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_AI_PROVIDER": "provider_runtime",
         "WEBCHAT_FAST_STREAM_ENABLED": "false",
         "OPENCLAW_RESPONSES_URL": "http://100.64.0.1/responses",
         "OPENCLAW_RESPONSES_TOKEN_FILE": "/dev/null",
@@ -234,7 +237,8 @@ def test_config_rules():
     # Production stream enabled missing URL
     with patch.dict(os.environ, {
         "APP_ENV": "production",
-            "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_AI_PROVIDER": "provider_runtime",
         "WEBCHAT_FAST_STREAM_ENABLED": "true",
         "OPENCLAW_RESPONSES_URL": "http://100.64.0.1/responses",
         "OPENCLAW_RESPONSES_TOKEN_FILE": "/dev/null",
@@ -248,7 +252,8 @@ def test_config_rules():
     # Production stream enabled missing Token File
     with patch.dict(os.environ, {
         "APP_ENV": "production",
-            "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_AI_PROVIDER": "provider_runtime",
         "WEBCHAT_FAST_STREAM_ENABLED": "true",
         "OPENCLAW_RESPONSES_URL": "http://100.64.0.1/responses",
         "OPENCLAW_RESPONSES_TOKEN_FILE": "/dev/null",
@@ -262,7 +267,8 @@ def test_config_rules():
     # Production stream enabled token plain text
     with patch.dict(os.environ, {
         "APP_ENV": "production",
-            "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_AI_PROVIDER": "provider_runtime",
         "WEBCHAT_FAST_STREAM_ENABLED": "true",
         "OPENCLAW_RESPONSES_URL": "http://100.64.0.1/responses",
         "OPENCLAW_RESPONSES_TOKEN_FILE": "/dev/null",
@@ -277,7 +283,8 @@ def test_config_rules():
     # Stream URL private/tailnet pass
     with patch.dict(os.environ, {
         "APP_ENV": "production",
-            "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_AI_PROVIDER": "provider_runtime",
         "WEBCHAT_FAST_STREAM_ENABLED": "true",
         "OPENCLAW_RESPONSES_URL": "http://100.64.0.1/responses",
         "OPENCLAW_RESPONSES_TOKEN_FILE": "/dev/null",
@@ -291,7 +298,8 @@ def test_config_rules():
     # Stream URL public host validation failure
     with patch.dict(os.environ, {
         "APP_ENV": "production",
-            "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_AI_ENABLED": "true",
+        "WEBCHAT_FAST_AI_PROVIDER": "provider_runtime",
         "WEBCHAT_FAST_STREAM_ENABLED": "true",
         "OPENCLAW_RESPONSES_URL": "http://100.64.0.1/responses",
         "OPENCLAW_RESPONSES_TOKEN_FILE": "/dev/null",
@@ -301,4 +309,3 @@ def test_config_rules():
         get_webchat_fast_settings.cache_clear()
         with pytest.raises(RuntimeError, match="must point to a private or tailnet host"):
             get_webchat_fast_settings()
-
