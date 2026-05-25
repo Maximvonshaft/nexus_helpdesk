@@ -10,6 +10,7 @@ from typing import Protocol
 from fastapi import HTTPException, UploadFile
 
 from ..settings import get_settings
+from .text_decoding import is_supported_text_upload
 
 settings = get_settings()
 CHUNK_SIZE = 1024 * 1024
@@ -37,6 +38,10 @@ def _validate_persist_bytes_inputs(*, content: bytes, filename: str, media_type:
         raise HTTPException(status_code=413, detail='Persisted attachment exceeds configured size limit')
     if allowed_extensions is not None and suffix not in allowed_extensions and suffix not in {'.bin', '.json', '.txt'}:
         raise HTTPException(status_code=400, detail=f"File extension '{suffix}' is not allowed")
+    if suffix == '.txt' and allowed_mime_types is not None and 'text/plain' in allowed_mime_types:
+        if not is_supported_text_upload(content[:4096]):
+            raise HTTPException(status_code=400, detail='Uploaded text file must be encoded as UTF-8, UTF-16, GB18030, or GBK')
+        return suffix, 'text/plain'
     if allowed_mime_types is not None and normalized_media_type not in allowed_mime_types:
         raise HTTPException(status_code=400, detail=f"MIME type '{normalized_media_type}' is not allowed")
     return suffix, normalized_media_type
@@ -58,11 +63,9 @@ class LocalStorageBackend:
         if len(sample) >= 12 and sample[:4] == b'RIFF' and sample[8:12] == b'WEBP':
             return 'image/webp'
         if suffix == '.txt':
-            try:
-                sample.decode('utf-8')
+            if is_supported_text_upload(sample):
                 return 'text/plain'
-            except UnicodeDecodeError as exc:
-                raise HTTPException(status_code=400, detail='Uploaded text file is not valid UTF-8') from exc
+            raise HTTPException(status_code=400, detail='Uploaded text file must be encoded as UTF-8, UTF-16, GB18030, or GBK')
         guessed, _ = mimetypes.guess_type(f'file{suffix}')
         return (guessed or declared).lower()
 
