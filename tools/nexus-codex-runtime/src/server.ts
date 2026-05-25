@@ -130,7 +130,7 @@ async function handleReply(
     return sendJson(
       res,
       normalized.status,
-      { ok: false, error: normalized.code, stage_ms: stages },
+      { ok: false, error: normalized.code, error_stage: normalized.stage ?? null, stage_ms: stages },
       {
         "X-Nexus-Codex-Backend": "nexus_codex_appserver_runtime",
         "X-Nexus-Codex-Elapsed-Ms": String(stages.total),
@@ -177,6 +177,9 @@ function readyPayload(config: RuntimeConfig): Record<string, unknown> {
     ok: config.enabled,
     enabled: config.enabled,
     model: config.model,
+    performance_profile: config.performanceProfile,
+    service_tier: config.serviceTier,
+    reasoning_effort: config.reasoningEffort,
     thread_mode: config.threadMode,
     runtime_start_options_hash: config.runtimeStartOptionsHash,
   };

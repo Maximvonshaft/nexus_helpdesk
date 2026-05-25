@@ -10,10 +10,10 @@ const DEVELOPER_INSTRUCTIONS =
 
 export function compilePrompt(request: ReplyRequest): CompiledPrompt {
   const history = request.messages
-    .slice(-2)
+    .slice(-1)
     .map((message) => {
       const role = typeof message.role === "string" ? message.role.slice(0, 16) : "user";
-      const content = typeof message.content === "string" ? truncate(message.content.replace(/\s+/g, " ").trim(), 120) : "";
+      const content = typeof message.content === "string" ? truncate(message.content.replace(/\s+/g, " ").trim(), 90) : "";
       return `${role}: ${content}`;
     })
     .join("\n");
@@ -28,12 +28,12 @@ export function compilePrompt(request: ReplyRequest): CompiledPrompt {
       `Contract=${request.contract || "speedaf_webchat_fast_reply_v1"}`,
       facts,
       history ? `Context:\n${history}` : "",
-      `Customer:\n${truncate(body.replace(/\s+/g, " ").trim(), 260)}`,
+      `Customer:\n${truncate(body.replace(/\s+/g, " ").trim(), 220)}`,
       `JSON schema: ${schema}`,
     ]
       .filter(Boolean)
       .join("\n\n"),
-    950,
+    720,
   );
   return {
     developerInstructions: truncateWords(DEVELOPER_INSTRUCTIONS, 120),

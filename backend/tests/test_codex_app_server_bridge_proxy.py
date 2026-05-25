@@ -600,7 +600,7 @@ def test_bridge_preserves_safe_upstream_status_and_error_class(monkeypatch, tmp_
             return None
 
         def do_POST(self) -> None:
-            raw = json.dumps({"ok": False, "error": "codex_queue_timeout", "stage_ms": {"queue": 751}}).encode("utf-8")
+            raw = json.dumps({"ok": False, "error": "codex_queue_timeout", "error_stage": "queue", "stage_ms": {"queue": 751}}).encode("utf-8")
             self.send_response(429)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(raw)))
@@ -639,4 +639,6 @@ def test_bridge_preserves_safe_upstream_status_and_error_class(monkeypatch, tmp_
     assert payload["bridge_error"] == "codex_upstream_http_error"
     assert payload["upstream_status"] == 429
     assert payload["upstream_error"] == "codex_queue_timeout"
+    assert payload["error_stage"] == "queue"
+    assert payload["stage_ms"]["queue"] == 751
     assert "oauth-access" not in json.dumps(payload)

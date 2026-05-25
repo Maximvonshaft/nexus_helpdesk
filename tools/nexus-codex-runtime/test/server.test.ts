@@ -45,11 +45,17 @@ test("node sidecar queue timeout is classified deterministically", async () => {
 test("node sidecar model benchmark config is opt-in", () => {
   const config = loadConfig({});
   const benchmark = loadConfig({ CODEX_APPSERVER_MODEL: "gpt-5.4-mini" });
+  const baseline = loadConfig({ CODEX_APPSERVER_PERFORMANCE_PROFILE: "baseline" });
 
   assert.equal(config.model, "gpt-5.5");
   assert.equal(config.maxConcurrency, 6);
   assert.equal(config.queueTimeoutMs, 750);
+  assert.equal(config.performanceProfile, "webchat_fast");
+  assert.equal(config.reasoningEffort, "low");
+  assert.equal(config.serviceTier, "priority");
   assert.equal(benchmark.model, "gpt-5.4-mini");
+  assert.equal(baseline.reasoningEffort, null);
+  assert.equal(baseline.serviceTier, null);
 });
 
 function listen(server: http.Server): Promise<void> {

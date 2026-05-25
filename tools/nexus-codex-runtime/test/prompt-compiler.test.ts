@@ -28,8 +28,9 @@ test("prompt compiler keeps latency profile compact and strict", () => {
   const prompt = compilePrompt(request);
 
   assert.ok(prompt.developerInstructions.split(/\s+/).length <= 35);
-  assert.ok(prompt.userText.length <= 950);
+  assert.ok(prompt.userText.length <= 720);
   assert.match(prompt.userText, /strict JSON|JSON schema/);
   assert.match(prompt.userText, /Tracking evidence: absent/);
-  assert.doesNotMatch(prompt.userText, /old context old context/);
+  assert.doesNotMatch(prompt.userText, /older reply/);
+  assert.doesNotMatch(prompt.userText, /old context/);
 });

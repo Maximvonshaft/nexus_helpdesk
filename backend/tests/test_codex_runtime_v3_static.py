@@ -46,7 +46,10 @@ def test_compose_adds_node_runtime_and_keeps_python_rollback():
 
     assert "codex-appserver-runtime:" in compose
     assert "CODEX_APPSERVER_PORT: \"18810\"" in compose
+    assert "CODEX_APPSERVER_PERFORMANCE_PROFILE: ${CODEX_APPSERVER_PERFORMANCE_PROFILE:-webchat_fast}" in compose
     assert "CODEX_APPSERVER_MODEL: ${CODEX_APPSERVER_MODEL:-gpt-5.5}" in compose
+    assert "CODEX_APPSERVER_REASONING_EFFORT: ${CODEX_APPSERVER_REASONING_EFFORT:-low}" in compose
+    assert "CODEX_APPSERVER_SERVICE_TIER: ${CODEX_APPSERVER_SERVICE_TIER:-priority}" in compose
     assert "codex-private-model-runtime:" in compose
     assert "PORT: \"18800\"" in compose
     assert "CODEX_APP_SERVER_RUNTIME_BACKEND" in compose
@@ -72,6 +75,8 @@ def test_node_runtime_defaults_match_validated_server_profile():
     assert 'const DEFAULT_MODEL = "gpt-5.5"' in env
     assert "const DEFAULT_MAX_CONCURRENCY = 6" in env
     assert "const DEFAULT_QUEUE_TIMEOUT_MS = 750" in env
+    assert 'const DEFAULT_REASONING_EFFORT = "low"' in env
+    assert 'const DEFAULT_SERVICE_TIER = "priority"' in env
     assert "CODEX_APPSERVER_MAX_CONCURRENCY: ${CODEX_APPSERVER_MAX_CONCURRENCY:-6}" in compose
     assert "CODEX_APPSERVER_QUEUE_TIMEOUT_MS: ${CODEX_APPSERVER_QUEUE_TIMEOUT_MS:-750}" in compose
     assert "ln -sf /usr/local/lib/node_modules/@openclaw/codex/node_modules/.bin/codex /usr/local/bin/codex" in dockerfile
@@ -95,9 +100,13 @@ def test_runtime_exposes_terminal_wait_and_queue_taxonomy():
 
     assert '"terminal_wait"' in metrics
     assert "codex_queue_timeout" in server
+    assert "error_stage" in server
     assert "terminalWaitMs" in thread_runner
     assert "codex_model_error" in thread_runner
     assert "codex_login_failed" in thread_runner
+    assert "config.workDir" in thread_runner
+    assert "collaborationMode" in thread_runner
+    assert "reasoning_effort" in thread_runner
 
 
 def test_bridge_preserves_safe_upstream_error_taxonomy():
@@ -120,6 +129,8 @@ def test_sla_probe_supports_required_phases_and_summary_fields():
     assert "backend_seen" in script
     assert "reply_source_seen" in script
     assert "dummy_assistant_success_count" in script
+    assert "CODEX_APPSERVER_SLA_PROFILE_MATRIX" in script
+    assert "CODEX_APPSERVER_SLA_RESTART_RUNTIME" in script
 
 
 def test_model_benchmark_candidates_are_documented_opt_in():

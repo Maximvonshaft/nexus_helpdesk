@@ -336,6 +336,17 @@ def _safe_upstream_error(exc: error.HTTPError) -> tuple[int, dict[str, Any]]:
     }
     if upstream_error:
         payload["upstream_error"] = upstream_error
+    if isinstance(decoded, dict):
+        error_stage = decoded.get("error_stage")
+        if isinstance(error_stage, str) and len(error_stage) <= 40:
+            payload["error_stage"] = error_stage
+        stage_ms = decoded.get("stage_ms")
+        if isinstance(stage_ms, dict):
+            payload["stage_ms"] = {
+                str(key): int(value)
+                for key, value in stage_ms.items()
+                if isinstance(key, str) and isinstance(value, (int, float)) and 0 <= value <= 300000
+            }
     return response_status, payload
 
 

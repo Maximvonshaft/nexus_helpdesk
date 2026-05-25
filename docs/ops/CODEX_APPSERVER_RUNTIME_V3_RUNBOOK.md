@@ -12,7 +12,10 @@ Start v3 candidate:
 ```bash
 export CODEX_APP_SERVER_RUNTIME_BACKEND=node_appserver
 export CODEX_APPSERVER_RUNTIME_ENABLED=true
+export CODEX_APPSERVER_PERFORMANCE_PROFILE=webchat_fast
 export CODEX_APPSERVER_MODEL=gpt-5.5
+export CODEX_APPSERVER_REASONING_EFFORT=low
+export CODEX_APPSERVER_SERVICE_TIER=priority
 export CODEX_APPSERVER_MAX_CONCURRENCY=6
 export CODEX_APPSERVER_QUEUE_TIMEOUT_MS=750
 export CODEX_APPSERVER_REPLY_TIMEOUT_MS=8000
@@ -32,11 +35,15 @@ Server validation after owner provides a controlled valid token:
 ```bash
 export CODEX_APP_SERVER_RUNTIME_BACKEND=node_appserver
 export WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED=true
+export CODEX_APPSERVER_PERFORMANCE_PROFILE=webchat_fast
 export CODEX_APPSERVER_MODEL=gpt-5.5
+export CODEX_APPSERVER_REASONING_EFFORT=low
+export CODEX_APPSERVER_SERVICE_TIER=priority
 export CODEX_APPSERVER_MAX_CONCURRENCY=6
 export CODEX_APPSERVER_QUEUE_TIMEOUT_MS=750
 export CODEX_APPSERVER_REPLY_TIMEOUT_MS=8000
-export NEXUS_CODEX_ACCESS_TOKEN="$(cat /run/nexus/owner-provided-valid-token)"
+read -r NEXUS_CODEX_ACCESS_TOKEN < /run/nexus/owner-provided-valid-token
+export NEXUS_CODEX_ACCESS_TOKEN
 bash scripts/probe_codex_appserver_discovery.sh
 bash scripts/probe_codex_appserver_runtime_v3_sla.sh
 ```
@@ -56,26 +63,47 @@ Do not count rollback or fallback traffic as Codex v3 success. Only responses wi
 
 ## Pilot Runtime Profile
 
-Validated default profile for this engineering candidate:
+Default controlled-probe profile for this engineering candidate:
 
+- `CODEX_APPSERVER_PERFORMANCE_PROFILE=webchat_fast`
 - `CODEX_APPSERVER_MODEL=gpt-5.5`
+- `CODEX_APPSERVER_REASONING_EFFORT=low`
+- `CODEX_APPSERVER_SERVICE_TIER=priority`
 - `CODEX_APPSERVER_MAX_CONCURRENCY=6`
 - `CODEX_APPSERVER_QUEUE_TIMEOUT_MS=750`
 - `CODEX_APPSERVER_REPLY_TIMEOUT_MS=8000`
 - `CODEX_APPSERVER_THREAD_MODE=ephemeral`
+- `CODEX_APPSERVER_WORK_DIR=/tmp/nexus-codex-runtime/webchat-workdir`
 - Request-scoped OAuth through `account/login/start`
 - `dynamicTools=[]`
 
-The queue timeout is intentionally classified as `codex_queue_timeout` so 12-parallel overload does not become a false success or generic upstream error.
+The performance hardening changes are intentional:
+
+- Use an isolated empty workdir instead of the application repo so Codex does not spend turn budget on irrelevant workspace context.
+- Send `effort=low` for modern Codex models; OpenClaw maps `minimal` to `low` because modern models reject or retry on `minimal`.
+- Send `serviceTier=priority` when supported for customer-facing latency.
+- Keep queue timeout classified as `codex_queue_timeout` so 12-parallel overload does not become a false success or generic upstream error.
 
 ## Model Benchmarking
 
-Default remains `gpt-5.5`. Benchmark candidates are opt-in only:
+Default remains `gpt-5.5` until owner validation says otherwise. Benchmark candidates are opt-in only:
 
 - `CODEX_APPSERVER_MODEL=gpt-5.4-mini`
 - `CODEX_APPSERVER_MODEL=gpt-5.3-codex-spark`
 
 Do not change the default model without a fresh controlled valid-token probe, dummy negative gate, and SLA run.
+
+Benchmark model/profile candidates on the server:
+
+```bash
+read -r NEXUS_CODEX_ACCESS_TOKEN < /run/nexus/owner-provided-valid-token
+export NEXUS_CODEX_ACCESS_TOKEN
+export CODEX_APPSERVER_SLA_RESTART_RUNTIME=true
+export CODEX_APPSERVER_SLA_PROFILE_MATRIX='gpt55_priority,gpt-5.5,low,priority,6,750,8000;gpt54mini_priority,gpt-5.4-mini,low,priority,6,750,8000;spark_priority,gpt-5.3-codex-spark,low,priority,6,750,8000'
+bash scripts/probe_codex_appserver_runtime_v3_sla.sh
+```
+
+The script reports `recommended_profile` only when a profile passes dummy safety, leakage scan, sequential 20, parallel 6, and acceptable parallel 12 behavior.
 
 ## Server Validation Snapshot
 
@@ -97,6 +125,25 @@ Observed results:
 - 12-parallel SLA still had errors after tuning.
 
 Current status: pilot-functional only. Production no-go remains for broad canary, high parallel traffic, p95 above 8 seconds, and 12-parallel errors.
+
+PR235 follow-up server facts:
+
+- Dummy token safety passed.
+- Token leakage count was 0.
+- SLA failure was dominated by `codex_turn_timeout`.
+- Observed `gpt-5.5` PR235 profile: sequential 18/20, parallel_6 5/6, parallel_12 5/12 with 6 controlled `codex_queue_timeout` and 1 `codex_turn_timeout`.
+
+Engineering conclusion: the bottleneck is terminal model latency inside the turn, not bridge routing or queue classification. If `gpt-5.5` with `webchat_fast` still misses p95, benchmark `gpt-5.4-mini` and `gpt-5.3-codex-spark` before any pilot increase.
+
+## Production Decision Matrix
+
+| Result | Decision |
+| --- | --- |
+| Dummy assistant success > 0 or token leakage > 0 | Not safe for controlled probe |
+| Sequential 20 or parallel_6 has `codex_turn_timeout` | Safe for owner debugging only; not safe for pilot |
+| parallel_6 is 6/6 with p95 <= 8000 ms, dummy/leakage pass, parallel_12 has only controlled `codex_queue_timeout` | Safe for controlled pilot discussion, not broad production |
+| sequential 20 is 20/20, parallel_6 is 6/6 p95 <= 8000 ms, parallel_12 has no unclassified/model/upstream generic errors, audit clean | Production-candidate for owner review only |
+| Any fallback/rollback counted as v3 success | Invalid run |
 
 ## Current Production No-Go List
 
