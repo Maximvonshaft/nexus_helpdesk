@@ -118,7 +118,7 @@ def test_fast_reply_provider_runtime_unavailable_returns_controlled_non_500(monk
     monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "provider_runtime")
     get_webchat_fast_settings.cache_clear()
     monkeypatch.setattr(
-        "app.services.ai_runtime.provider_router.ProviderRuntimeRouter.route",
+        "app.services.provider_runtime.webchat_fast_dispatcher.ProviderRuntimeRouter.route",
         AsyncMock(
             return_value=ProviderResult(
                 ok=False,

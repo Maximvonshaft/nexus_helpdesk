@@ -74,6 +74,8 @@ jobs:
               backend/app/services/provider_runtime/codex_smoke_chat.py) return 0 ;;
               backend/app/services/provider_runtime/oauth_refresh_manager.py) return 0 ;;
               backend/app/services/provider_runtime/router.py) return 0 ;;
+              backend/app/services/provider_runtime/webchat_fast_dispatcher.py) return 0 ;;
+              backend/app/services/webchat_fast_ai_service.py) return 0 ;;
               backend/app/services/webchat_fast_config.py) return 0 ;;
               backend/app/services/webcall_ai_production/**) return 0 ;;
               backend/app/webcall_ai_schemas.py) return 0 ;;
@@ -93,6 +95,7 @@ jobs:
               backend/tests/test_webchat_fast_ai_provider_router_phase1.py) return 0 ;;
               backend/tests/test_webchat_fast_production_legacy_guard.py) return 0 ;;
               backend/tests/test_webchat_fast_reply_api.py) return 0 ;;
+              backend/tests/test_webchat_fast_reply_provider_runtime.py) return 0 ;;
               backend/tests/test_webchat_stream_feature_flag.py) return 0 ;;
               backend/tests/test_webcall_ai_production.py) return 0 ;;
               backend/tests/test_webcall_ai_voice_loop.py) return 0 ;;
