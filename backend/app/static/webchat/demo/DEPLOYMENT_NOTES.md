@@ -50,4 +50,16 @@ The showcase page must not display local tracking answers, local bot answers, fa
 
 ## Voice entry
 
-This showcase does not expose a customer-visible voice entry. If voice is later required, integrate the existing NexusDesk `/webchat/voice-entry.js` runtime and let `/api/webchat/voice/runtime-config` control visibility.
+The showcase loads the optional customer-visible WebCall entry script:
+
+```text
+/webchat/voice-entry.js
+```
+
+Visibility remains controlled by the backend runtime config endpoint:
+
+```text
+GET /api/webchat/voice/runtime-config
+```
+
+When `WEBCHAT_VOICE_ENABLED=false`, the WebCall button stays hidden. When `WEBCHAT_VOICE_ENABLED=true`, the entry script displays the WebCall button and creates voice sessions through the existing WebChat voice runtime.

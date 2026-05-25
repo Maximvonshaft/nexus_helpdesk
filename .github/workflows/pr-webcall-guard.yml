@@ -54,7 +54,10 @@ jobs:
               webapp/package.json) return 0 ;;
               webapp/package-lock.json) return 0 ;;
               Dockerfile) return 0 ;;
+              backend/app/static/webchat/demo/DEPLOYMENT_NOTES.md) return 0 ;;
+              backend/app/static/webchat/demo/index.html) return 0 ;;
               backend/app/webchat_voice_config.py) return 0 ;;
+              backend/tests/test_webchat_voice_mock_ui_static.py) return 0 ;;
               backend/tests/test_webchat_voice_static_headers.py) return 0 ;;
               webapp/src/routes/webcall-ai.tsx) return 0 ;;
               webapp/src/styles.css) return 0 ;;
@@ -125,6 +128,7 @@ jobs:
               webapp/package.json) return 0 ;;
               webapp/package-lock.json) return 0 ;;
               backend/app/webchat_voice_config.py) return 0 ;;
+              backend/tests/test_webchat_voice_mock_ui_static.py) return 0 ;;
               backend/tests/test_webchat_voice_static_headers.py) return 0 ;;
             esac
             return 1
@@ -310,6 +314,7 @@ jobs:
           set -Eeuo pipefail
           pytest -q \
             backend/tests/test_webchat_voice_static_headers.py \
+            backend/tests/test_webchat_voice_mock_ui_static.py \
             backend/tests/test_webchat_voice_p0_static.py \
             backend/tests/test_webchat_voice_api.py \
             backend/tests/test_webchat_voice_p0_gap_closure.py \

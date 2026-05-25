@@ -6,6 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 VOICE_ENTRY = ROOT / "backend" / "app" / "static" / "webchat" / "voice-entry.js"
 DEMO_HTML = ROOT / "backend" / "app" / "static" / "webchat" / "demo.html"
+DEMO_INDEX = ROOT / "backend" / "app" / "static" / "webchat" / "demo" / "index.html"
 ADMIN_ROUTE = ROOT / "webapp" / "src" / "routes" / "webchat-voice.tsx"
 AGENT_PANEL = ROOT / "webapp" / "src" / "components" / "webcall" / "AgentWebCallPanel.tsx"
 WEBCALL_ROUTE = ROOT / "webapp" / "src" / "routes" / "webcall.tsx"
@@ -28,12 +29,16 @@ def test_public_voice_entry_calls_voice_session_api_and_webcall_page():
     assert "Popup blocked. Please allow popups" in text
 
 
-def test_showcase_redirect_does_not_expose_unvalidated_voice_button():
-    text = DEMO_HTML.read_text(encoding="utf-8")
+def test_showcase_loads_feature_gated_webcall_entry():
+    redirect_text = DEMO_HTML.read_text(encoding="utf-8")
+    index_text = DEMO_INDEX.read_text(encoding="utf-8")
 
-    assert "url=/webchat/demo/" in text
-    assert "/webchat/voice-entry.js" not in text
-    assert "Voice support" not in text
+    assert "url=/webchat/demo/" in redirect_text
+    assert "/webchat/voice-entry.js" in index_text
+    assert "data-tenant=\"default\"" in index_text
+    assert "data-channel=\"website\"" in index_text
+    assert "data-title=\"Speedaf WebCall\"" in index_text
+    assert "data-voice-label=\"WebCall\"" in index_text
 
 
 def test_agent_webcall_console_route_is_registered():
