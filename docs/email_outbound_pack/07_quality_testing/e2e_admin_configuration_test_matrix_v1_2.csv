@@ -1,0 +1,19 @@
+ID,Layer,Scenario,Expected Result,Priority
+E2E-001,Admin UI,Open Email account page,Email accounts are listed with readiness and health badges,P0
+E2E-002,Admin API,Create Email account with valid fields,ChannelAccount(provider=email) and EmailChannelAccount created in one transaction,P0
+E2E-003,Admin API,Create Email account with raw secret value,Request rejected; raw secret not stored,P0
+E2E-004,Admin UI,Missing identity verification,Readiness checklist shows identity_not_verified,P0
+E2E-005,Admin UI,Run health check with missing secret_ref,Health check fails safely with missing secret reason,P0
+E2E-006,Admin UI,Send test email to allowed test recipient,Provider accepted result shown and audit record created,P0
+E2E-007,Agent UI,Ticket customer has valid email and account ready,Email channel selectable and Email fields rendered,P0
+E2E-008,Agent UI,Ticket customer email missing,Email disabled with valid_email_recipient missing reason,P0
+E2E-009,Agent API,Send Email reply,Outbox row and EmailOutboundMetadata created in same transaction,P0
+E2E-010,Worker,Email disabled after row queued,Pending row not dead-lettered and retry_count unchanged,P0
+E2E-011,Provider,SES send success,Provider message id persisted and timeline shows accepted,P0
+E2E-012,Webhook,Unsigned delivery event,Request rejected,P0
+E2E-013,Webhook,Bounce event,Delivery event stored and suppression entry created,P0
+E2E-014,Inbound,Reply with plus-address ticket id,Inbound message links to correct ticket,P0
+E2E-015,Inbound,Subject-only match,Message goes unresolved/manual review, not auto-linked,P0
+E2E-016,Frontend regression,WhatsApp/WebChat send existing payload,Still works with {channel,body},P0
+E2E-017,Admin queue,Email backlog exists,Queue summary shows Email-specific counts,P1
+E2E-018,Rollback,OUTBOUND_EMAIL_ENABLED=false,Email unavailable in UI and pending Email untouched,P0

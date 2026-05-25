@@ -227,6 +227,11 @@ class OutboundDraftCreate(BaseModel):
 class OutboundSendRequest(BaseModel):
     channel: SourceChannel
     body: str
+    email_to: Optional[str] = None
+    email_from: Optional[str] = None
+    email_subject: Optional[str] = None
+    email_cc: list[str] = Field(default_factory=list)
+    email_bcc: list[str] = Field(default_factory=list)
 
 
 class AttachmentRead(APIModel):
@@ -272,6 +277,10 @@ class OutboundMessageRead(APIModel):
     max_retries: int = 0
     sent_at: Optional[datetime] = None
     created_at: datetime
+    provider_message_id: Optional[str] = None
+    email_subject: Optional[str] = None
+    email_to: Optional[str] = None
+    email_from: Optional[str] = None
 
 
 class AIIntakeRead(APIModel):
@@ -659,6 +668,10 @@ class OpenClawSyncEnqueueRequest(BaseModel):
 class QueueSummaryRead(APIModel):
     pending_outbound: int
     dead_outbound: int
+    email_pending_outbound: int = 0
+    email_dead_outbound: int = 0
+    email_delivery_events: int = 0
+    email_active_suppressions: int = 0
     pending_jobs: int
     dead_jobs: int
     openclaw_links: int
@@ -723,6 +736,61 @@ class ChannelAccountUpdate(BaseModel):
     priority: Optional[int] = None
     health_status: Optional[str] = None
     fallback_account_id: Optional[str] = None
+
+
+class EmailAccountCreate(BaseModel):
+    account_id: str
+    from_email: str
+    from_name: Optional[str] = None
+    market_id: Optional[int] = None
+    region: Optional[str] = None
+    configuration_set: Optional[str] = None
+    inbound_domain: Optional[str] = None
+    plus_address_tag: Optional[str] = None
+    verification_status: str = "pending"
+    is_active: bool = True
+
+
+class EmailAccountUpdate(BaseModel):
+    from_name: Optional[str] = None
+    market_id: Optional[int] = None
+    region: Optional[str] = None
+    configuration_set: Optional[str] = None
+    inbound_domain: Optional[str] = None
+    plus_address_tag: Optional[str] = None
+    verification_status: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class EmailAccountRead(APIModel):
+    id: int
+    channel_account_id: int
+    account_id: str
+    from_email: str
+    from_name: Optional[str] = None
+    market_id: Optional[int] = None
+    provider: str
+    region: Optional[str] = None
+    configuration_set: Optional[str] = None
+    verification_status: str
+    inbound_domain: Optional[str] = None
+    plus_address_tag: Optional[str] = None
+    is_active: bool
+    health_status: str
+    last_test_send_at: Optional[datetime] = None
+    last_readiness_check_at: Optional[datetime] = None
+    updated_at: datetime
+
+
+class EmailReadinessRead(BaseModel):
+    ready: bool
+    missing: list[str] = Field(default_factory=list)
+
+
+class EmailTestSendRequest(BaseModel):
+    to_email: str
+    subject: str = "NexusDesk Email test"
+    body: str = "NexusDesk Email account test."
 
 
 class OpenClawRuntimeHealthRead(APIModel):

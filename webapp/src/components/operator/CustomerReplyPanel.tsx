@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { Field, Select, Textarea } from '@/components/ui/Field'
+import { Field, Input, Select, Textarea } from '@/components/ui/Field'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { labelize, sanitizeDisplayText } from '@/lib/format'
 import { SpeedafActionsPanel } from '@/components/operator/SpeedafActionsPanel'
@@ -36,6 +36,10 @@ export function CustomerReplyPanel({ activeCase, onToast }: { activeCase: CaseDe
   const client = useQueryClient()
   const [channel, setChannel] = useState(activeCase.preferred_reply_channel || activeCase.openclaw_conversation?.channel || 'web_chat')
   const [body, setBody] = useState(defaultReply(activeCase))
+  const [emailSubject, setEmailSubject] = useState(`Re: ${activeCase.title}`)
+  const [emailTo, setEmailTo] = useState(activeCase.customer?.email || activeCase.preferred_reply_contact || '')
+  const [emailCc, setEmailCc] = useState('')
+  const [emailBcc, setEmailBcc] = useState('')
   const [confirmExternal, setConfirmExternal] = useState(false)
 
   const capabilities = useQuery({
@@ -47,6 +51,10 @@ export function CustomerReplyPanel({ activeCase, onToast }: { activeCase: CaseDe
   useEffect(() => {
     setChannel(activeCase.preferred_reply_channel || activeCase.openclaw_conversation?.channel || 'web_chat')
     setBody(defaultReply(activeCase))
+    setEmailSubject(`Re: ${activeCase.title}`)
+    setEmailTo(activeCase.customer?.email || activeCase.preferred_reply_contact || '')
+    setEmailCc('')
+    setEmailBcc('')
     setConfirmExternal(false)
   }, [activeCase.id])
 
@@ -58,10 +66,24 @@ export function CustomerReplyPanel({ activeCase, onToast }: { activeCase: CaseDe
     () => (capabilities.data?.channels ?? []).find((item) => item.channel === channel),
     [capabilities.data?.channels, channel],
   )
-  const canSend = Boolean(selectedCapability?.supports_send && body.trim() && (!selectedCapability.external_send || confirmExternal))
+  const canSend = Boolean(selectedCapability?.supports_send && body.trim() && (channel !== 'email' || (emailTo.trim() && emailSubject.trim())) && (!selectedCapability.external_send || confirmExternal))
+
+  const sendCurrentMessage = () => {
+    if (channel !== 'email') {
+      return api.sendOutboundMessage(activeCase.id, { channel, body: body.trim() })
+    }
+    return api.sendOutboundMessage(activeCase.id, {
+      channel: 'email',
+      body: body.trim(),
+      email_to: emailTo.trim(),
+      email_subject: emailSubject.trim(),
+      email_cc: emailCc.split(',').map((item) => item.trim()).filter(Boolean),
+      email_bcc: emailBcc.split(',').map((item) => item.trim()).filter(Boolean),
+    })
+  }
 
   const sendMutation = useMutation({
-    mutationFn: () => api.sendOutboundMessage(activeCase.id, { channel, body: body.trim() }),
+    mutationFn: sendCurrentMessage,
     onSuccess: async (result) => {
       const semantics = String(result.delivery_semantics || '')
       onToast({
@@ -110,6 +132,15 @@ export function CustomerReplyPanel({ activeCase, onToast }: { activeCase: CaseDe
               {selectedCapability && selectedCapability.missing.length ? (
                 <div className="message" data-role="user">
                   <strong>发送阻断项：</strong> {selectedCapability.missing.map(labelize).join('、')}
+                </div>
+              ) : null}
+
+              {channel === 'email' ? (
+                <div className="form-grid">
+                  <Field label="To" required><Input value={emailTo} onChange={(event) => setEmailTo(event.target.value)} /></Field>
+                  <Field label="Subject" required><Input value={emailSubject} onChange={(event) => setEmailSubject(event.target.value)} /></Field>
+                  <Field label="CC"><Input value={emailCc} onChange={(event) => setEmailCc(event.target.value)} /></Field>
+                  <Field label="BCC"><Input value={emailBcc} onChange={(event) => setEmailBcc(event.target.value)} /></Field>
                 </div>
               ) : null}
 

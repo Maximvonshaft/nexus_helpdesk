@@ -1,0 +1,7 @@
+Requirement,Evidence,Design,Implementation Files,Tests,Acceptance
+Email must remain blocked until configured,E-002,Capability registry,"outbound_channel_registry.py, settings.py",test_email_channel_capabilities.py,"AC-001, AC-002"
+Agent can send email from ticket,"E-003,E-004",Email adapter + outbox,"schemas.py, ticket_service.py, message_dispatch.py, outbound_adapters/email.py",test_email_outbound_adapter.py,AC-003
+Provider message id persisted,E-006,Email metadata table,"models.py, migration, email.py",test_email_provider_success.py,AC-004
+Bounce/complaint events captured,E-006,Delivery event webhook,"api/email_integrations.py, email_events.py",test_email_delivery_events.py,AC-005
+Inbound replies link to ticket,E-007,Inbound parser/linker,"email_inbound.py, api/email_integrations.py",test_email_inbound_parser.py,AC-006
+Rollback disables send,E-004,Feature flags,"settings.py, registry.py, deployment docs",test_email_runtime_gates.py,AC-010

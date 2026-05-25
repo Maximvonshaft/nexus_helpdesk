@@ -44,6 +44,7 @@ from ..schemas import (
 from .audit_service import log_event
 from .file_service import build_attachment_download_url, save_upload
 from .message_dispatch import queue_outbound_message
+from .outbound_adapters.email import build_or_get_email_metadata
 from .permissions import (
     ensure_can_assign,
     ensure_can_change_status,
@@ -689,6 +690,17 @@ def send_outbound_message(db: Session, ticket_id: int, payload: OutboundSendRequ
         body=payload.body,
         created_by=current_user.id,
     )
+    if payload.channel.value == "email":
+        build_or_get_email_metadata(
+            db,
+            message=message,
+            ticket=ticket,
+            subject=payload.email_subject,
+            to_email=payload.email_to,
+            from_email=payload.email_from,
+            cc=payload.email_cc,
+            bcc=payload.email_bcc,
+        )
     update_first_response(ticket)
     evaluate_sla(ticket, db)
     log_event(

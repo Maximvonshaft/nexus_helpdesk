@@ -1,0 +1,10 @@
+Evidence ID,Path,Current Behavior,Required Change,Risk
+E-001,backend/app/enums.py,SourceChannel includes email,Keep enum; no breaking change,Low
+E-002,backend/app/services/outbound_channel_registry.py,Email is experimental_not_ready,Turn into gated ready channel after implementation,High
+E-003,backend/app/api/tickets.py,Send endpoint calls capability gate,Preserve gate and add email-specific validation,Medium
+E-004,backend/app/services/message_dispatch.py,Outbox/worker dispatch supports external channels but provider allowlist is openclaw,Add email branch and email runtime gate,High
+E-005,backend/app/services/outbound_adapters/whatsapp.py,Dedicated adapter pattern exists,Mirror adapter pattern for email,Medium
+E-006,backend/app/models.py,TicketOutboundMessage has generic queue fields,Add email metadata/delivery/inbound/suppression tables,High
+E-007,backend/app/settings.py,No email provider settings,Add fail-closed email env settings,Medium
+E-008,webapp/src/routes/accounts.tsx,Account UI exists,Add/extend email account governance UI if feasible,Medium
+E-009,webapp/src/lib/types.ts,Frontend types likely require channel/capability extension,Add email capability and send fields,Medium

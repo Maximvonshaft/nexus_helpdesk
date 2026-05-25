@@ -166,6 +166,114 @@ class ChannelAccount(Base):
     market: Mapped[Optional["Market"]] = relationship(back_populates="channel_accounts")
 
 
+class EmailChannelAccount(Base):
+    __tablename__ = "email_channel_accounts"
+    __table_args__ = (UniqueConstraint("channel_account_id", name="uq_email_channel_account_channel_account"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    channel_account_id: Mapped[int] = mapped_column(ForeignKey("channel_accounts.id"), index=True)
+    from_email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    from_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    provider: Mapped[str] = mapped_column(String(40), default="ses", index=True)
+    region: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    configuration_set: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    verification_status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    inbound_domain: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    plus_address_tag: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    last_test_send_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True)
+    last_readiness_check_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
+
+    channel_account: Mapped["ChannelAccount"] = relationship()
+
+
+class EmailOutboundMetadata(Base):
+    __tablename__ = "email_outbound_metadata"
+    __table_args__ = (UniqueConstraint("outbound_message_id", name="uq_email_outbound_metadata_message"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outbound_message_id: Mapped[int] = mapped_column(ForeignKey("ticket_outbound_messages.id"), index=True)
+    email_account_id: Mapped[Optional[int]] = mapped_column(ForeignKey("email_channel_accounts.id"), nullable=True, index=True)
+    from_email: Mapped[str] = mapped_column(String(320), index=True)
+    to_email: Mapped[str] = mapped_column(String(320), index=True)
+    cc_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    bcc_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    subject: Mapped[str] = mapped_column(String(255))
+    provider_message_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    provider_thread_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    reply_token: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
+
+    outbound_message: Mapped["TicketOutboundMessage"] = relationship()
+    email_account: Mapped[Optional["EmailChannelAccount"]] = relationship()
+
+
+class EmailDeliveryEvent(Base):
+    __tablename__ = "email_delivery_events"
+    __table_args__ = (UniqueConstraint("provider", "provider_event_id", name="uq_email_delivery_provider_event"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outbound_message_id: Mapped[Optional[int]] = mapped_column(ForeignKey("ticket_outbound_messages.id"), nullable=True, index=True)
+    provider: Mapped[str] = mapped_column(String(40), default="ses", index=True)
+    provider_event_id: Mapped[str] = mapped_column(String(255), index=True)
+    provider_message_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(40), index=True)
+    recipient: Mapped[Optional[str]] = mapped_column(String(320), nullable=True, index=True)
+    payload_json: Mapped[dict] = mapped_column(JSON)
+    occurred_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+
+    outbound_message: Mapped[Optional["TicketOutboundMessage"]] = relationship()
+
+
+class EmailSuppression(Base):
+    __tablename__ = "email_suppressions"
+    __table_args__ = (UniqueConstraint("email_normalized", name="uq_email_suppression_email"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    email_normalized: Mapped[str] = mapped_column(String(320), index=True)
+    reason: Mapped[str] = mapped_column(String(80), index=True)
+    source_event_id: Mapped[Optional[int]] = mapped_column(ForeignKey("email_delivery_events.id"), nullable=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
+
+
+class EmailInboundMessage(Base):
+    __tablename__ = "email_inbound_messages"
+    __table_args__ = (UniqueConstraint("provider", "provider_message_id", name="uq_email_inbound_provider_message"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticket_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tickets.id"), nullable=True, index=True)
+    provider: Mapped[str] = mapped_column(String(40), default="ses", index=True)
+    provider_message_id: Mapped[str] = mapped_column(String(255), index=True)
+    from_email: Mapped[str] = mapped_column(String(320), index=True)
+    to_email: Mapped[str] = mapped_column(String(320), index=True)
+    subject: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    body_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reply_token: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    link_status: Mapped[str] = mapped_column(String(40), default="unresolved", index=True)
+    payload_json: Mapped[dict] = mapped_column(JSON)
+    received_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+
+    ticket: Mapped[Optional["Ticket"]] = relationship()
+
+
+class EmailWebhookReplay(Base):
+    __tablename__ = "email_webhook_replays"
+    __table_args__ = (UniqueConstraint("signature", name="uq_email_webhook_replay_signature"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    signature: Mapped[str] = mapped_column(String(128), index=True)
+    timestamp: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+
+
 class User(Base):
     __tablename__ = "users"
 

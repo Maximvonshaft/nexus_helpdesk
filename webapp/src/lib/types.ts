@@ -132,6 +132,31 @@ export interface ChannelAccount {
   updated_at: string
 }
 
+export interface EmailAccount {
+  id: number
+  channel_account_id: number
+  account_id: string
+  from_email: string
+  from_name?: string | null
+  market_id?: number | null
+  provider: string
+  region?: string | null
+  configuration_set?: string | null
+  verification_status: string
+  inbound_domain?: string | null
+  plus_address_tag?: string | null
+  is_active: boolean
+  health_status: string
+  last_test_send_at?: string | null
+  last_readiness_check_at?: string | null
+  updated_at: string
+}
+
+export interface EmailReadiness {
+  ready: boolean
+  missing: string[]
+}
+
 export interface EvidenceSummary {
   loaded: boolean
   preview_limit: number
@@ -191,9 +216,23 @@ export interface CaseDetail {
   } | null
 }
 
+export interface OutboundEmailSendPayload {
+  channel: 'email'
+  body: string
+  email_to: string
+  email_subject: string
+  email_from?: string | null
+  email_cc?: string[]
+  email_bcc?: string[]
+}
+
 export interface QueueSummary {
   pending_outbound: number
   dead_outbound: number
+  email_pending_outbound?: number
+  email_dead_outbound?: number
+  email_delivery_events?: number
+  email_active_suppressions?: number
   external_pending_outbound?: number
   external_dead_outbound?: number
   webchat_local_ack_sent?: number

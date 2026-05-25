@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketPriority, TicketSource, UserRole
 from ..models import ChannelAccount, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, Team, Ticket, TicketAttachment, User
+from .channel_account_registry import OPENCLAW_PROVIDER_CHANNELS, resolve_channel_account_for_provider
 from ..schemas import OpenClawConversationRead, OpenClawSyncResult, OpenClawTranscriptRead
 from ..settings import get_settings
 from ..utils.time import utc_now
@@ -280,15 +281,32 @@ def _extract_attachment_refs(payload: Any) -> list[dict[str, Any]]:
 
 def resolve_channel_account(db: Session, *, market_id: int | None, account_id: str | None) -> ChannelAccount | None:
     if account_id:
-        row = db.query(ChannelAccount).filter(ChannelAccount.account_id == account_id, ChannelAccount.is_active.is_(True)).first()
+        row = db.query(ChannelAccount).filter(
+            ChannelAccount.account_id == account_id,
+            ChannelAccount.provider.in_(OPENCLAW_PROVIDER_CHANNELS),
+            ChannelAccount.is_active.is_(True),
+        ).first()
         if row:
             return row
-    q = db.query(ChannelAccount).filter(ChannelAccount.is_active.is_(True))
+    q = db.query(ChannelAccount).filter(
+        ChannelAccount.provider.in_(OPENCLAW_PROVIDER_CHANNELS),
+        ChannelAccount.is_active.is_(True),
+    )
     if market_id is not None:
         row = q.filter(ChannelAccount.market_id == market_id).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
         if row:
             return row
     return q.filter(ChannelAccount.market_id.is_(None)).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
+
+
+def resolve_provider_channel_account(
+    db: Session,
+    *,
+    provider: str,
+    market_id: int | None,
+    account_id: str | None,
+) -> ChannelAccount | None:
+    return resolve_channel_account_for_provider(db, provider=provider, market_id=market_id, account_id=account_id)
 
 
 def persist_unresolved_openclaw_event(

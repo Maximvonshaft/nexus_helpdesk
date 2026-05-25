@@ -1,0 +1,10 @@
+# Suggested CODEOWNERS for Email outbound changes
+
+/backend/app/services/outbound_adapters/email.py @backend-owner
+/backend/app/services/email_providers/ @backend-owner @devops-owner
+/backend/app/services/email_events.py @backend-owner @security-owner
+/backend/app/services/email_inbound.py @backend-owner @security-owner
+/backend/app/api/email_integrations.py @backend-owner @security-owner
+/backend/alembic/versions/*email* @backend-owner
+/webapp/src/routes/* @frontend-owner
+/docs/ops/EMAIL_OUTBOUND_RUNBOOK.md @devops-owner @operations-owner

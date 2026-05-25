@@ -1,0 +1,13 @@
+Key,Context,Copy
+email.channel.label,Channel selector,Email
+email.disabled.missing_customer_email,Disabled reason,Customer email is missing or invalid.
+email.disabled.account_missing,Disabled reason,Email account is not configured for this market.
+email.disabled.identity_unverified,Disabled reason,Sender email/domain is not verified.
+email.disabled.dispatch_off,Disabled reason,Email sending is disabled by system configuration.
+email.disabled.suppressed,Disabled reason,This email address is blocked because of a bounce or complaint.
+email.send.queued,Toast/timeline,Email queued for sending.
+email.send.sent,Timeline,Email accepted by provider.
+email.delivery.delivered,Timeline,Email delivered.
+email.delivery.bounced,Timeline,Email bounced. Verify the customer email address.
+email.delivery.complaint,Timeline,Complaint received. Do not resend without review.
+email.inbound.received,Timeline,Customer replied by email.

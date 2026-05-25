@@ -1,0 +1,20 @@
+Test ID,Command,Purpose,Required Result
+T-001,python -m pytest backend/tests/test_email_channel_capabilities.py,Capability gates,Pass
+T-002,python -m pytest backend/tests/test_email_outbound_adapter.py,Route and adapter behavior,Pass
+T-003,python -m pytest backend/tests/test_email_provider_ses.py,SES provider contract with stubbed client,Pass
+T-004,python -m pytest backend/tests/test_email_delivery_events.py,Webhook/delivery/bounce/complaint idempotency,Pass
+T-005,python -m pytest backend/tests/test_email_inbound_parser.py,Inbound reply parsing/linking,Pass
+T-006,python -m pytest backend/tests/test_email_security.py,"Header injection, suppression, secret safety",Pass
+T-007,python -m pytest backend/tests/test_production_dispatch_gates.py backend/tests/test_outbound_message_semantics.py,Regression for existing outbound semantics,Pass
+T-008,python -m pytest backend/tests/test_whatsapp_outbound_adapter.py,Regression for WhatsApp adapter,Pass
+T-009,npm --prefix webapp run typecheck,Frontend type safety,Pass if UI touched
+T-010,npm --prefix webapp test,Frontend tests,Pass if UI touched
+T-011,npm --prefix webapp run build,Frontend production build,Pass if UI touched
+T-012,alembic upgrade head,Migration upgrade,Pass
+T-013,python backend/scripts/smoke_email_outbound_adapter.py,Local email smoke with fake provider,Pass
+T-014,python -m pytest backend/tests/test_provider_scoped_channel_account_resolution.py,Provider-scoped account resolver prevents Email contamination of non-email channels,Pass
+T-015,python -m pytest backend/tests/test_email_runtime_gate_and_rollback.py,Email-specific runtime gate and rollback pause semantics,Pass
+T-016,python -m pytest backend/tests/test_email_backward_compatibility.py,Existing non-email outbound payloads remain backward compatible,Pass
+T-017,python -m pytest backend/tests/test_email_webhook_auth.py,SNS signature or HMAC timestamp anti-replay validation,Pass
+T-018,python -m pytest backend/tests/test_email_inbound_no_subject_autolink.py,Subject similarity cannot auto-link inbound Email in V1,Pass
+T-019,python -m pytest backend/tests/test_email_queue_observability.py,Admin queue summary includes Email channel breakdown,Pass

@@ -1,0 +1,59 @@
+name: Email Outbound SSS Quality Gate
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - "backend/app/services/outbound_adapters/email.py"
+      - "backend/app/services/email_*.py"
+      - "backend/app/services/email_providers/**"
+      - "backend/app/api/admin_email.py"
+      - "backend/app/api/email_integrations.py"
+      - "backend/alembic/versions/*email*.py"
+      - "backend/app/services/channel_account_registry.py"
+      - "backend/app/models.py"
+      - "backend/app/schemas.py"
+      - "backend/app/settings.py"
+      - "backend/tests/test_email_*.py"
+      - "webapp/**"
+
+jobs:
+  email-quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Backend email tests
+        run: |
+          python -m pytest \
+            backend/tests/test_email_runtime_gate.py \
+            backend/tests/test_channel_account_provider_scope.py \
+            backend/tests/test_email_models_migration.py \
+            backend/tests/test_email_admin_api.py \
+            backend/tests/test_email_channel_capabilities.py \
+            backend/tests/test_email_outbound_queueing.py \
+            backend/tests/test_email_dispatch_adapter.py \
+            backend/tests/test_email_provider_ses.py \
+            backend/tests/test_email_delivery_events.py \
+            backend/tests/test_email_webhook_auth.py \
+            backend/tests/test_email_inbound_parser.py \
+            backend/tests/test_email_inbound_linking.py \
+            backend/tests/test_email_observability.py \
+            backend/tests/test_email_security.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: webapp/package-lock.json
+      - name: Install frontend dependencies
+        run: npm --prefix webapp ci
+      - name: Frontend checks
+        run: |
+          npm --prefix webapp run typecheck
+          npm --prefix webapp test
+      - name: Pack validation
+        run: python 15_automation_scripts/validate_pack.py

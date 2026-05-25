@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
-import type { ChannelAccount } from '@/lib/types'
+import type { ChannelAccount, EmailAccount } from '@/lib/types'
 import { formatDateTime, healthTone, labelize, sanitizeDisplayText } from '@/lib/format'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -48,11 +48,13 @@ function AccountsPage() {
   const navigate = useNavigate()
   const permitted = canManageChannels(session.data)
   const accounts = useQuery({ queryKey: ['channelAccounts'], queryFn: api.channelAccounts, refetchInterval: autoRefresh.enabled ? 30000 : false, enabled: permitted })
+  const emailAccounts = useQuery({ queryKey: ['emailAccounts'], queryFn: api.emailAccounts, refetchInterval: autoRefresh.enabled ? 30000 : false, enabled: permitted })
   const markets = useQuery({ queryKey: ['markets'], queryFn: api.markets, enabled: permitted })
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [provider, setProvider] = useState('all')
   const [health, setHealth] = useState('all')
   const [form, setForm] = useState<Partial<ChannelAccount>>(emptyForm())
+  const [emailForm, setEmailForm] = useState<Partial<EmailAccount>>({ account_id: '', from_email: '', from_name: '', verification_status: 'pending', is_active: true })
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
   const [dirty, setDirty] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
@@ -129,6 +131,25 @@ function AccountsPage() {
     onError: (err: Error) => setToast({ message: err.message || '保存发送线路失败', tone: 'danger' }),
   })
 
+  const saveEmailMutation = useMutation({
+    mutationFn: () => api.createEmailAccount({
+      account_id: emailForm.account_id || '',
+      from_email: emailForm.from_email || '',
+      from_name: emailForm.from_name || null,
+      market_id: emailForm.market_id || null,
+      region: emailForm.region || null,
+      configuration_set: emailForm.configuration_set || null,
+      verification_status: emailForm.verification_status || 'pending',
+      is_active: emailForm.is_active ?? true,
+    }),
+    onSuccess: async () => {
+      setEmailForm({ account_id: '', from_email: '', from_name: '', verification_status: 'pending', is_active: true })
+      setToast({ message: 'Email 账号已创建', tone: 'success' })
+      await emailAccounts.refetch()
+    },
+    onError: (err: Error) => setToast({ message: err.message || '保存 Email 账号失败', tone: 'danger' }),
+  })
+
   return (
     <AppShell>
       <PageHeader
@@ -151,6 +172,8 @@ function AccountsPage() {
             <MetricCard label="已离线" value={(accounts.data ?? []).filter((a) => a.health_status === 'offline').length} />
             <MetricCard label="启用中" value={(accounts.data ?? []).filter((a) => a.is_active).length} />
             <MetricCard label="已配置备用" value={(accounts.data ?? []).filter((a) => !!a.fallback_account_id).length} />
+            <MetricCard label="Email 账号" value={emailAccounts.data?.length ?? 0} />
+            <MetricCard label="Email 已验证" value={(emailAccounts.data ?? []).filter((a) => a.verification_status === 'verified').length} />
           </div>
           <div className="workspace-toolbar">
             <SegmentedControl value={provider} onChange={setProvider} options={[{ label: '全部渠道', value: 'all' }, ...PROVIDERS]} />
@@ -200,6 +223,46 @@ function AccountsPage() {
                   </div>
                   {selectedId ? <label className="toggle-row"><input type="checkbox" checked={Boolean(form.is_active)} onChange={(e) => patchForm({ is_active: e.target.checked })} /> 当前账号启用</label> : null}
                   <div className="button-row"><Button variant="primary" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>{saveMutation.isPending ? '保存中…' : selectedId ? '保存修改' : '创建线路'}</Button><Button onClick={() => dirty ? setConfirmReset(true) : resetForm()}>重置</Button></div>
+                </div>
+              </CardBody>
+            </Card>
+          </div>
+          <div className="page-grid split-grid-wide">
+            <Card>
+              <CardHeader title="Email 账号" subtitle="Email 使用独立运行时门禁和 SES 身份验证状态，不复用 OpenClaw 外发 provider。" />
+              <CardBody>
+                <div className="list">
+                  {(emailAccounts.data ?? []).map((account) => (
+                    <div key={account.id} className="queue-card">
+                      <div className="badges">
+                        <Badge>Email</Badge>
+                        <Badge tone={account.is_active ? 'success' : 'danger'}>{account.is_active ? '启用中' : '已停用'}</Badge>
+                        <Badge tone={account.verification_status === 'verified' ? 'success' : 'warning'}>{labelize(account.verification_status)}</Badge>
+                      </div>
+                      <div className="queue-card-title">{sanitizeDisplayText(account.from_name || account.from_email)}</div>
+                      <div className="queue-card-meta">账号：{sanitizeDisplayText(account.account_id)} · 区域：{sanitizeDisplayText(account.region || '未配置')}</div>
+                      <div className="queue-card-meta">市场：{account.market_id ? sanitizeDisplayText(marketMap.get(account.market_id) || `ID ${account.market_id}`) : '全局通用'} · 健康：{labelize(account.health_status)}</div>
+                    </div>
+                  ))}
+                  {!emailAccounts.data?.length ? <EmptyState title="尚未配置 Email 账号" description="创建 SES Email 账号后，客服 Email 回复能力才可能进入 ready 状态。" /> : null}
+                </div>
+              </CardBody>
+            </Card>
+            <Card>
+              <CardHeader title="新建 Email 账号" subtitle="只保存身份、市场、SES 区域和验证状态；AWS 原始密钥不得进入数据库。" />
+              <CardBody>
+                <div className="stack">
+                  <div className="form-grid">
+                    <Field label="账号编号" required><Input value={emailForm.account_id ?? ''} onChange={(event) => setEmailForm((current) => ({ ...current, account_id: event.target.value }))} /></Field>
+                    <Field label="From Email" required><Input value={emailForm.from_email ?? ''} onChange={(event) => setEmailForm((current) => ({ ...current, from_email: event.target.value }))} /></Field>
+                    <Field label="发件人名称"><Input value={emailForm.from_name ?? ''} onChange={(event) => setEmailForm((current) => ({ ...current, from_name: event.target.value }))} /></Field>
+                    <Field label="SES 区域"><Input value={emailForm.region ?? ''} onChange={(event) => setEmailForm((current) => ({ ...current, region: event.target.value }))} /></Field>
+                    <Field label="Configuration Set"><Input value={emailForm.configuration_set ?? ''} onChange={(event) => setEmailForm((current) => ({ ...current, configuration_set: event.target.value }))} /></Field>
+                    <Field label="绑定市场"><Select value={String(emailForm.market_id ?? '')} onChange={(event) => setEmailForm((current) => ({ ...current, market_id: event.target.value ? Number(event.target.value) : undefined }))}><option value="">不绑定市场 / 全局通用</option>{(markets.data ?? []).map((market) => <option key={market.id} value={market.id}>{market.code} · {market.name}</option>)}</Select></Field>
+                    <Field label="验证状态"><Select value={emailForm.verification_status ?? 'pending'} onChange={(event) => setEmailForm((current) => ({ ...current, verification_status: event.target.value }))}><option value="pending">Pending</option><option value="verified">Verified</option><option value="failed">Failed</option></Select></Field>
+                  </div>
+                  <label className="toggle-row"><input type="checkbox" checked={emailForm.is_active ?? true} onChange={(event) => setEmailForm((current) => ({ ...current, is_active: event.target.checked }))} /> 启用 Email 账号</label>
+                  <div className="button-row"><Button variant="primary" onClick={() => saveEmailMutation.mutate()} disabled={saveEmailMutation.isPending}>{saveEmailMutation.isPending ? '保存中…' : '创建 Email 账号'}</Button></div>
                 </div>
               </CardBody>
             </Card>

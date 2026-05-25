@@ -1,0 +1,59 @@
+name: Email Outbound Production Task
+description: Production-grade Email outbound implementation task
+title: "[Email Outbound]: "
+labels: ["production-task", "email-outbound", "customer-facing"]
+body:
+  - type: textarea
+    id: business_objective
+    attributes:
+      label: Business Objective
+      description: What business outcome should this Email outbound task achieve?
+      value: "Enable production-grade customer-support Email outbound in NexusDesk."
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope / Non-scope
+      description: Include exact in-scope and out-of-scope items.
+      value: |
+        In scope: capability gate, email account governance, SES provider, outbox dispatch, delivery events, inbound reply linking, tests, docs.
+        Non-scope: marketing/bulk sending, open/click tracking by default, self-hosted SMTP.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Current code paths and facts.
+      value: |
+        - backend/app/services/outbound_channel_registry.py blocks email as experimental_not_ready.
+        - backend/app/api/tickets.py gates outbound/send through capability registry.
+        - backend/app/services/message_dispatch.py has outbox/retry/dead-letter semantics.
+        - backend/app/services/outbound_adapters/whatsapp.py is the adapter pattern.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: Given / When / Then criteria.
+      value: |
+        Given Email is not fully configured, when capabilities are requested, then Email is not sendable with exact missing reasons.
+        Given Email is fully configured, when an agent sends email, then worker sends through SES and provider_message_id is persisted.
+        Given delivery/bounce/complaint events arrive, when webhook processes them, then events are stored idempotently and timeline updates.
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk Level
+      options:
+        - R1
+        - R2
+        - R3
+        - R4
+        - R5
+      default: 3
+    validations:
+      required: true

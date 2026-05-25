@@ -71,6 +71,17 @@ class Settings:
         self.openclaw_bridge_timeout_seconds = int(os.getenv("OPENCLAW_BRIDGE_TIMEOUT_SECONDS", "20"))
         self.enable_outbound_dispatch = os.getenv("ENABLE_OUTBOUND_DISPATCH", "false").strip().lower() == "true"
         self.outbound_provider = os.getenv("OUTBOUND_PROVIDER", "disabled").strip().lower() or "disabled"
+        self.outbound_email_enabled = _env_bool("OUTBOUND_EMAIL_ENABLED", False)
+        self.email_provider = os.getenv("EMAIL_PROVIDER", "disabled").strip().lower() or "disabled"
+        self.email_provider_region = os.getenv("EMAIL_PROVIDER_REGION", "").strip()
+        self.email_ses_configuration_set = os.getenv("EMAIL_SES_CONFIGURATION_SET", "").strip() or None
+        self.email_webhook_secret = os.getenv("EMAIL_WEBHOOK_SECRET", "").strip()
+        self.email_inbound_enabled = _env_bool("EMAIL_INBOUND_ENABLED", False)
+        self.email_delivery_events_enabled = _env_bool("EMAIL_DELIVERY_EVENTS_ENABLED", False)
+        self.email_default_from_email = os.getenv("EMAIL_DEFAULT_FROM_EMAIL", "").strip()
+        self.email_default_from_name = os.getenv("EMAIL_DEFAULT_FROM_NAME", "").strip()
+        self.email_max_recipients = int(os.getenv("EMAIL_MAX_RECIPIENTS", "1"))
+        self.email_allow_click_open_tracking = _env_bool("EMAIL_ALLOW_CLICK_OPEN_TRACKING", False)
         self.outbox_batch_size = int(os.getenv("OUTBOX_BATCH_SIZE", "50"))
         self.outbox_lock_seconds = int(os.getenv("OUTBOX_LOCK_SECONDS", "300"))
         self.outbox_max_retries = int(os.getenv("OUTBOX_MAX_RETRIES", "3"))
@@ -182,6 +193,14 @@ class Settings:
             raise RuntimeError("WEBCHAT_AI_SESSION_SUMMARY_MESSAGES must be between 1 and 20")
         if self.webchat_tracking_fact_lookup_enabled and not self.webchat_tracking_fact_redaction_enabled:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED must be true when tracking lookup is enabled")
+        if self.outbound_provider == "ses":
+            raise RuntimeError("OUTBOUND_PROVIDER=ses is not allowed; use OUTBOUND_EMAIL_ENABLED and EMAIL_PROVIDER=ses")
+        if self.email_provider not in {"disabled", "ses"}:
+            raise RuntimeError("EMAIL_PROVIDER must be disabled or ses")
+        if self.email_max_recipients < 1 or self.email_max_recipients > 10:
+            raise RuntimeError("EMAIL_MAX_RECIPIENTS must be between 1 and 10")
+        if self.outbound_email_enabled and self.email_provider == "disabled":
+            raise RuntimeError("OUTBOUND_EMAIL_ENABLED=true requires EMAIL_PROVIDER=ses")
         if self.app_env == "production":
             if not self.jwt_secret_key:
                 raise RuntimeError("SECRET_KEY must be set in production")

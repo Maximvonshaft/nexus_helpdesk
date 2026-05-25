@@ -32,6 +32,9 @@ import type {
   CodexDeviceStart,
   CodexSessionStatus,
   CodexCredentialActionResult,
+  EmailAccount,
+  EmailReadiness,
+  OutboundEmailSendPayload,
 } from '@/lib/types'
 import type { WebchatVoiceIncomingSession, WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
 
@@ -261,7 +264,7 @@ export type WebCallAIDemoTurn = {
 
 type CaseQueryParams = { q?: string; status?: string; priority?: string; assignee_id?: number; team_id?: number; overdue?: boolean; cursor?: string | null; limit?: number }
 
-type OutboundSendPayload = { channel: string; body: string }
+type OutboundSendPayload = { channel: string; body: string } | OutboundEmailSendPayload
 
 function buildCaseSearch(params?: CaseQueryParams) {
   const search = new URLSearchParams()
@@ -388,6 +391,20 @@ export const api = {
   }),
   updateChannelAccount: (accountId: number, payload: Partial<ChannelAccount>) => request<ChannelAccount>(`/api/admin/channel-accounts/${accountId}`, {
     method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  emailAccounts: () => request<EmailAccount[]>('/api/admin/email-accounts'),
+  createEmailAccount: (payload: Partial<EmailAccount> & { account_id: string; from_email: string }) => request<EmailAccount>('/api/admin/email-accounts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateEmailAccount: (accountId: number, payload: Partial<EmailAccount>) => request<EmailAccount>(`/api/admin/email-accounts/${accountId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  checkEmailReadiness: (accountId: number) => request<EmailReadiness>(`/api/admin/email-accounts/${accountId}/check-readiness`, { method: 'POST' }),
+  testEmailSend: (accountId: number, payload: { to_email: string; subject?: string; body?: string }) => request<{ ok: boolean; status: string; to_email: string }>(`/api/admin/email-accounts/${accountId}/test-send`, {
+    method: 'POST',
     body: JSON.stringify(payload),
   }),
 

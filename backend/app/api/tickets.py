@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from ..db import get_db
 from ..enums import NoteVisibility, SourceChannel
-from ..models import OpenClawTranscriptMessage, Ticket, Tag, TicketTag, TicketOutboundMessage
+from ..models import EmailOutboundMetadata, OpenClawTranscriptMessage, Ticket, Tag, TicketTag, TicketOutboundMessage
 from ..schemas import (
     AIIntakeCreate,
     AIIntakeRead,
@@ -77,7 +77,7 @@ def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
         delivery_semantics = "local_webchat_delivery"
     else:
         delivery_semantics = "local_or_non_dispatchable"
-    return {
+    payload = {
         "id": row.id,
         "ticket_id": row.ticket_id,
         "channel": row.channel,
@@ -98,6 +98,24 @@ def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
         "ui_label": outbound_ui_label(row.channel, row.status, row.provider_status),
         "operator_note": "Queued for external provider dispatch; wait for sent/dead/review final state" if external_send else "Local-only delivery; no external provider send occurred",
     }
+    if channel_value == SourceChannel.email.value:
+        metadata = None
+        try:
+            row_session = object_session(row)
+            if row_session is not None:
+                metadata = row_session.query(EmailOutboundMetadata).filter(EmailOutboundMetadata.outbound_message_id == row.id).first()
+        except Exception:
+            metadata = None
+        if metadata is not None:
+            payload.update(
+                {
+                    "email_subject": metadata.subject,
+                    "email_to": metadata.to_email,
+                    "email_from": metadata.from_email,
+                    "provider_message_id": metadata.provider_message_id or row.provider_message_id,
+                }
+            )
+    return payload
 
 
 def _serialize_ticket(ticket: Ticket, db: Session) -> TicketRead:

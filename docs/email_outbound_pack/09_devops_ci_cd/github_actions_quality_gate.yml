@@ -1,0 +1,24 @@
+name: email-outbound-quality-gate
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/services/outbound_adapters/email.py"
+      - "backend/app/services/email_providers/**"
+      - "backend/app/services/email_*.py"
+      - "backend/app/api/email_integrations.py"
+      - "backend/app/models.py"
+      - "backend/app/schemas.py"
+      - "backend/app/settings.py"
+      - "backend/tests/test_email_*.py"
+      - "webapp/**"
+
+jobs:
+  backend-email-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Backend email tests
+        run: |
+          cd backend
+          python -m pytest tests/test_email_channel_capabilities.py tests/test_email_outbound_adapter.py tests/test_email_delivery_events.py tests/test_email_inbound_parser.py tests/test_email_security.py

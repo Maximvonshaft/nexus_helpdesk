@@ -8,8 +8,9 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from ..enums import SourceChannel
-from ..models import ChannelAccount, Ticket
+from ..models import ChannelAccount, EmailChannelAccount, Ticket
 from ..settings import get_settings
+from .email_security import is_email_suppressed, normalize_email_address
 
 
 EXTERNAL_READY_CANDIDATE_CHANNELS = frozenset({
@@ -95,6 +96,26 @@ def _has_matching_channel_account(db: Session | None, *, channel: str, ticket: T
     return query.filter(ChannelAccount.market_id.is_(None)).first() is not None
 
 
+def _has_verified_email_account(db: Session | None, *, ticket: Ticket | None = None) -> bool:
+    if db is None:
+        return False
+    query = (
+        db.query(EmailChannelAccount)
+        .join(ChannelAccount, ChannelAccount.id == EmailChannelAccount.channel_account_id)
+        .filter(
+            ChannelAccount.provider == SourceChannel.email.value,
+            ChannelAccount.is_active.is_(True),
+            EmailChannelAccount.is_active.is_(True),
+            EmailChannelAccount.verification_status == "verified",
+        )
+    )
+    if ticket is not None and getattr(ticket, "market_id", None) is not None:
+        market_row = query.filter(ChannelAccount.market_id == ticket.market_id).first()
+        if market_row is not None:
+            return True
+    return query.filter(ChannelAccount.market_id.is_(None)).first() is not None
+
+
 def _has_webchat_conversation(db: Session | None, *, ticket: Ticket | None = None) -> bool:
     if db is None or ticket is None:
         return False
@@ -133,6 +154,8 @@ def _target_ready(ticket: Ticket | None, *, channel: str) -> bool:
         return False
     if channel == SourceChannel.sms.value:
         return is_valid_e164_phone(target)
+    if channel == SourceChannel.email.value:
+        return normalize_email_address(target) is not None
     return True
 
 
@@ -191,25 +214,41 @@ def get_outbound_channel_capability(
             operator_note="Local WebChat delivery only; no external provider dispatch should occur.",
         )
 
-    if channel_value in EXTERNAL_EXPERIMENTAL_CHANNELS:
+    if channel_value == SourceChannel.email.value:
+        account_configured = _has_verified_email_account(db, ticket=ticket) if db is not None else False
+        target = _ticket_target(ticket, channel=channel_value)
+        target_configured = _target_ready(ticket, channel=channel_value) if ticket is not None else True
+        if not bool(settings.enable_outbound_dispatch):
+            missing.append("enable_outbound_dispatch")
+        if not bool(settings.outbound_email_enabled):
+            missing.append("outbound_email_enabled")
+        if settings.email_provider != "ses":
+            missing.append("email_provider_ses")
+        if not account_configured:
+            missing.append("verified_email_channel_account")
+        if not target_configured:
+            missing.append("valid_email_recipient")
+        if db is not None and target and is_email_suppressed(db, target):
+            missing.append("recipient_not_suppressed")
+        status_value = "ready" if not missing else "configurable"
         return OutboundChannelCapability(
             channel=channel_value,
             label=_label(channel_value),
             dispatch_type="external",
-            status="experimental_not_ready",
-            customer_sendable=False,
-            enabled=False,
-            configured=False,
+            status=status_value,
+            customer_sendable=True,
+            enabled=not missing,
+            configured=account_configured and target_configured,
             account_required=True,
             target_required=True,
-            supports_send=False,
+            supports_send=not missing,
             supports_inbound_sync=False,
-            supports_delivery_receipt=False,
+            supports_delivery_receipt=True,
             supports_attachments=False,
             external_send=True,
             target_validation=_target_validation(channel_value),
-            missing=["email_account_registry", "email_send_schema", "email_provider_adapter"],
-            operator_note="Email exists in the enum/outbox layer but is blocked until account, schema, and adapter closure are implemented.",
+            missing=missing,
+            operator_note="Email dispatch is allowed only when the email runtime gate, verified account, target, and suppression checks pass.",
         )
 
     if channel_value in EXTERNAL_READY_CANDIDATE_CHANNELS:

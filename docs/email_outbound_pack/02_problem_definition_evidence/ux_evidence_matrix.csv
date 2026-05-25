@@ -1,0 +1,6 @@
+UX Area,Current Risk,Required UX Behavior,Acceptance
+Reply channel dropdown,Email may appear misleadingly if only enum-driven,Show Email only when capability supports_send=true; otherwise disabled with exact missing reasons,AC-007
+Compose fields,Existing body-only schema insufficient for email,Show To/From/Subject/Body for email,AC-008
+Error states,Provider errors can be cryptic,Map to actionable messages without secrets,AC-009
+Timeline,Sent vs delivered distinction may be unclear,"Show queued, sent, delivered, bounced, complaint states separately",AC-005
+Account setup,Missing email account blocks send,"Admin page/runbook explains From, Reply-To, verification, health",AC-011

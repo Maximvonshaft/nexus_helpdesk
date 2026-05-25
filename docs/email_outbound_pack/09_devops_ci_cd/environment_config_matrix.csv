@@ -1,0 +1,22 @@
+Environment,Variable,Default,Staging,Production,Notes
+all,ENABLE_OUTBOUND_DISPATCH,false,true after smoke,true after go/no-go,Existing global outbound switch
+all,OUTBOUND_PROVIDER,disabled,openclaw,openclaw,Keep for existing non-email channels
+all,OUTBOUND_EMAIL_ENABLED,false,true after setup,true after approval,Email-specific kill switch
+all,EMAIL_PROVIDER,disabled,ses,ses,V1 provider
+all,EMAIL_PROVIDER_REGION,,eu-central-1 or selected region,approved region,Align with compliance/provider setup
+all,EMAIL_SES_CONFIGURATION_SET,,,optional,For delivery events if used
+all,EMAIL_DEFAULT_FROM_EMAIL,,support-staging@example.com,support@domain,Must be verified
+all,EMAIL_DEFAULT_FROM_NAME,,NexusDesk Staging,Speedaf Support,Displayed sender
+all,EMAIL_WEBHOOK_SECRET,,secret,secret,Use secret manager/env
+all,EMAIL_INBOUND_ENABLED,false,true after setup,true after approval,Inbound reply parser
+all,EMAIL_DELIVERY_EVENTS_ENABLED,false,true,true,Delivery/bounce/complaint
+all,EMAIL_MAX_RECIPIENTS,1,1,1,No bulk sending
+all,EMAIL_ALLOW_CLICK_OPEN_TRACKING,false,false,false,Privacy default
+all,EMAIL_WORKER_PAUSE_ON_DISABLE,true,true,true,When Email disabled pending rows must not be dead-lettered
+all,EMAIL_WEBHOOK_AUTH_MODE,hmac,hmac or sns_signature,sns_signature preferred,Must verify webhook authenticity
+all,EMAIL_WEBHOOK_MAX_CLOCK_SKEW_SECONDS,300,300,300,For HMAC timestamp anti-replay
+all,EMAIL_SES_INBOUND_REGION,,approved receiving region,approved receiving region,Must support SES inbound receiving
+all,EMAIL_ALLOWED_INBOUND_DOMAINS,,staging domain,production support domain,Inbound recipient domain allowlist
+all,EMAIL_SUPPRESSION_ENABLED,true,true,true,Bounce/complaint must suppress future sends
+all,EMAIL_AUTO_LINK_BY_SUBJECT,false,false,false,V1 forbids subject-similarity auto-link
+all,EMAIL_ALLOW_CC_BCC,false,false,false,V1 max one customer recipient

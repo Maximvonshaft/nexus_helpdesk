@@ -5,8 +5,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..db import get_db, engine
-from ..enums import JobStatus, MessageStatus, UserRole
-from ..models import AIConfigResource, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
+from ..enums import JobStatus, MessageStatus, SourceChannel, UserRole
+from ..models import AIConfigResource, BackgroundJob, ChannelAccount, EmailDeliveryEvent, EmailSuppression, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
 from ..schemas import UserUpdate, PasswordResetRequest, OpenClawUnresolvedEventRead, AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, OpenClawConnectivityProbeRead, OpenClawConversationRead, OpenClawLinkRequest, OpenClawRuntimeHealthRead, OpenClawSyncEnqueueRequest, OpenClawSyncResult, ProductionReadinessRead, QueueSummaryRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead, UserCreate
 from ..settings import get_settings
 from ..auth_service import hash_password
@@ -308,6 +308,10 @@ def get_queue_summary(db: Session = Depends(get_db), current_user=Depends(get_cu
     return QueueSummaryRead(
         pending_outbound=db.query(TicketOutboundMessage).filter(TicketOutboundMessage.status == MessageStatus.pending).count(),
         dead_outbound=db.query(TicketOutboundMessage).filter(TicketOutboundMessage.status == MessageStatus.dead).count(),
+        email_pending_outbound=db.query(TicketOutboundMessage).filter(TicketOutboundMessage.channel == SourceChannel.email, TicketOutboundMessage.status == MessageStatus.pending).count(),
+        email_dead_outbound=db.query(TicketOutboundMessage).filter(TicketOutboundMessage.channel == SourceChannel.email, TicketOutboundMessage.status == MessageStatus.dead).count(),
+        email_delivery_events=db.query(EmailDeliveryEvent).count(),
+        email_active_suppressions=db.query(EmailSuppression).filter(EmailSuppression.is_active.is_(True)).count(),
         pending_jobs=db.query(BackgroundJob).filter(BackgroundJob.status == JobStatus.pending).count(),
         dead_jobs=db.query(BackgroundJob).filter(BackgroundJob.status == JobStatus.dead).count(),
         openclaw_links=db.query(OpenClawConversationLink).count(),

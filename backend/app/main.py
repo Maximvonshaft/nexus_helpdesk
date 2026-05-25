@@ -15,6 +15,7 @@ from .api.admin_outbound_semantics import router as admin_outbound_semantics_rou
 from .api.admin_perf import router as admin_perf_router
 from .api.admin_provider_runtime import router as admin_provider_runtime_router
 from .api.admin_provider_credentials import router as admin_provider_credentials_router
+from .api.admin_email import router as admin_email_router
 from .api.admin_webcall_ai import router as admin_webcall_ai_router
 from .api.admin_webcall_ai_demo import router as admin_webcall_ai_demo_router
 from .api import admin as admin_api
@@ -23,6 +24,7 @@ from .api.admin_queue import router as admin_queue_router
 from .api.auth import router as auth_router
 from .api.channel_control import router as channel_control_router
 from .api.customers import router as customers_router
+from .api.email_integrations import router as email_integrations_router
 from .api.files import router as files_router
 from .api.integration import router as integration_router
 from .api.knowledge_items import router as knowledge_items_router
@@ -200,6 +202,7 @@ app.include_router(admin_outbound_semantics_router)
 app.include_router(admin_perf_router)
 app.include_router(admin_provider_runtime_router)
 app.include_router(admin_provider_credentials_router)
+app.include_router(admin_email_router)
 app.include_router(admin_webcall_ai_router)
 app.include_router(admin_webcall_ai_demo_router)
 app.include_router(ticket_perf_router)
@@ -215,6 +218,7 @@ app.include_router(knowledge_items_router)
 app.include_router(lookups_router)
 app.include_router(lite_router)
 app.include_router(customers_router)
+app.include_router(email_integrations_router)
 app.include_router(persona_profiles_router)
 app.include_router(stats_router)
 app.include_router(tickets_router)

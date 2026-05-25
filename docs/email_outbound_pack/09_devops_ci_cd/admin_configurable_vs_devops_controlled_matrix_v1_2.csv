@@ -1,0 +1,17 @@
+Item,Admin UI Configurable,DevOps/Provider Controlled,Reason
+Display name,Yes,No,Operational metadata
+Market/global scope,Yes,No,Routing metadata
+From email,Yes,Provider verification required,Admin chooses identity; provider verifies it
+From name,Yes,No,Presentation metadata
+Reply-To,Yes,Provider/DNS may influence,Operational metadata
+Return-Path,Yes,DNS/provider must support,Used for bounces
+SES region,Yes,Provider account must allow,Routing metadata
+Configuration set,Yes,Must exist in SES,Event publishing dependency
+Secret reference,Yes,Secret value controlled outside DB,DB stores reference only
+AWS access key value,No,Yes,Secret must not be stored in DB
+SPF/DKIM/DMARC records,No,Yes,DNS ownership outside app
+MX inbound records,No,Yes,DNS ownership outside app
+Identity verification status,Displayed/refreshable,Verified by provider,App cannot fake provider verification
+Health check,Triggerable,Depends on provider/secrets,Admin can run check
+Test send,Triggerable,Provider sends,Admin-visible smoke
+Suppression release,Restricted admin,Policy controlled,Requires approval
