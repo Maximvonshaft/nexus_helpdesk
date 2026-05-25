@@ -36,10 +36,6 @@ class OAuthRefreshManager:
 
     async def get_valid_access_token(self, tenant_id: str, credential_id: str) -> Optional[str]:
         cache_key = self._access_token_cache_key(tenant_id, credential_id)
-        cached = self._get_cached_access_token(cache_key)
-        if cached:
-            return cached
-
         result = self._read_credential(tenant_id=tenant_id, credential_id=credential_id, include_refresh=True)
         if not result or result["status"] in {"revoked", "error", "pending"}:
             self._clear_access_token_cache(cache_key)
@@ -47,16 +43,23 @@ class OAuthRefreshManager:
 
         expires_at = self._normalize_dt(result["expires_at"])
         if expires_at is None:
+            cached = self._get_cached_access_token(cache_key)
+            if cached:
+                return cached
             token = self.crypto_service.decrypt(result["encrypted_access_token"])
             self._store_access_token(cache_key, token, None)
             return token
 
         now = datetime.now(timezone.utc)
         if expires_at > now + timedelta(minutes=5):
+            cached = self._get_cached_access_token(cache_key)
+            if cached:
+                return cached
             token = self.crypto_service.decrypt(result["encrypted_access_token"])
             self._store_access_token(cache_key, token, expires_at)
             return token
 
+        self._clear_access_token_cache(cache_key)
         token = await self._refresh_with_lock(
             tenant_id=tenant_id,
             credential_id=credential_id,
@@ -111,20 +114,12 @@ class OAuthRefreshManager:
             self.db.rollback()
             return False
 
-    async def _refresh_with_lock(self, *, tenant_id: str, credential_id: str, provider: str, encrypted_refresh_token: str) -> Optional[str]:
+    async def _refresh_with_lock(self, *, tenant_id: str, credential_id: str, provider: str, encrypted_refresh_token: str | None) -> Optional[str]:
         lock_key = f"oauth-refresh:{tenant_id}:{provider}:{credential_id}"
         cache_key = self._access_token_cache_key(tenant_id, credential_id)
-        cached = self._get_cached_access_token(cache_key)
-        if cached:
-            return cached
-
         process_lock = await self._get_lock(lock_key)
 
         async with process_lock:
-            cached = self._get_cached_access_token(cache_key)
-            if cached:
-                return cached
-
             if not self._obtain_pg_lock(lock_key):
                 return None
 
@@ -136,11 +131,15 @@ class OAuthRefreshManager:
             expires_at = self._normalize_dt(refreshed["expires_at"])
             now = datetime.now(timezone.utc)
             if expires_at and expires_at > now + timedelta(minutes=5):
+                cached = self._get_cached_access_token(cache_key)
+                if cached:
+                    return cached
                 token = self.crypto_service.decrypt(refreshed["encrypted_access_token"])
                 self._store_access_token(cache_key, token, expires_at)
                 return token
 
-            refresh_token = self.crypto_service.decrypt(encrypted_refresh_token)
+            self._clear_access_token_cache(cache_key)
+            refresh_token = self.crypto_service.decrypt(encrypted_refresh_token) if encrypted_refresh_token else None
             if not refresh_token:
                 self._mark_refresh_failed(tenant_id=tenant_id, credential_id=credential_id, now=now)
                 self._clear_access_token_cache(cache_key)
