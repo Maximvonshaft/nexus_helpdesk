@@ -14,6 +14,17 @@ export type ThreadRunResult = {
   terminalWaitMs: number;
 };
 
+const CODEX_THREAD_CONFIG = {
+  "features.code_mode": true,
+  "features.code_mode_only": false,
+  project_doc_max_bytes: 0,
+} as const;
+
+const CODEX_APPROVAL_POLICY = "never";
+const CODEX_APPROVALS_REVIEWER = "user";
+const CODEX_SANDBOX = "read-only";
+const CODEX_SERVICE_NAME = "NexusDesk";
+
 export async function runEphemeralThread(
   client: RpcClient,
   config: RuntimeConfig,
@@ -26,8 +37,11 @@ export async function runEphemeralThread(
   const threadParams: Record<string, unknown> = {
     model: config.model,
     cwd: config.workDir,
-    approvalPolicy: "never",
-    sandbox: "read-only",
+    approvalPolicy: CODEX_APPROVAL_POLICY,
+    approvalsReviewer: CODEX_APPROVALS_REVIEWER,
+    sandbox: CODEX_SANDBOX,
+    serviceName: CODEX_SERVICE_NAME,
+    config: CODEX_THREAD_CONFIG,
     developerInstructions: prompt.developerInstructions,
     dynamicTools: [],
     experimentalRawEvents: false,
@@ -52,24 +66,26 @@ export async function runEphemeralThread(
     const turnParams: Record<string, unknown> = {
       threadId,
       input: [{ type: "text", text: prompt.userText, text_elements: [] }],
-      approvalPolicy: "never",
-      sandboxPolicy: { type: "readOnly", access: { type: "fullAccess" }, networkAccess: false },
+      cwd: config.workDir,
+      approvalPolicy: CODEX_APPROVAL_POLICY,
+      approvalsReviewer: CODEX_APPROVALS_REVIEWER,
+      sandboxPolicy: { type: "readOnly", networkAccess: false },
       dynamicTools: [],
       model: config.model,
-    };
-    if (config.serviceTier) {
-      turnParams.serviceTier = config.serviceTier;
-    }
-    if (config.reasoningEffort) {
-      turnParams.effort = config.reasoningEffort;
-      turnParams.collaborationMode = {
+      collaborationMode: {
         mode: "default",
         settings: {
           model: config.model,
           reasoning_effort: config.reasoningEffort,
           developer_instructions: null,
         },
-      };
+      },
+    };
+    if (config.serviceTier) {
+      turnParams.serviceTier = config.serviceTier;
+    }
+    if (config.reasoningEffort) {
+      turnParams.effort = config.reasoningEffort;
     }
     let turn: Record<string, unknown>;
     try {

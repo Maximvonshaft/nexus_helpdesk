@@ -144,7 +144,7 @@ class CodexAppServerAdapter(ProviderAdapter):
         refresh_manager = OAuthRefreshManager(db, self.crypto_service)
 
         cred_row = db.execute(text("""
-            SELECT id, account_id, chatgpt_plan_type
+            SELECT id, profile_id, account_id, email, chatgpt_plan_type
             FROM provider_credentials
             WHERE tenant_id = :tenant_id
               AND provider = 'openai-codex'
@@ -166,7 +166,7 @@ class CodexAppServerAdapter(ProviderAdapter):
         login_payload = {
             "type": "chatgptAuthTokens",
             "accessToken": access_token,
-            "chatgptAccountId": cred_row["account_id"],
+            "chatgptAccountId": _resolve_chatgpt_account_id(cred_row),
             "chatgptPlanType": cred_row["chatgpt_plan_type"],
         }
 
@@ -263,12 +263,23 @@ class CodexAppServerAdapter(ProviderAdapter):
             "contract": request.output_contract,
             "tracking_fact_summary": request.tracking_fact_summary,
             "tracking_fact_evidence_present": request.tracking_fact_evidence_present,
+            "tenant_id": request.tenant_id,
+            "channel_key": request.channel_key,
+            "session_id": request.session_id,
         }
 
     @staticmethod
     def _host_hash(url: str) -> str:
         host = urllib.parse.urlparse(url).hostname or ""
         return hashlib.sha256(host.encode("utf-8")).hexdigest()[:16]
+
+
+def _resolve_chatgpt_account_id(row) -> str:
+    for key in ("account_id", "email", "profile_id", "id"):
+        value = row.get(key) if hasattr(row, "get") else row[key]
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "unknown"
 
 
 def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:

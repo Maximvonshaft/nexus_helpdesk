@@ -8,7 +8,7 @@ import { runEphemeralThread } from "../src/thread-runner.js";
 import type { ReplyRequest } from "../src/reply-contract.js";
 import type { RpcNotification } from "../src/notification-correlation.js";
 
-test("thread runner uses fast profile params and isolated workdir", async () => {
+test("thread runner uses fast profile params and OpenClaw-aligned app-server contract", async () => {
   const calls: Array<{ method: string; params: any }> = [];
   let handler: ((notification: RpcNotification) => void) | undefined;
   const client = {
@@ -81,9 +81,29 @@ test("thread runner uses fast profile params and isolated workdir", async () => 
   const turnStart = calls.find((call) => call.method === "turn/start");
   assert.equal(result.assistantText.includes("tracking_missing_number"), true);
   assert.equal(threadStart?.params.cwd, workDir);
+  assert.equal(threadStart?.params.approvalPolicy, "never");
+  assert.equal(threadStart?.params.approvalsReviewer, "user");
+  assert.equal(threadStart?.params.sandbox, "read-only");
+  assert.equal(threadStart?.params.serviceName, "NexusDesk");
+  assert.deepEqual(threadStart?.params.config, {
+    "features.code_mode": true,
+    "features.code_mode_only": false,
+    project_doc_max_bytes: 0,
+  });
   assert.equal(threadStart?.params.serviceTier, "priority");
+  assert.equal(threadStart?.params.persistExtendedHistory, false);
+  assert.equal(threadStart?.params.experimentalRawEvents, false);
+  assert.deepEqual(threadStart?.params.dynamicTools, []);
+
+  assert.equal(turnStart?.params.cwd, workDir);
+  assert.equal(turnStart?.params.approvalPolicy, "never");
+  assert.equal(turnStart?.params.approvalsReviewer, "user");
+  assert.deepEqual(turnStart?.params.sandboxPolicy, { type: "readOnly", networkAccess: false });
   assert.equal(turnStart?.params.serviceTier, "priority");
   assert.equal(turnStart?.params.effort, "low");
+  assert.equal(turnStart?.params.collaborationMode.mode, "default");
+  assert.equal(turnStart?.params.collaborationMode.settings.model, "gpt-5.5");
   assert.equal(turnStart?.params.collaborationMode.settings.reasoning_effort, "low");
+  assert.equal(turnStart?.params.collaborationMode.settings.developer_instructions, null);
   assert.deepEqual(turnStart?.params.dynamicTools, []);
 });

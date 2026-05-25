@@ -69,7 +69,7 @@ class CodexSmokeChatService:
         codex_credential = CodexLLMCredential(
             id=credential["id"],
             tenant_id=credential["tenant_id"],
-            account_id=credential.get("account_id"),
+            account_id=_resolve_chatgpt_account_id(credential),
             chatgpt_plan_type=credential.get("chatgpt_plan_type"),
         )
         try:
@@ -130,7 +130,7 @@ class CodexSmokeChatService:
 
     def _read_active_credential(self, tenant_id: str):
         return self.db.execute(text("""
-            SELECT id, tenant_id, account_id, chatgpt_plan_type, expires_at
+            SELECT id, tenant_id, profile_id, account_id, email, chatgpt_plan_type, expires_at
             FROM provider_credentials
             WHERE tenant_id = :tenant_id
               AND provider = :provider
@@ -189,6 +189,13 @@ class CodexSmokeChatService:
         except Exception as exc:
             logger.warning("codex_smoke_chat_audit_failed", extra={"request_id": request_id, "error_type": type(exc).__name__})
             self.db.rollback()
+
+def _resolve_chatgpt_account_id(row) -> str:
+    for key in ("account_id", "email", "profile_id", "id"):
+        value = row.get(key) if hasattr(row, "get") else row[key]
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "unknown"
 
 def _hash_value(value: str | None) -> str | None:
     if not value:
