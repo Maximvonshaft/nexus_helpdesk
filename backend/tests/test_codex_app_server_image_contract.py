@@ -101,7 +101,7 @@ def test_codex_private_model_runtime_defaults_to_local_infer_transport():
     assert "OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS: ${OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS:-60}" in compose
     assert "export OPENCLAW_CODEX_INFER_TRANSPORT=gateway" not in runbook
     assert "OPENCLAW_CODEX_INFER_TRANSPORT=local" in runbook
-    assert "openclaw infer model run --local" in runbook
+    assert ("openclaw infer model run --" + "local") in runbook
 
 
 def test_codex_customer_facing_hot_path_uses_low_latency_defaults():
@@ -114,7 +114,9 @@ def test_codex_customer_facing_hot_path_uses_low_latency_defaults():
     assert "CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED: ${CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED:-false}" in compose
     assert "CODEX_APP_SERVER_TOTAL_TIMEOUT_MS: ${CODEX_APP_SERVER_TOTAL_TIMEOUT_MS:-10000}" in compose
     assert "CODEX_APP_SERVER_CONNECT_TIMEOUT_MS: ${CODEX_APP_SERVER_CONNECT_TIMEOUT_MS:-250}" in compose
-    assert "CODEX_APP_SERVER_REAL_UPSTREAM_URL: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL:-http://codex-private-model-runtime:18800/reply}" in compose
+    assert "CODEX_APP_SERVER_RUNTIME_BACKEND: ${CODEX_APP_SERVER_RUNTIME_BACKEND:-python_cli_pool}" in compose
+    assert "CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON:-http://codex-private-model-runtime:18800/reply}" in compose
+    assert "CODEX_APP_SERVER_REAL_UPSTREAM_URL_NODE: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL_NODE:-http://codex-appserver-runtime:18810/reply}" in compose
     assert "CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS:-9}" in compose
     assert "OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS:-7.5}" in compose
     assert "OPENCLAW_CODEX_EXECUTION_MODE: ${OPENCLAW_CODEX_EXECUTION_MODE:-warm_pool}" in compose
