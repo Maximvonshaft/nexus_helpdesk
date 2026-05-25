@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -178,6 +179,80 @@ def test_router_can_fallback_to_openclaw_provider(monkeypatch):
 
     assert result.ok is True
     assert result.reply_source == "openclaw_responses"
+
+
+def test_webchat_fast_service_provider_runtime_uses_dispatcher(monkeypatch):
+    from app.services import webchat_fast_ai_service as service
+
+    class Settings:
+        enabled = True
+        provider = "provider_runtime"
+
+    dispatcher = AsyncMock(
+        return_value=FastAIProviderResult(
+            ok=True,
+            ai_generated=True,
+            reply_source="codex_app_server",
+            raw_provider="codex_app_server",
+            raw_payload_safe_summary={"provider_runtime": True},
+            reply="ok",
+            intent="greeting",
+            tracking_number=None,
+            handoff_required=False,
+            handoff_reason=None,
+            recommended_agent_action=None,
+            tool_intents=[],
+            elapsed_ms=7,
+        )
+    )
+    legacy_router = AsyncMock(side_effect=AssertionError("provider_runtime must not enter legacy provider_router"))
+    monkeypatch.setattr(service, "get_webchat_fast_settings", lambda: Settings())
+    monkeypatch.setattr(service, "dispatch_webchat_fast_reply", dispatcher)
+    monkeypatch.setattr(service, "generate_fast_reply", legacy_router)
+
+    result = asyncio.run(
+        service.generate_webchat_fast_reply(
+            tenant_key="default",
+            channel_key="website",
+            session_id="s1",
+            body="hello",
+            recent_context=[],
+            request_id="r1",
+        )
+    )
+
+    assert result.ok is True
+    dispatcher.assert_awaited_once()
+    legacy_router.assert_not_called()
+    forwarded = dispatcher.await_args.kwargs["request"]
+    assert forwarded.tenant_key == "default"
+    assert forwarded.channel_key == "website"
+    assert forwarded.session_id == "s1"
+    assert forwarded.request_id == "r1"
+
+
+def test_legacy_provider_router_no_longer_dispatches_provider_runtime():
+    class Settings:
+        provider = "provider_runtime"
+        fallback_provider = "openclaw_responses"
+
+    result = asyncio.run(
+        generate_fast_reply(
+            request=FastAIProviderRequest(
+                tenant_key="default",
+                channel_key="website",
+                session_id="s1",
+                body="hello",
+                recent_context=[],
+                request_id="r1",
+            ),
+            settings=Settings(),  # type: ignore[arg-type]
+        )
+    )
+
+    assert result.ok is False
+    assert result.raw_provider == "provider_runtime"
+    assert result.error_code == "provider_runtime_dispatcher_required"
 
 
 def test_production_forbids_plaintext_codex_token(monkeypatch):

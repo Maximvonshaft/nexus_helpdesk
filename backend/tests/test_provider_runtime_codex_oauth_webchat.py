@@ -8,10 +8,13 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from app.services.ai_runtime.provider_router import generate_fast_reply
 from app.services.ai_runtime.schemas import FastAIProviderRequest
 from app.services.provider_runtime.adapters.codex_app_server import CodexAppServerAdapter
 from app.services.provider_runtime.output_contracts import OutputContracts
+from app.services.provider_runtime.webchat_fast_dispatcher import (
+    build_webchat_fast_provider_request,
+    dispatch_webchat_fast_reply,
+)
 from app.services.provider_runtime.registry import ProviderAdapter, ProviderRegistry
 from app.services.provider_runtime.router import ProviderRuntimeRouter
 from app.services.provider_runtime.schemas import ProviderRequest, ProviderResult
@@ -142,10 +145,9 @@ async def test_fast_provider_runtime_reads_reply_or_customer_reply():
         recent_context=[],
         request_id="req1",
     )
-    settings = Mock(provider="provider_runtime")
 
-    with patch("app.services.ai_runtime.provider_router.SessionLocal"), patch(
-        "app.services.ai_runtime.provider_router.ProviderRuntimeRouter.route",
+    with patch("app.services.provider_runtime.webchat_fast_dispatcher.SessionLocal"), patch(
+        "app.services.provider_runtime.webchat_fast_dispatcher.ProviderRuntimeRouter.route",
         new=AsyncMock(return_value=ProviderResult(
             ok=True,
             provider="codex_app_server",
@@ -158,7 +160,7 @@ async def test_fast_provider_runtime_reads_reply_or_customer_reply():
             raw_payload_safe_summary={"safe": True},
         )),
     ):
-        result = await generate_fast_reply(request=req, settings=settings)
+        result = await dispatch_webchat_fast_reply(request=req)
 
     assert result.ok is True
     assert result.reply == "Reply field works."
@@ -176,13 +178,12 @@ async def test_fast_provider_runtime_router_exception_returns_unavailable_result
         recent_context=[],
         request_id="req-router-exception",
     )
-    settings = Mock(provider="provider_runtime")
 
-    with patch("app.services.ai_runtime.provider_router.SessionLocal"), patch(
-        "app.services.ai_runtime.provider_router.ProviderRuntimeRouter.route",
+    with patch("app.services.provider_runtime.webchat_fast_dispatcher.SessionLocal"), patch(
+        "app.services.provider_runtime.webchat_fast_dispatcher.ProviderRuntimeRouter.route",
         new=AsyncMock(side_effect=RuntimeError("route failed")),
     ):
-        result = await generate_fast_reply(request=req, settings=settings)
+        result = await dispatch_webchat_fast_reply(request=req)
 
     assert result.ok is False
     assert result.raw_provider == "provider_runtime"
@@ -200,10 +201,9 @@ async def test_fast_provider_runtime_all_failed_preserves_error_code_without_typ
         recent_context=[],
         request_id="req-all-failed",
     )
-    settings = Mock(provider="provider_runtime")
 
-    with patch("app.services.ai_runtime.provider_router.SessionLocal"), patch(
-        "app.services.ai_runtime.provider_router.ProviderRuntimeRouter.route",
+    with patch("app.services.provider_runtime.webchat_fast_dispatcher.SessionLocal"), patch(
+        "app.services.provider_runtime.webchat_fast_dispatcher.ProviderRuntimeRouter.route",
         new=AsyncMock(
             return_value=ProviderResult(
                 ok=False,
@@ -215,12 +215,41 @@ async def test_fast_provider_runtime_all_failed_preserves_error_code_without_typ
             )
         ),
     ):
-        result = await generate_fast_reply(request=req, settings=settings)
+        result = await dispatch_webchat_fast_reply(request=req)
 
     assert result.ok is False
     assert result.raw_provider == "provider_runtime"
     assert result.error_code == "openclaw_responses_unavailable"
     assert result.elapsed_ms == 42
+
+
+def test_provider_runtime_dispatcher_builds_webchat_fast_request():
+    req = FastAIProviderRequest(
+        tenant_key="default",
+        channel_key="website",
+        session_id="sess-build",
+        body="hello",
+        recent_context=[{"role": "customer", "text": "hello"}],
+        request_id=None,
+        tracking_fact_summary="Trusted tracking fact",
+        tracking_fact_evidence_present=True,
+    )
+
+    runtime_req = build_webchat_fast_provider_request(req)
+
+    assert runtime_req.request_id == "req_unknown"
+    assert runtime_req.tenant_id == "default"
+    assert runtime_req.tenant_key == "default"
+    assert runtime_req.channel_key == "website"
+    assert runtime_req.session_id == "sess-build"
+    assert runtime_req.scenario == "webchat_fast_reply"
+    assert runtime_req.body == "hello"
+    assert runtime_req.recent_context == [{"role": "customer", "text": "hello"}]
+    assert runtime_req.tracking_fact_summary == "Trusted tracking fact"
+    assert runtime_req.tracking_fact_evidence_present is True
+    assert runtime_req.output_contract == "speedaf_webchat_fast_reply_v1"
+    assert runtime_req.timeout_ms == 10000
+    assert runtime_req.metadata == {}
 
 
 def test_provider_runtime_status_credential_summary_has_no_raw_tokens(monkeypatch):

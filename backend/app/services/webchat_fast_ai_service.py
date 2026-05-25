@@ -10,6 +10,7 @@ from .ai_runtime.openclaw_responses_provider import (
 )
 from .ai_runtime.provider_router import generate_fast_reply
 from .ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
+from .provider_runtime.webchat_fast_dispatcher import dispatch_webchat_fast_reply
 from .webchat_fast_config import get_webchat_fast_settings
 from .webchat_fast_reply_metrics import record_fast_reply_metric
 
@@ -134,20 +135,24 @@ async def generate_webchat_fast_reply(
         return result
 
     evidence_present = bool(tracking_fact_evidence_present and tracking_fact_summary)
-    provider_result = await generate_fast_reply(
-        request=FastAIProviderRequest(
-            tenant_key=tenant_key,
-            channel_key=channel_key,
-            session_id=session_id,
-            body=body,
-            recent_context=recent_context,
-            request_id=request_id,
-            tracking_fact_summary=tracking_fact_summary if evidence_present else None,
-            tracking_fact_metadata=tracking_fact_metadata if evidence_present else None,
-            tracking_fact_evidence_present=evidence_present,
-        ),
-        settings=settings,
+    provider_request = FastAIProviderRequest(
+        tenant_key=tenant_key,
+        channel_key=channel_key,
+        session_id=session_id,
+        body=body,
+        recent_context=recent_context,
+        request_id=request_id,
+        tracking_fact_summary=tracking_fact_summary if evidence_present else None,
+        tracking_fact_metadata=tracking_fact_metadata if evidence_present else None,
+        tracking_fact_evidence_present=evidence_present,
     )
+    if getattr(settings, "provider", None) == "provider_runtime":
+        provider_result = await dispatch_webchat_fast_reply(request=provider_request)
+    else:
+        provider_result = await generate_fast_reply(
+            request=provider_request,
+            settings=settings,
+        )
 
     status = "ok" if provider_result.ok else (provider_result.error_code or "ai_unavailable")
     record_fast_reply_metric(
