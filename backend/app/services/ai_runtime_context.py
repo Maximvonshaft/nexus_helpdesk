@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -11,6 +13,23 @@ MAX_PERSONA_SUMMARY_CHARS = 1200
 MAX_PERSONA_JSON_CHARS = 1600
 MAX_KNOWLEDGE_CHARS = 800
 MAX_CONTEXT_HITS = 5
+
+_SECRET_PATTERNS = [
+    re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.I),
+    re.compile(r"sk-[A-Za-z0-9_-]{12,}", re.I),
+    re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
+    re.compile(r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[0-1])\.\d+\.\d+|192\.168\.\d+\.\d+)[^\s]*", re.I),
+]
+_INTERNAL_WORDS = {
+    "provider_runtime",
+    "codex_app_server",
+    "codex bridge",
+    "bridge token",
+    "system prompt",
+    "openclaw",
+    "localhost",
+    "127.0.0.1",
+}
 
 
 def build_webchat_runtime_context(
@@ -37,7 +56,7 @@ def build_webchat_runtime_context(
         audience_scope=audience_scope,
         limit=MAX_CONTEXT_HITS,
     )
-    return {
+    return sanitize_runtime_context({
         "context_version": "nexus_webchat_runtime_context_v1",
         "tenant_key": tenant_key,
         "metadata_filters": {
@@ -57,7 +76,28 @@ def build_webchat_runtime_context(
                 "Do not override trusted tracking facts with knowledge text.",
             ],
         },
-    }
+    })
+
+
+def sanitize_runtime_context(value: Any) -> Any:
+    if isinstance(value, str):
+        return _sanitize_text(value)
+    if isinstance(value, list):
+        return [sanitize_runtime_context(item) for item in value]
+    if isinstance(value, dict):
+        return {str(k): sanitize_runtime_context(v) for k, v in value.items()}
+    return value
+
+
+def _sanitize_text(value: str) -> str:
+    text = value
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub("[redacted]", text)
+    lowered = text.lower()
+    if any(word in lowered for word in _INTERNAL_WORDS):
+        for word in sorted(_INTERNAL_WORDS, key=len, reverse=True):
+            text = re.sub(re.escape(word), "[internal]", text, flags=re.I)
+    return text
 
 
 def _persona_context(profile, match_rank: int | None) -> dict[str, Any] | None:
@@ -106,8 +146,6 @@ def _clip(value: str | None, limit: int) -> str | None:
 
 
 def _clip_json(value: dict[str, Any], limit: int) -> dict[str, Any]:
-    import json
-
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True)
     if len(encoded) <= limit:
         return value
