@@ -183,7 +183,7 @@ def test_router_can_fallback_to_openclaw_provider(monkeypatch):
 def test_production_forbids_plaintext_codex_token(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
-    monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "codex_auth")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "provider_runtime")
     monkeypatch.setenv("WEBCHAT_FAST_AI_CODEX_ENABLED", "true")
     monkeypatch.setenv("CODEX_AUTH_TOKEN", "codex-secret-token-value")
     monkeypatch.delenv("CODEX_AUTH_TOKEN_FILE", raising=False)

@@ -19,6 +19,7 @@ from app.enums import UserRole
 from app.main import app
 from app.models import AdminAuditLog, User, UserCapabilityOverride
 from app.services.provider_runtime.credential_crypto import CredentialCryptoService
+from app.services.provider_runtime.oauth_refresh_manager import clear_oauth_access_token_cache_for_tests
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -75,6 +76,7 @@ def users(db_session):
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
+    clear_oauth_access_token_cache_for_tests()
     monkeypatch.delenv("APP_ENV", raising=False)
     monkeypatch.delenv("ENV", raising=False)
     monkeypatch.delenv("CODEX_LLM_ENDPOINT", raising=False)
@@ -93,6 +95,8 @@ def clean_env(monkeypatch):
     monkeypatch.delenv("CODEX_APP_SERVER_TIMEOUT_MS", raising=False)
     monkeypatch.delenv("CODEX_OAUTH_CLIENT_ID", raising=False)
     monkeypatch.delenv("CODEX_OAUTH_TOKEN_URL", raising=False)
+    yield
+    clear_oauth_access_token_cache_for_tests()
 
 
 @pytest.fixture()

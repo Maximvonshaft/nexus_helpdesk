@@ -6,6 +6,8 @@ from .provider_base import BaseFastAIProvider
 from .schemas import FastAIProviderRequest, FastAIProviderResult
 
 
+# Deprecated legacy direct WebChat Fast Reply provider. Production traffic must
+# enter through WEBCHAT_FAST_AI_PROVIDER=provider_runtime instead.
 class CodexAuthProvider(BaseFastAIProvider):
     """Phase 1 Codex-auth provider skeleton.
 

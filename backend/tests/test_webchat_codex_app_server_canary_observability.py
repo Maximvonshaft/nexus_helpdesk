@@ -214,7 +214,7 @@ def test_codex_kill_switch_config(monkeypatch):
     assert settings.codex_app_server_kill_switch is True
 
 
-def test_production_codex_canary_requires_openclaw_token_file(monkeypatch, tmp_path):
+def test_production_codex_canary_direct_provider_is_guarded(monkeypatch, tmp_path):
     codex_token_file = tmp_path / "codex_app_server_token"
     codex_token_file.write_text("codex-file-token", encoding="utf-8")
     monkeypatch.setenv("APP_ENV", "production")
@@ -228,11 +228,11 @@ def test_production_codex_canary_requires_openclaw_token_file(monkeypatch, tmp_p
     monkeypatch.delenv("OPENCLAW_RESPONSES_TOKEN_FILE", raising=False)
     _clear_settings()
 
-    with pytest.raises(RuntimeError, match="OPENCLAW_RESPONSES_TOKEN_FILE"):
+    with pytest.raises(RuntimeError, match="WEBCHAT_FAST_AI_PROVIDER=provider_runtime"):
         get_webchat_fast_settings()
 
 
-def test_production_codex_kill_switch_requires_openclaw_token_file(monkeypatch, tmp_path):
+def test_production_codex_kill_switch_direct_provider_is_guarded(monkeypatch, tmp_path):
     codex_token_file = tmp_path / "codex_app_server_token"
     codex_token_file.write_text("codex-file-token", encoding="utf-8")
     monkeypatch.setenv("APP_ENV", "production")
@@ -247,5 +247,5 @@ def test_production_codex_kill_switch_requires_openclaw_token_file(monkeypatch, 
     monkeypatch.delenv("OPENCLAW_RESPONSES_TOKEN_FILE", raising=False)
     _clear_settings()
 
-    with pytest.raises(RuntimeError, match="OPENCLAW_RESPONSES_TOKEN_FILE"):
+    with pytest.raises(RuntimeError, match="WEBCHAT_FAST_AI_PROVIDER=provider_runtime"):
         get_webchat_fast_settings()
