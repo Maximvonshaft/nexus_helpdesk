@@ -11,6 +11,13 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
+_OPENCLAW_DEVICE_POLL_MODES = {"openclaw", "openclaw_codex", "device_auth", "device_auth_id"}
+_GENERIC_DEVICE_POLL_MODES = {"generic", "generic_device_code", "device_code", "oauth_device_code"}
+_ALLOWED_DEVICE_POLL_MODES = {"auto", *_OPENCLAW_DEVICE_POLL_MODES, *_GENERIC_DEVICE_POLL_MODES}
+_OPENCLAW_DEVICE_TOKEN_HINT = "deviceauth/token"
+_OPENCLAW_DEVICE_CALLBACK_PATH = "/deviceauth/callback"
+
+
 class CodexDeviceAuthService:
     def __init__(self, db: Session, crypto_service):
         self.db = db
@@ -21,6 +28,8 @@ class CodexDeviceAuthService:
         self.usercode_path = os.environ.get("CODEX_OAUTH_DEVICE_USERCODE_PATH", "").strip()
         self.device_token_path = os.environ.get("CODEX_OAUTH_DEVICE_TOKEN_PATH", "").strip()
         self.token_path = (os.environ.get("CODEX_OAUTH_TOKEN_URL") or os.environ.get("CODEX_OAUTH_TOKEN_PATH", "")).strip()
+        self.device_poll_payload_mode = os.environ.get("CODEX_OAUTH_DEVICE_POLL_PAYLOAD_MODE", "auto").strip().lower() or "auto"
+        self.device_redirect_uri = os.environ.get("CODEX_OAUTH_DEVICE_REDIRECT_URI", "").strip()
 
     def _require_enabled(self) -> None:
         if not self.enabled:
@@ -38,11 +47,56 @@ class CodexDeviceAuthService:
             missing.append("CODEX_OAUTH_TOKEN_URL or CODEX_OAUTH_TOKEN_PATH")
         if missing:
             raise ValueError("Codex device flow missing configuration: " + ", ".join(missing))
+        if self.device_poll_payload_mode not in _ALLOWED_DEVICE_POLL_MODES:
+            raise ValueError(
+                "CODEX_OAUTH_DEVICE_POLL_PAYLOAD_MODE must be auto, openclaw, or generic_device_code"
+            )
 
     def _url(self, path_or_url: str) -> str:
         if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
             return path_or_url
         return f"{self.auth_base_url}/{path_or_url.lstrip('/')}"
+
+    def _use_openclaw_device_poll(self) -> bool:
+        mode = self.device_poll_payload_mode
+        if mode in _OPENCLAW_DEVICE_POLL_MODES:
+            return True
+        if mode in _GENERIC_DEVICE_POLL_MODES:
+            return False
+        token_path = self.device_token_path.lower()
+        auth_base = self.auth_base_url.lower()
+        return _OPENCLAW_DEVICE_TOKEN_HINT in token_path or "auth.openai.com" in auth_base
+
+    def _device_exchange_redirect_uri(self) -> str | None:
+        if self.device_redirect_uri:
+            return self.device_redirect_uri
+        if self._use_openclaw_device_poll() and self.auth_base_url:
+            return f"{self.auth_base_url}{_OPENCLAW_DEVICE_CALLBACK_PATH}"
+        return None
+
+    def _build_device_poll_payload(self, session: dict[str, Any]) -> dict[str, Any]:
+        device_auth_id = session.get("device_auth_id")
+        if not device_auth_id:
+            raise ValueError("Codex device auth session is missing device_auth_id")
+        if self._use_openclaw_device_poll():
+            user_code = session.get("user_code")
+            if not user_code:
+                raise ValueError("OpenClaw-compatible Codex device auth polling requires user_code")
+            return {
+                "device_auth_id": device_auth_id,
+                "user_code": user_code,
+            }
+        return {
+            "client_id": self.client_id,
+            "device_code": device_auth_id,
+        }
+
+    def _is_pending_poll_response(self, response: httpx.Response, error_code: str | None) -> bool:
+        if response.status_code in {400, 401} and error_code in {"authorization_pending", "slow_down"}:
+            return True
+        if self._use_openclaw_device_poll() and response.status_code in {403, 404}:
+            return True
+        return False
 
     async def start_device_flow(self, tenant_id: str, user_id: str, scope: str | None = None) -> dict[str, Any]:
         self._require_enabled()
@@ -58,7 +112,7 @@ class CodexDeviceAuthService:
             response.raise_for_status()
             data = response.json()
 
-        user_code = data.get("user_code") or data.get("userCode")
+        user_code = data.get("user_code") or data.get("userCode") or data.get("usercode")
         verification_url = data.get("verification_uri") or data.get("verification_url") or data.get("verificationUrl")
         device_auth_id = data.get("device_code") or data.get("device_auth_id") or data.get("deviceAuthId")
         interval = int(data.get("interval") or 5)
@@ -128,18 +182,17 @@ class CodexDeviceAuthService:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             response = await client.post(
                 self._url(self.device_token_path),
-                json={"client_id": self.client_id, "device_code": session["device_auth_id"]},
+                json=self._build_device_poll_payload(dict(session)),
                 headers={"Accept": "application/json"},
             )
-            if response.status_code in {400, 401}:
-                data = response.json()
-                error_code = data.get("error") or data.get("error_code") or "authorization_pending"
-                if error_code in {"authorization_pending", "slow_down"}:
-                    return {"status": "pending", "error_code": error_code}
+            data = _safe_response_json(response)
+            error_code = data.get("error") or data.get("error_code") or "authorization_pending"
+            if self._is_pending_poll_response(response, error_code):
+                return {"status": "pending", "error_code": error_code}
+            if response.status_code >= 400:
                 self._mark_session(session_id=session_id, tenant_id=tenant_id, status="failed", error_code=error_code)
                 return {"status": "failed", "error_code": error_code}
             response.raise_for_status()
-            data = response.json()
 
         token_data = await self._exchange_token(data)
         access_token = token_data.get("access_token") or token_data.get("access")
@@ -175,6 +228,9 @@ class CodexDeviceAuthService:
             "code": authorization_code,
             "client_id": self.client_id,
         }
+        redirect_uri = self._device_exchange_redirect_uri()
+        if redirect_uri:
+            payload["redirect_uri"] = redirect_uri
         if code_verifier:
             payload["code_verifier"] = code_verifier
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
@@ -230,3 +286,11 @@ class CodexDeviceAuthService:
             WHERE id = :id AND tenant_id = :tenant_id
         """), {"status": status, "error_code": error_code, "completed": completed, "id": session_id, "tenant_id": tenant_id})
         self.db.commit()
+
+
+def _safe_response_json(response: httpx.Response) -> dict[str, Any]:
+    try:
+        data = response.json()
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
