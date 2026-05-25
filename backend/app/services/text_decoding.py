@@ -94,15 +94,21 @@ def _text_quality_score(text: str) -> float:
 
     good = 0.0
     bad = 0.0
+    high_confidence = 0
     for ch in stripped:
         code = ord(ch)
         if ch.isspace() or ch in ",.;:!?，。；：！？、-_/()[]{}'\"":
             good += 1.0
+            high_confidence += 1
         elif 0x20 <= code <= 0x7E:
             good += 1.0
+            high_confidence += 1
         elif 0x4E00 <= code <= 0x9FFF:
             good += 1.0
+            high_confidence += 1
         elif 0x3400 <= code <= 0x4DBF:
+            good += 0.35
+        elif 0x00A0 <= code <= 0x024F:
             good += 0.35
         elif 0xAC00 <= code <= 0xD7AF:
             bad += 1.0
@@ -113,8 +119,10 @@ def _text_quality_score(text: str) -> float:
         elif code >= 0xA000:
             bad += 0.8
         else:
-            good += 0.45
+            bad += 0.7
 
+    if high_confidence == 0:
+        return 0.0
     total = good + bad
     if total <= 0:
         return 0.0
