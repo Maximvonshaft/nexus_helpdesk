@@ -27,6 +27,9 @@ export type ReplyRequest = {
   contract?: string;
   tracking_fact_summary?: string | null;
   tracking_fact_evidence_present?: boolean;
+  persona_context?: Record<string, unknown> | null;
+  knowledge_context?: Record<string, unknown> | null;
+  safety_policy?: Record<string, unknown> | null;
   tenant_id?: string;
   channel_key?: string;
   session_id?: string;
@@ -71,6 +74,9 @@ export function validateReplyRequest(value: unknown): ReplyRequest {
     tracking_fact_summary:
       typeof value.tracking_fact_summary === "string" ? value.tracking_fact_summary : null,
     tracking_fact_evidence_present: value.tracking_fact_evidence_present === true,
+    persona_context: isRecord(value.persona_context) ? sanitizeRecord(value.persona_context, 2600) : null,
+    knowledge_context: isRecord(value.knowledge_context) ? sanitizeRecord(value.knowledge_context, 5000) : null,
+    safety_policy: isRecord(value.safety_policy) ? sanitizeRecord(value.safety_policy, 2000) : null,
     tenant_id: typeof value.tenant_id === "string" && value.tenant_id.trim() ? value.tenant_id.trim() : "default",
     channel_key: typeof value.channel_key === "string" && value.channel_key.trim() ? value.channel_key.trim() : "website",
     session_id: typeof value.session_id === "string" ? value.session_id : undefined,
@@ -123,4 +129,12 @@ export function parseStrictReply(text: string): StrictReply {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function sanitizeRecord(value: Record<string, unknown>, maxJsonChars: number): Record<string, unknown> {
+  const json = JSON.stringify(value);
+  if (json.length <= maxJsonChars) {
+    return value;
+  }
+  return { truncated: true, preview: json.slice(0, maxJsonChars - 16) };
 }

@@ -113,6 +113,8 @@ async def generate_webchat_fast_reply(
     tracking_fact_summary: str | None = None,
     tracking_fact_metadata: dict[str, Any] | None = None,
     tracking_fact_evidence_present: bool = False,
+    market_id: int | None = None,
+    language: str | None = None,
 ) -> WebchatFastReplyResult:
     settings = get_webchat_fast_settings()
     if not settings.enabled:
@@ -145,6 +147,8 @@ async def generate_webchat_fast_reply(
         tracking_fact_summary=tracking_fact_summary if evidence_present else None,
         tracking_fact_metadata=tracking_fact_metadata if evidence_present else None,
         tracking_fact_evidence_present=evidence_present,
+        market_id=market_id,
+        language=language,
     )
     if getattr(settings, "provider", None) == "provider_runtime":
         provider_result = await dispatch_webchat_fast_reply(request=provider_request)

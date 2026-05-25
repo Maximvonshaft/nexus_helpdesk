@@ -344,11 +344,28 @@ export interface PersonaProfile {
   language?: string | null
   is_active: boolean
   draft_summary?: string | null
+  draft_content_json?: Record<string, unknown> | null
   published_summary?: string | null
+  published_content_json?: Record<string, unknown> | null
   published_version: number
   published_at?: string | null
   created_at: string
   updated_at: string
+}
+
+export interface PersonaProfileVersion {
+  id: number
+  profile_id: number
+  version: number
+  snapshot_json: Record<string, unknown>
+  summary?: string | null
+  notes?: string | null
+  published_by?: number | null
+  published_at: string
+}
+
+export interface PersonaProfileDetail extends PersonaProfile {
+  versions: PersonaProfileVersion[]
 }
 
 export interface PersonaProfileList {
@@ -367,14 +384,62 @@ export interface KnowledgeItem {
   channel?: string | null
   audience_scope: string
   priority: number
+  starts_at?: string | null
+  ends_at?: string | null
+  source_url?: string | null
+  file_name?: string | null
+  file_storage_key?: string | null
+  mime_type?: string | null
+  file_size?: number | null
+  parsing_status?: string | null
+  parsing_error?: string | null
+  parsed_at?: string | null
+  indexed_version: number
+  indexed_at?: string | null
+  chunk_count: number
+  draft_body?: string | null
+  draft_normalized_text?: string | null
+  published_body?: string | null
+  published_normalized_text?: string | null
   published_version: number
   published_at?: string | null
   created_at: string
   updated_at: string
 }
 
+export interface KnowledgeItemVersion {
+  id: number
+  item_id: number
+  version: number
+  snapshot_json: Record<string, unknown>
+  summary?: string | null
+  notes?: string | null
+  published_by?: number | null
+  published_at: string
+}
+
+export interface KnowledgeItemDetail extends KnowledgeItem {
+  versions: KnowledgeItemVersion[]
+}
+
 export interface KnowledgeItemList {
   items: KnowledgeItem[]
+  total: number
+}
+
+export interface KnowledgeChunkHit {
+  item_id: number
+  item_key: string
+  title: string
+  published_version: number
+  chunk_index: number
+  score: number
+  text: string
+  metadata: Record<string, unknown>
+}
+
+export interface KnowledgeRetrievalTestResult {
+  hits: KnowledgeChunkHit[]
   total: number
 }
 

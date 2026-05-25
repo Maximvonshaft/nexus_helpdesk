@@ -5,13 +5,38 @@ import logging
 from app.db import SessionLocal
 
 from ..ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
+from ..ai_runtime_context import build_webchat_runtime_context
 from .router import ProviderRuntimeRouter
 from .schemas import ProviderRequest
 
 logger = logging.getLogger(__name__)
 
 
-def build_webchat_fast_provider_request(request: FastAIProviderRequest) -> ProviderRequest:
+def _fallback_runtime_context(request: FastAIProviderRequest) -> dict:
+    return {
+        "context_version": "nexus_webchat_runtime_context_v1",
+        "tenant_key": request.tenant_key,
+        "metadata_filters": {
+            "market_id": request.market_id,
+            "channel": request.channel_key,
+            "language": request.language,
+            "audience_scope": "customer",
+        },
+        "persona_context": None,
+        "knowledge_context": {"retrieval": "unavailable", "total_matches": 0, "hits": []},
+        "safety_policy": {
+            "knowledge_scope": "policy_sop_faq_only",
+            "tracking_truth_boundary": "Parcel live status requires tracking_fact_evidence_present=true and trusted tracking_fact_summary.",
+        },
+    }
+
+
+def build_webchat_fast_provider_request(request: FastAIProviderRequest, *, metadata: dict | None = None) -> ProviderRequest:
+    safe_metadata = dict(metadata or {})
+    if request.metadata:
+        safe_metadata.update(request.metadata)
+    if request.tracking_fact_evidence_present and request.tracking_fact_metadata:
+        safe_metadata["tracking_fact_metadata"] = request.tracking_fact_metadata
     return ProviderRequest(
         request_id=request.request_id or "req_unknown",
         tenant_id=request.tenant_key,
@@ -25,15 +50,27 @@ def build_webchat_fast_provider_request(request: FastAIProviderRequest) -> Provi
         tracking_fact_evidence_present=request.tracking_fact_evidence_present,
         output_contract="speedaf_webchat_fast_reply_v1",
         timeout_ms=10000,
-        metadata={},
+        metadata=safe_metadata,
     )
 
 
 async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> FastAIProviderResult:
     db = SessionLocal()
     try:
+        try:
+            runtime_context = build_webchat_runtime_context(
+                db,
+                tenant_key=request.tenant_key,
+                channel_key=request.channel_key,
+                body=request.body,
+                market_id=request.market_id,
+                language=request.language,
+            )
+        except Exception:
+            logger.exception("webchat_runtime_context_build_failed")
+            runtime_context = _fallback_runtime_context(request)
         router = ProviderRuntimeRouter(db)
-        res = await router.route(build_webchat_fast_provider_request(request))
+        res = await router.route(build_webchat_fast_provider_request(request, metadata=runtime_context))
         if not res.ok or not res.structured_output:
             return FastAIProviderResult.unavailable(
                 provider="provider_runtime",

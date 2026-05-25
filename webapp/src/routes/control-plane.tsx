@@ -5,7 +5,6 @@ import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
 import { canManageAIConfig, canManageChannels, canViewControlPlane } from '@/lib/access'
 import { useSession } from '@/hooks/useAuth'
-import { Badge } from '@/components/ui/Badge'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { DataTable } from '@/components/ui/DataTable'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -21,8 +20,8 @@ function ControlPlanePage() {
 
   const [personas, knowledge, tasks] = useQueries({
     queries: [
-      { queryKey: ['control-plane-personas'], queryFn: api.personaProfiles, enabled: canSeeAI },
-      { queryKey: ['control-plane-knowledge'], queryFn: api.knowledgeItems, enabled: canSeeAI },
+      { queryKey: ['control-plane-personas'], queryFn: () => api.personaProfiles(), enabled: canSeeAI },
+      { queryKey: ['control-plane-knowledge'], queryFn: () => api.knowledgeItems(), enabled: canSeeAI },
       { queryKey: ['control-plane-channel-tasks'], queryFn: api.channelOnboardingTasks, enabled: canSeeChannels },
     ],
   })
@@ -37,6 +36,7 @@ function ControlPlanePage() {
   const taskRows = tasks.data?.tasks ?? []
   const publishedPersonaCount = personaRows.filter((item) => item.published_version > 0).length
   const activeKnowledgeCount = knowledgeRows.filter((item) => item.status === 'active' && item.published_version > 0).length
+  const indexedChunkCount = knowledgeRows.reduce((sum, item) => sum + (item.chunk_count || 0), 0)
   const openTaskCount = taskRows.filter((item) => !['completed', 'cancelled'].includes(item.status)).length
 
   return (
@@ -56,7 +56,7 @@ function ControlPlanePage() {
         <>
           <div className="metrics-grid metrics-grid-wide">
             <div className="metric-card"><div className="metric-label">Persona 总数</div><div className="metric-value">{canSeeAI ? personaRows.length : '—'}</div><div className="metric-hint">已发布 {canSeeAI ? publishedPersonaCount : '—'} 项</div></div>
-            <div className="metric-card"><div className="metric-label">Knowledge 总数</div><div className="metric-value">{canSeeAI ? knowledgeRows.length : '—'}</div><div className="metric-hint">生效 {canSeeAI ? activeKnowledgeCount : '—'} 项</div></div>
+            <div className="metric-card"><div className="metric-label">Knowledge 总数</div><div className="metric-value">{canSeeAI ? knowledgeRows.length : '—'}</div><div className="metric-hint">生效 {canSeeAI ? activeKnowledgeCount : '—'} 项 / chunk {canSeeAI ? indexedChunkCount : '—'}</div></div>
             <div className="metric-card"><div className="metric-label">Channel 任务</div><div className="metric-value">{canSeeChannels ? taskRows.length : '—'}</div><div className="metric-hint">待处理 {canSeeChannels ? openTaskCount : '—'} 项</div></div>
             <div className="metric-card"><div className="metric-label">能力边界</div><div className="metric-value">只读</div><div className="metric-hint">本页不执行发布、绑定或发送</div></div>
           </div>
@@ -97,13 +97,13 @@ function ControlPlanePage() {
               <CardBody>
                 {canSeeAI ? (
                   <DataTable
-                    columns={['Key', '标题', '状态', '渠道', '受众', '版本']}
+                    columns={['Key', '标题', '状态', '渠道', '索引', '版本']}
                     rows={knowledgeRows.slice(0, 12).map((item) => [
                       sanitizeDisplayText(item.item_key),
                       sanitizeDisplayText(item.title),
                       labelize(item.status),
                       sanitizeDisplayText(item.channel),
-                      labelize(item.audience_scope),
+                      `${item.indexed_version ? `v${item.indexed_version}` : '未索引'} / ${item.chunk_count || 0}`,
                       item.published_version > 0 ? `v${item.published_version}` : '未发布',
                     ])}
                   />

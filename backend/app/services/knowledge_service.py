@@ -3,11 +3,15 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import HTTPException
+from fastapi import UploadFile
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..models_control_plane import KnowledgeItem, KnowledgeItemVersion
 from ..utils.time import ensure_utc, utc_now
+from . import file_service
+from .knowledge_document_service import parse_document_bytes, read_upload_bytes
+from .knowledge_retrieval_service import index_published_item
 
 VALID_STATUSES = {"draft", "active", "archived"}
 VALID_SOURCE_TYPES = {"text", "url", "file"}
@@ -46,6 +50,8 @@ def _snapshot(row: KnowledgeItem, *, version: int, published_at) -> dict:
         "file_storage_key": row.file_storage_key,
         "mime_type": row.mime_type,
         "file_size": row.file_size,
+        "parsing_status": row.parsing_status,
+        "parsing_error": row.parsing_error,
         "body": row.draft_body,
         "normalized_text": row.draft_normalized_text,
         "published_version": version,
@@ -125,12 +131,38 @@ def create_item(db: Session, payload, actor) -> KnowledgeItem:
         file_storage_key=payload.file_storage_key,
         mime_type=payload.mime_type,
         file_size=payload.file_size,
+        parsing_status=payload.parsing_status or "unparsed",
+        parsing_error=payload.parsing_error,
         draft_body=payload.draft_body,
         draft_normalized_text=payload.draft_normalized_text or payload.draft_body,
         created_by=getattr(actor, "id", None),
         updated_by=getattr(actor, "id", None),
     )
     db.add(row)
+    db.flush()
+    return row
+
+
+def upload_document(db: Session, row: KnowledgeItem, file: UploadFile, actor) -> KnowledgeItem:
+    content = read_upload_bytes(file)
+    parsed_body, normalized_text = parse_document_bytes(
+        content=content,
+        filename=file.filename,
+        mime_type=file.content_type,
+    )
+    stored = file_service.save_upload(file)
+    now = utc_now()
+    row.source_type = "file"
+    row.file_name = stored.stored_name
+    row.file_storage_key = stored.storage_key
+    row.mime_type = stored.mime_type
+    row.file_size = stored.file_size
+    row.draft_body = parsed_body
+    row.draft_normalized_text = normalized_text
+    row.parsing_status = "parsed"
+    row.parsing_error = None
+    row.parsed_at = now
+    row.updated_by = getattr(actor, "id", None)
     db.flush()
     return row
 
@@ -172,6 +204,7 @@ def publish_item(db: Session, row: KnowledgeItem, actor, *, notes: Optional[str]
     if row.status == "draft":
         row.status = "active"
     db.add(version_row)
+    index_published_item(db, row)
     db.flush()
     return version_row
 
@@ -197,6 +230,8 @@ def rollback_item(db: Session, row: KnowledgeItem, *, version: int, actor, notes
     row.file_storage_key = snapshot.get("file_storage_key")
     row.mime_type = snapshot.get("mime_type")
     row.file_size = snapshot.get("file_size")
+    row.parsing_status = snapshot.get("parsing_status") or row.parsing_status
+    row.parsing_error = snapshot.get("parsing_error")
     row.draft_body = snapshot.get("body")
     row.draft_normalized_text = snapshot.get("normalized_text")
     return publish_item(db, row, actor, notes=notes or f"Rollback to v{version}")

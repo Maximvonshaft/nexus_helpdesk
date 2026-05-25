@@ -167,10 +167,12 @@ class KnowledgeItemBase(BaseModel):
     file_storage_key: Optional[str] = Field(default=None, max_length=255)
     mime_type: Optional[str] = Field(default=None, max_length=120)
     file_size: Optional[int] = Field(default=None, ge=0)
+    parsing_status: Optional[str] = Field(default=None, max_length=40)
+    parsing_error: Optional[str] = Field(default=None, max_length=4000)
     draft_body: Optional[str] = Field(default=None, max_length=120000)
     draft_normalized_text: Optional[str] = Field(default=None, max_length=120000)
 
-    @field_validator("title", "summary", "status", "source_type", "channel", "audience_scope", "source_url", "file_name", "file_storage_key", "mime_type", "draft_body", "draft_normalized_text", mode="before")
+    @field_validator("title", "summary", "status", "source_type", "channel", "audience_scope", "source_url", "file_name", "file_storage_key", "mime_type", "parsing_status", "parsing_error", "draft_body", "draft_normalized_text", mode="before")
     @classmethod
     def strip_optional_strings(cls, value):
         if isinstance(value, str):
@@ -207,10 +209,12 @@ class KnowledgeItemUpdate(BaseModel):
     file_storage_key: Optional[str] = Field(default=None, max_length=255)
     mime_type: Optional[str] = Field(default=None, max_length=120)
     file_size: Optional[int] = Field(default=None, ge=0)
+    parsing_status: Optional[str] = Field(default=None, max_length=40)
+    parsing_error: Optional[str] = Field(default=None, max_length=4000)
     draft_body: Optional[str] = Field(default=None, max_length=120000)
     draft_normalized_text: Optional[str] = Field(default=None, max_length=120000)
 
-    @field_validator("title", "summary", "status", "source_type", "channel", "audience_scope", "source_url", "file_name", "file_storage_key", "mime_type", "draft_body", "draft_normalized_text", mode="before")
+    @field_validator("title", "summary", "status", "source_type", "channel", "audience_scope", "source_url", "file_name", "file_storage_key", "mime_type", "parsing_status", "parsing_error", "draft_body", "draft_normalized_text", mode="before")
     @classmethod
     def strip_optional_strings(cls, value):
         if isinstance(value, str):
@@ -251,6 +255,22 @@ class KnowledgeSearchPublishedRequest(BaseModel):
         return value
 
 
+class KnowledgeRetrievalTestRequest(BaseModel):
+    q: str = Field(min_length=1, max_length=500)
+    market_id: Optional[int] = None
+    channel: Optional[str] = Field(default=None, max_length=40)
+    audience_scope: Optional[str] = Field(default="customer", max_length=40)
+    limit: int = Field(default=5, ge=1, le=20)
+
+    @field_validator("q", "channel", "audience_scope", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+
 class KnowledgeItemVersionOut(ControlPlaneModel):
     id: int
     item_id: int
@@ -280,6 +300,12 @@ class KnowledgeItemOut(ControlPlaneModel):
     file_storage_key: Optional[str] = None
     mime_type: Optional[str] = None
     file_size: Optional[int] = None
+    parsing_status: Optional[str] = None
+    parsing_error: Optional[str] = None
+    parsed_at: Optional[datetime] = None
+    indexed_version: int = 0
+    indexed_at: Optional[datetime] = None
+    chunk_count: int = 0
     draft_body: Optional[str] = None
     draft_normalized_text: Optional[str] = None
     published_body: Optional[str] = None
@@ -304,4 +330,20 @@ class KnowledgeItemListOut(BaseModel):
 
 class KnowledgeSearchPublishedOut(BaseModel):
     items: list[KnowledgeItemOut]
+    total: int
+
+
+class KnowledgeChunkHitOut(BaseModel):
+    item_id: int
+    item_key: str
+    title: str
+    published_version: int
+    chunk_index: int
+    score: float
+    text: str
+    metadata: JsonObject = Field(default_factory=dict)
+
+
+class KnowledgeRetrievalTestOut(BaseModel):
+    hits: list[KnowledgeChunkHitOut]
     total: int
