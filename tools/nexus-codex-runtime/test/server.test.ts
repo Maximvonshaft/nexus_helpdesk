@@ -47,8 +47,8 @@ test("node sidecar model benchmark config is opt-in", () => {
   const benchmark = loadConfig({ CODEX_APPSERVER_MODEL: "gpt-5.4-mini" });
   const baseline = loadConfig({ CODEX_APPSERVER_PERFORMANCE_PROFILE: "baseline" });
 
-  assert.equal(config.model, "gpt-5.5");
-  assert.equal(config.maxConcurrency, 6);
+  assert.equal(config.model, "gpt-5.3-codex-spark");
+  assert.equal(config.maxConcurrency, 4);
   assert.equal(config.queueTimeoutMs, 750);
   assert.equal(config.performanceProfile, "webchat_fast");
   assert.equal(config.reasoningEffort, "low");

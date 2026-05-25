@@ -2,10 +2,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stableHash } from "./redaction.js";
 
-const DEFAULT_MODEL = "gpt-5.5";
+const DEFAULT_MODEL = "gpt-5.3-codex-spark";
 const DEFAULT_QUEUE_TIMEOUT_MS = 750;
 const DEFAULT_REPLY_TIMEOUT_MS = 8000;
-const DEFAULT_MAX_CONCURRENCY = 6;
+const DEFAULT_MAX_CONCURRENCY = 4;
 const DEFAULT_PERFORMANCE_PROFILE = "webchat_fast";
 const DEFAULT_REASONING_EFFORT = "low";
 const DEFAULT_SERVICE_TIER = "priority";
