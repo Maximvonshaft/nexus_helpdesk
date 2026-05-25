@@ -36,7 +36,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     enabled: parseBool(env.CODEX_APPSERVER_RUNTIME_ENABLED ?? "true"),
     host: env.CODEX_APPSERVER_HOST || "0.0.0.0",
     port: parseIntEnv(env.CODEX_APPSERVER_PORT, 18810, 1, 65535),
-    model: env.CODEX_APPSERVER_MODEL || "openai/gpt-5.5",
+    model: env.CODEX_APPSERVER_MODEL || "gpt-5.5",
     threadMode: "ephemeral",
     clientCacheTtlSeconds: parseIntEnv(env.CODEX_APPSERVER_CLIENT_CACHE_TTL_SECONDS, 1800, 1, 86400),
     queueTimeoutMs: parseIntEnv(env.CODEX_APPSERVER_QUEUE_TIMEOUT_MS, 200, 1, 60000),

@@ -69,7 +69,10 @@ RUN node --version \
     && npm --version \
     && openclaw --version \
     && npm list -g --depth=0 openclaw @openclaw/codex \
-    && test -e /usr/local/lib/node_modules/openclaw/dist/entry.mjs -o -e /usr/local/lib/node_modules/openclaw/dist/entry.js -o -e /usr/local/lib/node_modules/openclaw/openclaw.mjs
+    && test -e /usr/local/lib/node_modules/openclaw/dist/entry.mjs -o -e /usr/local/lib/node_modules/openclaw/dist/entry.js -o -e /usr/local/lib/node_modules/openclaw/openclaw.mjs \
+    && test -x /usr/local/lib/node_modules/@openclaw/codex/node_modules/.bin/codex \
+    && ln -sf /usr/local/lib/node_modules/@openclaw/codex/node_modules/.bin/codex /usr/local/bin/codex \
+    && codex --version
 
 # Round B webchat widget static export
 # Keep embeddable public webchat files outside SPA fallback.

@@ -46,6 +46,7 @@ def test_compose_adds_node_runtime_and_keeps_python_rollback():
 
     assert "codex-appserver-runtime:" in compose
     assert "CODEX_APPSERVER_PORT: \"18810\"" in compose
+    assert "CODEX_APPSERVER_MODEL: ${CODEX_APPSERVER_MODEL:-gpt-5.5}" in compose
     assert "codex-private-model-runtime:" in compose
     assert "PORT: \"18800\"" in compose
     assert "CODEX_APP_SERVER_RUNTIME_BACKEND" in compose
@@ -61,3 +62,22 @@ def test_bridge_has_runtime_backend_switch():
     assert "node_appserver" in source
     assert "codex-private-model-runtime:18800/reply" in source
     assert "codex-appserver-runtime:18810/reply" in source
+
+
+def test_node_runtime_defaults_match_validated_server_profile():
+    env = _read("tools/nexus-codex-runtime/src/env.ts")
+    dockerfile = _read("Dockerfile")
+
+    assert 'model: env.CODEX_APPSERVER_MODEL || "gpt-5.5"' in env
+    assert "ln -sf /usr/local/lib/node_modules/@openclaw/codex/node_modules/.bin/codex /usr/local/bin/codex" in dockerfile
+    assert "codex --version" in dockerfile
+
+
+def test_runbook_documents_webchat_flag_and_db_canary_gate():
+    runbook = _read("docs/ops/CODEX_APPSERVER_RUNTIME_V3_RUNBOOK.md")
+
+    assert "WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED=true" in runbook
+    assert "DB canary > 0" in runbook
+    assert "Canary remains 0 by default" in runbook
+    assert "pilot-functional only" in runbook
+    assert "12-parallel errors" in runbook

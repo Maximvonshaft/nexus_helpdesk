@@ -5,7 +5,7 @@ import { clientCacheKey } from "../src/client-cache.js";
 test("client cache key separates accounts and token fingerprints", () => {
   const base = {
     tenantId: "tenant-a",
-    model: "openai/gpt-5.5",
+    model: "gpt-5.5",
     runtimeStartOptionsHash: "runtime-a",
   };
   const first = clientCacheKey({

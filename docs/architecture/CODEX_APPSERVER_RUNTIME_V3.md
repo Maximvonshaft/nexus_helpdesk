@@ -14,6 +14,7 @@ Key properties:
 - Reply-only execution. `dynamicTools=[]`, `persistExtendedHistory=false`, no tool execution, no shell, no browser.
 - Notification-driven completion. `turn/start` is not terminal; `turn/completed` or non-retry `error` ends collection.
 - Strict output contract. The assistant output must parse as Nexus WebChat JSON.
+- Default ChatGPT Codex account model is `gpt-5.5`.
 
 Bridge switch:
 
