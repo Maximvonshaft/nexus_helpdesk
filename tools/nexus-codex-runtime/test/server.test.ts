@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import test from "node:test";
-import { createHttpServer } from "../src/server.js";
+import { createHttpServer, Semaphore } from "../src/server.js";
 import { loadConfig } from "../src/env.js";
 
 test("node sidecar healthz and missing token rejection", async () => {
@@ -23,9 +23,33 @@ test("node sidecar healthz and missing token rejection", async () => {
     const reply = await request("POST", port, "/reply", { body: "hello" });
     assert.equal(reply.status, 401);
     assert.equal(reply.body.error, "codex_auth_missing");
+    assert.equal(reply.body.stage_ms.terminal_wait, 0);
   } finally {
     server.close();
   }
+});
+
+test("node sidecar queue timeout is classified deterministically", async () => {
+  const semaphore = new Semaphore(1);
+  const release = await semaphore.acquire(10);
+  try {
+    await assert.rejects(
+      () => semaphore.acquire(5),
+      (error: any) => error?.status === 429 && error?.code === "codex_queue_timeout",
+    );
+  } finally {
+    release();
+  }
+});
+
+test("node sidecar model benchmark config is opt-in", () => {
+  const config = loadConfig({});
+  const benchmark = loadConfig({ CODEX_APPSERVER_MODEL: "gpt-5.4-mini" });
+
+  assert.equal(config.model, "gpt-5.5");
+  assert.equal(config.maxConcurrency, 6);
+  assert.equal(config.queueTimeoutMs, 750);
+  assert.equal(benchmark.model, "gpt-5.4-mini");
 });
 
 function listen(server: http.Server): Promise<void> {

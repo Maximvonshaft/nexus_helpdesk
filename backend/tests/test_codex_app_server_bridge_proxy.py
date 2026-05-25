@@ -592,3 +592,51 @@ def test_bridge_upstream_timeout_is_safe_504(monkeypatch, tmp_path):
     assert status == 504
     assert payload == {"ok": False, "error": "upstream_timeout"}
     assert "oauth-access" not in json.dumps(payload)
+
+
+def test_bridge_preserves_safe_upstream_status_and_error_class(monkeypatch, tmp_path):
+    class UpstreamHandler(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args) -> None:
+            return None
+
+        def do_POST(self) -> None:
+            raw = json.dumps({"ok": False, "error": "codex_queue_timeout", "stage_ms": {"queue": 751}}).encode("utf-8")
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_GET(self) -> None:
+            raw = json.dumps({"ok": True}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+    upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    upstream_thread.start()
+    bridge = _load_bridge_module(monkeypatch, tmp_path, upstream_url=f"http://127.0.0.1:{upstream.server_address[1]}/reply")
+    server = bridge.ThreadingHTTPServer(("127.0.0.1", 0), bridge.Handler)
+    bridge_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    bridge_thread.start()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+
+    try:
+        status, payload = _post_json(base_url + "/reply", _reply_with_login("hello"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        bridge_thread.join(timeout=2)
+        upstream.shutdown()
+        upstream.server_close()
+        upstream_thread.join(timeout=2)
+
+    assert status == 429
+    assert payload["error"] == "codex_queue_timeout"
+    assert payload["bridge_error"] == "codex_upstream_http_error"
+    assert payload["upstream_status"] == 429
+    assert payload["upstream_error"] == "codex_queue_timeout"
+    assert "oauth-access" not in json.dumps(payload)

@@ -2,6 +2,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stableHash } from "./redaction.js";
 
+const DEFAULT_MODEL = "gpt-5.5";
+const DEFAULT_QUEUE_TIMEOUT_MS = 750;
+const DEFAULT_REPLY_TIMEOUT_MS = 8000;
+const DEFAULT_MAX_CONCURRENCY = 6;
+
 export type RuntimeConfig = {
   enabled: boolean;
   host: string;
@@ -36,12 +41,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     enabled: parseBool(env.CODEX_APPSERVER_RUNTIME_ENABLED ?? "true"),
     host: env.CODEX_APPSERVER_HOST || "0.0.0.0",
     port: parseIntEnv(env.CODEX_APPSERVER_PORT, 18810, 1, 65535),
-    model: env.CODEX_APPSERVER_MODEL || "gpt-5.5",
+    model: env.CODEX_APPSERVER_MODEL || DEFAULT_MODEL,
     threadMode: "ephemeral",
     clientCacheTtlSeconds: parseIntEnv(env.CODEX_APPSERVER_CLIENT_CACHE_TTL_SECONDS, 1800, 1, 86400),
-    queueTimeoutMs: parseIntEnv(env.CODEX_APPSERVER_QUEUE_TIMEOUT_MS, 200, 1, 60000),
-    replyTimeoutMs: parseIntEnv(env.CODEX_APPSERVER_REPLY_TIMEOUT_MS, 8000, 100, 120000),
-    maxConcurrency: parseIntEnv(env.CODEX_APPSERVER_MAX_CONCURRENCY, 4, 1, 64),
+    queueTimeoutMs: parseIntEnv(env.CODEX_APPSERVER_QUEUE_TIMEOUT_MS, DEFAULT_QUEUE_TIMEOUT_MS, 1, 60000),
+    replyTimeoutMs: parseIntEnv(env.CODEX_APPSERVER_REPLY_TIMEOUT_MS, DEFAULT_REPLY_TIMEOUT_MS, 100, 120000),
+    maxConcurrency: parseIntEnv(env.CODEX_APPSERVER_MAX_CONCURRENCY, DEFAULT_MAX_CONCURRENCY, 1, 64),
     codexCommand,
     codexArgs,
     stateDir: env.CODEX_APPSERVER_STATE_DIR || join(tmpdir(), "nexus-codex-runtime"),

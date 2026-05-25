@@ -11,7 +11,7 @@ import { runEphemeralThread } from "./thread-runner.js";
 
 type QueueWaiter = () => void;
 
-class Semaphore {
+export class Semaphore {
   private active = 0;
   private readonly waiters: QueueWaiter[] = [];
 
@@ -25,7 +25,7 @@ class Semaphore {
     return await new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.remove(waiter);
-        reject(new RuntimeError(429, "codex_overloaded", "codex_queue_full", "queue"));
+        reject(new RuntimeError(429, "codex_queue_timeout", "codex_queue_timeout", "queue"));
       }, timeoutMs);
       const waiter = () => {
         clearTimeout(timer);
@@ -109,6 +109,7 @@ async function handleReply(
     const run = await runEphemeralThread(lookup.client, config, request, Math.min(remainingMs(deadlineMs), config.replyTimeoutMs));
     timer.set("thread_start", run.threadStartMs);
     timer.set("turn_start", run.turnStartMs);
+    timer.set("terminal_wait", run.terminalWaitMs);
     const parsed = await timer.measure("parse", async () => parseStrictReply(run.assistantText));
     const stages = timer.snapshot();
     return sendJson(

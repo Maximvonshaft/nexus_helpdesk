@@ -10,6 +10,7 @@ export type ThreadRunResult = {
   extractionPath?: string;
   threadStartMs: number;
   turnStartMs: number;
+  terminalWaitMs: number;
 };
 
 export async function runEphemeralThread(
@@ -56,16 +57,18 @@ export async function runEphemeralThread(
       throw new RuntimeError(502, "codex_runtime_error", "turn_start_missing_turn_id", "turn_start");
     }
     collector.setTurn(threadId, turnId);
+    const terminalStarted = Date.now();
     const terminal = await collector.wait(timeoutMs);
+    const terminalWaitMs = Date.now() - terminalStarted;
     completed = terminal.terminal;
     if (!terminal.terminal) {
       throw new RuntimeError(504, "codex_turn_timeout", "codex_turn_timeout", "turn_start");
     }
     if (terminal.error && classifyAuthFailure(terminal.error)) {
-      throw new RuntimeError(401, "codex_auth_invalid", "codex_auth_invalid", "turn_start");
+      throw new RuntimeError(401, "codex_login_failed", "codex_login_failed", "turn_start");
     }
     if (terminal.error) {
-      throw new RuntimeError(502, "codex_runtime_error", "codex_turn_error", "turn_start");
+      throw new RuntimeError(502, "codex_model_error", "codex_model_error", "turn_start");
     }
     if (!terminal.assistantText) {
       throw new RuntimeError(502, "codex_invalid_output", "assistant_text_missing", "parse");
@@ -75,6 +78,7 @@ export async function runEphemeralThread(
       extractionPath: terminal.extractionPath,
       threadStartMs,
       turnStartMs,
+      terminalWaitMs,
     };
   } finally {
     remove();

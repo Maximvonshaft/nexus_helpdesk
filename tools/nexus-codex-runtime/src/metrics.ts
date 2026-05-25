@@ -6,6 +6,7 @@ export type StageName =
   | "login"
   | "thread_start"
   | "turn_start"
+  | "terminal_wait"
   | "parse"
   | "total";
 
@@ -37,6 +38,7 @@ export class StageTimer {
       login: this.values.login ?? 0,
       thread_start: this.values.thread_start ?? 0,
       turn_start: this.values.turn_start ?? 0,
+      terminal_wait: this.values.terminal_wait ?? 0,
       parse: this.values.parse ?? 0,
       total: Date.now() - this.started,
     };

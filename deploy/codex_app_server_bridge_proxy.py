@@ -31,7 +31,18 @@ LEGACY_LOGIN_STATE_ENABLED = os.environ.get("CODEX_APP_SERVER_LEGACY_LOGIN_STATE
 GIT_SHA = os.environ.get("GIT_SHA", "unknown")
 IMAGE_TAG = os.environ.get("IMAGE_TAG", "unknown")
 APP_VERSION = os.environ.get("APP_VERSION", "unknown")
-VERSION = "1.2"
+VERSION = "1.3"
+SAFE_UPSTREAM_ERROR_CODES = {
+    "codex_queue_timeout",
+    "codex_login_failed",
+    "codex_auth_missing",
+    "codex_auth_invalid",
+    "codex_model_error",
+    "codex_turn_timeout",
+    "codex_invalid_output",
+    "codex_upstream_http_error",
+    "codex_runtime_error",
+}
 
 
 def resolve_real_upstream_url() -> str:
@@ -302,6 +313,32 @@ def _forward_headers(handler: BaseHTTPRequestHandler, token: str, budget_ms: int
     return headers
 
 
+def _safe_upstream_error(exc: error.HTTPError) -> tuple[int, dict[str, Any]]:
+    upstream_status = int(getattr(exc, "code", 0) or 0)
+    response_status = upstream_status if upstream_status in {401, 403, 429, 503, 504} else 502
+    upstream_error = None
+    try:
+        raw = exc.read(4096)
+        decoded = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
+    except Exception:
+        decoded = {}
+    if isinstance(decoded, dict):
+        value = decoded.get("error")
+        if isinstance(value, str):
+            candidate = value.strip()[:80]
+            if candidate in SAFE_UPSTREAM_ERROR_CODES:
+                upstream_error = candidate
+    payload: dict[str, Any] = {
+        "ok": False,
+        "error": upstream_error or "codex_upstream_http_error",
+        "bridge_error": "codex_upstream_http_error",
+        "upstream_status": upstream_status,
+    }
+    if upstream_error:
+        payload["upstream_error"] = upstream_error
+    return response_status, payload
+
+
 def call_real_upstream(handler: BaseHTTPRequestHandler, payload: dict[str, Any]) -> dict[str, Any]:
     login = _login_from_payload(payload) or _legacy_login()
     if not login:
@@ -416,7 +453,8 @@ class Handler(BaseHTTPRequestHandler):
                 },
             )
         except error.HTTPError as exc:
-            json_response(self, 502, {"ok": False, "error": "upstream_http_error", "upstream_status": exc.code}, {"X-Nexus-Codex-Elapsed-Ms": str(int((time.monotonic() - started) * 1000)), "X-Nexus-Codex-Backend": EFFECTIVE_REPLY_GENERATION_BACKEND})
+            status, payload = _safe_upstream_error(exc)
+            json_response(self, status, payload, {"X-Nexus-Codex-Elapsed-Ms": str(int((time.monotonic() - started) * 1000)), "X-Nexus-Codex-Backend": EFFECTIVE_REPLY_GENERATION_BACKEND, "X-Nexus-Codex-Upstream-Status": str(payload["upstream_status"])})
         except (TimeoutError, socket.timeout):
             json_response(self, 504, {"ok": False, "error": "upstream_timeout"}, {"X-Nexus-Codex-Elapsed-Ms": str(int((time.monotonic() - started) * 1000)), "X-Nexus-Codex-Backend": EFFECTIVE_REPLY_GENERATION_BACKEND})
         except Exception as exc:

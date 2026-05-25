@@ -67,8 +67,13 @@ def test_bridge_has_runtime_backend_switch():
 def test_node_runtime_defaults_match_validated_server_profile():
     env = _read("tools/nexus-codex-runtime/src/env.ts")
     dockerfile = _read("Dockerfile")
+    compose = _read("deploy/docker-compose.server.yml")
 
-    assert 'model: env.CODEX_APPSERVER_MODEL || "gpt-5.5"' in env
+    assert 'const DEFAULT_MODEL = "gpt-5.5"' in env
+    assert "const DEFAULT_MAX_CONCURRENCY = 6" in env
+    assert "const DEFAULT_QUEUE_TIMEOUT_MS = 750" in env
+    assert "CODEX_APPSERVER_MAX_CONCURRENCY: ${CODEX_APPSERVER_MAX_CONCURRENCY:-6}" in compose
+    assert "CODEX_APPSERVER_QUEUE_TIMEOUT_MS: ${CODEX_APPSERVER_QUEUE_TIMEOUT_MS:-750}" in compose
     assert "ln -sf /usr/local/lib/node_modules/@openclaw/codex/node_modules/.bin/codex /usr/local/bin/codex" in dockerfile
     assert "codex --version" in dockerfile
 
@@ -81,3 +86,58 @@ def test_runbook_documents_webchat_flag_and_db_canary_gate():
     assert "Canary remains 0 by default" in runbook
     assert "pilot-functional only" in runbook
     assert "12-parallel errors" in runbook
+
+
+def test_runtime_exposes_terminal_wait_and_queue_taxonomy():
+    metrics = _read("tools/nexus-codex-runtime/src/metrics.ts")
+    server = _read("tools/nexus-codex-runtime/src/server.ts")
+    thread_runner = _read("tools/nexus-codex-runtime/src/thread-runner.ts")
+
+    assert '"terminal_wait"' in metrics
+    assert "codex_queue_timeout" in server
+    assert "terminalWaitMs" in thread_runner
+    assert "codex_model_error" in thread_runner
+    assert "codex_login_failed" in thread_runner
+
+
+def test_bridge_preserves_safe_upstream_error_taxonomy():
+    source = _read("deploy/codex_app_server_bridge_proxy.py")
+
+    assert "codex_upstream_http_error" in source
+    assert "SAFE_UPSTREAM_ERROR_CODES" in source
+    assert "X-Nexus-Codex-Upstream-Status" in source
+    assert "upstream_error" in source
+
+
+def test_sla_probe_supports_required_phases_and_summary_fields():
+    script = _read("scripts/probe_codex_appserver_runtime_v3_sla.sh")
+
+    assert 'CODEX_APPSERVER_SLA_SEQUENTIAL:-20' in script
+    assert 'CODEX_APPSERVER_SLA_PARALLEL_6:-6' in script
+    assert 'CODEX_APPSERVER_SLA_PARALLEL_12:-12' in script
+    assert "dummy_negative" in script
+    assert "error_taxonomy_summary" in script
+    assert "backend_seen" in script
+    assert "reply_source_seen" in script
+    assert "dummy_assistant_success_count" in script
+
+
+def test_model_benchmark_candidates_are_documented_opt_in():
+    runbook = _read("docs/ops/CODEX_APPSERVER_RUNTIME_V3_RUNBOOK.md")
+    env = _read("tools/nexus-codex-runtime/src/env.ts")
+
+    assert 'const DEFAULT_MODEL = "gpt-5.5"' in env
+    assert "gpt-5.4-mini" in runbook
+    assert "gpt-5.3-codex-spark" in runbook
+    assert "do not change the default" in runbook.lower()
+
+
+def test_canary_remains_disabled_by_default_and_fallback_not_counted_as_success():
+    config = _read("backend/app/services/webchat_fast_config.py")
+    rollback = _read("docs/ops/CODEX_APPSERVER_RUNTIME_V3_ROLLBACK.md")
+    runbook = _read("docs/ops/CODEX_APPSERVER_RUNTIME_V3_RUNBOOK.md")
+
+    assert 'CODEX_APP_SERVER_CANARY_PERCENT", 0' in config
+    assert "Do not count fallback responses as v3 Codex success" in rollback
+    assert "Canary remains 0 by default" in runbook
+    assert "Do not count rollback or fallback traffic as Codex v3 success" in runbook
