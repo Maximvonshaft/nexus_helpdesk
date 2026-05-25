@@ -18,10 +18,7 @@ This PR now includes a production-manageable `18795` upstream proxy. The proxy s
   - `CODEX_APP_SERVER_BRIDGE_URL=http://codex-app-server-bridge:18794/reply`.
   - `CODEX_APP_SERVER_LOGIN_URL=http://codex-app-server-bridge:18794/login`.
   - `CODEX_APP_SERVER_TOKEN_FILE=/run/nexus/codex_app_server_bridge_token`.
-  - `CODEX_APP_SERVER_AUTH_MODE=per_request`.
-  - `CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED=false`.
-  - `CODEX_APP_SERVER_TOTAL_TIMEOUT_MS=10000`.
-  - `CODEX_APP_SERVER_CONNECT_TIMEOUT_MS=250`.
+  - Optional: `CODEX_APP_SERVER_TIMEOUT_MS`.
 - Direct approved LLM endpoint path:
   - `CODEX_LLM_ENDPOINT`.
   - `CODEX_LLM_API_STYLE=openai_chat` or `CODEX_LLM_API_STYLE=responses`.
@@ -31,63 +28,6 @@ This PR now includes a production-manageable `18795` upstream proxy. The proxy s
 Do not configure provider access tokens, refresh tokens, client secrets, or encryption keys inline.
 
 The backend obtains the Code X OAuth access token through the existing provider credential encryption/decryption and `OAuthRefreshManager` path. Do not configure an OpenAI API key for this probe.
-
-## Low-Latency Customer-Facing Path
-
-For `webchat_fast_reply`, Codex remains the customer-facing primary provider. The low-latency path is:
-
-```text
-Nexus app -> 18794 bridge /reply -> 18800 codex-private-model-runtime /reply -> OpenClaw Codex --local
-```
-
-The 18795 upstream proxy and 18796 private reply engine remain available for compatibility and no-traffic chain smoke, but the customer-facing fast path should point 18794 directly at 18800:
-
-```bash
-CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://codex-private-model-runtime:18800/reply
-CODEX_APP_SERVER_REPLY_GENERATION_BACKEND=codex_app_server
-```
-
-Required low-latency env:
-
-```bash
-CODEX_APP_SERVER_AUTH_MODE=per_request
-CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED=false
-CODEX_APP_SERVER_TOTAL_TIMEOUT_MS=10000
-CODEX_APP_SERVER_CONNECT_TIMEOUT_MS=250
-CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS=9
-OPENCLAW_CODEX_INFER_TRANSPORT=local
-OPENCLAW_CODEX_EXECUTION_MODE=warm_pool
-OPENCLAW_CODEX_WORKER_POOL_SIZE=1
-OPENCLAW_CODEX_QUEUE_TIMEOUT_MS=250
-OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS=7.5
-```
-
-Hot-path rules:
-
-- The app sends the OAuth access token inside the current `/reply` payload as `login.type=chatgptAuthTokens`; it does not call `/login` first.
-- The 18794 bridge uses the request-local OAuth token only for the current downstream call.
-- `_LOGIN_STATE` is not used unless `CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED=true`, which is not the production fast path.
-- `/reply` handlers do not call their own `/readyz` or downstream `/readyz`; strict readiness remains for deploy and smoke checks only.
-- `X-Nexus-Request-Deadline-Ms` and `X-Nexus-Request-Id` are propagated through the chain. Expired deadlines fail closed before a downstream call.
-- 18794 and 18800 return non-sensitive latency headers: `X-Nexus-Codex-Elapsed-Ms`, `X-Nexus-Codex-Backend`, and `X-Nexus-Codex-Timeout-Budget-Ms`.
-
-When deploying the app and Codex sidecars, use one image tag for all services and force-recreate them together:
-
-```bash
-docker compose -p deploy --env-file /opt/nexus_helpdesk/deploy/.env.prod \
-  -f /opt/nexus_helpdesk/deploy/docker-compose.server.yml \
-  --profile codex-app-server \
-  up -d --force-recreate app codex-app-server-bridge codex-private-model-runtime
-```
-
-Verify release metadata matches across app, 18794, and 18800:
-
-```bash
-curl -fsS https://www.leakle.com/readyz | jq '.git_sha,.image_tag,.app_version'
-curl -fsS http://172.18.0.1:18794/healthz | jq '.git_sha,.image_tag,.app_version'
-docker compose -f deploy/docker-compose.server.yml exec -T codex-private-model-runtime \
-  curl -fsS http://127.0.0.1:18800/healthz | jq '.git_sha,.image_tag,.app_version'
-```
 
 ## Bridge Service
 
@@ -103,19 +43,17 @@ The compose service runs `deploy/codex_app_server_bridge_proxy.py` on port `1879
 BIND_HOST=0.0.0.0
 PORT=18794
 CODEX_APP_SERVER_TOKEN_FILE=/run/nexus/codex_app_server_bridge_token
-CODEX_APP_SERVER_AUTH_MODE=per_request
-CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED=false
 CODEX_APP_SERVER_BRIDGE_MODE=real
-CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://codex-private-model-runtime:18800/reply
+CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://codex-app-server-upstream:18795/reply
 CODEX_APP_SERVER_REPLY_GENERATION_BACKEND=codex_app_server
-CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS=9
+CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS=30
 CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS=30
 ```
 
-If you are running the compatibility no-traffic chain through 18795/18796 instead of the low-latency customer-facing path, set:
+If the real app-server upstream is host-local instead of Docker-network reachable, set:
 
 ```bash
-CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://codex-app-server-upstream:18795/reply
+CODEX_APP_SERVER_REAL_UPSTREAM_URL=http://127.0.0.1:18795/reply
 ```
 
 Do not point this bridge at the OpenClaw Responses proxy on `18793`; that is not accepted as Code X proof.
@@ -175,10 +113,7 @@ OPENCLAW_CODEX_INFER_TRANSPORT=local
 OPENCLAW_CODEX_READY_TIMEOUT_SECONDS=30
 OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS=30
 OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS=60
-OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS=7.5
-OPENCLAW_CODEX_EXECUTION_MODE=warm_pool
-OPENCLAW_CODEX_WORKER_POOL_SIZE=1
-OPENCLAW_CODEX_QUEUE_TIMEOUT_MS=250
+OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS=60
 ```
 
 Then point the `18794` bridge at the proxy:
@@ -282,10 +217,7 @@ OPENCLAW_CODEX_INFER_TRANSPORT=local
 OPENCLAW_CODEX_READY_TIMEOUT_SECONDS=30
 OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS=30
 OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS=60
-OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS=7.5
-OPENCLAW_CODEX_EXECUTION_MODE=warm_pool
-OPENCLAW_CODEX_WORKER_POOL_SIZE=1
-OPENCLAW_CODEX_QUEUE_TIMEOUT_MS=250
+OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS=60
 ```
 
 The 18800 service persists the official OpenClaw auth/profile home through this read/write bind mount:

@@ -492,7 +492,6 @@ def test_openclaw_codex_adapter_reply_invokes_official_infer_and_returns_strict_
     def fake_run(args, timeout_seconds, input_text=None):
         captured["args"] = args
         captured["timeout"] = timeout_seconds
-        captured["thread_name"] = threading.current_thread().name
         envelope = {"ok": True, "outputs": [{"text": json.dumps(_strict_reply("Echo nonce-openclaw"))}]}
         return _completed(args, json.dumps(envelope))
 
@@ -516,109 +515,11 @@ def test_openclaw_codex_adapter_reply_invokes_official_infer_and_returns_strict_
     assert "--model" in captured["args"]
     assert "openai/gpt-5.5" in captured["args"]
     assert "--json" in captured["args"]
-    assert captured["thread_name"].startswith("codex-warm")
     prompt = captured["args"][captured["args"].index("--prompt") + 1]
     assert "Return only strict JSON" in prompt
     assert "Do not perform browser cookie scraping" in prompt
     assert "nonce-openclaw" in prompt
     assert "oauth-access" not in json.dumps(payload)
-
-
-def test_openclaw_codex_adapter_reply_does_not_call_readyz_on_hot_path(monkeypatch, tmp_path):
-    adapter = _load_adapter(monkeypatch, tmp_path)
-    monkeypatch.setattr(adapter, "readiness_payload", lambda: (_ for _ in ()).throw(AssertionError("reply hot path must not call readyz")))
-    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
-    monkeypatch.setattr(
-        adapter,
-        "run_openclaw",
-        lambda args, timeout_seconds, input_text=None: _completed(args, json.dumps({"outputs": [{"text": json.dumps(_strict_reply("hot path"))}]})),
-    )
-    server = adapter.ThreadingHTTPServer(("127.0.0.1", 0), adapter.Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        status, payload = _post_json(f"http://127.0.0.1:{server.server_address[1]}/reply", _reply_payload("hello"))
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
-
-    assert status == 200
-    assert payload["reply"] == "hot path"
-
-
-def test_openclaw_codex_adapter_expired_deadline_fails_before_model_call(monkeypatch, tmp_path):
-    adapter = _load_adapter(monkeypatch, tmp_path)
-    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
-    monkeypatch.setattr(adapter, "run_openclaw", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("expired deadline must not call model")))
-    server = adapter.ThreadingHTTPServer(("127.0.0.1", 0), adapter.Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    headers_token = "oauth-access"
-    req = request.Request(
-        f"http://127.0.0.1:{server.server_address[1]}/reply",
-        data=json.dumps(_reply_payload("hello")).encode("utf-8"),
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Authorization": "Bearer " + headers_token,
-            "X-Nexus-Request-Deadline-Ms": str(int(__import__("time").time() * 1000) - 1),
-        },
-    )
-    try:
-        try:
-            request.urlopen(req, timeout=2)
-            raise AssertionError("expected HTTPError")
-        except error.HTTPError as exc:
-            status = exc.code
-            payload = json.loads(exc.read().decode("utf-8"))
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
-
-    assert status == 504
-    assert payload == {"ok": False, "error": "openclaw_codex_timeout"}
-
-
-def test_openclaw_codex_adapter_prewarms_warm_pool(monkeypatch, tmp_path):
-    adapter = _load_adapter(monkeypatch, tmp_path)
-    monkeypatch.setattr(adapter, "cli_path", lambda: "/usr/local/bin/openclaw")
-
-    def fake_run(args, timeout_seconds, input_text=None):
-        nonce = "ready-test"
-        prompt = args[args.index("--prompt") + 1]
-        if "ready-" in prompt:
-            import re
-
-            match = re.search(r"ready-[0-9]+", prompt)
-            nonce_value = match.group(0) if match else nonce
-        else:
-            nonce_value = nonce
-        return _completed(args, json.dumps({"outputs": [{"text": json.dumps(_strict_reply(nonce_value))}]}))
-
-    monkeypatch.setattr(adapter, "run_openclaw", fake_run)
-
-    adapter.prewarm_warm_pool()
-
-    assert adapter._PREWARM_FUTURE is not None
-    assert adapter._PREWARM_FUTURE.result(timeout=2) == (True, None)
-
-
-def test_openclaw_codex_adapter_warm_pool_queue_timeout_fails_closed(monkeypatch, tmp_path):
-    adapter = _load_adapter(monkeypatch, tmp_path)
-    adapter.ensure_warm_pool()
-    assert adapter._WARM_POOL_SEMAPHORE is not None
-    assert adapter._WARM_POOL_SEMAPHORE.acquire(timeout=0.1) is True
-    try:
-        try:
-            adapter.call_openclaw_codex(_reply_payload("hello"), 1.0)
-            raise AssertionError("expected warm pool queue timeout")
-        except subprocess.TimeoutExpired as exc:
-            assert "warm_pool_queue" in str(exc.cmd)
-    finally:
-        adapter._WARM_POOL_SEMAPHORE.release()
 
 
 def test_openclaw_codex_adapter_invalid_model_output_is_rejected(monkeypatch, tmp_path):

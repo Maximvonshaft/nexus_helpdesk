@@ -1,6 +1,6 @@
 """email outbound production foundation
 
-Revision ID: 20260525_0033_email_outbound_production
+Revision ID: 20260525_eout_p1
 Revises: 20260523_0032
 Create Date: 2026-05-25
 """
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "20260525_0033_email_outbound_production"
+revision = "20260525_eout_p1"
 down_revision = "20260523_0032"
 branch_labels = None
 depends_on = None

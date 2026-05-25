@@ -6,15 +6,6 @@ RUN npm ci
 COPY webapp/ ./
 RUN npm run build
 
-FROM docker.io/library/node:22-bookworm-slim AS nexus-codex-runtime-builder
-WORKDIR /build/nexus-codex-runtime
-COPY tools/nexus-codex-runtime/package*.json ./
-RUN npm config set registry https://registry.npmjs.org/ \
-    && npm ci
-COPY tools/nexus-codex-runtime/ ./
-RUN npm run build \
-    && npm prune --omit=dev
-
 FROM docker.io/library/node:22-bookworm-slim AS openclaw-runtime
 RUN npm config set registry https://registry.npmjs.org/ \
     && npm install -g openclaw @openclaw/codex \
@@ -61,7 +52,6 @@ COPY deploy/codex_app_server_bridge_proxy.py /app/deploy/
 COPY deploy/codex_app_server_private_upstream_proxy.py /app/deploy/
 COPY deploy/codex_private_reply_engine.py /app/deploy/
 COPY deploy/codex_openclaw_codex_harness_adapter.py /app/deploy/
-COPY --from=nexus-codex-runtime-builder /build/nexus-codex-runtime /app/tools/nexus-codex-runtime
 COPY --from=webapp-builder /build/frontend_dist /app/frontend_dist
 COPY --from=openclaw-runtime /usr/local/ /usr/local/
 

@@ -104,45 +104,6 @@ def test_codex_private_model_runtime_defaults_to_local_infer_transport():
     assert "openclaw infer model run --local" in runbook
 
 
-def test_codex_customer_facing_hot_path_uses_low_latency_defaults():
-    compose = _read("deploy/docker-compose.server.yml")
-    adapter = _read("backend/app/services/provider_runtime/adapters/codex_app_server.py")
-    bridge = _read("deploy/codex_app_server_bridge_proxy.py")
-    model_runtime = _read("deploy/codex_openclaw_codex_harness_adapter.py")
-
-    assert "CODEX_APP_SERVER_AUTH_MODE: ${CODEX_APP_SERVER_AUTH_MODE:-per_request}" in compose
-    assert "CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED: ${CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED:-false}" in compose
-    assert "CODEX_APP_SERVER_TOTAL_TIMEOUT_MS: ${CODEX_APP_SERVER_TOTAL_TIMEOUT_MS:-10000}" in compose
-    assert "CODEX_APP_SERVER_CONNECT_TIMEOUT_MS: ${CODEX_APP_SERVER_CONNECT_TIMEOUT_MS:-250}" in compose
-    assert "CODEX_APP_SERVER_REAL_UPSTREAM_URL: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL:-http://codex-private-model-runtime:18800/reply}" in compose
-    assert "CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS:-9}" in compose
-    assert "OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS:-7.5}" in compose
-    assert "OPENCLAW_CODEX_EXECUTION_MODE: ${OPENCLAW_CODEX_EXECUTION_MODE:-warm_pool}" in compose
-    assert "OPENCLAW_CODEX_WORKER_POOL_SIZE: ${OPENCLAW_CODEX_WORKER_POOL_SIZE:-1}" in compose
-    assert "OPENCLAW_CODEX_QUEUE_TIMEOUT_MS: ${OPENCLAW_CODEX_QUEUE_TIMEOUT_MS:-250}" in compose
-
-    assert "_get_bridge_readyz" in adapter
-    assert "bridge_readyz = await self._get_bridge_readyz" not in adapter
-    assert 'CODEX_APP_SERVER_TOTAL_TIMEOUT_MS", 10000' in adapter
-    assert 'CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS", "9"' in bridge
-    assert 'OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS", "7.5"' in model_runtime
-    assert 'OPENCLAW_CODEX_EXECUTION_MODE", "warm_pool"' in model_runtime
-    assert "ready = readiness_payload()" not in model_runtime.split("def do_POST", 1)[1]
-
-
-def test_codex_services_expose_release_metadata_for_image_consistency():
-    bridge = _read("deploy/codex_app_server_bridge_proxy.py")
-    model_runtime = _read("deploy/codex_openclaw_codex_harness_adapter.py")
-
-    for source in (bridge, model_runtime):
-        assert 'GIT_SHA = os.environ.get("GIT_SHA", "unknown")' in source
-        assert 'IMAGE_TAG = os.environ.get("IMAGE_TAG", "unknown")' in source
-        assert 'APP_VERSION = os.environ.get("APP_VERSION", "unknown")' in source
-        assert '"git_sha": GIT_SHA' in source
-        assert '"image_tag": IMAGE_TAG' in source
-        assert '"app_version": APP_VERSION' in source
-
-
 def test_codex_private_reply_engine_uses_30_second_ready_timeout():
     compose = _read("deploy/docker-compose.server.yml")
     engine = _read("deploy/codex_private_reply_engine.py")

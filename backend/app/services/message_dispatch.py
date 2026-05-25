@@ -34,9 +34,9 @@ def _external_dispatch_block_reason() -> tuple[str, str] | None:
     return None
 
 
-def _eligible_outbound_channels() -> list[SourceChannel]:
+def _eligible_outbound_channels(*, respect_openclaw_runtime_gate: bool = False) -> list[SourceChannel]:
     channels: list[SourceChannel] = []
-    if _external_dispatch_block_reason() is None:
+    if not respect_openclaw_runtime_gate or _external_dispatch_block_reason() is None:
         channels.extend([SourceChannel.whatsapp, SourceChannel.telegram, SourceChannel.sms])
     if email_runtime_block_reason() is None:
         channels.append(SourceChannel.email)
@@ -182,14 +182,20 @@ def requeue_dead_outbound_message(db: Session, *, message_id: int) -> TicketOutb
     return message
 
 
-def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: str | None = None) -> list[TicketOutboundMessage]:
+def claim_pending_messages(
+    db: Session,
+    *,
+    limit: int | None = None,
+    worker_id: str | None = None,
+    eligible_channels: list[SourceChannel] | None = None,
+) -> list[TicketOutboundMessage]:
     worker_id = worker_id or f'worker-{uuid.uuid4().hex[:8]}'
     limit = limit or settings.outbox_batch_size
     now = utc_now()
     lock_deadline = now - timedelta(seconds=settings.outbox_lock_seconds)
 
     pending_filters = [
-        TicketOutboundMessage.channel.in_(_eligible_outbound_channels()),
+        TicketOutboundMessage.channel.in_(eligible_channels or _eligible_outbound_channels()),
         TicketOutboundMessage.status == MessageStatus.pending,
         or_(TicketOutboundMessage.next_retry_at.is_(None), TicketOutboundMessage.next_retry_at <= now),
         or_(TicketOutboundMessage.locked_at.is_(None), TicketOutboundMessage.locked_at < lock_deadline),
@@ -414,10 +420,11 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
 
 
 def dispatch_pending_messages(db: Session, *, limit: int | None = None, worker_id: str | None = None) -> list[TicketOutboundMessage]:
-    if not _eligible_outbound_channels():
+    eligible_channels = _eligible_outbound_channels(respect_openclaw_runtime_gate=True)
+    if not eligible_channels:
         LOGGER.warning('external_outbound_dispatch_blocked_by_runtime_gate', extra={'event_payload': {'outbound_provider': settings.outbound_provider, 'enable_outbound_dispatch': settings.enable_outbound_dispatch, 'email_gate': email_runtime_block_reason()}})
         return []
-    claimed = claim_pending_messages(db, limit=limit, worker_id=worker_id)
+    claimed = claim_pending_messages(db, limit=limit, worker_id=worker_id, eligible_channels=eligible_channels)
     processed: list[TicketOutboundMessage] = []
     for message in claimed:
         process_outbound_message(db, message)

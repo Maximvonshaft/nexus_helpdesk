@@ -101,15 +101,17 @@ def test_registry_classifies_all_declared_channels(db_session, monkeypatch):
 
     assert rows["internal"].status == "not_customer_sendable"
     assert rows["internal"].customer_sendable is False
-    assert rows["email"].status == "experimental_not_ready"
+    assert rows["email"].status == "configurable"
+    assert rows["email"].customer_sendable is True
     assert rows["email"].supports_send is False
+    assert "outbound_email_enabled" in rows["email"].missing
     assert rows["web_chat"].dispatch_type == "local"
     assert rows["whatsapp"].dispatch_type == "external"
     assert rows["telegram"].dispatch_type == "external"
     assert rows["sms"].dispatch_type == "external"
 
 
-def test_internal_and_email_are_blocked_from_customer_send(db_session, monkeypatch):
+def test_internal_is_not_customer_sendable_and_email_is_fail_closed(db_session, monkeypatch):
     _reset_settings(monkeypatch, dispatch=True, provider="openclaw")
     ticket = _ticket(db_session)
 
@@ -121,8 +123,9 @@ def test_internal_and_email_are_blocked_from_customer_send(db_session, monkeypat
     with pytest.raises(HTTPException) as email_exc:
         require_outbound_channel_sendable(db_session, ticket=ticket, channel=SourceChannel.email)
     assert email_exc.value.status_code == 400
-    assert email_exc.value.detail["error_code"] == "outbound_channel_not_customer_sendable"
-    assert "email_provider_adapter" in email_exc.value.detail["missing"]
+    assert email_exc.value.detail["error_code"] == "outbound_channel_not_ready"
+    assert "outbound_email_enabled" in email_exc.value.detail["missing"]
+    assert "email_provider_ses" in email_exc.value.detail["missing"]
 
 
 def test_whatsapp_requires_runtime_account_and_target(db_session, monkeypatch):
