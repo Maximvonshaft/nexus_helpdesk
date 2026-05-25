@@ -18,10 +18,6 @@ from ..oauth_refresh_manager import OAuthRefreshManager
 from ..registry import ProviderAdapter
 from ..schemas import ProviderCapabilities, ProviderRequest, ProviderResult
 
-_DEFAULT_TIMEOUT_SECONDS = 120.0
-_MAX_TIMEOUT_SECONDS = 300.0
-
-
 class CodexAppServerAdapter(ProviderAdapter):
     name = "codex_app_server"
     capabilities = ProviderCapabilities(
@@ -37,7 +33,10 @@ class CodexAppServerAdapter(ProviderAdapter):
         self.app_env = os.environ.get("APP_ENV", os.environ.get("ENV", "development")).strip().lower()
         self.shared_token = self._load_shared_token()
         self.login_url = os.environ.get("CODEX_APP_SERVER_LOGIN_URL", "").strip()
+        self.auth_mode = os.environ.get("CODEX_APP_SERVER_AUTH_MODE", "per_request").strip().lower() or "per_request"
         self.allow_combined_login_reply = os.environ.get("CODEX_APP_SERVER_ALLOW_COMBINED_LOGIN_REPLY", "false").lower() == "true"
+        self.total_timeout_ms = _int_env("CODEX_APP_SERVER_TOTAL_TIMEOUT_MS", 10000, minimum=500, maximum=10000)
+        self.connect_timeout_ms = _int_env("CODEX_APP_SERVER_CONNECT_TIMEOUT_MS", 250, minimum=50, maximum=2000)
         self._validate_bridge_url(bridge_url)
         if self.login_url:
             self._validate_bridge_url(self.login_url)
@@ -104,8 +103,12 @@ class CodexAppServerAdapter(ProviderAdapter):
             return True
         return False
 
-    def _headers(self) -> dict[str, str]:
-        headers: dict[str, str] = {"X-Nexus-Provider-Runtime": "codex-app-server-v1"}
+    def _headers(self, *, request_id: str, deadline_ms: int) -> dict[str, str]:
+        headers: dict[str, str] = {
+            "X-Nexus-Provider-Runtime": "codex-app-server-v1",
+            "X-Nexus-Request-Id": request_id,
+            "X-Nexus-Request-Deadline-Ms": str(deadline_ms),
+        }
         if self.shared_token:
             headers["Authorization"] = f"Bearer {self.shared_token}"
         return headers
@@ -126,7 +129,7 @@ class CodexAppServerAdapter(ProviderAdapter):
         }
 
     async def _get_bridge_readyz(self, client: httpx.AsyncClient) -> dict[str, Any] | None:
-        response = await client.get(self._readyz_url(), headers=self._headers())
+        response = await client.get(self._readyz_url(), headers=self._headers(request_id="readyz", deadline_ms=_deadline_ms(1000)))
         if response.status_code not in {200, 503}:
             response.raise_for_status()
         payload = response.json()
@@ -136,6 +139,8 @@ class CodexAppServerAdapter(ProviderAdapter):
 
     async def generate(self, db: Session, request: ProviderRequest) -> ProviderResult:
         started = time.monotonic()
+        budget_ms = min(max(int(request.timeout_ms or self.total_timeout_ms), 500), self.total_timeout_ms)
+        deadline_ms = _deadline_ms(budget_ms)
         refresh_manager = OAuthRefreshManager(db, self.crypto_service)
 
         cred_row = db.execute(text("""
@@ -166,46 +171,53 @@ class CodexAppServerAdapter(ProviderAdapter):
         }
 
         try:
-            timeout_seconds = _timeout_seconds(request.timeout_ms)
-            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-                bridge_readyz = await self._get_bridge_readyz(client)
-                bridge_summary = self._safe_readyz_summary(bridge_readyz)
-                if (
-                    bridge_summary["bridge_mode"] == "stub"
-                    or not bridge_summary["real_upstream_configured"]
-                    or bridge_summary["reply_generation_backend"] in {None, "", "stub", "unconfigured"}
-                ):
+            timeout = self._http_timeout(deadline_ms)
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+                headers = self._headers(request_id=request.request_id, deadline_ms=deadline_ms)
+                if self.auth_mode == "legacy_login" and self.login_url:
+                    await self._post_login(client, login_payload)
+                    reply_payload = self._reply_payload(request)
+                else:
+                    if self.app_env == "production" and self.auth_mode not in {"per_request", "legacy_login"}:
+                        return ProviderResult.unavailable(self.name, "codex_auth_mode_invalid", int((time.monotonic() - started) * 1000))
+                    if self.app_env == "production" and self.auth_mode != "per_request" and not self.allow_combined_login_reply:
+                        return ProviderResult.unavailable(self.name, "codex_login_boundary_not_configured", int((time.monotonic() - started) * 1000))
+                    reply_payload = {"login": login_payload, **self._reply_payload(request)}
+
+                response = await client.post(self.bridge_url, json=reply_payload, headers=headers)
+                response_headers = getattr(response, "headers", {}) or {}
+                bridge_elapsed_ms = int(response_headers.get("X-Nexus-Codex-Elapsed-Ms") or 0)
+                backend = response_headers.get("X-Nexus-Codex-Backend") or None
+                if response.status_code >= 400:
+                    error_code = _safe_error_code(response)
                     return ProviderResult(
                         ok=False,
                         provider=self.name,
                         elapsed_ms=int((time.monotonic() - started) * 1000),
-                        error_code="bridge_not_production_ready",
-                        retryable=False,
+                        error_code=error_code,
+                        retryable=response.status_code in {408, 429, 500, 502, 503, 504},
                         fallback_allowed=True,
-                        raw_payload_safe_summary=bridge_summary,
+                        raw_payload_safe_summary=self._safe_reply_summary(
+                            response_status=response.status_code,
+                            bridge_elapsed_ms=bridge_elapsed_ms,
+                            backend=backend,
+                            deadline_ms=deadline_ms,
+                            error_code=error_code,
+                        ),
                     )
-                if self.login_url:
-                    await self._post_login(client, login_payload)
-                    reply_payload = self._reply_payload(request)
-                else:
-                    if self.app_env == "production" and not self.allow_combined_login_reply:
-                        return ProviderResult.unavailable(self.name, "codex_login_boundary_not_configured", int((time.monotonic() - started) * 1000))
-                    reply_payload = {"login": login_payload, **self._reply_payload(request)}
-
-                response = await client.post(self.bridge_url, json=reply_payload, headers=self._headers())
                 response.raise_for_status()
                 return ProviderResult(
                     ok=True,
                     provider=self.name,
                     elapsed_ms=int((time.monotonic() - started) * 1000),
                     structured_output=response.json(),
-                    raw_payload_safe_summary={
-                        "bridge_status": response.status_code,
-                        "bridge_host_hash": self._host_hash(self.bridge_url),
-                        "codex_timeout_seconds": timeout_seconds,
-                        "login_mode": "two_step" if self.login_url else "combined",
-                        **bridge_summary,
-                    },
+                    raw_payload_safe_summary=self._safe_reply_summary(
+                        response_status=response.status_code,
+                        bridge_elapsed_ms=bridge_elapsed_ms,
+                        backend=backend,
+                        deadline_ms=deadline_ms,
+                        error_code=None,
+                    ),
                 )
         except httpx.TimeoutException:
             return ProviderResult.unavailable(self.name, "bridge_timeout", int((time.monotonic() - started) * 1000))
@@ -215,8 +227,33 @@ class CodexAppServerAdapter(ProviderAdapter):
             return ProviderResult.unavailable(self.name, "internal_error", int((time.monotonic() - started) * 1000))
 
     async def _post_login(self, client: httpx.AsyncClient, login_payload: dict) -> None:
-        response = await client.post(self.login_url, json={"login": login_payload}, headers=self._headers())
+        response = await client.post(self.login_url, json={"login": login_payload}, headers=self._headers(request_id="legacy-login", deadline_ms=_deadline_ms(1000)))
         response.raise_for_status()
+
+    def _http_timeout(self, deadline_ms: int) -> httpx.Timeout:
+        remaining = max(0.1, (deadline_ms - int(time.time() * 1000)) / 1000.0)
+        connect = min(max(self.connect_timeout_ms / 1000.0, 0.05), remaining)
+        return httpx.Timeout(timeout=remaining, connect=connect, read=remaining, write=remaining, pool=connect)
+
+    def _safe_reply_summary(
+        self,
+        *,
+        response_status: int,
+        bridge_elapsed_ms: int,
+        backend: str | None,
+        deadline_ms: int,
+        error_code: str | None,
+    ) -> dict[str, Any]:
+        return {
+            "bridge_status": response_status,
+            "bridge_host_hash": self._host_hash(self.bridge_url),
+            "auth_mode": self.auth_mode,
+            "hotpath_readyz": False,
+            "bridge_elapsed_ms": bridge_elapsed_ms,
+            "codex_deadline_ms": deadline_ms,
+            "codex_error_code": error_code,
+            "reply_generation_backend": backend,
+        }
 
     @staticmethod
     def _reply_payload(request: ProviderRequest) -> dict:
@@ -234,17 +271,25 @@ class CodexAppServerAdapter(ProviderAdapter):
         return hashlib.sha256(host.encode("utf-8")).hexdigest()[:16]
 
 
-def _timeout_seconds(request_timeout_ms: int | None) -> float:
-    raw = os.getenv("CODEX_LLM_TIMEOUT_SECONDS") or os.getenv("CODEX_APP_SERVER_TIMEOUT_MS") or ""
-    if not raw and request_timeout_ms:
-        raw = str(request_timeout_ms)
-    if not raw:
-        value = _DEFAULT_TIMEOUT_SECONDS
-    else:
-        try:
-            value = float(raw)
-        except ValueError:
-            value = _DEFAULT_TIMEOUT_SECONDS
-    if value > 1000:
-        value = value / 1000.0
-    return max(1.0, min(value, _MAX_TIMEOUT_SECONDS))
+def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+def _deadline_ms(budget_ms: int) -> int:
+    return int(time.time() * 1000) + max(1, int(budget_ms))
+
+
+def _safe_error_code(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return f"bridge_http_{response.status_code}"
+    if isinstance(payload, dict):
+        value = payload.get("error") or payload.get("reason")
+        if isinstance(value, str) and value:
+            return value[:120]
+    return f"bridge_http_{response.status_code}"

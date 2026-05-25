@@ -7,6 +7,8 @@ import re
 import shutil
 import socket
 import subprocess
+import concurrent.futures
+import threading
 import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,10 +28,19 @@ AGENT_ID = os.environ.get("OPENCLAW_CODEX_AGENT", "").strip()
 READY_TIMEOUT_SECONDS = float(os.environ.get("OPENCLAW_CODEX_READY_TIMEOUT_SECONDS", "30"))
 READY_SMOKE_TIMEOUT_SECONDS = float(os.environ.get("OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS", "30"))
 READY_SMOKE_TTL_SECONDS = float(os.environ.get("OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS", "60"))
-REPLY_TIMEOUT_SECONDS = float(os.environ.get("OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS", "60"))
+REPLY_TIMEOUT_SECONDS = float(os.environ.get("OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS", "7.5"))
+EXECUTION_MODE = os.environ.get("OPENCLAW_CODEX_EXECUTION_MODE", "warm_pool").strip().lower() or "warm_pool"
+WORKER_POOL_SIZE = max(1, min(int(os.environ.get("OPENCLAW_CODEX_WORKER_POOL_SIZE", "1")), 4))
+QUEUE_TIMEOUT_MS = max(0, min(int(os.environ.get("OPENCLAW_CODEX_QUEUE_TIMEOUT_MS", "250")), 2000))
 GATEWAY_URL = os.environ.get("OPENCLAW_CODEX_GATEWAY_URL", "ws://127.0.0.1:18789").strip() or "ws://127.0.0.1:18789"
+GIT_SHA = os.environ.get("GIT_SHA", "unknown")
+IMAGE_TAG = os.environ.get("IMAGE_TAG", "unknown")
+APP_VERSION = os.environ.get("APP_VERSION", "unknown")
 VERSION = "0.1"
 _LOCAL_INFER_SMOKE_CACHE: dict[str, Any] = {"checked_at": 0.0, "ok": False, "reason": None}
+_WARM_POOL: concurrent.futures.ThreadPoolExecutor | None = None
+_WARM_POOL_SEMAPHORE: threading.BoundedSemaphore | None = None
+_PREWARM_FUTURE: concurrent.futures.Future | None = None
 
 _ALLOWED_INTENTS = {
     "greeting",
@@ -49,14 +60,19 @@ _SECRET_PATTERNS = [
 ]
 
 
-def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
+def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any], headers: dict[str, str] | None = None) -> None:
     raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.send_header("Content-Length", str(len(raw)))
-    handler.send_header("Cache-Control", "no-store")
-    handler.end_headers()
-    handler.wfile.write(raw)
+    try:
+        handler.send_response(status)
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        handler.send_header("Content-Length", str(len(raw)))
+        handler.send_header("Cache-Control", "no-store")
+        for key, value in (headers or {}).items():
+            handler.send_header(key, str(value))
+        handler.end_headers()
+        handler.wfile.write(raw)
+    except (BrokenPipeError, ConnectionResetError):
+        return
 
 
 def redact(value: Any) -> str:
@@ -74,7 +90,10 @@ def safe_log(handler: BaseHTTPRequestHandler, message: str) -> None:
         "path": getattr(handler, "path", None),
         "message": redact(message),
     }
-    print(json.dumps(record, ensure_ascii=False), flush=True)
+    try:
+        print(json.dumps(record, ensure_ascii=False), flush=True)
+    except (BrokenPipeError, OSError):
+        return
 
 
 def check_bind_host() -> None:
@@ -139,7 +158,7 @@ def run_openclaw(args: list[str], timeout_seconds: float, input_text: str | None
         input=input_text,
         text=True,
         capture_output=True,
-        timeout=max(1.0, min(timeout_seconds, 120.0)),
+        timeout=max(0.05, min(timeout_seconds, 120.0)),
         check=False,
         env=sanitized_env(),
         shell=False,
@@ -345,6 +364,9 @@ def health_payload() -> dict[str, Any]:
         "ok": True,
         "service": "nexus-openclaw-codex-harness-adapter",
         "version": VERSION,
+        "git_sha": GIT_SHA,
+        "image_tag": IMAGE_TAG,
+        "app_version": APP_VERSION,
     }
 
 
@@ -402,6 +424,8 @@ def readiness_payload() -> dict[str, Any]:
         "gateway_required": INFER_TRANSPORT == "gateway",
         "gateway_ready": gateway_ready,
         "local_infer_smoke_ready": local_smoke_ok,
+        "execution_mode": EXECUTION_MODE,
+        "worker_pool_size": WORKER_POOL_SIZE if EXECUTION_MODE == "warm_pool" else 0,
         "ready_smoke_ttl_seconds": READY_SMOKE_TTL_SECONDS,
         "capabilities": {
             "strict_fast_reply_json": True,
@@ -419,6 +443,9 @@ def readiness_payload() -> dict[str, Any]:
         },
         "reason": reason,
         "version": VERSION,
+        "git_sha": GIT_SHA,
+        "image_tag": IMAGE_TAG,
+        "app_version": APP_VERSION,
     }
 
 
@@ -560,8 +587,71 @@ def infer_args(prompt: str) -> list[str]:
     return args
 
 
-def call_openclaw_codex(payload: dict[str, Any]) -> dict[str, Any]:
-    result = run_openclaw(infer_args(build_prompt(payload)), REPLY_TIMEOUT_SECONDS)
+def remaining_timeout_seconds(handler: BaseHTTPRequestHandler, configured_timeout: float) -> tuple[float, int]:
+    header_value = handler.headers.get("X-Nexus-Request-Deadline-Ms", "").strip()
+    if not header_value:
+        timeout = max(0.05, min(configured_timeout, 10.0))
+        return timeout, int(timeout * 1000)
+    try:
+        deadline_ms = int(header_value)
+    except ValueError as exc:
+        raise TimeoutError("invalid_deadline") from exc
+    remaining_ms = deadline_ms - int(time.time() * 1000)
+    if remaining_ms <= 0:
+        raise TimeoutError("deadline_exceeded")
+    timeout = max(0.05, min(configured_timeout, remaining_ms / 1000.0))
+    return timeout, remaining_ms
+
+
+def lightweight_reply_config_ok() -> tuple[bool, str | None]:
+    if not OPENCLAW_ENABLED:
+        return False, "openclaw_codex_runtime_disabled"
+    if not cli_path():
+        return False, "openclaw_cli_not_found"
+    if not model_configured():
+        return False, "openclaw_codex_model_not_configured"
+    if INFER_TRANSPORT not in {"local", "gateway"}:
+        return False, "openclaw_codex_transport_invalid"
+    if INFER_TRANSPORT == "gateway":
+        return False, "openclaw_codex_gateway_not_allowed_for_production_hot_path"
+    if EXECUTION_MODE not in {"warm_pool", "direct"}:
+        return False, "openclaw_codex_execution_mode_invalid"
+    return True, None
+
+
+def ensure_warm_pool() -> concurrent.futures.ThreadPoolExecutor:
+    global _WARM_POOL, _WARM_POOL_SEMAPHORE
+    if _WARM_POOL is None:
+        _WARM_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=WORKER_POOL_SIZE, thread_name_prefix="codex-warm")
+        _WARM_POOL_SEMAPHORE = threading.BoundedSemaphore(WORKER_POOL_SIZE)
+    return _WARM_POOL
+
+
+def submit_warm_task(fn, *args, queue_timeout_seconds: float) -> concurrent.futures.Future:
+    pool = ensure_warm_pool()
+    semaphore = _WARM_POOL_SEMAPHORE
+    if semaphore is None or not semaphore.acquire(timeout=max(0.0, queue_timeout_seconds)):
+        raise subprocess.TimeoutExpired(["openclaw", "warm_pool_queue"], queue_timeout_seconds)
+
+    def run_and_release():
+        try:
+            return fn(*args)
+        finally:
+            semaphore.release()
+
+    return pool.submit(run_and_release)
+
+
+def prewarm_warm_pool() -> None:
+    global _PREWARM_FUTURE
+    if EXECUTION_MODE != "warm_pool":
+        return
+    if _PREWARM_FUTURE is None or _PREWARM_FUTURE.done():
+        _PREWARM_FUTURE = submit_warm_task(local_infer_smoke_ready, queue_timeout_seconds=0.0)
+
+
+def call_openclaw_codex_direct(payload: dict[str, Any], timeout_seconds: float) -> dict[str, Any]:
+    result = run_openclaw(infer_args(build_prompt(payload)), timeout_seconds)
     if result.returncode != 0:
         raise RuntimeError("openclaw_codex_infer_failed")
     output = (result.stdout or "").strip()
@@ -571,6 +661,18 @@ def call_openclaw_codex(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("openclaw_codex_invalid_json_output") from exc
     reply_text = extract_model_text(envelope)
     return strict_reply(parse_json_object(reply_text))
+
+
+def call_openclaw_codex(payload: dict[str, Any], timeout_seconds: float) -> dict[str, Any]:
+    if EXECUTION_MODE != "warm_pool":
+        return call_openclaw_codex_direct(payload, timeout_seconds)
+    queue_timeout = QUEUE_TIMEOUT_MS / 1000.0
+    future = submit_warm_task(call_openclaw_codex_direct, payload, timeout_seconds, queue_timeout_seconds=queue_timeout)
+    try:
+        return future.result(timeout=max(0.05, timeout_seconds))
+    except concurrent.futures.TimeoutError as exc:
+        future.cancel()
+        raise subprocess.TimeoutExpired(infer_args("<redacted>"), timeout_seconds) from exc
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -601,23 +703,39 @@ class Handler(BaseHTTPRequestHandler):
             json_response(self, 400, {"ok": False, "error": err})
             return
         assert payload is not None
-        ready = readiness_payload()
-        if not ready["ok"]:
-            json_response(self, 503, {"ok": False, "error": ready.get("reason") or "openclaw_codex_runtime_not_ready"})
+        started = time.monotonic()
+        ok, reason = lightweight_reply_config_ok()
+        if not ok:
+            json_response(self, 503, {"ok": False, "error": reason or "openclaw_codex_runtime_not_ready"})
             return
         try:
+            timeout_seconds, budget_ms = remaining_timeout_seconds(self, REPLY_TIMEOUT_SECONDS)
             validate_request_payload(payload)
-            json_response(self, 200, call_openclaw_codex(payload))
+            reply = call_openclaw_codex(payload, timeout_seconds)
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            json_response(
+                self,
+                200,
+                reply,
+                {
+                    "X-Nexus-Codex-Elapsed-Ms": str(elapsed_ms),
+                    "X-Nexus-Codex-Backend": "openclaw_codex_local_warm_pool" if EXECUTION_MODE == "warm_pool" else "openclaw_codex_local_direct",
+                    "X-Nexus-Codex-Timeout-Budget-Ms": str(max(0, budget_ms)),
+                },
+            )
         except subprocess.TimeoutExpired:
-            json_response(self, 504, {"ok": False, "error": "openclaw_codex_timeout"})
+            json_response(self, 504, {"ok": False, "error": "openclaw_codex_timeout"}, {"X-Nexus-Codex-Elapsed-Ms": str(int((time.monotonic() - started) * 1000)), "X-Nexus-Codex-Backend": "openclaw_codex_local_warm_pool"})
+        except TimeoutError:
+            json_response(self, 504, {"ok": False, "error": "openclaw_codex_timeout"}, {"X-Nexus-Codex-Elapsed-Ms": str(int((time.monotonic() - started) * 1000)), "X-Nexus-Codex-Backend": "openclaw_codex_local_warm_pool"})
         except ValueError as exc:
-            json_response(self, 502, {"ok": False, "error": str(exc)[:120]})
+            json_response(self, 502, {"ok": False, "error": str(exc)[:120]}, {"X-Nexus-Codex-Elapsed-Ms": str(int((time.monotonic() - started) * 1000)), "X-Nexus-Codex-Backend": "openclaw_codex_local_warm_pool"})
         except Exception:
-            json_response(self, 502, {"ok": False, "error": "openclaw_codex_provider_call_failed"})
+            json_response(self, 502, {"ok": False, "error": "openclaw_codex_provider_call_failed"}, {"X-Nexus-Codex-Elapsed-Ms": str(int((time.monotonic() - started) * 1000)), "X-Nexus-Codex-Backend": "openclaw_codex_local_warm_pool"})
 
 
 def main() -> None:
     check_bind_host()
+    prewarm_warm_pool()
     startup = readiness_payload()
     startup.update({
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
