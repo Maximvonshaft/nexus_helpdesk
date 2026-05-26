@@ -535,7 +535,10 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
                 metadata["rag_trace"] = result.rag_trace
             if result.grounding_applied:
                 metadata["grounding_applied"] = True
-                metadata["grounding_source"] = result.grounding_source
+                if result.grounding_source:
+                    metadata["grounding_source"] = result.grounding_source
+                if result.grounding_reason:
+                    metadata["grounding_reason"] = result.grounding_reason
             if tracking_fact_metadata:
                 metadata["tracking_fact"] = tracking_fact_metadata
             append_fast_ai_message(db, conversation=conversation, reply=result.reply, client_message_id=payload.client_message_id, metadata=metadata)
