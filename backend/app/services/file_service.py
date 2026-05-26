@@ -12,6 +12,9 @@ from .storage import StoredFile, get_storage_backend
 
 settings = get_settings()
 STORAGE = get_storage_backend()
+DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+KNOWLEDGE_DOCUMENT_MIME_TYPES = {'text/plain', 'text/markdown', 'text/x-markdown', 'application/pdf', DOCX_MIME_TYPE}
+KNOWLEDGE_DOCUMENT_EXTENSIONS = {'.txt', '.md', '.markdown', '.pdf', '.docx'}
 
 
 class StoredUpload:
@@ -23,13 +26,7 @@ class StoredUpload:
         self.mime_type = mime_type
 
 
-def save_upload(file: UploadFile) -> StoredUpload:
-    stored: StoredFile = STORAGE.save_upload(
-        file,
-        allowed_mime_types=set(settings.allowed_upload_mime_types),
-        allowed_extensions=set(settings.allowed_upload_extensions),
-        max_bytes=settings.max_upload_bytes,
-    )
+def _to_stored_upload(file: UploadFile, stored: StoredFile) -> StoredUpload:
     return StoredUpload(
         stored_name=Path(file.filename or stored.storage_key).name,
         storage_key=stored.storage_key,
@@ -37,6 +34,26 @@ def save_upload(file: UploadFile) -> StoredUpload:
         file_size=stored.size_bytes,
         mime_type=stored.detected_mime_type,
     )
+
+
+def save_upload(file: UploadFile) -> StoredUpload:
+    stored: StoredFile = STORAGE.save_upload(
+        file,
+        allowed_mime_types=set(settings.allowed_upload_mime_types),
+        allowed_extensions=set(settings.allowed_upload_extensions),
+        max_bytes=settings.max_upload_bytes,
+    )
+    return _to_stored_upload(file, stored)
+
+
+def save_knowledge_document_upload(file: UploadFile) -> StoredUpload:
+    stored: StoredFile = STORAGE.save_upload(
+        file,
+        allowed_mime_types=set(settings.allowed_upload_mime_types) | KNOWLEDGE_DOCUMENT_MIME_TYPES,
+        allowed_extensions=set(settings.allowed_upload_extensions) | KNOWLEDGE_DOCUMENT_EXTENSIONS,
+        max_bytes=settings.max_upload_bytes,
+    )
+    return _to_stored_upload(file, stored)
 
 
 def build_attachment_download_url(attachment_id: int) -> str:
