@@ -15,6 +15,9 @@ const webchatRoute = readFileSync(resolve(root, 'src/routes/webchat.tsx'), 'utf8
 const webchatVoiceApi = readFileSync(resolve(root, 'src/lib/webchatVoiceApi.ts'), 'utf8')
 const agentWebCallPanel = readFileSync(resolve(root, 'src/components/webcall/AgentWebCallPanel.tsx'), 'utf8')
 const replyPanel = readFileSync(resolve(root, 'src/components/operator/CustomerReplyPanel.tsx'), 'utf8')
+const rbacManifest = readFileSync(resolve(root, 'src/lib/rbac.ts'), 'utf8')
+const usersRoute = readFileSync(resolve(root, 'src/routes/users.tsx'), 'utf8')
+const speedafActionsPanel = readFileSync(resolve(root, 'src/components/operator/SpeedafActionsPanel.tsx'), 'utf8')
 
 test('workspace case list uses non-legacy paginated API contract', () => {
   assert.match(types, /export interface CaseListPage \{/)
@@ -115,7 +118,8 @@ test('runtime recovery actions use safe api client endpoints', () => {
 
 test('runtime page exposes confirmed recovery actions and refreshes runtime views', () => {
   assert.match(runtimeRoute, /data-testid="runtime-recovery-actions"/)
-  assert.match(runtimeRoute, /window\.confirm/)
+  assert.match(runtimeRoute, /<ConfirmDialog/)
+  assert.doesNotMatch(runtimeRoute, /window\.confirm/)
   assert.match(runtimeRoute, /api\.requeueDeadJobs\(\{ limit: 50 \}\)/)
   assert.match(runtimeRoute, /api\.requeueDeadOutbound\(\{ limit: 50 \}\)/)
   assert.match(runtimeRoute, /api\.requeueJob\(job\.id\)/)
@@ -126,6 +130,40 @@ test('runtime page exposes confirmed recovery actions and refreshes runtime view
   for (const key of ['runtimeHealth', 'readiness', 'signoff', 'jobs', 'queueSummary', 'openclawConnectivity']) {
     assert.match(runtimeRoute, new RegExp(`invalidateQueries\\(\\{ queryKey: \\['${key}'\\] \\}\\)`))
   }
+})
+
+test('rbac manifest centralizes route and high-risk action access', () => {
+  assert.match(rbacManifest, /export const routeAccess/)
+  assert.match(rbacManifest, /export const actionAccess/)
+  for (const capability of [
+    'tool:speedaf.work_order.create:write',
+    'tool:speedaf.order.update_address:write',
+    'tool:speedaf.order.cancel:write',
+    'webcall.voice.read',
+    'webcall.voice.queue.view',
+    'webcall.voice.accept',
+    'webcall.voice.reject',
+    'webcall.voice.end',
+  ]) {
+    assert.match(rbacManifest, new RegExp(capability.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+})
+
+test('users page uses route guard, grouped capability metadata, and dangerous confirmations', () => {
+  assert.match(usersRoute, /<RequireCapability requirement=\{routeAccess\['\/users'\]\}>/)
+  assert.match(usersRoute, /capabilityMetadata/)
+  assert.match(usersRoute, /isHighRiskCapability/)
+  assert.match(usersRoute, /<ConfirmDialog/)
+})
+
+test('speedaf and webcall actions are capability gated in the operator UI', () => {
+  assert.match(speedafActionsPanel, /canCreateSpeedafWorkOrder/)
+  assert.match(speedafActionsPanel, /canUpdateSpeedafAddress/)
+  assert.match(speedafActionsPanel, /canCancelSpeedafOrder/)
+  assert.match(speedafActionsPanel, /<ConfirmDialog/)
+  assert.match(agentWebCallPanel, /canAcceptWebcallVoice/)
+  assert.match(agentWebCallPanel, /canRejectWebcallVoice/)
+  assert.match(agentWebCallPanel, /canEndWebcallVoice/)
 })
 
 test('operator navigation uses workflow-oriented entrypoints', () => {

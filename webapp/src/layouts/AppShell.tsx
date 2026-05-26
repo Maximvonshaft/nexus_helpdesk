@@ -8,20 +8,21 @@ import { CommandPalette } from '@/components/ui/CommandPalette'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { labelize } from '@/lib/format'
-import { canManageAIConfig, canManageChannels, canManageUsers, canViewControlPlane, canViewOps, roleWorkspaceHint } from '@/lib/access'
+import { canViewOps, roleWorkspaceHint } from '@/lib/access'
+import { canAccess, routeAccess } from '@/lib/rbac'
 
 const nav = [
   { to: '/', label: '今日总览', hint: '异常与优先入口' },
   { to: '/workspace', label: '处理工单', hint: '回复、分配、闭环' },
   { to: '/webchat', label: 'WebChat 收件箱', hint: '客户实时来信' },
-  { to: '/runtime', label: '运行恢复', hint: 'dead/requeue 自助处理', permission: 'ops', attention: 'runtime' },
-  { to: '/webcall-ai-demo', label: 'WebCall AI Demo', hint: '内部语音 AI 沙盒', permission: 'ops' },
-  { to: '/provider-credentials', label: 'Code X 授权', hint: '云端授权与 Token 托管', permission: 'ops' },
-  { to: '/accounts', label: '发送线路', hint: '账号与兜底线路', permission: 'channels' },
+  { to: '/runtime', label: '运行恢复', hint: 'dead/requeue 自助处理', access: routeAccess['/runtime'], attention: 'runtime' },
+  { to: '/webcall-ai-demo', label: 'WebCall AI Demo', hint: '内部语音 AI 沙盒', access: routeAccess['/webcall-ai-demo'] },
+  { to: '/provider-credentials', label: 'Code X 授权', hint: '云端授权与 Token 托管', access: routeAccess['/provider-credentials'] },
+  { to: '/accounts', label: '发送线路', hint: '账号与兜底线路', access: routeAccess['/accounts'] },
   { to: '/bulletins', label: '公告口径', hint: '统一客服话术', permission: 'bulletins' },
-  { to: '/ai-control', label: 'AI 规则', hint: '助手口径治理', permission: 'ai' },
-  { to: '/control-plane', label: '控制面', hint: '高级治理入口', permission: 'control-plane' },
-  { to: '/users', label: '账号权限', hint: '人员与权限', permission: 'users' },
+  { to: '/ai-control', label: 'AI 规则', hint: '助手口径治理', access: routeAccess['/ai-control'] },
+  { to: '/control-plane', label: '控制面', hint: '高级治理入口', access: routeAccess['/control-plane'] },
+  { to: '/users', label: '账号权限', hint: '人员与权限', access: routeAccess['/users'] },
 ]
 
 const navGroups = [
@@ -74,11 +75,7 @@ export function AppShell({ children }: PropsWithChildren) {
   }, [session.data])
 
   const availableNav = useMemo(() => nav.filter((item) => {
-    if (item.permission === 'ops') return canViewOps(session.data)
-    if (item.permission === 'channels') return canManageChannels(session.data)
-    if (item.permission === 'ai') return canManageAIConfig(session.data)
-    if (item.permission === 'control-plane') return canViewControlPlane(session.data)
-    if (item.permission === 'users') return canManageUsers(session.data)
+    if ('access' in item && item.access) return canAccess(session.data, item.access)
     if (item.permission === 'bulletins') return true
     return true
   }), [session.data])

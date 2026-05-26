@@ -92,6 +92,21 @@ def test_work_order_enabled_queues_job_and_truncates_description(harness, monkey
         assert db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_work_order").count() == 1
 
 
+def test_work_order_enabled_requires_tool_capability_for_visible_agent(harness, monkeypatch):
+    monkeypatch.setenv("SPEEDAF_WORK_ORDER_CREATE_ENABLED", "true")
+    with harness.SessionLocal() as db:
+        user = db.get(User, harness.user.id)
+        ticket = db.get(Ticket, harness.ticket.id)
+        user.role = UserRole.agent
+        ticket.assignee_id = user.id
+        db.commit()
+
+    res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/work-orders", json=work_order_payload())
+
+    assert res.status_code == 403
+    assert res.json()["detail"] == "speedaf_work_order_requires_capability"
+
+
 def test_address_update_disabled_by_default(harness):
     res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/address-update", json=address_payload())
     assert res.status_code == 403
@@ -113,6 +128,21 @@ def test_address_update_enabled_queues_job_without_synchronous_submit(harness, m
         assert job.job_type == SPEEDAF_ADDRESS_UPDATE_JOB
         assert json.loads(job.payload_json)["addressUpdateDedupeKey"] == body["dedupeKey"]
         assert db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_address_update", TicketEvent.new_value == "queued").count() == 1
+
+
+def test_address_update_enabled_requires_tool_capability_for_visible_agent(harness, monkeypatch):
+    monkeypatch.setenv("SPEEDAF_UPDATE_ADDRESS_ENABLED", "true")
+    with harness.SessionLocal() as db:
+        user = db.get(User, harness.user.id)
+        ticket = db.get(Ticket, harness.ticket.id)
+        user.role = UserRole.agent
+        ticket.assignee_id = user.id
+        db.commit()
+
+    res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/address-update", json=address_payload())
+
+    assert res.status_code == 403
+    assert res.json()["detail"] == "speedaf_address_update_requires_capability"
 
 
 def test_address_update_worker_executes_speedaf_action_and_writes_completion(harness, monkeypatch):

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { createRoute, redirect, useNavigate } from '@tanstack/react-router'
+import { createRoute, redirect } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
@@ -14,9 +14,10 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Toast } from '@/components/ui/Toast'
 import { MetricCard } from '@/components/ui/MetricCard'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { RequireCapability } from '@/components/security/RequireCapability'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
-import { useSession } from '@/hooks/useAuth'
-import { canManageUsers } from '@/lib/access'
+import { capabilityMetadata, isHighRiskCapability, routeAccess } from '@/lib/rbac'
 
 type UserForm = {
   username: string
@@ -27,6 +28,8 @@ type UserForm = {
   team_id: string
   capabilities: string[]
 }
+
+type PendingUserAction = 'create' | 'update' | 'toggleActive' | 'resetPassword'
 
 function emptyForm(): UserForm {
   return {
@@ -53,16 +56,13 @@ function formFromUser(user: AdminUser | null): UserForm {
   }
 }
 
-function UsersPage() {
+function UsersPageContent() {
   const client = useQueryClient()
   const autoRefresh = useAutoRefresh(true)
-  const session = useSession()
-  const navigate = useNavigate()
-  const permitted = canManageUsers(session.data)
 
-  const usersQuery = useQuery({ queryKey: ['adminUsers'], queryFn: api.adminUsers, refetchInterval: autoRefresh.enabled ? 30000 : false, enabled: permitted })
-  const teamsQuery = useQuery({ queryKey: ['teams'], queryFn: api.teams, enabled: permitted })
-  const catalogQuery = useQuery({ queryKey: ['catalog'], queryFn: api.capabilityCatalog, enabled: permitted })
+  const usersQuery = useQuery({ queryKey: ['adminUsers'], queryFn: api.adminUsers, refetchInterval: autoRefresh.enabled ? 30000 : false })
+  const teamsQuery = useQuery({ queryKey: ['teams'], queryFn: api.teams })
+  const catalogQuery = useQuery({ queryKey: ['catalog'], queryFn: api.capabilityCatalog })
 
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [roleFilter, setRoleFilter] = useState('all')
@@ -71,10 +71,7 @@ function UsersPage() {
   const [form, setForm] = useState<UserForm>(emptyForm())
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
   const [resetPassword, setResetPassword] = useState('')
-
-  useEffect(() => {
-    if (session.data && !permitted) navigate({ to: '/' })
-  }, [session.data, permitted, navigate])
+  const [pendingAction, setPendingAction] = useState<PendingUserAction | null>(null)
 
   const allUsers = usersQuery.data ?? []
   const selectedUser = useMemo(() => allUsers.find((user) => user.id === selectedId) ?? null, [allUsers, selectedId])
@@ -93,6 +90,18 @@ function UsersPage() {
       return roleOk && statusOk && searchOk
     })
   }, [allUsers, roleFilter, statusFilter, search])
+
+  const capabilityGroups = useMemo(() => {
+    const groups = new Map<string, string[]>()
+    for (const capability of catalogQuery.data ?? []) {
+      const meta = capabilityMetadata(capability)
+      groups.set(meta.group, [...(groups.get(meta.group) ?? []), capability])
+    }
+    return Array.from(groups.entries()).map(([group, capabilities]) => ({
+      group,
+      capabilities: capabilities.sort((a, b) => capabilityMetadata(a).label.localeCompare(capabilityMetadata(b).label)),
+    }))
+  }, [catalogQuery.data])
 
   const createMutation = useMutation({
     mutationFn: async () => api.createUser({
@@ -163,8 +172,48 @@ function UsersPage() {
     { label: 'Admin', value: 'admin' },
   ]
 
+  function confirmCopy() {
+    if (pendingAction === 'toggleActive') {
+      return {
+        title: selectedUser?.is_active ? '确认停用账号？' : '确认启用账号？',
+        description: selectedUser
+          ? `${selectedUser.display_name}（@${selectedUser.username}）的登录状态将被修改。`
+          : '账号状态将被修改。',
+        consequence: selectedUser?.is_active ? '停用后该员工不能继续登录；最后一个 active admin 仍由后端阻断。' : '启用后该员工可以按当前角色和 capability 登录。',
+        confirmLabel: selectedUser?.is_active ? '停用账号' : '启用账号',
+      }
+    }
+    if (pendingAction === 'resetPassword') {
+      return {
+        title: '确认重置密码？',
+        description: selectedUser ? `${selectedUser.display_name}（@${selectedUser.username}）将使用新密码登录。` : '将为选中账号重置密码。',
+        consequence: '请确认这是本人或管理员授权操作；后端会记录 admin audit。',
+        confirmLabel: '重置密码',
+      }
+    }
+    const highRiskCaps = form.capabilities.filter(isHighRiskCapability)
+    const roleRisk = form.role === 'admin'
+    return {
+      title: pendingAction === 'create' ? '确认开通账号？' : '确认保存权限变更？',
+      description: `${form.display_name || form.username || '该账号'} 将被设置为 ${labelize(form.role)}。`,
+      consequence: roleRisk || highRiskCaps.length
+        ? `包含高危授权：${[roleRisk ? 'admin role' : null, ...highRiskCaps].filter(Boolean).join('、')}。请确认影响范围和回滚方式。`
+        : '本次变更会按后端 capability override 写入，并记录审计日志。',
+      confirmLabel: pendingAction === 'create' ? '确认开通' : '保存修改',
+    }
+  }
+
+  function runPendingAction() {
+    const action = pendingAction
+    setPendingAction(null)
+    if (action === 'create') createMutation.mutate()
+    if (action === 'update') updateMutation.mutate()
+    if (action === 'toggleActive') toggleActiveMutation.mutate()
+    if (action === 'resetPassword') resetPasswordMutation.mutate()
+  }
+
   return (
-    <AppShell>
+    <>
       {toast ? <Toast message={toast.message} tone={toast.tone} onClose={() => setToast(null)} /> : null}
       <PageHeader
         eyebrow="账号管理"
@@ -216,23 +265,34 @@ function UsersPage() {
               </div>
               <Field label="高级权限覆盖">
                 <div className="list compact">
-                  {(catalogQuery.data ?? []).map((capability) => (
-                    <label key={capability} className="list-item" style={{ cursor: 'pointer' }}>
-                      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                        <input
-                          type="checkbox"
-                          checked={form.capabilities.includes(capability)}
-                          onChange={() => setForm((prev) => ({ ...prev, capabilities: prev.capabilities.includes(capability) ? prev.capabilities.filter((item) => item !== capability) : [...prev.capabilities, capability] }))}
-                        />
-                        <div><strong>{capability}</strong></div>
+                  {capabilityGroups.map((group) => (
+                    <div className="list-item" key={group.group}>
+                      <div className="section-title">{group.group}</div>
+                      <div className="stack compact">
+                        {group.capabilities.map((capability) => {
+                          const meta = capabilityMetadata(capability)
+                          return (
+                            <label key={capability} className="checkbox-row" style={{ cursor: 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={form.capabilities.includes(capability)}
+                                onChange={() => setForm((prev) => ({ ...prev, capabilities: prev.capabilities.includes(capability) ? prev.capabilities.filter((item) => item !== capability) : [...prev.capabilities, capability] }))}
+                              />
+                              <span>
+                                <strong>{meta.label}</strong> <Badge tone={meta.risk === 'high' ? 'danger' : 'default'}>{meta.risk === 'high' ? '高危' : '常规'}</Badge>
+                                <div className="section-subtitle">{sanitizeDisplayText(meta.description)} · {sanitizeDisplayText(capability)}</div>
+                              </span>
+                            </label>
+                          )
+                        })}
                       </div>
-                    </label>
+                    </div>
                   ))}
                 </div>
               </Field>
               <div className="button-row">
-                {!selectedUser ? <Button variant="primary" disabled={createMutation.isPending} onClick={() => createMutation.mutate()}>{createMutation.isPending ? '开通中…' : '确认开通'}</Button> : <Button variant="primary" disabled={updateMutation.isPending} onClick={() => updateMutation.mutate()}>{updateMutation.isPending ? '保存中…' : '保存修改'}</Button>}
-                {selectedUser ? <Button variant="secondary" disabled={toggleActiveMutation.isPending} onClick={() => toggleActiveMutation.mutate()}>{selectedUser.is_active ? '停用账号' : '启用账号'}</Button> : null}
+                {!selectedUser ? <Button variant="primary" disabled={createMutation.isPending} onClick={() => setPendingAction('create')}>{createMutation.isPending ? '开通中…' : '确认开通'}</Button> : <Button variant="primary" disabled={updateMutation.isPending} onClick={() => setPendingAction('update')}>{updateMutation.isPending ? '保存中…' : '保存修改'}</Button>}
+                {selectedUser ? <Button variant="secondary" disabled={toggleActiveMutation.isPending} onClick={() => setPendingAction('toggleActive')}>{selectedUser.is_active ? '停用账号' : '启用账号'}</Button> : null}
                 <Button onClick={() => setForm(formFromUser(selectedUser))}>重置表单</Button>
               </div>
               {selectedUser ? (
@@ -241,13 +301,34 @@ function UsersPage() {
                   <Field label="重置密码（至少 6 位）">
                     <Input type="password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} placeholder="输入新密码" />
                   </Field>
-                  <div className="button-row"><Button variant="secondary" disabled={resetPasswordMutation.isPending || !resetPassword} onClick={() => resetPasswordMutation.mutate()}>{resetPasswordMutation.isPending ? '重置中…' : '确认重置密码'}</Button></div>
+                  <div className="button-row"><Button variant="secondary" disabled={resetPasswordMutation.isPending || !resetPassword} onClick={() => setPendingAction('resetPassword')}>{resetPasswordMutation.isPending ? '重置中…' : '确认重置密码'}</Button></div>
                 </>
               ) : null}
             </div>
           </CardBody>
         </Card>
       </div>
+      <ConfirmDialog
+        open={pendingAction !== null}
+        tone="danger"
+        title={confirmCopy().title}
+        description={confirmCopy().description}
+        consequence={confirmCopy().consequence}
+        confirmLabel={confirmCopy().confirmLabel}
+        pending={createMutation.isPending || updateMutation.isPending || toggleActiveMutation.isPending || resetPasswordMutation.isPending}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={runPendingAction}
+      />
+    </>
+  )
+}
+
+function UsersPage() {
+  return (
+    <AppShell>
+      <RequireCapability requirement={routeAccess['/users']}>
+        <UsersPageContent />
+      </RequireCapability>
     </AppShell>
   )
 }

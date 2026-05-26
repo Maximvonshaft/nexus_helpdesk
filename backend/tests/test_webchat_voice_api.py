@@ -20,7 +20,7 @@ from app.auth_service import create_access_token
 from app.db import Base, SessionLocal, engine
 from app.enums import UserRole
 from app.main import app
-from app.models import User
+from app.models import Ticket, User
 from app.services.livekit_voice_provider import LiveKitVoiceProvider
 from app.services.voice_provider import VoiceParticipantToken
 from app.utils.time import utc_now
@@ -508,6 +508,35 @@ def test_admin_voice_endpoint_requires_ticket_visibility():
     )
 
     assert response.status_code == 403
+
+
+def test_admin_voice_accept_requires_voice_capability_even_when_ticket_visible():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client)
+    db = SessionLocal()
+    try:
+        ticket = db.query(Ticket).filter(Ticket.id == ticket_id).one()
+        ticket.assignee_id = 9204
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        headers=_admin_headers(9204),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "webcall_voice_accept_requires_capability"
+
+
+def test_admin_voice_queue_requires_voice_queue_capability():
+    client = TestClient(app)
+
+    response = client.get("/api/webchat/admin/voice/sessions?status=incoming&limit=20", headers=_admin_headers(9204))
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "webcall_voice_queue_requires_capability"
 
 
 def test_admin_voice_end_requires_auth():

@@ -27,7 +27,13 @@ from ..schemas import (
 )
 from ..utils.time import utc_now
 from .audit_service import log_event
-from .permissions import ensure_can_assign, ensure_can_change_status, ensure_ticket_visible
+from .permissions import (
+    ensure_can_assign,
+    ensure_can_change_status,
+    ensure_can_update_core_fields,
+    ensure_can_write_internal_note,
+    ensure_ticket_visible,
+)
 from .ticket_service import add_ai_intake, add_internal_note, change_status, create_ticket, get_ticket_or_404, list_tickets, validate_assignee_team
 from .sla_service import evaluate_sla, resume_sla, update_pause_state_for_status
 from .state_machine import requires_note, validate_transition
@@ -416,10 +422,12 @@ def workflow_update_lite_case(db: Session, ticket_id: int, payload: LiteWorkflow
     for field in ["required_action", "missing_fields", "customer_update", "resolution_summary"]:
         value = getattr(payload, field)
         if value is not None and getattr(ticket, field) != value:
-            setattr(ticket, field, value)
             changed_fields.append(field)
 
     if changed_fields:
+        ensure_can_update_core_fields(current_user, db)
+        for field in changed_fields:
+            setattr(ticket, field, getattr(payload, field))
         log_event(
             db,
             ticket_id=ticket.id,
@@ -430,6 +438,7 @@ def workflow_update_lite_case(db: Session, ticket_id: int, payload: LiteWorkflow
         )
 
     if payload.human_note:
+        ensure_can_write_internal_note(current_user, db)
         note = TicketInternalNote(ticket_id=ticket.id, author_id=current_user.id, body=payload.human_note)
         db.add(note)
         ticket.last_human_update = payload.human_note

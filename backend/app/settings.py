@@ -17,11 +17,14 @@ class Settings:
     def __init__(self) -> None:
         self.project_root = Path(__file__).resolve().parents[2]
         self.backend_root = self.project_root / "backend"
+        self.app_env = os.getenv("APP_ENV", "development").strip().lower() or "development"
         self.legacy_frontend_root = self.project_root / "frontend"
         self.frontend_dist_root = self.project_root / "frontend_dist"
-        self.frontend_root = self.frontend_dist_root if self.frontend_dist_root.exists() else self.legacy_frontend_root
+        self.frontend_dist_index = self.frontend_dist_root / "index.html"
+        self.frontend_dist_available = self.frontend_dist_index.exists()
+        self.frontend_root = self.frontend_dist_root if self.frontend_dist_available else self.legacy_frontend_root
+        self.frontend_uses_legacy_fallback = not self.frontend_dist_available
 
-        self.app_env = os.getenv("APP_ENV", "development").strip().lower() or "development"
         self.database_url = os.getenv("DATABASE_URL", "sqlite:///./helpdesk.db").strip()
         self.database_echo = os.getenv("DATABASE_ECHO", "false").strip().lower() == "true"
         self.jwt_secret_key = os.getenv("SECRET_KEY")
@@ -216,6 +219,8 @@ class Settings:
                 raise RuntimeError("WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must be false in production")
             if self.openclaw_attachment_url_fetch_enabled and not self.openclaw_attachment_allowed_hosts:
                 raise RuntimeError("OPENCLAW_ATTACHMENT_ALLOWED_HOSTS must be set when OPENCLAW_ATTACHMENT_URL_FETCH_ENABLED=true in production")
+            if not self.frontend_dist_available:
+                raise RuntimeError("frontend_dist/index.html must exist in production; refusing legacy frontend fallback")
             if self.require_prometheus_client_in_production:
                 try:
                     import prometheus_client  # noqa: F401

@@ -41,6 +41,7 @@ import type {
   CodexCredentialActionResult,
 } from '@/lib/types'
 import type { WebchatVoiceIncomingSession, WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
+import { mapApiErrorMessage } from '@/lib/apiErrorMap'
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
 const REQUEST_ID_HEADER = 'X-Request-Id'
@@ -112,7 +113,7 @@ async function readErrorMessage(res: Response, fallback: string) {
   try {
     const data = await res.json()
     const detail = data?.detail
-    return typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : JSON.stringify(data)
+    return mapApiErrorMessage(res.status, detail, JSON.stringify(data) || fallback)
   } catch {
     return fallback
   }

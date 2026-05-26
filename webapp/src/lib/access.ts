@@ -1,16 +1,7 @@
 import type { AuthUser } from './types'
+import { CAPABILITIES, actionAccess, canAccess, hasCapability } from './rbac'
 
-const CAP_USER_MANAGE = 'user.manage'
-const CAP_CHANNEL_ACCOUNT_MANAGE = 'channel_account.manage'
-const CAP_BULLETIN_MANAGE = 'bulletin.manage'
-const CAP_AI_CONFIG_READ = 'ai_config.read'
-const CAP_AI_CONFIG_MANAGE = 'ai_config.manage'
-const CAP_RUNTIME_MANAGE = 'runtime.manage'
-const CAP_MARKET_MANAGE = 'market.manage'
-
-function hasCapability(user?: AuthUser | null, capability?: string) {
-  return Boolean(user && capability && user.capabilities?.includes(capability))
-}
+export { CAPABILITIES, actionAccess, canAccess, hasCapability } from './rbac'
 
 export function isOpsSupervisorRole(role?: string | null) {
   const normalized = String(role || '').trim().toLowerCase()
@@ -18,35 +9,99 @@ export function isOpsSupervisorRole(role?: string | null) {
 }
 
 export function canViewOps(user?: AuthUser | null) {
-  return hasCapability(user, CAP_RUNTIME_MANAGE)
+  return hasCapability(user, CAPABILITIES.runtimeManage)
 }
 
 export function canManageChannels(user?: AuthUser | null) {
-  return hasCapability(user, CAP_CHANNEL_ACCOUNT_MANAGE)
+  return hasCapability(user, CAPABILITIES.channelAccountManage)
 }
 
 export function canManageUsers(user?: AuthUser | null) {
-  return hasCapability(user, CAP_USER_MANAGE)
+  return hasCapability(user, CAPABILITIES.userManage)
 }
 
 export function canEditBulletins(user?: AuthUser | null) {
-  return hasCapability(user, CAP_BULLETIN_MANAGE)
+  return hasCapability(user, CAPABILITIES.bulletinManage)
 }
 
 export function canReadAIConfig(user?: AuthUser | null) {
-  return hasCapability(user, CAP_AI_CONFIG_READ) || hasCapability(user, CAP_AI_CONFIG_MANAGE)
+  return hasCapability(user, CAPABILITIES.aiConfigRead) || hasCapability(user, CAPABILITIES.aiConfigManage)
 }
 
 export function canManageAIConfig(user?: AuthUser | null) {
-  return hasCapability(user, CAP_AI_CONFIG_MANAGE)
+  return hasCapability(user, CAPABILITIES.aiConfigManage)
 }
 
 export function canManageMarkets(user?: AuthUser | null) {
-  return hasCapability(user, CAP_MARKET_MANAGE)
+  return hasCapability(user, CAPABILITIES.marketManage)
 }
 
 export function canViewControlPlane(user?: AuthUser | null) {
   return canReadAIConfig(user) || canManageChannels(user) || canViewOps(user)
+}
+
+export function canAssignTickets(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.assignTicket)
+}
+
+export function canUpdateTicketCore(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.updateTicketCore)
+}
+
+export function canChangeTicketStatus(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.changeTicketStatus)
+}
+
+export function canCloseTickets(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.closeTicket)
+}
+
+export function canWriteInternalNote(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.writeInternalNote)
+}
+
+export function canSendOutbound(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.sendOutbound)
+}
+
+export function canWriteAiIntake(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.writeAiIntake)
+}
+
+export function canCreateSpeedafWorkOrder(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.createSpeedafWorkOrder)
+}
+
+export function canUpdateSpeedafAddress(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.updateSpeedafAddress)
+}
+
+export function canCancelSpeedafOrder(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.cancelSpeedafOrder)
+}
+
+export function canReadWebcallVoice(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.readWebcallVoice)
+}
+
+export function canViewWebcallVoiceQueue(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.viewWebcallVoiceQueue)
+}
+
+export function canAcceptWebcallVoice(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.acceptWebcallVoice)
+}
+
+export function canRejectWebcallVoice(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.rejectWebcallVoice)
+}
+
+export function canEndWebcallVoice(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.endWebcallVoice)
+}
+
+export function canViewWebchatDebug(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.viewWebchatDebug)
 }
 
 export function roleWorkspaceHint(user?: AuthUser | null) {

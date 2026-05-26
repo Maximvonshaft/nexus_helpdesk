@@ -18,29 +18,33 @@ def test_source_release_script_defaults_to_current_release_and_includes_current_
 
 def test_frontend_routes_are_role_gated_for_operator_simplicity():
     shell = (PROJECT / 'webapp' / 'src' / 'layouts' / 'AppShell.tsx').read_text()
+    rbac = (PROJECT / 'webapp' / 'src' / 'lib' / 'rbac.ts').read_text()
     runtime = (PROJECT / 'webapp' / 'src' / 'routes' / 'runtime.tsx').read_text()
     accounts = (PROJECT / 'webapp' / 'src' / 'routes' / 'accounts.tsx').read_text()
     command = (PROJECT / 'webapp' / 'src' / 'components' / 'ui' / 'CommandPalette.tsx').read_text()
 
     assert 'roleWorkspaceHint' in shell
     assert 'canViewOps' in shell
-    assert 'canManageChannels' in shell
+    assert "access: routeAccess['/runtime']" in shell
+    assert "access: routeAccess['/accounts']" in shell
     assert '运营保障' in runtime
     assert '无权限访问' in runtime
     assert '发送线路' in accounts
     assert '无权限访问' in accounts
-    assert "permission: 'ops'" in command
-    assert "permission: 'channels'" in command
+    assert "access: routeAccess['/runtime']" in command
+    assert "access: routeAccess['/accounts']" in command
+    assert "'/runtime': { allOf: [CAPABILITIES.runtimeManage] }" in rbac
+    assert "'/accounts': { allOf: [CAPABILITIES.channelAccountManage] }" in rbac
 
 
 def test_frontend_governance_gates_use_capabilities_not_roles():
     access = (PROJECT / 'webapp' / 'src' / 'lib' / 'access.ts').read_text()
-    assert "return hasCapability(user, CAP_RUNTIME_MANAGE)" in access
-    assert "return hasCapability(user, CAP_CHANNEL_ACCOUNT_MANAGE)" in access
-    assert "return hasCapability(user, CAP_USER_MANAGE)" in access
-    assert "return hasCapability(user, CAP_MARKET_MANAGE)" in access
+    assert "return hasCapability(user, CAPABILITIES.runtimeManage)" in access
+    assert "return hasCapability(user, CAPABILITIES.channelAccountManage)" in access
+    assert "return hasCapability(user, CAPABILITIES.userManage)" in access
+    assert "return hasCapability(user, CAPABILITIES.marketManage)" in access
     assert "isOpsSupervisorRole(user?.role) || hasCapability" not in access
-    assert "CAP_AI_CONFIG_READ" in access
+    assert "CAPABILITIES.aiConfigRead" in access
 
 
 def test_webchat_governance_hardening_invariants():
@@ -74,11 +78,15 @@ def test_ai_config_governance_reads_are_capability_guarded():
 def test_ci_readiness_checks_are_blocking():
     backend_ci = (PROJECT / '.github' / 'workflows' / 'backend-ci.yml').read_text()
     pg_ci = (PROJECT / '.github' / 'workflows' / 'postgres-migration.yml').read_text()
+    settings = (ROOT / 'app' / 'settings.py').read_text()
+    main = (ROOT / 'app' / 'main.py').read_text()
 
     assert 'validate_production_readiness.py || true' not in backend_ci
     assert 'validate_production_readiness.py || true' not in pg_ci
     assert 'Strict readiness' in backend_ci
     assert 'Strict production-like readiness' in pg_ci
+    assert 'refusing legacy frontend fallback' in settings
+    assert "'frontend': frontend_readiness" in main
 
 
 def test_deployment_templates_prevent_server_drift():

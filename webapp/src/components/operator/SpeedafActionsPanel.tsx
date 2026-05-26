@@ -8,6 +8,9 @@ import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Field, Input, Select, Textarea } from '@/components/ui/Field'
 import { sanitizeDisplayText } from '@/lib/format'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { useSession } from '@/hooks/useAuth'
+import { canCancelSpeedafOrder, canCreateSpeedafWorkOrder, canUpdateSpeedafAddress } from '@/lib/access'
 
 function normalizePhone(value?: string | null) {
   return String(value || '').replace(/[^0-9+]/g, '').slice(0, 80)
@@ -36,6 +39,7 @@ function ActionResult({ result }: { result: SpeedafActionResponse | null }) {
 
 export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseDetail; onToast: ToastFn }) {
   const client = useQueryClient()
+  const session = useSession()
   const [workOrderDescription, setWorkOrderDescription] = useState('Please follow up delivery with Speedaf last-mile operations.')
   const [workOrderResult, setWorkOrderResult] = useState<SpeedafActionResponse | null>(null)
   const [addressPhone, setAddressPhone] = useState(defaultCallerId(activeCase))
@@ -43,10 +47,15 @@ export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseD
   const [reasonCode, setReasonCode] = useState('CC01')
   const [cancelPreview, setCancelPreview] = useState<SpeedafCancelPreviewResponse | null>(null)
   const [confirmCancel, setConfirmCancel] = useState(false)
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
 
   const waybillCode = defaultWaybill(activeCase)
   const callerID = defaultCallerId(activeCase)
   const hasMinimumData = Boolean(waybillCode && callerID)
+  const canSubmitSpeedafWorkOrder = canCreateSpeedafWorkOrder(session.data)
+  const canSubmitSpeedafAddress = canUpdateSpeedafAddress(session.data)
+  const canSubmitSpeedafCancel = canCancelSpeedafOrder(session.data)
+  const hasAnySpeedafAction = canSubmitSpeedafWorkOrder || canSubmitSpeedafAddress || canSubmitSpeedafCancel
 
   useEffect(() => {
     setAddressPhone(defaultCallerId(activeCase))
@@ -54,6 +63,7 @@ export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseD
     setAddressResult(null)
     setCancelPreview(null)
     setConfirmCancel(false)
+    setCancelDialogOpen(false)
   }, [activeCase.id])
 
   const refresh = async () => {
@@ -112,26 +122,28 @@ export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseD
       onToast({ message: result.message || 'Speedaf 取消请求已提交', tone: 'success' })
       setCancelPreview(null)
       setConfirmCancel(false)
+      setCancelDialogOpen(false)
       await refresh()
     },
     onError: (err: Error) => onToast({ message: err.message || 'Speedaf 取消请求失败', tone: 'danger' }),
   })
 
-  const canSubmitWorkOrder = hasMinimumData && workOrderDescription.trim().length > 0 && !workOrderMutation.isPending
-  const canSubmitAddress = hasMinimumData && addressPhone.trim().length >= 4 && !addressMutation.isPending
-  const canPreviewCancel = hasMinimumData && !cancelPreviewMutation.isPending
+  const canSubmitWorkOrder = canSubmitSpeedafWorkOrder && hasMinimumData && workOrderDescription.trim().length > 0 && !workOrderMutation.isPending
+  const canSubmitAddress = canSubmitSpeedafAddress && hasMinimumData && addressPhone.trim().length >= 4 && !addressMutation.isPending
+  const canPreviewCancel = canSubmitSpeedafCancel && hasMinimumData && !cancelPreviewMutation.isPending
   const canConfirmCancel = Boolean(cancelPreview?.cancelAllowed && cancelPreview.confirmToken && confirmCancel && !cancelMutation.isPending)
 
   return (
-    <Card className="soft">
-      <CardHeader title="Speedaf 操作" subtitle="高风险动作由后端 feature flag、权限、限流、幂等和审计统一保护；前端只提供受控入口。" />
-      <CardBody>
-        <div className="stack" data-testid="speedaf-actions-panel">
-          <div className="badges">
-            <Badge tone={hasMinimumData ? 'success' : 'warning'}>{hasMinimumData ? '基础信息完整' : '缺运单号或客户电话'}</Badge>
-            <Badge tone="warning">写动作默认关闭</Badge>
-            <Badge>后端审计</Badge>
-          </div>
+    <>
+      <Card className="soft">
+        <CardHeader title="Speedaf 操作" subtitle="高风险动作由后端 feature flag、权限、限流、幂等和审计统一保护；前端只提供受控入口。" />
+        <CardBody>
+          <div className="stack" data-testid="speedaf-actions-panel">
+            <div className="badges">
+              <Badge tone={hasMinimumData ? 'success' : 'warning'}>{hasMinimumData ? '基础信息完整' : '缺运单号或客户电话'}</Badge>
+              <Badge tone="warning">写动作默认关闭</Badge>
+              <Badge>后端审计</Badge>
+            </div>
 
           <div className="kv-grid">
             <div className="kv"><label>运单号</label><div>{sanitizeDisplayText(waybillCode || '缺失')}</div></div>
@@ -144,7 +156,13 @@ export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseD
             </div>
           ) : null}
 
-          <Card>
+          {!hasAnySpeedafAction ? (
+            <div className="message" data-role="agent">
+              当前账号没有 Speedaf 写工具 capability。需要催派、地址更新或取消运单时，请联系主管授权或代办。
+            </div>
+          ) : null}
+
+          {canSubmitSpeedafWorkOrder ? <Card>
             <CardHeader title="催派工单" subtitle="创建 Speedaf WT0103-05 催派/派送跟进工单，后端会排队执行。" />
             <CardBody>
               <div className="stack">
@@ -157,9 +175,9 @@ export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseD
                 <ActionResult result={workOrderResult} />
               </div>
             </CardBody>
-          </Card>
+          </Card> : null}
 
-          <Card>
+          {canSubmitSpeedafAddress ? <Card>
             <CardHeader title="地址更新确认请求" subtitle="提交 WhatsApp/地址更新确认请求；这不代表地址已经修改成功。" />
             <CardBody>
               <div className="stack">
@@ -172,9 +190,9 @@ export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseD
                 <ActionResult result={addressResult} />
               </div>
             </CardBody>
-          </Card>
+          </Card> : null}
 
-          <Card>
+          {canSubmitSpeedafCancel ? <Card>
             <CardHeader title="取消运单" subtitle="最高风险动作：必须先预检，再使用短效确认令牌提交。" />
             <CardBody>
               <div className="stack">
@@ -203,14 +221,26 @@ export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseD
                     <span>我确认取消请求已由人工核对，且理解 Nexus 工单不会自动关闭。</span>
                   </label>
                 ) : null}
-                <Button variant="danger" onClick={() => cancelMutation.mutate()} disabled={!canConfirmCancel}>
+                <Button variant="danger" onClick={() => setCancelDialogOpen(true)} disabled={!canConfirmCancel}>
                   {cancelMutation.isPending ? '提交中…' : '确认提交取消'}
                 </Button>
               </div>
             </CardBody>
-          </Card>
-        </div>
-      </CardBody>
-    </Card>
+          </Card> : null}
+          </div>
+        </CardBody>
+      </Card>
+      <ConfirmDialog
+        open={cancelDialogOpen}
+        title="确认提交 Speedaf 取消运单？"
+        description={`运单 ${sanitizeDisplayText(waybillCode || '缺失')} 将向 Speedaf 发起取消请求。`}
+        consequence="这是最高风险工具动作。Nexus 工单不会自动关闭，后端会记录审计和幂等键。"
+        confirmLabel="提交取消请求"
+        tone="danger"
+        pending={cancelMutation.isPending}
+        onCancel={() => setCancelDialogOpen(false)}
+        onConfirm={() => cancelMutation.mutate()}
+      />
+    </>
   )
 }
