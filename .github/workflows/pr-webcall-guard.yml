@@ -272,32 +272,29 @@ jobs:
           test -f "$PANEL"
           test -f "$TEST"
 
-          non_livekit_branch="$(python - <<'PY'
+          python - <<'PY'
           from pathlib import Path
           import re
 
-          p = Path('webapp/src/components/webcall/AgentWebCallPanel.tsx')
-          text = p.read_text(encoding='utf-8')
+          panel_path = Path('webapp/src/components/webcall/AgentWebCallPanel.tsx')
+          test_path = Path('webapp/tests/operator-console-contract.test.mjs')
+          text = panel_path.read_text(encoding='utf-8')
+          test_text = test_path.read_text(encoding='utf-8')
           match = re.search(r"if \(accepted\.provider !== 'livekit'\) \{(?P<body>.*?)\n\s*\}\n\s*const livekitUrl", text, re.S)
           if not match:
               raise SystemExit('could_not_locate_non_livekit_branch')
-          print(match.group('body'))
+          body = match.group('body')
+          if 'await cleanupRoom()' not in body:
+              raise SystemExit(f'::error file={panel_path}::non-LiveKit branch must clean up the acquired microphone track')
+          if 'return null' in body:
+              raise SystemExit(f'::error file={panel_path}::non-LiveKit branch still contains return null')
+          if 'return accepted' not in body:
+              raise SystemExit(f'::error file={panel_path}::non-LiveKit branch must return the accepted session after cleanup')
+          if 'webcall non-livekit accept path cleans up acquired microphone track before return' not in test_text:
+              raise SystemExit(f'::error file={test_path}::missing non-LiveKit cleanup regression test')
+          if 'returnIndex > cleanupIndex' not in test_text:
+              raise SystemExit(f'::error file={test_path}::test must assert cleanup happens before return')
           PY
-          )"
-
-          if ! grep -q 'await cleanupRoom()' <<<"$non_livekit_branch"; then
-            echo "::error::$PANEL non-LiveKit branch must clean up the acquired microphone track."
-            exit 1
-          fi
-
-          if grep -q 'return null' <<<"$non_livekit_branch"; then
-            echo "::error::$PANEL non-LiveKit branch still contains return null."
-            exit 1
-          fi
-
-          grep -q 'return accepted' <<<"$non_livekit_branch"
-          grep -q 'webcall non-livekit accept path cleans up acquired microphone track before return' "$TEST"
-          grep -q \"returnIndex > cleanupIndex\" "$TEST"
 
           echo "WebCall blocking fix markers verified."
 
