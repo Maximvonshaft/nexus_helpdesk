@@ -15,6 +15,8 @@ from .text_decoding import is_supported_text_upload
 settings = get_settings()
 CHUNK_SIZE = 1024 * 1024
 TEXT_SNIFF_SAMPLE_BYTES = 4096
+DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+TEXT_UPLOAD_EXTENSIONS = {'.txt', '.md', '.markdown'}
 
 
 @dataclass
@@ -39,10 +41,14 @@ def _validate_persist_bytes_inputs(*, content: bytes, filename: str, media_type:
         raise HTTPException(status_code=413, detail='Persisted attachment exceeds configured size limit')
     if allowed_extensions is not None and suffix not in allowed_extensions and suffix not in {'.bin', '.json', '.txt'}:
         raise HTTPException(status_code=400, detail=f"File extension '{suffix}' is not allowed")
-    if suffix == '.txt' and allowed_mime_types is not None and 'text/plain' in allowed_mime_types:
+    if suffix in TEXT_UPLOAD_EXTENSIONS and allowed_mime_types is not None and ('text/plain' in allowed_mime_types or 'text/markdown' in allowed_mime_types):
         if not is_supported_text_upload(content[:4096]):
-            raise HTTPException(status_code=400, detail='Uploaded text file must be encoded as UTF-8, UTF-16, GB18030, or GBK')
+            raise HTTPException(status_code=400, detail='Uploaded text or Markdown file must be encoded as UTF-8, UTF-16, GB18030, or GBK')
+        if suffix in {'.md', '.markdown'} and 'text/markdown' in allowed_mime_types:
+            return suffix, 'text/markdown'
         return suffix, 'text/plain'
+    if suffix == '.docx' and allowed_mime_types is not None and DOCX_MIME_TYPE in allowed_mime_types:
+        return suffix, DOCX_MIME_TYPE
     if allowed_mime_types is not None and normalized_media_type not in allowed_mime_types:
         raise HTTPException(status_code=400, detail=f"MIME type '{normalized_media_type}' is not allowed")
     return suffix, normalized_media_type
@@ -63,10 +69,14 @@ class LocalStorageBackend:
             return 'image/jpeg'
         if len(sample) >= 12 and sample[:4] == b'RIFF' and sample[8:12] == b'WEBP':
             return 'image/webp'
-        if suffix == '.txt':
+        if suffix in TEXT_UPLOAD_EXTENSIONS:
             if is_supported_text_upload(sample):
-                return 'text/plain'
-            raise HTTPException(status_code=400, detail='Uploaded text file must be encoded as UTF-8, UTF-16, GB18030, or GBK')
+                return 'text/markdown' if suffix in {'.md', '.markdown'} else 'text/plain'
+            raise HTTPException(status_code=400, detail='Uploaded text or Markdown file must be encoded as UTF-8, UTF-16, GB18030, or GBK')
+        if suffix == '.docx':
+            if sample.startswith(b'PK\x03\x04') or sample.startswith(b'PK\x05\x06') or sample.startswith(b'PK\x07\x08'):
+                return DOCX_MIME_TYPE
+            raise HTTPException(status_code=400, detail='Uploaded DOCX file is not a valid Office Open XML document')
         guessed, _ = mimetypes.guess_type(f'file{suffix}')
         return (guessed or declared).lower()
 
