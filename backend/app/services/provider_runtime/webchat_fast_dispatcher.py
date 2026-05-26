@@ -6,7 +6,7 @@ from app.db import SessionLocal
 
 from ..ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
 from ..ai_runtime_context import build_webchat_runtime_context
-from ..knowledge_grounding_service import enforce_grounded_answer
+from ..knowledge_grounding_service import enforce_grounded_answer, select_approved_direct_answer_override
 from ..knowledge_prompt_service import summarize_rag_trace
 from .router import ProviderRuntimeRouter
 from .schemas import ProviderRequest
@@ -56,6 +56,13 @@ def build_webchat_fast_provider_request(request: FastAIProviderRequest, *, metad
     )
 
 
+def _grounded_intent(value: object) -> str:
+    intent = str(value or "").strip()
+    if intent in {"tracking", "tracking_missing_number", "tracking_unresolved"}:
+        return "other"
+    return intent or "other"
+
+
 async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> FastAIProviderResult:
     db = SessionLocal()
     try:
@@ -86,12 +93,21 @@ async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> Fast
         safe_summary = dict(res.raw_payload_safe_summary or {})
         safe_summary["provider_runtime"] = True
         safe_summary["rag_trace"] = summarize_rag_trace(runtime_context)
-        grounding_decision = enforce_grounded_answer(
+        knowledge_context = ((runtime_context or {}).get("knowledge_context") or {})
+        grounding_decision = select_approved_direct_answer_override(
             query=request.body,
-            provider_reply=output.get("customer_reply") or output.get("reply"),
-            hits=((runtime_context or {}).get("knowledge_context") or {}).get("hits", []),
+            provider_output=output,
+            knowledge_context=knowledge_context,
             tracking_fact_evidence_present=request.tracking_fact_evidence_present,
         )
+        if not grounding_decision.applied and grounding_decision.reason != "trusted_tracking_output_conflict":
+            grounding_decision = enforce_grounded_answer(
+                query=request.body,
+                provider_reply=output.get("customer_reply") or output.get("reply"),
+                hits=knowledge_context.get("hits", []) if isinstance(knowledge_context, dict) else [],
+                tracking_fact_evidence_present=request.tracking_fact_evidence_present,
+            )
+        safe_summary["grounding_reason"] = grounding_decision.reason
         safe_summary["grounding_applied"] = grounding_decision.applied
         if grounding_decision.source:
             safe_summary["grounding_source"] = grounding_decision.source
@@ -99,7 +115,8 @@ async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> Fast
             output = {
                 **output,
                 "customer_reply": grounding_decision.reply,
-                "intent": output.get("intent") or "other",
+                "intent": _grounded_intent(output.get("intent")),
+                "tracking_number": None,
                 "handoff_required": False,
                 "handoff_reason": None,
                 "recommended_agent_action": None,
