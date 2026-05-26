@@ -63,6 +63,55 @@ def _grounded_intent(value: object) -> str:
     return intent or "other"
 
 
+def _knowledge_context(runtime_context: dict | None) -> dict:
+    knowledge = ((runtime_context or {}).get("knowledge_context") or {})
+    return knowledge if isinstance(knowledge, dict) else {}
+
+
+def _pre_provider_direct_answer_result(
+    *,
+    request: FastAIProviderRequest,
+    runtime_context: dict | None,
+) -> FastAIProviderResult | None:
+    if request.tracking_fact_evidence_present:
+        return None
+
+    knowledge_context = _knowledge_context(runtime_context)
+    grounding_decision = select_approved_direct_answer_override(
+        query=request.body,
+        provider_output=None,
+        knowledge_context=knowledge_context,
+        tracking_fact_evidence_present=request.tracking_fact_evidence_present,
+    )
+    if not grounding_decision.applied or not grounding_decision.reply:
+        return None
+
+    safe_summary = {
+        "provider_runtime": True,
+        "rag_trace": summarize_rag_trace(runtime_context),
+        "grounding_reason": grounding_decision.reason,
+        "grounding_applied": True,
+        "grounding_source": grounding_decision.source,
+        "provider_bypassed": True,
+        "provider_bypass_reason": "approved_direct_answer_pre_provider",
+    }
+    return FastAIProviderResult(
+        ok=True,
+        ai_generated=True,
+        reply_source="codex_app_server:grounded_knowledge",
+        raw_provider="knowledge_direct_answer",
+        raw_payload_safe_summary=safe_summary,
+        reply=grounding_decision.reply,
+        intent="other",
+        tracking_number=None,
+        handoff_required=False,
+        handoff_reason=None,
+        recommended_agent_action=None,
+        tool_intents=[],
+        elapsed_ms=0,
+    )
+
+
 async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> FastAIProviderResult:
     db = SessionLocal()
     try:
@@ -80,6 +129,11 @@ async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> Fast
             except Exception:
                 logger.exception("webchat_runtime_context_build_failed")
                 runtime_context = _fallback_runtime_context(request)
+
+        pre_provider_result = _pre_provider_direct_answer_result(request=request, runtime_context=runtime_context)
+        if pre_provider_result is not None:
+            return pre_provider_result
+
         router = ProviderRuntimeRouter(db)
         res = await router.route(build_webchat_fast_provider_request(request, metadata=runtime_context))
         if not res.ok or not res.structured_output:
@@ -93,7 +147,7 @@ async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> Fast
         safe_summary = dict(res.raw_payload_safe_summary or {})
         safe_summary["provider_runtime"] = True
         safe_summary["rag_trace"] = summarize_rag_trace(runtime_context)
-        knowledge_context = ((runtime_context or {}).get("knowledge_context") or {})
+        knowledge_context = _knowledge_context(runtime_context)
         grounding_decision = select_approved_direct_answer_override(
             query=request.body,
             provider_output=output,
