@@ -58,7 +58,7 @@ function emptyPersonaForm() {
     name: '',
     description: '',
     channel: 'website',
-    language: 'en',
+    language: '',
     is_active: true,
     draft_summary: templateDrafts.persona.summary,
     draft_content_text: JSON.stringify(templateDrafts.persona.content, null, 2),
@@ -177,7 +177,7 @@ function AIControlPage() {
       name: selectedPersona.name,
       description: selectedPersona.description ?? '',
       channel: selectedPersona.channel ?? 'website',
-      language: selectedPersona.language ?? 'en',
+      language: selectedPersona.language ?? '',
       is_active: selectedPersona.is_active,
       draft_summary: selectedPersona.draft_summary ?? '',
       draft_content_text: stringifyDraft(selectedPersona.draft_content_json),
@@ -509,7 +509,7 @@ function AIControlPage() {
                   <div className="list">
                     {personaRows.map((item) => (
                       <button key={item.id} className={`queue-card ${selectedPersonaId === item.id ? 'selected' : ''}`} onClick={() => setSelectedPersonaId(item.id)}>
-                        <div className="badges"><Badge>{sanitizeDisplayText(item.channel || 'global')}</Badge><Badge>{sanitizeDisplayText(item.language || 'any')}</Badge>{item.is_active ? <Badge tone="success">启用</Badge> : <Badge>停用</Badge>}{item.published_version > 0 ? <Badge tone="success">v{item.published_version}</Badge> : <Badge tone="warning">未发布</Badge>}</div>
+                        <div className="badges"><Badge>{sanitizeDisplayText(item.channel || 'global')}</Badge><Badge>{sanitizeDisplayText(item.language || 'all languages')}</Badge>{item.is_active ? <Badge tone="success">启用</Badge> : <Badge>停用</Badge>}{item.published_version > 0 ? <Badge tone="success">v{item.published_version}</Badge> : <Badge tone="warning">未发布</Badge>}</div>
                         <div className="queue-card-title">{sanitizeDisplayText(item.name)}</div>
                         <div className="queue-card-meta">{sanitizeDisplayText(item.profile_key)} · {formatDateTime(item.updated_at)}</div>
                         <div className="queue-card-meta">{sanitizeDisplayText(item.draft_summary || item.published_summary || item.description || '暂无摘要')}</div>
@@ -527,10 +527,10 @@ function AIControlPage() {
                     {jsonError ? <ErrorSummary title="高级 JSON 暂时不能保存" errors={[`JSON 格式无效：${jsonError}`]} /> : null}
                     <div className="button-row">{configTypes.map((item) => <Button key={item} variant="secondary" onClick={() => { const template = templateDrafts[item]; if (item === 'persona') setPersonaForm((s) => ({ ...s, draft_summary: template.summary, draft_content_text: stringifyDraft(template.content) })) }}>套用{aiConfigTypeLabels[item]}模板</Button>)}</div>
                     <div className="form-grid">
-                      <Field label="Profile Key" required example="default.website.en"><Input value={personaForm.profile_key} onChange={(e) => setPersonaForm((s) => ({ ...s, profile_key: e.target.value }))} /></Field>
+                      <Field label="Profile Key" required example="default.website"><Input value={personaForm.profile_key} onChange={(e) => setPersonaForm((s) => ({ ...s, profile_key: e.target.value }))} /></Field>
                       <Field label="名称" required><Input value={personaForm.name} onChange={(e) => setPersonaForm((s) => ({ ...s, name: e.target.value }))} /></Field>
                       <Field label="渠道"><Select value={personaForm.channel} onChange={(e) => setPersonaForm((s) => ({ ...s, channel: e.target.value }))}>{channelOptions.map((item) => <option key={item} value={item}>{item}</option>)}</Select></Field>
-                      <Field label="语言"><Input value={personaForm.language} onChange={(e) => setPersonaForm((s) => ({ ...s, language: e.target.value }))} /></Field>
+                      <Field label="语言" hint="留空表示所有语言；也可输入 global / all / any / *。"><Input value={personaForm.language} placeholder="所有语言" onChange={(e) => setPersonaForm((s) => ({ ...s, language: e.target.value }))} /></Field>
                     </div>
                     <Field label="业务说明"><Textarea value={personaForm.description} onChange={(e) => setPersonaForm((s) => ({ ...s, description: e.target.value }))} /></Field>
                     <Field label="发布摘要" required><Textarea value={personaForm.draft_summary} onChange={(e) => setPersonaForm((s) => ({ ...s, draft_summary: e.target.value }))} /></Field>
@@ -618,83 +618,103 @@ function AIControlPage() {
                   </div>
                 </CardBody>
               </Card>
-
-              <Card>
-                <CardHeader title="知识发布历史" subtitle="回滚后会重新发布并重建索引。" />
-                <CardBody><VersionList versions={selectedKnowledge?.versions ?? []} onRollback={(version) => setConfirmRollback({ target: 'knowledge', version })} /></CardBody>
-              </Card>
             </div>
           ) : (
             <div className="page-grid split-grid-wide">
               <Card>
-                <CardHeader title="Business Rules / SOP / Policy" subtitle="沿用 AIConfigResource 管理 SOP 与执行边界；这些规则用于治理，不替代 KnowledgeChunk 检索。" />
+                <CardHeader title="Business Rules / SOP / Policy" subtitle="这些规则用于治理执行边界；不会替代 PersonaProfile 或 KnowledgeItem。" />
                 <CardBody>
                   <div className="list">
                     {ruleRows.map((item) => (
                       <button key={item.id} className={`queue-card ${selectedRuleId === item.id ? 'selected' : ''}`} onClick={() => setSelectedRuleId(item.id)}>
-                        <div className="badges"><Badge>{(aiConfigTypeLabels as Record<string, string>)[item.config_type] || labelize(item.config_type)}</Badge>{item.is_active ? <Badge tone="success">启用</Badge> : <Badge>停用</Badge>}{item.published_version > 0 ? <Badge tone="success">v{item.published_version}</Badge> : <Badge tone="warning">未发布</Badge>}</div>
+                        <div className="badges"><Badge>{labelize(item.config_type)}</Badge><Badge>{labelize(item.scope_type)}</Badge>{item.is_active ? <Badge tone="success">启用</Badge> : <Badge>停用</Badge>}{item.published_version > 0 ? <Badge tone="success">v{item.published_version}</Badge> : <Badge tone="warning">未发布</Badge>}</div>
                         <div className="queue-card-title">{sanitizeDisplayText(item.name)}</div>
-                        <div className="queue-card-meta">{sanitizeDisplayText(item.resource_key)} · {sanitizeDisplayText(item.scope_type)} · {formatDateTime(item.updated_at)}</div>
+                        <div className="queue-card-meta">{sanitizeDisplayText(item.resource_key)} · {formatDateTime(item.updated_at)}</div>
                         <div className="queue-card-meta">{sanitizeDisplayText(item.draft_summary || item.published_summary || item.description || '暂无摘要')}</div>
                       </button>
                     ))}
-                    {!ruleRows.length ? <EmptyState title="还没有业务规则" description="创建 SOP 或 Policy，维护助手执行边界、升级条件和业务流程。" reason="这里保留旧 AIConfigResource 能力，不与 KnowledgeItem 文档库混用。" /> : null}
+                    {!ruleRows.length ? <EmptyState title="还没有业务规则" description="添加 SOP 或 Policy，明确 AI 可以解释什么、必须转人工什么。" reason="保留业务规则能力，避免 Persona/Knowledge 变成唯一控制面。" /> : null}
                   </div>
                 </CardBody>
               </Card>
 
               <Card>
-                <CardHeader title={selectedRuleId ? '编辑业务规则草稿' : '新建业务规则'} subtitle="SOP/Policy 用来声明流程和边界；客户可见事实仍由 Knowledge 与 tracking fact gate 控制。" />
+                <CardHeader title={selectedRuleId ? '编辑业务规则草稿' : '新建业务规则'} subtitle="用于 SOP、Policy 和执行边界管理。" />
                 <CardBody>
                   <div className="stack">
-                    {ruleJsonError ? <ErrorSummary title="业务规则 JSON 暂时不能保存" errors={[`JSON 格式无效：${ruleJsonError}`]} /> : null}
-                    <div className="button-row"><Button variant="secondary" onClick={() => setRuleForm((s) => ({ ...s, draft_summary: templateDrafts.rules.summary, draft_content_text: stringifyDraft(templateDrafts.rules.content) }))}>套用 SOP/Policy 模板</Button></div>
+                    {ruleJsonError ? <ErrorSummary title="规则 JSON 暂时不能保存" errors={[`JSON 格式无效：${ruleJsonError}`]} /> : null}
                     <div className="form-grid">
-                      <Field label="Resource Key" required example="webchat.address-change.sop"><Input value={ruleForm.resource_key} onChange={(e) => setRuleForm((s) => ({ ...s, resource_key: e.target.value }))} /></Field>
-                      <Field label="类型"><Select value={ruleForm.config_type} onChange={(e) => setRuleForm((s) => ({ ...s, config_type: e.target.value }))}>{ruleTypes.map((item) => <option key={item} value={item}>{aiConfigTypeLabels[item]}</option>)}</Select></Field>
+                      <Field label="Resource Key" required example="sop.tracking.truth-boundary"><Input value={ruleForm.resource_key} onChange={(e) => setRuleForm((s) => ({ ...s, resource_key: e.target.value }))} /></Field>
+                      <Field label="类型"><Select value={ruleForm.config_type} onChange={(e) => setRuleForm((s) => ({ ...s, config_type: e.target.value }))}>{ruleTypes.map((item) => <option key={item} value={item}>{labelize(item)}</option>)}</Select></Field>
                       <Field label="名称" required><Input value={ruleForm.name} onChange={(e) => setRuleForm((s) => ({ ...s, name: e.target.value }))} /></Field>
                       <Field label="Scope"><Input value={ruleForm.scope_type} onChange={(e) => setRuleForm((s) => ({ ...s, scope_type: e.target.value }))} /></Field>
-                      <Field label="Scope Value"><Input value={ruleForm.scope_value} onChange={(e) => setRuleForm((s) => ({ ...s, scope_value: e.target.value }))} /></Field>
                     </div>
+                    <Field label="Scope Value"><Input value={ruleForm.scope_value} onChange={(e) => setRuleForm((s) => ({ ...s, scope_value: e.target.value }))} /></Field>
                     <Field label="说明"><Textarea value={ruleForm.description} onChange={(e) => setRuleForm((s) => ({ ...s, description: e.target.value }))} /></Field>
-                    <Field label="发布摘要" required><Textarea value={ruleForm.draft_summary} onChange={(e) => setRuleForm((s) => ({ ...s, draft_summary: e.target.value }))} /></Field>
-                    <TechnicalDetails title="SOP / Policy JSON" summary="维护业务规则、执行边界、转人工条件和工具使用限制">
+                    <Field label="规则摘要"><Textarea value={ruleForm.draft_summary} onChange={(e) => setRuleForm((s) => ({ ...s, draft_summary: e.target.value }))} /></Field>
+                    <TechnicalDetails title="SOP / Policy JSON" summary="高级规则结构，仅管理员编辑">
                       <Field label="草稿内容 JSON" error={ruleJsonError || undefined}><Textarea rows={12} value={ruleForm.draft_content_text} onChange={(e) => setRuleForm((s) => ({ ...s, draft_content_text: e.target.value }))} /></Field>
                     </TechnicalDetails>
                     <label className="toggle-row"><input type="checkbox" checked={ruleForm.is_active} onChange={(e) => setRuleForm((s) => ({ ...s, is_active: e.target.checked }))} /> 当前业务规则启用</label>
-                    <div className="button-row"><Button variant="primary" onClick={() => saveRule.mutate()} disabled={saveRule.isPending || !!ruleJsonError}>保存草稿</Button><Button onClick={() => setConfirmAction({ kind: 'publish-rule', title: '发布当前业务规则？', description: '发布后治理视图和运行策略可读取这条 SOP/Policy 规则。', consequence: '请确认执行边界、升级条件和事实边界已经检查。' })} disabled={!selectedRuleId || publishRule.isPending || !!ruleJsonError}>发布</Button><Button variant="danger" onClick={() => setConfirmAction({ kind: 'disable-rule', title: '停用当前业务规则？', description: '停用后这条 SOP/Policy 不再作为当前治理规则。', consequence: '历史发布版本仍保留，可回滚后重新发布。' })} disabled={!selectedRuleId || !selectedRule?.is_active}>停用</Button></div>
+                    <div className="button-row"><Button variant="primary" onClick={() => saveRule.mutate()} disabled={saveRule.isPending || !!ruleJsonError}>保存规则草稿</Button><Button onClick={() => setConfirmAction({ kind: 'publish-rule', title: '发布当前业务规则？', description: '发布后会进入业务规则治理历史。', consequence: '请确认该规则不会和事实边界冲突。' })} disabled={!selectedRuleId || publishRule.isPending || !!ruleJsonError}>发布规则</Button><Button variant="danger" onClick={() => setConfirmAction({ kind: 'disable-rule', title: '停用当前业务规则？', description: '停用后该规则不会被视为有效治理项。', consequence: '历史版本仍可审计和回滚。' })} disabled={!selectedRuleId || !selectedRule?.is_active}>停用</Button></div>
                   </div>
                 </CardBody>
               </Card>
 
               <Card>
-                <CardHeader title="业务规则发布历史" subtitle="回滚会复制历史快照并发布为新版本。" />
-                <CardBody><VersionList versions={ruleVersions.data ?? []} onRollback={(version) => setConfirmRollback({ target: 'rule', version })} /></CardBody>
+                <CardHeader title="业务规则发布历史" subtitle="回滚并重新发布规则。" />
+                <CardBody>
+                  <VersionList versions={ruleVersions.data ?? []} onRollback={(version) => setConfirmRollback({ target: 'rule', version })} />
+                </CardBody>
               </Card>
             </div>
           )}
         </>
       )}
 
+      <ConfirmDialog
+        open={!!confirmAction}
+        title={confirmAction?.title || ''}
+        description={confirmAction?.description || ''}
+        confirmLabel="确认执行"
+        cancelLabel="取消"
+        consequence={confirmAction?.consequence}
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={runConfirmedAction}
+      />
+      <ConfirmDialog
+        open={!!confirmRollback}
+        title="回滚并重新发布？"
+        description={`将历史 v${confirmRollback?.version ?? ''} 复制为新的发布版本。`}
+        confirmLabel="确认回滚"
+        cancelLabel="取消"
+        consequence="回滚不是删除当前版本，而是创建一个新版本，便于审计。"
+        onCancel={() => setConfirmRollback(null)}
+        onConfirm={() => {
+          const target = confirmRollback?.target
+          const version = confirmRollback?.version
+          setConfirmRollback(null)
+          if (!version) return
+          if (target === 'persona') rollbackPersona.mutate(version)
+          if (target === 'knowledge') rollbackKnowledge.mutate(version)
+          if (target === 'rule') rollbackRule.mutate(version)
+        }}
+      />
       {toast ? <Toast message={toast.message} tone={toast.tone} onClose={() => setToast(null)} /> : null}
-      <ConfirmDialog open={!!confirmAction} title={confirmAction?.title || ''} description={confirmAction?.description || ''} consequence={confirmAction?.consequence || ''} confirmLabel="确认" tone={confirmAction?.kind.includes('archive') || confirmAction?.kind.includes('disable') ? 'danger' : 'default'} pending={publishPersona.isPending || publishKnowledge.isPending || publishRule.isPending || updatePersona.isPending || updateKnowledge.isPending || updateRule.isPending} onCancel={() => setConfirmAction(null)} onConfirm={runConfirmedAction} />
-      <ConfirmDialog open={!!confirmRollback} title="回滚并重新发布规则？" description={`将当前${confirmRollback?.target === 'persona' ? ' Persona' : confirmRollback?.target === 'knowledge' ? '知识' : '业务规则'}回滚到 v${confirmRollback?.version ?? ''}，并作为新的线上版本发布。`} consequence="这会改变线上助手当前可读取的发布内容。" confirmLabel="确认回滚" tone="danger" pending={rollbackPersona.isPending || rollbackKnowledge.isPending || rollbackRule.isPending} onCancel={() => setConfirmRollback(null)} onConfirm={() => { const action = confirmRollback; setConfirmRollback(null); if (!action) return; if (action.target === 'persona') rollbackPersona.mutate(action.version); else if (action.target === 'knowledge') rollbackKnowledge.mutate(action.version); else rollbackRule.mutate(action.version) }} />
     </AppShell>
   )
 }
 
-function VersionList({ versions, onRollback }: { versions: Array<{ id: number; version: number; summary?: string | null; notes?: string | null; published_at: string }>; onRollback: (version: number) => void }) {
-  if (!versions.length) {
-    return <EmptyState title="还没有发布历史" description="保存草稿不会生成版本，首次发布后才会出现在这里。" reason="发布前请先确认范围和内容。" />
-  }
+function VersionList({ versions, onRollback }: { versions: { version: number; published_at?: string; summary?: string | null; notes?: string | null }[]; onRollback: (version: number) => void }) {
+  if (!versions.length) return <EmptyState title="暂无发布历史" description="发布后这里会显示版本和回滚入口。" reason="系统用版本历史保证变更可审计。" />
   return (
     <div className="list">
       {versions.map((item) => (
-        <div key={item.id} className="list-item">
-          <div className="badges"><Badge tone="success">v{item.version}</Badge></div>
-          <strong>{sanitizeDisplayText(item.summary || '未填写摘要')}</strong>
-          <div className="section-subtitle">{formatDateTime(item.published_at)} · {sanitizeDisplayText(item.notes || '')}</div>
-          <div className="button-row"><Button onClick={() => onRollback(item.version)}>回滚到这个版本</Button></div>
+        <div key={`${item.version}-${item.published_at}`} className="list-item">
+          <div className="badges"><Badge tone="success">v{item.version}</Badge><Badge>{formatDateTime(item.published_at)}</Badge></div>
+          <strong>{sanitizeDisplayText(item.summary || '无摘要')}</strong>
+          {item.notes ? <div className="section-subtitle">{sanitizeDisplayText(item.notes)}</div> : null}
+          <div className="button-row"><Button variant="secondary" onClick={() => onRollback(item.version)}>回滚到 v{item.version}</Button></div>
         </div>
       ))}
     </div>
@@ -704,6 +724,8 @@ function VersionList({ versions, onRollback }: { versions: Array<{ id: number; v
 export const Route = createRoute({
   getParentRoute: () => RootRoute,
   path: '/ai-control',
-  beforeLoad: () => { if (!getToken()) throw redirect({ to: '/login' }) },
+  beforeLoad: () => {
+    if (!getToken()) throw redirect({ to: '/login' })
+  },
   component: AIControlPage,
 })
