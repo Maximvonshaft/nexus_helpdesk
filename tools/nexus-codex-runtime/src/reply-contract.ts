@@ -44,6 +44,9 @@ export type StrictReply = {
   recommended_agent_action: string | null;
 };
 
+const MAX_REPLY_CHARS = 600;
+const MAX_VISIBLE_PREFIX_CHARS = 80;
+
 export function validateReplyRequest(value: unknown): ReplyRequest {
   if (!isRecord(value)) {
     throw new RuntimeError(400, "codex_request_invalid", "request_body_must_be_object");
@@ -104,7 +107,7 @@ export function parseStrictReply(text: string): StrictReply {
   const handoffRequired = decoded.handoff_required;
   const handoffReason = decoded.handoff_reason;
   const recommended = decoded.recommended_agent_action;
-  if (typeof reply !== "string" || !reply.trim() || reply.length > 600) {
+  if (typeof reply !== "string" || !reply.trim() || reply.length > MAX_REPLY_CHARS) {
     throw new RuntimeError(502, "codex_invalid_output", "reply_invalid", "parse");
   }
   if (typeof intent !== "string" || !INTENTS.includes(intent as ReplyIntent)) {
@@ -130,6 +133,47 @@ export function parseStrictReply(text: string): StrictReply {
     handoff_reason: handoffReason,
     recommended_agent_action: recommended,
   };
+}
+
+export function enforcePersonaRules(reply: StrictReply, request: ReplyRequest): StrictReply {
+  const prefix = extractPersonaVisiblePrefix(request.persona_context);
+  if (!prefix) {
+    return reply;
+  }
+  const currentReply = reply.reply.trim();
+  if (currentReply.startsWith(prefix)) {
+    return { ...reply, reply: currentReply };
+  }
+  return {
+    ...reply,
+    reply: truncateReply(`${prefix} ${currentReply}`),
+  };
+}
+
+export function extractPersonaVisiblePrefix(value: Record<string, unknown> | null | undefined): string | null {
+  if (!value || !isRecord(value.content_json)) {
+    return null;
+  }
+  const content = value.content_json;
+  for (const key of ["must_prefix", "reply_prefix", "visible_prefix"]) {
+    const raw = content[key];
+    if (typeof raw !== "string") {
+      continue;
+    }
+    const cleaned = sanitizeRuntimeText(raw).replace(/\s+/g, " ").trim();
+    if (cleaned && !cleaned.includes("[REDACTED_") && cleaned.length <= MAX_VISIBLE_PREFIX_CHARS) {
+      return cleaned;
+    }
+  }
+  return null;
+}
+
+function truncateReply(value: string): string {
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  if (cleaned.length <= MAX_REPLY_CHARS) {
+    return cleaned;
+  }
+  return cleaned.slice(0, MAX_REPLY_CHARS - 3).trimEnd() + "...";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
