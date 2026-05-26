@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -46,7 +47,16 @@ def production_env(**overrides: str) -> dict[str, str]:
     return env
 
 
-def test_production_settings_accept_hardened_contract():
+def test_production_settings_accept_hardened_contract(monkeypatch):
+    real_exists = Path.exists
+
+    def fake_exists(path):
+        if path.name == 'index.html' and path.parent.name == 'frontend_dist':
+            return True
+        return real_exists(path)
+
+    monkeypatch.setattr(Path, 'exists', fake_exists)
+
     with patched_env(production_env()):
         settings = Settings()
     assert settings.app_env == 'production'

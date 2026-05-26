@@ -54,7 +54,14 @@ jobs:
           is_webcall_relevant_file() {
             case "$1" in
               webapp/src/components/webcall/AgentWebCallPanel.tsx) return 0 ;;
+              webapp/src/components/operator/SpeedafActionsPanel.tsx) return 0 ;;
+              webapp/src/components/security/RequireCapability.tsx) return 0 ;;
+              webapp/src/components/ui/CommandPalette.tsx) return 0 ;;
+              webapp/src/layouts/AppShell.tsx) return 0 ;;
+              webapp/src/lib/access.ts) return 0 ;;
               webapp/tests/operator-console-contract.test.mjs) return 0 ;;
+              webapp/tests/route-nav-consistency.test.mjs) return 0 ;;
+              webapp/tests/webcall-ai-demo-contract.test.mjs) return 0 ;;
               webapp/package.json) return 0 ;;
               webapp/package-lock.json) return 0 ;;
               Dockerfile) return 0 ;;
@@ -72,11 +79,15 @@ jobs:
               backend/app/api/admin_provider_runtime.py) return 0 ;;
               backend/app/api/webchat_fast.py) return 0 ;;
               backend/app/api/webcall_ai.py) return 0 ;;
+              backend/app/api/speedaf_actions.py) return 0 ;;
+              backend/app/api/speedaf_cancel.py) return 0 ;;
               backend/app/api/admin_webcall_ai.py) return 0 ;;
               backend/app/api/admin_provider_credentials.py) return 0 ;;
               backend/app/api/knowledge_items.py) return 0 ;;
+              backend/app/main.py) return 0 ;;
               backend/app/models_control_plane.py) return 0 ;;
               backend/app/schemas_control_plane.py) return 0 ;;
+              backend/app/settings.py) return 0 ;;
               backend/app/services/ai_runtime/codex_auth_provider.py) return 0 ;;
               backend/app/services/ai_runtime/codex_app_server_provider.py) return 0 ;;
               backend/app/services/ai_runtime/openclaw_responses_provider.py) return 0 ;;
@@ -88,6 +99,8 @@ jobs:
               backend/app/services/knowledge_prompt_service.py) return 0 ;;
               backend/app/services/knowledge_retrieval_service.py) return 0 ;;
               backend/app/services/knowledge_service.py) return 0 ;;
+              backend/app/services/lite_service.py) return 0 ;;
+              backend/app/services/permissions.py) return 0 ;;
               backend/app/services/storage.py) return 0 ;;
               backend/app/services/text_decoding.py) return 0 ;;
               backend/app/services/provider_runtime/adapters/codex_app_server.py) return 0 ;;
@@ -125,6 +138,12 @@ jobs:
               backend/tests/test_knowledge_runtime_context.py) return 0 ;;
               backend/tests/test_knowledge_text_upload_encoding.py) return 0 ;;
               backend/tests/test_persona_profiles.py) return 0 ;;
+              backend/tests/test_production_settings_contract.py) return 0 ;;
+              backend/tests/test_rbac_capability_contracts.py) return 0 ;;
+              backend/tests/test_round24_hardening.py) return 0 ;;
+              backend/tests/test_round27_frontend_hardening.py) return 0 ;;
+              backend/tests/test_speedaf_workorder_address_actions.py) return 0 ;;
+              backend/tests/test_webchat_voice_api.py) return 0 ;;
               backend/tests/test_webchat_codex_app_server_canary_observability.py) return 0 ;;
               backend/tests/test_webchat_codex_app_server_provider.py) return 0 ;;
               backend/tests/test_webchat_ai_turn_runtime.py) return 0 ;;
@@ -158,13 +177,22 @@ jobs:
               scripts/probe_persona_identity_e2e.sh) return 0 ;;
               tools/nexus-codex-runtime/**) return 0 ;;
               webapp/src/lib/api.ts) return 0 ;;
+              webapp/src/lib/apiErrorMap.ts) return 0 ;;
+              webapp/src/lib/rbac.ts) return 0 ;;
+              webapp/src/lib/speedafApi.ts) return 0 ;;
               webapp/src/lib/types.ts) return 0 ;;
               webapp/src/routes/ai-control.tsx) return 0 ;;
               webapp/src/routes/control-plane.tsx) return 0 ;;
+              webapp/src/routes/runtime.tsx) return 0 ;;
+              webapp/src/routes/users.tsx) return 0 ;;
+              webapp/src/routes/webchat-voice.tsx) return 0 ;;
+              webapp/src/routes/webchat.tsx) return 0 ;;
+              webapp/src/routes/workspace.tsx) return 0 ;;
               webapp/tests/novice-ux-regression.test.mjs) return 0 ;;
               .github/workflows/webcall-ai-final-quality-gate.yml) return 0 ;;
               .github/workflows/webcall-ai-infra-skeleton.yml) return 0 ;;
               .github/workflows/postgres-migration.yml) return 0 ;;
+              .github/workflows/production-readiness.yml) return 0 ;;
               .github/workflows/pr-webcall-guard.yml) return 0 ;;
               "") return 0 ;;
             esac
@@ -250,15 +278,15 @@ jobs:
 
           p = Path('webapp/src/components/webcall/AgentWebCallPanel.tsx')
           text = p.read_text(encoding='utf-8')
-          match = re.search(r"if \(config\.provider !== 'livekit'\) \{(?P<body>.*?)\n\s*\}\n\s*const isSecureContext", text, re.S)
+          match = re.search(r"if \(accepted\.provider !== 'livekit'\) \{(?P<body>.*?)\n\s*\}\n\s*const livekitUrl", text, re.S)
           if not match:
               raise SystemExit('could_not_locate_non_livekit_branch')
           print(match.group('body'))
           PY
           )"
 
-          if ! grep -q 'return (' <<<"$non_livekit_branch"; then
-            echo "::error::$PANEL non-LiveKit branch must render a visible fallback instead of returning null."
+          if ! grep -q 'await cleanupRoom()' <<<"$non_livekit_branch"; then
+            echo "::error::$PANEL non-LiveKit branch must clean up the acquired microphone track."
             exit 1
           fi
 
@@ -267,10 +295,9 @@ jobs:
             exit 1
           fi
 
-          grep -q 'fallback--disabled' "$PANEL"
-          grep -q 'LiveKit provider is not enabled' "$PANEL"
-          grep -q 'non-LiveKit provider fallback' "$TEST"
-          grep -q 'not.toMatch(/return null/)' "$TEST"
+          grep -q 'return accepted' <<<"$non_livekit_branch"
+          grep -q 'webcall non-livekit accept path cleans up acquired microphone track before return' "$TEST"
+          grep -q \"returnIndex > cleanupIndex\" "$TEST"
 
           echo "WebCall blocking fix markers verified."
 
