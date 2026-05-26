@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# CI trigger: ready-for-review event did not create workflow runs; this no-op comment forces pull_request synchronize.
 set -Eeuo pipefail
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
@@ -40,133 +41,149 @@ api_json() {
   curl -fsS -X "$method" "${BASE_URL%/}$path" "${headers[@]}" --data "$payload" -o "$output"
 }
 
-json_value() {
-  local file="$1"
-  local key="$2"
-  "$PYTHON_BIN" - "$file" "$key" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as fh:
-    data = json.load(fh)
-value = data
-for part in sys.argv[2].split("."):
-    value = value.get(part) if isinstance(value, dict) else None
-print("" if value is None else value)
-PY
-}
-
-cleanup() {
-  if [[ -n "$PROFILE_ID" && "$PUBLISH_TEMP_PERSONA" == "1" && -n "$NEXUS_API_TOKEN" ]]; then
-    log "Restoring probe state by disabling temporary Persona profile $PROFILE_ID"
-    api_json PATCH "/api/persona-profiles/$PROFILE_ID" '{"is_active":false}' "$LOG_DIR/persona_identity_$RUN_ID.restore.json" || true
+api_multipart() {
+  local method="$1"
+  local path="$2"
+  shift 2
+  local headers=()
+  if [[ -n "$NEXUS_API_TOKEN" ]]; then
+    headers+=(-H "Authorization: Bearer $NEXUS_API_TOKEN")
   fi
+  curl -fsS -X "$method" "${BASE_URL%/}$path" "${headers[@]}" "$@"
 }
-trap cleanup EXIT
 
-if [[ "$PUBLISH_TEMP_PERSONA" == "1" ]]; then
+restore_persona() {
+  if [[ "$PUBLISH_TEMP_PERSONA" != "1" || -z "$PROFILE_ID" || -z "$NEXUS_API_TOKEN" ]]; then
+    return 0
+  fi
+  log "Temp persona created; rollback is not automatic because API rollback version is tenant data. Review profile_id=$PROFILE_ID if cleanup is required."
+}
+trap restore_persona EXIT
+
+publish_temp_persona() {
+  if [[ "$PUBLISH_TEMP_PERSONA" != "1" ]]; then
+    return 0
+  fi
   if [[ -z "$NEXUS_API_TOKEN" ]]; then
-    log "NEXUS_API_TOKEN is required when PUBLISH_TEMP_PERSONA=1"
+    log "PUBLISH_TEMP_PERSONA=1 requires NEXUS_API_TOKEN/API_TOKEN"
     exit 2
   fi
-  PROFILE_KEY="000.identity.probe.$(date +%s).$RANDOM"
-  CREATE_PAYLOAD="$("$PYTHON_BIN" - "$PROFILE_KEY" "$CHANNEL_KEY" "$BRAND_NAME" "$ASSISTANT_NAME" <<'PY'
-import json
-import sys
-
-profile_key, channel, brand, assistant = sys.argv[1:5]
+  local payload
+  payload="$($PYTHON_BIN - <<PY
+import json, os, time
+brand=os.environ.get('BRAND_NAME', '猴王山')
+assistant=os.environ.get('ASSISTANT_NAME', f'{brand} AI 客服')
+key='probe.identity.' + str(int(time.time()))
 print(json.dumps({
-    "profile_key": profile_key,
-    "name": "Persona identity probe",
-    "description": None,
-    "channel": channel,
-    "language": None,
-    "is_active": True,
-    "draft_summary": "Temporary Persona identity probe.",
-    "draft_content_json": {
-        "brand_name": brand,
-        "assistant_name": assistant,
-        "role_label": "AI 客服",
-        "identity_statement": f"我是{brand}的{assistant}，可以协助处理客户服务问题。",
-        "identity_answer_rule": "身份问题只按本 Persona 的品牌和助手名称回答。",
-        "capabilities": ["回答常见问题", "收集必要信息", "需要人工处理时转接客服"],
-        "disallowed_identity_claims": [],
-        "handoff_boundary": "缺少事实证据或需要人工处理时转人工。"
+    'profile_key': key,
+    'name': assistant,
+    'channel': os.environ.get('CHANNEL_KEY', 'website'),
+    'language': None,
+    'is_active': True,
+    'draft_summary': f'{assistant} identity probe persona.',
+    'draft_content_json': {
+        'brand_name': brand,
+        'assistant_name': assistant,
+        'role_label': 'AI 客服',
+        'identity_statement': f'我是{assistant}，可以协助处理订单、物流、售后和转人工。',
+        'identity_answer_rule': f'客户询问身份时，必须明确回答自己是{assistant}。',
+        'capabilities': ['订单咨询', '物流咨询', '售后问题记录', '联系方式说明', '必要时转人工'],
+        'disallowed_identity_claims': ['NexusDesk', '不是' + brand + '客服'],
     }
 }, ensure_ascii=False))
 PY
 )"
-  CREATE_OUT="$LOG_DIR/persona_identity_$RUN_ID.create.json"
-  PUBLISH_OUT="$LOG_DIR/persona_identity_$RUN_ID.publish.json"
-  log "Creating temporary Persona $PROFILE_KEY"
-  api_json POST "/api/persona-profiles" "$CREATE_PAYLOAD" "$CREATE_OUT"
-  PROFILE_ID="$(json_value "$CREATE_OUT" id)"
-  log "Publishing temporary Persona profile $PROFILE_ID"
-  api_json POST "/api/persona-profiles/$PROFILE_ID/publish" '{"notes":"persona identity e2e probe"}' "$PUBLISH_OUT"
-fi
-
-printf 'question\tok\treply\n' > "$SUMMARY_TSV"
-QUESTIONS=("你是谁" "你是什么客服" "你是哪里的客服" "你是否是猴王山的客服")
-
-idx=0
-for question in "${QUESTIONS[@]}"; do
-  idx=$((idx + 1))
-  CLIENT_MESSAGE_ID="persona_identity_${RUN_ID}_$idx"
-  REQUEST_PAYLOAD="$("$PYTHON_BIN" - "$TENANT_KEY" "$CHANNEL_KEY" "${SESSION_ID}_$idx" "$CLIENT_MESSAGE_ID" "$question" <<'PY'
+  local create_out="$LOG_DIR/create_persona_$RUN_ID.json"
+  api_json POST /api/persona-profiles "$payload" "$create_out"
+  PROFILE_ID="$($PYTHON_BIN - <<PY
 import json
-import sys
-
-tenant, channel, session_id, client_message_id, body = sys.argv[1:6]
-print(json.dumps({
-    "tenant_key": tenant,
-    "channel_key": channel,
-    "session_id": session_id,
-    "client_message_id": client_message_id,
-    "body": body,
-    "recent_context": []
-}, ensure_ascii=False))
+print(json.load(open('$create_out', encoding='utf-8'))['id'])
 PY
 )"
-  RESPONSE_FILE="$LOG_DIR/persona_identity_$RUN_ID.reply_$idx.json"
-  log "Probing identity question: $question"
-  api_json POST "/api/webchat/fast-reply" "$REQUEST_PAYLOAD" "$RESPONSE_FILE"
-  "$PYTHON_BIN" - "$RESPONSE_FILE" "$question" "$BRAND_NAME" "$ASSISTANT_NAME" "$JSONL_FILE" "$SUMMARY_TSV" <<'PY'
-import json
-import sys
+  api_json POST "/api/persona-profiles/$PROFILE_ID/publish" '{"notes":"persona identity e2e probe"}' "$LOG_DIR/publish_persona_$RUN_ID.json"
+  log "Published temp persona profile_id=$PROFILE_ID"
+}
 
-response_file, question, brand, assistant, jsonl_file, tsv_file = sys.argv[1:7]
-with open(response_file, encoding="utf-8") as fh:
-    data = json.load(fh)
-reply = str(data.get("reply") or data.get("customer_reply") or "")
-ok = bool(data.get("ok", bool(reply)))
-expected = [item for item in (brand, assistant) if item]
-if expected and not any(item in reply for item in expected):
-    raise SystemExit(f"reply does not contain configured identity: {reply}")
-allows_nexusdesk = brand.strip().lower() == "nexusdesk" or assistant.strip().lower() == "nexusdesk"
-if not allows_nexusdesk and "NexusDesk" in reply:
-    raise SystemExit(f"reply leaked NexusDesk: {reply}")
-if brand and f"不是{brand}" in reply:
-    raise SystemExit(f"reply denied configured brand: {reply}")
-row = {"question": question, "ok": ok, "reply": reply, "raw": data}
-with open(jsonl_file, "a", encoding="utf-8") as fh:
-    fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-safe_reply = reply.replace("\t", " ").replace("\n", " ")
-with open(tsv_file, "a", encoding="utf-8") as fh:
-    fh.write(f"{question}\t{str(ok).lower()}\t{safe_reply}\n")
+publish_temp_persona
+
+QUESTIONS=("你是谁" "你是什么客服" "你是哪里的客服" "你是否是${BRAND_NAME}的客服")
+FAIL=0
+: > "$JSONL_FILE"
+printf 'question\thttp_status\tidentity_ok\tno_nexusdesk\tno_negative\treply_source\treply\n' > "$SUMMARY_TSV"
+
+for idx in "${!QUESTIONS[@]}"; do
+  q="${QUESTIONS[$idx]}"
+  req="$LOG_DIR/request_${RUN_ID}_${idx}.json"
+  resp="$LOG_DIR/response_${RUN_ID}_${idx}.json"
+  status_file="$LOG_DIR/status_${RUN_ID}_${idx}.txt"
+  $PYTHON_BIN - "$req" "$q" "$SESSION_ID" "$idx" <<'PY'
+import json, sys
+path, body, session_id, idx = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+open(path, 'w', encoding='utf-8').write(json.dumps({
+    'tenant_key': 'default',
+    'channel_key': 'website',
+    'session_id': f'{session_id}_{idx}',
+    'client_message_id': f'{session_id}_msg_{idx}',
+    'body': body,
+    'recent_context': [],
+    'visitor': {'name': 'Persona Identity Probe'},
+}, ensure_ascii=False))
 PY
+  code="$(curl -sS -o "$resp" -w '%{http_code}' -X POST "${BASE_URL%/}/api/webchat/fast-reply" -H 'Content-Type: application/json' --data-binary "@$req" || true)"
+  printf '%s' "$code" > "$status_file"
+  if ! $PYTHON_BIN - "$resp" "$code" "$q" "$BRAND_NAME" "$ASSISTANT_NAME" "$JSONL_FILE" "$SUMMARY_TSV" <<'PY'
+import json, sys
+from pathlib import Path
+resp, code, question, brand, assistant, jsonl, tsv = sys.argv[1:]
+try:
+    data = json.loads(Path(resp).read_text(encoding='utf-8'))
+except Exception as exc:
+    data = {'ok': False, 'error_code': 'response_not_json', 'reply': str(exc)}
+reply = str(data.get('reply') or data.get('customer_reply') or '')
+identity_ok = (brand in reply) or (assistant in reply)
+no_nexusdesk = 'NexusDesk' not in reply
+no_negative = ('不是' not in reply) and ('无法代表' not in reply) and ('不能代表' not in reply)
+row = {
+    'question': question,
+    'http_status': code,
+    'identity_ok': identity_ok,
+    'no_nexusdesk': no_nexusdesk,
+    'no_negative': no_negative,
+    'reply_source': data.get('reply_source'),
+    'ai_generated': data.get('ai_generated'),
+    'error_code': data.get('error_code'),
+    'reply': reply,
+}
+with open(jsonl, 'a', encoding='utf-8') as f:
+    f.write(json.dumps(row, ensure_ascii=False) + '\n')
+with open(tsv, 'a', encoding='utf-8') as f:
+    safe_reply = reply.replace('\t', ' ').replace('\n', ' ')
+    f.write(f"{question}\t{code}\t{identity_ok}\t{no_nexusdesk}\t{no_negative}\t{data.get('reply_source')}\t{safe_reply}\n")
+print(json.dumps(row, ensure_ascii=False))
+if code != '200' or not identity_ok or not no_nexusdesk or not no_negative:
+    raise SystemExit(1)
+PY
+  then
+    FAIL=1
+  fi
 done
 
-"$PYTHON_BIN" - "$JSONL_FILE" "$SUMMARY_JSON" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as fh:
-    rows = [json.loads(line) for line in fh if line.strip()]
-with open(sys.argv[2], "w", encoding="utf-8") as fh:
-    json.dump({"ok": True, "count": len(rows), "results": rows}, fh, ensure_ascii=False, indent=2)
+$PYTHON_BIN - "$JSONL_FILE" "$SUMMARY_JSON" <<'PY'
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1], encoding='utf-8') if line.strip()]
+summary = {
+    'total': len(rows),
+    'passed': sum(1 for r in rows if r['http_status'] == '200' and r['identity_ok'] and r['no_nexusdesk'] and r['no_negative']),
+    'rows': rows,
+}
+open(sys.argv[2], 'w', encoding='utf-8').write(json.dumps(summary, ensure_ascii=False, indent=2))
+print(json.dumps(summary, ensure_ascii=False, indent=2))
 PY
 
-log "Persona identity probe passed"
-log "Log: $LOG_FILE"
-log "JSON summary: $SUMMARY_JSON"
-log "TSV summary: $SUMMARY_TSV"
+log "summary_json=$SUMMARY_JSON"
+log "summary_tsv=$SUMMARY_TSV"
+if [[ "$FAIL" != "0" ]]; then
+  log "PERSONA_IDENTITY_E2E_FAILED"
+  exit 1
+fi
+log "PERSONA_IDENTITY_E2E_OK"
