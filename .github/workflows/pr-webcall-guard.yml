@@ -117,6 +117,7 @@ jobs:
               backend/tests/test_oauth_refresh_concurrency.py) return 0 ;;
               backend/tests/test_provider_runtime_codex_oauth_webchat.py) return 0 ;;
               backend/tests/test_provider_runtime_kill_switch_canary.py) return 0 ;;
+              backend/tests/test_provider_runtime_output_contracts.py) return 0 ;;
               backend/tests/test_provider_runtime_persona_enforcement.py) return 0 ;;
               backend/tests/test_provider_runtime_router_fallback_e2e.py) return 0 ;;
               backend/tests/test_knowledge_items.py) return 0 ;;
