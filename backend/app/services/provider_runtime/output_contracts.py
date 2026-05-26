@@ -16,6 +16,13 @@ _STATUS_WORDS = [
     "delivered", "in transit", "out for delivery", "customs", "returned", "failed delivery",
     "派送", "已签收", "运输中", "清关", "退回",
 ]
+_IDENTITY_NEGATION_PATTERNS = ["不是", "不能代表", "无法代表", "not ", "cannot represent", "can't represent"]
+_IDENTITY_EN_RE = re.compile(
+    r"\b(?:who\s+are\s+you|what\s+(?:kind\s+of\s+)?(?:support|customer\s+service)\s+are\s+you|"
+    r"are\s+you\s+(?:the\s+)?(?:.*\s+)?(?:support|customer\s+service)|"
+    r"which\s+(?:company|brand|store)\s+(?:support|customer\s+service)\s+are\s+you)\b",
+    re.IGNORECASE,
+)
 _MAX_FAST_REPLY_CHARS = 1200
 _MAX_VISIBLE_PREFIX_CHARS = 80
 
@@ -74,7 +81,13 @@ class OutputContracts:
         return {}
 
     @staticmethod
-    def validate_and_parse(contract_name: str, raw_output: str, evidence_present: bool = False, persona_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    def validate_and_parse(
+        contract_name: str,
+        raw_output: str,
+        evidence_present: bool = False,
+        persona_context: dict[str, Any] | None = None,
+        request_body: Any = None,
+    ) -> dict[str, Any]:
         try:
             parsed = json.loads(raw_output)
         except json.JSONDecodeError as exc:
@@ -83,7 +96,7 @@ class OutputContracts:
             raise ValueError("Output must be a JSON object")
         if contract_name == "speedaf_webchat_fast_reply_v1":
             parsed = OutputContracts._normalize_fast_reply_v1(parsed)
-            parsed = OutputContracts.enforce_persona_fast_reply(parsed, persona_context)
+            parsed = OutputContracts.enforce_persona_fast_reply(parsed, persona_context, request_body=request_body)
             raw_output = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
 
         schema = OutputContracts.get_schema(contract_name)
@@ -113,7 +126,11 @@ class OutputContracts:
         return parsed
 
     @staticmethod
-    def enforce_persona_fast_reply(parsed: dict[str, Any], persona_context: dict[str, Any] | None) -> dict[str, Any]:
+    def enforce_persona_fast_reply(parsed: dict[str, Any], persona_context: dict[str, Any] | None, *, request_body: Any = None) -> dict[str, Any]:
+        identity_reply = OutputContracts.extract_persona_identity_reply(persona_context, request_body)
+        if identity_reply:
+            return {**parsed, "customer_reply": OutputContracts._truncate_reply(identity_reply), "intent": "greeting"}
+
         prefix = OutputContracts.extract_persona_visible_prefix(persona_context)
         if not prefix:
             return parsed
@@ -121,6 +138,51 @@ class OutputContracts:
         if not reply or reply.startswith(prefix):
             return {**parsed, "customer_reply": reply}
         return {**parsed, "customer_reply": OutputContracts._truncate_reply(f"{prefix} {reply}")}
+
+    @staticmethod
+    def extract_persona_identity_reply(persona_context: dict[str, Any] | None, request_body: Any = None) -> str | None:
+        if not OutputContracts._looks_like_identity_question(request_body):
+            return None
+        if not isinstance(persona_context, dict):
+            return None
+        content_json = persona_context.get("content_json")
+        if not isinstance(content_json, dict):
+            return None
+
+        identity = OutputContracts._safe_text(content_json.get("identity"))
+        brand_name = OutputContracts._safe_text(content_json.get("brand_name"))
+        answer_rule = OutputContracts._safe_text(content_json.get("identity_answer_rule"))
+        capabilities = content_json.get("capabilities")
+        capability_text = OutputContracts._capability_text(capabilities)
+
+        if identity:
+            if capability_text:
+                return f"您好，{identity}我可以协助处理{capability_text}。"
+            return f"您好，{identity}请问有什么可以帮您？"
+        if brand_name:
+            if capability_text:
+                return f"您好，我是{brand_name}的 AI 客服，可以协助处理{capability_text}。"
+            return f"您好，我是{brand_name}的 AI 客服，请问有什么可以帮您？"
+        if answer_rule:
+            # Fallback for deployments that only provide a rule sentence.
+            marker = "必须明确回答："
+            if marker in answer_rule:
+                answer = answer_rule.split(marker, 1)[1].strip()
+                return answer.split("。", 1)[0].strip(" ：:；;，,") + "。"
+            return answer_rule
+        return None
+
+    @staticmethod
+    def _looks_like_identity_question(request_body: Any) -> bool:
+        text = " ".join(str(request_body or "").strip().lower().split())
+        if not text:
+            return False
+        compact = re.sub(r"\s+", "", text)
+        if any(token in compact for token in ("你是谁", "你是什么客服", "你是哪里的客服", "你是哪家客服", "你是否是", "你是不是", "你属于哪里", "什么客服", "哪里的客服", "哪家客服")):
+            return True
+        if "你" in compact and "客服" in compact and any(token in compact for token in ("是", "哪", "什么", "谁")):
+            return True
+        return _IDENTITY_EN_RE.search(text) is not None
 
     @staticmethod
     def extract_persona_visible_prefix(persona_context: dict[str, Any] | None) -> str | None:
@@ -131,19 +193,37 @@ class OutputContracts:
             return None
         for key in ("must_prefix", "reply_prefix", "visible_prefix"):
             value = content_json.get(key)
-            if not isinstance(value, str):
-                continue
-            cleaned = " ".join(value.strip().split())
+            cleaned = OutputContracts._safe_text(value)
             if not cleaned or len(cleaned) > _MAX_VISIBLE_PREFIX_CHARS:
-                continue
-            if "[REDACTED_" in cleaned:
-                continue
-            if any(marker in cleaned.lower() for marker in _INTERNAL_PATTERNS):
-                continue
-            if any(pattern.search(cleaned) for pattern in _SECRET_PATTERNS):
                 continue
             return cleaned
         return None
+
+    @staticmethod
+    def _safe_text(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        cleaned = " ".join(value.strip().split())
+        if not cleaned:
+            return None
+        lowered = cleaned.lower()
+        if "[redacted_" in lowered or "[redacted" in lowered:
+            return None
+        if any(marker in lowered for marker in _INTERNAL_PATTERNS):
+            return None
+        if any(pattern.search(cleaned) for pattern in _SECRET_PATTERNS):
+            return None
+        return cleaned
+
+    @staticmethod
+    def _capability_text(value: Any) -> str | None:
+        if not isinstance(value, list):
+            return None
+        items = [OutputContracts._safe_text(item) for item in value]
+        items = [item for item in items if item]
+        if not items:
+            return None
+        return "、".join(items[:5])
 
     @staticmethod
     def _truncate_reply(value: str) -> str:
