@@ -190,7 +190,7 @@ def serialize_webchat_voice_message(message: WebchatMessage) -> dict:
         "summary": summary,
         "visibility": "internal",
         "actor_id": None,
-        "actor_display_name": message.author_label or "NexusDesk Voice",
+        "actor_display_name": message.author_label or "Voice",
         "created_at": message.created_at,
         "payload": payload,
     }

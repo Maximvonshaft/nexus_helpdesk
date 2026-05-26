@@ -32,6 +32,14 @@ const templateDrafts: Record<string, { summary: string; content: Record<string, 
   persona: {
     summary: '专业、简洁、先确认事实再给承诺；涉及赔付、投诉升级或账号风险时转人工。',
     content: {
+      brand_name: '',
+      assistant_name: '在线客服助手',
+      role_label: 'AI 客服',
+      identity_statement: '我是在线客服助手，可以协助处理常见客户服务问题。',
+      identity_answer_rule: '客户询问身份时，只使用已发布 Persona 的品牌、助手名称和能力范围回答，不提及内部平台或运行时名称。',
+      capabilities: ['回答常见客服问题', '协助收集必要信息', '需要人工处理时转接客服'],
+      disallowed_identity_claims: [],
+      handoff_boundary: '涉及赔付、投诉升级、账号风险或缺少事实证据时转人工。',
       tone: 'professional_concise',
       guardrails: ['No parcel status without trusted tracking evidence', 'Escalate compensation and legal requests'],
       escalation: 'handoff_for_high_risk_or_missing_facts',
@@ -101,6 +109,40 @@ function stringifyDraft(value: unknown) {
   }
 }
 
+function parseDraftObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+function draftStringValue(draft: Record<string, unknown>, key: string) {
+  const value = draft[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function draftListText(draft: Record<string, unknown>, key: string) {
+  const value = draft[key]
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string').join('\n')
+  return typeof value === 'string' ? value : ''
+}
+
+function setDraftField(draftText: string, key: string, value: string, asList = false) {
+  const draft = parseDraftObject(draftText)
+  if (asList) {
+    const items = value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
+    if (items.length) draft[key] = items
+    else delete draft[key]
+    return stringifyDraft(draft)
+  }
+  const cleaned = value.trim()
+  if (cleaned) draft[key] = value
+  else delete draft[key]
+  return stringifyDraft(draft)
+}
+
 function statusTone(status: string, publishedVersion = 0): BadgeTone {
   if (status === 'archived') return 'danger'
   if (publishedVersion > 0 && status === 'active') return 'success'
@@ -156,6 +198,10 @@ function AIControlPage() {
       return err instanceof Error ? err.message : 'JSON 格式无效'
     }
   }, [personaForm.draft_content_text])
+  const personaDraft = useMemo(() => parseDraftObject(personaForm.draft_content_text), [personaForm.draft_content_text])
+  const updatePersonaDraftField = (key: string, value: string, asList = false) => {
+    setPersonaForm((s) => ({ ...s, draft_content_text: setDraftField(s.draft_content_text, key, value, asList) }))
+  }
 
   const ruleJsonError = useMemo(() => {
     try {
@@ -236,7 +282,7 @@ function AIControlPage() {
         name: personaForm.name,
         description: personaForm.description || null,
         channel: personaForm.channel || null,
-        language: personaForm.language || null,
+        language: personaForm.language.trim() || null,
         is_active: personaForm.is_active,
         draft_summary: personaForm.draft_summary || null,
         draft_content_json: JSON.parse(personaForm.draft_content_text || '{}'),
@@ -534,6 +580,18 @@ function AIControlPage() {
                     </div>
                     <Field label="业务说明"><Textarea value={personaForm.description} onChange={(e) => setPersonaForm((s) => ({ ...s, description: e.target.value }))} /></Field>
                     <Field label="发布摘要" required><Textarea value={personaForm.draft_summary} onChange={(e) => setPersonaForm((s) => ({ ...s, draft_summary: e.target.value }))} /></Field>
+                    <div className="form-grid">
+                      <Field label="Customer-facing brand name"><Input value={draftStringValue(personaDraft, 'brand_name')} onChange={(e) => updatePersonaDraftField('brand_name', e.target.value)} /></Field>
+                      <Field label="Assistant display name"><Input value={draftStringValue(personaDraft, 'assistant_name')} onChange={(e) => updatePersonaDraftField('assistant_name', e.target.value)} /></Field>
+                      <Field label="Role label"><Input value={draftStringValue(personaDraft, 'role_label')} onChange={(e) => updatePersonaDraftField('role_label', e.target.value)} /></Field>
+                    </div>
+                    <Field label="Identity statement"><Textarea rows={3} value={draftStringValue(personaDraft, 'identity_statement')} onChange={(e) => updatePersonaDraftField('identity_statement', e.target.value)} /></Field>
+                    <Field label="Identity answer rule"><Textarea rows={3} value={draftStringValue(personaDraft, 'identity_answer_rule')} onChange={(e) => updatePersonaDraftField('identity_answer_rule', e.target.value)} /></Field>
+                    <div className="form-grid">
+                      <Field label="Capabilities" hint="每行一项"><Textarea rows={4} value={draftListText(personaDraft, 'capabilities')} onChange={(e) => updatePersonaDraftField('capabilities', e.target.value, true)} /></Field>
+                      <Field label="Disallowed identity claims" hint="每行一项"><Textarea rows={4} value={draftListText(personaDraft, 'disallowed_identity_claims')} onChange={(e) => updatePersonaDraftField('disallowed_identity_claims', e.target.value, true)} /></Field>
+                    </div>
+                    <Field label="Handoff boundary"><Textarea rows={3} value={draftStringValue(personaDraft, 'handoff_boundary')} onChange={(e) => updatePersonaDraftField('handoff_boundary', e.target.value)} /></Field>
                     <TechnicalDetails title="高级 JSON 配置" summary="仅管理员排查或批量迁移时编辑">
                       <Field label="草稿内容 JSON" error={jsonError || undefined}><Textarea rows={12} value={personaForm.draft_content_text} onChange={(e) => setPersonaForm((s) => ({ ...s, draft_content_text: e.target.value }))} /></Field>
                     </TechnicalDetails>

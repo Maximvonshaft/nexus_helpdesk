@@ -9,7 +9,7 @@ from ...utils.time import utc_now
 from ...voice_models import WebchatVoiceParticipant, WebchatVoiceSession
 from .config import WebCallAISettings, get_webcall_ai_settings
 
-AI_PARTICIPANT_LABEL = "NexusDesk AI Voice Agent"
+AI_PARTICIPANT_LABEL = "AI Voice Agent"
 AI_PARTICIPANT_TYPE = "ai"
 
 _SAFE_IDENTITY_CHARS = re.compile(r"[^A-Za-z0-9_-]+")

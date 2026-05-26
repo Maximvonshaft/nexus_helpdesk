@@ -13,6 +13,8 @@ MAX_PERSONA_SUMMARY_CHARS = 1200
 MAX_PERSONA_JSON_CHARS = 1600
 MAX_KNOWLEDGE_CHARS = 800
 MAX_CONTEXT_HITS = 5
+MAX_IDENTITY_FIELD_CHARS = 500
+MAX_IDENTITY_LIST_ITEMS = 12
 
 _SECRET_PATTERNS = [
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.I),
@@ -30,6 +32,21 @@ _INTERNAL_WORDS = {
     "localhost",
     "127.0.0.1",
 }
+
+_IDENTITY_STRING_FIELDS = (
+    "brand_name",
+    "assistant_name",
+    "role_label",
+    "identity_statement",
+    "identity_answer_rule",
+    "handoff_boundary",
+    "tone",
+)
+_IDENTITY_LIST_FIELDS = (
+    "capabilities",
+    "disallowed_identity_claims",
+    "guardrails",
+)
 
 
 def build_webchat_runtime_context(
@@ -103,14 +120,65 @@ def _sanitize_text(value: str) -> str:
 def _persona_context(profile, match_rank: int | None) -> dict[str, Any] | None:
     if profile is None or not profile.is_active or int(profile.published_version or 0) <= 0:
         return None
+    content_json = profile.published_content_json or {}
     return {
         "profile_key": profile.profile_key,
         "name": profile.name,
         "summary": _clip(profile.published_summary, MAX_PERSONA_SUMMARY_CHARS),
-        "content_json": _clip_json(profile.published_content_json or {}, MAX_PERSONA_JSON_CHARS),
+        "content_json": _clip_json(content_json, MAX_PERSONA_JSON_CHARS),
+        "identity_context": _identity_context(content_json),
         "published_version": profile.published_version,
         "match_rank": match_rank,
     }
+
+
+def _identity_context(content_json: dict[str, Any]) -> dict[str, Any]:
+    source: dict[str, Any] = {}
+    nested = content_json.get("identity_context")
+    if isinstance(nested, dict):
+        source.update(nested)
+    for key in (*_IDENTITY_STRING_FIELDS, *_IDENTITY_LIST_FIELDS):
+        if key in content_json:
+            source[key] = content_json[key]
+
+    return {
+        "brand_name": _identity_string(source.get("brand_name")),
+        "assistant_name": _identity_string(source.get("assistant_name")),
+        "role_label": _identity_string(source.get("role_label")),
+        "identity_statement": _identity_string(source.get("identity_statement")),
+        "identity_answer_rule": _identity_string(source.get("identity_answer_rule")),
+        "capabilities": _identity_list(source.get("capabilities")),
+        "disallowed_identity_claims": _identity_list(source.get("disallowed_identity_claims")),
+        "handoff_boundary": _identity_string(source.get("handoff_boundary")),
+        "tone": _identity_string(source.get("tone")),
+        "guardrails": _identity_list(source.get("guardrails")),
+    }
+
+
+def _identity_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return _clip(" ".join(value.split()), MAX_IDENTITY_FIELD_CHARS)
+
+
+def _identity_list(value: Any) -> list[str]:
+    raw_items: list[Any]
+    if isinstance(value, list):
+        raw_items = value
+    elif isinstance(value, str):
+        raw_items = [value]
+    else:
+        return []
+    items: list[str] = []
+    for item in raw_items:
+        if not isinstance(item, str):
+            continue
+        cleaned = _clip(" ".join(item.split()), MAX_IDENTITY_FIELD_CHARS)
+        if cleaned:
+            items.append(cleaned)
+        if len(items) >= MAX_IDENTITY_LIST_ITEMS:
+            break
+    return items
 
 
 def _knowledge_context(hits: list[KnowledgeChunkHit], total: int) -> dict[str, Any]:

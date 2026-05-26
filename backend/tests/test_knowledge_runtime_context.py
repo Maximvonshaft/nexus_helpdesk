@@ -157,3 +157,43 @@ def test_runtime_context_includes_published_persona_and_safe_knowledge(db_sessio
     assert context["knowledge_context"]["hits"][0]["item_key"] == "runtime.address"
     assert context["safety_policy"]["knowledge_scope"] == "policy_sop_faq_only"
     assert "tracking_fact_evidence_present=true" in context["safety_policy"]["tracking_truth_boundary"]
+
+
+def test_runtime_context_includes_persona_identity_context_without_description(db_session):
+    admin = _user(db_session)
+    profile = persona_service.create_profile(
+        db_session,
+        PersonaProfileCreate(
+            profile_key="identity.website.zh",
+            name="Identity Website Chinese",
+            description=None,
+            channel="website",
+            language="zh",
+            draft_summary="Identity contract only.",
+            draft_content_json={
+                "brand_name": "猴王山",
+                "assistant_name": "悟空客服",
+                "identity_statement": "我是猴王山的悟空客服，可以协助处理客户服务问题。",
+                "capabilities": ["回答常见问题", "转人工"],
+                "disallowed_identity_claims": ["NexusDesk"],
+            },
+        ),
+        admin,
+    )
+    persona_service.publish_profile(db_session, profile, admin, notes="publish")
+
+    context = build_webchat_runtime_context(
+        db_session,
+        tenant_key="default",
+        channel_key="website",
+        language="zh",
+        body="你是谁",
+    )
+
+    identity = context["persona_context"]["identity_context"]
+    assert context["persona_context"]["profile_key"] == "identity.website.zh"
+    assert context["persona_context"]["content_json"]["brand_name"] == "猴王山"
+    assert identity["brand_name"] == "猴王山"
+    assert identity["assistant_name"] == "悟空客服"
+    assert identity["identity_statement"] == "我是猴王山的悟空客服，可以协助处理客户服务问题。"
+    assert identity["capabilities"] == ["回答常见问题", "转人工"]

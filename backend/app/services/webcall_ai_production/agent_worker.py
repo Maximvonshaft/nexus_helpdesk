@@ -288,7 +288,7 @@ def _speak_greeting(db, *, session: WebchatVoiceSession, worker_id: str, io: Liv
         db,
         session=session,
         worker_id=worker_id,
-        response_text="Hello, this is NexusDesk AI support. Please tell me your tracking number or shipment question.",
+        response_text="Hello, this is AI support. Please tell me your tracking number or shipment question.",
         intent="ai_greeting",
         handoff_required=False,
         handoff_reason=None,

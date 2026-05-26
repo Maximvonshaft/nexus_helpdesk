@@ -44,7 +44,10 @@ test("prompt compiler keeps latency profile compact and strict", () => {
 
   const prompt = compilePrompt(request);
 
-  assert.ok(prompt.developerInstructions.split(/\s+/).length <= 60);
+  assert.ok(prompt.developerInstructions.split(/\s+/).length <= 80);
+  assert.doesNotMatch(prompt.developerInstructions, /NexusDesk WebChat/);
+  assert.match(prompt.developerInstructions, /Customer service WebChat runtime/);
+  assert.match(prompt.developerInstructions, /Never identify as NexusDesk unless/);
   assert.ok(prompt.userText.length <= 1600);
   assert.match(prompt.userText, /strict JSON|JSON schema/);
   assert.match(prompt.userText, /Tracking evidence: absent/);
@@ -92,6 +95,55 @@ test("prompt compiler turns persona visible prefix into mandatory reply rule", (
   assert.match(prompt.userText, /Visible prefix rule: the reply string MUST start with exact prefix "SPEEDY_PERSONA_OK"/);
   assert.match(prompt.userText, /Every reply must visibly start with SPEEDY_PERSONA_OK/);
   assert.match(prompt.userText, /Apply these persona rules to the reply field/);
+});
+
+test("prompt compiler renders persona identity fields before conversation context", () => {
+  const request: ReplyRequest = {
+    login: {
+      type: "chatgptAuthTokens",
+      accessToken: "test-token",
+      chatgptAccountId: "acct",
+      chatgptPlanType: "plus",
+    },
+    body: "你是谁",
+    messages: [{ role: "user", content: "你好" }],
+    contract: "speedaf_webchat_fast_reply_v1",
+    tracking_fact_summary: null,
+    tracking_fact_evidence_present: false,
+    persona_context: {
+      profile_key: "monkey.king",
+      name: "Monkey King",
+      identity_context: {
+        brand_name: "猴王山",
+        assistant_name: "悟空客服",
+        identity_statement: "我是猴王山的悟空客服。",
+        identity_answer_rule: "身份问题只按猴王山 Persona 回答。",
+        capabilities: ["回答常见问题", "转人工"],
+        disallowed_identity_claims: ["NexusDesk"],
+      },
+      content_json: {
+        brand_name: "猴王山",
+        assistant_name: "悟空客服",
+        identity_statement: "我是猴王山的悟空客服。",
+      },
+    },
+    knowledge_context: { hits: [] },
+    safety_policy: { tracking_truth_boundary: "Knowledge is not live shipment evidence." },
+    tenant_id: "default",
+    channel_key: "website",
+    session_id: "session",
+  };
+
+  const prompt = compilePrompt(request);
+
+  assert.match(prompt.userText, /Customer-facing identity \(authoritative\):/);
+  assert.match(prompt.userText, /brand_name: 猴王山/);
+  assert.match(prompt.userText, /assistant_name: 悟空客服/);
+  assert.match(prompt.userText, /identity_statement: 我是猴王山的悟空客服。/);
+  assert.match(prompt.userText, /identity_answer_rule: 身份问题只按猴王山 Persona 回答。/);
+  assert.match(prompt.userText, /capabilities: 回答常见问题 \| 转人工/);
+  assert.match(prompt.userText, /disallowed_identity_claims: NexusDesk/);
+  assert.ok(prompt.userText.indexOf("Customer-facing identity") < prompt.userText.indexOf("Context:"));
 });
 
 test("prompt compiler scrubs unsafe runtime and private operational terms", () => {

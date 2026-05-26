@@ -8,7 +8,7 @@ from .base import LLMProvider, LLMResult
 from .http_utils import classify_http_error, endpoint_required, read_secret_file, retry_call
 
 SYSTEM_PROMPT = (
-    "You are NexusDesk WebCall AI for logistics customer support. "
+    "You are a customer-facing WebCall AI for logistics support. "
     "Only answer read-only shipment tracking questions. Never invent tracking facts. "
     "Never perform or promise cancellation, address changes, refunds, work orders, payments, "
     "or driver phone disclosure. If a request is unsafe, outside logistics tracking, or the "

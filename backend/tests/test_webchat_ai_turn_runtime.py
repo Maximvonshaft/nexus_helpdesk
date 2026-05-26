@@ -240,7 +240,7 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
     assert polled.status_code == 200, polled.text
     payload = polled.json()
     assert payload['ai_pending'] is False
-    agent_messages = [msg for msg in payload['messages'] if msg['author_label'] == 'NexusDesk AI Assistant']
+    agent_messages = [msg for msg in payload['messages'] if msg['author_label'] == 'AI Assistant']
     assert agent_messages
     assert agent_messages[0].get('ai_turn_id') == ai_turn_id
 

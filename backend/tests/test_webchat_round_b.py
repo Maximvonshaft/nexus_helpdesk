@@ -94,7 +94,7 @@ def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
     )
     assert polled_after.status_code == 200, polled_after.text
     messages_after = polled_after.json()['messages']
-    assert any(item['direction'] == 'agent' and item['author_label'] == 'NexusDesk AI Assistant' for item in messages_after)
+    assert any(item['direction'] == 'agent' and item['author_label'] == 'AI Assistant' for item in messages_after)
     assert any('shipment' in item['body'].lower() or 'support' in item['body'].lower() for item in messages_after if item['direction'] == 'agent')
 
 
@@ -158,7 +158,7 @@ def test_webchat_ai_reply_uses_bridge_when_enabled(monkeypatch):
     )
     assert polled_after.status_code == 200, polled_after.text
     messages_after = polled_after.json()['messages']
-    assert any(item['direction'] == 'agent' and item['author_label'] == 'NexusDesk AI Assistant' for item in messages_after)
+    assert any(item['direction'] == 'agent' and item['author_label'] == 'AI Assistant' for item in messages_after)
 
 
 def test_bridge_ai_reply_maps_public_session_key_to_gateway_key():
@@ -248,5 +248,5 @@ def test_webchat_ai_reply_bridge_failure_falls_back_safely(monkeypatch):
     messages_after = polled_after.json()['messages']
     assert any(item['direction'] == 'visitor' and 'Where is my parcel?' in item['body'] for item in messages_after)
     assert any(item['direction'] == 'agent' and 'received your parcel inquiry' in item['body'] for item in messages_after)
-    assert any(item['direction'] == 'agent' and item['author_label'] == 'NexusDesk AI Assistant' for item in messages_after)
-    assert any('tracking number' in item['body'].lower() or 'review' in item['body'].lower() for item in messages_after if item['author_label'] == 'NexusDesk AI Assistant')
+    assert any(item['direction'] == 'agent' and item['author_label'] == 'AI Assistant' for item in messages_after)
+    assert any('tracking number' in item['body'].lower() or 'review' in item['body'].lower() for item in messages_after if item['author_label'] == 'AI Assistant')
