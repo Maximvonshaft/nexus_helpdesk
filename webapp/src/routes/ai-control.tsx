@@ -26,6 +26,9 @@ const configTypes = ['persona', 'knowledge'] as const
 type ControlTab = 'persona' | 'knowledge' | 'rules'
 const ruleTypes = ['sop', 'policy'] as const
 const knowledgeStatuses = ['draft', 'active', 'archived'] as const
+const knowledgeKinds = ['document', 'faq', 'business_fact', 'policy', 'sop'] as const
+const factStatuses = ['draft', 'approved', 'archived'] as const
+const answerModes = ['direct_answer', 'guided_answer', 'handoff_only'] as const
 const channelOptions = ['website', 'webchat', 'whatsapp', 'email'] as const
 
 const templateDrafts: Record<string, { summary: string; content: Record<string, unknown>; body?: string }> = {
@@ -80,9 +83,17 @@ function emptyKnowledgeForm() {
     summary: '',
     status: 'draft',
     source_type: 'text',
+    knowledge_kind: 'document',
     channel: 'website',
     audience_scope: 'customer',
+    language: '',
     priority: 100,
+    fact_question: '',
+    fact_answer: '',
+    fact_aliases_text: '',
+    fact_status: 'draft',
+    answer_mode: 'guided_answer',
+    citation_metadata_text: '{\n  "source": "admin_entered"\n}',
     draft_body: templateDrafts.knowledge.body ?? '',
   }
 }
@@ -110,6 +121,19 @@ function stringifyDraft(value: unknown) {
 }
 
 function parseDraftObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+function parseLines(value: string) {
+  return value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
+}
+
+function parseOptionalJsonObject(value: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(value || '{}')
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
@@ -238,9 +262,17 @@ function AIControlPage() {
       summary: selectedKnowledge.summary ?? '',
       status: selectedKnowledge.status,
       source_type: selectedKnowledge.source_type,
+      knowledge_kind: selectedKnowledge.knowledge_kind || 'document',
       channel: selectedKnowledge.channel ?? 'website',
       audience_scope: selectedKnowledge.audience_scope,
+      language: selectedKnowledge.language ?? '',
       priority: selectedKnowledge.priority,
+      fact_question: selectedKnowledge.fact_question ?? '',
+      fact_answer: selectedKnowledge.fact_answer ?? '',
+      fact_aliases_text: (selectedKnowledge.fact_aliases_json ?? []).join('\n'),
+      fact_status: selectedKnowledge.fact_status || 'draft',
+      answer_mode: selectedKnowledge.answer_mode || 'guided_answer',
+      citation_metadata_text: stringifyDraft(selectedKnowledge.citation_metadata_json ?? { source: 'admin_entered' }),
       draft_body: selectedKnowledge.draft_body ?? '',
     })
   }, [selectedKnowledge])
@@ -345,9 +377,17 @@ function AIControlPage() {
         summary: knowledgeForm.summary || null,
         status: knowledgeForm.status,
         source_type: knowledgeForm.source_type,
+        knowledge_kind: knowledgeForm.knowledge_kind,
         channel: knowledgeForm.channel || null,
         audience_scope: knowledgeForm.audience_scope,
+        language: knowledgeForm.language.trim() || null,
         priority: Number(knowledgeForm.priority) || 100,
+        fact_question: knowledgeForm.fact_question || null,
+        fact_answer: knowledgeForm.fact_answer || null,
+        fact_aliases_json: parseLines(knowledgeForm.fact_aliases_text),
+        fact_status: knowledgeForm.fact_status,
+        answer_mode: knowledgeForm.answer_mode,
+        citation_metadata_json: parseOptionalJsonObject(knowledgeForm.citation_metadata_text),
         draft_body: knowledgeForm.draft_body || null,
         draft_normalized_text: knowledgeForm.draft_body || null,
       }
@@ -428,6 +468,7 @@ function AIControlPage() {
       q: retrievalQuery,
       channel: knowledgeForm.channel || null,
       audience_scope: knowledgeForm.audience_scope || 'customer',
+      language: knowledgeForm.language.trim() || null,
       limit: 5,
     }),
     onError: (err: Error) => setToast({ message: err.message || '检索测试失败', tone: 'danger' }),
@@ -616,7 +657,7 @@ function AIControlPage() {
                   <div className="list">
                     {knowledgeRows.map((item) => (
                       <button key={item.id} className={`queue-card ${selectedKnowledgeId === item.id ? 'selected' : ''}`} onClick={() => setSelectedKnowledgeId(item.id)}>
-                        <div className="badges"><Badge tone={statusTone(item.status, item.published_version)}>{labelize(item.status)}</Badge><Badge>{labelize(item.source_type)}</Badge><Badge>{sanitizeDisplayText(item.channel || 'global')}</Badge>{item.published_version > 0 ? <Badge tone="success">v{item.published_version}</Badge> : <Badge tone="warning">未发布</Badge>}</div>
+                        <div className="badges"><Badge tone={statusTone(item.status, item.published_version)}>{labelize(item.status)}</Badge><Badge>{labelize(item.knowledge_kind || item.source_type)}</Badge>{item.fact_status === 'approved' ? <Badge tone="success">approved</Badge> : null}<Badge>{sanitizeDisplayText(item.channel || 'global')}</Badge>{item.published_version > 0 ? <Badge tone="success">v{item.published_version}</Badge> : <Badge tone="warning">未发布</Badge>}</div>
                         <div className="queue-card-title">{sanitizeDisplayText(item.title)}</div>
                         <div className="queue-card-meta">{sanitizeDisplayText(item.item_key)} · chunk {item.chunk_count || 0} · {formatDateTime(item.updated_at)}</div>
                         <div className="queue-card-meta">{sanitizeDisplayText(item.summary || item.draft_body || '暂无内容')}</div>
@@ -636,9 +677,21 @@ function AIControlPage() {
                       <Field label="Item Key" required example="faq.address-change"><Input value={knowledgeForm.item_key} onChange={(e) => setKnowledgeForm((s) => ({ ...s, item_key: e.target.value }))} /></Field>
                       <Field label="标题" required><Input value={knowledgeForm.title} onChange={(e) => setKnowledgeForm((s) => ({ ...s, title: e.target.value }))} /></Field>
                       <Field label="状态"><Select value={knowledgeForm.status} onChange={(e) => setKnowledgeForm((s) => ({ ...s, status: e.target.value }))}>{knowledgeStatuses.map((item) => <option key={item} value={item}>{labelize(item)}</option>)}</Select></Field>
+                      <Field label="知识类型"><Select value={knowledgeForm.knowledge_kind} onChange={(e) => setKnowledgeForm((s) => ({ ...s, knowledge_kind: e.target.value }))}>{knowledgeKinds.map((item) => <option key={item} value={item}>{labelize(item)}</option>)}</Select></Field>
+                      <Field label="Fact 状态"><Select value={knowledgeForm.fact_status} onChange={(e) => setKnowledgeForm((s) => ({ ...s, fact_status: e.target.value }))}>{factStatuses.map((item) => <option key={item} value={item}>{labelize(item)}</option>)}</Select></Field>
+                      <Field label="回答模式"><Select value={knowledgeForm.answer_mode} onChange={(e) => setKnowledgeForm((s) => ({ ...s, answer_mode: e.target.value }))}>{answerModes.map((item) => <option key={item} value={item}>{labelize(item)}</option>)}</Select></Field>
                       <Field label="渠道"><Select value={knowledgeForm.channel} onChange={(e) => setKnowledgeForm((s) => ({ ...s, channel: e.target.value }))}>{channelOptions.map((item) => <option key={item} value={item}>{item}</option>)}</Select></Field>
                       <Field label="受众"><Input value={knowledgeForm.audience_scope} onChange={(e) => setKnowledgeForm((s) => ({ ...s, audience_scope: e.target.value }))} /></Field>
+                      <Field label="语言"><Input value={knowledgeForm.language} onChange={(e) => setKnowledgeForm((s) => ({ ...s, language: e.target.value }))} placeholder="zh / en / 留空全局" /></Field>
                       <Field label="优先级"><Input type="number" value={knowledgeForm.priority} onChange={(e) => setKnowledgeForm((s) => ({ ...s, priority: Number(e.target.value) }))} /></Field>
+                    </div>
+                    <div className="form-grid">
+                      <Field label="结构化问题"><Textarea rows={3} value={knowledgeForm.fact_question} onChange={(e) => setKnowledgeForm((s) => ({ ...s, fact_question: e.target.value }))} /></Field>
+                      <Field label="结构化答案"><Textarea rows={3} value={knowledgeForm.fact_answer} onChange={(e) => setKnowledgeForm((s) => ({ ...s, fact_answer: e.target.value }))} /></Field>
+                    </div>
+                    <div className="form-grid">
+                      <Field label="Aliases" hint="每行一个客户问法、业务词或缩写"><Textarea rows={4} value={knowledgeForm.fact_aliases_text} onChange={(e) => setKnowledgeForm((s) => ({ ...s, fact_aliases_text: e.target.value }))} /></Field>
+                      <Field label="Citation metadata JSON"><Textarea rows={4} value={knowledgeForm.citation_metadata_text} onChange={(e) => setKnowledgeForm((s) => ({ ...s, citation_metadata_text: e.target.value }))} /></Field>
                     </div>
                     <Field label="摘要"><Textarea value={knowledgeForm.summary} onChange={(e) => setKnowledgeForm((s) => ({ ...s, summary: e.target.value }))} /></Field>
                     <Field label="草稿正文 / 解析预览" hint="这里是发布前预览。发布后才会进入 KnowledgeChunk 检索。"><Textarea rows={12} value={knowledgeForm.draft_body} onChange={(e) => setKnowledgeForm((s) => ({ ...s, draft_body: e.target.value, source_type: 'text' }))} /></Field>
@@ -662,13 +715,32 @@ function AIControlPage() {
                   <div className="stack">
                     <Field label="客户问题"><Input value={retrievalQuery} onChange={(e) => setRetrievalQuery(e.target.value)} placeholder="Can I change my delivery address?" /></Field>
                     <div className="button-row"><Button onClick={() => retrieval.mutate()} disabled={!retrievalQuery.trim() || retrieval.isPending}>测试检索</Button></div>
+                    {retrieval.data?.query_analysis ? (
+                      <div className="kv-grid">
+                        <div className="kv"><label>Language</label><strong>{sanitizeDisplayText(retrieval.data.query_analysis.language)}</strong></div>
+                        <div className="kv"><label>Candidates</label><strong>{retrieval.data.candidate_count ?? 0} / {retrieval.data.total}</strong></div>
+                        <div className="kv"><label>Grounding</label><strong>{retrieval.data.grounding_would_apply ? 'direct-answer ready' : 'not applicable'}</strong></div>
+                      </div>
+                    ) : null}
+                    {retrieval.data?.query_analysis ? (
+                      <div className="list-item">
+                        <strong>Query terms</strong>
+                        <div className="badges">{retrieval.data.query_analysis.high_value_terms.map((term) => <Badge key={term}>{sanitizeDisplayText(term)}</Badge>)}</div>
+                        <div className="section-subtitle">{sanitizeDisplayText(retrieval.data.query_analysis.normalized_query)}</div>
+                      </div>
+                    ) : null}
                     <div className="list">
                       {(retrieval.data?.hits ?? []).map((hit: KnowledgeChunkHit) => (
                         <div key={`${hit.item_key}-${hit.chunk_index}`} className="list-item">
-                          <div className="badges"><Badge tone="success">score {hit.score}</Badge><Badge>v{hit.published_version}</Badge></div>
+                          <div className="badges"><Badge tone="success">score {hit.score}</Badge><Badge>v{hit.published_version}</Badge><Badge>{sanitizeDisplayText(hit.retrieval_method || 'hybrid')}</Badge>{hit.direct_answer ? <Badge tone="success">direct answer</Badge> : null}</div>
                           <strong>{sanitizeDisplayText(hit.title)}</strong>
                           <div className="section-subtitle">{sanitizeDisplayText(hit.item_key)} · chunk {hit.chunk_index}</div>
+                          {hit.matched_terms?.length ? <div className="badges">{hit.matched_terms.map((term) => <Badge key={term}>{sanitizeDisplayText(term)}</Badge>)}</div> : null}
+                          {hit.direct_answer ? <div className="message" data-role="agent">{sanitizeDisplayText(hit.direct_answer)}</div> : null}
                           <div className="message" data-role="assistant">{sanitizeDisplayText(hit.text)}</div>
+                          <TechnicalDetails title="Score breakdown" summary="检索方法、分数和来源元数据">
+                            <pre className="code-block">{JSON.stringify({ score_breakdown: hit.score_breakdown, source_metadata: hit.source_metadata, metadata: hit.metadata }, null, 2)}</pre>
+                          </TechnicalDetails>
                         </div>
                       ))}
                       {retrieval.data && !retrieval.data.hits.length ? <EmptyState title="没有命中可注入知识" description="请检查关键词、渠道、受众、发布状态和有效期。" reason="系统不会放宽过滤条件去读取错误渠道或草稿知识。" /> : null}

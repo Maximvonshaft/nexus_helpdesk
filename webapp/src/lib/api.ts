@@ -457,7 +457,7 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ version, notes: notes || null }),
   }),
-  testKnowledgeRetrieval: (payload: { q: string; market_id?: number | null; channel?: string | null; audience_scope?: string | null; limit?: number }) => request<KnowledgeRetrievalTestResult>('/api/knowledge-items/retrieve-test', {
+  testKnowledgeRetrieval: (payload: { q: string; market_id?: number | null; channel?: string | null; audience_scope?: string | null; language?: string | null; limit?: number }) => request<KnowledgeRetrievalTestResult>('/api/knowledge-items/retrieve-test', {
     method: 'POST',
     body: JSON.stringify(payload),
   }),

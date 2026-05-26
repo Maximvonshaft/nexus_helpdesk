@@ -16,12 +16,15 @@ from ..schemas_control_plane import (
     KnowledgeRetrievalTestOut,
     KnowledgeRetrievalTestRequest,
     KnowledgeRollbackRequest,
+    KnowledgeRuntimeContextTestOut,
+    KnowledgeRuntimeContextTestRequest,
     KnowledgeSearchPublishedOut,
     KnowledgeSearchPublishedRequest,
 )
 from ..services.permissions import ensure_can_manage_ai_configs, ensure_can_read_ai_configs
 from ..services import knowledge_service
-from ..services.knowledge_retrieval_service import search_published_chunks
+from ..services.knowledge_retrieval_service import retrieve_published_chunks
+from ..services.ai_runtime_context import build_webchat_runtime_context
 from ..unit_of_work import managed_session
 from .deps import get_current_user
 
@@ -128,12 +131,13 @@ def test_knowledge_retrieval(
     current_user=Depends(get_current_user),
 ):
     ensure_can_read_ai_configs(current_user, db)
-    hits, total = search_published_chunks(
+    retrieval = retrieve_published_chunks(
         db,
         q=payload.q,
         market_id=payload.market_id,
         channel=payload.channel,
         audience_scope=payload.audience_scope,
+        language=payload.language,
         limit=payload.limit,
     )
     return KnowledgeRetrievalTestOut(
@@ -146,11 +150,42 @@ def test_knowledge_retrieval(
                 chunk_index=hit.chunk_index,
                 score=hit.score,
                 text=hit.text,
+                retrieval_method=hit.retrieval_method,
+                matched_terms=hit.matched_terms,
+                score_breakdown=hit.score_breakdown,
+                direct_answer=hit.direct_answer,
+                answer_mode=hit.answer_mode,
+                source_metadata=hit.source_metadata,
                 metadata=hit.metadata,
             )
-            for hit in hits
+            for hit in retrieval.hits
         ],
-        total=total,
+        total=retrieval.total,
+        query_analysis=retrieval.query_analysis.as_trace(),
+        candidate_count=retrieval.candidate_count,
+        top_hits=retrieval.top_hits,
+        grounding_would_apply=retrieval.grounding_would_apply,
+        grounding_source=retrieval.grounding_source,
+    )
+
+
+@router.post("/runtime-context-test", response_model=KnowledgeRuntimeContextTestOut)
+def test_knowledge_runtime_context(
+    payload: KnowledgeRuntimeContextTestRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_read_ai_configs(current_user, db)
+    return KnowledgeRuntimeContextTestOut(
+        context=build_webchat_runtime_context(
+            db,
+            tenant_key=payload.tenant_key,
+            channel_key=payload.channel or "website",
+            body=payload.q,
+            market_id=payload.market_id,
+            language=payload.language,
+            audience_scope=payload.audience_scope or "customer",
+        )
     )
 
 
