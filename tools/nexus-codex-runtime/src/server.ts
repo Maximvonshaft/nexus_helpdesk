@@ -5,7 +5,7 @@ import { ClientCache, clientCacheKey, loginFingerprint, type LoginState } from "
 import { loginAccount } from "./account-login.js";
 import { deadlineFromHeader, remainingMs } from "./deadline.js";
 import { StageTimer } from "./metrics.js";
-import { parseStrictReply, validateReplyRequest } from "./reply-contract.js";
+import { enforcePersonaRules, parseStrictReply, validateReplyRequest } from "./reply-contract.js";
 import { redact } from "./redaction.js";
 import { runEphemeralThread } from "./thread-runner.js";
 
@@ -117,11 +117,12 @@ async function handleReply(
     timer.set("turn_start", run.turnStartMs);
     timer.set("terminal_wait", run.terminalWaitMs);
     const parsed = await timer.measure("parse", async () => parseStrictReply(run.assistantText));
+    const enforced = enforcePersonaRules(parsed, request);
     const stages = timer.snapshot();
     return sendJson(
       res,
       200,
-      { ...parsed, stage_ms: stages },
+      { ...enforced, stage_ms: stages },
       {
         "X-Nexus-Codex-Backend": "nexus_codex_appserver_runtime",
         "X-Nexus-Codex-Elapsed-Ms": String(stages.total),
