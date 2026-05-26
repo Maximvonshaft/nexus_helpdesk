@@ -24,7 +24,14 @@ from .observability import (
     record_voice_ringing_duration,
     record_voice_session_event,
 )
-from .permissions import ensure_ticket_visible
+from .permissions import (
+    ensure_can_accept_webcall_voice,
+    ensure_can_end_webcall_voice,
+    ensure_can_read_webcall_voice,
+    ensure_can_reject_webcall_voice,
+    ensure_can_view_webcall_voice_queue,
+    ensure_ticket_visible,
+)
 from .voice_provider import VoiceProvider, VoiceProviderError
 from .webchat_rate_limit import enforce_webchat_rate_limit
 
@@ -394,6 +401,7 @@ def end_public_voice_session(db: Session, *, conversation_public_id: str, voice_
 
 
 def list_admin_voice_sessions(db: Session, *, ticket_id: int, current_user: User) -> dict[str, Any]:
+    ensure_can_read_webcall_voice(current_user, db)
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if ticket is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ticket not found")
@@ -403,6 +411,7 @@ def list_admin_voice_sessions(db: Session, *, ticket_id: int, current_user: User
 
 
 def list_admin_incoming_voice_sessions(db: Session, *, current_user: User, status_filter: str = "ringing", limit: int = 50) -> dict[str, Any]:
+    ensure_can_view_webcall_voice_queue(current_user, db)
     requested = (status_filter or "ringing").strip().lower()
     if requested in {"incoming", "ringing"}:
         statuses = {"created", "ringing"}
@@ -457,6 +466,7 @@ def list_admin_incoming_voice_sessions(db: Session, *, current_user: User, statu
 
 
 def accept_admin_voice_session(db: Session, *, ticket_id: int, voice_session_public_id: str, current_user: User) -> dict[str, Any]:
+    ensure_can_accept_webcall_voice(current_user, db)
     session = _load_voice_session(db, voice_session_public_id)
     if session.ticket_id != ticket_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
@@ -493,6 +503,7 @@ def accept_admin_voice_session(db: Session, *, ticket_id: int, voice_session_pub
 
 
 def reject_admin_voice_session(db: Session, *, ticket_id: int, voice_session_public_id: str, current_user: User, reason: str | None = None) -> dict[str, Any]:
+    ensure_can_reject_webcall_voice(current_user, db)
     session = _load_voice_session(db, voice_session_public_id)
     if session.ticket_id != ticket_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
@@ -526,6 +537,7 @@ def reject_admin_voice_session(db: Session, *, ticket_id: int, voice_session_pub
     return {"ok": True, "status": session.status, "voice_session_id": session.public_id, "accepted_by_user_id": session.accepted_by_user_id}
 
 def end_admin_voice_session(db: Session, *, ticket_id: int, voice_session_public_id: str, current_user: User) -> dict[str, Any]:
+    ensure_can_end_webcall_voice(current_user, db)
     session = _load_voice_session(db, voice_session_public_id)
     if session.ticket_id != ticket_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")

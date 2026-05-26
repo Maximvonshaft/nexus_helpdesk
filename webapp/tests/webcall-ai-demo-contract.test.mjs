@@ -8,6 +8,7 @@ const apiClient = readFileSync(resolve(root, 'src/lib/api.ts'), 'utf8')
 const route = readFileSync(resolve(root, 'src/routes/webcall-ai-demo.tsx'), 'utf8')
 const router = readFileSync(resolve(root, 'src/router.tsx'), 'utf8')
 const shell = readFileSync(resolve(root, 'src/layouts/AppShell.tsx'), 'utf8')
+const rbac = readFileSync(resolve(root, 'src/lib/rbac.ts'), 'utf8')
 
 test('webcall ai demo uses admin api client and internal route only', () => {
   assert.match(apiClient, /webcallAIDemoStatus/)
@@ -27,5 +28,6 @@ test('webcall ai demo route is visible only through ops navigation', () => {
   assert.match(router, /WebCallAIDemoRoute/)
   assert.match(router, /@\/routes\/webcall-ai-demo/)
   assert.match(shell, /\/webcall-ai-demo/)
-  assert.match(shell, /permission: 'ops'/)
+  assert.match(shell, /access: routeAccess\['\/webcall-ai-demo'\]/)
+  assert.match(rbac, /'\/webcall-ai-demo': \{ allOf: \[CAPABILITIES\.runtimeManage\] \}/)
 })

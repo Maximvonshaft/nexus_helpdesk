@@ -37,6 +37,32 @@ def _success(provider: str, reply: str = "I can help with that.") -> ProviderRes
     )
 
 
+def _approved_shipping_sla_context(answer: str) -> dict:
+    return {
+        "knowledge_context": {
+            "hits": [
+                {
+                    "item_key": "fact.ch.shipping-sla",
+                    "title": "瑞士海运时效",
+                    "score": 42.0,
+                    "chunk_index": 0,
+                    "retrieval_method": "structured_fact_recall+direct_answer_fact",
+                    "direct_answer": answer,
+                    "answer_mode": "direct_answer",
+                    "metadata": {
+                        "knowledge_kind": "business_fact",
+                        "fact_status": "approved",
+                        "answer_mode": "direct_answer",
+                    },
+                    "source_metadata": {"item_key": "fact.ch.shipping-sla"},
+                }
+            ],
+            "grounding_would_apply": True,
+            "grounding_source": {"item_key": "fact.ch.shipping-sla"},
+        }
+    }
+
+
 def _request() -> ProviderRequest:
     return ProviderRequest(
         request_id="req-e2e",
@@ -49,6 +75,13 @@ def _request() -> ProviderRequest:
         output_contract="speedaf_webchat_fast_reply_v1",
         timeout_ms=10000,
     )
+
+
+def _shipping_sla_request(answer: str) -> ProviderRequest:
+    req = _request()
+    req.body = "瑞士海运时效是多少？"
+    req.metadata = _approved_shipping_sla_context(answer)
+    return req
 
 
 def _db(rule: dict):
@@ -195,3 +228,41 @@ async def test_audit_and_result_do_not_expose_raw_oauth_tokens_e2e(monkeypatch):
     assert "raw-refresh-token" not in rendered
     assert "access_token" not in rendered
     assert "refresh_token" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_router_accepts_grounded_business_sla_status_language(monkeypatch):
+    import app.services.provider_runtime as provider_runtime_module
+
+    monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
+    answer = "瑞士海运清关时效为 15 天。"
+    codex = E2EAdapter("codex_app_server", _success("codex_app_server", reply=answer))
+    ProviderRegistry.register("codex_app_server", lambda db: codex)
+    db = _db(_rule(canary_percent=100))
+
+    result = await ProviderRuntimeRouter(db).route(_shipping_sla_request(answer))
+
+    assert result.ok is True
+    assert result.structured_output["customer_reply"] == answer
+    assert codex.calls == 1
+    assert not any(row.get("error_code") == "parse_reject" for row in db.audit_rows)
+    assert not any(row.get("error_code") == "all_providers_failed" for row in db.audit_rows)
+
+
+@pytest.mark.asyncio
+async def test_router_rejects_live_tracking_status_without_evidence_even_with_kb(monkeypatch):
+    import app.services.provider_runtime as provider_runtime_module
+
+    monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
+    answer = "瑞士海运清关时效为 15 天。"
+    codex = E2EAdapter("codex_app_server", _success("codex_app_server", reply="你的包裹正在运输中。"))
+    ProviderRegistry.register("codex_app_server", lambda db: codex)
+    db = _db({**_rule(canary_percent=100), "fallback_providers": []})
+
+    result = await ProviderRuntimeRouter(db).route(_shipping_sla_request(answer))
+
+    assert result.ok is False
+    assert result.error_code == "all_providers_failed"
+    parse_rejects = [row for row in db.audit_rows if row.get("error_code") == "parse_reject"]
+    assert parse_rejects
+    assert "trusted tracking evidence" in parse_rejects[0]["safe_summary"]

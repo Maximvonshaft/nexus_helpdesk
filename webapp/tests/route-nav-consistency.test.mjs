@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 const root = resolve(process.cwd())
 const router = readFileSync(resolve(root, 'src/router.tsx'), 'utf8')
 const appShell = readFileSync(resolve(root, 'src/layouts/AppShell.tsx'), 'utf8')
+const rbac = readFileSync(resolve(root, 'src/lib/rbac.ts'), 'utf8')
 
 function staticNavTargets(source) {
   return [...source.matchAll(/\{\s*to:\s*'([^']+)'/g)].map((match) => match[1])
@@ -24,7 +25,8 @@ test('provider credentials nav route is registered in router', () => {
 test('internal webcall routes are intentionally classified', () => {
   assert.match(router, /Internal operator console for human WebCall handling/)
   assert.match(router, /Internal ops-only AI sandbox/)
-  assert.match(appShell, /to: '\/webcall-ai-demo'[\s\S]*permission: 'ops'/)
+  assert.match(appShell, /to: '\/webcall-ai-demo'[\s\S]*access: routeAccess\['\/webcall-ai-demo'\]/)
+  assert.match(rbac, /'\/webcall-ai-demo': \{ allOf: \[CAPABILITIES\.runtimeManage\] \}/)
   assert.doesNotMatch(appShell, /to: '\/webchat-voice'/)
 })
 

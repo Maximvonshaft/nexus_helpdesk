@@ -4,19 +4,19 @@ import { useNavigate } from '@tanstack/react-router'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Field'
 import { useSession } from '@/hooks/useAuth'
-import { canEditBulletins, canManageChannels, canViewOps } from '@/lib/access'
+import { CAPABILITIES, canAccess, routeAccess } from '@/lib/rbac'
 
 const actions = [
   { id: 'overview', label: '查看今日总览', keywords: '首页 总览 今日 优先', to: '/' },
   { id: 'workspace', label: '处理工单 / 客户回复', keywords: '工单 回复 客户 闭环', to: '/workspace' },
   { id: 'webchat', label: '打开 WebChat 收件箱', keywords: 'webchat 网站聊天 收件箱 客户来信', to: '/webchat' },
-  { id: 'runtime', label: '进入运行恢复 / dead 重排', keywords: 'runtime 运行恢复 dead requeue 重排 队列', to: '/runtime', permission: 'ops' },
-  { id: 'accounts', label: '检查发送线路', keywords: '发送线路 渠道 账号 outbound', to: '/accounts', permission: 'channels' },
+  { id: 'runtime', label: '进入运行恢复 / dead 重排', keywords: 'runtime 运行恢复 dead requeue 重排 队列', to: '/runtime', access: routeAccess['/runtime'] },
+  { id: 'accounts', label: '检查发送线路', keywords: '发送线路 渠道 账号 outbound', to: '/accounts', access: routeAccess['/accounts'] },
   { id: 'bulletins', label: '查看公告口径', keywords: '公告 口径 通知', to: '/bulletins' },
   { id: 'refresh', label: '刷新全部数据', keywords: '刷新 reload invalidate', action: 'refresh' },
-  { id: 'runtime-refresh', label: '刷新运行状态', keywords: '刷新 runtime 运行 状态', action: 'runtime-refresh', permission: 'ops' },
-  { id: 'new-bulletin', label: '新建公告', keywords: '公告 新建 口径', to: '/bulletins', permission: 'bulletinsManage' },
-  { id: 'new-account', label: '新建渠道账号', keywords: '渠道 账号 新建', to: '/accounts', permission: 'channels' },
+  { id: 'runtime-refresh', label: '刷新运行状态', keywords: '刷新 runtime 运行 状态', action: 'runtime-refresh', access: routeAccess['/runtime'] },
+  { id: 'new-bulletin', label: '新建公告', keywords: '公告 新建 口径', to: '/bulletins', access: { allOf: [CAPABILITIES.bulletinManage] } },
+  { id: 'new-account', label: '新建渠道账号', keywords: '渠道 账号 新建', to: '/accounts', access: routeAccess['/accounts'] },
 ]
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -25,9 +25,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const queryClient = useQueryClient()
   const session = useSession()
   const visibleActions = useMemo(() => actions.filter((item) => {
-    if (item.permission === 'ops') return canViewOps(session.data)
-    if (item.permission === 'channels') return canManageChannels(session.data)
-    if (item.permission === 'bulletinsManage') return canEditBulletins(session.data)
+    if ('access' in item && item.access) return canAccess(session.data, item.access)
     return true
   }), [session.data])
   const normalizedQuery = query.trim().toLowerCase()

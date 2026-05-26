@@ -19,8 +19,18 @@ import { GuidedWorkflow } from '@/components/ui/GuidedWorkflow'
 import { TechnicalDetails } from '@/components/ui/TechnicalDetails'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
+import { useSession } from '@/hooks/useAuth'
 import { CustomerReplyPanel } from '@/components/operator/CustomerReplyPanel'
 import { formatDurationSeconds, voiceCallLabels } from '@/lib/uxCopy'
+import {
+  canAssignTickets,
+  canChangeTicketStatus,
+  canCloseTickets,
+  canSendOutbound,
+  canUpdateTicketCore,
+  canWriteAiIntake,
+  canWriteInternalNote,
+} from '@/lib/access'
 
 function timelineTitle(item: Record<string, unknown>) {
   const sourceType = String(item.source_type || '')
@@ -120,6 +130,7 @@ function SyncCountdown({ onRefresh }: { onRefresh: () => void }) {
 
 function WorkspacePage() {
   const client = useQueryClient()
+  const session = useSession()
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('')
   const [market, setMarket] = useState('')
@@ -212,15 +223,17 @@ function WorkspacePage() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!selectedId) return
-      const payload: Record<string, unknown> = {
-        required_action: form.required_action,
-        missing_fields: form.missing_fields,
-        customer_update: form.customer_update,
-        resolution_summary: form.resolution_summary,
+      const payload: Record<string, unknown> = {}
+      if (canEditCore) {
+        payload.required_action = form.required_action
+        payload.missing_fields = form.missing_fields
+        payload.customer_update = form.customer_update
+        payload.resolution_summary = form.resolution_summary
       }
-      if (form.status && form.status !== detail.data?.status) payload.status = form.status
-      if (form.assignee_id) payload.assignee_id = Number(form.assignee_id)
-      if (form.human_note.trim()) payload.human_note = form.human_note.trim()
+      if (canChangeStatus && form.status && form.status !== detail.data?.status) payload.status = form.status
+      if (canAssign && form.assignee_id) payload.assignee_id = Number(form.assignee_id)
+      if (canWriteNote && form.human_note.trim()) payload.human_note = form.human_note.trim()
+      if (!Object.keys(payload).length) throw new Error('当前账号没有可保存的处理动作。请联系主管开通对应 capability。')
       return api.workflowUpdate(selectedId, payload)
     },
     onSuccess: async (updated) => {
@@ -236,6 +249,7 @@ function WorkspacePage() {
   const aiMutation = useMutation({
     mutationFn: async () => {
       if (!selectedId) return
+      if (!canAiIntake) throw new Error('当前账号缺少 ai_intake.write，无法保存智能提炼。')
       return api.aiIntake(selectedId, {
         ai_summary: form.ai_summary,
         case_type: form.ai_case_type,
@@ -257,8 +271,21 @@ function WorkspacePage() {
   const timelineItems = timeline.data?.items ?? []
   const users = meta.data?.users ?? []
   const statuses = meta.data?.statuses ?? []
+  const canAssign = canAssignTickets(session.data)
+  const canEditCore = canUpdateTicketCore(session.data)
+  const canChangeStatus = canChangeTicketStatus(session.data)
+  const canClose = canCloseTickets(session.data)
+  const canWriteNote = canWriteInternalNote(session.data)
+  const canReply = canSendOutbound(session.data)
+  const canAiIntake = canWriteAiIntake(session.data)
+  const canMutateWorkflow = canAssign || canEditCore || canChangeStatus || canWriteNote
   const caseCount = cases.data?.length ?? 0
   const marketOptions = [...new Set((cases.data ?? []).map((item) => item.market_code || item.country_code).filter(Boolean) as string[])]
+  const editableStatuses = useMemo(() => (
+    canChangeStatus
+      ? statuses.filter((s) => canClose || !['closed', 'canceled', 'cancelled', 'escalated'].includes(String(s)))
+      : []
+  ), [canChangeStatus, canClose, statuses])
 
   const queueCards = useMemo(() => (cases.data ?? []).map((item) => (
     <button className={`queue-card ${selectedId === item.id ? 'selected' : ''}`} key={item.id} onClick={() => handleSelectCase(item.id)}>
@@ -501,71 +528,86 @@ function WorkspacePage() {
 
         <div className="stack">
           <Card>
-            <CardHeader title="处理动作" subtitle="客服常用动作集中在这里：更新状态、补充说明、保存客户更新。" />
+            <CardHeader title="处理动作" subtitle={canMutateWorkflow ? '仅展示当前账号 capability 允许的字段和动作。' : '当前账号是只读审计视图，不渲染任何 mutation 控件。'} />
             <CardBody>
               {detail.isLoading && !activeCase ? <Skeleton lines={10} /> : null}
               {activeCase ? (
                 <div className="stack">
                   {saveMutation.isError ? <ErrorSummary errors={[saveMutation.error?.message || '保存处理结果失败，请检查网络和必填内容后重试。']} /> : null}
-                  <Field label="工单状态" required>
-                    <Select value={form.status} onChange={(e) => setForm((s) => ({ ...s, status: e.target.value }))}>
-                      {statuses.map((s) => <option key={s} value={s}>{labelize(s)}</option>)}
-                    </Select>
-                  </Field>
+                  {!canMutateWorkflow ? <EmptyState title="只读审计模式" description="当前账号只能查看工单、证据、附件和时间线。" reason="保存、回复、分配、状态变更和 AI intake 均不会显示。" /> : null}
+                  {canChangeStatus ? (
+                    <Field label="工单状态" required>
+                      <Select value={form.status} onChange={(e) => setForm((s) => ({ ...s, status: e.target.value }))}>
+                        {editableStatuses.map((s) => <option key={s} value={s}>{labelize(s)}</option>)}
+                      </Select>
+                    </Field>
+                  ) : null}
 
-                  <Field label="分配给">
-                    <Select value={form.assignee_id} onChange={(e) => setForm((s) => ({ ...s, assignee_id: e.target.value }))}>
-                      <option value="">保持当前分配</option>
-                      {users.map((u) => <option key={u.id} value={u.id}>{u.display_name}</option>)}
-                    </Select>
-                  </Field>
+                  {canAssign ? (
+                    <Field label="分配给">
+                      <Select value={form.assignee_id} onChange={(e) => setForm((s) => ({ ...s, assignee_id: e.target.value }))}>
+                        <option value="">保持当前分配</option>
+                        {users.map((u) => <option key={u.id} value={u.id}>{u.display_name}</option>)}
+                      </Select>
+                    </Field>
+                  ) : null}
 
-                  <Field label="下一步动作" hint="例如：联系网点、催件、核实客户资料。" example="已联系目的国网点核实派送状态，预计今天内回传结果。">
-                    <Textarea value={form.required_action} onChange={(e) => setForm((s) => ({ ...s, required_action: e.target.value }))} />
-                  </Field>
-                  <Field label="待补信息" hint="例如：缺运单照片、缺清关资料、缺客户电话。">
-                    <Textarea value={form.missing_fields} onChange={(e) => setForm((s) => ({ ...s, missing_fields: e.target.value }))} />
-                  </Field>
-                  <Field label="给客户的更新说明" description="这里写客户能直接看懂的进展，不放内部编号或系统错误。">
-                    <Textarea value={form.customer_update} onChange={(e) => setForm((s) => ({ ...s, customer_update: e.target.value }))} />
-                  </Field>
-                  <Field label="解决结果摘要">
-                    <Textarea value={form.resolution_summary} onChange={(e) => setForm((s) => ({ ...s, resolution_summary: e.target.value }))} />
-                  </Field>
-                  <Field label="内部备注">
-                    <Textarea value={form.human_note} onChange={(e) => setForm((s) => ({ ...s, human_note: e.target.value }))} />
-                  </Field>
+                  {canEditCore ? (
+                    <>
+                      <Field label="下一步动作" hint="例如：联系网点、催件、核实客户资料。" example="已联系目的国网点核实派送状态，预计今天内回传结果。">
+                        <Textarea value={form.required_action} onChange={(e) => setForm((s) => ({ ...s, required_action: e.target.value }))} />
+                      </Field>
+                      <Field label="待补信息" hint="例如：缺运单照片、缺清关资料、缺客户电话。">
+                        <Textarea value={form.missing_fields} onChange={(e) => setForm((s) => ({ ...s, missing_fields: e.target.value }))} />
+                      </Field>
+                      <Field label="给客户的更新说明" description="这里写客户能直接看懂的进展，不放内部编号或系统错误。">
+                        <Textarea value={form.customer_update} onChange={(e) => setForm((s) => ({ ...s, customer_update: e.target.value }))} />
+                      </Field>
+                      <Field label="解决结果摘要">
+                        <Textarea value={form.resolution_summary} onChange={(e) => setForm((s) => ({ ...s, resolution_summary: e.target.value }))} />
+                      </Field>
+                    </>
+                  ) : null}
+                  {canWriteNote ? (
+                    <Field label="内部备注">
+                      <Textarea value={form.human_note} onChange={(e) => setForm((s) => ({ ...s, human_note: e.target.value }))} />
+                    </Field>
+                  ) : null}
 
-                  <div className="button-row">
-                    <Button variant="primary" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
-                      {saveMutation.isPending ? '保存中…' : '保存处理结果'}
-                    </Button>
-                  </div>
+                  {canMutateWorkflow ? (
+                    <div className="button-row">
+                      <Button variant="primary" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+                        {saveMutation.isPending ? '保存中…' : '保存处理结果'}
+                      </Button>
+                    </div>
+                  ) : null}
 
-                  <CustomerReplyPanel activeCase={activeCase} onToast={setToast} />
+                  {canReply ? <CustomerReplyPanel activeCase={activeCase} onToast={setToast} /> : null}
 
-                  <Card className="soft">
-                    <CardHeader title="智能提炼" subtitle="把客户消息沉淀成结构化摘要，方便下一位客服快速接手。" />
-                    <CardBody>
-                      <div className="stack">
-                        <Field label="智能摘要">
-                          <Textarea value={form.ai_summary} onChange={(e) => setForm((s) => ({ ...s, ai_summary: e.target.value }))} />
-                        </Field>
-                        <Field label="工单类型">
-                          <Input value={form.ai_case_type} onChange={(e) => setForm((s) => ({ ...s, ai_case_type: e.target.value }))} placeholder="例如：延误、清关、签收异常" />
-                        </Field>
-                        <Field label="建议动作">
-                          <Textarea value={form.ai_required_action} onChange={(e) => setForm((s) => ({ ...s, ai_required_action: e.target.value }))} />
-                        </Field>
-                        <Field label="补充上下文">
-                          <Textarea value={form.ai_missing_fields} onChange={(e) => setForm((s) => ({ ...s, ai_missing_fields: e.target.value }))} />
-                        </Field>
-                        <Button variant="secondary" onClick={() => aiMutation.mutate()} disabled={aiMutation.isPending}>
-                          {aiMutation.isPending ? '保存中…' : '保存智能提炼'}
-                        </Button>
-                      </div>
-                    </CardBody>
-                  </Card>
+                  {canAiIntake ? (
+                    <Card className="soft">
+                      <CardHeader title="智能提炼" subtitle="把客户消息沉淀成结构化摘要，方便下一位客服快速接手。" />
+                      <CardBody>
+                        <div className="stack">
+                          <Field label="智能摘要">
+                            <Textarea value={form.ai_summary} onChange={(e) => setForm((s) => ({ ...s, ai_summary: e.target.value }))} />
+                          </Field>
+                          <Field label="工单类型">
+                            <Input value={form.ai_case_type} onChange={(e) => setForm((s) => ({ ...s, ai_case_type: e.target.value }))} placeholder="例如：延误、清关、签收异常" />
+                          </Field>
+                          <Field label="建议动作">
+                            <Textarea value={form.ai_required_action} onChange={(e) => setForm((s) => ({ ...s, ai_required_action: e.target.value }))} />
+                          </Field>
+                          <Field label="补充上下文">
+                            <Textarea value={form.ai_missing_fields} onChange={(e) => setForm((s) => ({ ...s, ai_missing_fields: e.target.value }))} />
+                          </Field>
+                          <Button variant="secondary" onClick={() => aiMutation.mutate()} disabled={aiMutation.isPending}>
+                            {aiMutation.isPending ? '保存中…' : '保存智能提炼'}
+                          </Button>
+                        </div>
+                      </CardBody>
+                    </Card>
+                  ) : null}
                 </div>
               ) : (
                 <EmptyState title="请选择工单后再处理" description="处理动作需要明确绑定到一条工单，避免把更新保存到错误对象。" />

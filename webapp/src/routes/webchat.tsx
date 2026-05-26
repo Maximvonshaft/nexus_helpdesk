@@ -17,13 +17,16 @@ import { Field, Textarea } from '@/components/ui/Field'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Toast } from '@/components/ui/Toast'
+import { useSession } from '@/hooks/useAuth'
+import { canViewWebcallVoiceQueue, canViewWebchatDebug } from '@/lib/access'
 
 function isCardPayload(payload: WebchatMessage['payload_json']): payload is WebchatCardPayload {
   return Boolean(payload && typeof payload === 'object' && 'card_type' in payload && 'actions' in payload)
 }
 
-function PayloadBlock({ payload }: { payload: unknown }) {
+function PayloadBlock({ payload, allowDebug }: { payload: unknown; allowDebug: boolean }) {
   const [open, setOpen] = useState(false)
+  if (!allowDebug) return null
   if (!payload || typeof payload !== 'object') return null
   return (
     <div className="stack compact">
@@ -53,7 +56,7 @@ function voiceEvidenceValue(payload: Record<string, unknown> | null | undefined,
   return sanitizeDisplayText(String(value))
 }
 
-function MessageCard({ msg }: { msg: WebchatMessage }) {
+function MessageCard({ msg, allowDebug }: { msg: WebchatMessage; allowDebug: boolean }) {
   const messageType = msg.message_type || 'text'
   const cardPayload = isCardPayload(msg.payload_json) ? msg.payload_json : null
   if (messageType === 'voice_call') {
@@ -95,7 +98,7 @@ function MessageCard({ msg }: { msg: WebchatMessage }) {
             <Badge tone="success">{sanitizeDisplayText(msg.action_status || 'pending')}</Badge>
             {actions.map((action) => <Badge key={action.id}>{sanitizeDisplayText(action.label || action.id)}</Badge>)}
           </div>
-          <PayloadBlock payload={msg.payload_json} />
+          <PayloadBlock payload={msg.payload_json} allowDebug={allowDebug} />
         </div>
       </div>
     )
@@ -108,7 +111,7 @@ function MessageCard({ msg }: { msg: WebchatMessage }) {
           <span>{formatDateTime(msg.created_at)}</span>
         </div>
         <div>{sanitizeDisplayText(msg.body_text || msg.body)}</div>
-        <PayloadBlock payload={msg.payload_json} />
+        <PayloadBlock payload={msg.payload_json} allowDebug={allowDebug} />
       </div>
     )
   }
@@ -130,6 +133,7 @@ function backoffMs(failures: number, baseMs: number, maxMs: number) {
 
 function WebchatInboxPage() {
   const client = useQueryClient()
+  const session = useSession()
   const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null)
   const [lastEventId, setLastEventId] = useState(0)
   const [reply, setReply] = useState('')
@@ -156,9 +160,11 @@ function WebchatInboxPage() {
   const incomingVoiceSessions = useQuery({
     queryKey: ['webchatVoiceIncomingSessions', 'webchat-integrated-entry'],
     queryFn: ({ signal }) => webchatVoiceApi.incomingSessions({ status: 'incoming', limit: 50 }, { signal }),
+    enabled: canViewWebcallVoiceQueue(session.data),
     refetchInterval: 4000,
     retry: false,
   })
+  const allowDebug = canViewWebchatDebug(session.data)
 
   useEffect(() => {
     if (conversations.isSuccess) setConversationPollFailures(0)
@@ -269,13 +275,13 @@ function WebchatInboxPage() {
         actions={<Button variant="secondary" onClick={() => client.invalidateQueries({ queryKey: ['webchatConversations'] })}>刷新</Button>}
       />
 
-      <Card className="soft">
+      {allowDebug ? <Card className="soft">
         <CardHeader title="Speedaf Webchat 嵌入代码" subtitle="visitor 端无需登录；admin 后台需要登录。生产环境请替换为正式域名，并配置 WEBCHAT_ALLOWED_ORIGINS。" />
         <CardBody>
           <pre className="code-block"><code>{snippet}</code></pre>
           <div className="section-subtitle">Realtime-lite 使用 after_id events JSON long-poll；如事件接口不可用，仍保留 7s/10s polling fallback。连续失败时自动 backoff，成功后恢复。</div>
         </CardBody>
-      </Card>
+      </Card> : null}
 
       <div className="page-grid workspace">
         <Card>
@@ -329,13 +335,13 @@ function WebchatInboxPage() {
                     <div className="kv"><label>来源网站</label><div>{sanitizeDisplayText(selectedConversation.origin)}</div></div>
                     <div className="kv"><label>页面</label><div>{sanitizeDisplayText(selectedConversation.page_url)}</div></div>
                     <div className="kv"><label>当前状态</label><div>{sanitizeDisplayText(threadData?.conversation_state || selectedConversation.status)}</div></div>
-                    <div className="kv"><label>AI Runtime</label><div><AIStatusBadge status={threadData?.ai_status || selectedConversation.ai_status} pending={threadData?.ai_pending || selectedConversation.ai_pending} turnId={threadData?.ai_turn_id || selectedConversation.ai_turn_id} /></div></div>
-                    <div className="kv"><label>Realtime-lite</label><div>{events.isFetching ? 'polling events…' : `after_id ${lastEventId}`}</div></div>
+                    {allowDebug ? <div className="kv"><label>AI Runtime</label><div><AIStatusBadge status={threadData?.ai_status || selectedConversation.ai_status} pending={threadData?.ai_pending || selectedConversation.ai_pending} turnId={threadData?.ai_turn_id || selectedConversation.ai_turn_id} /></div></div> : null}
+                    {allowDebug ? <div className="kv"><label>Realtime-lite</label><div>{events.isFetching ? 'polling events…' : `after_id ${lastEventId}`}</div></div> : null}
                     <div className="kv"><label>Required action</label><div>{sanitizeDisplayText(threadData?.required_action || 'None')}</div></div>
                   </div>
                   <div className="timeline">
-                    {(threadData?.messages ?? []).map((msg) => <MessageCard key={msg.id} msg={msg} />)}
-                    {threadData?.actions?.length ? <div className="message" data-role="agent"><div className="message-head"><strong>Action audit</strong><span>{threadData.actions.length} actions</span></div><PayloadBlock payload={threadData.actions} /></div> : null}
+                    {(threadData?.messages ?? []).map((msg) => <MessageCard key={msg.id} msg={msg} allowDebug={allowDebug} />)}
+                    {allowDebug && threadData?.actions?.length ? <div className="message" data-role="agent"><div className="message-head"><strong>Action audit</strong><span>{threadData.actions.length} actions</span></div><PayloadBlock payload={threadData.actions} allowDebug={allowDebug} /></div> : null}
                     {threadData && !(threadData.messages ?? []).length ? <EmptyState text="该会话暂无消息。" /> : null}
                   </div>
                 </div>

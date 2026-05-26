@@ -19,7 +19,7 @@ from ..models import Ticket, TicketEvent
 from ..settings import get_settings
 from .deps import get_current_user
 from ..services.admin_action_rate_limit import enforce_admin_action_rate_limit
-from ..services.permissions import ensure_ticket_visible, resolve_capabilities
+from ..services.permissions import CAP_SPEEDAF_CANCEL_WRITE, ensure_ticket_visible, resolve_capabilities
 from ..services.speedaf.action_service import SpeedafActionDisabled, SpeedafActionService, _enabled as speedaf_action_enabled
 from ..services.speedaf.adapter import SpeedafCoreAdapter
 from ..services.speedaf.redactor import safe_caller_payload, safe_waybill_payload
@@ -35,7 +35,6 @@ from ..utils.time import utc_now
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets", "speedaf"])
 
-CAP_SPEEDAF_CANCEL_WRITE = "tool:speedaf.order.cancel:write"
 CANCEL_PREVIEW_ACTION_KEY = "speedaf.cancel.preview"
 CANCEL_CONFIRM_ACTION_KEY = "speedaf.cancel.confirm"
 CANCEL_TOKEN_AUDIENCE = "speedaf-cancel"

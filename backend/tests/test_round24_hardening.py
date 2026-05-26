@@ -41,13 +41,13 @@ from app.models import (  # noqa: E402
     User,
     UserCapabilityOverride,
 )
-from app.schemas import AIIntakeCreate, CommentCreate, LiteAIIntakeRequest, LiteAssignRequest, TicketCreate  # noqa: E402
+from app.schemas import AIIntakeCreate, CommentCreate, LiteAIIntakeRequest, LiteAssignRequest, LiteWorkflowUpdateRequest, TicketCreate  # noqa: E402
 from app.api import auth as auth_api  # noqa: E402
 from app.api import integration as integration_api  # noqa: E402
 from app.api import lookups as lookups_api  # noqa: E402
 from app.api import tickets as tickets_api  # noqa: E402
 from app.services.integration_auth import authenticate_integration_client  # noqa: E402
-from app.services.lite_service import assign_lite_case, get_lite_case, save_ai_intake_lite  # noqa: E402
+from app.services.lite_service import assign_lite_case, get_lite_case, save_ai_intake_lite, workflow_update_lite_case  # noqa: E402
 from app.services.ticket_service import add_ai_intake, add_comment, create_ticket  # noqa: E402
 from app.settings import Settings  # noqa: E402
 from app.utils import client_ip as client_ip_utils  # noqa: E402
@@ -238,6 +238,46 @@ def test_capability_override_is_enforced_for_lite_assign(db_session):
     assert case.assigned_to == assignee.display_name
 
 
+def test_auditor_cannot_mutate_lite_workflow_core_fields(db_session):
+    team = make_team(db_session)
+    lead = make_user(db_session, 'lead-lite-core', UserRole.lead, team)
+    auditor = make_user(db_session, 'auditor-lite-core', UserRole.auditor, team)
+    ticket = make_ticket(db_session, lead, team=team)
+
+    with pytest.raises(HTTPException) as exc:
+        workflow_update_lite_case(
+            db_session,
+            ticket.id,
+            LiteWorkflowUpdateRequest(required_action='Call carrier'),
+            auditor,
+        )
+
+    assert exc.value.status_code == 403
+    db_session.rollback()
+    db_session.refresh(ticket)
+    assert ticket.required_action is None
+
+
+def test_auditor_cannot_write_lite_workflow_internal_note(db_session):
+    team = make_team(db_session)
+    lead = make_user(db_session, 'lead-lite-note', UserRole.lead, team)
+    auditor = make_user(db_session, 'auditor-lite-note', UserRole.auditor, team)
+    ticket = make_ticket(db_session, lead, team=team)
+
+    with pytest.raises(HTTPException) as exc:
+        workflow_update_lite_case(
+            db_session,
+            ticket.id,
+            LiteWorkflowUpdateRequest(human_note='Review-only users must not write notes'),
+            auditor,
+        )
+
+    assert exc.value.status_code == 403
+    db_session.rollback()
+    db_session.refresh(ticket)
+    assert ticket.last_human_update is None
+
+
 def test_lookups_are_team_scoped_for_agents(db_session):
     team1 = make_team(db_session, 'Team A')
     team2 = make_team(db_session, 'Team B')
@@ -264,6 +304,29 @@ def test_settings_reject_placeholder_secret_in_production(monkeypatch):
     monkeypatch.setenv('ALLOW_DEV_AUTH', 'false')
     monkeypatch.setenv('ALLOW_LEGACY_INTEGRATION_API_KEY', 'false')
     with pytest.raises(RuntimeError):
+        Settings()
+
+
+def test_settings_rejects_legacy_frontend_fallback_in_production(monkeypatch):
+    monkeypatch.setenv('APP_ENV', 'production')
+    monkeypatch.setenv('SECRET_KEY', 'super-strong-secret-value')
+    monkeypatch.setenv('DATABASE_URL', 'postgresql://user:pass@db/app')
+    monkeypatch.setenv('ALLOWED_ORIGINS', 'https://app.example.com')
+    monkeypatch.setenv('AUTO_INIT_DB', 'false')
+    monkeypatch.setenv('SEED_DEMO_DATA', 'false')
+    monkeypatch.setenv('ALLOW_DEV_AUTH', 'false')
+    monkeypatch.setenv('ALLOW_LEGACY_INTEGRATION_API_KEY', 'false')
+
+    real_exists = Path.exists
+
+    def fake_exists(path):
+        if path.name == 'index.html' and path.parent.name == 'frontend_dist':
+            return False
+        return real_exists(path)
+
+    monkeypatch.setattr(Path, 'exists', fake_exists)
+
+    with pytest.raises(RuntimeError, match='refusing legacy frontend fallback'):
         Settings()
 
 

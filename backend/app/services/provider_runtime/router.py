@@ -125,6 +125,7 @@ class ProviderRuntimeRouter:
                     request.tracking_fact_evidence_present,
                     (request.metadata or {}).get("persona_context"),
                     request.body,
+                    (request.metadata or {}).get("knowledge_context"),
                 )
                 result.structured_output = parsed
                 self._write_audit(request, "generate", "ok", provider_name, result.elapsed_ms, result.raw_payload_safe_summary)

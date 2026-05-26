@@ -9,6 +9,15 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { useSession } from '@/hooks/useAuth'
+import {
+  canAcceptWebcallVoice,
+  canEndWebcallVoice,
+  canReadWebcallVoice,
+  canRejectWebcallVoice,
+  canViewWebcallVoiceQueue,
+  canViewWebchatDebug,
+} from '@/lib/access'
 
 const ACTIVE_STATUSES = new Set(['created', 'ringing', 'accepted', 'active'])
 const REJECT_READY_STATUSES = new Set(['created', 'ringing'])
@@ -103,7 +112,7 @@ function readableAcceptError(detail: string) {
 function safeErrorMessage(err: unknown) {
   if (err instanceof ApiError) {
     if (err.status === 409) return readableAcceptError(err.message)
-    return 'WebCall request failed. Please refresh and try again.'
+    return err.message
   }
   if (err instanceof Error) {
     if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') return 'Microphone permission was denied. Allow microphone access and accept the WebCall again.'
@@ -122,6 +131,7 @@ function DetailField({ label, value }: { label: string; value?: string | number 
 
 export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorLabel, onActivity, onSelectTicket }: AgentWebCallPanelProps) {
   const client = useQueryClient()
+  const session = useSession()
   const [callState, setCallState] = useState<AgentCallState>('idle')
   const [message, setMessage] = useState('Waiting for an incoming WebCall on this ticket.')
   const [muted, setMuted] = useState(false)
@@ -130,10 +140,17 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
   const roomRef = useRef<Room | null>(null)
   const localAudioRef = useRef<LocalAudioTrack | null>(null)
   const remoteAudioRef = useRef<HTMLDivElement | null>(null)
+  const canReadVoice = canReadWebcallVoice(session.data)
+  const canViewQueue = canViewWebcallVoiceQueue(session.data)
+  const canAcceptVoice = canAcceptWebcallVoice(session.data)
+  const canRejectVoice = canRejectWebcallVoice(session.data)
+  const canEndVoice = canEndWebcallVoice(session.data)
+  const canViewDebug = canViewWebchatDebug(session.data)
 
   const runtimeConfig = useQuery({
     queryKey: ['webchatVoiceRuntimeConfig'],
     queryFn: ({ signal }) => webchatVoiceApi.runtimeConfig({ signal }),
+    enabled: canAcceptVoice,
     refetchInterval: 30000,
     retry: false,
   })
@@ -141,7 +158,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
   const sessions = useQuery({
     queryKey: ['webchatVoiceSessions', ticketId],
     queryFn: ({ signal }) => webchatVoiceApi.listSessions(ticketId as number, { signal }),
-    enabled: !!ticketId,
+    enabled: !!ticketId && canReadVoice,
     refetchInterval: callState === 'connected' ? 8000 : 4000,
     retry: false,
   })
@@ -149,6 +166,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
   const operationalQueue = useQuery({
     queryKey: ['webchatVoiceOperationalQueue', queueTab],
     queryFn: ({ signal }) => webchatVoiceApi.incomingSessions({ status: queueTab, limit: 50 }, { signal }),
+    enabled: canViewQueue,
     refetchInterval: queueTab === 'incoming' ? 4000 : 8000,
     retry: false,
   })
@@ -159,8 +177,9 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
   const hasLiveCall = Boolean(currentSession && !terminal)
   const connected = callState === 'connected'
   const busyAccepting = callState === 'accepting' || callState === 'requesting_mic' || callState === 'connecting'
-  const canAccept = Boolean(ticketId && currentSession && !terminal && !connected && !busyAccepting)
-  const canReject = Boolean(ticketId && currentSession && REJECT_READY_STATUSES.has(String(currentSession.status)) && !connected && !busyAccepting)
+  const canAccept = Boolean(canAcceptVoice && ticketId && currentSession && !terminal && !connected && !busyAccepting)
+  const canReject = Boolean(canRejectVoice && ticketId && currentSession && REJECT_READY_STATUSES.has(String(currentSession.status)) && !connected && !busyAccepting)
+  const canEnd = Boolean(canEndVoice && currentSession && !terminal)
 
   async function cleanupRoom() {
     try {
@@ -322,6 +341,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
       <CardHeader title="Agent WebCall" subtitle="Incoming-call queue for the selected WebChat ticket. Microphone access is requested only after Accept WebCall." />
       <CardBody>
         {!ticketId ? <EmptyState text="Select a WebChat ticket to monitor WebCall sessions." /> : null}
+        {ticketId && !canReadVoice ? <EmptyState title="WebCall 只读受限" description="当前账号缺少 webcall.voice.read，不能查看或操作语音会话。" reason="需要处理 WebCall 时，请联系主管授权。" /> : null}
         {ticketId && sessions.isLoading ? <div className="section-subtitle" data-testid="webcall-loading-state">Loading WebCall sessions...</div> : null}
         {ticketId && sessions.isError ? (
           <div className="message" data-testid="webcall-error-state" data-role="agent">
@@ -330,7 +350,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
           </div>
         ) : null}
         {ticketId && !sessions.isLoading && !sessions.isError && !currentSession ? <EmptyState text="No incoming WebCall sessions for this ticket." /> : null}
-        {!currentSession ? (
+        {!currentSession && canViewQueue ? (
           <div className="stack compact" data-testid="webcall-operational-queue">
             <strong>WebCall Operational Queue</strong>
             <div className="inline-actions" role="tablist" aria-label="WebCall Operational Queue tabs">
@@ -372,43 +392,53 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
             <div className="kv-grid" data-testid="webcall-current-card">
               <DetailField label="Ticket ID" value={ticketId} />
               <DetailField label="Ticket" value={ticketNo} />
-              <DetailField label="Conversation ID" value={conversationId} />
               <DetailField label="Visitor" value={visitorLabel} />
-              <DetailField label="Voice session ID" value={currentSession.voice_session_id} />
-              <DetailField label="Room" value={roomNameFor(currentSession)} />
-              <DetailField label="Provider" value={currentSession.provider} />
               <DetailField label="Status" value={readableStatus(currentSession.status)} />
-              <DetailField label="Accepted by user ID" value={currentSession.accepted_by_user_id} />
-              <DetailField label="Ended by user ID" value={currentSession.ended_by_user_id} />
               <DetailField label="Started" value={formatDateTime(currentSession.started_at || undefined)} />
               <DetailField label="Ringing" value={formatDateTime(currentSession.ringing_at || undefined)} />
               <DetailField label="Accepted" value={formatDateTime(currentSession.accepted_at || undefined)} />
               <DetailField label="Active" value={formatDateTime(currentSession.active_at || undefined)} />
               <DetailField label="Ended" value={formatDateTime(currentSession.ended_at || undefined)} />
-              <DetailField label="Expires" value={formatDateTime(currentSession.expires_at || undefined)} />
-              <DetailField label="LiveKit URL" value={runtimeConfig.data?.livekit_url || (runtimeConfig.isError ? 'runtime config unavailable' : 'loading')} />
               <DetailField label="Ringing duration seconds" value={currentSession.ringing_duration_seconds} />
               <DetailField label="Talk duration seconds" value={currentSession.talk_duration_seconds} />
               <DetailField label="Total duration seconds" value={currentSession.total_duration_seconds} />
               <DetailField label="Recording status" value={currentSession.recording_status} />
               <DetailField label="Transcript status" value={currentSession.transcript_status} />
               <DetailField label="Summary status" value={currentSession.summary_status} />
+              {canViewDebug ? (
+                <>
+                  <DetailField label="Conversation ID" value={conversationId} />
+                  <DetailField label="Voice session ID" value={currentSession.voice_session_id} />
+                  <DetailField label="Room" value={roomNameFor(currentSession)} />
+                  <DetailField label="Provider" value={currentSession.provider} />
+                  <DetailField label="Accepted by user ID" value={currentSession.accepted_by_user_id} />
+                  <DetailField label="Ended by user ID" value={currentSession.ended_by_user_id} />
+                  <DetailField label="Expires" value={formatDateTime(currentSession.expires_at || undefined)} />
+                  <DetailField label="LiveKit URL" value={runtimeConfig.data?.livekit_url || (runtimeConfig.isError ? 'runtime config unavailable' : 'loading')} />
+                </>
+              ) : null}
             </div>
 
-            {runtimeConfig.isError ? <div className="section-subtitle">Runtime config is unavailable. Accept may fail until the page can refresh the LiveKit URL.</div> : null}
+            {canAcceptVoice && runtimeConfig.isError ? <div className="section-subtitle">Runtime config is unavailable. Accept may fail until the page can refresh the LiveKit URL.</div> : null}
             <div role="status" className="section-subtitle">{sanitizeDisplayText(message)}</div>
             <div ref={remoteAudioRef} aria-hidden="true" />
             <div className="inline-actions">
-              <Button variant="primary" disabled={!canAccept} onClick={() => currentSession && acceptMutation.mutate(currentSession)}>
-                {acceptMutation.isPending ? 'Accepting...' : 'Accept WebCall'}
-              </Button>
-              <Button variant="secondary" disabled={!canReject || rejectMutation.isPending} onClick={() => rejectMutation.mutate()}>
-                {rejectMutation.isPending ? 'Rejecting...' : 'Reject WebCall'}
-              </Button>
+              {canAcceptVoice ? (
+                <Button variant="primary" disabled={!canAccept} onClick={() => currentSession && acceptMutation.mutate(currentSession)}>
+                  {acceptMutation.isPending ? 'Accepting...' : 'Accept WebCall'}
+                </Button>
+              ) : null}
+              {canRejectVoice ? (
+                <Button variant="secondary" disabled={!canReject || rejectMutation.isPending} onClick={() => rejectMutation.mutate()}>
+                  {rejectMutation.isPending ? 'Rejecting...' : 'Reject WebCall'}
+                </Button>
+              ) : null}
               <Button variant="secondary" disabled={!connected} onClick={() => void toggleMute()}>{muted ? 'Unmute' : 'Mute'}</Button>
-              <Button variant="secondary" disabled={!currentSession || terminal || endMutation.isPending} onClick={() => endMutation.mutate()}>
-                {endMutation.isPending ? 'Ending...' : 'End WebCall'}
-              </Button>
+              {canEndVoice ? (
+                <Button variant="secondary" disabled={!canEnd || endMutation.isPending} onClick={() => endMutation.mutate()}>
+                  {endMutation.isPending ? 'Ending...' : 'End WebCall'}
+                </Button>
+              ) : null}
               <Button variant="secondary" disabled={sessions.isFetching} onClick={() => void sessions.refetch()}>{sessions.isFetching ? 'Refreshing...' : 'Refresh sessions'}</Button>
             </div>
 
@@ -426,7 +456,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
               ))}
             </div>
 
-            <div className="stack compact" data-testid="webcall-operational-queue">
+            {canViewQueue ? <div className="stack compact" data-testid="webcall-operational-queue">
               <strong>WebCall Operational Queue</strong>
               <div className="inline-actions" role="tablist" aria-label="WebCall Operational Queue tabs">
                 {QUEUE_TABS.map((tab) => (
@@ -453,7 +483,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
                   <div className="queue-card-meta">Ticket {valueOrDash(item.ticket_id)} · Ringing {valueOrDash(formatDateTime(item.ringing_at || undefined))} · Ended {valueOrDash(formatDateTime(item.ended_at || undefined))}</div>
                 </button>
               ))}
-            </div>
+            </div> : null}
           </div>
         ) : null}
       </CardBody>

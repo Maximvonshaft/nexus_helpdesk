@@ -1,6 +1,30 @@
+import json
+
 import pytest
 
 from app.services.provider_runtime.output_contracts import OutputContracts
+
+
+def _approved_direct_answer_context(answer: str) -> dict:
+    return {
+        "hits": [
+            {
+                "item_key": "fact.ch.shipping-sla",
+                "title": "瑞士海运时效",
+                "score": 42.0,
+                "chunk_index": 0,
+                "retrieval_method": "structured_fact_recall+direct_answer_fact",
+                "direct_answer": answer,
+                "answer_mode": "direct_answer",
+                "metadata": {
+                    "knowledge_kind": "business_fact",
+                    "fact_status": "approved",
+                    "answer_mode": "direct_answer",
+                },
+                "source_metadata": {"item_key": "fact.ch.shipping-sla"},
+            }
+        ]
+    }
 
 
 def test_speedaf_webchat_fast_reply_v1_valid():
@@ -51,3 +75,74 @@ def test_tracking_intent_requires_trusted_evidence():
         OutputContracts.validate_and_parse("speedaf_webchat_fast_reply_v1", raw_json, evidence_present=False)
     parsed = OutputContracts.validate_and_parse("speedaf_webchat_fast_reply_v1", raw_json, evidence_present=True)
     assert parsed["tracking_number"] == "ABC123"
+
+
+def test_business_sla_direct_answer_status_words_pass_with_approved_grounding():
+    answer = "瑞士海运清关时效为 15 天。"
+    raw_json = json.dumps(
+        {
+            "customer_reply": answer,
+            "language": "zh",
+            "intent": "other",
+            "tracking_number": None,
+            "handoff_required": False,
+            "ticket_should_create": False,
+        },
+        ensure_ascii=False,
+    )
+
+    parsed = OutputContracts.validate_and_parse(
+        "speedaf_webchat_fast_reply_v1",
+        raw_json,
+        evidence_present=False,
+        request_body="瑞士海运时效是多少？",
+        knowledge_context=_approved_direct_answer_context(answer),
+    )
+
+    assert parsed["customer_reply"] == answer
+
+
+def test_live_parcel_status_still_fails_without_trusted_tracking_evidence():
+    raw_json = json.dumps(
+        {
+            "customer_reply": "你的包裹正在运输中。",
+            "language": "zh",
+            "intent": "other",
+            "tracking_number": None,
+            "handoff_required": False,
+            "ticket_should_create": False,
+        },
+        ensure_ascii=False,
+    )
+
+    with pytest.raises(ValueError, match="Parcel status language requires trusted tracking evidence"):
+        OutputContracts.validate_and_parse(
+            "speedaf_webchat_fast_reply_v1",
+            raw_json,
+            evidence_present=False,
+            request_body="瑞士海运时效是多少？",
+            knowledge_context=_approved_direct_answer_context("瑞士海运清关时效为 15 天。"),
+        )
+
+
+def test_direct_answer_does_not_excuse_extra_live_parcel_status_claim():
+    raw_json = json.dumps(
+        {
+            "customer_reply": "瑞士海运清关时效为 15 天。你的包裹正在运输中。",
+            "language": "zh",
+            "intent": "other",
+            "tracking_number": None,
+            "handoff_required": False,
+            "ticket_should_create": False,
+        },
+        ensure_ascii=False,
+    )
+
+    with pytest.raises(ValueError, match="Parcel status language requires trusted tracking evidence"):
+        OutputContracts.validate_and_parse(
+            "speedaf_webchat_fast_reply_v1",
+            raw_json,
+            evidence_present=False,
+            request_body="瑞士海运时效是多少？",
+            knowledge_context=_approved_direct_answer_context("瑞士海运清关时效为 15 天。"),
+        )

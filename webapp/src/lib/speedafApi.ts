@@ -1,4 +1,5 @@
 import { getToken, normalizeApiBaseUrl } from '@/lib/api'
+import { mapApiErrorMessage } from '@/lib/apiErrorMap'
 import type {
   SpeedafActionResponse,
   SpeedafAddressUpdatePayload,
@@ -25,7 +26,7 @@ async function readErrorMessage(res: Response, fallback: string) {
   try {
     const data = await res.json()
     const detail = data?.detail
-    return typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : JSON.stringify(data)
+    return mapApiErrorMessage(res.status, detail, JSON.stringify(data) || fallback)
   } catch {
     return fallback
   }

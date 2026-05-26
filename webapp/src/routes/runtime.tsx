@@ -9,12 +9,14 @@ import { DataTable } from '@/components/ui/DataTable'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Toast } from '@/components/ui/Toast'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useState, useEffect } from 'react'
 import { useSession } from '@/hooks/useAuth'
 import { canViewOps } from '@/lib/access'
 import type { BackgroundJob } from '@/lib/types'
 
 type RecoveryAction = 'requeue_dead_jobs' | 'requeue_dead_outbound' | 'requeue_job'
+type PendingRecovery = { action: RecoveryAction; message: string; job?: BackgroundJob } | null
 
 function recoveryResultMessage(action: RecoveryAction, result: RuntimeRecoveryResult) {
   if (action === 'requeue_dead_jobs') return `已重排 ${result.requeued ?? 0} 个 dead 后台任务`
@@ -40,6 +42,7 @@ function RuntimePage() {
   const navigate = useNavigate()
   const client = useQueryClient()
   const permitted = canViewOps(session.data)
+  const [pendingRecovery, setPendingRecovery] = useState<PendingRecovery>(null)
   const [runtime, readiness, signoff, jobs, queue, connectivity] = useQueries({
     queries: [
       { queryKey: ['runtimeHealth'], queryFn: api.runtimeHealth, enabled: permitted },
@@ -93,8 +96,7 @@ function RuntimePage() {
   })
 
   function confirmAndRecover(action: RecoveryAction, message: string, job?: BackgroundJob) {
-    if (!window.confirm(message)) return
-    recovery.mutate({ action, job })
+    setPendingRecovery({ action, message, job })
   }
 
   useEffect(() => {
@@ -128,6 +130,21 @@ function RuntimePage() {
 
       <div className="page-grid split-grid"><Card><CardHeader title="消息同步状态" /><CardBody><DataTable columns={['项目', '值']} rows={[['同步游标', sanitizeDisplayText(runtime.data?.sync_cursor)],['当前状态', sanitizeDisplayText(runtime.data?.sync_daemon_status)],['最近心跳', formatDateTime(runtime.data?.sync_daemon_last_seen_at)],['待补同步', String(runtime.data?.stale_link_count ?? '—')],['待执行同步任务', String(runtime.data?.pending_sync_jobs ?? '—')],['失败同步任务', String(runtime.data?.dead_sync_jobs ?? '—')],['待处理附件任务', String(runtime.data?.pending_attachment_jobs ?? '—')]]} /></CardBody></Card><Card><CardHeader title="上线检查清单" /><CardBody><DataTable columns={['检查项', '状态']} rows={Object.entries(signoff.data?.checks ?? {}).map(([key, value]) => [signoffLabel(key), value ? '通过' : '未通过'])} /></CardBody></Card><Card><CardHeader title="OpenClaw 联调检查" subtitle="先确认本地或远端 Gateway 桥接是否真的通，再做消息和附件联调。" /><CardBody><DataTable columns={['项目', '值']} rows={[['部署模式', sanitizeDisplayText(connectivity.data?.deployment_mode)],['消息方式', sanitizeDisplayText(connectivity.data?.transport)],['MCP 命令', sanitizeDisplayText(connectivity.data?.command)],['Gateway 地址', sanitizeDisplayText(connectivity.data?.url)],['桥接已启动', connectivity.data?.bridge_started ? '是' : '否'],['会话列表工具可用', connectivity.data?.conversations_tool_ok ? '是' : '否'],['可见会话数', String(connectivity.data?.conversations_seen ?? '—')],['示例会话键', sanitizeDisplayText(connectivity.data?.sample_session_key)],['Token 鉴权已配置', connectivity.data?.token_auth_configured ? '是' : '否'],['Password 鉴权已配置', connectivity.data?.password_auth_configured ? '是' : '否']]} /></CardBody></Card><Card><CardHeader title="系统配置状态" /><CardBody><DataTable columns={['项目', '值']} rows={[['环境', sanitizeDisplayText(readiness.data?.app_env)],['数据库', sanitizeDisplayText(readiness.data?.database_url_scheme)],['附件存储', sanitizeDisplayText(readiness.data?.storage_backend)],['消息方式', sanitizeDisplayText(readiness.data?.openclaw_transport)],['监控开关', String(readiness.data?.metrics_enabled ?? false)],['同步开关', String(readiness.data?.openclaw_sync_enabled ?? false)]]} /></CardBody></Card><Card><CardHeader title="最近后台任务" /><CardBody><DataTable columns={['任务类型', '状态', '尝试次数', '更新时间', '恢复动作']} rows={jobRows(jobs.data ?? [], (job) => confirmAndRecover('requeue_job', `确认重排 dead 任务 #${job.id}（${job.job_type}）？`, job), recoveryPending)} /></CardBody></Card></div></>}
       {toast ? <Toast message={toast.message} tone={toast.tone} onClose={() => setToast(null)} /> : null}
+      <ConfirmDialog
+        open={pendingRecovery !== null}
+        title="确认执行运行恢复？"
+        description={pendingRecovery?.message || ''}
+        consequence="该动作只会重排 dead 状态对象，不会删除数据；后端会再次校验 runtime.manage、限流并记录审计。"
+        confirmLabel="确认重排"
+        tone="danger"
+        pending={recovery.isPending}
+        onCancel={() => setPendingRecovery(null)}
+        onConfirm={() => {
+          if (!pendingRecovery) return
+          recovery.mutate({ action: pendingRecovery.action, job: pendingRecovery.job })
+          setPendingRecovery(null)
+        }}
+      />
     </AppShell>
   )
 }

@@ -13,20 +13,24 @@ from sqlalchemy.orm import Session
 
 from ..api.deps import get_current_user
 from ..db import get_db
-from ..enums import EventType, UserRole
+from ..enums import EventType
 from ..models import Ticket, TicketEvent
 from ..settings import get_settings
 from ..services.admin_action_rate_limit import enforce_admin_action_rate_limit
 from ..services.background_jobs import enqueue_speedaf_address_update_job, enqueue_speedaf_work_order_create_job
-from ..services.permissions import ensure_ticket_visible, resolve_capabilities
+from ..services.permissions import (
+    CAP_SPEEDAF_ADDRESS_UPDATE_WRITE,
+    CAP_SPEEDAF_WORK_ORDER_WRITE,
+    ensure_can_create_speedaf_work_order,
+    ensure_can_update_speedaf_address,
+    ensure_ticket_visible,
+)
 from ..services.speedaf.redactor import safe_caller_payload, safe_waybill_payload
 from ..services.speedaf.status_map import is_auto_work_order_type_allowed
 from ..utils.time import utc_now
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets", "speedaf"])
 
-CAP_SPEEDAF_WORK_ORDER_WRITE = "tool:speedaf.work_order.create:write"
-CAP_SPEEDAF_ADDRESS_UPDATE_WRITE = "tool:speedaf.order.update_address:write"
 WORK_ORDER_ACTION_KEY = "speedaf.work_order.create"
 ADDRESS_UPDATE_ACTION_KEY = "speedaf.address_update.submit"
 WORK_ORDER_INPUT_DESCRIPTION_MAX_LENGTH = 1000
@@ -83,13 +87,6 @@ def _request_id(request: Request | None) -> str | None:
 
 def _require_feature(name: str, detail: str) -> None:
     if not _enabled(name, False):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
-
-
-def _require_capability_or_admin(user, db: Session, capability: str, detail: str) -> None:
-    if getattr(user, "role", None) == UserRole.admin:
-        return
-    if capability not in resolve_capabilities(user, db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 
@@ -169,7 +166,7 @@ def _reserve_address_update(db: Session, *, dedupe_key: str, ticket_id: int, way
 @router.post("/{ticket_id}/speedaf/work-orders", response_model=SpeedafActionResponse)
 def create_speedaf_work_order(ticket_id: int, payload: SpeedafWorkOrderRequest, request: Request, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     _require_feature("SPEEDAF_WORK_ORDER_CREATE_ENABLED", "speedaf_work_order_create_disabled")
-    _require_capability_or_admin(current_user, db, CAP_SPEEDAF_WORK_ORDER_WRITE, "speedaf_work_order_requires_capability")
+    ensure_can_create_speedaf_work_order(current_user, db)
     enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key=WORK_ORDER_ACTION_KEY, max_requests=get_settings().admin_action_rate_limit_single_max, request_id=_request_id(request))
     _load_visible_ticket(db, ticket_id=ticket_id, user=current_user)
     work_order_type = _clean(payload.workOrderType, limit=32)
@@ -199,7 +196,7 @@ def create_speedaf_work_order(ticket_id: int, payload: SpeedafWorkOrderRequest, 
 @router.post("/{ticket_id}/speedaf/address-update", response_model=SpeedafActionResponse)
 def submit_speedaf_address_update(ticket_id: int, payload: SpeedafAddressUpdateRequest, request: Request, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     _require_feature("SPEEDAF_UPDATE_ADDRESS_ENABLED", "speedaf_update_address_disabled")
-    _require_capability_or_admin(current_user, db, CAP_SPEEDAF_ADDRESS_UPDATE_WRITE, "speedaf_address_update_requires_capability")
+    ensure_can_update_speedaf_address(current_user, db)
     enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key=ADDRESS_UPDATE_ACTION_KEY, max_requests=get_settings().admin_action_rate_limit_batch_max, request_id=_request_id(request))
     _load_visible_ticket(db, ticket_id=ticket_id, user=current_user)
     waybill = _clean(payload.waybillCode, limit=80).upper()

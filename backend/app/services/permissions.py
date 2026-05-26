@@ -28,6 +28,14 @@ CAP_AI_CONFIG_READ = "ai_config.read"
 CAP_AI_CONFIG_MANAGE = "ai_config.manage"
 CAP_RUNTIME_MANAGE = "runtime.manage"
 CAP_MARKET_MANAGE = "market.manage"
+CAP_SPEEDAF_WORK_ORDER_WRITE = "tool:speedaf.work_order.create:write"
+CAP_SPEEDAF_ADDRESS_UPDATE_WRITE = "tool:speedaf.order.update_address:write"
+CAP_SPEEDAF_CANCEL_WRITE = "tool:speedaf.order.cancel:write"
+CAP_WEBCALL_VOICE_READ = "webcall.voice.read"
+CAP_WEBCALL_VOICE_QUEUE_VIEW = "webcall.voice.queue.view"
+CAP_WEBCALL_VOICE_ACCEPT = "webcall.voice.accept"
+CAP_WEBCALL_VOICE_REJECT = "webcall.voice.reject"
+CAP_WEBCALL_VOICE_END = "webcall.voice.end"
 
 ALL_CAPABILITIES = [
     CAP_TICKET_READ,
@@ -52,6 +60,14 @@ ALL_CAPABILITIES = [
     CAP_AI_CONFIG_MANAGE,
     CAP_RUNTIME_MANAGE,
     CAP_MARKET_MANAGE,
+    CAP_SPEEDAF_WORK_ORDER_WRITE,
+    CAP_SPEEDAF_ADDRESS_UPDATE_WRITE,
+    CAP_SPEEDAF_CANCEL_WRITE,
+    CAP_WEBCALL_VOICE_READ,
+    CAP_WEBCALL_VOICE_QUEUE_VIEW,
+    CAP_WEBCALL_VOICE_ACCEPT,
+    CAP_WEBCALL_VOICE_REJECT,
+    CAP_WEBCALL_VOICE_END,
 ]
 
 ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
@@ -218,3 +234,35 @@ def ensure_can_manage_runtime(user, db: Session | None = None):
 
 def ensure_can_manage_markets(user, db: Session | None = None):
     ensure_capability(user, CAP_MARKET_MANAGE, db, message="Not authorized to manage markets")
+
+
+def ensure_can_create_speedaf_work_order(user, db: Session | None = None):
+    ensure_capability(user, CAP_SPEEDAF_WORK_ORDER_WRITE, db, message="speedaf_work_order_requires_capability")
+
+
+def ensure_can_update_speedaf_address(user, db: Session | None = None):
+    ensure_capability(user, CAP_SPEEDAF_ADDRESS_UPDATE_WRITE, db, message="speedaf_address_update_requires_capability")
+
+
+def ensure_can_cancel_speedaf_order(user, db: Session | None = None):
+    ensure_capability(user, CAP_SPEEDAF_CANCEL_WRITE, db, message="speedaf_cancel_requires_capability")
+
+
+def ensure_can_read_webcall_voice(user, db: Session | None = None):
+    ensure_capability(user, CAP_WEBCALL_VOICE_READ, db, message="webcall_voice_read_requires_capability")
+
+
+def ensure_can_view_webcall_voice_queue(user, db: Session | None = None):
+    ensure_capability(user, CAP_WEBCALL_VOICE_QUEUE_VIEW, db, message="webcall_voice_queue_requires_capability")
+
+
+def ensure_can_accept_webcall_voice(user, db: Session | None = None):
+    ensure_capability(user, CAP_WEBCALL_VOICE_ACCEPT, db, message="webcall_voice_accept_requires_capability")
+
+
+def ensure_can_reject_webcall_voice(user, db: Session | None = None):
+    ensure_capability(user, CAP_WEBCALL_VOICE_REJECT, db, message="webcall_voice_reject_requires_capability")
+
+
+def ensure_can_end_webcall_voice(user, db: Session | None = None):
+    ensure_capability(user, CAP_WEBCALL_VOICE_END, db, message="webcall_voice_end_requires_capability")

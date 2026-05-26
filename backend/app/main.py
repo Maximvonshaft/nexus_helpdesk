@@ -110,6 +110,17 @@ def _migration_revision(conn: Connection) -> str | None:
         return None
 
 
+def _frontend_readiness() -> dict[str, object]:
+    active_index = settings.frontend_root / 'index.html'
+    dist_index_exists = settings.frontend_dist_index.exists()
+    active_index_exists = active_index.exists()
+    return {
+        'ok': active_index_exists and (settings.app_env != 'production' or dist_index_exists),
+        'active_root': 'legacy' if settings.frontend_uses_legacy_fallback else 'frontend_dist',
+        'frontend_dist_index': 'present' if dist_index_exists else 'missing',
+    }
+
+
 def _voice_runtime_headers_enabled(path: str) -> bool:
     config = load_webchat_voice_runtime_config()
     return bool(config.enabled and is_webchat_voice_path(path, config))
@@ -174,19 +185,25 @@ def metrics(x_metrics_token: str | None = Header(default=None, alias='X-Metrics-
 @app.get('/readyz')
 def readyz():
     storage_readiness = check_storage_readiness()
+    frontend_readiness = _frontend_readiness()
     try:
         with engine.connect() as conn:
             conn.execute(text('SELECT 1'))
             migration_revision = _migration_revision(conn)
+        ready = storage_readiness.ok and bool(frontend_readiness['ok'])
         payload = {
-            'status': 'ready' if storage_readiness.ok else 'not_ready',
+            'status': 'ready' if ready else 'not_ready',
             'database': 'ok',
             'migration_revision': migration_revision,
             'storage': storage_readiness.as_dict(),
+            'frontend': frontend_readiness,
             **_runtime_identity(),
         }
         if not storage_readiness.ok:
             app_log_event(40, 'readiness_storage_check_failed', storage=storage_readiness.as_dict())
+            return JSONResponse(status_code=503, content=payload)
+        if not frontend_readiness['ok']:
+            app_log_event(40, 'readiness_frontend_check_failed', frontend=frontend_readiness)
             return JSONResponse(status_code=503, content=payload)
         if storage_readiness.warnings:
             app_log_event(30, 'readiness_storage_warning', storage=storage_readiness.as_dict())

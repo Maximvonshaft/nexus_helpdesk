@@ -10,6 +10,10 @@ import { sanitizeDisplayText } from '@/lib/format'
 import { AgentWebCallPanel } from '@/components/webcall/AgentWebCallPanel'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { RequireCapability } from '@/components/security/RequireCapability'
+import { routeAccess } from '@/lib/rbac'
+import { useSession } from '@/hooks/useAuth'
+import { canViewWebcallVoiceQueue } from '@/lib/access'
 
 function formatValue(value?: string | number | null) {
   if (value === null || value === undefined || value === '') return '-'
@@ -28,11 +32,14 @@ function incomingVisitorLabel(item?: WebchatVoiceIncomingSession | null) {
 
 function WebCallAgentConsolePage() {
   const client = useQueryClient()
+  const session = useSession()
+  const permitted = canViewWebcallVoiceQueue(session.data)
   const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null)
 
   const conversations = useQuery({
     queryKey: ['webchatConversations'],
     queryFn: ({ signal }) => api.webchatConversations({ signal }),
+    enabled: permitted,
     refetchInterval: 10000,
     retry: false,
   })
@@ -40,6 +47,7 @@ function WebCallAgentConsolePage() {
   const incomingSessions = useQuery({
     queryKey: ['webchatVoiceIncomingSessions'],
     queryFn: ({ signal }) => webchatVoiceApi.incomingSessions({ status: 'ringing', limit: 50 }, { signal }),
+    enabled: permitted,
     refetchInterval: 4000,
     retry: false,
   })
@@ -69,7 +77,8 @@ function WebCallAgentConsolePage() {
   }
 
   return (
-    <main style={{ padding: 28, display: 'grid', gridTemplateColumns: 'minmax(280px, 420px) 1fr', gap: 20, background: '#f8fafc', minHeight: '100vh' }}>
+    <RequireCapability requirement={routeAccess['/webchat-voice']}>
+      <main style={{ padding: 28, display: 'grid', gridTemplateColumns: 'minmax(280px, 420px) 1fr', gap: 20, background: '#f8fafc', minHeight: '100vh' }}>
       <section style={{ border: '1px solid #e5e7eb', borderRadius: 16, padding: 18, background: '#fff' }}>
         <h1 style={{ marginTop: 0 }}>WebCall Agent Console</h1>
         <p style={{ color: '#475467' }}>Select a WebChat ticket, monitor the operator incoming-call queue, and accept real browser voice calls through LiveKit.</p>
@@ -136,7 +145,8 @@ function WebCallAgentConsolePage() {
           onActivity={() => void refreshAll()}
         />
       </div>
-    </main>
+      </main>
+    </RequireCapability>
   )
 }
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from typing import Any
 
 import jsonschema
@@ -108,6 +109,7 @@ class OutputContracts:
         evidence_present: bool = False,
         persona_context: dict[str, Any] | None = None,
         request_body: Any = None,
+        knowledge_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             parsed = json.loads(raw_output)
@@ -128,7 +130,13 @@ class OutputContracts:
             except jsonschema.exceptions.ValidationError as exc:
                 raise ValueError(f"Schema validation failed: {exc.message}") from exc
 
-        OutputContracts.check_security_rules(raw_output=raw_output, parsed=parsed, evidence_present=evidence_present)
+        OutputContracts.check_security_rules(
+            raw_output=raw_output,
+            parsed=parsed,
+            evidence_present=evidence_present,
+            request_body=request_body,
+            knowledge_context=knowledge_context,
+        )
         return parsed
 
     @staticmethod
@@ -345,7 +353,14 @@ class OutputContracts:
         return cleaned[: _MAX_FAST_REPLY_CHARS - 3].rstrip() + "..."
 
     @staticmethod
-    def check_security_rules(*, raw_output: str, parsed: dict[str, Any], evidence_present: bool = False) -> None:
+    def check_security_rules(
+        *,
+        raw_output: str,
+        parsed: dict[str, Any],
+        evidence_present: bool = False,
+        request_body: Any = None,
+        knowledge_context: dict[str, Any] | None = None,
+    ) -> None:
         lower_raw = raw_output.lower()
         if "```" in raw_output or "~~~" in raw_output:
             raise ValueError("Markdown code blocks are prohibited")
@@ -366,5 +381,98 @@ class OutputContracts:
                 raise ValueError("Tracking intent without a tracking_number is prohibited")
             if not evidence_present:
                 raise ValueError("Tracking status output requires trusted tracking evidence")
-        if not evidence_present and any(word in reply_lower for word in _STATUS_WORDS):
+        if (
+            not evidence_present
+            and any(word in reply_lower for word in _STATUS_WORDS)
+            and not OutputContracts._is_safe_grounded_business_reply(
+                parsed=parsed,
+                reply=reply,
+                request_body=request_body,
+                knowledge_context=knowledge_context,
+            )
+        ):
             raise ValueError("Parcel status language requires trusted tracking evidence")
+
+    @staticmethod
+    def _is_safe_grounded_business_reply(
+        *,
+        parsed: dict[str, Any],
+        reply: str,
+        request_body: Any,
+        knowledge_context: dict[str, Any] | None,
+    ) -> bool:
+        if parsed.get("intent") == "tracking" or parsed.get("tracking_number"):
+            return False
+        if parsed.get("handoff_required") is True:
+            return False
+        if OutputContracts._looks_like_specific_parcel_status_claim(reply):
+            return False
+        if not isinstance(knowledge_context, dict):
+            return False
+        hits = knowledge_context.get("hits")
+        if not isinstance(hits, list):
+            return False
+        try:
+            from ..knowledge_grounding_service import select_grounding_candidate
+
+            candidate = select_grounding_candidate(
+                query=str(request_body or ""),
+                hits=hits,
+                tracking_fact_evidence_present=False,
+            )
+        except Exception:
+            return False
+        if not candidate:
+            return False
+        return OutputContracts._reply_matches_direct_answer(reply, str(candidate.get("answer") or ""))
+
+    @staticmethod
+    def _looks_like_specific_parcel_status_claim(reply: str) -> bool:
+        text = " ".join(str(reply or "").strip().lower().split())
+        if not text:
+            return False
+        latin_status = r"(?:delivered|in transit|out for delivery|customs|returned|failed delivery)"
+        latin_parcel = r"(?:parcel|package|shipment|order|waybill|tracking)"
+        if re.search(rf"\b(?:your|this|the)\s+{latin_parcel}\b.{{0,80}}\b{latin_status}\b", text):
+            return True
+        if re.search(rf"\b{latin_status}\b.{{0,80}}\b(?:your|this|the)\s+{latin_parcel}\b", text):
+            return True
+        cjk_status = r"(?:派送|派送中|已签收|签收|妥投|运输中|清关|退回|投递失败)"
+        cjk_parcel = r"(?:包裹|快递|货件|运单|单号)"
+        if re.search(rf"(?:你(?:的)?|您(?:的)?|该|此|这个|这票)?{cjk_parcel}.{{0,40}}{cjk_status}", text):
+            return True
+        if re.search(rf"{cjk_status}.{{0,40}}(?:你(?:的)?|您(?:的)?|该|此|这个|这票)?{cjk_parcel}", text):
+            return True
+        return False
+
+    @staticmethod
+    def _reply_matches_direct_answer(reply: str, answer: str) -> bool:
+        reply_norm = OutputContracts._contract_match_text(reply)
+        answer_norm = OutputContracts._contract_match_text(answer)
+        if not reply_norm or not answer_norm:
+            return False
+        if len(answer_norm) >= 8 and answer_norm in reply_norm:
+            return True
+        if len(reply_norm) >= 8 and reply_norm in answer_norm:
+            return True
+        answer_numbers = set(re.findall(r"\d+(?:\.\d+)?", answer_norm))
+        if not answer_numbers or not answer_numbers.issubset(set(re.findall(r"\d+(?:\.\d+)?", reply_norm))):
+            return False
+        return len(OutputContracts._meaningful_overlap_terms(reply, answer)) >= 2
+
+    @staticmethod
+    def _contract_match_text(value: str) -> str:
+        text = unicodedata.normalize("NFKC", str(value or "")).lower()
+        return re.sub(r"[^\w\u4e00-\u9fff]+", "", text)
+
+    @staticmethod
+    def _meaningful_overlap_terms(reply: str, answer: str) -> set[str]:
+        def terms(value: str) -> set[str]:
+            normalized = unicodedata.normalize("NFKC", value or "").lower()
+            latin = {item for item in re.findall(r"[a-z][a-z0-9_-]{2,}", normalized)}
+            cjk = set()
+            for phrase in re.findall(r"[\u4e00-\u9fff]{2,}", normalized):
+                cjk.update(phrase[idx:idx + 2] for idx in range(0, max(0, len(phrase) - 1)))
+            return latin | cjk
+
+        return terms(reply) & terms(answer)
