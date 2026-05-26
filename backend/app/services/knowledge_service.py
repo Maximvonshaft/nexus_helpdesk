@@ -241,7 +241,7 @@ def upload_document(db: Session, row: KnowledgeItem, file: UploadFile, actor) ->
         filename=file.filename,
         mime_type=file.content_type,
     )
-    stored = file_service.save_upload(file)
+    stored = file_service.save_knowledge_document_upload(file)
     now = utc_now()
     row.source_type = "file"
     row.file_name = stored.stored_name
