@@ -63,7 +63,7 @@ def _candidate_byte_sequences(content: bytes, encoding: str):
     # Docker storage MIME sniffing only reads a sample. Samples can end in the
     # middle of a multibyte sequence, especially for UTF-16 or GB18030. Trimming
     # a tiny suffix prevents false negatives while keeping full parse strict.
-    if len(content) > 32 and encoding in {"gb18030", "gbk", "utf-16-le", "utf-16-be"}:
+    if len(content) > 32 and encoding in {"utf-8-sig", "gb18030", "gbk", "utf-16-le", "utf-16-be"}:
         for trim in (1, 2, 3):
             if len(content) > trim:
                 yield content[:-trim]

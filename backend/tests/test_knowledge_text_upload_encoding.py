@@ -94,3 +94,33 @@ def test_local_storage_save_upload_rejects_binary_txt(tmp_path: Path):
             max_bytes=1024 * 1024,
         )
     assert exc.value.status_code == 400
+
+
+def test_is_supported_text_upload_accepts_utf8_sample_cut_mid_multibyte_character():
+    content = ("规" * 1366).encode("utf-8")
+    sample = content[:4096]
+    with pytest.raises(UnicodeDecodeError):
+        sample.decode("utf-8")
+    assert is_supported_text_upload(sample)
+
+
+def test_local_storage_save_upload_accepts_utf8_when_sniff_sample_cuts_multibyte(tmp_path: Path):
+    text = ("规" * 1366) + "\nDo not invent parcel status."
+    content = text.encode("utf-8")
+    sample = content[:4096]
+    with pytest.raises(UnicodeDecodeError):
+        sample.decode("utf-8")
+
+    backend = LocalStorageBackend(tmp_path)
+    stored = backend.save_upload(
+        _upload_file("rules.txt", content),
+        allowed_mime_types={"text/plain"},
+        allowed_extensions={".txt"},
+        max_bytes=1024 * 1024,
+    )
+
+    assert stored.detected_mime_type == "text/plain"
+    assert stored.size_bytes == len(content)
+    assert stored.absolute_path is not None
+    assert stored.absolute_path.exists()
+    assert stored.absolute_path.read_bytes() == content
