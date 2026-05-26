@@ -18,7 +18,10 @@ from app.models import User  # noqa: E402
 from app.schemas_control_plane import KnowledgeItemCreate, PersonaProfileCreate  # noqa: E402
 from app.services import knowledge_service, persona_service  # noqa: E402
 from app.services.ai_runtime_context import build_webchat_runtime_context  # noqa: E402
-from app.services.knowledge_grounding_service import enforce_grounded_answer  # noqa: E402
+from app.services.knowledge_grounding_service import (  # noqa: E402
+    enforce_grounded_answer,
+    select_approved_direct_answer_override,
+)
 from app.services.knowledge_prompt_service import build_knowledge_prompt_block  # noqa: E402
 from app.services.knowledge_retrieval_service import analyze_query, retrieve_published_chunks  # noqa: E402
 from app.services.provider_runtime.output_contracts import OutputContracts  # noqa: E402
@@ -323,6 +326,56 @@ def test_direct_answer_grounding_rewrites_safe_numeric_contradiction_only():
         tracking_fact_evidence_present=True,
     )
     assert tracking_blocked.applied is False
+
+
+def test_approved_direct_answer_override_policy_blocks_tracking_and_high_risk_queries():
+    hits = [
+        {
+            "item_key": "fact.ch.shipping-sla",
+            "title": "瑞士海运时效",
+            "score": 161.04,
+            "chunk_index": 0,
+            "retrieval_method": "structured_fact_recall+direct_answer_fact",
+            "direct_answer": "瑞士海运时效为 15 天。",
+            "answer_mode": "direct_answer",
+            "metadata": {"knowledge_kind": "business_fact", "fact_status": "approved", "answer_mode": "direct_answer"},
+            "source_metadata": {"item_key": "fact.ch.shipping-sla"},
+        }
+    ]
+    knowledge_context = {
+        "grounding_would_apply": True,
+        "grounding_source": {"item_key": "fact.ch.shipping-sla"},
+        "hits": hits,
+    }
+    provider_output = {
+        "customer_reply": "请提供您的运单号，我才能查询包裹状态。",
+        "intent": "tracking_missing_number",
+        "tracking_number": None,
+    }
+
+    decision = select_approved_direct_answer_override(
+        query="瑞士海运时效是多少",
+        provider_output=provider_output,
+        knowledge_context=knowledge_context,
+    )
+
+    assert decision.applied is True
+    assert decision.reply == "瑞士海运时效为 15 天。"
+    assert decision.reason == "approved_direct_answer_override"
+
+    tracking_blocked = select_approved_direct_answer_override(
+        query="我的包裹在哪里",
+        provider_output=provider_output,
+        knowledge_context=knowledge_context,
+    )
+    assert tracking_blocked.applied is False
+
+    complaint_blocked = select_approved_direct_answer_override(
+        query="我要投诉，瑞士海运时效是多少",
+        provider_output=provider_output,
+        knowledge_context=knowledge_context,
+    )
+    assert complaint_blocked.applied is False
 
 
 @pytest.mark.parametrize(

@@ -38,9 +38,9 @@ LIVE_TRACKING_MARKERS = (
 TRACKING_NUMBER_RE = re.compile(r"\b(?=[A-Z0-9]{8,30}\b)(?=[A-Z0-9]*\d)[A-Z0-9]+\b", re.I)
 NUMBER_RE = re.compile(r"(?<![A-Z0-9])\d+(?:\.\d+)?(?![A-Z0-9])", re.I)
 UNSAFE_MARKERS = (
-    "compensation", "refund", "claim", "legal", "lawsuit", "account risk", "driver phone",
+    "compensation", "refund", "claim", "complaint", "complain", "legal", "lawsuit", "account risk", "driver phone",
     "courier phone", "api", "token", "secret", "password", "internal system", "赔偿", "理赔",
-    "退款", "法律", "起诉", "账号风险", "司机电话", "快递员电话", "接口", "令牌", "密钥", "内部系统",
+    "退款", "投诉", "法律", "起诉", "账号风险", "司机电话", "快递员电话", "接口", "令牌", "密钥", "内部系统",
 )
 PROMISE_MARKERS = (
     "guarantee", "guaranteed", "promise", "will deliver", "will refund", "一定", "保证", "承诺会",
@@ -77,6 +77,42 @@ def enforce_grounded_answer(
     if _looks_like_direct_conflict(provider_reply=provider_reply, direct_answer=candidate["answer"]):
         return GroundingDecision(applied=True, reply=candidate["answer"], reason="direct_answer_conflict_rewrite", source=candidate["source"])
     return GroundingDecision(applied=False, reason="provider_reply_not_refusal_or_conflict", source=candidate["source"])
+
+
+def select_approved_direct_answer_override(
+    *,
+    query: str,
+    provider_output: dict[str, Any] | None,
+    knowledge_context: dict[str, Any] | None,
+    tracking_fact_evidence_present: bool = False,
+) -> GroundingDecision:
+    if not isinstance(knowledge_context, dict):
+        return GroundingDecision(applied=False, reason="knowledge_context_missing")
+    if knowledge_context.get("grounding_would_apply") is not True:
+        return GroundingDecision(applied=False, reason="grounding_context_not_applicable")
+    if not isinstance(knowledge_context.get("grounding_source"), dict) or not knowledge_context.get("grounding_source"):
+        return GroundingDecision(applied=False, reason="grounding_source_missing")
+    hits = knowledge_context.get("hits")
+    if not isinstance(hits, list):
+        return GroundingDecision(applied=False, reason="knowledge_hits_missing")
+    candidate = select_grounding_candidate(
+        query=query,
+        hits=hits,
+        tracking_fact_evidence_present=tracking_fact_evidence_present,
+    )
+    if candidate is None:
+        return GroundingDecision(applied=False, reason="no_safe_direct_answer")
+    if _has_trusted_tracking_output_conflict(
+        provider_output=provider_output,
+        tracking_fact_evidence_present=tracking_fact_evidence_present,
+    ):
+        return GroundingDecision(applied=False, reason="trusted_tracking_output_conflict", source=candidate["source"])
+    return GroundingDecision(
+        applied=True,
+        reply=candidate["answer"],
+        reason="approved_direct_answer_override",
+        source=candidate["source"],
+    )
 
 
 def select_grounding_candidate(
@@ -152,6 +188,19 @@ def _looks_like_direct_conflict(*, provider_reply: str | None, direct_answer: st
     if not reply_numbers or not answer_numbers:
         return False
     return answer_numbers.isdisjoint(reply_numbers)
+
+
+def _has_trusted_tracking_output_conflict(
+    *,
+    provider_output: dict[str, Any] | None,
+    tracking_fact_evidence_present: bool,
+) -> bool:
+    if not tracking_fact_evidence_present or not isinstance(provider_output, dict):
+        return False
+    intent = str(provider_output.get("intent") or "").strip()
+    if intent == "tracking":
+        return True
+    return bool(provider_output.get("tracking_number"))
 
 
 def _number_terms(value: str | None) -> set[str]:
