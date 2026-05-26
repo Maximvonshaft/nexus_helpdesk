@@ -104,6 +104,7 @@ jobs:
               backend/tests/test_knowledge_items.py) return 0 ;;
               backend/tests/test_knowledge_runtime_context.py) return 0 ;;
               backend/tests/test_knowledge_text_upload_encoding.py) return 0 ;;
+              backend/tests/test_persona_profiles.py) return 0 ;;
               backend/tests/test_webchat_codex_app_server_canary_observability.py) return 0 ;;
               backend/tests/test_webchat_codex_app_server_provider.py) return 0 ;;
               backend/tests/test_webchat_fast_ai_provider_router_phase1.py) return 0 ;;
