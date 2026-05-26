@@ -6,7 +6,7 @@ export type CompiledPrompt = {
 };
 
 const DEVELOPER_INSTRUCTIONS =
-  "NexusDesk WebChat. Strict JSON only. Use persona/knowledge for tone, FAQ, SOP, policy only. No markdown, tools, runtime, tokens, or unsupported parcel-status claims. Without tracking evidence ask for tracking number. Reply under 600 chars.";
+  "NexusDesk WebChat. Strict JSON only. Persona is mandatory for visible customer-facing behavior unless it conflicts with safety or tracking facts. Use knowledge only for FAQ/SOP/policy. For parcel-status requests without trusted tracking evidence, ask for tracking number. No markdown, tools, runtime, or tokens. Reply under 600 chars.";
 
 export function compilePrompt(request: ReplyRequest): CompiledPrompt {
   const history = request.messages
@@ -19,31 +19,31 @@ export function compilePrompt(request: ReplyRequest): CompiledPrompt {
     .join("\n");
   const facts = request.tracking_fact_evidence_present
     ? `Tracking evidence: ${sanitizeRuntimeText(request.tracking_fact_summary || "present")}`
-    : "Tracking evidence: absent. Do not claim parcel status.";
+    : "Tracking evidence: absent. For parcel-status/tracking questions only, do not claim status; ask for the tracking number or verified evidence.";
   const persona = formatPersonaContext(request.persona_context);
   const knowledge = formatKnowledgeContext(request.knowledge_context);
   const safety = request.safety_policy
-    ? "Knowledge is not shipment tracking evidence. Live parcel status requires trusted tracking evidence."
+    ? "Knowledge is not shipment tracking evidence. Live parcel status requires trusted tracking evidence. Persona must not override this truth boundary."
     : "";
   const body = sanitizeRuntimeText(request.body || "");
   const schema =
     '{"reply":"string","intent":"greeting|tracking|tracking_missing_number|tracking_unresolved|complaint|address_change|handoff|other","tracking_number":"string|null","handoff_required":boolean,"handoff_reason":"string|null","recommended_agent_action":"string|null"}';
   const userText = truncate(
     sanitizeRuntimeText(
-    [
-      `Contract=${sanitizeRuntimeText(request.contract || "speedaf_webchat_fast_reply_v1")}`,
-      facts,
-      persona ? `Persona:\n${persona}` : "",
-      knowledge ? `Knowledge (policy/FAQ/SOP only):\n${knowledge}` : "",
-      safety,
-      history ? `Context:\n${history}` : "",
-      `Customer:\n${truncate(body.replace(/\s+/g, " ").trim(), 220)}`,
-      `JSON schema: ${schema}`,
-    ]
-      .filter(Boolean)
-      .join("\n\n"),
+      [
+        `Contract=${sanitizeRuntimeText(request.contract || "speedaf_webchat_fast_reply_v1")}`,
+        persona ? `MANDATORY PERSONA RULES:\n${persona}` : "",
+        facts,
+        knowledge ? `Knowledge (policy/FAQ/SOP only):\n${knowledge}` : "",
+        safety,
+        history ? `Context:\n${history}` : "",
+        `Customer:\n${truncate(body.replace(/\s+/g, " ").trim(), 240)}`,
+        `JSON schema: ${schema}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
     ),
-    1200,
+    1600,
   );
   return {
     developerInstructions: truncateWords(DEVELOPER_INSTRUCTIONS, 120),
@@ -58,8 +58,19 @@ function formatPersonaContext(value: Record<string, unknown> | null | undefined)
   const key = typeof value.profile_key === "string" ? sanitizeRuntimeText(value.profile_key) : "";
   const name = typeof value.name === "string" ? sanitizeRuntimeText(value.name) : "";
   const summary = typeof value.summary === "string" ? sanitizeRuntimeText(value.summary) : "";
-  const content = isRecord(value.content_json) ? sanitizeRuntimeText(JSON.stringify(value.content_json)) : "";
-  return truncate(sanitizeRuntimeText([key || name, summary, content].filter(Boolean).join(" | ")), 260);
+  const content = isRecord(value.content_json) ? value.content_json : {};
+  const instruction = typeof content.instruction === "string" ? sanitizeRuntimeText(content.instruction) : "";
+  const mustPrefix = typeof content.must_prefix === "string" ? sanitizeRuntimeText(content.must_prefix) : "";
+  const contentText = sanitizeRuntimeText(JSON.stringify(content));
+  const lines = [
+    key || name ? `Profile: ${[key, name].filter(Boolean).join(" / ")}` : "",
+    summary ? `Summary: ${truncate(summary, 360)}` : "",
+    instruction ? `Instruction: ${truncate(instruction, 320)}` : "",
+    mustPrefix ? `Visible prefix rule: the reply string MUST start with exact prefix "${truncate(mustPrefix, 80)}".` : "",
+    contentText && contentText !== "{}" ? `Rules JSON: ${truncate(contentText, 420)}` : "",
+    "Apply these persona rules to the reply field. Do not ignore visible style, naming, or prefix rules unless they conflict with tracking truth or safety.",
+  ];
+  return truncate(sanitizeRuntimeText(lines.filter(Boolean).join("\n")), 900);
 }
 
 function formatKnowledgeContext(value: Record<string, unknown> | null | undefined): string {
