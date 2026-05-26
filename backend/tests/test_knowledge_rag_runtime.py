@@ -246,6 +246,47 @@ def test_direct_answer_grounding_rewrites_safe_refusal_and_blocks_tracking_bound
     assert blocked.applied is False
 
 
+def test_direct_answer_grounding_rewrites_safe_numeric_contradiction_only():
+    hits = [
+        {
+            "item_key": "fact.shipping.sla",
+            "title": "运输时效",
+            "score": 42.0,
+            "chunk_index": 0,
+            "retrieval_method": "structured_fact_recall+direct_answer_fact",
+            "direct_answer": "海运15天，空运10天。",
+            "answer_mode": "direct_answer",
+            "metadata": {"knowledge_kind": "business_fact", "fact_status": "approved", "answer_mode": "direct_answer"},
+            "source_metadata": {"item_key": "fact.shipping.sla"},
+        }
+    ]
+
+    decision = enforce_grounded_answer(
+        query="海运和空运多久？",
+        provider_reply="通常需要30-45天。",
+        hits=hits,
+    )
+
+    assert decision.applied is True
+    assert decision.reply == "海运15天，空运10天。"
+    assert decision.reason == "direct_answer_conflict_rewrite"
+
+    legal_blocked = enforce_grounded_answer(
+        query="如果海运晚了要赔偿吗，海运多久？",
+        provider_reply="通常需要30-45天。",
+        hits=hits,
+    )
+    assert legal_blocked.applied is False
+
+    tracking_blocked = enforce_grounded_answer(
+        query="PK120053679836 现在在哪里，海运多久？",
+        provider_reply="通常需要30-45天。",
+        hits=hits,
+        tracking_fact_evidence_present=True,
+    )
+    assert tracking_blocked.applied is False
+
+
 def test_runtime_context_and_prompt_are_bounded_and_sanitized(db_session):
     admin = _user(db_session)
     _create(

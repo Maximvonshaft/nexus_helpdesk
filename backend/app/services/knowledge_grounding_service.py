@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import asdict, dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .knowledge_retrieval_service import DIRECT_ANSWER_SCORE_THRESHOLD, KnowledgeChunkHit
@@ -34,6 +36,7 @@ LIVE_TRACKING_MARKERS = (
     "在哪里", "到哪里", "派送", "签收", "妥投", "运输中", "清关", "退回",
 )
 TRACKING_NUMBER_RE = re.compile(r"\b(?=[A-Z0-9]{8,30}\b)(?=[A-Z0-9]*\d)[A-Z0-9]+\b", re.I)
+NUMBER_RE = re.compile(r"(?<![A-Z0-9])\d+(?:\.\d+)?(?![A-Z0-9])", re.I)
 UNSAFE_MARKERS = (
     "compensation", "refund", "claim", "legal", "lawsuit", "account risk", "driver phone",
     "courier phone", "api", "token", "secret", "password", "internal system", "赔偿", "理赔",
@@ -69,9 +72,11 @@ def enforce_grounded_answer(
     )
     if candidate is None:
         return GroundingDecision(applied=False, reason="no_safe_direct_answer")
-    if not _looks_like_refusal(provider_reply):
-        return GroundingDecision(applied=False, reason="provider_reply_not_refusal", source=candidate["source"])
-    return GroundingDecision(applied=True, reply=candidate["answer"], reason="direct_answer_refusal_rewrite", source=candidate["source"])
+    if _looks_like_refusal(provider_reply):
+        return GroundingDecision(applied=True, reply=candidate["answer"], reason="direct_answer_refusal_rewrite", source=candidate["source"])
+    if _looks_like_direct_conflict(provider_reply=provider_reply, direct_answer=candidate["answer"]):
+        return GroundingDecision(applied=True, reply=candidate["answer"], reason="direct_answer_conflict_rewrite", source=candidate["source"])
+    return GroundingDecision(applied=False, reason="provider_reply_not_refusal_or_conflict", source=candidate["source"])
 
 
 def select_grounding_candidate(
@@ -141,13 +146,33 @@ def _looks_like_refusal(value: str | None) -> bool:
     return bool(text and any(marker in text for marker in REFUSAL_MARKERS))
 
 
+def _looks_like_direct_conflict(*, provider_reply: str | None, direct_answer: str) -> bool:
+    reply_numbers = _number_terms(provider_reply)
+    answer_numbers = _number_terms(direct_answer)
+    if not reply_numbers or not answer_numbers:
+        return False
+    return answer_numbers.isdisjoint(reply_numbers)
+
+
+def _number_terms(value: str | None) -> set[str]:
+    normalized = unicodedata.normalize("NFKC", value or "")
+    terms: set[str] = set()
+    for match in NUMBER_RE.finditer(normalized):
+        try:
+            decimal = Decimal(match.group(0))
+        except InvalidOperation:
+            continue
+        terms.add(str(decimal.normalize()).lower())
+    return terms
+
+
 def _unsafe_for_grounding(query: str | None, *, tracking_fact_evidence_present: bool) -> bool:
     text = (query or "").lower()
     if any(marker in text for marker in UNSAFE_MARKERS):
         return True
-    if TRACKING_NUMBER_RE.search(text) and not tracking_fact_evidence_present:
+    if TRACKING_NUMBER_RE.search(text):
         return True
-    if not tracking_fact_evidence_present and any(marker in text for marker in LIVE_TRACKING_MARKERS):
+    if any(marker in text for marker in LIVE_TRACKING_MARKERS):
         return True
     return False
 

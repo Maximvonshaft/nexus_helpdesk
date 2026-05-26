@@ -57,7 +57,7 @@ jobs:
           cd backend
           alembic heads
           alembic upgrade head
-          alembic downgrade -1
+          alembic downgrade 20260525_0033
           alembic upgrade head
 
       - name: Strict production-like readiness check

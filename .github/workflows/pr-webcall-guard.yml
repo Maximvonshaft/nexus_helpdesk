@@ -28,6 +28,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate knowledge retrieval probe shell syntax
+        shell: bash
+        run: bash -n scripts/probe_knowledge_retrieval_e2e.sh
+
       - name: Validate changed file scope
         id: changed_files
         shell: bash
@@ -159,6 +163,7 @@ jobs:
               webapp/tests/novice-ux-regression.test.mjs) return 0 ;;
               .github/workflows/webcall-ai-final-quality-gate.yml) return 0 ;;
               .github/workflows/webcall-ai-infra-skeleton.yml) return 0 ;;
+              .github/workflows/postgres-migration.yml) return 0 ;;
               .github/workflows/pr-webcall-guard.yml) return 0 ;;
               "") return 0 ;;
             esac
