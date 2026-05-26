@@ -185,7 +185,7 @@ export function sanitizeRuntimeText(value: string): string {
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi, "[REDACTED_SECRET]")
     .replace(/\b(sk|pk|rk)-[A-Za-z0-9_-]{12,}\b/g, "[REDACTED_SECRET]")
     .replace(
-      /(["']?\b(?:access[_-]?token|api[_-]?key|secret|password|authorization)\b["']?\s*[:=]\s*["']?)[^"'\s,;)\]}]{4,}/gi,
+      /(["']?\b(?:access[_-]?token|api[_-]?key|private[_-]?value|secret|password|authorization)\b["']?\s*[:=]\s*["']?)[^"'\s,;)\]}]{4,}/gi,
       "$1[REDACTED_SECRET]",
     )
     .replace(

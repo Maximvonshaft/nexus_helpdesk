@@ -293,7 +293,7 @@ def _maybe_create_webchat_auto_ack(db: Session, *, conversation: WebchatConversa
         message_type="text",
         delivery_status="sent",
         metadata_json=_metadata(generated_by="system", safety_level="ack_only", fallback_reason="local_safe_ack", fact_evidence_present=False),
-        author_label="NexusDesk Assistant",
+        author_label="Support Assistant",
     )
     db.add(row)
 
@@ -320,7 +320,7 @@ def _write_card_message(db: Session, *, conversation: WebchatConversation, ticke
         metadata_json=_metadata(**metadata),
         delivery_status="sent",
         action_status="pending",
-        author_label="NexusDesk Assistant",
+        author_label="Support Assistant",
     )
     db.add(row)
     db.flush()

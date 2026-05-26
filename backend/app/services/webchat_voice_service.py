@@ -584,5 +584,5 @@ def _ensure_final_voice_call_message(db: Session, *, session: WebchatVoiceSessio
         metadata_json=json.dumps({"generated_by": "system", "external_send": False}, ensure_ascii=False),
         client_message_id=client_message_id,
         delivery_status="sent",
-        author_label="NexusDesk Voice",
+        author_label="Voice",
     ))

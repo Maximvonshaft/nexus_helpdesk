@@ -87,8 +87,13 @@ jobs:
               backend/app/services/provider_runtime/output_contracts.py) return 0 ;;
               backend/app/services/provider_runtime/router.py) return 0 ;;
               backend/app/services/provider_runtime/webchat_fast_dispatcher.py) return 0 ;;
+              backend/app/services/webcall_ai/participant_service.py) return 0 ;;
+              backend/app/services/webchat_ai_service.py) return 0 ;;
               backend/app/services/webchat_fast_ai_service.py) return 0 ;;
               backend/app/services/webchat_fast_config.py) return 0 ;;
+              backend/app/services/webchat_service.py) return 0 ;;
+              backend/app/services/webchat_voice_service.py) return 0 ;;
+              backend/app/services/timeline_service.py) return 0 ;;
               backend/app/services/webcall_ai_production/**) return 0 ;;
               backend/app/webcall_ai_schemas.py) return 0 ;;
               backend/tests/test_codex_app_server_image_contract.py) return 0 ;;
@@ -109,11 +114,13 @@ jobs:
               backend/tests/test_persona_profiles.py) return 0 ;;
               backend/tests/test_webchat_codex_app_server_canary_observability.py) return 0 ;;
               backend/tests/test_webchat_codex_app_server_provider.py) return 0 ;;
+              backend/tests/test_webchat_ai_turn_runtime.py) return 0 ;;
               backend/tests/test_webchat_fast_ai_provider_router_phase1.py) return 0 ;;
               backend/tests/test_webchat_fast_production_legacy_guard.py) return 0 ;;
               backend/tests/test_webchat_fast_reply_api.py) return 0 ;;
               backend/tests/test_webchat_fast_reply_provider_runtime.py) return 0 ;;
               backend/tests/test_webchat_stream_feature_flag.py) return 0 ;;
+              backend/tests/test_webchat_round_b.py) return 0 ;;
               backend/tests/test_webcall_ai_production.py) return 0 ;;
               backend/tests/test_webcall_ai_voice_loop.py) return 0 ;;
               deploy/codex_app_server_bridge_proxy.py) return 0 ;;
@@ -134,6 +141,7 @@ jobs:
               docs/security/CODEX_APPSERVER_TOKEN_BOUNDARY.md) return 0 ;;
               scripts/probe_codex_appserver_discovery.sh) return 0 ;;
               scripts/probe_codex_appserver_runtime_v3_sla.sh) return 0 ;;
+              scripts/probe_persona_identity_e2e.sh) return 0 ;;
               tools/nexus-codex-runtime/**) return 0 ;;
               webapp/src/lib/api.ts) return 0 ;;
               webapp/src/lib/types.ts) return 0 ;;
