@@ -17,6 +17,8 @@ CHUNK_SIZE = 1024 * 1024
 TEXT_SNIFF_SAMPLE_BYTES = 4096
 DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 TEXT_UPLOAD_EXTENSIONS = {'.txt', '.md', '.markdown'}
+KNOWLEDGE_DOCUMENT_EXTENSIONS = {'.md', '.markdown', '.docx'}
+KNOWLEDGE_DOCUMENT_MIME_TYPES = {'text/markdown', 'text/x-markdown', DOCX_MIME_TYPE}
 
 
 @dataclass
@@ -37,19 +39,21 @@ class StorageBackend(Protocol):
 def _validate_persist_bytes_inputs(*, content: bytes, filename: str, media_type: str, allowed_mime_types: set[str] | None, allowed_extensions: set[str] | None, max_bytes: int | None) -> tuple[str, str]:
     suffix = Path(filename or 'attachment.bin').suffix.lower() or '.bin'
     normalized_media_type = (media_type or 'application/octet-stream').split(';', 1)[0].strip().lower()
+    effective_allowed_extensions = set(allowed_extensions or set()) | KNOWLEDGE_DOCUMENT_EXTENSIONS if allowed_extensions is not None else None
+    effective_allowed_mime_types = set(allowed_mime_types or set()) | KNOWLEDGE_DOCUMENT_MIME_TYPES if allowed_mime_types is not None else None
     if max_bytes is not None and len(content) > max_bytes:
         raise HTTPException(status_code=413, detail='Persisted attachment exceeds configured size limit')
-    if allowed_extensions is not None and suffix not in allowed_extensions and suffix not in {'.bin', '.json', '.txt'}:
+    if effective_allowed_extensions is not None and suffix not in effective_allowed_extensions and suffix not in {'.bin', '.json', '.txt'}:
         raise HTTPException(status_code=400, detail=f"File extension '{suffix}' is not allowed")
-    if suffix in TEXT_UPLOAD_EXTENSIONS and allowed_mime_types is not None and ('text/plain' in allowed_mime_types or 'text/markdown' in allowed_mime_types):
+    if suffix in TEXT_UPLOAD_EXTENSIONS and effective_allowed_mime_types is not None and ('text/plain' in effective_allowed_mime_types or 'text/markdown' in effective_allowed_mime_types):
         if not is_supported_text_upload(content[:4096]):
             raise HTTPException(status_code=400, detail='Uploaded text or Markdown file must be encoded as UTF-8, UTF-16, GB18030, or GBK')
-        if suffix in {'.md', '.markdown'} and 'text/markdown' in allowed_mime_types:
+        if suffix in {'.md', '.markdown'} and 'text/markdown' in effective_allowed_mime_types:
             return suffix, 'text/markdown'
         return suffix, 'text/plain'
-    if suffix == '.docx' and allowed_mime_types is not None and DOCX_MIME_TYPE in allowed_mime_types:
+    if suffix == '.docx' and effective_allowed_mime_types is not None and DOCX_MIME_TYPE in effective_allowed_mime_types:
         return suffix, DOCX_MIME_TYPE
-    if allowed_mime_types is not None and normalized_media_type not in allowed_mime_types:
+    if effective_allowed_mime_types is not None and normalized_media_type not in effective_allowed_mime_types:
         raise HTTPException(status_code=400, detail=f"MIME type '{normalized_media_type}' is not allowed")
     return suffix, normalized_media_type
 
@@ -82,7 +86,9 @@ class LocalStorageBackend:
 
     def save_upload(self, file: UploadFile, *, allowed_mime_types: set[str], allowed_extensions: set[str], max_bytes: int) -> StoredFile:
         suffix = Path(file.filename or 'upload.bin').suffix.lower()
-        if suffix not in allowed_extensions:
+        effective_allowed_extensions = set(allowed_extensions) | KNOWLEDGE_DOCUMENT_EXTENSIONS
+        effective_allowed_mime_types = set(allowed_mime_types) | KNOWLEDGE_DOCUMENT_MIME_TYPES
+        if suffix not in effective_allowed_extensions:
             raise HTTPException(status_code=400, detail=f"File extension '{suffix or '[none]'}' is not allowed")
         storage_key = f"{uuid.uuid4().hex}{suffix}"
         absolute_path = (self.root / storage_key).resolve()
@@ -111,7 +117,7 @@ class LocalStorageBackend:
             raise
 
         detected_mime = self._sniff_mime(sample, suffix, file.content_type or 'application/octet-stream')
-        if detected_mime not in allowed_mime_types:
+        if detected_mime not in effective_allowed_mime_types:
             absolute_path.unlink(missing_ok=True)
             raise HTTPException(status_code=400, detail=f"Detected MIME type '{detected_mime}' is not allowed")
         return StoredFile(storage_key=storage_key, absolute_path=absolute_path, size_bytes=total, detected_mime_type=detected_mime)
@@ -175,7 +181,9 @@ class S3CompatibleStorageBackend:
 
     def save_upload(self, file: UploadFile, *, allowed_mime_types: set[str], allowed_extensions: set[str], max_bytes: int) -> StoredFile:
         suffix = Path(file.filename or 'upload.bin').suffix.lower()
-        if suffix not in allowed_extensions:
+        effective_allowed_extensions = set(allowed_extensions) | KNOWLEDGE_DOCUMENT_EXTENSIONS
+        effective_allowed_mime_types = set(allowed_mime_types) | KNOWLEDGE_DOCUMENT_MIME_TYPES
+        if suffix not in effective_allowed_extensions:
             raise HTTPException(status_code=400, detail=f"File extension '{suffix or '[none]'}' is not allowed")
         storage_key = f"{uuid.uuid4().hex}{suffix}"
         total = 0
@@ -196,7 +204,7 @@ class S3CompatibleStorageBackend:
                         raise HTTPException(status_code=413, detail='Uploaded file exceeds MAX_UPLOAD_BYTES')
                     handle.write(chunk)
             detected_mime = self._sniff_mime(sample, suffix, file.content_type or 'application/octet-stream')
-            if detected_mime not in allowed_mime_types:
+            if detected_mime not in effective_allowed_mime_types:
                 raise HTTPException(status_code=400, detail=f"Detected MIME type '{detected_mime}' is not allowed")
             client = self._client()
             client.upload_file(str(tmp_path), self.bucket, storage_key, ExtraArgs={"ContentType": detected_mime})
