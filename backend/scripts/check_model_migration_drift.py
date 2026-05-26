@@ -17,6 +17,7 @@ from app.db import Base
 from app.settings import get_settings
 from app import models as _models  # noqa: F401 - register model tables on Base.metadata
 from app import webchat_models as _webchat_models  # noqa: F401 - register webchat tables on Base.metadata
+from app import models_control_plane as _models_control_plane  # noqa: F401 - register control-plane tables
 
 
 IGNORED_TABLES_WITH_REASON = {

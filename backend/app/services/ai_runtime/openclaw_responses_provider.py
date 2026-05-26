@@ -14,6 +14,7 @@ from ..webchat_fast_reply_metrics import record_openclaw_responses_metric
 from ..webchat_openclaw_responses_client import OpenClawResponsesError, call_openclaw_responses
 from .provider_base import BaseFastAIProvider
 from .schemas import FastAIProviderRequest, FastAIProviderResult
+from ..knowledge_prompt_service import build_knowledge_prompt_block
 
 
 def _clip(value: str | None, limit: int) -> str:
@@ -57,6 +58,8 @@ def build_fast_reply_instructions() -> str:
         "- If a Trusted tracking fact block is provided, use only that block for parcel status.\n"
         "- If the Trusted tracking fact says No Info, no trace, or no tracking updates, say the official system currently has no tracking updates.\n"
         "- If no Trusted tracking fact block is provided, do not claim any live parcel status; ask for the tracking number or say support will check.\n"
+        "- If sanitized Knowledge context directly answers the customer's FAQ or policy question, answer from Knowledge context and do not say cannot confirm.\n"
+        "- Knowledge context is FAQ/SOP/policy/business facts only; never use it as live parcel tracking evidence.\n"
         "- If a tracking number is missing, ask for it naturally.\n"
         "- If manual support is needed, say so naturally.\n"
         "- Return valid JSON only.\n"
@@ -92,6 +95,7 @@ def build_fast_reply_input_text(
     max_prompt_chars: int,
     tracking_fact_summary: str | None = None,
     tracking_fact_evidence_present: bool = False,
+    knowledge_context: dict[str, Any] | None = None,
 ) -> str:
     fact_block = _trusted_fact_block(
         tracking_fact_summary=tracking_fact_summary,
@@ -101,6 +105,7 @@ def build_fast_reply_input_text(
         "Recent context:\n"
         f"{_context_block(recent_context)}\n\n"
         f"{fact_block}"
+        f"{build_knowledge_prompt_block(knowledge_context) + chr(10) + chr(10) if knowledge_context else ''}"
         "Customer message:\n"
         f"{_clip(body, 2000)}"
     )
@@ -159,6 +164,7 @@ class OpenClawResponsesProvider(BaseFastAIProvider):
                     max_prompt_chars=self.settings.max_prompt_chars,
                     tracking_fact_summary=request.tracking_fact_summary,
                     tracking_fact_evidence_present=request.tracking_fact_evidence_present,
+                    knowledge_context=(request.metadata or {}).get("knowledge_context") if isinstance(request.metadata, dict) else None,
                 ),
                 request_id=request.request_id,
                 settings=self.settings,

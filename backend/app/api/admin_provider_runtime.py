@@ -48,6 +48,53 @@ def provider_runtime_status(db: Session = Depends(get_db), current_user=Depends(
     return get_provider_runtime_status(db)
 
 
+@router.get("/audit/recent")
+def provider_runtime_audit_recent(
+    request_id: str | None = None,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_runtime(current_user, db)
+    capped_limit = min(max(int(limit or 20), 1), 100)
+    params = {"limit": capped_limit}
+    where = ""
+    if request_id:
+        where = "WHERE request_id = :request_id"
+        params["request_id"] = request_id.strip()
+    rows = db.execute(text(f"""
+        SELECT id, tenant_id, provider, request_id, channel_key, session_id,
+               operation, status, safe_summary, error_code, elapsed_ms, created_at
+        FROM provider_runtime_audit_logs
+        {where}
+        ORDER BY created_at DESC
+        LIMIT :limit
+    """), params).mappings().all()
+    items = []
+    for row in rows:
+        safe_summary = row["safe_summary"]
+        if isinstance(safe_summary, str):
+            try:
+                safe_summary = json.loads(safe_summary)
+            except json.JSONDecodeError:
+                safe_summary = {}
+        items.append({
+            "id": row["id"],
+            "tenant_id": row["tenant_id"],
+            "provider": row["provider"],
+            "request_id": row["request_id"],
+            "channel_key": row["channel_key"],
+            "session_id": row["session_id"],
+            "operation": row["operation"],
+            "status": row["status"],
+            "safe_summary": safe_summary if isinstance(safe_summary, dict) else {},
+            "error_code": row["error_code"],
+            "elapsed_ms": row["elapsed_ms"],
+            "created_at": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else row["created_at"],
+        })
+    return {"items": items, "total": len(items)}
+
+
 @router.patch("/routing/webchat-fast-reply")
 def update_webchat_fast_reply_routing(
     payload: WebchatFastRoutingUpdate,

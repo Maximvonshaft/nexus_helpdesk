@@ -380,9 +380,11 @@ export interface KnowledgeItem {
   summary?: string | null
   status: string
   source_type: string
+  knowledge_kind: string
   market_id?: number | null
   channel?: string | null
   audience_scope: string
+  language?: string | null
   priority: number
   starts_at?: string | null
   ends_at?: string | null
@@ -397,6 +399,12 @@ export interface KnowledgeItem {
   indexed_version: number
   indexed_at?: string | null
   chunk_count: number
+  fact_question?: string | null
+  fact_answer?: string | null
+  fact_aliases_json?: string[] | null
+  fact_status?: string | null
+  answer_mode?: string | null
+  citation_metadata_json?: Record<string, unknown> | null
   draft_body?: string | null
   draft_normalized_text?: string | null
   published_body?: string | null
@@ -435,12 +443,35 @@ export interface KnowledgeChunkHit {
   chunk_index: number
   score: number
   text: string
+  retrieval_method?: string | null
+  matched_terms?: string[]
+  score_breakdown?: Record<string, number>
+  direct_answer?: string | null
+  answer_mode?: string | null
+  source_metadata?: Record<string, unknown>
   metadata: Record<string, unknown>
+}
+
+export interface KnowledgeQueryAnalysis {
+  language: string
+  normalized_query: string
+  entity_terms: string[]
+  service_terms: string[]
+  numeric_terms: string[]
+  intent_terms: string[]
+  terms: string[]
+  high_value_terms: string[]
+  fallback_ngrams: string[]
 }
 
 export interface KnowledgeRetrievalTestResult {
   hits: KnowledgeChunkHit[]
   total: number
+  query_analysis?: KnowledgeQueryAnalysis | null
+  candidate_count?: number
+  top_hits?: Record<string, unknown>[]
+  grounding_would_apply?: boolean
+  grounding_source?: Record<string, unknown> | null
 }
 
 export interface ChannelOnboardingTask {

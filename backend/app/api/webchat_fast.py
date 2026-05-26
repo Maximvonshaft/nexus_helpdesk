@@ -531,6 +531,11 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
         conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
         if result.ok:
             metadata = {"handoff_required": result.handoff_required, "reply_source": result.reply_source}
+            if result.rag_trace:
+                metadata["rag_trace"] = result.rag_trace
+            if result.grounding_applied:
+                metadata["grounding_applied"] = True
+                metadata["grounding_source"] = result.grounding_source
             if tracking_fact_metadata:
                 metadata["tracking_fact"] = tracking_fact_metadata
             append_fast_ai_message(db, conversation=conversation, reply=result.reply, client_message_id=payload.client_message_id, metadata=metadata)
