@@ -1,8 +1,15 @@
+import sys
+from pathlib import Path
+
 import pytest
 from unittest.mock import patch
 
-from app.services.ai_runtime.schemas import FastAIProviderRequest
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from app.services.ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
 from app.services.provider_runtime.webchat_fast_dispatcher import dispatch_webchat_fast_reply
+from app.services.webchat_fast_ai_service import _apply_grounding, _result_from_provider
 
 
 def _approved_shipping_sla_context() -> dict:
@@ -368,3 +375,42 @@ async def test_dispatch_webchat_fast_reply_preserves_trusted_tracking_output_ove
     assert res.reply_source == "codex_app_server"
     assert res.raw_payload_safe_summary["grounding_applied"] is False
     assert res.raw_payload_safe_summary["grounding_reason"] == "trusted_tracking_output_conflict"
+
+
+def test_second_pass_grounding_preserves_provider_runtime_grounded_telemetry():
+    source = {"item_key": "fact.ch.shipping-sla", "title": "瑞士海运时效"}
+    provider_result = FastAIProviderResult(
+        ok=True,
+        ai_generated=True,
+        reply_source="codex_app_server:grounded_knowledge",
+        raw_provider="codex_app_server",
+        raw_payload_safe_summary={
+            "grounding_applied": True,
+            "grounding_source": source,
+            "grounding_reason": "approved_direct_answer_override",
+        },
+        reply="瑞士海运时效为 15 天。",
+        intent="other",
+        tracking_number=None,
+        handoff_required=False,
+        handoff_reason=None,
+        recommended_agent_action=None,
+        elapsed_ms=12,
+    )
+
+    grounded = _apply_grounding(
+        provider_result=provider_result,
+        body="瑞士海运时效是多少",
+        runtime_context={
+            "context_version": "nexus_webchat_runtime_context_v1",
+            "knowledge_context": {"hits": []},
+        },
+        tracking_fact_evidence_present=False,
+    )
+    result = _result_from_provider(grounded)
+
+    assert grounded.raw_payload_safe_summary["grounding_applied"] is True
+    assert grounded.raw_payload_safe_summary["grounding_reason"] == "approved_direct_answer_override"
+    assert result.grounding_applied is True
+    assert result.grounding_source == source
+    assert result.grounding_reason == "approved_direct_answer_override"

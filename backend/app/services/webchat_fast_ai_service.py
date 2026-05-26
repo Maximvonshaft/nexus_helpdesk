@@ -38,12 +38,12 @@ class WebchatFastReplyResult:
     rag_trace: dict[str, Any] | None = None
     grounding_applied: bool = False
     grounding_source: dict[str, Any] | None = None
+    grounding_reason: str | None = None
 
     def to_response(self) -> dict[str, Any]:
         payload = asdict(self)
         payload.pop("recommended_agent_action", None)
         payload.pop("rag_trace", None)
-        payload.pop("grounding_source", None)
         return payload
 
 
@@ -98,6 +98,8 @@ def _session_key(*, tenant_key: str, session_id: str) -> str:
 
 def _result_from_provider(provider_result: FastAIProviderResult) -> WebchatFastReplyResult:
     safe_summary = provider_result.raw_payload_safe_summary or {}
+    grounded_reply_source = str(provider_result.reply_source or "").endswith(":grounded_knowledge")
+    grounding_applied = bool(safe_summary.get("grounding_applied")) or grounded_reply_source
     return WebchatFastReplyResult(
         ok=provider_result.ok,
         ai_generated=provider_result.ai_generated,
@@ -113,8 +115,9 @@ def _result_from_provider(provider_result: FastAIProviderResult) -> WebchatFastR
         error_code=provider_result.error_code,
         retry_after_ms=provider_result.retry_after_ms,
         rag_trace=safe_summary.get("rag_trace"),
-        grounding_applied=bool(safe_summary.get("grounding_applied")),
+        grounding_applied=grounding_applied,
         grounding_source=safe_summary.get("grounding_source"),
+        grounding_reason=safe_summary.get("grounding_reason"),
     )
 
 
@@ -146,6 +149,11 @@ def _provider_result_with_summary(provider_result: FastAIProviderResult, safe_su
     return FastAIProviderResult(**{**provider_result.__dict__, "raw_payload_safe_summary": safe_summary})
 
 
+def _is_already_grounded_provider_result(provider_result: FastAIProviderResult) -> bool:
+    safe_summary = provider_result.raw_payload_safe_summary or {}
+    return bool(safe_summary.get("grounding_applied")) or str(provider_result.reply_source or "").endswith(":grounded_knowledge")
+
+
 def _apply_grounding(
     *,
     provider_result: FastAIProviderResult,
@@ -153,6 +161,14 @@ def _apply_grounding(
     runtime_context: dict[str, Any] | None,
     tracking_fact_evidence_present: bool,
 ) -> FastAIProviderResult:
+    safe_summary = dict(provider_result.raw_payload_safe_summary or {})
+    if runtime_context:
+        safe_summary.setdefault("rag_trace", summarize_rag_trace(runtime_context))
+    if _is_already_grounded_provider_result(provider_result):
+        safe_summary["grounding_applied"] = True
+        safe_summary.setdefault("grounding_reason", "provider_runtime_grounded_knowledge")
+        return _provider_result_with_summary(provider_result, safe_summary)
+
     knowledge = runtime_context.get("knowledge_context") if isinstance(runtime_context, dict) else None
     hits = knowledge.get("hits") if isinstance(knowledge, dict) else []
     decision = enforce_grounded_answer(
@@ -161,14 +177,11 @@ def _apply_grounding(
         hits=hits if isinstance(hits, list) else [],
         tracking_fact_evidence_present=tracking_fact_evidence_present,
     )
-    safe_summary = dict(provider_result.raw_payload_safe_summary or {})
-    if runtime_context:
-        safe_summary["rag_trace"] = summarize_rag_trace(runtime_context)
     safe_summary["grounding_applied"] = decision.applied
+    safe_summary["grounding_reason"] = decision.reason
     if decision.source:
         safe_summary["grounding_source"] = decision.source
     if not decision.applied:
-        safe_summary["grounding_reason"] = decision.reason
         return _provider_result_with_summary(provider_result, safe_summary)
     return FastAIProviderResult(
         **{

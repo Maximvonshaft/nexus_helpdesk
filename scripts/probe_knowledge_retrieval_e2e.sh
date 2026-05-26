@@ -11,6 +11,8 @@ LANGUAGE="${LANGUAGE:-en}"
 TENANT_KEY="${TENANT_KEY:-default}"
 LIMIT="${LIMIT:-5}"
 OUT_DIR="${OUT_DIR:-artifacts/knowledge_retrieval_probe}"
+EXPECTED_SHA="${EXPECTED_SHA:-}"
+SKIP_RUNTIME_SHA_GATE="${SKIP_RUNTIME_SHA_GATE:-false}"
 CREATE_TEMP_KB="false"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d%H%M%S)-$$}"
 REQUEST_ID="knowledge-probe-${RUN_ID}"
@@ -55,6 +57,23 @@ print(json.dumps(sys.argv[1], ensure_ascii=False))
 PY
 }
 
+json_field() {
+  local path="$1"
+  local key="$2"
+  python - "$path" "$key" <<'PY'
+import json
+import sys
+
+path, key = sys.argv[1:]
+try:
+    payload = json.load(open(path, encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+value = payload.get(key)
+print("" if value is None else str(value))
+PY
+}
+
 write_tsv_header() {
   printf 'step\tstatus\tkey\tvalue\n' > "$TSV"
 }
@@ -94,7 +113,56 @@ api_post() {
     -o "$out_file"
 }
 
+runtime_sha_gate() {
+  if [[ "$SKIP_RUNTIME_SHA_GATE" == "true" ]]; then
+    printf '{"runtime_git_sha":"skipped","reason":"SKIP_RUNTIME_SHA_GATE=true"}' > "$TMP/runtime_git_sha.out.json"
+    record_step "runtime_git_sha" "skipped" "$TMP/runtime_git_sha.out.json"
+    return 0
+  fi
+
+  local healthz_out="$TMP/healthz.out.json"
+  curl -sS -f "${BASE_URL%/}/healthz" -o "$healthz_out"
+  local healthz_sha
+  healthz_sha="$(json_field "$healthz_out" git_sha || true)"
+  local expected_sha="${EXPECTED_SHA:-$healthz_sha}"
+  local expected_source="healthz-derived"
+  if [[ -n "$EXPECTED_SHA" ]]; then
+    expected_source="EXPECTED_SHA env override"
+  fi
+  python - "$healthz_out" "$expected_sha" "$expected_source" "$TMP/runtime_git_sha.out.json" <<'PY'
+import json
+import sys
+
+healthz_path, expected_sha, expected_source, out_path = sys.argv[1:]
+payload = json.load(open(healthz_path, encoding="utf-8"))
+actual = str(payload.get("git_sha") or "").strip()
+expected = str(expected_sha or "").strip()
+result = {
+    "runtime_git_sha": actual,
+    "expected_sha": expected,
+    "source": expected_source,
+}
+if not actual:
+    result["status"] = "fail"
+    result["error"] = "healthz git_sha missing"
+elif not expected:
+    result["status"] = "fail"
+    result["error"] = "expected SHA missing"
+elif actual.lower() != expected.lower():
+    result["status"] = "fail"
+    result["error"] = "runtime_git_sha mismatch"
+else:
+    result["status"] = "pass"
+with open(out_path, "w", encoding="utf-8") as fh:
+    json.dump(result, fh, ensure_ascii=False, sort_keys=True)
+if result["status"] != "pass":
+    raise SystemExit(f"{result['error']}: actual={actual} expected={expected}")
+PY
+  record_step "runtime_git_sha" "ok" "$TMP/runtime_git_sha.out.json"
+}
+
 write_tsv_header
+runtime_sha_gate
 
 if [[ "$CREATE_TEMP_KB" == "true" ]]; then
   ITEM_KEY="probe.business_fact.${RUN_ID}"

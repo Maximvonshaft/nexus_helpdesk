@@ -378,6 +378,63 @@ def test_approved_direct_answer_override_policy_blocks_tracking_and_high_risk_qu
     assert complaint_blocked.applied is False
 
 
+def test_approved_direct_answer_override_requires_entity_compatible_candidate():
+    hits = [
+        {
+            "item_key": "fact.ch.shipping-sla",
+            "title": "瑞士海运时效",
+            "text": "Question: 瑞士海运时效是多少？ Answer: 瑞士海运时效为 15 天。",
+            "score": 161.04,
+            "chunk_index": 0,
+            "retrieval_method": "structured_fact_recall+direct_answer_fact",
+            "direct_answer": "瑞士海运时效为 15 天。",
+            "answer_mode": "direct_answer",
+            "metadata": {"knowledge_kind": "business_fact", "fact_status": "approved", "answer_mode": "direct_answer"},
+            "source_metadata": {"item_key": "fact.ch.shipping-sla", "title": "瑞士海运时效"},
+        }
+    ]
+    provider_output = {
+        "customer_reply": "请提供您的运单号，我才能查询包裹状态。",
+        "intent": "tracking_missing_number",
+        "tracking_number": None,
+    }
+
+    swiss_context = {
+        "grounding_would_apply": True,
+        "grounding_source": {"item_key": "fact.ch.shipping-sla"},
+        "query_analysis": {"entity_terms": ["瑞士"]},
+        "hits": hits,
+    }
+    swiss = select_approved_direct_answer_override(
+        query="瑞士海运时效是多少",
+        provider_output=provider_output,
+        knowledge_context=swiss_context,
+    )
+    assert swiss.applied is True
+    assert swiss.reply == "瑞士海运时效为 15 天。"
+
+    for query in ("尼日利亚海运时效是多少", "尼日利亚空运时效是多少"):
+        blocked = select_approved_direct_answer_override(
+            query=query,
+            provider_output=provider_output,
+            knowledge_context={
+                **swiss_context,
+                "query_analysis": {"entity_terms": ["尼日利亚"]},
+            },
+        )
+        assert blocked.applied is False
+        assert blocked.reason == "entity_mismatch"
+
+
+def test_knowledge_e2e_probe_runtime_sha_gate_is_dynamic():
+    script = (ROOT.parent / "scripts/probe_knowledge_retrieval_e2e.sh").read_text(encoding="utf-8")
+
+    assert 'EXPECTED_SHA="${EXPECTED_SHA:-}"' in script
+    assert "runtime_git_sha mismatch" in script
+    assert "${BASE_URL%/}/healthz" in script
+    assert "633d8c30e098" not in script
+
+
 @pytest.mark.parametrize(
     "query",
     [

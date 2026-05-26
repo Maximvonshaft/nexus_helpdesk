@@ -95,12 +95,20 @@ def select_approved_direct_answer_override(
     hits = knowledge_context.get("hits")
     if not isinstance(hits, list):
         return GroundingDecision(applied=False, reason="knowledge_hits_missing")
+    entity_terms = _query_entity_terms(knowledge_context)
     candidate = select_grounding_candidate(
         query=query,
         hits=hits,
         tracking_fact_evidence_present=tracking_fact_evidence_present,
+        required_entity_terms=entity_terms,
     )
     if candidate is None:
+        if entity_terms and select_grounding_candidate(
+            query=query,
+            hits=hits,
+            tracking_fact_evidence_present=tracking_fact_evidence_present,
+        ):
+            return GroundingDecision(applied=False, reason="entity_mismatch")
         return GroundingDecision(applied=False, reason="no_safe_direct_answer")
     if _has_trusted_tracking_output_conflict(
         provider_output=provider_output,
@@ -120,6 +128,7 @@ def select_grounding_candidate(
     query: str,
     hits: list[KnowledgeChunkHit] | list[dict[str, Any]],
     tracking_fact_evidence_present: bool = False,
+    required_entity_terms: list[str] | None = None,
 ) -> dict[str, Any] | None:
     if _unsafe_for_grounding(query, tracking_fact_evidence_present=tracking_fact_evidence_present):
         return None
@@ -140,6 +149,9 @@ def select_grounding_candidate(
             continue
         if (data.get("answer_mode") or metadata.get("answer_mode")) != "direct_answer":
             continue
+        entity_text = _candidate_entity_text(data=data, answer=answer, metadata=metadata)
+        if required_entity_terms and not _entity_terms_compatible(required_entity_terms, entity_text):
+            continue
         return {
             "answer": answer,
             "source": {
@@ -150,6 +162,7 @@ def select_grounding_candidate(
                 "retrieval_method": data.get("retrieval_method") or metadata.get("retrieval_method"),
                 "source_metadata": data.get("source_metadata") or {},
             },
+            "_entity_text": entity_text,
         }
     return None
 
@@ -201,6 +214,47 @@ def _has_trusted_tracking_output_conflict(
     if intent == "tracking":
         return True
     return bool(provider_output.get("tracking_number"))
+
+
+def _query_entity_terms(knowledge_context: dict[str, Any]) -> list[str]:
+    query_analysis = knowledge_context.get("query_analysis")
+    if not isinstance(query_analysis, dict):
+        return []
+    raw_terms = query_analysis.get("entity_terms")
+    if not isinstance(raw_terms, list):
+        return []
+    return [str(term).strip() for term in raw_terms if str(term).strip()]
+
+
+def _candidate_entity_text(*, data: dict[str, Any], answer: str, metadata: dict[str, Any]) -> str:
+    source_metadata = data.get("source_metadata") if isinstance(data.get("source_metadata"), dict) else {}
+    parts = [
+        data.get("item_key"),
+        data.get("title"),
+        data.get("text"),
+        answer,
+        metadata.get("item_key"),
+        metadata.get("title"),
+        source_metadata.get("item_key"),
+        source_metadata.get("title"),
+    ]
+    return " ".join(str(part) for part in parts if part not in (None, ""))
+
+
+def _entity_terms_compatible(entity_terms: list[str], candidate_text: str) -> bool:
+    normalized_candidate = _entity_match_text(candidate_text)
+    if not normalized_candidate:
+        return False
+    for term in entity_terms:
+        normalized_term = _entity_match_text(term)
+        if normalized_term and normalized_term in normalized_candidate:
+            return True
+    return False
+
+
+def _entity_match_text(value: str | None) -> str:
+    text = unicodedata.normalize("NFKC", value or "").lower()
+    return re.sub(r"[^\w\u4e00-\u9fff]+", "", text)
 
 
 def _number_terms(value: str | None) -> set[str]:
