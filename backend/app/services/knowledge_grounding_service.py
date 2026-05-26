@@ -167,7 +167,7 @@ def _number_terms(value: str | None) -> set[str]:
 
 
 def _unsafe_for_grounding(query: str | None, *, tracking_fact_evidence_present: bool) -> bool:
-    text = (query or "").lower()
+    text = _unsafe_match_text(query)
     if any(marker in text for marker in UNSAFE_MARKERS):
         return True
     if TRACKING_NUMBER_RE.search(text):
@@ -178,5 +178,9 @@ def _unsafe_for_grounding(query: str | None, *, tracking_fact_evidence_present: 
 
 
 def _unsafe_answer(answer: str) -> bool:
-    text = answer.lower()
+    text = _unsafe_match_text(answer)
     return any(marker in text for marker in UNSAFE_MARKERS) or any(marker in text for marker in PROMISE_MARKERS)
+
+
+def _unsafe_match_text(value: str | None) -> str:
+    return re.sub(r"[\s_-]+", " ", (value or "").lower())

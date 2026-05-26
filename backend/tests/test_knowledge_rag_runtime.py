@@ -153,6 +153,44 @@ def test_english_query_retrieves_approved_business_fact(db_session):
     assert "sla" in result.query_analysis.intent_terms or "delivery" in result.query_analysis.service_terms
 
 
+def test_swiss_ocean_shipping_sla_direct_answer_retrieval_and_runtime_context(db_session):
+    admin = _user(db_session)
+    fact = _business_fact(
+        db_session,
+        admin,
+        item_key="fact.ch.shipping-sla",
+        title="瑞士海运时效",
+        language="zh",
+        fact_question="瑞士海运时效是多少？",
+        fact_answer="瑞士海运时效为 15 天。",
+        fact_aliases_json=["瑞士海运多久", "瑞士海运时效", "瑞士海运15天"],
+    )
+
+    result = retrieve_published_chunks(
+        db_session,
+        q="瑞士海运时效是多少？",
+        channel="website",
+        audience_scope="customer",
+        language="zh",
+        limit=5,
+    )
+
+    assert result.hits[0].item_key == fact.item_key
+    assert result.hits[0].direct_answer == "瑞士海运时效为 15 天。"
+    assert result.grounding_source["item_key"] == fact.item_key
+
+    context = build_webchat_runtime_context(
+        db_session,
+        tenant_key="default",
+        channel_key="website",
+        body="瑞士海运时效是多少？",
+        language="zh",
+    )
+
+    assert context["knowledge_context"]["hits"][0]["direct_answer"] == "瑞士海运时效为 15 天。"
+    assert context["knowledge_context"]["grounding_source"]["item_key"] == fact.item_key
+
+
 def test_approved_qa_outranks_raw_chunk_and_unapproved_facts_are_excluded(db_session):
     admin = _user(db_session)
     approved = _business_fact(
@@ -285,6 +323,72 @@ def test_direct_answer_grounding_rewrites_safe_numeric_contradiction_only():
         tracking_fact_evidence_present=True,
     )
     assert tracking_blocked.applied is False
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "If ocean shipping is late, can I get compensation?",
+        "瑞士海运晚了有法律责任吗？",
+        "Can you provide the driver-phone for this service?",
+        "What internal API token should I use for shipping SLA?",
+        "Does this create account-risk?",
+    ],
+)
+def test_direct_answer_grounding_blocks_protected_topics(query):
+    hits = [
+        {
+            "item_key": "fact.shipping.sla",
+            "title": "运输时效",
+            "score": 42.0,
+            "chunk_index": 0,
+            "retrieval_method": "structured_fact_recall+direct_answer_fact",
+            "direct_answer": "瑞士海运时效为 15 天。",
+            "answer_mode": "direct_answer",
+            "metadata": {"knowledge_kind": "business_fact", "fact_status": "approved", "answer_mode": "direct_answer"},
+            "source_metadata": {"item_key": "fact.shipping.sla"},
+        }
+    ]
+
+    decision = enforce_grounded_answer(
+        query=query,
+        provider_reply="通常需要30-45天。",
+        hits=hits,
+    )
+
+    assert decision.applied is False
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "We guarantee compensation if the shipment is late.",
+        "The driver-phone is 123456.",
+        "Use the internal API token from the admin console.",
+    ],
+)
+def test_direct_answer_grounding_blocks_unsafe_answers(answer):
+    hits = [
+        {
+            "item_key": "fact.unsafe",
+            "title": "Unsafe answer",
+            "score": 42.0,
+            "chunk_index": 0,
+            "retrieval_method": "structured_fact_recall+direct_answer_fact",
+            "direct_answer": answer,
+            "answer_mode": "direct_answer",
+            "metadata": {"knowledge_kind": "business_fact", "fact_status": "approved", "answer_mode": "direct_answer"},
+            "source_metadata": {"item_key": "fact.unsafe"},
+        }
+    ]
+
+    decision = enforce_grounded_answer(
+        query="What is the Switzerland shipping SLA?",
+        provider_reply="I cannot confirm that from the available information.",
+        hits=hits,
+    )
+
+    assert decision.applied is False
 
 
 def test_runtime_context_and_prompt_are_bounded_and_sanitized(db_session):
