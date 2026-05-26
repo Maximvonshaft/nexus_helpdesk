@@ -9,9 +9,24 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_valid
 from .utils.time import format_utc
 
 PROFILE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{1,119}$")
+GLOBAL_SCOPE_ALIASES = {"*", "all", "any", "global", "none", "null"}
 
 
 JsonObject = dict[str, Any]
+
+
+def _strip_optional_string(value):
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    return value
+
+
+def _strip_optional_language(value):
+    cleaned = _strip_optional_string(value)
+    if isinstance(cleaned, str) and cleaned.lower() in GLOBAL_SCOPE_ALIASES:
+        return None
+    return cleaned
 
 
 class ControlPlaneModel(BaseModel):
@@ -34,13 +49,15 @@ class PersonaProfileBase(BaseModel):
     draft_summary: Optional[str] = Field(default=None, max_length=8000)
     draft_content_json: Optional[JsonObject] = None
 
-    @field_validator("name", "description", "channel", "language", "draft_summary", mode="before")
+    @field_validator("name", "description", "channel", "draft_summary", mode="before")
     @classmethod
     def strip_optional_strings(cls, value):
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return value
+        return _strip_optional_string(value)
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def strip_optional_language(cls, value):
+        return _strip_optional_language(value)
 
 
 class PersonaProfileCreate(PersonaProfileBase):
@@ -65,13 +82,15 @@ class PersonaProfileUpdate(BaseModel):
     draft_summary: Optional[str] = Field(default=None, max_length=8000)
     draft_content_json: Optional[JsonObject] = None
 
-    @field_validator("name", "description", "channel", "language", "draft_summary", mode="before")
+    @field_validator("name", "description", "channel", "draft_summary", mode="before")
     @classmethod
     def strip_optional_strings(cls, value):
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return value
+        return _strip_optional_string(value)
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def strip_optional_language(cls, value):
+        return _strip_optional_language(value)
 
 
 class PersonaPublishRequest(BaseModel):
@@ -80,10 +99,7 @@ class PersonaPublishRequest(BaseModel):
     @field_validator("notes", mode="before")
     @classmethod
     def strip_notes(cls, value):
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return value
+        return _strip_optional_string(value)
 
 
 class PersonaRollbackRequest(PersonaPublishRequest):
@@ -95,13 +111,15 @@ class PersonaResolvePreviewRequest(BaseModel):
     channel: Optional[str] = Field(default=None, max_length=40)
     language: Optional[str] = Field(default=None, max_length=16)
 
-    @field_validator("channel", "language", mode="before")
+    @field_validator("channel", mode="before")
     @classmethod
     def strip_optional_strings(cls, value):
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return value
+        return _strip_optional_string(value)
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def strip_optional_language(cls, value):
+        return _strip_optional_language(value)
 
 
 class PersonaProfileVersionOut(ControlPlaneModel):
@@ -173,10 +191,7 @@ class KnowledgeItemBase(BaseModel):
     @field_validator("title", "summary", "status", "source_type", "channel", "audience_scope", "source_url", "file_name", "file_storage_key", "mime_type", "draft_body", "draft_normalized_text", mode="before")
     @classmethod
     def strip_optional_strings(cls, value):
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return value
+        return _strip_optional_string(value)
 
 
 class KnowledgeItemCreate(KnowledgeItemBase):
@@ -213,10 +228,7 @@ class KnowledgeItemUpdate(BaseModel):
     @field_validator("title", "summary", "status", "source_type", "channel", "audience_scope", "source_url", "file_name", "file_storage_key", "mime_type", "draft_body", "draft_normalized_text", mode="before")
     @classmethod
     def strip_optional_strings(cls, value):
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return value
+        return _strip_optional_string(value)
 
 
 class KnowledgePublishRequest(BaseModel):
@@ -225,10 +237,7 @@ class KnowledgePublishRequest(BaseModel):
     @field_validator("notes", mode="before")
     @classmethod
     def strip_notes(cls, value):
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return value
+        return _strip_optional_string(value)
 
 
 class KnowledgeRollbackRequest(KnowledgePublishRequest):
@@ -245,10 +254,7 @@ class KnowledgeSearchPublishedRequest(BaseModel):
     @field_validator("q", "channel", "audience_scope", mode="before")
     @classmethod
     def strip_optional_strings(cls, value):
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return value
+        return _strip_optional_string(value)
 
 
 class KnowledgeRetrievalTestRequest(BaseModel):
@@ -261,10 +267,7 @@ class KnowledgeRetrievalTestRequest(BaseModel):
     @field_validator("q", "channel", "audience_scope", mode="before")
     @classmethod
     def strip_optional_strings(cls, value):
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return value
+        return _strip_optional_string(value)
 
 
 class KnowledgeItemVersionOut(ControlPlaneModel):
