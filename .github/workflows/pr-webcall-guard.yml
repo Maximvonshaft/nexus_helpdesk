@@ -84,6 +84,7 @@ jobs:
               backend/app/services/provider_runtime/codex_llm_client.py) return 0 ;;
               backend/app/services/provider_runtime/codex_smoke_chat.py) return 0 ;;
               backend/app/services/provider_runtime/oauth_refresh_manager.py) return 0 ;;
+              backend/app/services/provider_runtime/output_contracts.py) return 0 ;;
               backend/app/services/provider_runtime/router.py) return 0 ;;
               backend/app/services/provider_runtime/webchat_fast_dispatcher.py) return 0 ;;
               backend/app/services/webchat_fast_ai_service.py) return 0 ;;
@@ -100,6 +101,7 @@ jobs:
               backend/tests/test_oauth_refresh_concurrency.py) return 0 ;;
               backend/tests/test_provider_runtime_codex_oauth_webchat.py) return 0 ;;
               backend/tests/test_provider_runtime_kill_switch_canary.py) return 0 ;;
+              backend/tests/test_provider_runtime_persona_enforcement.py) return 0 ;;
               backend/tests/test_provider_runtime_router_fallback_e2e.py) return 0 ;;
               backend/tests/test_knowledge_items.py) return 0 ;;
               backend/tests/test_knowledge_runtime_context.py) return 0 ;;
