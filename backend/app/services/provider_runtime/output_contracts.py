@@ -16,6 +16,8 @@ _STATUS_WORDS = [
     "delivered", "in transit", "out for delivery", "customs", "returned", "failed delivery",
     "派送", "已签收", "运输中", "清关", "退回",
 ]
+_MAX_FAST_REPLY_CHARS = 1200
+_MAX_VISIBLE_PREFIX_CHARS = 80
 
 
 class OutputContracts:
@@ -72,7 +74,7 @@ class OutputContracts:
         return {}
 
     @staticmethod
-    def validate_and_parse(contract_name: str, raw_output: str, evidence_present: bool = False) -> dict[str, Any]:
+    def validate_and_parse(contract_name: str, raw_output: str, evidence_present: bool = False, persona_context: dict[str, Any] | None = None) -> dict[str, Any]:
         try:
             parsed = json.loads(raw_output)
         except json.JSONDecodeError as exc:
@@ -81,6 +83,7 @@ class OutputContracts:
             raise ValueError("Output must be a JSON object")
         if contract_name == "speedaf_webchat_fast_reply_v1":
             parsed = OutputContracts._normalize_fast_reply_v1(parsed)
+            parsed = OutputContracts.enforce_persona_fast_reply(parsed, persona_context)
             raw_output = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
 
         schema = OutputContracts.get_schema(contract_name)
@@ -108,6 +111,46 @@ class OutputContracts:
         parsed.setdefault("internal_summary", None)
         parsed.setdefault("risk_flags", [])
         return parsed
+
+    @staticmethod
+    def enforce_persona_fast_reply(parsed: dict[str, Any], persona_context: dict[str, Any] | None) -> dict[str, Any]:
+        prefix = OutputContracts.extract_persona_visible_prefix(persona_context)
+        if not prefix:
+            return parsed
+        reply = str(parsed.get("customer_reply") or "").strip()
+        if not reply or reply.startswith(prefix):
+            return {**parsed, "customer_reply": reply}
+        return {**parsed, "customer_reply": OutputContracts._truncate_reply(f"{prefix} {reply}")}
+
+    @staticmethod
+    def extract_persona_visible_prefix(persona_context: dict[str, Any] | None) -> str | None:
+        if not isinstance(persona_context, dict):
+            return None
+        content_json = persona_context.get("content_json")
+        if not isinstance(content_json, dict):
+            return None
+        for key in ("must_prefix", "reply_prefix", "visible_prefix"):
+            value = content_json.get(key)
+            if not isinstance(value, str):
+                continue
+            cleaned = " ".join(value.strip().split())
+            if not cleaned or len(cleaned) > _MAX_VISIBLE_PREFIX_CHARS:
+                continue
+            if "[REDACTED_" in cleaned:
+                continue
+            if any(marker in cleaned.lower() for marker in _INTERNAL_PATTERNS):
+                continue
+            if any(pattern.search(cleaned) for pattern in _SECRET_PATTERNS):
+                continue
+            return cleaned
+        return None
+
+    @staticmethod
+    def _truncate_reply(value: str) -> str:
+        cleaned = " ".join(str(value or "").strip().split())
+        if len(cleaned) <= _MAX_FAST_REPLY_CHARS:
+            return cleaned
+        return cleaned[: _MAX_FAST_REPLY_CHARS - 3].rstrip() + "..."
 
     @staticmethod
     def check_security_rules(*, raw_output: str, parsed: dict[str, Any], evidence_present: bool = False) -> None:
