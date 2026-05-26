@@ -73,6 +73,9 @@ def _pre_provider_direct_answer_result(
     request: FastAIProviderRequest,
     runtime_context: dict | None,
 ) -> FastAIProviderResult | None:
+    if request.tracking_fact_evidence_present:
+        return None
+
     knowledge_context = _knowledge_context(runtime_context)
     grounding_decision = select_approved_direct_answer_override(
         query=request.body,
