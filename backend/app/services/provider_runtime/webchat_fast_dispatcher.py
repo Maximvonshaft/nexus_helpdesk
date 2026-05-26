@@ -95,7 +95,7 @@ def _pre_provider_direct_answer_result(
     return FastAIProviderResult(
         ok=True,
         ai_generated=True,
-        reply_source="knowledge_direct_answer:grounded_knowledge",
+        reply_source="codex_app_server:grounded_knowledge",
         raw_provider="knowledge_direct_answer",
         raw_payload_safe_summary=safe_summary,
         reply=grounding_decision.reply,
