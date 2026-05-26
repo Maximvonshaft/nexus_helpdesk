@@ -14,6 +14,7 @@ from .text_decoding import is_supported_text_upload
 
 settings = get_settings()
 CHUNK_SIZE = 1024 * 1024
+TEXT_SNIFF_SAMPLE_BYTES = 4096
 
 
 @dataclass
@@ -88,8 +89,9 @@ class LocalStorageBackend:
                     chunk = file.file.read(CHUNK_SIZE)
                     if not chunk:
                         break
-                    if not sample:
-                        sample = chunk[:512]
+                    if len(sample) < TEXT_SNIFF_SAMPLE_BYTES:
+                        needed = TEXT_SNIFF_SAMPLE_BYTES - len(sample)
+                        sample += chunk[:needed]
                     total += len(chunk)
                     if total > max_bytes:
                         raise HTTPException(status_code=413, detail='Uploaded file exceeds MAX_UPLOAD_BYTES')
@@ -176,8 +178,9 @@ class S3CompatibleStorageBackend:
                     chunk = file.file.read(CHUNK_SIZE)
                     if not chunk:
                         break
-                    if not sample:
-                        sample = chunk[:512]
+                    if len(sample) < TEXT_SNIFF_SAMPLE_BYTES:
+                        needed = TEXT_SNIFF_SAMPLE_BYTES - len(sample)
+                        sample += chunk[:needed]
                     total += len(chunk)
                     if total > max_bytes:
                         raise HTTPException(status_code=413, detail='Uploaded file exceeds MAX_UPLOAD_BYTES')
