@@ -123,6 +123,33 @@ def test_invalid_profile_key_fails_validation():
         PersonaProfileCreate(profile_key="Bad Key", name="Invalid")
 
 
+@pytest.mark.parametrize("alias", ["", " ", "global", "GLOBAL", "all", "any", "*", "none", "null"])
+def test_persona_language_global_aliases_store_as_null(alias):
+    payload = PersonaProfileCreate(
+        profile_key="global.language.alias",
+        name="Global Language Alias",
+        channel="website",
+        language=alias,
+        draft_summary="Global language support persona",
+        draft_content_json={"tone": "concise"},
+    )
+    assert payload.language is None
+
+
+def test_update_persona_language_global_alias_stores_null(db_session):
+    admin = _user(db_session, UserRole.admin, "admin")
+    profile = create_persona_profile(_create_payload(profile_key="language.global", channel="website", language="en"), db_session, admin)
+
+    updated = update_persona_profile(
+        profile.id,
+        PersonaProfileUpdate(language="global"),
+        db_session,
+        admin,
+    )
+
+    assert updated.language is None
+
+
 def test_list_and_get_profiles_work(db_session):
     admin = _user(db_session, UserRole.admin, "admin")
     create_persona_profile(_create_payload(profile_key="b.persona", name="B Persona"), db_session, admin)
