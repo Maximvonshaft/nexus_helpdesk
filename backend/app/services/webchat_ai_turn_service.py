@@ -12,6 +12,7 @@ from ..models import BackgroundJob
 from ..utils.time import utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatMessage
 from .observability import record_webchat_ai_stale_suppressed, record_webchat_ai_timeout, record_webchat_ai_turn_metric
+from .realtime_broker import publish_webchat_event_sync
 
 LOGGER = logging.getLogger("nexusdesk")
 
@@ -72,11 +73,15 @@ def write_webchat_event(
         return row
 
     if not best_effort:
-        return _insert()
+        row = _insert()
+        publish_webchat_event_sync(conversation_id=conversation_id, ticket_id=ticket_id, event_type=event_type)
+        return row
 
     try:
         with db.begin_nested():
-            return _insert()
+            row = _insert()
+            publish_webchat_event_sync(conversation_id=conversation_id, ticket_id=ticket_id, event_type=event_type)
+            return row
     except Exception as exc:  # pragma: no cover - exercised through monkeypatch failure tests
         LOGGER.warning(
             "webchat_event_write_failed_best_effort",

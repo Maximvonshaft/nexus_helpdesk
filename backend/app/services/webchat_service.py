@@ -266,14 +266,14 @@ def _webchat_auto_ack_text(visitor_body: str) -> str:
     )
 
 
-def _maybe_create_webchat_auto_ack(db: Session, *, conversation: WebchatConversation, visitor_message: WebchatMessage) -> None:
+def _maybe_create_webchat_auto_ack(db: Session, *, conversation: WebchatConversation, visitor_message: WebchatMessage) -> WebchatMessage | None:
     """Create a safe first-response agent message for public webchat.
 
     This is acknowledgement-only. It must not claim parcel status, delivery result,
     refund status, or any fact not backed by tools.
     """
     if get_settings().openclaw_bridge_enabled:
-        return
+        return None
 
     existing_agent = (
         db.query(WebchatMessage.id)
@@ -284,7 +284,7 @@ def _maybe_create_webchat_auto_ack(db: Session, *, conversation: WebchatConversa
         .first()
     )
     if existing_agent:
-        return
+        return None
 
     body = _webchat_auto_ack_text(visitor_message.body)
     row = WebchatMessage(
@@ -299,6 +299,15 @@ def _maybe_create_webchat_auto_ack(db: Session, *, conversation: WebchatConversa
         author_label="Support Assistant",
     )
     db.add(row)
+    db.flush()
+    safe_write_webchat_event(
+        db,
+        conversation_id=conversation.id,
+        ticket_id=conversation.ticket_id,
+        event_type="message.created",
+        payload={"message_id": row.id, "direction": "agent", "generated_by": "local_safe_ack"},
+    )
+    return row
 
 
 def _write_card_message(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, card: WebChatCardPayload, provider_status: str, intent_metadata: dict[str, Any]) -> WebchatMessage:
@@ -327,6 +336,13 @@ def _write_card_message(db: Session, *, conversation: WebchatConversation, ticke
     )
     db.add(row)
     db.flush()
+    safe_write_webchat_event(
+        db,
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        event_type="message.created",
+        payload={"message_id": row.id, "direction": row.direction, "message_type": row.message_type},
+    )
     db.add(TicketOutboundMessage(
         ticket_id=ticket.id,
         channel=SourceChannel.web_chat,
@@ -599,6 +615,14 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
         author_label=conversation.visitor_name or "Visitor",
     )
     db.add(action_message)
+    db.flush()
+    safe_write_webchat_event(
+        db,
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        event_type="message.created",
+        payload={"message_id": action_message.id, "direction": "action", "message_type": "action"},
+    )
     card_message.action_status = "submitted"
     db.add(TicketComment(ticket_id=ticket.id, author_id=None, body=action_text, visibility=NoteVisibility.external))
     db.add(TicketEvent(

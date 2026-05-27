@@ -78,6 +78,7 @@ jobs:
               backend/alembic/versions/20260527_0035_webchat_handoff_control.py) return 0 ;;
               backend/alembic/versions/20260526_0034_knowledge_rag_business_facts.py) return 0 ;;
               backend/app/api/webchat.py) return 0 ;;
+              backend/app/api/webchat_ws.py) return 0 ;;
               backend/app/api/admin_provider_runtime.py) return 0 ;;
               backend/app/api/webchat_fast.py) return 0 ;;
               backend/app/api/webcall_ai.py) return 0 ;;
@@ -123,6 +124,9 @@ jobs:
               backend/app/services/webchat_fast_ai_service.py) return 0 ;;
               backend/app/services/webchat_fast_config.py) return 0 ;;
               backend/app/services/webchat_service.py) return 0 ;;
+              backend/app/services/webchat_realtime_event_service.py) return 0 ;;
+              backend/app/services/webchat_realtime_hub.py) return 0 ;;
+              backend/app/services/realtime_broker.py) return 0 ;;
               backend/app/services/webchat_voice_service.py) return 0 ;;
               backend/scripts/check_model_migration_drift.py) return 0 ;;
               backend/app/services/timeline_service.py) return 0 ;;
@@ -162,6 +166,8 @@ jobs:
               backend/tests/test_webchat_fast_reply_api.py) return 0 ;;
               backend/tests/test_webchat_fast_reply_provider_runtime.py) return 0 ;;
               backend/tests/test_webchat_handoff_control.py) return 0 ;;
+              backend/tests/test_webchat_ws_runtime.py) return 0 ;;
+              backend/tests/test_webchat_ws_static_contracts.py) return 0 ;;
               backend/tests/test_webchat_stream_feature_flag.py) return 0 ;;
               backend/tests/test_webchat_round_b.py) return 0 ;;
               backend/tests/test_webcall_ai_production.py) return 0 ;;
@@ -171,6 +177,7 @@ jobs:
               deploy/codex_private_reply_engine.py) return 0 ;;
               deploy/codex_openclaw_codex_harness_adapter.py) return 0 ;;
               deploy/docker-compose.server.yml) return 0 ;;
+              deploy/nginx/default.conf) return 0 ;;
               backend/alembic/versions/20260525_0033_knowledge_chunks_runtime_context.py) return 0 ;;
               docs/architecture/CODEX_APPSERVER_RUNTIME_V3.md) return 0 ;;
               docs/architecture/WEBCHAT_AI_PROVIDER_ROUTER.md) return 0 ;;
@@ -181,6 +188,7 @@ jobs:
               docs/engineering/webcall_ai_*) return 0 ;;
               docs/ops/CODEX_APPSERVER_RUNTIME_V3_ROLLBACK.md) return 0 ;;
               docs/ops/CODEX_APPSERVER_RUNTIME_V3_RUNBOOK.md) return 0 ;;
+              docs/ops/WEBCHAT_WEBSOCKET_RUNTIME.md) return 0 ;;
               docs/security/CODEX_APPSERVER_TOKEN_BOUNDARY.md) return 0 ;;
               scripts/probe_codex_appserver_discovery.sh) return 0 ;;
               scripts/probe_codex_appserver_runtime_v3_sla.sh) return 0 ;;
@@ -188,6 +196,7 @@ jobs:
               scripts/probe_persona_identity_e2e.sh) return 0 ;;
               tools/nexus-codex-runtime/**) return 0 ;;
               webapp/src/lib/api.ts) return 0 ;;
+              webapp/src/lib/webchatRealtime.ts) return 0 ;;
               webapp/src/lib/apiErrorMap.ts) return 0 ;;
               webapp/src/lib/rbac.ts) return 0 ;;
               webapp/src/lib/speedafApi.ts) return 0 ;;
@@ -198,6 +207,8 @@ jobs:
               webapp/src/routes/users.tsx) return 0 ;;
               webapp/src/routes/webchat-voice.tsx) return 0 ;;
               webapp/src/routes/webchat.tsx) return 0 ;;
+              backend/app/static/webchat/widget.js) return 0 ;;
+              webapp/tests/webchat-realtime-contract.test.mjs) return 0 ;;
               webapp/src/routes/workspace.tsx) return 0 ;;
               webapp/tests/novice-ux-regression.test.mjs) return 0 ;;
               .github/workflows/webcall-ai-final-quality-gate.yml) return 0 ;;

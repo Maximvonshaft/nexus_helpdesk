@@ -41,7 +41,10 @@
     legacyConversationId: null,
     legacyVisitorToken: null,
     legacyLastMessageId: 0,
+    legacyLastEventId: 0,
     legacyPollTimer: null,
+    legacyWs: null,
+    legacyWsReconnectTimer: null,
     rendered: {}
   };
 
@@ -265,6 +268,12 @@
         });
       })
       .finally(function () { if (timer) clearTimeout(timer); });
+  }
+
+  function wsUrl() {
+    var url = new URL('/api/webchat/ws', apiBase || window.location.origin);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    return url.toString();
   }
 
   function parseSseBlock(block) {
@@ -526,6 +535,7 @@
       state.legacyConversationId = cached.conversationId || null;
       state.legacyVisitorToken = cached.visitorToken || null;
       state.legacyLastMessageId = 0;
+      state.legacyLastEventId = 0;
     } catch (err) {}
   }
 
@@ -536,7 +546,10 @@
   }
 
   function ensureLegacySession() {
-    if (state.legacyConversationId && state.legacyVisitorToken) return Promise.resolve();
+    if (state.legacyConversationId && state.legacyVisitorToken) {
+      startLegacyWs();
+      return Promise.resolve();
+    }
     setStatus('Connecting...');
     return api('/api/webchat/init', {
       method: 'POST',
@@ -553,10 +566,18 @@
       state.legacyVisitorToken = data.visitor_token;
       persistLegacySession();
       setStatus('Online');
+      startLegacyWs();
       return pollLegacy(true);
     }).catch(function () {
       setStatus('Temporarily unavailable');
     });
+  }
+
+  function renderServerMessage(msg) {
+    if (!msg || !msg.id) return;
+    if (msg.id && msg.id > state.legacyLastMessageId) state.legacyLastMessageId = msg.id;
+    var role = msg.direction === 'visitor' ? 'visitor' : 'agent';
+    appendMessage(role, msg.body_text || msg.body || (msg.payload_json && (msg.payload_json.title || msg.payload_json.body)) || '', '', 'server:' + String(msg.id));
   }
 
   function pollLegacy(reset) {
@@ -566,11 +587,7 @@
     return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/messages' + qs, {
       headers: { 'X-Webchat-Visitor-Token': state.legacyVisitorToken }
     }, Number(script.getAttribute('data-fast-reply-timeout-ms') || script.getAttribute('data-timeout-ms') || 90000)).then(function (data) {
-      (data.messages || []).forEach(function (msg) {
-        if (msg.id && msg.id > state.legacyLastMessageId) state.legacyLastMessageId = msg.id;
-        var role = msg.direction === 'visitor' ? 'visitor' : 'agent';
-        appendMessage(role, msg.body_text || msg.body || (msg.payload_json && (msg.payload_json.title || msg.payload_json.body)) || '', '', 'server:' + String(msg.id));
-      });
+      (data.messages || []).forEach(renderServerMessage);
       if (reset) setStatus('Online');
     }).catch(function () {
       setStatus('Reconnecting...');
@@ -581,9 +598,59 @@
     if (mode !== 'legacy') return;
     if (state.legacyPollTimer) clearTimeout(state.legacyPollTimer);
     state.legacyPollTimer = setTimeout(function tick() {
-      if (state.open && document.visibilityState !== 'hidden') pollLegacy(false).finally(scheduleLegacyPoll);
+      if (state.open && document.visibilityState !== 'hidden' && !(state.legacyWs && state.legacyWs.readyState === WebSocket.OPEN)) pollLegacy(false).finally(scheduleLegacyPoll);
       else scheduleLegacyPoll();
     }, document.visibilityState === 'hidden' ? 15000 : 4000);
+  }
+
+  function startLegacyWs() {
+    if (mode !== 'legacy') return;
+    if (script.getAttribute('data-websocket') === 'false') return;
+    if (!window.WebSocket || !state.legacyConversationId || !state.legacyVisitorToken) return;
+    if (state.legacyWs && state.legacyWs.readyState === WebSocket.OPEN) return;
+    if (state.legacyWsReconnectTimer) clearTimeout(state.legacyWsReconnectTimer);
+    try {
+      if (state.legacyWs && state.legacyWs.readyState < WebSocket.CLOSING) state.legacyWs.close(1000, 'reconnect');
+    } catch (err) {}
+    try {
+      state.legacyWs = new WebSocket(wsUrl());
+      state.legacyWs.onopen = function () {
+        state.legacyWs.send(JSON.stringify({
+          type: 'connection.hello',
+          client_type: 'visitor',
+          conversation_id: state.legacyConversationId,
+          visitor_token: state.legacyVisitorToken,
+          last_event_id: state.legacyLastEventId
+        }));
+        setStatus('Online');
+      };
+      state.legacyWs.onmessage = function (event) {
+        var data = {};
+        try { data = JSON.parse(String(event.data || '{}')); } catch (err) { return; }
+        if (data.type === 'connection.ready' || data.type === 'subscription.ready' || data.type === 'pong') return;
+        if (data.type === 'error') {
+          try { state.legacyWs.close(1000, 'server_error'); } catch (err) {}
+          return;
+        }
+        if (typeof data.event_id === 'number') state.legacyLastEventId = Math.max(state.legacyLastEventId, data.event_id);
+        if (data.type === 'message.created' && data.message) {
+          hideTyping();
+          renderServerMessage(data.message);
+          setStatus('Online');
+        }
+      };
+      state.legacyWs.onclose = function () {
+        if (mode !== 'legacy' || !state.open) return;
+        setStatus('Reconnecting...');
+        state.legacyWsReconnectTimer = setTimeout(startLegacyWs, 4000);
+        scheduleLegacyPoll();
+      };
+      state.legacyWs.onerror = function () {
+        setStatus('Reconnecting...');
+      };
+    } catch (err) {
+      scheduleLegacyPoll();
+    }
   }
 
   function sendLegacyMessage(body, existingEl) {
@@ -602,9 +669,10 @@
     }).then(function (data) {
       updateMessage(bubble, body, 'visitor');
       if (data && data.message) {
-        appendMessage(data.message.direction === 'visitor' ? 'visitor' : 'agent', data.message.body_text || data.message.body || '', '', 'server:' + String(data.message.id));
+        renderServerMessage(data.message);
       }
       setStatus('Sent');
+      startLegacyWs();
       return pollLegacy(true);
     }).catch(function () {
       updateMessage(bubble, body, 'visitor', 'failed');

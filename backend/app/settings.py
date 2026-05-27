@@ -136,6 +136,14 @@ class Settings:
         self.webchat_ai_session_ttl_hours = int(os.getenv("WEBCHAT_AI_SESSION_TTL_HOURS", "24"))
         self.webchat_ai_session_max_messages = int(os.getenv("WEBCHAT_AI_SESSION_MAX_MESSAGES", "40"))
         self.webchat_ai_session_summary_messages = int(os.getenv("WEBCHAT_AI_SESSION_SUMMARY_MESSAGES", "8"))
+        self.webchat_ws_enabled = _env_bool("WEBCHAT_WS_ENABLED", False)
+        self.webchat_ws_public_enabled = _env_bool("WEBCHAT_WS_PUBLIC_ENABLED", self.webchat_ws_enabled)
+        self.webchat_ws_admin_enabled = _env_bool("WEBCHAT_WS_ADMIN_ENABLED", self.webchat_ws_enabled)
+        self.webchat_ws_broker = os.getenv("WEBCHAT_WS_BROKER", "database").strip().lower() or "database"
+        self.webchat_ws_replay_poll_ms = int(os.getenv("WEBCHAT_WS_REPLAY_POLL_MS", "500"))
+        self.webchat_ws_fallback_poll_ms = int(os.getenv("WEBCHAT_WS_FALLBACK_POLL_MS", "4000"))
+        self.webchat_ws_heartbeat_ms = int(os.getenv("WEBCHAT_WS_HEARTBEAT_MS", "25000"))
+        self.webchat_ws_hello_timeout_ms = int(os.getenv("WEBCHAT_WS_HELLO_TIMEOUT_MS", "5000"))
 
         self.request_id_header = os.getenv("REQUEST_ID_HEADER", "X-Request-Id")
         self.log_json = os.getenv("LOG_JSON", "true").strip().lower() == "true"
@@ -186,6 +194,16 @@ class Settings:
             raise RuntimeError("WEBCHAT_AI_SESSION_MAX_MESSAGES must be between 4 and 200")
         if self.webchat_ai_session_summary_messages < 1 or self.webchat_ai_session_summary_messages > 20:
             raise RuntimeError("WEBCHAT_AI_SESSION_SUMMARY_MESSAGES must be between 1 and 20")
+        if self.webchat_ws_broker not in {"database", "memory"}:
+            raise RuntimeError("WEBCHAT_WS_BROKER must be database or memory")
+        if self.webchat_ws_replay_poll_ms < 100 or self.webchat_ws_replay_poll_ms > 10000:
+            raise RuntimeError("WEBCHAT_WS_REPLAY_POLL_MS must be between 100 and 10000")
+        if self.webchat_ws_fallback_poll_ms < 1000 or self.webchat_ws_fallback_poll_ms > 60000:
+            raise RuntimeError("WEBCHAT_WS_FALLBACK_POLL_MS must be between 1000 and 60000")
+        if self.webchat_ws_heartbeat_ms < 5000 or self.webchat_ws_heartbeat_ms > 120000:
+            raise RuntimeError("WEBCHAT_WS_HEARTBEAT_MS must be between 5000 and 120000")
+        if self.webchat_ws_hello_timeout_ms < 1000 or self.webchat_ws_hello_timeout_ms > 30000:
+            raise RuntimeError("WEBCHAT_WS_HELLO_TIMEOUT_MS must be between 1000 and 30000")
         if self.webchat_tracking_fact_lookup_enabled and not self.webchat_tracking_fact_redaction_enabled:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED must be true when tracking lookup is enabled")
         if self.app_env == "production":
@@ -220,6 +238,8 @@ class Settings:
                 raise RuntimeError("METRICS_TOKEN must be set in production when METRICS_ENABLED=true")
             if self.webchat_allow_legacy_token_transport:
                 raise RuntimeError("WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must be false in production")
+            if self.webchat_ws_enabled and self.webchat_ws_broker == "memory":
+                raise RuntimeError("WEBCHAT_WS_BROKER=memory is not allowed in production when WEBCHAT_WS_ENABLED=true")
             if self.openclaw_attachment_url_fetch_enabled and not self.openclaw_attachment_allowed_hosts:
                 raise RuntimeError("OPENCLAW_ATTACHMENT_ALLOWED_HOSTS must be set when OPENCLAW_ATTACHMENT_URL_FETCH_ENABLED=true in production")
             if not self.frontend_dist_available:

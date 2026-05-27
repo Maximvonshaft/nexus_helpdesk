@@ -39,6 +39,7 @@ from .api.tickets import router as tickets_router
 from .api.webchat_fast import router as webchat_fast_router
 from .api.webchat import router as webchat_router
 from .api.webchat_events import router as webchat_events_router
+from .api.webchat_ws import router as webchat_ws_router
 from .api.webchat_voice import router as webchat_voice_router
 from .api.webcall_ai import router as webcall_ai_router
 from .db import engine, reset_current_request_id, set_current_request_id
@@ -239,6 +240,7 @@ app.include_router(speedaf_actions_router)
 app.include_router(speedaf_cancel_router)
 app.include_router(webchat_fast_router)
 app.include_router(webchat_events_router)
+app.include_router(webchat_ws_router)
 app.include_router(webcall_ai_router)
 app.include_router(webchat_voice_router)
 app.include_router(webchat_router)
