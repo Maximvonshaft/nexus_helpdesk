@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import timezone
 from typing import Any, Literal
 
@@ -15,6 +16,13 @@ from .permissions import ensure_ticket_visible
 from .webchat_handoff_service import serialize_handoff_request
 
 Audience = Literal["admin", "visitor"]
+
+
+@dataclass(frozen=True)
+class EventReplayBatch:
+    events: list[dict[str, Any]]
+    scanned_last_event_id: int
+
 
 CUSTOMER_VISIBLE_EVENT_TYPES = {
     "message.created",
@@ -193,10 +201,11 @@ def list_conversation_event_envelopes(
     limit: int = 50,
     audience: Audience,
     current_user: User | None = None,
-) -> list[dict[str, Any]]:
+) -> EventReplayBatch:
+    safe_after_id = max(0, int(after_id or 0))
     rows = (
         db.query(WebchatEvent)
-        .filter(WebchatEvent.conversation_id == conversation_id, WebchatEvent.id > max(0, int(after_id or 0)))
+        .filter(WebchatEvent.conversation_id == conversation_id, WebchatEvent.id > safe_after_id)
         .order_by(WebchatEvent.id.asc())
         .limit(max(1, min(int(limit or 50), 100)))
         .all()
@@ -206,7 +215,10 @@ def list_conversation_event_envelopes(
         envelope = event_envelope(db, row, audience=audience, current_user=current_user)
         if envelope is not None:
             envelopes.append(envelope)
-    return envelopes
+    return EventReplayBatch(
+        events=envelopes,
+        scanned_last_event_id=int(rows[-1].id) if rows else safe_after_id,
+    )
 
 
 def list_admin_queue_event_envelopes(
@@ -215,10 +227,11 @@ def list_admin_queue_event_envelopes(
     current_user: User,
     after_id: int = 0,
     limit: int = 50,
-) -> list[dict[str, Any]]:
+) -> EventReplayBatch:
+    safe_after_id = max(0, int(after_id or 0))
     rows = (
         db.query(WebchatEvent)
-        .filter(WebchatEvent.id > max(0, int(after_id or 0)), WebchatEvent.event_type.in_(QUEUE_REFRESH_EVENT_TYPES))
+        .filter(WebchatEvent.id > safe_after_id, WebchatEvent.event_type.in_(QUEUE_REFRESH_EVENT_TYPES))
         .order_by(WebchatEvent.id.asc())
         .limit(max(1, min(int(limit or 50), 100)) * 2)
         .all()
@@ -237,4 +250,7 @@ def list_admin_queue_event_envelopes(
             envelopes.append(envelope)
         if len(envelopes) >= max(1, min(int(limit or 50), 100)):
             break
-    return envelopes
+    return EventReplayBatch(
+        events=envelopes,
+        scanned_last_event_id=int(rows[-1].id) if rows else safe_after_id,
+    )

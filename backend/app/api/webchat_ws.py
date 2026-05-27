@@ -270,18 +270,20 @@ async def _subscribe_queue(websocket: WebSocket, db: Session, state: ConnectionS
 
 async def _send_conversation_replay(websocket: WebSocket, db: Session, state: ConnectionState, sub: ConversationSubscription) -> bool:
     db.expire_all()
-    events = list_conversation_event_envelopes(
+    batch = list_conversation_event_envelopes(
         db,
         conversation_id=sub.conversation_id,
         after_id=sub.last_event_id,
         audience="visitor" if sub.audience == "visitor" else "admin",
         current_user=state.current_user,
     )
+    events = batch.events
     for event in events:
         await websocket.send_json(event)
         record_webchat_websocket_event_sent(state.client_type, event.get("type"))
         log_event(20, "websocket_event_sent", client_type=state.client_type, event_type=event.get("type"))
         sub.last_event_id = max(sub.last_event_id, int(event["event_id"]))
+    sub.last_event_id = max(sub.last_event_id, batch.scanned_last_event_id)
     if events:
         record_webchat_websocket_event_replay(state.client_type, "conversation", len(events))
         log_event(20, "websocket_event_replay", client_type=state.client_type, subscription="conversation", event_count=len(events))
@@ -292,8 +294,10 @@ async def _send_queue_updates(websocket: WebSocket, db: Session, state: Connecti
     if state.current_user is None:
         return False
     db.expire_all()
-    events = list_admin_queue_event_envelopes(db, current_user=state.current_user, after_id=sub.last_event_id)
+    batch = list_admin_queue_event_envelopes(db, current_user=state.current_user, after_id=sub.last_event_id)
+    events = batch.events
     if not events:
+        sub.last_event_id = max(sub.last_event_id, batch.scanned_last_event_id)
         return False
     max_event_id = sub.last_event_id
     for event in events:
@@ -303,7 +307,7 @@ async def _send_queue_updates(websocket: WebSocket, db: Session, state: Connecti
         max_event_id = max(max_event_id, int(event["event_id"]))
     record_webchat_websocket_event_replay(state.client_type, "handoff_queue", len(events))
     log_event(20, "websocket_event_replay", client_type=state.client_type, subscription="handoff_queue", event_count=len(events))
-    sub.last_event_id = max_event_id
+    sub.last_event_id = max(max_event_id, batch.scanned_last_event_id)
     await websocket.send_json(
         {
             "type": "queue.updated",

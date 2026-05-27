@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from contextlib import contextmanager
@@ -30,6 +31,13 @@ from app.db import Base, get_db  # noqa: E402
 from app.enums import ConversationState, JobStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import BackgroundJob, Customer, Team, Ticket, User  # noqa: E402
+from app.api.webchat_ws import (  # noqa: E402
+    ConnectionState,
+    ConversationSubscription,
+    QueueSubscription,
+    _send_conversation_replay,
+    _send_queue_updates,
+)
 from app.services import webchat_fast_rate_limit as fast_rate_limit  # noqa: E402
 from app.services.webchat_ai_turn_service import safe_write_webchat_event  # noqa: E402
 from app.services.webchat_realtime_event_service import _hash_token  # noqa: E402
@@ -191,6 +199,14 @@ def drain_until(ws, event_type: str, *, max_messages: int = 12):
     raise AssertionError(f"did not receive {event_type}; seen={seen!r}")
 
 
+class CollectingWebSocket:
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send_json(self, payload: dict) -> None:
+        self.sent.append(payload)
+
+
 def test_public_visitor_websocket_replays_customer_safe_message(api_context):
     db, client = api_context
     _ticket, conversation, message = make_webchat(db, "WS-PUBLIC", token="public-token")
@@ -213,6 +229,87 @@ def test_public_visitor_websocket_replays_customer_safe_message(api_context):
     assert event["message"]["body_text"] == "Hello from support"
     assert "author_user_id" not in event["message"]
     assert "author_user_id" not in event["payload"]
+
+
+def test_visitor_replay_advances_past_invisible_page_to_message_created(api_context):
+    db, client = api_context
+    ticket, conversation, _initial_message = make_webchat(db, "WS-PUBLIC-CURSOR", token="cursor-token")
+    baseline_event_id = db.query(WebchatEvent.id).order_by(WebchatEvent.id.desc()).limit(1).scalar() or 0
+    for index in range(55):
+        safe_write_webchat_event(
+            db,
+            conversation_id=conversation.id,
+            ticket_id=ticket.id,
+            event_type="handoff.requested",
+            payload={"handoff_request_id": 1000 + index},
+        )
+    visible_message = WebchatMessage(
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        direction="agent",
+        body="Visible after invisible replay page",
+        body_text="Visible after invisible replay page",
+        author_label="Support",
+    )
+    db.add(visible_message)
+    db.flush()
+    visible_event = safe_write_webchat_event(
+        db,
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        event_type="message.created",
+        payload={"message_id": visible_message.id, "direction": "agent"},
+    )
+    assert visible_event is not None
+    db.commit()
+
+    with client.websocket_connect("/api/webchat/ws") as ws:
+        ws.send_json({
+            "type": "connection.hello",
+            "client_type": "visitor",
+            "conversation_id": conversation.public_id,
+            "visitor_token": "cursor-token",
+            "last_event_id": baseline_event_id,
+        })
+        assert ws.receive_json()["type"] == "connection.ready"
+        assert ws.receive_json()["type"] == "subscription.ready"
+        event, _seen = drain_until(ws, "message.created", max_messages=4)
+
+    assert event["event_id"] == visible_event.id
+    assert event["message"]["body_text"] == "Visible after invisible replay page"
+
+
+def test_conversation_replay_cursor_advances_when_visible_events_empty(api_context):
+    db, _client = api_context
+    ticket, conversation, _initial_message = make_webchat(db, "WS-CONV-EMPTY-CURSOR", token="empty-cursor-token")
+    baseline_event_id = db.query(WebchatEvent.id).order_by(WebchatEvent.id.desc()).limit(1).scalar() or 0
+    last_invisible = None
+    for index in range(3):
+        last_invisible = safe_write_webchat_event(
+            db,
+            conversation_id=conversation.id,
+            ticket_id=ticket.id,
+            event_type="handoff.requested",
+            payload={"handoff_request_id": 2000 + index},
+        )
+    assert last_invisible is not None
+    db.commit()
+
+    websocket = CollectingWebSocket()
+    state = ConnectionState(client_type="visitor")
+    sub = ConversationSubscription(
+        conversation_id=conversation.id,
+        public_id=conversation.public_id,
+        ticket_id=ticket.id,
+        audience="visitor",
+        last_event_id=baseline_event_id,
+    )
+
+    delivered = asyncio.run(_send_conversation_replay(websocket, db, state, sub))
+
+    assert delivered is False
+    assert websocket.sent == []
+    assert sub.last_event_id == last_invisible.id
 
 
 def test_agent_websocket_subscription_rejects_invisible_ticket(api_context):
@@ -252,6 +349,55 @@ def test_agent_queue_snapshot_exposes_real_force_takeover_capability(api_context
     assert snapshot["type"] == "queue.snapshot"
     assert snapshot["data"]["permissions"]["can_force_takeover"] is False
     assert snapshot["data"]["items"][0]["can_force_takeover"] is False
+
+
+def test_admin_queue_replay_advances_past_invisible_page_to_visible_update(api_context):
+    db, client = api_context
+    visible_team = make_team(db, "queue-visible-team")
+    hidden_team = make_team(db, "queue-hidden-team")
+    agent = make_user(db, "queue-scoped-agent", UserRole.agent, team_id=visible_team.id)
+    hidden_ticket, hidden_conversation, hidden_message = make_webchat(db, "WS-QUEUE-HIDDEN", team_id=hidden_team.id)
+    for _index in range(105):
+        safe_write_webchat_event(
+            db,
+            conversation_id=hidden_conversation.id,
+            ticket_id=hidden_ticket.id,
+            event_type="message.created",
+            payload={"message_id": hidden_message.id, "direction": "agent"},
+        )
+    make_webchat(db, "WS-QUEUE-VISIBLE", assignee_id=agent.id, team_id=visible_team.id)
+    visible_event_id = db.query(WebchatEvent.id).order_by(WebchatEvent.id.desc()).limit(1).scalar() or 0
+    db.commit()
+
+    with client.websocket_connect("/api/webchat/ws") as ws:
+        ws.send_json({"type": "connection.hello", "client_type": "agent", "access_token": create_access_token(agent.id)})
+        assert ws.receive_json()["type"] == "connection.ready"
+        ws.send_json({"type": "subscribe.handoff_queue", "view": "requested", "last_event_id": 0})
+        assert ws.receive_json()["type"] == "queue.snapshot"
+        update, _seen = drain_until(ws, "queue.updated", max_messages=4)
+
+    assert update["event_id"] >= visible_event_id
+    assert update["view"] == "requested"
+
+
+def test_queue_replay_cursor_advances_when_visible_events_empty(api_context):
+    db, _client = api_context
+    visible_team = make_team(db, "queue-empty-visible-team")
+    hidden_team = make_team(db, "queue-empty-hidden-team")
+    agent = make_user(db, "queue-empty-agent", UserRole.agent, team_id=visible_team.id)
+    make_webchat(db, "WS-QUEUE-EMPTY-HIDDEN", team_id=hidden_team.id)
+    hidden_event_id = db.query(WebchatEvent.id).order_by(WebchatEvent.id.desc()).limit(1).scalar() or 0
+    db.commit()
+
+    websocket = CollectingWebSocket()
+    state = ConnectionState(client_type="agent", current_user=agent)
+    sub = QueueSubscription(view="requested", last_event_id=0)
+
+    delivered = asyncio.run(_send_queue_updates(websocket, db, state, sub))
+
+    assert delivered is False
+    assert websocket.sent == []
+    assert sub.last_event_id == hidden_event_id
 
 
 def test_supervisor_force_takeover_command_replays_handoff_and_ai_cancelled(api_context):
