@@ -26,10 +26,27 @@ export const credentialTermLabels: Record<string, string> = {
 }
 
 export const accountHealthLabels: Record<string, string> = {
+  ok: '正常',
+  success: '成功',
+  error: '异常',
+  warning: '需关注',
   healthy: '正常',
   degraded: '受限',
   offline: '离线',
   unknown: '未知',
+}
+
+export const smtpFailureLabels: Record<string, string> = {
+  smtp_configuration_missing: '未配置可用 SMTP 账号',
+  smtp_auth_failed: 'SMTP 认证失败',
+  smtp_tls_failed: 'TLS/SSL 握手失败',
+  smtp_connect_timeout: '连接超时',
+  smtp_connect_failed: '连接失败',
+  smtp_sender_rejected: '发件地址被拒绝',
+  smtp_recipient_rejected: '收件地址被拒绝',
+  smtp_rate_limited: 'SMTP 限流',
+  smtp_message_rejected: '邮件内容被拒绝',
+  smtp_unexpected_error: 'SMTP 未知错误',
 }
 
 export function formatDurationSeconds(value: unknown) {

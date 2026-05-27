@@ -24,12 +24,44 @@ on:
         description: 'Optional Origin for CORS preflight check; leave blank to skip'
         required: false
         default: ''
+      check_outbound_email_admin:
+        description: 'Run real admin browser smoke for /outbound-email using STAGING_ADMIN_USERNAME/PASSWORD secrets'
+        required: true
+        default: false
+        type: boolean
+      check_outbound_email_test_send:
+        description: 'Send a real SMTP test email using OUTBOUND_EMAIL_TEST_TO and admin secrets'
+        required: true
+        default: false
+        type: boolean
+      outbound_email_account_id:
+        description: 'Optional Outbound Email account id for test-send; leave blank to use first active account'
+        required: false
+        default: ''
 
 jobs:
   manual-staging-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
+      - name: Checkout repository
+        if: ${{ inputs.check_outbound_email_admin || inputs.check_outbound_email_test_send }}
+        uses: actions/checkout@v4
+
+      - name: Setup Node for optional browser smoke
+        if: ${{ inputs.check_outbound_email_admin }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Setup Python for optional test-send gate
+        if: ${{ inputs.check_outbound_email_test_send }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Normalize target
         id: target
         shell: bash
@@ -146,6 +178,47 @@ jobs:
           fi
           echo 'metrics_endpoint_ok'
 
+      - name: Run optional Outbound Email admin browser smoke
+        if: ${{ inputs.check_outbound_email_admin }}
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ steps.target.outputs.base_url }}
+          NEXUS_REAL_ADMIN_SMOKE: "1"
+          NEXUS_ADMIN_USERNAME: ${{ secrets.STAGING_ADMIN_USERNAME }}
+          NEXUS_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [ -z "${NEXUS_ADMIN_USERNAME:-}" ] || [ -z "${NEXUS_ADMIN_PASSWORD:-}" ]; then
+            echo 'STAGING_ADMIN_USERNAME and STAGING_ADMIN_PASSWORD secrets are required for Outbound Email admin browser smoke'
+            exit 7
+          fi
+          cd webapp
+          npm ci
+          npx playwright install --with-deps chrome
+          npx playwright test e2e/outbound-email-admin-real.spec.ts
+
+      - name: Run optional Outbound Email production test-send gate
+        if: ${{ inputs.check_outbound_email_test_send }}
+        env:
+          NEXUS_BASE_URL: ${{ steps.target.outputs.base_url }}
+          NEXUS_ADMIN_USERNAME: ${{ secrets.STAGING_ADMIN_USERNAME }}
+          NEXUS_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+          OUTBOUND_EMAIL_TEST_TO: ${{ secrets.OUTBOUND_EMAIL_TEST_TO }}
+          OUTBOUND_EMAIL_ACCOUNT_ID: ${{ inputs.outbound_email_account_id }}
+          OUTBOUND_EMAIL_TEST_SEND_CONFIRM: I_UNDERSTAND_THIS_SENDS_REAL_EMAIL
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [ -z "${NEXUS_ADMIN_USERNAME:-}" ] || [ -z "${NEXUS_ADMIN_PASSWORD:-}" ]; then
+            echo 'STAGING_ADMIN_USERNAME and STAGING_ADMIN_PASSWORD secrets are required for Outbound Email test-send gate'
+            exit 8
+          fi
+          if [ -z "${OUTBOUND_EMAIL_TEST_TO:-}" ]; then
+            echo 'OUTBOUND_EMAIL_TEST_TO secret is required for Outbound Email test-send gate'
+            exit 9
+          fi
+          python scripts/smoke/outbound_email_test_send_gate.py
+
       - name: Summarize smoke result
         if: always()
         shell: bash
@@ -160,4 +233,6 @@ jobs:
             echo '- WebChat assets: `${{ inputs.check_webchat_assets }}`'
             echo '- CORS origin: `${{ inputs.cors_origin }}`'
             echo '- Metrics check: `${{ inputs.check_metrics }}`'
+            echo '- Outbound Email admin browser smoke: `${{ inputs.check_outbound_email_admin }}`'
+            echo '- Outbound Email test-send gate: `${{ inputs.check_outbound_email_test_send }}`'
           } >> "$GITHUB_STEP_SUMMARY"

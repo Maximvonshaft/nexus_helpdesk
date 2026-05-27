@@ -3,11 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 
 
-WIDGET_JS = Path(__file__).resolve().parents[1] / "app" / "static" / "webchat" / "widget.js"
+STATIC_ROOT = Path(__file__).resolve().parents[1] / "app" / "static" / "webchat"
+WIDGET_JS = STATIC_ROOT / "widget.js"
+DEMO_JS = STATIC_ROOT / "demo" / "js" / "app.js"
 
 
 def _widget_source() -> str:
     return WIDGET_JS.read_text(encoding="utf-8")
+
+
+def _demo_source() -> str:
+    return DEMO_JS.read_text(encoding="utf-8")
 
 
 def test_widget_defaults_to_fast_ai_mode():
@@ -94,3 +100,44 @@ def test_fast_error_state_does_not_append_template_agent_reply():
     assert "Connection issue. Please try again." in source
     assert "A support specialist will review it shortly" not in source
     assert "We received your message and support will reply soon" not in source
+
+
+def test_demo_fast_reply_uses_differentiated_error_handling():
+    source = _demo_source()
+
+    assert "network_timeout" in source
+    assert "http_error" in source
+    assert "origin_forbidden" in source
+    assert "api_error_code" in source
+    assert "empty_reply" in source
+    assert "render_error" in source
+    assert "userVisibleErrorMessage" in source
+    assert "classifiedError" in source
+    assert "reportDemoError('webchat_demo_api_error'" in source
+    assert "reportDemoError('webchat_demo_render_error'" in source
+
+
+def test_demo_fast_reply_debug_context_is_diagnostic_and_sanitized():
+    source = _demo_source()
+
+    assert "session_id: sessionId" in source
+    assert "client_message_id" in source
+    assert "request_path: CONFIG.fastReplyPath" in source
+    assert "http_status" in source
+    assert "backend_error_code" in source
+    assert "token" not in source.lower()
+    assert "authorization" not in source.lower()
+    assert "bearer" not in source.lower()
+
+
+def test_demo_success_render_error_does_not_convert_success_to_connection_issue():
+    source = _demo_source()
+
+    render_block_start = source.index(".then(function (data)")
+    render_block_end = source.index(".catch(function (error)", render_block_start)
+    render_block = source[render_block_start:render_block_end]
+
+    assert "appendMessage('bot', reply" in render_block
+    assert "remember(body, reply)" in render_block
+    assert "webchat_demo_render_error" in render_block
+    assert "Connection issue. Please try again." not in render_block

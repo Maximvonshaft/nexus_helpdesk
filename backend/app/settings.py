@@ -74,6 +74,8 @@ class Settings:
         self.openclaw_bridge_timeout_seconds = int(os.getenv("OPENCLAW_BRIDGE_TIMEOUT_SECONDS", "20"))
         self.enable_outbound_dispatch = os.getenv("ENABLE_OUTBOUND_DISPATCH", "false").strip().lower() == "true"
         self.outbound_provider = os.getenv("OUTBOUND_PROVIDER", "disabled").strip().lower() or "disabled"
+        self.outbound_email_production_pilot_enabled = _env_bool("OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED", False)
+        self.outbound_email_test_send_max_age_hours = int(os.getenv("OUTBOUND_EMAIL_TEST_SEND_MAX_AGE_HOURS", "24"))
         self.outbox_batch_size = int(os.getenv("OUTBOX_BATCH_SIZE", "50"))
         self.outbox_lock_seconds = int(os.getenv("OUTBOX_LOCK_SECONDS", "300"))
         self.outbox_max_retries = int(os.getenv("OUTBOX_MAX_RETRIES", "3"))
@@ -210,6 +212,8 @@ class Settings:
             raise RuntimeError("WEBCHAT_WS_MAX_CONNECTIONS must be between 1 and 100000")
         if self.webchat_ws_max_connections_per_user < 1 or self.webchat_ws_max_connections_per_user > 1000:
             raise RuntimeError("WEBCHAT_WS_MAX_CONNECTIONS_PER_USER must be between 1 and 1000")
+        if self.outbound_email_test_send_max_age_hours < 1 or self.outbound_email_test_send_max_age_hours > 168:
+            raise RuntimeError("OUTBOUND_EMAIL_TEST_SEND_MAX_AGE_HOURS must be between 1 and 168")
         if self.webchat_tracking_fact_lookup_enabled and not self.webchat_tracking_fact_redaction_enabled:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED must be true when tracking lookup is enabled")
         if self.app_env == "production":

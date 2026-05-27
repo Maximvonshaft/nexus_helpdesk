@@ -3,12 +3,39 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from sqlalchemy import create_engine, text  # noqa: E402
+
 from app.settings import get_settings  # noqa: E402
+from app.utils.time import utc_now  # noqa: E402
 from app.services.webcall_ai_production.config import get_webcall_ai_production_settings  # noqa: E402
+
+
+def _outbound_email_successful_test_send_count(database_url: str, *, max_age_hours: int) -> int:
+    engine = create_engine(database_url)
+    cutoff = utc_now() - timedelta(hours=max_age_hours)
+    try:
+        with engine.connect() as conn:
+            return int(conn.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM outbound_email_accounts
+                    WHERE is_active = true
+                      AND health_status = 'ok'
+                      AND last_test_status = 'success'
+                      AND last_test_at IS NOT NULL
+                      AND last_test_at >= :cutoff
+                    """
+                ),
+                {"cutoff": cutoff},
+            ).scalar() or 0)
+    finally:
+        engine.dispose()
 
 
 def main() -> int:
@@ -47,6 +74,19 @@ def main() -> int:
         warnings.append("WEBCHAT_AI_AUTO_REPLY_MODE should be off or safe_ack in production")
     if settings.webchat_allow_legacy_token_transport:
         warnings.append("WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must remain false")
+    outbound_email_successful_test_send_accounts = 0
+    if settings.outbound_email_production_pilot_enabled:
+        try:
+            outbound_email_successful_test_send_accounts = _outbound_email_successful_test_send_count(
+                settings.database_url,
+                max_age_hours=settings.outbound_email_test_send_max_age_hours,
+            )
+        except Exception as exc:
+            warnings.append(f"Outbound Email production pilot test-send gate failed: {exc.__class__.__name__}")
+        if outbound_email_successful_test_send_accounts < 1:
+            warnings.append(
+                f"OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=true requires one active SMTP account with successful test-send in the last {settings.outbound_email_test_send_max_age_hours} hours"
+            )
     try:
         webcall_ai = get_webcall_ai_production_settings()
     except Exception as exc:
@@ -84,6 +124,9 @@ def main() -> int:
         "webchat_allow_legacy_token_transport": settings.webchat_allow_legacy_token_transport,
         "webchat_rate_limit_backend": settings.webchat_rate_limit_backend,
         "webchat_ai_auto_reply_mode": settings.webchat_ai_auto_reply_mode,
+        "outbound_email_production_pilot_enabled": settings.outbound_email_production_pilot_enabled,
+        "outbound_email_successful_test_send_accounts": outbound_email_successful_test_send_accounts,
+        "outbound_email_test_send_max_age_hours": settings.outbound_email_test_send_max_age_hours,
         "warnings": warnings,
         "webcall_ai": None if webcall_ai is None else {
             "production_enabled": webcall_ai.production_enabled,

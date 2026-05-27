@@ -10,7 +10,7 @@ from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from ..enums import EventType, MessageStatus, NoteVisibility, ResolutionCategory, TicketPriority, TicketStatus, UserRole
+from ..enums import EventType, MessageStatus, NoteVisibility, ResolutionCategory, SourceChannel, TicketPriority, TicketStatus, UserRole
 from ..models import (
     Customer,
     SLAPolicy,
@@ -44,6 +44,7 @@ from ..schemas import (
 from .audit_service import log_event
 from .file_service import build_attachment_download_url, save_upload
 from .message_dispatch import queue_outbound_message
+from .outbound_adapters.email import clean_email_subject
 from .permissions import (
     ensure_can_assign,
     ensure_can_change_status,
@@ -659,6 +660,7 @@ def save_outbound_draft(db: Session, ticket_id: int, payload: OutboundDraftCreat
         ticket_id=ticket.id,
         channel=payload.channel,
         status=MessageStatus.draft,
+        subject=_resolve_outbound_subject(ticket, payload.channel, getattr(payload, "subject", None)),
         body=payload.body,
         provider_status="draft_saved",
         created_by=current_user.id,
@@ -677,15 +679,29 @@ def save_outbound_draft(db: Session, ticket_id: int, payload: OutboundDraftCreat
     return draft
 
 
+def _resolve_outbound_subject(ticket: Ticket, channel: SourceChannel, subject: str | None) -> str | None:
+    if channel != SourceChannel.email:
+        return None
+    resolved = clean_email_subject(subject) or clean_email_subject(ticket.title)
+    if not resolved:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error_code": "email_subject_required", "message": "Email subject is required"},
+        )
+    return resolved
+
+
 def send_outbound_message(db: Session, ticket_id: int, payload: OutboundSendRequest, current_user: User) -> TicketOutboundMessage:
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
     ensure_can_send_outbound(current_user, db)
+    subject = _resolve_outbound_subject(ticket, payload.channel, getattr(payload, "subject", None))
 
     message = queue_outbound_message(
         db,
         ticket_id=ticket.id,
         channel=payload.channel,
+        subject=subject,
         body=payload.body,
         created_by=current_user.id,
     )
@@ -697,7 +713,7 @@ def send_outbound_message(db: Session, ticket_id: int, payload: OutboundSendRequ
         actor_id=current_user.id,
         event_type=EventType.outbound_queued,
         note="Reply queued for dispatch",
-        payload={"channel": payload.channel.value, "provider_status": "queued"},
+        payload={"channel": payload.channel.value, "provider_status": "queued", "subject_configured": bool(subject)},
     )
     db.flush()
     db.refresh(message)

@@ -74,6 +74,8 @@ jobs:
           OPENCLAW_BRIDGE_ENABLED: "true"
           OPENCLAW_BRIDGE_URL: http://127.0.0.1:18792
           OPENCLAW_CLI_FALLBACK_ENABLED: "false"
+          OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED: "false"
+          OUTBOUND_EMAIL_TEST_SEND_MAX_AGE_HOURS: "24"
           METRICS_ENABLED: "true"
           METRICS_TOKEN: ci-metrics-token
           REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
@@ -98,6 +100,10 @@ jobs:
               'content-security-policy:',
               'permissions-policy:',
               'STAGING_METRICS_TOKEN',
+              'check_outbound_email_admin',
+              'check_outbound_email_test_send',
+              'outbound_email_test_send_gate.py',
+              'OUTBOUND_EMAIL_TEST_TO',
           ]
           missing = [item for item in required if item not in text]
           if missing:

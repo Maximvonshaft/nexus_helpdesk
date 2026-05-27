@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import uuid
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
@@ -122,20 +121,40 @@ def _frontend_readiness() -> dict[str, object]:
     }
 
 
-def _voice_runtime_headers_enabled(path: str) -> bool:
-    config = load_webchat_voice_runtime_config()
-    return bool(config.enabled and is_webchat_voice_path(path, config))
+def _voice_runtime_config_for_headers(path: str):
+    try:
+        return load_webchat_voice_runtime_config()
+    except Exception as exc:
+        app_log_event(30, 'webchat_voice_runtime_config_unavailable', path=path, error_type=type(exc).__name__)
+        return None
+
+
+def _voice_runtime_headers_enabled(path: str, config=None) -> bool:
+    runtime_config = config if config is not None else _voice_runtime_config_for_headers(path)
+    if runtime_config is None or not getattr(runtime_config, 'enabled', False):
+        return False
+    try:
+        return bool(is_webchat_voice_path(path, runtime_config))
+    except Exception as exc:
+        app_log_event(30, 'webchat_voice_runtime_config_unavailable', path=path, error_type=type(exc).__name__)
+        return False
 
 
 def _content_security_policy_for_request(path: str) -> str:
-    if not _voice_runtime_headers_enabled(path):
+    config = _voice_runtime_config_for_headers(path)
+    if not _voice_runtime_headers_enabled(path, config):
         return DEFAULT_CSP
-    connect_src = ["'self'", *webchat_voice_connect_sources()]
+    try:
+        connect_src = ["'self'", *webchat_voice_connect_sources(config)]
+    except Exception as exc:
+        app_log_event(30, 'webchat_voice_runtime_config_unavailable', path=path, error_type=type(exc).__name__)
+        return DEFAULT_CSP
     return "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; " + f"connect-src {' '.join(connect_src)}; " + "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
 
 def _permissions_policy_for_request(path: str) -> str:
-    return VOICE_PERMISSIONS_POLICY if _voice_runtime_headers_enabled(path) else DEFAULT_PERMISSIONS_POLICY
+    config = _voice_runtime_config_for_headers(path)
+    return VOICE_PERMISSIONS_POLICY if _voice_runtime_headers_enabled(path, config) else DEFAULT_PERMISSIONS_POLICY
 
 
 @app.middleware('http')

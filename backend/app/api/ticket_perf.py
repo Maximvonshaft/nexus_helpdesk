@@ -460,7 +460,7 @@ def _timeline_items(db: Session, ticket_id: int, cursor_key: tuple[datetime, int
     for row in _base_timeline_query(db.query(TicketInternalNote), TicketInternalNote, "internal_note", ticket_id, cursor_key, limit):
         items.append({"source_type": "internal_note", "source_id": row.id, "id": f"internal_note:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "visibility": "internal", "author_id": row.author_id})
     for row in _base_timeline_query(db.query(TicketOutboundMessage), TicketOutboundMessage, "outbound_message", ticket_id, cursor_key, limit):
-        items.append({"source_type": "outbound_message", "source_id": row.id, "id": f"outbound_message:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "status": _value(row.status), "channel": _value(row.channel), "created_by": row.created_by})
+        items.append({"source_type": "outbound_message", "source_id": row.id, "id": f"outbound_message:{row.id}", "created_at": _dt(row.created_at), "subject": row.subject, "body": row.body, "status": _value(row.status), "channel": _value(row.channel), "created_by": row.created_by})
     for row in _base_timeline_query(db.query(TicketAIIntake), TicketAIIntake, "ai_intake", ticket_id, cursor_key, limit):
         items.append({"source_type": "ai_intake", "source_id": row.id, "id": f"ai_intake:{row.id}", "created_at": _dt(row.created_at), "summary": row.summary, "classification": row.classification, "confidence": row.confidence})
     for row in _base_timeline_query(db.query(TicketEvent), TicketEvent, "ticket_event", ticket_id, cursor_key, limit):

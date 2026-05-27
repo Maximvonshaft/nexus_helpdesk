@@ -22,6 +22,13 @@ test('provider credentials nav route is registered in router', () => {
   assert.match(router, /@\/routes\/provider-credentials/)
 })
 
+test('outbound email admin nav route is registered and capability gated', () => {
+  assert.match(appShell, /to: '\/outbound-email'/)
+  assert.match(router, /OutboundEmailRoute/)
+  assert.match(router, /@\/routes\/outbound-email/)
+  assert.match(rbac, /'\/outbound-email': \{ allOf: \[CAPABILITIES\.channelAccountManage\] \}/)
+})
+
 test('internal webcall routes are intentionally classified', () => {
   assert.match(router, /Internal operator console for human WebCall handling/)
   assert.match(router, /Internal ops-only AI sandbox/)
@@ -40,6 +47,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'webcall-ai-demo.tsx',
     'provider-credentials.tsx',
     'accounts.tsx',
+    'outbound-email.tsx',
     'bulletins.tsx',
     'ai-control.tsx',
     'control-plane.tsx',

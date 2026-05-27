@@ -19,6 +19,7 @@ const nav = [
   { to: '/webcall-ai-demo', label: 'WebCall AI Demo', hint: '内部语音 AI 沙盒', access: routeAccess['/webcall-ai-demo'] },
   { to: '/provider-credentials', label: 'Code X 授权', hint: '云端授权与 Token 托管', access: routeAccess['/provider-credentials'] },
   { to: '/accounts', label: '发送线路', hint: '账号与兜底线路', access: routeAccess['/accounts'] },
+  { to: '/outbound-email', label: 'Email 账号', hint: 'SMTP 配置与测试发送', access: routeAccess['/outbound-email'] },
   { to: '/bulletins', label: '公告口径', hint: '统一客服话术', permission: 'bulletins' },
   { to: '/ai-control', label: 'AI 规则', hint: '助手口径治理', access: routeAccess['/ai-control'] },
   { to: '/control-plane', label: '控制面', hint: '高级治理入口', access: routeAccess['/control-plane'] },
@@ -27,7 +28,7 @@ const nav = [
 
 const navGroups = [
   { label: '日常处理', items: ['/', '/workspace', '/webchat', '/bulletins'] },
-  { label: '渠道与授权', items: ['/accounts', '/provider-credentials'] },
+  { label: '渠道与授权', items: ['/accounts', '/outbound-email', '/provider-credentials'] },
   { label: '治理与运维', items: ['/runtime', '/ai-control', '/control-plane', '/users', '/webcall-ai-demo'] },
 ]
 
