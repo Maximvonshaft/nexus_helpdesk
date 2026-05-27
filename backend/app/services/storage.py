@@ -15,6 +15,19 @@ from .text_decoding import is_supported_text_upload
 settings = get_settings()
 CHUNK_SIZE = 1024 * 1024
 TEXT_SNIFF_SAMPLE_BYTES = 4096
+TEXT_UPLOAD_EXTENSIONS = {'.txt', '.md', '.markdown', '.csv', '.html', '.htm'}
+TEXT_MIME_BY_EXTENSION = {
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.markdown': 'text/markdown',
+    '.csv': 'text/csv',
+    '.html': 'text/html',
+    '.htm': 'text/html',
+}
+OFFICE_OPEN_XML_MIME_BY_EXTENSION = {
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+}
 
 
 @dataclass
@@ -39,10 +52,19 @@ def _validate_persist_bytes_inputs(*, content: bytes, filename: str, media_type:
         raise HTTPException(status_code=413, detail='Persisted attachment exceeds configured size limit')
     if allowed_extensions is not None and suffix not in allowed_extensions and suffix not in {'.bin', '.json', '.txt'}:
         raise HTTPException(status_code=400, detail=f"File extension '{suffix}' is not allowed")
-    if suffix == '.txt' and allowed_mime_types is not None and 'text/plain' in allowed_mime_types:
+    if suffix in TEXT_UPLOAD_EXTENSIONS and allowed_mime_types is not None:
         if not is_supported_text_upload(content[:4096]):
             raise HTTPException(status_code=400, detail='Uploaded text file must be encoded as UTF-8, UTF-16, GB18030, or GBK')
-        return suffix, 'text/plain'
+        guessed, _ = mimetypes.guess_type(f'file{suffix}')
+        detected = TEXT_MIME_BY_EXTENSION.get(suffix, (guessed or 'text/plain').lower())
+        if detected not in allowed_mime_types:
+            raise HTTPException(status_code=400, detail=f"MIME type '{detected}' is not allowed")
+        return suffix, detected
+    if suffix in OFFICE_OPEN_XML_MIME_BY_EXTENSION:
+        detected = OFFICE_OPEN_XML_MIME_BY_EXTENSION[suffix]
+        if allowed_mime_types is not None and detected not in allowed_mime_types:
+            raise HTTPException(status_code=400, detail=f"MIME type '{detected}' is not allowed")
+        return suffix, detected
     if allowed_mime_types is not None and normalized_media_type not in allowed_mime_types:
         raise HTTPException(status_code=400, detail=f"MIME type '{normalized_media_type}' is not allowed")
     return suffix, normalized_media_type
@@ -63,10 +85,13 @@ class LocalStorageBackend:
             return 'image/jpeg'
         if len(sample) >= 12 and sample[:4] == b'RIFF' and sample[8:12] == b'WEBP':
             return 'image/webp'
-        if suffix == '.txt':
+        if suffix in TEXT_UPLOAD_EXTENSIONS:
             if is_supported_text_upload(sample):
-                return 'text/plain'
+                guessed, _ = mimetypes.guess_type(f'file{suffix}')
+                return TEXT_MIME_BY_EXTENSION.get(suffix, (guessed or 'text/plain').lower())
             raise HTTPException(status_code=400, detail='Uploaded text file must be encoded as UTF-8, UTF-16, GB18030, or GBK')
+        if suffix in OFFICE_OPEN_XML_MIME_BY_EXTENSION:
+            return OFFICE_OPEN_XML_MIME_BY_EXTENSION[suffix]
         guessed, _ = mimetypes.guess_type(f'file{suffix}')
         return (guessed or declared).lower()
 

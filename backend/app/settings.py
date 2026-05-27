@@ -52,10 +52,10 @@ class Settings:
         self.allowed_upload_mime_types = self._parse_csv(
             os.getenv(
                 "ALLOWED_UPLOAD_MIME_TYPES",
-                "image/jpeg,image/png,image/webp,application/pdf,text/plain",
+                "image/jpeg,image/png,image/webp,application/pdf,text/plain,text/markdown,text/csv,text/html,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         )
-        self.allowed_upload_extensions = {ext.lower() for ext in self._parse_csv(os.getenv("ALLOWED_UPLOAD_EXTENSIONS", ".jpg,.jpeg,.png,.webp,.pdf,.txt"))}
+        self.allowed_upload_extensions = {ext.lower() for ext in self._parse_csv(os.getenv("ALLOWED_UPLOAD_EXTENSIONS", ".jpg,.jpeg,.png,.webp,.pdf,.txt,.md,.markdown,.csv,.html,.htm,.docx,.xlsx"))}
         self.max_upload_bytes = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
 
         self.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY")
