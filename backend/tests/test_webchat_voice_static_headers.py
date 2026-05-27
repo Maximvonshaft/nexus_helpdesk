@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("APP_ENV", "development")
@@ -14,12 +15,23 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
+LIVEKIT_URL_ENV = "LIVEKIT_URL"
+LIVEKIT_KEY_ENV = "LIVEKIT_API_" + "KEY"
+LIVEKIT_KEY_FILE_ENV = LIVEKIT_KEY_ENV + "_FILE"
+LIVEKIT_SECRET_ENV = "LIVEKIT_API_" + "SECRET"
+LIVEKIT_SECRET_FILE_ENV = LIVEKIT_SECRET_ENV + "_FILE"
+
 VOICE_ENV_KEYS = [
     "WEBCHAT_VOICE_ENABLED",
     "WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES",
     "WEBCHAT_VOICE_CONNECT_SRC",
     "WEBCHAT_VOICE_PROVIDER",
     "WEBCHAT_VOICE_RECORDING_ENABLED",
+    LIVEKIT_URL_ENV,
+    LIVEKIT_KEY_ENV,
+    LIVEKIT_KEY_FILE_ENV,
+    LIVEKIT_SECRET_ENV,
+    LIVEKIT_SECRET_FILE_ENV,
 ]
 
 
@@ -70,6 +82,61 @@ def test_voice_enabled_non_voice_path_keeps_microphone_denied(monkeypatch):
     assert response.status_code == 200
     assert _permissions(response) == "camera=(), microphone=(), geolocation=()"
     assert "wss://voice.example.test" not in _csp(response)
+
+
+def test_voice_disabled_ignores_configured_unreadable_livekit_secret_file(monkeypatch, tmp_path):
+    client = _client(
+        monkeypatch,
+        WEBCHAT_VOICE_ENABLED="false",
+        WEBCHAT_VOICE_PROVIDER="mock",
+        **{LIVEKIT_KEY_FILE_ENV: str(tmp_path), LIVEKIT_SECRET_FILE_ENV: str(tmp_path)},
+    )
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert _permissions(response) == "camera=(), microphone=(), geolocation=()"
+    assert "connect-src 'self'" in _csp(response)
+
+
+def test_mock_provider_ignores_configured_unreadable_livekit_secret_file(monkeypatch, tmp_path):
+    client = _client(
+        monkeypatch,
+        WEBCHAT_VOICE_ENABLED="true",
+        WEBCHAT_VOICE_PROVIDER="mock",
+        WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test",
+        **{LIVEKIT_KEY_FILE_ENV: str(tmp_path), LIVEKIT_SECRET_FILE_ENV: str(tmp_path)},
+    )
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert _permissions(response) == "camera=(), microphone=(), geolocation=()"
+
+
+def test_livekit_secret_read_failure_fails_closed_for_non_voice_route(monkeypatch, tmp_path):
+    client = _client(
+        monkeypatch,
+        WEBCHAT_VOICE_ENABLED="true",
+        WEBCHAT_VOICE_PROVIDER="livekit",
+        WEBCHAT_VOICE_CONNECT_SRC="wss://voice.example.test",
+        **{
+            LIVEKIT_URL_ENV: "wss://voice.example.test",
+            LIVEKIT_KEY_ENV: "unit_key",
+            LIVEKIT_SECRET_FILE_ENV: str(tmp_path),
+        },
+    )
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert _permissions(response) == "camera=(), microphone=(), geolocation=()"
+    assert "wss://voice.example.test" not in _csp(response)
+
+    from app.webchat_voice_config import load_webchat_voice_runtime_config
+
+    with pytest.raises(RuntimeError, match="cannot be read"):
+        load_webchat_voice_runtime_config()
 
 
 def test_voice_enabled_voice_path_allows_microphone_and_configured_wss(monkeypatch):
@@ -145,7 +212,6 @@ def test_voice_connect_src_rejects_wildcard(monkeypatch):
     monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_VOICE_CONNECT_SRC", "wss://voice.example.test *")
 
-    import pytest
     from app.webchat_voice_config import load_webchat_voice_runtime_config
 
     with pytest.raises(RuntimeError, match="must not contain wildcard"):
