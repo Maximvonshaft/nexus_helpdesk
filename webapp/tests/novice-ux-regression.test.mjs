@@ -19,6 +19,7 @@ const workspace = read('src/routes/workspace.tsx')
 const accounts = read('src/routes/accounts.tsx')
 const aiControl = read('src/routes/ai-control.tsx')
 const providerCredentials = read('src/routes/provider-credentials.tsx')
+const outboundEmail = read('src/routes/outbound-email.tsx')
 const appShell = read('src/layouts/AppShell.tsx')
 
 test('shared UX primitives expose production novice guidance and accessibility contracts', () => {
@@ -101,6 +102,18 @@ test('provider credentials presents normal mode first and protects high-impact a
   assert.match(providerCredentials, /Token 明文不会在前端展示/)
   assert.doesNotMatch(providerCredentials, /Credential: \{credential\.id\}/)
   assert.doesNotMatch(providerCredentials, /Fingerprint: \{credential\.token_fingerprint_prefix/)
+})
+
+test('outbound email setup protects secrets and labels SMTP test failures', () => {
+  assert.match(outboundEmail, /轮换密码/)
+  assert.match(outboundEmail, /password_configured/)
+  assert.match(outboundEmail, /password_mask/)
+  assert.match(outboundEmail, /api\.testOutboundEmailAccount/)
+  assert.match(outboundEmail, /测试发送会发出真实邮件/)
+  assert.match(outboundEmail, /Plain SMTP 不加密传输凭证/)
+  assert.match(outboundEmail, /<ConfirmDialog/)
+  assert.match(outboundEmail, /smtpFailureLabel/)
+  assert.doesNotMatch(outboundEmail, /password_encrypted/)
 })
 
 test('navigation is grouped by operator mental model without route changes', () => {

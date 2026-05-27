@@ -68,7 +68,7 @@ test('customer reply panel uses ticket-scoped channel readiness and outbound sen
   assert.match(apiClient, /sendOutboundMessage: \(ticketId: number, payload: OutboundSendPayload\)/)
   assert.match(apiClient, /`\/api\/tickets\/\$\{ticketId\}\/outbound\/send`/)
   assert.match(replyPanel, /api\.ticketOutboundChannelCapabilities\(activeCase\.id\)/)
-  assert.match(replyPanel, /api\.sendOutboundMessage\(activeCase\.id, \{ channel, body: body\.trim\(\) \}\)/)
+  assert.match(replyPanel, /api\.sendOutboundMessage\(activeCase\.id, selectedIsEmail \? \{ channel, subject: subject\.trim\(\), body: body\.trim\(\) \} : \{ channel, body: body\.trim\(\) \}\)/)
 })
 
 test('customer reply panel shows send semantics and refreshes workspace after send', () => {
@@ -79,6 +79,17 @@ test('customer reply panel shows send semantics and refreshes workspace after se
   assert.match(replyPanel, /invalidateQueries\(\{ queryKey: \['caseDetail', activeCase\.id\] \}\)/)
   assert.match(replyPanel, /invalidateQueries\(\{ queryKey: \['ticketTimeline', activeCase\.id\] \}\)/)
   assert.match(replyPanel, /invalidateQueries\(\{ queryKey: \['cases'\] \}\)/)
+})
+
+test('customer reply panel requires explicit email subject for SMTP sends', () => {
+  assert.match(types, /export type OutboundSendPayload = \{/)
+  assert.match(types, /subject\?: string \| null/)
+  assert.match(replyPanel, /const \[subject, setSubject\] = useState\(defaultEmailSubject\(activeCase\)\)/)
+  assert.match(replyPanel, /const selectedIsEmail = channel === 'email'/)
+  assert.match(replyPanel, /!selectedIsEmail \|\| subject\.trim\(\)/)
+  assert.match(replyPanel, /<Field label="Email 主题" required/)
+  assert.match(replyPanel, /我确认这是 SMTP 外部邮件发送/)
+  assert.match(replyPanel, /Email 收件人/)
 })
 
 test('webchat admin events are routed through unified api client', () => {

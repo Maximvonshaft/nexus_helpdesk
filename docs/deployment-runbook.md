@@ -32,6 +32,10 @@ curl -fsS http://127.0.0.1/healthz
 curl -fsS http://127.0.0.1/readyz
 ```
 
+## Outbound Email pilot gate
+
+Keep `ENABLE_OUTBOUND_DISPATCH=false`, `OUTBOUND_PROVIDER=disabled`, and `OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=false` until the `/outbound-email` admin browser smoke and SMTP test-send gate pass. Follow [Outbound Email Production Pilot Runbook](runbooks/outbound-email-production-pilot.md) before enabling real Email dispatch.
+
 ## Rollback flow
 
 ```bash

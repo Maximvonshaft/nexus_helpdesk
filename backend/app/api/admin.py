@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db, engine
 from ..enums import JobStatus, MessageStatus, UserRole
-from ..models import AIConfigResource, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
+from ..models import AIConfigResource, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, OutboundEmailAccount, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
 from ..schemas import UserUpdate, PasswordResetRequest, OpenClawUnresolvedEventRead, AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, OpenClawConnectivityProbeRead, OpenClawConversationRead, OpenClawLinkRequest, OpenClawRuntimeHealthRead, OpenClawSyncEnqueueRequest, OpenClawSyncResult, ProductionReadinessRead, QueueSummaryRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead, UserCreate
 from ..settings import get_settings
 from ..auth_service import hash_password
@@ -29,6 +29,7 @@ from ..services.background_jobs import enqueue_openclaw_sync_job, enqueue_stale_
 from ..unit_of_work import managed_session
 from ..services.openclaw_bridge import ALLOWED_CHANNEL_ACCOUNT_PROVIDERS, consume_openclaw_events_once, count_stale_openclaw_links, link_ticket_to_openclaw_session, list_stale_openclaw_links, replay_unresolved_openclaw_event as replay_unresolved_openclaw_event_payload, sync_openclaw_conversation
 from ..services.openclaw_runtime_service import probe_openclaw_connectivity
+from ..services.outbound_email_account_service import count_active_successful_tested_accounts
 from .deps import get_current_user
 from .admin_outbound_email import router as outbound_email_router
 
@@ -344,6 +345,15 @@ def production_readiness(db: Session = Depends(get_db), current_user=Depends(get
         warnings.append('Current runtime DB dialect is not PostgreSQL')
     if settings.openclaw_sync_enabled and not settings.openclaw_inbound_auto_sync_enabled and not settings.openclaw_event_driver_enabled:
         warnings.append('OpenClaw sync is enabled but no inbound auto-sync/event driver/manual job producer is active')
+    outbound_email_active_accounts = db.query(OutboundEmailAccount).filter(OutboundEmailAccount.is_active.is_(True)).count()
+    outbound_email_successful_test_send_accounts = count_active_successful_tested_accounts(
+        db,
+        max_age_hours=settings.outbound_email_test_send_max_age_hours,
+    )
+    if settings.outbound_email_production_pilot_enabled and outbound_email_successful_test_send_accounts < 1:
+        warnings.append(
+            f'OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=true requires at least one active SMTP account with a successful test-send in the last {settings.outbound_email_test_send_max_age_hours} hours'
+        )
     return ProductionReadinessRead(
         app_env=settings.app_env,
         database_url_scheme=settings.database_url.split(':', 1)[0],
@@ -356,6 +366,10 @@ def production_readiness(db: Session = Depends(get_db), current_user=Depends(get
         openclaw_links_count=db.query(OpenClawConversationLink).count(),
         openclaw_transcript_messages_count=db.query(OpenClawTranscriptMessage).count(),
         openclaw_unresolved_events_count=db.query(OpenClawUnresolvedEvent).count(),
+        outbound_email_production_pilot_enabled=settings.outbound_email_production_pilot_enabled,
+        outbound_email_active_accounts=outbound_email_active_accounts,
+        outbound_email_successful_test_send_accounts=outbound_email_successful_test_send_accounts,
+        outbound_email_test_send_max_age_hours=settings.outbound_email_test_send_max_age_hours,
         warnings=warnings,
     )
 
@@ -392,6 +406,19 @@ def signoff_checklist(db: Session = Depends(get_db), current_user=Depends(get_cu
 
     if settings.openclaw_event_driver_enabled is False:
         warnings.append('OPENCLAW_EVENT_DRIVER_ENABLED is false')
+
+    outbound_email_successful_test_send_accounts = count_active_successful_tested_accounts(
+        db,
+        max_age_hours=settings.outbound_email_test_send_max_age_hours,
+    )
+    checks['outbound_email_pilot_test_send_success'] = (
+        not settings.outbound_email_production_pilot_enabled
+        or outbound_email_successful_test_send_accounts > 0
+    )
+    if not checks['outbound_email_pilot_test_send_success']:
+        warnings.append(
+            f'OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=true but no active SMTP account has a successful test-send in the last {settings.outbound_email_test_send_max_age_hours} hours'
+        )
     return {
         'status': 'ready' if not warnings else 'not_ready',
         'checks': checks,
