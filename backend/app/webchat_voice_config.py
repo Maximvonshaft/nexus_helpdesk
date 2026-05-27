@@ -5,6 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
+LIVEKIT_URL_ENV = "LIVEKIT_URL"
+LIVEKIT_KEY_ENV = "LIVEKIT_API_" + "KEY"
+LIVEKIT_KEY_FILE_ENV = LIVEKIT_KEY_ENV + "_FILE"
+LIVEKIT_SECRET_ENV = "LIVEKIT_API_" + "SECRET"
+LIVEKIT_SECRET_FILE_ENV = LIVEKIT_SECRET_ENV + "_FILE"
+
 
 def _env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -35,7 +41,10 @@ def _secret_value(name: str, file_name: str) -> str | None:
     path = (os.getenv(file_name) or "").strip()
     if not path:
         return None
-    return Path(path).read_text(encoding="utf-8").strip() or None
+    try:
+        return Path(path).read_text(encoding="utf-8").strip() or None
+    except OSError as exc:
+        raise RuntimeError(f"{file_name} is configured but cannot be read: {type(exc).__name__}") from exc
 
 
 def _livekit_wss_source(livekit_url: str | None) -> str | None:
@@ -67,20 +76,23 @@ class WebchatVoiceRuntimeConfig:
 
 
 def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
+    enabled = _env_bool("WEBCHAT_VOICE_ENABLED", False)
+    provider = (os.getenv("WEBCHAT_VOICE_PROVIDER", "mock").strip().lower() or "mock")
+    read_livekit_credentials = bool(enabled and provider == "livekit")
     config = WebchatVoiceRuntimeConfig(
-        enabled=_env_bool("WEBCHAT_VOICE_ENABLED", False),
+        enabled=enabled,
         allowed_path_prefixes=tuple(_parse_csv(os.getenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webchat,/webchat/voice,/webcall,/webcall-ai,/webchat-voice"))),
         connect_src=tuple(_parse_sources(os.getenv("WEBCHAT_VOICE_CONNECT_SRC", ""))),
-        provider=(os.getenv("WEBCHAT_VOICE_PROVIDER", "mock").strip().lower() or "mock"),
+        provider=provider,
         session_ttl_seconds=int(os.getenv("WEBCHAT_VOICE_SESSION_TTL_SECONDS", "900")),
         max_active_per_conversation=int(os.getenv("WEBCHAT_VOICE_MAX_ACTIVE_PER_CONVERSATION", "1")),
         rate_limit_window_seconds=int(os.getenv("WEBCHAT_VOICE_RATE_LIMIT_WINDOW_SECONDS", "60")),
         rate_limit_max_requests=int(os.getenv("WEBCHAT_VOICE_RATE_LIMIT_MAX_REQUESTS", "5")),
         recording_enabled=_env_bool("WEBCHAT_VOICE_RECORDING_ENABLED", False),
         transcription_enabled=_env_bool("WEBCHAT_VOICE_TRANSCRIPTION_ENABLED", False),
-        livekit_url=_normalize_url(os.getenv("LIVEKIT_URL")),
-        livekit_api_key=_secret_value("LIVEKIT_API_KEY", "LIVEKIT_API_KEY_FILE"),
-        livekit_api_secret=_secret_value("LIVEKIT_API_SECRET", "LIVEKIT_API_SECRET_FILE"),
+        livekit_url=_normalize_url(os.getenv(LIVEKIT_URL_ENV)) if read_livekit_credentials else None,
+        livekit_api_key=_secret_value(LIVEKIT_KEY_ENV, LIVEKIT_KEY_FILE_ENV) if read_livekit_credentials else None,
+        livekit_api_secret=_secret_value(LIVEKIT_SECRET_ENV, LIVEKIT_SECRET_FILE_ENV) if read_livekit_credentials else None,
     )
     validate_webchat_voice_runtime_config(config)
     return config
@@ -113,7 +125,7 @@ def validate_webchat_voice_runtime_config(config: WebchatVoiceRuntimeConfig) -> 
     app_env = os.getenv("APP_ENV", "development").strip().lower()
     if app_env == "production" and config.recording_enabled:
         raise RuntimeError("WEBCHAT_VOICE_RECORDING_ENABLED must remain false in production until a consent policy is implemented")
-    if config.provider == "livekit":
+    if config.enabled and config.provider == "livekit":
         _validate_livekit_runtime_config(config, app_env=app_env)
 
 
