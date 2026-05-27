@@ -75,7 +75,9 @@ jobs:
               backend/.env.example) return 0 ;;
               backend/requirements.txt) return 0 ;;
               backend/alembic/env.py) return 0 ;;
+              backend/alembic/versions/20260527_0035_webchat_handoff_control.py) return 0 ;;
               backend/alembic/versions/20260526_0034_knowledge_rag_business_facts.py) return 0 ;;
+              backend/app/api/webchat.py) return 0 ;;
               backend/app/api/admin_provider_runtime.py) return 0 ;;
               backend/app/api/webchat_fast.py) return 0 ;;
               backend/app/api/webcall_ai.py) return 0 ;;
@@ -88,6 +90,7 @@ jobs:
               backend/app/models_control_plane.py) return 0 ;;
               backend/app/schemas_control_plane.py) return 0 ;;
               backend/app/settings.py) return 0 ;;
+              backend/app/services/operator_queue.py) return 0 ;;
               backend/app/services/ai_runtime/codex_auth_provider.py) return 0 ;;
               backend/app/services/ai_runtime/codex_app_server_provider.py) return 0 ;;
               backend/app/services/ai_runtime/openclaw_responses_provider.py) return 0 ;;
@@ -111,7 +114,12 @@ jobs:
               backend/app/services/provider_runtime/router.py) return 0 ;;
               backend/app/services/provider_runtime/webchat_fast_dispatcher.py) return 0 ;;
               backend/app/services/webcall_ai/participant_service.py) return 0 ;;
+              backend/app/services/webchat_ai_safe_service.py) return 0 ;;
+              backend/app/services/webchat_ai_turn_service.py) return 0 ;;
               backend/app/services/webchat_ai_service.py) return 0 ;;
+              backend/app/services/webchat_fast_stream_service.py) return 0 ;;
+              backend/app/services/webchat_handoff_service.py) return 0 ;;
+              backend/app/services/webchat_performance.py) return 0 ;;
               backend/app/services/webchat_fast_ai_service.py) return 0 ;;
               backend/app/services/webchat_fast_config.py) return 0 ;;
               backend/app/services/webchat_service.py) return 0 ;;
@@ -120,6 +128,8 @@ jobs:
               backend/app/services/timeline_service.py) return 0 ;;
               backend/app/services/webcall_ai_production/**) return 0 ;;
               backend/app/webcall_ai_schemas.py) return 0 ;;
+              backend/app/webchat_models.py) return 0 ;;
+              backend/tests/test_operator_queue_concurrency.py) return 0 ;;
               backend/tests/test_codex_app_server_image_contract.py) return 0 ;;
               backend/tests/test_codex_app_server_bridge_proxy.py) return 0 ;;
               backend/tests/test_codex_app_server_private_upstream_proxy.py) return 0 ;;
@@ -151,6 +161,7 @@ jobs:
               backend/tests/test_webchat_fast_production_legacy_guard.py) return 0 ;;
               backend/tests/test_webchat_fast_reply_api.py) return 0 ;;
               backend/tests/test_webchat_fast_reply_provider_runtime.py) return 0 ;;
+              backend/tests/test_webchat_handoff_control.py) return 0 ;;
               backend/tests/test_webchat_stream_feature_flag.py) return 0 ;;
               backend/tests/test_webchat_round_b.py) return 0 ;;
               backend/tests/test_webcall_ai_production.py) return 0 ;;

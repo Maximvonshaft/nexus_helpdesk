@@ -19,7 +19,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Toast } from '@/components/ui/Toast'
 import { useSession } from '@/hooks/useAuth'
-import { canViewWebcallVoiceQueue, canViewWebchatDebug } from '@/lib/access'
+import { canForceWebchatHandoff, canViewWebcallVoiceQueue, canViewWebchatDebug } from '@/lib/access'
 
 function isCardPayload(payload: WebchatMessage['payload_json']): payload is WebchatCardPayload {
   return Boolean(payload && typeof payload === 'object' && 'card_type' in payload && 'actions' in payload)
@@ -78,6 +78,7 @@ function HandoffQueueItem({
 }) {
   const canAccept = typeof item.id === 'number' && item.status === 'requested'
   const canForce = item.status === 'ai_active'
+  const forceAllowed = item.can_force_takeover === true
   return (
     <div
       className={`queue-card ${selected ? 'selected' : ''}`}
@@ -99,8 +100,9 @@ function HandoffQueueItem({
       <div className="badges" onClick={(event) => event.stopPropagation()}>
         {canAccept ? <Button variant="primary" disabled={busy} onClick={onAccept}>接管</Button> : null}
         {canAccept ? <Button variant="secondary" disabled={busy} onClick={onDecline}>跳过</Button> : null}
-        {canForce ? <Button variant="danger" disabled={busy} onClick={onForce}>强制接管</Button> : null}
+        {canForce ? <Button variant="danger" disabled={busy || !forceAllowed} title={forceAllowed ? '强制接管 AI 会话' : '仅 Lead / Manager / Admin 可强制接管 AI 会话'} onClick={onForce}>强制接管</Button> : null}
       </div>
+      {canForce && !forceAllowed ? <div className="queue-card-meta">仅 Lead / Manager / Admin 可强制接管 AI 会话。</div> : null}
     </div>
   )
 }
@@ -221,6 +223,7 @@ function WebchatInboxPage() {
     retry: false,
   })
   const allowDebug = canViewWebchatDebug(session.data)
+  const canForceTakeover = canForceWebchatHandoff(session.data)
 
   const handoffQueue = useQuery({
     queryKey: ['webchatHandoffQueue', handoffView],
@@ -504,15 +507,16 @@ function WebchatInboxPage() {
                       <div>{sanitizeDisplayText(selectedHandoff.reason_text || selectedHandoff.reason_code || 'Human handoff requested')}</div>
                       {selectedHandoff.recommended_agent_action ? <div className="section-subtitle">{sanitizeDisplayText(selectedHandoff.recommended_agent_action)}</div> : null}
                       <div className="badges">
-                        {selectedHandoff.status === 'requested' && typeof selectedHandoff.id === 'number' ? <Button variant="primary" disabled={acceptMutation.isPending} onClick={() => acceptMutation.mutate(selectedHandoff.id as number)}>接管</Button> : null}
-                        {selectedHandoff.status === 'accepted' && selectedHandoff.active_agent_id === session.data?.id && typeof selectedHandoff.id === 'number' ? <Button variant="secondary" disabled={releaseMutation.isPending} onClick={() => releaseMutation.mutate(selectedHandoff.id as number)}>释放回队列</Button> : null}
-                        {typeof selectedHandoff.id === 'number' ? <Button variant="secondary" disabled={resumeAiMutation.isPending} onClick={() => resumeAiMutation.mutate(selectedHandoff.id as number)}>恢复 AI</Button> : null}
+                        {selectedHandoff.status === 'requested' && selectedHandoff.can_accept !== false && typeof selectedHandoff.id === 'number' ? <Button variant="primary" disabled={acceptMutation.isPending} onClick={() => acceptMutation.mutate(selectedHandoff.id as number)}>接管</Button> : null}
+                        {selectedHandoff.status === 'accepted' && selectedHandoff.can_release === true && typeof selectedHandoff.id === 'number' ? <Button variant="secondary" disabled={releaseMutation.isPending} onClick={() => releaseMutation.mutate(selectedHandoff.id as number)}>释放回队列</Button> : null}
+                        {selectedHandoff.can_resume_ai === true && typeof selectedHandoff.id === 'number' ? <Button variant="secondary" disabled={resumeAiMutation.isPending} onClick={() => resumeAiMutation.mutate(selectedHandoff.id as number)}>恢复 AI</Button> : null}
                       </div>
                     </div>
                   </div> : null}
                   {!selectedHandoff && selectedConversation?.ai_pending ? <div className="message" data-role="agent">
                     <div className="message-head"><strong>AI 正在处理</strong><span>{sanitizeDisplayText(selectedConversation.ai_status || 'active')}</span></div>
-                    <Button variant="danger" disabled={forceMutation.isPending} onClick={() => selectedTicketId && forceMutation.mutate(selectedTicketId)}>强制接管</Button>
+                    <Button variant="danger" disabled={forceMutation.isPending || !canForceTakeover} title={canForceTakeover ? '强制接管 AI 会话' : '仅 Lead / Manager / Admin 可强制接管 AI 会话'} onClick={() => selectedTicketId && canForceTakeover && forceMutation.mutate(selectedTicketId)}>强制接管</Button>
+                    {!canForceTakeover ? <div className="section-subtitle">仅 Lead / Manager / Admin 可强制接管 AI 会话；普通客服请等待 AI 递交人工接管请求后点击“接管”。</div> : null}
                   </div> : null}
                   <div className="timeline">
                     {(threadData?.messages ?? []).map((msg) => <MessageCard key={msg.id} msg={msg} allowDebug={allowDebug} />)}

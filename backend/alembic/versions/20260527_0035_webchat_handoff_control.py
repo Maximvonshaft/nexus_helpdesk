@@ -147,10 +147,10 @@ def upgrade() -> None:
     for col in [
         sa.Column("current_handoff_request_id", sa.Integer(), nullable=True),
         sa.Column("handoff_status", sa.String(length=40), nullable=False, server_default="none"),
-        sa.Column("active_agent_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=True),
+        sa.Column("active_agent_id", sa.Integer(), nullable=True),
         sa.Column("ai_suspended", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("ai_suspended_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("ai_suspended_by", sa.Integer(), sa.ForeignKey("users.id"), nullable=True),
+        sa.Column("ai_suspended_by", sa.Integer(), nullable=True),
         sa.Column("ai_suspended_reason", sa.String(length=240), nullable=True),
         sa.Column("takeover_mode", sa.String(length=40), nullable=True),
         sa.Column("last_handoff_reason", sa.String(length=240), nullable=True),
@@ -171,12 +171,12 @@ def upgrade() -> None:
 
     message_cols = _columns(bind, "webchat_messages")
     if "author_user_id" not in message_cols:
-        op.add_column("webchat_messages", sa.Column("author_user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=True))
+        op.add_column("webchat_messages", sa.Column("author_user_id", sa.Integer(), nullable=True))
     _create_index_once("ix_webchat_messages_author_user_id", "webchat_messages", ["author_user_id"])
 
     turn_cols = _columns(bind, "webchat_ai_turns")
     if "cancelled_by_user_id" not in turn_cols:
-        op.add_column("webchat_ai_turns", sa.Column("cancelled_by_user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=True))
+        op.add_column("webchat_ai_turns", sa.Column("cancelled_by_user_id", sa.Integer(), nullable=True))
     if "cancellation_reason_code" not in turn_cols:
         op.add_column("webchat_ai_turns", sa.Column("cancellation_reason_code", sa.String(length=120), nullable=True))
     _create_index_once("ix_webchat_ai_turns_cancelled_by_user_id", "webchat_ai_turns", ["cancelled_by_user_id"])

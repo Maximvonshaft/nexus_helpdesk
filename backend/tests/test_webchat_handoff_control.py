@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -21,11 +22,13 @@ from app.db import Base  # noqa: E402
 from app.enums import ConversationState, JobStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.models import BackgroundJob, Customer, Ticket, User  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
+from app.services.permissions import CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER, resolve_capabilities  # noqa: E402
 from app.services.webchat_ai_turn_service import schedule_webchat_ai_turn  # noqa: E402
 from app.services.webchat_handoff_service import (  # noqa: E402
     accept_handoff_request,
     decline_handoff_request,
     force_takeover_ticket,
+    list_handoff_queue,
     release_handoff_request,
     request_webchat_handoff,
     resume_ai_for_handoff,
@@ -230,3 +233,81 @@ def test_force_takeover_blocks_new_ai_turns_and_agent_reply_is_audited(db_sessio
     agent_message = db_session.query(WebchatMessage).filter(WebchatMessage.id == reply["message"]["id"]).one()
     assert agent_message.author_user_id == admin.id
     assert db_session.query(WebchatEvent).filter(WebchatEvent.conversation_id == conversation.id, WebchatEvent.event_type == "handoff.agent_reply_sent").count() == 1
+
+
+def test_plain_agent_cannot_force_takeover_ai_active_session(db_session):
+    agent = make_user(db_session, "plain_agent", UserRole.agent)
+    ticket, conversation, message = make_webchat(db_session)
+    ticket.assignee_id = agent.id
+    attach_open_ai_turn(db_session, conversation, ticket, message)
+    db_session.flush()
+
+    assert CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER not in resolve_capabilities(agent, db_session)
+    queue = list_handoff_queue(db_session, agent, view="ai_active")
+    assert queue["permissions"]["can_force_takeover"] is False
+    assert queue["items"][0]["can_force_takeover"] is False
+
+    with pytest.raises(HTTPException) as exc:
+        force_takeover_ticket(db_session, ticket_id=ticket.id, current_user=agent)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.parametrize("role", [UserRole.lead, UserRole.manager, UserRole.admin])
+def test_supervisor_roles_can_force_takeover_ai_active_session(db_session, role):
+    user = make_user(db_session, f"force_{role.value}", role)
+    ticket, conversation, message = make_webchat(db_session)
+    if role == UserRole.lead:
+        ticket.assignee_id = user.id
+    attach_open_ai_turn(db_session, conversation, ticket, message)
+    db_session.flush()
+
+    assert CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER in resolve_capabilities(user, db_session)
+    queue = list_handoff_queue(db_session, user, view="ai_active")
+    assert queue["permissions"]["can_force_takeover"] is True
+    assert queue["items"][0]["can_force_takeover"] is True
+
+    forced = force_takeover_ticket(db_session, ticket_id=ticket.id, current_user=user, reason_code="operator_forced_takeover")
+    assert forced["status"] == "accepted"
+    assert forced["takeover_mode"] == "forced"
+    assert forced["can_reply"] is True
+    assert conversation.active_agent_id == user.id
+
+
+def test_force_capability_does_not_bypass_accept_before_reply(db_session):
+    manager = make_user(db_session, "reply_manager", UserRole.manager)
+    ticket, conversation, message = make_webchat(db_session)
+    request_webchat_handoff(
+        db_session,
+        conversation=conversation,
+        ticket=ticket,
+        source="ai_auto",
+        trigger_type="ai_result_handoff_required",
+        reason_code="manual_review_required",
+        trigger_message_id=message.id,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        admin_reply(db_session, ticket.id, manager, body="I should not bypass accept.", has_fact_evidence=False)
+    assert exc.value.status_code == 409
+    assert "accepted" in str(exc.value.detail)
+
+    force_takeover_ticket(db_session, ticket_id=ticket.id, current_user=manager, reason_code="operator_forced_takeover")
+    reply = admin_reply(db_session, ticket.id, manager, body="I have now taken over.", has_fact_evidence=False)
+    assert reply["ok"] is True
+    assert db_session.query(WebchatEvent).filter(WebchatEvent.conversation_id == conversation.id, WebchatEvent.event_type == "handoff.force_takeover").count() == 1
+    assert db_session.query(WebchatEvent).filter(WebchatEvent.conversation_id == conversation.id, WebchatEvent.event_type == "handoff.agent_reply_sent").count() == 1
+
+
+def test_direct_reply_to_ai_active_session_requires_force_takeover_first(db_session):
+    manager = make_user(db_session, "ai_active_manager", UserRole.manager)
+    ticket, conversation, message = make_webchat(db_session)
+    attach_open_ai_turn(db_session, conversation, ticket, message)
+
+    with pytest.raises(HTTPException) as exc:
+        admin_reply(db_session, ticket.id, manager, body="Reply while AI is still active.", has_fact_evidence=False)
+    assert exc.value.status_code == 409
+    assert "force takeover" in str(exc.value.detail)
+
+    force_takeover_ticket(db_session, ticket_id=ticket.id, current_user=manager, reason_code="operator_forced_takeover")
+    reply = admin_reply(db_session, ticket.id, manager, body="Reply after takeover.", has_fact_evidence=False)
+    assert reply["ok"] is True

@@ -31,6 +31,7 @@ export const CAPABILITIES = {
   webcallVoiceAccept: 'webcall.voice.accept',
   webcallVoiceReject: 'webcall.voice.reject',
   webcallVoiceEnd: 'webcall.voice.end',
+  webchatHandoffForceTakeover: 'webchat.handoff.force_takeover',
 } as const
 
 export type Capability = (typeof CAPABILITIES)[keyof typeof CAPABILITIES]
@@ -76,6 +77,7 @@ export const actionAccess = {
   rejectWebcallVoice: { allOf: [CAPABILITIES.webcallVoiceReject] },
   endWebcallVoice: { allOf: [CAPABILITIES.webcallVoiceEnd] },
   viewWebchatDebug: { anyOf: [CAPABILITIES.runtimeManage] },
+  forceWebchatHandoff: { allOf: [CAPABILITIES.webchatHandoffForceTakeover] },
 } satisfies Record<string, AccessRequirement>
 
 export const capabilityCatalogMeta: CapabilityMeta[] = [
@@ -109,6 +111,7 @@ export const capabilityCatalogMeta: CapabilityMeta[] = [
   { capability: CAPABILITIES.webcallVoiceAccept, label: '接听 WebCall', group: 'WebCall 语音', description: '接听客户发起的 WebCall。', risk: 'high' },
   { capability: CAPABILITIES.webcallVoiceReject, label: '拒接 WebCall', group: 'WebCall 语音', description: '拒接客户发起的 WebCall。', risk: 'high' },
   { capability: CAPABILITIES.webcallVoiceEnd, label: '结束 WebCall', group: 'WebCall 语音', description: '挂断或结束语音会话。', risk: 'high' },
+  { capability: CAPABILITIES.webchatHandoffForceTakeover, label: '强制接管 WebChat AI', group: 'WebChat 接管', description: '在 AI 正在处理时强制暂停 AI 并接管会话。', risk: 'high' },
 ]
 
 const metaByCapability = new Map(capabilityCatalogMeta.map((item) => [item.capability, item]))

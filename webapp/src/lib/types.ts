@@ -681,11 +681,24 @@ export interface WebchatHandoffRequest extends WebchatAIRuntimeSnapshot {
   visitor_phone?: string | null
   origin?: string | null
   last_message?: WebchatHandoffLastMessage | null
+  can_accept?: boolean
+  can_decline?: boolean
+  can_force_takeover?: boolean
+  can_release?: boolean
+  can_resume_ai?: boolean
+  can_reply?: boolean
 }
 
 export interface WebchatHandoffQueue {
   items: WebchatHandoffRequest[]
   view: string
+  permissions?: {
+    can_accept?: boolean
+    can_decline?: boolean
+    can_force_takeover?: boolean
+    can_release?: boolean
+    can_resume_ai?: boolean
+  }
 }
 
 export interface WebchatConversation extends WebchatAIRuntimeSnapshot {

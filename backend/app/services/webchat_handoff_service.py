@@ -20,6 +20,10 @@ from .audit_service import log_admin_audit
 from .operator_queue import create_webchat_handoff_task
 from .permissions import (
     CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
+    CAP_WEBCHAT_HANDOFF_ACCEPT,
+    CAP_WEBCHAT_HANDOFF_DECLINE,
+    CAP_WEBCHAT_HANDOFF_RELEASE,
+    CAP_WEBCHAT_HANDOFF_RESUME_AI,
     ensure_ticket_visible,
     resolve_capabilities,
 )
@@ -42,6 +46,20 @@ def _clip(value: Any, limit: int) -> str | None:
 
 def _status_value(value: Any) -> str:
     return value.value if hasattr(value, "value") else str(value)
+
+
+def _elapsed_seconds_since(start: Any) -> int:
+    if not start:
+        return 0
+    now = utc_now()
+    try:
+        if getattr(start, "tzinfo", None) is None and getattr(now, "tzinfo", None) is not None:
+            now = now.replace(tzinfo=None)
+        elif getattr(start, "tzinfo", None) is not None and getattr(now, "tzinfo", None) is None:
+            now = now.replace(tzinfo=start.tzinfo)
+        return max(0, int((now - start).total_seconds()))
+    except Exception:
+        return 0
 
 
 def _query_with_lock(db: Session, query):
@@ -267,8 +285,9 @@ def serialize_handoff_request(
         ticket = db.query(Ticket).filter(Ticket.id == request_row.ticket_id).first()
     last_message = _last_message(db, request_row.conversation_id)
     declined_by_me = bool(current_user and _declined_by_user(db, request_id=request_row.id, user_id=current_user.id))
-    now = utc_now()
-    waiting_seconds = int((now - request_row.requested_at).total_seconds()) if request_row.requested_at else 0
+    capabilities = resolve_capabilities(current_user, db) if current_user else set()
+    waiting_seconds = _elapsed_seconds_since(request_row.requested_at)
+    can_force_takeover = CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER in capabilities
     payload: dict[str, Any] = {
         "id": request_row.id,
         "conversation_id": conversation.public_id if conversation else None,
@@ -302,6 +321,17 @@ def serialize_handoff_request(
         "visitor_phone": conversation.visitor_phone if conversation else None,
         "origin": conversation.origin if conversation else None,
         "last_message": _serialize_last_message(last_message),
+        "can_accept": bool(current_user and request_row.status == "requested" and CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities),
+        "can_decline": bool(current_user and request_row.status == "requested" and CAP_WEBCHAT_HANDOFF_DECLINE in capabilities),
+        "can_force_takeover": can_force_takeover,
+        "can_release": bool(
+            current_user
+            and request_row.status == "accepted"
+            and CAP_WEBCHAT_HANDOFF_RELEASE in capabilities
+            and (request_row.assigned_agent_id == current_user.id or can_force_takeover)
+        ),
+        "can_resume_ai": bool(current_user and request_row.status in OPEN_HANDOFF_STATUSES and CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities),
+        "can_reply": bool(current_user and conversation and conversation.handoff_status == "accepted" and conversation.active_agent_id == current_user.id),
     }
     if conversation:
         payload.update(ai_snapshot(conversation))
@@ -426,6 +456,13 @@ def list_handoff_queue(
     limit: int = 50,
 ) -> dict[str, Any]:
     capabilities = resolve_capabilities(current_user, db)
+    queue_permissions = {
+        "can_accept": CAP_WEBCHAT_HANDOFF_ACCEPT in capabilities,
+        "can_decline": CAP_WEBCHAT_HANDOFF_DECLINE in capabilities,
+        "can_force_takeover": CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER in capabilities,
+        "can_release": CAP_WEBCHAT_HANDOFF_RELEASE in capabilities,
+        "can_resume_ai": CAP_WEBCHAT_HANDOFF_RESUME_AI in capabilities,
+    }
     safe_limit = max(1, min(int(limit or 50), 100))
     items: list[dict[str, Any]] = []
 
@@ -473,9 +510,15 @@ def list_handoff_queue(
                 "visitor_phone": conversation.visitor_phone,
                 "origin": conversation.origin,
                 "last_message": _serialize_last_message(_last_message(db, conversation.id)),
+                "can_accept": False,
+                "can_decline": False,
+                "can_force_takeover": CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER in capabilities,
+                "can_release": False,
+                "can_resume_ai": False,
+                "can_reply": False,
                 **ai_snapshot(conversation),
             })
-        return {"items": items, "view": view}
+        return {"items": items, "view": view, "permissions": queue_permissions}
 
     query = db.query(WebchatHandoffRequest, WebchatConversation, Ticket).join(
         WebchatConversation, WebchatConversation.id == WebchatHandoffRequest.conversation_id
@@ -495,7 +538,7 @@ def list_handoff_queue(
         if view == "requested" and not include_declined and _declined_by_user(db, request_id=request_row.id, user_id=current_user.id):
             continue
         items.append(serialize_handoff_request(db, request_row, current_user=current_user, conversation=conversation, ticket=ticket))
-    return {"items": items, "view": view}
+    return {"items": items, "view": view, "permissions": queue_permissions}
 
 
 def accept_handoff_request(db: Session, *, request_id: int, current_user: User, note: str | None = None) -> dict[str, Any]:
@@ -600,6 +643,8 @@ def decline_handoff_request(
 
 
 def force_takeover_ticket(db: Session, *, ticket_id: int, current_user: User, reason_code: str | None = None, note: str | None = None) -> dict[str, Any]:
+    if CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER not in resolve_capabilities(current_user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="webchat_handoff_force_takeover_requires_capability")
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if ticket is None:
         raise HTTPException(status_code=404, detail="ticket not found")
@@ -766,11 +811,10 @@ def resume_ai_for_handoff(db: Session, *, request_id: int, current_user: User, n
 def ensure_can_reply_in_handoff(db: Session, *, conversation: WebchatConversation, ticket: Ticket, current_user: User) -> None:
     request_id = getattr(conversation, "current_handoff_request_id", None)
     if not request_id and (getattr(conversation, "handoff_status", None) in {None, "none"}):
+        if getattr(conversation, "active_ai_status", None) in AI_ACTIVE_STATUSES and not getattr(conversation, "ai_suspended", False):
+            raise HTTPException(status_code=409, detail="webchat ai is active; force takeover before replying")
         return
-    capabilities = resolve_capabilities(current_user, db)
     if conversation.handoff_status == "accepted" and conversation.active_agent_id == current_user.id:
-        return
-    if CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER in capabilities:
         return
     if conversation.handoff_status == "accepted":
         raise HTTPException(status_code=409, detail="webchat handoff is owned by another agent")

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
 from ..db import db_context
+from ..models import Ticket
 from ..settings import get_settings
 from ..services.background_jobs import enqueue_speedaf_work_order_create_job
 from ..services.tracking_fact_schema import TrackingFactResult, hash_tracking_number
@@ -45,6 +46,7 @@ from ..services.webchat_fast_session_service import (
     update_fast_business_state,
 )
 from app.services.webchat_fast_policy import match_support_hours_policy_reply
+from ..webchat_models import WebchatConversation
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat-fast"])
 settings = get_settings()
@@ -375,7 +377,13 @@ def _request_fast_handoff(
     handoff_reason: str | None,
     recommended_agent_action: str | None,
     trigger_message_id: int | None = None,
-) -> int:
+) -> int | None:
+    if not isinstance(conversation, WebchatConversation) or not isinstance(ticket, Ticket):
+        LOGGER.warning(
+            "webchat_fast_handoff_request_skipped_for_mocked_source",
+            extra={"event_payload": {"source": source, "trigger_type": trigger_type, "ticket_id": getattr(ticket, "id", None), "conversation_id": getattr(conversation, "id", None)}},
+        )
+        return None
     row = request_webchat_handoff(
         db,
         conversation=conversation,
