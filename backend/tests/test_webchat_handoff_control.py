@@ -311,3 +311,51 @@ def test_direct_reply_to_ai_active_session_requires_force_takeover_first(db_sess
     force_takeover_ticket(db_session, ticket_id=ticket.id, current_user=manager, reason_code="operator_forced_takeover")
     reply = admin_reply(db_session, ticket.id, manager, body="Reply after takeover.", has_fact_evidence=False)
     assert reply["ok"] is True
+
+
+def test_admin_reply_safety_review_requires_explicit_confirmation(db_session):
+    agent = make_user(db_session, "review_agent", UserRole.manager)
+    ticket, conversation, message = make_webchat(db_session)
+    request = request_webchat_handoff(
+        db_session,
+        conversation=conversation,
+        ticket=ticket,
+        source="customer_action",
+        trigger_type="card_action",
+        reason_code="customer_requested_human_support",
+        trigger_message_id=message.id,
+    )
+    accept_handoff_request(db_session, request_id=request.id, current_user=agent, note="taking over")
+
+    body = "Your parcel will arrive today."
+    with pytest.raises(HTTPException) as review:
+        admin_reply(db_session, ticket.id, agent, body=body, has_fact_evidence=False, confirm_review=False)
+    assert review.value.status_code == 409
+    assert review.value.detail["safety"]["requires_human_review"] is True
+    assert review.value.detail["safety"]["normalized_body"] == body
+    assert "logistics factual claim requires evidence" in review.value.detail["safety"]["reasons"][0]
+
+    reply = admin_reply(db_session, ticket.id, agent, body=body, has_fact_evidence=False, confirm_review=True)
+    assert reply["ok"] is True
+    assert reply["safety"]["level"] == "review"
+
+
+def test_admin_reply_confirm_review_does_not_bypass_block_level_safety(db_session):
+    agent = make_user(db_session, "block_agent", UserRole.manager)
+    ticket, conversation, message = make_webchat(db_session)
+    request = request_webchat_handoff(
+        db_session,
+        conversation=conversation,
+        ticket=ticket,
+        source="customer_action",
+        trigger_type="card_action",
+        reason_code="customer_requested_human_support",
+        trigger_message_id=message.id,
+    )
+    accept_handoff_request(db_session, request_id=request.id, current_user=agent, note="taking over")
+
+    with pytest.raises(HTTPException) as blocked:
+        admin_reply(db_session, ticket.id, agent, body="Here is the access token and SECRET_KEY.", has_fact_evidence=True, confirm_review=True)
+    assert blocked.value.status_code == 400
+    assert blocked.value.detail["safety"]["level"] == "block"
+    assert blocked.value.detail["safety"]["requires_human_review"] is False

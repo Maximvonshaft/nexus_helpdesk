@@ -60,3 +60,34 @@ test('ticket attachment and escalation actions go through unified api client and
   assert.match(access, /canUploadAttachment/)
   assert.match(access, /canEscalateTickets/)
 })
+
+test('webchat inbox V5 supports safety review confirmation after backend 409', () => {
+  assert.match(apiClient, /class ApiError extends Error \{[\s\S]*detail\?: unknown[\s\S]*payload\?: unknown/)
+  assert.match(apiClient, /readErrorBody/)
+  assert.match(inbox, /safetyReviewFromError/)
+  assert.match(inbox, /requires_human_review/)
+  assert.match(inbox, /回复需要人工复核/)
+  assert.match(inbox, /后端规范化正文/)
+  assert.match(inbox, /确认已复核并发送/)
+  assert.match(inbox, /replyMutation\.mutate\(\{ confirmReview: true \}\)/)
+  assert.match(inbox, /confirm_review: input\?\.confirmReview === true/)
+})
+
+test('webchat inbox V5 exposes fact-evidence confirmation without defaulting it to true', () => {
+  assert.match(inbox, /const \[hasFactEvidence, setHasFactEvidence\] = useState\(false\)/)
+  assert.match(inbox, /已核对物流事实证据/)
+  assert.match(inbox, /has_fact_evidence: hasFactEvidence/)
+  assert.doesNotMatch(inbox, /has_fact_evidence:\s*true/)
+})
+
+test('webchat inbox V5 displays redacted action audit from thread actions', () => {
+  assert.match(inbox, /function ActionAuditPanel/)
+  assert.match(inbox, /thread\?\.actions/)
+  for (const field of ['action.action_type', 'action.status', 'action.submitted_by', 'action.created_at']) {
+    assert.match(inbox, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  }
+  assert.match(inbox, /payloadSummary\(action\.payload/)
+  assert.match(inbox, /safeAuditPayloadJson\(action\.payload/)
+  assert.match(inbox, /SENSITIVE_AUDIT_KEY/)
+  assert.match(inbox, /redacted payload/)
+})

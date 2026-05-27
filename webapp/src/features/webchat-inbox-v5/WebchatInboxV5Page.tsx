@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
@@ -7,10 +7,10 @@ import * as Tabs from '@radix-ui/react-tabs'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '@/layouts/AppShell'
-import { api } from '@/lib/api'
+import { ApiError, api } from '@/lib/api'
 import { formatDateTime, sanitizeDisplayText, statusTone } from '@/lib/format'
 import { findReplyChannelCapability, isCustomerSendableReplyChannel, outboundChannelMissingText } from '@/lib/outboundChannels'
-import type { CaseDetail, Team, WebchatConversation, WebchatHandoffQueue, WebchatHandoffRequest, WebchatMessage, WebchatThread } from '@/lib/types'
+import type { CaseDetail, Team, WebchatActionAudit, WebchatConversation, WebchatHandoffQueue, WebchatHandoffRequest, WebchatMessage, WebchatThread } from '@/lib/types'
 import { useWebchatRealtime, type WebchatRealtimeEvent } from '@/lib/webchatRealtime'
 import { AgentWebCallPanel } from '@/components/webcall/AgentWebCallPanel'
 import { Badge } from '@/components/ui/Badge'
@@ -31,6 +31,18 @@ type RealtimeHandoffView = 'requested' | 'ai_active' | 'mine'
 type ToastState = { message: string; tone?: 'default' | 'danger' | 'success'; action?: { label: string; onClick: () => void } }
 type ConfirmState = { title: string; body: string; tone?: 'danger' | 'default'; confirmLabel: string; onConfirm: () => void }
 type EscalateState = { open: boolean; teamId: string; note: string }
+type SafetyReviewState = {
+  body: string
+  message: string
+  safety: {
+    allowed: boolean
+    level: string
+    reasons: string[]
+    requires_human_review: boolean
+    normalized_body: string
+  }
+}
+type ReplyMutationInput = { confirmReview?: boolean }
 
 type InboxRow = {
   key: string
@@ -81,29 +93,16 @@ const QUICK_REPLIES = [
 const EMOJIS = ['🙂', '👍', '🙏', '✅', '📦', '🚚', '⏳', '📍']
 const AI_ACTIVE_STATUSES = new Set(['queued', 'processing', 'bridge_calling', 'fallback_generating'])
 const TERMINAL_TICKET_STATUSES = new Set(['closed', 'resolved', 'canceled', 'cancelled'])
+const SENSITIVE_AUDIT_KEY = /token|secret|authorization|password|credential|api[_-]?key|visitor[_-]?token|access[_-]?token|participant[_-]?token/i
+const SENSITIVE_AUDIT_VALUE = /bearer\s+|visitor[_-]?token|access[_-]?token|participant[_-]?token|secret|authorization|password/i
 
 function backoffMs(failures: number, baseMs: number, maxMs: number) {
   if (failures <= 0) return baseMs
   return Math.min(maxMs, baseMs * 2 ** Math.min(failures, 4))
 }
 
-function elapsedLabel(seconds?: number | null) {
-  if (typeof seconds !== 'number' || Number.isNaN(seconds)) return null
-  const mins = Math.floor(seconds / 60)
-  const sec = seconds % 60
-  if (mins >= 60) return `${Math.floor(mins / 60)}h ${mins % 60}m`
-  return `${String(mins).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
-}
-
 function shortText(value?: string | null, fallback = '-') {
   return sanitizeDisplayText(value || fallback)
-}
-
-function handoffTone(status?: string | null): 'default' | 'warning' | 'success' | 'danger' {
-  if (status === 'accepted') return 'success'
-  if (status === 'requested') return 'warning'
-  if (status === 'cancelled' || status === 'expired') return 'danger'
-  return 'default'
 }
 
 function aiTone(status?: string | null, pending?: boolean): 'default' | 'warning' | 'success' | 'danger' {
@@ -115,8 +114,73 @@ function aiTone(status?: string | null, pending?: boolean): 'default' | 'warning
 }
 
 function apiErrorText(error: unknown, fallback: string) {
+  const safety = safetyFromError(error)
+  if (safety) {
+    const prefix = safety.level === 'block' ? '安全门阻断' : '安全门复核'
+    return `${prefix}：${safety.reasons.length ? safety.reasons.join('；') : safety.normalized_body || fallback}`
+  }
   if (error instanceof Error && error.message) return error.message
   return fallback
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function stringList(value: unknown) {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string')
+}
+
+function safetyFromError(error: unknown): SafetyReviewState['safety'] | null {
+  if (!(error instanceof ApiError) || !isRecord(error.detail) || !isRecord(error.detail.safety)) return null
+  const safety = error.detail.safety
+  return {
+    allowed: safety.allowed === true,
+    level: typeof safety.level === 'string' ? safety.level : 'review',
+    reasons: stringList(safety.reasons),
+    requires_human_review: safety.requires_human_review === true,
+    normalized_body: typeof safety.normalized_body === 'string' ? safety.normalized_body : '',
+  }
+}
+
+function safetyReviewFromError(error: unknown, body: string): SafetyReviewState | null {
+  if (!(error instanceof ApiError) || error.status !== 409 || !isRecord(error.detail)) return null
+  const safety = safetyFromError(error)
+  if (!safety?.requires_human_review || safety.level === 'block') return null
+  return {
+    body,
+    message: typeof error.detail.message === 'string' ? error.detail.message : '回复需要人工复核后才能发送。',
+    safety: { ...safety, normalized_body: safety.normalized_body || body },
+  }
+}
+
+function redactAuditPayload(value: unknown, depth = 0): unknown {
+  if (depth > 3) return '[redacted depth limit]'
+  if (typeof value === 'string' && SENSITIVE_AUDIT_VALUE.test(value)) return '[redacted]'
+  if (Array.isArray(value)) return value.slice(0, 8).map((item) => redactAuditPayload(item, depth + 1))
+  if (!isRecord(value)) return value
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    SENSITIVE_AUDIT_KEY.test(key) ? '[redacted]' : redactAuditPayload(item, depth + 1),
+  ]))
+}
+
+function payloadSummary(payload: Record<string, unknown>) {
+  const redacted = redactAuditPayload(payload)
+  if (!isRecord(redacted)) return sanitizeDisplayText(String(redacted || '-'))
+  const entries = Object.entries(redacted).filter(([key]) => !SENSITIVE_AUDIT_KEY.test(key)).slice(0, 4)
+  if (!entries.length) return '无公开 payload 摘要'
+  return entries.map(([key, value]) => {
+    const safeValue = typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+      ? String(value)
+      : JSON.stringify(value) ?? String(value ?? '')
+    return `${sanitizeDisplayText(key)}=${sanitizeDisplayText(safeValue).slice(0, 120)}`
+  }).join(' · ')
+}
+
+function safeAuditPayloadJson(payload: Record<string, unknown>) {
+  return sanitizeDisplayText(JSON.stringify(redactAuditPayload(payload), null, 2))
 }
 
 function voiceEvidenceValue(payload: Record<string, unknown> | null | undefined, key: string) {
@@ -421,9 +485,14 @@ function ConversationWorkspace({
   allowDebug,
   reply,
   setReply,
+  hasFactEvidence,
+  setHasFactEvidence,
+  safetyReview,
   canSend,
   sendDisabledReason,
   onSend,
+  onConfirmReview,
+  onDismissReview,
   sendPending,
   onInsert,
   onAttach,
@@ -441,9 +510,14 @@ function ConversationWorkspace({
   allowDebug: boolean
   reply: string
   setReply: (value: string) => void
+  hasFactEvidence: boolean
+  setHasFactEvidence: (value: boolean) => void
+  safetyReview: SafetyReviewState | null
   canSend: boolean
   sendDisabledReason: string | null
   onSend: () => void
+  onConfirmReview: () => void
+  onDismissReview: () => void
   sendPending: boolean
   onInsert: (text: string) => void
   onAttach: (file: File) => void
@@ -484,6 +558,31 @@ function ConversationWorkspace({
         <Field label="回复内容" disabledReason={sendDisabledReason || undefined}>
           <Textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="输入客户可见回复；Ctrl/Cmd + Enter 发送。" />
         </Field>
+        <label className="v5-compact-check">
+          <input type="checkbox" checked={hasFactEvidence} onChange={(event) => setHasFactEvidence(event.target.checked)} />
+          <span>已核对物流事实证据</span>
+        </label>
+        {safetyReview ? (
+          <div className="v5-review-panel" role="alert">
+            <div>
+              <strong>回复需要人工复核</strong>
+              <p>{sanitizeDisplayText(safetyReview.message)}</p>
+            </div>
+            {safetyReview.safety.reasons.length ? (
+              <ul>
+                {safetyReview.safety.reasons.map((reason) => <li key={reason}>{sanitizeDisplayText(reason)}</li>)}
+              </ul>
+            ) : null}
+            <div className="v5-review-normalized">
+              <span>后端规范化正文</span>
+              <p>{sanitizeDisplayText(safetyReview.safety.normalized_body)}</p>
+            </div>
+            <div className="button-row">
+              <Button variant="primary" disabled={!canSend || sendPending} onClick={onConfirmReview}>{sendPending ? '发送中…' : '确认已复核并发送'}</Button>
+              <Button variant="secondary" disabled={sendPending} onClick={onDismissReview}>返回修改</Button>
+            </div>
+          </div>
+        ) : null}
         <div className="v5-composer-footer">
           <ComposerTools onInsert={onInsert} onAttach={onAttach} attachmentDisabled={!canAttach} attachmentBusy={attachmentPending} />
           <div className="button-row">
@@ -586,6 +685,33 @@ function CaseEvidencePanel({
   )
 }
 
+function ActionAuditPanel({ actions = [], allowDebug }: { actions?: WebchatActionAudit[]; allowDebug: boolean }) {
+  if (!actions.length) return <p className="section-subtitle">暂无客户动作审计。</p>
+  return (
+    <div className="v5-action-audit-list">
+      {actions.slice(-8).map((action) => (
+        <div key={action.id} className="v5-action-audit-item">
+          <div className="v5-action-audit-head">
+            <strong>{sanitizeDisplayText(action.action_type)}</strong>
+            <Badge tone={statusTone(action.status)}>{sanitizeDisplayText(action.status)}</Badge>
+          </div>
+          <div className="v5-action-audit-meta">
+            <span>submitted_by: {sanitizeDisplayText(action.submitted_by || '-')}</span>
+            <span>created_at: {formatDateTime(action.created_at)}</span>
+          </div>
+          <p>{payloadSummary(action.payload || {})}</p>
+          {allowDebug ? (
+            <details className="v5-debug">
+              <summary>redacted payload</summary>
+              <pre>{safeAuditPayloadJson(action.payload || {})}</pre>
+            </details>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function EscalateDialog({
   state,
   setState,
@@ -639,6 +765,7 @@ function ContextPanel({
   onRetryEvidence,
   selectedHandoff,
   realtimeLabel,
+  allowDebug,
   canForceTakeover,
   onAccept,
   onDecline,
@@ -655,6 +782,7 @@ function ContextPanel({
   onRetryEvidence: () => void
   selectedHandoff?: WebchatHandoffRequest | null
   realtimeLabel: ReactNode
+  allowDebug: boolean
   canForceTakeover: boolean
   onAccept: (requestId: number) => void
   onDecline: (requestId: number) => void
@@ -709,6 +837,7 @@ function ContextPanel({
           <p className="section-subtitle">WebSocket 断开时自动回落到事件轮询，不阻塞人工处理。</p>
         </Section>
         <Section title="事件 / 审计预览" defaultOpen={false}>
+          <ActionAuditPanel actions={thread?.actions ?? []} allowDebug={allowDebug} />
           <div className="v5-event-list">
             {(thread?.events ?? []).slice(-8).map((event) => <div key={event.id}><strong>{sanitizeDisplayText(event.event_type)}</strong><span>{formatDateTime(event.created_at)}</span></div>)}
             {!(thread?.events ?? []).length ? <p className="section-subtitle">暂无可展示事件。</p> : null}
@@ -731,6 +860,8 @@ export function WebchatInboxV5Page() {
     return Number.isFinite(value) && value > 0 ? value : null
   })
   const [reply, setReply] = useState('')
+  const [hasFactEvidence, setHasFactEvidence] = useState(false)
+  const [safetyReview, setSafetyReview] = useState<SafetyReviewState | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
   const [confirm, setConfirm] = useState<ConfirmState | null>(null)
   const [contextOpen, setContextOpen] = useState(false)
@@ -795,7 +926,7 @@ export function WebchatInboxV5Page() {
     retry: false,
   })
 
-  const refreshWebchatState = async () => {
+  const refreshWebchatState = useCallback(async () => {
     await Promise.all([
       client.invalidateQueries({ queryKey: ['webchatHandoffQueue'] }),
       client.invalidateQueries({ queryKey: ['webchatConversations'] }),
@@ -803,7 +934,7 @@ export function WebchatInboxV5Page() {
       selectedTicketId ? client.invalidateQueries({ queryKey: ['caseDetail', selectedTicketId] }) : Promise.resolve(),
       selectedTicketId ? client.invalidateQueries({ queryKey: ['webchatThread', selectedTicketId] }) : Promise.resolve(),
     ])
-  }
+  }, [client, selectedTicketId])
 
   const applyRealtimeEvent = (event: WebchatRealtimeEvent) => {
     if (event.type === 'queue.snapshot' || event.type === 'queue.updated') {
@@ -838,7 +969,12 @@ export function WebchatInboxV5Page() {
   useEffect(() => {
     setLastEventId(0)
     setEventPollFailures(0)
+    setSafetyReview(null)
+    setHasFactEvidence(false)
   }, [selectedTicketId])
+  useEffect(() => {
+    if (safetyReview && safetyReview.body !== reply.trim()) setSafetyReview(null)
+  }, [reply, safetyReview])
   useEffect(() => {
     if (events.isSuccess) setEventPollFailures(0)
     if (events.isError) setEventPollFailures((value) => Math.min(value + 1, 6))
@@ -847,7 +983,7 @@ export function WebchatInboxV5Page() {
     if (!selectedTicketId || !events.data?.events?.length) return
     setLastEventId(events.data.last_event_id || events.data.events[events.data.events.length - 1].id)
     void refreshWebchatState()
-  }, [events.data, selectedTicketId])
+  }, [events.data, refreshWebchatState, selectedTicketId])
 
   const handoffRows = useMemo(() => (handoffQueue.data?.items ?? []).map(rowFromHandoff), [handoffQueue.data?.items])
   const conversationRows = useMemo(() => (conversations.data ?? []).map(rowFromConversation), [conversations.data])
@@ -937,16 +1073,21 @@ export function WebchatInboxV5Page() {
     onError: (err) => setToast({ message: apiErrorText(err, '恢复 AI 失败'), tone: 'danger' }),
   })
   const replyMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (input?: ReplyMutationInput) => {
       if (!selectedTicketId) throw new Error('No ticket selected')
       const body = reply.trim()
-      // Product decision: no mechanical safety checkboxes in the operator UI.
-      // Backend retains default has_fact_evidence=false and confirm_review=false behavior; review/block responses are displayed as actionable errors.
-      return api.webchatReply(selectedTicketId, { body })
+      return api.webchatReply(selectedTicketId, { body, has_fact_evidence: hasFactEvidence, confirm_review: input?.confirmReview === true })
     },
-    onSuccess: async () => { setReply(''); setToast({ message: 'WebChat 回复已发送并写入工单时间线。', tone: 'success' }); await refreshWebchatState() },
+    onSuccess: async () => { setReply(''); setHasFactEvidence(false); setSafetyReview(null); setToast({ message: 'WebChat 回复已发送并写入工单时间线。', tone: 'success' }); await refreshWebchatState() },
     onError: (err) => {
-      const failedBody = reply
+      const failedBody = reply.trim()
+      const review = safetyReviewFromError(err, failedBody)
+      if (review) {
+        setSafetyReview(review)
+        setToast({ message: '回复需要人工复核后才能继续发送。', tone: 'danger' })
+        return
+      }
+      setSafetyReview(null)
       setToast({
         message: apiErrorText(err, '发送失败'),
         tone: 'danger',
@@ -1016,7 +1157,7 @@ export function WebchatInboxV5Page() {
     const handler = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
         event.preventDefault()
-        if (canSend && !replyMutation.isPending) replyMutation.mutate()
+        if (canSend && !replyMutation.isPending) replyMutation.mutate({})
       }
       if (event.altKey && /^[1-5]$/.test(event.key)) {
         event.preventDefault()
@@ -1078,9 +1219,14 @@ export function WebchatInboxV5Page() {
           allowDebug={allowDebug}
           reply={reply}
           setReply={setReply}
+          hasFactEvidence={hasFactEvidence}
+          setHasFactEvidence={setHasFactEvidence}
+          safetyReview={safetyReview}
           canSend={canSend}
           sendDisabledReason={sendDisabledReason}
-          onSend={() => replyMutation.mutate()}
+          onSend={() => replyMutation.mutate({})}
+          onConfirmReview={() => replyMutation.mutate({ confirmReview: true })}
+          onDismissReview={() => setSafetyReview(null)}
           sendPending={replyMutation.isPending}
           onInsert={insertReply}
           onAttach={(file) => attachmentMutation.mutate(file)}
@@ -1103,6 +1249,7 @@ export function WebchatInboxV5Page() {
             onRetryEvidence={() => void caseDetail.refetch()}
             selectedHandoff={selectedHandoff}
             realtimeLabel={realtimeLabel}
+            allowDebug={allowDebug}
             canForceTakeover={canForceTakeover}
             busy={busy}
             onAccept={(requestId) => acceptMutation.mutate(requestId)}
@@ -1127,6 +1274,7 @@ export function WebchatInboxV5Page() {
               onRetryEvidence={() => void caseDetail.refetch()}
               selectedHandoff={selectedHandoff}
               realtimeLabel={realtimeLabel}
+              allowDebug={allowDebug}
               canForceTakeover={canForceTakeover}
               busy={busy}
               onAccept={(requestId) => acceptMutation.mutate(requestId)}
