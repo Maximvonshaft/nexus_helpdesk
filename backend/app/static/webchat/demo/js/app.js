@@ -52,7 +52,8 @@
   };
 
   // NEXUSDESK_DEMO_PUBLIC_HANDOFF_STARTUP
-  if (publicSession && publicSession.conversationId && publicSession.visitorToken) {
+  // NEXUSDESK_DEMO_PUBLIC_HANDOFF_EXPLICIT_FLAG_STARTUP
+  if (publicSession && publicSession.handoffRequested === true && publicSession.conversationId && publicSession.visitorToken) {
     handoffRequested = true;
     schedulePublicPoll(true);
   }
@@ -147,7 +148,7 @@
     showTyping();
 
     // NEXUSDESK_DEMO_PUBLIC_HANDOFF_SEND_SWITCH
-    const sendOperation = handoffRequested && publicSession && publicSession.conversationId && publicSession.visitorToken
+    const sendOperation = handoffRequested && publicSession && publicSession.handoffRequested === true && publicSession.conversationId && publicSession.visitorToken
       ? sendPublicMessage(body)
       : sendFastReply(body);
 
@@ -344,12 +345,13 @@
   function loadPublicSession() {
     try {
       const parsed = JSON.parse(sessionStorage.getItem(PUBLIC_SESSION_KEY) || '{}');
-      if (!parsed || !parsed.conversationId || !parsed.visitorToken) return null;
+      if (!parsed || !parsed.conversationId || !parsed.visitorToken || parsed.handoffRequested !== true) return null;
       return {
         conversationId: String(parsed.conversationId || ''),
         visitorToken: String(parsed.visitorToken || ''),
         lastMessageId: Number(parsed.lastMessageId || 0),
-        lastEventId: Number(parsed.lastEventId || 0)
+        lastEventId: Number(parsed.lastEventId || 0),
+        handoffRequested: true
       };
     } catch (_) {
       return null;
@@ -357,7 +359,8 @@
   }
 
   function persistPublicSession() {
-    if (!publicSession || !publicSession.conversationId || !publicSession.visitorToken) return;
+    if (!publicSession || !publicSession.conversationId || !publicSession.visitorToken || publicSession.handoffRequested !== true) return;
+    publicSession.handoffRequested = true;
     try { sessionStorage.setItem(PUBLIC_SESSION_KEY, JSON.stringify(publicSession)); } catch (_) {}
   }
 
@@ -371,14 +374,17 @@
 
   function rememberPublicSession(data) {
     const session = data && (data.webchat_session || data);
-    if (!session || !session.conversation_id || !session.visitor_token) return;
+    const isHandoff = Boolean(data && (data.handoff_required === true || data.handoff_request_id));
+    if (!isHandoff || !session || !session.conversation_id || !session.visitor_token) return;
     const previous = publicSession || {};
     publicSession = {
       conversationId: String(session.conversation_id || ''),
       visitorToken: String(session.visitor_token || ''),
       lastMessageId: Math.max(Number(previous.lastMessageId || 0), Number(session.last_message_id || session.webchat_last_message_id || 0)),
-      lastEventId: Math.max(Number(previous.lastEventId || 0), Number(session.last_event_id || session.webchat_last_event_id || 0))
+      lastEventId: Math.max(Number(previous.lastEventId || 0), Number(session.last_event_id || session.webchat_last_event_id || 0)),
+      handoffRequested: true
     };
+    handoffRequested = true;
     persistPublicSession();
     schedulePublicPoll(true);
   }
@@ -398,7 +404,7 @@
   }
 
   function sendPublicMessage(body) {
-    if (!publicSession || !publicSession.conversationId || !publicSession.visitorToken) {
+    if (!publicSession || publicSession.handoffRequested !== true || !publicSession.conversationId || !publicSession.visitorToken) {
       return Promise.reject(classifiedError('missing_public_session', 'missing_public_session', makeDebugContext({ error_code: 'missing_public_session' })));
     }
     const controller = new AbortController();
@@ -449,7 +455,7 @@
   }
 
   function pollPublicMessages() {
-    if (!publicSession || !publicSession.conversationId || !publicSession.visitorToken) return Promise.resolve();
+    if (!publicSession || publicSession.handoffRequested !== true || !publicSession.conversationId || !publicSession.visitorToken) return Promise.resolve();
     return fetch(CONFIG.apiBase + publicMessagesPath(), {
       method: 'GET',
       headers: { 'X-Webchat-Visitor-Token': publicSession.visitorToken }
@@ -472,14 +478,14 @@
 
   function schedulePublicPoll(immediate) {
     if (publicPollTimer) clearTimeout(publicPollTimer);
-    if (!publicSession || !publicSession.conversationId || !publicSession.visitorToken) return;
+    if (!publicSession || publicSession.handoffRequested !== true || !publicSession.conversationId || !publicSession.visitorToken) return;
     const run = function () {
       if (document.visibilityState === 'hidden') {
         publicPollTimer = setTimeout(run, PUBLIC_POLL_MS * 3);
         return;
       }
       pollPublicMessages().finally(function () {
-        if (publicSession && publicSession.conversationId && publicSession.visitorToken) {
+        if (publicSession && publicSession.handoffRequested === true && publicSession.conversationId && publicSession.visitorToken) {
           publicPollTimer = setTimeout(run, PUBLIC_POLL_MS);
         }
       });
