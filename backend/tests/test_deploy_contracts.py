@@ -40,6 +40,7 @@ def test_local_postgres_env_and_compose_contract():
     assert env["SEED_DEMO_DATA"] == "false"
     assert env["OUTBOUND_PROVIDER"] == "disabled"
     assert env["ENABLE_OUTBOUND_DISPATCH"] == "false"
+    assert env["OUTBOUND_EMAIL_ENCRYPTION_KEY_FILE"] == "/run/nexus/outbound_email_encryption_key"
 
 
 def test_external_postgres_env_and_compose_contract():
@@ -53,10 +54,12 @@ def test_external_postgres_env_and_compose_contract():
     assert env["SEED_DEMO_DATA"] == "false"
     assert env["OUTBOUND_PROVIDER"] == "disabled"
     assert env["ENABLE_OUTBOUND_DISPATCH"] == "false"
+    assert env["OUTBOUND_EMAIL_ENCRYPTION_KEY_FILE"] == "/run/nexus/outbound_email_encryption_key"
 
 
 def test_default_env_template_keeps_outbound_disabled():
     env = _env("deploy/.env.prod.example")
     assert env["OUTBOUND_PROVIDER"] == "disabled"
     assert env["ENABLE_OUTBOUND_DISPATCH"] == "false"
+    assert env["OUTBOUND_EMAIL_ENCRYPTION_KEY_FILE"] == "/run/nexus/outbound_email_encryption_key"
     assert env["OPENCLAW_CLI_FALLBACK_ENABLED"] == "false"

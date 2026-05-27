@@ -5,8 +5,16 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import OutboundEmailAccount
-from ..schemas import OutboundEmailAccountCreate, OutboundEmailAccountRead, OutboundEmailAccountUpdate
+from ..enums import MessageStatus
+from ..schemas import (
+    OutboundEmailAccountCreate,
+    OutboundEmailAccountRead,
+    OutboundEmailAccountUpdate,
+    OutboundEmailTestSendRead,
+    OutboundEmailTestSendRequest,
+)
 from ..services.audit_service import log_admin_audit
+from ..services.outbound_adapters.email import send_outbound_email_test
 from ..services.outbound_email_account_service import (
     account_audit_snapshot,
     clean_optional_text,
@@ -18,6 +26,7 @@ from ..services.outbound_email_account_service import (
 from ..services.permissions import ensure_can_manage_channel_accounts
 from ..services.secret_crypto import SecretCryptoService, mask_secret
 from ..unit_of_work import managed_session
+from ..utils.time import utc_now
 from .deps import get_current_user
 
 router = APIRouter(prefix="/outbound-email", tags=["admin-outbound-email"])
@@ -245,6 +254,64 @@ def enable_outbound_email_account(account_id: int, db: Session = Depends(get_db)
 @router.post("/accounts/{account_id}/disable", response_model=OutboundEmailAccountRead)
 def disable_outbound_email_account(account_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     return _set_outbound_email_account_active(account_id, False, db, current_user)
+
+
+@router.post("/accounts/{account_id}/test-send", response_model=OutboundEmailTestSendRead)
+def send_outbound_email_account_test(
+    account_id: int,
+    payload: OutboundEmailTestSendRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_channel_accounts(current_user, db)
+    row = db.query(OutboundEmailAccount).filter(OutboundEmailAccount.id == account_id).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outbound Email account not found")
+
+    status_value, provider_status, sent_at, route_context = send_outbound_email_test(
+        row,
+        to_address=str(payload.to_address),
+        subject=payload.subject,
+        body=payload.body,
+    )
+    ok = status_value == MessageStatus.sent
+    failure_code = route_context.get("failure_code") if isinstance(route_context, dict) else None
+    error_message = route_context.get("error") if isinstance(route_context, dict) else None
+    health_status = "ok" if ok else "error"
+    last_test_status = "success" if ok else str(failure_code or provider_status or "failed")
+
+    with managed_session(db):
+        row.health_status = health_status
+        row.last_test_status = last_test_status[:40]
+        row.last_test_error = None if ok else str(error_message or provider_status or "SMTP test-send failed")
+        row.last_test_at = utc_now()
+        row.updated_by = current_user.id
+        db.flush()
+        log_admin_audit(
+            db,
+            actor_id=current_user.id,
+            action="outbound_email_account.test_send",
+            target_type="outbound_email_account",
+            target_id=row.id,
+            old_value=None,
+            new_value={
+                "id": row.id,
+                "health_status": row.health_status,
+                "last_test_status": row.last_test_status,
+                "last_test_error": row.last_test_error,
+                "route": route_context,
+            },
+        )
+
+    return OutboundEmailTestSendRead(
+        ok=ok,
+        account_id=row.id,
+        provider_status=provider_status or ("smtp_sent" if ok else "failed"),
+        failure_code=str(failure_code) if failure_code else None,
+        error_message=None if ok else str(error_message or provider_status or "SMTP test-send failed"),
+        sent_at=sent_at,
+        health_status=health_status,
+    )
 
 
 def _set_outbound_email_account_active(

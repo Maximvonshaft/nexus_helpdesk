@@ -75,7 +75,7 @@ def _target_validation(channel: str) -> str | None:
         SourceChannel.whatsapp.value: "whatsapp_contact_or_session",
         SourceChannel.telegram.value: "telegram_chat_or_session",
         SourceChannel.sms.value: "e164_phone",
-        SourceChannel.email.value: "email_address_with_subject",
+        SourceChannel.email.value: "email_address",
         SourceChannel.web_chat.value: "linked_webchat_conversation",
     }.get(channel)
 
@@ -120,7 +120,10 @@ def _ticket_target(ticket: Ticket | None, *, channel: str) -> str | None:
         values = [ticket.source_chat_id, ticket.preferred_reply_contact, getattr(customer, "phone", None)]
     for value in values:
         cleaned = str(value or "").strip()
-        if cleaned:
+        if channel == SourceChannel.email.value:
+            if is_valid_email_address(cleaned):
+                return cleaned
+        elif cleaned:
             return cleaned
     return None
 
@@ -208,29 +211,33 @@ def get_outbound_channel_capability(
     if channel_value in EXTERNAL_EXPERIMENTAL_CHANNELS:
         account_configured = has_active_outbound_email_account(db, ticket=ticket)
         target_configured = _target_ready(ticket, channel=channel_value) if ticket is not None else True
+        if not bool(settings.enable_outbound_dispatch):
+            missing.append("enable_outbound_dispatch")
+        if settings.outbound_provider != "openclaw":
+            missing.append("outbound_provider_openclaw")
         if not account_configured:
             missing.append("email_account_registry")
         if not target_configured:
-            missing.append("valid_email_address_with_subject")
-        missing.extend(["email_send_schema", "email_provider_adapter"])
+            missing.append("valid_email_address")
+        status_value = "ready" if not missing else "configurable"
         return OutboundChannelCapability(
             channel=channel_value,
             label=_label(channel_value),
             dispatch_type="external",
-            status="configurable",
+            status=status_value,
             customer_sendable=True,
-            enabled=False,
+            enabled=not missing,
             configured=account_configured and target_configured,
             account_required=True,
             target_required=True,
-            supports_send=False,
+            supports_send=not missing,
             supports_inbound_sync=False,
             supports_delivery_receipt=False,
             supports_attachments=False,
             external_send=True,
             target_validation=_target_validation(channel_value),
             missing=missing,
-            operator_note="Email account registry is available, but customer sends remain blocked until send schema and SMTP adapter closure are implemented.",
+            operator_note="Email SMTP dispatch is allowed only when runtime, account, target, and subject gates are closed.",
         )
 
     if channel_value in EXTERNAL_READY_CANDIDATE_CHANNELS:

@@ -573,6 +573,7 @@ class TicketOutboundMessage(Base):
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
     channel: Mapped[SourceChannel] = mapped_column(Enum(SourceChannel), index=True)
     status: Mapped[MessageStatus] = mapped_column(Enum(MessageStatus), index=True)
+    subject: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     body: Mapped[str] = mapped_column(Text)
     provider_status: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

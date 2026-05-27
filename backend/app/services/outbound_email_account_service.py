@@ -100,4 +100,3 @@ def account_audit_snapshot(row: OutboundEmailAccount) -> dict[str, Any]:
         "last_test_status": row.last_test_status,
         "last_test_error": row.last_test_error,
     }
-

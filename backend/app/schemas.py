@@ -221,11 +221,13 @@ class AIIntakeCreate(BaseModel):
 
 class OutboundDraftCreate(BaseModel):
     channel: SourceChannel
+    subject: Optional[str] = Field(default=None, max_length=255)
     body: str
 
 
 class OutboundSendRequest(BaseModel):
     channel: SourceChannel
+    subject: Optional[str] = Field(default=None, max_length=255)
     body: str
 
 
@@ -265,6 +267,7 @@ class OutboundMessageRead(APIModel):
     ticket_id: int
     channel: SourceChannel
     status: MessageStatus
+    subject: Optional[str] = None
     body: str
     provider_status: Optional[str] = None
     error_message: Optional[str] = None
@@ -826,6 +829,22 @@ class OutboundEmailAccountRead(APIModel):
     password_mask: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+class OutboundEmailTestSendRequest(BaseModel):
+    to_address: EmailStr
+    subject: Optional[str] = Field(default=None, max_length=255)
+    body: Optional[str] = Field(default=None, max_length=4000)
+
+
+class OutboundEmailTestSendRead(APIModel):
+    ok: bool
+    account_id: int
+    provider_status: str
+    failure_code: Optional[str] = None
+    error_message: Optional[str] = None
+    sent_at: Optional[datetime] = None
+    health_status: str
 
 
 class OpenClawRuntimeHealthRead(APIModel):

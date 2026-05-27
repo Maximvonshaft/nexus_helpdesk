@@ -123,8 +123,7 @@ def test_internal_is_not_customer_sendable_and_email_is_not_runtime_ready(db_ses
         require_outbound_channel_sendable(db_session, ticket=ticket, channel=SourceChannel.email)
     assert email_exc.value.status_code == 400
     assert email_exc.value.detail["error_code"] == "outbound_channel_not_ready"
-    assert "email_send_schema" in email_exc.value.detail["missing"]
-    assert "email_provider_adapter" in email_exc.value.detail["missing"]
+    assert "email_account_registry" in email_exc.value.detail["missing"]
 
 
 def test_email_capability_uses_account_registry_and_target_validation(db_session, monkeypatch):
@@ -135,7 +134,7 @@ def test_email_capability_uses_account_registry_and_target_validation(db_session
     assert missing_account.customer_sendable is True
     assert missing_account.supports_send is False
     assert "email_account_registry" in missing_account.missing
-    assert "valid_email_address_with_subject" not in missing_account.missing
+    assert "valid_email_address" not in missing_account.missing
 
     db_session.add(
         OutboundEmailAccount(
@@ -155,11 +154,13 @@ def test_email_capability_uses_account_registry_and_target_validation(db_session
     configured = get_outbound_channel_capability(SourceChannel.email, db=db_session, ticket=ticket)
     assert configured.configured is True
     assert "email_account_registry" not in configured.missing
-    assert configured.missing == ["email_send_schema", "email_provider_adapter"]
+    assert configured.supports_send is True
+    assert configured.missing == []
 
     invalid_ticket = _ticket(db_session, channel=SourceChannel.email, contact="not-an-email")
+    invalid_ticket.customer.email = None
     invalid = get_outbound_channel_capability(SourceChannel.email, db=db_session, ticket=invalid_ticket)
-    assert "valid_email_address_with_subject" in invalid.missing
+    assert "valid_email_address" in invalid.missing
 
 
 def test_whatsapp_requires_runtime_account_and_target(db_session, monkeypatch):

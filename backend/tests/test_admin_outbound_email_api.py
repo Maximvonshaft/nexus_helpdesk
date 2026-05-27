@@ -24,13 +24,15 @@ from app.api.admin_outbound_email import (  # noqa: E402
     create_outbound_email_account,
     disable_outbound_email_account,
     list_outbound_email_accounts,
+    send_outbound_email_account_test,
     update_outbound_email_account,
 )
 from app.db import Base  # noqa: E402
-from app.enums import UserRole  # noqa: E402
+from app.enums import MessageStatus, UserRole  # noqa: E402
 from app.models import AdminAuditLog, Market, OutboundEmailAccount, User  # noqa: E402
-from app.schemas import OutboundEmailAccountCreate, OutboundEmailAccountUpdate  # noqa: E402
+from app.schemas import OutboundEmailAccountCreate, OutboundEmailAccountUpdate, OutboundEmailTestSendRequest  # noqa: E402
 from app.services.secret_crypto import SecretCryptoService  # noqa: E402
+from app.utils.time import utc_now  # noqa: E402
 
 
 @pytest.fixture()
@@ -147,6 +149,43 @@ def test_update_password_rotates_secret_and_writes_redacted_audit(db_session):
     assert "rotated-secret" not in audit_text
     assert db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "outbound_email_account.update").count() == 1
     assert db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "outbound_email_account.password_change").count() == 1
+
+
+def test_test_send_updates_health_and_writes_redacted_audit(db_session, monkeypatch):
+    admin = _user(db_session, UserRole.admin, "admin")
+    created = create_outbound_email_account(_payload(), db=db_session, current_user=admin)
+
+    def fake_test_send(row, *, to_address, subject=None, body=None, smtp_factory=None):
+        assert row.id == created.id
+        assert to_address == "ops@example.com"
+        assert subject == "Probe"
+        assert body == "hello"
+        return MessageStatus.sent, "smtp_sent", utc_now(), {
+            "adapter": "smtp",
+            "account_id": row.id,
+            "to_address": "o***@example.com",
+            "from_address": "s***@nexusdesk-mail.com",
+        }
+
+    monkeypatch.setattr("app.api.admin_outbound_email.send_outbound_email_test", fake_test_send)
+
+    result = send_outbound_email_account_test(
+        created.id,
+        OutboundEmailTestSendRequest(to_address="ops@example.com", subject="Probe", body="hello"),
+        db=db_session,
+        current_user=admin,
+    )
+
+    assert result.ok is True
+    assert result.provider_status == "smtp_sent"
+    row = db_session.query(OutboundEmailAccount).filter(OutboundEmailAccount.id == created.id).one()
+    assert row.health_status == "ok"
+    assert row.last_test_status == "success"
+    assert row.last_test_error is None
+    assert row.last_test_at is not None
+    audit_text = _audit_payloads(db_session)
+    assert "smtp-secret" not in audit_text
+    assert db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "outbound_email_account.test_send").count() == 1
 
 
 def test_agent_cannot_manage_outbound_email_accounts(db_session):
