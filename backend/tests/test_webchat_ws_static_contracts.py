@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 from pathlib import Path
 
 import pytest
+from fastapi.routing import APIWebSocketRoute
 
 from app.settings import Settings
 
@@ -79,6 +81,19 @@ def test_nginx_webchat_ws_upgrade_contract():
     assert "proxy_set_header Connection $connection_upgrade;" in text
     assert "proxy_buffering off;" in text
     assert "proxy_read_timeout 75s;" in text
+
+
+def test_webchat_ws_runtime_dependency_and_route_registry_contract(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+    requirements = (ROOT / "backend" / "requirements.txt").read_text(encoding="utf-8")
+
+    assert "websockets==13.1" in requirements
+    assert importlib.util.find_spec("websockets") is not None or importlib.util.find_spec("wsproto") is not None
+
+    from app.main import app
+
+    assert any(isinstance(route, APIWebSocketRoute) and route.path == "/api/webchat/ws" for route in app.routes)
 
 
 def test_static_widget_uses_ws_without_url_token_transport():
