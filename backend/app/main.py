@@ -45,6 +45,7 @@ from .db import engine, reset_current_request_id, set_current_request_id
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
 from .services.password_policy import MIN_PASSWORD_LENGTH, PasswordPolicyError, validate_admin_password_policy
 from .services.release_metadata import runtime_identity
+from .services.spa_fallback_hardening import should_block_spa_fallback
 from .services.storage_readiness import check_storage_readiness
 from .services.webchat_openclaw_responses_client import close_openclaw_clients
 from .settings import get_settings
@@ -306,7 +307,7 @@ if frontend_dir.exists():
 
     @app.get('/{full_path:path}', include_in_schema=False)
     def serve_spa_fallback(full_path: str):
-        if full_path.startswith(('api/', 'docs', 'openapi.json', 'healthz', 'readyz', 'metrics', 'webchat/', 'static/')):
+        if full_path.startswith(('api/', 'docs', 'openapi.json', 'healthz', 'readyz', 'metrics', 'webchat/', 'static/')) or should_block_spa_fallback(full_path):
             return JSONResponse(status_code=404, content={'detail': 'not found'})
         index_file = frontend_dir / 'index.html'
         if index_file.exists():
