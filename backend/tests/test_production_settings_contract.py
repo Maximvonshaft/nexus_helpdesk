@@ -42,6 +42,10 @@ def production_env(**overrides: str) -> dict[str, str]:
         'WEBCHAT_AI_AUTO_REPLY_MODE': 'safe_ack',
         'WEBCHAT_ALLOWED_ORIGINS': 'https://example.test',
         'WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT': 'false',
+        'WEBCHAT_WS_ENABLED': 'false',
+        'WEBCHAT_WS_ADMIN_ENABLED': 'false',
+        'WEBCHAT_WS_PUBLIC_ENABLED': 'false',
+        'WEBCHAT_WS_BROKER': 'database',
     }
     env.update(overrides)
     return env
@@ -63,6 +67,8 @@ def test_production_settings_accept_hardened_contract(monkeypatch):
     assert settings.is_postgres is True
     assert settings.allow_dev_auth is False
     assert settings.webchat_knowledge_reply_mode == 'ai_grounded'
+    assert settings.webchat_ws_enabled is False
+    assert settings.webchat_ws_broker == 'database'
 
 
 @pytest.mark.parametrize(
@@ -75,10 +81,12 @@ def test_production_settings_accept_hardened_contract(monkeypatch):
         ('OPENCLAW_CLI_FALLBACK_ENABLED', 'true', 'OPENCLAW_CLI_FALLBACK_ENABLED'),
         ('WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT', 'true', 'WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT'),
         ('WEBCHAT_KNOWLEDGE_REPLY_MODE', 'direct_answer', 'WEBCHAT_KNOWLEDGE_REPLY_MODE'),
+        ('WEBCHAT_WS_BROKER', 'memory', 'WEBCHAT_WS_BROKER=memory'),
     ],
 )
 def test_production_settings_reject_unsafe_contract(key: str, value: str, expected_message: str):
-    with patched_env(production_env(**{key: value})):
+    extra = {'WEBCHAT_WS_ENABLED': 'true'} if key == 'WEBCHAT_WS_BROKER' else {}
+    with patched_env(production_env(**extra, **{key: value})):
         with pytest.raises(RuntimeError) as exc:
             Settings()
     assert expected_message in str(exc.value)

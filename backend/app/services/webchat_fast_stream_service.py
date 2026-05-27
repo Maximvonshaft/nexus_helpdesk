@@ -25,6 +25,7 @@ from .webchat_fast_session_service import (
     append_fast_ai_message,
     append_fast_system_handoff_message,
     extract_fast_business_state,
+    fast_public_session_payload,
     get_or_create_fast_conversation,
     get_or_create_fast_ticket,
 )
@@ -149,7 +150,7 @@ def _persist_stream_result(
     recent_context: list[dict[str, Any]] | None,
     routing_context: FastRoutingContext | None = None,
     tracking_fact_metadata: dict[str, Any] | None = None,
-) -> int | None:
+) -> dict[str, Any]:
     with db_context() as db:
         conversation = get_or_create_fast_conversation(db, tenant_key=tenant_key, channel_key=channel_key, session_id=session_id)
         metadata = {"handoff_required": parsed.handoff_required, "reply_source": "openclaw_responses_stream"}
@@ -157,7 +158,7 @@ def _persist_stream_result(
             metadata["tracking_fact"] = tracking_fact_metadata
         append_fast_ai_message(db, conversation=conversation, reply=parsed.reply, client_message_id=client_message_id, metadata=metadata)
         if not parsed.handoff_required:
-            return None
+            return fast_public_session_payload(db, conversation)
         business_state = extract_fast_business_state(body=body, context=recent_context or [], session_id=session_id)
         if parsed.tracking_number:
             business_state = type(business_state)(intent=business_state.intent, issue_type=business_state.issue_type, tracking_number=parsed.tracking_number, fast_issue_key=f"tracking:{parsed.tracking_number}:intent:{business_state.issue_type}"[:240], missing_fields=())
@@ -183,7 +184,9 @@ def _persist_stream_result(
             trigger_message_id=handoff_message.id,
             requested_by_actor_type="ai",
         )
-        return ticket.id
+        session_payload = fast_public_session_payload(db, conversation)
+        session_payload["ticket_id"] = ticket.id
+        return session_payload
 
 
 async def stream_webchat_fast_reply_events(
@@ -214,6 +217,11 @@ async def stream_webchat_fast_reply_events(
             return
         final = {k: v for k, v in stored.items() if k != "reply"}
         final["replayed"] = True
+        with db_context() as db:
+            conversation = get_or_create_fast_conversation(db, tenant_key=tenant_key, channel_key=channel_key, session_id=session_id)
+            session_payload = fast_public_session_payload(db, conversation)
+            final.update(session_payload)
+            final["webchat_session"] = session_payload
         yield sse_event("final", final)
         if replay_reply:
             yield sse_event("reply_delta", {"text": replay_reply})
@@ -251,7 +259,7 @@ async def stream_webchat_fast_reply_events(
             final_input = last_completed.full_text or last_completed.full_payload
         parsed = extractor.final_parse(final_input)
         try:
-            ticket_id = _persist_stream_result(
+            public_session = _persist_stream_result(
                 tenant_key=tenant_key,
                 channel_key=channel_key,
                 session_id=session_id,
@@ -262,6 +270,7 @@ async def stream_webchat_fast_reply_events(
                 routing_context=routing_context,
                 tracking_fact_metadata=tracking_fact_metadata,
             )
+            public_session = public_session or {}
         except Exception:
             if parsed.handoff_required:
                 _mark_failed(begin.row_id, "handoff_enqueue_failed")
@@ -269,12 +278,15 @@ async def stream_webchat_fast_reply_events(
                 yield sse_event("error", {"error_code": "handoff_enqueue_failed", "retry_after_ms": 1500})
                 return
             raise
-        final = public_final_from_parsed(parsed, ticket_creation_queued=False, replayed=False)
-        if ticket_id is not None:
-            final["ticket_id"] = ticket_id
+        stored_final = public_final_from_parsed(parsed, ticket_creation_queued=False, replayed=False)
+        if public_session.get("ticket_id") is not None:
+            stored_final["ticket_id"] = public_session["ticket_id"]
+        final = dict(stored_final)
+        final.update(public_session)
+        final["webchat_session"] = {key: public_session[key] for key in ("conversation_id", "visitor_token", "last_message_id", "last_event_id") if key in public_session}
         elapsed_ms = int((time.monotonic() - started) * 1000)
         final["elapsed_ms"] = elapsed_ms
-        _mark_done(begin.row_id, {**final, "reply": parsed.reply})
+        _mark_done(begin.row_id, {**stored_final, "elapsed_ms": elapsed_ms, "reply": parsed.reply})
         record_fast_reply_metric(status="ok", intent=parsed.intent, handoff_required=parsed.handoff_required, elapsed_ms=elapsed_ms)
         yield sse_event("final", final)
         if parsed.reply:

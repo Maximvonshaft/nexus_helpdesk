@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from ..enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus
 from ..models import ChannelAccount, Customer, Market, Ticket
 from ..utils.time import utc_now
-from ..webchat_models import WebchatConversation, WebchatMessage
+from ..webchat_models import WebchatConversation, WebchatEvent, WebchatMessage
 from .ticket_service import generate_ticket_no
 from .webchat_fast_config import get_webchat_fast_settings
 
@@ -79,6 +79,39 @@ def _json(payload: dict[str, Any]) -> str:
 
 def _safe_public_id(*, tenant_key: str, channel_key: str, session_id: str) -> str:
     return f"wcf_{_sha(f'fast:{tenant_key}:{channel_key}:{session_id}')[:24]}"
+
+
+def fast_visitor_token(*, tenant_key: str, channel_key: str, session_id: str) -> str:
+    tenant = _clip(tenant_key, 120) or "default"
+    channel = _clip(channel_key, 120) or "website"
+    session = _clip(session_id, 120) or "unknown"
+    return f"fast-visitor:{tenant}:{channel}:{session}"
+
+
+def fast_public_session_payload(db: Session, conversation: WebchatConversation) -> dict[str, Any]:
+    session_id = conversation.fast_session_id or conversation.visitor_ref or conversation.public_id
+    last_message_id = db.execute(
+        select(WebchatMessage.id)
+        .where(WebchatMessage.conversation_id == conversation.id)
+        .order_by(WebchatMessage.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    last_event_id = db.execute(
+        select(WebchatEvent.id)
+        .where(WebchatEvent.conversation_id == conversation.id)
+        .order_by(WebchatEvent.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return {
+        "conversation_id": conversation.public_id,
+        "visitor_token": fast_visitor_token(
+            tenant_key=conversation.tenant_key,
+            channel_key=conversation.channel_key,
+            session_id=session_id,
+        ),
+        "last_message_id": int(last_message_id or 0),
+        "last_event_id": int(last_event_id or 0),
+    }
 
 
 def _fast_customer_external_ref(conversation: WebchatConversation) -> str:
@@ -333,7 +366,7 @@ def get_or_create_fast_conversation(db: Session, *, tenant_key: str, channel_key
     page_url, user_agent = _request_meta(request)
     row = WebchatConversation(
         public_id=public_id,
-        visitor_token_hash=_sha(f"fast-visitor:{tenant}:{channel}:{session}"),
+        visitor_token_hash=_sha(fast_visitor_token(tenant_key=tenant, channel_key=channel, session_id=session)),
         tenant_key=tenant,
         channel_key=channel,
         ticket_id=None,

@@ -6,7 +6,8 @@ import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
 import { formatDateTime, sanitizeDisplayText, statusTone } from '@/lib/format'
 import { findReplyChannelCapability, isCustomerSendableReplyChannel, outboundChannelMissingText, replyPanelVisibleChannels } from '@/lib/outboundChannels'
-import type { WebchatCardAction, WebchatCardPayload, WebchatHandoffRequest, WebchatMessage } from '@/lib/types'
+import type { WebchatCardAction, WebchatCardPayload, WebchatHandoffQueue, WebchatHandoffRequest, WebchatMessage, WebchatThread } from '@/lib/types'
+import { useWebchatRealtime, type WebchatRealtimeEvent } from '@/lib/webchatRealtime'
 import { webchatVoiceApi } from '@/lib/webchatVoiceApi'
 import { AgentWebCallPanel } from '@/components/webcall/AgentWebCallPanel'
 import { Badge } from '@/components/ui/Badge'
@@ -228,7 +229,7 @@ function WebchatInboxPage() {
   const handoffQueue = useQuery({
     queryKey: ['webchatHandoffQueue', handoffView],
     queryFn: ({ signal }) => api.webchatHandoffQueue({ view: handoffView, limit: 50 }, { signal }),
-    refetchInterval: 5000,
+    refetchInterval: false,
     retry: false,
   })
 
@@ -260,15 +261,45 @@ function WebchatInboxPage() {
     queryKey: ['webchatThread', selectedTicketId],
     queryFn: ({ signal }) => api.webchatThread(selectedTicketId as number, { signal }),
     enabled: !!selectedTicketId,
-    refetchInterval: 7000,
+    refetchInterval: false,
     retry: false,
+  })
+
+  const mergeMessageIntoThread = (event: WebchatRealtimeEvent) => {
+    if (!event.message || !event.ticket_id) return
+    client.setQueryData<WebchatThread | undefined>(['webchatThread', event.ticket_id], (old) => {
+      if (!old) return old
+      if ((old.messages ?? []).some((msg) => msg.id === event.message?.id)) return old
+      return { ...old, messages: [...(old.messages ?? []), event.message as WebchatMessage] }
+    })
+  }
+
+  const applyRealtimeEvent = (event: WebchatRealtimeEvent) => {
+    if (event.type === 'queue.snapshot' || event.type === 'queue.updated') {
+      if (event.view && event.data) client.setQueryData<WebchatHandoffQueue>(['webchatHandoffQueue', event.view], event.data)
+      return
+    }
+    if (event.type === 'message.created') mergeMessageIntoThread(event)
+    if (event.type.startsWith('handoff.') || event.type.startsWith('ai_turn.') || event.type === 'ai.resumed' || event.type === 'message.created') {
+      if (event.ticket_id) void client.invalidateQueries({ queryKey: ['webchatThread', event.ticket_id] })
+      void client.invalidateQueries({ queryKey: ['webchatConversations'] })
+      void client.invalidateQueries({ queryKey: ['webchatHandoffQueue'] })
+      void client.invalidateQueries({ queryKey: ['webchatVoiceIncomingSessions'] })
+    }
+  }
+
+  const realtime = useWebchatRealtime({
+    enabled: true,
+    selectedTicketId,
+    handoffView,
+    onEvent: applyRealtimeEvent,
   })
 
   const events = useQuery({
     queryKey: ['webchatEvents', selectedTicketId, lastEventId],
     queryFn: ({ signal }) => api.webchatEvents(selectedTicketId as number, lastEventId, { signal }),
-    enabled: !!selectedTicketId,
-    refetchInterval: backoffMs(eventPollFailures, 2500, 30000),
+    enabled: !!selectedTicketId && !realtime.connected,
+    refetchInterval: realtime.connected ? false : backoffMs(eventPollFailures, 2500, 30000),
     retry: false,
   })
 
@@ -284,6 +315,16 @@ function WebchatInboxPage() {
     void client.invalidateQueries({ queryKey: ['webchatConversations'] })
     void client.invalidateQueries({ queryKey: ['webchatVoiceIncomingSessions'] })
   }, [client, events.data, selectedTicketId])
+
+  useEffect(() => {
+    if (realtime.connected) return
+    const timer = window.setInterval(() => {
+      void client.invalidateQueries({ queryKey: ['webchatHandoffQueue', handoffView] })
+      void client.invalidateQueries({ queryKey: ['webchatConversations'] })
+      if (selectedTicketId) void client.invalidateQueries({ queryKey: ['webchatThread', selectedTicketId] })
+    }, backoffMs(Math.max(eventPollFailures, conversationPollFailures), 5000, 30000))
+    return () => window.clearInterval(timer)
+  }, [client, realtime.connected, handoffView, selectedTicketId, eventPollFailures, conversationPollFailures])
 
   const selectedConversation = useMemo(
     () => (conversations.data ?? []).find((item) => item.ticket_id === selectedTicketId),
@@ -405,7 +446,7 @@ function WebchatInboxPage() {
         <CardHeader title="Speedaf Webchat 嵌入代码" subtitle="visitor 端无需登录；admin 后台需要登录。生产环境请替换为正式域名，并配置 WEBCHAT_ALLOWED_ORIGINS。" />
         <CardBody>
           <pre className="code-block"><code>{snippet}</code></pre>
-          <div className="section-subtitle">Realtime-lite 使用 after_id events JSON long-poll；如事件接口不可用，仍保留 7s/10s polling fallback。连续失败时自动 backoff，成功后恢复。</div>
+          <div className="section-subtitle">实时连接：{realtime.connected ? 'WebSocket connected' : realtime.status === 'connecting' ? 'WebSocket connecting' : 'polling fallback'} · after_id {Math.max(lastEventId, realtime.lastEventId)}</div>
         </CardBody>
       </Card> : null}
 
@@ -498,7 +539,7 @@ function WebchatInboxPage() {
                     <div className="kv"><label>当前状态</label><div>{sanitizeDisplayText(threadData?.conversation_state || selectedConversation.status)}</div></div>
                     <div className="kv"><label>接管状态</label><div><Badge tone={handoffTone(threadData?.handoff_status || selectedConversation.handoff_status)}>{sanitizeDisplayText(threadData?.handoff_status || selectedConversation.handoff_status || 'none')}</Badge></div></div>
                     {allowDebug ? <div className="kv"><label>AI Runtime</label><div><AIStatusBadge status={threadData?.ai_status || selectedConversation.ai_status} pending={threadData?.ai_pending || selectedConversation.ai_pending} turnId={threadData?.ai_turn_id || selectedConversation.ai_turn_id} /></div></div> : null}
-                    {allowDebug ? <div className="kv"><label>Realtime-lite</label><div>{events.isFetching ? 'polling events…' : `after_id ${lastEventId}`}</div></div> : null}
+                    {allowDebug ? <div className="kv"><label>Realtime</label><div>{realtime.connected ? 'WebSocket' : events.isFetching ? 'polling events…' : 'polling fallback'} · after_id {Math.max(lastEventId, realtime.lastEventId)}</div></div> : null}
                     <div className="kv"><label>Required action</label><div>{sanitizeDisplayText(threadData?.required_action || 'None')}</div></div>
                   </div>
                   {selectedHandoff ? <div className="message" data-role="agent">

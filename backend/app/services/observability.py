@@ -63,6 +63,13 @@ _VOICE_SESSION_EVENTS = Counter('nexusdesk_voice_session_events_total', 'WebCall
 _VOICE_PROVIDER_ERRORS = Counter('nexusdesk_voice_provider_errors_total', 'WebCall voice provider operation errors', ['provider', 'operation'], registry=_PROM_REGISTRY) if Counter else None
 _VOICE_CALL_DURATION = Histogram('nexusdesk_voice_call_duration_seconds', 'Completed WebCall duration in seconds', ['provider', 'status'], registry=_PROM_REGISTRY, buckets=(1, 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600)) if Histogram else None
 _VOICE_RINGING_DURATION = Histogram('nexusdesk_voice_ringing_duration_seconds', 'WebCall ringing duration before accept or terminal state in seconds', ['provider', 'status'], registry=_PROM_REGISTRY, buckets=(1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 900)) if Histogram else None
+_WEBCHAT_WS_CONNECTED = Counter('nexusdesk_webchat_websocket_connected_total', 'WebChat WebSocket accepted connections', ['client_type'], registry=_PROM_REGISTRY) if Counter else None
+_WEBCHAT_WS_DISCONNECTED = Counter('nexusdesk_webchat_websocket_disconnected_total', 'WebChat WebSocket closed connections', ['client_type'], registry=_PROM_REGISTRY) if Counter else None
+_WEBCHAT_WS_AUTH_FAILED = Counter('nexusdesk_webchat_websocket_auth_failed_total', 'WebChat WebSocket rejected handshakes and subscriptions', ['client_type', 'reason'], registry=_PROM_REGISTRY) if Counter else None
+_WEBCHAT_WS_EVENT_SENT = Counter('nexusdesk_webchat_websocket_event_sent_total', 'WebChat WebSocket events sent to clients', ['client_type', 'event_type'], registry=_PROM_REGISTRY) if Counter else None
+_WEBCHAT_WS_EVENT_REPLAY = Counter('nexusdesk_webchat_websocket_event_replay_total', 'WebChat WebSocket replay batches delivered', ['client_type', 'subscription'], registry=_PROM_REGISTRY) if Counter else None
+_WEBCHAT_WS_FALLBACK_POLLING = Counter('nexusdesk_webchat_websocket_fallback_polling_total', 'WebChat public widget fallback polling activations', ['client_type', 'reason'], registry=_PROM_REGISTRY) if Counter else None
+_WEBCHAT_WS_ACTIVE_CONNECTIONS = Gauge('nexusdesk_webchat_websocket_active_connections', 'Current in-process WebChat WebSocket connections', ['client_type'], registry=_PROM_REGISTRY) if Gauge else None
 
 _ID_SEGMENT_RE = re.compile(r"/\d+(?=/|$)")
 _UUID_SEGMENT_RE = re.compile(r"/[0-9a-fA-F]{8,}(?=/|$)")
@@ -162,6 +169,43 @@ def record_webchat_ai_stale_suppressed(reason: str | None = None) -> None:
 def record_webchat_ai_timeout(reason: str | None = None) -> None:
     if _WEBCHAT_AI_TIMEOUTS:
         _WEBCHAT_AI_TIMEOUTS.labels(reason=_label(reason, 'unknown')).inc()
+
+
+def record_webchat_websocket_connected(client_type: str | None) -> None:
+    if _WEBCHAT_WS_CONNECTED:
+        _WEBCHAT_WS_CONNECTED.labels(client_type=_label(client_type)).inc()
+
+
+def record_webchat_websocket_disconnected(client_type: str | None) -> None:
+    if _WEBCHAT_WS_DISCONNECTED:
+        _WEBCHAT_WS_DISCONNECTED.labels(client_type=_label(client_type)).inc()
+
+
+def record_webchat_websocket_auth_failed(client_type: str | None, reason: str | None) -> None:
+    if _WEBCHAT_WS_AUTH_FAILED:
+        _WEBCHAT_WS_AUTH_FAILED.labels(client_type=_label(client_type), reason=_label(reason)).inc()
+
+
+def record_webchat_websocket_event_sent(client_type: str | None, event_type: str | None) -> None:
+    if _WEBCHAT_WS_EVENT_SENT:
+        _WEBCHAT_WS_EVENT_SENT.labels(client_type=_label(client_type), event_type=_label(event_type)).inc()
+
+
+def record_webchat_websocket_event_replay(client_type: str | None, subscription: str | None, count: int = 1) -> None:
+    if _WEBCHAT_WS_EVENT_REPLAY:
+        _WEBCHAT_WS_EVENT_REPLAY.labels(client_type=_label(client_type), subscription=_label(subscription)).inc(max(int(count or 0), 0))
+
+
+def record_webchat_websocket_fallback_polling(client_type: str | None, reason: str | None) -> None:
+    if _WEBCHAT_WS_FALLBACK_POLLING:
+        _WEBCHAT_WS_FALLBACK_POLLING.labels(client_type=_label(client_type), reason=_label(reason)).inc()
+
+
+def record_webchat_websocket_active_connections(*, agents: int = 0, visitors: int = 0) -> None:
+    if _WEBCHAT_WS_ACTIVE_CONNECTIONS:
+        _WEBCHAT_WS_ACTIVE_CONNECTIONS.labels(client_type='agent').set(max(int(agents or 0), 0))
+        _WEBCHAT_WS_ACTIVE_CONNECTIONS.labels(client_type='visitor').set(max(int(visitors or 0), 0))
+        _WEBCHAT_WS_ACTIVE_CONNECTIONS.labels(client_type='all').set(max(int(agents or 0), 0) + max(int(visitors or 0), 0))
 
 
 def record_openclaw_bridge_metric(operation: str, status: str, elapsed_ms: int | float | None = None) -> None:
