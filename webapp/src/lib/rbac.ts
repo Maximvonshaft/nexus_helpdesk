@@ -79,6 +79,8 @@ export const actionAccess = {
   endWebcallVoice: { allOf: [CAPABILITIES.webcallVoiceEnd] },
   viewWebchatDebug: { anyOf: [CAPABILITIES.runtimeManage] },
   forceWebchatHandoff: { allOf: [CAPABILITIES.webchatHandoffForceTakeover] },
+  uploadAttachment: { allOf: [CAPABILITIES.attachmentUpload] },
+  escalateTicket: { allOf: [CAPABILITIES.ticketEscalate] },
 } satisfies Record<string, AccessRequirement>
 
 export const capabilityCatalogMeta: CapabilityMeta[] = [

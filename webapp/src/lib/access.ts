@@ -108,6 +108,14 @@ export function canForceWebchatHandoff(user?: AuthUser | null) {
   return canAccess(user, actionAccess.forceWebchatHandoff)
 }
 
+export function canUploadAttachment(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.uploadAttachment)
+}
+
+export function canEscalateTickets(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.escalateTicket)
+}
+
 export function roleWorkspaceHint(user?: AuthUser | null) {
   return canViewOps(user)
     ? '你当前可以同时查看工单、公告、发送线路与运营保障。'

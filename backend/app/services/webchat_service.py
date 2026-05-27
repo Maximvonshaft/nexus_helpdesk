@@ -26,6 +26,7 @@ from .background_jobs import enqueue_webchat_ai_reply_job
 from .webchat_card_factory import build_handoff_card, build_quick_replies_card
 from .webchat_handoff_service import ensure_can_reply_in_handoff, request_webchat_handoff, serialize_handoff_request
 from .webchat_ai_turn_service import is_ai_suspended_for_handoff, safe_write_webchat_event
+from .webchat_inbox_read_state import webchat_read_state_payload
 from .webchat_intent_service import detect_webchat_intent
 
 WEBCHAT_LOGGER = logging.getLogger("nexusdesk")
@@ -710,6 +711,7 @@ def admin_list_conversations(db: Session, current_user: User, *, limit: int = 50
             "last_message_type": last_message.message_type if last_message else None,
             "last_action_status": last_message.action_status if last_message else None,
             "needs_human": ticket.conversation_state == ConversationState.human_review_required or bool(ticket.required_action),
+            **webchat_read_state_payload(db, conversation_id=row.id, user_id=current_user.id),
         })
     return items
 
@@ -750,6 +752,7 @@ def admin_get_thread(db: Session, ticket_id: int, current_user: User) -> dict[st
             "origin": action.origin,
             "created_at": action.created_at.isoformat() if action.created_at else None,
         } for action in actions],
+        **webchat_read_state_payload(db, conversation_id=conversation.id, user_id=current_user.id),
     }
 
 

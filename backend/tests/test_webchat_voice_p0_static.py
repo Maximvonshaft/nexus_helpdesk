@@ -8,6 +8,7 @@ RATE_LIMIT = ROOT / "backend" / "app" / "services" / "webchat_rate_limit.py"
 AGENT_PANEL = ROOT / "webapp" / "src" / "components" / "webcall" / "AgentWebCallPanel.tsx"
 AGENT_ROUTE = ROOT / "webapp" / "src" / "routes" / "webchat-voice.tsx"
 WEBCHAT_ROUTE = ROOT / "webapp" / "src" / "routes" / "webchat.tsx"
+WEBCHAT_INBOX_V5 = ROOT / "webapp" / "src" / "features" / "webchat-inbox-v5" / "WebchatInboxV5Page.tsx"
 WORKSPACE_ROUTE = ROOT / "webapp" / "src" / "routes" / "workspace.tsx"
 VOICE_ENTRY = ROOT / "backend" / "app" / "static" / "webchat" / "voice-entry.js"
 WEBCALL_ROUTE = ROOT / "webapp" / "src" / "routes" / "webcall.tsx"
@@ -34,7 +35,8 @@ def test_backend_p0_routes_and_metrics_are_present():
 def test_frontend_p0_queue_reject_and_text_fallback_are_present():
     panel = AGENT_PANEL.read_text(encoding="utf-8")
     route = AGENT_ROUTE.read_text(encoding="utf-8")
-    webchat = WEBCHAT_ROUTE.read_text(encoding="utf-8")
+    webchat_route = WEBCHAT_ROUTE.read_text(encoding="utf-8")
+    webchat = WEBCHAT_INBOX_V5.read_text(encoding="utf-8")
     entry = VOICE_ENTRY.read_text(encoding="utf-8")
     webcall = WEBCALL_ROUTE.read_text(encoding="utf-8")
 
@@ -43,8 +45,9 @@ def test_frontend_p0_queue_reject_and_text_fallback_are_present():
     assert "Rejecting WebCall" in panel
     assert "Incoming WebCall Queue" in route
     assert "webchatVoiceApi.incomingSessions" in route
+    assert "WebchatInboxV5Page" in webchat_route
     assert "AgentWebCallPanel" in webchat
-    assert "webchatVoiceApi.incomingSessions" in webchat
+    assert "api.webchatVoiceIncomingSessions" in webchat
     assert "Incoming WebCall" in webchat
     assert "Continue in WebChat text support" in entry
     assert "textFallbackMessage" in entry
@@ -53,10 +56,12 @@ def test_frontend_p0_queue_reject_and_text_fallback_are_present():
     assert "LIVEKIT_API_SECRET" not in panel
 
 def test_voice_call_evidence_cards_are_present_and_do_not_render_secrets():
-    webchat = WEBCHAT_ROUTE.read_text(encoding="utf-8")
+    webchat_route = WEBCHAT_ROUTE.read_text(encoding="utf-8")
+    webchat = WEBCHAT_INBOX_V5.read_text(encoding="utf-8")
     workspace = WORKSPACE_ROUTE.read_text(encoding="utf-8")
     combined = webchat + "\n" + workspace
 
+    assert "WebchatInboxV5Page" in webchat_route
     assert "voice-call-evidence-card" in webchat
     assert "ticket-timeline-voice-call-evidence-card" in workspace
     for marker in [

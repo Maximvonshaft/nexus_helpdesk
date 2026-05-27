@@ -765,6 +765,10 @@ export interface WebchatHandoffRequest extends WebchatAIRuntimeSnapshot {
   can_release?: boolean
   can_resume_ai?: boolean
   can_reply?: boolean
+  last_event_id?: number
+  last_read_event_id?: number
+  unread_count?: number
+  marked_unread?: boolean
 }
 
 export interface WebchatHandoffQueue {
@@ -801,6 +805,10 @@ export interface WebchatConversation extends WebchatAIRuntimeSnapshot {
   ai_suspended?: boolean
   takeover_mode?: string | null
   last_handoff_reason?: string | null
+  last_event_id?: number
+  last_read_event_id?: number
+  unread_count?: number
+  marked_unread?: boolean
 }
 
 export interface WebchatMessage {
@@ -870,6 +878,19 @@ export interface WebchatThread extends WebchatAIRuntimeSnapshot {
   actions?: WebchatActionAudit[]
   ai_turns?: WebchatAITurnSummary[]
   events?: WebchatEventSummary[]
+  last_event_id?: number
+  last_read_event_id?: number
+  unread_count?: number
+  marked_unread?: boolean
+}
+
+export interface WebchatReadStateResult {
+  conversation_id: string
+  ticket_id: number
+  last_event_id: number
+  last_read_event_id: number
+  unread_count: number
+  marked_unread: boolean
 }
 
 export interface WebchatReplyResult {

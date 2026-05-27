@@ -8,6 +8,7 @@ const read = (path) => readFileSync(resolve(root, path), 'utf8')
 
 const realtime = read('src/lib/webchatRealtime.ts')
 const webchatRoute = read('src/routes/webchat.tsx')
+const webchatInboxV5 = read('src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx')
 
 test('webchat realtime adapter authenticates in hello and keeps polling fallback', () => {
   assert.match(realtime, /new WebSocket\(websocketUrl\(\)\)/)
@@ -21,10 +22,11 @@ test('webchat realtime adapter authenticates in hello and keeps polling fallback
 })
 
 test('webchat route uses websocket events first and retains after_id polling fallback', () => {
-  assert.match(webchatRoute, /useWebchatRealtime/)
-  assert.match(webchatRoute, /realtime\.connected \? false : backoffMs/)
-  assert.match(webchatRoute, /queue\.updated/)
-  assert.match(webchatRoute, /client\.setQueryData<WebchatHandoffQueue>/)
-  assert.match(webchatRoute, /webchatEvents/)
-  assert.match(webchatRoute, /polling fallback/)
+  assert.match(webchatRoute, /WebchatInboxV5Page/)
+  assert.match(webchatInboxV5, /useWebchatRealtime/)
+  assert.match(webchatInboxV5, /realtime\.connected \? false : backoffMs/)
+  assert.match(webchatInboxV5, /queue\.updated/)
+  assert.match(webchatInboxV5, /client\.setQueryData<WebchatHandoffQueue>/)
+  assert.match(webchatInboxV5, /webchatEvents/)
+  assert.match(webchatInboxV5, /polling fallback/)
 })

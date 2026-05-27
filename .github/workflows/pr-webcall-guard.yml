@@ -75,6 +75,7 @@ jobs:
               backend/.env.example) return 0 ;;
               backend/requirements.txt) return 0 ;;
               backend/alembic/env.py) return 0 ;;
+              backend/alembic/versions/20260527_0038_webchat_inbox_read_state.py) return 0 ;;
               backend/alembic/versions/20260527_0035_webchat_handoff_control.py) return 0 ;;
               backend/alembic/versions/20260526_0034_knowledge_rag_business_facts.py) return 0 ;;
               backend/app/api/webchat.py) return 0 ;;
@@ -125,6 +126,7 @@ jobs:
               backend/app/services/webchat_performance.py) return 0 ;;
               backend/app/services/webchat_fast_ai_service.py) return 0 ;;
               backend/app/services/webchat_fast_config.py) return 0 ;;
+              backend/app/services/webchat_inbox_read_state.py) return 0 ;;
               backend/app/services/webchat_service.py) return 0 ;;
               backend/app/services/webchat_realtime_event_service.py) return 0 ;;
               backend/app/services/webchat_realtime_hub.py) return 0 ;;
@@ -160,6 +162,7 @@ jobs:
               backend/tests/test_round27_frontend_hardening.py) return 0 ;;
               backend/tests/test_speedaf_workorder_address_actions.py) return 0 ;;
               backend/tests/test_webchat_voice_api.py) return 0 ;;
+              backend/tests/test_webchat_voice_p0_static.py) return 0 ;;
               backend/tests/test_webchat_codex_app_server_canary_observability.py) return 0 ;;
               backend/tests/test_webchat_codex_app_server_provider.py) return 0 ;;
               backend/tests/test_webchat_ai_turn_runtime.py) return 0 ;;
@@ -169,6 +172,7 @@ jobs:
               backend/tests/test_webchat_fast_reply_api.py) return 0 ;;
               backend/tests/test_webchat_fast_reply_provider_runtime.py) return 0 ;;
               backend/tests/test_webchat_handoff_control.py) return 0 ;;
+              backend/tests/test_webchat_inbox_read_state.py) return 0 ;;
               backend/tests/test_webchat_ws_runtime.py) return 0 ;;
               backend/tests/test_webchat_ws_static_contracts.py) return 0 ;;
               backend/tests/test_webchat_stream_feature_flag.py) return 0 ;;
@@ -204,6 +208,7 @@ jobs:
               webapp/src/lib/rbac.ts) return 0 ;;
               webapp/src/lib/speedafApi.ts) return 0 ;;
               webapp/src/lib/types.ts) return 0 ;;
+              webapp/src/features/webchat-inbox-v5/*) return 0 ;;
               webapp/src/routes/ai-control.tsx) return 0 ;;
               webapp/src/routes/control-plane.tsx) return 0 ;;
               webapp/src/routes/runtime.tsx) return 0 ;;
@@ -211,6 +216,7 @@ jobs:
               webapp/src/routes/webchat-voice.tsx) return 0 ;;
               webapp/src/routes/webchat.tsx) return 0 ;;
               backend/app/static/webchat/widget.js) return 0 ;;
+              webapp/tests/webchat-inbox-v5-contract.test.mjs) return 0 ;;
               webapp/tests/webchat-realtime-contract.test.mjs) return 0 ;;
               webapp/src/routes/workspace.tsx) return 0 ;;
               webapp/tests/novice-ux-regression.test.mjs) return 0 ;;

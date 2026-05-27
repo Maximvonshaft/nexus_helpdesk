@@ -14,6 +14,7 @@ from ..models import Ticket, User
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
 from .permissions import CAP_TICKET_READ, resolve_capabilities
+from .webchat_inbox_read_state import webchat_read_state_payloads
 
 DEFAULT_POLL_LIMIT = 50
 MAX_POLL_LIMIT = 100
@@ -165,6 +166,11 @@ def admin_list_conversations_optimized(db: Session, current_user: User, *, limit
         .limit(safe_limit)
         .all()
     )
+    read_states = webchat_read_state_payloads(
+        db,
+        conversation_ids=[conversation.id for conversation, _, _ in rows],
+        user_id=current_user.id,
+    )
 
     items: list[dict[str, Any]] = []
     for conversation, ticket, last_message in rows:
@@ -200,5 +206,6 @@ def admin_list_conversations_optimized(db: Session, current_user: User, *, limit
             "ai_suspended": bool(getattr(conversation, "ai_suspended", False)),
             "takeover_mode": getattr(conversation, "takeover_mode", None),
             "last_handoff_reason": getattr(conversation, "last_handoff_reason", None),
+            **read_states.get(conversation.id, {}),
         })
     return items

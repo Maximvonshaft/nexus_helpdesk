@@ -22,6 +22,7 @@ import type {
   OutboundEmailTestSendResult,
   OutboundSendPayload,
   SignoffChecklist,
+  SystemAttachment,
   AIConfigResource,
   AIConfigVersion,
   KnowledgeItem,
@@ -38,6 +39,7 @@ import type {
   WebchatConversation,
   WebchatHandoffQueue,
   WebchatHandoffRequest,
+  WebchatReadStateResult,
   WebchatThread,
   WebchatReplyResult,
   ProviderCredentialStatusResponse,
@@ -344,6 +346,19 @@ export const api = {
     return request<TicketTimelinePage>(`/api/tickets/${ticketId}/timeline?${search.toString()}`)
   },
   ticketOutboundChannelCapabilities: (ticketId: number) => request<OutboundChannelCapabilitiesResponse>(`/api/tickets/${ticketId}/outbound/channels/capabilities`),
+  uploadTicketAttachment: (ticketId: number, file: File, visibility = 'external') => {
+    const form = new FormData()
+    form.set('file', file)
+    form.set('visibility', visibility)
+    return request<SystemAttachment>(`/api/tickets/${ticketId}/attachments`, {
+      method: 'POST',
+      body: form,
+    })
+  },
+  escalateTicket: (ticketId: number, payload: { team_id: number; note: string }) => request<Record<string, unknown>>(`/api/tickets/${ticketId}/escalate`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   sendOutboundMessage: (ticketId: number, payload: OutboundSendPayload) => request<Record<string, unknown>>(`/api/tickets/${ticketId}/outbound/send`, {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -584,6 +599,10 @@ export const api = {
   }),
   webchatThread: (ticketId: number, init?: RequestInit) => request<WebchatThread>(`/api/webchat/admin/tickets/${ticketId}/thread`, init),
   webchatEvents: (ticketId: number, afterId: number, init?: RequestInit) => request<WebchatEventsPage>(`/api/webchat/admin/tickets/${ticketId}/events?${buildWebchatEventsSearch(afterId).toString()}`, init),
+  webchatReadState: (ticketId: number, payload: { marked_unread: boolean }) => request<WebchatReadStateResult>(`/api/webchat/admin/tickets/${ticketId}/read-state`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   webchatReply: (ticketId: number, payload: { body: string; has_fact_evidence?: boolean; confirm_review?: boolean }) => request<WebchatReplyResult>(`/api/webchat/admin/tickets/${ticketId}/reply`, {
     method: 'POST',
     body: JSON.stringify(payload),

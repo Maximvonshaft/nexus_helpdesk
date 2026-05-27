@@ -45,6 +45,7 @@ from ..services.webchat_handoff_service import (
     release_handoff_request,
     resume_ai_for_handoff,
 )
+from ..services.webchat_inbox_read_state import mark_webchat_read_state
 from ..services.permissions import (
     ensure_can_accept_webchat_handoff,
     ensure_can_decline_webchat_handoff,
@@ -95,6 +96,11 @@ class WebchatHandoffDecisionRequest(BaseModel):
 class WebchatHandoffTransitionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     note: str | None = Field(default=None, max_length=1000)
+
+
+class WebchatReadStateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    marked_unread: bool = False
 
 
 def _normalized_allowed_origins() -> set[str]:
@@ -471,6 +477,12 @@ def get_webchat_thread(ticket_id: int, db: Session = Depends(get_db), current_us
     if conversation:
         result.update(ai_snapshot(conversation))
     return result
+
+
+@router.post("/admin/tickets/{ticket_id}/read-state")
+def update_webchat_read_state(ticket_id: int, payload: WebchatReadStateRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
+    with managed_session(db):
+        return mark_webchat_read_state(db, ticket_id=ticket_id, current_user=current_user, marked_unread=payload.marked_unread)
 
 
 @router.post("/admin/tickets/{ticket_id}/reply")

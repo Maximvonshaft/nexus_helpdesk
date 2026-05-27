@@ -160,6 +160,23 @@ class WebchatEvent(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
 
 
+class WebchatInboxReadState(Base):
+    """Per-agent WebChat inbox read cursor and manual unread marker."""
+
+    __tablename__ = "webchat_inbox_read_states"
+    __table_args__ = (
+        UniqueConstraint("user_id", "conversation_id", name="uq_webchat_inbox_read_state_user_conversation"),
+        Index("ix_webchat_inbox_read_states_user_updated", "user_id", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("webchat_conversations.id"), index=True)
+    last_read_event_id: Mapped[int] = mapped_column(Integer, default=0)
+    marked_unread: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, index=True)
+
+
 class WebchatHandoffRequest(Base):
     """Durable AI-to-human handoff request and active ownership state."""
 
