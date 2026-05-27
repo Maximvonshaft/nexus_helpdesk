@@ -47,6 +47,24 @@ _IDENTITY_FIELDS = {
     "tone",
     "guardrails",
 }
+_COUNTRY_CONFLICT_GROUPS = (
+    ("nigeria", "尼日利亚"),
+    ("switzerland", "swiss", "瑞士"),
+    ("china", "chinese", "中国"),
+    ("uk", "britain", "英国"),
+    ("usa", "america", "美国"),
+    ("ghana", "加纳"),
+    ("kenya", "肯尼亚"),
+    ("uae", "阿联酋"),
+    ("saudi", "沙特"),
+)
+_SERVICE_CONFLICT_GROUPS = (
+    ("ocean shipping", "sea shipping", "ocean", "sea freight", "海运"),
+    ("air shipping", "air freight", "air", "空运"),
+    ("address change", "address-change", "改地址", "地址变更"),
+    ("customs clearance", "customs", "清关"),
+    ("redelivery", "reattempt", "重派", "重新派送"),
+)
 
 
 class OutputContracts:
@@ -138,6 +156,27 @@ class OutputContracts:
             knowledge_context=knowledge_context,
         )
         return parsed
+
+    @staticmethod
+    def locked_fact_validation(reply: Any, knowledge_context: dict[str, Any] | None) -> dict[str, Any]:
+        locked_facts = OutputContracts._locked_facts(knowledge_context)
+        ids = [str(fact.get("item_key") or "") for fact in locked_facts if fact.get("item_key")]
+        if not locked_facts:
+            return {"status": "not_applicable", "locked_fact_ids": []}
+        reply_text = str(reply or "").strip()
+        if not reply_text:
+            return {"status": "fail", "reason": "empty_reply", "locked_fact_ids": ids}
+        for fact in locked_facts:
+            answer = str(fact.get("answer") or "").strip()
+            if not answer:
+                continue
+            if OutputContracts._reply_matches_direct_answer(reply_text, answer):
+                return {
+                    "status": "pass",
+                    "locked_fact_ids": [str(fact.get("item_key") or "")] if fact.get("item_key") else ids,
+                    "source": fact.get("source") if isinstance(fact.get("source"), dict) else {"item_key": fact.get("item_key"), "title": fact.get("title")},
+                }
+        return {"status": "fail", "reason": "reply_not_fact_equivalent", "locked_fact_ids": ids}
 
     @staticmethod
     def _normalize_fast_reply_v1(parsed: dict[str, Any]) -> dict[str, Any]:
@@ -392,6 +431,10 @@ class OutputContracts:
             )
         ):
             raise ValueError("Parcel status language requires trusted tracking evidence")
+        if parsed.get("handoff_required") is not True:
+            validation = OutputContracts.locked_fact_validation(reply, knowledge_context)
+            if validation["status"] == "fail":
+                raise ValueError("Locked fact grounding conflict")
 
     @staticmethod
     def _is_safe_grounded_business_reply(
@@ -447,6 +490,8 @@ class OutputContracts:
 
     @staticmethod
     def _reply_matches_direct_answer(reply: str, answer: str) -> bool:
+        if OutputContracts._locked_fact_conflict(reply, answer):
+            return False
         reply_norm = OutputContracts._contract_match_text(reply)
         answer_norm = OutputContracts._contract_match_text(answer)
         if not reply_norm or not answer_norm:
@@ -458,7 +503,47 @@ class OutputContracts:
         answer_numbers = set(re.findall(r"\d+(?:\.\d+)?", answer_norm))
         if not answer_numbers or not answer_numbers.issubset(set(re.findall(r"\d+(?:\.\d+)?", reply_norm))):
             return False
+        reply_numbers = set(re.findall(r"\d+(?:\.\d+)?", reply_norm))
+        if reply_numbers - answer_numbers:
+            return False
         return len(OutputContracts._meaningful_overlap_terms(reply, answer)) >= 2
+
+    @staticmethod
+    def _locked_facts(knowledge_context: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if not isinstance(knowledge_context, dict):
+            return []
+        facts = knowledge_context.get("locked_facts")
+        if not isinstance(facts, list):
+            return []
+        return [fact for fact in facts if isinstance(fact, dict)]
+
+    @staticmethod
+    def _locked_fact_conflict(reply: str, answer: str) -> bool:
+        reply_numbers = set(re.findall(r"\d+(?:\.\d+)?", OutputContracts._contract_match_text(reply)))
+        answer_numbers = set(re.findall(r"\d+(?:\.\d+)?", OutputContracts._contract_match_text(answer)))
+        if answer_numbers and (not answer_numbers.issubset(reply_numbers) or bool(reply_numbers - answer_numbers)):
+            return True
+        return OutputContracts._has_group_conflict(reply, answer, _COUNTRY_CONFLICT_GROUPS) or OutputContracts._has_group_conflict(reply, answer, _SERVICE_CONFLICT_GROUPS)
+
+    @staticmethod
+    def _has_group_conflict(reply: str, answer: str, groups: tuple[tuple[str, ...], ...]) -> bool:
+        reply_text = OutputContracts._contract_match_text(reply)
+        answer_text = OutputContracts._contract_match_text(answer)
+        if not reply_text or not answer_text:
+            return False
+        answer_groups = {
+            idx
+            for idx, group in enumerate(groups)
+            if any(OutputContracts._contract_match_text(term) in answer_text for term in group)
+        }
+        if not answer_groups:
+            return False
+        reply_groups = {
+            idx
+            for idx, group in enumerate(groups)
+            if any(OutputContracts._contract_match_text(term) in reply_text for term in group)
+        }
+        return bool(reply_groups - answer_groups)
 
     @staticmethod
     def _contract_match_text(value: str) -> str:

@@ -13,7 +13,8 @@ def build_knowledge_prompt_block(knowledge_context: dict[str, Any] | None) -> st
     if not isinstance(knowledge_context, dict):
         return ""
     hits = [hit for hit in knowledge_context.get("hits") or [] if isinstance(hit, dict)]
-    if not hits:
+    locked_facts = [fact for fact in knowledge_context.get("locked_facts") or [] if isinstance(fact, dict)]
+    if not hits and not locked_facts:
         return ""
     ordered = sorted(
         hits[:MAX_PROMPT_HITS],
@@ -21,9 +22,16 @@ def build_knowledge_prompt_block(knowledge_context: dict[str, Any] | None) -> st
     )
     lines = [
         "Knowledge context (sanitized KB, not live parcel tracking evidence):",
+        "- Locked facts are authoritative. Use them naturally, but do not change numbers, countries, service types, or policy boundaries.",
         "- If KB directly answers the customer question, answer from KB and do not say cannot confirm.",
         "- Never treat knowledge documents as live parcel tracking evidence.",
     ]
+    for index, fact in enumerate(locked_facts[:MAX_PROMPT_HITS], start=1):
+        lines.extend([
+            f"[LOCKED FACT {index}] item_key={_clean(fact.get('item_key'))} title={_clean(fact.get('title'))}",
+            f"question={_clean(fact.get('question'))}",
+            f"answer={_clip(fact.get('answer'), MAX_DIRECT_ANSWER_CHARS)}",
+        ])
     for index, hit in enumerate(ordered, start=1):
         source = hit.get("source_metadata") if isinstance(hit.get("source_metadata"), dict) else {}
         metadata = hit.get("metadata") if isinstance(hit.get("metadata"), dict) else {}

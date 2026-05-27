@@ -192,6 +192,8 @@ def test_swiss_ocean_shipping_sla_direct_answer_retrieval_and_runtime_context(db
 
     assert context["knowledge_context"]["hits"][0]["direct_answer"] == "瑞士海运时效为 15 天。"
     assert context["knowledge_context"]["grounding_source"]["item_key"] == fact.item_key
+    assert context["knowledge_context"]["locked_facts"][0]["item_key"] == fact.item_key
+    assert context["knowledge_context"]["locked_facts"][0]["answer"] == "瑞士海运时效为 15 天。"
 
 
 def test_approved_qa_outranks_raw_chunk_and_unapproved_facts_are_excluded(db_session):
@@ -588,6 +590,8 @@ def test_knowledge_prompt_block_force_includes_direct_answer_first(db_session):
 
     block = build_knowledge_prompt_block(context["knowledge_context"])
 
+    assert "[LOCKED FACT 1] item_key=fact.direct.prompt" in block
+    assert "answer=The Switzerland address-change service fee is 8 CHF." in block
     assert "[KB 1] item_key=fact.direct.prompt" in block
     assert "direct_answer=The Switzerland address-change service fee is 8 CHF." in block
     assert "not live parcel tracking evidence" in block

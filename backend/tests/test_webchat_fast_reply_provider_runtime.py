@@ -8,11 +8,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from app.services.ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
+from app.settings import get_settings
 from app.services.provider_runtime.webchat_fast_dispatcher import dispatch_webchat_fast_reply
 from app.services.webchat_fast_ai_service import _apply_grounding, _result_from_provider
 
 
-def _approved_shipping_sla_context() -> dict:
+def _clear_settings() -> None:
+    get_settings.cache_clear()
+
+
+def _approved_shipping_sla_context(*, include_locked: bool = True) -> dict:
     source = {
         "item_key": "fact.ch.shipping-sla",
         "title": "瑞士海运时效",
@@ -27,32 +32,44 @@ def _approved_shipping_sla_context() -> dict:
             "answer_mode": "direct_answer",
         },
     }
+    knowledge_context = {
+        "grounding_would_apply": True,
+        "grounding_source": source,
+        "hits": [
+            {
+                "item_key": "fact.ch.shipping-sla",
+                "title": "瑞士海运时效",
+                "score": 161.04,
+                "chunk_index": 0,
+                "retrieval_method": "structured_fact_recall+direct_answer_fact",
+                "direct_answer": "瑞士海运时效为 15 天。",
+                "answer_mode": "direct_answer",
+                "metadata": {
+                    "knowledge_kind": "business_fact",
+                    "fact_status": "approved",
+                    "answer_mode": "direct_answer",
+                },
+                "source_metadata": source["source_metadata"],
+            }
+        ],
+        "query_analysis": {"language": "zh", "high_value_terms": ["瑞士", "海运", "时效"], "terms": ["瑞士", "海运", "时效"]},
+        "candidate_count": 1,
+        "total_matches": 1,
+    }
+    if include_locked:
+        knowledge_context["locked_facts"] = [
+            {
+                "item_key": "fact.ch.shipping-sla",
+                "title": "瑞士海运时效",
+                "question": "瑞士海运时效是多少？",
+                "answer": "瑞士海运时效为 15 天。",
+                "answer_mode": "direct_answer",
+                "source": source,
+            }
+        ]
     return {
         "context_version": "nexus_webchat_runtime_context_v1",
-        "knowledge_context": {
-            "grounding_would_apply": True,
-            "grounding_source": source,
-            "hits": [
-                {
-                    "item_key": "fact.ch.shipping-sla",
-                    "title": "瑞士海运时效",
-                    "score": 161.04,
-                    "chunk_index": 0,
-                    "retrieval_method": "structured_fact_recall+direct_answer_fact",
-                    "direct_answer": "瑞士海运时效为 15 天。",
-                    "answer_mode": "direct_answer",
-                    "metadata": {
-                        "knowledge_kind": "business_fact",
-                        "fact_status": "approved",
-                        "answer_mode": "direct_answer",
-                    },
-                    "source_metadata": source["source_metadata"],
-                }
-            ],
-            "query_analysis": {"language": "zh", "high_value_terms": ["瑞士", "海运", "时效"], "terms": ["瑞士", "海运", "时效"]},
-            "candidate_count": 1,
-            "total_matches": 1,
-        },
+        "knowledge_context": knowledge_context,
         "safety_policy": {"knowledge_scope": "policy_sop_faq_only"},
     }
 
@@ -125,7 +142,7 @@ async def test_dispatch_webchat_fast_reply_with_provider_runtime():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_webchat_fast_reply_applies_direct_answer_grounding():
+async def test_dispatch_webchat_fast_reply_ai_grounded_preserves_provider_reply():
     req = FastAIProviderRequest(
         tenant_key="tenant_1",
         channel_key="webchat",
@@ -136,6 +153,16 @@ async def test_dispatch_webchat_fast_reply_applies_direct_answer_grounding():
         metadata={
             "context_version": "nexus_webchat_runtime_context_v1",
             "knowledge_context": {
+                "locked_facts": [
+                    {
+                        "item_key": "fact.ch.address",
+                        "title": "Swiss address fee",
+                        "question": "Swiss address change fee",
+                        "answer": "The Switzerland address-change service fee is 8 CHF.",
+                        "answer_mode": "direct_answer",
+                        "source": {"item_key": "fact.ch.address"},
+                    }
+                ],
                 "hits": [
                     {
                         "item_key": "fact.ch.address",
@@ -166,7 +193,7 @@ async def test_dispatch_webchat_fast_reply_applies_direct_answer_grounding():
                 provider="codex_app_server",
                 elapsed_ms=120,
                 structured_output={
-                    "customer_reply": "I cannot confirm that from the available information.",
+                    "customer_reply": "The Switzerland address-change service fee is 8 CHF.",
                     "language": "en",
                     "intent": "other",
                     "handoff_required": False,
@@ -181,12 +208,17 @@ async def test_dispatch_webchat_fast_reply_applies_direct_answer_grounding():
 
     assert res.ok
     assert res.reply == "The Switzerland address-change service fee is 8 CHF."
-    assert res.reply_source == "codex_app_server:grounded_knowledge"
+    assert res.reply_source == "codex_app_server"
+    assert res.raw_provider == "codex_app_server"
     assert res.raw_payload_safe_summary["grounding_applied"] is True
+    assert res.raw_payload_safe_summary["grounded_by_ai"] is True
+    assert res.raw_payload_safe_summary["grounding_validation"] == "pass"
+    assert res.raw_payload_safe_summary["provider_bypassed"] is False
+    mock_route.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_dispatch_webchat_fast_reply_applies_grounding_on_safe_numeric_contradiction():
+async def test_dispatch_webchat_fast_reply_rejects_locked_fact_numeric_contradiction():
     req = FastAIProviderRequest(
         tenant_key="tenant_1",
         channel_key="webchat",
@@ -197,6 +229,16 @@ async def test_dispatch_webchat_fast_reply_applies_grounding_on_safe_numeric_con
         metadata={
             "context_version": "nexus_webchat_runtime_context_v1",
             "knowledge_context": {
+                "locked_facts": [
+                    {
+                        "item_key": "fact.shipping.sla",
+                        "title": "运输时效",
+                        "question": "海运和空运多久？",
+                        "answer": "海运15天，空运10天。",
+                        "answer_mode": "direct_answer",
+                        "source": {"item_key": "fact.shipping.sla", "title": "运输时效"},
+                    }
+                ],
                 "hits": [
                     {
                         "item_key": "fact.shipping.sla",
@@ -240,14 +282,13 @@ async def test_dispatch_webchat_fast_reply_applies_grounding_on_safe_numeric_con
         with patch("app.services.provider_runtime.webchat_fast_dispatcher.SessionLocal"):
             res = await dispatch_webchat_fast_reply(request=req)
 
-    assert res.ok
-    assert res.reply == "海运15天，空运10天。"
-    assert res.reply_source == "codex_app_server:grounded_knowledge"
-    assert res.raw_payload_safe_summary["grounding_applied"] is True
+    assert res.ok is False
+    assert res.error_code == "locked_fact_grounding_conflict"
+    assert res.reply is None
 
 
 @pytest.mark.asyncio
-async def test_dispatch_webchat_fast_reply_overrides_tracking_missing_number_with_approved_direct_answer():
+async def test_dispatch_webchat_fast_reply_rejects_non_equivalent_reply_before_customer_visibility():
     req = FastAIProviderRequest(
         tenant_key="tenant_1",
         channel_key="webchat",
@@ -274,13 +315,44 @@ async def test_dispatch_webchat_fast_reply_overrides_tracking_missing_number_wit
         with patch("app.services.provider_runtime.webchat_fast_dispatcher.SessionLocal"):
             res = await dispatch_webchat_fast_reply(request=req)
 
-    assert res.ok
-    assert res.reply == "瑞士海运时效为 15 天。"
-    assert res.intent == "other"
-    assert res.tracking_number is None
-    assert res.reply_source == "codex_app_server:grounded_knowledge"
-    assert res.raw_payload_safe_summary["grounding_applied"] is True
-    assert res.raw_payload_safe_summary["grounding_reason"] == "approved_direct_answer_override"
+    assert res.ok is False
+    assert res.error_code == "locked_fact_grounding_conflict"
+    assert res.reply is None
+
+
+@pytest.mark.asyncio
+async def test_provider_unavailable_with_locked_fact_does_not_return_direct_answer():
+    req = FastAIProviderRequest(
+        tenant_key="tenant_1",
+        channel_key="webchat",
+        session_id="session_provider_down",
+        body="瑞士海运时效是多少",
+        recent_context=[],
+        request_id="req-provider-down",
+        metadata=_approved_shipping_sla_context(),
+    )
+
+    with patch("app.services.provider_runtime.webchat_fast_dispatcher.ProviderRuntimeRouter.route") as mock_route:
+        async def mock_route_fn(_pr_req):
+            from app.services.provider_runtime.schemas import ProviderResult
+
+            return ProviderResult(
+                ok=False,
+                provider="router",
+                elapsed_ms=15,
+                error_code="all_providers_failed",
+                structured_output=None,
+                raw_payload_safe_summary={"safe": True},
+            )
+
+        mock_route.side_effect = mock_route_fn
+        with patch("app.services.provider_runtime.webchat_fast_dispatcher.SessionLocal"):
+            res = await dispatch_webchat_fast_reply(request=req)
+
+    assert res.ok is False
+    assert res.error_code == "all_providers_failed"
+    assert res.reply is None
+    mock_route.assert_called_once()
 
 
 @pytest.mark.parametrize(
@@ -305,7 +377,7 @@ async def test_dispatch_webchat_fast_reply_blocks_direct_answer_override_for_tra
         body=query,
         recent_context=[],
         request_id="req-pr256-negative",
-        metadata=_approved_shipping_sla_context(),
+        metadata=_approved_shipping_sla_context(include_locked=False),
     )
 
     with patch("app.services.provider_runtime.webchat_fast_dispatcher.ProviderRuntimeRouter.route") as mock_route:
@@ -342,7 +414,7 @@ async def test_dispatch_webchat_fast_reply_preserves_trusted_tracking_output_ove
         request_id="req-pr256-tracking-evidence",
         tracking_fact_evidence_present=True,
         tracking_fact_summary="SPX123456789CH is in transit.",
-        metadata=_approved_shipping_sla_context(),
+        metadata=_approved_shipping_sla_context(include_locked=False),
     )
 
     with patch("app.services.provider_runtime.webchat_fast_dispatcher.ProviderRuntimeRouter.route") as mock_route:
@@ -374,7 +446,34 @@ async def test_dispatch_webchat_fast_reply_preserves_trusted_tracking_output_ove
     assert res.tracking_number == "SPX123456789CH"
     assert res.reply_source == "codex_app_server"
     assert res.raw_payload_safe_summary["grounding_applied"] is False
-    assert res.raw_payload_safe_summary["grounding_reason"] == "trusted_tracking_output_conflict"
+    assert res.raw_payload_safe_summary["grounding_validation"] == "not_applicable"
+
+
+@pytest.mark.asyncio
+async def test_deterministic_direct_answer_mode_keeps_legacy_pre_provider_escape_hatch(monkeypatch):
+    monkeypatch.setenv("WEBCHAT_KNOWLEDGE_REPLY_MODE", "deterministic_direct_answer")
+    _clear_settings()
+    req = FastAIProviderRequest(
+        tenant_key="tenant_1",
+        channel_key="webchat",
+        session_id="session_legacy_direct",
+        body="瑞士海运时效是多少",
+        recent_context=[],
+        request_id="req-legacy-direct",
+        metadata=_approved_shipping_sla_context(),
+    )
+
+    with patch("app.services.provider_runtime.webchat_fast_dispatcher.ProviderRuntimeRouter.route") as mock_route:
+        with patch("app.services.provider_runtime.webchat_fast_dispatcher.SessionLocal"):
+            res = await dispatch_webchat_fast_reply(request=req)
+
+    _clear_settings()
+
+    assert res.ok
+    assert res.reply == "瑞士海运时效为 15 天。"
+    assert res.raw_provider == "knowledge_direct_answer"
+    assert res.raw_payload_safe_summary["provider_bypassed"] is True
+    mock_route.assert_not_called()
 
 
 def test_second_pass_grounding_preserves_provider_runtime_grounded_telemetry():

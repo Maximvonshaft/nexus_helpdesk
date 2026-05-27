@@ -3,11 +3,13 @@ from __future__ import annotations
 import logging
 
 from app.db import SessionLocal
+from app.settings import get_settings
 
 from ..ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
 from ..ai_runtime_context import build_webchat_runtime_context
 from ..knowledge_grounding_service import enforce_grounded_answer, select_approved_direct_answer_override
 from ..knowledge_prompt_service import summarize_rag_trace
+from .output_contracts import OutputContracts
 from .router import ProviderRuntimeRouter
 from .schemas import ProviderRequest
 
@@ -25,9 +27,10 @@ def _fallback_runtime_context(request: FastAIProviderRequest) -> dict:
             "audience_scope": "customer",
         },
         "persona_context": None,
-        "knowledge_context": {"retrieval": "unavailable", "total_matches": 0, "hits": []},
+        "knowledge_context": {"retrieval": "unavailable", "total_matches": 0, "locked_facts": [], "hits": []},
         "safety_policy": {
             "knowledge_scope": "policy_sop_faq_only",
+            "locked_facts_contract": "Use locked_facts as authoritative facts when present; never change numbers, country, service type, or policy boundaries.",
             "tracking_truth_boundary": "Parcel live status requires tracking_fact_evidence_present=true and trusted tracking_fact_summary.",
         },
     }
@@ -68,11 +71,38 @@ def _knowledge_context(runtime_context: dict | None) -> dict:
     return knowledge if isinstance(knowledge, dict) else {}
 
 
+def _knowledge_reply_mode() -> str:
+    return get_settings().webchat_knowledge_reply_mode
+
+
+def _ai_grounded_summary(output: dict, knowledge_context: dict) -> dict:
+    reply = output.get("customer_reply") or output.get("reply")
+    validation = OutputContracts.locked_fact_validation(reply, knowledge_context)
+    summary = {
+        "grounding_validation": validation["status"],
+        "grounded_by_ai": validation["status"] == "pass",
+        "grounding_applied": validation["status"] == "pass",
+        "locked_fact_ids": validation.get("locked_fact_ids") or [],
+    }
+    if validation.get("source"):
+        summary["grounding_source"] = validation["source"]
+    if validation["status"] == "pass":
+        summary["grounding_reason"] = "locked_fact_ai_grounded"
+    return summary
+
+
+def _ai_grounded_validation_failed(output: dict, knowledge_context: dict) -> bool:
+    reply = output.get("customer_reply") or output.get("reply")
+    return OutputContracts.locked_fact_validation(reply, knowledge_context)["status"] == "fail"
+
+
 def _pre_provider_direct_answer_result(
     *,
     request: FastAIProviderRequest,
     runtime_context: dict | None,
 ) -> FastAIProviderResult | None:
+    if _knowledge_reply_mode() != "deterministic_direct_answer":
+        return None
     if request.tracking_fact_evidence_present:
         return None
 
@@ -148,40 +178,52 @@ async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> Fast
         safe_summary["provider_runtime"] = True
         safe_summary["rag_trace"] = summarize_rag_trace(runtime_context)
         knowledge_context = _knowledge_context(runtime_context)
-        grounding_decision = select_approved_direct_answer_override(
-            query=request.body,
-            provider_output=output,
-            knowledge_context=knowledge_context,
-            tracking_fact_evidence_present=request.tracking_fact_evidence_present,
-        )
-        if not grounding_decision.applied and grounding_decision.reason != "trusted_tracking_output_conflict":
-            grounding_decision = enforce_grounded_answer(
+        if _knowledge_reply_mode() == "deterministic_direct_answer":
+            grounding_decision = select_approved_direct_answer_override(
                 query=request.body,
-                provider_reply=output.get("customer_reply") or output.get("reply"),
-                hits=knowledge_context.get("hits", []) if isinstance(knowledge_context, dict) else [],
+                provider_output=output,
+                knowledge_context=knowledge_context,
                 tracking_fact_evidence_present=request.tracking_fact_evidence_present,
             )
-        safe_summary["grounding_reason"] = grounding_decision.reason
-        safe_summary["grounding_applied"] = grounding_decision.applied
-        if grounding_decision.source:
-            safe_summary["grounding_source"] = grounding_decision.source
-        if grounding_decision.applied and grounding_decision.reply:
-            output = {
-                **output,
-                "customer_reply": grounding_decision.reply,
-                "intent": _grounded_intent(output.get("intent")),
-                "tracking_number": None,
-                "handoff_required": False,
-                "handoff_reason": None,
-                "recommended_agent_action": None,
-                "ticket_should_create": False,
-            }
+            if not grounding_decision.applied and grounding_decision.reason != "trusted_tracking_output_conflict":
+                grounding_decision = enforce_grounded_answer(
+                    query=request.body,
+                    provider_reply=output.get("customer_reply") or output.get("reply"),
+                    hits=knowledge_context.get("hits", []) if isinstance(knowledge_context, dict) else [],
+                    tracking_fact_evidence_present=request.tracking_fact_evidence_present,
+                )
+            safe_summary["grounding_reason"] = grounding_decision.reason
+            safe_summary["grounding_applied"] = grounding_decision.applied
+            if grounding_decision.source:
+                safe_summary["grounding_source"] = grounding_decision.source
+            if grounding_decision.applied and grounding_decision.reply:
+                output = {
+                    **output,
+                    "customer_reply": grounding_decision.reply,
+                    "intent": _grounded_intent(output.get("intent")),
+                    "tracking_number": None,
+                    "handoff_required": False,
+                    "handoff_reason": None,
+                    "recommended_agent_action": None,
+                    "ticket_should_create": False,
+                }
+        else:
+            if _ai_grounded_validation_failed(output, knowledge_context):
+                return FastAIProviderResult.unavailable(
+                    provider=res.provider,
+                    error_code="locked_fact_grounding_conflict",
+                    elapsed_ms=res.elapsed_ms,
+                )
+            safe_summary["provider_bypassed"] = False
+            safe_summary.update(_ai_grounded_summary(output, knowledge_context))
         reply = output.get("customer_reply") or output.get("reply")
 
         return FastAIProviderResult(
             ok=True,
             ai_generated=True,
-            reply_source=f"{res.provider}:grounded_knowledge" if grounding_decision.applied else res.provider,
+            reply_source=res.provider if _knowledge_reply_mode() != "deterministic_direct_answer" else (
+                f"{res.provider}:grounded_knowledge" if grounding_decision.applied else res.provider
+            ),
             raw_provider=res.provider,
             raw_payload_safe_summary=safe_summary,
             reply=reply,

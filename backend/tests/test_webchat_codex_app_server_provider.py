@@ -58,7 +58,10 @@ def test_provider_runtime_codex_payload_includes_persona_and_knowledge_context()
         timeout_ms=1000,
         metadata={
             "persona_context": {"profile_key": "default.website.en"},
-            "knowledge_context": {"hits": [{"item_key": "address.policy", "text": "Before dispatch only."}]},
+            "knowledge_context": {
+                "locked_facts": [{"item_key": "address.policy", "answer": "Address changes are available before dispatch."}],
+                "hits": [{"item_key": "address.policy", "text": "Before dispatch only."}],
+            },
             "safety_policy": {"knowledge_scope": "policy_sop_faq_only"},
         },
     )
@@ -67,6 +70,8 @@ def test_provider_runtime_codex_payload_includes_persona_and_knowledge_context()
 
     assert payload["persona_context"]["profile_key"] == "default.website.en"
     assert payload["knowledge_context"]["hits"][0]["item_key"] == "address.policy"
+    assert payload["grounding_contract"]["mode"] == "ai_grounded_locked_facts"
+    assert payload["grounding_contract"]["locked_facts_present"] is True
     assert payload["safety_policy"]["knowledge_scope"] == "policy_sop_faq_only"
     assert payload["tracking_fact_evidence_present"] is False
 
