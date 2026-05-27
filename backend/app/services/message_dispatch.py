@@ -15,6 +15,7 @@ from ..utils.time import utc_now
 from .audit_service import log_event
 from .observability import LOGGER
 from .openclaw_bridge import dispatch_via_openclaw_bridge, dispatch_via_openclaw_cli, dispatch_via_openclaw_mcp, resolve_channel_account
+from .outbound_adapters.email import dispatch_email_outbound
 from .outbound_adapters.whatsapp import dispatch_whatsapp_outbound
 from .outbound_semantics import external_channel_values, is_external_outbound_message
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
@@ -74,12 +75,14 @@ def queue_outbound_message(
     channel,
     body: str,
     created_by: int | None,
+    subject: str | None = None,
     provider_status: str = 'queued',
 ) -> TicketOutboundMessage:
     message = TicketOutboundMessage(
         ticket_id=ticket_id,
         channel=channel,
         status=MessageStatus.pending,
+        subject=subject,
         body=body,
         provider_status=provider_status,
         created_by=created_by,
@@ -92,7 +95,7 @@ def queue_outbound_message(
     return message
 
 
-def _mark_retry(message: TicketOutboundMessage, reason: str) -> None:
+def _mark_retry(message: TicketOutboundMessage, reason: str, *, failure_code: str | None = None) -> None:
     message.retry_count += 1
     message.error_message = reason
     message.failure_reason = reason
@@ -102,13 +105,14 @@ def _mark_retry(message: TicketOutboundMessage, reason: str) -> None:
     backoff_minutes = min(2 ** max(message.retry_count - 1, 0), 30)
     if message.retry_count >= message.max_retries:
         message.status = MessageStatus.dead
-        message.provider_status = 'dead:max_retries'
-        message.failure_code = 'max_retries'
+        message.failure_code = failure_code or 'max_retries'
+        message.provider_status = f'dead:{message.failure_code}'
         message.next_retry_at = None
     else:
         message.status = MessageStatus.pending
-        message.provider_status = f'retry_scheduled:{backoff_minutes}m'
-        message.failure_code = 'retryable_dispatch_error'
+        message.failure_code = failure_code or 'retryable_dispatch_error'
+        suffix = f':{message.failure_code}' if failure_code else ''
+        message.provider_status = f'retry_scheduled:{backoff_minutes}m{suffix}'
         message.next_retry_at = utc_now() + timedelta(minutes=backoff_minutes)
 
 
@@ -278,6 +282,20 @@ def _dispatch_whatsapp_message(db: Session, message: TicketOutboundMessage, tick
         }
 
 
+def _dispatch_email_message(db: Session, message: TicketOutboundMessage, ticket: Ticket | None, idempotency_key: str) -> tuple[MessageStatus, str | None, object | None, dict[str, Any]]:
+    try:
+        return dispatch_email_outbound(db, message=message, ticket=ticket, idempotency_key=idempotency_key)
+    except ValueError as exc:
+        error_code = str(exc)
+        return MessageStatus.failed, error_code, None, {
+            'channel': SourceChannel.email.value,
+            'adapter': 'smtp',
+            'idempotency_key': idempotency_key,
+            'failure_code': error_code,
+            'error': error_code,
+        }
+
+
 def _handle_dispatch_result(
     db: Session,
     *,
@@ -298,8 +316,10 @@ def _handle_dispatch_result(
         log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_sent, note='Queued outbound message sent', payload={'message_id': message.id, 'provider_status': provider_status, 'route': route_context})
         return message
 
-    reason = provider_status or 'Dispatch failed'
-    _mark_retry(message, reason)
+    route_error = route_context.get('error')
+    reason = route_error if isinstance(route_error, str) and route_error else (provider_status or 'Dispatch failed')
+    route_failure_code = route_context.get('failure_code')
+    _mark_retry(message, reason, failure_code=route_failure_code if isinstance(route_failure_code, str) else None)
     event_type = EventType.outbound_dead if message.status == MessageStatus.dead else EventType.outbound_retry_scheduled
     log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='Queued outbound message failed dispatch', payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count, 'route': route_context})
     return message
@@ -334,6 +354,10 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
                 account_id=route_context.get('account_id'),
                 thread_id=route_context.get('thread_id'),
             )
+        return _handle_dispatch_result(db, message=message, ticket=ticket, status_value=status_value, provider_status=provider_status, sent_at=sent_at, route_context=route_context)
+
+    if message.channel == SourceChannel.email:
+        status_value, provider_status, sent_at, route_context = _dispatch_email_message(db, message, ticket, idempotency_key)
         return _handle_dispatch_result(db, message=message, ticket=ticket, status_value=status_value, provider_status=provider_status, sent_at=sent_at, route_context=route_context)
 
     target = None

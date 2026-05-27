@@ -75,6 +75,7 @@ class Market(Base):
 
     teams: Mapped[list["Team"]] = relationship(back_populates="market")
     channel_accounts: Mapped[list["ChannelAccount"]] = relationship(back_populates="market")
+    outbound_email_accounts: Mapped[list["OutboundEmailAccount"]] = relationship(back_populates="market")
     bulletins: Mapped[list["MarketBulletin"]] = relationship(back_populates="market")
 
 
@@ -164,6 +165,59 @@ class ChannelAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
 
     market: Mapped[Optional["Market"]] = relationship(back_populates="channel_accounts")
+
+
+class OutboundEmailAccount(Base):
+    __tablename__ = "outbound_email_accounts"
+    __table_args__ = (
+        Index(
+            "uq_outbound_email_accounts_global_route",
+            "host",
+            "port",
+            "username",
+            "from_address",
+            unique=True,
+            sqlite_where=text("market_id IS NULL"),
+            postgresql_where=text("market_id IS NULL"),
+        ),
+        Index(
+            "uq_outbound_email_accounts_market_route",
+            "host",
+            "port",
+            "username",
+            "from_address",
+            "market_id",
+            unique=True,
+            sqlite_where=text("market_id IS NOT NULL"),
+            postgresql_where=text("market_id IS NOT NULL"),
+        ),
+        Index("ix_outbound_email_accounts_market_active_priority", "market_id", "is_active", "priority"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    host: Mapped[str] = mapped_column(String(253), index=True)
+    port: Mapped[int] = mapped_column(Integer)
+    username: Mapped[str] = mapped_column(String(255))
+    password_encrypted: Mapped[str] = mapped_column(Text)
+    from_address: Mapped[str] = mapped_column(String(320), index=True)
+    reply_to: Mapped[Optional[str]] = mapped_column(String(320), nullable=True)
+    security_mode: Mapped[str] = mapped_column(String(20), default="starttls", index=True)
+    market_id: Mapped[Optional[int]] = mapped_column(ForeignKey("markets.id"), nullable=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=100)
+    health_status: Mapped[str] = mapped_column(String(40), default="unknown", index=True)
+    last_test_status: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    last_test_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_test_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    updated_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
+
+    market: Mapped[Optional["Market"]] = relationship(back_populates="outbound_email_accounts")
+    creator: Mapped[Optional["User"]] = relationship(foreign_keys=[created_by])
+    updater: Mapped[Optional["User"]] = relationship(foreign_keys=[updated_by])
 
 
 class User(Base):
@@ -519,6 +573,7 @@ class TicketOutboundMessage(Base):
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
     channel: Mapped[SourceChannel] = mapped_column(Enum(SourceChannel), index=True)
     status: Mapped[MessageStatus] = mapped_column(Enum(MessageStatus), index=True)
+    subject: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     body: Mapped[str] = mapped_column(Text)
     provider_status: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

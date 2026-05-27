@@ -82,6 +82,7 @@ def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
         "ticket_id": row.ticket_id,
         "channel": row.channel,
         "status": row.status,
+        "subject": getattr(row, "subject", None),
         "body": row.body,
         "provider_status": row.provider_status,
         "error_message": row.error_message,
