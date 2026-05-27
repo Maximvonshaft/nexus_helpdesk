@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator
 
 from .enums import ConversationState, MessageStatus, NoteVisibility, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole
 from .utils.time import format_utc
@@ -723,6 +723,109 @@ class ChannelAccountUpdate(BaseModel):
     priority: Optional[int] = None
     health_status: Optional[str] = None
     fallback_account_id: Optional[str] = None
+
+
+OutboundEmailSecurityMode = Literal["starttls", "ssl", "plain"]
+
+
+def _clean_optional_string(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _clean_required_string(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError("value cannot be blank")
+    return cleaned
+
+
+class OutboundEmailAccountCreate(BaseModel):
+    display_name: Optional[str] = Field(default=None, max_length=160)
+    host: str = Field(min_length=1, max_length=253)
+    port: int = Field(ge=1, le=65535)
+    username: str = Field(min_length=1, max_length=255)
+    password: str = Field(min_length=1, max_length=4096)
+    from_address: EmailStr
+    reply_to: Optional[EmailStr] = None
+    security_mode: OutboundEmailSecurityMode = "starttls"
+    market_id: Optional[int] = None
+    priority: int = Field(default=100, ge=1, le=1000)
+    is_active: bool = True
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def clean_display_name(cls, value):
+        return _clean_optional_string(value)
+
+    @field_validator("host", "username")
+    @classmethod
+    def clean_required_text(cls, value: str) -> str:
+        return _clean_required_string(value)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("password cannot be blank")
+        return value
+
+
+class OutboundEmailAccountUpdate(BaseModel):
+    display_name: Optional[str] = Field(default=None, max_length=160)
+    host: Optional[str] = Field(default=None, min_length=1, max_length=253)
+    port: Optional[int] = Field(default=None, ge=1, le=65535)
+    username: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    password: Optional[str] = Field(default=None, min_length=1, max_length=4096)
+    from_address: Optional[EmailStr] = None
+    reply_to: Optional[EmailStr] = None
+    security_mode: Optional[OutboundEmailSecurityMode] = None
+    market_id: Optional[int] = None
+    priority: Optional[int] = Field(default=None, ge=1, le=1000)
+    is_active: Optional[bool] = None
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def clean_display_name(cls, value):
+        return _clean_optional_string(value)
+
+    @field_validator("host", "username")
+    @classmethod
+    def clean_required_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _clean_required_string(value)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("password cannot be blank")
+        return value
+
+
+class OutboundEmailAccountRead(APIModel):
+    id: int
+    display_name: Optional[str] = None
+    host: str
+    port: int
+    username: str
+    from_address: str
+    reply_to: Optional[str] = None
+    security_mode: str
+    market_id: Optional[int] = None
+    is_active: bool
+    priority: int
+    health_status: str
+    last_test_status: Optional[str] = None
+    last_test_error: Optional[str] = None
+    last_test_at: Optional[datetime] = None
+    password_configured: bool = False
+    password_mask: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class OpenClawRuntimeHealthRead(APIModel):
