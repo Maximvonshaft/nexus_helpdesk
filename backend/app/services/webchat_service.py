@@ -16,7 +16,7 @@ from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility,
 from ..models import Customer, Ticket, TicketComment, TicketEvent, TicketOutboundMessage, User
 from ..utils.time import utc_now
 from ..settings import get_settings
-from ..webchat_models import WebchatCardAction, WebchatConversation, WebchatMessage
+from ..webchat_models import WebchatCardAction, WebchatConversation, WebchatHandoffRequest, WebchatMessage
 from ..webchat_schemas import WebChatActionSubmitRequest, WebChatCardPayload
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .permissions import ensure_ticket_visible
@@ -24,6 +24,8 @@ from .sla_service import update_first_response, evaluate_sla
 from .ticket_service import generate_ticket_no, get_ticket_or_404
 from .background_jobs import enqueue_webchat_ai_reply_job
 from .webchat_card_factory import build_handoff_card, build_quick_replies_card
+from .webchat_handoff_service import ensure_can_reply_in_handoff, request_webchat_handoff, serialize_handoff_request
+from .webchat_ai_turn_service import is_ai_suspended_for_handoff, safe_write_webchat_event
 from .webchat_intent_service import detect_webchat_intent
 
 WEBCHAT_LOGGER = logging.getLogger("nexusdesk")
@@ -134,6 +136,7 @@ def _message_read(row: WebchatMessage) -> dict[str, Any]:
         "metadata_json": _loads_json(getattr(row, "metadata_json", None)),
         "client_message_id": getattr(row, "client_message_id", None),
         "ai_turn_id": getattr(row, "ai_turn_id", None),
+        "author_user_id": getattr(row, "author_user_id", None),
         "delivery_status": getattr(row, "delivery_status", None) or "sent",
         "action_status": getattr(row, "action_status", None),
         "author_label": row.author_label,
@@ -373,6 +376,18 @@ def _maybe_create_structured_card(db: Session, *, conversation: WebchatConversat
         ticket.conversation_state = ConversationState.human_review_required
         card = build_handoff_card(reason=f"intent:{intent.intent}")
         _write_card_message(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, card=card, provider_status="webchat_handoff_ack_delivered", intent_metadata={**intent_metadata, "fallback_reason": "high_risk_or_handoff_intent"})
+        request_webchat_handoff(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            source="server_rule",
+            trigger_type="intent_handoff",
+            reason_code=f"intent:{intent.intent}",
+            reason_text=f"WebChat intent requires human review: {intent.intent}",
+            recommended_agent_action="Review the customer message and reply in WebChat.",
+            trigger_message_id=visitor_message.id,
+            requested_by_actor_type="system",
+        )
         WEBCHAT_LOGGER.info("webchat_handoff_triggered", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "reason": intent.intent}})
         return
     if intent.recommended_card == "quick_replies" or intent.intent in {"greeting", "tracking", "unknown"}:
@@ -449,7 +464,7 @@ def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, 
         if ticket.status in {TicketStatus.resolved, TicketStatus.closed}:
             ticket.status = TicketStatus.pending_assignment
             ticket.conversation_state = ConversationState.reopened_by_customer
-        elif ticket.conversation_state != ConversationState.human_review_required:
+        elif ticket.conversation_state != ConversationState.human_review_required and not is_ai_suspended_for_handoff(conversation):
             ticket.conversation_state = ConversationState.human_owned
         db.add(TicketComment(ticket_id=ticket.id, author_id=None, body=normalized_body, visibility=NoteVisibility.external))
         db.add(TicketEvent(
@@ -468,18 +483,27 @@ def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, 
     conversation.updated_at = utc_now()
     db.flush()
 
-    try:
-        enqueue_webchat_ai_reply_job(
+    if not is_ai_suspended_for_handoff(conversation):
+        try:
+            enqueue_webchat_ai_reply_job(
+                db,
+                conversation_id=conversation.id,
+                ticket_id=conversation.ticket_id,
+                visitor_message_id=message.id,
+            )
+            db.flush()
+        except Exception as exc:
+            WEBCHAT_LOGGER.exception(
+                "webchat_ai_reply_enqueue_failed",
+                extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": conversation.ticket_id, "visitor_message_id": message.id, "error": str(exc)}},
+            )
+    else:
+        safe_write_webchat_event(
             db,
             conversation_id=conversation.id,
             ticket_id=conversation.ticket_id,
-            visitor_message_id=message.id,
-        )
-        db.flush()
-    except Exception as exc:
-        WEBCHAT_LOGGER.exception(
-            "webchat_ai_reply_enqueue_failed",
-            extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": conversation.ticket_id, "visitor_message_id": message.id, "error": str(exc)}},
+            event_type="ai_turn.suppressed_by_handoff",
+            payload={"message_id": message.id, "reason": getattr(conversation, "ai_suspended_reason", None)},
         )
 
     WEBCHAT_LOGGER.info("webchat_message_received", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": conversation.ticket_id, "message_id": message.id}})
@@ -589,6 +613,18 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
         ticket.required_action = "WebChat customer requested human support"
         ticket.status = TicketStatus.in_progress
         ticket.conversation_state = ConversationState.human_review_required
+        request_webchat_handoff(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            source="customer_action",
+            trigger_type="card_action",
+            reason_code="customer_requested_human_support",
+            reason_text=selected.label,
+            recommended_agent_action="Customer requested human support from the WebChat handoff card.",
+            trigger_message_id=action_message.id,
+            requested_by_actor_type="visitor",
+        )
         db.add(TicketOutboundMessage(
             ticket_id=ticket.id,
             channel=SourceChannel.web_chat,
@@ -662,6 +698,7 @@ def admin_get_thread(db: Session, ticket_id: int, current_user: User) -> dict[st
         raise HTTPException(status_code=404, detail="webchat conversation not found for ticket")
     rows = db.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id).order_by(WebchatMessage.created_at.asc(), WebchatMessage.id.asc()).all()
     actions = db.query(WebchatCardAction).filter(WebchatCardAction.conversation_id == conversation.id).order_by(WebchatCardAction.created_at.asc(), WebchatCardAction.id.asc()).all()
+    handoff_row = db.query(WebchatHandoffRequest).filter_by(id=conversation.current_handoff_request_id).first() if conversation.current_handoff_request_id else None
     return {
         "conversation_id": conversation.public_id,
         "ticket_id": ticket.id,
@@ -671,6 +708,7 @@ def admin_get_thread(db: Session, ticket_id: int, current_user: User) -> dict[st
         "status": ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status),
         "conversation_state": ticket.conversation_state.value if hasattr(ticket.conversation_state, "value") else str(ticket.conversation_state),
         "required_action": ticket.required_action,
+        "handoff": serialize_handoff_request(db, handoff_row, current_user=current_user, conversation=conversation, ticket=ticket) if handoff_row else None,
         "visitor": {
             "name": conversation.visitor_name,
             "email": conversation.visitor_email,
@@ -697,6 +735,7 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
     conversation = db.query(WebchatConversation).filter(WebchatConversation.ticket_id == ticket.id).first()
     if not conversation:
         raise HTTPException(status_code=404, detail="webchat conversation not found for ticket")
+    ensure_can_reply_in_handoff(db, conversation=conversation, ticket=ticket, current_user=current_user)
 
     normalized_body = _clip_body(body)
     decision = evaluate_outbound_safety(ticket, normalized_body, source="manual", has_fact_evidence=has_fact_evidence)
@@ -716,6 +755,7 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
         delivery_status="sent",
         metadata_json=_metadata(generated_by="human_agent", safety_level=decision.level, fact_evidence_present=has_fact_evidence),
         author_label=current_user.display_name,
+        author_user_id=current_user.id,
         safety_level=decision.level,
         safety_reasons_json=json.dumps(decision.reasons, ensure_ascii=False),
     )
@@ -751,6 +791,21 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
             "provider_status": "webchat_delivered",
         }, ensure_ascii=False),
     ))
+    safe_write_webchat_event(
+        db,
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        event_type="message.created",
+        payload={"message_id": message.id, "direction": "agent", "author_user_id": current_user.id},
+    )
+    if getattr(conversation, "current_handoff_request_id", None):
+        safe_write_webchat_event(
+            db,
+            conversation_id=conversation.id,
+            ticket_id=ticket.id,
+            event_type="handoff.agent_reply_sent",
+            payload={"handoff_request_id": conversation.current_handoff_request_id, "message_id": message.id, "actor_id": current_user.id},
+        )
     evaluate_sla(ticket, db)
     db.flush()
     WEBCHAT_LOGGER.info("webchat_message_sent", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "message_id": message.id, "external_send": False}})

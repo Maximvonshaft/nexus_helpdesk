@@ -6,7 +6,7 @@ import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
 import { formatDateTime, sanitizeDisplayText, statusTone } from '@/lib/format'
 import { findReplyChannelCapability, isCustomerSendableReplyChannel, outboundChannelMissingText, replyPanelVisibleChannels } from '@/lib/outboundChannels'
-import type { WebchatCardAction, WebchatCardPayload, WebchatMessage } from '@/lib/types'
+import type { WebchatCardAction, WebchatCardPayload, WebchatHandoffRequest, WebchatMessage } from '@/lib/types'
 import { webchatVoiceApi } from '@/lib/webchatVoiceApi'
 import { AgentWebCallPanel } from '@/components/webcall/AgentWebCallPanel'
 import { Badge } from '@/components/ui/Badge'
@@ -15,10 +15,11 @@ import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Field, Textarea } from '@/components/ui/Field'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Toast } from '@/components/ui/Toast'
 import { useSession } from '@/hooks/useAuth'
-import { canViewWebcallVoiceQueue, canViewWebchatDebug } from '@/lib/access'
+import { canForceWebchatHandoff, canViewWebcallVoiceQueue, canViewWebchatDebug } from '@/lib/access'
 
 function isCardPayload(payload: WebchatMessage['payload_json']): payload is WebchatCardPayload {
   return Boolean(payload && typeof payload === 'object' && 'card_type' in payload && 'actions' in payload)
@@ -48,6 +49,62 @@ function AIStatusBadge({ status, pending, turnId }: { status?: string | null; pe
   const label = status || 'none'
   const suffix = turnId ? ` #${turnId}` : ''
   return <Badge tone={aiStatusTone(status, pending)}>AI {sanitizeDisplayText(label)}{suffix}</Badge>
+}
+
+function handoffTone(status?: string | null): 'default' | 'warning' | 'success' | 'danger' {
+  if (status === 'accepted') return 'success'
+  if (status === 'requested') return 'warning'
+  if (status === 'resumed_ai' || status === 'closed') return 'default'
+  if (status === 'cancelled' || status === 'expired') return 'danger'
+  return 'default'
+}
+
+function HandoffQueueItem({
+  item,
+  selected,
+  onSelect,
+  onAccept,
+  onDecline,
+  onForce,
+  busy,
+}: {
+  item: WebchatHandoffRequest
+  selected: boolean
+  onSelect: () => void
+  onAccept: () => void
+  onDecline: () => void
+  onForce: () => void
+  busy: boolean
+}) {
+  const canAccept = typeof item.id === 'number' && item.status === 'requested'
+  const canForce = item.status === 'ai_active'
+  const forceAllowed = item.can_force_takeover === true
+  return (
+    <div
+      className={`queue-card ${selected ? 'selected' : ''}`}
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') onSelect()
+      }}
+    >
+      <div className="queue-card-top"><div className="badges">
+        <Badge tone={handoffTone(item.status)}>{sanitizeDisplayText(item.status)}</Badge>
+        <Badge>{sanitizeDisplayText(item.source)}</Badge>
+        {item.ai_suspended ? <Badge tone="warning">AI paused</Badge> : <AIStatusBadge status={item.ai_status} pending={item.ai_pending} turnId={item.ai_turn_id} />}
+      </div></div>
+      <div className="queue-card-title">{sanitizeDisplayText(item.ticket_no || `#${item.ticket_id}`)} · {sanitizeDisplayText(item.title || 'WebChat handoff')}</div>
+      <div className="queue-card-meta">{sanitizeDisplayText(item.reason_text || item.reason_code || item.trigger_type)}</div>
+      {item.last_message?.body_text ? <div className="queue-card-meta">{sanitizeDisplayText(item.last_message.body_text)}</div> : null}
+      <div className="badges" onClick={(event) => event.stopPropagation()}>
+        {canAccept ? <Button variant="primary" disabled={busy} onClick={onAccept}>接管</Button> : null}
+        {canAccept ? <Button variant="secondary" disabled={busy} onClick={onDecline}>跳过</Button> : null}
+        {canForce ? <Button variant="danger" disabled={busy || !forceAllowed} title={forceAllowed ? '强制接管 AI 会话' : '仅 Lead / Manager / Admin 可强制接管 AI 会话'} onClick={onForce}>强制接管</Button> : null}
+      </div>
+      {canForce && !forceAllowed ? <div className="queue-card-meta">仅 Lead / Manager / Admin 可强制接管 AI 会话。</div> : null}
+    </div>
+  )
 }
 
 function voiceEvidenceValue(payload: Record<string, unknown> | null | undefined, key: string) {
@@ -139,6 +196,7 @@ function WebchatInboxPage() {
   const [reply, setReply] = useState('')
   const [hasFactEvidence, setHasFactEvidence] = useState(false)
   const [confirmReview, setConfirmReview] = useState(false)
+  const [handoffView, setHandoffView] = useState<'requested' | 'ai_active' | 'mine'>('requested')
   const [eventPollFailures, setEventPollFailures] = useState(0)
   const [conversationPollFailures, setConversationPollFailures] = useState(0)
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
@@ -165,6 +223,22 @@ function WebchatInboxPage() {
     retry: false,
   })
   const allowDebug = canViewWebchatDebug(session.data)
+  const canForceTakeover = canForceWebchatHandoff(session.data)
+
+  const handoffQueue = useQuery({
+    queryKey: ['webchatHandoffQueue', handoffView],
+    queryFn: ({ signal }) => api.webchatHandoffQueue({ view: handoffView, limit: 50 }, { signal }),
+    refetchInterval: 5000,
+    retry: false,
+  })
+
+  const refreshWebchatState = async () => {
+    await Promise.all([
+      client.invalidateQueries({ queryKey: ['webchatHandoffQueue'] }),
+      client.invalidateQueries({ queryKey: ['webchatConversations'] }),
+      client.invalidateQueries({ queryKey: ['webchatThread', selectedTicketId] }),
+    ])
+  }
 
   useEffect(() => {
     if (conversations.isSuccess) setConversationPollFailures(0)
@@ -223,6 +297,11 @@ function WebchatInboxPage() {
     return values
   }, [incomingVoiceSessions.data?.items])
   const threadData = thread.data
+  const selectedHandoff = threadData?.handoff
+  const handoffReplyBlocked = Boolean(
+    selectedHandoff
+    && !(selectedHandoff.status === 'accepted' && selectedHandoff.active_agent_id === session.data?.id),
+  )
   const visibleReplyChannels = useMemo(
     () => replyPanelVisibleChannels(outboundCapabilities.data?.channels),
     [outboundCapabilities.data],
@@ -264,6 +343,53 @@ function WebchatInboxPage() {
     },
   })
 
+  const acceptMutation = useMutation({
+    mutationFn: (requestId: number) => api.webchatAcceptHandoff(requestId),
+    onSuccess: async (handoff) => {
+      setSelectedTicketId(handoff.ticket_id)
+      setToast({ message: '已接管会话，AI 已暂停。', tone: 'success' })
+      await refreshWebchatState()
+    },
+    onError: (err: Error) => setToast({ message: err.message || '接管失败', tone: 'danger' }),
+  })
+
+  const declineMutation = useMutation({
+    mutationFn: (requestId: number) => api.webchatDeclineHandoff(requestId, { reason_code: 'agent_skipped' }),
+    onSuccess: async () => {
+      setToast({ message: '已跳过；该请求仍会保留给其他客服。', tone: 'success' })
+      await refreshWebchatState()
+    },
+    onError: (err: Error) => setToast({ message: err.message || '跳过失败', tone: 'danger' }),
+  })
+
+  const forceMutation = useMutation({
+    mutationFn: (ticketId: number) => api.webchatForceTakeover(ticketId, { reason_code: 'operator_forced_takeover' }),
+    onSuccess: async (handoff) => {
+      setSelectedTicketId(handoff.ticket_id)
+      setToast({ message: '已强制接管，未完成 AI 回复已被取消。', tone: 'success' })
+      await refreshWebchatState()
+    },
+    onError: (err: Error) => setToast({ message: err.message || '强制接管失败', tone: 'danger' }),
+  })
+
+  const releaseMutation = useMutation({
+    mutationFn: (requestId: number) => api.webchatReleaseHandoff(requestId),
+    onSuccess: async () => {
+      setToast({ message: '会话已释放回待接入队列，AI 仍保持暂停。', tone: 'success' })
+      await refreshWebchatState()
+    },
+    onError: (err: Error) => setToast({ message: err.message || '释放失败', tone: 'danger' }),
+  })
+
+  const resumeAiMutation = useMutation({
+    mutationFn: (requestId: number) => api.webchatResumeAi(requestId),
+    onSuccess: async () => {
+      setToast({ message: 'AI 已恢复，下一条客户消息可重新触发自动回复。', tone: 'success' })
+      await refreshWebchatState()
+    },
+    onError: (err: Error) => setToast({ message: err.message || '恢复 AI 失败', tone: 'danger' }),
+  })
+
   const snippet = '<script src="https://YOUR_DOMAIN/webchat/widget.js" data-tenant="default" data-channel="website" data-title="Speedaf Support" data-locale="en" async></script>'
 
   return (
@@ -285,6 +411,39 @@ function WebchatInboxPage() {
 
       <div className="page-grid workspace">
         <Card>
+          <CardHeader title="接管队列" subtitle="AI 递交、客户请求和 AI 正在对话都会进入这里处理。" />
+          <CardBody>
+            <div style={{ marginBottom: 12 }}>
+              <SegmentedControl
+                value={handoffView}
+                onChange={(next) => setHandoffView(next as 'requested' | 'ai_active' | 'mine')}
+                options={[
+                  { value: 'requested', label: '待接入' },
+                  { value: 'ai_active', label: 'AI 监控' },
+                  { value: 'mine', label: '我的' },
+                ]}
+              />
+            </div>
+            {handoffQueue.isLoading ? <Skeleton lines={4} /> : null}
+            <div className="list">
+              {(handoffQueue.data?.items ?? []).map((item) => (
+                <HandoffQueueItem
+                  key={`${item.status}-${item.ticket_id}-${item.id ?? item.ai_turn_id ?? item.webchat_conversation_id}`}
+                  item={item}
+                  selected={selectedTicketId === item.ticket_id}
+                  onSelect={() => setSelectedTicketId(item.ticket_id)}
+                  onAccept={() => typeof item.id === 'number' && acceptMutation.mutate(item.id)}
+                  onDecline={() => typeof item.id === 'number' && declineMutation.mutate(item.id)}
+                  onForce={() => forceMutation.mutate(item.ticket_id)}
+                  busy={acceptMutation.isPending || declineMutation.isPending || forceMutation.isPending}
+                />
+              ))}
+              {!handoffQueue.isLoading && !(handoffQueue.data?.items?.length) ? <EmptyState text="当前队列为空。" /> : null}
+            </div>
+          </CardBody>
+        </Card>
+
+        <Card>
           <CardHeader title="Webchat 会话" subtitle="按最近更新时间排序。needs human 表示客户请求人工或 AI/规则建议人工。" />
           <CardBody>
             {conversations.isLoading ? <Skeleton lines={8} /> : null}
@@ -295,6 +454,8 @@ function WebchatInboxPage() {
                     <Badge tone={statusTone(item.status)}>{sanitizeDisplayText(item.status)}</Badge>
                     <Badge tone="success">WebChat</Badge>
                     <AIStatusBadge status={item.ai_status} pending={item.ai_pending} turnId={item.ai_turn_id} />
+                    {item.ai_suspended ? <Badge tone="warning">AI paused</Badge> : null}
+                    {item.handoff_status && item.handoff_status !== 'none' ? <Badge tone={handoffTone(item.handoff_status)}>{sanitizeDisplayText(item.handoff_status)}</Badge> : null}
                     {item.last_message_type ? <Badge>{sanitizeDisplayText(item.last_message_type)}</Badge> : null}
                     {item.needs_human ? <Badge tone="warning">Needs human</Badge> : null}
                     {incomingVoiceByTicket.get(item.ticket_id) ? <Badge tone="warning">Incoming WebCall</Badge> : null}
@@ -335,10 +496,28 @@ function WebchatInboxPage() {
                     <div className="kv"><label>来源网站</label><div>{sanitizeDisplayText(selectedConversation.origin)}</div></div>
                     <div className="kv"><label>页面</label><div>{sanitizeDisplayText(selectedConversation.page_url)}</div></div>
                     <div className="kv"><label>当前状态</label><div>{sanitizeDisplayText(threadData?.conversation_state || selectedConversation.status)}</div></div>
+                    <div className="kv"><label>接管状态</label><div><Badge tone={handoffTone(threadData?.handoff_status || selectedConversation.handoff_status)}>{sanitizeDisplayText(threadData?.handoff_status || selectedConversation.handoff_status || 'none')}</Badge></div></div>
                     {allowDebug ? <div className="kv"><label>AI Runtime</label><div><AIStatusBadge status={threadData?.ai_status || selectedConversation.ai_status} pending={threadData?.ai_pending || selectedConversation.ai_pending} turnId={threadData?.ai_turn_id || selectedConversation.ai_turn_id} /></div></div> : null}
                     {allowDebug ? <div className="kv"><label>Realtime-lite</label><div>{events.isFetching ? 'polling events…' : `after_id ${lastEventId}`}</div></div> : null}
                     <div className="kv"><label>Required action</label><div>{sanitizeDisplayText(threadData?.required_action || 'None')}</div></div>
                   </div>
+                  {selectedHandoff ? <div className="message" data-role="agent">
+                    <div className="message-head"><strong>接管控制</strong><span>{sanitizeDisplayText(selectedHandoff.source)} · {sanitizeDisplayText(selectedHandoff.trigger_type)}</span></div>
+                    <div className="stack compact">
+                      <div>{sanitizeDisplayText(selectedHandoff.reason_text || selectedHandoff.reason_code || 'Human handoff requested')}</div>
+                      {selectedHandoff.recommended_agent_action ? <div className="section-subtitle">{sanitizeDisplayText(selectedHandoff.recommended_agent_action)}</div> : null}
+                      <div className="badges">
+                        {selectedHandoff.status === 'requested' && selectedHandoff.can_accept !== false && typeof selectedHandoff.id === 'number' ? <Button variant="primary" disabled={acceptMutation.isPending} onClick={() => acceptMutation.mutate(selectedHandoff.id as number)}>接管</Button> : null}
+                        {selectedHandoff.status === 'accepted' && selectedHandoff.can_release === true && typeof selectedHandoff.id === 'number' ? <Button variant="secondary" disabled={releaseMutation.isPending} onClick={() => releaseMutation.mutate(selectedHandoff.id as number)}>释放回队列</Button> : null}
+                        {selectedHandoff.can_resume_ai === true && typeof selectedHandoff.id === 'number' ? <Button variant="secondary" disabled={resumeAiMutation.isPending} onClick={() => resumeAiMutation.mutate(selectedHandoff.id as number)}>恢复 AI</Button> : null}
+                      </div>
+                    </div>
+                  </div> : null}
+                  {!selectedHandoff && selectedConversation?.ai_pending ? <div className="message" data-role="agent">
+                    <div className="message-head"><strong>AI 正在处理</strong><span>{sanitizeDisplayText(selectedConversation.ai_status || 'active')}</span></div>
+                    <Button variant="danger" disabled={forceMutation.isPending || !canForceTakeover} title={canForceTakeover ? '强制接管 AI 会话' : '仅 Lead / Manager / Admin 可强制接管 AI 会话'} onClick={() => selectedTicketId && canForceTakeover && forceMutation.mutate(selectedTicketId)}>强制接管</Button>
+                    {!canForceTakeover ? <div className="section-subtitle">仅 Lead / Manager / Admin 可强制接管 AI 会话；普通客服请等待 AI 递交人工接管请求后点击“接管”。</div> : null}
+                  </div> : null}
                   <div className="timeline">
                     {(threadData?.messages ?? []).map((msg) => <MessageCard key={msg.id} msg={msg} allowDebug={allowDebug} />)}
                     {allowDebug && threadData?.actions?.length ? <div className="message" data-role="agent"><div className="message-head"><strong>Action audit</strong><span>{threadData.actions.length} actions</span></div><PayloadBlock payload={threadData.actions} allowDebug={allowDebug} /></div> : null}
@@ -360,10 +539,11 @@ function WebchatInboxPage() {
                   {visibleReplyChannels.map((channel) => <Badge key={channel.channel} tone={channel.channel === 'web_chat' ? 'success' : 'warning'}>{sanitizeDisplayText(channel.label)}</Badge>)}
                 </div>
                 {!webchatReplyEnabled ? <div className="section-subtitle">WebChat 回复当前未开放：{sanitizeDisplayText(webchatCapabilityIssue)}</div> : null}
+                {handoffReplyBlocked ? <div className="section-subtitle">该会话需要先由当前客服接管后才能回复。</div> : null}
                 <Field label="回复内容"><Textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="例如：We have received your request and will check it shortly." /></Field>
                 <label className="check-row"><input type="checkbox" checked={hasFactEvidence} onChange={(event) => setHasFactEvidence(event.target.checked)} /><span>本次回复涉及物流事实时，我已核对系统证据</span></label>
                 <label className="check-row"><input type="checkbox" checked={confirmReview} onChange={(event) => setConfirmReview(event.target.checked)} /><span>若安全门返回 review，我确认已人工复核并继续发送</span></label>
-                <Button variant="primary" disabled={!selectedTicketId || !reply.trim() || !webchatReplyEnabled || replyMutation.isPending} onClick={() => replyMutation.mutate()}>{replyMutation.isPending ? '发送中…' : '发送 Webchat 回复'}</Button>
+                <Button variant="primary" disabled={!selectedTicketId || !reply.trim() || !webchatReplyEnabled || handoffReplyBlocked || replyMutation.isPending} onClick={() => replyMutation.mutate()}>{replyMutation.isPending ? '发送中…' : '发送 Webchat 回复'}</Button>
               </div>
             </CardBody>
           </Card>

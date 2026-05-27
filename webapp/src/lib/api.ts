@@ -30,6 +30,8 @@ import type {
   PersonaProfileVersion,
   Team,
   WebchatConversation,
+  WebchatHandoffQueue,
+  WebchatHandoffRequest,
   WebchatThread,
   WebchatReplyResult,
   ProviderCredentialStatusResponse,
@@ -533,6 +535,33 @@ export const api = {
   outboundChannelCapabilities: () => request<OutboundChannelCapabilitiesResponse>('/api/outbound/channels/capabilities'),
 
   webchatConversations: (init?: RequestInit) => request<WebchatConversation[]>('/api/webchat/admin/conversations', init),
+  webchatHandoffQueue: (params?: { view?: string; include_declined?: boolean; limit?: number }, init?: RequestInit) => {
+    const search = new URLSearchParams()
+    search.set('view', params?.view || 'requested')
+    search.set('limit', String(params?.limit ?? 50))
+    if (typeof params?.include_declined === 'boolean') search.set('include_declined', String(params.include_declined))
+    return request<WebchatHandoffQueue>(`/api/webchat/admin/handoff/queue?${search.toString()}`, init)
+  },
+  webchatAcceptHandoff: (requestId: number, note?: string) => request<WebchatHandoffRequest>(`/api/webchat/admin/handoff/${requestId}/accept`, {
+    method: 'POST',
+    body: JSON.stringify({ note: note || null }),
+  }),
+  webchatDeclineHandoff: (requestId: number, payload?: { reason_code?: string; note?: string }) => request<WebchatHandoffRequest>(`/api/webchat/admin/handoff/${requestId}/decline`, {
+    method: 'POST',
+    body: JSON.stringify({ reason_code: payload?.reason_code || null, note: payload?.note || null }),
+  }),
+  webchatForceTakeover: (ticketId: number, payload?: { reason_code?: string; note?: string }) => request<WebchatHandoffRequest>(`/api/webchat/admin/tickets/${ticketId}/force-takeover`, {
+    method: 'POST',
+    body: JSON.stringify({ reason_code: payload?.reason_code || null, note: payload?.note || null }),
+  }),
+  webchatReleaseHandoff: (requestId: number, note?: string) => request<WebchatHandoffRequest>(`/api/webchat/admin/handoff/${requestId}/release`, {
+    method: 'POST',
+    body: JSON.stringify({ note: note || null }),
+  }),
+  webchatResumeAi: (requestId: number, note?: string) => request<WebchatHandoffRequest>(`/api/webchat/admin/handoff/${requestId}/resume-ai`, {
+    method: 'POST',
+    body: JSON.stringify({ note: note || null }),
+  }),
   webchatThread: (ticketId: number, init?: RequestInit) => request<WebchatThread>(`/api/webchat/admin/tickets/${ticketId}/thread`, init),
   webchatEvents: (ticketId: number, afterId: number, init?: RequestInit) => request<WebchatEventsPage>(`/api/webchat/admin/tickets/${ticketId}/events?${buildWebchatEventsSearch(afterId).toString()}`, init),
   webchatReply: (ticketId: number, payload: { body: string; has_fact_evidence?: boolean; confirm_review?: boolean }) => request<WebchatReplyResult>(`/api/webchat/admin/tickets/${ticketId}/reply`, {

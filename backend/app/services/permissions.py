@@ -36,6 +36,12 @@ CAP_WEBCALL_VOICE_QUEUE_VIEW = "webcall.voice.queue.view"
 CAP_WEBCALL_VOICE_ACCEPT = "webcall.voice.accept"
 CAP_WEBCALL_VOICE_REJECT = "webcall.voice.reject"
 CAP_WEBCALL_VOICE_END = "webcall.voice.end"
+CAP_WEBCHAT_HANDOFF_ACCEPT = "webchat.handoff.accept"
+CAP_WEBCHAT_HANDOFF_DECLINE = "webchat.handoff.decline"
+CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER = "webchat.handoff.force_takeover"
+CAP_WEBCHAT_HANDOFF_RELEASE = "webchat.handoff.release"
+CAP_WEBCHAT_HANDOFF_RESUME_AI = "webchat.handoff.resume_ai"
+CAP_WEBCHAT_CONVERSATION_MONITOR_AI = "webchat.conversation.monitor_ai"
 
 ALL_CAPABILITIES = [
     CAP_TICKET_READ,
@@ -68,6 +74,12 @@ ALL_CAPABILITIES = [
     CAP_WEBCALL_VOICE_ACCEPT,
     CAP_WEBCALL_VOICE_REJECT,
     CAP_WEBCALL_VOICE_END,
+    CAP_WEBCHAT_HANDOFF_ACCEPT,
+    CAP_WEBCHAT_HANDOFF_DECLINE,
+    CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
+    CAP_WEBCHAT_HANDOFF_RELEASE,
+    CAP_WEBCHAT_HANDOFF_RESUME_AI,
+    CAP_WEBCHAT_CONVERSATION_MONITOR_AI,
 ]
 
 ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
@@ -80,6 +92,8 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
         CAP_ATTACHMENT_READ_INTERNAL, CAP_ATTACHMENT_UPLOAD, CAP_CUSTOMER_PROFILE_READ,
         CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND, CAP_AI_INTAKE_WRITE,
         CAP_NOTE_WRITE_INTERNAL, CAP_NOTE_WRITE_EXTERNAL, CAP_BULLETIN_MANAGE,
+        CAP_WEBCHAT_HANDOFF_ACCEPT, CAP_WEBCHAT_HANDOFF_DECLINE, CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
+        CAP_WEBCHAT_HANDOFF_RELEASE, CAP_WEBCHAT_HANDOFF_RESUME_AI, CAP_WEBCHAT_CONVERSATION_MONITOR_AI,
     },
     UserRole.lead: {
         CAP_TICKET_READ, CAP_TICKET_ASSIGN, CAP_TICKET_ESCALATE, CAP_TICKET_UPDATE_CORE,
@@ -87,12 +101,16 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
         CAP_ATTACHMENT_READ_INTERNAL, CAP_ATTACHMENT_UPLOAD, CAP_CUSTOMER_PROFILE_READ,
         CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND, CAP_AI_INTAKE_WRITE,
         CAP_NOTE_WRITE_INTERNAL, CAP_NOTE_WRITE_EXTERNAL,
+        CAP_WEBCHAT_HANDOFF_ACCEPT, CAP_WEBCHAT_HANDOFF_DECLINE, CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
+        CAP_WEBCHAT_HANDOFF_RELEASE, CAP_WEBCHAT_HANDOFF_RESUME_AI, CAP_WEBCHAT_CONVERSATION_MONITOR_AI,
     },
     UserRole.agent: {
         CAP_TICKET_READ, CAP_ATTACHMENT_READ_EXTERNAL, CAP_ATTACHMENT_READ_INTERNAL,
         CAP_ATTACHMENT_UPLOAD, CAP_TICKET_STATUS_CHANGE, CAP_OUTBOUND_DRAFT_SAVE,
         CAP_OUTBOUND_SEND, CAP_AI_INTAKE_WRITE, CAP_NOTE_WRITE_INTERNAL,
         CAP_NOTE_WRITE_EXTERNAL, CAP_CUSTOMER_PROFILE_READ,
+        CAP_WEBCHAT_HANDOFF_ACCEPT, CAP_WEBCHAT_HANDOFF_DECLINE, CAP_WEBCHAT_HANDOFF_RELEASE,
+        CAP_WEBCHAT_CONVERSATION_MONITOR_AI,
     },
     UserRole.auditor: {
         CAP_TICKET_READ, CAP_ATTACHMENT_READ_EXTERNAL,
@@ -266,3 +284,27 @@ def ensure_can_reject_webcall_voice(user, db: Session | None = None):
 
 def ensure_can_end_webcall_voice(user, db: Session | None = None):
     ensure_capability(user, CAP_WEBCALL_VOICE_END, db, message="webcall_voice_end_requires_capability")
+
+
+def ensure_can_accept_webchat_handoff(user, db: Session | None = None):
+    ensure_capability(user, CAP_WEBCHAT_HANDOFF_ACCEPT, db, message="webchat_handoff_accept_requires_capability")
+
+
+def ensure_can_decline_webchat_handoff(user, db: Session | None = None):
+    ensure_capability(user, CAP_WEBCHAT_HANDOFF_DECLINE, db, message="webchat_handoff_decline_requires_capability")
+
+
+def ensure_can_force_takeover_webchat(user, db: Session | None = None):
+    ensure_capability(user, CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER, db, message="webchat_handoff_force_takeover_requires_capability")
+
+
+def ensure_can_release_webchat_handoff(user, db: Session | None = None):
+    ensure_capability(user, CAP_WEBCHAT_HANDOFF_RELEASE, db, message="webchat_handoff_release_requires_capability")
+
+
+def ensure_can_resume_webchat_ai(user, db: Session | None = None):
+    ensure_capability(user, CAP_WEBCHAT_HANDOFF_RESUME_AI, db, message="webchat_handoff_resume_ai_requires_capability")
+
+
+def ensure_can_monitor_webchat_ai(user, db: Session | None = None):
+    ensure_capability(user, CAP_WEBCHAT_CONVERSATION_MONITOR_AI, db, message="webchat_monitor_ai_requires_capability")

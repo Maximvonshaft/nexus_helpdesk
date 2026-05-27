@@ -104,6 +104,10 @@ export function canViewWebchatDebug(user?: AuthUser | null) {
   return canAccess(user, actionAccess.viewWebchatDebug)
 }
 
+export function canForceWebchatHandoff(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.forceWebchatHandoff)
+}
+
 export function roleWorkspaceHint(user?: AuthUser | null) {
   return canViewOps(user)
     ? '你当前可以同时查看工单、公告、发送线路与运营保障。'

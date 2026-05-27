@@ -18,7 +18,9 @@ from .sla_service import evaluate_sla, update_first_response
 from .webchat_ai_service import AI_AUTHOR_LABEL, process_webchat_ai_reply_job as _legacy_process_webchat_ai_reply_job
 from .webchat_ai_turn_service import (
     AI_TURN_OPEN_STATUSES,
+    cancel_open_ai_turns_for_handoff,
     complete_ai_turn_with_reply,
+    is_ai_suspended_for_handoff,
     latest_visitor_message_id,
     mark_ai_turn_bridge_calling,
     mark_ai_turn_processing,
@@ -233,6 +235,9 @@ def _complete_turn_if_present(db: Session, *, conversation: WebchatConversation,
 def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id: int, visitor_message_id: int) -> dict[str, Any]:
     conversation, ticket, visitor_message = _load_context(db, conversation_id=conversation_id, ticket_id=ticket_id, visitor_message_id=visitor_message_id)
     turn = _open_turn_for_message(db, conversation=conversation, visitor_message=visitor_message)
+    if is_ai_suspended_for_handoff(conversation):
+        cancel_open_ai_turns_for_handoff(db, conversation=conversation, actor_id=None, reason_code="handoff_ai_suspended_before_safe_worker")
+        return {"status": "skipped", "reason": "handoff_ai_suspended", "reply_source": "suppressed"}
     if turn is not None and turn.status == "queued":
         mark_ai_turn_processing(db, conversation=conversation, turn=turn)
         cutoff_id = latest_visitor_message_id(db, conversation_id=conversation.id)
