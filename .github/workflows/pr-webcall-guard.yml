@@ -53,6 +53,8 @@ jobs:
 
           is_webcall_relevant_file() {
             case "$1" in
+              .github/workflows/pr-webcall-guard.yml) return 0 ;;
+              .gitignore) return 0 ;;
               webapp/src/components/webcall/AgentWebCallPanel.tsx) return 0 ;;
               webapp/src/components/operator/SpeedafActionsPanel.tsx) return 0 ;;
               webapp/src/components/security/RequireCapability.tsx) return 0 ;;
@@ -94,6 +96,7 @@ jobs:
               backend/app/settings.py) return 0 ;;
               backend/app/services/operator_queue.py) return 0 ;;
               backend/app/services/observability.py) return 0 ;;
+              backend/app/services/spa_fallback_hardening.py) return 0 ;;
               backend/app/services/ai_runtime/codex_auth_provider.py) return 0 ;;
               backend/app/services/ai_runtime/codex_app_server_provider.py) return 0 ;;
               backend/app/services/ai_runtime/openclaw_responses_provider.py) return 0 ;;
@@ -160,6 +163,8 @@ jobs:
               backend/tests/test_rbac_capability_contracts.py) return 0 ;;
               backend/tests/test_round24_hardening.py) return 0 ;;
               backend/tests/test_round27_frontend_hardening.py) return 0 ;;
+              backend/tests/test_release_metadata.py) return 0 ;;
+              backend/tests/test_spa_fallback_hardening.py) return 0 ;;
               backend/tests/test_speedaf_workorder_address_actions.py) return 0 ;;
               backend/tests/test_webchat_voice_api.py) return 0 ;;
               backend/tests/test_webchat_voice_p0_static.py) return 0 ;;
@@ -189,6 +194,7 @@ jobs:
               docs/architecture/CODEX_APPSERVER_RUNTIME_V3.md) return 0 ;;
               docs/architecture/WEBCHAT_AI_PROVIDER_ROUTER.md) return 0 ;;
               docs/ai-control-center-runtime.md) return 0 ;;
+              docs/deployment/release-metadata.md) return 0 ;;
               docs/engineering/codex_appserver_runtime_v3_discovery_report.md) return 0 ;;
               docs/engineering/codex_chat_smoke_runbook.md) return 0 ;;
               docs/engineering/voice_provider_bridge_contract.md) return 0 ;;
@@ -197,6 +203,7 @@ jobs:
               docs/ops/CODEX_APPSERVER_RUNTIME_V3_RUNBOOK.md) return 0 ;;
               docs/ops/WEBCHAT_WEBSOCKET_RUNTIME.md) return 0 ;;
               docs/security/CODEX_APPSERVER_TOKEN_BOUNDARY.md) return 0 ;;
+              scripts/export_release_metadata.sh) return 0 ;;
               scripts/probe_codex_appserver_discovery.sh) return 0 ;;
               scripts/probe_codex_appserver_runtime_v3_sla.sh) return 0 ;;
               scripts/probe_knowledge_retrieval_e2e.sh) return 0 ;;
@@ -224,7 +231,6 @@ jobs:
               .github/workflows/webcall-ai-infra-skeleton.yml) return 0 ;;
               .github/workflows/postgres-migration.yml) return 0 ;;
               .github/workflows/production-readiness.yml) return 0 ;;
-              .github/workflows/pr-webcall-guard.yml) return 0 ;;
               "") return 0 ;;
             esac
             return 1
@@ -281,61 +287,45 @@ jobs:
             exit 1
           fi
 
-          echo "Scope guard passed."
-
-  webcall-blocking-fix-guard:
-    name: webcall-blocking-fix-guard
-    runs-on: ubuntu-latest
+  backend-webcall-tests:
     needs: scope-guard
     if: needs.scope-guard.outputs.webcall_checks_required == 'true'
-    steps:
-      - name: Checkout PR
-        uses: actions/checkout@v4
-
-      - name: Verify WebCall blocking fix markers
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          PANEL="webapp/src/components/webcall/AgentWebCallPanel.tsx"
-          TEST="webapp/tests/operator-console-contract.test.mjs"
-
-          test -f "$PANEL"
-          test -f "$TEST"
-
-          python - <<'PY'
-          from pathlib import Path
-          import re
-
-          panel_path = Path('webapp/src/components/webcall/AgentWebCallPanel.tsx')
-          test_path = Path('webapp/tests/operator-console-contract.test.mjs')
-          text = panel_path.read_text(encoding='utf-8')
-          test_text = test_path.read_text(encoding='utf-8')
-          match = re.search(r"if \(accepted\.provider !== 'livekit'\) \{(?P<body>.*?)\n\s*\}\n\s*const livekitUrl", text, re.S)
-          if not match:
-              raise SystemExit('could_not_locate_non_livekit_branch')
-          body = match.group('body')
-          if 'await cleanupRoom()' not in body:
-              raise SystemExit(f'::error file={panel_path}::non-LiveKit branch must clean up the acquired microphone track')
-          if 'return null' in body:
-              raise SystemExit(f'::error file={panel_path}::non-LiveKit branch still contains return null')
-          if 'return accepted' not in body:
-              raise SystemExit(f'::error file={panel_path}::non-LiveKit branch must return the accepted session after cleanup')
-          if 'webcall non-livekit accept path cleans up acquired microphone track before return' not in test_text:
-              raise SystemExit(f'::error file={test_path}::missing non-LiveKit cleanup regression test')
-          if 'returnIndex > cleanupIndex' not in test_text:
-              raise SystemExit(f'::error file={test_path}::test must assert cleanup happens before return')
-          PY
-
-          echo "WebCall blocking fix markers verified."
-
-  backend-webcall-tests:
-    name: backend-webcall-tests
     runs-on: ubuntu-latest
-    needs: scope-guard
-    if: needs.scope-guard.outputs.webcall_relevant == 'true'
-    env:
-      PYTHONPATH: backend
     steps:
-      - name: Checkout PR
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+      - name: Run backend WebCall tests
+        working-directory: backend
+        env:
+          APP_ENV: test
+          DATABASE_URL: sqlite:///./webcall_guard.db
+          LIVEKIT_API_KEY: test-key
+          LIVEKIT_API_SECRET: test-secret
+          LIVEKIT_URL: wss://livekit.test
+          WEBCALL_BROWSER_ENTRY_ENABLED: "true"
+        run: |
+          pytest -q tests/test_webchat_voice_api.py tests/test_webchat_voice_static_headers.py tests/test_webchat_voice_mock_ui_static.py
+
+  webcall-blocking-fix-guard:
+    needs: scope-guard
+    if: needs.scope-guard.outputs.webcall_checks_required == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - name: Install webapp dependencies
+        working-directory: webapp
+        run: npm ci
+      - name: Run operator console contract tests
+        working-directory: webapp
+        run: node --test tests/operator-console-contract.test.mjs
