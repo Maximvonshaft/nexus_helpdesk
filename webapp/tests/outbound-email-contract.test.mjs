@@ -15,6 +15,9 @@ const rbac = read('src/lib/rbac.ts')
 const apiErrorMap = read('src/lib/apiErrorMap.ts')
 const uxCopy = read('src/lib/uxCopy.ts')
 const replyPanel = read('src/components/operator/CustomerReplyPanel.tsx')
+const playwrightSmoke = read('e2e/smoke.spec.ts')
+const realAdminSmoke = read('e2e/outbound-email-admin-real.spec.ts')
+const playwrightConfig = read('playwright.config.ts')
 
 test('outbound email API client matches backend PR-2 endpoints', () => {
   assert.match(apiClient, /outboundEmailAccounts: \(\) => request<OutboundEmailAccount\[\]>\('\/api\/admin\/outbound-email\/accounts'\)/)
@@ -109,4 +112,15 @@ test('operator email send UX submits subject only for email', () => {
   assert.match(replyPanel, /我确认这是 SMTP 外部邮件发送/)
   assert.match(replyPanel, /市场 SMTP 账号/)
   assert.match(replyPanel, /全局 fallback/)
+})
+
+test('outbound email browser smoke covers mock and real admin paths safely', () => {
+  assert.match(playwrightSmoke, /admin can open outbound email configuration page/)
+  assert.match(playwrightSmoke, /\/api\/admin\/outbound-email\/accounts/)
+  assert.match(playwrightSmoke, /密码：\*\*\*\*\*\*\*\*/)
+  assert.match(realAdminSmoke, /NEXUS_REAL_ADMIN_SMOKE/)
+  assert.match(realAdminSmoke, /NEXUS_ADMIN_USERNAME/)
+  assert.match(realAdminSmoke, /\/outbound-email/)
+  assert.match(realAdminSmoke, /发送测试邮件/)
+  assert.match(playwrightConfig, /PLAYWRIGHT_BASE_URL/)
 })

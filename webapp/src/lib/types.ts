@@ -352,6 +352,10 @@ export interface ProductionReadiness {
   openclaw_transport: string
   metrics_enabled: boolean
   openclaw_sync_enabled: boolean
+  outbound_email_production_pilot_enabled?: boolean
+  outbound_email_active_accounts?: number
+  outbound_email_successful_test_send_accounts?: number
+  outbound_email_test_send_max_age_hours?: number
   warnings: string[]
 }
 

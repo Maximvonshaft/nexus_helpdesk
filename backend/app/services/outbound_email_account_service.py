@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from ..models import Market, OutboundEmailAccount, Ticket
+from ..utils.time import utc_now
 
 EMAIL_SECURITY_MODES = frozenset({"starttls", "ssl", "plain"})
 
@@ -80,6 +82,20 @@ def has_active_outbound_email_account(db: Session | None, *, ticket: Ticket | No
         return False
     market_id = getattr(ticket, "market_id", None) if ticket is not None else None
     return resolve_outbound_email_account(db, market_id=market_id) is not None
+
+
+def count_active_successful_tested_accounts(db: Session | None, *, max_age_hours: int | None = None) -> int:
+    if db is None:
+        return 0
+    query = db.query(OutboundEmailAccount).filter(
+        OutboundEmailAccount.is_active.is_(True),
+        OutboundEmailAccount.health_status == "ok",
+        OutboundEmailAccount.last_test_status == "success",
+        OutboundEmailAccount.last_test_at.isnot(None),
+    )
+    if max_age_hours is not None:
+        query = query.filter(OutboundEmailAccount.last_test_at >= utc_now() - timedelta(hours=max_age_hours))
+    return query.count()
 
 
 def account_audit_snapshot(row: OutboundEmailAccount) -> dict[str, Any]:

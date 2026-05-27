@@ -55,10 +55,26 @@ Current smoke coverage:
 - unauthenticated protected route redirects to `/login`
 - agent navigation does not expose management entry points
 - admin/capability user navigation exposes management entry points
+- admin/capability user can open `/outbound-email` with masked SMTP account state
 
 CI note:
 
-- The suite is runnable today but is not yet required to block `main`.
+- `webapp-build` runs this mock-safe suite and uploads the Playwright report.
+
+## Real admin Outbound Email smoke
+
+The real admin smoke does not mock `/api/**`. It is skipped unless explicitly enabled and should run only against staging or a controlled production pilot target.
+
+```bash
+cd webapp
+PLAYWRIGHT_BASE_URL=https://support.example.com \
+NEXUS_REAL_ADMIN_SMOKE=1 \
+NEXUS_ADMIN_USERNAME=admin@example.com \
+NEXUS_ADMIN_PASSWORD='...' \
+npx playwright test e2e/outbound-email-admin-real.spec.ts
+```
+
+This smoke verifies login, `/outbound-email` route access, and visibility of the SMTP test-send controls. It does not send email.
 
 ## Run mock-only checks
 
@@ -88,3 +104,5 @@ bash scripts/smoke/smoke_e2e_runtime_health.sh --api-url http://127.0.0.1:18081
 ## Production warning
 
 Do not use live OpenClaw mode on production customer accounts during Round A. Round A is intended for mock mode, CI mode, or a disposable staging environment.
+
+Outbound Email production pilot test-send is covered separately in `docs/runbooks/outbound-email-production-pilot.md` because it intentionally sends a real email.

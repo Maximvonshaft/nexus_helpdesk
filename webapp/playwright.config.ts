@@ -1,7 +1,8 @@
 import { defineConfig } from '@playwright/test'
 
 const port = Number(process.env.PLAYWRIGHT_PORT || 4173)
-const baseURL = `http://127.0.0.1:${port}`
+const externalBaseURL = process.env.PLAYWRIGHT_BASE_URL?.replace(/\/+$/, '')
+const baseURL = externalBaseURL || `http://127.0.0.1:${port}`
 
 export default defineConfig({
   testDir: './e2e',
@@ -19,7 +20,7 @@ export default defineConfig({
       channel: 'chrome',
     },
   },
-  webServer: {
+  webServer: externalBaseURL ? undefined : {
     command: `npm run preview -- --host 127.0.0.1 --port ${port}`,
     url: baseURL,
     reuseExistingServer: !process.env.CI,

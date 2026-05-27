@@ -681,6 +681,10 @@ class ProductionReadinessRead(APIModel):
     openclaw_links_count: int = 0
     openclaw_transcript_messages_count: int = 0
     openclaw_unresolved_events_count: int = 0
+    outbound_email_production_pilot_enabled: bool = False
+    outbound_email_active_accounts: int = 0
+    outbound_email_successful_test_send_accounts: int = 0
+    outbound_email_test_send_max_age_hours: int = 24
     warnings: list[str]
 
 
