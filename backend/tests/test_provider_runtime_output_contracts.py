@@ -6,7 +6,16 @@ from app.services.provider_runtime.output_contracts import OutputContracts
 
 
 def _approved_direct_answer_context(answer: str) -> dict:
+    source = {"item_key": "fact.ch.shipping-sla"}
     return {
+        "locked_facts": [
+            {
+                "id": "fact.ch.shipping-sla#0",
+                "answer": answer,
+                "mode": "locked_fact",
+                "source": source,
+            }
+        ],
         "hits": [
             {
                 "item_key": "fact.ch.shipping-sla",
@@ -21,7 +30,7 @@ def _approved_direct_answer_context(answer: str) -> dict:
                     "fact_status": "approved",
                     "answer_mode": "direct_answer",
                 },
-                "source_metadata": {"item_key": "fact.ch.shipping-sla"},
+                "source_metadata": source,
             }
         ]
     }
@@ -122,6 +131,72 @@ def test_live_parcel_status_still_fails_without_trusted_tracking_evidence():
             evidence_present=False,
             request_body="瑞士海运时效是多少？",
             knowledge_context=_approved_direct_answer_context("瑞士海运清关时效为 15 天。"),
+        )
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        ("瑞士海运清关通常需要 15 天。", "pass"),
+        ("瑞士海运清关通常需要 20 天。", "Locked fact numeric conflict"),
+        ("尼日利亚海运清关通常需要 15 天。", "Locked fact entity conflict"),
+        ("瑞士空运清关通常需要 15 天。", "Locked fact service conflict"),
+    ],
+)
+def test_locked_facts_validate_provider_generated_fact_equivalence(reply, expected):
+    raw_json = json.dumps(
+        {
+            "customer_reply": reply,
+            "language": "zh",
+            "intent": "other",
+            "tracking_number": None,
+            "handoff_required": False,
+            "ticket_should_create": False,
+        },
+        ensure_ascii=False,
+    )
+    context = _approved_direct_answer_context("瑞士海运清关时效为 15 天。")
+
+    if expected == "pass":
+        parsed = OutputContracts.validate_and_parse(
+            "speedaf_webchat_fast_reply_v1",
+            raw_json,
+            evidence_present=False,
+            request_body="瑞士海运时效是多少？",
+            knowledge_context=context,
+        )
+        assert parsed["customer_reply"] == reply
+    else:
+        with pytest.raises(ValueError, match=expected):
+            OutputContracts.validate_and_parse(
+                "speedaf_webchat_fast_reply_v1",
+                raw_json,
+                evidence_present=False,
+                request_body="瑞士海运时效是多少？",
+                knowledge_context=context,
+            )
+
+
+def test_locked_facts_reject_service_number_swap():
+    raw_json = json.dumps(
+        {
+            "customer_reply": "海运10天，空运15天。",
+            "language": "zh",
+            "intent": "other",
+            "tracking_number": None,
+            "handoff_required": False,
+            "ticket_should_create": False,
+        },
+        ensure_ascii=False,
+    )
+
+    with pytest.raises(ValueError, match="Locked fact service conflict"):
+        OutputContracts.validate_and_parse(
+            "speedaf_webchat_fast_reply_v1",
+            raw_json,
+            evidence_present=False,
+            request_body="海运和空运多久？",
+            knowledge_context=_approved_direct_answer_context("海运15天，空运10天。"),
         )
 
 

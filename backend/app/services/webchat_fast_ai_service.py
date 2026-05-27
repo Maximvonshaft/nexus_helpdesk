@@ -13,7 +13,6 @@ from .ai_runtime.openclaw_responses_provider import (
 from .ai_runtime.provider_router import generate_fast_reply
 from .ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
 from .ai_runtime_context import build_webchat_runtime_context
-from .knowledge_grounding_service import enforce_grounded_answer
 from .knowledge_prompt_service import summarize_rag_trace
 from .provider_runtime.webchat_fast_dispatcher import dispatch_webchat_fast_reply
 from .webchat_fast_config import get_webchat_fast_settings
@@ -154,6 +153,19 @@ def _is_already_grounded_provider_result(provider_result: FastAIProviderResult) 
     return bool(safe_summary.get("grounding_applied")) or str(provider_result.reply_source or "").endswith(":grounded_knowledge")
 
 
+def _locked_fact_source(runtime_context: dict[str, Any] | None) -> dict[str, Any] | None:
+    knowledge = runtime_context.get("knowledge_context") if isinstance(runtime_context, dict) else None
+    if not isinstance(knowledge, dict):
+        return None
+    for fact in knowledge.get("locked_facts") or []:
+        if not isinstance(fact, dict):
+            continue
+        source = fact.get("source") if isinstance(fact.get("source"), dict) else None
+        if source:
+            return source
+    return None
+
+
 def _apply_grounding(
     *,
     provider_result: FastAIProviderResult,
@@ -169,32 +181,12 @@ def _apply_grounding(
         safe_summary.setdefault("grounding_reason", "provider_runtime_grounded_knowledge")
         return _provider_result_with_summary(provider_result, safe_summary)
 
-    knowledge = runtime_context.get("knowledge_context") if isinstance(runtime_context, dict) else None
-    hits = knowledge.get("hits") if isinstance(knowledge, dict) else []
-    decision = enforce_grounded_answer(
-        query=body,
-        provider_reply=provider_result.reply,
-        hits=hits if isinstance(hits, list) else [],
-        tracking_fact_evidence_present=tracking_fact_evidence_present,
-    )
-    safe_summary["grounding_applied"] = decision.applied
-    safe_summary["grounding_reason"] = decision.reason
-    if decision.source:
-        safe_summary["grounding_source"] = decision.source
-    if not decision.applied:
-        return _provider_result_with_summary(provider_result, safe_summary)
-    return FastAIProviderResult(
-        **{
-            **provider_result.__dict__,
-            "reply": decision.reply,
-            "reply_source": f"{provider_result.reply_source or provider_result.raw_provider}:grounded_knowledge",
-            "raw_payload_safe_summary": safe_summary,
-            "intent": provider_result.intent or "other",
-            "handoff_required": False,
-            "handoff_reason": None,
-            "recommended_agent_action": None,
-        }
-    )
+    source = _locked_fact_source(runtime_context)
+    safe_summary["grounding_applied"] = False
+    safe_summary["grounding_reason"] = "locked_facts_available_provider_validation_required" if source else "no_locked_facts"
+    if source:
+        safe_summary["grounding_source"] = source
+    return _provider_result_with_summary(provider_result, safe_summary)
 
 
 async def generate_webchat_fast_reply(

@@ -185,6 +185,7 @@ jobs:
               scripts/probe_codex_appserver_discovery.sh) return 0 ;;
               scripts/probe_codex_appserver_runtime_v3_sla.sh) return 0 ;;
               scripts/probe_knowledge_retrieval_e2e.sh) return 0 ;;
+              scripts/postdeploy_direct_answer_fast_reply_smoke.sh) return 0 ;;
               scripts/probe_persona_identity_e2e.sh) return 0 ;;
               tools/nexus-codex-runtime/**) return 0 ;;
               webapp/src/lib/api.ts) return 0 ;;

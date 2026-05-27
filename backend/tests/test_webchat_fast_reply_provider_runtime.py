@@ -32,6 +32,14 @@ def _approved_shipping_sla_context() -> dict:
         "knowledge_context": {
             "grounding_would_apply": True,
             "grounding_source": source,
+            "locked_facts": [
+                {
+                    "id": "fact.ch.shipping-sla#0",
+                    "answer": "瑞士海运时效为 15 天。",
+                    "mode": "locked_fact",
+                    "source": source,
+                }
+            ],
             "hits": [
                 {
                     "item_key": "fact.ch.shipping-sla",
@@ -125,7 +133,7 @@ async def test_dispatch_webchat_fast_reply_with_provider_runtime():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_webchat_fast_reply_applies_direct_answer_grounding():
+async def test_dispatch_webchat_fast_reply_preserves_provider_generated_locked_fact_reply():
     req = FastAIProviderRequest(
         tenant_key="tenant_1",
         channel_key="webchat",
@@ -136,6 +144,14 @@ async def test_dispatch_webchat_fast_reply_applies_direct_answer_grounding():
         metadata={
             "context_version": "nexus_webchat_runtime_context_v1",
             "knowledge_context": {
+                "locked_facts": [
+                    {
+                        "id": "fact.ch.address#0",
+                        "answer": "The Switzerland address-change service fee is 8 CHF.",
+                        "mode": "locked_fact",
+                        "source": {"item_key": "fact.ch.address"},
+                    }
+                ],
                 "hits": [
                     {
                         "item_key": "fact.ch.address",
@@ -166,7 +182,7 @@ async def test_dispatch_webchat_fast_reply_applies_direct_answer_grounding():
                 provider="codex_app_server",
                 elapsed_ms=120,
                 structured_output={
-                    "customer_reply": "I cannot confirm that from the available information.",
+                    "customer_reply": "The address-change service fee for Switzerland is 8 CHF.",
                     "language": "en",
                     "intent": "other",
                     "handoff_required": False,
@@ -180,13 +196,14 @@ async def test_dispatch_webchat_fast_reply_applies_direct_answer_grounding():
             res = await dispatch_webchat_fast_reply(request=req)
 
     assert res.ok
-    assert res.reply == "The Switzerland address-change service fee is 8 CHF."
-    assert res.reply_source == "codex_app_server:grounded_knowledge"
+    assert res.reply == "The address-change service fee for Switzerland is 8 CHF."
+    assert res.reply_source == "codex_app_server"
     assert res.raw_payload_safe_summary["grounding_applied"] is True
+    assert res.raw_payload_safe_summary["grounding_reason"] == "locked_facts_provider_generated"
 
 
 @pytest.mark.asyncio
-async def test_dispatch_webchat_fast_reply_applies_grounding_on_safe_numeric_contradiction():
+async def test_dispatch_webchat_fast_reply_does_not_rewrite_numeric_contradiction_when_router_is_mocked():
     req = FastAIProviderRequest(
         tenant_key="tenant_1",
         channel_key="webchat",
@@ -197,6 +214,14 @@ async def test_dispatch_webchat_fast_reply_applies_grounding_on_safe_numeric_con
         metadata={
             "context_version": "nexus_webchat_runtime_context_v1",
             "knowledge_context": {
+                "locked_facts": [
+                    {
+                        "id": "fact.shipping.sla#0",
+                        "answer": "海运15天，空运10天。",
+                        "mode": "locked_fact",
+                        "source": {"item_key": "fact.shipping.sla"},
+                    }
+                ],
                 "hits": [
                     {
                         "item_key": "fact.shipping.sla",
@@ -241,13 +266,13 @@ async def test_dispatch_webchat_fast_reply_applies_grounding_on_safe_numeric_con
             res = await dispatch_webchat_fast_reply(request=req)
 
     assert res.ok
-    assert res.reply == "海运15天，空运10天。"
-    assert res.reply_source == "codex_app_server:grounded_knowledge"
+    assert res.reply == "通常需要30-45天。"
+    assert res.reply_source == "codex_app_server"
     assert res.raw_payload_safe_summary["grounding_applied"] is True
 
 
 @pytest.mark.asyncio
-async def test_dispatch_webchat_fast_reply_overrides_tracking_missing_number_with_approved_direct_answer():
+async def test_dispatch_webchat_fast_reply_does_not_override_tracking_missing_number_with_direct_answer():
     req = FastAIProviderRequest(
         tenant_key="tenant_1",
         channel_key="webchat",
@@ -275,12 +300,12 @@ async def test_dispatch_webchat_fast_reply_overrides_tracking_missing_number_wit
             res = await dispatch_webchat_fast_reply(request=req)
 
     assert res.ok
-    assert res.reply == "瑞士海运时效为 15 天。"
-    assert res.intent == "other"
+    assert res.reply == "请提供您的运单号，我才能查询包裹状态。"
+    assert res.intent == "tracking_missing_number"
     assert res.tracking_number is None
-    assert res.reply_source == "codex_app_server:grounded_knowledge"
+    assert res.reply_source == "codex_app_server"
     assert res.raw_payload_safe_summary["grounding_applied"] is True
-    assert res.raw_payload_safe_summary["grounding_reason"] == "approved_direct_answer_override"
+    assert res.raw_payload_safe_summary["grounding_reason"] == "locked_facts_provider_generated"
 
 
 @pytest.mark.parametrize(
@@ -298,6 +323,8 @@ async def test_dispatch_webchat_fast_reply_overrides_tracking_missing_number_wit
 )
 @pytest.mark.asyncio
 async def test_dispatch_webchat_fast_reply_blocks_direct_answer_override_for_tracking_and_high_risk_queries(query):
+    context = _approved_shipping_sla_context()
+    context["knowledge_context"]["locked_facts"] = []
     req = FastAIProviderRequest(
         tenant_key="tenant_1",
         channel_key="webchat",
@@ -305,7 +332,7 @@ async def test_dispatch_webchat_fast_reply_blocks_direct_answer_override_for_tra
         body=query,
         recent_context=[],
         request_id="req-pr256-negative",
-        metadata=_approved_shipping_sla_context(),
+        metadata=context,
     )
 
     with patch("app.services.provider_runtime.webchat_fast_dispatcher.ProviderRuntimeRouter.route") as mock_route:
@@ -387,7 +414,7 @@ def test_second_pass_grounding_preserves_provider_runtime_grounded_telemetry():
         raw_payload_safe_summary={
             "grounding_applied": True,
             "grounding_source": source,
-            "grounding_reason": "approved_direct_answer_override",
+            "grounding_reason": "locked_facts_provider_generated",
         },
         reply="瑞士海运时效为 15 天。",
         intent="other",
@@ -410,7 +437,7 @@ def test_second_pass_grounding_preserves_provider_runtime_grounded_telemetry():
     result = _result_from_provider(grounded)
 
     assert grounded.raw_payload_safe_summary["grounding_applied"] is True
-    assert grounded.raw_payload_safe_summary["grounding_reason"] == "approved_direct_answer_override"
+    assert grounded.raw_payload_safe_summary["grounding_reason"] == "locked_facts_provider_generated"
     assert result.grounding_applied is True
     assert result.grounding_source == source
-    assert result.grounding_reason == "approved_direct_answer_override"
+    assert result.grounding_reason == "locked_facts_provider_generated"

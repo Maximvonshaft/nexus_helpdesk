@@ -217,7 +217,7 @@ FAST_SOURCE="$(json_field "$TMP/fast_reply.out.json" reply_source)"
 FAST_GROUNDED="$(json_field "$TMP/fast_reply.out.json" grounding_applied)"
 FAST_REASON="$(json_field "$TMP/fast_reply.out.json" grounding_reason)"
 
-if [[ "$FAST_CODE" != "200" || "$FAST_OK" != "True" || "$FAST_REPLY" != "$EXPECTED_REPLY" || "$FAST_SOURCE" != "codex_app_server:grounded_knowledge" || "$FAST_GROUNDED" != "True" || "$FAST_REASON" != "approved_direct_answer_override" ]]; then
+if [[ "$FAST_CODE" != "200" || "$FAST_OK" != "True" || "$FAST_REPLY" != *"15"* || "$FAST_SOURCE" != "codex_app_server" || "$FAST_GROUNDED" != "True" || "$FAST_REASON" != "locked_facts_provider_generated" ]]; then
   record "CRITICAL" "controlled_rag_fast_reply" "FAIL" "http=${FAST_CODE} ok=${FAST_OK} reply=${FAST_REPLY} source=${FAST_SOURCE} grounded=${FAST_GROUNDED} reason=${FAST_REASON}"
   exit 4
 fi

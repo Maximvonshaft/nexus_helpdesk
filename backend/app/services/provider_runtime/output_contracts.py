@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import jsonschema
@@ -46,6 +47,23 @@ _IDENTITY_FIELDS = {
     "handoff_boundary",
     "tone",
     "guardrails",
+}
+_NUMERIC_FACT_UNIT_MARKERS = (
+    "day", "days", "business day", "business days", "天", "工作日",
+    "chf", "usd", "eur", "fee", "费用", "服务费", "时效", "sla",
+    "清关", "customs", "海运", "空运", "shipping", "delivery",
+)
+_COUNTRY_ALIASES = {
+    "switzerland": ("switzerland", "swiss", "瑞士"),
+    "nigeria": ("nigeria", "nigerian", "尼日利亚"),
+    "united_kingdom": ("united kingdom", "uk", "britain", "英国"),
+    "china": ("china", "chinese", "中国"),
+}
+_SERVICE_ALIASES = {
+    "ocean": ("海运", "ocean freight", "ocean shipping", "sea freight", "sea shipping"),
+    "air": ("空运", "air freight", "air shipping"),
+    "customs": ("清关", "customs clearance", "customs"),
+    "address_change": ("地址变更", "address change", "address-change"),
 }
 
 
@@ -137,6 +155,13 @@ class OutputContracts:
             request_body=request_body,
             knowledge_context=knowledge_context,
         )
+        if contract_name == "speedaf_webchat_fast_reply_v1":
+            OutputContracts.enforce_locked_facts_fast_reply(
+                parsed=parsed,
+                request_body=request_body,
+                knowledge_context=knowledge_context,
+                evidence_present=evidence_present,
+            )
         return parsed
 
     @staticmethod
@@ -353,6 +378,196 @@ class OutputContracts:
         return cleaned[: _MAX_FAST_REPLY_CHARS - 3].rstrip() + "..."
 
     @staticmethod
+    def enforce_locked_facts_fast_reply(
+        *,
+        parsed: dict[str, Any],
+        request_body: Any = None,
+        knowledge_context: dict[str, Any] | None = None,
+        evidence_present: bool = False,
+    ) -> None:
+        locked_facts = OutputContracts._locked_facts_from_context(
+            knowledge_context=knowledge_context,
+            request_body=request_body,
+            evidence_present=evidence_present,
+        )
+        if not locked_facts:
+            return
+        if evidence_present and (parsed.get("intent") == "tracking" or parsed.get("tracking_number")):
+            return
+
+        reply = str(parsed.get("customer_reply") or "").strip()
+        if not reply:
+            raise ValueError("Locked facts require a provider-generated customer_reply")
+        if parsed.get("handoff_required") is True:
+            raise ValueError("Locked facts require a provider-generated answer")
+
+        conflict_reasons: list[str] = []
+        for fact in locked_facts:
+            answer = str(fact.get("answer") or fact.get("direct_answer") or "").strip()
+            if not answer:
+                continue
+            conflict_reason = OutputContracts._locked_fact_conflict_reason(reply=reply, answer=answer)
+            if conflict_reason:
+                conflict_reasons.append(conflict_reason)
+                continue
+            if OutputContracts._reply_matches_direct_answer(reply, answer):
+                return
+            conflict_reasons.append("Locked fact missing from provider output")
+
+        if conflict_reasons:
+            raise ValueError(conflict_reasons[0])
+        raise ValueError("Locked fact missing from provider output")
+
+    @staticmethod
+    def _locked_facts_from_context(
+        *,
+        knowledge_context: dict[str, Any] | None,
+        request_body: Any = None,
+        evidence_present: bool = False,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(knowledge_context, dict):
+            return []
+        facts: list[dict[str, Any]] = []
+        for raw in knowledge_context.get("locked_facts") or []:
+            if not isinstance(raw, dict):
+                continue
+            answer = str(raw.get("answer") or raw.get("direct_answer") or "").strip()
+            if answer:
+                facts.append({**raw, "answer": answer})
+        if facts:
+            return facts
+
+        hits = knowledge_context.get("hits")
+        if not isinstance(hits, list):
+            return []
+        try:
+            from ..knowledge_grounding_service import select_grounding_candidate
+
+            candidate = select_grounding_candidate(
+                query=str(request_body or ""),
+                hits=hits,
+                tracking_fact_evidence_present=evidence_present,
+            )
+        except Exception:
+            return []
+        if not candidate:
+            return []
+        answer = str(candidate.get("answer") or "").strip()
+        if not answer:
+            return []
+        return [{"answer": answer, "source": candidate.get("source") or {}, "mode": "locked_fact"}]
+
+    @staticmethod
+    def _locked_fact_conflict_reason(*, reply: str, answer: str) -> str | None:
+        answer_numbers = OutputContracts._number_terms(answer)
+        reply_numbers = OutputContracts._number_terms(reply)
+        if answer_numbers:
+            if not answer_numbers.issubset(reply_numbers):
+                return "Locked fact numeric conflict"
+            extra_numbers = reply_numbers - answer_numbers
+            if extra_numbers and OutputContracts._contains_numeric_fact_unit(f"{answer} {reply}"):
+                return "Locked fact numeric conflict"
+
+        answer_countries = OutputContracts._country_terms(answer)
+        reply_countries = OutputContracts._country_terms(reply)
+        if answer_countries and reply_countries and not reply_countries.issubset(answer_countries):
+            return "Locked fact entity conflict"
+
+        answer_services = OutputContracts._service_terms(answer)
+        reply_services = OutputContracts._service_terms(reply)
+        if answer_services and reply_services and not reply_services.issubset(answer_services):
+            return "Locked fact service conflict"
+
+        answer_pairs = OutputContracts._service_number_pairs(answer)
+        reply_pairs = OutputContracts._service_number_pairs(reply)
+        if answer_pairs and reply_pairs:
+            answer_pair_services = {service for service, _number in answer_pairs}
+            conflicting_pairs = {
+                pair for pair in reply_pairs
+                if pair[0] in answer_pair_services and pair not in answer_pairs
+            }
+            if conflicting_pairs:
+                return "Locked fact service conflict"
+        return None
+
+    @staticmethod
+    def _number_terms(value: str) -> set[str]:
+        normalized = unicodedata.normalize("NFKC", value or "")
+        terms: set[str] = set()
+        for match in re.finditer(r"(?<![A-Z0-9])\d+(?:\.\d+)?(?![A-Z0-9])", normalized, flags=re.I):
+            try:
+                decimal = Decimal(match.group(0))
+            except InvalidOperation:
+                continue
+            terms.add(str(decimal.normalize()).lower())
+        return terms
+
+    @staticmethod
+    def _contains_numeric_fact_unit(value: str) -> bool:
+        normalized = unicodedata.normalize("NFKC", value or "").lower()
+        return any(marker in normalized for marker in _NUMERIC_FACT_UNIT_MARKERS)
+
+    @staticmethod
+    def _country_terms(value: str) -> set[str]:
+        normalized = unicodedata.normalize("NFKC", value or "").lower()
+        found: set[str] = set()
+        for key, aliases in _COUNTRY_ALIASES.items():
+            for alias in aliases:
+                if re.search(OutputContracts._alias_pattern(alias), normalized):
+                    found.add(key)
+                    break
+        return found
+
+    @staticmethod
+    def _service_terms(value: str) -> set[str]:
+        normalized = unicodedata.normalize("NFKC", value or "").lower()
+        found: set[str] = set()
+        for key, aliases in _SERVICE_ALIASES.items():
+            for alias in aliases:
+                if re.search(OutputContracts._alias_pattern(alias), normalized):
+                    found.add(key)
+                    break
+        return found
+
+    @staticmethod
+    def _service_number_pairs(value: str) -> set[tuple[str, str]]:
+        normalized = unicodedata.normalize("NFKC", value or "").lower()
+        numbers = [
+            (match.start(), match.end(), next(iter(OutputContracts._number_terms(match.group(0))), match.group(0)))
+            for match in re.finditer(r"(?<![A-Z0-9])\d+(?:\.\d+)?(?![A-Z0-9])", normalized, flags=re.I)
+        ]
+        mentions: list[tuple[int, int, str]] = []
+        for service, aliases in _SERVICE_ALIASES.items():
+            for alias in aliases:
+                for match in re.finditer(OutputContracts._alias_pattern(alias), normalized):
+                    mentions.append((match.start(), match.end(), service))
+        mentions.sort(key=lambda item: item[0])
+        pairs: set[tuple[str, str]] = set()
+        for index, (mention_start, mention_end, service) in enumerate(mentions):
+            next_service_start = mentions[index + 1][0] if index + 1 < len(mentions) else len(normalized)
+            scoped_numbers = [
+                (start, end, number)
+                for start, end, number in numbers
+                if mention_end <= start < next_service_start
+            ]
+            if not scoped_numbers:
+                scoped_numbers = sorted(
+                    numbers,
+                    key=lambda item: min(abs(mention_end - item[0]), abs(mention_start - item[1])),
+                )[:1]
+            for start, end, number in scoped_numbers:
+                if min(abs(mention_end - start), abs(mention_start - end)) <= 24:
+                    pairs.add((service, number))
+        return pairs
+
+    @staticmethod
+    def _alias_pattern(alias: str) -> str:
+        escaped = re.escape(alias.lower())
+        if re.fullmatch(r"[a-z0-9][a-z0-9\s-]*", alias.lower()):
+            return rf"(?<![a-z0-9]){escaped}(?![a-z0-9])"
+        return escaped
+
+    @staticmethod
     def check_security_rules(
         *,
         raw_output: str,
@@ -391,6 +606,16 @@ class OutputContracts:
                 knowledge_context=knowledge_context,
             )
         ):
+            if not OutputContracts._looks_like_specific_parcel_status_claim(reply):
+                for fact in OutputContracts._locked_facts_from_context(
+                    knowledge_context=knowledge_context,
+                    request_body=request_body,
+                    evidence_present=False,
+                ):
+                    answer = str(fact.get("answer") or "").strip()
+                    conflict_reason = OutputContracts._locked_fact_conflict_reason(reply=reply, answer=answer)
+                    if conflict_reason and OutputContracts._meaningful_overlap_terms(reply, answer):
+                        raise ValueError(conflict_reason)
             raise ValueError("Parcel status language requires trusted tracking evidence")
 
     @staticmethod
@@ -409,6 +634,15 @@ class OutputContracts:
             return False
         if not isinstance(knowledge_context, dict):
             return False
+        for fact in OutputContracts._locked_facts_from_context(
+            knowledge_context=knowledge_context,
+            request_body=request_body,
+            evidence_present=False,
+        ):
+            answer = str(fact.get("answer") or "").strip()
+            if answer and not OutputContracts._locked_fact_conflict_reason(reply=reply, answer=answer):
+                if OutputContracts._reply_matches_direct_answer(reply, answer):
+                    return True
         hits = knowledge_context.get("hits")
         if not isinstance(hits, list):
             return False
@@ -455,10 +689,11 @@ class OutputContracts:
             return True
         if len(reply_norm) >= 8 and reply_norm in answer_norm:
             return True
-        answer_numbers = set(re.findall(r"\d+(?:\.\d+)?", answer_norm))
-        if not answer_numbers or not answer_numbers.issubset(set(re.findall(r"\d+(?:\.\d+)?", reply_norm))):
+        answer_numbers = OutputContracts._number_terms(answer)
+        if answer_numbers and not answer_numbers.issubset(OutputContracts._number_terms(reply)):
             return False
-        return len(OutputContracts._meaningful_overlap_terms(reply, answer)) >= 2
+        required_overlap = 2 if answer_numbers else 3
+        return len(OutputContracts._meaningful_overlap_terms(reply, answer)) >= required_overlap
 
     @staticmethod
     def _contract_match_text(value: str) -> str:

@@ -20,7 +20,7 @@ from app.services import knowledge_service, persona_service  # noqa: E402
 from app.services.ai_runtime_context import build_webchat_runtime_context  # noqa: E402
 from app.services.knowledge_grounding_service import (  # noqa: E402
     enforce_grounded_answer,
-    select_approved_direct_answer_override,
+    select_grounding_candidate,
 )
 from app.services.knowledge_prompt_service import build_knowledge_prompt_block  # noqa: E402
 from app.services.knowledge_retrieval_service import analyze_query, retrieve_published_chunks  # noqa: E402
@@ -191,6 +191,7 @@ def test_swiss_ocean_shipping_sla_direct_answer_retrieval_and_runtime_context(db
     )
 
     assert context["knowledge_context"]["hits"][0]["direct_answer"] == "瑞士海运时效为 15 天。"
+    assert context["knowledge_context"]["locked_facts"][0]["answer"] == "瑞士海运时效为 15 天。"
     assert context["knowledge_context"]["grounding_source"]["item_key"] == fact.item_key
 
 
@@ -264,7 +265,7 @@ def test_channel_audience_and_language_filters_are_enforced(db_session):
     assert [hit.item_key for hit in result.hits] == [website_en.item_key]
 
 
-def test_direct_answer_grounding_rewrites_safe_refusal_and_blocks_tracking_boundary(db_session):
+def test_direct_answer_grounding_does_not_rewrite_safe_refusal_and_blocks_tracking_boundary(db_session):
     admin = _user(db_session)
     _business_fact(db_session, admin, item_key="fact.ch.address-grounding", title="Swiss address fee")
     result = retrieve_published_chunks(db_session, q="Swiss address change fee", channel="website", audience_scope="customer", language="en")
@@ -275,8 +276,9 @@ def test_direct_answer_grounding_rewrites_safe_refusal_and_blocks_tracking_bound
         hits=result.hits,
     )
 
-    assert decision.applied is True
-    assert decision.reply == "The Switzerland address-change service fee is 8 CHF."
+    assert decision.applied is False
+    assert decision.reply is None
+    assert decision.reason == "locked_fact_provider_refusal"
 
     blocked = enforce_grounded_answer(
         query="Where is package PK120053679836?",
@@ -287,7 +289,7 @@ def test_direct_answer_grounding_rewrites_safe_refusal_and_blocks_tracking_bound
     assert blocked.applied is False
 
 
-def test_direct_answer_grounding_rewrites_safe_numeric_contradiction_only():
+def test_direct_answer_grounding_reports_safe_numeric_contradiction_without_rewrite():
     hits = [
         {
             "item_key": "fact.shipping.sla",
@@ -308,9 +310,9 @@ def test_direct_answer_grounding_rewrites_safe_numeric_contradiction_only():
         hits=hits,
     )
 
-    assert decision.applied is True
-    assert decision.reply == "海运15天，空运10天。"
-    assert decision.reason == "direct_answer_conflict_rewrite"
+    assert decision.applied is False
+    assert decision.reply is None
+    assert decision.reason == "locked_fact_provider_conflict"
 
     legal_blocked = enforce_grounded_answer(
         query="如果海运晚了要赔偿吗，海运多久？",
@@ -328,7 +330,7 @@ def test_direct_answer_grounding_rewrites_safe_numeric_contradiction_only():
     assert tracking_blocked.applied is False
 
 
-def test_approved_direct_answer_override_policy_blocks_tracking_and_high_risk_queries():
+def test_locked_fact_candidate_policy_blocks_tracking_and_high_risk_queries():
     hits = [
         {
             "item_key": "fact.ch.shipping-sla",
@@ -342,43 +344,27 @@ def test_approved_direct_answer_override_policy_blocks_tracking_and_high_risk_qu
             "source_metadata": {"item_key": "fact.ch.shipping-sla"},
         }
     ]
-    knowledge_context = {
-        "grounding_would_apply": True,
-        "grounding_source": {"item_key": "fact.ch.shipping-sla"},
-        "hits": hits,
-    }
-    provider_output = {
-        "customer_reply": "请提供您的运单号，我才能查询包裹状态。",
-        "intent": "tracking_missing_number",
-        "tracking_number": None,
-    }
-
-    decision = select_approved_direct_answer_override(
+    candidate = select_grounding_candidate(
         query="瑞士海运时效是多少",
-        provider_output=provider_output,
-        knowledge_context=knowledge_context,
+        hits=hits,
     )
 
-    assert decision.applied is True
-    assert decision.reply == "瑞士海运时效为 15 天。"
-    assert decision.reason == "approved_direct_answer_override"
+    assert candidate["answer"] == "瑞士海运时效为 15 天。"
 
-    tracking_blocked = select_approved_direct_answer_override(
+    tracking_blocked = select_grounding_candidate(
         query="我的包裹在哪里",
-        provider_output=provider_output,
-        knowledge_context=knowledge_context,
+        hits=hits,
     )
-    assert tracking_blocked.applied is False
+    assert tracking_blocked is None
 
-    complaint_blocked = select_approved_direct_answer_override(
+    complaint_blocked = select_grounding_candidate(
         query="我要投诉，瑞士海运时效是多少",
-        provider_output=provider_output,
-        knowledge_context=knowledge_context,
+        hits=hits,
     )
-    assert complaint_blocked.applied is False
+    assert complaint_blocked is None
 
 
-def test_approved_direct_answer_override_requires_entity_compatible_candidate():
+def test_locked_fact_candidate_requires_entity_compatible_candidate():
     hits = [
         {
             "item_key": "fact.ch.shipping-sla",
@@ -393,37 +379,20 @@ def test_approved_direct_answer_override_requires_entity_compatible_candidate():
             "source_metadata": {"item_key": "fact.ch.shipping-sla", "title": "瑞士海运时效"},
         }
     ]
-    provider_output = {
-        "customer_reply": "请提供您的运单号，我才能查询包裹状态。",
-        "intent": "tracking_missing_number",
-        "tracking_number": None,
-    }
-
-    swiss_context = {
-        "grounding_would_apply": True,
-        "grounding_source": {"item_key": "fact.ch.shipping-sla"},
-        "query_analysis": {"entity_terms": ["瑞士"]},
-        "hits": hits,
-    }
-    swiss = select_approved_direct_answer_override(
+    swiss = select_grounding_candidate(
         query="瑞士海运时效是多少",
-        provider_output=provider_output,
-        knowledge_context=swiss_context,
+        hits=hits,
+        required_entity_terms=["瑞士"],
     )
-    assert swiss.applied is True
-    assert swiss.reply == "瑞士海运时效为 15 天。"
+    assert swiss["answer"] == "瑞士海运时效为 15 天。"
 
     for query in ("尼日利亚海运时效是多少", "尼日利亚空运时效是多少"):
-        blocked = select_approved_direct_answer_override(
+        blocked = select_grounding_candidate(
             query=query,
-            provider_output=provider_output,
-            knowledge_context={
-                **swiss_context,
-                "query_analysis": {"entity_terms": ["尼日利亚"]},
-            },
+            hits=hits,
+            required_entity_terms=["尼日利亚"],
         )
-        assert blocked.applied is False
-        assert blocked.reason == "entity_mismatch"
+        assert blocked is None
 
 
 def test_knowledge_e2e_probe_runtime_sha_gate_is_dynamic():
@@ -532,7 +501,7 @@ def test_runtime_context_and_prompt_are_bounded_and_sanitized(db_session):
         runtime_context=context,
     )
     assert "item_key=doc.return.window" in prompt
-    assert "do not say cannot confirm" in prompt
+    assert "generate a natural answer that preserves those facts" in prompt
     assert len(prompt) < 7000
 
 
@@ -589,5 +558,6 @@ def test_knowledge_prompt_block_force_includes_direct_answer_first(db_session):
     block = build_knowledge_prompt_block(context["knowledge_context"])
 
     assert "[KB 1] item_key=fact.direct.prompt" in block
-    assert "direct_answer=The Switzerland address-change service fee is 8 CHF." in block
+    assert "[LOCKED FACT 1]" in block
+    assert "answer=The Switzerland address-change service fee is 8 CHF." in block
     assert "not live parcel tracking evidence" in block

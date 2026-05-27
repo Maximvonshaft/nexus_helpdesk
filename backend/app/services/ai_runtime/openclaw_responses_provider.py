@@ -58,7 +58,7 @@ def build_fast_reply_instructions() -> str:
         "- If a Trusted tracking fact block is provided, use only that block for parcel status.\n"
         "- If the Trusted tracking fact says No Info, no trace, or no tracking updates, say the official system currently has no tracking updates.\n"
         "- If no Trusted tracking fact block is provided, do not claim any live parcel status; ask for the tracking number or say support will check.\n"
-        "- If sanitized Knowledge context directly answers the customer's FAQ or policy question, answer from Knowledge context and do not say cannot confirm.\n"
+        "- If sanitized Knowledge context includes locked facts for the customer's FAQ or policy question, generate a natural answer that preserves those facts.\n"
         "- Knowledge context is FAQ/SOP/policy/business facts only; never use it as live parcel tracking evidence.\n"
         "- If a tracking number is missing, ask for it naturally.\n"
         "- If manual support is needed, say so naturally.\n"

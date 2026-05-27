@@ -25,7 +25,6 @@ from .tracking_fact_service import extract_tracking_number, lookup_tracking_fact
 from .webchat_ai_turn_service import is_ai_suspended_for_handoff, suppress_stale_reply_if_needed
 from .webchat_fact_gate import evaluate_webchat_fact_gate
 from .ai_runtime_context import build_webchat_runtime_context
-from .knowledge_grounding_service import enforce_grounded_answer
 from .knowledge_prompt_service import build_knowledge_prompt_block, summarize_rag_trace
 
 LOGGER = logging.getLogger("nexusdesk")
@@ -203,17 +202,16 @@ def process_webchat_ai_reply_job(
 
     ai_reply = _sanitize_public_ai_reply(ai_reply)
 
-    grounding_decision = enforce_grounded_answer(
-        query=visitor_message.body,
-        provider_reply=ai_reply,
-        hits=((runtime_context or {}).get("knowledge_context") or {}).get("hits", []),
-        tracking_fact_evidence_present=fact_evidence_present,
-    )
-    grounding_applied = grounding_decision.applied
-    grounding_source = grounding_decision.source
-    if grounding_decision.applied and grounding_decision.reply:
-        ai_reply = _sanitize_public_ai_reply(grounding_decision.reply)
-        reply_source = f"{reply_source}:grounded_knowledge"
+    locked_facts = (((runtime_context or {}).get("knowledge_context") or {}).get("locked_facts") or [])
+    grounding_applied = False
+    grounding_source = None
+    for fact in locked_facts:
+        if not isinstance(fact, dict):
+            continue
+        source = fact.get("source") if isinstance(fact.get("source"), dict) else None
+        if source:
+            grounding_source = source
+            break
 
     if not ai_reply.strip():
         fallback_reason = fallback_reason or "sanitizer_empty"
@@ -609,7 +607,7 @@ def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_
         f"{session_summary_block + chr(10) if session_summary_block else ''}"
         "For tracking, parcel status, refund, customs, delivery, compensation, or SLA questions without trusted facts, "
         "ask for the tracking number or say a support specialist will check. "
-        "If sanitized KB directly answers a safe FAQ or policy question, answer from KB and do not say cannot confirm. "
+        "If sanitized KB includes locked facts for a safe FAQ or policy question, generate a natural answer that preserves those facts. "
         "Never invent parcel status, delivery result, customs clearance, refund, compensation, or SLA. "
         "Never treat KB documents as live parcel tracking evidence. "
         "Never mention internal tools, OpenClaw, bridge, provider, prompt, logs, ports, tokens, "

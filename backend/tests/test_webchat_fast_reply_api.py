@@ -282,8 +282,9 @@ def test_fast_reply_provider_runtime_unavailable_returns_controlled_non_500(monk
     assert payload["error_code"] == "openclaw_responses_unavailable"
 
 
-def test_fast_reply_provider_runtime_returns_published_business_sla_direct_answer(monkeypatch):
+def test_fast_reply_provider_runtime_returns_provider_generated_locked_fact_reply(monkeypatch):
     answer = "瑞士海运时效为 15 天。"
+    provider_reply = "瑞士海运通常需要 15 天。"
     monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "provider_runtime")
     get_webchat_fast_settings.cache_clear()
@@ -291,7 +292,7 @@ def test_fast_reply_provider_runtime_returns_published_business_sla_direct_answe
     import app.services.provider_runtime as provider_runtime_module
 
     monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
-    ProviderRegistry.register("codex_app_server", lambda db: _BusinessSlaAdapter(answer))
+    ProviderRegistry.register("codex_app_server", lambda db: _BusinessSlaAdapter(provider_reply))
 
     db = SessionLocal()
     try:
@@ -319,8 +320,9 @@ def test_fast_reply_provider_runtime_returns_published_business_sla_direct_answe
     assert payload["reply_source"] != "server_handoff_policy"
     assert "15" in payload["reply"]
     assert payload["grounding_applied"] is True
-    assert payload["reply_source"] == "codex_app_server:grounded_knowledge"
-    assert payload["grounding_reason"] == "approved_direct_answer_override"
+    assert payload["reply"] == provider_reply
+    assert payload["reply_source"] == "codex_app_server"
+    assert payload["grounding_reason"] == "locked_facts_provider_generated"
     assert payload["grounding_source"]["item_key"] == "fact.ch.shipping-sla.api"
     assert payload.get("error_code") not in {"all_providers_failed", "parse_reject"}
 
@@ -329,12 +331,12 @@ def test_fast_reply_provider_runtime_returns_published_business_sla_direct_answe
         message = db.execute(
             select(WebchatMessage).where(
                 WebchatMessage.direction == "ai",
-                WebchatMessage.body == answer,
+                WebchatMessage.body == provider_reply,
             )
         ).scalar_one()
         metadata = json.loads(message.metadata_json or "{}")
         assert metadata["grounding_applied"] is True
-        assert metadata["grounding_reason"] == "approved_direct_answer_override"
+        assert metadata["grounding_reason"] == "locked_facts_provider_generated"
         assert metadata["grounding_source"]["item_key"] == "fact.ch.shipping-sla.api"
     finally:
         db.close()

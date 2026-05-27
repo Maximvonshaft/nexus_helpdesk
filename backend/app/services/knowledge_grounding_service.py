@@ -73,54 +73,10 @@ def enforce_grounded_answer(
     if candidate is None:
         return GroundingDecision(applied=False, reason="no_safe_direct_answer")
     if _looks_like_refusal(provider_reply):
-        return GroundingDecision(applied=True, reply=candidate["answer"], reason="direct_answer_refusal_rewrite", source=candidate["source"])
+        return GroundingDecision(applied=False, reason="locked_fact_provider_refusal", source=candidate["source"])
     if _looks_like_direct_conflict(provider_reply=provider_reply, direct_answer=candidate["answer"]):
-        return GroundingDecision(applied=True, reply=candidate["answer"], reason="direct_answer_conflict_rewrite", source=candidate["source"])
-    return GroundingDecision(applied=False, reason="provider_reply_not_refusal_or_conflict", source=candidate["source"])
-
-
-def select_approved_direct_answer_override(
-    *,
-    query: str,
-    provider_output: dict[str, Any] | None,
-    knowledge_context: dict[str, Any] | None,
-    tracking_fact_evidence_present: bool = False,
-) -> GroundingDecision:
-    if not isinstance(knowledge_context, dict):
-        return GroundingDecision(applied=False, reason="knowledge_context_missing")
-    if knowledge_context.get("grounding_would_apply") is not True:
-        return GroundingDecision(applied=False, reason="grounding_context_not_applicable")
-    if not isinstance(knowledge_context.get("grounding_source"), dict) or not knowledge_context.get("grounding_source"):
-        return GroundingDecision(applied=False, reason="grounding_source_missing")
-    hits = knowledge_context.get("hits")
-    if not isinstance(hits, list):
-        return GroundingDecision(applied=False, reason="knowledge_hits_missing")
-    entity_terms = _query_entity_terms(knowledge_context)
-    candidate = select_grounding_candidate(
-        query=query,
-        hits=hits,
-        tracking_fact_evidence_present=tracking_fact_evidence_present,
-        required_entity_terms=entity_terms,
-    )
-    if candidate is None:
-        if entity_terms and select_grounding_candidate(
-            query=query,
-            hits=hits,
-            tracking_fact_evidence_present=tracking_fact_evidence_present,
-        ):
-            return GroundingDecision(applied=False, reason="entity_mismatch")
-        return GroundingDecision(applied=False, reason="no_safe_direct_answer")
-    if _has_trusted_tracking_output_conflict(
-        provider_output=provider_output,
-        tracking_fact_evidence_present=tracking_fact_evidence_present,
-    ):
-        return GroundingDecision(applied=False, reason="trusted_tracking_output_conflict", source=candidate["source"])
-    return GroundingDecision(
-        applied=True,
-        reply=candidate["answer"],
-        reason="approved_direct_answer_override",
-        source=candidate["source"],
-    )
+        return GroundingDecision(applied=False, reason="locked_fact_provider_conflict", source=candidate["source"])
+    return GroundingDecision(applied=False, reason="provider_reply_preserved", source=candidate["source"])
 
 
 def select_grounding_candidate(
@@ -201,29 +157,6 @@ def _looks_like_direct_conflict(*, provider_reply: str | None, direct_answer: st
     if not reply_numbers or not answer_numbers:
         return False
     return answer_numbers.isdisjoint(reply_numbers)
-
-
-def _has_trusted_tracking_output_conflict(
-    *,
-    provider_output: dict[str, Any] | None,
-    tracking_fact_evidence_present: bool,
-) -> bool:
-    if not tracking_fact_evidence_present or not isinstance(provider_output, dict):
-        return False
-    intent = str(provider_output.get("intent") or "").strip()
-    if intent == "tracking":
-        return True
-    return bool(provider_output.get("tracking_number"))
-
-
-def _query_entity_terms(knowledge_context: dict[str, Any]) -> list[str]:
-    query_analysis = knowledge_context.get("query_analysis")
-    if not isinstance(query_analysis, dict):
-        return []
-    raw_terms = query_analysis.get("entity_terms")
-    if not isinstance(raw_terms, list):
-        return []
-    return [str(term).strip() for term in raw_terms if str(term).strip()]
 
 
 def _candidate_entity_text(*, data: dict[str, Any], answer: str, metadata: dict[str, Any]) -> str:

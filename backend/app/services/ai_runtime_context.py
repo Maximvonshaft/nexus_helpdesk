@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from . import persona_service
+from .knowledge_grounding_service import select_grounding_candidate
 from .knowledge_retrieval_service import KnowledgeChunkHit, retrieve_published_chunks
 
 MAX_PERSONA_SUMMARY_CHARS = 1200
@@ -85,7 +86,7 @@ def build_webchat_runtime_context(
             "audience_scope": audience_scope,
         },
         "persona_context": _persona_context(profile, match_rank),
-        "knowledge_context": _knowledge_context(retrieval),
+        "knowledge_context": _knowledge_context(retrieval, query=body),
         "rag_trace": retrieval.as_trace(),
         "safety_policy": {
             "knowledge_scope": "policy_sop_faq_only",
@@ -184,8 +185,37 @@ def _identity_list(value: Any) -> list[str]:
     return items
 
 
-def _knowledge_context(retrieval) -> dict[str, Any]:
+def _knowledge_context(retrieval, *, query: str) -> dict[str, Any]:
     hits: list[KnowledgeChunkHit] = retrieval.hits
+    serialized_hits = [
+        {
+            "item_key": hit.item_key,
+            "title": hit.title,
+            "published_version": hit.published_version,
+            "chunk_index": hit.chunk_index,
+            "score": hit.score,
+            "retrieval_method": hit.retrieval_method,
+            "matched_terms": hit.matched_terms,
+            "score_breakdown": hit.score_breakdown,
+            "direct_answer": _clip(hit.direct_answer, MAX_KNOWLEDGE_DIRECT_ANSWER_CHARS),
+            "answer_mode": hit.answer_mode,
+            "text": _clip(hit.text, MAX_KNOWLEDGE_CHARS),
+            "metadata": {
+                "source_type": hit.metadata.get("source_type"),
+                "file_name": hit.metadata.get("file_name"),
+                "market_id": hit.metadata.get("market_id"),
+                "channel": hit.metadata.get("channel"),
+                "audience_scope": hit.metadata.get("audience_scope"),
+                "language": hit.metadata.get("language"),
+                "knowledge_kind": hit.metadata.get("knowledge_kind"),
+                "fact_status": hit.metadata.get("fact_status"),
+                "answer_mode": hit.metadata.get("answer_mode"),
+                "citation": hit.metadata.get("citation"),
+            },
+            "source_metadata": hit.source_metadata,
+        }
+        for hit in hits
+    ]
     return {
         "retrieval": "hybrid_metadata_fusion_v1",
         "total_matches": retrieval.total,
@@ -194,36 +224,31 @@ def _knowledge_context(retrieval) -> dict[str, Any]:
         "top_hits": retrieval.top_hits,
         "grounding_would_apply": retrieval.grounding_would_apply,
         "grounding_source": retrieval.grounding_source,
-        "hits": [
-            {
-                "item_key": hit.item_key,
-                "title": hit.title,
-                "published_version": hit.published_version,
-                "chunk_index": hit.chunk_index,
-                "score": hit.score,
-                "retrieval_method": hit.retrieval_method,
-                "matched_terms": hit.matched_terms,
-                "score_breakdown": hit.score_breakdown,
-                "direct_answer": _clip(hit.direct_answer, MAX_KNOWLEDGE_DIRECT_ANSWER_CHARS),
-                "answer_mode": hit.answer_mode,
-                "text": _clip(hit.text, MAX_KNOWLEDGE_CHARS),
-                "metadata": {
-                    "source_type": hit.metadata.get("source_type"),
-                    "file_name": hit.metadata.get("file_name"),
-                    "market_id": hit.metadata.get("market_id"),
-                    "channel": hit.metadata.get("channel"),
-                    "audience_scope": hit.metadata.get("audience_scope"),
-                    "language": hit.metadata.get("language"),
-                    "knowledge_kind": hit.metadata.get("knowledge_kind"),
-                    "fact_status": hit.metadata.get("fact_status"),
-                    "answer_mode": hit.metadata.get("answer_mode"),
-                    "citation": hit.metadata.get("citation"),
-                },
-                "source_metadata": hit.source_metadata,
-            }
-            for hit in hits
-        ],
+        "locked_facts": _locked_facts(query=query, hits=serialized_hits),
+        "hits": serialized_hits,
     }
+
+
+def _locked_facts(*, query: str, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidate = select_grounding_candidate(
+        query=query,
+        hits=hits,
+        tracking_fact_evidence_present=False,
+    )
+    if not candidate:
+        return []
+    source = candidate.get("source") if isinstance(candidate.get("source"), dict) else {}
+    answer = _clip(str(candidate.get("answer") or ""), MAX_KNOWLEDGE_DIRECT_ANSWER_CHARS)
+    if not answer:
+        return []
+    return [
+        {
+            "id": f"{source.get('item_key') or 'knowledge'}#{source.get('chunk_index') if source.get('chunk_index') is not None else 0}",
+            "answer": answer,
+            "mode": "locked_fact",
+            "source": source,
+        }
+    ]
 
 
 def _clip(value: str | None, limit: int) -> str | None:
