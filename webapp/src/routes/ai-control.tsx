@@ -30,6 +30,11 @@ const knowledgeKinds = ['document', 'faq', 'business_fact', 'policy', 'sop'] as 
 const factStatuses = ['draft', 'approved', 'archived'] as const
 const answerModes = ['direct_answer', 'guided_answer', 'handoff_only'] as const
 const channelOptions = ['website', 'webchat', 'whatsapp', 'email'] as const
+const visibilityOptions = [
+  { value: 'customer', label: '客户可见' },
+  { value: 'internal', label: '仅内部' },
+] as const
+const knowledgeUploadAccept = '.txt,.pdf,.docx,.xlsx,.csv,.md,.markdown,.html,.htm,text/plain,application/pdf,text/markdown,text/csv,text/html,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 const templateDrafts: Record<string, { summary: string; content: Record<string, unknown>; body?: string }> = {
   persona: {
@@ -84,6 +89,7 @@ function emptyKnowledgeForm() {
     status: 'draft',
     source_type: 'text',
     knowledge_kind: 'document',
+    market_id: '',
     channel: 'website',
     audience_scope: 'customer',
     language: '',
@@ -174,6 +180,101 @@ function statusTone(status: string, publishedVersion = 0): BadgeTone {
   return 'default'
 }
 
+function formatFileSize(value?: number | null) {
+  if (!value) return '未上传'
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${Math.round(value / 102.4) / 10} KB`
+  return `${Math.round(value / 1024 / 102.4) / 10} MB`
+}
+
+function makeKnowledgeItemKey(value: string) {
+  const normalized = value.trim().toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  const slug = normalized.replace(/\.[a-z0-9]+$/i, '').replace(/[^a-z0-9_.-]+/g, '-').replace(/^[-_.]+|[-_.]+$/g, '').slice(0, 90)
+  return `kb.${slug || `knowledge-${Date.now().toString(36)}`}`.slice(0, 120)
+}
+
+function buildDraftSections(value: string) {
+  const cleaned = value.trim()
+  if (!cleaned) return []
+  const rawSections = cleaned
+    .split(/\n{2,}|(?=^#{1,4}\s+)/m)
+    .map((part) => normalizePreviewText(part))
+    .filter(Boolean)
+  const sections = rawSections.length > 1 ? rawSections : splitLongPreview(cleaned)
+  return sections.slice(0, 8)
+}
+
+function splitLongPreview(value: string) {
+  const normalized = normalizePreviewText(value)
+  if (!normalized) return []
+  if (normalized.length <= 900) return [normalized]
+  const sections: string[] = []
+  for (let index = 0; index < normalized.length; index += 760) {
+    sections.push(normalized.slice(index, index + 900).trim())
+  }
+  return sections
+}
+
+function normalizePreviewText(value: string) {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function tokenizePreview(value: string) {
+  const normalized = value.toLowerCase().normalize('NFKC')
+  const terms = new Set<string>()
+  for (const match of normalized.matchAll(/[a-z][a-z0-9_-]{2,}|\d[\da-z.-]{1,}/g)) {
+    const term = match[0]
+    if (!['the', 'and', 'for', 'you', 'your', 'with', 'can', 'how', 'what', 'when', 'where'].includes(term)) terms.add(term)
+  }
+  for (const phrase of normalized.matchAll(/[\u4e00-\u9fff]{2,}/g)) {
+    const value = phrase[0]
+    for (let size = 2; size <= Math.min(4, value.length); size += 1) {
+      for (let index = 0; index <= value.length - size; index += 1) {
+        terms.add(value.slice(index, index + size))
+      }
+    }
+  }
+  return [...terms].slice(0, 32)
+}
+
+function isLiveTrackingQuestion(value: string) {
+  const normalized = value.toLowerCase()
+  const trackingTerm = /tracking|track my|waybill|parcel|package|delivery status|运单|单号|物流|包裹|快递|查件/.test(normalized)
+  const liveStatusTerm = /where is|current|status|arriv|delivered|signed|now|my parcel|my package|到哪|在哪|状态|现在|签收|派送|送到|物流信息/.test(normalized)
+  return trackingTerm && liveStatusTerm
+}
+
+function previewDraftQuestion(question: string, sections: string[], title: string) {
+  const trimmed = question.trim()
+  if (!trimmed) {
+    return { status: 'idle', tone: 'default' as BadgeTone, label: '等待问题', action: '输入客户问题后显示判断', matchedTerms: [] as string[], title }
+  }
+  if (isLiveTrackingQuestion(trimmed)) {
+    return { status: 'tracking', tone: 'warning' as BadgeTone, label: '需要物流证据', action: '实时包裹状态不能从静态知识推断，需 tracking 结果或转人工。', matchedTerms: tokenizePreview(trimmed).slice(0, 8), title }
+  }
+  const terms = tokenizePreview(trimmed)
+  let best = { score: 0, section: '', index: -1, matchedTerms: [] as string[] }
+  sections.forEach((section, index) => {
+    const haystack = section.toLowerCase().normalize('NFKC')
+    const matchedTerms = terms.filter((term) => haystack.includes(term))
+    const score = matchedTerms.length
+    if (score > best.score) best = { score, section, index, matchedTerms }
+  })
+  if (!best.score) {
+    return { status: 'insufficient', tone: 'danger' as BadgeTone, label: '知识不足', action: 'AI 不应编造答案，应要求更多信息或转人工。', matchedTerms: terms.slice(0, 8), title }
+  }
+  return {
+    status: 'grounded',
+    tone: 'success' as BadgeTone,
+    label: '可按知识回答',
+    action: '回答应限制在命中的知识片段内。',
+    matchedTerms: best.matchedTerms.slice(0, 10),
+    section: best.section,
+    sectionIndex: best.index,
+    title,
+  }
+}
+
 function AIControlPage() {
   const session = useSession()
   const navigate = useNavigate()
@@ -189,7 +290,7 @@ function AIControlPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [retrievalQuery, setRetrievalQuery] = useState('')
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
-  const [confirmAction, setConfirmAction] = useState<null | { kind: 'publish-persona' | 'disable-persona' | 'publish-knowledge' | 'archive-knowledge' | 'publish-rule' | 'disable-rule'; title: string; description: string; consequence: string }>(null)
+  const [confirmAction, setConfirmAction] = useState<null | { kind: 'publish-persona' | 'disable-persona' | 'replace-knowledge-file' | 'publish-knowledge' | 'archive-knowledge' | 'publish-rule' | 'disable-rule'; title: string; description: string; consequence: string }>(null)
   const [confirmRollback, setConfirmRollback] = useState<null | { target: 'persona' | 'knowledge' | 'rule'; version: number }>(null)
 
   const personas = useQuery({ queryKey: ['persona-profiles'], queryFn: () => api.personaProfiles(), enabled: permitted })
@@ -213,6 +314,12 @@ function AIControlPage() {
   const personaRows = personas.data?.profiles ?? []
   const knowledgeRows = knowledge.data?.items ?? []
   const ruleRows = rules.data ?? []
+  const marketLabelById = useMemo(() => new Map((markets.data ?? []).map((item) => [item.id, `${item.code} · ${item.name}`])), [markets.data])
+  const draftSections = useMemo(() => buildDraftSections(knowledgeForm.draft_body), [knowledgeForm.draft_body])
+  const draftQuestionPreview = useMemo(
+    () => previewDraftQuestion(retrievalQuery, draftSections, knowledgeForm.title || selectedKnowledge?.title || uploadFile?.name || '当前草稿'),
+    [draftSections, knowledgeForm.title, retrievalQuery, selectedKnowledge?.title, uploadFile?.name],
+  )
 
   const jsonError = useMemo(() => {
     try {
@@ -263,6 +370,7 @@ function AIControlPage() {
       status: selectedKnowledge.status,
       source_type: selectedKnowledge.source_type,
       knowledge_kind: selectedKnowledge.knowledge_kind || 'document',
+      market_id: selectedKnowledge.market_id ? String(selectedKnowledge.market_id) : '',
       channel: selectedKnowledge.channel ?? 'website',
       audience_scope: selectedKnowledge.audience_scope,
       language: selectedKnowledge.language ?? '',
@@ -371,13 +479,15 @@ function AIControlPage() {
 
   const saveKnowledge = useMutation({
     mutationFn: async () => {
+      const itemKey = knowledgeForm.item_key.trim() || makeKnowledgeItemKey(knowledgeForm.title || uploadFile?.name || 'knowledge')
       const payload = {
-        item_key: knowledgeForm.item_key,
+        item_key: itemKey,
         title: knowledgeForm.title,
         summary: knowledgeForm.summary || null,
         status: knowledgeForm.status,
         source_type: knowledgeForm.source_type,
         knowledge_kind: knowledgeForm.knowledge_kind,
+        market_id: knowledgeForm.market_id ? Number(knowledgeForm.market_id) : null,
         channel: knowledgeForm.channel || null,
         audience_scope: knowledgeForm.audience_scope,
         language: knowledgeForm.language.trim() || null,
@@ -408,23 +518,37 @@ function AIControlPage() {
   const uploadKnowledge = useMutation({
     mutationFn: async () => {
       if (!uploadFile) throw new Error('请选择要上传的文档')
-      if (!selectedKnowledgeId) {
-        return api.createKnowledgeItemFromUpload(uploadFile, {
-          item_key: knowledgeForm.item_key || undefined,
-          title: knowledgeForm.title || undefined,
-          channel: knowledgeForm.channel || undefined,
-          audience_scope: knowledgeForm.audience_scope || undefined,
-        })
-      }
+      return api.createKnowledgeItemFromUpload(uploadFile, {
+        item_key: knowledgeForm.item_key || undefined,
+        title: knowledgeForm.title || undefined,
+        market_id: knowledgeForm.market_id ? Number(knowledgeForm.market_id) : undefined,
+        channel: knowledgeForm.channel || undefined,
+        audience_scope: knowledgeForm.audience_scope || undefined,
+        language: knowledgeForm.language.trim() || undefined,
+      })
+    },
+    onSuccess: async (saved) => {
+      setSelectedKnowledgeId(saved.id)
+      setUploadFile(null)
+      setToast({ message: '文档已作为新知识解析到草稿，可预览后发布', tone: 'success' })
+      await invalidateKnowledge(saved.id)
+    },
+    onError: (err: Error) => setToast({ message: err.message || '上传解析失败', tone: 'danger' }),
+  })
+
+  const replaceKnowledgeFile = useMutation({
+    mutationFn: async () => {
+      if (!uploadFile) throw new Error('请选择要替换的文档')
+      if (!selectedKnowledgeId) throw new Error('请选择要替换的知识')
       return api.uploadKnowledgeDocument(selectedKnowledgeId, uploadFile)
     },
     onSuccess: async (saved) => {
       setSelectedKnowledgeId(saved.id)
       setUploadFile(null)
-      setToast({ message: '文档已解析到草稿，可预览后发布', tone: 'success' })
+      setToast({ message: '当前知识文件已替换，可预览后再发布', tone: 'success' })
       await invalidateKnowledge(saved.id)
     },
-    onError: (err: Error) => setToast({ message: err.message || '上传解析失败', tone: 'danger' }),
+    onError: (err: Error) => setToast({ message: err.message || '替换文件失败', tone: 'danger' }),
   })
 
   const publishKnowledge = useMutation({
@@ -466,6 +590,7 @@ function AIControlPage() {
   const retrieval = useMutation({
     mutationFn: () => api.testKnowledgeRetrieval({
       q: retrievalQuery,
+      market_id: knowledgeForm.market_id ? Number(knowledgeForm.market_id) : null,
       channel: knowledgeForm.channel || null,
       audience_scope: knowledgeForm.audience_scope || 'customer',
       language: knowledgeForm.language.trim() || null,
@@ -542,6 +667,7 @@ function AIControlPage() {
     setConfirmAction(null)
     if (action === 'publish-persona') publishPersona.mutate()
     if (action === 'disable-persona') updatePersona.mutate({ is_active: false })
+    if (action === 'replace-knowledge-file') replaceKnowledgeFile.mutate()
     if (action === 'publish-knowledge') publishKnowledge.mutate()
     if (action === 'archive-knowledge') updateKnowledge.mutate({ status: 'archived' })
     if (action === 'publish-rule') publishRule.mutate()
@@ -554,7 +680,7 @@ function AIControlPage() {
         eyebrow="AI Control Center"
         title="AI 控制中心"
         description="智能助手规则与知识配置：配置助手人格、业务知识、发布版本和运行时检索。只有已发布、启用、渠道匹配且未过期的内容会进入 WebChat/Codex 运行时。"
-        actions={<div className="button-row"><Button variant="secondary" onClick={() => { if (tab === 'persona') { setSelectedPersonaId(null); setPersonaForm(emptyPersonaForm()) } else if (tab === 'knowledge') { setSelectedKnowledgeId(null); setKnowledgeForm(emptyKnowledgeForm()) } else { setSelectedRuleId(null); setRuleForm(emptyRuleForm()) } }}>新建{tab === 'persona' ? ' Persona' : tab === 'knowledge' ? '知识' : '业务规则'}</Button><Button variant="primary" onClick={() => tab === 'persona' ? savePersona.mutate() : tab === 'knowledge' ? saveKnowledge.mutate() : saveRule.mutate()} disabled={tab === 'persona' ? savePersona.isPending || !!jsonError : tab === 'knowledge' ? saveKnowledge.isPending : saveRule.isPending || !!ruleJsonError}>{tab === 'persona' ? '保存 Persona 草稿' : tab === 'knowledge' ? '保存知识草稿' : '保存规则草稿'}</Button></div>}
+        actions={<div className="button-row"><Button variant="secondary" onClick={() => { if (tab === 'persona') { setSelectedPersonaId(null); setPersonaForm(emptyPersonaForm()) } else if (tab === 'knowledge') { setSelectedKnowledgeId(null); setKnowledgeForm(emptyKnowledgeForm()); setUploadFile(null) } else { setSelectedRuleId(null); setRuleForm(emptyRuleForm()) } }}>新建{tab === 'persona' ? ' Persona' : tab === 'knowledge' ? '知识' : '业务规则'}</Button><Button variant="primary" onClick={() => tab === 'persona' ? savePersona.mutate() : tab === 'knowledge' ? saveKnowledge.mutate() : saveRule.mutate()} disabled={tab === 'persona' ? savePersona.isPending || !!jsonError : tab === 'knowledge' ? saveKnowledge.isPending : saveRule.isPending || !!ruleJsonError}>{tab === 'persona' ? '保存 Persona 草稿' : tab === 'knowledge' ? '保存知识草稿' : '保存规则草稿'}</Button></div>}
       />
 
       {!permitted ? (
@@ -652,14 +778,14 @@ function AIControlPage() {
           ) : tab === 'knowledge' ? (
             <div className="page-grid split-grid-wide">
               <Card>
-                <CardHeader title="Knowledge Items" subtitle="知识只回答政策、SOP、FAQ；不会作为包裹实时状态证据。" />
+                <CardHeader title="知识库" subtitle="已发布知识会按市场、语言、渠道和可见范围进入客户 AI。" />
                 <CardBody>
                   <div className="list">
                     {knowledgeRows.map((item) => (
                       <button key={item.id} className={`queue-card ${selectedKnowledgeId === item.id ? 'selected' : ''}`} onClick={() => setSelectedKnowledgeId(item.id)}>
-                        <div className="badges"><Badge tone={statusTone(item.status, item.published_version)}>{labelize(item.status)}</Badge><Badge>{labelize(item.knowledge_kind || item.source_type)}</Badge>{item.fact_status === 'approved' ? <Badge tone="success">approved</Badge> : null}<Badge>{sanitizeDisplayText(item.channel || 'global')}</Badge>{item.published_version > 0 ? <Badge tone="success">v{item.published_version}</Badge> : <Badge tone="warning">未发布</Badge>}</div>
+                        <div className="badges"><Badge tone={statusTone(item.status, item.published_version)}>{labelize(item.status)}</Badge><Badge>{sanitizeDisplayText(marketLabelById.get(item.market_id ?? 0) || '全部市场')}</Badge><Badge>{sanitizeDisplayText(item.language || '全部语言')}</Badge><Badge>{sanitizeDisplayText(item.channel || 'global')}</Badge>{item.published_version > 0 ? <Badge tone="success">v{item.published_version}</Badge> : <Badge tone="warning">未发布</Badge>}</div>
                         <div className="queue-card-title">{sanitizeDisplayText(item.title)}</div>
-                        <div className="queue-card-meta">{sanitizeDisplayText(item.item_key)} · chunk {item.chunk_count || 0} · {formatDateTime(item.updated_at)}</div>
+                        <div className="queue-card-meta">{visibilityOptions.find((option) => option.value === item.audience_scope)?.label || sanitizeDisplayText(item.audience_scope)} · {item.chunk_count || 0} prepared sections · {formatDateTime(item.updated_at)}</div>
                         <div className="queue-card-meta">{sanitizeDisplayText(item.summary || item.draft_body || '暂无内容')}</div>
                       </button>
                     ))}
@@ -669,62 +795,85 @@ function AIControlPage() {
               </Card>
 
               <Card>
-                <CardHeader title={selectedKnowledgeId ? '编辑知识草稿' : '新建知识'} subtitle="上传文档会先解析到草稿；发布后生成可检索分段。" />
+                <CardHeader title={selectedKnowledgeId ? '知识草稿' : '上传知识'} subtitle="默认上传会创建新知识；替换现有文件需要单独确认。" />
                 <CardBody>
                   <div className="stack">
-                    <div className="button-row">{configTypes.map((item) => <Button key={item} variant="secondary" onClick={() => { const template = templateDrafts[item]; if (item === 'knowledge') setKnowledgeForm((s) => ({ ...s, summary: template.summary, draft_body: template.body || s.draft_body })) }}>套用{aiConfigTypeLabels[item]}模板</Button>)}</div>
                     <div className="form-grid">
-                      <Field label="Item Key" required example="faq.address-change"><Input value={knowledgeForm.item_key} onChange={(e) => setKnowledgeForm((s) => ({ ...s, item_key: e.target.value }))} /></Field>
-                      <Field label="标题" required><Input value={knowledgeForm.title} onChange={(e) => setKnowledgeForm((s) => ({ ...s, title: e.target.value }))} /></Field>
-                      <Field label="状态"><Select value={knowledgeForm.status} onChange={(e) => setKnowledgeForm((s) => ({ ...s, status: e.target.value }))}>{knowledgeStatuses.map((item) => <option key={item} value={item}>{labelize(item)}</option>)}</Select></Field>
-                      <Field label="知识类型"><Select value={knowledgeForm.knowledge_kind} onChange={(e) => setKnowledgeForm((s) => ({ ...s, knowledge_kind: e.target.value }))}>{knowledgeKinds.map((item) => <option key={item} value={item}>{labelize(item)}</option>)}</Select></Field>
-                      <Field label="Fact 状态"><Select value={knowledgeForm.fact_status} onChange={(e) => setKnowledgeForm((s) => ({ ...s, fact_status: e.target.value }))}>{factStatuses.map((item) => <option key={item} value={item}>{labelize(item)}</option>)}</Select></Field>
-                      <Field label="回答模式"><Select value={knowledgeForm.answer_mode} onChange={(e) => setKnowledgeForm((s) => ({ ...s, answer_mode: e.target.value }))}>{answerModes.map((item) => <option key={item} value={item}>{labelize(item)}</option>)}</Select></Field>
-                      <Field label="渠道"><Select value={knowledgeForm.channel} onChange={(e) => setKnowledgeForm((s) => ({ ...s, channel: e.target.value }))}>{channelOptions.map((item) => <option key={item} value={item}>{item}</option>)}</Select></Field>
-                      <Field label="受众"><Input value={knowledgeForm.audience_scope} onChange={(e) => setKnowledgeForm((s) => ({ ...s, audience_scope: e.target.value }))} /></Field>
+                      <Field label="知识名称" required><Input value={knowledgeForm.title} onChange={(e) => setKnowledgeForm((s) => ({ ...s, title: e.target.value }))} placeholder="例如：瑞士客户支持 FAQ" /></Field>
+                      <Field label="国家 / 市场"><Select value={knowledgeForm.market_id} onChange={(e) => setKnowledgeForm((s) => ({ ...s, market_id: e.target.value }))}><option value="">全部市场</option>{(markets.data ?? []).map((item) => <option key={item.id} value={String(item.id)}>{item.code} · {item.name}</option>)}</Select></Field>
                       <Field label="语言"><Input value={knowledgeForm.language} onChange={(e) => setKnowledgeForm((s) => ({ ...s, language: e.target.value }))} placeholder="zh / en / 留空全局" /></Field>
-                      <Field label="优先级"><Input type="number" value={knowledgeForm.priority} onChange={(e) => setKnowledgeForm((s) => ({ ...s, priority: Number(e.target.value) }))} /></Field>
+                      <Field label="渠道"><Select value={knowledgeForm.channel} onChange={(e) => setKnowledgeForm((s) => ({ ...s, channel: e.target.value }))}>{channelOptions.map((item) => <option key={item} value={item}>{item}</option>)}</Select></Field>
+                      <Field label="可见范围"><Select value={knowledgeForm.audience_scope} onChange={(e) => setKnowledgeForm((s) => ({ ...s, audience_scope: e.target.value }))}>{visibilityOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
+                      <Field label="上传知识文件" hint="支持 TXT、PDF、DOCX、XLSX、CSV、Markdown、HTML。"><Input type="file" accept={knowledgeUploadAccept} onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} /></Field>
                     </div>
-                    <div className="form-grid">
-                      <Field label="结构化问题"><Textarea rows={3} value={knowledgeForm.fact_question} onChange={(e) => setKnowledgeForm((s) => ({ ...s, fact_question: e.target.value }))} /></Field>
-                      <Field label="结构化答案"><Textarea rows={3} value={knowledgeForm.fact_answer} onChange={(e) => setKnowledgeForm((s) => ({ ...s, fact_answer: e.target.value }))} /></Field>
-                    </div>
-                    <div className="form-grid">
-                      <Field label="Aliases" hint="每行一个客户问法、业务词或缩写"><Textarea rows={4} value={knowledgeForm.fact_aliases_text} onChange={(e) => setKnowledgeForm((s) => ({ ...s, fact_aliases_text: e.target.value }))} /></Field>
-                      <Field label="Citation metadata JSON"><Textarea rows={4} value={knowledgeForm.citation_metadata_text} onChange={(e) => setKnowledgeForm((s) => ({ ...s, citation_metadata_text: e.target.value }))} /></Field>
-                    </div>
-                    <Field label="摘要"><Textarea value={knowledgeForm.summary} onChange={(e) => setKnowledgeForm((s) => ({ ...s, summary: e.target.value }))} /></Field>
-                    <Field label="草稿正文 / 解析预览" hint="这里是发布前预览。发布后才会进入 KnowledgeChunk 检索。"><Textarea rows={12} value={knowledgeForm.draft_body} onChange={(e) => setKnowledgeForm((s) => ({ ...s, draft_body: e.target.value, source_type: 'text' }))} /></Field>
-                    <div className="kv-grid">
+                    <div className="kv-grid kv-grid-three">
+                      <div className="kv"><label>文件</label><strong>{sanitizeDisplayText(uploadFile?.name || selectedKnowledge?.file_name || '未选择')}</strong></div>
+                      <div className="kv"><label>大小</label><strong>{formatFileSize(uploadFile?.size || selectedKnowledge?.file_size)}</strong></div>
                       <div className="kv"><label>解析状态</label><strong>{sanitizeDisplayText(selectedKnowledge?.parsing_status || 'unparsed')}</strong></div>
-                      <div className="kv"><label>索引版本</label><strong>v{selectedKnowledge?.indexed_version || 0} · {selectedKnowledge?.chunk_count || 0} chunks</strong></div>
+                      <div className="kv"><label>草稿分段预览</label><strong>{draftSections.length}</strong></div>
+                      <div className="kv"><label>发布版本</label><strong>v{selectedKnowledge?.published_version || 0}</strong></div>
+                      <div className="kv"><label>已索引分段</label><strong>{selectedKnowledge?.chunk_count || 0}</strong></div>
                     </div>
                     {selectedKnowledge?.parsing_error ? <ErrorSummary title="文档解析错误" errors={[selectedKnowledge.parsing_error]} /> : null}
-                    <div className="form-grid">
-                      <Field label="上传知识文档" hint="支持 UTF-8 文本和 PDF。上传后会覆盖当前草稿正文。"><Input type="file" accept=".txt,.pdf,text/plain,application/pdf" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} /></Field>
-                      <Field label="已选文件"><Input value={uploadFile?.name || selectedKnowledge?.file_name || ''} readOnly /></Field>
+                    <Field label="摘要"><Textarea value={knowledgeForm.summary} onChange={(e) => setKnowledgeForm((s) => ({ ...s, summary: e.target.value }))} /></Field>
+                    <Field label="解析内容预览"><Textarea rows={12} value={knowledgeForm.draft_body} onChange={(e) => setKnowledgeForm((s) => ({ ...s, draft_body: e.target.value, source_type: 'text' }))} /></Field>
+                    <div className="list compact">
+                      {draftSections.slice(0, 4).map((section, index) => (
+                        <div key={`${index}-${section.slice(0, 24)}`} className="list-item">
+                          <div className="badges"><Badge>section {index + 1}</Badge></div>
+                          <div className="queue-card-meta">{sanitizeDisplayText(section)}</div>
+                        </div>
+                      ))}
+                      {!draftSections.length ? <EmptyState title="暂无解析内容" description="上传或粘贴知识内容后，这里会显示系统理解到的文本。" reason="空草稿不能发布，也不会进入客户 AI。" /> : null}
                     </div>
-                    <div className="button-row"><Button variant="primary" onClick={() => saveKnowledge.mutate()} disabled={saveKnowledge.isPending}>保存草稿</Button><Button onClick={() => uploadKnowledge.mutate()} disabled={!uploadFile || uploadKnowledge.isPending}>{selectedKnowledgeId ? '上传并解析' : '上传并创建'}</Button><Button onClick={() => setConfirmAction({ kind: 'publish-knowledge', title: '发布当前知识？', description: '发布后会生成 KnowledgeChunk，并允许匹配渠道的运行时检索。', consequence: '请确认正文不包含未核实的包裹实时状态。' })} disabled={!selectedKnowledgeId || publishKnowledge.isPending}>发布并索引</Button><Button variant="danger" onClick={() => setConfirmAction({ kind: 'archive-knowledge', title: '归档当前知识？', description: '归档后运行时不会再检索这条知识。', consequence: '已发布版本仍保留在历史中，可回滚后重新发布。' })} disabled={!selectedKnowledgeId || selectedKnowledge?.status === 'archived'}>归档</Button></div>
+                    <TechnicalDetails title="高级知识字段" summary="内部 ID、结构化事实、检索和来源元数据">
+                      <div className="stack">
+                        <div className="button-row">{configTypes.map((item) => <Button key={item} variant="secondary" onClick={() => { const template = templateDrafts[item]; if (item === 'knowledge') setKnowledgeForm((s) => ({ ...s, summary: template.summary, draft_body: template.body || s.draft_body })) }}>套用{aiConfigTypeLabels[item]}模板</Button>)}</div>
+                        <div className="form-grid">
+                          <Field label="Internal ID" example="faq.address-change"><Input value={knowledgeForm.item_key} onChange={(e) => setKnowledgeForm((s) => ({ ...s, item_key: e.target.value }))} /></Field>
+                          <Field label="状态"><Select value={knowledgeForm.status} onChange={(e) => setKnowledgeForm((s) => ({ ...s, status: e.target.value }))}>{knowledgeStatuses.map((item) => <option key={item} value={item}>{labelize(item)}</option>)}</Select></Field>
+                          <Field label="知识类型"><Select value={knowledgeForm.knowledge_kind} onChange={(e) => setKnowledgeForm((s) => ({ ...s, knowledge_kind: e.target.value }))}>{knowledgeKinds.map((item) => <option key={item} value={item}>{labelize(item)}</option>)}</Select></Field>
+                          <Field label="确认状态"><Select value={knowledgeForm.fact_status} onChange={(e) => setKnowledgeForm((s) => ({ ...s, fact_status: e.target.value }))}>{factStatuses.map((item) => <option key={item} value={item}>{labelize(item)}</option>)}</Select></Field>
+                          <Field label="AI 使用方式"><Select value={knowledgeForm.answer_mode} onChange={(e) => setKnowledgeForm((s) => ({ ...s, answer_mode: e.target.value }))}>{answerModes.map((item) => <option key={item} value={item}>{labelize(item)}</option>)}</Select></Field>
+                          <Field label="优先级"><Input type="number" value={knowledgeForm.priority} onChange={(e) => setKnowledgeForm((s) => ({ ...s, priority: Number(e.target.value) }))} /></Field>
+                        </div>
+                        <div className="form-grid">
+                          <Field label="结构化问题"><Textarea rows={3} value={knowledgeForm.fact_question} onChange={(e) => setKnowledgeForm((s) => ({ ...s, fact_question: e.target.value }))} /></Field>
+                          <Field label="结构化答案"><Textarea rows={3} value={knowledgeForm.fact_answer} onChange={(e) => setKnowledgeForm((s) => ({ ...s, fact_answer: e.target.value }))} /></Field>
+                        </div>
+                        <div className="form-grid">
+                          <Field label="客户问法 / 业务词" hint="每行一个客户问法、业务词或缩写"><Textarea rows={4} value={knowledgeForm.fact_aliases_text} onChange={(e) => setKnowledgeForm((s) => ({ ...s, fact_aliases_text: e.target.value }))} /></Field>
+                          <Field label="来源与审批 JSON"><Textarea rows={4} value={knowledgeForm.citation_metadata_text} onChange={(e) => setKnowledgeForm((s) => ({ ...s, citation_metadata_text: e.target.value }))} /></Field>
+                        </div>
+                      </div>
+                    </TechnicalDetails>
+                    <div className="button-row"><Button variant="primary" onClick={() => saveKnowledge.mutate()} disabled={saveKnowledge.isPending}>保存草稿</Button><Button onClick={() => uploadKnowledge.mutate()} disabled={!uploadFile || uploadKnowledge.isPending}>上传为新知识</Button><Button variant="danger" onClick={() => setConfirmAction({ kind: 'replace-knowledge-file', title: '替换当前知识文件？', description: '这会把所选文件解析到当前知识草稿，不会创建新知识。', consequence: '请确认当前选中的知识和文件属于同一业务范围，避免把文件传入错误知识。' })} disabled={!selectedKnowledgeId || !uploadFile || replaceKnowledgeFile.isPending}>替换当前文件</Button><Button onClick={() => setConfirmAction({ kind: 'publish-knowledge', title: '发布当前知识？', description: '发布后会生成 KnowledgeChunk，并允许匹配渠道的运行时检索。', consequence: '请确认正文不包含未核实的包裹实时状态。' })} disabled={!selectedKnowledgeId || publishKnowledge.isPending}>发布并索引</Button><Button variant="danger" onClick={() => setConfirmAction({ kind: 'archive-knowledge', title: '归档当前知识？', description: '归档后运行时不会再检索这条知识。', consequence: '已发布版本仍保留在历史中，可回滚后重新发布。' })} disabled={!selectedKnowledgeId || selectedKnowledge?.status === 'archived'}>归档</Button></div>
                   </div>
                 </CardBody>
               </Card>
 
               <Card>
-                <CardHeader title="检索测试" subtitle="按当前渠道和受众过滤，只展示会进入运行时的发布分段。" />
+                <CardHeader title="客户问题测试" subtitle="先看当前草稿是否足够；发布后再验证运行时会命中的知识。" />
                 <CardBody>
                   <div className="stack">
-                    <Field label="客户问题"><Input value={retrievalQuery} onChange={(e) => setRetrievalQuery(e.target.value)} placeholder="Can I change my delivery address?" /></Field>
-                    <div className="button-row"><Button onClick={() => retrieval.mutate()} disabled={!retrievalQuery.trim() || retrieval.isPending}>测试检索</Button></div>
+                    <Field label="客户问题"><Input value={retrievalQuery} onChange={(e) => setRetrievalQuery(e.target.value)} placeholder="POD 是什么意思？" /></Field>
+                    <div className="list-item">
+                      <div className="badges"><Badge tone={draftQuestionPreview.tone}>{draftQuestionPreview.label}</Badge><Badge>{sanitizeDisplayText(draftQuestionPreview.title)}</Badge></div>
+                      <strong>{sanitizeDisplayText(draftQuestionPreview.action)}</strong>
+                      {'section' in draftQuestionPreview && draftQuestionPreview.section ? <div className="message" data-role="assistant">{sanitizeDisplayText(draftQuestionPreview.section)}</div> : null}
+                      {draftQuestionPreview.matchedTerms.length ? <div className="badges">{draftQuestionPreview.matchedTerms.map((term) => <Badge key={term}>{sanitizeDisplayText(term)}</Badge>)}</div> : null}
+                    </div>
+                    <div className="button-row"><Button onClick={() => retrieval.mutate()} disabled={!retrievalQuery.trim() || retrieval.isPending}>测试已发布知识</Button></div>
                     {retrieval.data?.query_analysis ? (
                       <div className="kv-grid">
-                        <div className="kv"><label>Language</label><strong>{sanitizeDisplayText(retrieval.data.query_analysis.language)}</strong></div>
-                        <div className="kv"><label>Candidates</label><strong>{retrieval.data.candidate_count ?? 0} / {retrieval.data.total}</strong></div>
-                        <div className="kv"><label>Grounding</label><strong>{retrieval.data.grounding_would_apply ? 'direct-answer ready' : 'not applicable'}</strong></div>
+                        <div className="kv"><label>语言</label><strong>{sanitizeDisplayText(retrieval.data.query_analysis.language)}</strong></div>
+                        <div className="kv"><label>候选知识</label><strong>{retrieval.data.candidate_count ?? 0} / {retrieval.data.total}</strong></div>
+                        <div className="kv"><label>可直接回答</label><strong>{retrieval.data.grounding_would_apply ? '是' : '否'}</strong></div>
                       </div>
                     ) : null}
                     {retrieval.data?.query_analysis ? (
                       <div className="list-item">
-                        <strong>Query terms</strong>
+                        <strong>客户问题关键词</strong>
                         <div className="badges">{retrieval.data.query_analysis.high_value_terms.map((term) => <Badge key={term}>{sanitizeDisplayText(term)}</Badge>)}</div>
                         <div className="section-subtitle">{sanitizeDisplayText(retrieval.data.query_analysis.normalized_query)}</div>
                       </div>
@@ -734,7 +883,7 @@ function AIControlPage() {
                         <div key={`${hit.item_key}-${hit.chunk_index}`} className="list-item">
                           <div className="badges"><Badge tone="success">score {hit.score}</Badge><Badge>v{hit.published_version}</Badge><Badge>{sanitizeDisplayText(hit.retrieval_method || 'hybrid')}</Badge>{hit.direct_answer ? <Badge tone="success">direct answer</Badge> : null}</div>
                           <strong>{sanitizeDisplayText(hit.title)}</strong>
-                          <div className="section-subtitle">{sanitizeDisplayText(hit.item_key)} · chunk {hit.chunk_index}</div>
+                          <div className="section-subtitle">{sanitizeDisplayText(hit.source_metadata?.file_name ? String(hit.source_metadata.file_name) : hit.item_key)} · section {hit.chunk_index + 1}</div>
                           {hit.matched_terms?.length ? <div className="badges">{hit.matched_terms.map((term) => <Badge key={term}>{sanitizeDisplayText(term)}</Badge>)}</div> : null}
                           {hit.direct_answer ? <div className="message" data-role="agent">{sanitizeDisplayText(hit.direct_answer)}</div> : null}
                           <div className="message" data-role="assistant">{sanitizeDisplayText(hit.text)}</div>
@@ -746,6 +895,13 @@ function AIControlPage() {
                       {retrieval.data && !retrieval.data.hits.length ? <EmptyState title="没有命中可注入知识" description="请检查关键词、渠道、受众、发布状态和有效期。" reason="系统不会放宽过滤条件去读取错误渠道或草稿知识。" /> : null}
                     </div>
                   </div>
+                </CardBody>
+              </Card>
+
+              <Card>
+                <CardHeader title="知识发布历史" subtitle="保留版本证据，可回滚并重新发布。" />
+                <CardBody>
+                  <VersionList versions={selectedKnowledge?.versions ?? []} onRollback={(version) => setConfirmRollback({ target: 'knowledge', version })} />
                 </CardBody>
               </Card>
             </div>

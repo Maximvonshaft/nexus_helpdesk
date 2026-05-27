@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from fastapi import HTTPException, UploadFile
@@ -36,6 +37,30 @@ def _clean_optional_text(value: str | None) -> str | None:
         return None
     cleaned = value.strip()
     return cleaned or None
+
+
+def _suggest_summary(text: str | None) -> str | None:
+    normalized = _clean_optional_text(text)
+    if not normalized:
+        return None
+    sentence = re.split(r"(?<=[。！？.!?])\s+", normalized, maxsplit=1)[0].strip()
+    summary = sentence or normalized
+    if len(summary) > 360:
+        summary = f"{summary[:357].rstrip()}..."
+    return summary
+
+
+def _detect_text_language(text: str | None) -> str | None:
+    normalized = text or ""
+    cjk_count = sum(1 for ch in normalized if "\u4e00" <= ch <= "\u9fff")
+    latin_count = sum(1 for ch in normalized.lower() if "a" <= ch <= "z")
+    if cjk_count and latin_count:
+        return "mixed"
+    if cjk_count:
+        return "zh"
+    if latin_count:
+        return "en"
+    return None
 
 
 def _validate_shape(*, status: str, source_type: str, knowledge_kind: str = "document", fact_status: str = "draft", answer_mode: str = "guided_answer") -> None:
@@ -210,7 +235,18 @@ def create_item(db: Session, payload, actor) -> KnowledgeItem:
     return row
 
 
-def create_file_item_from_upload(db: Session, *, file: UploadFile, actor, item_key: str | None = None, title: str | None = None, channel: str | None = "website", audience_scope: str | None = "customer") -> KnowledgeItem:
+def create_file_item_from_upload(
+    db: Session,
+    *,
+    file: UploadFile,
+    actor,
+    item_key: str | None = None,
+    title: str | None = None,
+    market_id: int | None = None,
+    channel: str | None = "website",
+    audience_scope: str | None = "customer",
+    language: str | None = None,
+) -> KnowledgeItem:
     filename = file.filename or "knowledge.txt"
     key = _normalize_key(_clean_optional_text(item_key) or _safe_item_key_from_filename(filename))
     if db.query(KnowledgeItem).filter(KnowledgeItem.item_key == key).first() is not None:
@@ -221,8 +257,11 @@ def create_file_item_from_upload(db: Session, *, file: UploadFile, actor, item_k
         summary=None,
         status="draft",
         source_type="file",
+        knowledge_kind="document",
+        market_id=market_id,
         channel=_clean_optional_text(channel),
         audience_scope=_clean_optional_text(audience_scope) or "customer",
+        language=_clean_optional_text(language),
         priority=100,
         parsing_status="unparsed",
         parsing_error=None,
@@ -250,6 +289,10 @@ def upload_document(db: Session, row: KnowledgeItem, file: UploadFile, actor) ->
     row.file_size = stored.file_size
     row.draft_body = parsed_body
     row.draft_normalized_text = normalized_text
+    if not row.summary:
+        row.summary = _suggest_summary(normalized_text)
+    if not row.language:
+        row.language = _detect_text_language(normalized_text)
     row.parsing_status = "parsed"
     row.parsing_error = None
     row.parsed_at = now

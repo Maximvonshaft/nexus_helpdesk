@@ -158,8 +158,10 @@ def test_one_step_upload_api_creates_file_item(monkeypatch):
             data={
                 "item_key": "upload.one-step",
                 "title": "One Step Upload",
+                "market_id": "1",
                 "channel": "website",
                 "audience_scope": "customer",
+                "language": "en",
             },
             files={"file": ("upload-faq.txt", b"Customers may change address before dispatch.", "text/plain")},
         )
@@ -172,6 +174,9 @@ def test_one_step_upload_api_creates_file_item(monkeypatch):
     payload = response.json()
     assert payload["item_key"] == "upload.one-step"
     assert payload["title"] == "One Step Upload"
+    assert payload["market_id"] == 1
+    assert payload["language"] == "en"
+    assert payload["summary"] == "Customers may change address before dispatch."
     assert payload["source_type"] == "file"
     assert payload["file_storage_key"] == "stored-upload-faq.txt"
     assert payload["parsing_status"] == "parsed"

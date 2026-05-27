@@ -86,8 +86,10 @@ def create_knowledge_item_from_upload(
     file: UploadFile = File(...),
     item_key: str | None = Form(default=None),
     title: str | None = Form(default=None),
+    market_id: int | None = Form(default=None),
     channel: str | None = Form(default="website"),
     audience_scope: str | None = Form(default="customer"),
+    language: str | None = Form(default=None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -99,8 +101,10 @@ def create_knowledge_item_from_upload(
             actor=current_user,
             item_key=item_key,
             title=title,
+            market_id=market_id,
             channel=channel,
             audience_scope=audience_scope or "customer",
+            language=language,
         )
     db.refresh(row)
     return _item_out(row)
