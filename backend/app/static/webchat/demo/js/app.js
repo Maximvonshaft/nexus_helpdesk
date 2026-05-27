@@ -7,7 +7,8 @@
     channelKey: 'website',
     timeoutMs: 240000,
     sessionKey: 'speedaf-demo:webchat:session-id',
-    contextKey: 'speedaf-demo:webchat:recent-context'
+    contextKey: 'speedaf-demo:webchat:recent-context',
+    fastReplyPath: '/api/webchat/fast-reply'
   });
 
   const panel = document.getElementById('chatPanel');
@@ -124,14 +125,19 @@
     sendFastReply(body)
       .then(function (data) {
         hideTyping();
-        const reply = data && data.ok === true && data.reply ? String(data.reply).trim() : '';
-        if (!reply) throw new Error('empty_reply');
-        appendMessage('bot', reply, { handoff: Boolean(data.handoff_required) });
-        remember(body, reply);
+        const reply = data && data.reply ? String(data.reply).trim() : '';
+        const debugContext = data && data.__debug_context ? data.__debug_context : makeDebugContext({ error_code: 'render_error' });
+        try {
+          appendMessage('bot', reply, { handoff: Boolean(data.handoff_required) });
+          remember(body, reply);
+        } catch (renderError) {
+          reportDemoError('webchat_demo_render_error', renderError, withDebug(debugContext, { error_code: 'render_error' }));
+        }
       })
-      .catch(function () {
+      .catch(function (error) {
         hideTyping();
-        appendMessage('bot', 'Connection issue. Please try again.');
+        reportDemoError('webchat_demo_api_error', error, error && error.debug_context);
+        appendMessage('bot', userVisibleErrorMessage(error));
       })
       .finally(function () {
         busy = false;
@@ -140,28 +146,107 @@
       });
   }
 
+  function makeDebugContext(extra) {
+    return Object.assign({
+      session_id: sessionId,
+      tenant_key: CONFIG.tenantKey,
+      channel_key: CONFIG.channelKey,
+      request_path: CONFIG.fastReplyPath,
+      http_status: null,
+      backend_error_code: null,
+      client_message_id: null,
+      error_code: null
+    }, extra || {});
+  }
+
+  function withDebug(base, extra) {
+    return Object.assign({}, base || {}, extra || {});
+  }
+
+  function classifiedError(errorCode, message, debugContext) {
+    const error = new Error(message || errorCode);
+    error.name = 'WebchatDemoError';
+    error.error_code = errorCode;
+    error.debug_context = withDebug(debugContext, { error_code: errorCode });
+    if (error.debug_context.http_status) error.status = error.debug_context.http_status;
+    return error;
+  }
+
+  function reportDemoError(label, error, debugContext) {
+    const safeDebug = withDebug(debugContext || (error && error.debug_context), {
+      error_type: error && error.name ? error.name : 'Error',
+      error_message: error && error.message ? String(error.message).slice(0, 160) : undefined
+    });
+    if (window.console && typeof window.console.error === 'function') {
+      window.console.error(label, safeDebug);
+    }
+  }
+
+  function userVisibleErrorMessage(error) {
+    const code = error && (error.error_code || (error.debug_context && error.debug_context.error_code));
+    if (code === 'network_timeout') return 'Connection timed out. Please try again.';
+    if (code === 'origin_forbidden' || code === 'http_403') return 'Chat is not allowed from this website. Please contact support.';
+    if (code === 'empty_reply') return 'The assistant returned an empty reply. Please retry.';
+    if (code === 'api_error_code') return 'The assistant is temporarily unavailable. Please retry.';
+    if (code === 'render_error') return 'The reply was received but could not be displayed. Please refresh and try again.';
+    return 'Connection issue. Please try again.';
+  }
+
+  function submitDebugPayload(data, debugContext) {
+    if (data && typeof data === 'object') {
+      data.__debug_context = debugContext;
+    }
+    return data;
+  }
+
+  function backendErrorCode(data) {
+    if (!data || typeof data !== 'object') return null;
+    if (typeof data.error_code === 'string' && data.error_code) return data.error_code;
+    if (data.detail && typeof data.detail === 'object' && typeof data.detail.code === 'string') return data.detail.code;
+    if (typeof data.detail === 'string' && data.detail) return data.detail.slice(0, 120);
+    return null;
+  }
+
   function sendFastReply(body) {
     const controller = new AbortController();
     const timer = setTimeout(function () { controller.abort(); }, CONFIG.timeoutMs);
+    const clientMessageId = makeId('msg');
+    const debugBase = makeDebugContext({ client_message_id: clientMessageId });
     const payload = {
       tenant_key: CONFIG.tenantKey,
       channel_key: CONFIG.channelKey,
       session_id: sessionId,
-      client_message_id: makeId('msg'),
+      client_message_id: clientMessageId,
       body: body,
       recent_context: recentContext.slice(-10)
     };
 
-    return fetch(CONFIG.apiBase + '/api/webchat/fast-reply', {
+    return fetch(CONFIG.apiBase + CONFIG.fastReplyPath, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal: controller.signal
     }).then(function (res) {
-      return res.json().then(function (data) {
-        if (!res.ok) throw new Error('http_' + res.status);
-        return data;
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        const apiCode = backendErrorCode(data);
+        const debugContext = withDebug(debugBase, { http_status: res.status, backend_error_code: apiCode });
+        if (!res.ok) {
+          const httpCode = res.status === 403 ? 'origin_forbidden' : 'http_error';
+          throw classifiedError(httpCode, 'http_' + res.status, debugContext);
+        }
+        if (!data || data.ok !== true) {
+          throw classifiedError(apiCode ? 'api_error_code' : 'api_not_ok', apiCode || 'api_not_ok', debugContext);
+        }
+        const reply = data.reply ? String(data.reply).trim() : '';
+        if (!reply) throw classifiedError('empty_reply', 'empty_reply', debugContext);
+        return submitDebugPayload(data, debugContext);
       });
+    }).catch(function (error) {
+      if (error && error.debug_context) throw error;
+      if (error && error.name === 'AbortError') {
+        throw classifiedError('network_timeout', 'network_timeout', debugBase);
+      }
+      throw classifiedError('network_error', error && error.message ? error.message : 'network_error', debugBase);
     }).finally(function () {
       clearTimeout(timer);
     });
