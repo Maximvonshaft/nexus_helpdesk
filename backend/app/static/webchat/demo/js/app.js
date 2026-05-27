@@ -11,6 +11,18 @@
     fastReplyPath: '/api/webchat/fast-reply'
   });
 
+  // NEXUSDESK_DEMO_PUBLIC_HANDOFF_CLIENT_BEGIN
+  const PUBLIC_SESSION_KEY = CONFIG.sessionKey + ':public-session';
+  const PUBLIC_POLL_MS = 4000;
+  const QUICK_ACTION_MESSAGES = Object.freeze({
+    track: 'Please help me track my parcel. I will provide the tracking number.',
+    redelivery: 'I need help with redelivery.',
+    refuse: 'Refuse delivery',
+    problem: 'I have a delivery issue and need help.',
+    human: 'Talk to human'
+  });
+  // NEXUSDESK_DEMO_PUBLIC_HANDOFF_CLIENT_END
+
   const panel = document.getElementById('chatPanel');
   const closeBtn = document.getElementById('closeChat');
   const openBtn = document.getElementById('floatingChat');
@@ -24,8 +36,12 @@
   const trackingInput = document.getElementById('trackingInput');
 
   let busy = false;
+  let handoffRequested = false;
   let recentContext = loadContext();
   const sessionId = loadSessionId();
+  let publicSession = loadPublicSession();
+  let publicPollTimer = null;
+  const renderedServerMessageIds = Object.create(null);
 
   window.SpeedafSiteConfig = {
     API_BASE_URL: CONFIG.apiBase,
@@ -34,6 +50,12 @@
     session_id: sessionId,
     requestTimeoutMs: CONFIG.timeoutMs
   };
+
+  // NEXUSDESK_DEMO_PUBLIC_HANDOFF_STARTUP
+  if (publicSession && publicSession.conversationId && publicSession.visitorToken) {
+    handoffRequested = true;
+    schedulePublicPoll(true);
+  }
 
   if (openBtn) openBtn.addEventListener('click', openChat);
   if (closeBtn) closeBtn.addEventListener('click', closeChat);
@@ -59,8 +81,10 @@
 
   Array.from(document.querySelectorAll('.quick-btn[data-action]')).forEach(function (button) {
     button.addEventListener('click', function () {
+      if (button.disabled) return;
       const action = button.getAttribute('data-action') || 'general';
-      const message = button.textContent ? button.textContent.trim() : action;
+      const message = QUICK_ACTION_MESSAGES[action] || (button.textContent ? button.textContent.trim() : action);
+      if (action === 'track') clearContext();
       if (input) input.value = message;
       submitMessage();
     });
@@ -122,14 +146,32 @@
     if (sendBtn) sendBtn.disabled = true;
     showTyping();
 
-    sendFastReply(body)
+    // NEXUSDESK_DEMO_PUBLIC_HANDOFF_SEND_SWITCH
+    const sendOperation = handoffRequested && publicSession && publicSession.conversationId && publicSession.visitorToken
+      ? sendPublicMessage(body)
+      : sendFastReply(body);
+
+    sendOperation
       .then(function (data) {
         hideTyping();
+        // NEXUSDESK_DEMO_PUBLIC_HANDOFF_SENT_BRANCH
+        if (data && data.__public_message_sent) {
+          schedulePublicPoll(true);
+          return;
+        }
         const reply = data && data.reply ? String(data.reply).trim() : '';
         const debugContext = data && data.__debug_context ? data.__debug_context : makeDebugContext({ error_code: 'render_error' });
         try {
           appendMessage('bot', reply, { handoff: Boolean(data.handoff_required) });
           remember(body, reply);
+          rememberPublicSession(data);
+          // NEXUSDESK_DEMO_PUBLIC_HANDOFF_AFTER_FAST_REPLY
+          if (data && data.handoff_required) {
+            handoffRequested = true;
+            setQuickButtonsDisabled(true);
+            if (input) input.placeholder = 'Human review requested. You can continue typing here.';
+            schedulePublicPoll(true);
+          }
         } catch (renderError) {
           reportDemoError('webchat_demo_render_error', renderError, withDebug(debugContext, { error_code: 'render_error' }));
         }
@@ -285,6 +327,167 @@
     if (!log) return;
     log.querySelectorAll('.dynamic-typing').forEach(function (node) { node.remove(); });
   }
+
+  // NEXUSDESK_DEMO_PUBLIC_HANDOFF_HELPERS_BEGIN
+  function setQuickButtonsDisabled(disabled) {
+    Array.from(document.querySelectorAll('.quick-btn[data-action]')).forEach(function (button) {
+      button.disabled = Boolean(disabled);
+      button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    });
+  }
+
+  function clearContext() {
+    recentContext = [];
+    try { sessionStorage.removeItem(CONFIG.contextKey); } catch (_) {}
+  }
+
+  function loadPublicSession() {
+    try {
+      const parsed = JSON.parse(sessionStorage.getItem(PUBLIC_SESSION_KEY) || '{}');
+      if (!parsed || !parsed.conversationId || !parsed.visitorToken) return null;
+      return {
+        conversationId: String(parsed.conversationId || ''),
+        visitorToken: String(parsed.visitorToken || ''),
+        lastMessageId: Number(parsed.lastMessageId || 0),
+        lastEventId: Number(parsed.lastEventId || 0)
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function persistPublicSession() {
+    if (!publicSession || !publicSession.conversationId || !publicSession.visitorToken) return;
+    try { sessionStorage.setItem(PUBLIC_SESSION_KEY, JSON.stringify(publicSession)); } catch (_) {}
+  }
+
+  function clearPublicSession() {
+    publicSession = null;
+    handoffRequested = false;
+    if (publicPollTimer) clearTimeout(publicPollTimer);
+    publicPollTimer = null;
+    try { sessionStorage.removeItem(PUBLIC_SESSION_KEY); } catch (_) {}
+  }
+
+  function rememberPublicSession(data) {
+    const session = data && (data.webchat_session || data);
+    if (!session || !session.conversation_id || !session.visitor_token) return;
+    const previous = publicSession || {};
+    publicSession = {
+      conversationId: String(session.conversation_id || ''),
+      visitorToken: String(session.visitor_token || ''),
+      lastMessageId: Math.max(Number(previous.lastMessageId || 0), Number(session.last_message_id || session.webchat_last_message_id || 0)),
+      lastEventId: Math.max(Number(previous.lastEventId || 0), Number(session.last_event_id || session.webchat_last_event_id || 0))
+    };
+    persistPublicSession();
+    schedulePublicPoll(true);
+  }
+
+  function publicMessageHeaders() {
+    return {
+      'Content-Type': 'application/json',
+      'X-Webchat-Visitor-Token': publicSession && publicSession.visitorToken ? publicSession.visitorToken : ''
+    };
+  }
+
+  function publicMessagesPath() {
+    const conversationId = encodeURIComponent(publicSession.conversationId);
+    let path = '/api/webchat/conversations/' + conversationId + '/messages?limit=50';
+    if (publicSession.lastMessageId) path += '&after_id=' + encodeURIComponent(publicSession.lastMessageId);
+    return path;
+  }
+
+  function sendPublicMessage(body) {
+    if (!publicSession || !publicSession.conversationId || !publicSession.visitorToken) {
+      return Promise.reject(classifiedError('missing_public_session', 'missing_public_session', makeDebugContext({ error_code: 'missing_public_session' })));
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(function () { controller.abort(); }, CONFIG.timeoutMs);
+    const clientMessageId = makeId('handoff_msg');
+    return fetch(CONFIG.apiBase + '/api/webchat/conversations/' + encodeURIComponent(publicSession.conversationId) + '/messages', {
+      method: 'POST',
+      headers: publicMessageHeaders(),
+      body: JSON.stringify({ body: body, client_message_id: clientMessageId }),
+      signal: controller.signal
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok) throw classifiedError(res.status === 403 ? 'public_session_forbidden' : 'public_message_send_failed', 'http_' + res.status, makeDebugContext({ http_status: res.status }));
+        if (data && data.message && data.message.id && publicSession) {
+          publicSession.lastMessageId = Math.max(Number(publicSession.lastMessageId || 0), Number(data.message.id || 0));
+          persistPublicSession();
+        }
+        return Object.assign({}, data || {}, { __public_message_sent: true });
+      });
+    }).catch(function (error) {
+      if (error && error.name === 'AbortError') throw classifiedError('network_timeout', 'network_timeout', makeDebugContext({ error_code: 'network_timeout' }));
+      throw error;
+    }).finally(function () {
+      clearTimeout(timer);
+    });
+  }
+
+  function renderServerMessage(msg) {
+    if (!msg || !msg.id) return;
+    const id = Number(msg.id || 0);
+    if (!id || renderedServerMessageIds[id]) return;
+    renderedServerMessageIds[id] = true;
+    if (publicSession && id > Number(publicSession.lastMessageId || 0)) {
+      publicSession.lastMessageId = id;
+    }
+    if (msg.direction === 'visitor') {
+      persistPublicSession();
+      return;
+    }
+    const payload = msg.payload_json || {};
+    const text = String(msg.body_text || msg.body || payload.title || payload.body || '').trim();
+    if (!text) {
+      persistPublicSession();
+      return;
+    }
+    appendMessage('bot', text, { handoff: msg.direction === 'agent' });
+    persistPublicSession();
+  }
+
+  function pollPublicMessages() {
+    if (!publicSession || !publicSession.conversationId || !publicSession.visitorToken) return Promise.resolve();
+    return fetch(CONFIG.apiBase + publicMessagesPath(), {
+      method: 'GET',
+      headers: { 'X-Webchat-Visitor-Token': publicSession.visitorToken }
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok) {
+          if (res.status === 403 || res.status === 404) clearPublicSession();
+          throw new Error('public_poll_http_' + res.status);
+        }
+        (data.messages || []).forEach(renderServerMessage);
+        if (publicSession && data.next_after_id) {
+          publicSession.lastMessageId = Math.max(Number(publicSession.lastMessageId || 0), Number(data.next_after_id || 0));
+          persistPublicSession();
+        }
+      });
+    }).catch(function (error) {
+      reportDemoError('webchat_demo_public_poll_error', error, makeDebugContext({ error_code: 'public_poll_error' }));
+    });
+  }
+
+  function schedulePublicPoll(immediate) {
+    if (publicPollTimer) clearTimeout(publicPollTimer);
+    if (!publicSession || !publicSession.conversationId || !publicSession.visitorToken) return;
+    const run = function () {
+      if (document.visibilityState === 'hidden') {
+        publicPollTimer = setTimeout(run, PUBLIC_POLL_MS * 3);
+        return;
+      }
+      pollPublicMessages().finally(function () {
+        if (publicSession && publicSession.conversationId && publicSession.visitorToken) {
+          publicPollTimer = setTimeout(run, PUBLIC_POLL_MS);
+        }
+      });
+    };
+    publicPollTimer = setTimeout(run, immediate ? 250 : PUBLIC_POLL_MS);
+  }
+
+  // NEXUSDESK_DEMO_PUBLIC_HANDOFF_HELPERS_END
 
   function remember(userText, replyText) {
     recentContext.push({ role: 'visitor', text: String(userText || '').slice(0, 500) });
