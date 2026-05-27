@@ -22,6 +22,7 @@ import type {
   OutboundEmailTestSendResult,
   OutboundSendPayload,
   SignoffChecklist,
+  SystemAttachment,
   AIConfigResource,
   AIConfigVersion,
   KnowledgeItem,
@@ -38,6 +39,7 @@ import type {
   WebchatConversation,
   WebchatHandoffQueue,
   WebchatHandoffRequest,
+  WebchatReadStateResult,
   WebchatThread,
   WebchatReplyResult,
   ProviderCredentialStatusResponse,
@@ -68,11 +70,15 @@ export class AuthExpiredError extends Error {
 
 export class ApiError extends Error {
   status: number
+  detail?: unknown
+  payload?: unknown
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, detail?: unknown, payload?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.detail = detail
+    this.payload = payload
   }
 }
 
@@ -117,13 +123,17 @@ function emitFrontendLatency(detail: { path: string; method: string; status: str
   window.dispatchEvent(new CustomEvent('nexusdesk:api-latency', { detail }))
 }
 
-async function readErrorMessage(res: Response, fallback: string) {
+async function readErrorBody(res: Response, fallback: string) {
   try {
     const data = await res.json()
     const detail = data?.detail
-    return mapApiErrorMessage(res.status, detail, JSON.stringify(data) || fallback)
+    return {
+      message: mapApiErrorMessage(res.status, detail, JSON.stringify(data) || fallback),
+      detail,
+      payload: data,
+    }
   } catch {
-    return fallback
+    return { message: fallback, detail: undefined, payload: undefined }
   }
 }
 
@@ -179,8 +189,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       emitFrontendLatency({ path: apiPath, method, status: String(res.status), duration_ms, ok: res.ok })
       if (res.status === 401) {
         if (publicRequest) {
-          const msg = await readErrorMessage(res, '登录失败，请检查账号或密码')
-          throw new ApiError(msg, res.status)
+          const err = await readErrorBody(res, '登录失败，请检查账号或密码')
+          throw new ApiError(err.message, res.status, err.detail, err.payload)
         }
         if (!authExpiryHandled) {
           authExpiryHandled = true
@@ -189,8 +199,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         throw new AuthExpiredError()
       }
       if (!res.ok) {
-        const msg = await readErrorMessage(res, `${res.status} ${res.statusText}`)
-        throw new ApiError(msg, res.status)
+        const err = await readErrorBody(res, `${res.status} ${res.statusText}`)
+        throw new ApiError(err.message, res.status, err.detail, err.payload)
       }
       if (res.status === 204) return undefined as T
       return res.json() as Promise<T>
@@ -344,6 +354,19 @@ export const api = {
     return request<TicketTimelinePage>(`/api/tickets/${ticketId}/timeline?${search.toString()}`)
   },
   ticketOutboundChannelCapabilities: (ticketId: number) => request<OutboundChannelCapabilitiesResponse>(`/api/tickets/${ticketId}/outbound/channels/capabilities`),
+  uploadTicketAttachment: (ticketId: number, file: File, visibility = 'external') => {
+    const form = new FormData()
+    form.set('file', file)
+    form.set('visibility', visibility)
+    return request<SystemAttachment>(`/api/tickets/${ticketId}/attachments`, {
+      method: 'POST',
+      body: form,
+    })
+  },
+  escalateTicket: (ticketId: number, payload: { team_id: number; note: string }) => request<Record<string, unknown>>(`/api/tickets/${ticketId}/escalate`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   sendOutboundMessage: (ticketId: number, payload: OutboundSendPayload) => request<Record<string, unknown>>(`/api/tickets/${ticketId}/outbound/send`, {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -584,6 +607,10 @@ export const api = {
   }),
   webchatThread: (ticketId: number, init?: RequestInit) => request<WebchatThread>(`/api/webchat/admin/tickets/${ticketId}/thread`, init),
   webchatEvents: (ticketId: number, afterId: number, init?: RequestInit) => request<WebchatEventsPage>(`/api/webchat/admin/tickets/${ticketId}/events?${buildWebchatEventsSearch(afterId).toString()}`, init),
+  webchatReadState: (ticketId: number, payload: { marked_unread: boolean }) => request<WebchatReadStateResult>(`/api/webchat/admin/tickets/${ticketId}/read-state`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   webchatReply: (ticketId: number, payload: { body: string; has_fact_evidence?: boolean; confirm_review?: boolean }) => request<WebchatReplyResult>(`/api/webchat/admin/tickets/${ticketId}/reply`, {
     method: 'POST',
     body: JSON.stringify(payload),

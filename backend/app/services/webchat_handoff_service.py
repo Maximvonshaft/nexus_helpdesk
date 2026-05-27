@@ -28,6 +28,7 @@ from .permissions import (
     resolve_capabilities,
 )
 from .webchat_ai_turn_service import ai_snapshot, cancel_open_ai_turns_for_handoff, safe_write_webchat_event
+from .webchat_inbox_read_state import webchat_read_state_payload
 
 OPEN_HANDOFF_STATUSES = {"requested", "accepted"}
 TERMINAL_HANDOFF_STATUSES = {"closed", "cancelled", "expired", "resumed_ai"}
@@ -335,6 +336,8 @@ def serialize_handoff_request(
     }
     if conversation:
         payload.update(ai_snapshot(conversation))
+        if current_user:
+            payload.update(webchat_read_state_payload(db, conversation_id=conversation.id, user_id=current_user.id))
     return payload
 
 
@@ -516,6 +519,7 @@ def list_handoff_queue(
                 "can_release": False,
                 "can_resume_ai": False,
                 "can_reply": False,
+                **webchat_read_state_payload(db, conversation_id=conversation.id, user_id=current_user.id),
                 **ai_snapshot(conversation),
             })
         return {"items": items, "view": view, "permissions": queue_permissions}

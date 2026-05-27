@@ -12,6 +12,7 @@ const overviewRoute = readFileSync(resolve(root, 'src/routes/index.tsx'), 'utf8'
 const workspaceRoute = readFileSync(resolve(root, 'src/routes/workspace.tsx'), 'utf8')
 const runtimeRoute = readFileSync(resolve(root, 'src/routes/runtime.tsx'), 'utf8')
 const webchatRoute = readFileSync(resolve(root, 'src/routes/webchat.tsx'), 'utf8')
+const webchatInboxV5 = readFileSync(resolve(root, 'src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx'), 'utf8')
 const webchatVoiceApi = readFileSync(resolve(root, 'src/lib/webchatVoiceApi.ts'), 'utf8')
 const agentWebCallPanel = readFileSync(resolve(root, 'src/components/webcall/AgentWebCallPanel.tsx'), 'utf8')
 const replyPanel = readFileSync(resolve(root, 'src/components/operator/CustomerReplyPanel.tsx'), 'utf8')
@@ -96,9 +97,12 @@ test('webchat admin events are routed through unified api client', () => {
   assert.match(apiClient, /export type WebchatEventsPage = \{/)
   assert.match(apiClient, /webchatEvents: \(ticketId: number, afterId: number, init\?: RequestInit\)/)
   assert.match(apiClient, /\/api\/webchat\/admin\/tickets\/\$\{ticketId\}\/events/)
-  assert.match(webchatRoute, /api\.webchatEvents\(selectedTicketId as number, lastEventId, \{ signal \}\)/)
+  assert.match(webchatRoute, /WebchatInboxV5Page/)
+  assert.match(webchatInboxV5, /api\.webchatEvents\(selectedTicketId as number, lastEventId, \{ signal \}\)/)
   assert.doesNotMatch(webchatRoute, /fetch\(/)
+  assert.doesNotMatch(webchatInboxV5, /\bfetch\s*\(/)
   assert.doesNotMatch(webchatRoute, /Authorization/)
+  assert.doesNotMatch(webchatInboxV5, /Authorization/)
 })
 
 test('webchat voice admin calls delegate to unified api client', () => {
@@ -218,6 +222,7 @@ test('admin operator surfaces do not bypass unified api client with raw fetch', 
     ['src/routes/workspace.tsx', workspaceRoute],
     ['src/routes/runtime.tsx', runtimeRoute],
     ['src/routes/webchat.tsx', webchatRoute],
+    ['src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx', webchatInboxV5],
     ['src/routes/index.tsx', overviewRoute],
     ['src/layouts/AppShell.tsx', appShell],
     ['src/components/ui/CommandPalette.tsx', commandPalette],
