@@ -175,6 +175,41 @@ def test_integrity_error_for_same_webchat_handoff_returns_existing_not_500(db_se
     assert row.id == existing.id
 
 
+def test_webchat_handoff_task_reuses_conversation_identity_when_source_id_changes(db_session):
+    ticket = make_ticket(db_session)
+    conversation = make_conversation(db_session, ticket)
+    existing = OperatorTask(
+        source_type="webchat",
+        source_id="stale-public-id",
+        ticket_id=ticket.id,
+        webchat_conversation_id=conversation.id,
+        task_type="handoff",
+        status="pending",
+        priority=80,
+    )
+    db_session.add(existing)
+    db_session.flush()
+
+    row, created = create_operator_task(
+        db_session,
+        source_type="webchat",
+        source_id=conversation.public_id,
+        ticket_id=ticket.id,
+        webchat_conversation_id=conversation.id,
+        task_type="handoff",
+        reason_code="manual_review_required",
+        priority=40,
+        payload={"ticket_no": ticket.ticket_no},
+    )
+
+    assert created is False
+    assert row.id == existing.id
+    assert row.source_id == conversation.public_id
+    assert row.reason_code == "manual_review_required"
+    assert row.priority == 40
+    assert json.loads(row.payload_json or "{}")["ticket_no"] == ticket.ticket_no
+
+
 def test_project_operator_queue_skipped_existing_counts_are_correct(db_session):
     admin = make_admin(db_session)
     event = make_unresolved(db_session)

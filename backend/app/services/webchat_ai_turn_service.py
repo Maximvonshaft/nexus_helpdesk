@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
+from ..enums import JobStatus
 from ..models import BackgroundJob
 from ..utils.time import utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatMessage
@@ -117,7 +118,19 @@ def ai_snapshot(conversation: WebchatConversation) -> dict[str, Any]:
         "ai_status": status,
         "ai_turn_id": turn_id,
         "ai_pending_for_message_id": getattr(conversation, "active_ai_for_message_id", None),
+        "ai_suspended": bool(getattr(conversation, "ai_suspended", False)),
+        "handoff_status": getattr(conversation, "handoff_status", None) or "none",
+        "current_handoff_request_id": getattr(conversation, "current_handoff_request_id", None),
+        "active_agent_id": getattr(conversation, "active_agent_id", None),
     }
+
+
+def is_ai_suspended_for_handoff(conversation: WebchatConversation) -> bool:
+    return bool(
+        getattr(conversation, "ai_suspended", False)
+        or (getattr(conversation, "handoff_status", None) in {"requested", "accepted"})
+        or getattr(conversation, "active_agent_id", None)
+    )
 
 
 def _clear_active_snapshot(conversation: WebchatConversation) -> None:
@@ -189,6 +202,23 @@ def schedule_webchat_ai_turn(
         event_type="message.created",
         payload={"message_id": visitor_message.id, "direction": visitor_message.direction},
     )
+
+    if is_ai_suspended_for_handoff(conversation):
+        safe_write_webchat_event(
+            db,
+            conversation_id=conversation.id,
+            ticket_id=ticket_id,
+            event_type="ai_turn.suppressed_by_handoff",
+            payload={
+                "trigger_message_id": visitor_message.id,
+                "handoff_status": getattr(conversation, "handoff_status", None),
+                "current_handoff_request_id": getattr(conversation, "current_handoff_request_id", None),
+                "ai_suspended_reason": getattr(conversation, "ai_suspended_reason", None),
+            },
+        )
+        record_webchat_ai_turn_metric("suppressed_by_handoff")
+        db.flush()
+        return {**ai_snapshot(conversation), "coalesced": False, "ai_suppressed_by_handoff": True}
 
     active_turn = None
     if getattr(conversation, "active_ai_turn_id", None):
@@ -344,6 +374,12 @@ def mark_ai_turn_timeout(db: Session, *, conversation: WebchatConversation, turn
 
 
 def should_suppress_stale_reply(db: Session, *, conversation: WebchatConversation, turn: WebchatAITurn | None) -> bool:
+    try:
+        db.refresh(conversation)
+    except Exception:
+        pass
+    if is_ai_suspended_for_handoff(conversation):
+        return True
     if turn is None:
         return False
     if not turn.is_public_reply_allowed or turn.status in AI_TURN_TERMINAL_STATUSES:
@@ -413,6 +449,56 @@ def supersede_ai_turn(db: Session, *, conversation: WebchatConversation, turn: W
     db.flush()
 
 
+def cancel_open_ai_turns_for_handoff(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    actor_id: int | None = None,
+    reason_code: str = "handoff_ai_suspended",
+) -> int:
+    """Fail closed for queued/in-flight AI turns when a human handoff owns the session."""
+
+    now = utc_now()
+    turns = (
+        db.query(WebchatAITurn)
+        .filter(WebchatAITurn.conversation_id == conversation.id, WebchatAITurn.status.in_(AI_TURN_OPEN_STATUSES))
+        .order_by(WebchatAITurn.id.asc())
+        .all()
+    )
+    cancelled = 0
+    for turn in turns:
+        turn.status = "cancelled"
+        turn.status_reason = reason_code
+        turn.is_public_reply_allowed = False
+        turn.cancelled_by_user_id = actor_id
+        turn.cancellation_reason_code = reason_code
+        turn.completed_at = now
+        turn.updated_at = now
+        if turn.job_id:
+            job = db.query(BackgroundJob).filter(BackgroundJob.id == turn.job_id).first()
+            if job is not None and _status_value(job.status) in {JobStatus.pending.value, JobStatus.processing.value}:
+                job.status = JobStatus.dead
+                job.last_error = reason_code
+                job.locked_at = None
+                job.locked_by = None
+                job.next_run_at = None
+                job.updated_at = now
+        safe_write_webchat_event(
+            db,
+            conversation_id=conversation.id,
+            ticket_id=turn.ticket_id,
+            event_type="ai_turn.cancelled_by_handoff",
+            payload={"ai_turn_id": turn.id, "actor_id": actor_id, "reason": reason_code},
+        )
+        record_webchat_ai_turn_metric("cancelled", _turn_duration_ms(turn))
+        cancelled += 1
+    conversation.next_ai_turn_id = None
+    if cancelled or conversation.active_ai_turn_id:
+        _clear_active_snapshot(conversation)
+    db.flush()
+    return cancelled
+
+
 def latest_visitor_message_id(db: Session, *, conversation_id: int) -> int | None:
     row = (
         db.query(WebchatMessage.id)
@@ -436,6 +522,9 @@ def process_webchat_ai_turn_job(db: Session, *, ai_turn_id: int, legacy_process:
         return {"status": "failed", "reason": "conversation_not_found"}
     if turn.status != "queued":
         return {"status": "skipped", "reason": f"ai_turn_not_queued:{turn.status}"}
+    if is_ai_suspended_for_handoff(conversation):
+        cancel_open_ai_turns_for_handoff(db, conversation=conversation, actor_id=None, reason_code="handoff_ai_suspended_before_worker")
+        return {"status": "skipped", "reason": "handoff_ai_suspended", "reply_source": "suppressed"}
 
     mark_ai_turn_processing(db, conversation=conversation, turn=turn)
     cutoff_id = latest_visitor_message_id(db, conversation_id=conversation.id)

@@ -27,6 +27,7 @@ from ..services.webchat_fast_rate_limit import enforce_webchat_fast_rate_limit
 from ..services.webchat_fast_stream_service import prepare_webchat_fast_stream, sse_event, stream_webchat_fast_reply_events
 from ..services.webchat_handoff_policy import HandoffPolicyDecision, decide_server_handoff_policy
 from ..services.webchat_handoff_policy_config import load_webchat_handoff_rules
+from ..services.webchat_handoff_service import request_webchat_handoff
 from ..services.webchat_fast_config import get_webchat_fast_settings, WebchatFastSettings
 from ..services.webchat_fast_rollout import is_stream_rollout_selected
 from ..services.webchat_fast_session_service import (
@@ -364,6 +365,32 @@ def _server_handoff_response_payload(*, handoff_reason: str | None, customer_rep
     return {"ok": True, "ai_generated": False, "reply_source": "server_handoff_policy", "reply": customer_reply or "A human teammate will review this request.", "intent": "handoff", "tracking_number": None, "handoff_required": True, "handoff_reason": handoff_reason or "server_policy_handoff_required", "ticket_creation_queued": False, "elapsed_ms": 0}
 
 
+def _request_fast_handoff(
+    db,
+    *,
+    conversation,
+    ticket,
+    source: str,
+    trigger_type: str,
+    handoff_reason: str | None,
+    recommended_agent_action: str | None,
+    trigger_message_id: int | None = None,
+) -> int:
+    row = request_webchat_handoff(
+        db,
+        conversation=conversation,
+        ticket=ticket,
+        source=source,
+        trigger_type=trigger_type,
+        reason_code=handoff_reason or f"{trigger_type}_requires_human_review",
+        reason_text=handoff_reason,
+        recommended_agent_action=recommended_agent_action,
+        trigger_message_id=trigger_message_id,
+        requested_by_actor_type="ai",
+    )
+    return row.id
+
+
 def _support_hours_policy_payload(body: str) -> dict[str, Any] | None:
     return match_support_hours_policy_reply(body)
 
@@ -393,8 +420,10 @@ async def _server_policy_stream_events(*, row_id: int, payload: WebchatFastReply
         ticket = get_or_create_fast_ticket(db, conversation=conversation, business_state=business_state, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, customer_message=payload.body, routing_context=routing_context)
         speedaf_job_id = _maybe_enqueue_speedaf_work_order(db=db, ticket_id=ticket.id, conversation_id=conversation.id, business_state=business_state, body=payload.body, visitor=payload.visitor, handoff_reason=server_policy.handoff_reason, recommended_action=server_policy.recommended_agent_action)
         append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"handoff_required": True, "source": "server_handoff_policy", "speedaf_work_order_job_id": speedaf_job_id})
-        append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, client_message_id=payload.client_message_id)
+        handoff_message = append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, client_message_id=payload.client_message_id)
+        handoff_request_id = _request_fast_handoff(db, conversation=conversation, ticket=ticket, source="server_rule", trigger_type="server_handoff_policy", handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, trigger_message_id=handoff_message.id)
         result_payload.update({"ticket_id": ticket.id, "tracking_number": business_state.tracking_number})
+        result_payload["handoff_request_id"] = handoff_request_id
         if speedaf_job_id:
             result_payload["speedaf_work_order_job_id"] = speedaf_job_id
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
@@ -495,8 +524,10 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
             ticket = get_or_create_fast_ticket(db, conversation=conversation, business_state=business_state, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, customer_message=payload.body, routing_context=routing_context)
             speedaf_job_id = _maybe_enqueue_speedaf_work_order(db=db, ticket_id=ticket.id, conversation_id=conversation.id, business_state=business_state, body=payload.body, visitor=payload.visitor, handoff_reason=server_policy.handoff_reason, recommended_action=server_policy.recommended_agent_action)
             append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"handoff_required": True, "source": "server_handoff_policy", "speedaf_work_order_job_id": speedaf_job_id})
-            append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, client_message_id=payload.client_message_id)
+            handoff_message = append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, client_message_id=payload.client_message_id)
+            handoff_request_id = _request_fast_handoff(db, conversation=conversation, ticket=ticket, source="server_rule", trigger_type="server_handoff_policy", handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, trigger_message_id=handoff_message.id)
             result_payload.update({"ticket_id": ticket.id, "tracking_number": business_state.tracking_number})
+            result_payload["handoff_request_id"] = handoff_request_id
             if speedaf_job_id:
                 result_payload["speedaf_work_order_job_id"] = speedaf_job_id
             row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
@@ -548,8 +579,9 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
                 handoff_state = type(handoff_state)(intent=handoff_state.intent, issue_type=handoff_state.issue_type, tracking_number=result.tracking_number, fast_issue_key=f"tracking:{result.tracking_number}:intent:{handoff_state.issue_type}"[:240], missing_fields=())
             ticket = get_or_create_fast_ticket(db, conversation=conversation, business_state=handoff_state, handoff_reason=result.handoff_reason, recommended_agent_action=result.recommended_agent_action, customer_message=payload.body, routing_context=routing_context)
             speedaf_job_id = _maybe_enqueue_speedaf_work_order(db=db, ticket_id=ticket.id, conversation_id=conversation.id, business_state=handoff_state, body=payload.body, visitor=payload.visitor, handoff_reason=result.handoff_reason, recommended_action=result.recommended_agent_action)
-            append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=result.handoff_reason, recommended_agent_action=result.recommended_agent_action, client_message_id=payload.client_message_id)
-            result_payload.update({"ticket_creation_queued": False, "ticket_id": ticket.id})
+            handoff_message = append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=result.handoff_reason, recommended_agent_action=result.recommended_agent_action, client_message_id=payload.client_message_id)
+            handoff_request_id = _request_fast_handoff(db, conversation=conversation, ticket=ticket, source="ai_auto", trigger_type="ai_result_handoff_required", handoff_reason=result.handoff_reason, recommended_agent_action=result.recommended_agent_action, trigger_message_id=handoff_message.id)
+            result_payload.update({"ticket_creation_queued": False, "ticket_id": ticket.id, "handoff_request_id": handoff_request_id})
             if speedaf_job_id:
                 result_payload["speedaf_work_order_job_id"] = speedaf_job_id
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()

@@ -207,18 +207,50 @@ def _find_existing_active_task(
     unresolved_event_id: int | None = None,
 ) -> OperatorTask | None:
     query = _active_query(db, source_type=source_type, task_type=task_type)
+    identities = []
     if source_id:
-        query = query.filter(OperatorTask.source_id == source_id)
+        identities.append(OperatorTask.source_id == source_id)
     if unresolved_event_id is not None:
-        query = query.filter(OperatorTask.unresolved_event_id == unresolved_event_id)
+        identities.append(OperatorTask.unresolved_event_id == unresolved_event_id)
     if webchat_conversation_id is not None:
-        query = query.filter(OperatorTask.webchat_conversation_id == webchat_conversation_id)
+        identities.append(OperatorTask.webchat_conversation_id == webchat_conversation_id)
+    if not identities:
+        return None
+    query = query.filter(or_(*identities))
     return query.order_by(OperatorTask.id.desc()).first()
 
 
 def _ensure_task_mutable(row: OperatorTask) -> None:
     if row.status in TERMINAL_STATUSES:
         raise OperatorQueueError(409, "operator_task_terminal", "operator task is terminal")
+
+
+def _refresh_existing_task(
+    row: OperatorTask,
+    *,
+    source_id: str | None = None,
+    ticket_id: int | None = None,
+    webchat_conversation_id: int | None = None,
+    unresolved_event_id: int | None = None,
+    reason_code: str | None = None,
+    priority: int | None = None,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    if source_id:
+        row.source_id = source_id[:160]
+    if ticket_id is not None:
+        row.ticket_id = ticket_id
+    if webchat_conversation_id is not None:
+        row.webchat_conversation_id = webchat_conversation_id
+    if unresolved_event_id is not None:
+        row.unresolved_event_id = unresolved_event_id
+    if reason_code:
+        row.reason_code = reason_code[:160]
+    if priority is not None:
+        row.priority = priority
+    if payload is not None:
+        row.payload_json = _json_payload(payload)
+    row.updated_at = utc_now()
 
 
 def create_operator_task(
@@ -244,6 +276,16 @@ def create_operator_task(
         unresolved_event_id=unresolved_event_id,
     )
     if existing:
+        _refresh_existing_task(
+            existing,
+            source_id=source_id,
+            ticket_id=ticket_id,
+            webchat_conversation_id=webchat_conversation_id,
+            unresolved_event_id=unresolved_event_id,
+            reason_code=reason_code,
+            priority=priority,
+            payload=payload,
+        )
         return existing, False
 
     row = OperatorTask(
@@ -274,6 +316,16 @@ def create_operator_task(
             unresolved_event_id=unresolved_event_id,
         )
         if existing:
+            _refresh_existing_task(
+                existing,
+                source_id=source_id,
+                ticket_id=ticket_id,
+                webchat_conversation_id=webchat_conversation_id,
+                unresolved_event_id=unresolved_event_id,
+                reason_code=reason_code,
+                priority=priority,
+                payload=payload,
+            )
             return existing, False
         raise OperatorQueueError(409, "operator_task_conflict", "operator task already exists") from exc
     if webchat_conversation_id and ticket_id:

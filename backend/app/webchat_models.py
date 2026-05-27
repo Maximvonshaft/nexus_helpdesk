@@ -66,6 +66,15 @@ class WebchatConversation(Base):
     next_ai_turn_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     active_ai_started_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True)
     active_ai_updated_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    current_handoff_request_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    handoff_status: Mapped[str] = mapped_column(String(40), default="none", index=True)
+    active_agent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    ai_suspended: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    ai_suspended_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    ai_suspended_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    ai_suspended_reason: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
+    takeover_mode: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
+    last_handoff_reason: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, index=True)
@@ -96,6 +105,7 @@ class WebchatMessage(Base):
     metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     client_message_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     ai_turn_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_ai_turns.id"), nullable=True, index=True)
+    author_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     delivery_status: Mapped[str] = mapped_column(String(32), default="sent", index=True)
     action_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
     author_label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
@@ -129,6 +139,8 @@ class WebchatAITurn(Base):
     bridge_timeout_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     superseded_by_turn_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_ai_turns.id"), nullable=True, index=True)
     is_public_reply_allowed: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    cancelled_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    cancellation_reason_code: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
@@ -145,6 +157,69 @@ class WebchatEvent(Base):
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
     event_type: Mapped[str] = mapped_column(String(80), index=True)
     payload_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+
+
+class WebchatHandoffRequest(Base):
+    """Durable AI-to-human handoff request and active ownership state."""
+
+    __tablename__ = "webchat_handoff_requests"
+    __table_args__ = (
+        Index("ix_webchat_handoff_requests_status_requested", "status", "requested_at"),
+        Index("ix_webchat_handoff_requests_ticket_status", "ticket_id", "status"),
+        Index("ix_webchat_handoff_requests_assigned_status", "assigned_agent_id", "status"),
+        Index("ix_webchat_handoff_requests_source_trigger", "source", "trigger_type"),
+        Index(
+            "uq_webchat_handoff_open_conversation",
+            "conversation_id",
+            unique=True,
+            sqlite_where=text("status IN ('requested', 'accepted')"),
+            postgresql_where=text("status IN ('requested', 'accepted')"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("webchat_conversations.id"), index=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    source: Mapped[str] = mapped_column(String(40), default="ai_auto", index=True)
+    trigger_type: Mapped[str] = mapped_column(String(80), default="handoff_required", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="requested", index=True)
+    reason_code: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
+    reason_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    recommended_agent_action: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    trigger_message_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_messages.id"), nullable=True, index=True)
+    ai_turn_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_ai_turns.id"), nullable=True, index=True)
+    requested_by_actor_type: Mapped[str] = mapped_column(String(40), default="system", index=True)
+    requested_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    accepted_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    forced_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    assigned_agent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    decision_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    accepted_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    released_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    lock_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, index=True)
+
+
+class WebchatHandoffDecision(Base):
+    """Per-agent handoff decision history, e.g. skip/decline without closing the queue item."""
+
+    __tablename__ = "webchat_handoff_decisions"
+    __table_args__ = (
+        Index("ix_webchat_handoff_decisions_request_actor", "request_id", "actor_id"),
+        Index("ix_webchat_handoff_decisions_decision_created", "decision", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("webchat_handoff_requests.id"), index=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    decision: Mapped[str] = mapped_column(String(40), default="declined", index=True)
+    reason_code: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
 
 

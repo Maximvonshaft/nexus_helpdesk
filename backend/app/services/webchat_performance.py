@@ -194,5 +194,11 @@ def admin_list_conversations_optimized(db: Session, current_user: User, *, limit
             "ai_status": getattr(conversation, "active_ai_status", None),
             "ai_turn_id": getattr(conversation, "active_ai_turn_id", None),
             "ai_pending_for_message_id": getattr(conversation, "active_ai_for_message_id", None),
+            "current_handoff_request_id": getattr(conversation, "current_handoff_request_id", None),
+            "handoff_status": getattr(conversation, "handoff_status", None) or "none",
+            "active_agent_id": getattr(conversation, "active_agent_id", None),
+            "ai_suspended": bool(getattr(conversation, "ai_suspended", False)),
+            "takeover_mode": getattr(conversation, "takeover_mode", None),
+            "last_handoff_reason": getattr(conversation, "last_handoff_reason", None),
         })
     return items

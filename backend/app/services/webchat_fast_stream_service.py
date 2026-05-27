@@ -28,6 +28,7 @@ from .webchat_fast_session_service import (
     get_or_create_fast_conversation,
     get_or_create_fast_ticket,
 )
+from .webchat_handoff_service import request_webchat_handoff
 from .webchat_fast_stream_parser import StreamingReplyAbort, StreamingReplyExtractor
 from .webchat_openclaw_responses_client import OpenClawResponsesError
 from .webchat_openclaw_stream_adapter import Completed
@@ -169,7 +170,19 @@ def _persist_stream_result(
             customer_message=body,
             routing_context=routing_context,
         )
-        append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=parsed.handoff_reason, recommended_agent_action=parsed.recommended_agent_action, client_message_id=client_message_id)
+        handoff_message = append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=parsed.handoff_reason, recommended_agent_action=parsed.recommended_agent_action, client_message_id=client_message_id)
+        request_webchat_handoff(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            source="ai_auto",
+            trigger_type="stream_ai_result_handoff_required",
+            reason_code=parsed.handoff_reason or "stream_ai_result_requires_human_review",
+            reason_text=parsed.handoff_reason,
+            recommended_agent_action=parsed.recommended_agent_action,
+            trigger_message_id=handoff_message.id,
+            requested_by_actor_type="ai",
+        )
         return ticket.id
 
 

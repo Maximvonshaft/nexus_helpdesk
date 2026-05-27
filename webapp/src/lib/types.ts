@@ -635,9 +635,57 @@ export interface WebchatAIRuntimeSnapshot {
   ai_status?: string | null
   ai_turn_id?: number | null
   ai_pending_for_message_id?: number | null
+  ai_suspended?: boolean
+  handoff_status?: string | null
+  current_handoff_request_id?: number | null
+  active_agent_id?: number | null
   last_ai_reply_source?: string | null
   last_ai_fallback_reason?: string | null
   last_bridge_elapsed_ms?: number | null
+}
+
+export interface WebchatHandoffLastMessage {
+  id: number
+  direction: string
+  body_text?: string | null
+  message_type?: WebchatMessageType | null
+  author_label?: string | null
+  created_at?: string | null
+}
+
+export interface WebchatHandoffRequest extends WebchatAIRuntimeSnapshot {
+  id: number | null
+  conversation_id?: string | null
+  webchat_conversation_id: number
+  ticket_id: number
+  ticket_no?: string | null
+  title?: string | null
+  status: string
+  source: string
+  trigger_type: string
+  reason_code?: string | null
+  reason_text?: string | null
+  recommended_agent_action?: string | null
+  assigned_agent_id?: number | null
+  accepted_by_user_id?: number | null
+  forced_by_user_id?: number | null
+  declined_by_me?: boolean
+  waiting_seconds?: number
+  requested_at?: string | null
+  accepted_at?: string | null
+  released_at?: string | null
+  closed_at?: string | null
+  takeover_mode?: string | null
+  visitor_name?: string | null
+  visitor_email?: string | null
+  visitor_phone?: string | null
+  origin?: string | null
+  last_message?: WebchatHandoffLastMessage | null
+}
+
+export interface WebchatHandoffQueue {
+  items: WebchatHandoffRequest[]
+  view: string
 }
 
 export interface WebchatConversation extends WebchatAIRuntimeSnapshot {
@@ -656,6 +704,12 @@ export interface WebchatConversation extends WebchatAIRuntimeSnapshot {
   last_message_type?: WebchatMessageType | null
   last_action_status?: string | null
   needs_human?: boolean
+  current_handoff_request_id?: number | null
+  handoff_status?: string | null
+  active_agent_id?: number | null
+  ai_suspended?: boolean
+  takeover_mode?: string | null
+  last_handoff_reason?: string | null
 }
 
 export interface WebchatMessage {
@@ -667,6 +721,8 @@ export interface WebchatMessage {
   payload_json?: WebchatCardPayload | Record<string, unknown> | null
   metadata_json?: Record<string, unknown> | null
   client_message_id?: string | null
+  ai_turn_id?: number | null
+  author_user_id?: number | null
   delivery_status?: string | null
   action_status?: string | null
   author_label?: string | null
@@ -712,6 +768,7 @@ export interface WebchatThread extends WebchatAIRuntimeSnapshot {
   status?: string | null
   conversation_state?: string | null
   required_action?: string | null
+  handoff?: WebchatHandoffRequest | null
   visitor: {
     name?: string | null
     email?: string | null

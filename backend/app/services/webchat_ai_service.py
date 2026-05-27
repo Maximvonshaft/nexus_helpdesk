@@ -22,7 +22,7 @@ from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .sla_service import evaluate_sla, update_first_response
 from .tracking_fact_schema import TrackingFactResult
 from .tracking_fact_service import extract_tracking_number, lookup_tracking_fact
-from .webchat_ai_turn_service import suppress_stale_reply_if_needed
+from .webchat_ai_turn_service import is_ai_suspended_for_handoff, suppress_stale_reply_if_needed
 from .webchat_fact_gate import evaluate_webchat_fact_gate
 from .ai_runtime_context import build_webchat_runtime_context
 from .knowledge_grounding_service import enforce_grounded_answer
@@ -131,6 +131,8 @@ def process_webchat_ai_reply_job(
         )
 
     turn = db.query(WebchatAITurn).filter(WebchatAITurn.id == ai_turn_id, WebchatAITurn.conversation_id == conversation.id).first() if ai_turn_id else None
+    if is_ai_suspended_for_handoff(conversation):
+        return {"status": "skipped", "reason": "handoff_ai_suspended", "reply_source": "suppressed"}
 
     existing_agent = (
         db.query(WebchatMessage.id)
