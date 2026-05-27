@@ -119,15 +119,35 @@ def test_demo_fast_reply_uses_differentiated_error_handling():
 
 def test_demo_fast_reply_debug_context_is_diagnostic_and_sanitized():
     source = _demo_source()
+    debug_block = source[source.index("function makeDebugContext"):source.index("function withDebug")]
+    fast_reply_block = source[source.index("function sendFastReply"):source.index("function appendMessage")]
 
     assert "session_id: sessionId" in source
     assert "client_message_id" in source
     assert "request_path: CONFIG.fastReplyPath" in source
     assert "http_status" in source
     assert "backend_error_code" in source
-    assert "token" not in source.lower()
-    assert "authorization" not in source.lower()
-    assert "bearer" not in source.lower()
+    assert "response_body_summary" in source
+    assert "response_body_summary: responseBodySummary(data)" in fast_reply_block
+    assert "visitorToken" not in debug_block
+    assert "X-Webchat-Visitor-Token" not in debug_block
+
+
+def test_demo_public_poll_error_uses_real_messages_request_path():
+    source = _demo_source()
+    poll_start = source.index("function pollPublicMessages()")
+    poll_end = source.index("function schedulePublicPoll", poll_start)
+    poll_block = source[poll_start:poll_end]
+
+    assert "const path = publicMessagesPath()" in poll_block
+    assert "fetch(CONFIG.apiBase + path" in poll_block
+    assert "makeDebugContext({ request_path: path })" in poll_block
+    assert "http_status: res.status" in poll_block
+    assert "backend_error_code: backendErrorCode(data)" in poll_block
+    assert "response_body_summary: responseBodySummary(data)" in poll_block
+    assert "webchat_demo_public_poll_error" in poll_block
+    assert "CONFIG.fastReplyPath" not in poll_block
+    assert poll_block.index("reportDemoError('webchat_demo_public_poll_error'") < poll_block.index("clearPublicSession()")
 
 
 def test_demo_success_render_error_does_not_convert_success_to_connection_issue():

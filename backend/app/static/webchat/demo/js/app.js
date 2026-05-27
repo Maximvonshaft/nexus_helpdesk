@@ -198,6 +198,7 @@
       http_status: null,
       backend_error_code: null,
       client_message_id: null,
+      response_body_summary: null,
       error_code: null
     }, extra || {});
   }
@@ -250,6 +251,25 @@
     return null;
   }
 
+  function responseBodySummary(data) {
+    if (data === undefined || data === null) return null;
+    try {
+      const text = typeof data === 'string'
+        ? data
+        : JSON.stringify(data, function (key, value) {
+            const lowerKey = String(key || '').toLowerCase();
+            if (lowerKey.indexOf('token') !== -1 || lowerKey.indexOf('secret') !== -1 || lowerKey === 'authorization' || lowerKey.indexOf('password') !== -1) {
+              return '[redacted]';
+            }
+            if (typeof value === 'string' && value.toLowerCase().indexOf('bearer ') !== -1) return '[redacted]';
+            return value;
+          });
+      return text ? String(text).slice(0, 500) : null;
+    } catch (_) {
+      return '[unserializable response body]';
+    }
+  }
+
   function sendFastReply(body) {
     const controller = new AbortController();
     const timer = setTimeout(function () { controller.abort(); }, CONFIG.timeoutMs);
@@ -272,7 +292,7 @@
     }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (data) {
         const apiCode = backendErrorCode(data);
-        const debugContext = withDebug(debugBase, { http_status: res.status, backend_error_code: apiCode });
+        const debugContext = withDebug(debugBase, { http_status: res.status, backend_error_code: apiCode, response_body_summary: responseBodySummary(data) });
         if (!res.ok) {
           const httpCode = res.status === 403 ? 'origin_forbidden' : 'http_error';
           throw classifiedError(httpCode, 'http_' + res.status, debugContext);
@@ -456,14 +476,17 @@
 
   function pollPublicMessages() {
     if (!publicSession || publicSession.handoffRequested !== true || !publicSession.conversationId || !publicSession.visitorToken) return Promise.resolve();
-    return fetch(CONFIG.apiBase + publicMessagesPath(), {
+    const path = publicMessagesPath();
+    const debugBase = makeDebugContext({ request_path: path });
+    return fetch(CONFIG.apiBase + path, {
       method: 'GET',
       headers: { 'X-Webchat-Visitor-Token': publicSession.visitorToken }
     }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (data) {
+        const debugContext = withDebug(debugBase, { http_status: res.status, backend_error_code: backendErrorCode(data), response_body_summary: responseBodySummary(data) });
         if (!res.ok) {
-          if (res.status === 403 || res.status === 404) clearPublicSession();
-          throw new Error('public_poll_http_' + res.status);
+          const errorCode = res.status === 403 ? 'public_session_forbidden' : (res.status === 404 ? 'public_session_missing' : 'public_poll_failed');
+          throw classifiedError(errorCode, 'http_' + res.status, debugContext);
         }
         (data.messages || []).forEach(renderServerMessage);
         if (publicSession && data.next_after_id) {
@@ -472,7 +495,11 @@
         }
       });
     }).catch(function (error) {
-      reportDemoError('webchat_demo_public_poll_error', error, makeDebugContext({ error_code: 'public_poll_error' }));
+      const debugContext = withDebug(debugBase, error && error.debug_context ? error.debug_context : { error_code: 'public_poll_error' });
+      reportDemoError('webchat_demo_public_poll_error', error, debugContext);
+      if (error && (error.error_code === 'public_session_forbidden' || error.error_code === 'public_session_missing')) {
+        clearPublicSession();
+      }
     });
   }
 

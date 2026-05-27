@@ -133,8 +133,39 @@ def _validated_origin(request: Request) -> str | None:
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webchat origin is required")
 
 
-def _public_cors_headers(request: Request) -> dict[str, str]:
-    origin = _validated_origin(request)
+def _referer_origin(referer: str | None) -> str | None:
+    if not referer:
+        return None
+    parsed = urlparse(referer)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+    return None
+
+
+def _validated_public_poll_origin(request: Request) -> str | None:
+    allowed = _normalized_allowed_origins()
+    origin = request.headers.get("origin")
+    resolved_origin: str | None = None
+    if origin:
+        normalized = origin.rstrip("/")
+        if normalized not in allowed:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webchat origin is not allowed")
+        resolved_origin = origin
+
+    referer = request.headers.get("referer")
+    referer_origin = _referer_origin(referer)
+    if referer:
+        if not referer_origin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webchat origin is not allowed")
+        if referer_origin not in allowed:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webchat origin is not allowed")
+        if not resolved_origin:
+            resolved_origin = referer_origin
+
+    return resolved_origin
+
+
+def _public_cors_headers_for_origin(origin: str | None) -> dict[str, str]:
     headers = {
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, X-Requested-With, X-Webchat-Visitor-Token, X-Webchat-WS-Fallback",
@@ -147,8 +178,18 @@ def _public_cors_headers(request: Request) -> dict[str, str]:
     return headers
 
 
+def _public_cors_headers(request: Request) -> dict[str, str]:
+    return _public_cors_headers_for_origin(_validated_origin(request))
+
+
 def _set_public_cors(response: Response, request: Request) -> None:
     for key, value in _public_cors_headers(request).items():
+        response.headers.setdefault(key, value)
+
+
+def _set_public_poll_cors(response: Response, request: Request) -> None:
+    origin = _validated_public_poll_origin(request)
+    for key, value in _public_cors_headers_for_origin(origin).items():
         response.headers.setdefault(key, value)
 
 
@@ -366,7 +407,7 @@ def send_webchat_message(conversation_id: str, payload: WebchatSendRequest, requ
 
 @router.get("/conversations/{conversation_id}/messages")
 def poll_webchat_messages(conversation_id: str, request: Request, response: Response, visitor_token: str | None = Query(default=None), after_id: int | None = Query(default=None, ge=0), limit: int = Query(default=50, ge=1, le=100), x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"), x_webchat_ws_fallback: str | None = Header(default=None, alias="X-Webchat-WS-Fallback"), db: Session = Depends(get_db)) -> dict[str, Any]:
-    _set_public_cors(response, request)
+    _set_public_poll_cors(response, request)
     if str(x_webchat_ws_fallback or "").strip().lower() in {"1", "true", "yes", "on"}:
         record_webchat_websocket_fallback_polling("visitor", "client_poll")
         log_event(20, "websocket_fallback_polling", client_type="visitor", reason="client_poll")

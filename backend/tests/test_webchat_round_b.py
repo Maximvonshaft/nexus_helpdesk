@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import uuid
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api import webchat as webchat_api
 from app.main import app
 from app.db import Base, engine, SessionLocal
-from app.enums import UserRole
-from app.models import BackgroundJob, User
-from app.services import background_jobs
+from app.enums import SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole
+from app.models import BackgroundJob, Customer, Ticket, User
+from app.services import background_jobs, webchat_rate_limit
 from app.services.background_jobs import WEBCHAT_AI_REPLY_JOB
 from app.webchat_models import WebchatConversation, WebchatMessage  # noqa: F401 - ensure metadata registration
+
+ALLOWED_PUBLIC_POLL_ORIGIN = "https://www.leakle.com"
+PUBLIC_POLL_VISITOR_TOKEN = "visitor-token-public-poll-origin"
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -62,6 +68,138 @@ def _create_webchat_message_flow(client: TestClient):
     assert any(item['direction'] == 'visitor' and 'Hello, what can you help me with?' in item['body'] for item in messages_before)
     assert any(item['direction'] == 'agent' and 'received your message' in item['body'] for item in messages_before)
     return conversation_id, visitor_token
+
+
+@pytest.fixture()
+def production_public_poll_settings(monkeypatch):
+    monkeypatch.setattr(webchat_api.settings, "app_env", "production")
+    monkeypatch.setattr(webchat_api.settings, "webchat_allowed_origins", [ALLOWED_PUBLIC_POLL_ORIGIN])
+    monkeypatch.setattr(webchat_api.settings, "webchat_allow_no_origin", False)
+    monkeypatch.setattr(webchat_rate_limit.settings, "webchat_rate_limit_backend", "memory")
+
+
+def _create_public_poll_conversation(visitor_token: str = PUBLIC_POLL_VISITOR_TOKEN) -> str:
+    suffix = uuid.uuid4().hex[:12]
+    public_id = f"wcf_poll_{suffix}"
+    db = SessionLocal()
+    try:
+        customer = Customer(name="Public Poll Visitor", email=f"poll-{suffix}@example.invalid")
+        db.add(customer)
+        db.flush()
+        ticket = Ticket(
+            ticket_no=f"WC-POLL-{suffix.upper()}",
+            title="Public poll origin fixture",
+            description="Fixture for public webchat polling",
+            customer_id=customer.id,
+            source=TicketSource.user_message,
+            source_channel=SourceChannel.web_chat,
+            priority=TicketPriority.medium,
+            status=TicketStatus.in_progress,
+        )
+        db.add(ticket)
+        db.flush()
+        conversation = WebchatConversation(
+            public_id=public_id,
+            visitor_token_hash=hashlib.sha256(visitor_token.encode("utf-8")).hexdigest(),
+            tenant_key="default",
+            channel_key="website",
+            ticket_id=ticket.id,
+            visitor_name="Public Poll Visitor",
+            visitor_email=customer.email,
+            origin=ALLOWED_PUBLIC_POLL_ORIGIN,
+            status="open",
+            handoff_status="requested",
+        )
+        db.add(conversation)
+        db.flush()
+        db.add(
+            WebchatMessage(
+                conversation_id=conversation.id,
+                ticket_id=ticket.id,
+                direction="agent",
+                body="Support reply",
+                body_text="Support reply",
+                message_type="text",
+                author_label="Support",
+            )
+        )
+        db.commit()
+        return public_id
+    finally:
+        db.close()
+
+
+def _poll_public(client: TestClient, public_id: str, token: str = PUBLIC_POLL_VISITOR_TOKEN, headers: dict[str, str] | None = None):
+    request_headers = {"X-Webchat-Visitor-Token": token}
+    request_headers.update(headers or {})
+    return client.get(f"/api/webchat/conversations/{public_id}/messages?limit=5", headers=request_headers)
+
+
+def test_public_poll_without_origin_or_referer_allows_valid_visitor_token(production_public_poll_settings):
+    client = TestClient(app)
+    public_id = _create_public_poll_conversation()
+
+    response = _poll_public(client, public_id)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["conversation_id"] == public_id
+    assert payload["handoff_status"] == "requested"
+    assert payload["messages"][0]["body_text"] == "Support reply"
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_public_poll_without_origin_or_referer_rejects_invalid_visitor_token(production_public_poll_settings):
+    client = TestClient(app)
+    public_id = _create_public_poll_conversation()
+
+    response = _poll_public(client, public_id, token="wrong-token")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "invalid webchat visitor token"
+
+
+def test_public_poll_rejects_disallowed_origin_before_token_result(production_public_poll_settings):
+    client = TestClient(app)
+    public_id = _create_public_poll_conversation()
+
+    response = _poll_public(client, public_id, headers={"Origin": "https://evil.example"})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Webchat origin is not allowed"
+
+
+def test_public_poll_allows_allowed_origin_with_valid_visitor_token(production_public_poll_settings):
+    client = TestClient(app)
+    public_id = _create_public_poll_conversation()
+
+    response = _poll_public(client, public_id, headers={"Origin": ALLOWED_PUBLIC_POLL_ORIGIN})
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == ALLOWED_PUBLIC_POLL_ORIGIN
+    assert response.json()["messages"][0]["body_text"] == "Support reply"
+
+
+def test_public_poll_validates_referer_origin(production_public_poll_settings):
+    client = TestClient(app)
+    public_id = _create_public_poll_conversation()
+
+    allowed = _poll_public(client, public_id, headers={"Referer": f"{ALLOWED_PUBLIC_POLL_ORIGIN}/support/chat"})
+    rejected = _poll_public(client, public_id, headers={"Referer": "https://evil.example/support/chat"})
+
+    assert allowed.status_code == 200
+    assert allowed.headers["access-control-allow-origin"] == ALLOWED_PUBLIC_POLL_ORIGIN
+    assert rejected.status_code == 403
+    assert rejected.json()["detail"] == "Webchat origin is not allowed"
+
+
+def test_public_poll_missing_conversation_remains_404_after_token_resolution(production_public_poll_settings):
+    client = TestClient(app)
+
+    response = _poll_public(client, "wcf_missing_public_poll")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "webchat conversation not found"
 
 
 def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
