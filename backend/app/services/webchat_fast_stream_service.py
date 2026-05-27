@@ -270,6 +270,7 @@ async def stream_webchat_fast_reply_events(
                 routing_context=routing_context,
                 tracking_fact_metadata=tracking_fact_metadata,
             )
+            public_session = public_session or {}
         except Exception:
             if parsed.handoff_required:
                 _mark_failed(begin.row_id, "handoff_enqueue_failed")
