@@ -165,6 +165,7 @@ jobs:
               backend/tests/test_webchat_ai_turn_runtime.py) return 0 ;;
               backend/tests/test_webchat_fast_ai_provider_router_phase1.py) return 0 ;;
               backend/tests/test_webchat_fast_production_legacy_guard.py) return 0 ;;
+              backend/tests/test_webchat_fast_handoff_policy.py) return 0 ;;
               backend/tests/test_webchat_fast_reply_api.py) return 0 ;;
               backend/tests/test_webchat_fast_reply_provider_runtime.py) return 0 ;;
               backend/tests/test_webchat_handoff_control.py) return 0 ;;
