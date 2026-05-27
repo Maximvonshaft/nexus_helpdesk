@@ -127,6 +127,7 @@ jobs:
               backend/app/services/webchat_fast_stream_service.py) return 0 ;;
               backend/app/services/webchat_fast_session_service.py) return 0 ;;
               backend/app/services/webchat_handoff_service.py) return 0 ;;
+              backend/app/services/webchat_handoff_policy.py) return 0 ;;
               backend/app/services/webchat_performance.py) return 0 ;;
               backend/app/services/webchat_fast_ai_service.py) return 0 ;;
               backend/app/services/webchat_fast_config.py) return 0 ;;
