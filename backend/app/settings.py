@@ -127,6 +127,7 @@ class Settings:
         except ValueError:
             self.webchat_ai_reconciler_interval_seconds = 30
         self.webchat_static_quick_replies_mode = os.getenv("WEBCHAT_STATIC_QUICK_REPLIES_MODE", "off").strip().lower() or "off"
+        self.webchat_knowledge_reply_mode = os.getenv("WEBCHAT_KNOWLEDGE_REPLY_MODE", "ai_grounded").strip().lower() or "ai_grounded"
         self.webchat_tracking_fact_lookup_enabled = os.getenv("WEBCHAT_TRACKING_FACT_LOOKUP_ENABLED", "false").strip().lower() == "true"
         self.webchat_tracking_fact_source = os.getenv("WEBCHAT_TRACKING_FACT_SOURCE", "openclaw_bridge").strip().lower() or "openclaw_bridge"
         self.webchat_tracking_fact_timeout_seconds = int(os.getenv("WEBCHAT_TRACKING_FACT_TIMEOUT_SECONDS", "8"))
@@ -173,6 +174,8 @@ class Settings:
             raise RuntimeError("WEBCHAT_AI_AUTO_REPLY_MODE must be off, safe_ack, or safe_ai")
         if self.webchat_static_quick_replies_mode not in {"off", "legacy"}:
             raise RuntimeError("WEBCHAT_STATIC_QUICK_REPLIES_MODE must be off or legacy")
+        if self.webchat_knowledge_reply_mode not in {"ai_grounded", "deterministic_direct_answer"}:
+            raise RuntimeError("WEBCHAT_KNOWLEDGE_REPLY_MODE must be ai_grounded or deterministic_direct_answer")
         if self.webchat_tracking_fact_source not in {"openclaw_bridge", "speedaf_api"}:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_SOURCE must be openclaw_bridge or speedaf_api")
         if self.webchat_tracking_fact_timeout_seconds < 1 or self.webchat_tracking_fact_timeout_seconds > 30:

@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from app.db import SessionLocal
+from app.settings import get_settings
 
 from .ai_runtime.openclaw_responses_provider import (
     build_fast_reply_input_text,
@@ -154,6 +155,10 @@ def _is_already_grounded_provider_result(provider_result: FastAIProviderResult) 
     return bool(safe_summary.get("grounding_applied")) or str(provider_result.reply_source or "").endswith(":grounded_knowledge")
 
 
+def _deterministic_direct_answer_enabled() -> bool:
+    return get_settings().webchat_knowledge_reply_mode == "deterministic_direct_answer"
+
+
 def _apply_grounding(
     *,
     provider_result: FastAIProviderResult,
@@ -167,6 +172,17 @@ def _apply_grounding(
     if _is_already_grounded_provider_result(provider_result):
         safe_summary["grounding_applied"] = True
         safe_summary.setdefault("grounding_reason", "provider_runtime_grounded_knowledge")
+        return _provider_result_with_summary(provider_result, safe_summary)
+    if not _deterministic_direct_answer_enabled():
+        knowledge = runtime_context.get("knowledge_context") if isinstance(runtime_context, dict) else None
+        if isinstance(knowledge, dict) and knowledge.get("locked_facts"):
+            safe_summary.setdefault("grounding_applied", False)
+            safe_summary.setdefault("grounding_reason", "ai_grounded_provider_result_not_overridden")
+            safe_summary.setdefault("locked_fact_ids", [
+                str(fact.get("item_key"))
+                for fact in knowledge.get("locked_facts", [])
+                if isinstance(fact, dict) and fact.get("item_key")
+            ])
         return _provider_result_with_summary(provider_result, safe_summary)
 
     knowledge = runtime_context.get("knowledge_context") if isinstance(runtime_context, dict) else None

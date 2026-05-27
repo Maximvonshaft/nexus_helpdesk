@@ -319,8 +319,8 @@ def test_fast_reply_provider_runtime_returns_published_business_sla_direct_answe
     assert payload["reply_source"] != "server_handoff_policy"
     assert "15" in payload["reply"]
     assert payload["grounding_applied"] is True
-    assert payload["reply_source"] == "codex_app_server:grounded_knowledge"
-    assert payload["grounding_reason"] == "approved_direct_answer_override"
+    assert payload["reply_source"] == "codex_app_server"
+    assert payload["grounding_reason"] == "locked_fact_ai_grounded"
     assert payload["grounding_source"]["item_key"] == "fact.ch.shipping-sla.api"
     assert payload.get("error_code") not in {"all_providers_failed", "parse_reject"}
 
@@ -334,7 +334,7 @@ def test_fast_reply_provider_runtime_returns_published_business_sla_direct_answe
         ).scalar_one()
         metadata = json.loads(message.metadata_json or "{}")
         assert metadata["grounding_applied"] is True
-        assert metadata["grounding_reason"] == "approved_direct_answer_override"
+        assert metadata["grounding_reason"] == "locked_fact_ai_grounded"
         assert metadata["grounding_source"]["item_key"] == "fact.ch.shipping-sla.api"
     finally:
         db.close()

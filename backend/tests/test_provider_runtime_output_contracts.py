@@ -27,6 +27,21 @@ def _approved_direct_answer_context(answer: str) -> dict:
     }
 
 
+def _locked_fact_context(answer: str) -> dict:
+    context = _approved_direct_answer_context(answer)
+    context["locked_facts"] = [
+        {
+            "item_key": "fact.ng.shipping-sla",
+            "title": "尼日利亚海运时效",
+            "question": "尼日利亚海运时效是多少？",
+            "answer": answer,
+            "answer_mode": "direct_answer",
+            "source": {"item_key": "fact.ng.shipping-sla", "title": "尼日利亚海运时效"},
+        }
+    ]
+    return context
+
+
 def test_speedaf_webchat_fast_reply_v1_valid():
     raw_json = '{"customer_reply": "hello", "language": "en", "intent": "greeting", "handoff_required": false, "ticket_should_create": false}'
     parsed = OutputContracts.validate_and_parse("speedaf_webchat_fast_reply_v1", raw_json)
@@ -145,4 +160,59 @@ def test_direct_answer_does_not_excuse_extra_live_parcel_status_claim():
             evidence_present=False,
             request_body="瑞士海运时效是多少？",
             knowledge_context=_approved_direct_answer_context("瑞士海运清关时效为 15 天。"),
+        )
+
+
+def test_locked_fact_equivalent_natural_reply_passes():
+    raw_json = json.dumps(
+        {
+            "customer_reply": "尼日利亚海运通常需要 15 天。",
+            "language": "zh",
+            "intent": "other",
+            "tracking_number": None,
+            "handoff_required": False,
+            "ticket_should_create": False,
+        },
+        ensure_ascii=False,
+    )
+
+    parsed = OutputContracts.validate_and_parse(
+        "speedaf_webchat_fast_reply_v1",
+        raw_json,
+        evidence_present=False,
+        request_body="尼日利亚海运时效是多少？",
+        knowledge_context=_locked_fact_context("尼日利亚海运时效为 15 天。"),
+    )
+
+    assert parsed["customer_reply"] == "尼日利亚海运通常需要 15 天。"
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "尼日利亚海运通常需要 20 天。",
+        "瑞士海运时效为 15 天。",
+        "尼日利亚空运时效为 15 天。",
+    ],
+)
+def test_locked_fact_conflicts_are_rejected(reply):
+    raw_json = json.dumps(
+        {
+            "customer_reply": reply,
+            "language": "zh",
+            "intent": "other",
+            "tracking_number": None,
+            "handoff_required": False,
+            "ticket_should_create": False,
+        },
+        ensure_ascii=False,
+    )
+
+    with pytest.raises(ValueError, match="Locked fact grounding conflict"):
+        OutputContracts.validate_and_parse(
+            "speedaf_webchat_fast_reply_v1",
+            raw_json,
+            evidence_present=False,
+            request_body="尼日利亚海运时效是多少？",
+            knowledge_context=_locked_fact_context("尼日利亚海运时效为 15 天。"),
         )

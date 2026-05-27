@@ -62,6 +62,7 @@ def test_production_settings_accept_hardened_contract(monkeypatch):
     assert settings.app_env == 'production'
     assert settings.is_postgres is True
     assert settings.allow_dev_auth is False
+    assert settings.webchat_knowledge_reply_mode == 'ai_grounded'
 
 
 @pytest.mark.parametrize(
@@ -73,6 +74,7 @@ def test_production_settings_accept_hardened_contract(monkeypatch):
         ('ALLOW_LEGACY_INTEGRATION_API_KEY', 'true', 'ALLOW_LEGACY_INTEGRATION_API_KEY'),
         ('OPENCLAW_CLI_FALLBACK_ENABLED', 'true', 'OPENCLAW_CLI_FALLBACK_ENABLED'),
         ('WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT', 'true', 'WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT'),
+        ('WEBCHAT_KNOWLEDGE_REPLY_MODE', 'direct_answer', 'WEBCHAT_KNOWLEDGE_REPLY_MODE'),
     ],
 )
 def test_production_settings_reject_unsafe_contract(key: str, value: str, expected_message: str):

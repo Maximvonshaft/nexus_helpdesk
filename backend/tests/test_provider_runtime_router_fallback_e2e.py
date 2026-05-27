@@ -40,6 +40,16 @@ def _success(provider: str, reply: str = "I can help with that.") -> ProviderRes
 def _approved_shipping_sla_context(answer: str) -> dict:
     return {
         "knowledge_context": {
+            "locked_facts": [
+                {
+                    "item_key": "fact.ch.shipping-sla",
+                    "title": "瑞士海运时效",
+                    "question": "瑞士海运时效是多少？",
+                    "answer": answer,
+                    "answer_mode": "direct_answer",
+                    "source": {"item_key": "fact.ch.shipping-sla", "title": "瑞士海运时效"},
+                }
+            ],
             "hits": [
                 {
                     "item_key": "fact.ch.shipping-sla",

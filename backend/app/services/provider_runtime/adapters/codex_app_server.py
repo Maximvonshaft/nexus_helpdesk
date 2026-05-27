@@ -319,6 +319,7 @@ class CodexAppServerAdapter(ProviderAdapter):
 
     @staticmethod
     def _reply_payload(request: ProviderRequest) -> dict:
+        knowledge_context = (request.metadata or {}).get("knowledge_context")
         return {
             "messages": request.recent_context or [],
             "body": request.body,
@@ -326,7 +327,16 @@ class CodexAppServerAdapter(ProviderAdapter):
             "tracking_fact_summary": request.tracking_fact_summary,
             "tracking_fact_evidence_present": request.tracking_fact_evidence_present,
             "persona_context": (request.metadata or {}).get("persona_context"),
-            "knowledge_context": (request.metadata or {}).get("knowledge_context"),
+            "knowledge_context": knowledge_context,
+            "grounding_contract": {
+                "mode": "ai_grounded_locked_facts",
+                "locked_facts_present": bool(isinstance(knowledge_context, dict) and knowledge_context.get("locked_facts")),
+                "rules": [
+                    "Use locked_facts as authoritative context for customer-visible answers when present.",
+                    "Natural rephrasing is allowed, but countries, service types, timing, numbers, prices, and policy boundaries must stay unchanged.",
+                    "Do not expose internal field names such as locked_facts or provider_runtime to the customer.",
+                ],
+            },
             "safety_policy": (request.metadata or {}).get("safety_policy"),
             "tenant_id": request.tenant_id,
             "channel_key": request.channel_key,
