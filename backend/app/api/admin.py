@@ -30,10 +30,12 @@ from ..unit_of_work import managed_session
 from ..services.openclaw_bridge import ALLOWED_CHANNEL_ACCOUNT_PROVIDERS, consume_openclaw_events_once, count_stale_openclaw_links, link_ticket_to_openclaw_session, list_stale_openclaw_links, replay_unresolved_openclaw_event as replay_unresolved_openclaw_event_payload, sync_openclaw_conversation
 from ..services.openclaw_runtime_service import probe_openclaw_connectivity
 from .deps import get_current_user
+from .admin_outbound_email import router as outbound_email_router
 
 settings = get_settings()
 
 router = APIRouter(prefix='/api/admin', tags=['admin'])
+router.include_router(outbound_email_router)
 
 def _normalize_username(value: str) -> str:
     return value.strip()

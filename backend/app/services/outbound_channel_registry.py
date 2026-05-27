@@ -4,12 +4,14 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from email_validator import EmailNotValidError, validate_email
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from ..enums import SourceChannel
 from ..models import ChannelAccount, Ticket
 from ..settings import get_settings
+from .outbound_email_account_service import has_active_outbound_email_account
 
 
 EXTERNAL_READY_CANDIDATE_CHANNELS = frozenset({
@@ -127,10 +129,22 @@ def is_valid_e164_phone(value: str | None) -> bool:
     return bool(value and E164_RE.match(value.strip()))
 
 
+def is_valid_email_address(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        validate_email(value.strip(), check_deliverability=False)
+        return True
+    except EmailNotValidError:
+        return False
+
+
 def _target_ready(ticket: Ticket | None, *, channel: str) -> bool:
     target = _ticket_target(ticket, channel=channel)
     if not target:
         return False
+    if channel == SourceChannel.email.value:
+        return is_valid_email_address(target)
     if channel == SourceChannel.sms.value:
         return is_valid_e164_phone(target)
     return True
@@ -192,14 +206,21 @@ def get_outbound_channel_capability(
         )
 
     if channel_value in EXTERNAL_EXPERIMENTAL_CHANNELS:
+        account_configured = has_active_outbound_email_account(db, ticket=ticket)
+        target_configured = _target_ready(ticket, channel=channel_value) if ticket is not None else True
+        if not account_configured:
+            missing.append("email_account_registry")
+        if not target_configured:
+            missing.append("valid_email_address_with_subject")
+        missing.extend(["email_send_schema", "email_provider_adapter"])
         return OutboundChannelCapability(
             channel=channel_value,
             label=_label(channel_value),
             dispatch_type="external",
-            status="experimental_not_ready",
-            customer_sendable=False,
+            status="configurable",
+            customer_sendable=True,
             enabled=False,
-            configured=False,
+            configured=account_configured and target_configured,
             account_required=True,
             target_required=True,
             supports_send=False,
@@ -208,8 +229,8 @@ def get_outbound_channel_capability(
             supports_attachments=False,
             external_send=True,
             target_validation=_target_validation(channel_value),
-            missing=["email_account_registry", "email_send_schema", "email_provider_adapter"],
-            operator_note="Email exists in the enum/outbox layer but is blocked until account, schema, and adapter closure are implemented.",
+            missing=missing,
+            operator_note="Email account registry is available, but customer sends remain blocked until send schema and SMTP adapter closure are implemented.",
         )
 
     if channel_value in EXTERNAL_READY_CANDIDATE_CHANNELS:

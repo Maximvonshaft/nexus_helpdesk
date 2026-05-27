@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT.parent))
 from app.api.tickets import ticket_outbound_channel_capabilities  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.enums import ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
-from app.models import ChannelAccount, Customer, Team, Ticket, User  # noqa: E402
+from app.models import ChannelAccount, Customer, OutboundEmailAccount, Team, Ticket, User  # noqa: E402
 from app.services.outbound_channel_registry import (  # noqa: E402
     get_outbound_channel_capability,
     list_outbound_channel_capabilities,
@@ -101,7 +101,8 @@ def test_registry_classifies_all_declared_channels(db_session, monkeypatch):
 
     assert rows["internal"].status == "not_customer_sendable"
     assert rows["internal"].customer_sendable is False
-    assert rows["email"].status == "experimental_not_ready"
+    assert rows["email"].status == "configurable"
+    assert rows["email"].customer_sendable is True
     assert rows["email"].supports_send is False
     assert rows["web_chat"].dispatch_type == "local"
     assert rows["whatsapp"].dispatch_type == "external"
@@ -109,7 +110,7 @@ def test_registry_classifies_all_declared_channels(db_session, monkeypatch):
     assert rows["sms"].dispatch_type == "external"
 
 
-def test_internal_and_email_are_blocked_from_customer_send(db_session, monkeypatch):
+def test_internal_is_not_customer_sendable_and_email_is_not_runtime_ready(db_session, monkeypatch):
     _reset_settings(monkeypatch, dispatch=True, provider="openclaw")
     ticket = _ticket(db_session)
 
@@ -121,8 +122,44 @@ def test_internal_and_email_are_blocked_from_customer_send(db_session, monkeypat
     with pytest.raises(HTTPException) as email_exc:
         require_outbound_channel_sendable(db_session, ticket=ticket, channel=SourceChannel.email)
     assert email_exc.value.status_code == 400
-    assert email_exc.value.detail["error_code"] == "outbound_channel_not_customer_sendable"
+    assert email_exc.value.detail["error_code"] == "outbound_channel_not_ready"
+    assert "email_send_schema" in email_exc.value.detail["missing"]
     assert "email_provider_adapter" in email_exc.value.detail["missing"]
+
+
+def test_email_capability_uses_account_registry_and_target_validation(db_session, monkeypatch):
+    _reset_settings(monkeypatch, dispatch=True, provider="openclaw")
+    ticket = _ticket(db_session, channel=SourceChannel.email, contact="alice@nexusdesk-mail.com")
+
+    missing_account = get_outbound_channel_capability(SourceChannel.email, db=db_session, ticket=ticket)
+    assert missing_account.customer_sendable is True
+    assert missing_account.supports_send is False
+    assert "email_account_registry" in missing_account.missing
+    assert "valid_email_address_with_subject" not in missing_account.missing
+
+    db_session.add(
+        OutboundEmailAccount(
+            display_name="Support SMTP",
+            host="smtp.example.test",
+            port=587,
+            username="support",
+            password_encrypted="encrypted-password",
+            from_address="support@example.test",
+            security_mode="starttls",
+            is_active=True,
+            priority=10,
+        )
+    )
+    db_session.flush()
+
+    configured = get_outbound_channel_capability(SourceChannel.email, db=db_session, ticket=ticket)
+    assert configured.configured is True
+    assert "email_account_registry" not in configured.missing
+    assert configured.missing == ["email_send_schema", "email_provider_adapter"]
+
+    invalid_ticket = _ticket(db_session, channel=SourceChannel.email, contact="not-an-email")
+    invalid = get_outbound_channel_capability(SourceChannel.email, db=db_session, ticket=invalid_ticket)
+    assert "valid_email_address_with_subject" in invalid.missing
 
 
 def test_whatsapp_requires_runtime_account_and_target(db_session, monkeypatch):
