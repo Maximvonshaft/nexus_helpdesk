@@ -10,13 +10,15 @@ Before building the production image, generate a dedicated non-secret release me
 
 ```bash
 cd /opt/nexus_helpdesk
-scripts/export_release_metadata.sh deploy/.release.env
+sh scripts/export_release_metadata.sh deploy/.release.env
 set -a
 . deploy/.release.env
 set +a
 docker compose --env-file deploy/.env.prod --env-file deploy/.release.env -f deploy/docker-compose.server.yml build
 docker compose --env-file deploy/.env.prod --env-file deploy/.release.env -f deploy/docker-compose.server.yml up -d --remove-orphans
 ```
+
+Use `sh scripts/export_release_metadata.sh` so the command works even when a fresh checkout has not preserved executable mode for the script.
 
 `deploy/.release.env` is ignored by git. It must be regenerated for each release from the checked-out commit that is being deployed.
 
@@ -33,7 +35,7 @@ The export script writes only non-secret metadata:
 - `APP_VERSION`
 - `IMAGE_TAG`
 
-The script refuses to write to paths containing `secret`, `password`, or `token` so release metadata is not mixed with runtime secrets.
+The script refuses to write to sensitive-looking file paths so release metadata is not mixed with runtime secrets.
 
 ## Why this exists
 
