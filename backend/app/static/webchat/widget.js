@@ -463,7 +463,7 @@
 
     function fallbackToNonStream() {
       hideTyping();
-      api('/api/webchat/fast-reply', {
+      return api('/api/webchat/fast-reply', {
         method: 'POST',
         body: JSON.stringify(requestPayload)
       }, timeoutMs).then(function (data) {
@@ -486,8 +486,18 @@
         updateMessage(bubble, body, 'visitor', 'failed');
         setStatus('Connection issue. Please try again.');
         appendRetry(bubble, body, function (retryBody) { sendFastMessage(retryBody, bubble, cmid); });
+      }).finally(function () {
+        state.busy = false;
+        sendEl.disabled = false;
       });
     }
+
+    // NEXUSDESK_DIRECT_JSON_FAST_REPLY_BEGIN
+    // Current production route is provider_runtime -> codex_app_server over JSON.
+    // Do not probe an unconfigured stream endpoint first; it adds latency and can
+    // leave same-client-message fallback in request_processing.
+    return fallbackToNonStream();
+    // NEXUSDESK_DIRECT_JSON_FAST_REPLY_END
 
     streamApi('/api/webchat/fast-reply/stream', requestPayload, timeoutMs, function (eventName, data) {
       if (!eventName || (eventName !== 'reply_delta' && eventName !== 'replay' && eventName !== 'final' && eventName !== 'error')) return;

@@ -30,7 +30,7 @@ _RULES: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
     (
         "explicit_human_request",
         (
-            "speak to a human", "talk to a human", "speak with a human", "talk with a human",
+            "speak to a human", "talk to a human", "speak to human", "talk to human", "connect to human", "human please", "speak with a human", "talk with a human",
             "human agent", "human representative", "real person", "live agent", "operator", "representative",
             "manual support", "support agent", "human support", "connect me to an agent", "connect me to a human",
             "speak to an agent", "talk to an agent", "agent please", "representative please",
@@ -279,13 +279,16 @@ def decide_server_handoff_policy(
     handoff, but it cannot suppress these server-owned rules.
     """
 
-    joined = _normalize(body)
-    context = _customer_context_text(recent_context)
-    if context:
-        joined = f"{context}\n{joined}"
+    policy_text = _normalize(body)
+    # NEXUSDESK_HANDOFF_BODY_ONLY_CURRENT_TURN
+    # Strong server-owned handoff rules are current-turn authority.
+    # Historical context remains available to AI/provider context, but it must not
+    # trigger a new high-risk handoff after the customer switches intent, e.g.
+    # "Refuse delivery" -> "Track parcel".
+    _ = recent_context
 
     for rule in _iter_configured_rules(configured_rules):
-        if any(_contains_phrase(joined, phrase) for phrase in rule.phrases):
+        if any(_contains_phrase(policy_text, phrase) for phrase in rule.phrases):
             return HandoffPolicyDecision(
                 handoff_required=True,
                 rule_id=rule.rule_id,
@@ -295,7 +298,7 @@ def decide_server_handoff_policy(
             )
 
     for rule_id, phrases, reason, action in _RULES:
-        if rule_id == "address_change_request" and _looks_like_address_change_request(joined):
+        if rule_id == "address_change_request" and _looks_like_address_change_request(policy_text):
             return HandoffPolicyDecision(
                 handoff_required=True,
                 rule_id=rule_id,
@@ -304,7 +307,7 @@ def decide_server_handoff_policy(
                 customer_reply=_DEFAULT_CUSTOMER_REPLY,
             )
 
-        if any(_contains_phrase(joined, phrase) for phrase in phrases):
+        if any(_contains_phrase(policy_text, phrase) for phrase in phrases):
             return HandoffPolicyDecision(
                 handoff_required=True,
                 rule_id=rule_id,

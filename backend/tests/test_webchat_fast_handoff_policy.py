@@ -261,3 +261,44 @@ def test_non_stream_address_change_with_waybill_skips_tracking_fact_short_circui
     assert "tracking_fact" not in data
     assert calls == {"ai": 0, "tracking": 0, "ticket": 1}
 # PR193_ADDRESS_CHANGE_SEMANTIC_REGRESSION_END
+
+
+# NEXUSDESK_HANDOFF_BODY_ONLY_REGRESSION_BEGIN
+def test_track_parcel_ignores_previous_refuse_delivery_context_for_handoff_policy():
+    decision = decide_server_handoff_policy(
+        body="Track parcel",
+        recent_context=[
+            {"role": "visitor", "text": "Refuse delivery"},
+            {"role": "agent", "text": "A human teammate will review this request."},
+        ],
+    )
+
+    assert decision.handoff_required is False
+    assert decision.rule_id is None
+
+
+def test_tracking_number_ignores_previous_refuse_delivery_context_for_handoff_policy():
+    decision = decide_server_handoff_policy(
+        body="CH02000126553",
+        recent_context=[{"role": "visitor", "text": "Refuse delivery"}],
+    )
+
+    assert decision.handoff_required is False
+    assert decision.rule_id is None
+
+
+def test_refuse_delivery_current_turn_still_requires_handoff():
+    decision = decide_server_handoff_policy(body="Refuse delivery", recent_context=[])
+
+    assert decision.handoff_required is True
+    assert decision.rule_id == "refusal_or_return_request"
+    assert decision.handoff_reason == "refusal_or_return_requires_human_review"
+
+
+def test_talk_to_human_without_article_is_server_owned_handoff():
+    decision = decide_server_handoff_policy(body="Talk to human", recent_context=[])
+
+    assert decision.handoff_required is True
+    assert decision.rule_id == "explicit_human_request"
+    assert decision.handoff_reason == "customer_requested_human_review"
+# NEXUSDESK_HANDOFF_BODY_ONLY_REGRESSION_END

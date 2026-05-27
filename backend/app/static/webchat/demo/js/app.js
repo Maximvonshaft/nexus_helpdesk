@@ -11,6 +11,15 @@
     fastReplyPath: '/api/webchat/fast-reply'
   });
 
+  // NEXUSDESK_DEMO_QUICK_ACTION_INTENT_MAPPING
+  const QUICK_ACTION_MESSAGES = Object.freeze({
+    track: 'Please help me track my parcel. I will provide the tracking number.',
+    redelivery: 'I need help with redelivery.',
+    refuse: 'Refuse delivery',
+    problem: 'I have a delivery issue and need help.',
+    human: 'Talk to human'
+  });
+
   const panel = document.getElementById('chatPanel');
   const closeBtn = document.getElementById('closeChat');
   const openBtn = document.getElementById('floatingChat');
@@ -24,6 +33,7 @@
   const trackingInput = document.getElementById('trackingInput');
 
   let busy = false;
+  let handoffRequested = false;
   let recentContext = loadContext();
   const sessionId = loadSessionId();
 
@@ -59,8 +69,10 @@
 
   Array.from(document.querySelectorAll('.quick-btn[data-action]')).forEach(function (button) {
     button.addEventListener('click', function () {
+      if (button.disabled) return;
       const action = button.getAttribute('data-action') || 'general';
-      const message = button.textContent ? button.textContent.trim() : action;
+      const message = QUICK_ACTION_MESSAGES[action] || (button.textContent ? button.textContent.trim() : action);
+      if (action === 'track') clearContext();
       if (input) input.value = message;
       submitMessage();
     });
@@ -130,6 +142,11 @@
         try {
           appendMessage('bot', reply, { handoff: Boolean(data.handoff_required) });
           remember(body, reply);
+          if (data && data.handoff_required) {
+            handoffRequested = true;
+            setQuickButtonsDisabled(true);
+            if (input) input.placeholder = 'Human review requested. Type extra details or refresh for a new issue.';
+          }
         } catch (renderError) {
           reportDemoError('webchat_demo_render_error', renderError, withDebug(debugContext, { error_code: 'render_error' }));
         }
@@ -284,6 +301,18 @@
   function hideTyping() {
     if (!log) return;
     log.querySelectorAll('.dynamic-typing').forEach(function (node) { node.remove(); });
+  }
+
+  function setQuickButtonsDisabled(disabled) {
+    Array.from(document.querySelectorAll('.quick-btn[data-action]')).forEach(function (button) {
+      button.disabled = Boolean(disabled);
+      button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    });
+  }
+
+  function clearContext() {
+    recentContext = [];
+    try { sessionStorage.removeItem(CONFIG.contextKey); } catch (_) {}
   }
 
   function remember(userText, replyText) {
