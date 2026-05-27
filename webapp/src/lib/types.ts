@@ -132,6 +132,80 @@ export interface ChannelAccount {
   updated_at: string
 }
 
+export type OutboundEmailSecurityMode = 'starttls' | 'ssl' | 'plain'
+
+export interface OutboundEmailAccount {
+  id: number
+  display_name?: string | null
+  host: string
+  port: number
+  username: string
+  from_address: string
+  reply_to?: string | null
+  security_mode: OutboundEmailSecurityMode | string
+  market_id?: number | null
+  is_active: boolean
+  priority: number
+  health_status: string
+  last_test_status?: string | null
+  last_test_error?: string | null
+  last_test_at?: string | null
+  password_configured: boolean
+  password_mask?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type OutboundEmailAccountCreate = {
+  display_name?: string | null
+  host: string
+  port: number
+  username: string
+  password: string
+  from_address: string
+  reply_to?: string | null
+  security_mode: OutboundEmailSecurityMode
+  market_id?: number | null
+  priority?: number
+  is_active?: boolean
+}
+
+export type OutboundEmailAccountUpdate = Partial<{
+  display_name: string | null
+  host: string
+  port: number
+  username: string
+  password: string
+  from_address: string
+  reply_to: string | null
+  security_mode: OutboundEmailSecurityMode
+  market_id: number | null
+  priority: number
+  is_active: boolean
+}>
+
+export type OutboundEmailTestSendRequest = {
+  to_address: string
+  subject?: string | null
+  body?: string | null
+}
+
+export interface OutboundEmailTestSendResult {
+  ok: boolean
+  account_id: number
+  provider_status: string
+  failure_code?: string | null
+  error_message?: string | null
+  sent_at?: string | null
+  health_status: string
+}
+
+export type OutboundSendPayload = {
+  channel: string
+  subject?: string | null
+  body: string
+}
+
 export interface EvidenceSummary {
   loaded: boolean
   preview_limit: number

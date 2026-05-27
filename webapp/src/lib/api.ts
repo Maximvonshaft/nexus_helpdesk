@@ -15,6 +15,12 @@ import type {
   RuntimeHealth,
   OpenClawConnectivityProbe,
   OutboundChannelCapabilitiesResponse,
+  OutboundEmailAccount,
+  OutboundEmailAccountCreate,
+  OutboundEmailAccountUpdate,
+  OutboundEmailTestSendRequest,
+  OutboundEmailTestSendResult,
+  OutboundSendPayload,
   SignoffChecklist,
   AIConfigResource,
   AIConfigVersion,
@@ -271,8 +277,6 @@ export type WebCallAIDemoTurn = {
 
 type CaseQueryParams = { q?: string; status?: string; priority?: string; assignee_id?: number; team_id?: number; overdue?: boolean; cursor?: string | null; limit?: number }
 
-type OutboundSendPayload = { channel: string; body: string }
-
 function buildCaseSearch(params?: CaseQueryParams) {
   const search = new URLSearchParams()
   search.set('limit', String(params?.limit ?? 50))
@@ -475,6 +479,22 @@ export const api = {
   }),
   updateChannelAccount: (accountId: number, payload: Partial<ChannelAccount>) => request<ChannelAccount>(`/api/admin/channel-accounts/${accountId}`, {
     method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  outboundEmailAccounts: () => request<OutboundEmailAccount[]>('/api/admin/outbound-email/accounts'),
+  outboundEmailAccount: (accountId: number) => request<OutboundEmailAccount>(`/api/admin/outbound-email/accounts/${accountId}`),
+  createOutboundEmailAccount: (payload: OutboundEmailAccountCreate) => request<OutboundEmailAccount>('/api/admin/outbound-email/accounts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateOutboundEmailAccount: (accountId: number, payload: OutboundEmailAccountUpdate) => request<OutboundEmailAccount>(`/api/admin/outbound-email/accounts/${accountId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  enableOutboundEmailAccount: (accountId: number) => request<OutboundEmailAccount>(`/api/admin/outbound-email/accounts/${accountId}/enable`, { method: 'POST' }),
+  disableOutboundEmailAccount: (accountId: number) => request<OutboundEmailAccount>(`/api/admin/outbound-email/accounts/${accountId}/disable`, { method: 'POST' }),
+  testOutboundEmailAccount: (accountId: number, payload: OutboundEmailTestSendRequest) => request<OutboundEmailTestSendResult>(`/api/admin/outbound-email/accounts/${accountId}/test-send`, {
+    method: 'POST',
     body: JSON.stringify(payload),
   }),
 

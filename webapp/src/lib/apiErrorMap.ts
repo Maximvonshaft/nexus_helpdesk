@@ -18,10 +18,32 @@ const detailMessages: Record<string, string> = {
   'Only lead or above can assign': '缺少 ticket.assign，无法分配工单。请联系组长或主管处理。',
   'Resolution category is required before closing a ticket': '关闭工单前必须填写解决分类，请先补全工单结论。',
   'This status change requires a note in workflow_update': '该状态变更必须填写内部备注，请说明原因后再保存。',
+  email_subject_required: 'Email 主题不能为空。请填写主题后再发送客户邮件。',
+  smtp_configuration_missing: '没有可用的 Outbound Email SMTP 账号。请先配置并启用市场账号或全局 fallback。',
+  smtp_auth_failed: 'SMTP 认证失败。请核对 username、密码和服务端授权方式后重试。',
+  smtp_tls_failed: 'SMTP TLS/SSL 握手失败。请核对 security mode、端口和证书配置。',
+  smtp_connect_timeout: '连接 SMTP 服务超时。请检查 host、port、网络策略和供应商状态。',
+  smtp_connect_failed: '无法连接 SMTP 服务。请检查 host、port、DNS 和防火墙策略。',
+  smtp_sender_rejected: 'SMTP 服务拒绝发件地址。请确认 From address 已被该账号授权。',
+  smtp_recipient_rejected: 'SMTP 服务拒绝收件地址。请核对客户邮箱或使用测试收件人复测。',
+  smtp_rate_limited: 'SMTP 服务触发限流。请稍后重试，必要时联系邮件供应商提升额度。',
+  smtp_message_rejected: 'SMTP 服务拒绝邮件内容。请检查主题、正文、发件域策略和供应商限制。',
+  smtp_unexpected_error: 'SMTP 发送出现未知错误。请查看技术详情或后端日志中的 request id。',
+}
+
+function detailCode(detail: unknown) {
+  if (typeof detail === 'string') return detail
+  if (detail && typeof detail === 'object' && 'error_code' in detail) {
+    const code = (detail as { error_code?: unknown }).error_code
+    return typeof code === 'string' ? code : ''
+  }
+  return ''
 }
 
 export function mapApiErrorMessage(status: number, detail: unknown, fallback: string) {
+  const code = detailCode(detail)
   const raw = typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : ''
+  if (code && detailMessages[code]) return detailMessages[code]
   if (raw && detailMessages[raw]) return detailMessages[raw]
   if (status === 403) return raw ? `权限不足：${raw}。请联系主管或管理员开通对应 capability。` : '权限不足，请联系主管或管理员开通对应 capability。'
   if (status === 400) return raw || '请求内容不完整，请检查必填项后重试。'
