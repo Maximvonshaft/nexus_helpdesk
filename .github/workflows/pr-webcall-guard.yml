@@ -92,6 +92,7 @@ jobs:
               backend/app/schemas_control_plane.py) return 0 ;;
               backend/app/settings.py) return 0 ;;
               backend/app/services/operator_queue.py) return 0 ;;
+              backend/app/services/observability.py) return 0 ;;
               backend/app/services/ai_runtime/codex_auth_provider.py) return 0 ;;
               backend/app/services/ai_runtime/codex_app_server_provider.py) return 0 ;;
               backend/app/services/ai_runtime/openclaw_responses_provider.py) return 0 ;;
@@ -119,6 +120,7 @@ jobs:
               backend/app/services/webchat_ai_turn_service.py) return 0 ;;
               backend/app/services/webchat_ai_service.py) return 0 ;;
               backend/app/services/webchat_fast_stream_service.py) return 0 ;;
+              backend/app/services/webchat_fast_session_service.py) return 0 ;;
               backend/app/services/webchat_handoff_service.py) return 0 ;;
               backend/app/services/webchat_performance.py) return 0 ;;
               backend/app/services/webchat_fast_ai_service.py) return 0 ;;

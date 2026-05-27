@@ -88,3 +88,48 @@ def test_static_widget_uses_ws_without_url_token_transport():
     assert "visitor_token:" in text
     assert "visitor_token=" not in text
     assert "data-websocket" in text
+
+
+def test_static_widget_fast_ai_uses_public_ws_and_keeps_disable_fallback():
+    text = (ROOT / "backend" / "app" / "static" / "webchat" / "widget.js").read_text(encoding="utf-8")
+
+    assert "var mode = (script.getAttribute('data-webchat-mode') || 'fast_ai').toLowerCase()" in text
+    assert "rememberPublicSession(data)" in text
+    assert "mode !== 'legacy' && mode !== 'fast_ai'" in text
+    assert "script.getAttribute('data-websocket') === 'false') return" in text
+    assert "X-Webchat-WS-Fallback" in text
+
+
+def test_webchat_ws_observability_and_connection_limits_contract():
+    settings_text = (ROOT / "backend" / "app" / "settings.py").read_text(encoding="utf-8")
+    env_example = (ROOT / "backend" / ".env.example").read_text(encoding="utf-8")
+    observability = (ROOT / "backend" / "app" / "services" / "observability.py").read_text(encoding="utf-8")
+    ws_route = (ROOT / "backend" / "app" / "api" / "webchat_ws.py").read_text(encoding="utf-8")
+    hub = (ROOT / "backend" / "app" / "services" / "webchat_realtime_hub.py").read_text(encoding="utf-8")
+
+    assert "WEBCHAT_WS_MAX_CONNECTIONS" in settings_text
+    assert "WEBCHAT_WS_MAX_CONNECTIONS_PER_USER" in settings_text
+    assert "WEBCHAT_WS_MAX_CONNECTIONS=1000" in env_example
+    assert "WEBCHAT_WS_MAX_CONNECTIONS_PER_USER=10" in env_example
+    for metric in (
+        "nexusdesk_webchat_websocket_connected_total",
+        "nexusdesk_webchat_websocket_disconnected_total",
+        "nexusdesk_webchat_websocket_auth_failed_total",
+        "nexusdesk_webchat_websocket_event_sent_total",
+        "nexusdesk_webchat_websocket_event_replay_total",
+        "nexusdesk_webchat_websocket_fallback_polling_total",
+        "nexusdesk_webchat_websocket_active_connections",
+    ):
+        assert metric in observability
+    for event_name in (
+        "websocket_connected",
+        "websocket_disconnected",
+        "websocket_auth_failed",
+        "websocket_event_sent",
+        "websocket_event_replay",
+        "websocket_fallback_polling",
+    ):
+        assert event_name in ws_route
+    assert "websocket_active_connections" in hub
+    assert 'log_event(20, "websocket_connected", client_type=client_type)' in ws_route
+    assert all("visitor_token" not in line and "access_token" not in line for line in ws_route.splitlines() if "log_event" in line)

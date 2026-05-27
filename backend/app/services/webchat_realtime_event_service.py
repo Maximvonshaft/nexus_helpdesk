@@ -167,7 +167,7 @@ def event_envelope(
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "payload": payload,
     }
-    message_id = payload.get("message_id")
+    message_id = payload.get("message_id") or payload.get("webchat_message_id")
     if row.event_type == "message.created" and message_id:
         message = (
             db.query(WebchatMessage)

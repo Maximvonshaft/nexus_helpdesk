@@ -13,6 +13,15 @@ from ..models import User
 from ..settings import get_settings
 from ..unit_of_work import managed_session
 from ..services.permissions import ensure_can_accept_webchat_handoff, ensure_can_monitor_webchat_ai
+from ..services.observability import (
+    log_event,
+    record_webchat_websocket_auth_failed,
+    record_webchat_websocket_connected,
+    record_webchat_websocket_disconnected,
+    record_webchat_websocket_event_replay,
+    record_webchat_websocket_event_sent,
+    record_webchat_websocket_fallback_polling,
+)
 from ..services.webchat_handoff_service import force_takeover_ticket, list_handoff_queue
 from ..services.webchat_realtime_event_service import (
     list_admin_queue_event_envelopes,
@@ -79,6 +88,12 @@ def _error_payload(code: str, message: str, *, retryable: bool = False, request_
     return payload
 
 
+def _record_auth_failed(client_type: str | None, reason: str) -> None:
+    safe_client_type = client_type if client_type in {"agent", "visitor"} else "unknown"
+    record_webchat_websocket_auth_failed(safe_client_type, reason)
+    log_event(30, "websocket_auth_failed", client_type=safe_client_type, reason=reason)
+
+
 async def _send_error(websocket: WebSocket, code: str, message: str, *, retryable: bool = False, request_id: str | None = None) -> None:
     await websocket.send_json(_error_payload(code, message, retryable=retryable, request_id=request_id))
 
@@ -108,28 +123,48 @@ async def _send_ready(websocket: WebSocket, state: ConnectionState) -> None:
 async def _handle_hello(websocket: WebSocket, db: Session, state: ConnectionState, message: dict[str, Any]) -> None:
     settings = get_settings()
     if not settings.webchat_ws_enabled:
+        _record_auth_failed("unknown", "webchat_ws_disabled")
         await _send_error(websocket, "webchat_ws_disabled", "WebChat WebSocket runtime is disabled", retryable=False)
         await websocket.close(code=4403)
         return
     client_type = str(message.get("client_type") or "").strip().lower()
     if client_type not in {"agent", "visitor"}:
+        _record_auth_failed("unknown", "invalid_client_type")
         await _send_error(websocket, "invalid_client_type", "client_type must be agent or visitor", retryable=False)
         await websocket.close(code=4400)
         return
     if client_type == "agent" and not settings.webchat_ws_admin_enabled:
+        _record_auth_failed(client_type, "webchat_ws_admin_disabled")
         await _send_error(websocket, "webchat_ws_admin_disabled", "WebChat admin WebSocket runtime is disabled", retryable=False)
         await websocket.close(code=4403)
         return
     if client_type == "visitor" and not settings.webchat_ws_public_enabled:
+        _record_auth_failed(client_type, "webchat_ws_public_disabled")
+        record_webchat_websocket_fallback_polling("visitor", "public_ws_disabled")
+        log_event(20, "websocket_fallback_polling", client_type="visitor", reason="public_ws_disabled")
         await _send_error(websocket, "webchat_ws_public_disabled", "WebChat public WebSocket runtime is disabled", retryable=False)
         await websocket.close(code=4403)
         return
     token = message.get("access_token") or _access_token_from_headers(websocket)
     current_user = _load_user(db, str(token)) if client_type == "agent" else None
     if client_type == "agent" and current_user is None:
+        _record_auth_failed(client_type, "authentication_required")
         await _send_error(websocket, "authentication_required", "Authentication required", retryable=False)
         await websocket.close(code=4401)
         return
+    snapshot = await webchat_realtime_hub.snapshot()
+    if snapshot["connections"] >= settings.webchat_ws_max_connections:
+        _record_auth_failed(client_type, "max_connections")
+        await _send_error(websocket, "connection_limit_exceeded", "WebChat WebSocket connection limit exceeded", retryable=True)
+        await websocket.close(code=4429)
+        return
+    if current_user is not None:
+        existing_for_user = await webchat_realtime_hub.count_for_agent(current_user.id)
+        if existing_for_user >= settings.webchat_ws_max_connections_per_user:
+            _record_auth_failed(client_type, "max_connections_per_user")
+            await _send_error(websocket, "connection_limit_exceeded", "WebChat WebSocket per-user connection limit exceeded", retryable=True)
+            await websocket.close(code=4429)
+            return
     state.client_type = client_type
     state.current_user = current_user
     state.visitor_token = str(message.get("visitor_token") or "") or websocket.headers.get("x-webchat-visitor-token")
@@ -137,6 +172,8 @@ async def _handle_hello(websocket: WebSocket, db: Session, state: ConnectionStat
         client_type=client_type,
         user_id=current_user.id if current_user else None,
     )
+    record_webchat_websocket_connected(client_type)
+    log_event(20, "websocket_connected", client_type=client_type)
     await _send_ready(websocket, state)
 
     conversation_id = message.get("conversation_id")
@@ -152,7 +189,20 @@ async def _subscribe_conversation(websocket: WebSocket, db: Session, state: Conn
     last_event_id = int(message.get("last_event_id") or 0)
     if state.client_type == "visitor":
         public_id = str(message.get("conversation_id") or "").strip()
-        conversation = validate_visitor_conversation(db, public_id=public_id, visitor_token=state.visitor_token)
+        try:
+            conversation = validate_visitor_conversation(db, public_id=public_id, visitor_token=state.visitor_token)
+        except HTTPException:
+            _record_auth_failed("visitor", "invalid_visitor_conversation")
+            raise
+        if state.connection_id:
+            existing_for_conversation = await webchat_realtime_hub.count_for_visitor_conversation(conversation.id)
+            settings = get_settings()
+            if existing_for_conversation >= settings.webchat_ws_max_connections_per_user:
+                _record_auth_failed("visitor", "max_connections_per_conversation")
+                await _send_error(websocket, "connection_limit_exceeded", "WebChat WebSocket per-conversation connection limit exceeded", retryable=True)
+                await websocket.close(code=4429)
+                return
+            await webchat_realtime_hub.update_connection(state.connection_id, visitor_conversation_id=conversation.id)
         sub = ConversationSubscription(
             conversation_id=conversation.id,
             public_id=conversation.public_id,
@@ -229,7 +279,12 @@ async def _send_conversation_replay(websocket: WebSocket, db: Session, state: Co
     )
     for event in events:
         await websocket.send_json(event)
+        record_webchat_websocket_event_sent(state.client_type, event.get("type"))
+        log_event(20, "websocket_event_sent", client_type=state.client_type, event_type=event.get("type"))
         sub.last_event_id = max(sub.last_event_id, int(event["event_id"]))
+    if events:
+        record_webchat_websocket_event_replay(state.client_type, "conversation", len(events))
+        log_event(20, "websocket_event_replay", client_type=state.client_type, subscription="conversation", event_count=len(events))
     return bool(events)
 
 
@@ -243,7 +298,11 @@ async def _send_queue_updates(websocket: WebSocket, db: Session, state: Connecti
     max_event_id = sub.last_event_id
     for event in events:
         await websocket.send_json(event)
+        record_webchat_websocket_event_sent(state.client_type, event.get("type"))
+        log_event(20, "websocket_event_sent", client_type=state.client_type, event_type=event.get("type"))
         max_event_id = max(max_event_id, int(event["event_id"]))
+    record_webchat_websocket_event_replay(state.client_type, "handoff_queue", len(events))
+    log_event(20, "websocket_event_replay", client_type=state.client_type, subscription="handoff_queue", event_count=len(events))
     sub.last_event_id = max_event_id
     await websocket.send_json(
         {
@@ -253,6 +312,7 @@ async def _send_queue_updates(websocket: WebSocket, db: Session, state: Connecti
             "data": list_handoff_queue(db, state.current_user, view=sub.view, limit=50),
         }
     )
+    record_webchat_websocket_event_sent(state.client_type, "queue.updated")
     return True
 
 
@@ -351,4 +411,6 @@ async def webchat_ws(websocket: WebSocket, db: Session = Depends(get_db)) -> Non
         pass
     finally:
         if state.connection_id:
+            record_webchat_websocket_disconnected(state.client_type)
+            log_event(20, "websocket_disconnected", client_type=state.client_type)
             await webchat_realtime_hub.disconnect(state.connection_id)

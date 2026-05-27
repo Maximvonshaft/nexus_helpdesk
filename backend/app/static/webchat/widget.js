@@ -147,9 +147,7 @@
     else sendFastMessage(body);
   });
 
-  if (mode === 'legacy') {
-    restoreLegacySession();
-  }
+  restoreLegacySession();
 
   function setStatus(text) {
     statusEl.textContent = text;
@@ -166,6 +164,10 @@
       updateUnread();
       setTimeout(function () { inputEl.focus(); }, 80);
       if (mode === 'legacy') ensureLegacySession().then(scheduleLegacyPoll);
+      else if (mode === 'fast_ai' && state.legacyConversationId && state.legacyVisitorToken) {
+        startLegacyWs();
+        scheduleLegacyPoll();
+      }
     }
   }
 
@@ -467,6 +469,7 @@
       }, timeoutMs).then(function (data) {
         updateMessage(bubble, body, 'visitor');
         if (data && data.ok === true && data.reply) {
+          rememberPublicSession(data);
           aiText = String(data.reply || '');
           aiBubble = ensureAIBubble();
           updateMessage(aiBubble, aiText, 'agent', 'complete');
@@ -510,6 +513,7 @@
       }
       if (eventName === 'final') {
         finalSeen = true;
+        rememberPublicSession(data);
         markReplyComplete(replayed || (data && data.replayed === true) ? 'replayed_complete' : 'complete');
         return;
       }
@@ -534,15 +538,29 @@
       var cached = JSON.parse(window.sessionStorage.getItem(storageKey + ':legacy') || '{}');
       state.legacyConversationId = cached.conversationId || null;
       state.legacyVisitorToken = cached.visitorToken || null;
-      state.legacyLastMessageId = 0;
-      state.legacyLastEventId = 0;
+      state.legacyLastMessageId = Number(cached.lastMessageId || 0);
+      state.legacyLastEventId = Number(cached.lastEventId || 0);
     } catch (err) {}
   }
 
   function persistLegacySession() {
     try {
-      window.sessionStorage.setItem(storageKey + ':legacy', JSON.stringify({ conversationId: state.legacyConversationId, visitorToken: state.legacyVisitorToken }));
+      window.sessionStorage.setItem(storageKey + ':legacy', JSON.stringify({ conversationId: state.legacyConversationId, visitorToken: state.legacyVisitorToken, lastMessageId: state.legacyLastMessageId, lastEventId: state.legacyLastEventId }));
     } catch (err) {}
+  }
+
+  function rememberPublicSession(data) {
+    var session = data && (data.webchat_session || data);
+    if (!session || !session.conversation_id || !session.visitor_token) return;
+    state.legacyConversationId = String(session.conversation_id || '');
+    state.legacyVisitorToken = String(session.visitor_token || '');
+    var lastMessageId = Number(session.last_message_id || session.webchat_last_message_id || 0);
+    var lastEventId = Number(session.last_event_id || session.webchat_last_event_id || 0);
+    if (lastMessageId > state.legacyLastMessageId) state.legacyLastMessageId = lastMessageId;
+    if (lastEventId > state.legacyLastEventId) state.legacyLastEventId = lastEventId;
+    persistLegacySession();
+    startLegacyWs();
+    scheduleLegacyPoll();
   }
 
   function ensureLegacySession() {
@@ -578,14 +596,17 @@
     if (msg.id && msg.id > state.legacyLastMessageId) state.legacyLastMessageId = msg.id;
     var role = msg.direction === 'visitor' ? 'visitor' : 'agent';
     appendMessage(role, msg.body_text || msg.body || (msg.payload_json && (msg.payload_json.title || msg.payload_json.body)) || '', '', 'server:' + String(msg.id));
+    persistLegacySession();
   }
 
   function pollLegacy(reset) {
     if (!state.legacyConversationId || !state.legacyVisitorToken) return Promise.resolve();
     var qs = '?limit=50';
     if (state.legacyLastMessageId) qs += '&after_id=' + encodeURIComponent(state.legacyLastMessageId);
+    var headers = { 'X-Webchat-Visitor-Token': state.legacyVisitorToken };
+    if (!(state.legacyWs && state.legacyWs.readyState === WebSocket.OPEN)) headers['X-Webchat-WS-Fallback'] = 'true';
     return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/messages' + qs, {
-      headers: { 'X-Webchat-Visitor-Token': state.legacyVisitorToken }
+      headers: headers
     }, Number(script.getAttribute('data-fast-reply-timeout-ms') || script.getAttribute('data-timeout-ms') || 90000)).then(function (data) {
       (data.messages || []).forEach(renderServerMessage);
       if (reset) setStatus('Online');
@@ -595,7 +616,7 @@
   }
 
   function scheduleLegacyPoll() {
-    if (mode !== 'legacy') return;
+    if (mode !== 'legacy' && mode !== 'fast_ai') return;
     if (state.legacyPollTimer) clearTimeout(state.legacyPollTimer);
     state.legacyPollTimer = setTimeout(function tick() {
       if (state.open && document.visibilityState !== 'hidden' && !(state.legacyWs && state.legacyWs.readyState === WebSocket.OPEN)) pollLegacy(false).finally(scheduleLegacyPoll);
@@ -604,7 +625,7 @@
   }
 
   function startLegacyWs() {
-    if (mode !== 'legacy') return;
+    if (mode !== 'legacy' && mode !== 'fast_ai') return;
     if (script.getAttribute('data-websocket') === 'false') return;
     if (!window.WebSocket || !state.legacyConversationId || !state.legacyVisitorToken) return;
     if (state.legacyWs && state.legacyWs.readyState === WebSocket.OPEN) return;
@@ -632,7 +653,10 @@
           try { state.legacyWs.close(1000, 'server_error'); } catch (err) {}
           return;
         }
-        if (typeof data.event_id === 'number') state.legacyLastEventId = Math.max(state.legacyLastEventId, data.event_id);
+        if (typeof data.event_id === 'number') {
+          state.legacyLastEventId = Math.max(state.legacyLastEventId, data.event_id);
+          persistLegacySession();
+        }
         if (data.type === 'message.created' && data.message) {
           hideTyping();
           renderServerMessage(data.message);
@@ -640,7 +664,7 @@
         }
       };
       state.legacyWs.onclose = function () {
-        if (mode !== 'legacy' || !state.open) return;
+        if ((mode !== 'legacy' && mode !== 'fast_ai') || !state.open) return;
         setStatus('Reconnecting...');
         state.legacyWsReconnectTimer = setTimeout(startLegacyWs, 4000);
         scheduleLegacyPoll();

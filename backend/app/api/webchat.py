@@ -21,6 +21,7 @@ from .deps import get_current_user
 from ..services.background_jobs import WEBCHAT_AI_REPLY_JOB, enqueue_background_job
 from ..services.webchat_ai_reconciler import reconcile_webchat_ai_state
 from ..services.webchat_ai_turn_service import ai_snapshot, schedule_webchat_ai_turn
+from ..services.observability import log_event, record_webchat_websocket_fallback_polling
 from ..services.webchat_performance import (
     admin_list_conversations_optimized,
     list_public_messages_throttled,
@@ -130,7 +131,7 @@ def _public_cors_headers(request: Request) -> dict[str, str]:
     origin = _validated_origin(request)
     headers = {
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, X-Requested-With, X-Webchat-Visitor-Token",
+        "Access-Control-Allow-Headers": "Content-Type, X-Requested-With, X-Webchat-Visitor-Token, X-Webchat-WS-Fallback",
         "Access-Control-Max-Age": "600",
         "Vary": "Origin",
         "Cache-Control": "no-store",
@@ -358,8 +359,11 @@ def send_webchat_message(conversation_id: str, payload: WebchatSendRequest, requ
 
 
 @router.get("/conversations/{conversation_id}/messages")
-def poll_webchat_messages(conversation_id: str, request: Request, response: Response, visitor_token: str | None = Query(default=None), after_id: int | None = Query(default=None, ge=0), limit: int = Query(default=50, ge=1, le=100), x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"), db: Session = Depends(get_db)) -> dict[str, Any]:
+def poll_webchat_messages(conversation_id: str, request: Request, response: Response, visitor_token: str | None = Query(default=None), after_id: int | None = Query(default=None, ge=0), limit: int = Query(default=50, ge=1, le=100), x_webchat_visitor_token: str | None = Header(default=None, alias="X-Webchat-Visitor-Token"), x_webchat_ws_fallback: str | None = Header(default=None, alias="X-Webchat-WS-Fallback"), db: Session = Depends(get_db)) -> dict[str, Any]:
     _set_public_cors(response, request)
+    if str(x_webchat_ws_fallback or "").strip().lower() in {"1", "true", "yes", "on"}:
+        record_webchat_websocket_fallback_polling("visitor", "client_poll")
+        log_event(20, "websocket_fallback_polling", client_type="visitor", reason="client_poll")
     resolved_token = _resolve_visitor_token(x_webchat_visitor_token, visitor_token)
     if not resolved_token:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid webchat visitor token")

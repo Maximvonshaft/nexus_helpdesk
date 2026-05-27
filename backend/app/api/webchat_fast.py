@@ -39,6 +39,7 @@ from ..services.webchat_fast_session_service import (
     append_fast_visitor_message,
     build_fast_server_context,
     extract_fast_business_state,
+    fast_public_session_payload,
     get_or_create_fast_conversation,
     get_or_create_fast_ticket,
     merge_fast_context,
@@ -275,7 +276,7 @@ def _persist_tracking_fact_forced_reply(
     result_payload: dict[str, Any],
     tracking_fact_metadata: dict[str, Any] | None,
     request: Request | None = None,
-) -> None:
+) -> dict[str, Any]:
     with db_context() as db:
         conversation = get_or_create_fast_conversation(
             db,
@@ -298,6 +299,7 @@ def _persist_tracking_fact_forced_reply(
         )
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
         mark_webchat_fast_done(db, row, response_json=result_payload)
+        return _with_fast_public_session(db, conversation, result_payload)
 
 
 async def _tracking_fact_forced_stream_events(
@@ -308,7 +310,7 @@ async def _tracking_fact_forced_stream_events(
     tracking_fact_metadata: dict[str, Any] | None,
     request: Request | None = None,
 ) -> AsyncIterator[str]:
-    _persist_tracking_fact_forced_reply(
+    public_payload = _persist_tracking_fact_forced_reply(
         row_id=row_id,
         payload=payload,
         result_payload=result_payload,
@@ -317,7 +319,7 @@ async def _tracking_fact_forced_stream_events(
     )
     yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2", "reply_source": "server_tracking_fact"})
     yield sse_event("reply_delta", {"text": result_payload["reply"]})
-    yield sse_event("final", {k: v for k, v in result_payload.items() if k != "reply"})
+    yield sse_event("final", {k: v for k, v in public_payload.items() if k != "reply"})
 
 
 def _is_delivery_follow_up_request(*, body: str | None, business_state: FastBusinessState, handoff_reason: str | None = None, recommended_action: str | None = None) -> bool:
@@ -367,6 +369,24 @@ def _server_handoff_response_payload(*, handoff_reason: str | None, customer_rep
     return {"ok": True, "ai_generated": False, "reply_source": "server_handoff_policy", "reply": customer_reply or "A human teammate will review this request.", "intent": "handoff", "tracking_number": None, "handoff_required": True, "handoff_reason": handoff_reason or "server_policy_handoff_required", "ticket_creation_queued": False, "elapsed_ms": 0}
 
 
+def _with_fast_public_session(db, conversation, payload: dict[str, Any]) -> dict[str, Any]:
+    session_payload = fast_public_session_payload(db, conversation)
+    return {**payload, **session_payload, "webchat_session": session_payload}
+
+
+def _with_fast_public_session_from_request(payload: WebchatFastReplyRequest, response_payload: dict[str, Any], request: Request | None = None) -> dict[str, Any]:
+    with db_context() as db:
+        conversation = get_or_create_fast_conversation(
+            db,
+            tenant_key=payload.tenant_key,
+            channel_key=payload.channel_key,
+            session_id=payload.session_id,
+            request=request,
+            visitor=payload.visitor,
+        )
+        return _with_fast_public_session(db, conversation, response_payload)
+
+
 def _request_fast_handoff(
     db,
     *,
@@ -403,19 +423,20 @@ def _support_hours_policy_payload(body: str) -> dict[str, Any] | None:
     return match_support_hours_policy_reply(body)
 
 
-def _persist_support_hours_policy_reply(*, row_id: int, payload: WebchatFastReplyRequest, result_payload: dict[str, Any], request: Request | None = None) -> None:
+def _persist_support_hours_policy_reply(*, row_id: int, payload: WebchatFastReplyRequest, result_payload: dict[str, Any], request: Request | None = None) -> dict[str, Any]:
     with db_context() as db:
         conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
         append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"handoff_required": False, "source": "server_support_hours_policy"})
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
         mark_webchat_fast_done(db, row, response_json=result_payload)
+        return _with_fast_public_session(db, conversation, result_payload)
 
 
 async def _support_hours_policy_stream_events(*, row_id: int, payload: WebchatFastReplyRequest, result_payload: dict[str, Any], request: Request | None = None) -> AsyncIterator[str]:
-    _persist_support_hours_policy_reply(row_id=row_id, payload=payload, result_payload=result_payload, request=request)
+    public_payload = _persist_support_hours_policy_reply(row_id=row_id, payload=payload, result_payload=result_payload, request=request)
     yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2", "reply_source": "server_support_hours_policy"})
     yield sse_event("reply_delta", {"text": result_payload["reply"]})
-    yield sse_event("final", {k: v for k, v in result_payload.items() if k != "reply"})
+    yield sse_event("final", {k: v for k, v in public_payload.items() if k != "reply"})
 
 
 async def _server_policy_stream_events(*, row_id: int, payload: WebchatFastReplyRequest, context_payload: list[dict[str, str]], server_policy: HandoffPolicyDecision, routing_context: FastRoutingContext) -> AsyncIterator[str]:
@@ -436,9 +457,10 @@ async def _server_policy_stream_events(*, row_id: int, payload: WebchatFastReply
             result_payload["speedaf_work_order_job_id"] = speedaf_job_id
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
         mark_webchat_fast_done(db, row, response_json=result_payload)
+        public_payload = _with_fast_public_session(db, conversation, result_payload)
     yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2", "reply_source": "server_handoff_policy"})
     yield sse_event("reply_delta", {"text": result_payload["reply"]})
-    yield sse_event("final", {k: v for k, v in result_payload.items() if k != "reply"})
+    yield sse_event("final", {k: v for k, v in public_payload.items() if k != "reply"})
 
 
 async def _tracking_candidate_selection_stream_events(*, row_id: int, payload: WebchatFastReplyRequest, result_payload: dict[str, Any]) -> AsyncIterator[str]:
@@ -447,8 +469,9 @@ async def _tracking_candidate_selection_stream_events(*, row_id: int, payload: W
         append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"source": "server_tracking_candidate_selection", "safe_candidates": result_payload.get("safe_candidates")})
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
         mark_webchat_fast_done(db, row, response_json=result_payload)
+        public_payload = _with_fast_public_session(db, conversation, result_payload)
     yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2", "reply_source": "server_tracking_candidate_selection"})
-    yield sse_event("final", {k: v for k, v in result_payload.items() if k != "reply"})
+    yield sse_event("final", {k: v for k, v in public_payload.items() if k != "reply"})
     yield sse_event("reply_delta", {"text": result_payload["reply"]})
 
 
@@ -472,10 +495,11 @@ def webchat_fast_reply_stream_options(request: Request):
     return Response(status_code=204, headers=headers)
 
 
-def _begin_status_response(begin, headers: dict[str, str]) -> JSONResponse | None:
+def _begin_status_response(begin, headers: dict[str, str], payload: WebchatFastReplyRequest, request: Request | None = None) -> JSONResponse | None:
     if begin.kind == "replay":
         replayed = dict(begin.response_json or {})
         replayed["idempotent"] = True
+        replayed = _with_fast_public_session_from_request(payload, replayed, request=request)
         return JSONResponse(replayed, status_code=200, headers=headers)
     if begin.kind == "processing":
         return JSONResponse({"error_code": "request_processing", "retry_after_ms": 1500}, status_code=202, headers=headers)
@@ -502,7 +526,7 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
     with db_context() as db:
         begin = begin_webchat_fast_idempotency(db, tenant_key=payload.tenant_key, session_id=payload.session_id, client_message_id=payload.client_message_id, request_hash=request_hash, request_hash_aliases=request_hash_aliases, owner_request_id=getattr(request.state, "request_id", None))
         row_id = begin.row.id if begin.row is not None else None
-    status_response = _begin_status_response(begin, headers)
+    status_response = _begin_status_response(begin, headers, payload, request=request)
     if status_response is not None:
         return status_response
     if row_id is None:
@@ -521,8 +545,8 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
 
     support_payload = _support_hours_policy_payload(payload.body)
     if support_payload is not None:
-        _persist_support_hours_policy_reply(row_id=row_id, payload=payload, result_payload=support_payload, request=request)
-        return JSONResponse(support_payload, status_code=200, headers=headers)
+        public_payload = _persist_support_hours_policy_reply(row_id=row_id, payload=payload, result_payload=support_payload, request=request)
+        return JSONResponse(public_payload, status_code=200, headers=headers)
 
     server_policy = decide_server_handoff_policy(body=payload.body, recent_context=merged_context, configured_rules=configured_rules)
     if server_policy.handoff_required:
@@ -540,7 +564,8 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
                 result_payload["speedaf_work_order_job_id"] = speedaf_job_id
             row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
             mark_webchat_fast_done(db, row, response_json=result_payload)
-        return JSONResponse(result_payload, status_code=200, headers=headers)
+            public_payload = _with_fast_public_session(db, conversation, result_payload)
+        return JSONResponse(public_payload, status_code=200, headers=headers)
 
     tracking_number = _tracking_candidate(body=payload.body, context=merged_context, tracking_number=business_state.tracking_number)
     tracking_fact = _lookup_fast_tracking_fact(tracking_number=tracking_number, conversation_id=conversation_id, ticket_id=None, request_id=getattr(request.state, "request_id", None), caller_id=caller_id, country_code=payload.country_code or routing_context.country_code)
@@ -551,17 +576,18 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
             append_fast_ai_message(db, conversation=conversation, reply=candidate_payload["reply"], client_message_id=payload.client_message_id, metadata={"source": "server_tracking_candidate_selection", "safe_candidates": candidate_payload.get("safe_candidates")})
             row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
             mark_webchat_fast_done(db, row, response_json=candidate_payload)
-        return JSONResponse(candidate_payload, status_code=200, headers=headers)
+            public_payload = _with_fast_public_session(db, conversation, candidate_payload)
+        return JSONResponse(public_payload, status_code=200, headers=headers)
     forced_payload = _tracking_fact_forced_reply_payload(tracking_number=tracking_number, result=tracking_fact)
     if forced_payload:
-        _persist_tracking_fact_forced_reply(
+        public_payload = _persist_tracking_fact_forced_reply(
             row_id=row_id,
             payload=payload,
             result_payload=forced_payload,
             tracking_fact_metadata=tracking_fact.metadata_payload() if tracking_fact else None,
             request=request,
         )
-        return JSONResponse(forced_payload, status_code=200, headers=headers)
+        return JSONResponse(public_payload, status_code=200, headers=headers)
 
     tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _tracking_fact_provider_fields(tracking_fact)
     result = await generate_webchat_fast_reply(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, body=payload.body, recent_context=merged_context, request_id=getattr(request.state, "request_id", None), tracking_fact_summary=tracking_fact_summary, tracking_fact_metadata=tracking_fact_metadata, tracking_fact_evidence_present=tracking_fact_evidence_present, market_id=routing_context.market_id)
@@ -597,7 +623,8 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
             mark_webchat_fast_done(db, row, response_json=result_payload)
         else:
             mark_webchat_fast_failed(db, row, error_code=result.error_code or "request_failed")
-    return JSONResponse(result_payload, status_code=200, headers=headers)
+        public_payload = _with_fast_public_session(db, conversation, result_payload)
+    return JSONResponse(public_payload, status_code=200, headers=headers)
 
 
 @router.post("/fast-reply/stream")

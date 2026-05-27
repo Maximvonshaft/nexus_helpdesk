@@ -815,6 +815,7 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
             "provider_status": "webchat_delivered",
         }, ensure_ascii=False),
     ))
+    db.flush()
     safe_write_webchat_event(
         db,
         conversation_id=conversation.id,

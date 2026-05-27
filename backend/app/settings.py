@@ -144,6 +144,8 @@ class Settings:
         self.webchat_ws_fallback_poll_ms = int(os.getenv("WEBCHAT_WS_FALLBACK_POLL_MS", "4000"))
         self.webchat_ws_heartbeat_ms = int(os.getenv("WEBCHAT_WS_HEARTBEAT_MS", "25000"))
         self.webchat_ws_hello_timeout_ms = int(os.getenv("WEBCHAT_WS_HELLO_TIMEOUT_MS", "5000"))
+        self.webchat_ws_max_connections = int(os.getenv("WEBCHAT_WS_MAX_CONNECTIONS", "1000"))
+        self.webchat_ws_max_connections_per_user = int(os.getenv("WEBCHAT_WS_MAX_CONNECTIONS_PER_USER", "10"))
 
         self.request_id_header = os.getenv("REQUEST_ID_HEADER", "X-Request-Id")
         self.log_json = os.getenv("LOG_JSON", "true").strip().lower() == "true"
@@ -204,6 +206,10 @@ class Settings:
             raise RuntimeError("WEBCHAT_WS_HEARTBEAT_MS must be between 5000 and 120000")
         if self.webchat_ws_hello_timeout_ms < 1000 or self.webchat_ws_hello_timeout_ms > 30000:
             raise RuntimeError("WEBCHAT_WS_HELLO_TIMEOUT_MS must be between 1000 and 30000")
+        if self.webchat_ws_max_connections < 1 or self.webchat_ws_max_connections > 100000:
+            raise RuntimeError("WEBCHAT_WS_MAX_CONNECTIONS must be between 1 and 100000")
+        if self.webchat_ws_max_connections_per_user < 1 or self.webchat_ws_max_connections_per_user > 1000:
+            raise RuntimeError("WEBCHAT_WS_MAX_CONNECTIONS_PER_USER must be between 1 and 1000")
         if self.webchat_tracking_fact_lookup_enabled and not self.webchat_tracking_fact_redaction_enabled:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED must be true when tracking lookup is enabled")
         if self.app_env == "production":

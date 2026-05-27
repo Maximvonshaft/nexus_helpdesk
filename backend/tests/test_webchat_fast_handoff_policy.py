@@ -15,6 +15,7 @@ from app.api import webchat_fast
 from app.db import Base, SessionLocal, engine
 from app.main import app
 from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency
+from app.services.webchat_fast_rate_limit import reset_webchat_fast_rate_limit_for_tests
 from app.services.webchat_handoff_policy import decide_server_handoff_policy
 
 
@@ -29,6 +30,7 @@ def setup_function():
         db.commit()
     finally:
         db.close()
+    reset_webchat_fast_rate_limit_for_tests()
 
 
 def _payload(client_message_id: str, body: str, session_id: str | None = None) -> dict:

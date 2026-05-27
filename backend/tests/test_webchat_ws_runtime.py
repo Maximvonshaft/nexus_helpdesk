@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -22,16 +23,18 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
+from app.api import webchat_fast  # noqa: E402
 from app import models, operator_models, webchat_fast_models, webchat_models  # noqa: F401,E402
 from app.auth_service import create_access_token  # noqa: E402
 from app.db import Base, get_db  # noqa: E402
 from app.enums import ConversationState, JobStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import BackgroundJob, Customer, Team, Ticket, User  # noqa: E402
+from app.services import webchat_fast_rate_limit as fast_rate_limit  # noqa: E402
 from app.services.webchat_ai_turn_service import safe_write_webchat_event  # noqa: E402
 from app.services.webchat_realtime_event_service import _hash_token  # noqa: E402
 from app.settings import get_settings  # noqa: E402
-from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage  # noqa: E402
+from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatMessage  # noqa: E402
 
 
 @pytest.fixture()
@@ -138,6 +141,16 @@ def make_webchat(
     )
     db.flush()
     return ticket, conversation, message
+
+
+@contextmanager
+def fast_api_bound_to_session(db):
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 def attach_open_ai_turn(db, conversation: WebchatConversation, ticket: Ticket, message: WebchatMessage) -> WebchatAITurn:
@@ -285,3 +298,146 @@ def test_agent_reply_command_uses_existing_handoff_ownership_gate(api_context):
     assert event["type"] == "error"
     assert event["request_id"] == "reply-1"
     assert "force takeover" in event["message"]
+
+
+def test_fast_ai_response_credentials_authenticate_public_visitor_websocket(api_context, monkeypatch):
+    db, client = api_context
+    monkeypatch.setattr(webchat_fast, "db_context", lambda: fast_api_bound_to_session(db))
+    monkeypatch.setattr(fast_rate_limit, "db_context", lambda: fast_api_bound_to_session(db))
+
+    response = client.post(
+        "/api/webchat/fast-reply",
+        json={
+            "tenant_key": "pytest",
+            "channel_key": "website",
+            "session_id": "fast-ws-auth-session",
+            "client_message_id": "fast-ws-auth-msg",
+            "body": "I want a human support agent for a complaint",
+            "recent_context": [],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["handoff_required"] is True
+    assert payload["conversation_id"].startswith("wcf_")
+    assert payload["visitor_token"].startswith("fast-visitor:")
+    assert payload["webchat_session"]["conversation_id"] == payload["conversation_id"]
+
+    with client.websocket_connect("/api/webchat/ws") as ws:
+        ws.send_json({
+            "type": "connection.hello",
+            "client_type": "visitor",
+            "conversation_id": payload["conversation_id"],
+            "visitor_token": payload["visitor_token"],
+            "last_event_id": payload["last_event_id"],
+        })
+        assert ws.receive_json()["type"] == "connection.ready"
+        subscription = ws.receive_json()
+
+    assert subscription["type"] == "subscription.ready"
+    assert subscription["conversation_id"] == payload["conversation_id"]
+
+
+def test_fast_ai_handoff_agent_reply_reaches_public_visitor_websocket(api_context, monkeypatch):
+    db, client = api_context
+    monkeypatch.setattr(webchat_fast, "db_context", lambda: fast_api_bound_to_session(db))
+    monkeypatch.setattr(fast_rate_limit, "db_context", lambda: fast_api_bound_to_session(db))
+    manager = make_user(db, "fast-ws-manager", UserRole.manager)
+    db.commit()
+
+    fast_response = client.post(
+        "/api/webchat/fast-reply",
+        json={
+            "tenant_key": "pytest",
+            "channel_key": "website",
+            "session_id": "fast-ws-e2e-session",
+            "client_message_id": "fast-ws-e2e-msg",
+            "body": "I want a human support agent for a complaint",
+            "recent_context": [],
+        },
+    )
+    assert fast_response.status_code == 200
+    fast_payload = fast_response.json()
+    assert fast_payload["handoff_required"] is True
+    assert fast_payload["handoff_request_id"]
+    auth = {"Authorization": f"Bearer {create_access_token(manager.id)}"}
+
+    accept_response = client.post(
+        f"/api/webchat/admin/handoff/{fast_payload['handoff_request_id']}/accept",
+        headers=auth,
+        json={"note": "taking over"},
+    )
+    assert accept_response.status_code == 200
+    accepted_event_id = db.query(WebchatEvent.id).order_by(WebchatEvent.id.desc()).limit(1).scalar() or fast_payload["last_event_id"]
+
+    with client.websocket_connect("/api/webchat/ws") as ws:
+        ws.send_json({
+            "type": "connection.hello",
+            "client_type": "visitor",
+            "conversation_id": fast_payload["conversation_id"],
+            "visitor_token": fast_payload["visitor_token"],
+            "last_event_id": accepted_event_id,
+        })
+        assert ws.receive_json()["type"] == "connection.ready"
+        assert ws.receive_json()["type"] == "subscription.ready"
+        reply_response = client.post(
+            f"/api/webchat/admin/tickets/{fast_payload['ticket_id']}/reply",
+            headers=auth,
+            json={
+                "body": "Thanks, a support specialist has taken over and will help from here.",
+                "has_fact_evidence": True,
+                "confirm_review": True,
+            },
+        )
+        assert reply_response.status_code == 200
+        event = ws.receive_json()
+
+    assert event["conversation_id"] == fast_payload["conversation_id"]
+    assert event["type"] == "message.created"
+    assert event["message"]["direction"] == "agent"
+    assert event["message"]["body_text"] == "Thanks, a support specialist has taken over and will help from here."
+    assert "author_user_id" not in event["message"]
+
+
+def test_public_ws_disabled_keeps_fast_reply_and_polling_fallback_usable(api_context, monkeypatch):
+    db, client = api_context
+    monkeypatch.setattr(webchat_fast, "db_context", lambda: fast_api_bound_to_session(db))
+    monkeypatch.setattr(fast_rate_limit, "db_context", lambda: fast_api_bound_to_session(db))
+    monkeypatch.setattr(get_settings(), "webchat_ws_public_enabled", False)
+
+    fast_response = client.post(
+        "/api/webchat/fast-reply",
+        json={
+            "tenant_key": "pytest",
+            "channel_key": "website",
+            "session_id": "fast-ws-disabled-session",
+            "client_message_id": "fast-ws-disabled-msg",
+            "body": "I want a human support agent for a complaint",
+            "recent_context": [],
+        },
+    )
+    assert fast_response.status_code == 200
+    payload = fast_response.json()
+
+    with client.websocket_connect("/api/webchat/ws") as ws:
+        ws.send_json({
+            "type": "connection.hello",
+            "client_type": "visitor",
+            "conversation_id": payload["conversation_id"],
+            "visitor_token": payload["visitor_token"],
+        })
+        event = ws.receive_json()
+
+    assert event["type"] == "error"
+    assert event["code"] == "webchat_ws_public_disabled"
+
+    poll_response = client.get(
+        f"/api/webchat/conversations/{payload['conversation_id']}/messages?limit=10",
+        headers={
+            "X-Webchat-Visitor-Token": payload["visitor_token"],
+            "X-Webchat-WS-Fallback": "true",
+        },
+    )
+    assert poll_response.status_code == 200
+    assert poll_response.json()["conversation_id"] == payload["conversation_id"]

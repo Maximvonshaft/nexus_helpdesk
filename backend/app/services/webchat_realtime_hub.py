@@ -5,6 +5,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from .observability import log_event, record_webchat_websocket_active_connections
+
 
 @dataclass
 class WebchatRealtimeConnection:
@@ -49,11 +51,17 @@ class WebchatRealtimeHub:
                 user_id=user_id,
                 visitor_conversation_id=visitor_conversation_id,
             )
+            snapshot = self._snapshot_unlocked()
+        record_webchat_websocket_active_connections(agents=snapshot["agents"], visitors=snapshot["visitors"])
+        log_event(20, "websocket_active_connections", agents=snapshot["agents"], visitors=snapshot["visitors"], total=snapshot["connections"])
         return connection_id
 
     async def disconnect(self, connection_id: str) -> None:
         async with self._lock:
             self._connections.pop(connection_id, None)
+            snapshot = self._snapshot_unlocked()
+        record_webchat_websocket_active_connections(agents=snapshot["agents"], visitors=snapshot["visitors"])
+        log_event(20, "websocket_active_connections", agents=snapshot["agents"], visitors=snapshot["visitors"], total=snapshot["connections"])
 
     async def update_connection(self, connection_id: str, **updates: Any) -> None:
         async with self._lock:
@@ -70,14 +78,29 @@ class WebchatRealtimeHub:
             if record is not None:
                 record.subscriptions.add(subscription)
 
+    def _snapshot_unlocked(self) -> dict[str, Any]:
+        return {
+            "connections": len(self._connections),
+            "agents": sum(1 for item in self._connections.values() if item.client_type == "agent"),
+            "visitors": sum(1 for item in self._connections.values() if item.client_type == "visitor"),
+            "subscriptions": sum(len(item.subscriptions) for item in self._connections.values()),
+        }
+
     async def snapshot(self) -> dict[str, Any]:
         async with self._lock:
-            return {
-                "connections": len(self._connections),
-                "agents": sum(1 for item in self._connections.values() if item.client_type == "agent"),
-                "visitors": sum(1 for item in self._connections.values() if item.client_type == "visitor"),
-                "subscriptions": sum(len(item.subscriptions) for item in self._connections.values()),
-            }
+            return self._snapshot_unlocked()
+
+    async def count_for_agent(self, user_id: int) -> int:
+        async with self._lock:
+            return sum(1 for item in self._connections.values() if item.client_type == "agent" and item.user_id == user_id)
+
+    async def count_for_visitor_conversation(self, conversation_id: int) -> int:
+        async with self._lock:
+            return sum(
+                1
+                for item in self._connections.values()
+                if item.client_type == "visitor" and item.visitor_conversation_id == conversation_id
+            )
 
     def notify_event_sync(self, *, conversation_id: int | None = None, ticket_id: int | None = None, event_type: str | None = None) -> None:
         self._version += 1
