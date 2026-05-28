@@ -11,6 +11,7 @@ const commandPalette = readFileSync(resolve(root, 'src/components/ui/CommandPale
 const overviewRoute = readFileSync(resolve(root, 'src/routes/index.tsx'), 'utf8')
 const workspaceRoute = readFileSync(resolve(root, 'src/routes/workspace.tsx'), 'utf8')
 const runtimeRoute = readFileSync(resolve(root, 'src/routes/runtime.tsx'), 'utf8')
+const realtimeRoute = readFileSync(resolve(root, 'src/routes/realtime.tsx'), 'utf8')
 const webchatRoute = readFileSync(resolve(root, 'src/routes/webchat.tsx'), 'utf8')
 const webcallOperatorRoute = readFileSync(resolve(root, 'src/routes/webcall-operator.tsx'), 'utf8')
 const webchatInboxV5 = readFileSync(resolve(root, 'src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx'), 'utf8')
@@ -202,6 +203,7 @@ test('command palette exposes high-frequency operator workflow shortcuts', () =>
   assert.match(commandPalette, /进入运行恢复 \/ dead 重排/)
   assert.match(commandPalette, /刷新运行状态/)
   assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['runtimeHealth'\] \}\)/)
+  assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['realtimeHealth'\] \}\)/)
   assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['queueSummary'\] \}\)/)
   assert.match(commandPalette, /navigate\(\{ to: '\/runtime' \}\)/)
 })
@@ -224,6 +226,7 @@ test('admin operator surfaces do not bypass unified api client with raw fetch', 
   const checkedFiles = [
     ['src/routes/workspace.tsx', workspaceRoute],
     ['src/routes/runtime.tsx', runtimeRoute],
+    ['src/routes/realtime.tsx', realtimeRoute],
     ['src/routes/webchat.tsx', webchatRoute],
     ['src/routes/webcall-operator.tsx', webcallOperatorRoute],
     ['src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx', webchatInboxV5],

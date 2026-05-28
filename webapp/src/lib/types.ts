@@ -306,6 +306,46 @@ export interface RuntimeHealth {
   warnings: string[]
 }
 
+export interface RealtimeHealth {
+  status: 'disabled' | 'ready' | 'degraded' | string
+  features: {
+    enabled: boolean
+    admin_enabled: boolean
+    public_enabled: boolean
+    broker: string
+    broker_durable_replay: boolean
+    broker_cross_worker_safe: boolean
+    replay_poll_ms: number
+    fallback_poll_ms: number
+    heartbeat_ms: number
+    hello_timeout_ms: number
+    max_connections: number
+    max_connections_per_user: number
+  }
+  connections: {
+    connections: number
+    agents: number
+    visitors: number
+    subscriptions: number
+  }
+  replay: {
+    last_event_id?: number | null
+    last_event_at?: string | null
+    events_last_5m: number
+    handoff_events_last_5m: number
+    conversation_events_last_5m: number
+  }
+  observability: {
+    connected_total?: number | null
+    disconnected_total?: number | null
+    auth_failures_total?: number | null
+    event_sent_total?: number | null
+    event_replay_total?: number | null
+    fallback_polling_total?: number | null
+  }
+  warnings: string[]
+}
+
 export interface OutboundChannelCapability {
   channel: string
   label: string

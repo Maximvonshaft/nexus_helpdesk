@@ -64,6 +64,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'ai-control.tsx',
     'control-plane.tsx',
     'users.tsx',
+    'realtime.tsx',
   ]
   const registered = new Set(routeFiles.flatMap((file) => registeredStaticRoutes(readFileSync(resolve(root, `src/routes/${file}`), 'utf8'))))
   const missing = staticNavTargets(appShell).filter((target) => target.startsWith('/') && !registered.has(target))

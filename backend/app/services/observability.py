@@ -208,6 +208,31 @@ def record_webchat_websocket_active_connections(*, agents: int = 0, visitors: in
         _WEBCHAT_WS_ACTIVE_CONNECTIONS.labels(client_type='all').set(max(int(agents or 0), 0) + max(int(visitors or 0), 0))
 
 
+def _counter_total(counter) -> int | None:
+    if not counter:
+        return None
+    try:
+        total = 0.0
+        for metric in counter.collect():
+            for sample in metric.samples:
+                if sample.name.endswith("_total"):
+                    total += float(sample.value)
+        return int(total)
+    except Exception:
+        return None
+
+
+def webchat_websocket_observability_snapshot() -> dict[str, int | None]:
+    return {
+        "connected_total": _counter_total(_WEBCHAT_WS_CONNECTED),
+        "disconnected_total": _counter_total(_WEBCHAT_WS_DISCONNECTED),
+        "auth_failures_total": _counter_total(_WEBCHAT_WS_AUTH_FAILED),
+        "event_sent_total": _counter_total(_WEBCHAT_WS_EVENT_SENT),
+        "event_replay_total": _counter_total(_WEBCHAT_WS_EVENT_REPLAY),
+        "fallback_polling_total": _counter_total(_WEBCHAT_WS_FALLBACK_POLLING),
+    }
+
+
 def record_openclaw_bridge_metric(operation: str, status: str, elapsed_ms: int | float | None = None) -> None:
     if elapsed_ms is not None and _OPENCLAW_BRIDGE_DURATION:
         _OPENCLAW_BRIDGE_DURATION.labels(operation=_label(operation), status=_label(status)).observe(max(float(elapsed_ms), 0.0))

@@ -19,6 +19,7 @@ import { Route as AccountsRoute } from '@/routes/accounts'
 import { Route as OutboundEmailRoute } from '@/routes/outbound-email'
 import { Route as UsersRoute } from '@/routes/users'
 import { Route as RuntimeRoute } from '@/routes/runtime'
+import { Route as RealtimeRoute } from '@/routes/realtime'
 
 const routeTree = RootRoute.addChildren([
   LoginRoute,
@@ -44,6 +45,7 @@ const routeTree = RootRoute.addChildren([
   OutboundEmailRoute,
   UsersRoute,
   RuntimeRoute,
+  RealtimeRoute,
 ])
 
 export const router = createRouter({

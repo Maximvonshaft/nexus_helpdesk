@@ -12,6 +12,7 @@ import type {
   Market,
   ProductionReadiness,
   QueueSummary,
+  RealtimeHealth,
   RuntimeHealth,
   OpenClawConnectivityProbe,
   OutboundChannelCapabilitiesResponse,
@@ -526,6 +527,7 @@ export const api = {
   }),
 
   queueSummary: () => request<QueueSummary>('/api/admin/queues/summary'),
+  realtimeHealth: () => request<RealtimeHealth>('/api/admin/realtime-health'),
   runtimeHealth: () => request<RuntimeHealth>('/api/admin/openclaw/runtime-health'),
   openclawConnectivityCheck: () => request<OpenClawConnectivityProbe>('/api/admin/openclaw/connectivity-check'),
   readiness: () => request<ProductionReadiness>('/api/admin/production-readiness'),

@@ -688,6 +688,54 @@ class ProductionReadinessRead(APIModel):
     warnings: list[str]
 
 
+class RealtimeFeatureFlagsRead(APIModel):
+    enabled: bool
+    admin_enabled: bool
+    public_enabled: bool
+    broker: str
+    broker_durable_replay: bool
+    broker_cross_worker_safe: bool
+    replay_poll_ms: int
+    fallback_poll_ms: int
+    heartbeat_ms: int
+    hello_timeout_ms: int
+    max_connections: int
+    max_connections_per_user: int
+
+
+class RealtimeConnectionSnapshotRead(APIModel):
+    connections: int
+    agents: int
+    visitors: int
+    subscriptions: int
+
+
+class RealtimeEventReplayRead(APIModel):
+    last_event_id: Optional[int] = None
+    last_event_at: Optional[datetime] = None
+    events_last_5m: int
+    handoff_events_last_5m: int
+    conversation_events_last_5m: int
+
+
+class RealtimeObservabilityRead(APIModel):
+    connected_total: Optional[int] = None
+    disconnected_total: Optional[int] = None
+    auth_failures_total: Optional[int] = None
+    event_sent_total: Optional[int] = None
+    event_replay_total: Optional[int] = None
+    fallback_polling_total: Optional[int] = None
+
+
+class RealtimeHealthRead(APIModel):
+    status: str
+    features: RealtimeFeatureFlagsRead
+    connections: RealtimeConnectionSnapshotRead
+    replay: RealtimeEventReplayRead
+    observability: RealtimeObservabilityRead
+    warnings: list[str]
+
+
 
 class OpenClawAttachmentReferenceRead(APIModel):
     id: int
