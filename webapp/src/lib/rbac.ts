@@ -17,6 +17,8 @@ export const CAPABILITIES = {
   noteWriteInternal: 'note.write.internal',
   noteWriteExternal: 'note.write.external',
   userManage: 'user.manage',
+  securityRead: 'security.read',
+  auditRead: 'audit.read',
   channelAccountManage: 'channel_account.manage',
   bulletinManage: 'bulletin.manage',
   aiConfigRead: 'ai_config.read',
@@ -60,6 +62,7 @@ export const routeAccess = {
   '/ai-control': { allOf: [CAPABILITIES.aiConfigManage] },
   '/control-plane': { anyOf: [CAPABILITIES.aiConfigRead, CAPABILITIES.aiConfigManage, CAPABILITIES.channelAccountManage, CAPABILITIES.runtimeManage] },
   '/users': { allOf: [CAPABILITIES.userManage] },
+  '/security-audit': { anyOf: [CAPABILITIES.securityRead, CAPABILITIES.auditRead, CAPABILITIES.userManage] },
   '/webchat-voice': { allOf: [CAPABILITIES.webcallVoiceQueueView] },
 } satisfies Record<string, AccessRequirement>
 
@@ -108,6 +111,8 @@ export const capabilityCatalogMeta: CapabilityMeta[] = [
   { capability: CAPABILITIES.runtimeManage, label: '运行恢复', group: '治理配置', description: '执行重排、同步、连接检查等运维动作。', risk: 'high' },
   { capability: CAPABILITIES.marketManage, label: '管理市场', group: '治理配置', description: '维护市场和团队归属。', risk: 'high' },
   { capability: CAPABILITIES.userManage, label: '管理员工账号', group: '账号权限', description: '创建账号、停用账号、重置密码和授权。', risk: 'high' },
+  { capability: CAPABILITIES.securityRead, label: '查看权限矩阵', group: '账号权限', description: '只读查看角色、capability 和用户授权视图。', risk: 'normal' },
+  { capability: CAPABILITIES.auditRead, label: '查看审计轨迹', group: '账号权限', description: '只读查看权限变更 diff 和脱敏审计日志。', risk: 'normal' },
   { capability: CAPABILITIES.speedafWorkOrderWrite, label: 'Speedaf 催派工单', group: 'Speedaf 工具', description: '创建 Speedaf 派送跟进工单。', risk: 'high' },
   { capability: CAPABILITIES.speedafAddressUpdateWrite, label: 'Speedaf 地址更新', group: 'Speedaf 工具', description: '提交地址更新确认流程。', risk: 'high' },
   { capability: CAPABILITIES.speedafCancelWrite, label: 'Speedaf 取消运单', group: 'Speedaf 工具', description: '执行取消运单预检和确认提交。', risk: 'high' },

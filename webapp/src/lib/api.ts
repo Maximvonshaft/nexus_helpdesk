@@ -13,6 +13,7 @@ import type {
   ProductionReadiness,
   QueueSummary,
   RuntimeHealth,
+  SecurityAuditRead,
   OpenClawConnectivityProbe,
   OutboundChannelCapabilitiesResponse,
   OutboundEmailAccount,
@@ -339,6 +340,15 @@ export const api = {
   }),
   teams: () => request<Team[]>('/api/lookups/teams'),
   capabilityCatalog: () => request<string[]>('/api/admin/capabilities/catalog'),
+  securityAudit: (params?: { limit?: number; action?: string; target_type?: string; actor_id?: number; q?: string }) => {
+    const search = new URLSearchParams()
+    if (typeof params?.limit === 'number') search.set('limit', String(params.limit))
+    if (params?.action) search.set('action', params.action)
+    if (params?.target_type) search.set('target_type', params.target_type)
+    if (typeof params?.actor_id === 'number') search.set('actor_id', String(params.actor_id))
+    if (params?.q) search.set('q', params.q)
+    return request<SecurityAuditRead>(`/api/admin/security-audit${search.toString() ? `?${search.toString()}` : ''}`)
+  },
 
   liteMeta: () => request<LiteMeta>('/api/lite/meta'),
   casesPage: (params?: CaseQueryParams) => request<CaseListPage>(`/api/lite/cases?${buildCaseSearch(params).toString()}`),

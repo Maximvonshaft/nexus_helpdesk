@@ -36,6 +36,15 @@ test('email operator workbench nav route is registered and capability gated', ()
   assert.match(rbac, /'\/email': \{ allOf: \[CAPABILITIES\.ticketRead\], anyOf: \[CAPABILITIES\.outboundDraftSave, CAPABILITIES\.outboundSend\] \}/)
 })
 
+test('security audit nav route is registered and auditor readable', () => {
+  assert.match(appShell, /to: '\/security-audit'/)
+  assert.match(router, /SecurityAuditRoute/)
+  assert.match(router, /@\/routes\/security-audit/)
+  assert.match(rbac, /securityRead: 'security\.read'/)
+  assert.match(rbac, /auditRead: 'audit\.read'/)
+  assert.match(rbac, /'\/security-audit': \{ anyOf: \[CAPABILITIES\.securityRead, CAPABILITIES\.auditRead, CAPABILITIES\.userManage\] \}/)
+})
+
 test('internal webcall routes are intentionally classified', () => {
   assert.match(router, /Internal operator console for human WebCall handling/)
   assert.match(router, /Top-level operator WebCall workbench/)
@@ -64,6 +73,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'ai-control.tsx',
     'control-plane.tsx',
     'users.tsx',
+    'security-audit.tsx',
   ]
   const registered = new Set(routeFiles.flatMap((file) => registeredStaticRoutes(readFileSync(resolve(root, `src/routes/${file}`), 'utf8'))))
   const missing = staticNavTargets(appShell).filter((target) => target.startsWith('/') && !registered.has(target))

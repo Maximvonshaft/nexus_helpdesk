@@ -17,6 +17,82 @@ export interface AdminUser extends AuthUser {
   updated_at: string
 }
 
+export type SecurityAuditRisk = 'low' | 'medium' | 'high'
+
+export interface SecurityAuditCapabilityRow {
+  capability: string
+  group: string
+  risk: SecurityAuditRisk
+  roles_allowed: Record<string, boolean>
+}
+
+export interface SecurityAuditRoleRow {
+  role: string
+  capabilities: string[]
+  high_risk_capabilities: string[]
+  capability_count: number
+  high_risk_count: number
+}
+
+export interface SecurityAuditUserLens {
+  id: number
+  username: string
+  display_name: string
+  email?: string | null
+  role: string
+  team_id?: number | null
+  is_active: boolean
+  capabilities: string[]
+  high_risk_capabilities: string[]
+  override_count: number
+  allow_override_count: number
+  deny_override_count: number
+  risk: SecurityAuditRisk
+  last_capability_change_at?: string | null
+}
+
+export interface SecurityAuditLogEntry {
+  id: number
+  actor_id?: number | null
+  actor_display_name?: string | null
+  action: string
+  target_type: string
+  target_id?: number | null
+  old_value?: unknown
+  new_value?: unknown
+  changed_fields: string[]
+  risk: SecurityAuditRisk
+  created_at: string
+}
+
+export interface SecurityAuditRead {
+  ok: boolean
+  summary: {
+    capability_count: number
+    high_risk_capability_count: number
+    user_count: number
+    active_user_count: number
+    admin_user_count: number
+    auditor_user_count: number
+    high_risk_user_count: number
+    override_count: number
+    recent_audit_count: number
+  }
+  contracts: {
+    readonly: boolean
+    auditor_readonly: boolean
+    mutation_api_exposed: boolean
+    secret_values_exposed: boolean
+    request_id_available: boolean
+    required_capabilities: string[]
+    can_manage_users: boolean
+  }
+  capability_matrix: SecurityAuditCapabilityRow[]
+  role_matrix: SecurityAuditRoleRow[]
+  users: SecurityAuditUserLens[]
+  audit_logs: SecurityAuditLogEntry[]
+}
+
 export interface Market {
   id: number
   code: string

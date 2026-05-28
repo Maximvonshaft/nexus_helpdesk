@@ -64,6 +64,7 @@ jobs:
               backend/alembic/versions/20260527_0038_webchat_inbox_read_state.py) return 0 ;;
               backend/app/api/admin_provider_credentials.py) return 0 ;;
               backend/app/api/admin_provider_runtime.py) return 0 ;;
+              backend/app/api/admin_security_audit.py) return 0 ;;
               backend/app/api/admin_webcall_ai.py) return 0 ;;
               backend/app/api/knowledge_items.py) return 0 ;;
               backend/app/api/speedaf_actions.py) return 0 ;;
@@ -154,6 +155,7 @@ jobs:
               backend/tests/test_release_metadata.py) return 0 ;;
               backend/tests/test_round24_hardening.py) return 0 ;;
               backend/tests/test_round27_frontend_hardening.py) return 0 ;;
+              backend/tests/test_admin_security_audit.py) return 0 ;;
               backend/tests/test_spa_fallback_hardening.py) return 0 ;;
               backend/tests/test_speedaf_workorder_address_actions.py) return 0 ;;
               backend/tests/test_webcall_ai_production.py) return 0 ;;
@@ -225,6 +227,7 @@ jobs:
               webapp/src/routes/control-plane.tsx) return 0 ;;
               webapp/src/routes/email.tsx) return 0 ;;
               webapp/src/routes/runtime.tsx) return 0 ;;
+              webapp/src/routes/security-audit.tsx) return 0 ;;
               webapp/src/routes/users.tsx) return 0 ;;
               webapp/src/routes/webcall-ai.tsx) return 0 ;;
               webapp/src/routes/webcall-operator.tsx) return 0 ;;
@@ -237,6 +240,7 @@ jobs:
               webapp/tests/novice-ux-regression.test.mjs) return 0 ;;
               webapp/tests/operator-console-contract.test.mjs) return 0 ;;
               webapp/tests/route-nav-consistency.test.mjs) return 0 ;;
+              webapp/tests/security-audit-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-ai-demo-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-livekit-lazy-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-operator-workbench-contract.test.mjs) return 0 ;;
