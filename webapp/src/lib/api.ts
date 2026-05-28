@@ -39,6 +39,7 @@ import type {
   WebchatConversation,
   WebchatHandoffQueue,
   WebchatHandoffRequest,
+  WebCallOperatorWorkbench,
   WebchatReadStateResult,
   WebchatThread,
   WebchatReplyResult,
@@ -544,6 +545,14 @@ export const api = {
   consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
 
   webcallAIDemoStatus: () => request<WebCallAIDemoStatus>('/api/admin/webcall-ai-demo/status'),
+  webcallOperatorWorkbench: (params?: { ticket_id?: number | null; handoff_view?: string; voice_status?: string; limit?: number }, init?: RequestInit) => {
+    const search = new URLSearchParams()
+    if (params?.ticket_id) search.set('ticket_id', String(params.ticket_id))
+    search.set('handoff_view', params?.handoff_view || 'requested')
+    search.set('voice_status', params?.voice_status || 'incoming')
+    search.set('limit', String(params?.limit ?? 50))
+    return request<WebCallOperatorWorkbench>(`/api/admin/webcall-ai/operator-workbench?${search.toString()}`, init)
+  },
   webcallAIDemoCreateSession: (payload: { locale?: string; display_name?: string; scenario?: string; initial_text?: string }) => request<{ ok: boolean; session: WebCallAIDemoSession; events: WebCallAIDemoEvent[] }>('/api/admin/webcall-ai-demo/sessions', {
     method: 'POST',
     body: JSON.stringify(payload),

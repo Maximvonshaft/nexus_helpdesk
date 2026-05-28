@@ -7,7 +7,7 @@ import { Route as WorkspaceRoute } from '@/routes/workspace'
 import { Route as WebchatRoute } from '@/routes/webchat'
 import { Route as EmailRoute } from '@/routes/email'
 import { Route as WebchatVoiceRoute } from '@/routes/webchat-voice'
-import { Route as WebCallOperatorRoute } from '@/routes/webcall-operator'
+import { OperatorRoute as WebCallOperatorAliasRoute, Route as WebCallOperatorRoute } from '@/routes/webcall-operator'
 import { Route as WebCallRoute } from '@/routes/webcall'
 import { Route as WebCallAIProductionRoute } from '@/routes/webcall-ai'
 import { Route as WebCallAIDemoRoute } from '@/routes/webcall-ai-demo'
@@ -31,6 +31,7 @@ const routeTree = RootRoute.addChildren([
   WebchatVoiceRoute,
   // Top-level operator WebCall workbench with voice, handoff, customer profile, AI suggestion, and audit context.
   WebCallOperatorRoute,
+  WebCallOperatorAliasRoute,
   // Public/customer WebCall room; linked from widget runtime with visitor token context.
   WebCallRoute,
   WebCallAIProductionRoute,

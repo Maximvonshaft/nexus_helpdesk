@@ -8,6 +8,7 @@ from ..services.permissions import ensure_can_manage_runtime, ensure_ticket_visi
 from ..services.webcall_ai_production.agent_worker import health as worker_health
 from ..services.webcall_ai_production.event_service import write_event
 from ..services.webcall_ai_production.session_service import TERMINAL_STATUSES, get_session, list_events
+from ..services.webcall_operator_workbench import build_operator_workbench
 from ..services.webchat_voice_service import end_admin_voice_session
 from ..unit_of_work import managed_session
 from ..voice_models import WebchatVoiceSession
@@ -15,6 +16,26 @@ from ..models import Ticket
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/admin/webcall-ai", tags=["admin-webcall-ai"])
+
+
+@router.get("/operator-workbench")
+def read_admin_webcall_operator_workbench(
+    ticket_id: int | None = Query(default=None, ge=1),
+    handoff_view: str = Query(default="requested", pattern="^(requested|ai_active|mine|closed)$"),
+    voice_status: str = Query(default="incoming"),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict:
+    with managed_session(db):
+        return build_operator_workbench(
+            db,
+            current_user,
+            ticket_id=ticket_id,
+            handoff_view=handoff_view,
+            voice_status=voice_status,
+            limit=limit,
+        )
 
 
 @router.get("/health")

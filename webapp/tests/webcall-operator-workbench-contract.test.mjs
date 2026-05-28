@@ -13,8 +13,10 @@ const publicWebcall = readFileSync(resolve(root, 'src/routes/webcall.tsx'), 'utf
 
 test('top-level /webcall operator route is registered without replacing customer room route', () => {
   assert.match(route, /path: '\/webcall'/)
+  assert.match(route, /path: '\/webcall\/operator'/)
   assert.match(route, /WebCall Operator Workbench/)
   assert.match(router, /WebCallOperatorRoute/)
+  assert.match(router, /WebCallOperatorAliasRoute/)
   assert.match(router, /@\/routes\/webcall-operator/)
   assert.match(router, /WebCallRoute/)
   assert.match(publicWebcall, /path: '\/webcall\/\$voice_session_id'/)
@@ -22,22 +24,20 @@ test('top-level /webcall operator route is registered without replacing customer
 
 test('webcall operator entry is routeAccess gated and visible in operator navigation', () => {
   assert.match(rbac, /'\/webcall': \{ allOf: \[CAPABILITIES\.webcallVoiceQueueView\] \}/)
+  assert.match(rbac, /'\/webcall\/operator': \{ allOf: \[CAPABILITIES\.webcallVoiceQueueView\] \}/)
   assert.match(route, /<RequireCapability requirement=\{routeAccess\['\/webcall'\]\}>/)
   assert.match(appShell, /to: '\/webcall'[\s\S]*label: 'WebCall 工作台'[\s\S]*access: routeAccess\['\/webcall'\]/)
   assert.match(appShell, /isActiveNavPath\(location\.pathname, item\.to\)/)
   assert.match(appShell, /pathname\.startsWith\(`\$\{target\}\/`\)/)
-  assert.match(commandPalette, /id: 'webcall-workbench'[\s\S]*to: '\/webcall'[\s\S]*access: routeAccess\['\/webcall'\]/)
+  assert.match(commandPalette, /id: 'webcall-workbench'[\s\S]*to: '\/webcall\/operator'[\s\S]*access: routeAccess\['\/webcall\/operator'\]/)
 })
 
 test('webcall workbench uses real backend contracts for queue, identity, AI, handoff, and audit', () => {
   for (const apiCall of [
-    'api.webchatVoiceIncomingSessions',
-    'api.webchatHandoffQueue',
-    'api.webchatConversations',
+    'api.webcallOperatorWorkbench',
     'api.webchatThread',
     'api.caseDetail',
     'api.ticketTimeline',
-    'api.webcallAIDemoStatus',
     'api.webchatAcceptHandoff',
     'api.webchatDeclineHandoff',
     'api.webchatReleaseHandoff',
@@ -52,6 +52,8 @@ test('webcall workbench uses real backend contracts for queue, identity, AI, han
   assert.match(route, /data-testid="webcall-handoff-actions"/)
   assert.match(route, /data-testid="webcall-demo-shape"/)
   assert.match(route, /data-testid="webcall-timeline-audit"/)
+  assert.match(route, /operator_workbench/)
+  assert.match(route, /timeline_audit/)
   assert.doesNotMatch(route, /\bfetch\s*\(/)
   assert.doesNotMatch(route, /Mock voice session|Accept mock call|End mock call/)
 })

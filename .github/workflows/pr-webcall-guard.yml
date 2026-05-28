@@ -108,6 +108,7 @@ jobs:
               backend/app/services/text_decoding.py) return 0 ;;
               backend/app/services/timeline_service.py) return 0 ;;
               backend/app/services/webcall_ai/participant_service.py) return 0 ;;
+              backend/app/services/webcall_operator_workbench.py) return 0 ;;
               backend/app/services/webcall_ai_production/**) return 0 ;;
               backend/app/services/webchat_ai_safe_service.py) return 0 ;;
               backend/app/services/webchat_ai_service.py) return 0 ;;
@@ -158,6 +159,7 @@ jobs:
               backend/tests/test_speedaf_workorder_address_actions.py) return 0 ;;
               backend/tests/test_webcall_ai_production.py) return 0 ;;
               backend/tests/test_webcall_ai_voice_loop.py) return 0 ;;
+              backend/tests/test_webcall_operator_workbench_api.py) return 0 ;;
               backend/tests/test_webchat_ai_turn_runtime.py) return 0 ;;
               backend/tests/test_webchat_codex_app_server_canary_observability.py) return 0 ;;
               backend/tests/test_webchat_codex_app_server_provider.py) return 0 ;;
@@ -263,6 +265,8 @@ jobs:
               webapp/package.json) return 0 ;;
               webapp/package-lock.json) return 0 ;;
               backend/app/webchat_voice_config.py) return 0 ;;
+              backend/app/services/webcall_operator_workbench.py) return 0 ;;
+              backend/tests/test_webcall_operator_workbench_api.py) return 0 ;;
               backend/tests/test_webchat_voice_mock_ui_static.py) return 0 ;;
               backend/tests/test_webchat_voice_static_headers.py) return 0 ;;
             esac
@@ -330,7 +334,7 @@ jobs:
           LIVEKIT_URL: wss://livekit.test
           WEBCALL_BROWSER_ENTRY_ENABLED: "true"
         run: |
-          pytest -q tests/test_webchat_voice_api.py tests/test_webchat_voice_static_headers.py tests/test_webchat_voice_mock_ui_static.py
+          pytest -q tests/test_webchat_voice_api.py tests/test_webcall_operator_workbench_api.py tests/test_webchat_voice_static_headers.py tests/test_webchat_voice_mock_ui_static.py
 
   webcall-blocking-fix-guard:
     needs: scope-guard

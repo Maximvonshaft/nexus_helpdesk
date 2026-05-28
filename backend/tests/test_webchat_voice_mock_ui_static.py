@@ -50,10 +50,9 @@ def test_agent_webcall_console_route_is_registered():
     assert "path: '/webchat-voice'" in route_text
     assert "WebCall Agent Console" in route_text
     assert "path: '/webcall'" in operator_text
+    assert "path: '/webcall/operator'" in operator_text
     assert "WebCall Operator Workbench" in operator_text
-    assert "api.webchatVoiceIncomingSessions" in operator_text
-    assert "api.webchatHandoffQueue" in operator_text
-    assert "api.webcallAIDemoStatus" in operator_text
+    assert "api.webcallOperatorWorkbench" in operator_text
     assert "AgentWebCallPanel" in route_text
     assert "AgentWebCallPanel" in operator_text
     assert "Mock voice session" not in route_text
@@ -64,6 +63,7 @@ def test_agent_webcall_console_route_is_registered():
     assert "End mock call" not in operator_text
     assert "WebchatVoiceRoute" in router_text
     assert "WebCallOperatorRoute" in router_text
+    assert "WebCallOperatorAliasRoute" in router_text
     assert "@/routes/webchat-voice" in router_text
     assert "@/routes/webcall-operator" in router_text
 

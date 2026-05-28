@@ -1,3 +1,5 @@
+import type { WebchatVoiceIncomingSession, WebchatVoiceSession } from './webchatVoiceTypes'
+
 export type BadgeTone = 'default' | 'warning' | 'success' | 'danger'
 
 export interface AuthUser {
@@ -903,4 +905,104 @@ export interface WebchatReplyResult {
     normalized_body: string
   }
   message: WebchatMessage
+}
+
+export interface WebCallOperatorIdentity {
+  verified: boolean
+  status: string
+  matches: string[]
+  missing_visitor_fields: string[]
+  visitor: {
+    name?: string | null
+    email?: string | null
+    phone?: string | null
+    ref?: string | null
+  }
+  ticket_customer?: {
+    id?: number | null
+    name?: string | null
+    email?: string | null
+    phone?: string | null
+    external_ref?: string | null
+  } | null
+  preferred_reply_contact?: string | null
+}
+
+export interface WebCallOperatorSuggestion {
+  source: string
+  label: string
+  text: string
+}
+
+export interface WebCallOperatorSessionAction {
+  voice_session_id?: string | null
+  status: string
+  provider?: string | null
+  can_accept: boolean
+  can_reject: boolean
+  can_end: boolean
+  accepted_by_user_id?: number | null
+  ended_by_user_id?: number | null
+}
+
+export interface WebCallAIDemoStatus {
+  ok: boolean
+  status: 'disabled' | 'ready' | 'degraded' | 'blocked' | string
+  enabled: boolean
+  kill_switch: boolean
+  internal_only: boolean
+  public_customer_entry_enabled: boolean
+  recording_enabled: boolean
+  transcription_enabled: boolean
+  ai_agent_enabled: boolean
+  demo_mode: string
+  allow_browser_speech: boolean
+  allow_real_media: boolean
+  active_demo_sessions: number
+  max_active_sessions: number
+  max_turns_per_session: number
+  blockers: string[]
+  warnings: string[]
+}
+
+export interface WebCallOperatorWorkbench {
+  ok: boolean
+  route: {
+    operator: string
+    legacy: string
+    customer_room: string
+  }
+  contracts: Record<string, string>
+  capabilities: Record<string, boolean>
+  voice_queue: { items: WebchatVoiceIncomingSession[]; unavailable?: boolean; detail?: string }
+  handoff_queue: WebchatHandoffQueue & { unavailable?: boolean; detail?: string }
+  conversation_queue: { items: WebchatConversation[]; unavailable?: boolean; detail?: string }
+  demo: {
+    available: boolean
+    requires_capability: string
+    status?: WebCallAIDemoStatus | null
+  }
+  selected?: {
+    ticket_id: number
+    ticket: Partial<CaseDetail> & {
+      id: number
+      ticket_no?: string | null
+      customer?: CaseDetail['customer'] | null
+    }
+    thread?: WebchatThread | null
+    handoff?: WebchatHandoffRequest | null
+    identity: WebCallOperatorIdentity
+    ai_suggestions: WebCallOperatorSuggestion[]
+    voice_sessions: { items: WebchatVoiceSession[]; unavailable?: boolean; detail?: string }
+    session_actions: {
+      primary_voice_session_id?: string | null
+      items: WebCallOperatorSessionAction[]
+    }
+    timeline_audit: {
+      writeback_sources: Record<string, number>
+      ticket_events: Array<Record<string, unknown>>
+      webchat_events: Array<Record<string, unknown>>
+      voice_call_messages: Array<Record<string, unknown>>
+    }
+  } | null
 }
