@@ -206,6 +206,107 @@ export type OutboundSendPayload = {
   body: string
 }
 
+export type IntegrationObservabilityQuery = {
+  status?: string
+  client_id?: number | null
+  endpoint?: string
+  error_code?: string
+  has_idempotency_key?: boolean | null
+  retryable?: boolean | null
+  q?: string
+  limit?: number
+}
+
+export interface IntegrationObservabilitySummary {
+  total: number
+  success_count: number
+  error_count: number
+  retryable_count: number
+  processing_count: number
+  idempotency_conflict_count: number
+  rate_limited_count: number
+  unique_clients: number
+  last_created_at?: string | null
+}
+
+export interface IntegrationObservabilityUsage {
+  endpoint: string
+  method: string
+  scope: string
+  count: number
+  success_count: number
+  error_count: number
+  retryable_count: number
+  avg_latency_ms?: number | null
+  latency_available: boolean
+  last_seen_at?: string | null
+}
+
+export interface IntegrationObservabilityClient {
+  id: number
+  name: string
+  key_id: string
+  scopes: string[]
+  rate_limit_per_minute: number
+  is_active: boolean
+  last_used_at?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  request_count: number
+  success_count: number
+  error_count: number
+  retryable_count: number
+  last_log_created_at?: string | null
+}
+
+export interface IntegrationRequestLogItem {
+  id: number
+  client_id: number
+  client_name: string
+  endpoint: string
+  method: string
+  scope: string
+  status_code?: number | null
+  status_family: string
+  error_code?: string | null
+  idempotency_key?: string | null
+  idempotency_key_present: boolean
+  request_hash_present: boolean
+  request_id?: string | null
+  request_id_available: boolean
+  retryable: boolean
+  latency_ms?: number | null
+  latency_available: boolean
+  response_preview?: string | null
+  created_at?: string | null
+}
+
+export interface IntegrationObservabilityContract {
+  method: string
+  path: string
+  scope: string
+  idempotency_required: boolean
+  request_id_header: string
+}
+
+export interface IntegrationObservabilityResponse {
+  ok: boolean
+  filters: IntegrationObservabilityQuery
+  summary: IntegrationObservabilitySummary
+  usage: IntegrationObservabilityUsage[]
+  clients: IntegrationObservabilityClient[]
+  items: IntegrationRequestLogItem[]
+  contracts: IntegrationObservabilityContract[]
+  capabilities: {
+    readonly: boolean
+    client_registration_api: boolean
+    request_id_persisted: boolean
+    latency_available: boolean
+    csv_export: boolean
+    csv_export_audit_action?: string | null
+  }
+}
+
 export interface EvidenceSummary {
   loaded: boolean
   preview_limit: number

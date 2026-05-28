@@ -198,6 +198,21 @@ def _integration_error_payload(exc: HTTPException) -> dict:
     return {'ok': False, 'detail': detail}
 
 
+def _clean_request_id(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    return str(raw).strip()[:120]
+
+
+def _request_id(request: Request) -> str | None:
+    state = getattr(request, 'state', None)
+    headers = getattr(request, 'headers', None)
+    raw = getattr(state, 'request_id', None)
+    if not raw and hasattr(headers, 'get'):
+        raw = headers.get(settings.request_id_header)
+    return _clean_request_id(raw)
+
+
 def _record_integration_error(
     db: Session,
     *,
@@ -207,6 +222,7 @@ def _record_integration_error(
     idempotency_key: str | None,
     request_hash: str | None,
     exc: HTTPException,
+    request_id: str | None = None,
 ) -> None:
     if client.client_id is not None:
         row = db.query(IntegrationClient).filter(IntegrationClient.id == client.client_id).first()
@@ -222,6 +238,7 @@ def _record_integration_error(
         status_code=exc.status_code,
         response_payload=_integration_error_payload(exc),
         error_code=error_code_from_status(exc.status_code),
+        request_id=request_id,
     )
     db.commit()
 
@@ -246,7 +263,9 @@ def nexusdesk_customer_profile(
     channel: str = Query(default='whatsapp'),
     db: Session = Depends(get_db),
     client: AuthenticatedIntegrationClient = Depends(get_authenticated_integration_client),
+    x_request_id: str | None = Header(default=None, alias=settings.request_id_header),
 ):
+    request_id = _clean_request_id(x_request_id)
     try:
         with managed_session(db):
             require_scope(client, 'profile.read')
@@ -268,7 +287,7 @@ def nexusdesk_customer_profile(
 
             if not customer and not tickets:
                 response = {'ok': True, 'found': False, 'message': 'No customer profile found for this contact.', 'channel': normalized_channel.value}
-                record_integration_response(db, client=client, endpoint='integration.profile', method='GET', idempotency_key=None, request_hash=None, status_code=200, response_payload=response)
+                record_integration_response(db, client=client, endpoint='integration.profile', method='GET', idempotency_key=None, request_hash=None, status_code=200, response_payload=response, request_id=request_id)
                 db.flush()
                 return response
 
@@ -288,7 +307,7 @@ def nexusdesk_customer_profile(
                 'active_tasks': active_tasks,
                 'dispute_history': dispute_history,
             }
-            record_integration_response(db, client=client, endpoint='integration.profile', method='GET', idempotency_key=None, request_hash=None, status_code=200, response_payload=response)
+            record_integration_response(db, client=client, endpoint='integration.profile', method='GET', idempotency_key=None, request_hash=None, status_code=200, response_payload=response, request_id=request_id)
             db.flush()
             return response
     except HTTPException as exc:
@@ -301,6 +320,7 @@ def nexusdesk_customer_profile(
                 idempotency_key=None,
                 request_hash=None,
                 exc=exc,
+                request_id=request_id,
             )
         raise
 
@@ -313,6 +333,7 @@ def nexusdesk_escalate_task(
     client: AuthenticatedIntegrationClient = Depends(get_authenticated_integration_client),
     idempotency_key: str | None = Header(default=None, alias='Idempotency-Key'),
 ):
+    request_id = _request_id(request)
     request_hash = stable_request_hash(payload.model_dump())
     try:
         with managed_session(db):
@@ -322,7 +343,7 @@ def nexusdesk_escalate_task(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Idempotency-Key is required for integration writes')
 
             if idempotency_key:
-                begin = begin_integration_idempotency(db, client=client, endpoint='integration.task', method='POST', idempotency_key=idempotency_key, request_hash=request_hash)
+                begin = begin_integration_idempotency(db, client=client, endpoint='integration.task', method='POST', idempotency_key=idempotency_key, request_hash=request_hash, request_id=request_id)
                 begin_response = _idempotency_begin_response(begin.kind, begin.response_json, begin.error_code)
                 if begin_response is not None:
                     return begin_response
@@ -346,7 +367,7 @@ def nexusdesk_escalate_task(
                     'status': 'existing',
                     'message': 'Matching open task already exists in Resolution Center.',
                 }
-                record_integration_response(db, client=client, endpoint='integration.task', method='POST', idempotency_key=idempotency_key, request_hash=request_hash, status_code=200, response_payload=response)
+                record_integration_response(db, client=client, endpoint='integration.task', method='POST', idempotency_key=idempotency_key, request_hash=request_hash, status_code=200, response_payload=response, request_id=request_id)
                 db.flush()
                 return response
 
@@ -391,7 +412,7 @@ def nexusdesk_escalate_task(
                 'status': 'created',
                 'message': 'Task escalated to Resolution Center successfully.',
             }
-            record_integration_response(db, client=client, endpoint='integration.task', method='POST', idempotency_key=idempotency_key, request_hash=request_hash, status_code=200, response_payload=response)
+            record_integration_response(db, client=client, endpoint='integration.task', method='POST', idempotency_key=idempotency_key, request_hash=request_hash, status_code=200, response_payload=response, request_id=request_id)
             db.flush()
             return response
     except HTTPException as exc:
@@ -404,5 +425,6 @@ def nexusdesk_escalate_task(
                 idempotency_key=idempotency_key,
                 request_hash=request_hash,
                 exc=exc,
+                request_id=request_id,
             )
         raise

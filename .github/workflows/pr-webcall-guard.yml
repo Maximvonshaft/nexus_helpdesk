@@ -62,9 +62,12 @@ jobs:
               backend/alembic/versions/20260526_0034_knowledge_rag_business_facts.py) return 0 ;;
               backend/alembic/versions/20260527_0035_webchat_handoff_control.py) return 0 ;;
               backend/alembic/versions/20260527_0038_webchat_inbox_read_state.py) return 0 ;;
+              backend/alembic/versions/20260529_0039_integration_request_log_request_id.py) return 0 ;;
+              backend/app/api/admin_integration_observability.py) return 0 ;;
               backend/app/api/admin_provider_credentials.py) return 0 ;;
               backend/app/api/admin_provider_runtime.py) return 0 ;;
               backend/app/api/admin_webcall_ai.py) return 0 ;;
+              backend/app/api/integration.py) return 0 ;;
               backend/app/api/knowledge_items.py) return 0 ;;
               backend/app/api/speedaf_actions.py) return 0 ;;
               backend/app/api/speedaf_cancel.py) return 0 ;;
@@ -73,6 +76,7 @@ jobs:
               backend/app/api/webchat_fast.py) return 0 ;;
               backend/app/api/webchat_ws.py) return 0 ;;
               backend/app/main.py) return 0 ;;
+              backend/app/models.py) return 0 ;;
               backend/app/models_control_plane.py) return 0 ;;
               backend/app/schemas_control_plane.py) return 0 ;;
               backend/app/settings.py) return 0 ;;
@@ -92,6 +96,7 @@ jobs:
               backend/app/services/knowledge_retrieval_service.py) return 0 ;;
               backend/app/services/knowledge_service.py) return 0 ;;
               backend/app/services/lite_service.py) return 0 ;;
+              backend/app/services/integration_auth.py) return 0 ;;
               backend/app/services/observability.py) return 0 ;;
               backend/app/services/operator_queue.py) return 0 ;;
               backend/app/services/permissions.py) return 0 ;;
@@ -135,6 +140,7 @@ jobs:
               backend/tests/test_codex_app_server_private_upstream_proxy.py) return 0 ;;
               backend/tests/test_codex_openclaw_codex_harness_adapter.py) return 0 ;;
               backend/tests/test_codex_private_reply_engine.py) return 0 ;;
+              backend/tests/test_admin_integration_observability.py) return 0 ;;
               backend/tests/test_codex_runtime_v3_static.py) return 0 ;;
               backend/tests/test_codex_smoke_chat.py) return 0 ;;
               backend/tests/test_knowledge_items.py) return 0 ;;
@@ -224,6 +230,7 @@ jobs:
               webapp/src/routes/ai-control.tsx) return 0 ;;
               webapp/src/routes/control-plane.tsx) return 0 ;;
               webapp/src/routes/email.tsx) return 0 ;;
+              webapp/src/routes/integration-observability.tsx) return 0 ;;
               webapp/src/routes/runtime.tsx) return 0 ;;
               webapp/src/routes/users.tsx) return 0 ;;
               webapp/src/routes/webcall-ai.tsx) return 0 ;;
@@ -234,6 +241,7 @@ jobs:
               webapp/src/routes/workspace.tsx) return 0 ;;
               webapp/src/styles.css) return 0 ;;
               webapp/tests/email-workbench-contract.test.mjs) return 0 ;;
+              webapp/tests/integration-observability-contract.test.mjs) return 0 ;;
               webapp/tests/novice-ux-regression.test.mjs) return 0 ;;
               webapp/tests/operator-console-contract.test.mjs) return 0 ;;
               webapp/tests/route-nav-consistency.test.mjs) return 0 ;;

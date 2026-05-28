@@ -21,6 +21,8 @@ import type {
   OutboundEmailTestSendRequest,
   OutboundEmailTestSendResult,
   OutboundSendPayload,
+  IntegrationObservabilityQuery,
+  IntegrationObservabilityResponse,
   SignoffChecklist,
   SystemAttachment,
   AIConfigResource,
@@ -215,6 +217,52 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   throw lastError instanceof Error ? lastError : new Error('API request failed')
 }
 
+async function requestText(path: string, init?: RequestInit): Promise<string> {
+  const publicRequest = isPublicRequest(path)
+  const token = getToken()
+  const headers = new Headers(init?.headers ?? {})
+  const method = requestMethod(init)
+  const retryable = SAFE_RETRY_METHODS.has(method)
+  const requestId = headers.get(REQUEST_ID_HEADER) || createRequestId()
+  const apiPath = requestPathname(path)
+  const url = buildApiUrl(path)
+  headers.set(REQUEST_ID_HEADER, requestId)
+  if (token && !publicRequest) headers.set('Authorization', `Bearer ${token}`)
+
+  let lastError: unknown
+  for (let attempt = 0; attempt < (retryable ? 2 : 1); attempt += 1) {
+    const started = performance.now()
+    try {
+      const res = await fetchWithTimeout(url, { ...init, method, headers }, DEFAULT_API_TIMEOUT_MS)
+      const duration_ms = Math.round(performance.now() - started)
+      emitFrontendLatency({ path: apiPath, method, status: String(res.status), duration_ms, ok: res.ok })
+      if (res.status === 401) {
+        if (publicRequest) {
+          const err = await readErrorBody(res, '登录失败，请检查账号或密码')
+          throw new ApiError(err.message, res.status, err.detail, err.payload)
+        }
+        if (!authExpiryHandled) {
+          authExpiryHandled = true
+          clearToken()
+        }
+        throw new AuthExpiredError()
+      }
+      if (!res.ok) {
+        const err = await readErrorBody(res, `${res.status} ${res.statusText}`)
+        throw new ApiError(err.message, res.status, err.detail, err.payload)
+      }
+      return res.text()
+    } catch (error) {
+      lastError = error
+      const duration_ms = Math.round(performance.now() - started)
+      const timeout = error instanceof DOMException && error.name === 'AbortError'
+      emitFrontendLatency({ path: apiPath, method, status: timeout ? 'timeout' : 'network_error', duration_ms, ok: false, timeout })
+      if (!retryable || attempt > 0 || error instanceof AuthExpiredError) break
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('API request failed')
+}
+
 export type TicketTimelinePage = {
   items: Array<Record<string, unknown>>
   next_cursor: string | null
@@ -313,6 +361,19 @@ function buildRecoverySearch(params?: { job_type?: string; limit?: number }) {
   if (params?.job_type) search.set('job_type', params.job_type)
   if (typeof params?.limit === 'number') search.set('limit', String(params.limit))
   return search.toString()
+}
+
+function buildIntegrationObservabilitySearch(params?: IntegrationObservabilityQuery) {
+  const search = new URLSearchParams()
+  search.set('limit', String(params?.limit ?? 50))
+  if (params?.status) search.set('status', params.status)
+  if (typeof params?.client_id === 'number') search.set('client_id', String(params.client_id))
+  if (params?.endpoint) search.set('endpoint', params.endpoint)
+  if (params?.error_code) search.set('error_code', params.error_code)
+  if (typeof params?.has_idempotency_key === 'boolean') search.set('has_idempotency_key', String(params.has_idempotency_key))
+  if (typeof params?.retryable === 'boolean') search.set('retryable', String(params.retryable))
+  if (params?.q) search.set('q', params.q)
+  return search
 }
 
 export const api = {
@@ -524,6 +585,8 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
+  integrationObservability: (params?: IntegrationObservabilityQuery) => request<IntegrationObservabilityResponse>(`/api/admin/integration-observability?${buildIntegrationObservabilitySearch(params).toString()}`),
+  exportIntegrationObservabilityCsv: (params?: IntegrationObservabilityQuery) => requestText(`/api/admin/integration-observability/export.csv?${buildIntegrationObservabilitySearch({ ...params, limit: params?.limit ?? 200 }).toString()}`),
 
   queueSummary: () => request<QueueSummary>('/api/admin/queues/summary'),
   runtimeHealth: () => request<RuntimeHealth>('/api/admin/openclaw/runtime-health'),

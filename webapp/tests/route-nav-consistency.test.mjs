@@ -60,6 +60,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'provider-credentials.tsx',
     'accounts.tsx',
     'outbound-email.tsx',
+    'integration-observability.tsx',
     'bulletins.tsx',
     'ai-control.tsx',
     'control-plane.tsx',

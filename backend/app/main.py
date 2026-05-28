@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from .api.admin_outbound_semantics import router as admin_outbound_semantics_router
+from .api.admin_integration_observability import router as admin_integration_observability_router
 from .api.admin_perf import router as admin_perf_router
 from .api.admin_provider_runtime import router as admin_provider_runtime_router
 from .api.admin_provider_credentials import router as admin_provider_credentials_router
@@ -235,6 +236,7 @@ def readyz():
 
 
 app.include_router(admin_outbound_semantics_router)
+app.include_router(admin_integration_observability_router)
 app.include_router(admin_perf_router)
 app.include_router(admin_provider_runtime_router)
 app.include_router(admin_provider_credentials_router)

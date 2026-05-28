@@ -51,6 +51,7 @@ export type CapabilityMeta = {
 
 export const routeAccess = {
   '/runtime': { allOf: [CAPABILITIES.runtimeManage] },
+  '/integration-observability': { allOf: [CAPABILITIES.runtimeManage] },
   '/provider-credentials': { allOf: [CAPABILITIES.runtimeManage] },
   '/webcall': { allOf: [CAPABILITIES.webcallVoiceQueueView] },
   '/webcall-ai-demo': { allOf: [CAPABILITIES.runtimeManage] },

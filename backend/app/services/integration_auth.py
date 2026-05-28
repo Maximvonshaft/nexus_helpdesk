@@ -135,6 +135,7 @@ def begin_integration_idempotency(
     method: str,
     idempotency_key: str,
     request_hash: str,
+    request_id: str | None = None,
 ) -> IntegrationIdempotencyBegin:
     """Reserve an integration idempotency key before executing side effects.
 
@@ -155,6 +156,7 @@ def begin_integration_idempotency(
         method=method,
         idempotency_key=idempotency_key,
         request_hash=request_hash,
+        request_id=request_id,
         status_code=None,
         error_code=None,
         response_json=None,
@@ -191,6 +193,7 @@ def record_integration_response(
     status_code: int,
     response_payload: dict,
     error_code: str | None = None,
+    request_id: str | None = None,
 ) -> None:
     if idempotency_key:
         existing = _integration_log_query(db, client, endpoint, idempotency_key).first()
@@ -200,11 +203,13 @@ def record_integration_response(
                 return
             existing.method = method
             existing.request_hash = request_hash
+            if request_id:
+                existing.request_id = request_id
             existing.status_code = status_code
             existing.error_code = error_code
             existing.response_json = json.dumps(response_payload, ensure_ascii=False)
             existing.created_at = utc_now()
             db.flush()
             return
-    db.add(IntegrationRequestLog(client_id=client.client_id, endpoint=endpoint, method=method, idempotency_key=idempotency_key, request_hash=request_hash, status_code=status_code, error_code=error_code, response_json=json.dumps(response_payload, ensure_ascii=False)))
+    db.add(IntegrationRequestLog(client_id=client.client_id, endpoint=endpoint, method=method, idempotency_key=idempotency_key, request_hash=request_hash, request_id=request_id, status_code=status_code, error_code=error_code, response_json=json.dumps(response_payload, ensure_ascii=False)))
     db.flush()

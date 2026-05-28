@@ -263,6 +263,7 @@ class IntegrationRequestLog(Base):
     method: Mapped[str] = mapped_column(String(16), default="GET")
     idempotency_key: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
     request_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    request_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     error_code: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     response_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
