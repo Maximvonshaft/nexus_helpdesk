@@ -118,9 +118,11 @@ test('outbound email setup protects secrets and labels SMTP test failures', () =
 
 test('navigation is grouped by operator mental model without route changes', () => {
   assert.match(appShell, /const navGroups/)
-  assert.match(appShell, /日常处理/)
+  assert.match(appShell, /工作台/)
+  assert.match(appShell, /工单与口径/)
   assert.match(appShell, /渠道与授权/)
   assert.match(appShell, /治理与运维/)
+  assert.match(appShell, /'\/webchat', '\/webcall', '\/email'/)
   assert.match(appShell, /to: '\/provider-credentials'/)
   assert.match(appShell, /to: '\/ai-control'/)
 })

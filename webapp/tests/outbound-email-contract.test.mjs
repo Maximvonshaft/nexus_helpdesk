@@ -77,10 +77,11 @@ test('outbound email admin page protects secrets and supports test-send workflow
 
 test('outbound email navigation and command shortcuts are capability gated', () => {
   assert.match(rbac, /'\/outbound-email': \{ allOf: \[CAPABILITIES\.channelAccountManage\] \}/)
-  assert.match(appShell, /to: '\/outbound-email'[\s\S]*access: routeAccess\['\/outbound-email'\]/)
+  assert.match(appShell, /to: '\/outbound-email'[\s\S]*label: 'SMTP 账号'[\s\S]*access: routeAccess\['\/outbound-email'\]/)
   assert.match(appShell, /渠道与授权'[\s\S]*'\/outbound-email'/)
   assert.match(commandPalette, /to: '\/outbound-email'[\s\S]*access: routeAccess\['\/outbound-email'\]/)
   assert.match(commandPalette, /新建 SMTP 账号/)
+  assert.match(commandPalette, /维护 SMTP 账号/)
 })
 
 test('SMTP error taxonomy is mapped to operator-readable text', () => {

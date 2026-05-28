@@ -7,12 +7,14 @@ import { useSession } from '@/hooks/useAuth'
 import { CAPABILITIES, canAccess, routeAccess } from '@/lib/rbac'
 
 const actions = [
-  { id: 'overview', label: '查看今日总览', keywords: '首页 总览 今日 优先', to: '/' },
+  { id: 'overview', label: '查看今日工作台', keywords: '首页 总览 今日 优先 工作台', to: '/' },
+  { id: 'webchat', label: '打开 WebChat 工作台', keywords: 'webchat 网站聊天 收件箱 客户来信 接管', to: '/webchat' },
+  { id: 'webcall', label: '打开 WebCall 接听台', keywords: 'webcall voice 语音 电话 接听 来电', to: '/webcall', access: routeAccess['/webcall'] },
+  { id: 'email', label: '打开 Email 工作台', keywords: 'email 邮件 回复 客户 smtp 发送', to: '/email', access: routeAccess['/email'] },
   { id: 'workspace', label: '处理工单 / 客户回复', keywords: '工单 回复 客户 闭环', to: '/workspace' },
-  { id: 'webchat', label: '打开 WebChat 收件箱', keywords: 'webchat 网站聊天 收件箱 客户来信', to: '/webchat' },
   { id: 'runtime', label: '进入运行恢复 / dead 重排', keywords: 'runtime 运行恢复 dead requeue 重排 队列', to: '/runtime', access: routeAccess['/runtime'] },
   { id: 'accounts', label: '检查发送线路', keywords: '发送线路 渠道 账号 outbound', to: '/accounts', access: routeAccess['/accounts'] },
-  { id: 'outbound-email', label: '维护 Outbound Email 账号', keywords: 'email smtp 邮件 账号 test-send 测试发送 outbound', to: '/outbound-email', access: routeAccess['/outbound-email'] },
+  { id: 'outbound-email', label: '维护 SMTP 账号', keywords: 'email smtp 邮件 账号 test-send 测试发送 outbound', to: '/outbound-email', access: routeAccess['/outbound-email'] },
   { id: 'bulletins', label: '查看公告口径', keywords: '公告 口径 通知', to: '/bulletins' },
   { id: 'refresh', label: '刷新全部数据', keywords: '刷新 reload invalidate', action: 'refresh' },
   { id: 'runtime-refresh', label: '刷新运行状态', keywords: '刷新 runtime 运行 状态', action: 'runtime-refresh', access: routeAccess['/runtime'] },

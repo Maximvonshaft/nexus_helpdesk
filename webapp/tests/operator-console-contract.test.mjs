@@ -13,6 +13,8 @@ const workspaceRoute = readFileSync(resolve(root, 'src/routes/workspace.tsx'), '
 const runtimeRoute = readFileSync(resolve(root, 'src/routes/runtime.tsx'), 'utf8')
 const webchatRoute = readFileSync(resolve(root, 'src/routes/webchat.tsx'), 'utf8')
 const webchatInboxV5 = readFileSync(resolve(root, 'src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx'), 'utf8')
+const webcallWorkbenchRoute = readFileSync(resolve(root, 'src/routes/webcall-workbench.tsx'), 'utf8')
+const emailRoute = readFileSync(resolve(root, 'src/routes/email.tsx'), 'utf8')
 const webchatVoiceApi = readFileSync(resolve(root, 'src/lib/webchatVoiceApi.ts'), 'utf8')
 const agentWebCallPanel = readFileSync(resolve(root, 'src/components/webcall/AgentWebCallPanel.tsx'), 'utf8')
 const replyPanel = readFileSync(resolve(root, 'src/components/operator/CustomerReplyPanel.tsx'), 'utf8')
@@ -183,24 +185,54 @@ test('speedaf and webcall actions are capability gated in the operator UI', () =
 
 test('operator navigation uses workflow-oriented entrypoints', () => {
   assert.match(appShell, /data-testid="operator-primary-navigation"/)
-  assert.match(appShell, /处理工单/)
-  assert.match(appShell, /WebChat 收件箱/)
+  assert.match(appShell, /今日工作台/)
+  assert.match(appShell, /WebChat/)
+  assert.match(appShell, /WebCall/)
+  assert.match(appShell, /Email/)
+  assert.match(appShell, /工单处理/)
   assert.match(appShell, /运行恢复/)
   assert.match(appShell, /dead\/requeue 自助处理/)
   assert.match(appShell, /runtimeNeedsAttention/)
   assert.match(appShell, /需处理 \{runtimeAttentionCount\}/)
   assert.match(appShell, /运行需处理/)
+  assert.match(appShell, /工作台'[\s\S]*'\/webchat'[\s\S]*'\/webcall'[\s\S]*'\/email'/)
+  assert.match(appShell, /工单与口径'[\s\S]*'\/workspace'/)
 })
 
 test('command palette exposes high-frequency operator workflow shortcuts', () => {
   assert.match(commandPalette, /data-testid="operator-command-palette-actions"/)
+  assert.match(commandPalette, /打开 WebChat 工作台/)
+  assert.match(commandPalette, /打开 WebCall 接听台/)
+  assert.match(commandPalette, /打开 Email 工作台/)
   assert.match(commandPalette, /处理工单 \/ 客户回复/)
-  assert.match(commandPalette, /打开 WebChat 收件箱/)
   assert.match(commandPalette, /进入运行恢复 \/ dead 重排/)
   assert.match(commandPalette, /刷新运行状态/)
   assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['runtimeHealth'\] \}\)/)
   assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['queueSummary'\] \}\)/)
   assert.match(commandPalette, /navigate\(\{ to: '\/runtime' \}\)/)
+})
+
+test('webcall workbench lands template voice desk shape on real voice APIs', () => {
+  assert.match(webcallWorkbenchRoute, /path: '\/webcall'/)
+  assert.match(webcallWorkbenchRoute, /<AppShell>/)
+  assert.match(webcallWorkbenchRoute, /<RequireCapability requirement=\{routeAccess\['\/webcall'\]\}>/)
+  assert.match(webcallWorkbenchRoute, /api\.webchatConversations/)
+  assert.match(webcallWorkbenchRoute, /webchatVoiceApi\.incomingSessions/)
+  assert.match(webcallWorkbenchRoute, /<AgentWebCallPanel/)
+  assert.match(webcallWorkbenchRoute, /来电队列/)
+  assert.match(webcallWorkbenchRoute, /客户与工单上下文/)
+})
+
+test('email workbench uses ticket timeline and outbound send APIs', () => {
+  assert.match(emailRoute, /path: '\/email'/)
+  assert.match(emailRoute, /<RequireCapability requirement=\{routeAccess\['\/email'\]\}>/)
+  assert.match(emailRoute, /api\.cases/)
+  assert.match(emailRoute, /api\.caseDetail/)
+  assert.match(emailRoute, /api\.ticketTimeline/)
+  assert.match(emailRoute, /api\.ticketOutboundChannelCapabilities/)
+  assert.match(emailRoute, /api\.sendOutboundMessage\(activeCase\.id, \{ channel: 'email', subject: subject\.trim\(\), body: body\.trim\(\) \}\)/)
+  assert.match(emailRoute, /SMTP 外部邮件发送/)
+  assert.match(emailRoute, /timeline\/outbound audit/)
 })
 
 test('overview page provides priority action entrypoints', () => {
@@ -222,6 +254,8 @@ test('admin operator surfaces do not bypass unified api client with raw fetch', 
     ['src/routes/workspace.tsx', workspaceRoute],
     ['src/routes/runtime.tsx', runtimeRoute],
     ['src/routes/webchat.tsx', webchatRoute],
+    ['src/routes/webcall-workbench.tsx', webcallWorkbenchRoute],
+    ['src/routes/email.tsx', emailRoute],
     ['src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx', webchatInboxV5],
     ['src/routes/index.tsx', overviewRoute],
     ['src/layouts/AppShell.tsx', appShell],

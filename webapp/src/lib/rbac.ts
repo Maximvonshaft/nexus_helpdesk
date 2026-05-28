@@ -50,6 +50,8 @@ export type CapabilityMeta = {
 }
 
 export const routeAccess = {
+  '/email': { anyOf: [CAPABILITIES.ticketRead, CAPABILITIES.outboundSend] },
+  '/webcall': { anyOf: [CAPABILITIES.webcallVoiceRead, CAPABILITIES.webcallVoiceQueueView] },
   '/runtime': { allOf: [CAPABILITIES.runtimeManage] },
   '/provider-credentials': { allOf: [CAPABILITIES.runtimeManage] },
   '/webcall-ai-demo': { allOf: [CAPABILITIES.runtimeManage] },

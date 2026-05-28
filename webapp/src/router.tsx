@@ -5,6 +5,8 @@ import { Route as AdminRoute } from '@/routes/admin'
 import { Route as IndexRoute } from '@/routes/index'
 import { Route as WorkspaceRoute } from '@/routes/workspace'
 import { Route as WebchatRoute } from '@/routes/webchat'
+import { Route as EmailRoute } from '@/routes/email'
+import { Route as WebCallWorkbenchRoute } from '@/routes/webcall-workbench'
 import { Route as WebchatVoiceRoute } from '@/routes/webchat-voice'
 import { Route as WebCallRoute } from '@/routes/webcall'
 import { Route as WebCallAIProductionRoute } from '@/routes/webcall-ai'
@@ -24,8 +26,11 @@ const routeTree = RootRoute.addChildren([
   IndexRoute,
   WorkspaceRoute,
   WebchatRoute,
+  EmailRoute,
+  WebCallWorkbenchRoute,
   // Internal operator console for human WebCall handling; intentionally absent from primary nav.
   WebchatVoiceRoute,
+  // Public/customer WebCall room; linked from widget runtime with visitor token context.
   WebCallRoute,
   WebCallAIProductionRoute,
   // Internal ops-only AI sandbox; AppShell exposes it only to ops-capable users.
