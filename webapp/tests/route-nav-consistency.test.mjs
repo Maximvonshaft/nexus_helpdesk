@@ -38,7 +38,10 @@ test('email operator workbench nav route is registered and capability gated', ()
 
 test('internal webcall routes are intentionally classified', () => {
   assert.match(router, /Internal operator console for human WebCall handling/)
+  assert.match(router, /Top-level operator WebCall workbench/)
   assert.match(router, /Internal ops-only AI sandbox/)
+  assert.match(appShell, /to: '\/webcall'[\s\S]*access: routeAccess\['\/webcall'\]/)
+  assert.match(rbac, /'\/webcall': \{ allOf: \[CAPABILITIES\.webcallVoiceQueueView\] \}/)
   assert.match(appShell, /to: '\/webcall-ai-demo'[\s\S]*access: routeAccess\['\/webcall-ai-demo'\]/)
   assert.match(rbac, /'\/webcall-ai-demo': \{ allOf: \[CAPABILITIES\.runtimeManage\] \}/)
   assert.doesNotMatch(appShell, /to: '\/webchat-voice'/)
@@ -51,6 +54,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'workspace.tsx',
     'webchat.tsx',
     'email.tsx',
+    'webcall-operator.tsx',
     'runtime.tsx',
     'webcall-ai-demo.tsx',
     'provider-credentials.tsx',

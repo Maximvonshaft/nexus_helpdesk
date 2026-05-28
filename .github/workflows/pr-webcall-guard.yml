@@ -229,11 +229,13 @@ jobs:
               webapp/src/routes/runtime.tsx) return 0 ;;
               webapp/src/routes/users.tsx) return 0 ;;
               webapp/src/routes/webchat-voice.tsx) return 0 ;;
+              webapp/src/routes/webcall-operator.tsx) return 0 ;;
               webapp/src/routes/webchat.tsx) return 0 ;;
               backend/app/static/webchat/widget.js) return 0 ;;
               webapp/tests/webchat-inbox-v5-contract.test.mjs) return 0 ;;
               webapp/tests/webchat-realtime-contract.test.mjs) return 0 ;;
               webapp/tests/email-workbench-contract.test.mjs) return 0 ;;
+              webapp/tests/webcall-operator-workbench-contract.test.mjs) return 0 ;;
               webapp/src/routes/workspace.tsx) return 0 ;;
               webapp/tests/novice-ux-regression.test.mjs) return 0 ;;
               .github/workflows/webcall-ai-final-quality-gate.yml) return 0 ;;
@@ -248,7 +250,9 @@ jobs:
           requires_webcall_quality_checks() {
             case "$1" in
               webapp/src/components/webcall/AgentWebCallPanel.tsx) return 0 ;;
+              webapp/src/routes/webcall-operator.tsx) return 0 ;;
               webapp/tests/operator-console-contract.test.mjs) return 0 ;;
+              webapp/tests/webcall-operator-workbench-contract.test.mjs) return 0 ;;
               webapp/package.json) return 0 ;;
               webapp/package-lock.json) return 0 ;;
               backend/app/webchat_voice_config.py) return 0 ;;
@@ -337,4 +341,4 @@ jobs:
         run: npm ci
       - name: Run operator console contract tests
         working-directory: webapp
-        run: node --test tests/operator-console-contract.test.mjs
+        run: node --test tests/operator-console-contract.test.mjs tests/webcall-operator-workbench-contract.test.mjs
