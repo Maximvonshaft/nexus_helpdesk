@@ -3,7 +3,7 @@ import { createRoute, redirect } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
-import { api, getToken } from '@/lib/api'
+import { api, getToken, normalizeApiBaseUrl } from '@/lib/api'
 import type { CaseDetail, CaseListItem, OutboundChannelCapability } from '@/lib/types'
 import { formatDateTime, labelize, marketLabel, priorityTone, sanitizeDisplayText, statusTone } from '@/lib/format'
 import { Badge } from '@/components/ui/Badge'
@@ -17,11 +17,63 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Toast } from '@/components/ui/Toast'
 import { RequireCapability } from '@/components/security/RequireCapability'
-import { routeAccess } from '@/lib/rbac'
+import { useSession } from '@/hooks/useAuth'
+import { CAPABILITIES, canAccess, type AccessRequirement } from '@/lib/rbac'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 
+const emailWorkbenchAccess = {
+  allOf: [CAPABILITIES.ticketRead],
+  anyOf: [CAPABILITIES.outboundDraftSave, CAPABILITIES.outboundSend],
+} satisfies AccessRequirement
+
+const emailDraftAccess = { allOf: [CAPABILITIES.outboundDraftSave] } satisfies AccessRequirement
+const emailSendAccess = { allOf: [CAPABILITIES.outboundSend] } satisfies AccessRequirement
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
+const EMAIL_QUEUE_TOKENS = new Set(['email', 'mail', 'smtp', 'imap', 'pop3'])
+
+function emailApiUrl(path: string) {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return `${API_BASE_URL}${normalizedPath}`
+}
+
+function createRequestId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  return `email-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
+async function readErrorMessage(response: Response) {
+  try {
+    const payload = await response.json()
+    if (typeof payload?.detail === 'string') return payload.detail
+    if (typeof payload?.detail?.message === 'string') return payload.detail.message
+    if (typeof payload?.detail?.error_code === 'string') return labelize(payload.detail.error_code)
+  } catch {
+    // Fall through to status text.
+  }
+  return `${response.status} ${response.statusText}`.trim()
+}
+
+async function saveEmailDraft(ticketId: number, payload: { channel: 'email'; subject?: string | null; body: string }) {
+  const headers = new Headers({
+    'Content-Type': 'application/json',
+    'X-Request-Id': createRequestId(),
+  })
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(emailApiUrl(`/api/tickets/${ticketId}/outbound/draft`), {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) throw new Error(await readErrorMessage(response))
+  return response.json() as Promise<Record<string, unknown>>
+}
+
 function isEmailCandidate(item: CaseListItem) {
-  return /email|mail|smtp/i.test(`${item.source_channel || ''} ${item.category || ''} ${item.sub_category || ''}`)
+  const text = [item.source_channel, item.category, item.sub_category]
+    .map((value) => String(value || '').toLowerCase().replace(/\be[-_\s]?mail\b/g, 'email'))
+    .join(' ')
+  return text.split(/[^a-z0-9]+/).some((token) => EMAIL_QUEUE_TOKENS.has(token))
 }
 
 function emailRecipient(activeCase: CaseDetail) {
@@ -54,6 +106,7 @@ function EmailComposer({
   activeCase: CaseDetail
   onToast: (toast: { message: string; tone?: 'default' | 'danger' | 'success' }) => void
 }) {
+  const session = useSession()
   const client = useQueryClient()
   const [subject, setSubject] = useState(defaultSubject(activeCase))
   const [body, setBody] = useState(defaultBody(activeCase))
@@ -78,7 +131,24 @@ function EmailComposer({
     [capabilities.data?.channels],
   )
   const recipient = emailRecipient(activeCase)
-  const canSend = Boolean(emailCapability?.supports_send && recipient && subject.trim() && body.trim() && confirmExternal)
+  const canSaveDraft = canAccess(session.data, emailDraftAccess)
+  const canSendEmail = canAccess(session.data, emailSendAccess)
+  const canDraft = Boolean(canSaveDraft && subject.trim() && body.trim())
+  const canSend = Boolean(canSendEmail && emailCapability?.supports_send && recipient && subject.trim() && body.trim() && confirmExternal)
+
+  const draftMutation = useMutation({
+    mutationFn: () => saveEmailDraft(activeCase.id, { channel: 'email', subject: subject.trim(), body: body.trim() }),
+    onSuccess: async () => {
+      onToast({ message: 'Email 草稿已保存到工单 timeline', tone: 'success' })
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['caseDetail', activeCase.id] }),
+        client.invalidateQueries({ queryKey: ['ticketTimeline', activeCase.id] }),
+        client.invalidateQueries({ queryKey: ['cases'] }),
+        client.invalidateQueries({ queryKey: ['emailWorkbenchCases'] }),
+      ])
+    },
+    onError: (err: Error) => onToast({ message: err.message || '保存 Email 草稿失败', tone: 'danger' }),
+  })
 
   const sendMutation = useMutation({
     mutationFn: () => api.sendOutboundMessage(activeCase.id, { channel: 'email', subject: subject.trim(), body: body.trim() }),
@@ -114,6 +184,8 @@ function EmailComposer({
             <Badge tone={channelTone(emailCapability)}>{emailCapability?.supports_send ? 'Email 可发送' : 'Email 不可发送'}</Badge>
             {emailCapability?.status ? <Badge>{labelize(emailCapability.status)}</Badge> : null}
             {emailCapability?.external_send ? <Badge tone="warning">外部 provider</Badge> : null}
+            <Badge tone={canSaveDraft ? 'success' : 'warning'}>draft.save {canSaveDraft ? '已授权' : '未授权'}</Badge>
+            <Badge tone={canSendEmail ? 'success' : 'warning'}>outbound.send {canSendEmail ? '已授权' : '未授权'}</Badge>
           </div>
           {emailCapability?.missing?.length ? (
             <ErrorSummary title="发送前需要补齐" errors={emailCapability.missing.map(labelize)} />
@@ -121,16 +193,21 @@ function EmailComposer({
           <Field label="Email 主题" required>
             <Input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="请输入客户能识别的邮件主题" />
           </Field>
-          <Field label="回复正文" required hint="发送后会进入 ticket timeline/outbound audit；不要写入内部排障细节或密钥。">
+          <Field label="回复正文" required hint="保存草稿和发送都会进入 ticket timeline/ticket event audit；不要写入内部排障细节或密钥。">
             <Textarea value={body} onChange={(event) => setBody(event.target.value)} rows={9} placeholder="输入要发送给客户的 Email 回复" />
           </Field>
-          <label className="checkbox-row">
+          <label className="toggle-row">
             <input type="checkbox" checked={confirmExternal} onChange={(event) => setConfirmExternal(event.target.checked)} />
             <span>我确认这是 SMTP 外部邮件发送，收件人、主题和正文已核对。</span>
           </label>
-          <Button variant="primary" onClick={() => sendMutation.mutate()} disabled={!canSend || sendMutation.isPending}>
-            {sendMutation.isPending ? '发送中...' : '发送 Email'}
-          </Button>
+          <div className="button-row">
+            <Button onClick={() => draftMutation.mutate()} disabled={!canDraft || draftMutation.isPending}>
+              {draftMutation.isPending ? '保存中...' : '保存草稿'}
+            </Button>
+            <Button variant="primary" onClick={() => sendMutation.mutate()} disabled={!canSend || sendMutation.isPending}>
+              {sendMutation.isPending ? '发送中...' : '发送 Email'}
+            </Button>
+          </div>
         </>
       ) : null}
     </div>
@@ -195,7 +272,7 @@ function EmailWorkbenchPage() {
 
   return (
     <AppShell>
-      <RequireCapability requirement={routeAccess['/email']}>
+      <RequireCapability requirement={emailWorkbenchAccess}>
         <PageHeader
           eyebrow="Email"
           title="Email 客服处理台"
@@ -216,7 +293,7 @@ function EmailWorkbenchPage() {
           <MetricCard label="Email 候选" value={emailReadyCount || rows.length} hint="email/source-channel 优先，否则回退 ticket queue" />
           <MetricCard label="待处理" value={openCount} hint="未进入 resolved/closed/canceled" />
           <MetricCard label="SLA 风险" value={overdueCount} hint="overdue tickets" />
-          <MetricCard label="当前工单" value={selectedId ?? '-'} hint="send binds to ticket outbound API" />
+          <MetricCard label="当前工单" value={selectedId ?? '-'} hint="draft/send bind to ticket outbound API" />
         </div>
 
         <div className="workspace-toolbar">
@@ -303,7 +380,7 @@ function EmailWorkbenchPage() {
           </Card>
 
           <Card>
-            <CardHeader title="Reply Composer / Guardrails" subtitle="仅调用真实 outbound send API；SMTP 账号配置仍在系统配置中维护。" />
+            <CardHeader title="Reply Composer / Guardrails" subtitle="调用真实 outbound draft/send API；SMTP 账号配置仍在系统配置中维护。" />
             <CardBody>
               {activeCase ? (
                 <EmailComposer activeCase={activeCase} onToast={setToast} />

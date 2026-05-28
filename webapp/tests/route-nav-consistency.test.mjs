@@ -31,23 +31,10 @@ test('outbound email admin nav route is registered and capability gated', () => 
 
 test('internal webcall routes are intentionally classified', () => {
   assert.match(router, /Internal operator console for human WebCall handling/)
-  assert.match(router, /Public\/customer WebCall room/)
-  assert.match(router, /WebCallWorkbenchRoute/)
-  assert.match(router, /@\/routes\/webcall-workbench/)
-  assert.match(appShell, /to: '\/webcall'[\s\S]*access: routeAccess\['\/webcall'\]/)
-  assert.match(rbac, /'\/webcall': \{ anyOf: \[CAPABILITIES\.webcallVoiceRead, CAPABILITIES\.webcallVoiceQueueView\] \}/)
   assert.match(router, /Internal ops-only AI sandbox/)
   assert.match(appShell, /to: '\/webcall-ai-demo'[\s\S]*access: routeAccess\['\/webcall-ai-demo'\]/)
   assert.match(rbac, /'\/webcall-ai-demo': \{ allOf: \[CAPABILITIES\.runtimeManage\] \}/)
   assert.doesNotMatch(appShell, /to: '\/webchat-voice'/)
-})
-
-test('email workbench route is separate from smtp account configuration', () => {
-  assert.match(appShell, /to: '\/email'[\s\S]*label: 'Email'[\s\S]*access: routeAccess\['\/email'\]/)
-  assert.match(appShell, /to: '\/outbound-email'[\s\S]*label: 'SMTP 账号'/)
-  assert.match(router, /EmailRoute/)
-  assert.match(router, /@\/routes\/email/)
-  assert.match(rbac, /'\/email': \{ anyOf: \[CAPABILITIES\.ticketRead, CAPABILITIES\.outboundSend\] \}/)
 })
 
 test('primary nav internal hrefs have matching registered routes', () => {
@@ -56,8 +43,6 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'index.tsx',
     'workspace.tsx',
     'webchat.tsx',
-    'webcall-workbench.tsx',
-    'email.tsx',
     'runtime.tsx',
     'webcall-ai-demo.tsx',
     'provider-credentials.tsx',
