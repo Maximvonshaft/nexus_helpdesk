@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Room, RoomEvent, Track, createLocalAudioTrack } from 'livekit-client'
 import { ApiError } from '@/lib/api'
 import { webchatVoiceApi } from '@/lib/webchatVoiceApi'
 import type { WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
@@ -69,7 +68,7 @@ type AgentWebCallPanelProps = {
   onSelectTicket?: (ticketId: number) => void
 }
 
-type LocalAudioTrack = Awaited<ReturnType<typeof createLocalAudioTrack>>
+type LocalAudioTrack = any
 type SessionWithOptionalOpsFields = WebchatVoiceSession & {
   recording_status?: string | null
   transcript_status?: string | null
@@ -137,7 +136,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
   const [muted, setMuted] = useState(false)
   const [joinedVoiceSessionId, setJoinedVoiceSessionId] = useState<string | null>(null)
   const [queueTab, setQueueTab] = useState<(typeof QUEUE_TABS)[number]['key']>('incoming')
-  const roomRef = useRef<Room | null>(null)
+  const roomRef = useRef<any | null>(null)
   const localAudioRef = useRef<LocalAudioTrack | null>(null)
   const remoteAudioRef = useRef<HTMLDivElement | null>(null)
   const canReadVoice = canReadWebcallVoice(session.data)
@@ -226,6 +225,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
       if (!ticketId) throw new Error('No ticket selected')
       setCallState('requesting_mic')
       setMessage('Requesting microphone permission...')
+      const { Room, RoomEvent, Track, createLocalAudioTrack } = await import('livekit-client')
       const audioTrack = await createLocalAudioTrack({
         echoCancellation: true,
         noiseSuppression: true,

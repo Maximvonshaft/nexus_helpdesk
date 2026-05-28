@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoute } from '@tanstack/react-router'
-import { Room, RoomEvent, Track, createLocalAudioTrack } from 'livekit-client'
 import { Route as RootRoute } from './root'
 
 type WebCallContext = {
@@ -46,7 +45,7 @@ function WebCallVisitorRoomPage() {
   const [message, setMessage] = useState('Ready to join WebCall. Microphone permission will be requested only after you click Join.')
   const [muted, setMuted] = useState(false)
   const [ended, setEnded] = useState(false)
-  const roomRef = useRef<Room | null>(null)
+  const roomRef = useRef<any | null>(null)
   const localAudioRef = useRef<any>(null)
   const remoteAudioRef = useRef<HTMLDivElement | null>(null)
 
@@ -86,6 +85,7 @@ function WebCallVisitorRoomPage() {
     try {
       setCallState('requesting_mic')
       setMessage('Requesting microphone permission...')
+      const { Room, RoomEvent, Track, createLocalAudioTrack } = await import('livekit-client')
       const audioTrack = await createLocalAudioTrack({
         echoCancellation: true,
         noiseSuppression: true,
