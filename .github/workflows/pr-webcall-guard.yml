@@ -185,6 +185,8 @@ jobs:
               backend/tests/test_webchat_ws_static_contracts.py) return 0 ;;
               backend/tests/test_webchat_stream_feature_flag.py) return 0 ;;
               backend/tests/test_webchat_round_b.py) return 0 ;;
+              backend/tests/test_channel_workbench_backend_contracts.py) return 0 ;;
+              backend/tests/test_webchat_widget_fast_mode_static.py) return 0 ;;
               backend/tests/test_webcall_ai_production.py) return 0 ;;
               backend/tests/test_webcall_ai_voice_loop.py) return 0 ;;
               deploy/codex_app_server_bridge_proxy.py) return 0 ;;
@@ -198,6 +200,7 @@ jobs:
               docs/architecture/WEBCHAT_AI_PROVIDER_ROUTER.md) return 0 ;;
               docs/ai-control-center-runtime.md) return 0 ;;
               docs/deployment/release-metadata.md) return 0 ;;
+              docs/frontend-upgrade/18-webchat-webcall-email-capability-gap.md) return 0 ;;
               docs/engineering/codex_appserver_runtime_v3_discovery_report.md) return 0 ;;
               docs/engineering/codex_chat_smoke_runbook.md) return 0 ;;
               docs/engineering/voice_provider_bridge_contract.md) return 0 ;;
@@ -219,8 +222,10 @@ jobs:
               webapp/src/lib/speedafApi.ts) return 0 ;;
               webapp/src/lib/types.ts) return 0 ;;
               webapp/src/features/webchat-inbox-v5/*) return 0 ;;
+              webapp/src/router.tsx) return 0 ;;
               webapp/src/routes/ai-control.tsx) return 0 ;;
               webapp/src/routes/control-plane.tsx) return 0 ;;
+              webapp/src/routes/email.tsx) return 0 ;;
               webapp/src/routes/runtime.tsx) return 0 ;;
               webapp/src/routes/users.tsx) return 0 ;;
               webapp/src/routes/webchat-voice.tsx) return 0 ;;
@@ -228,6 +233,7 @@ jobs:
               backend/app/static/webchat/widget.js) return 0 ;;
               webapp/tests/webchat-inbox-v5-contract.test.mjs) return 0 ;;
               webapp/tests/webchat-realtime-contract.test.mjs) return 0 ;;
+              webapp/tests/email-workbench-contract.test.mjs) return 0 ;;
               webapp/src/routes/workspace.tsx) return 0 ;;
               webapp/tests/novice-ux-regression.test.mjs) return 0 ;;
               .github/workflows/webcall-ai-final-quality-gate.yml) return 0 ;;

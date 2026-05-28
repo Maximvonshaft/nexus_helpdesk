@@ -3,7 +3,7 @@ import { createRoute, redirect } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
-import { api, getToken, normalizeApiBaseUrl } from '@/lib/api'
+import { api, getToken } from '@/lib/api'
 import type { CaseDetail, CaseListItem, OutboundChannelCapability } from '@/lib/types'
 import { formatDateTime, labelize, marketLabel, priorityTone, sanitizeDisplayText, statusTone } from '@/lib/format'
 import { Badge } from '@/components/ui/Badge'
@@ -18,56 +18,12 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { Toast } from '@/components/ui/Toast'
 import { RequireCapability } from '@/components/security/RequireCapability'
 import { useSession } from '@/hooks/useAuth'
-import { CAPABILITIES, canAccess, type AccessRequirement } from '@/lib/rbac'
+import { CAPABILITIES, canAccess, routeAccess, type AccessRequirement } from '@/lib/rbac'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
-
-const emailWorkbenchAccess = {
-  allOf: [CAPABILITIES.ticketRead],
-  anyOf: [CAPABILITIES.outboundDraftSave, CAPABILITIES.outboundSend],
-} satisfies AccessRequirement
 
 const emailDraftAccess = { allOf: [CAPABILITIES.outboundDraftSave] } satisfies AccessRequirement
 const emailSendAccess = { allOf: [CAPABILITIES.outboundSend] } satisfies AccessRequirement
-const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL)
 const EMAIL_QUEUE_TOKENS = new Set(['email', 'mail', 'smtp', 'imap', 'pop3'])
-
-function emailApiUrl(path: string) {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`
-  return `${API_BASE_URL}${normalizedPath}`
-}
-
-function createRequestId() {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
-  return `email-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
-}
-
-async function readErrorMessage(response: Response) {
-  try {
-    const payload = await response.json()
-    if (typeof payload?.detail === 'string') return payload.detail
-    if (typeof payload?.detail?.message === 'string') return payload.detail.message
-    if (typeof payload?.detail?.error_code === 'string') return labelize(payload.detail.error_code)
-  } catch {
-    // Fall through to status text.
-  }
-  return `${response.status} ${response.statusText}`.trim()
-}
-
-async function saveEmailDraft(ticketId: number, payload: { channel: 'email'; subject?: string | null; body: string }) {
-  const headers = new Headers({
-    'Content-Type': 'application/json',
-    'X-Request-Id': createRequestId(),
-  })
-  const token = getToken()
-  if (token) headers.set('Authorization', `Bearer ${token}`)
-  const response = await fetch(emailApiUrl(`/api/tickets/${ticketId}/outbound/draft`), {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(payload),
-  })
-  if (!response.ok) throw new Error(await readErrorMessage(response))
-  return response.json() as Promise<Record<string, unknown>>
-}
 
 function isEmailCandidate(item: CaseListItem) {
   const text = [item.source_channel, item.category, item.sub_category]
@@ -137,7 +93,7 @@ function EmailComposer({
   const canSend = Boolean(canSendEmail && emailCapability?.supports_send && recipient && subject.trim() && body.trim() && confirmExternal)
 
   const draftMutation = useMutation({
-    mutationFn: () => saveEmailDraft(activeCase.id, { channel: 'email', subject: subject.trim(), body: body.trim() }),
+    mutationFn: () => api.saveOutboundDraft(activeCase.id, { channel: 'email', subject: subject.trim(), body: body.trim() }),
     onSuccess: async () => {
       onToast({ message: 'Email 草稿已保存到工单 timeline', tone: 'success' })
       await Promise.all([
@@ -272,7 +228,7 @@ function EmailWorkbenchPage() {
 
   return (
     <AppShell>
-      <RequireCapability requirement={emailWorkbenchAccess}>
+      <RequireCapability requirement={routeAccess['/email']}>
         <PageHeader
           eyebrow="Email"
           title="Email 客服处理台"

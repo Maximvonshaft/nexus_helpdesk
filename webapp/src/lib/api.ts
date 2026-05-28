@@ -367,6 +367,10 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
+  saveOutboundDraft: (ticketId: number, payload: OutboundSendPayload) => request<Record<string, unknown>>(`/api/tickets/${ticketId}/outbound/draft`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   sendOutboundMessage: (ticketId: number, payload: OutboundSendPayload) => request<Record<string, unknown>>(`/api/tickets/${ticketId}/outbound/send`, {
     method: 'POST',
     body: JSON.stringify(payload),
