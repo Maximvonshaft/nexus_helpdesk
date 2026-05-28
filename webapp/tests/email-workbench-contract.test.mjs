@@ -24,7 +24,8 @@ test('email workbench route uses unified routeAccess RBAC semantics', () => {
 
 test('email workbench is reachable from AppShell navigation and command palette', () => {
   assert.match(appShell, /to: '\/email'[\s\S]*label: 'Email 工作台'[\s\S]*access: routeAccess\['\/email'\]/)
-  assert.match(appShell, /\{ label: '日常处理', items: \['\/', '\/workspace', '\/webchat', '\/webcall', '\/email', '\/bulletins'\] \}/)
+  assert.match(appShell, /\{ label: '工作台', items: \['\/', '\/webchat', '\/webcall', '\/email'\] \}/)
+  assert.match(appShell, /\{ label: '业务处理', items: \['\/workspace', '\/bulletins'\] \}/)
   assert.match(commandPalette, /id: 'email-workbench'[\s\S]*label: '打开 Email 工作台'[\s\S]*to: '\/email'[\s\S]*access: routeAccess\['\/email'\]/)
 })
 

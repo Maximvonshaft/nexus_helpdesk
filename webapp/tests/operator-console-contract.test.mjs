@@ -184,7 +184,9 @@ test('speedaf and webcall actions are capability gated in the operator UI', () =
 
 test('operator navigation uses workflow-oriented entrypoints', () => {
   assert.match(appShell, /data-testid="operator-primary-navigation"/)
-  assert.match(appShell, /处理工单/)
+  assert.match(appShell, /工单处理/)
+  assert.match(appShell, /label: '工作台'[\s\S]*items: \['\/', '\/webchat', '\/webcall', '\/email'\]/)
+  assert.match(appShell, /label: '业务处理'[\s\S]*items: \['\/workspace', '\/bulletins'\]/)
   assert.match(appShell, /WebChat 收件箱/)
   assert.match(appShell, /WebCall 工作台/)
   assert.match(appShell, /运行恢复/)
