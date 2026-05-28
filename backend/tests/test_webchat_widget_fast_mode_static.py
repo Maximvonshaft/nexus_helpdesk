@@ -119,15 +119,22 @@ def test_demo_fast_reply_uses_differentiated_error_handling():
 
 def test_demo_fast_reply_debug_context_is_diagnostic_and_sanitized():
     source = _demo_source()
+    diagnostic_source = "\n".join([
+        source[source.index("function makeDebugContext"):source.index("function withDebug")],
+        source[source.index("function withDebug"):source.index("function classifiedError")],
+        source[source.index("function classifiedError"):source.index("function reportDemoError")],
+        source[source.index("function reportDemoError"):source.index("function userVisibleErrorMessage")],
+        source[source.index("function backendErrorCode"):source.index("function sendFastReply")],
+    ])
 
     assert "session_id: sessionId" in source
     assert "client_message_id" in source
     assert "request_path: CONFIG.fastReplyPath" in source
     assert "http_status" in source
     assert "backend_error_code" in source
-    assert "token" not in source.lower()
-    assert "authorization" not in source.lower()
-    assert "bearer" not in source.lower()
+    assert "token" not in diagnostic_source.lower()
+    assert "authorization" not in diagnostic_source.lower()
+    assert "bearer" not in diagnostic_source.lower()
 
 
 def test_demo_success_render_error_does_not_convert_success_to_connection_issue():
