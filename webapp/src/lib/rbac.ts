@@ -55,6 +55,7 @@ export const routeAccess = {
   '/webcall-ai-demo': { allOf: [CAPABILITIES.runtimeManage] },
   '/accounts': { allOf: [CAPABILITIES.channelAccountManage] },
   '/outbound-email': { allOf: [CAPABILITIES.channelAccountManage] },
+  '/email': { allOf: [CAPABILITIES.ticketRead], anyOf: [CAPABILITIES.outboundDraftSave, CAPABILITIES.outboundSend] },
   '/ai-control': { allOf: [CAPABILITIES.aiConfigManage] },
   '/control-plane': { anyOf: [CAPABILITIES.aiConfigRead, CAPABILITIES.aiConfigManage, CAPABILITIES.channelAccountManage, CAPABILITIES.runtimeManage] },
   '/users': { allOf: [CAPABILITIES.userManage] },
