@@ -233,6 +233,7 @@ jobs:
               webapp/src/routes/webchat.tsx) return 0 ;;
               webapp/src/routes/workspace.tsx) return 0 ;;
               webapp/src/styles.css) return 0 ;;
+              webapp/e2e/smoke.spec.ts) return 0 ;;
               webapp/tests/email-workbench-contract.test.mjs) return 0 ;;
               webapp/tests/novice-ux-regression.test.mjs) return 0 ;;
               webapp/tests/operator-console-contract.test.mjs) return 0 ;;

@@ -114,7 +114,7 @@ test('agent navigation hides management entry points', async ({ page }) => {
   await page.goto('/')
 
   await expect(page.getByTestId('operator-primary-navigation')).toBeVisible()
-  await expect(page.getByRole('link', { name: /处理工单/ })).toBeVisible()
+  await expect(page.getByRole('link', { name: /工单处理/ })).toBeVisible()
   await expect(page.getByRole('link', { name: /控制面/ })).toHaveCount(0)
   await expect(page.getByRole('link', { name: /账号权限/ })).toHaveCount(0)
   await expect(page.getByRole('link', { name: /发送线路/ })).toHaveCount(0)
