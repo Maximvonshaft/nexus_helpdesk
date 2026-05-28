@@ -8,6 +8,7 @@ VOICE_ENTRY = ROOT / "backend" / "app" / "static" / "webchat" / "voice-entry.js"
 DEMO_HTML = ROOT / "backend" / "app" / "static" / "webchat" / "demo.html"
 DEMO_INDEX = ROOT / "backend" / "app" / "static" / "webchat" / "demo" / "index.html"
 ADMIN_ROUTE = ROOT / "webapp" / "src" / "routes" / "webchat-voice.tsx"
+OPERATOR_ROUTE = ROOT / "webapp" / "src" / "routes" / "webcall-operator.tsx"
 AGENT_PANEL = ROOT / "webapp" / "src" / "components" / "webcall" / "AgentWebCallPanel.tsx"
 WEBCALL_ROUTE = ROOT / "webapp" / "src" / "routes" / "webcall.tsx"
 ROUTER = ROOT / "webapp" / "src" / "router.tsx"
@@ -43,16 +44,28 @@ def test_showcase_loads_feature_gated_webcall_entry():
 
 def test_agent_webcall_console_route_is_registered():
     route_text = ADMIN_ROUTE.read_text(encoding="utf-8")
+    operator_text = OPERATOR_ROUTE.read_text(encoding="utf-8")
     router_text = ROUTER.read_text(encoding="utf-8")
 
     assert "path: '/webchat-voice'" in route_text
     assert "WebCall Agent Console" in route_text
+    assert "path: '/webcall'" in operator_text
+    assert "WebCall Operator Workbench" in operator_text
+    assert "api.webchatVoiceIncomingSessions" in operator_text
+    assert "api.webchatHandoffQueue" in operator_text
+    assert "api.webcallAIDemoStatus" in operator_text
     assert "AgentWebCallPanel" in route_text
+    assert "AgentWebCallPanel" in operator_text
     assert "Mock voice session" not in route_text
+    assert "Mock voice session" not in operator_text
     assert "Accept mock call" not in route_text
+    assert "Accept mock call" not in operator_text
     assert "End mock call" not in route_text
+    assert "End mock call" not in operator_text
     assert "WebchatVoiceRoute" in router_text
+    assert "WebCallOperatorRoute" in router_text
     assert "@/routes/webchat-voice" in router_text
+    assert "@/routes/webcall-operator" in router_text
 
 
 def test_agent_webcall_panel_uses_livekit_click_to_accept_only():
