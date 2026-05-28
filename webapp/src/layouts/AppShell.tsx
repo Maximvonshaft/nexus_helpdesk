@@ -12,8 +12,8 @@ import { canViewOps, roleWorkspaceHint } from '@/lib/access'
 import { canAccess, routeAccess } from '@/lib/rbac'
 
 const nav = [
-  { to: '/', label: '今日总览', hint: '异常与优先入口' },
-  { to: '/workspace', label: '处理工单', hint: '回复、分配、闭环' },
+  { to: '/', label: '今日工作台', hint: '异常与优先入口' },
+  { to: '/workspace', label: '工单处理', hint: '回复、分配、闭环' },
   { to: '/webchat', label: 'WebChat 收件箱', hint: '客户实时来信' },
   { to: '/webcall', label: 'WebCall 工作台', hint: '来电、接管与 AI 建议', access: routeAccess['/webcall'] },
   { to: '/email', label: 'Email 工作台', hint: '邮件队列、草稿与发送', access: routeAccess['/email'] },
@@ -29,7 +29,8 @@ const nav = [
 ]
 
 const navGroups = [
-  { label: '日常处理', items: ['/', '/workspace', '/webchat', '/webcall', '/email', '/bulletins'] },
+  { label: '工作台', items: ['/', '/webchat', '/webcall', '/email'] },
+  { label: '业务处理', items: ['/workspace', '/bulletins'] },
   { label: '渠道与授权', items: ['/accounts', '/outbound-email', '/provider-credentials'] },
   { label: '治理与运维', items: ['/runtime', '/ai-control', '/control-plane', '/users', '/webcall-ai-demo'] },
 ]

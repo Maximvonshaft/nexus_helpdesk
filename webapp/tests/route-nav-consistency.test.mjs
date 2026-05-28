@@ -69,3 +69,12 @@ test('primary nav internal hrefs have matching registered routes', () => {
   const missing = staticNavTargets(appShell).filter((target) => target.startsWith('/') && !registered.has(target))
   assert.deepEqual(missing, [])
 })
+
+
+test('primary nav groups separate workbench from business processing', () => {
+  assert.match(appShell, /label: '工作台'[\s\S]*items: \['\/', '\/webchat', '\/webcall', '\/email'\]/)
+  assert.match(appShell, /label: '业务处理'[\s\S]*items: \['\/workspace', '\/bulletins'\]/)
+  assert.doesNotMatch(appShell, /label: '日常处理'/)
+  assert.match(appShell, /to: '\/'[\s\S]*label: '今日工作台'/)
+  assert.match(appShell, /to: '\/workspace'[\s\S]*label: '工单处理'/)
+})
