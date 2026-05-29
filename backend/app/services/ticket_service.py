@@ -33,6 +33,7 @@ from ..schemas import (
     CommentCreate,
     InternalNoteCreate,
     OutboundDraftCreate,
+    OutboundReplyTemplateRead,
     OutboundSendRequest,
     TicketAssignRequest,
     TicketCreate,
@@ -689,6 +690,95 @@ def _resolve_outbound_subject(ticket: Ticket, channel: SourceChannel, subject: s
             detail={"error_code": "email_subject_required", "message": "Email subject is required"},
         )
     return resolved
+
+
+def _safe_template_text(value: str | None, fallback: str) -> str:
+    cleaned = " ".join(str(value or "").strip().split())
+    return cleaned or fallback
+
+
+def _email_template_subject(ticket: Ticket, suffix: str | None = None) -> str:
+    base = clean_email_subject(ticket.title) or clean_email_subject(ticket.issue_summary) or f"Ticket {ticket.id} update"
+    if suffix and suffix.lower() not in base.lower():
+        return clean_email_subject(f"{base} - {suffix}") or base
+    return base
+
+
+def _email_template_intro(ticket: Ticket) -> str:
+    customer_name = _safe_template_text(ticket.customer.name if ticket.customer else None, "there")
+    return f"Hi {customer_name},"
+
+
+def list_outbound_reply_templates(db: Session, ticket_id: int, channel: SourceChannel, current_user: User) -> list[OutboundReplyTemplateRead]:
+    ticket = get_ticket_or_404(db, ticket_id)
+    ensure_ticket_visible(current_user, ticket, db)
+    if channel != SourceChannel.email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported template channel")
+
+    context_lines = [
+        _email_template_intro(ticket),
+        "",
+        f"We are following up on your support case {_safe_template_text(ticket.ticket_no, str(ticket.id))}.",
+    ]
+    if ticket.tracking_number:
+        context_lines.append(f"Tracking number: {ticket.tracking_number}.")
+    if ticket.customer_update or ticket.required_action:
+        context_lines.append(_safe_template_text(ticket.customer_update or ticket.required_action, "We are reviewing the latest details."))
+    else:
+        context_lines.append(_safe_template_text(ticket.issue_summary or ticket.description, "We are reviewing the latest details."))
+
+    guardrails = [
+        "Review recipient, subject, and body before SMTP send.",
+        "Do not promise refunds, delivery outcomes, or policy exceptions without approved evidence.",
+    ]
+    signoff = "Regards,\nSupport Team"
+    missing = _safe_template_text(ticket.missing_fields, "the missing details we requested")
+    next_step = _safe_template_text(ticket.required_action or ticket.last_human_update, "We will update you as soon as the next check is complete.")
+    resolution = _safe_template_text(ticket.resolution_summary or ticket.customer_update, "We have completed the latest review and are ready to close the loop.")
+
+    return [
+        OutboundReplyTemplateRead(
+            id="email_status_update",
+            channel=SourceChannel.email,
+            label="Status update",
+            subject=_email_template_subject(ticket, "Status update"),
+            body="\n".join([*context_lines, "", f"Next step: {next_step}", "", signoff]),
+            source="ticket_context",
+            guardrails=guardrails,
+        ),
+        OutboundReplyTemplateRead(
+            id="email_missing_information",
+            channel=SourceChannel.email,
+            label="Request missing information",
+            subject=_email_template_subject(ticket, "Information needed"),
+            body="\n".join([
+                _email_template_intro(ticket),
+                "",
+                f"To continue with case {_safe_template_text(ticket.ticket_no, str(ticket.id))}, please send us {missing}.",
+                "Once we receive it, we can continue the investigation and update the ticket timeline.",
+                "",
+                signoff,
+            ]),
+            source="ticket_context",
+            guardrails=guardrails,
+        ),
+        OutboundReplyTemplateRead(
+            id="email_resolution_followup",
+            channel=SourceChannel.email,
+            label="Resolution follow-up",
+            subject=_email_template_subject(ticket, "Resolution follow-up"),
+            body="\n".join([
+                _email_template_intro(ticket),
+                "",
+                resolution,
+                "Please reply to this email if anything is still unresolved.",
+                "",
+                signoff,
+            ]),
+            source="ticket_context",
+            guardrails=guardrails,
+        ),
+    ]
 
 
 def send_outbound_message(db: Session, ticket_id: int, payload: OutboundSendRequest, current_user: User) -> TicketOutboundMessage:

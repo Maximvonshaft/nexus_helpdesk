@@ -190,6 +190,42 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
     assert db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_queued).count() == 1
 
 
+def test_email_reply_templates_are_ticket_backed_and_read_only(client: TestClient, db_session):
+    admin = _admin(db_session, user_id=9403)
+    team = _team(db_session)
+    ticket = _email_ticket(db_session, team=team)
+    ticket.tracking_number = "SPX-EMAIL-001"
+    ticket.required_action = "Check delivery exception with the station team."
+    ticket.missing_fields = "the delivery address and best contact time"
+    ticket.customer_update = "The station team is checking the route exception."
+    db_session.commit()
+    headers = _headers(admin)
+
+    before_messages = db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).count()
+    before_events = db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id).count()
+
+    response = client.get(f"/api/tickets/{ticket.id}/outbound/templates?channel=email", headers=headers)
+
+    assert response.status_code == 200, response.text
+    templates = response.json()
+    ids = {item["id"] for item in templates}
+    assert {"email_status_update", "email_missing_information", "email_resolution_followup"}.issubset(ids)
+    status_template = next(item for item in templates if item["id"] == "email_status_update")
+    missing_template = next(item for item in templates if item["id"] == "email_missing_information")
+    assert status_template["channel"] == "email"
+    assert status_template["source"] == "ticket_context"
+    assert "Email Customer" in status_template["body"]
+    assert "SPX-EMAIL-001" in status_template["body"]
+    assert "Check delivery exception" in status_template["body"]
+    assert "delivery address" in missing_template["body"]
+    assert status_template["guardrails"]
+    assert db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).count() == before_messages
+    assert db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id).count() == before_events
+
+    unsupported = client.get(f"/api/tickets/{ticket.id}/outbound/templates?channel=web_chat", headers=headers)
+    assert unsupported.status_code == 400, unsupported.text
+
+
 def test_webcall_accept_end_writes_timeline_voice_evidence(client: TestClient, db_session):
     admin = _admin(db_session, user_id=9402)
     headers = _headers(admin)

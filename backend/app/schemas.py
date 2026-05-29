@@ -231,6 +231,16 @@ class OutboundSendRequest(BaseModel):
     body: str
 
 
+class OutboundReplyTemplateRead(APIModel):
+    id: str
+    channel: SourceChannel
+    label: str
+    subject: Optional[str] = None
+    body: str
+    source: str
+    guardrails: list[str] = Field(default_factory=list)
+
+
 class AttachmentRead(APIModel):
 
     id: int

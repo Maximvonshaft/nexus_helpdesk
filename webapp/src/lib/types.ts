@@ -330,6 +330,16 @@ export interface OutboundChannelCapabilitiesResponse {
   channels: OutboundChannelCapability[]
 }
 
+export interface OutboundReplyTemplate {
+  id: string
+  channel: string
+  label: string
+  subject?: string | null
+  body: string
+  source: string
+  guardrails: string[]
+}
+
 export interface OpenClawConnectivityProbe {
   deployment_mode: string
   transport: string

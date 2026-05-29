@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -16,6 +16,7 @@ from ..schemas import (
     InternalNoteRead,
     OutboundDraftCreate,
     OutboundMessageRead,
+    OutboundReplyTemplateRead,
     OutboundSendRequest,
     TicketAssignRequest,
     TicketCreate,
@@ -48,6 +49,7 @@ from ..services.ticket_service import (
     get_ticket_events,
     get_ticket_or_404,
     list_tickets,
+    list_outbound_reply_templates,
     reopen_ticket,
     save_outbound_draft,
     send_outbound_message,
@@ -309,6 +311,16 @@ def ticket_outbound_channel_capabilities(ticket_id: int, db: Session = Depends(g
     return {
         "channels": [item.to_dict() for item in list_outbound_channel_capabilities(db=db, ticket=ticket)],
     }
+
+
+@router.get("/{ticket_id}/outbound/templates", response_model=list[OutboundReplyTemplateRead])
+def ticket_outbound_reply_templates(
+    ticket_id: int,
+    channel: SourceChannel = Query(default=SourceChannel.email),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return list_outbound_reply_templates(db, ticket_id, channel, current_user)
 
 
 @router.post("/{ticket_id}/outbound/draft", response_model=OutboundMessageRead)

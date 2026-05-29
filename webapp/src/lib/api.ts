@@ -20,6 +20,7 @@ import type {
   OutboundEmailAccountUpdate,
   OutboundEmailTestSendRequest,
   OutboundEmailTestSendResult,
+  OutboundReplyTemplate,
   OutboundSendPayload,
   SignoffChecklist,
   SystemAttachment,
@@ -354,6 +355,11 @@ export const api = {
     return request<TicketTimelinePage>(`/api/tickets/${ticketId}/timeline?${search.toString()}`)
   },
   ticketOutboundChannelCapabilities: (ticketId: number) => request<OutboundChannelCapabilitiesResponse>(`/api/tickets/${ticketId}/outbound/channels/capabilities`),
+  ticketOutboundReplyTemplates: (ticketId: number, channel = 'email') => {
+    const search = new URLSearchParams()
+    search.set('channel', channel)
+    return request<OutboundReplyTemplate[]>(`/api/tickets/${ticketId}/outbound/templates?${search.toString()}`)
+  },
   uploadTicketAttachment: (ticketId: number, file: File, visibility = 'external') => {
     const form = new FormData()
     form.set('file', file)

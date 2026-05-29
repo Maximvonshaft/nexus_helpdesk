@@ -46,3 +46,16 @@ test('email workbench closes draft save, outbound send, and timeline refresh loo
   assert.match(emailRoute, /保存草稿和发送都会进入 ticket timeline\/ticket event audit/)
   assert.doesNotMatch(emailRoute, /\bfetch\s*\(/)
 })
+
+test('email composer loads backend reply templates into the draft form', () => {
+  assert.match(apiClient, /OutboundReplyTemplate/)
+  assert.match(apiClient, /ticketOutboundReplyTemplates: \(ticketId: number, channel = 'email'\)/)
+  assert.match(apiClient, /`\/api\/tickets\/\$\{ticketId\}\/outbound\/templates\?\$\{search\.toString\(\)\}`/)
+  assert.match(emailRoute, /api\.ticketOutboundReplyTemplates\(activeCase\.id, 'email'\)/)
+  assert.match(emailRoute, /queryKey: \['ticketOutboundReplyTemplates', activeCase\.id, 'email'\]/)
+  assert.match(emailRoute, /data-testid="email-workbench-template-list"/)
+  assert.match(emailRoute, /function applyTemplate\(template: OutboundReplyTemplate\)/)
+  assert.match(emailRoute, /setSubject\(template\.subject \|\| defaultSubject\(activeCase\)\)/)
+  assert.match(emailRoute, /setBody\(template\.body\)/)
+  assert.match(emailRoute, /模板来自 ticket_context/)
+})

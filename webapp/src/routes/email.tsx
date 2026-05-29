@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
-import type { CaseDetail, CaseListItem, OutboundChannelCapability } from '@/lib/types'
+import type { CaseDetail, CaseListItem, OutboundChannelCapability, OutboundReplyTemplate } from '@/lib/types'
 import { formatDateTime, labelize, marketLabel, priorityTone, sanitizeDisplayText, statusTone } from '@/lib/format'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -73,6 +73,11 @@ function EmailComposer({
     queryFn: () => api.ticketOutboundChannelCapabilities(activeCase.id),
     enabled: !!activeCase.id,
   })
+  const templates = useQuery({
+    queryKey: ['ticketOutboundReplyTemplates', activeCase.id, 'email'],
+    queryFn: () => api.ticketOutboundReplyTemplates(activeCase.id, 'email'),
+    enabled: !!activeCase.id,
+  })
 
   useEffect(() => {
     setSubject(defaultSubject(activeCase))
@@ -91,6 +96,13 @@ function EmailComposer({
   const canSendEmail = canAccess(session.data, emailSendAccess)
   const canDraft = Boolean(canSaveDraft && subject.trim() && body.trim())
   const canSend = Boolean(canSendEmail && emailCapability?.supports_send && recipient && subject.trim() && body.trim() && confirmExternal)
+
+  function applyTemplate(template: OutboundReplyTemplate) {
+    setSubject(template.subject || defaultSubject(activeCase))
+    setBody(template.body)
+    setConfirmExternal(false)
+    onToast({ message: `已套用 ${sanitizeDisplayText(template.label)} 模板`, tone: 'success' })
+  }
 
   const draftMutation = useMutation({
     mutationFn: () => api.saveOutboundDraft(activeCase.id, { channel: 'email', subject: subject.trim(), body: body.trim() }),
@@ -146,6 +158,23 @@ function EmailComposer({
           {emailCapability?.missing?.length ? (
             <ErrorSummary title="发送前需要补齐" errors={emailCapability.missing.map(labelize)} />
           ) : null}
+          <div className="stack" data-testid="email-workbench-template-list">
+            <div className="section-subtitle">回复模板</div>
+            {templates.isLoading ? <Skeleton lines={2} /> : null}
+            {templates.isError ? <ErrorSummary title="无法加载回复模板" errors={['模板 API 当前不可用，仍可手写主题和正文。']} /> : null}
+            {templates.data?.length ? (
+              <div className="stack">
+                <div className="button-row">
+                  {templates.data.map((template) => (
+                    <Button key={template.id} type="button" variant="secondary" onClick={() => applyTemplate(template)}>
+                      {sanitizeDisplayText(template.label)}
+                    </Button>
+                  ))}
+                </div>
+                <div className="queue-card-meta">模板来自 ticket_context；套用后仍需人工核对收件人、主题和正文。</div>
+              </div>
+            ) : null}
+          </div>
           <Field label="Email 主题" required>
             <Input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="请输入客户能识别的邮件主题" />
           </Field>
