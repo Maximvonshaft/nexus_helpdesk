@@ -27,20 +27,20 @@ from app.auth_service import create_access_token  # noqa: E402
 from app.db import Base, get_db  # noqa: E402
 from app.enums import ConversationState, EventType, MessageStatus, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import Customer, OutboundEmailAccount, Team, Ticket, TicketEvent, TicketOutboundMessage, User  # noqa: E402
+from app.models import Customer, OutboundEmailAccount, Team, Ticket, TicketEvent, TicketInternalNote, TicketOutboundMessage, User  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.webchat_models import WebchatMessage  # noqa: E402
 
 
 @pytest.fixture()
-def db_session(tmp_path, monkeypatch):
+def db_session(monkeypatch):
     monkeypatch.setenv("ENABLE_OUTBOUND_DISPATCH", "true")
     monkeypatch.setenv("OUTBOUND_PROVIDER", "openclaw")
     monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "mock")
     get_settings.cache_clear()
 
-    db_file = tmp_path / "channel_workbench_contracts.db"
+    db_file = ROOT / f".channel_workbench_contracts_{uuid.uuid4().hex}.db"
     engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False}, future=True)
     TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
     Base.metadata.create_all(engine)
@@ -51,6 +51,7 @@ def db_session(tmp_path, monkeypatch):
         session.close()
         Base.metadata.drop_all(engine)
         engine.dispose()
+        db_file.unlink(missing_ok=True)
         get_settings.cache_clear()
 
 
@@ -174,20 +175,33 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
     assert send_payload["delivery_semantics"] == "external_provider_send"
     assert send_payload["external_send"] is True
 
+    note = client.post(
+        f"/api/tickets/{ticket.id}/internal-notes",
+        headers=headers,
+        json={"body": "Internal note: customer confirmed address evidence."},
+    )
+    assert note.status_code == 200, note.text
+    assert note.json()["body"] == "Internal note: customer confirmed address evidence."
+
     timeline = client.get(f"/api/tickets/{ticket.id}/timeline?limit=20", headers=headers)
     assert timeline.status_code == 200, timeline.text
     items = timeline.json()["items"]
     outbound_items = [item for item in items if item.get("source_type") == "outbound_message"]
+    internal_note_items = [item for item in items if item.get("source_type") == "internal_note"]
     event_types = {item.get("event_type") for item in items if item.get("source_type") == "ticket_event"}
     assert any(item["subject"] == "Draft subject" and item["status"] == "draft" for item in outbound_items)
     assert any(item["subject"] == "Send subject" and item["status"] == "pending" for item in outbound_items)
+    assert any("customer confirmed address evidence" in item["body"] for item in internal_note_items)
     assert EventType.outbound_draft_saved.value in event_types
     assert EventType.outbound_queued.value in event_types
+    assert EventType.internal_note_added.value in event_types
 
     rows = db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).all()
     assert {row.status for row in rows} == {MessageStatus.draft, MessageStatus.pending}
+    assert db_session.query(TicketInternalNote).filter(TicketInternalNote.ticket_id == ticket.id).count() == 1
     assert db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_draft_saved).count() == 1
     assert db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_queued).count() == 1
+    assert db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.internal_note_added).count() == 1
 
 
 def test_webcall_accept_end_writes_timeline_voice_evidence(client: TestClient, db_session):

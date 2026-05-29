@@ -23,6 +23,7 @@ import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 
 const emailDraftAccess = { allOf: [CAPABILITIES.outboundDraftSave] } satisfies AccessRequirement
 const emailSendAccess = { allOf: [CAPABILITIES.outboundSend] } satisfies AccessRequirement
+const emailInternalNoteAccess = { allOf: [CAPABILITIES.noteWriteInternal] } satisfies AccessRequirement
 const EMAIL_QUEUE_TOKENS = new Set(['email', 'mail', 'smtp', 'imap', 'pop3'])
 
 function isEmailCandidate(item: CaseListItem) {
@@ -66,6 +67,7 @@ function EmailComposer({
   const client = useQueryClient()
   const [subject, setSubject] = useState(defaultSubject(activeCase))
   const [body, setBody] = useState(defaultBody(activeCase))
+  const [internalNote, setInternalNote] = useState('')
   const [confirmExternal, setConfirmExternal] = useState(false)
 
   const capabilities = useQuery({
@@ -77,6 +79,7 @@ function EmailComposer({
   useEffect(() => {
     setSubject(defaultSubject(activeCase))
     setBody(defaultBody(activeCase))
+    setInternalNote('')
     setConfirmExternal(false)
     // Reset only when the ticket changes; live refetches must not wipe an operator draft.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -89,8 +92,10 @@ function EmailComposer({
   const recipient = emailRecipient(activeCase)
   const canSaveDraft = canAccess(session.data, emailDraftAccess)
   const canSendEmail = canAccess(session.data, emailSendAccess)
+  const canWriteInternalNote = canAccess(session.data, emailInternalNoteAccess)
   const canDraft = Boolean(canSaveDraft && subject.trim() && body.trim())
   const canSend = Boolean(canSendEmail && emailCapability?.supports_send && recipient && subject.trim() && body.trim() && confirmExternal)
+  const canAddInternalNote = Boolean(canWriteInternalNote && internalNote.trim())
 
   const draftMutation = useMutation({
     mutationFn: () => api.saveOutboundDraft(activeCase.id, { channel: 'email', subject: subject.trim(), body: body.trim() }),
@@ -126,6 +131,21 @@ function EmailComposer({
     onError: (err: Error) => onToast({ message: err.message || '发送 Email 失败', tone: 'danger' }),
   })
 
+  const internalNoteMutation = useMutation({
+    mutationFn: () => api.addTicketInternalNote(activeCase.id, { body: internalNote.trim() }),
+    onSuccess: async () => {
+      onToast({ message: '内部备注已写入 Email 工单 timeline', tone: 'success' })
+      setInternalNote('')
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['caseDetail', activeCase.id] }),
+        client.invalidateQueries({ queryKey: ['ticketTimeline', activeCase.id] }),
+        client.invalidateQueries({ queryKey: ['cases'] }),
+        client.invalidateQueries({ queryKey: ['emailWorkbenchCases'] }),
+      ])
+    },
+    onError: (err: Error) => onToast({ message: err.message || '保存内部备注失败', tone: 'danger' }),
+  })
+
   return (
     <div className="stack" data-testid="email-workbench-composer">
       {capabilities.isLoading ? <Skeleton lines={4} /> : null}
@@ -142,6 +162,7 @@ function EmailComposer({
             {emailCapability?.external_send ? <Badge tone="warning">外部 provider</Badge> : null}
             <Badge tone={canSaveDraft ? 'success' : 'warning'}>draft.save {canSaveDraft ? '已授权' : '未授权'}</Badge>
             <Badge tone={canSendEmail ? 'success' : 'warning'}>outbound.send {canSendEmail ? '已授权' : '未授权'}</Badge>
+            <Badge tone={canWriteInternalNote ? 'success' : 'warning'}>internal.note {canWriteInternalNote ? '已授权' : '未授权'}</Badge>
           </div>
           {emailCapability?.missing?.length ? (
             <ErrorSummary title="发送前需要补齐" errors={emailCapability.missing.map(labelize)} />
@@ -164,6 +185,12 @@ function EmailComposer({
               {sendMutation.isPending ? '发送中...' : '发送 Email'}
             </Button>
           </div>
+          <Field label="内部备注" hint="对应模板 Internal note 动作；只写内部 timeline/audit，不发送给客户。">
+            <Textarea value={internalNote} onChange={(event) => setInternalNote(event.target.value)} rows={4} placeholder="记录客户背景、证据核对或交接说明" />
+          </Field>
+          <Button onClick={() => internalNoteMutation.mutate()} disabled={!canAddInternalNote || internalNoteMutation.isPending}>
+            {internalNoteMutation.isPending ? '保存备注中...' : 'Internal note'}
+          </Button>
         </>
       ) : null}
     </div>
