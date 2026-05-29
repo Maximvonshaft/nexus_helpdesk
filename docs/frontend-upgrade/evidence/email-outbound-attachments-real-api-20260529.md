@@ -14,7 +14,7 @@ This PR closes Email outbound attachment send support for existing external tick
 - ticket timeline returns outbound attachment ids/count/details for audit readback
 - `/email` composer can select existing external ticket attachments when channel capability reports `supports_attachments`
 
-Inline upload from the Email composer remains out of scope; the existing upload contract stays `/api/tickets/{ticket_id}/attachments`.
+PR #312 scoped the backend attachment-send chain and existing external attachment selection. The stacked inline-upload PR keeps the same backend upload contract, `/api/tickets/{ticket_id}/attachments`, and wires it into the Email composer.
 
 ## Local Validation
 

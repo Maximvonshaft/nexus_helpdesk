@@ -12,7 +12,7 @@ The previous PRs connected real WebChat, WebCall, and Email API capabilities, bu
 
 - WebChat: verify visual parity for queue, message stream, customer profile, AI suggestions, handoff, session actions.
 - WebCall: verify visual parity for call queue, sessions, live console, transcript, notes, customer profile, identity verification, AI suggestions, handoff, session actions.
-- Email: verify visual parity for queue, thread, composer, draft/send/audit state. Existing external ticket attachments are now selectable from the Email composer and are bound to outbound draft/send records, SMTP MIME dispatch, and timeline payload readback.
+- Email: verify visual parity for queue, thread, composer, draft/send/audit state. Existing and newly uploaded external ticket attachments are selectable from the Email composer and are bound to outbound draft/send records, SMTP MIME dispatch, and timeline payload readback.
 - Today Workbench: compare `/` against v1.7.8 Today Workbench blocks.
 
 ## Next PR

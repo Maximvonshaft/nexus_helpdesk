@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import { createRoute, redirect } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
-import type { CaseDetail, CaseListItem, OutboundChannelCapability } from '@/lib/types'
+import type { CaseDetail, CaseListItem, OutboundChannelCapability, SystemAttachment } from '@/lib/types'
 import { formatDateTime, labelize, marketLabel, priorityTone, sanitizeDisplayText, statusTone } from '@/lib/format'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -24,6 +24,7 @@ import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 const emailDraftAccess = { allOf: [CAPABILITIES.outboundDraftSave] } satisfies AccessRequirement
 const emailSendAccess = { allOf: [CAPABILITIES.outboundSend] } satisfies AccessRequirement
 const EMAIL_QUEUE_TOKENS = new Set(['email', 'mail', 'smtp', 'imap', 'pop3'])
+const MAX_EMAIL_ATTACHMENTS = 10
 
 function isEmailCandidate(item: CaseListItem) {
   const text = [item.source_channel, item.category, item.sub_category]
@@ -67,6 +68,7 @@ function EmailComposer({
   const [subject, setSubject] = useState(defaultSubject(activeCase))
   const [body, setBody] = useState(defaultBody(activeCase))
   const [attachmentIds, setAttachmentIds] = useState<number[]>([])
+  const [uploadedAttachments, setUploadedAttachments] = useState<SystemAttachment[]>([])
   const [confirmExternal, setConfirmExternal] = useState(false)
 
   const capabilities = useQuery({
@@ -79,6 +81,7 @@ function EmailComposer({
     setSubject(defaultSubject(activeCase))
     setBody(defaultBody(activeCase))
     setAttachmentIds([])
+    setUploadedAttachments([])
     setConfirmExternal(false)
     // Reset only when the ticket changes; live refetches must not wipe an operator draft.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -88,23 +91,64 @@ function EmailComposer({
     () => (capabilities.data?.channels ?? []).find((item) => item.channel === 'email'),
     [capabilities.data?.channels],
   )
-  const availableAttachments = useMemo(
-    () => (activeCase.attachments ?? []).filter((attachment) => !attachment.visibility || attachment.visibility === 'external'),
-    [activeCase.attachments],
-  )
+  const availableAttachments = useMemo(() => {
+    const byId = new Map<number, SystemAttachment>()
+    for (const attachment of [...(activeCase.attachments ?? []), ...uploadedAttachments]) {
+      if (!attachment.visibility || attachment.visibility === 'external') {
+        byId.set(attachment.id, attachment)
+      }
+    }
+    return Array.from(byId.values())
+  }, [activeCase.attachments, uploadedAttachments])
   const recipient = emailRecipient(activeCase)
   const canSaveDraft = canAccess(session.data, emailDraftAccess)
   const canSendEmail = canAccess(session.data, emailSendAccess)
   const attachmentBlocked = attachmentIds.length > 0 && !emailCapability?.supports_attachments
+  const maxAttachmentsReached = attachmentIds.length >= MAX_EMAIL_ATTACHMENTS
   const canDraft = Boolean(canSaveDraft && subject.trim() && body.trim() && !attachmentBlocked)
   const canSend = Boolean(canSendEmail && emailCapability?.supports_send && recipient && subject.trim() && body.trim() && confirmExternal && !attachmentBlocked)
 
   function toggleAttachment(attachmentId: number) {
-    setAttachmentIds((current) => (
-      current.includes(attachmentId)
-        ? current.filter((item) => item !== attachmentId)
-        : [...current, attachmentId]
-    ))
+    setAttachmentIds((current) => {
+      if (current.includes(attachmentId)) return current.filter((item) => item !== attachmentId)
+      if (current.length >= MAX_EMAIL_ATTACHMENTS) return current
+      return [...current, attachmentId]
+    })
+  }
+
+  function mergeAttachmentIds(ids: number[]) {
+    setAttachmentIds((current) => Array.from(new Set([...current, ...ids])))
+  }
+
+  const uploadMutation = useMutation({
+    mutationFn: (files: File[]) => Promise.all(files.map((file) => api.uploadTicketAttachment(activeCase.id, file, 'external'))),
+    onSuccess: async (attachments) => {
+      setUploadedAttachments((current) => {
+        const byId = new Map<number, SystemAttachment>()
+        for (const attachment of [...current, ...attachments]) byId.set(attachment.id, attachment)
+        return Array.from(byId.values())
+      })
+      mergeAttachmentIds(attachments.map((attachment) => attachment.id))
+      onToast({ message: `已上传并选中 ${attachments.length} 个 Email 附件`, tone: 'success' })
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['caseDetail', activeCase.id] }),
+        client.invalidateQueries({ queryKey: ['ticketTimeline', activeCase.id] }),
+        client.invalidateQueries({ queryKey: ['cases'] }),
+        client.invalidateQueries({ queryKey: ['emailWorkbenchCases'] }),
+      ])
+    },
+    onError: (err: Error) => onToast({ message: err.message || '上传 Email 附件失败', tone: 'danger' }),
+  })
+
+  function handleAttachmentUpload(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.currentTarget.files ?? [])
+    event.currentTarget.value = ''
+    if (!files.length) return
+    if (files.length > MAX_EMAIL_ATTACHMENTS - attachmentIds.length) {
+      onToast({ message: `Email 最多绑定 ${MAX_EMAIL_ATTACHMENTS} 个附件，请先取消部分已选附件。`, tone: 'danger' })
+      return
+    }
+    uploadMutation.mutate(files)
   }
 
   const draftMutation = useMutation({
@@ -172,13 +216,28 @@ function EmailComposer({
           </Field>
           <div className="stack" data-testid="email-workbench-attachments">
             <div className="section-subtitle">可发送附件</div>
+            <Field
+              label="上传外部附件"
+              hint={`上传成功后会自动选中，并随保存草稿或发送进入 outbound message。最多 ${MAX_EMAIL_ATTACHMENTS} 个附件。`}
+              disabledReason={!emailCapability?.supports_attachments ? '当前 Email channel capability 未启用附件发送' : undefined}
+            >
+              <Input
+                data-testid="email-workbench-attachment-upload"
+                type="file"
+                multiple
+                disabled={!emailCapability?.supports_attachments || uploadMutation.isPending}
+                onChange={handleAttachmentUpload}
+              />
+            </Field>
+            {uploadMutation.isPending ? <Skeleton lines={1} /> : null}
             {availableAttachments.length ? (
               <div className="stack">
-                {availableAttachments.slice(0, 8).map((attachment) => (
+                {availableAttachments.map((attachment) => (
                   <label key={attachment.id} className="toggle-row">
                     <input
                       type="checkbox"
                       checked={attachmentIds.includes(attachment.id)}
+                      disabled={!attachmentIds.includes(attachment.id) && maxAttachmentsReached}
                       onChange={() => toggleAttachment(attachment.id)}
                     />
                     <span>{sanitizeDisplayText(attachment.file_name)} · {sanitizeDisplayText(attachment.mime_type || 'file')}</span>
