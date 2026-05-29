@@ -306,6 +306,51 @@ export interface RuntimeHealth {
   warnings: string[]
 }
 
+export type IntegrationStatusBucket = 'success' | 'retryable' | 'failed' | 'conflict' | 'pending'
+
+export interface IntegrationObservabilityItem {
+  id: number
+  client_id?: number | null
+  client_name?: string | null
+  client_key_id?: string | null
+  scopes: string[]
+  endpoint: string
+  method: string
+  idempotency_key?: string | null
+  request_hash?: string | null
+  status_code?: number | null
+  error_code?: string | null
+  request_id?: string | null
+  retryable: boolean
+  status_bucket: IntegrationStatusBucket
+  response_preview?: unknown
+  created_at?: string | null
+}
+
+export interface IntegrationObservabilitySummary {
+  total: number
+  by_status: Record<string, number>
+  retryable: number
+  error_codes: string[]
+  endpoints: string[]
+  clients: string[]
+  missing_request_id: number
+}
+
+export interface IntegrationObservabilityResponse {
+  items: IntegrationObservabilityItem[]
+  summary: IntegrationObservabilitySummary
+  total: number
+  has_more: boolean
+  filters: {
+    q?: string | null
+    endpoint?: string | null
+    client_id?: number | null
+    status_bucket: string
+    limit: number
+  }
+}
+
 export interface OutboundChannelCapability {
   channel: string
   label: string

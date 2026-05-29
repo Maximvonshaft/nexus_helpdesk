@@ -36,6 +36,13 @@ test('email operator workbench nav route is registered and capability gated', ()
   assert.match(rbac, /'\/email': \{ allOf: \[CAPABILITIES\.ticketRead\], anyOf: \[CAPABILITIES\.outboundDraftSave, CAPABILITIES\.outboundSend\] \}/)
 })
 
+test('integration observability nav route is registered and runtime gated', () => {
+  assert.match(appShell, /to: '\/integration'/)
+  assert.match(router, /IntegrationObservabilityRoute/)
+  assert.match(router, /@\/routes\/integration/)
+  assert.match(rbac, /'\/integration': \{ allOf: \[CAPABILITIES\.runtimeManage\] \}/)
+})
+
 test('internal webcall routes are intentionally classified', () => {
   assert.match(router, /Internal operator console for human WebCall handling/)
   assert.match(router, /Top-level operator WebCall workbench/)
@@ -56,6 +63,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'email.tsx',
     'webcall-operator.tsx',
     'runtime.tsx',
+    'integration.tsx',
     'webcall-ai-demo.tsx',
     'provider-credentials.tsx',
     'accounts.tsx',

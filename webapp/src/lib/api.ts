@@ -13,6 +13,7 @@ import type {
   ProductionReadiness,
   QueueSummary,
   RuntimeHealth,
+  IntegrationObservabilityResponse,
   OpenClawConnectivityProbe,
   OutboundChannelCapabilitiesResponse,
   OutboundEmailAccount,
@@ -542,6 +543,15 @@ export const api = {
     return request<RuntimeRecoveryResult>(`/api/admin/outbound/requeue-dead${search ? `?${search}` : ''}`, { method: 'POST' })
   },
   consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
+  integrationObservabilityRequests: (params?: { q?: string; endpoint?: string; client_id?: number; status_bucket?: string; limit?: number }, init?: RequestInit) => {
+    const search = new URLSearchParams()
+    search.set('limit', String(params?.limit ?? 50))
+    if (params?.q) search.set('q', params.q)
+    if (params?.endpoint) search.set('endpoint', params.endpoint)
+    if (typeof params?.client_id === 'number') search.set('client_id', String(params.client_id))
+    if (params?.status_bucket) search.set('status_bucket', params.status_bucket)
+    return request<IntegrationObservabilityResponse>(`/api/admin/integration-observability/requests?${search.toString()}`, init)
+  },
 
   webcallAIDemoStatus: () => request<WebCallAIDemoStatus>('/api/admin/webcall-ai-demo/status'),
   webcallAIDemoCreateSession: (payload: { locale?: string; display_name?: string; scenario?: string; initial_text?: string }) => request<{ ok: boolean; session: WebCallAIDemoSession; events: WebCallAIDemoEvent[] }>('/api/admin/webcall-ai-demo/sessions', {

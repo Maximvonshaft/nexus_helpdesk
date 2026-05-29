@@ -18,6 +18,7 @@ const nav = [
   { to: '/webcall', label: 'WebCall 工作台', hint: '来电、接管与 AI 建议', access: routeAccess['/webcall'] },
   { to: '/email', label: 'Email 工作台', hint: '邮件队列、草稿与发送', access: routeAccess['/email'] },
   { to: '/runtime', label: '运行恢复', hint: 'dead/requeue 自助处理', access: routeAccess['/runtime'], attention: 'runtime' },
+  { to: '/integration', label: 'Integration Observability', hint: 'request_id 与幂等排障', access: routeAccess['/integration'] },
   { to: '/webcall-ai-demo', label: 'WebCall AI Demo', hint: '内部语音 AI 沙盒', access: routeAccess['/webcall-ai-demo'] },
   { to: '/provider-credentials', label: 'Code X 授权', hint: '云端授权与 Token 托管', access: routeAccess['/provider-credentials'] },
   { to: '/accounts', label: '发送线路', hint: '账号与兜底线路', access: routeAccess['/accounts'] },
@@ -31,7 +32,7 @@ const nav = [
 const navGroups = [
   { label: '日常处理', items: ['/', '/workspace', '/webchat', '/webcall', '/email', '/bulletins'] },
   { label: '渠道与授权', items: ['/accounts', '/outbound-email', '/provider-credentials'] },
-  { label: '治理与运维', items: ['/runtime', '/ai-control', '/control-plane', '/users', '/webcall-ai-demo'] },
+  { label: '治理与运维', items: ['/runtime', '/integration', '/ai-control', '/control-plane', '/users', '/webcall-ai-demo'] },
 ]
 
 function isActiveNavPath(pathname: string, target: string) {
