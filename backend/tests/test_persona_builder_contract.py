@@ -179,12 +179,14 @@ def test_persona_builder_contract_uses_real_persona_tables_preview_and_runtime_c
     assert profiles[email_draft.profile_key]["published_ready"] is False
     assert blocks["persona-list"]["status"] == "implemented"
     assert blocks["resolve-preview"]["backend_contract"] == "POST /api/persona-profiles/resolve-preview"
-    assert blocks["approval"]["status"] == "not_implemented"
+    assert blocks["approval"]["status"] == "implemented"
     assert blocks["runtime-evidence"]["status"] == "linked"
-    assert lifecycle["approval"]["status"] == "not_implemented"
+    assert lifecycle["approval"]["status"] == "implemented"
     assert lifecycle["published"]["count"] == 2
-    assert payload["facts"]["submit_review_endpoint"] == "not_implemented"
-    assert payload["facts"]["approval_endpoint"] == "not_implemented"
+    assert payload["approval_queue"] == []
+    assert payload["facts"]["submit_review_endpoint"] == "implemented"
+    assert payload["facts"]["approval_endpoint"] == "implemented"
+    assert payload["facts"]["release_window_command"] == "implemented"
     assert payload["facts"]["dedicated_runtime_evidence_endpoint"] == "not_implemented"
     assert any(item["matched_profile_key"] == exact.profile_key and item["match_rank"] == 1 for item in payload["simulation_scenarios"])
 

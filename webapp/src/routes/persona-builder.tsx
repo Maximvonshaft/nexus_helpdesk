@@ -74,6 +74,22 @@ function PersonaBuilderPage() {
       language: previewLanguage.trim() || null,
     }),
   })
+  const submitReview = useMutation({
+    mutationFn: (profileId: number) => api.submitPersonaReview(profileId, { notes: 'submit from Persona Builder' }),
+    onSuccess: () => void refresh(),
+  })
+  const approveReview = useMutation({
+    mutationFn: (reviewId: number) => api.approvePersonaReview(reviewId, { decision_note: 'approved from Persona Builder' }),
+    onSuccess: () => void refresh(),
+  })
+  const rejectReview = useMutation({
+    mutationFn: (reviewId: number) => api.rejectPersonaReview(reviewId, { decision_note: 'rejected from Persona Builder' }),
+    onSuccess: () => void refresh(),
+  })
+  const publishReview = useMutation({
+    mutationFn: (reviewId: number) => api.publishPersonaReview(reviewId, 'publish approved Persona review'),
+    onSuccess: () => void refresh(),
+  })
 
   const canManage = Boolean(builder.data?.capabilities.includes('ai_config.manage'))
   const suggestedScenarios = useMemo(() => (builder.data?.simulation_scenarios ?? []).slice(0, 4), [builder.data?.simulation_scenarios])
@@ -131,7 +147,7 @@ function PersonaBuilderPage() {
                     <div className="badges"><Badge tone={item.identity_ready ? 'success' : 'danger'}>{item.identity_ready ? 'identity' : 'missing identity'}</Badge><Badge tone={item.boundary_ready ? 'success' : 'warning'}>{item.boundary_ready ? 'boundary' : 'boundary gap'}</Badge><Badge>{item.guardrail_count} controls</Badge></div>,
                     item.risk_flags.length ? <div className="badges">{item.risk_flags.map((flag) => <Badge key={flag} tone="warning">{sanitizeDisplayText(flag)}</Badge>)}</div> : <Badge tone="success">clear</Badge>,
                     sanitizeDisplayText(item.evidence),
-                    <Button variant="secondary" onClick={() => goTarget(item.href)}>打开</Button>,
+                    <div className="button-row"><Button variant="secondary" onClick={() => goTarget(item.href)}>打开</Button><Button disabled={!canManage || !item.draft_ready || submitReview.isPending} onClick={() => submitReview.mutate(item.id)}>送审</Button></div>,
                   ])}
                   empty={<EmptyState title="还没有 Persona" description="通过 AI 规则创建默认 WebChat Persona 并发布。" reason="没有已发布 Persona 时，运行时只能使用基础规则。" />}
                 />
@@ -194,6 +210,36 @@ function PersonaBuilderPage() {
             </div>
 
             <div className="page-grid split-grid-wide">
+              <Card data-testid="persona-builder-approval-queue">
+                <CardHeader title="Approval Queue / Release Window" subtitle="真实写入 persona_profile_reviews；审批后可以按 release window 发布已审批快照。" />
+                <CardBody>
+                  <div className="stack">
+                    {submitReview.isError || approveReview.isError || rejectReview.isError || publishReview.isError ? (
+                      <ErrorSummary
+                        title="审批动作失败"
+                        errors={[submitReview.error, approveReview.error, rejectReview.error, publishReview.error].filter(Boolean).map((error) => error instanceof Error ? error.message : '请检查权限或状态')}
+                      />
+                    ) : null}
+                    <DataTable
+                      columns={['Review', 'Scope', '状态', 'Release Window', '证据', '动作']}
+                      rows={builder.data.approval_queue.map((item) => [
+                        <div className="stack"><strong>{sanitizeDisplayText(item.profile_name || item.profile_key)}</strong><small>review #{item.review_version} · {sanitizeDisplayText(item.summary)}</small></div>,
+                        sanitizeDisplayText(item.scope_label),
+                        <Badge tone={item.status === 'published' ? 'success' : item.status === 'approved' ? 'warning' : item.status === 'rejected' ? 'danger' : 'default'}>{labelize(item.status)}</Badge>,
+                        <div className="stack"><span>{formatDateTime(item.release_window_start)}</span><small>{formatDateTime(item.release_window_end)}</small></div>,
+                        sanitizeDisplayText(item.evidence),
+                        <div className="button-row">
+                          <Button disabled={!canManage || item.status !== 'pending' || approveReview.isPending} onClick={() => approveReview.mutate(item.id)}>批准</Button>
+                          <Button variant="danger" disabled={!canManage || item.status !== 'pending' || rejectReview.isPending} onClick={() => rejectReview.mutate(item.id)}>拒绝</Button>
+                          <Button variant="primary" disabled={!canManage || item.status !== 'approved' || publishReview.isPending} onClick={() => publishReview.mutate(item.id)}>发布</Button>
+                        </div>,
+                      ])}
+                      empty={<EmptyState title="没有待审批 Persona" description="在 Persona 列表中选择有草稿的配置送审。" reason="审批记录保存在后端，发布时使用审批快照而不是前端状态。" />}
+                    />
+                  </div>
+                </CardBody>
+              </Card>
+
               <Card data-testid="persona-builder-release-lifecycle">
                 <CardHeader title="Release Lifecycle" subtitle="对应模板里的 Draft、Simulation、Impact Preview、Approval、Published、Rollback 和 Runtime Evidence。" />
                 <CardBody>

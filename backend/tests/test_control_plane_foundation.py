@@ -18,12 +18,14 @@ from app.models_control_plane import (  # noqa: E402
     KnowledgeItem,
     KnowledgeItemVersion,
     PersonaProfile,
+    PersonaProfileReview,
     PersonaProfileVersion,
 )
 
 CONTROL_PLANE_TABLES = {
     "persona_profiles",
     "persona_profile_versions",
+    "persona_profile_reviews",
     "knowledge_items",
     "knowledge_item_versions",
     "channel_onboarding_tasks",
@@ -114,6 +116,35 @@ def test_persona_profile_version_uniqueness(db_session):
             version=1,
             snapshot_json={"tone": "formal"},
             published_by=user.id,
+        )
+    )
+
+    _flush_raises_integrity_error(db_session)
+
+
+def test_persona_profile_review_version_uniqueness(db_session):
+    user = _seed_user(db_session)
+    profile = PersonaProfile(profile_key="reviewed-persona", name="Reviewed Persona", created_by=user.id)
+    db_session.add(profile)
+    db_session.flush()
+
+    db_session.add(
+        PersonaProfileReview(
+            profile_id=profile.id,
+            review_version=1,
+            status="pending",
+            snapshot_json={"summary": "first"},
+            requested_by=user.id,
+        )
+    )
+    db_session.flush()
+    db_session.add(
+        PersonaProfileReview(
+            profile_id=profile.id,
+            review_version=1,
+            status="pending",
+            snapshot_json={"summary": "second"},
+            requested_by=user.id,
         )
     )
 

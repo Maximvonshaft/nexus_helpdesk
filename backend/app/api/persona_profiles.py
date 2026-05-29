@@ -8,10 +8,15 @@ from ..schemas_control_plane import (
     PersonaProfileCreate,
     PersonaProfileDetailOut,
     PersonaProfileListOut,
+    PersonaProfileReviewListOut,
+    PersonaProfileReviewOut,
     PersonaProfileOut,
     PersonaProfileUpdate,
     PersonaProfileVersionOut,
     PersonaPublishRequest,
+    PersonaReviewDecisionRequest,
+    PersonaReviewPublishRequest,
+    PersonaReviewSubmitRequest,
     PersonaResolvePreviewOut,
     PersonaResolvePreviewRequest,
     PersonaRollbackRequest,
@@ -31,6 +36,10 @@ def _profile_out(row) -> PersonaProfileOut:
 def _detail_out(db: Session, row) -> PersonaProfileDetailOut:
     versions = [PersonaProfileVersionOut.model_validate(item) for item in persona_service.list_versions(db, row.id)]
     return PersonaProfileDetailOut.model_validate(row).model_copy(update={"versions": versions})
+
+
+def _review_out(row) -> PersonaProfileReviewOut:
+    return PersonaProfileReviewOut.model_validate(row)
 
 
 @router.get("", response_model=PersonaProfileListOut)
@@ -88,6 +97,65 @@ def resolve_persona_preview(
     return PersonaResolvePreviewOut(profile=_profile_out(row) if row else None, match_rank=score)
 
 
+@router.get("/reviews", response_model=PersonaProfileReviewListOut)
+def list_persona_reviews(
+    profile_id: int | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_read_ai_configs(current_user, db)
+    rows, total = persona_service.list_reviews(db, profile_id=profile_id, status=status, limit=limit, offset=offset)
+    return PersonaProfileReviewListOut(reviews=[_review_out(row) for row in rows], total=total)
+
+
+@router.post("/reviews/{review_id}/approve", response_model=PersonaProfileReviewOut)
+def approve_persona_review(
+    review_id: int,
+    payload: PersonaReviewDecisionRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_ai_configs(current_user, db)
+    review = persona_service.get_review_or_404(db, review_id)
+    with managed_session(db):
+        review = persona_service.approve_review(db, review, payload, current_user)
+    db.refresh(review)
+    return _review_out(review)
+
+
+@router.post("/reviews/{review_id}/reject", response_model=PersonaProfileReviewOut)
+def reject_persona_review(
+    review_id: int,
+    payload: PersonaReviewDecisionRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_ai_configs(current_user, db)
+    review = persona_service.get_review_or_404(db, review_id)
+    with managed_session(db):
+        review = persona_service.reject_review(db, review, payload, current_user)
+    db.refresh(review)
+    return _review_out(review)
+
+
+@router.post("/reviews/{review_id}/publish", response_model=PersonaProfileVersionOut)
+def publish_approved_persona_review(
+    review_id: int,
+    payload: PersonaReviewPublishRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_ai_configs(current_user, db)
+    review = persona_service.get_review_or_404(db, review_id)
+    with managed_session(db):
+        version_row = persona_service.publish_approved_review(db, review, current_user, notes=payload.notes)
+    db.refresh(version_row)
+    return PersonaProfileVersionOut.model_validate(version_row)
+
+
 @router.get("/{profile_id}", response_model=PersonaProfileDetailOut)
 def get_persona_profile(
     profile_id: int,
@@ -112,6 +180,21 @@ def update_persona_profile(
         row = persona_service.update_profile(db, row, payload, current_user)
     db.refresh(row)
     return _profile_out(row)
+
+
+@router.post("/{profile_id}/submit-review", response_model=PersonaProfileReviewOut)
+def submit_persona_review(
+    profile_id: int,
+    payload: PersonaReviewSubmitRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_ai_configs(current_user, db)
+    row = persona_service.get_profile_or_404(db, profile_id)
+    with managed_session(db):
+        review = persona_service.submit_review(db, row, payload, current_user)
+    db.refresh(review)
+    return _review_out(review)
 
 
 @router.post("/{profile_id}/publish", response_model=PersonaProfileVersionOut)

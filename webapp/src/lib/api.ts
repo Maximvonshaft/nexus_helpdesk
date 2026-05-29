@@ -38,6 +38,8 @@ import type {
   PersonaProfile,
   PersonaProfileDetail,
   PersonaProfileList,
+  PersonaProfileReview,
+  PersonaProfileReviewList,
   PersonaProfileVersion,
   PersonaResolvePreviewResult,
   Team,
@@ -454,6 +456,29 @@ export const api = {
   rollbackPersonaProfile: (profileId: number, version: number, notes?: string) => request<PersonaProfileVersion>(`/api/persona-profiles/${profileId}/rollback`, {
     method: 'POST',
     body: JSON.stringify({ version, notes: notes || null }),
+  }),
+  personaReviews: (params?: { profile_id?: number; status?: string; limit?: number }) => {
+    const search = new URLSearchParams()
+    search.set('limit', String(params?.limit ?? 50))
+    if (typeof params?.profile_id === 'number') search.set('profile_id', String(params.profile_id))
+    if (params?.status) search.set('status', params.status)
+    return request<PersonaProfileReviewList>(`/api/persona-profiles/reviews?${search.toString()}`)
+  },
+  submitPersonaReview: (profileId: number, payload?: { notes?: string | null; release_window_start?: string | null; release_window_end?: string | null }) => request<PersonaProfileReview>(`/api/persona-profiles/${profileId}/submit-review`, {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  }),
+  approvePersonaReview: (reviewId: number, payload?: { decision_note?: string | null; release_window_start?: string | null; release_window_end?: string | null }) => request<PersonaProfileReview>(`/api/persona-profiles/reviews/${reviewId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  }),
+  rejectPersonaReview: (reviewId: number, payload?: { decision_note?: string | null }) => request<PersonaProfileReview>(`/api/persona-profiles/reviews/${reviewId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  }),
+  publishPersonaReview: (reviewId: number, notes?: string) => request<PersonaProfileVersion>(`/api/persona-profiles/reviews/${reviewId}/publish`, {
+    method: 'POST',
+    body: JSON.stringify({ notes: notes || null }),
   }),
   resolvePersonaPreview: (payload: { market_id?: number | null; channel?: string | null; language?: string | null }) => request<PersonaResolvePreviewResult>('/api/persona-profiles/resolve-preview', {
     method: 'POST',

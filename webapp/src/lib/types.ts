@@ -421,6 +421,30 @@ export interface PersonaBuilderProfile {
   evidence: string
 }
 
+export interface PersonaBuilderReview {
+  id: number
+  profile_id: number
+  profile_key?: string | null
+  profile_name?: string | null
+  review_version: number
+  status: string
+  summary?: string | null
+  notes?: string | null
+  scope_label: string
+  requested_by?: number | null
+  requested_at?: string | null
+  reviewed_by?: number | null
+  reviewed_at?: string | null
+  decision_note?: string | null
+  release_window_start?: string | null
+  release_window_end?: string | null
+  published_by?: number | null
+  published_version?: number | null
+  published_at?: string | null
+  href: string
+  evidence: string
+}
+
 export interface PersonaBuilderSimulationScenario {
   market_id?: number | null
   channel?: string | null
@@ -462,6 +486,7 @@ export interface PersonaBuilder {
   capabilities: string[]
   kpis: PersonaBuilderKpi[]
   profiles: PersonaBuilderProfile[]
+  approval_queue: PersonaBuilderReview[]
   simulation_scenarios: PersonaBuilderSimulationScenario[]
   release_lifecycle: PersonaBuilderLifecycleStep[]
   template_blocks: PersonaBuilderTemplateBlock[]
@@ -840,6 +865,33 @@ export interface PersonaProfileVersion {
   notes?: string | null
   published_by?: number | null
   published_at: string
+}
+
+export interface PersonaProfileReview {
+  id: number
+  profile_id: number
+  review_version: number
+  status: string
+  snapshot_json: Record<string, unknown>
+  summary?: string | null
+  notes?: string | null
+  requested_by?: number | null
+  requested_at: string
+  reviewed_by?: number | null
+  reviewed_at?: string | null
+  decision_note?: string | null
+  release_window_start?: string | null
+  release_window_end?: string | null
+  published_by?: number | null
+  published_version?: number | null
+  published_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonaProfileReviewList {
+  reviews: PersonaProfileReview[]
+  total: number
 }
 
 export interface PersonaProfileDetail extends PersonaProfile {

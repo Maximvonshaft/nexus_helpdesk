@@ -106,6 +106,37 @@ class PersonaRollbackRequest(PersonaPublishRequest):
     version: int = Field(gt=0)
 
 
+class PersonaReviewSubmitRequest(BaseModel):
+    notes: Optional[str] = Field(default=None, max_length=4000)
+    release_window_start: Optional[datetime] = None
+    release_window_end: Optional[datetime] = None
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_notes(cls, value):
+        return _strip_optional_string(value)
+
+
+class PersonaReviewDecisionRequest(BaseModel):
+    decision_note: Optional[str] = Field(default=None, max_length=4000)
+    release_window_start: Optional[datetime] = None
+    release_window_end: Optional[datetime] = None
+
+    @field_validator("decision_note", mode="before")
+    @classmethod
+    def strip_decision_note(cls, value):
+        return _strip_optional_string(value)
+
+
+class PersonaReviewPublishRequest(BaseModel):
+    notes: Optional[str] = Field(default=None, max_length=4000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_notes(cls, value):
+        return _strip_optional_string(value)
+
+
 class PersonaResolvePreviewRequest(BaseModel):
     market_id: Optional[int] = None
     channel: Optional[str] = Field(default=None, max_length=40)
@@ -131,6 +162,28 @@ class PersonaProfileVersionOut(ControlPlaneModel):
     notes: Optional[str] = None
     published_by: Optional[int] = None
     published_at: datetime
+
+
+class PersonaProfileReviewOut(ControlPlaneModel):
+    id: int
+    profile_id: int
+    review_version: int
+    status: str
+    snapshot_json: JsonObject
+    summary: Optional[str] = None
+    notes: Optional[str] = None
+    requested_by: Optional[int] = None
+    requested_at: datetime
+    reviewed_by: Optional[int] = None
+    reviewed_at: Optional[datetime] = None
+    decision_note: Optional[str] = None
+    release_window_start: Optional[datetime] = None
+    release_window_end: Optional[datetime] = None
+    published_by: Optional[int] = None
+    published_version: Optional[int] = None
+    published_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class PersonaProfileOut(ControlPlaneModel):
@@ -161,6 +214,11 @@ class PersonaProfileDetailOut(PersonaProfileOut):
 
 class PersonaProfileListOut(BaseModel):
     profiles: list[PersonaProfileOut]
+    total: int
+
+
+class PersonaProfileReviewListOut(BaseModel):
+    reviews: list[PersonaProfileReviewOut]
     total: int
 
 
