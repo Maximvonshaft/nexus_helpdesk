@@ -218,6 +218,99 @@ export interface ControlTower {
   facts: Record<string, number | string[]>
 }
 
+export interface QATrainingKpi {
+  key: string
+  label: string
+  value: number
+  hint: string
+  tone: BadgeTone
+}
+
+export interface QATrainingQueueItem {
+  key: string
+  channel: string
+  sample: string
+  ticket_id: number
+  ticket_no?: string | null
+  customer_name?: string | null
+  agent_name?: string | null
+  ai_pre_score: number
+  risk: string
+  feedback: string
+  agent_appeal: string
+  source: string
+  created_at?: string | null
+  href: string
+  evidence: string[]
+}
+
+export interface QATrainingScorecardRow {
+  key: string
+  criterion: string
+  score: number
+  tone: BadgeTone
+  evidence: string
+  next: string
+}
+
+export interface QATrainingTask {
+  key: string
+  title: string
+  owner: string
+  priority: number
+  status: string
+  source: string
+  next: string
+  href: string
+  enabled: boolean
+  capability: string
+}
+
+export interface QATrainingKnowledgeGap {
+  key: string
+  title: string
+  source: string
+  status: string
+  owner: string
+  next: string
+  href: string
+  evidence: string
+}
+
+export interface QATrainingLoopStep {
+  key: string
+  step: string
+  owner: string
+  artifact: string
+  status: string
+  href: string
+  enabled: boolean
+}
+
+export interface QATrainingTemplateBlock {
+  key: string
+  label: string
+  backend_contract: string
+  status: string
+  evidence: string
+  href: string
+}
+
+export interface QATraining {
+  generated_at: string
+  role: string
+  user_id: number
+  capabilities: string[]
+  kpis: QATrainingKpi[]
+  qa_queue: QATrainingQueueItem[]
+  scorecard: QATrainingScorecardRow[]
+  training_tasks: QATrainingTask[]
+  knowledge_gaps: QATrainingKnowledgeGap[]
+  loop_steps: QATrainingLoopStep[]
+  template_blocks: QATrainingTemplateBlock[]
+  facts: Record<string, number | string | boolean>
+}
+
 export interface TranscriptMessage {
   id: number
   role: string

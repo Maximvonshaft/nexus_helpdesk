@@ -43,6 +43,14 @@ test('control tower nav route is registered and capability gated', () => {
   assert.match(rbac, /'\/control-tower': \{ anyOf: \[CAPABILITIES\.ticketAssign, CAPABILITIES\.bulletinManage, CAPABILITIES\.channelAccountManage, CAPABILITIES\.runtimeManage, CAPABILITIES\.aiConfigRead, CAPABILITIES\.aiConfigManage, CAPABILITIES\.userManage\] \}/)
 })
 
+test('qa training nav route is registered and capability gated', () => {
+  assert.match(appShell, /to: '\/qa-training'/)
+  assert.match(router, /QATrainingRoute/)
+  assert.match(router, /@\/routes\/qa-training/)
+  assert.match(rbac, /qaManage: 'qa\.manage'/)
+  assert.match(rbac, /'\/qa-training': \{ allOf: \[CAPABILITIES\.qaManage\] \}/)
+})
+
 test('internal webcall routes are intentionally classified', () => {
   assert.match(router, /Internal operator console for human WebCall handling/)
   assert.match(router, /Top-level operator WebCall workbench/)
@@ -64,6 +72,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'webcall-operator.tsx',
     'runtime.tsx',
     'control-tower.tsx',
+    'qa-training.tsx',
     'webcall-ai-demo.tsx',
     'provider-credentials.tsx',
     'accounts.tsx',

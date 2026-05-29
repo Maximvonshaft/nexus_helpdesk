@@ -23,6 +23,7 @@ export const CAPABILITIES = {
   aiConfigManage: 'ai_config.manage',
   runtimeManage: 'runtime.manage',
   marketManage: 'market.manage',
+  qaManage: 'qa.manage',
   speedafWorkOrderWrite: 'tool:speedaf.work_order.create:write',
   speedafAddressUpdateWrite: 'tool:speedaf.order.update_address:write',
   speedafCancelWrite: 'tool:speedaf.order.cancel:write',
@@ -52,6 +53,7 @@ export type CapabilityMeta = {
 export const routeAccess = {
   '/runtime': { allOf: [CAPABILITIES.runtimeManage] },
   '/control-tower': { anyOf: [CAPABILITIES.ticketAssign, CAPABILITIES.bulletinManage, CAPABILITIES.channelAccountManage, CAPABILITIES.runtimeManage, CAPABILITIES.aiConfigRead, CAPABILITIES.aiConfigManage, CAPABILITIES.userManage] },
+  '/qa-training': { allOf: [CAPABILITIES.qaManage] },
   '/provider-credentials': { allOf: [CAPABILITIES.runtimeManage] },
   '/webcall': { allOf: [CAPABILITIES.webcallVoiceQueueView] },
   '/webcall-ai-demo': { allOf: [CAPABILITIES.runtimeManage] },
@@ -108,6 +110,7 @@ export const capabilityCatalogMeta: CapabilityMeta[] = [
   { capability: CAPABILITIES.channelAccountManage, label: '管理发送线路', group: '治理配置', description: '维护渠道账号、兜底线路和健康状态。', risk: 'high' },
   { capability: CAPABILITIES.runtimeManage, label: '运行恢复', group: '治理配置', description: '执行重排、同步、连接检查等运维动作。', risk: 'high' },
   { capability: CAPABILITIES.marketManage, label: '管理市场', group: '治理配置', description: '维护市场和团队归属。', risk: 'high' },
+  { capability: CAPABILITIES.qaManage, label: '质检与培训', group: '治理配置', description: '查看质检样本、培训任务和知识缺口闭环。', risk: 'normal' },
   { capability: CAPABILITIES.userManage, label: '管理员工账号', group: '账号权限', description: '创建账号、停用账号、重置密码和授权。', risk: 'high' },
   { capability: CAPABILITIES.speedafWorkOrderWrite, label: 'Speedaf 催派工单', group: 'Speedaf 工具', description: '创建 Speedaf 派送跟进工单。', risk: 'high' },
   { capability: CAPABILITIES.speedafAddressUpdateWrite, label: 'Speedaf 地址更新', group: 'Speedaf 工具', description: '提交地址更新确认流程。', risk: 'high' },

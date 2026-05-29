@@ -12,6 +12,7 @@ const overviewRoute = readFileSync(resolve(root, 'src/routes/index.tsx'), 'utf8'
 const workspaceRoute = readFileSync(resolve(root, 'src/routes/workspace.tsx'), 'utf8')
 const runtimeRoute = readFileSync(resolve(root, 'src/routes/runtime.tsx'), 'utf8')
 const controlTowerRoute = readFileSync(resolve(root, 'src/routes/control-tower.tsx'), 'utf8')
+const qaTrainingRoute = readFileSync(resolve(root, 'src/routes/qa-training.tsx'), 'utf8')
 const webchatRoute = readFileSync(resolve(root, 'src/routes/webchat.tsx'), 'utf8')
 const webcallOperatorRoute = readFileSync(resolve(root, 'src/routes/webcall-operator.tsx'), 'utf8')
 const webchatInboxV5 = readFileSync(resolve(root, 'src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx'), 'utf8')
@@ -201,6 +202,7 @@ test('command palette exposes high-frequency operator workflow shortcuts', () =>
   assert.match(commandPalette, /打开 WebChat 收件箱/)
   assert.match(commandPalette, /打开 WebCall 工作台/)
   assert.match(commandPalette, /打开 Control Tower/)
+  assert.match(commandPalette, /打开 QA \/ Training Loop/)
   assert.match(commandPalette, /进入运行恢复 \/ dead 重排/)
   assert.match(commandPalette, /刷新运行状态/)
   assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['runtimeHealth'\] \}\)/)
@@ -225,6 +227,26 @@ test('control tower page uses the v1.7.8 governance backend contract', () => {
   assert.match(controlTowerRoute, /data-testid="control-tower-governance-lanes"/)
   assert.match(controlTowerRoute, /data-testid="control-tower-template-closure"/)
   assert.doesNotMatch(controlTowerRoute, /\bfetch\s*\(/)
+})
+
+test('qa training page uses the v1.7.8 training loop backend contract', () => {
+  assert.match(types, /export interface QATraining \{/)
+  assert.match(types, /export interface QATrainingQueueItem \{/)
+  assert.match(apiClient, /qaTraining: \(\) => request<QATraining>\('\/api\/lite\/qa-training'\)/)
+  assert.match(rbacManifest, /qaManage: 'qa\.manage'/)
+  assert.match(rbacManifest, /'\/qa-training': \{ allOf: \[CAPABILITIES\.qaManage\] \}/)
+  assert.match(qaTrainingRoute, /path: '\/qa-training'/)
+  assert.match(qaTrainingRoute, /<RequireCapability requirement=\{routeAccess\['\/qa-training'\]\}>/)
+  assert.match(qaTrainingRoute, /queryKey: \['qaTraining'\]/)
+  assert.match(qaTrainingRoute, /data-testid="qa-training-template-blocks"/)
+  assert.match(qaTrainingRoute, /data-testid="qa-training-real-kpis"/)
+  assert.match(qaTrainingRoute, /data-testid="qa-training-queue"/)
+  assert.match(qaTrainingRoute, /data-testid="qa-training-scorecard"/)
+  assert.match(qaTrainingRoute, /data-testid="qa-training-coaching-tasks"/)
+  assert.match(qaTrainingRoute, /data-testid="qa-training-knowledge-gaps"/)
+  assert.match(qaTrainingRoute, /data-testid="qa-training-loop-steps"/)
+  assert.match(qaTrainingRoute, /data-testid="qa-training-template-closure"/)
+  assert.doesNotMatch(qaTrainingRoute, /\bfetch\s*\(/)
 })
 
 test('overview page provides priority action entrypoints', () => {
@@ -261,6 +283,7 @@ test('admin operator surfaces do not bypass unified api client with raw fetch', 
     ['src/routes/workspace.tsx', workspaceRoute],
     ['src/routes/runtime.tsx', runtimeRoute],
     ['src/routes/control-tower.tsx', controlTowerRoute],
+    ['src/routes/qa-training.tsx', qaTrainingRoute],
     ['src/routes/webchat.tsx', webchatRoute],
     ['src/routes/webcall-operator.tsx', webcallOperatorRoute],
     ['src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx', webchatInboxV5],
