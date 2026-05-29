@@ -8,6 +8,7 @@ import type {
   CaseListPage,
   ChannelAccount,
   ChannelOnboardingTaskList,
+  ControlTower,
   LiteMeta,
   Market,
   ProductionReadiness,
@@ -349,6 +350,7 @@ export const api = {
   },
   caseDetail: (ticketId: number) => request<CaseDetail>(`/api/tickets/${ticketId}/summary`),
   todayWorkbench: () => request<TodayWorkbench>('/api/lite/today-workbench'),
+  controlTower: () => request<ControlTower>('/api/lite/control-tower'),
   ticketTimeline: (ticketId: number, params?: { cursor?: string | null; limit?: number }) => {
     const search = new URLSearchParams()
     search.set('limit', String(params?.limit ?? 50))

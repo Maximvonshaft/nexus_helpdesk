@@ -14,6 +14,7 @@ import { Route as WebCallAIDemoRoute } from '@/routes/webcall-ai-demo'
 import { Route as ProviderCredentialsRoute } from '@/routes/provider-credentials'
 import { Route as BulletinsRoute } from '@/routes/bulletins'
 import { Route as AIControlRoute } from '@/routes/ai-control'
+import { Route as ControlTowerRoute } from '@/routes/control-tower'
 import { Route as ControlPlaneRoute } from '@/routes/control-plane'
 import { Route as AccountsRoute } from '@/routes/accounts'
 import { Route as OutboundEmailRoute } from '@/routes/outbound-email'
@@ -39,6 +40,7 @@ const routeTree = RootRoute.addChildren([
   ProviderCredentialsRoute,
   BulletinsRoute,
   AIControlRoute,
+  ControlTowerRoute,
   ControlPlaneRoute,
   AccountsRoute,
   OutboundEmailRoute,

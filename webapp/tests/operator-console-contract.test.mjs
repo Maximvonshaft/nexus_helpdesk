@@ -11,6 +11,7 @@ const commandPalette = readFileSync(resolve(root, 'src/components/ui/CommandPale
 const overviewRoute = readFileSync(resolve(root, 'src/routes/index.tsx'), 'utf8')
 const workspaceRoute = readFileSync(resolve(root, 'src/routes/workspace.tsx'), 'utf8')
 const runtimeRoute = readFileSync(resolve(root, 'src/routes/runtime.tsx'), 'utf8')
+const controlTowerRoute = readFileSync(resolve(root, 'src/routes/control-tower.tsx'), 'utf8')
 const webchatRoute = readFileSync(resolve(root, 'src/routes/webchat.tsx'), 'utf8')
 const webcallOperatorRoute = readFileSync(resolve(root, 'src/routes/webcall-operator.tsx'), 'utf8')
 const webchatInboxV5 = readFileSync(resolve(root, 'src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx'), 'utf8')
@@ -199,11 +200,31 @@ test('command palette exposes high-frequency operator workflow shortcuts', () =>
   assert.match(commandPalette, /处理工单 \/ 客户回复/)
   assert.match(commandPalette, /打开 WebChat 收件箱/)
   assert.match(commandPalette, /打开 WebCall 工作台/)
+  assert.match(commandPalette, /打开 Control Tower/)
   assert.match(commandPalette, /进入运行恢复 \/ dead 重排/)
   assert.match(commandPalette, /刷新运行状态/)
   assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['runtimeHealth'\] \}\)/)
   assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['queueSummary'\] \}\)/)
   assert.match(commandPalette, /navigate\(\{ to: '\/runtime' \}\)/)
+})
+
+test('control tower page uses the v1.7.8 governance backend contract', () => {
+  assert.match(types, /export interface ControlTower \{/)
+  assert.match(types, /export interface ControlTowerAction \{/)
+  assert.match(apiClient, /controlTower: \(\) => request<ControlTower>\('\/api\/lite\/control-tower'\)/)
+  assert.match(rbacManifest, /'\/control-tower': \{ anyOf: \[CAPABILITIES\.ticketAssign, CAPABILITIES\.bulletinManage, CAPABILITIES\.channelAccountManage, CAPABILITIES\.runtimeManage, CAPABILITIES\.aiConfigRead, CAPABILITIES\.aiConfigManage, CAPABILITIES\.userManage\] \}/)
+  assert.match(controlTowerRoute, /path: '\/control-tower'/)
+  assert.match(controlTowerRoute, /<RequireCapability requirement=\{routeAccess\['\/control-tower'\]\}>/)
+  assert.match(controlTowerRoute, /queryKey: \['controlTower'\]/)
+  assert.match(controlTowerRoute, /data-testid="control-tower-template-blocks"/)
+  assert.match(controlTowerRoute, /data-testid="control-tower-real-kpis"/)
+  assert.match(controlTowerRoute, /data-testid="control-tower-manager-actions"/)
+  assert.match(controlTowerRoute, /data-testid="control-tower-team-workload"/)
+  assert.match(controlTowerRoute, /data-testid="control-tower-channel-health"/)
+  assert.match(controlTowerRoute, /data-testid="control-tower-bulletin-impact"/)
+  assert.match(controlTowerRoute, /data-testid="control-tower-governance-lanes"/)
+  assert.match(controlTowerRoute, /data-testid="control-tower-template-closure"/)
+  assert.doesNotMatch(controlTowerRoute, /\bfetch\s*\(/)
 })
 
 test('overview page provides priority action entrypoints', () => {
@@ -239,6 +260,7 @@ test('admin operator surfaces do not bypass unified api client with raw fetch', 
   const checkedFiles = [
     ['src/routes/workspace.tsx', workspaceRoute],
     ['src/routes/runtime.tsx', runtimeRoute],
+    ['src/routes/control-tower.tsx', controlTowerRoute],
     ['src/routes/webchat.tsx', webchatRoute],
     ['src/routes/webcall-operator.tsx', webcallOperatorRoute],
     ['src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx', webchatInboxV5],

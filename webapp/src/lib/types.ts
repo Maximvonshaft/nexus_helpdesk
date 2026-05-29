@@ -137,6 +137,87 @@ export interface TodayWorkbench {
   command_center: TodayWorkbenchCommand[]
 }
 
+export interface ControlTowerKpi {
+  key: string
+  label: string
+  value: number
+  hint: string
+  tone: BadgeTone
+}
+
+export interface ControlTowerAction {
+  key: string
+  label: string
+  count: number
+  tone: BadgeTone
+  next: string
+  href: string
+  capability: string
+  enabled: boolean
+}
+
+export interface ControlTowerTeamWorkload {
+  team_id?: number | null
+  team_name: string
+  active_tickets: number
+  unassigned: number
+  sla_risk: number
+  overdue: number
+}
+
+export interface ControlTowerChannelHealth {
+  key: string
+  label: string
+  health: BadgeTone
+  queue: number
+  risk: number
+  href: string
+  capability: string
+  enabled: boolean
+}
+
+export interface ControlTowerBulletinImpact {
+  severity: string
+  category: string
+  count: number
+  tone: BadgeTone
+}
+
+export interface ControlTowerGovernanceLane {
+  key: string
+  area: string
+  value: number
+  risk: BadgeTone
+  next: string
+  href: string
+  capability: string
+  enabled: boolean
+}
+
+export interface ControlTowerTemplateBlock {
+  key: string
+  label: string
+  backend_contract: string
+  status: string
+  evidence: string
+  href: string
+}
+
+export interface ControlTower {
+  generated_at: string
+  role: string
+  user_id: number
+  capabilities: string[]
+  kpis: ControlTowerKpi[]
+  manager_actions: ControlTowerAction[]
+  team_workload: ControlTowerTeamWorkload[]
+  channel_health: ControlTowerChannelHealth[]
+  bulletin_impact: ControlTowerBulletinImpact[]
+  governance_lanes: ControlTowerGovernanceLane[]
+  template_blocks: ControlTowerTemplateBlock[]
+  facts: Record<string, number | string[]>
+}
+
 export interface TranscriptMessage {
   id: number
   role: string

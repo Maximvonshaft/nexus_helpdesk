@@ -35,6 +35,7 @@ from ..services.lite_service import (
     update_lite_case,
     workflow_update_lite_case,
 )
+from ..services.control_tower_service import build_control_tower
 from ..services.today_workbench_service import build_today_workbench
 from .deps import get_current_user
 from ..unit_of_work import managed_session
@@ -68,6 +69,11 @@ def get_lite_meta(db: Session = Depends(get_db), current_user=Depends(get_curren
 @router.get("/today-workbench")
 def today_workbench(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     return build_today_workbench(db, current_user)
+
+
+@router.get("/control-tower")
+def control_tower(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return build_control_tower(db, current_user)
 
 
 @router.get("/cases")

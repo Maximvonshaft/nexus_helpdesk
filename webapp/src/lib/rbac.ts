@@ -51,6 +51,7 @@ export type CapabilityMeta = {
 
 export const routeAccess = {
   '/runtime': { allOf: [CAPABILITIES.runtimeManage] },
+  '/control-tower': { anyOf: [CAPABILITIES.ticketAssign, CAPABILITIES.bulletinManage, CAPABILITIES.channelAccountManage, CAPABILITIES.runtimeManage, CAPABILITIES.aiConfigRead, CAPABILITIES.aiConfigManage, CAPABILITIES.userManage] },
   '/provider-credentials': { allOf: [CAPABILITIES.runtimeManage] },
   '/webcall': { allOf: [CAPABILITIES.webcallVoiceQueueView] },
   '/webcall-ai-demo': { allOf: [CAPABILITIES.runtimeManage] },
