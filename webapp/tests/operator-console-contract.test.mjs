@@ -122,6 +122,7 @@ test('webchat voice admin calls delegate to unified api client', () => {
 
 test('runtime recovery actions use safe api client endpoints', () => {
   assert.match(apiClient, /export type RuntimeRecoveryResult = \{/)
+  assert.match(types, /export interface RequestTraceResult \{/)
   assert.match(apiClient, /requeueJob: \(jobId: number\) => request<RuntimeRecoveryResult>/)
   assert.match(apiClient, /\/api\/admin\/jobs\/\$\{jobId\}\/requeue/)
   assert.match(apiClient, /requeueDeadJobs: \(params\?: \{ job_type\?: string; limit\?: number \}\)/)
@@ -130,6 +131,8 @@ test('runtime recovery actions use safe api client endpoints', () => {
   assert.match(apiClient, /\/api\/admin\/outbound\/\$\{messageId\}\/requeue/)
   assert.match(apiClient, /requeueDeadOutbound: \(params\?: \{ limit\?: number \}\)/)
   assert.match(apiClient, /\/api\/admin\/outbound\/requeue-dead/)
+  assert.match(apiClient, /requestTrace: \(requestId: string\) => request<RequestTraceResult>/)
+  assert.match(apiClient, /\/api\/admin\/provider-runtime\/request-trace\/\$\{encodeURIComponent\(requestId\)\}/)
 })
 
 test('runtime page exposes confirmed recovery actions and refreshes runtime views', () => {
@@ -143,6 +146,10 @@ test('runtime page exposes confirmed recovery actions and refreshes runtime view
   assert.match(runtimeRoute, /重排 dead outbound/)
   assert.match(runtimeRoute, /重排此任务/)
   assert.match(runtimeRoute, /不会删除任务，不会跳过权限，不会绕过后端审计/)
+  assert.match(runtimeRoute, /data-testid="runtime-request-trace"/)
+  assert.match(runtimeRoute, /Request Trace Drawer/)
+  assert.match(runtimeRoute, /api\.requestTrace\(traceId\)/)
+  assert.match(runtimeRoute, /request_id、error_code、retryability、audit 和 timeline/)
   for (const key of ['runtimeHealth', 'readiness', 'signoff', 'jobs', 'queueSummary', 'openclawConnectivity']) {
     assert.match(runtimeRoute, new RegExp(`invalidateQueries\\(\\{ queryKey: \\['${key}'\\] \\}\\)`))
   }
@@ -200,6 +207,7 @@ test('command palette exposes high-frequency operator workflow shortcuts', () =>
   assert.match(commandPalette, /打开 WebChat 收件箱/)
   assert.match(commandPalette, /打开 WebCall 工作台/)
   assert.match(commandPalette, /进入运行恢复 \/ dead 重排/)
+  assert.match(commandPalette, /按 request_id 排障/)
   assert.match(commandPalette, /刷新运行状态/)
   assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['runtimeHealth'\] \}\)/)
   assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['queueSummary'\] \}\)/)

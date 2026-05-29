@@ -206,6 +206,33 @@ export type OutboundSendPayload = {
   body: string
 }
 
+export type RequestTraceSectionItem = Record<string, unknown>
+
+export interface RequestTraceSummary {
+  provider_runtime_count: number
+  admin_audit_count: number
+  tool_call_count: number
+  timeline_count: number
+  outbound_count: number
+  integration_count: number
+  error_codes: string[]
+  retryable: boolean
+}
+
+export interface RequestTraceResult {
+  request_id: string
+  found: boolean
+  summary: RequestTraceSummary
+  sections: {
+    provider_runtime: RequestTraceSectionItem[]
+    admin_audit: RequestTraceSectionItem[]
+    tool_calls: RequestTraceSectionItem[]
+    ticket_timeline: RequestTraceSectionItem[]
+    outbound_messages: RequestTraceSectionItem[]
+    integration_requests: RequestTraceSectionItem[]
+  }
+}
+
 export interface EvidenceSummary {
   loaded: boolean
   preview_limit: number

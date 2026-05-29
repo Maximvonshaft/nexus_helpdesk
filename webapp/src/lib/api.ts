@@ -12,6 +12,7 @@ import type {
   Market,
   ProductionReadiness,
   QueueSummary,
+  RequestTraceResult,
   RuntimeHealth,
   OpenClawConnectivityProbe,
   OutboundChannelCapabilitiesResponse,
@@ -541,6 +542,7 @@ export const api = {
     const search = buildRecoverySearch(params)
     return request<RuntimeRecoveryResult>(`/api/admin/outbound/requeue-dead${search ? `?${search}` : ''}`, { method: 'POST' })
   },
+  requestTrace: (requestId: string) => request<RequestTraceResult>(`/api/admin/provider-runtime/request-trace/${encodeURIComponent(requestId)}`),
   consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
 
   webcallAIDemoStatus: () => request<WebCallAIDemoStatus>('/api/admin/webcall-ai-demo/status'),

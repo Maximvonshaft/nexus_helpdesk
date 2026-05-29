@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import uuid
@@ -7,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("APP_ENV", "development")
@@ -21,14 +22,16 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
 from app import models as _models  # noqa: E402,F401
+from app import tool_models as _tool_models  # noqa: E402,F401
 from app import voice_models as _voice_models  # noqa: E402,F401
 from app import webchat_models as _webchat_models  # noqa: E402,F401
 from app.auth_service import create_access_token  # noqa: E402
 from app.db import Base, get_db  # noqa: E402
 from app.enums import ConversationState, EventType, MessageStatus, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import Customer, OutboundEmailAccount, Team, Ticket, TicketEvent, TicketOutboundMessage, User  # noqa: E402
+from app.models import AdminAuditLog, IntegrationClient, IntegrationRequestLog, Customer, OutboundEmailAccount, Team, Ticket, TicketEvent, TicketOutboundMessage, User  # noqa: E402
 from app.settings import get_settings  # noqa: E402
+from app.tool_models import ToolCallLog  # noqa: E402
 from app.webchat_models import WebchatMessage  # noqa: E402
 
 
@@ -188,6 +191,115 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
     assert {row.status for row in rows} == {MessageStatus.draft, MessageStatus.pending}
     assert db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_draft_saved).count() == 1
     assert db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_queued).count() == 1
+
+
+def test_runtime_request_trace_aggregates_request_id_evidence(client: TestClient, db_session):
+    admin = _admin(db_session, user_id=9403)
+    team = _team(db_session)
+    ticket = _email_ticket(db_session, team=team)
+    request_id = f"trace-{_uid()}"
+    headers = _headers(admin)
+
+    db_session.execute(text("""
+        CREATE TABLE IF NOT EXISTS provider_runtime_audit_logs (
+            id VARCHAR(36) PRIMARY KEY,
+            tenant_id VARCHAR(36),
+            provider VARCHAR(100),
+            request_id VARCHAR(160),
+            channel_key VARCHAR(100),
+            session_id VARCHAR(160),
+            operation VARCHAR(80),
+            status VARCHAR(40),
+            safe_summary TEXT,
+            error_code VARCHAR(120),
+            elapsed_ms INTEGER,
+            created_at DATETIME
+        )
+    """))
+    db_session.execute(
+        text("""
+        INSERT INTO provider_runtime_audit_logs (
+            id, tenant_id, provider, request_id, channel_key, session_id,
+            operation, status, safe_summary, error_code, elapsed_ms, created_at
+        ) VALUES (
+            :id, 'default', 'codex_app_server', :request_id, 'website', 'session-1',
+            'generate', 'failed', :safe_summary, 'provider_timeout', 1200, CURRENT_TIMESTAMP
+        )
+        """),
+        {"id": str(uuid.uuid4()), "request_id": request_id, "safe_summary": json.dumps({"stage": "reply"})},
+    )
+    db_session.add_all([
+        AdminAuditLog(
+            actor_id=admin.id,
+            action="admin_action.rate_limited",
+            target_type="runtime",
+            new_value_json=json.dumps({"request_id": request_id, "secret": "must-not-leak"}),
+        ),
+        ToolCallLog(
+            tool_name="speedaf.tracking.lookup",
+            provider="speedaf",
+            tool_type="read_only",
+            request_id=request_id,
+            ticket_id=ticket.id,
+            status="failed",
+            error_code="bridge_timeout",
+            redaction_applied=True,
+        ),
+        TicketOutboundMessage(
+            ticket_id=ticket.id,
+            channel=SourceChannel.email,
+            status=MessageStatus.dead,
+            subject="Trace subject",
+            body="Trace body",
+            provider_status="dead",
+            provider_message_id=request_id,
+            failure_code="smtp_timeout",
+            retry_count=1,
+            max_retries=3,
+            created_by=admin.id,
+        ),
+        TicketEvent(
+            ticket_id=ticket.id,
+            actor_id=admin.id,
+            event_type=EventType.field_updated,
+            field_name="status",
+            payload_json=json.dumps({"request_id": request_id, "transition": "queued_to_dead"}),
+        ),
+    ])
+    integration_client = IntegrationClient(
+        name=f"trace-client-{_uid()}",
+        key_id=f"trace-key-{_uid()}",
+        secret_hash="hash",
+        scopes_csv="task.write",
+        is_active=True,
+    )
+    db_session.add(integration_client)
+    db_session.flush()
+    db_session.add(IntegrationRequestLog(
+        client_id=integration_client.id,
+        endpoint="integration.task",
+        method="POST",
+        idempotency_key=request_id,
+        status_code=500,
+        error_code="upstream_timeout",
+    ))
+    db_session.commit()
+
+    response = client.get(f"/api/admin/provider-runtime/request-trace/{request_id}", headers=headers)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["request_id"] == request_id
+    assert payload["found"] is True
+    assert payload["summary"]["provider_runtime_count"] == 1
+    assert payload["summary"]["admin_audit_count"] == 1
+    assert payload["summary"]["tool_call_count"] == 1
+    assert payload["summary"]["timeline_count"] == 1
+    assert payload["summary"]["outbound_count"] == 1
+    assert payload["summary"]["integration_count"] == 1
+    assert payload["summary"]["retryable"] is True
+    assert {"provider_timeout", "bridge_timeout", "smtp_timeout", "upstream_timeout"}.issubset(set(payload["summary"]["error_codes"]))
+    assert payload["sections"]["admin_audit"][0]["new_value"]["secret"] == "[REDACTED]"
+    assert payload["sections"]["outbound_messages"][0]["retryable"] is True
 
 
 def test_webcall_accept_end_writes_timeline_voice_evidence(client: TestClient, db_session):
