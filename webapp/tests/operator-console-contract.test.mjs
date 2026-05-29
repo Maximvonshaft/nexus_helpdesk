@@ -160,6 +160,12 @@ test('rbac manifest centralizes route and high-risk action access', () => {
     'webcall.voice.accept',
     'webcall.voice.reject',
     'webcall.voice.end',
+    'webchat.handoff.accept',
+    'webchat.handoff.decline',
+    'webchat.handoff.force_takeover',
+    'webchat.handoff.release',
+    'webchat.handoff.resume_ai',
+    'webchat.conversation.monitor_ai',
   ]) {
     assert.match(rbacManifest, new RegExp(capability.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }

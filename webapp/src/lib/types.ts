@@ -1,3 +1,5 @@
+import type { WebchatVoiceIncomingSession, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
+
 export type BadgeTone = 'default' | 'warning' | 'success' | 'danger'
 
 export interface AuthUser {
@@ -903,4 +905,101 @@ export interface WebchatReplyResult {
     normalized_body: string
   }
   message: WebchatMessage
+}
+
+export type WebCallOperatorQueueSource = 'voice' | 'handoff' | 'conversation'
+
+export interface WebCallOperatorRow {
+  key: string
+  ticket_id: number
+  ticket_no?: string | null
+  title?: string | null
+  visitor_label?: string | null
+  origin?: string | null
+  page_url?: string | null
+  voice_session_id?: string | null
+  handoff_request_id?: number | null
+  handoff_status?: string | null
+  ai_status?: string | null
+  status?: string | null
+  source: WebCallOperatorQueueSource
+  priority: number
+}
+
+export interface WebCallIdentityVerification {
+  verification_status: 'matched' | 'needs_review' | string
+  match_basis: string[]
+  visitor: {
+    name?: string | null
+    email?: string | null
+    phone?: string | null
+  }
+  ticket_customer: {
+    name?: string | null
+    email?: string | null
+    phone?: string | null
+  }
+  tracking_number?: string | null
+  market_code?: string | null
+  country_code?: string | null
+}
+
+export interface WebCallAISuggestion {
+  label: string
+  text: string
+  source: string
+}
+
+export interface WebCallOperatorPermissions {
+  can_read_ticket: boolean
+  can_read_customer_profile: boolean
+  can_read_voice: boolean
+  can_view_voice_queue: boolean
+  can_accept_voice: boolean
+  can_reject_voice: boolean
+  can_end_voice: boolean
+  can_accept_handoff: boolean
+  can_decline_handoff: boolean
+  can_force_takeover: boolean
+  can_release_handoff: boolean
+  can_resume_ai: boolean
+  can_monitor_ai: boolean
+  can_open_demo: boolean
+}
+
+export interface WebCallOperatorSelected {
+  ticket_id: number
+  row?: WebCallOperatorRow | null
+  ticket?: CaseDetail | null
+  thread?: WebchatThread | null
+  handoff?: WebchatHandoffRequest | null
+  voice_sessions: { items: WebchatVoiceSession[] }
+  timeline: {
+    items: Array<Record<string, unknown>>
+    next_cursor: string | null
+    has_more: boolean
+  }
+  identity: WebCallIdentityVerification
+  ai_suggestions: WebCallAISuggestion[]
+}
+
+export interface WebCallOperatorWorkbenchResponse {
+  generated_at: string
+  filters: {
+    view: string
+    voice_status: string
+    limit: number
+  }
+  rows: WebCallOperatorRow[]
+  selected_ticket_id?: number | null
+  selected?: WebCallOperatorSelected | null
+  voice_queue: { items: WebchatVoiceIncomingSession[] }
+  handoff_queue: WebchatHandoffQueue & { blocked_reason?: string | null }
+  demo: {
+    visible: boolean
+    status?: Record<string, unknown> | null
+    blocked_reason?: string | null
+  }
+  permissions: WebCallOperatorPermissions
+  source_contracts: string[]
 }

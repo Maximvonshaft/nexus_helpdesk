@@ -51,9 +51,8 @@ def test_agent_webcall_console_route_is_registered():
     assert "WebCall Agent Console" in route_text
     assert "path: '/webcall'" in operator_text
     assert "WebCall Operator Workbench" in operator_text
-    assert "api.webchatVoiceIncomingSessions" in operator_text
-    assert "api.webchatHandoffQueue" in operator_text
-    assert "api.webcallAIDemoStatus" in operator_text
+    assert "api.webcallOperatorWorkbench" in operator_text
+    assert "/api/webcall/operator/workbench" in (ROOT / "webapp" / "src" / "lib" / "api.ts").read_text(encoding="utf-8")
     assert "AgentWebCallPanel" in route_text
     assert "AgentWebCallPanel" in operator_text
     assert "Mock voice session" not in route_text

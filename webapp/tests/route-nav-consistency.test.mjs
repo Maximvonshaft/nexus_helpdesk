@@ -41,7 +41,7 @@ test('internal webcall routes are intentionally classified', () => {
   assert.match(router, /Top-level operator WebCall workbench/)
   assert.match(router, /Internal ops-only AI sandbox/)
   assert.match(appShell, /to: '\/webcall'[\s\S]*access: routeAccess\['\/webcall'\]/)
-  assert.match(rbac, /'\/webcall': \{ allOf: \[CAPABILITIES\.webcallVoiceQueueView\] \}/)
+  assert.match(rbac, /'\/webcall': \{[\s\S]*CAPABILITIES\.ticketRead[\s\S]*CAPABILITIES\.customerProfileRead[\s\S]*CAPABILITIES\.webcallVoiceQueueView[\s\S]*CAPABILITIES\.webcallVoiceRead[\s\S]*CAPABILITIES\.webchatHandoffAccept[\s\S]*\}/)
   assert.match(appShell, /to: '\/webcall-ai-demo'[\s\S]*access: routeAccess\['\/webcall-ai-demo'\]/)
   assert.match(rbac, /'\/webcall-ai-demo': \{ allOf: \[CAPABILITIES\.runtimeManage\] \}/)
   assert.doesNotMatch(appShell, /to: '\/webchat-voice'/)

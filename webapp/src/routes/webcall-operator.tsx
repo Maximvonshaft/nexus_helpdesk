@@ -1,11 +1,17 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { createRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
-import type { CaseDetail, WebchatConversation, WebchatHandoffRequest, WebchatThread } from '@/lib/types'
-import type { WebchatVoiceIncomingSession } from '@/lib/webchatVoiceTypes'
+import type {
+  CaseDetail,
+  WebCallAISuggestion,
+  WebCallIdentityVerification,
+  WebCallOperatorRow,
+  WebchatHandoffRequest,
+  WebchatThread,
+} from '@/lib/types'
 import { AgentWebCallPanel } from '@/components/webcall/AgentWebCallPanel'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -20,25 +26,6 @@ import { useSession } from '@/hooks/useAuth'
 import { canAccess, routeAccess } from '@/lib/rbac'
 import { canForceWebchatHandoff } from '@/lib/access'
 import { formatDateTime, labelize, marketLabel, sanitizeDisplayText, statusTone } from '@/lib/format'
-
-type QueueSource = 'voice' | 'handoff' | 'conversation'
-
-type WorkbenchRow = {
-  key: string
-  ticketId: number
-  ticketNo?: string | null
-  title?: string | null
-  visitorLabel?: string | null
-  origin?: string | null
-  pageUrl?: string | null
-  voiceSessionId?: string | null
-  handoffRequestId?: number | null
-  handoffStatus?: string | null
-  aiStatus?: string | null
-  status?: string | null
-  source: QueueSource
-  priority: number
-}
 
 type HandoffAction =
   | { type: 'accept'; requestId: number }
@@ -61,102 +48,11 @@ function valueOrDash(value?: string | number | null) {
   return sanitizeDisplayText(String(value))
 }
 
-function visitorLabelFromConversation(item?: WebchatConversation | null) {
-  if (!item) return 'Anonymous visitor'
-  return item.visitor_name || item.visitor_email || item.visitor_phone || 'Anonymous visitor'
-}
-
-function visitorLabelFromHandoff(item?: WebchatHandoffRequest | null) {
-  if (!item) return 'Anonymous visitor'
-  return item.visitor_name || item.visitor_email || item.visitor_phone || 'Anonymous visitor'
-}
-
-function visitorLabelFromVoice(item?: WebchatVoiceIncomingSession | null) {
-  if (!item) return 'Anonymous visitor'
-  return item.visitor_label || 'Anonymous visitor'
-}
-
 function normalized(value?: string | null) {
   return String(value || '').trim().toLowerCase()
 }
 
-function mergeRow(map: Map<number, WorkbenchRow>, next: WorkbenchRow) {
-  const existing = map.get(next.ticketId)
-  if (!existing) {
-    map.set(next.ticketId, next)
-    return
-  }
-  map.set(next.ticketId, {
-    ...next,
-    ...existing,
-    key: existing.priority <= next.priority ? existing.key : next.key,
-    source: existing.priority <= next.priority ? existing.source : next.source,
-    priority: Math.min(existing.priority, next.priority),
-    voiceSessionId: existing.voiceSessionId || next.voiceSessionId,
-    handoffRequestId: existing.handoffRequestId || next.handoffRequestId,
-    handoffStatus: existing.handoffStatus || next.handoffStatus,
-    aiStatus: existing.aiStatus || next.aiStatus,
-    status: existing.status || next.status,
-  })
-}
-
-function queueRows(
-  voiceItems: WebchatVoiceIncomingSession[],
-  handoffItems: WebchatHandoffRequest[],
-  conversations: WebchatConversation[],
-) {
-  const map = new Map<number, WorkbenchRow>()
-  for (const item of voiceItems) {
-    mergeRow(map, {
-      key: `voice-${item.voice_session_id}`,
-      ticketId: item.ticket_id,
-      ticketNo: item.ticket_no,
-      title: item.ticket_title,
-      visitorLabel: visitorLabelFromVoice(item),
-      origin: item.origin,
-      pageUrl: item.page_url,
-      voiceSessionId: item.voice_session_id,
-      status: item.status,
-      source: 'voice',
-      priority: 0,
-    })
-  }
-  for (const item of handoffItems) {
-    mergeRow(map, {
-      key: `handoff-${item.id ?? item.ticket_id}`,
-      ticketId: item.ticket_id,
-      ticketNo: item.ticket_no,
-      title: item.title,
-      visitorLabel: visitorLabelFromHandoff(item),
-      origin: item.origin,
-      handoffRequestId: item.id,
-      handoffStatus: item.status,
-      aiStatus: item.ai_status,
-      source: 'handoff',
-      priority: item.status === 'requested' ? 1 : 2,
-    })
-  }
-  for (const item of conversations) {
-    mergeRow(map, {
-      key: `conversation-${item.conversation_id}`,
-      ticketId: item.ticket_id,
-      ticketNo: item.ticket_no,
-      title: item.title,
-      visitorLabel: visitorLabelFromConversation(item),
-      origin: item.origin,
-      pageUrl: item.page_url,
-      handoffRequestId: item.current_handoff_request_id,
-      handoffStatus: item.handoff_status,
-      aiStatus: item.ai_status,
-      status: item.status,
-      source: 'conversation',
-      priority: item.needs_human || item.ai_pending ? 3 : 4,
-    })
-  }
-  return [...map.values()].sort((a, b) => a.priority - b.priority || a.ticketId - b.ticketId)
-}
-
-function sourceBadge(row: WorkbenchRow) {
+function sourceBadge(row: WebCallOperatorRow) {
   if (row.source === 'voice') return <Badge tone="warning">Incoming WebCall</Badge>
   if (row.source === 'handoff') return <Badge tone="success">Handoff</Badge>
   return <Badge>WebChat</Badge>
@@ -170,25 +66,36 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   return <section className="stack compact"><div className="section-title">{title}</div>{children}</section>
 }
 
-function IdentityPanel({ thread, detail, row }: { thread?: WebchatThread; detail?: CaseDetail; row?: WorkbenchRow | null }) {
-  const visitorName = thread?.visitor?.name || row?.visitorLabel || null
-  const visitorEmail = thread?.visitor?.email || null
-  const visitorPhone = thread?.visitor?.phone || null
-  const ticketName = detail?.customer_name || detail?.customer?.name || null
-  const ticketEmail = detail?.customer?.email || (detail?.preferred_reply_contact?.includes('@') ? detail.preferred_reply_contact : null)
-  const ticketPhone = detail?.customer?.phone || (!detail?.preferred_reply_contact?.includes('@') ? detail?.preferred_reply_contact : null)
+function IdentityPanel({
+  thread,
+  detail,
+  row,
+  identity,
+}: {
+  thread?: WebchatThread | null
+  detail?: CaseDetail | null
+  row?: WebCallOperatorRow | null
+  identity?: WebCallIdentityVerification | null
+}) {
+  const visitorName = identity?.visitor.name || thread?.visitor?.name || row?.visitor_label || null
+  const visitorEmail = identity?.visitor.email || thread?.visitor?.email || null
+  const visitorPhone = identity?.visitor.phone || thread?.visitor?.phone || null
+  const ticketName = identity?.ticket_customer.name || detail?.customer_name || detail?.customer?.name || null
+  const ticketEmail = identity?.ticket_customer.email || detail?.customer?.email || (detail?.preferred_reply_contact?.includes('@') ? detail.preferred_reply_contact : null)
+  const ticketPhone = identity?.ticket_customer.phone || detail?.customer?.phone || (!detail?.preferred_reply_contact?.includes('@') ? detail?.preferred_reply_contact : null)
   const nameMatch = Boolean(visitorName && ticketName && normalized(visitorName) === normalized(ticketName))
   const emailMatch = Boolean(visitorEmail && ticketEmail && normalized(visitorEmail) === normalized(ticketEmail))
   const phoneMatch = Boolean(visitorPhone && ticketPhone && normalized(visitorPhone) === normalized(ticketPhone))
-  const verified = nameMatch || emailMatch || phoneMatch
+  const verified = identity ? identity.verification_status === 'matched' : nameMatch || emailMatch || phoneMatch
+  const matchBasis = identity?.match_basis?.length ? identity.match_basis.join(', ') : emailMatch ? 'email match' : phoneMatch ? 'phone match' : nameMatch ? 'name match' : 'no direct match'
 
   return (
     <Card data-testid="webcall-identity-verification">
-      <CardHeader title="Customer Profile / Identity" subtitle="来自 WebChat thread 与 ticket summary 的客户资料核对。" />
+      <CardHeader title="Customer Profile / Identity" subtitle="来自 WebCall operator backend 契约的客户资料核对。" />
       <CardBody>
         <div className="badges">
           <Badge tone={verified ? 'success' : 'warning'}>{verified ? '身份线索匹配' : '需要人工核对'}</Badge>
-          <Badge>{emailMatch ? 'email match' : phoneMatch ? 'phone match' : nameMatch ? 'name match' : 'no direct match'}</Badge>
+          <Badge>{matchBasis}</Badge>
         </div>
         <div className="kv-grid">
           <DetailField label="访客姓名" value={visitorName} />
@@ -197,8 +104,8 @@ function IdentityPanel({ thread, detail, row }: { thread?: WebchatThread; detail
           <DetailField label="工单 Email" value={ticketEmail} />
           <DetailField label="访客电话" value={visitorPhone} />
           <DetailField label="工单电话" value={ticketPhone} />
-          <DetailField label="运单号" value={detail?.tracking_number} />
-          <DetailField label="市场" value={marketLabel(detail?.market_code, detail?.country_code)} />
+          <DetailField label="运单号" value={identity?.tracking_number || detail?.tracking_number} />
+          <DetailField label="市场" value={marketLabel(identity?.market_code || detail?.market_code, identity?.country_code || detail?.country_code)} />
         </div>
       </CardBody>
     </Card>
@@ -209,27 +116,30 @@ function AISuggestionsPanel({
   thread,
   detail,
   handoff,
+  suggestions,
 }: {
-  thread?: WebchatThread
-  detail?: CaseDetail
+  thread?: WebchatThread | null
+  detail?: CaseDetail | null
   handoff?: WebchatHandoffRequest | null
+  suggestions?: WebCallAISuggestion[] | null
 }) {
   const latestAiTurn = (thread?.ai_turns ?? []).slice(-1)[0]
-  const suggestions = [
+  const fallbackSuggestions = [
     { label: 'Recommended action', text: handoff?.recommended_agent_action || thread?.required_action || detail?.required_action },
     { label: 'Missing information', text: detail?.missing_fields },
     { label: 'Customer update', text: detail?.customer_update },
     { label: 'AI summary', text: detail?.ai_summary },
     { label: 'Latest AI turn', text: latestAiTurn ? `${latestAiTurn.status}${latestAiTurn.reply_source ? ` / ${latestAiTurn.reply_source}` : ''}${latestAiTurn.fallback_reason ? ` / ${latestAiTurn.fallback_reason}` : ''}` : null },
   ].filter((item) => item.text)
+  const visibleSuggestions = suggestions?.length ? suggestions : fallbackSuggestions
 
   return (
     <Card data-testid="webcall-ai-suggestions">
-      <CardHeader title="AI Suggestions" subtitle="使用工单提炼、WebChat AI turn 与 handoff 推荐动作。" />
+      <CardHeader title="AI Suggestions" subtitle="使用 operator workbench 后端契约汇总工单提炼、WebChat AI turn 与 handoff 推荐动作。" />
       <CardBody>
-        {suggestions.length ? (
+        {visibleSuggestions.length ? (
           <div className="stack compact">
-            {suggestions.map((item) => (
+            {visibleSuggestions.map((item) => (
               <div className="message" data-role="agent" key={item.label}>
                 <div className="message-head"><strong>{item.label}</strong></div>
                 <div>{sanitizeDisplayText(String(item.text))}</div>
@@ -248,91 +158,43 @@ function WebCallOperatorWorkbenchPage() {
   const client = useQueryClient()
   const session = useSession()
   const navigate = useNavigate()
-  const canOpenDemo = canAccess(session.data, routeAccess['/webcall-ai-demo'])
+  const canOpenDemoByRole = canAccess(session.data, routeAccess['/webcall-ai-demo'])
   const canForceTakeover = canForceWebchatHandoff(session.data)
   const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null)
   const [handoffView, setHandoffView] = useState<'requested' | 'mine' | 'ai_active'>('requested')
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null)
 
-  const voiceQueue = useQuery({
-    queryKey: ['webcallWorkbenchVoiceQueue'],
-    queryFn: ({ signal }) => api.webchatVoiceIncomingSessions({ status: 'incoming', limit: 50 }, { signal }),
-    refetchInterval: 4000,
-    retry: false,
-  })
-
-  const handoffQueue = useQuery({
-    queryKey: ['webcallWorkbenchHandoffQueue', handoffView],
-    queryFn: ({ signal }) => api.webchatHandoffQueue({ view: handoffView, limit: 80 }, { signal }),
-    refetchInterval: 8000,
-    retry: false,
-  })
-
-  const conversations = useQuery({
-    queryKey: ['webcallWorkbenchConversations'],
-    queryFn: ({ signal }) => api.webchatConversations({ signal }),
-    refetchInterval: 10000,
-    retry: false,
-  })
-
-  const demoStatus = useQuery({
-    queryKey: ['webcallAIDemoStatus'],
-    queryFn: api.webcallAIDemoStatus,
-    enabled: canOpenDemo,
-    refetchInterval: 30000,
-    retry: false,
-  })
-
-  const rows = useMemo(
-    () => queueRows(voiceQueue.data?.items ?? [], handoffQueue.data?.items ?? [], conversations.data ?? []),
-    [conversations.data, handoffQueue.data?.items, voiceQueue.data?.items],
-  )
-
-  useEffect(() => {
-    if (!selectedTicketId && rows.length) setSelectedTicketId(rows[0].ticketId)
-  }, [rows, selectedTicketId])
-
-  const selectedRow = useMemo(
-    () => rows.find((row) => row.ticketId === selectedTicketId) ?? null,
-    [rows, selectedTicketId],
-  )
-
-  const thread = useQuery({
-    queryKey: ['webchatThread', selectedTicketId, 'webcall-workbench'],
-    queryFn: ({ signal }) => api.webchatThread(selectedTicketId as number, { signal }),
-    enabled: !!selectedTicketId,
+  const workbench = useQuery({
+    queryKey: ['webcallOperatorWorkbench', handoffView, selectedTicketId],
+    queryFn: ({ signal }) => api.webcallOperatorWorkbench({
+      view: handoffView,
+      voice_status: 'incoming',
+      ticket_id: selectedTicketId,
+      limit: 80,
+    }, { signal }),
     refetchInterval: 6000,
     retry: false,
   })
 
-  const caseDetail = useQuery({
-    queryKey: ['caseDetail', selectedTicketId, 'webcall-workbench'],
-    queryFn: () => api.caseDetail(selectedTicketId as number),
-    enabled: !!selectedTicketId,
-    refetchInterval: 10000,
-    retry: false,
-  })
+  const rows = workbench.data?.rows ?? []
 
-  const timeline = useQuery({
-    queryKey: ['ticketTimeline', selectedTicketId, 'webcall-workbench'],
-    queryFn: () => api.ticketTimeline(selectedTicketId as number, { limit: 20 }),
-    enabled: !!selectedTicketId,
-    refetchInterval: 10000,
-    retry: false,
-  })
+  useEffect(() => {
+    if (!selectedTicketId && workbench.data?.selected_ticket_id) setSelectedTicketId(workbench.data.selected_ticket_id)
+  }, [selectedTicketId, workbench.data?.selected_ticket_id])
 
-  const selectedHandoff = useMemo(() => {
-    return thread.data?.handoff
-      || (handoffQueue.data?.items ?? []).find((item) => item.ticket_id === selectedTicketId)
-      || null
-  }, [handoffQueue.data?.items, selectedTicketId, thread.data?.handoff])
+  const selectedRow = workbench.data?.selected?.row || rows.find((row) => row.ticket_id === selectedTicketId) || null
+  const selected = workbench.data?.selected ?? null
+  const threadData = selected?.thread ?? null
+  const caseDetailData = selected?.ticket ?? null
+  const selectedHandoff = selected?.handoff ?? null
+  const timelineItems = selected?.timeline?.items ?? []
+  const canOpenDemo = Boolean(workbench.data?.demo.visible ?? canOpenDemoByRole)
+  const demoStatus = workbench.data?.demo.status as { ok?: boolean; status?: string; enabled?: boolean; demo_mode?: string } | null | undefined
 
   async function refreshWorkbench(ticketId = selectedTicketId) {
     await Promise.all([
-      client.invalidateQueries({ queryKey: ['webcallWorkbenchVoiceQueue'] }),
-      client.invalidateQueries({ queryKey: ['webcallWorkbenchHandoffQueue'] }),
-      client.invalidateQueries({ queryKey: ['webcallWorkbenchConversations'] }),
+      client.invalidateQueries({ queryKey: ['webcallOperatorWorkbench'] }),
       client.invalidateQueries({ queryKey: ['webchatVoiceOperationalQueue'] }),
       ticketId ? client.invalidateQueries({ queryKey: ['webchatThread', ticketId] }) : Promise.resolve(),
       ticketId ? client.invalidateQueries({ queryKey: ['caseDetail', ticketId] }) : Promise.resolve(),
@@ -362,7 +224,7 @@ function WebCallOperatorWorkbenchPage() {
   const canDeclineHandoff = selectedHandoff?.status === 'requested' && typeof selectedHandoff.id === 'number' && selectedHandoff.can_decline !== false
   const canReleaseHandoff = selectedHandoff?.status === 'accepted' && typeof selectedHandoff.id === 'number' && selectedHandoff.can_release === true
   const canResumeAi = selectedHandoff?.can_resume_ai === true && typeof selectedHandoff.id === 'number'
-  const showForceTakeover = Boolean(selectedTicketId && (thread.data?.ai_pending || thread.data?.ai_status || selectedRow?.aiStatus))
+  const showForceTakeover = Boolean(selectedTicketId && (threadData?.ai_pending || threadData?.ai_status || selectedRow?.ai_status))
   const allowForceTakeover = Boolean(canForceTakeover && (selectedHandoff?.can_force_takeover ?? true))
 
   return (
@@ -372,7 +234,7 @@ function WebCallOperatorWorkbenchPage() {
           eyebrow="WebCall"
           title="WebCall Operator Workbench"
           description="来电队列、客户身份、AI 建议、handoff 和通话动作集中处理。"
-          actions={<Button variant="secondary" onClick={() => void refreshWorkbench()} disabled={voiceQueue.isFetching || handoffQueue.isFetching || conversations.isFetching}>刷新</Button>}
+          actions={<Button variant="secondary" onClick={() => void refreshWorkbench()} disabled={workbench.isFetching}>刷新</Button>}
         />
 
         <div className="grid two-column" data-testid="webcall-operator-workbench">
@@ -386,23 +248,23 @@ function WebCallOperatorWorkbenchPage() {
                   </Button>
                 ))}
               </div>
-              {voiceQueue.isLoading || handoffQueue.isLoading || conversations.isLoading ? <Skeleton lines={5} /> : null}
-              {voiceQueue.isError || handoffQueue.isError || conversations.isError ? <EmptyState title="无法加载 WebCall 工作队列" description="请刷新或检查当前账号的 WebCall/WebChat 权限。" /> : null}
-              {!rows.length && !voiceQueue.isLoading && !handoffQueue.isLoading && !conversations.isLoading ? <EmptyState text="暂无 WebCall 或 handoff 队列项。" /> : null}
+              {workbench.isLoading ? <Skeleton lines={5} /> : null}
+              {workbench.isError ? <EmptyState title="无法加载 WebCall 工作队列" description="请刷新或检查当前账号的 WebCall/WebChat 权限。" /> : null}
+              {!rows.length && !workbench.isLoading ? <EmptyState text="暂无 WebCall 或 handoff 队列项。" /> : null}
               <div className="stack compact">
                 {rows.map((row) => (
                   <button
                     key={row.key}
-                    className={`queue-card ${selectedTicketId === row.ticketId ? 'selected' : ''}`}
-                    onClick={() => setSelectedTicketId(row.ticketId)}
+                    className={`queue-card ${selectedTicketId === row.ticket_id ? 'selected' : ''}`}
+                    onClick={() => setSelectedTicketId(row.ticket_id)}
                   >
                     <div className="badges">
                       {sourceBadge(row)}
                       {row.status ? <Badge tone={statusTone(row.status)}>{labelize(row.status)}</Badge> : null}
-                      {row.handoffStatus ? <Badge>{labelize(row.handoffStatus)}</Badge> : null}
+                      {row.handoff_status ? <Badge>{labelize(row.handoff_status)}</Badge> : null}
                     </div>
-                    <div className="queue-card-title">{valueOrDash(row.ticketNo || `#${row.ticketId}`)} · {valueOrDash(row.title || row.voiceSessionId)}</div>
-                    <div className="queue-card-meta">{valueOrDash(row.visitorLabel)} · {valueOrDash(row.origin)} · {valueOrDash(row.pageUrl)}</div>
+                    <div className="queue-card-title">{valueOrDash(row.ticket_no || `#${row.ticket_id}`)} · {valueOrDash(row.title || row.voice_session_id)}</div>
+                    <div className="queue-card-meta">{valueOrDash(row.visitor_label)} · {valueOrDash(row.origin)} · {valueOrDash(row.page_url)}</div>
                   </button>
                 ))}
               </div>
@@ -416,28 +278,28 @@ function WebCallOperatorWorkbenchPage() {
                 {!selectedTicketId ? <EmptyState text="请选择一个 WebCall 队列项。" /> : null}
                 {selectedTicketId ? (
                   <div className="kv-grid">
-                    <DetailField label="Ticket" value={caseDetail.data?.title || selectedRow?.title} />
+                    <DetailField label="Ticket" value={caseDetailData?.title || selectedRow?.title} />
                     <DetailField label="Ticket ID" value={selectedTicketId} />
-                    <DetailField label="Ticket No" value={selectedRow?.ticketNo || (caseDetail.data ? `#${caseDetail.data.id}` : null)} />
-                    <DetailField label="Status" value={caseDetail.data?.status || selectedRow?.status} />
-                    <DetailField label="Priority" value={caseDetail.data?.priority} />
-                    <DetailField label="Conversation" value={thread.data?.conversation_id} />
-                    <DetailField label="Voice session" value={selectedRow?.voiceSessionId} />
-                    <DetailField label="Preferred channel" value={caseDetail.data?.preferred_reply_channel} />
+                    <DetailField label="Ticket No" value={selectedRow?.ticket_no || (caseDetailData ? `#${caseDetailData.id}` : null)} />
+                    <DetailField label="Status" value={caseDetailData?.status || selectedRow?.status} />
+                    <DetailField label="Priority" value={caseDetailData?.priority} />
+                    <DetailField label="Conversation" value={threadData?.conversation_id} />
+                    <DetailField label="Voice session" value={selectedRow?.voice_session_id} />
+                    <DetailField label="Preferred channel" value={caseDetailData?.preferred_reply_channel} />
                   </div>
                 ) : null}
               </CardBody>
             </Card>
 
-            <IdentityPanel thread={thread.data} detail={caseDetail.data} row={selectedRow} />
+            <IdentityPanel thread={threadData} detail={caseDetailData} row={selectedRow} identity={selected?.identity} />
 
             <Card data-testid="webcall-handoff-actions">
               <CardHeader title="Handoff Actions" subtitle="调用 WebChat handoff 真实 API。" />
               <CardBody>
                 <div className="badges">
                   <Badge>{selectedHandoff ? labelize(selectedHandoff.status) : 'no handoff'}</Badge>
-                  {thread.data?.ai_status ? <Badge tone="warning">AI {labelize(thread.data.ai_status)}</Badge> : null}
-                  {thread.data?.ai_suspended ? <Badge tone="success">AI suspended</Badge> : null}
+                  {threadData?.ai_status ? <Badge tone="warning">AI {labelize(threadData.ai_status)}</Badge> : null}
+                  {threadData?.ai_suspended ? <Badge tone="success">AI suspended</Badge> : null}
                 </div>
                 <div className="button-row">
                   {canAcceptHandoff ? <Button variant="primary" disabled={handoffBusy} onClick={() => handoffMutation.mutate({ type: 'accept', requestId: selectedHandoff.id as number })}>接管</Button> : null}
@@ -466,13 +328,13 @@ function WebCallOperatorWorkbenchPage() {
               </CardBody>
             </Card>
 
-            <AISuggestionsPanel thread={thread.data} detail={caseDetail.data} handoff={selectedHandoff} />
+            <AISuggestionsPanel thread={threadData} detail={caseDetailData} handoff={selectedHandoff} suggestions={selected?.ai_suggestions} />
 
             <AgentWebCallPanel
               ticketId={selectedTicketId}
-              ticketNo={selectedRow?.ticketNo}
-              conversationId={thread.data?.conversation_id}
-              visitorLabel={selectedRow?.visitorLabel || thread.data?.visitor?.name}
+              ticketNo={selectedRow?.ticket_no}
+              conversationId={threadData?.conversation_id}
+              visitorLabel={selectedRow?.visitor_label || threadData?.visitor?.name}
               onSelectTicket={setSelectedTicketId}
               onActivity={() => void refreshWorkbench()}
             />
@@ -482,13 +344,13 @@ function WebCallOperatorWorkbenchPage() {
               <CardBody>
                 {canOpenDemo ? (
                   <>
-                    {demoStatus.isLoading ? <Skeleton lines={2} /> : null}
-                    {demoStatus.isError ? <EmptyState text="无法读取 WebCall AI demo 状态。" /> : null}
-                    {demoStatus.data ? (
+                    {workbench.isLoading ? <Skeleton lines={2} /> : null}
+                    {!demoStatus && !workbench.isLoading ? <EmptyState text="无法读取 WebCall AI demo 状态。" /> : null}
+                    {demoStatus ? (
                       <div className="badges">
-                        <Badge tone={demoStatus.data.ok ? 'success' : 'danger'}>{demoStatus.data.status}</Badge>
-                        <Badge>{demoStatus.data.enabled ? 'enabled' : 'disabled'}</Badge>
-                        <Badge>{demoStatus.data.demo_mode}</Badge>
+                        <Badge tone={demoStatus.ok ? 'success' : 'danger'}>{demoStatus.status}</Badge>
+                        <Badge>{demoStatus.enabled ? 'enabled' : 'disabled'}</Badge>
+                        <Badge>{demoStatus.demo_mode}</Badge>
                       </div>
                     ) : null}
                     <div className="button-row">
@@ -504,9 +366,9 @@ function WebCallOperatorWorkbenchPage() {
             <Card data-testid="webcall-timeline-audit">
               <CardHeader title="Timeline / Audit" subtitle="ticket timeline 与 WebChat action audit 回写预览。" />
               <CardBody>
-                {timeline.isLoading || thread.isLoading || caseDetail.isLoading ? <Skeleton lines={3} /> : null}
+                {workbench.isLoading ? <Skeleton lines={3} /> : null}
                 <Section title="Ticket timeline">
-                  {(timeline.data?.items ?? []).slice(0, 8).map((item, index) => (
+                  {timelineItems.slice(0, 8).map((item, index) => (
                     <div className="message" data-role="agent" key={String(item.id || index)}>
                       <div className="message-head">
                         <strong>{labelize(String(item.source_type || item.kind || 'timeline'))}</strong>
@@ -515,16 +377,16 @@ function WebCallOperatorWorkbenchPage() {
                       <div>{sanitizeDisplayText(String(item.body || item.summary || item.event_type || item.id || ''))}</div>
                     </div>
                   ))}
-                  {!(timeline.data?.items ?? []).length && !timeline.isLoading ? <EmptyState text="暂无 timeline 证据。" /> : null}
+                  {!timelineItems.length && !workbench.isLoading ? <EmptyState text="暂无 timeline 证据。" /> : null}
                 </Section>
                 <Section title="WebChat actions">
-                  {(thread.data?.actions ?? []).slice(-6).map((action) => (
+                  {(threadData?.actions ?? []).slice(-6).map((action) => (
                     <div className="message" data-role="agent" key={action.id}>
                       <div className="message-head"><strong>{labelize(action.action_type)}</strong><span>{formatDateTime(action.created_at)}</span></div>
                       <div>{labelize(action.status)} · {sanitizeDisplayText(action.submitted_by)}</div>
                     </div>
                   ))}
-                  {!(thread.data?.actions ?? []).length && !thread.isLoading ? <EmptyState text="暂无 WebChat action audit。" /> : null}
+                  {!(threadData?.actions ?? []).length && !workbench.isLoading ? <EmptyState text="暂无 WebChat action audit。" /> : null}
                 </Section>
               </CardBody>
             </Card>

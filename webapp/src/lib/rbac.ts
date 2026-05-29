@@ -31,7 +31,12 @@ export const CAPABILITIES = {
   webcallVoiceAccept: 'webcall.voice.accept',
   webcallVoiceReject: 'webcall.voice.reject',
   webcallVoiceEnd: 'webcall.voice.end',
+  webchatHandoffAccept: 'webchat.handoff.accept',
+  webchatHandoffDecline: 'webchat.handoff.decline',
   webchatHandoffForceTakeover: 'webchat.handoff.force_takeover',
+  webchatHandoffRelease: 'webchat.handoff.release',
+  webchatHandoffResumeAi: 'webchat.handoff.resume_ai',
+  webchatConversationMonitorAi: 'webchat.conversation.monitor_ai',
 } as const
 
 export type Capability = (typeof CAPABILITIES)[keyof typeof CAPABILITIES]
@@ -52,7 +57,20 @@ export type CapabilityMeta = {
 export const routeAccess = {
   '/runtime': { allOf: [CAPABILITIES.runtimeManage] },
   '/provider-credentials': { allOf: [CAPABILITIES.runtimeManage] },
-  '/webcall': { allOf: [CAPABILITIES.webcallVoiceQueueView] },
+  '/webcall': {
+    allOf: [
+      CAPABILITIES.ticketRead,
+      CAPABILITIES.customerProfileRead,
+      CAPABILITIES.webcallVoiceQueueView,
+      CAPABILITIES.webcallVoiceRead,
+    ],
+    anyOf: [
+      CAPABILITIES.webcallVoiceAccept,
+      CAPABILITIES.webchatHandoffAccept,
+      CAPABILITIES.webchatConversationMonitorAi,
+      CAPABILITIES.webchatHandoffForceTakeover,
+    ],
+  },
   '/webcall-ai-demo': { allOf: [CAPABILITIES.runtimeManage] },
   '/accounts': { allOf: [CAPABILITIES.channelAccountManage] },
   '/outbound-email': { allOf: [CAPABILITIES.channelAccountManage] },
@@ -79,8 +97,13 @@ export const actionAccess = {
   acceptWebcallVoice: { allOf: [CAPABILITIES.webcallVoiceAccept] },
   rejectWebcallVoice: { allOf: [CAPABILITIES.webcallVoiceReject] },
   endWebcallVoice: { allOf: [CAPABILITIES.webcallVoiceEnd] },
+  acceptWebchatHandoff: { allOf: [CAPABILITIES.webchatHandoffAccept] },
+  declineWebchatHandoff: { allOf: [CAPABILITIES.webchatHandoffDecline] },
   viewWebchatDebug: { anyOf: [CAPABILITIES.runtimeManage] },
   forceWebchatHandoff: { allOf: [CAPABILITIES.webchatHandoffForceTakeover] },
+  releaseWebchatHandoff: { allOf: [CAPABILITIES.webchatHandoffRelease] },
+  resumeWebchatAi: { allOf: [CAPABILITIES.webchatHandoffResumeAi] },
+  monitorWebchatAi: { allOf: [CAPABILITIES.webchatConversationMonitorAi] },
   uploadAttachment: { allOf: [CAPABILITIES.attachmentUpload] },
   escalateTicket: { allOf: [CAPABILITIES.ticketEscalate] },
 } satisfies Record<string, AccessRequirement>
@@ -116,7 +139,12 @@ export const capabilityCatalogMeta: CapabilityMeta[] = [
   { capability: CAPABILITIES.webcallVoiceAccept, label: '接听 WebCall', group: 'WebCall 语音', description: '接听客户发起的 WebCall。', risk: 'high' },
   { capability: CAPABILITIES.webcallVoiceReject, label: '拒接 WebCall', group: 'WebCall 语音', description: '拒接客户发起的 WebCall。', risk: 'high' },
   { capability: CAPABILITIES.webcallVoiceEnd, label: '结束 WebCall', group: 'WebCall 语音', description: '挂断或结束语音会话。', risk: 'high' },
+  { capability: CAPABILITIES.webchatHandoffAccept, label: '接管 WebChat', group: 'WebChat 接管', description: '接受 AI 或客户触发的人工接管请求。', risk: 'high' },
+  { capability: CAPABILITIES.webchatHandoffDecline, label: '跳过 WebChat 接管', group: 'WebChat 接管', description: '跳过当前接管请求并留下操作审计。', risk: 'normal' },
   { capability: CAPABILITIES.webchatHandoffForceTakeover, label: '强制接管 WebChat AI', group: 'WebChat 接管', description: '在 AI 正在处理时强制暂停 AI 并接管会话。', risk: 'high' },
+  { capability: CAPABILITIES.webchatHandoffRelease, label: '释放 WebChat 接管', group: 'WebChat 接管', description: '把已接管会话释放回人工队列。', risk: 'high' },
+  { capability: CAPABILITIES.webchatHandoffResumeAi, label: '恢复 WebChat AI', group: 'WebChat 接管', description: '结束人工接管并恢复 AI 处理。', risk: 'high' },
+  { capability: CAPABILITIES.webchatConversationMonitorAi, label: '监控 WebChat AI', group: 'WebChat 接管', description: '查看 AI 正在处理的会话以判断是否需要人工介入。', risk: 'normal' },
 ]
 
 const metaByCapability = new Map(capabilityCatalogMeta.map((item) => [item.capability, item]))

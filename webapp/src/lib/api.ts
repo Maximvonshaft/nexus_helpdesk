@@ -39,6 +39,7 @@ import type {
   WebchatConversation,
   WebchatHandoffQueue,
   WebchatHandoffRequest,
+  WebCallOperatorWorkbenchResponse,
   WebchatReadStateResult,
   WebchatThread,
   WebchatReplyResult,
@@ -286,6 +287,7 @@ export type WebCallAIDemoTurn = {
 }
 
 type CaseQueryParams = { q?: string; status?: string; priority?: string; assignee_id?: number; team_id?: number; overdue?: boolean; cursor?: string | null; limit?: number }
+type WebCallOperatorWorkbenchParams = { view?: string; voice_status?: string; ticket_id?: number | null; limit?: number }
 
 function buildCaseSearch(params?: CaseQueryParams) {
   const search = new URLSearchParams()
@@ -312,6 +314,15 @@ function buildRecoverySearch(params?: { job_type?: string; limit?: number }) {
   const search = new URLSearchParams()
   if (params?.job_type) search.set('job_type', params.job_type)
   if (typeof params?.limit === 'number') search.set('limit', String(params.limit))
+  return search.toString()
+}
+
+function buildWebCallOperatorWorkbenchSearch(params?: WebCallOperatorWorkbenchParams) {
+  const search = new URLSearchParams()
+  search.set('view', params?.view || 'requested')
+  search.set('voice_status', params?.voice_status || 'incoming')
+  search.set('limit', String(params?.limit ?? 50))
+  if (typeof params?.ticket_id === 'number') search.set('ticket_id', String(params.ticket_id))
   return search.toString()
 }
 
@@ -557,6 +568,7 @@ export const api = {
     body: JSON.stringify({ reason }),
   }),
   webcallAIDemoEvents: (sessionId: string) => request<{ ok: boolean; session: Pick<WebCallAIDemoSession, 'public_id' | 'status' | 'mode'>; events: WebCallAIDemoEvent[]; turns: Array<Pick<WebCallAIDemoTurn, 'turn_index' | 'customer_text_redacted' | 'ai_response_text_redacted' | 'handoff_required' | 'created_at'> & { turn_id: number }> }>(`/api/admin/webcall-ai-demo/sessions/${sessionId}/events`),
+  webcallOperatorWorkbench: (params?: WebCallOperatorWorkbenchParams, init?: RequestInit) => request<WebCallOperatorWorkbenchResponse>(`/api/webcall/operator/workbench?${buildWebCallOperatorWorkbenchSearch(params)}`, init),
 
   codexCredentialStatus: () => request<ProviderCredentialStatusResponse>('/api/admin/provider-credentials/codex/status'),
   startCodexAuthorization: (scopes?: string[]) => request<CodexAuthorizationStart>('/api/admin/provider-credentials/codex/authorize', {
