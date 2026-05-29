@@ -184,9 +184,12 @@ test('speedaf and webcall actions are capability gated in the operator UI', () =
 
 test('operator navigation uses workflow-oriented entrypoints', () => {
   assert.match(appShell, /data-testid="operator-primary-navigation"/)
+  assert.match(appShell, /\{ label: 'Workbench', items: \['\/', '\/webchat', '\/webcall', '\/email'\] \}/)
+  assert.match(appShell, /今日工作台/)
   assert.match(appShell, /处理工单/)
-  assert.match(appShell, /WebChat 收件箱/)
-  assert.match(appShell, /WebCall 工作台/)
+  assert.match(appShell, /WebChat/)
+  assert.match(appShell, /WebCall/)
+  assert.match(appShell, /Email/)
   assert.match(appShell, /运行恢复/)
   assert.match(appShell, /dead\/requeue 自助处理/)
   assert.match(appShell, /runtimeNeedsAttention/)
@@ -196,9 +199,12 @@ test('operator navigation uses workflow-oriented entrypoints', () => {
 
 test('command palette exposes high-frequency operator workflow shortcuts', () => {
   assert.match(commandPalette, /data-testid="operator-command-palette-actions"/)
+  assert.match(commandPalette, /查看今日工作台/)
+  assert.match(commandPalette, /处理临近 SLA 工单/)
   assert.match(commandPalette, /处理工单 \/ 客户回复/)
-  assert.match(commandPalette, /打开 WebChat 收件箱/)
+  assert.match(commandPalette, /接入等待最久的 WebChat/)
   assert.match(commandPalette, /打开 WebCall 工作台/)
+  assert.match(commandPalette, /处理等待中的 Email/)
   assert.match(commandPalette, /进入运行恢复 \/ dead 重排/)
   assert.match(commandPalette, /刷新运行状态/)
   assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['runtimeHealth'\] \}\)/)
@@ -206,11 +212,21 @@ test('command palette exposes high-frequency operator workflow shortcuts', () =>
   assert.match(commandPalette, /navigate\(\{ to: '\/runtime' \}\)/)
 })
 
-test('overview page provides priority action entrypoints', () => {
+test('overview page consumes real today workbench contract and provides priority entrypoints', () => {
+  assert.match(types, /export interface TodayWorkbenchResponse \{/)
+  assert.match(apiClient, /todayWorkbench: \(\) => request<TodayWorkbenchResponse>\('\/api\/workbench\/today'\)/)
+  assert.match(overviewRoute, /title="今日工作台 \/ 我的优先事项"/)
+  assert.match(overviewRoute, /queryKey: \['todayWorkbench'\]/)
+  assert.match(overviewRoute, /api\.todayWorkbench/)
+  assert.match(overviewRoute, /data-testid="today-workbench-metrics"/)
+  assert.match(overviewRoute, /data-testid="today-workbench-tasks"/)
+  assert.match(overviewRoute, /data-testid="today-workbench-sla-risk"/)
+  assert.doesNotMatch(overviewRoute, /api\.cases\(\)/)
+  assert.doesNotMatch(overviewRoute, /count: 14/)
   assert.match(overviewRoute, /data-testid="overview-priority-actions"/)
-  assert.match(overviewRoute, /处理客户工单/)
+  assert.match(overviewRoute, /处理临近 SLA 工单/)
   assert.match(overviewRoute, /打开工单处理/)
-  assert.match(overviewRoute, /查看 WebChat 来信/)
+  assert.match(overviewRoute, /接入等待最久的 WebChat/)
   assert.match(overviewRoute, /打开 WebChat 收件箱/)
   assert.match(overviewRoute, /运行恢复待处理/)
   assert.match(overviewRoute, /打开运行恢复/)

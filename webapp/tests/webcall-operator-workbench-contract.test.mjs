@@ -23,7 +23,7 @@ test('top-level /webcall operator route is registered without replacing customer
 test('webcall operator entry is routeAccess gated and visible in operator navigation', () => {
   assert.match(rbac, /'\/webcall': \{ allOf: \[CAPABILITIES\.webcallVoiceQueueView\] \}/)
   assert.match(route, /<RequireCapability requirement=\{routeAccess\['\/webcall'\]\}>/)
-  assert.match(appShell, /to: '\/webcall'[\s\S]*label: 'WebCall 工作台'[\s\S]*access: routeAccess\['\/webcall'\]/)
+  assert.match(appShell, /to: '\/webcall'[\s\S]*label: 'WebCall'[\s\S]*access: routeAccess\['\/webcall'\]/)
   assert.match(appShell, /isActiveNavPath\(location\.pathname, item\.to\)/)
   assert.match(appShell, /pathname\.startsWith\(`\$\{target\}\/`\)/)
   assert.match(commandPalette, /id: 'webcall-workbench'[\s\S]*to: '\/webcall'[\s\S]*access: routeAccess\['\/webcall'\]/)

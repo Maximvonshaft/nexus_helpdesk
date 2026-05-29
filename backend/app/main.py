@@ -35,6 +35,7 @@ from .api.speedaf_cancel import router as speedaf_cancel_router
 from .api.stats import router as stats_router
 from .api.ticket_perf import router as ticket_perf_router
 from .api.tickets import router as tickets_router
+from .api.today_workbench import router as today_workbench_router
 from .api.webchat_fast import router as webchat_fast_router
 from .api.webchat import router as webchat_router
 from .api.webchat_events import router as webchat_events_router
@@ -256,6 +257,7 @@ app.include_router(customers_router)
 app.include_router(persona_profiles_router)
 app.include_router(stats_router)
 app.include_router(tickets_router)
+app.include_router(today_workbench_router)
 app.include_router(speedaf_actions_router)
 app.include_router(speedaf_cancel_router)
 app.include_router(webchat_fast_router)

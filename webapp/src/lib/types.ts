@@ -69,6 +69,45 @@ export interface CaseListPage {
   filters?: Record<string, unknown>
 }
 
+export interface TodayWorkbenchTask {
+  key: string
+  title: string
+  count: number
+  severity: string
+  source: string
+  next: string
+  target_route: string
+  target_filter: Record<string, unknown>
+}
+
+export interface TodayWorkbenchTicket {
+  id: number
+  ticket_no: string
+  title: string
+  status: string
+  priority: string
+  source_channel: string
+  customer_name?: string | null
+  assignee_name?: string | null
+  team_name?: string | null
+  first_response_due_at?: string | null
+  resolution_due_at?: string | null
+  next_due_at?: string | null
+  required_action?: string | null
+  updated_at: string
+  overdue: boolean
+}
+
+export interface TodayWorkbenchResponse {
+  generated_at: string
+  user: AuthUser
+  metrics: Record<string, number>
+  tasks: TodayWorkbenchTask[]
+  sla_risk_tickets: TodayWorkbenchTicket[]
+  permissions: Record<string, boolean>
+  source_contracts: string[]
+}
+
 export interface TranscriptMessage {
   id: number
   role: string

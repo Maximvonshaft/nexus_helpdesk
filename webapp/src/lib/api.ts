@@ -36,6 +36,7 @@ import type {
   PersonaProfileList,
   PersonaProfileVersion,
   Team,
+  TodayWorkbenchResponse,
   WebchatConversation,
   WebchatHandoffQueue,
   WebchatHandoffRequest,
@@ -321,6 +322,7 @@ export const api = {
     body: JSON.stringify({ username, password }),
   }),
   me: () => request<AuthUser>('/api/auth/me'),
+  todayWorkbench: () => request<TodayWorkbenchResponse>('/api/workbench/today'),
 
   adminUsers: () => request<AdminUser[]>('/api/admin/users?legacy=true'),
   createUser: (payload: Record<string, unknown>) => request<AdminUser>('/api/admin/users', {

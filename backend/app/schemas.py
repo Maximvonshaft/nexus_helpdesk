@@ -503,6 +503,45 @@ class LiteMetaRead(APIModel):
     priorities: list[str]
 
 
+class TodayWorkbenchTaskRead(APIModel):
+    key: str
+    title: str
+    count: int
+    severity: str
+    source: str
+    next: str
+    target_route: str
+    target_filter: dict[str, Any] = Field(default_factory=dict)
+
+
+class TodayWorkbenchTicketRead(APIModel):
+    id: int
+    ticket_no: str
+    title: str
+    status: str
+    priority: str
+    source_channel: str
+    customer_name: Optional[str] = None
+    assignee_name: Optional[str] = None
+    team_name: Optional[str] = None
+    first_response_due_at: Optional[datetime] = None
+    resolution_due_at: Optional[datetime] = None
+    next_due_at: Optional[datetime] = None
+    required_action: Optional[str] = None
+    updated_at: datetime
+    overdue: bool = False
+
+
+class TodayWorkbenchRead(APIModel):
+    generated_at: datetime
+    user: AuthUserRead
+    metrics: dict[str, int]
+    tasks: list[TodayWorkbenchTaskRead]
+    sla_risk_tickets: list[TodayWorkbenchTicketRead]
+    permissions: dict[str, bool]
+    source_contracts: list[str]
+
+
 class TicketStatsRead(BaseModel):
     total: int
     overdue_count: int
