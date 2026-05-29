@@ -552,6 +552,86 @@ export interface KnowledgeRetrievalTestResult {
   grounding_source?: Record<string, unknown> | null
 }
 
+export interface QAQueueSample {
+  ticket_id: number
+  ticket_no?: string | null
+  title: string
+  sample_channel: string
+  sample_ref?: string | null
+  customer_name?: string | null
+  agent_id?: number | null
+  agent_name?: string | null
+  status: string
+  priority: string
+  ai_pre_score: number
+  risks: string[]
+  feedback?: string | null
+  appeal_status: string
+  knowledge_gap_summary?: string | null
+  updated_at: string
+  reviewed_at?: string | null
+}
+
+export interface QAQueueSummary {
+  total_samples: number
+  needs_review: number
+  reviewed: number
+  average_ai_pre_score: number
+  open_training_tasks: number
+  knowledge_gap_tasks: number
+}
+
+export interface QAQueueResponse {
+  samples: QAQueueSample[]
+  summary: QAQueueSummary
+}
+
+export interface QAReviewPayload {
+  ticket_id: number
+  final_score: number
+  risks: string[]
+  feedback: string
+  knowledge_gap_summary?: string | null
+  appeal_status?: string
+  create_training_task?: boolean
+  coaching_summary?: string | null
+}
+
+export interface QATrainingTask {
+  id: number
+  review_id?: number | null
+  ticket_id: number
+  agent_id?: number | null
+  owner_id?: number | null
+  task_type: string
+  status: string
+  summary: string
+  knowledge_gap_summary?: string | null
+  due_at?: string | null
+  created_by?: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface QAReview {
+  id: number
+  ticket_id: number
+  sample_channel: string
+  sample_ref?: string | null
+  reviewer_id?: number | null
+  agent_id?: number | null
+  status: string
+  ai_pre_score: number
+  final_score?: number | null
+  risks: string[]
+  feedback?: string | null
+  knowledge_gap_summary?: string | null
+  appeal_status: string
+  training_task?: QATrainingTask | null
+  created_at: string
+  updated_at: string
+}
+
 export interface ChannelOnboardingTask {
   id: number
   provider: string

@@ -14,6 +14,7 @@ from .api.admin_outbound_semantics import router as admin_outbound_semantics_rou
 from .api.admin_perf import router as admin_perf_router
 from .api.admin_provider_runtime import router as admin_provider_runtime_router
 from .api.admin_provider_credentials import router as admin_provider_credentials_router
+from .api.admin_qa_training import router as admin_qa_training_router
 from .api.admin_webcall_ai import router as admin_webcall_ai_router
 from .api.admin_webcall_ai_demo import router as admin_webcall_ai_demo_router
 from .api import admin as admin_api
@@ -238,6 +239,7 @@ app.include_router(admin_outbound_semantics_router)
 app.include_router(admin_perf_router)
 app.include_router(admin_provider_runtime_router)
 app.include_router(admin_provider_credentials_router)
+app.include_router(admin_qa_training_router)
 app.include_router(admin_webcall_ai_router)
 app.include_router(admin_webcall_ai_demo_router)
 app.include_router(ticket_perf_router)

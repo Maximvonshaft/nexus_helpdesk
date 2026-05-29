@@ -617,6 +617,55 @@ class TicketAIIntake(Base):
     creator: Mapped[Optional["User"]] = relationship()
 
 
+class QAReview(Base):
+    __tablename__ = "qa_reviews"
+    __table_args__ = (
+        Index("ix_qa_reviews_ticket_created", "ticket_id", "created_at"),
+        Index("ix_qa_reviews_status_created", "status", "created_at"),
+        Index("ix_qa_reviews_channel_status", "sample_channel", "status"),
+        Index("ix_qa_reviews_agent_status", "agent_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    sample_channel: Mapped[str] = mapped_column(String(60), index=True)
+    sample_ref: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
+    reviewer_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    agent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="reviewed", index=True)
+    ai_pre_score: Mapped[int] = mapped_column(Integer, default=0)
+    final_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    risks_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    feedback: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    knowledge_gap_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    appeal_status: Mapped[str] = mapped_column(String(40), default="not_started", index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
+
+
+class QATrainingTask(Base):
+    __tablename__ = "qa_training_tasks"
+    __table_args__ = (
+        Index("ix_qa_training_tasks_status_due", "status", "due_at"),
+        Index("ix_qa_training_tasks_agent_status", "agent_id", "status"),
+        Index("ix_qa_training_tasks_ticket_status", "ticket_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    review_id: Mapped[Optional[int]] = mapped_column(ForeignKey("qa_reviews.id"), nullable=True, index=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    agent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    owner_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    task_type: Mapped[str] = mapped_column(String(60), default="coaching", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="open", index=True)
+    summary: Mapped[str] = mapped_column(Text)
+    knowledge_gap_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    due_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
+
+
 class BackgroundJob(Base):
     __tablename__ = "background_jobs"
     __table_args__ = (

@@ -35,6 +35,10 @@ import type {
   PersonaProfileDetail,
   PersonaProfileList,
   PersonaProfileVersion,
+  QAQueueResponse,
+  QAReview,
+  QAReviewPayload,
+  QATrainingTask,
   Team,
   WebchatConversation,
   WebchatHandoffQueue,
@@ -315,6 +319,14 @@ function buildRecoverySearch(params?: { job_type?: string; limit?: number }) {
   return search.toString()
 }
 
+function buildQATrainingSearch(params?: { channel?: string; status?: string; limit?: number }) {
+  const search = new URLSearchParams()
+  if (params?.channel && params.channel !== 'all') search.set('channel', params.channel)
+  if (params?.status && params.status !== 'all') search.set('status', params.status)
+  if (typeof params?.limit === 'number') search.set('limit', String(params.limit))
+  return search.toString()
+}
+
 export const api = {
   login: (username: string, password: string) => request<{access_token: string; user: AuthUser}>('/api/auth/login', {
     method: 'POST',
@@ -494,6 +506,18 @@ export const api = {
     body: JSON.stringify({ version, notes: notes || null }),
   }),
   testKnowledgeRetrieval: (payload: { q: string; market_id?: number | null; channel?: string | null; audience_scope?: string | null; language?: string | null; limit?: number }) => request<KnowledgeRetrievalTestResult>('/api/knowledge-items/retrieve-test', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  qaTrainingQueue: (params?: { channel?: string; status?: string; limit?: number }) => {
+    const search = buildQATrainingSearch(params)
+    return request<QAQueueResponse>(`/api/admin/qa-training/queue${search ? `?${search}` : ''}`)
+  },
+  qaTrainingTasks: (params?: { status?: string; limit?: number }) => {
+    const search = buildQATrainingSearch(params)
+    return request<QATrainingTask[]>(`/api/admin/qa-training/training-tasks${search ? `?${search}` : ''}`)
+  },
+  createQAReview: (payload: QAReviewPayload) => request<QAReview>('/api/admin/qa-training/reviews', {
     method: 'POST',
     body: JSON.stringify(payload),
   }),

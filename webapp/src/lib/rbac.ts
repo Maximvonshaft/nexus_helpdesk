@@ -32,6 +32,8 @@ export const CAPABILITIES = {
   webcallVoiceReject: 'webcall.voice.reject',
   webcallVoiceEnd: 'webcall.voice.end',
   webchatHandoffForceTakeover: 'webchat.handoff.force_takeover',
+  qaRead: 'qa.read',
+  qaManage: 'qa.manage',
 } as const
 
 export type Capability = (typeof CAPABILITIES)[keyof typeof CAPABILITIES]
@@ -59,6 +61,7 @@ export const routeAccess = {
   '/email': { allOf: [CAPABILITIES.ticketRead], anyOf: [CAPABILITIES.outboundDraftSave, CAPABILITIES.outboundSend] },
   '/ai-control': { allOf: [CAPABILITIES.aiConfigManage] },
   '/control-plane': { anyOf: [CAPABILITIES.aiConfigRead, CAPABILITIES.aiConfigManage, CAPABILITIES.channelAccountManage, CAPABILITIES.runtimeManage] },
+  '/qa-training': { anyOf: [CAPABILITIES.qaRead, CAPABILITIES.qaManage] },
   '/users': { allOf: [CAPABILITIES.userManage] },
   '/webchat-voice': { allOf: [CAPABILITIES.webcallVoiceQueueView] },
 } satisfies Record<string, AccessRequirement>
@@ -81,6 +84,7 @@ export const actionAccess = {
   endWebcallVoice: { allOf: [CAPABILITIES.webcallVoiceEnd] },
   viewWebchatDebug: { anyOf: [CAPABILITIES.runtimeManage] },
   forceWebchatHandoff: { allOf: [CAPABILITIES.webchatHandoffForceTakeover] },
+  createQAReview: { allOf: [CAPABILITIES.qaManage] },
   uploadAttachment: { allOf: [CAPABILITIES.attachmentUpload] },
   escalateTicket: { allOf: [CAPABILITIES.ticketEscalate] },
 } satisfies Record<string, AccessRequirement>
@@ -117,6 +121,8 @@ export const capabilityCatalogMeta: CapabilityMeta[] = [
   { capability: CAPABILITIES.webcallVoiceReject, label: '拒接 WebCall', group: 'WebCall 语音', description: '拒接客户发起的 WebCall。', risk: 'high' },
   { capability: CAPABILITIES.webcallVoiceEnd, label: '结束 WebCall', group: 'WebCall 语音', description: '挂断或结束语音会话。', risk: 'high' },
   { capability: CAPABILITIES.webchatHandoffForceTakeover, label: '强制接管 WebChat AI', group: 'WebChat 接管', description: '在 AI 正在处理时强制暂停 AI 并接管会话。', risk: 'high' },
+  { capability: CAPABILITIES.qaRead, label: '查看 QA 质检', group: '质检与培训', description: '查看 QA queue、评分、培训任务和知识缺口闭环。', risk: 'normal' },
+  { capability: CAPABILITIES.qaManage, label: '管理 QA 质检', group: '质检与培训', description: '创建评分、生成 coaching 任务并写入审计链路。', risk: 'high' },
 ]
 
 const metaByCapability = new Map(capabilityCatalogMeta.map((item) => [item.capability, item]))

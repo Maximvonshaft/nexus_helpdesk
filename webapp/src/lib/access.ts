@@ -108,6 +108,14 @@ export function canForceWebchatHandoff(user?: AuthUser | null) {
   return canAccess(user, actionAccess.forceWebchatHandoff)
 }
 
+export function canReadQA(user?: AuthUser | null) {
+  return hasCapability(user, CAPABILITIES.qaRead) || hasCapability(user, CAPABILITIES.qaManage)
+}
+
+export function canManageQA(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.createQAReview)
+}
+
 export function canUploadAttachment(user?: AuthUser | null) {
   return canAccess(user, actionAccess.uploadAttachment)
 }

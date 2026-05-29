@@ -42,6 +42,8 @@ CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER = "webchat.handoff.force_takeover"
 CAP_WEBCHAT_HANDOFF_RELEASE = "webchat.handoff.release"
 CAP_WEBCHAT_HANDOFF_RESUME_AI = "webchat.handoff.resume_ai"
 CAP_WEBCHAT_CONVERSATION_MONITOR_AI = "webchat.conversation.monitor_ai"
+CAP_QA_READ = "qa.read"
+CAP_QA_MANAGE = "qa.manage"
 
 ALL_CAPABILITIES = [
     CAP_TICKET_READ,
@@ -80,6 +82,8 @@ ALL_CAPABILITIES = [
     CAP_WEBCHAT_HANDOFF_RELEASE,
     CAP_WEBCHAT_HANDOFF_RESUME_AI,
     CAP_WEBCHAT_CONVERSATION_MONITOR_AI,
+    CAP_QA_READ,
+    CAP_QA_MANAGE,
 ]
 
 ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
@@ -94,6 +98,7 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
         CAP_NOTE_WRITE_INTERNAL, CAP_NOTE_WRITE_EXTERNAL, CAP_BULLETIN_MANAGE,
         CAP_WEBCHAT_HANDOFF_ACCEPT, CAP_WEBCHAT_HANDOFF_DECLINE, CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
         CAP_WEBCHAT_HANDOFF_RELEASE, CAP_WEBCHAT_HANDOFF_RESUME_AI, CAP_WEBCHAT_CONVERSATION_MONITOR_AI,
+        CAP_QA_READ, CAP_QA_MANAGE,
     },
     UserRole.lead: {
         CAP_TICKET_READ, CAP_TICKET_ASSIGN, CAP_TICKET_ESCALATE, CAP_TICKET_UPDATE_CORE,
@@ -103,6 +108,7 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
         CAP_NOTE_WRITE_INTERNAL, CAP_NOTE_WRITE_EXTERNAL,
         CAP_WEBCHAT_HANDOFF_ACCEPT, CAP_WEBCHAT_HANDOFF_DECLINE, CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
         CAP_WEBCHAT_HANDOFF_RELEASE, CAP_WEBCHAT_HANDOFF_RESUME_AI, CAP_WEBCHAT_CONVERSATION_MONITOR_AI,
+        CAP_QA_READ, CAP_QA_MANAGE,
     },
     UserRole.agent: {
         CAP_TICKET_READ, CAP_ATTACHMENT_READ_EXTERNAL, CAP_ATTACHMENT_READ_INTERNAL,
@@ -115,6 +121,7 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
     UserRole.auditor: {
         CAP_TICKET_READ, CAP_ATTACHMENT_READ_EXTERNAL,
         CAP_ATTACHMENT_READ_INTERNAL, CAP_CUSTOMER_PROFILE_READ,
+        CAP_QA_READ,
     },
 }
 
@@ -308,3 +315,13 @@ def ensure_can_resume_webchat_ai(user, db: Session | None = None):
 
 def ensure_can_monitor_webchat_ai(user, db: Session | None = None):
     ensure_capability(user, CAP_WEBCHAT_CONVERSATION_MONITOR_AI, db, message="webchat_monitor_ai_requires_capability")
+
+
+def ensure_can_read_qa_training(user, db: Session | None = None):
+    capabilities = resolve_capabilities(user, db)
+    if CAP_QA_READ not in capabilities and CAP_QA_MANAGE not in capabilities:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="qa_training_read_requires_capability")
+
+
+def ensure_can_manage_qa_training(user, db: Session | None = None):
+    ensure_capability(user, CAP_QA_MANAGE, db, message="qa_training_manage_requires_capability")
