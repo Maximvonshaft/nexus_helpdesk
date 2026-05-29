@@ -16,7 +16,7 @@ from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility,
 from ..models import Customer, Ticket, TicketComment, TicketEvent, TicketOutboundMessage, User
 from ..utils.time import utc_now
 from ..settings import get_settings
-from ..webchat_models import WebchatCardAction, WebchatConversation, WebchatHandoffRequest, WebchatMessage
+from ..webchat_models import WebchatAITurn, WebchatCardAction, WebchatConversation, WebchatEvent, WebchatHandoffRequest, WebchatMessage
 from ..webchat_schemas import WebChatActionSubmitRequest, WebChatCardPayload
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .permissions import ensure_ticket_visible
@@ -37,6 +37,7 @@ MAX_URL_CHARS = 700
 DEFAULT_POLL_LIMIT = 50
 MAX_POLL_LIMIT = 100
 WEBCHAT_VISITOR_TOKEN_TTL_DAYS = 7
+SENSITIVE_EVENT_KEYS = ("token", "secret", "password", "authorization", "cookie", "credential", "api_key", "session_key")
 
 
 def _clip(value: str | None, limit: int = MAX_FIELD_CHARS) -> str | None:
@@ -141,6 +142,44 @@ def _message_read(row: WebchatMessage) -> dict[str, Any]:
         "delivery_status": getattr(row, "delivery_status", None) or "sent",
         "action_status": getattr(row, "action_status", None),
         "author_label": row.author_label,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def _ai_turn_read(row: WebchatAITurn) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "status": row.status,
+        "trigger_message_id": row.trigger_message_id,
+        "latest_visitor_message_id": row.latest_visitor_message_id,
+        "context_cutoff_message_id": row.context_cutoff_message_id,
+        "reply_message_id": row.reply_message_id,
+        "reply_source": row.reply_source,
+        "fallback_reason": row.fallback_reason,
+        "bridge_elapsed_ms": row.bridge_elapsed_ms,
+    }
+
+
+def _redact_event_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized = str(key).lower().replace("-", "_")
+            if any(marker in normalized for marker in SENSITIVE_EVENT_KEYS):
+                redacted[key] = "[redacted]"
+            else:
+                redacted[key] = _redact_event_payload(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_event_payload(item) for item in value]
+    return value
+
+
+def _event_read(row: WebchatEvent) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "event_type": row.event_type,
+        "payload_json": _redact_event_payload(_loads_json(row.payload_json) or {}),
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
@@ -724,6 +763,20 @@ def admin_get_thread(db: Session, ticket_id: int, current_user: User) -> dict[st
         raise HTTPException(status_code=404, detail="webchat conversation not found for ticket")
     rows = db.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id).order_by(WebchatMessage.created_at.asc(), WebchatMessage.id.asc()).all()
     actions = db.query(WebchatCardAction).filter(WebchatCardAction.conversation_id == conversation.id).order_by(WebchatCardAction.created_at.asc(), WebchatCardAction.id.asc()).all()
+    ai_turn_rows = (
+        db.query(WebchatAITurn)
+        .filter(WebchatAITurn.conversation_id == conversation.id)
+        .order_by(WebchatAITurn.id.desc())
+        .limit(20)
+        .all()
+    )
+    event_rows = (
+        db.query(WebchatEvent)
+        .filter(WebchatEvent.conversation_id == conversation.id)
+        .order_by(WebchatEvent.id.desc())
+        .limit(30)
+        .all()
+    )
     handoff_row = db.query(WebchatHandoffRequest).filter_by(id=conversation.current_handoff_request_id).first() if conversation.current_handoff_request_id else None
     return {
         "conversation_id": conversation.public_id,
@@ -752,6 +805,8 @@ def admin_get_thread(db: Session, ticket_id: int, current_user: User) -> dict[st
             "origin": action.origin,
             "created_at": action.created_at.isoformat() if action.created_at else None,
         } for action in actions],
+        "ai_turns": [_ai_turn_read(row) for row in reversed(ai_turn_rows)],
+        "events": [_event_read(row) for row in reversed(event_rows)],
         **webchat_read_state_payload(db, conversation_id=conversation.id, user_id=current_user.id),
     }
 

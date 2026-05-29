@@ -1,10 +1,10 @@
-import { createRoute, redirect, useNavigate } from '@tanstack/react-router'
+import { createRoute, redirect } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken, type WebCallAIDemoEvent, type WebCallAIDemoSession, type WebCallAIDemoTurn } from '@/lib/api'
-import { canViewOps } from '@/lib/access'
+import { canAccess, routeAccess } from '@/lib/rbac'
 import { sanitizeDisplayText, formatDateTime } from '@/lib/format'
 import { useSession } from '@/hooks/useAuth'
 import { Badge } from '@/components/ui/Badge'
@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Field } from '@/components/ui/Field'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { RequireCapability } from '@/components/security/RequireCapability'
 import { Toast } from '@/components/ui/Toast'
 
 type SpeechRecognitionCtor = new () => {
@@ -43,9 +44,8 @@ function eventLabel(event: WebCallAIDemoEvent) {
 
 function WebCallAIDemoPage() {
   const session = useSession()
-  const navigate = useNavigate()
   const client = useQueryClient()
-  const permitted = canViewOps(session.data)
+  const permitted = canAccess(session.data, routeAccess['/webcall-ai-demo'])
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
   const [demoSession, setDemoSession] = useState<WebCallAIDemoSession | null>(null)
   const [text, setText] = useState('Where is my parcel?')
@@ -117,8 +117,6 @@ function WebCallAIDemoPage() {
     onError: (err: Error) => setToast({ message: err.message, tone: 'danger' }),
   })
 
-  if (session.data && !permitted) navigate({ to: '/' })
-
   return (
     <AppShell>
       <PageHeader
@@ -127,9 +125,7 @@ function WebCallAIDemoPage() {
         description="Admin-only text-first demo surface for WebCall AI readiness, safe turns, browser speech fallback, and durable evidence."
       />
 
-      {!permitted ? <Card><CardHeader title="No access" subtitle="This internal demo is limited to runtime/admin operators." /></Card> : null}
-
-      {permitted ? (
+      <RequireCapability requirement={routeAccess['/webcall-ai-demo']}>
         <>
           <div className="metrics-grid">
             <Card className="metric"><div className="metric-label">Demo Status</div><div className="metric-value"><Badge tone={statusTone(status.data?.status)}>{status.data?.status || 'loading'}</Badge></div></Card>
@@ -218,7 +214,7 @@ function WebCallAIDemoPage() {
             </Card>
           </div>
         </>
-      ) : null}
+      </RequireCapability>
       {toast ? <Toast message={toast.message} tone={toast.tone} onClose={() => setToast(null)} /> : null}
     </AppShell>
   )
