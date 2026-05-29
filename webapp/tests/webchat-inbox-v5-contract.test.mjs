@@ -11,6 +11,7 @@ const inbox = read('src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx')
 const apiClient = read('src/lib/api.ts')
 const access = read('src/lib/access.ts')
 const rbac = read('src/lib/rbac.ts')
+const backendTicketsApi = read('../backend/app/api/tickets.py')
 
 test('webchat route replaces the legacy inbox with the V5 production inbox', () => {
   assert.match(route, /WebchatInboxV5Page/)
@@ -51,14 +52,39 @@ test('webchat inbox V5 has no visible backend-placeholder copy for designed cont
 test('ticket attachment and escalation actions go through unified api client and permission helpers', () => {
   assert.match(apiClient, /uploadTicketAttachment: \(ticketId: number, file: File, visibility = 'external'\)/)
   assert.match(apiClient, /\/api\/tickets\/\$\{ticketId\}\/attachments/)
+  assert.match(apiClient, /addTicketInternalNote: \(ticketId: number, payload: \{ body: string \}\)/)
+  assert.match(apiClient, /\/api\/tickets\/\$\{ticketId\}\/internal-notes/)
   assert.match(apiClient, /escalateTicket: \(ticketId: number, payload: \{ team_id: number; note: string \}\)/)
   assert.match(apiClient, /\/api\/tickets\/\$\{ticketId\}\/escalate/)
   assert.match(apiClient, /webchatReadState: \(ticketId: number, payload: \{ marked_unread: boolean \}\)/)
   assert.match(apiClient, /\/api\/webchat\/admin\/tickets\/\$\{ticketId\}\/read-state/)
+  assert.match(backendTicketsApi, /@router\.post\("\/{ticket_id}\/internal-notes"/)
   assert.match(rbac, /uploadAttachment: \{ allOf: \[CAPABILITIES\.attachmentUpload\] \}/)
   assert.match(rbac, /escalateTicket: \{ allOf: \[CAPABILITIES\.ticketEscalate\] \}/)
+  assert.match(rbac, /writeInternalNote: \{ allOf: \[CAPABILITIES\.noteWriteInternal\] \}/)
   assert.match(access, /canUploadAttachment/)
   assert.match(access, /canEscalateTickets/)
+  assert.match(access, /canWriteInternalNote/)
+})
+
+test('webchat inbox V5 exposes v1.7.8 template blocks on real backend data and actions', () => {
+  for (const marker of [
+    /data-testid="webchat-template-reply-note-composer"/,
+    /data-testid="webchat-template-customer-profile"/,
+    /data-testid="webchat-template-ai-suggestions"/,
+    /testId="webchat-template-handoff-controls"/,
+    /data-testid="webchat-template-session-actions"/,
+    /function buildWebchatAISuggestions/,
+    /caseDetail\?\.evidence_summary/,
+    /webchatThread\.ai_turns/,
+    /api\.addTicketInternalNote/,
+    /api\.webchatReadState/,
+    /api\.escalateTicket/,
+    /api\.webchatForceTakeover/,
+    /AgentWebCallPanel/,
+  ]) {
+    assert.match(inbox, marker)
+  }
 })
 
 test('webchat inbox V5 supports safety review confirmation after backend 409', () => {

@@ -10,11 +10,11 @@ The previous PRs connected real WebChat, WebCall, and Email API capabilities, bu
 
 ## Remaining template-block work
 
-- WebChat: verify visual parity for queue, message stream, customer profile, AI suggestions, handoff, session actions.
+- WebChat: closed by the WebChat template parity PR; see `docs/frontend-upgrade/22-webchat-template-block-parity-evidence.md`.
 - WebCall: verify visual parity for call queue, sessions, live console, transcript, notes, customer profile, identity verification, AI suggestions, handoff, session actions.
 - Email: verify visual parity for queue, thread, composer, draft/send/audit state.
 - Today Workbench: compare `/` against v1.7.8 Today Workbench blocks.
 
 ## Next PR
 
-The next PR should be a template-block parity PR, not a performance PR.
+The next PR should continue template-block parity for WebCall, Email, or Today Workbench, not performance-only work.

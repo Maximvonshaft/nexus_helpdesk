@@ -10,7 +10,7 @@ import { AppShell } from '@/layouts/AppShell'
 import { ApiError, api } from '@/lib/api'
 import { formatDateTime, sanitizeDisplayText, statusTone } from '@/lib/format'
 import { findReplyChannelCapability, isCustomerSendableReplyChannel, outboundChannelMissingText } from '@/lib/outboundChannels'
-import type { CaseDetail, Team, WebchatActionAudit, WebchatConversation, WebchatHandoffQueue, WebchatHandoffRequest, WebchatMessage, WebchatThread } from '@/lib/types'
+import type { BadgeTone, CaseDetail, Team, WebchatActionAudit, WebchatConversation, WebchatHandoffQueue, WebchatHandoffRequest, WebchatMessage, WebchatThread } from '@/lib/types'
 import { useWebchatRealtime, type WebchatRealtimeEvent } from '@/lib/webchatRealtime'
 import { AgentWebCallPanel } from '@/components/webcall/AgentWebCallPanel'
 import { Badge } from '@/components/ui/Badge'
@@ -22,7 +22,7 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Toast } from '@/components/ui/Toast'
 import { useSession } from '@/hooks/useAuth'
-import { canEscalateTickets, canForceWebchatHandoff, canUploadAttachment, canViewWebcallVoiceQueue, canViewWebchatDebug } from '@/lib/access'
+import { canEscalateTickets, canForceWebchatHandoff, canUploadAttachment, canViewWebcallVoiceQueue, canViewWebchatDebug, canWriteInternalNote } from '@/lib/access'
 
 type InboxView = 'requested' | 'mine' | 'ai_active' | 'all' | 'closed'
 type FilterKey = 'needs_human' | 'timeout' | 'ai_suspended' | 'unread'
@@ -31,6 +31,15 @@ type RealtimeHandoffView = 'requested' | 'ai_active' | 'mine'
 type ToastState = { message: string; tone?: 'default' | 'danger' | 'success'; action?: { label: string; onClick: () => void } }
 type ConfirmState = { title: string; body: string; tone?: 'danger' | 'default'; confirmLabel: string; onConfirm: () => void }
 type EscalateState = { open: boolean; teamId: string; note: string }
+type ComposerMode = 'reply' | 'internal_note'
+type WebchatAISuggestion = {
+  id: string
+  title: string
+  body: string
+  source: string
+  tone?: BadgeTone
+  applyText?: string
+}
 type SafetyReviewState = {
   body: string
   message: string
@@ -187,6 +196,126 @@ function voiceEvidenceValue(payload: Record<string, unknown> | null | undefined,
   const value = payload?.[key]
   if (value === null || value === undefined || value === '') return '-'
   return sanitizeDisplayText(String(value))
+}
+
+function latestMessage(thread: WebchatThread | undefined, direction?: string) {
+  const messages = thread?.messages ?? []
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const item = messages[index]
+    if (!direction || item.direction === direction) return item
+  }
+  return undefined
+}
+
+function latestAiTurn(thread?: WebchatThread) {
+  const turns = thread?.ai_turns ?? []
+  return turns.length ? turns[turns.length - 1] : undefined
+}
+
+function profileName(row: InboxRow, thread?: WebchatThread, detail?: CaseDetail) {
+  return detail?.customer?.name || detail?.customer_name || thread?.visitor?.name || row.visitorLabel || 'Anonymous visitor'
+}
+
+function buildSuggestedReply(detail: CaseDetail | undefined, latestVisitor?: WebchatMessage) {
+  const tracking = detail?.tracking_number ? `运单 ${detail.tracking_number}` : '这个问题'
+  const ask = latestVisitor?.body_text || latestVisitor?.body || detail?.last_customer_message || detail?.customer_request
+  return ask
+    ? `您好，我已看到您提到的情况。我会先核实${tracking}的最新记录，再给您明确答复。`
+    : `您好，我会先核实${tracking}的最新记录，再给您明确答复。`
+}
+
+function buildWebchatAISuggestions({
+  row,
+  thread,
+  caseDetail,
+  handoff,
+  webchatReplyEnabled,
+  sendDisabledReason,
+}: {
+  row: InboxRow
+  thread?: WebchatThread
+  caseDetail?: CaseDetail
+  handoff?: WebchatHandoffRequest | null
+  webchatReplyEnabled: boolean
+  sendDisabledReason: string | null
+}) {
+  const suggestions: WebchatAISuggestion[] = []
+  const requiredAction = thread?.required_action || caseDetail?.required_action || handoff?.recommended_agent_action || row.rawHandoff?.recommended_agent_action
+  if (requiredAction) {
+    suggestions.push({
+      id: 'required-action',
+      title: 'Required action',
+      body: requiredAction,
+      source: thread?.required_action ? 'webchatThread.required_action' : caseDetail?.required_action ? 'caseDetail.required_action' : 'handoff.recommended_agent_action',
+      tone: 'warning',
+    })
+  }
+
+  const latestVisitor = latestMessage(thread, 'visitor')
+  if (latestVisitor || caseDetail?.last_customer_message || caseDetail?.customer_request) {
+    suggestions.push({
+      id: 'customer-intent',
+      title: '客户意图',
+      body: latestVisitor?.body_text || latestVisitor?.body || caseDetail?.last_customer_message || caseDetail?.customer_request || '客户最近消息已同步到线程。',
+      source: latestVisitor ? 'webchatThread.messages' : 'caseDetail.customer_request',
+      applyText: buildSuggestedReply(caseDetail, latestVisitor),
+    })
+  }
+
+  if (caseDetail?.ai_summary || caseDetail?.ai_classification) {
+    const confidence = typeof caseDetail.ai_confidence === 'number' ? ` · confidence ${Math.round(caseDetail.ai_confidence * 100)}%` : ''
+    suggestions.push({
+      id: 'case-ai-summary',
+      title: 'AI case summary',
+      body: `${caseDetail.ai_summary || caseDetail.ai_classification}${confidence}`,
+      source: caseDetail.ai_summary ? 'caseDetail.ai_summary' : 'caseDetail.ai_classification',
+      tone: 'success',
+    })
+  }
+
+  const aiTurn = latestAiTurn(thread)
+  if (aiTurn || row.aiStatus || thread?.last_ai_reply_source || thread?.last_ai_fallback_reason) {
+    const source = aiTurn?.reply_source || thread?.last_ai_reply_source || 'runtime'
+    const fallback = aiTurn?.fallback_reason || thread?.last_ai_fallback_reason
+    suggestions.push({
+      id: 'ai-runtime',
+      title: 'AI runtime',
+      body: `${aiTurn?.status || row.aiStatus || 'unknown'} · source ${source}${fallback ? ` · fallback ${fallback}` : ''}`,
+      source: aiTurn ? 'webchatThread.ai_turns' : 'webchatThread.ai_runtime',
+      tone: aiTone(aiTurn?.status || row.aiStatus, row.aiPending),
+    })
+  }
+
+  const evidence = caseDetail?.evidence_summary
+  if (evidence) {
+    suggestions.push({
+      id: 'evidence-readiness',
+      title: '证据就绪度',
+      body: `附件 ${evidence.attachments_count} · OpenClaw ${evidence.openclaw_transcript_count} · 公告 ${evidence.active_market_bulletins_count}`,
+      source: 'caseDetail.evidence_summary',
+      tone: evidence.loaded ? 'success' : 'warning',
+    })
+  }
+
+  if (!webchatReplyEnabled || sendDisabledReason) {
+    suggestions.push({
+      id: 'reply-gate',
+      title: '回复门禁',
+      body: sendDisabledReason || 'WebChat 回复通道当前不可发送。',
+      source: 'outboundChannelCapabilities + handoff ownership',
+      tone: 'warning',
+    })
+  }
+
+  if (!suggestions.length) {
+    suggestions.push({
+      id: 'no-ai-suggestion',
+      title: 'AI Suggestions',
+      body: '当前线程未返回 required action、AI 摘要或 AI turn；请以消息流和工单证据为准处理。',
+      source: 'webchatThread + caseDetail',
+    })
+  }
+  return suggestions.slice(0, 5)
 }
 
 function rowFromHandoff(item: WebchatHandoffRequest): InboxRow {
@@ -485,12 +614,19 @@ function ConversationWorkspace({
   allowDebug,
   reply,
   setReply,
+  composerMode,
+  setComposerMode,
+  internalNote,
+  setInternalNote,
   hasFactEvidence,
   setHasFactEvidence,
   safetyReview,
   canSend,
   sendDisabledReason,
   onSend,
+  canSaveInternalNote,
+  onSaveInternalNote,
+  internalNotePending,
   onConfirmReview,
   onDismissReview,
   sendPending,
@@ -510,12 +646,19 @@ function ConversationWorkspace({
   allowDebug: boolean
   reply: string
   setReply: (value: string) => void
+  composerMode: ComposerMode
+  setComposerMode: (value: ComposerMode) => void
+  internalNote: string
+  setInternalNote: (value: string) => void
   hasFactEvidence: boolean
   setHasFactEvidence: (value: boolean) => void
   safetyReview: SafetyReviewState | null
   canSend: boolean
   sendDisabledReason: string | null
   onSend: () => void
+  canSaveInternalNote: boolean
+  onSaveInternalNote: () => void
+  internalNotePending: boolean
   onConfirmReview: () => void
   onDismissReview: () => void
   sendPending: boolean
@@ -550,64 +693,85 @@ function ConversationWorkspace({
         {(thread?.messages ?? []).map((msg) => <MessageBubble key={msg.id} msg={msg} allowDebug={allowDebug} />)}
         {thread && !(thread.messages ?? []).length ? <EmptyState text="该会话暂无消息。" /> : null}
       </div>
-      <div className="v5-composer">
-        <div className="v5-composer-bar">
-          <strong>人工回复</strong>
-          <span>{reply.length} / 2000</span>
-        </div>
-        <Field label="回复内容" disabledReason={sendDisabledReason || undefined}>
-          <Textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="输入客户可见回复；Ctrl/Cmd + Enter 发送。" />
-        </Field>
-        <label className="v5-compact-check">
-          <input type="checkbox" checked={hasFactEvidence} onChange={(event) => setHasFactEvidence(event.target.checked)} />
-          <span>已核对物流事实证据</span>
-        </label>
-        {safetyReview ? (
-          <div className="v5-review-panel" role="alert">
-            <div>
-              <strong>回复需要人工复核</strong>
-              <p>{sanitizeDisplayText(safetyReview.message)}</p>
-            </div>
-            {safetyReview.safety.reasons.length ? (
-              <ul>
-                {safetyReview.safety.reasons.map((reason) => <li key={reason}>{sanitizeDisplayText(reason)}</li>)}
-              </ul>
+      <div className="v5-composer" data-testid="webchat-template-reply-note-composer">
+        <Tabs.Root value={composerMode} onValueChange={(value) => setComposerMode(value as ComposerMode)}>
+          <div className="v5-composer-bar">
+            <Tabs.List className="v5-composer-tabs" aria-label="WebChat composer mode">
+              <Tabs.Trigger className="v5-composer-tab" value="reply">客户回复</Tabs.Trigger>
+              <Tabs.Trigger className="v5-composer-tab" value="internal_note">内部备注</Tabs.Trigger>
+            </Tabs.List>
+            <span>{composerMode === 'reply' ? reply.length : internalNote.length} / {composerMode === 'reply' ? 2000 : 4000}</span>
+          </div>
+          <Tabs.Content value="reply" className="v5-composer-pane">
+            <Field label="回复内容" disabledReason={sendDisabledReason || undefined}>
+              <Textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="输入客户可见回复；Ctrl/Cmd + Enter 发送。" />
+            </Field>
+            <label className="v5-compact-check">
+              <input type="checkbox" checked={hasFactEvidence} onChange={(event) => setHasFactEvidence(event.target.checked)} />
+              <span>已核对物流事实证据</span>
+            </label>
+            {safetyReview ? (
+              <div className="v5-review-panel" role="alert">
+                <div>
+                  <strong>回复需要人工复核</strong>
+                  <p>{sanitizeDisplayText(safetyReview.message)}</p>
+                </div>
+                {safetyReview.safety.reasons.length ? (
+                  <ul>
+                    {safetyReview.safety.reasons.map((reason) => <li key={reason}>{sanitizeDisplayText(reason)}</li>)}
+                  </ul>
+                ) : null}
+                <div className="v5-review-normalized">
+                  <span>后端规范化正文</span>
+                  <p>{sanitizeDisplayText(safetyReview.safety.normalized_body)}</p>
+                </div>
+                <div className="button-row">
+                  <Button variant="primary" disabled={!canSend || sendPending} onClick={onConfirmReview}>{sendPending ? '发送中…' : '确认已复核并发送'}</Button>
+                  <Button variant="secondary" disabled={sendPending} onClick={onDismissReview}>返回修改</Button>
+                </div>
+              </div>
             ) : null}
-            <div className="v5-review-normalized">
-              <span>后端规范化正文</span>
-              <p>{sanitizeDisplayText(safetyReview.safety.normalized_body)}</p>
+            <div className="v5-composer-footer">
+              <ComposerTools onInsert={onInsert} onAttach={onAttach} attachmentDisabled={!canAttach} attachmentBusy={attachmentPending} />
+              <div className="button-row">
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild><Button variant="secondary">更多操作</Button></DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content className="v5-menu" sideOffset={8}>
+                      <DropdownMenu.Item className="v5-menu-item" onSelect={onCopyLink}>复制会话链接</DropdownMenu.Item>
+                      <DropdownMenu.Item className="v5-menu-item" disabled={readStatePending} onSelect={() => onMarkReadState(Boolean(!(selectedRow.unreadCount || selectedRow.markedUnread)))}>
+                        {(selectedRow.unreadCount || selectedRow.markedUnread) ? '标记已读' : '标记未读'}
+                      </DropdownMenu.Item>
+                      <DropdownMenu.Item className="v5-menu-item" disabled={!canEscalate} title={canEscalate ? '升级到指定团队' : '缺少 ticket.escalate'} onSelect={onEscalate}>升级主管</DropdownMenu.Item>
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+                <Button variant="primary" disabled={!canSend || sendPending} onClick={onSend}>{sendPending ? '发送中…' : '发送 WebChat 回复'}</Button>
+              </div>
             </div>
-            <div className="button-row">
-              <Button variant="primary" disabled={!canSend || sendPending} onClick={onConfirmReview}>{sendPending ? '发送中…' : '确认已复核并发送'}</Button>
-              <Button variant="secondary" disabled={sendPending} onClick={onDismissReview}>返回修改</Button>
+          </Tabs.Content>
+          <Tabs.Content value="internal_note" className="v5-composer-pane">
+            <Field label="内部备注" disabledReason={canSaveInternalNote ? undefined : '缺少 note.write.internal'}>
+              <Textarea value={internalNote} onChange={(event) => setInternalNote(event.target.value)} placeholder="写入仅内部可见的处理备注。" />
+            </Field>
+            <div className="v5-composer-footer v5-composer-footer-end">
+              <Button
+                variant="primary"
+                disabled={!canSaveInternalNote || !internalNote.trim() || internalNotePending}
+                onClick={onSaveInternalNote}
+              >
+                {internalNotePending ? '保存中…' : '保存内部备注'}
+              </Button>
             </div>
-          </div>
-        ) : null}
-        <div className="v5-composer-footer">
-          <ComposerTools onInsert={onInsert} onAttach={onAttach} attachmentDisabled={!canAttach} attachmentBusy={attachmentPending} />
-          <div className="button-row">
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild><Button variant="secondary">更多操作</Button></DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content className="v5-menu" sideOffset={8}>
-                  <DropdownMenu.Item className="v5-menu-item" onSelect={onCopyLink}>复制会话链接</DropdownMenu.Item>
-                  <DropdownMenu.Item className="v5-menu-item" disabled={readStatePending} onSelect={() => onMarkReadState(Boolean(!(selectedRow.unreadCount || selectedRow.markedUnread)))}>
-                    {(selectedRow.unreadCount || selectedRow.markedUnread) ? '标记已读' : '标记未读'}
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item className="v5-menu-item" disabled={!canEscalate} title={canEscalate ? '升级到指定团队' : '缺少 ticket.escalate'} onSelect={onEscalate}>升级主管</DropdownMenu.Item>
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
-            <Button variant="primary" disabled={!canSend || sendPending} onClick={onSend}>{sendPending ? '发送中…' : '发送 WebChat 回复'}</Button>
-          </div>
-        </div>
+          </Tabs.Content>
+        </Tabs.Root>
       </div>
     </Card>
   )
 }
 
-function Section({ title, children, defaultOpen = true }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
-  return <details className="v5-side-section" open={defaultOpen}><summary>{title}</summary><div>{children}</div></details>
+function Section({ title, children, defaultOpen = true, testId }: { title: string; children: ReactNode; defaultOpen?: boolean; testId?: string }) {
+  return <details className="v5-side-section" open={defaultOpen} data-testid={testId}><summary>{title}</summary><div>{children}</div></details>
 }
 
 function byteLabel(value?: number | null) {
@@ -712,6 +876,106 @@ function ActionAuditPanel({ actions = [], allowDebug }: { actions?: WebchatActio
   )
 }
 
+function CustomerProfilePanel({ row, thread, detail }: { row: InboxRow; thread?: WebchatThread; detail?: CaseDetail }) {
+  const name = profileName(row, thread, detail)
+  const contactRows = [
+    ['手机', detail?.customer?.phone || thread?.visitor?.phone || row.rawHandoff?.visitor_phone || row.rawConversation?.visitor_phone],
+    ['邮箱', detail?.customer?.email || thread?.visitor?.email || row.rawHandoff?.visitor_email || row.rawConversation?.visitor_email],
+    ['偏好渠道', detail?.preferred_reply_channel],
+    ['联系目标', detail?.preferred_reply_contact],
+    ['运单', detail?.tracking_number],
+    ['国家', detail?.destination_country || detail?.country_code],
+  ].filter(([, value]) => Boolean(value))
+  const stats = [
+    ['消息', thread?.messages?.length ?? 0],
+    ['动作', thread?.actions?.length ?? 0],
+    ['事件', thread?.events?.length ?? 0],
+    ['AI turns', thread?.ai_turns?.length ?? 0],
+  ]
+  const recentMessages = (thread?.messages ?? []).filter((message) => message.direction !== 'system').slice(-3)
+  return (
+    <div className="v5-profile" data-testid="webchat-template-customer-profile">
+      <div className="v5-profile-head">
+        <div className="v5-avatar">{shortText(name).slice(0, 2).toUpperCase()}</div>
+        <div>
+          <strong>{shortText(name)}</strong>
+          <span>{shortText(detail?.customer_request || detail?.issue_summary || row.title || 'WebChat customer')}</span>
+        </div>
+      </div>
+      <div className="v5-profile-stats">
+        {stats.map(([label, value]) => (
+          <div key={label}>
+            <strong>{value}</strong>
+            <span>{label}</span>
+          </div>
+        ))}
+      </div>
+      <div className="v5-profile-fields">
+        <div className="v5-kv"><span>工单</span><strong>{shortText(row.ticketNo || `#${row.ticketId}`)}</strong></div>
+        <div className="v5-kv"><span>来源</span><strong>{shortText(row.origin || thread?.origin || 'unknown')}</strong></div>
+        <div className="v5-kv"><span>页面</span><strong>{shortText(thread?.page_url || row.rawConversation?.page_url || '待客户侧上报')}</strong></div>
+        {contactRows.map(([label, value]) => <div key={label} className="v5-kv"><span>{label}</span><strong>{shortText(value)}</strong></div>)}
+      </div>
+      <div className="v5-recent-list" aria-label="Recent Conversations">
+        {recentMessages.map((message) => (
+          <div key={message.id}>
+            <strong>{message.direction === 'visitor' ? '客户' : message.direction === 'ai' ? 'AI 助手' : sanitizeDisplayText(message.author_label || '客服')}</strong>
+            <span>{shortText(message.body_text || message.body)}</span>
+          </div>
+        ))}
+        {!recentMessages.length ? <p className="section-subtitle">暂无最近消息。</p> : null}
+      </div>
+    </div>
+  )
+}
+
+function AISuggestionsPanel({ suggestions, onApply }: { suggestions: WebchatAISuggestion[]; onApply: (text: string) => void }) {
+  return (
+    <div className="v5-ai-suggestions" data-testid="webchat-template-ai-suggestions">
+      {suggestions.map((suggestion) => (
+        <div className="v5-suggestion" key={suggestion.id}>
+          <div className="v5-suggestion-head">
+            <strong>{sanitizeDisplayText(suggestion.title)}</strong>
+            <Badge tone={suggestion.tone || 'default'}>{sanitizeDisplayText(suggestion.source)}</Badge>
+          </div>
+          <p>{sanitizeDisplayText(suggestion.body)}</p>
+          {suggestion.applyText ? (
+            <Button variant="secondary" onClick={() => onApply(suggestion.applyText as string)}>插入回复</Button>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function SessionActionsPanel({
+  row,
+  canEscalate,
+  readStatePending,
+  onCopyLink,
+  onMarkReadState,
+  onEscalate,
+  onApplySummary,
+}: {
+  row: InboxRow
+  canEscalate: boolean
+  readStatePending: boolean
+  onCopyLink: () => void
+  onMarkReadState: (markedUnread: boolean) => void
+  onEscalate: () => void
+  onApplySummary: () => void
+}) {
+  const isUnread = Boolean(row.unreadCount || row.markedUnread)
+  return (
+    <div className="v5-session-actions" data-testid="webchat-template-session-actions">
+      <Button variant="secondary" onClick={onCopyLink}>复制会话链接</Button>
+      <Button variant="secondary" disabled={readStatePending} onClick={() => onMarkReadState(!isUnread)}>{isUnread ? '标记已读' : '标记未读'}</Button>
+      <Button variant="secondary" disabled={!canEscalate} title={canEscalate ? '升级到指定团队' : '缺少 ticket.escalate'} onClick={onEscalate}>升级主管</Button>
+      <Button variant="secondary" onClick={onApplySummary}>插入交接摘要</Button>
+    </div>
+  )
+}
+
 function EscalateDialog({
   state,
   setState,
@@ -772,6 +1036,14 @@ function ContextPanel({
   onForce,
   onRelease,
   onResume,
+  onCopyLink,
+  onMarkReadState,
+  readStatePending,
+  onEscalate,
+  canEscalate,
+  onApplySuggestion,
+  webchatReplyEnabled,
+  sendDisabledReason,
   busy,
 }: {
   row: InboxRow | null
@@ -789,6 +1061,14 @@ function ContextPanel({
   onForce: (ticketId: number) => void
   onRelease: (requestId: number) => void
   onResume: (requestId: number) => void
+  onCopyLink: () => void
+  onMarkReadState: (markedUnread: boolean) => void
+  readStatePending: boolean
+  onEscalate: () => void
+  canEscalate: boolean
+  onApplySuggestion: (text: string) => void
+  webchatReplyEnabled: boolean
+  sendDisabledReason: string | null
   busy: boolean
 }) {
   if (!row) return <Card className="v5-panel v5-side-panel"><CardBody><EmptyState text="请选择会话查看上下文。" /></CardBody></Card>
@@ -798,17 +1078,26 @@ function ContextPanel({
   const canResume = handoff?.can_resume_ai === true && typeof handoff.id === 'number'
   const forceVisible = row.aiPending || (row.aiStatus && AI_ACTIVE_STATUSES.has(row.aiStatus))
   const forceAllowed = canForceTakeover && (handoff?.can_force_takeover ?? row.rawHandoff?.can_force_takeover ?? true)
+  const suggestions = buildWebchatAISuggestions({ row, thread, caseDetail, handoff, webchatReplyEnabled, sendDisabledReason })
+  const latestVisitor = latestMessage(thread, 'visitor')
+  const handoffSummary = [
+    `客户：${profileName(row, thread, caseDetail)}`,
+    `工单：${row.ticketNo || `#${row.ticketId}`}`,
+    `状态：${row.status || thread?.status || '-'}`,
+    `最近客户消息：${latestVisitor?.body_text || latestVisitor?.body || caseDetail?.last_customer_message || '-'}`,
+    `下一步：${thread?.required_action || caseDetail?.required_action || handoff?.recommended_agent_action || '-'}`,
+  ].join('\n')
   return (
     <Card className="v5-panel v5-side-panel">
-      <CardHeader title="上下文与控制" subtitle="客户、接管、证据和运行状态。" />
+      <CardHeader title="上下文与控制" subtitle="客户、AI 建议、接管、会话动作和运行证据。" />
       <CardBody>
-        <Section title="客户上下文">
-          <div className="v5-kv"><span>客户</span><strong>{shortText(row.visitorLabel)}</strong></div>
-          <div className="v5-kv"><span>工单</span><strong>{shortText(row.ticketNo || `#${row.ticketId}`)}</strong></div>
-          <div className="v5-kv"><span>来源</span><strong>{shortText(row.origin || thread?.origin || 'unknown')}</strong></div>
-          <div className="v5-kv"><span>页面</span><strong>{shortText(thread?.page_url || row.rawConversation?.page_url || '待客户侧上报')}</strong></div>
+        <Section title="Customer Profile" testId="webchat-template-customer-profile-section">
+          <CustomerProfilePanel row={row} thread={thread} detail={caseDetail} />
         </Section>
-        <Section title="接管控制">
+        <Section title="AI Suggestions" testId="webchat-template-ai-suggestions-section">
+          <AISuggestionsPanel suggestions={suggestions} onApply={onApplySuggestion} />
+        </Section>
+        <Section title="Handoff" testId="webchat-template-handoff-controls">
           <div className="v5-action-grid">
             {canAccept ? <Button variant="primary" disabled={busy} onClick={() => onAccept(handoff.id as number)}>接管</Button> : null}
             {canAccept ? <Button variant="secondary" disabled={busy} onClick={() => onDecline(handoff.id as number)}>跳过</Button> : null}
@@ -817,6 +1106,17 @@ function ContextPanel({
             {forceVisible ? <Button variant="danger" disabled={busy || !forceAllowed} title={forceAllowed ? '强制接管 AI 会话' : '缺少 webchat.handoff.force_takeover 或当前队列项不可接管'} onClick={() => onForce(row.ticketId)}>强制接管</Button> : null}
           </div>
           {!handoff ? <p className="section-subtitle">当前没有开放的 handoff 请求；AI 活跃时需具备权限才能强制接管。</p> : null}
+        </Section>
+        <Section title="Session Actions" testId="webchat-template-session-actions-section">
+          <SessionActionsPanel
+            row={row}
+            canEscalate={canEscalate}
+            readStatePending={readStatePending}
+            onCopyLink={onCopyLink}
+            onMarkReadState={onMarkReadState}
+            onEscalate={onEscalate}
+            onApplySummary={() => onApplySuggestion(handoffSummary)}
+          />
         </Section>
         <Section title="下一步动作 / Required action">
           <p className="v5-recommendation">{shortText(thread?.required_action || selectedHandoff?.recommended_agent_action || row.rawHandoff?.recommended_agent_action || '暂无明确下一步动作。')}</p>
@@ -859,7 +1159,9 @@ export function WebchatInboxV5Page() {
     const value = Number(new URLSearchParams(window.location.search).get('ticket_id'))
     return Number.isFinite(value) && value > 0 ? value : null
   })
+  const [composerMode, setComposerMode] = useState<ComposerMode>('reply')
   const [reply, setReply] = useState('')
+  const [internalNote, setInternalNote] = useState('')
   const [hasFactEvidence, setHasFactEvidence] = useState(false)
   const [safetyReview, setSafetyReview] = useState<SafetyReviewState | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
@@ -873,6 +1175,7 @@ export function WebchatInboxV5Page() {
   const canForceTakeover = canForceWebchatHandoff(session.data)
   const canAttachEvidence = canUploadAttachment(session.data)
   const canEscalate = canEscalateTickets(session.data)
+  const canSaveInternalNote = canWriteInternalNote(session.data)
   const canViewVoiceQueue = canViewWebcallVoiceQueue(session.data)
   const handoffQueryView: HandoffQueueView = view === 'all' ? 'requested' : view
   const realtimeHandoffView: RealtimeHandoffView = view === 'ai_active' || view === 'mine' ? view : 'requested'
@@ -971,6 +1274,7 @@ export function WebchatInboxV5Page() {
     setEventPollFailures(0)
     setSafetyReview(null)
     setHasFactEvidence(false)
+    setInternalNote('')
   }, [selectedTicketId])
   useEffect(() => {
     if (safetyReview && safetyReview.body !== reply.trim()) setSafetyReview(null)
@@ -1106,6 +1410,18 @@ export function WebchatInboxV5Page() {
     },
     onError: (err) => setToast({ message: apiErrorText(err, '附件上传失败'), tone: 'danger' }),
   })
+  const internalNoteMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedTicketId) throw new Error('No ticket selected')
+      return api.addTicketInternalNote(selectedTicketId, { body: internalNote.trim() })
+    },
+    onSuccess: async () => {
+      setInternalNote('')
+      setToast({ message: '内部备注已写入工单 timeline。', tone: 'success' })
+      await refreshWebchatState()
+    },
+    onError: (err) => setToast({ message: apiErrorText(err, '内部备注保存失败'), tone: 'danger' }),
+  })
   const escalateMutation = useMutation({
     mutationFn: async () => {
       if (!selectedTicketId) throw new Error('No ticket selected')
@@ -1157,7 +1473,9 @@ export function WebchatInboxV5Page() {
     const handler = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
         event.preventDefault()
-        if (canSend && !replyMutation.isPending) replyMutation.mutate({})
+        if (composerMode === 'internal_note') {
+          if (selectedTicketId && canSaveInternalNote && internalNote.trim() && !internalNoteMutation.isPending) internalNoteMutation.mutate()
+        } else if (canSend && !replyMutation.isPending) replyMutation.mutate({})
       }
       if (event.altKey && /^[1-5]$/.test(event.key)) {
         event.preventDefault()
@@ -1167,7 +1485,7 @@ export function WebchatInboxV5Page() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [canSend, replyMutation])
+  }, [canSaveInternalNote, canSend, composerMode, internalNote, internalNoteMutation, replyMutation, selectedTicketId])
 
   const incomingVoiceByTicket = useMemo(() => {
     const map = new Map<number, boolean>()
@@ -1190,6 +1508,10 @@ export function WebchatInboxV5Page() {
   })
   const realtimeLabel = <RealtimePill connected={realtime.connected} status={realtime.status} />
   const insertReply = (text: string) => setReply((value) => value ? `${value}${text.length === 1 ? '' : '\n'}${text}` : text)
+  const applySuggestion = (text: string) => {
+    setComposerMode('reply')
+    insertReply(text)
+  }
 
   return (
     <AppShell>
@@ -1219,12 +1541,19 @@ export function WebchatInboxV5Page() {
           allowDebug={allowDebug}
           reply={reply}
           setReply={setReply}
+          composerMode={composerMode}
+          setComposerMode={setComposerMode}
+          internalNote={internalNote}
+          setInternalNote={setInternalNote}
           hasFactEvidence={hasFactEvidence}
           setHasFactEvidence={setHasFactEvidence}
           safetyReview={safetyReview}
           canSend={canSend}
           sendDisabledReason={sendDisabledReason}
           onSend={() => replyMutation.mutate({})}
+          canSaveInternalNote={Boolean(selectedTicketId && canSaveInternalNote)}
+          onSaveInternalNote={() => internalNoteMutation.mutate()}
+          internalNotePending={internalNoteMutation.isPending}
           onConfirmReview={() => replyMutation.mutate({ confirmReview: true })}
           onDismissReview={() => setSafetyReview(null)}
           sendPending={replyMutation.isPending}
@@ -1252,6 +1581,14 @@ export function WebchatInboxV5Page() {
             allowDebug={allowDebug}
             canForceTakeover={canForceTakeover}
             busy={busy}
+            onCopyLink={() => void copyConversationLink()}
+            onMarkReadState={(markedUnread) => readStateMutation.mutate(markedUnread)}
+            readStatePending={readStateMutation.isPending}
+            onEscalate={openEscalateDialog}
+            canEscalate={Boolean(selectedTicketId && canEscalate)}
+            onApplySuggestion={applySuggestion}
+            webchatReplyEnabled={webchatReplyEnabled}
+            sendDisabledReason={sendDisabledReason}
             onAccept={(requestId) => acceptMutation.mutate(requestId)}
             onDecline={(requestId) => declineMutation.mutate(requestId)}
             onForce={(ticketId) => setConfirm({ title: '确认强制接管？', body: '该操作会暂停 AI，并取消未完成 AI 回复。', tone: 'danger', confirmLabel: '强制接管', onConfirm: () => forceMutation.mutate(ticketId) })}
@@ -1277,6 +1614,14 @@ export function WebchatInboxV5Page() {
               allowDebug={allowDebug}
               canForceTakeover={canForceTakeover}
               busy={busy}
+              onCopyLink={() => void copyConversationLink()}
+              onMarkReadState={(markedUnread) => readStateMutation.mutate(markedUnread)}
+              readStatePending={readStateMutation.isPending}
+              onEscalate={openEscalateDialog}
+              canEscalate={Boolean(selectedTicketId && canEscalate)}
+              onApplySuggestion={applySuggestion}
+              webchatReplyEnabled={webchatReplyEnabled}
+              sendDisabledReason={sendDisabledReason}
               onAccept={(requestId) => acceptMutation.mutate(requestId)}
               onDecline={(requestId) => declineMutation.mutate(requestId)}
               onForce={(ticketId) => setConfirm({ title: '确认强制接管？', body: '该操作会暂停 AI，并取消未完成 AI 回复。', tone: 'danger', confirmLabel: '强制接管', onConfirm: () => forceMutation.mutate(ticketId) })}

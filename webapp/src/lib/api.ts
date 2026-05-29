@@ -363,6 +363,10 @@ export const api = {
       body: form,
     })
   },
+  addTicketInternalNote: (ticketId: number, payload: { body: string }) => request<Record<string, unknown>>(`/api/tickets/${ticketId}/internal-notes`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   escalateTicket: (ticketId: number, payload: { team_id: number; note: string }) => request<Record<string, unknown>>(`/api/tickets/${ticketId}/escalate`, {
     method: 'POST',
     body: JSON.stringify(payload),

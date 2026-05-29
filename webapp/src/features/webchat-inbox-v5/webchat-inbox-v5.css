@@ -65,6 +65,11 @@
 .v5-composer { border-top: 1px solid var(--v5-border); background: rgba(255,255,255,.94); padding: 14px 18px; }
 .v5-composer-bar { display: flex; justify-content: space-between; color: var(--v5-muted); font-size: 12px; margin-bottom: 8px; }
 .v5-composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.v5-composer-footer-end { justify-content: flex-end; }
+.v5-composer-tabs { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--v5-border); border-radius: 12px; background: #f8fafc; }
+.v5-composer-tab { border: 0; border-radius: 9px; background: transparent; color: var(--v5-muted); cursor: pointer; font-size: 12px; font-weight: 800; min-height: 30px; padding: 0 10px; }
+.v5-composer-tab[data-state='active'] { background: #fff; color: var(--v5-primary); box-shadow: 0 1px 6px rgba(15,23,42,.08); }
+.v5-composer-pane { outline: none; }
 .v5-composer-tools { display: flex; align-items: center; gap: 8px; }
 .v5-compact-check { display: inline-flex; gap: 8px; align-items: center; width: fit-content; color: var(--v5-muted); font-size: 13px; font-weight: 700; margin-top: 8px; }
 .v5-compact-check input { width: 16px; height: 16px; accent-color: #2563eb; }
@@ -95,6 +100,23 @@
 .v5-kv span { color: var(--v5-muted); font-size: 12px; }
 .v5-kv strong { overflow-wrap: anywhere; }
 .v5-action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.v5-profile { display: grid; gap: 10px; }
+.v5-profile-head { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.v5-profile-head strong, .v5-profile-head span { display: block; overflow-wrap: anywhere; }
+.v5-profile-head span { color: var(--v5-muted); font-size: 12px; margin-top: 2px; }
+.v5-profile-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.v5-profile-stats div { border: 1px solid rgba(148,163,184,.22); border-radius: 12px; background: #f8fafc; padding: 8px; min-width: 0; }
+.v5-profile-stats strong { display: block; color: var(--v5-text); font-size: 16px; line-height: 1.1; }
+.v5-profile-stats span { color: var(--v5-muted); display: block; font-size: 11px; margin-top: 3px; overflow-wrap: anywhere; }
+.v5-profile-fields { display: grid; gap: 0; }
+.v5-recent-list, .v5-ai-suggestions { display: grid; gap: 8px; }
+.v5-recent-list div, .v5-suggestion { border: 1px solid rgba(148,163,184,.22); border-radius: 12px; background: #f8fafc; padding: 9px 10px; min-width: 0; }
+.v5-recent-list strong, .v5-recent-list span { display: block; overflow-wrap: anywhere; }
+.v5-recent-list span { color: var(--v5-muted); font-size: 12px; margin-top: 3px; }
+.v5-suggestion { display: grid; gap: 8px; }
+.v5-suggestion-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.v5-suggestion p { margin: 0; line-height: 1.55; overflow-wrap: anywhere; }
+.v5-session-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .v5-recommendation { margin: 0; border-left: 3px solid #f59e0b; background: #fffbeb; padding: 10px 12px; border-radius: 12px; line-height: 1.55; }
 .v5-realtime-card { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .v5-event-list { display: grid; gap: 8px; }
