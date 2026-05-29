@@ -37,6 +37,7 @@ from ..services.lite_service import (
 )
 from ..services.control_tower_service import build_control_tower
 from ..services.knowledge_studio_service import build_knowledge_studio
+from ..services.persona_builder_service import build_persona_builder
 from ..services.qa_training_service import build_qa_training
 from ..services.today_workbench_service import build_today_workbench
 from .deps import get_current_user
@@ -86,6 +87,11 @@ def qa_training(db: Session = Depends(get_db), current_user=Depends(get_current_
 @router.get("/knowledge-studio")
 def knowledge_studio(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     return build_knowledge_studio(db, current_user)
+
+
+@router.get("/persona-builder")
+def persona_builder(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return build_persona_builder(db, current_user)
 
 
 @router.get("/cases")

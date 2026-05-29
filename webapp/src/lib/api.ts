@@ -28,6 +28,7 @@ import type {
   AIConfigResource,
   AIConfigVersion,
   KnowledgeStudio,
+  PersonaBuilder,
   KnowledgeItem,
   KnowledgeItemDetail,
   KnowledgeItemList,
@@ -38,6 +39,7 @@ import type {
   PersonaProfileDetail,
   PersonaProfileList,
   PersonaProfileVersion,
+  PersonaResolvePreviewResult,
   Team,
   TodayWorkbench,
   WebchatConversation,
@@ -355,6 +357,7 @@ export const api = {
   controlTower: () => request<ControlTower>('/api/lite/control-tower'),
   qaTraining: () => request<QATraining>('/api/lite/qa-training'),
   knowledgeStudio: () => request<KnowledgeStudio>('/api/lite/knowledge-studio'),
+  personaBuilder: () => request<PersonaBuilder>('/api/lite/persona-builder'),
   ticketTimeline: (ticketId: number, params?: { cursor?: string | null; limit?: number }) => {
     const search = new URLSearchParams()
     search.set('limit', String(params?.limit ?? 50))
@@ -451,6 +454,10 @@ export const api = {
   rollbackPersonaProfile: (profileId: number, version: number, notes?: string) => request<PersonaProfileVersion>(`/api/persona-profiles/${profileId}/rollback`, {
     method: 'POST',
     body: JSON.stringify({ version, notes: notes || null }),
+  }),
+  resolvePersonaPreview: (payload: { market_id?: number | null; channel?: string | null; language?: string | null }) => request<PersonaResolvePreviewResult>('/api/persona-profiles/resolve-preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   }),
   knowledgeItems: (params?: { q?: string; status?: string; source_type?: string; channel?: string; audience_scope?: string }) => {
     const search = new URLSearchParams()

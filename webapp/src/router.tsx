@@ -15,6 +15,7 @@ import { Route as ProviderCredentialsRoute } from '@/routes/provider-credentials
 import { Route as BulletinsRoute } from '@/routes/bulletins'
 import { Route as AIControlRoute } from '@/routes/ai-control'
 import { Route as KnowledgeStudioRoute } from '@/routes/knowledge-studio'
+import { Route as PersonaBuilderRoute } from '@/routes/persona-builder'
 import { Route as ControlTowerRoute } from '@/routes/control-tower'
 import { Route as QATrainingRoute } from '@/routes/qa-training'
 import { Route as ControlPlaneRoute } from '@/routes/control-plane'
@@ -43,6 +44,7 @@ const routeTree = RootRoute.addChildren([
   BulletinsRoute,
   AIControlRoute,
   KnowledgeStudioRoute,
+  PersonaBuilderRoute,
   ControlTowerRoute,
   QATrainingRoute,
   ControlPlaneRoute,

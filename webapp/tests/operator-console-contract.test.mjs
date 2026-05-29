@@ -14,6 +14,7 @@ const runtimeRoute = readFileSync(resolve(root, 'src/routes/runtime.tsx'), 'utf8
 const controlTowerRoute = readFileSync(resolve(root, 'src/routes/control-tower.tsx'), 'utf8')
 const qaTrainingRoute = readFileSync(resolve(root, 'src/routes/qa-training.tsx'), 'utf8')
 const knowledgeStudioRoute = readFileSync(resolve(root, 'src/routes/knowledge-studio.tsx'), 'utf8')
+const personaBuilderRoute = readFileSync(resolve(root, 'src/routes/persona-builder.tsx'), 'utf8')
 const webchatRoute = readFileSync(resolve(root, 'src/routes/webchat.tsx'), 'utf8')
 const webcallOperatorRoute = readFileSync(resolve(root, 'src/routes/webcall-operator.tsx'), 'utf8')
 const webchatInboxV5 = readFileSync(resolve(root, 'src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx'), 'utf8')
@@ -205,6 +206,7 @@ test('command palette exposes high-frequency operator workflow shortcuts', () =>
   assert.match(commandPalette, /打开 Control Tower/)
   assert.match(commandPalette, /打开 QA \/ Training Loop/)
   assert.match(commandPalette, /打开 Knowledge Studio/)
+  assert.match(commandPalette, /打开 AI Persona Builder/)
   assert.match(commandPalette, /进入运行恢复 \/ dead 重排/)
   assert.match(commandPalette, /刷新运行状态/)
   assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['runtimeHealth'\] \}\)/)
@@ -273,6 +275,29 @@ test('knowledge studio page uses the v1.7.8 knowledge backend contract', () => {
   assert.doesNotMatch(knowledgeStudioRoute, /\bfetch\s*\(/)
 })
 
+test('persona builder page uses the v1.7.8 persona backend contract', () => {
+  assert.match(types, /export interface PersonaBuilder \{/)
+  assert.match(types, /export interface PersonaBuilderProfile \{/)
+  assert.match(types, /export interface PersonaResolvePreviewResult \{/)
+  assert.match(apiClient, /personaBuilder: \(\) => request<PersonaBuilder>\('\/api\/lite\/persona-builder'\)/)
+  assert.match(apiClient, /resolvePersonaPreview: \(payload: \{ market_id\?: number \| null; channel\?: string \| null; language\?: string \| null \}\)/)
+  assert.match(rbacManifest, /'\/persona-builder': \{ anyOf: \[CAPABILITIES\.aiConfigRead, CAPABILITIES\.aiConfigManage\] \}/)
+  assert.match(appShell, /to: '\/persona-builder'[\s\S]*access: routeAccess\['\/persona-builder'\]/)
+  assert.match(commandPalette, /to: '\/persona-builder'[\s\S]*access: routeAccess\['\/persona-builder'\]/)
+  assert.match(personaBuilderRoute, /path: '\/persona-builder'/)
+  assert.match(personaBuilderRoute, /<RequireCapability requirement=\{routeAccess\['\/persona-builder'\]\}>/)
+  assert.match(personaBuilderRoute, /queryKey: \['personaBuilder'\]/)
+  assert.match(personaBuilderRoute, /api\.resolvePersonaPreview/)
+  assert.match(personaBuilderRoute, /data-testid="persona-builder-template-blocks"/)
+  assert.match(personaBuilderRoute, /data-testid="persona-builder-real-kpis"/)
+  assert.match(personaBuilderRoute, /data-testid="persona-builder-profile-library"/)
+  assert.match(personaBuilderRoute, /data-testid="persona-builder-resolve-preview"/)
+  assert.match(personaBuilderRoute, /data-testid="persona-builder-runtime-evidence"/)
+  assert.match(personaBuilderRoute, /data-testid="persona-builder-release-lifecycle"/)
+  assert.match(personaBuilderRoute, /data-testid="persona-builder-template-closure"/)
+  assert.doesNotMatch(personaBuilderRoute, /\bfetch\s*\(/)
+})
+
 test('overview page provides priority action entrypoints', () => {
   assert.match(overviewRoute, /data-testid="overview-priority-actions"/)
   assert.match(overviewRoute, /处理客户工单/)
@@ -309,6 +334,7 @@ test('admin operator surfaces do not bypass unified api client with raw fetch', 
     ['src/routes/control-tower.tsx', controlTowerRoute],
     ['src/routes/qa-training.tsx', qaTrainingRoute],
     ['src/routes/knowledge-studio.tsx', knowledgeStudioRoute],
+    ['src/routes/persona-builder.tsx', personaBuilderRoute],
     ['src/routes/webchat.tsx', webchatRoute],
     ['src/routes/webcall-operator.tsx', webcallOperatorRoute],
     ['src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx', webchatInboxV5],

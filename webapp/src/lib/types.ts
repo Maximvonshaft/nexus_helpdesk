@@ -389,6 +389,85 @@ export interface KnowledgeStudio {
   facts: Record<string, number | string | boolean>
 }
 
+export interface PersonaBuilderKpi {
+  key: string
+  label: string
+  value: number
+  hint: string
+  tone: BadgeTone
+}
+
+export interface PersonaBuilderProfile {
+  id: number
+  profile_key: string
+  name: string
+  description?: string | null
+  market_id?: number | null
+  channel?: string | null
+  language?: string | null
+  scope_label: string
+  scope_specificity: number
+  is_active: boolean
+  published_version: number
+  draft_ready: boolean
+  published_ready: boolean
+  needs_publish: boolean
+  identity_ready: boolean
+  boundary_ready: boolean
+  guardrail_count: number
+  risk_flags: string[]
+  updated_at?: string | null
+  href: string
+  evidence: string
+}
+
+export interface PersonaBuilderSimulationScenario {
+  market_id?: number | null
+  channel?: string | null
+  language?: string | null
+  matched_profile_key?: string | null
+  matched_name?: string | null
+  match_rank?: number | null
+  published_version?: number | null
+  reasons: string[]
+  fallback: boolean
+  status: string
+  href: string
+}
+
+export interface PersonaBuilderLifecycleStep {
+  key: string
+  step: string
+  owner: string
+  artifact: string
+  status: string
+  count: number
+  href: string
+  enabled: boolean
+}
+
+export interface PersonaBuilderTemplateBlock {
+  key: string
+  label: string
+  backend_contract: string
+  status: string
+  evidence: string
+  href: string
+}
+
+export interface PersonaBuilder {
+  generated_at: string
+  role: string
+  user_id: number
+  capabilities: string[]
+  kpis: PersonaBuilderKpi[]
+  profiles: PersonaBuilderProfile[]
+  simulation_scenarios: PersonaBuilderSimulationScenario[]
+  release_lifecycle: PersonaBuilderLifecycleStep[]
+  template_blocks: PersonaBuilderTemplateBlock[]
+  facts: Record<string, number | string | boolean>
+}
+
 export interface TranscriptMessage {
   id: number
   role: string
@@ -770,6 +849,11 @@ export interface PersonaProfileDetail extends PersonaProfile {
 export interface PersonaProfileList {
   profiles: PersonaProfile[]
   total: number
+}
+
+export interface PersonaResolvePreviewResult {
+  profile?: PersonaProfile | null
+  match_rank?: number | null
 }
 
 export interface KnowledgeItem {

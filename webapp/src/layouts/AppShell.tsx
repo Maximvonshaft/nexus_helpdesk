@@ -27,6 +27,7 @@ const nav = [
   { to: '/bulletins', label: '公告口径', hint: '统一客服话术', permission: 'bulletins' },
   { to: '/ai-control', label: 'AI 规则', hint: '助手口径治理', access: routeAccess['/ai-control'] },
   { to: '/knowledge-studio', label: 'Knowledge Studio', hint: '知识发布、检索与冲突', access: routeAccess['/knowledge-studio'] },
+  { to: '/persona-builder', label: 'AI Persona Builder', hint: '人格、匹配与发布证据', access: routeAccess['/persona-builder'] },
   { to: '/control-plane', label: '控制面', hint: '高级治理入口', access: routeAccess['/control-plane'] },
   { to: '/users', label: '账号权限', hint: '人员与权限', access: routeAccess['/users'] },
 ]
@@ -34,7 +35,7 @@ const nav = [
 const navGroups = [
   { label: '日常处理', items: ['/', '/workspace', '/webchat', '/webcall', '/email', '/bulletins'] },
   { label: '渠道与授权', items: ['/accounts', '/outbound-email', '/provider-credentials'] },
-  { label: '治理与运维', items: ['/control-tower', '/qa-training', '/runtime', '/ai-control', '/knowledge-studio', '/control-plane', '/users', '/webcall-ai-demo'] },
+  { label: '治理与运维', items: ['/control-tower', '/qa-training', '/runtime', '/ai-control', '/knowledge-studio', '/persona-builder', '/control-plane', '/users', '/webcall-ai-demo'] },
 ]
 
 function isActiveNavPath(pathname: string, target: string) {

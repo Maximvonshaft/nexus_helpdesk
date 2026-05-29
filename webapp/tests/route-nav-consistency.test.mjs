@@ -58,6 +58,13 @@ test('knowledge studio nav route is registered and capability gated', () => {
   assert.match(rbac, /'\/knowledge-studio': \{ anyOf: \[CAPABILITIES\.aiConfigRead, CAPABILITIES\.aiConfigManage\] \}/)
 })
 
+test('persona builder nav route is registered and capability gated', () => {
+  assert.match(appShell, /to: '\/persona-builder'/)
+  assert.match(router, /PersonaBuilderRoute/)
+  assert.match(router, /@\/routes\/persona-builder/)
+  assert.match(rbac, /'\/persona-builder': \{ anyOf: \[CAPABILITIES\.aiConfigRead, CAPABILITIES\.aiConfigManage\] \}/)
+})
+
 test('internal webcall routes are intentionally classified', () => {
   assert.match(router, /Internal operator console for human WebCall handling/)
   assert.match(router, /Top-level operator WebCall workbench/)
@@ -81,6 +88,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'control-tower.tsx',
     'qa-training.tsx',
     'knowledge-studio.tsx',
+    'persona-builder.tsx',
     'webcall-ai-demo.tsx',
     'provider-credentials.tsx',
     'accounts.tsx',
