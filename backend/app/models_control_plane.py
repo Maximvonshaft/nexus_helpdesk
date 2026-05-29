@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -158,3 +158,50 @@ class ChannelOnboardingTask(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
     started_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True)
+
+
+class GovernanceReleaseRequest(Base):
+    __tablename__ = "governance_release_requests"
+    __table_args__ = (
+        Index("ix_governance_release_status_created", "status", "created_at"),
+        Index("ix_governance_release_source", "source_type", "source_id"),
+        Index("ix_governance_release_risk_status", "risk_level", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_type: Mapped[str] = mapped_column(String(40), index=True)
+    source_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(200), index=True)
+    summary: Mapped[str] = mapped_column(Text)
+    release_type: Mapped[str] = mapped_column(String(40), default="change", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending_review", index=True)
+    risk_level: Mapped[str] = mapped_column(String(40), default="medium", index=True)
+    impact_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    diff_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    rollback_plan: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    audit_target_type: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    audit_target_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    requested_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    approved_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    published_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    rolled_back_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, index=True)
+    submitted_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    published_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    rolled_back_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+
+
+class GovernanceReleaseEvent(Base):
+    __tablename__ = "governance_release_events"
+    __table_args__ = (Index("ix_governance_release_events_release_created", "release_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    release_id: Mapped[int] = mapped_column(ForeignKey("governance_release_requests.id"), index=True)
+    actor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(80), index=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    request_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)

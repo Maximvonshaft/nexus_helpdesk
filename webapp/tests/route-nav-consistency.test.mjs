@@ -47,6 +47,13 @@ test('internal webcall routes are intentionally classified', () => {
   assert.doesNotMatch(appShell, /to: '\/webchat-voice'/)
 })
 
+test('governance release queue nav route is registered and capability gated', () => {
+  assert.match(appShell, /to: '\/governance-releases'/)
+  assert.match(router, /GovernanceReleasesRoute/)
+  assert.match(router, /@\/routes\/governance-releases/)
+  assert.match(rbac, /'\/governance-releases': \{ anyOf: \[CAPABILITIES\.governanceReleaseRead, CAPABILITIES\.governanceReleaseManage\] \}/)
+})
+
 test('primary nav internal hrefs have matching registered routes', () => {
   const routeFiles = [
     'login.tsx',
@@ -63,6 +70,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'bulletins.tsx',
     'ai-control.tsx',
     'control-plane.tsx',
+    'governance-releases.tsx',
     'users.tsx',
   ]
   const registered = new Set(routeFiles.flatMap((file) => registeredStaticRoutes(readFileSync(resolve(root, `src/routes/${file}`), 'utf8'))))

@@ -30,6 +30,9 @@ import type {
   KnowledgeItemList,
   KnowledgeItemVersion,
   KnowledgeRetrievalTestResult,
+  GovernanceRelease,
+  GovernanceReleaseCreate,
+  GovernanceReleaseList,
   OpenClawUnresolvedEvent,
   PersonaProfile,
   PersonaProfileDetail,
@@ -496,6 +499,39 @@ export const api = {
   testKnowledgeRetrieval: (payload: { q: string; market_id?: number | null; channel?: string | null; audience_scope?: string | null; language?: string | null; limit?: number }) => request<KnowledgeRetrievalTestResult>('/api/knowledge-items/retrieve-test', {
     method: 'POST',
     body: JSON.stringify(payload),
+  }),
+  governanceReleases: (params?: { status?: string; source_type?: string; risk_level?: string; q?: string; limit?: number }) => {
+    const search = new URLSearchParams()
+    search.set('limit', String(params?.limit ?? 100))
+    if (params?.status) search.set('status', params.status)
+    if (params?.source_type) search.set('source_type', params.source_type)
+    if (params?.risk_level) search.set('risk_level', params.risk_level)
+    if (params?.q) search.set('q', params.q)
+    return request<GovernanceReleaseList>(`/api/admin/governance-releases?${search.toString()}`)
+  },
+  createGovernanceRelease: (payload: GovernanceReleaseCreate) => request<GovernanceRelease>('/api/admin/governance-releases', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  submitGovernanceRelease: (releaseId: number, note?: string) => request<GovernanceRelease>(`/api/admin/governance-releases/${releaseId}/submit`, {
+    method: 'POST',
+    body: JSON.stringify({ note: note || null }),
+  }),
+  approveGovernanceRelease: (releaseId: number, note?: string) => request<GovernanceRelease>(`/api/admin/governance-releases/${releaseId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ note: note || null }),
+  }),
+  publishGovernanceRelease: (releaseId: number, note?: string) => request<GovernanceRelease>(`/api/admin/governance-releases/${releaseId}/publish`, {
+    method: 'POST',
+    body: JSON.stringify({ note: note || null }),
+  }),
+  rollbackGovernanceRelease: (releaseId: number, note?: string) => request<GovernanceRelease>(`/api/admin/governance-releases/${releaseId}/rollback`, {
+    method: 'POST',
+    body: JSON.stringify({ note: note || null }),
+  }),
+  rejectGovernanceRelease: (releaseId: number, note?: string) => request<GovernanceRelease>(`/api/admin/governance-releases/${releaseId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ note: note || null }),
   }),
   channelOnboardingTasks: () => request<ChannelOnboardingTaskList>('/api/channel-control/onboarding-tasks?limit=200'),
 

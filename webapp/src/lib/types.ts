@@ -552,6 +552,71 @@ export interface KnowledgeRetrievalTestResult {
   grounding_source?: Record<string, unknown> | null
 }
 
+export type GovernanceReleaseSourceType = 'persona' | 'knowledge' | 'ai_config' | 'bulletin' | 'channel_account' | 'outbound_email' | 'speedaf_action'
+export type GovernanceReleaseStatus = 'draft' | 'pending_review' | 'approved' | 'published' | 'rolled_back' | 'rejected'
+export type GovernanceReleaseRisk = 'low' | 'medium' | 'high' | 'critical'
+
+export interface GovernanceReleaseEvent {
+  id: number
+  release_id: number
+  actor_id?: number | null
+  event_type: string
+  note?: string | null
+  payload_json?: Record<string, unknown> | null
+  request_id?: string | null
+  created_at: string
+}
+
+export interface GovernanceRelease {
+  id: number
+  source_type: GovernanceReleaseSourceType | string
+  source_id?: number | null
+  title: string
+  summary: string
+  release_type: string
+  status: GovernanceReleaseStatus | string
+  risk_level: GovernanceReleaseRisk | string
+  impact_json?: Record<string, unknown> | null
+  diff_json?: Record<string, unknown> | null
+  rollback_plan?: string | null
+  audit_target_type?: string | null
+  audit_target_id?: number | null
+  requested_by?: number | null
+  approved_by?: number | null
+  published_by?: number | null
+  rolled_back_by?: number | null
+  created_at: string
+  updated_at: string
+  submitted_at?: string | null
+  approved_at?: string | null
+  published_at?: string | null
+  rolled_back_at?: string | null
+  events: GovernanceReleaseEvent[]
+}
+
+export interface GovernanceReleaseList {
+  items: GovernanceRelease[]
+  total: number
+  status_counts: Record<string, number>
+  source_counts: Record<string, number>
+  risk_counts: Record<string, number>
+}
+
+export type GovernanceReleaseCreate = {
+  source_type: GovernanceReleaseSourceType | string
+  source_id?: number | null
+  title: string
+  summary: string
+  release_type?: string
+  status?: 'draft' | 'pending_review'
+  risk_level?: GovernanceReleaseRisk | string
+  impact_json?: Record<string, unknown> | null
+  diff_json?: Record<string, unknown> | null
+  rollback_plan?: string | null
+  audit_target_type?: string | null
+  audit_target_id?: number | null
+}
+
 export interface ChannelOnboardingTask {
   id: number
   provider: string

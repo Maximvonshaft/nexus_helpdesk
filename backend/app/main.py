@@ -16,6 +16,7 @@ from .api.admin_provider_runtime import router as admin_provider_runtime_router
 from .api.admin_provider_credentials import router as admin_provider_credentials_router
 from .api.admin_webcall_ai import router as admin_webcall_ai_router
 from .api.admin_webcall_ai_demo import router as admin_webcall_ai_demo_router
+from .api.admin_governance_releases import router as admin_governance_releases_router
 from .api import admin as admin_api
 from .api.admin import router as admin_router
 from .api.admin_queue import router as admin_queue_router
@@ -240,6 +241,7 @@ app.include_router(admin_provider_runtime_router)
 app.include_router(admin_provider_credentials_router)
 app.include_router(admin_webcall_ai_router)
 app.include_router(admin_webcall_ai_demo_router)
+app.include_router(admin_governance_releases_router)
 app.include_router(ticket_perf_router)
 app.include_router(admin_router)
 app.include_router(admin_queue_router)

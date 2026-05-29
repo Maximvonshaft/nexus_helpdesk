@@ -62,6 +62,8 @@ jobs:
               backend/alembic/versions/20260526_0034_knowledge_rag_business_facts.py) return 0 ;;
               backend/alembic/versions/20260527_0035_webchat_handoff_control.py) return 0 ;;
               backend/alembic/versions/20260527_0038_webchat_inbox_read_state.py) return 0 ;;
+              backend/alembic/versions/20260529_0039_governance_release_queue.py) return 0 ;;
+              backend/app/api/admin_governance_releases.py) return 0 ;;
               backend/app/api/admin_provider_credentials.py) return 0 ;;
               backend/app/api/admin_provider_runtime.py) return 0 ;;
               backend/app/api/admin_webcall_ai.py) return 0 ;;
@@ -75,6 +77,7 @@ jobs:
               backend/app/main.py) return 0 ;;
               backend/app/models_control_plane.py) return 0 ;;
               backend/app/schemas_control_plane.py) return 0 ;;
+              backend/app/schemas_governance_release.py) return 0 ;;
               backend/app/settings.py) return 0 ;;
               backend/app/static/webchat/demo/DEPLOYMENT_NOTES.md) return 0 ;;
               backend/app/static/webchat/demo/index.html) return 0 ;;
@@ -87,6 +90,7 @@ jobs:
               backend/app/services/ai_runtime/schemas.py) return 0 ;;
               backend/app/services/ai_runtime_context.py) return 0 ;;
               backend/app/services/knowledge_document_service.py) return 0 ;;
+              backend/app/services/governance_release_service.py) return 0 ;;
               backend/app/services/knowledge_grounding_service.py) return 0 ;;
               backend/app/services/knowledge_prompt_service.py) return 0 ;;
               backend/app/services/knowledge_retrieval_service.py) return 0 ;;
@@ -138,6 +142,8 @@ jobs:
               backend/tests/test_codex_runtime_v3_static.py) return 0 ;;
               backend/tests/test_codex_smoke_chat.py) return 0 ;;
               backend/tests/test_knowledge_items.py) return 0 ;;
+              backend/tests/test_governance_release_migration.py) return 0 ;;
+              backend/tests/test_governance_release_queue_api.py) return 0 ;;
               backend/tests/test_knowledge_rag_runtime.py) return 0 ;;
               backend/tests/test_knowledge_runtime_context.py) return 0 ;;
               backend/tests/test_knowledge_text_upload_encoding.py) return 0 ;;
@@ -224,6 +230,7 @@ jobs:
               webapp/src/routes/ai-control.tsx) return 0 ;;
               webapp/src/routes/control-plane.tsx) return 0 ;;
               webapp/src/routes/email.tsx) return 0 ;;
+              webapp/src/routes/governance-releases.tsx) return 0 ;;
               webapp/src/routes/runtime.tsx) return 0 ;;
               webapp/src/routes/users.tsx) return 0 ;;
               webapp/src/routes/webcall-ai.tsx) return 0 ;;
@@ -234,6 +241,7 @@ jobs:
               webapp/src/routes/workspace.tsx) return 0 ;;
               webapp/src/styles.css) return 0 ;;
               webapp/tests/email-workbench-contract.test.mjs) return 0 ;;
+              webapp/tests/governance-release-contract.test.mjs) return 0 ;;
               webapp/tests/novice-ux-regression.test.mjs) return 0 ;;
               webapp/tests/operator-console-contract.test.mjs) return 0 ;;
               webapp/tests/route-nav-consistency.test.mjs) return 0 ;;

@@ -20,6 +20,7 @@ const accounts = read('src/routes/accounts.tsx')
 const aiControl = read('src/routes/ai-control.tsx')
 const providerCredentials = read('src/routes/provider-credentials.tsx')
 const outboundEmail = read('src/routes/outbound-email.tsx')
+const governanceReleases = read('src/routes/governance-releases.tsx')
 const appShell = read('src/layouts/AppShell.tsx')
 
 test('shared UX primitives expose production novice guidance and accessibility contracts', () => {
@@ -116,6 +117,19 @@ test('outbound email setup protects secrets and labels SMTP test failures', () =
   assert.doesNotMatch(outboundEmail, /password_encrypted/)
 })
 
+test('governance release queue keeps high-risk release actions guided and audited', () => {
+  assert.match(governanceReleases, /<GuidedWorkflow steps=/)
+  assert.match(governanceReleases, /影响范围与 Diff/)
+  assert.match(governanceReleases, /回滚计划/)
+  assert.match(governanceReleases, /<ConfirmDialog/)
+  assert.match(governanceReleases, /governance-release-queue/)
+  assert.match(governanceReleases, /governance-release-actions/)
+  assert.match(governanceReleases, /governance-release-evidence/)
+  assert.match(governanceReleases, /api\.createGovernanceRelease/)
+  assert.match(governanceReleases, /api\.publishGovernanceRelease/)
+  assert.match(governanceReleases, /api\.rollbackGovernanceRelease/)
+})
+
 test('navigation is grouped by operator mental model without route changes', () => {
   assert.match(appShell, /const navGroups/)
   assert.match(appShell, /日常处理/)
@@ -123,4 +137,5 @@ test('navigation is grouped by operator mental model without route changes', () 
   assert.match(appShell, /治理与运维/)
   assert.match(appShell, /to: '\/provider-credentials'/)
   assert.match(appShell, /to: '\/ai-control'/)
+  assert.match(appShell, /to: '\/governance-releases'/)
 })

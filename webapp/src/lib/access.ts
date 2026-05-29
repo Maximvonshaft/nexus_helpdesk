@@ -37,7 +37,15 @@ export function canManageMarkets(user?: AuthUser | null) {
 }
 
 export function canViewControlPlane(user?: AuthUser | null) {
-  return canReadAIConfig(user) || canManageChannels(user) || canViewOps(user)
+  return canReadAIConfig(user) || canManageChannels(user) || canViewOps(user) || canReadGovernanceReleases(user)
+}
+
+export function canReadGovernanceReleases(user?: AuthUser | null) {
+  return hasCapability(user, CAPABILITIES.governanceReleaseRead) || hasCapability(user, CAPABILITIES.governanceReleaseManage)
+}
+
+export function canManageGovernanceReleases(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.manageGovernanceRelease)
 }
 
 export function canAssignTickets(user?: AuthUser | null) {
