@@ -13,8 +13,8 @@ The previous PRs connected real WebChat, WebCall, and Email API capabilities, bu
 - WebChat: verify visual parity for queue, message stream, customer profile, AI suggestions, handoff, session actions.
 - WebCall: verify visual parity for call queue, sessions, live console, transcript, notes, customer profile, identity verification, AI suggestions, handoff, session actions.
 - Email: verify visual parity for queue, thread, composer, draft/send/audit state.
-- Today Workbench: compare `/` against v1.7.8 Today Workbench blocks.
+- Today Workbench: this PR maps `/` to the v1.7.8 `今日工作台 / 我的优先事项` block set with a real `/api/workbench/today` backend view model. It now exposes role tasks, metrics, SLA risk rows, visible entrypoints, Command Center rows, interaction states and source contracts instead of frontend-only fixture counts.
 
 ## Next PR
 
-The next PR should be a template-block parity PR, not a performance PR.
+The next PR should continue template-block parity for WebChat, WebCall, or Email visual/runtime blocks, not another performance-only PR.

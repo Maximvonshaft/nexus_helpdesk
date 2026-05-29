@@ -52,14 +52,24 @@ function OverviewPage() {
   const todayMetrics = today.data?.metrics ?? {}
   const todayTasks = today.data?.tasks ?? []
   const slaRiskTickets = today.data?.sla_risk_tickets ?? []
+  const visibleEntrypoints = today.data?.visible_entrypoints ?? []
+  const commandCenter = today.data?.command_center ?? []
+  const interactionStates = today.data?.interaction_states ?? []
   const runtimeRecoveryCount = (q?.dead_jobs ?? 0) + (q?.dead_outbound ?? 0) + (rt?.dead_sync_jobs ?? 0) + (rt?.dead_attachment_jobs ?? 0)
   const needsRuntimeRecovery = canSeeOps && runtimeRecoveryCount > 0
 
-  const openTask = (task: TodayWorkbenchTask) => {
-    if (task.target_route === '/webchat') navigate({ to: '/webchat' })
-    else if (task.target_route === '/email') navigate({ to: '/email' })
-    else if (task.target_route === '/runtime') navigate({ to: '/runtime' })
+  const navigateTo = (route: string) => {
+    if (route === '/webchat') navigate({ to: '/webchat' })
+    else if (route === '/webcall') navigate({ to: '/webcall' })
+    else if (route === '/email') navigate({ to: '/email' })
+    else if (route === '/runtime') navigate({ to: '/runtime' })
+    else if (route === '/accounts') navigate({ to: '/accounts' })
+    else if (route === '/users') navigate({ to: '/users' })
     else navigate({ to: '/workspace' })
+  }
+
+  const openTask = (task: TodayWorkbenchTask) => {
+    navigateTo(task.target_route)
   }
 
   return (
@@ -74,6 +84,16 @@ function OverviewPage() {
       {today.isError ? (
         <div className="message" data-role="agent">今日工作台需要 ticket.read 权限；请联系主管检查当前账号授权。</div>
       ) : null}
+
+      <Card className="soft" data-testid="today-workbench-template-block">
+        <CardHeader
+          title={today.data ? `${today.data.role_label}优先事项` : '角色优先事项'}
+          subtitle={today.data ? `生成时间 ${formatDateTime(today.data.generated_at)}` : '正在从后端聚合当前角色的真实任务。'}
+        />
+        <CardBody>
+          <div className="message" data-role="assistant">{sanitizeDisplayText(today.data?.mission ?? '正在读取角色任务、真实 API 来源和可见入口。')}</div>
+        </CardBody>
+      </Card>
 
       <div className="metrics-grid metrics-grid-wide" data-testid="today-workbench-metrics">
         <MetricCard label="我的处理中工单" value={today.data ? todayMetrics.my_open_tickets ?? 0 : '—'} hint="按当前账号可见范围计算" />
@@ -157,6 +177,55 @@ function OverviewPage() {
           </CardBody>
         </Card>
       </div>
+
+      <div className="page-grid split-grid">
+        <Card>
+          <CardHeader title="该角色可见入口" subtitle="入口来自后端 view model；实际放行仍由 routeAccess 与后端 RBAC 双重约束。" />
+          <CardBody>
+            <DataTable
+              columns={['入口', '说明', '真实来源', '动作']}
+              rows={visibleEntrypoints.map((entry) => [
+                sanitizeDisplayText(entry.label),
+                sanitizeDisplayText(entry.hint),
+                sanitizeDisplayText(entry.source),
+                <Button key={entry.key} variant="secondary" onClick={() => navigateTo(entry.route)}>打开</Button>,
+              ])}
+              loading={today.isLoading}
+            />
+          </CardBody>
+        </Card>
+        <Card>
+          <CardHeader title="Command Center" subtitle="v1.7.8 模板命令中心映射到真实接口与审计证据。" />
+          <CardBody>
+            <DataTable
+              columns={['命令', '来源接口', '审计证据', '动作']}
+              rows={commandCenter.map((command) => [
+                sanitizeDisplayText(command.label),
+                sanitizeDisplayText(command.source),
+                sanitizeDisplayText(command.audit),
+                <Button key={command.key} variant="secondary" onClick={() => navigateTo(command.route)}>打开</Button>,
+              ])}
+              loading={today.isLoading}
+            />
+          </CardBody>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader title="交互状态" subtitle="Loading、empty、error、permission denied、unsaved changes 都由同一个后端契约解释。" />
+        <CardBody>
+          <DataTable
+            columns={['状态', '客服看到什么', '产品规则', '来源']}
+            rows={interactionStates.map((state) => [
+              sanitizeDisplayText(state.state),
+              sanitizeDisplayText(state.operator_signal),
+              sanitizeDisplayText(state.product_rule),
+              sanitizeDisplayText(state.source),
+            ])}
+            loading={today.isLoading}
+          />
+        </CardBody>
+      </Card>
 
       {canSeeOps ? (
         <div className="metrics-grid metrics-grid-wide">

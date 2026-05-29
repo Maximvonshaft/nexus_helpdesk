@@ -11,9 +11,17 @@ from ..models import Ticket, User
 from ..utils.time import ensure_utc, utc_now
 from ..webchat_models import WebchatHandoffRequest
 from .permissions import (
+    CAP_CHANNEL_ACCOUNT_MANAGE,
+    CAP_OUTBOUND_DRAFT_SAVE,
+    CAP_OUTBOUND_SEND,
     CAP_RUNTIME_MANAGE,
     CAP_TICKET_ASSIGN,
     CAP_TICKET_READ,
+    CAP_USER_MANAGE,
+    CAP_WEBCALL_VOICE_ACCEPT,
+    CAP_WEBCALL_VOICE_END,
+    CAP_WEBCALL_VOICE_QUEUE_VIEW,
+    CAP_WEBCALL_VOICE_READ,
     ensure_capability,
     resolve_capabilities,
 )
@@ -32,6 +40,22 @@ WEBCHAT_ATTENTION_STATES = (
     ConversationState.ready_to_reply,
     ConversationState.reopened_by_customer,
 )
+
+ROLE_LABELS = {
+    UserRole.agent: "一线客服",
+    UserRole.lead: "组长",
+    UserRole.manager: "客服主管",
+    UserRole.admin: "管理员",
+    UserRole.auditor: "审计员",
+}
+
+ROLE_MISSIONS = {
+    UserRole.agent: "先处理自己的 WebChat handoff、等待中的 Email 和临近 SLA 工单，再补齐草稿、发送与 timeline 证据。",
+    UserRole.lead: "先消化未分配队列和溢出的 handoff，再处理升级单、WebCall 支援与质量抽检。",
+    UserRole.manager: "先看 SLA、跨渠道风险与运行恢复，再确认责任人、兜底线路和审计证据。",
+    UserRole.admin: "先确认运行恢复、RBAC、渠道健康和高风险变更，再处理系统级阻塞。",
+    UserRole.auditor: "先复核权限变更、时间线证据和发送留痕，再抽查高风险客户交互。",
+}
 
 
 def _enum_value(value: Any) -> Any:
@@ -94,6 +118,108 @@ def _task(
         "target_route": target_route,
         "target_filter": target_filter or {},
     }
+
+
+def _entrypoint(key: str, label: str, route: str, hint: str, source: str) -> dict[str, str]:
+    return {"key": key, "label": label, "route": route, "hint": hint, "source": source}
+
+
+def _command(key: str, label: str, route: str, source: str, audit: str) -> dict[str, str]:
+    return {"key": key, "label": label, "route": route, "source": source, "audit": audit}
+
+
+def _visible_entrypoints(capabilities: set[str]) -> list[dict[str, str]]:
+    entrypoints = [
+        _entrypoint("workspace", "处理工单", "/workspace", "分配、回复、证据与时间线", "/api/lite/cases"),
+        _entrypoint("webchat", "WebChat", "/webchat", "handoff、AI 暂停和人工回复", "/api/webchat/admin/handoff/queue"),
+    ]
+    if {CAP_WEBCALL_VOICE_READ, CAP_WEBCALL_VOICE_QUEUE_VIEW}.issubset(capabilities):
+        entrypoints.append(
+            _entrypoint("webcall", "WebCall", "/webcall", "来电队列、身份验证、AI 建议和会话动作", "/api/webcall/operator/workbench")
+        )
+    if {CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND} & capabilities:
+        entrypoints.append(
+            _entrypoint("email", "Email", "/email", "邮件队列、草稿保存、外发和 timeline 回写", "/api/tickets/{ticket_id}/outbound/*")
+        )
+    if CAP_RUNTIME_MANAGE in capabilities:
+        entrypoints.append(_entrypoint("runtime", "运行恢复", "/runtime", "dead/requeue 与同步健康", "/api/admin/queues/summary"))
+    if CAP_CHANNEL_ACCOUNT_MANAGE in capabilities:
+        entrypoints.append(_entrypoint("accounts", "发送线路", "/accounts", "渠道账号和兜底线路", "/api/admin/channel-accounts"))
+    if CAP_USER_MANAGE in capabilities:
+        entrypoints.append(_entrypoint("users", "账号权限", "/users", "RBAC 与权限变更审计", "/api/admin/capabilities/catalog"))
+    return entrypoints
+
+
+def _interaction_states() -> list[dict[str, str]]:
+    return [
+        {
+            "state": "loading",
+            "operator_signal": "显示骨架与刷新状态",
+            "product_rule": "不得误报 0；保留上次可用上下文",
+            "source": "React Query loading/error state",
+        },
+        {
+            "state": "empty",
+            "operator_signal": "明确当前没有待办",
+            "product_rule": "展示下一步入口，不让客服停在空页",
+            "source": "/api/workbench/today",
+        },
+        {
+            "state": "error",
+            "operator_signal": "显示可重试失败",
+            "product_rule": "保留模块边界，不吞掉接口错误",
+            "source": "统一 API client ApiError",
+        },
+        {
+            "state": "permission denied",
+            "operator_signal": "入口仍解释权限语义",
+            "product_rule": "RBAC 决定可见范围与动作能力",
+            "source": "routeAccess + backend capabilities",
+        },
+        {
+            "state": "unsaved changes",
+            "operator_signal": "草稿/动作必须显式保存",
+            "product_rule": "Email draft/save 与 timeline 写回分离验证",
+            "source": "/api/tickets/{ticket_id}/outbound/draft",
+        },
+    ]
+
+
+def _command_center(capabilities: set[str]) -> list[dict[str, str]]:
+    commands = [
+        _command("cmd-ticket", "打开工单处理", "/workspace", "/api/lite/cases", "TicketEvent + timeline"),
+        _command("cmd-webchat", "接入等待最久的 WebChat", "/webchat", "/api/webchat/admin/handoff/queue", "WebchatEvent + handoff decision"),
+        _command("cmd-trace", "查看 timeline/audit", "/workspace", "/api/tickets/{ticket_id}/timeline", "Ticket timeline"),
+    ]
+    if {CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND} & capabilities:
+        commands.append(
+            _command("cmd-email", "处理等待中的 Email", "/email", "/api/tickets/{ticket_id}/outbound/draft|send", "TicketOutboundMessage + TicketEvent")
+        )
+    if {CAP_WEBCALL_VOICE_ACCEPT, CAP_WEBCALL_VOICE_END, CAP_WEBCALL_VOICE_QUEUE_VIEW} & capabilities:
+        commands.append(
+            _command("cmd-webcall", "打开 WebCall 工作台", "/webcall", "/api/webcall/operator/workbench", "Voice session + handoff + ticket timeline")
+        )
+    if CAP_RUNTIME_MANAGE in capabilities:
+        commands.append(_command("cmd-runtime", "进入运行恢复", "/runtime", "/api/admin/queues/summary", "AdminAuditLog + queue recovery result"))
+    if CAP_USER_MANAGE in capabilities:
+        commands.append(_command("cmd-rbac", "复核 RBAC", "/users", "/api/admin/capabilities/catalog", "AdminAuditLog"))
+    return commands
+
+
+def _source_contracts() -> list[str]:
+    return [
+        "/api/auth/me",
+        "/api/workbench/today",
+        "/api/lite/cases",
+        "/api/webchat/admin/handoff/queue",
+        "/api/webchat/admin/conversations",
+        "/api/webcall/operator/workbench",
+        "/api/tickets/{ticket_id}/outbound/draft",
+        "/api/tickets/{ticket_id}/outbound/send",
+        "/api/tickets/{ticket_id}/timeline",
+        "/api/admin/queues/summary",
+        "/api/admin/capabilities/catalog",
+    ]
 
 
 def _ticket_payload(ticket: Ticket, now) -> dict[str, Any]:
@@ -252,19 +378,18 @@ def build_today_workbench(db: Session, current_user: User) -> dict[str, Any]:
             "team_id": current_user.team_id,
             "capabilities": sorted(capabilities),
         },
+        "role_label": ROLE_LABELS.get(current_user.role, current_user.role.value),
+        "mission": ROLE_MISSIONS.get(current_user.role, ROLE_MISSIONS[UserRole.agent]),
         "metrics": metrics,
         "tasks": tasks,
+        "visible_entrypoints": _visible_entrypoints(capabilities),
+        "interaction_states": _interaction_states(),
+        "command_center": _command_center(capabilities),
         "sla_risk_tickets": [_ticket_payload(ticket, now) for ticket in sla_rows],
         "permissions": {
             "can_assign": CAP_TICKET_ASSIGN in capabilities,
             "can_manage_runtime": CAP_RUNTIME_MANAGE in capabilities,
             "can_read_tickets": CAP_TICKET_READ in capabilities,
         },
-        "source_contracts": [
-            "/api/auth/me",
-            "/api/workbench/today",
-            "/api/lite/cases",
-            "/api/webchat/admin/handoff/queue",
-            "/api/tickets/{ticket_id}/timeline",
-        ],
+        "source_contracts": _source_contracts(),
     }

@@ -15,8 +15,10 @@ This PR adds `GET /api/workbench/today`:
 - Requires the current authenticated user and effective `ticket.read` capability.
 - Applies the same ticket visibility model as the ticket workbench: admin/manager/auditor see all; agent/lead see assigned tickets or their team.
 - Aggregates real tickets, WebChat handoff requests, source channels, customer-waiting state, urgent priority, unassigned queue, and 30-minute SLA risk.
-- Returns task cards, metrics, and SLA-risk ticket rows for the homepage.
+- Returns task cards, metrics, SLA-risk ticket rows, role mission copy, visible entrypoints, Command Center rows, and interaction-state rules for the homepage.
 - Keeps `/auth/me` as the identity/capability source and exposes the backend source contracts in the response for contract review.
+- Maps the v1.7.8 Workbench group (`今日工作台`, `WebChat`, `WebCall`, `Email`) to real route/API contracts instead of fixture-only template cards.
+- Explicitly includes Email draft/send and timeline contracts plus WebCall operator workbench source references so the default homepage is aligned with the channel workbenches already split out of the legacy omni inbox.
 
 ## Verification hooks
 

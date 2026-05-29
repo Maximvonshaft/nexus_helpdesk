@@ -514,6 +514,29 @@ class TodayWorkbenchTaskRead(APIModel):
     target_filter: dict[str, Any] = Field(default_factory=dict)
 
 
+class TodayWorkbenchEntrypointRead(APIModel):
+    key: str
+    label: str
+    route: str
+    hint: str
+    source: str
+
+
+class TodayWorkbenchInteractionStateRead(APIModel):
+    state: str
+    operator_signal: str
+    product_rule: str
+    source: str
+
+
+class TodayWorkbenchCommandRead(APIModel):
+    key: str
+    label: str
+    route: str
+    source: str
+    audit: str
+
+
 class TodayWorkbenchTicketRead(APIModel):
     id: int
     ticket_no: str
@@ -535,8 +558,13 @@ class TodayWorkbenchTicketRead(APIModel):
 class TodayWorkbenchRead(APIModel):
     generated_at: datetime
     user: AuthUserRead
+    role_label: str
+    mission: str
     metrics: dict[str, int]
     tasks: list[TodayWorkbenchTaskRead]
+    visible_entrypoints: list[TodayWorkbenchEntrypointRead]
+    interaction_states: list[TodayWorkbenchInteractionStateRead]
+    command_center: list[TodayWorkbenchCommandRead]
     sla_risk_tickets: list[TodayWorkbenchTicketRead]
     permissions: dict[str, bool]
     source_contracts: list[str]

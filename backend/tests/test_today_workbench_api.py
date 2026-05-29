@@ -191,11 +191,18 @@ def test_today_workbench_uses_real_ticket_scope_sla_and_handoff_counts(client: T
     assert payload["metrics"]["customer_waiting"] == 1
     assert payload["metrics"]["unassigned_visible"] == 3
     assert payload["metrics"]["urgent_open"] == 1
+    assert payload["role_label"] == "一线客服"
+    assert "WebChat handoff" in payload["mission"]
     assert {task["key"] for task in payload["tasks"]} >= {"handoff", "my-tickets", "sla-risk", "customer-waiting", "webchat-waiting", "email-waiting"}
     assert next(task for task in payload["tasks"] if task["key"] == "sla-risk")["source"] == "/api/workbench/today#sla_risk_tickets"
+    assert {entry["key"] for entry in payload["visible_entrypoints"]} >= {"workspace", "webchat", "email"}
+    assert {command["key"] for command in payload["command_center"]} >= {"cmd-ticket", "cmd-webchat", "cmd-email", "cmd-trace"}
+    assert {state["state"] for state in payload["interaction_states"]} == {"loading", "empty", "error", "permission denied", "unsaved changes"}
     assert len(payload["sla_risk_tickets"]) == 1
     assert payload["sla_risk_tickets"][0]["ticket_no"].startswith("MINE-SLA")
     assert "/api/auth/me" in payload["source_contracts"]
+    assert "/api/tickets/{ticket_id}/outbound/draft" in payload["source_contracts"]
+    assert "/api/tickets/{ticket_id}/timeline" in payload["source_contracts"]
 
 
 def test_today_workbench_admin_scope_sees_cross_team_sla_risk(client: TestClient, db_session):
@@ -216,6 +223,8 @@ def test_today_workbench_admin_scope_sees_cross_team_sla_risk(client: TestClient
     assert payload["metrics"]["sla_risk_30m"] == 2
     assert payload["permissions"]["can_assign"] is True
     assert any(task["key"] == "unassigned" for task in payload["tasks"])
+    assert any(entry["key"] == "webcall" for entry in payload["visible_entrypoints"])
+    assert any(command["key"] == "cmd-webcall" for command in payload["command_center"])
 
 
 def test_today_workbench_requires_effective_ticket_read_capability(client: TestClient, db_session):

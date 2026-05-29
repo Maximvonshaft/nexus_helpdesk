@@ -80,6 +80,29 @@ export interface TodayWorkbenchTask {
   target_filter: Record<string, unknown>
 }
 
+export interface TodayWorkbenchEntrypoint {
+  key: string
+  label: string
+  route: string
+  hint: string
+  source: string
+}
+
+export interface TodayWorkbenchInteractionState {
+  state: string
+  operator_signal: string
+  product_rule: string
+  source: string
+}
+
+export interface TodayWorkbenchCommand {
+  key: string
+  label: string
+  route: string
+  source: string
+  audit: string
+}
+
 export interface TodayWorkbenchTicket {
   id: number
   ticket_no: string
@@ -101,8 +124,13 @@ export interface TodayWorkbenchTicket {
 export interface TodayWorkbenchResponse {
   generated_at: string
   user: AuthUser
+  role_label: string
+  mission: string
   metrics: Record<string, number>
   tasks: TodayWorkbenchTask[]
+  visible_entrypoints: TodayWorkbenchEntrypoint[]
+  interaction_states: TodayWorkbenchInteractionState[]
+  command_center: TodayWorkbenchCommand[]
   sla_risk_tickets: TodayWorkbenchTicket[]
   permissions: Record<string, boolean>
   source_contracts: string[]
