@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -132,4 +134,12 @@ def test_confirm_success_uses_customer_caller_and_dedupes(harness, monkeypatch):
     assert second.status_code == 409
     assert action_calls == [{"waybill_code": "WB123", "reason_code": "CC01", "caller_id": "41000000000"}]
     with harness.SessionLocal() as db:
-        assert db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_cancel").count() == 1
+        event = db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_cancel").one()
+        payload = json.loads(event.payload_json)
+        assert payload["request_id"]
+        assert payload["dedupe_key"] == first.json()["dedupeKey"]
+    timeline = harness.client.get(f"/api/tickets/{harness.ticket.id}/timeline").json()["items"]
+    event_item = next(item for item in timeline if item.get("field_name") == "speedaf_cancel")
+    assert event_item["new_value"] == "cancel_requested"
+    assert event_item["payload"]["request_id"]
+    assert event_item["payload"]["dedupe_key"] == first.json()["dedupeKey"]

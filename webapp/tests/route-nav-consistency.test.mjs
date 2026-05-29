@@ -47,6 +47,13 @@ test('internal webcall routes are intentionally classified', () => {
   assert.doesNotMatch(appShell, /to: '\/webchat-voice'/)
 })
 
+test('speedaf action center nav route is registered and capability gated', () => {
+  assert.match(appShell, /to: '\/speedaf'/)
+  assert.match(router, /SpeedafRoute/)
+  assert.match(router, /@\/routes\/speedaf/)
+  assert.match(rbac, /'\/speedaf': \{ allOf: \[CAPABILITIES\.ticketRead\], anyOf: \[CAPABILITIES\.speedafWorkOrderWrite, CAPABILITIES\.speedafAddressUpdateWrite, CAPABILITIES\.speedafCancelWrite\] \}/)
+})
+
 test('primary nav internal hrefs have matching registered routes', () => {
   const routeFiles = [
     'login.tsx',
@@ -60,6 +67,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'provider-credentials.tsx',
     'accounts.tsx',
     'outbound-email.tsx',
+    'speedaf.tsx',
     'bulletins.tsx',
     'ai-control.tsx',
     'control-plane.tsx',

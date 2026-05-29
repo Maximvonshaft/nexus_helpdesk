@@ -16,6 +16,7 @@ const actions = [
   { id: 'accounts', label: '检查发送线路', keywords: '发送线路 渠道 账号 outbound', to: '/accounts', access: routeAccess['/accounts'] },
   { id: 'outbound-email', label: '维护 Outbound Email 账号', keywords: 'email smtp 邮件 账号 test-send 测试发送 outbound', to: '/outbound-email', access: routeAccess['/outbound-email'] },
   { id: 'bulletins', label: '查看公告口径', keywords: '公告 口径 通知', to: '/bulletins' },
+  { id: 'speedaf-action-center', label: '打开 Speedaf 动作中心', keywords: 'speedaf 催派 地址 更新 取消 运单', to: '/speedaf', access: routeAccess['/speedaf'] },
   { id: 'refresh', label: '刷新全部数据', keywords: '刷新 reload invalidate', action: 'refresh' },
   { id: 'runtime-refresh', label: '刷新运行状态', keywords: '刷新 runtime 运行 状态', action: 'runtime-refresh', access: routeAccess['/runtime'] },
   { id: 'new-bulletin', label: '新建公告', keywords: '公告 新建 口径', to: '/bulletins', access: { allOf: [CAPABILITIES.bulletinManage] } },

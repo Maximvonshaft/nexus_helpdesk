@@ -51,6 +51,14 @@ import type {
   CodexCredentialActionResult,
 } from '@/lib/types'
 import type { WebchatVoiceIncomingSession, WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
+import type {
+  SpeedafActionResponse,
+  SpeedafAddressUpdatePayload,
+  SpeedafCancelPayload,
+  SpeedafCancelPreviewPayload,
+  SpeedafCancelPreviewResponse,
+  SpeedafWorkOrderPayload,
+} from '@/lib/speedafTypes'
 import { mapApiErrorMessage } from '@/lib/apiErrorMap'
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
@@ -633,6 +641,23 @@ export const api = {
     body: JSON.stringify({ reason: reason || null }),
   }),
   webchatVoiceEndSession: (ticketId: number, voiceSessionId: string) => request<{ ok: boolean; status: string; voice_session_id: string; accepted_by_user_id?: number | null }>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/end`, { method: 'POST' }),
+
+  speedafCreateWorkOrder: (ticketId: number, payload: SpeedafWorkOrderPayload) => request<SpeedafActionResponse>(`/api/tickets/${ticketId}/speedaf/work-orders`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  speedafAddressUpdate: (ticketId: number, payload: SpeedafAddressUpdatePayload) => request<SpeedafActionResponse>(`/api/tickets/${ticketId}/speedaf/address-update`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  speedafCancelPreview: (ticketId: number, payload: SpeedafCancelPreviewPayload) => request<SpeedafCancelPreviewResponse>(`/api/tickets/${ticketId}/speedaf/cancel-preview`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  speedafCancel: (ticketId: number, payload: SpeedafCancelPayload) => request<SpeedafActionResponse>(`/api/tickets/${ticketId}/speedaf/cancel`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
 
   unresolvedEvents: () => request<OpenClawUnresolvedEvent[]>('/api/admin/openclaw/unresolved-events'),
   replayUnresolvedEvent: (eventId: number) => request<{ ok: boolean; linked_ticket_id?: number | null }>(`/api/admin/openclaw/unresolved-events/${eventId}/replay`, {

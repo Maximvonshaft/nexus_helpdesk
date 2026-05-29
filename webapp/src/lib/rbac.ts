@@ -59,6 +59,7 @@ export const routeAccess = {
   '/email': { allOf: [CAPABILITIES.ticketRead], anyOf: [CAPABILITIES.outboundDraftSave, CAPABILITIES.outboundSend] },
   '/ai-control': { allOf: [CAPABILITIES.aiConfigManage] },
   '/control-plane': { anyOf: [CAPABILITIES.aiConfigRead, CAPABILITIES.aiConfigManage, CAPABILITIES.channelAccountManage, CAPABILITIES.runtimeManage] },
+  '/speedaf': { allOf: [CAPABILITIES.ticketRead], anyOf: [CAPABILITIES.speedafWorkOrderWrite, CAPABILITIES.speedafAddressUpdateWrite, CAPABILITIES.speedafCancelWrite] },
   '/users': { allOf: [CAPABILITIES.userManage] },
   '/webchat-voice': { allOf: [CAPABILITIES.webcallVoiceQueueView] },
 } satisfies Record<string, AccessRequirement>

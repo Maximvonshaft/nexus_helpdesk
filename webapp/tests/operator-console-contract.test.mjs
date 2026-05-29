@@ -13,8 +13,10 @@ const workspaceRoute = readFileSync(resolve(root, 'src/routes/workspace.tsx'), '
 const runtimeRoute = readFileSync(resolve(root, 'src/routes/runtime.tsx'), 'utf8')
 const webchatRoute = readFileSync(resolve(root, 'src/routes/webchat.tsx'), 'utf8')
 const webcallOperatorRoute = readFileSync(resolve(root, 'src/routes/webcall-operator.tsx'), 'utf8')
+const speedafRoute = readFileSync(resolve(root, 'src/routes/speedaf.tsx'), 'utf8')
 const webchatInboxV5 = readFileSync(resolve(root, 'src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx'), 'utf8')
 const webchatVoiceApi = readFileSync(resolve(root, 'src/lib/webchatVoiceApi.ts'), 'utf8')
+const speedafApi = readFileSync(resolve(root, 'src/lib/speedafApi.ts'), 'utf8')
 const agentWebCallPanel = readFileSync(resolve(root, 'src/components/webcall/AgentWebCallPanel.tsx'), 'utf8')
 const replyPanel = readFileSync(resolve(root, 'src/components/operator/CustomerReplyPanel.tsx'), 'utf8')
 const rbacManifest = readFileSync(resolve(root, 'src/lib/rbac.ts'), 'utf8')
@@ -199,6 +201,7 @@ test('command palette exposes high-frequency operator workflow shortcuts', () =>
   assert.match(commandPalette, /处理工单 \/ 客户回复/)
   assert.match(commandPalette, /打开 WebChat 收件箱/)
   assert.match(commandPalette, /打开 WebCall 工作台/)
+  assert.match(commandPalette, /打开 Speedaf 动作中心/)
   assert.match(commandPalette, /进入运行恢复 \/ dead 重排/)
   assert.match(commandPalette, /刷新运行状态/)
   assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['runtimeHealth'\] \}\)/)
@@ -226,6 +229,7 @@ test('admin operator surfaces do not bypass unified api client with raw fetch', 
     ['src/routes/runtime.tsx', runtimeRoute],
     ['src/routes/webchat.tsx', webchatRoute],
     ['src/routes/webcall-operator.tsx', webcallOperatorRoute],
+    ['src/routes/speedaf.tsx', speedafRoute],
     ['src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx', webchatInboxV5],
     ['src/routes/index.tsx', overviewRoute],
     ['src/layouts/AppShell.tsx', appShell],
@@ -233,6 +237,7 @@ test('admin operator surfaces do not bypass unified api client with raw fetch', 
     ['src/components/operator/CustomerReplyPanel.tsx', replyPanel],
     ['src/components/webcall/AgentWebCallPanel.tsx', agentWebCallPanel],
     ['src/lib/webchatVoiceApi.ts', webchatVoiceApi],
+    ['src/lib/speedafApi.ts', speedafApi],
   ]
   const offenders = checkedFiles
     .filter(([, text]) => /\bfetch\s*\(/.test(text))

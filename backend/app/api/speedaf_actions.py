@@ -167,7 +167,8 @@ def _reserve_address_update(db: Session, *, dedupe_key: str, ticket_id: int, way
 def create_speedaf_work_order(ticket_id: int, payload: SpeedafWorkOrderRequest, request: Request, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     _require_feature("SPEEDAF_WORK_ORDER_CREATE_ENABLED", "speedaf_work_order_create_disabled")
     ensure_can_create_speedaf_work_order(current_user, db)
-    enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key=WORK_ORDER_ACTION_KEY, max_requests=get_settings().admin_action_rate_limit_single_max, request_id=_request_id(request))
+    request_id = _request_id(request)
+    enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key=WORK_ORDER_ACTION_KEY, max_requests=get_settings().admin_action_rate_limit_single_max, request_id=request_id)
     _load_visible_ticket(db, ticket_id=ticket_id, user=current_user)
     work_order_type = _clean(payload.workOrderType, limit=32)
     if not is_auto_work_order_type_allowed(work_order_type):
@@ -187,7 +188,7 @@ def create_speedaf_work_order(ticket_id: int, payload: SpeedafWorkOrderRequest, 
         field_name="speedaf_work_order",
         new_value="queued",
         note="Speedaf delivery follow-up work order queued.",
-        payload={"job_id": job.id, "workOrderType": work_order_type, **safe_waybill_payload(payload.waybillCode), **safe_caller_payload(payload.callerID)},
+        payload={"job_id": job.id, "request_id": request_id, "workOrderType": work_order_type, **safe_waybill_payload(payload.waybillCode), **safe_caller_payload(payload.callerID)},
     )
     db.commit()
     return SpeedafActionResponse(ok=True, status="queued", message="Speedaf work order queued.", jobId=job.id, dedupeKey=job.dedupe_key)
@@ -197,13 +198,13 @@ def create_speedaf_work_order(ticket_id: int, payload: SpeedafWorkOrderRequest, 
 def submit_speedaf_address_update(ticket_id: int, payload: SpeedafAddressUpdateRequest, request: Request, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     _require_feature("SPEEDAF_UPDATE_ADDRESS_ENABLED", "speedaf_update_address_disabled")
     ensure_can_update_speedaf_address(current_user, db)
-    enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key=ADDRESS_UPDATE_ACTION_KEY, max_requests=get_settings().admin_action_rate_limit_batch_max, request_id=_request_id(request))
+    request_id = _request_id(request)
+    enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key=ADDRESS_UPDATE_ACTION_KEY, max_requests=get_settings().admin_action_rate_limit_batch_max, request_id=request_id)
     _load_visible_ticket(db, ticket_id=ticket_id, user=current_user)
     waybill = _clean(payload.waybillCode, limit=80).upper()
     caller = _clean(payload.callerID, limit=80)
     phone = _clean(payload.whatsAppPhone, limit=80)
     dedupe_key = _address_dedupe_key(ticket_id=ticket_id, waybill_code=waybill, whatsapp_phone=phone)
-    request_id = _request_id(request)
     _reserve_address_update(db, dedupe_key=dedupe_key, ticket_id=ticket_id, waybill_code=waybill, whatsapp_phone=phone, actor_id=current_user.id, request_id=request_id)
     job = enqueue_speedaf_address_update_job(db, ticket_id=ticket_id, waybill_code=waybill, caller_id=caller, whatsapp_phone=phone, dedupe_key=dedupe_key, request_id=request_id)
     _append_event(
@@ -213,7 +214,7 @@ def submit_speedaf_address_update(ticket_id: int, payload: SpeedafAddressUpdateR
         field_name="speedaf_address_update",
         new_value="queued",
         note="Speedaf address update confirmation request queued. Final address change remains pending Speedaf/customer confirmation.",
-        payload={"job_id": job.id, "dedupe_key": dedupe_key, **safe_waybill_payload(waybill), "whatsapp_phone": {"redacted": True, "suffix": phone[-4:]}},
+        payload={"job_id": job.id, "dedupe_key": dedupe_key, "request_id": request_id, **safe_waybill_payload(waybill), "whatsapp_phone": {"redacted": True, "suffix": phone[-4:]}},
     )
     db.commit()
     return SpeedafActionResponse(ok=True, status="queued", message="Address update confirmation request queued. Final address change remains pending Speedaf/customer confirmation.", jobId=job.id, dedupeKey=dedupe_key)

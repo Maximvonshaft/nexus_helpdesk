@@ -80,6 +80,17 @@ export function canCancelSpeedafOrder(user?: AuthUser | null) {
   return canAccess(user, actionAccess.cancelSpeedafOrder)
 }
 
+export function canViewSpeedafActionCenter(user?: AuthUser | null) {
+  return canAccess(user, {
+    allOf: [CAPABILITIES.ticketRead],
+    anyOf: [
+      CAPABILITIES.speedafWorkOrderWrite,
+      CAPABILITIES.speedafAddressUpdateWrite,
+      CAPABILITIES.speedafCancelWrite,
+    ],
+  })
+}
+
 export function canReadWebcallVoice(user?: AuthUser | null) {
   return canAccess(user, actionAccess.readWebcallVoice)
 }
@@ -119,6 +130,8 @@ export function canEscalateTickets(user?: AuthUser | null) {
 export function roleWorkspaceHint(user?: AuthUser | null) {
   return canViewOps(user)
     ? '你当前可以同时查看工单、公告、发送线路与运营保障。'
+    : canViewSpeedafActionCenter(user)
+      ? '你当前可以处理授权范围内的 Speedaf 高风险动作。'
     : isOpsSupervisorRole(user?.role)
       ? '你当前是主管角色；治理入口只会在账号被授予对应 capability 后显示。'
       : '你当前以客服处理视角工作，重点使用工单处理和公告口径。'

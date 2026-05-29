@@ -340,6 +340,7 @@ def _append_cancel_event(
     reason_code: str,
     dedupe_key: str,
     safe_payload: dict[str, Any],
+    request_id: str | None,
 ) -> None:
     db.add(
         TicketEvent(
@@ -352,6 +353,7 @@ def _append_cancel_event(
             payload_json=json.dumps(
                 {
                     "dedupe_key": dedupe_key,
+                    "request_id": request_id,
                     "reason_code": reason_code,
                     "reason_label": safe_cancel_reason_label(reason_code),
                     **safe_waybill_payload(waybill_code),
@@ -437,12 +439,13 @@ def speedaf_cancel_confirm(
 ):
     _require_cancel_enabled()
     _require_cancel_capability(current_user, db)
+    request_id = _request_id(request)
     enforce_admin_action_rate_limit(
         db,
         actor_id=current_user.id,
         action_key=CANCEL_CONFIRM_ACTION_KEY,
         max_requests=get_settings().admin_action_rate_limit_batch_max,
-        request_id=_request_id(request),
+        request_id=request_id,
     )
     _load_visible_ticket(db, ticket_id=ticket_id, user=current_user)
     waybill, caller, reason = _validate_inputs(
@@ -463,7 +466,7 @@ def speedaf_cancel_confirm(
         waybill_code=waybill,
         caller_id=caller,
         ticket_id=ticket_id,
-        request_id=_request_id(request),
+        request_id=request_id,
     )
     if is_cancel_terminal_status(status_value, status_label):
         db.commit()
@@ -477,7 +480,7 @@ def speedaf_cancel_confirm(
         waybill_code=waybill,
         reason_code=reason,
         actor_id=current_user.id,
-        request_id=_request_id(request),
+        request_id=request_id,
     )
     service = SpeedafActionService(ticket_id=ticket_id, request_id=dedupe_key)
     try:
@@ -499,6 +502,7 @@ def speedaf_cancel_confirm(
         reason_code=reason,
         dedupe_key=dedupe_key,
         safe_payload=result.safe_payload,
+        request_id=request_id,
     )
     db.commit()
     return SpeedafCancelConfirmResponse(

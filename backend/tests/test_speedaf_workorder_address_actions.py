@@ -89,7 +89,15 @@ def test_work_order_enabled_queues_job_and_truncates_description(harness, monkey
         job = db.query(BackgroundJob).one()
         assert job.job_type == "speedaf.work_order.create"
         assert len(json.loads(job.payload_json)["description"]) == 200
-        assert db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_work_order").count() == 1
+        event = db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_work_order").one()
+        event_payload = json.loads(event.payload_json)
+        assert event_payload["job_id"] == job.id
+        assert event_payload["request_id"]
+    timeline = harness.client.get(f"/api/tickets/{harness.ticket.id}/timeline").json()["items"]
+    event_item = next(item for item in timeline if item.get("field_name") == "speedaf_work_order")
+    assert event_item["new_value"] == "queued"
+    assert event_item["payload"]["request_id"]
+    assert event_item["payload"]["job_id"] == res.json()["jobId"]
 
 
 def test_work_order_enabled_requires_tool_capability_for_visible_agent(harness, monkeypatch):
@@ -127,7 +135,14 @@ def test_address_update_enabled_queues_job_without_synchronous_submit(harness, m
         job = db.query(BackgroundJob).one()
         assert job.job_type == SPEEDAF_ADDRESS_UPDATE_JOB
         assert json.loads(job.payload_json)["addressUpdateDedupeKey"] == body["dedupeKey"]
-        assert db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_address_update", TicketEvent.new_value == "queued").count() == 1
+        event = db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_address_update", TicketEvent.new_value == "queued").one()
+        event_payload = json.loads(event.payload_json)
+        assert event_payload["request_id"]
+        assert event_payload["dedupe_key"] == body["dedupeKey"]
+    timeline = harness.client.get(f"/api/tickets/{harness.ticket.id}/timeline").json()["items"]
+    event_item = next(item for item in timeline if item.get("field_name") == "speedaf_address_update")
+    assert event_item["payload"]["request_id"]
+    assert event_item["payload"]["dedupe_key"] == body["dedupeKey"]
 
 
 def test_address_update_enabled_requires_tool_capability_for_visible_agent(harness, monkeypatch):

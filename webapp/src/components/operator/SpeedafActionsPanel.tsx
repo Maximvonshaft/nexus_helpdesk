@@ -40,9 +40,10 @@ function ActionResult({ result }: { result: SpeedafActionResponse | null }) {
 export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseDetail; onToast: ToastFn }) {
   const client = useQueryClient()
   const session = useSession()
+  const initialCallerId = defaultCallerId(activeCase)
   const [workOrderDescription, setWorkOrderDescription] = useState('Please follow up delivery with Speedaf last-mile operations.')
   const [workOrderResult, setWorkOrderResult] = useState<SpeedafActionResponse | null>(null)
-  const [addressPhone, setAddressPhone] = useState(defaultCallerId(activeCase))
+  const [addressPhone, setAddressPhone] = useState(initialCallerId)
   const [addressResult, setAddressResult] = useState<SpeedafActionResponse | null>(null)
   const [reasonCode, setReasonCode] = useState('CC01')
   const [cancelPreview, setCancelPreview] = useState<SpeedafCancelPreviewResponse | null>(null)
@@ -58,13 +59,13 @@ export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseD
   const hasAnySpeedafAction = canSubmitSpeedafWorkOrder || canSubmitSpeedafAddress || canSubmitSpeedafCancel
 
   useEffect(() => {
-    setAddressPhone(defaultCallerId(activeCase))
+    setAddressPhone(initialCallerId)
     setWorkOrderResult(null)
     setAddressResult(null)
     setCancelPreview(null)
     setConfirmCancel(false)
     setCancelDialogOpen(false)
-  }, [activeCase.id])
+  }, [activeCase.id, initialCallerId])
 
   const refresh = async () => {
     await client.invalidateQueries({ queryKey: ['caseDetail', activeCase.id] })

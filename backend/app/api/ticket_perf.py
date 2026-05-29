@@ -463,8 +463,27 @@ def _timeline_items(db: Session, ticket_id: int, cursor_key: tuple[datetime, int
         items.append({"source_type": "outbound_message", "source_id": row.id, "id": f"outbound_message:{row.id}", "created_at": _dt(row.created_at), "subject": row.subject, "body": row.body, "status": _value(row.status), "channel": _value(row.channel), "created_by": row.created_by})
     for row in _base_timeline_query(db.query(TicketAIIntake), TicketAIIntake, "ai_intake", ticket_id, cursor_key, limit):
         items.append({"source_type": "ai_intake", "source_id": row.id, "id": f"ai_intake:{row.id}", "created_at": _dt(row.created_at), "summary": row.summary, "classification": row.classification, "confidence": row.confidence})
+    speedaf_event_fields = {"speedaf_work_order", "speedaf_address_update", "speedaf_cancel"}
     for row in _base_timeline_query(db.query(TicketEvent), TicketEvent, "ticket_event", ticket_id, cursor_key, limit):
-        items.append({"source_type": "ticket_event", "source_id": row.id, "id": f"ticket_event:{row.id}", "created_at": _dt(row.created_at), "event_type": _value(row.event_type), "field_name": row.field_name, "note": row.note})
+        payload: dict[str, Any] = {}
+        if row.field_name in speedaf_event_fields:
+            try:
+                parsed_payload = json.loads(row.payload_json or "{}")
+            except Exception:
+                parsed_payload = {"raw": row.payload_json}
+            payload = parsed_payload if isinstance(parsed_payload, dict) else {"raw": parsed_payload}
+        items.append({
+            "source_type": "ticket_event",
+            "source_id": row.id,
+            "id": f"ticket_event:{row.id}",
+            "created_at": _dt(row.created_at),
+            "event_type": _value(row.event_type),
+            "field_name": row.field_name,
+            "old_value": row.old_value,
+            "new_value": row.new_value,
+            "note": row.note,
+            "payload": payload,
+        })
     for row in _base_timeline_query(db.query(WebchatEvent), WebchatEvent, "webchat_event", ticket_id, cursor_key, limit):
         items.append({"source_type": "webchat_event", "source_id": row.id, "id": f"webchat_event:{row.id}", "created_at": _dt(row.created_at), "event_type": row.event_type})
     voice_query = db.query(WebchatMessage).filter(WebchatMessage.ticket_id == ticket_id, WebchatMessage.message_type == "voice_call")
