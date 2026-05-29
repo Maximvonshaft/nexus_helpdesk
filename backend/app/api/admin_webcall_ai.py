@@ -30,6 +30,7 @@ def list_admin_webcall_ai_sessions(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict:
+    ensure_can_manage_runtime(current_user, db)
     query = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.mode == "livekit_ai_agent")
     if status == "active":
         query = query.filter(WebchatVoiceSession.status.notin_(list(TERMINAL_STATUSES)))
@@ -49,6 +50,7 @@ def list_admin_webcall_ai_sessions(
 
 @router.get("/sessions/{session_public_id}")
 def read_admin_webcall_ai_session(session_public_id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict:
+    ensure_can_manage_runtime(current_user, db)
     result = get_session(db, session_public_id, require_visitor_token=False)
     ticket = db.query(Ticket).filter(Ticket.id == result["session"]["ticket_id"]).first()
     if ticket is not None:
@@ -58,6 +60,7 @@ def read_admin_webcall_ai_session(session_public_id: str, db: Session = Depends(
 
 @router.get("/sessions/{session_public_id}/events")
 def read_admin_webcall_ai_events(session_public_id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict:
+    ensure_can_manage_runtime(current_user, db)
     result = list_events(db, session_public_id, require_visitor_token=False)
     ticket = db.query(Ticket).filter(Ticket.id == result["session"]["ticket_id"]).first()
     if ticket is not None:
@@ -67,6 +70,7 @@ def read_admin_webcall_ai_events(session_public_id: str, db: Session = Depends(g
 
 @router.post("/sessions/{session_public_id}/force-end")
 def force_end_admin_webcall_ai_session(session_public_id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict:
+    ensure_can_manage_runtime(current_user, db)
     result = get_session(db, session_public_id, require_visitor_token=False)
     ticket = db.query(Ticket).filter(Ticket.id == result["session"]["ticket_id"]).first()
     if ticket is not None:

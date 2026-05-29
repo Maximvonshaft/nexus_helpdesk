@@ -54,6 +54,7 @@ export const routeAccess = {
   '/provider-credentials': { allOf: [CAPABILITIES.runtimeManage] },
   '/webcall': { allOf: [CAPABILITIES.webcallVoiceQueueView] },
   '/webcall-ai-demo': { allOf: [CAPABILITIES.runtimeManage] },
+  '/webcall-ai-monitor': { allOf: [CAPABILITIES.runtimeManage] },
   '/accounts': { allOf: [CAPABILITIES.channelAccountManage] },
   '/outbound-email': { allOf: [CAPABILITIES.channelAccountManage] },
   '/email': { allOf: [CAPABILITIES.ticketRead], anyOf: [CAPABILITIES.outboundDraftSave, CAPABILITIES.outboundSend] },

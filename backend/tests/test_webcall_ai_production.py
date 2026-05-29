@@ -19,7 +19,8 @@ from app.auth_service import create_access_token
 from app.db import Base, SessionLocal, engine
 from app.enums import UserRole
 from app.main import app
-from app.models import User
+from app.models import User, UserCapabilityOverride
+from app.services.permissions import CAP_RUNTIME_MANAGE, CAP_WEBCALL_VOICE_END
 from app.services.webcall_ai_production.config import get_webcall_ai_production_settings
 from app.services.webcall_ai_production.agent_worker import run_worker_once
 from app.services.webcall_ai_production.orchestrator import run_fake_turn
@@ -34,14 +35,29 @@ def ensure_schema():
     db = SessionLocal()
     try:
         user = User(id=9701, username="webcall_ai_admin", display_name="WebCall AI Admin", password_hash="test", role=UserRole.admin, is_active=True)
-        existing = db.query(User).filter(User.id == user.id).first()
-        if existing is None:
-            db.add(user)
+        agent = User(id=9702, username="webcall_ai_agent", display_name="WebCall AI Agent", password_hash="test", role=UserRole.agent, is_active=True)
+        runtime_manager = User(id=9703, username="webcall_ai_runtime_manager", display_name="WebCall AI Runtime Manager", password_hash="test", role=UserRole.manager, is_active=True)
+        for row in (user, agent, runtime_manager):
+            existing = db.query(User).filter(User.id == row.id).first()
+            if existing is None:
+                db.add(row)
+            else:
+                existing.username = row.username
+                existing.display_name = row.display_name
+                existing.role = row.role
+                existing.is_active = True
+        override = db.query(UserCapabilityOverride).filter(
+            UserCapabilityOverride.user_id == runtime_manager.id,
+            UserCapabilityOverride.capability == CAP_RUNTIME_MANAGE,
+        ).first()
+        if override is None:
+            db.add(UserCapabilityOverride(user_id=runtime_manager.id, capability=CAP_RUNTIME_MANAGE, allowed=True))
         else:
-            existing.username = user.username
-            existing.display_name = user.display_name
-            existing.role = user.role
-            existing.is_active = True
+            override.allowed = True
+        db.query(UserCapabilityOverride).filter(
+            UserCapabilityOverride.user_id == runtime_manager.id,
+            UserCapabilityOverride.capability == CAP_WEBCALL_VOICE_END,
+        ).delete()
         db.commit()
     finally:
         db.close()
@@ -210,6 +226,31 @@ def test_admin_session_events_require_auth():
     assert unauthenticated.status_code == 401
     assert authenticated.status_code == 200, authenticated.text
     assert any(item["event_type"] == "webcall_ai.session.created" for item in authenticated.json()["events"])
+
+
+def test_admin_webcall_ai_monitor_requires_runtime_manage():
+    client = TestClient(app)
+
+    forbidden_sessions = client.get("/api/admin/webcall-ai/sessions", headers=_admin_headers(9702))
+    forbidden_health = client.get("/api/admin/webcall-ai/health", headers=_admin_headers(9702))
+
+    assert forbidden_sessions.status_code == 403
+    assert forbidden_health.status_code == 403
+
+
+def test_admin_webcall_ai_force_end_requires_voice_end_capability():
+    client = TestClient(app)
+    created = client.post("/api/webcall-ai/sessions", headers={"Idempotency-Key": f"idem-force-end-rbac-{uuid.uuid4().hex}"}, json={"visitor_name": "Force End RBAC"})
+    assert created.status_code == 200, created.text
+    session_id = created.json()["session"]["public_id"]
+
+    runtime_only = client.post(f"/api/admin/webcall-ai/sessions/{session_id}/force-end", headers=_admin_headers(9703))
+    admin = client.post(f"/api/admin/webcall-ai/sessions/{session_id}/force-end", headers=_admin_headers())
+
+    assert runtime_only.status_code == 403
+    assert runtime_only.json()["detail"] == "webcall_voice_end_requires_capability"
+    assert admin.status_code == 200, admin.text
+    assert admin.json()["status"] in {"cancelled", "ended"}
 
 
 def test_admin_health_reports_smoke_readiness_block():

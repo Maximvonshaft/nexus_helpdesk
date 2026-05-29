@@ -13,6 +13,7 @@ const actions = [
   { id: 'webcall-workbench', label: '打开 WebCall 工作台', keywords: 'webcall 语音 来电 接管 ai 建议 handoff', to: '/webcall', access: routeAccess['/webcall'] },
   { id: 'email-workbench', label: '打开 Email 工作台', keywords: 'email 邮件 工作台 草稿 回复 发送', to: '/email', access: routeAccess['/email'] },
   { id: 'runtime', label: '进入运行恢复 / dead 重排', keywords: 'runtime 运行恢复 dead requeue 重排 队列', to: '/runtime', access: routeAccess['/runtime'] },
+  { id: 'webcall-ai-monitor', label: '查看 WebCall AI Monitor', keywords: 'webcall ai monitor sessions events force end health livekit', to: '/webcall-ai-monitor', access: routeAccess['/webcall-ai-monitor'] },
   { id: 'accounts', label: '检查发送线路', keywords: '发送线路 渠道 账号 outbound', to: '/accounts', access: routeAccess['/accounts'] },
   { id: 'outbound-email', label: '维护 Outbound Email 账号', keywords: 'email smtp 邮件 账号 test-send 测试发送 outbound', to: '/outbound-email', access: routeAccess['/outbound-email'] },
   { id: 'bulletins', label: '查看公告口径', keywords: '公告 口径 通知', to: '/bulletins' },

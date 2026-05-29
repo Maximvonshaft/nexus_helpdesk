@@ -66,6 +66,7 @@ button, input, textarea, select { font: inherit; }
 .split-grid { grid-template-columns: 1fr 1fr; }
 .split-grid-wide { grid-template-columns: 1fr 1.08fr; }
 .stack { display:flex; flex-direction:column; gap:12px; }
+.stack.compact { gap:6px; }
 .list { display:flex; flex-direction:column; gap:10px; }
 .list.compact { gap: 8px; }
 .list-item { padding: 14px; border-radius: 16px; border: 1px solid var(--line); background: #fff; display:flex; flex-direction:column; gap:8px; text-align:left; }
@@ -121,6 +122,9 @@ button, input, textarea, select { font: inherit; }
 .button.secondary { background: #0f4fb8; color:#fff; border-color: #0f4fb8; }
 .button.ghost { background: transparent; color: var(--text); }
 .button.danger { background: var(--danger); color:#fff; border-color: var(--danger); }
+.link-button { border:0; background:transparent; color:var(--brand); padding:0; font-weight:800; cursor:pointer; text-align:left; overflow-wrap:anywhere; }
+.link-button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.link-button[aria-pressed="true"] { color:#0f4fb8; text-decoration: underline; text-underline-offset: 3px; }
 .form-grid { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
 .toggle-row { display:flex; align-items:center; gap:16px; color: var(--muted); font-size: 14px; flex-wrap: wrap; }
 .empty { color: var(--muted); font-size: 13px; padding: 10px 0; }

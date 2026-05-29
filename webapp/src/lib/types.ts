@@ -679,6 +679,90 @@ export interface CodexCredentialActionResult {
   upstream_revoke?: string | null
 }
 
+export interface WebCallAIAdminReadiness {
+  livekit_configured?: boolean
+  stt_configured?: boolean
+  llm_configured?: boolean
+  tts_configured?: boolean
+  tracking_bridge_configured?: boolean
+  kill_switch?: boolean
+  rollout_mode?: string
+  fake_heartbeat_enabled?: boolean
+  recording_enabled?: boolean
+  raw_audio_persistence?: boolean
+  dangerous_write_actions_enabled?: boolean
+  blockers?: string[]
+  degraded?: string[]
+  final_status?: string
+}
+
+export interface WebCallAIAdminHealth {
+  ok: boolean
+  agent_enabled: boolean
+  provider_profile: string
+  stt_provider: string
+  llm_provider: string
+  tts_provider: string
+  status: string
+  smoke_status: string
+  readiness: WebCallAIAdminReadiness
+  kill_switch: boolean
+  rollout_mode: string
+  livekit_configured: boolean
+  stt_configured: boolean
+  llm_configured: boolean
+  tts_configured: boolean
+  provider_configured: boolean
+  tracking_bridge_configured: boolean
+  fake_heartbeat_enabled: boolean
+  recording_enabled: boolean
+  raw_audio_persistence: boolean
+  dangerous_write_actions_enabled: boolean
+  active_sessions: number
+  stale_leases: number
+  failed_sessions: number
+  last_heartbeat?: string | null
+}
+
+export interface WebCallAIAdminSession {
+  public_id: string
+  status: string
+  provider: string
+  room_name: string
+  mode: string
+  conversation_id: number
+  ticket_id: number
+  ai_agent_status?: string | null
+  ai_turn_count: number
+  started_at?: string | null
+  ended_at?: string | null
+  expires_at?: string | null
+}
+
+export interface WebCallAIAdminEvent {
+  id: number
+  event_type: string
+  payload: Record<string, unknown>
+  created_at?: string | null
+}
+
+export interface WebCallAIAdminSessionList {
+  items: WebCallAIAdminSession[]
+}
+
+export interface WebCallAIAdminEventsResponse {
+  ok: boolean
+  session: WebCallAIAdminSession
+  events: WebCallAIAdminEvent[]
+}
+
+export interface WebCallAIMonitorForceEndResult {
+  ok: boolean
+  status: string
+  voice_session_id: string
+  accepted_by_user_id?: number | null
+}
+
 export type WebchatMessageType = 'text' | 'system' | 'card' | 'action' | 'attachment' | 'voice_call'
 
 export type WebchatCardType =

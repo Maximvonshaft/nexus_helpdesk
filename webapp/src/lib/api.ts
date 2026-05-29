@@ -42,6 +42,10 @@ import type {
   WebchatReadStateResult,
   WebchatThread,
   WebchatReplyResult,
+  WebCallAIAdminEventsResponse,
+  WebCallAIAdminHealth,
+  WebCallAIAdminSessionList,
+  WebCallAIMonitorForceEndResult,
   ProviderCredentialStatusResponse,
   CodexAuthorizationStart,
   CodexManualAuthorizationCompleteResult,
@@ -557,6 +561,15 @@ export const api = {
     body: JSON.stringify({ reason }),
   }),
   webcallAIDemoEvents: (sessionId: string) => request<{ ok: boolean; session: Pick<WebCallAIDemoSession, 'public_id' | 'status' | 'mode'>; events: WebCallAIDemoEvent[]; turns: Array<Pick<WebCallAIDemoTurn, 'turn_index' | 'customer_text_redacted' | 'ai_response_text_redacted' | 'handoff_required' | 'created_at'> & { turn_id: number }> }>(`/api/admin/webcall-ai-demo/sessions/${sessionId}/events`),
+  webcallAIMonitorHealth: () => request<WebCallAIAdminHealth>('/api/admin/webcall-ai/health'),
+  webcallAIMonitorSessions: (params?: { status?: string; limit?: number }, init?: RequestInit) => {
+    const search = new URLSearchParams()
+    search.set('status', params?.status || 'active')
+    search.set('limit', String(params?.limit ?? 50))
+    return request<WebCallAIAdminSessionList>(`/api/admin/webcall-ai/sessions?${search.toString()}`, init)
+  },
+  webcallAIMonitorEvents: (sessionId: string, init?: RequestInit) => request<WebCallAIAdminEventsResponse>(`/api/admin/webcall-ai/sessions/${sessionId}/events`, init),
+  webcallAIMonitorForceEnd: (sessionId: string) => request<WebCallAIMonitorForceEndResult>(`/api/admin/webcall-ai/sessions/${sessionId}/force-end`, { method: 'POST' }),
 
   codexCredentialStatus: () => request<ProviderCredentialStatusResponse>('/api/admin/provider-credentials/codex/status'),
   startCodexAuthorization: (scopes?: string[]) => request<CodexAuthorizationStart>('/api/admin/provider-credentials/codex/authorize', {

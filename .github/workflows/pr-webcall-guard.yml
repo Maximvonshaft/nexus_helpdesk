@@ -228,6 +228,7 @@ jobs:
               webapp/src/routes/users.tsx) return 0 ;;
               webapp/src/routes/webcall-ai.tsx) return 0 ;;
               webapp/src/routes/webcall-operator.tsx) return 0 ;;
+              webapp/src/routes/webcall-ai-monitor.tsx) return 0 ;;
               webapp/src/routes/webcall.tsx) return 0 ;;
               webapp/src/routes/webchat-voice.tsx) return 0 ;;
               webapp/src/routes/webchat.tsx) return 0 ;;
@@ -238,6 +239,7 @@ jobs:
               webapp/tests/operator-console-contract.test.mjs) return 0 ;;
               webapp/tests/route-nav-consistency.test.mjs) return 0 ;;
               webapp/tests/webcall-ai-demo-contract.test.mjs) return 0 ;;
+              webapp/tests/webcall-ai-monitor-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-livekit-lazy-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-operator-workbench-contract.test.mjs) return 0 ;;
               webapp/tests/webchat-inbox-v5-contract.test.mjs) return 0 ;;
@@ -256,9 +258,11 @@ jobs:
               webapp/src/components/webcall/AgentWebCallPanel.tsx) return 0 ;;
               webapp/src/routes/webcall-ai.tsx) return 0 ;;
               webapp/src/routes/webcall-operator.tsx) return 0 ;;
+              webapp/src/routes/webcall-ai-monitor.tsx) return 0 ;;
               webapp/src/routes/webcall.tsx) return 0 ;;
               webapp/tests/operator-console-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-livekit-lazy-contract.test.mjs) return 0 ;;
+              webapp/tests/webcall-ai-monitor-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-operator-workbench-contract.test.mjs) return 0 ;;
               webapp/package.json) return 0 ;;
               webapp/package-lock.json) return 0 ;;
@@ -348,4 +352,4 @@ jobs:
         run: npm ci
       - name: Run operator console contract tests
         working-directory: webapp
-        run: node --test tests/operator-console-contract.test.mjs tests/webcall-operator-workbench-contract.test.mjs tests/webcall-livekit-lazy-contract.test.mjs
+        run: node --test tests/operator-console-contract.test.mjs tests/webcall-operator-workbench-contract.test.mjs tests/webcall-livekit-lazy-contract.test.mjs tests/webcall-ai-monitor-contract.test.mjs

@@ -11,6 +11,7 @@ import { Route as WebCallOperatorRoute } from '@/routes/webcall-operator'
 import { Route as WebCallRoute } from '@/routes/webcall'
 import { Route as WebCallAIProductionRoute } from '@/routes/webcall-ai'
 import { Route as WebCallAIDemoRoute } from '@/routes/webcall-ai-demo'
+import { Route as WebCallAIMonitorRoute } from '@/routes/webcall-ai-monitor'
 import { Route as ProviderCredentialsRoute } from '@/routes/provider-credentials'
 import { Route as BulletinsRoute } from '@/routes/bulletins'
 import { Route as AIControlRoute } from '@/routes/ai-control'
@@ -36,6 +37,7 @@ const routeTree = RootRoute.addChildren([
   WebCallAIProductionRoute,
   // Internal ops-only AI sandbox; AppShell exposes it only to ops-capable users.
   WebCallAIDemoRoute,
+  WebCallAIMonitorRoute,
   ProviderCredentialsRoute,
   BulletinsRoute,
   AIControlRoute,
