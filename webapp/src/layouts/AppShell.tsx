@@ -12,7 +12,7 @@ import { canViewOps, roleWorkspaceHint } from '@/lib/access'
 import { canAccess, routeAccess } from '@/lib/rbac'
 
 const nav = [
-  { to: '/', label: '今日总览', hint: '异常与优先入口' },
+  { to: '/', label: '今日工作台', hint: '角色待办与优先入口' },
   { to: '/workspace', label: '处理工单', hint: '回复、分配、闭环' },
   { to: '/webchat', label: 'WebChat 收件箱', hint: '客户实时来信' },
   { to: '/webcall', label: 'WebCall 工作台', hint: '来电、接管与 AI 建议', access: routeAccess['/webcall'] },
@@ -147,7 +147,7 @@ export function AppShell({ children }: PropsWithChildren) {
         <div className="topbar">
           <div>
             <div className="section-title">客服运营台</div>
-            <div className="section-subtitle">先看今日总览，再进工单/WebChat；出现 dead 或同步异常时直接进入运行恢复。</div>
+            <div className="section-subtitle">先看今日工作台，再进工单/WebChat；出现 dead 或同步异常时直接进入运行恢复。</div>
           </div>
           <div className="button-row topbar-status">
             <Badge tone={!canSeeOps ? 'default' : runtimeNeedsAttention ? 'danger' : runtime.data?.warnings?.length ? 'warning' : 'success'}>{!canSeeOps ? '客服模式' : runtimeNeedsAttention ? '运行需处理' : runtime.data?.warnings?.length ? '需要关注' : '运行正常'}</Badge>

@@ -7,7 +7,7 @@ import { useSession } from '@/hooks/useAuth'
 import { CAPABILITIES, canAccess, routeAccess } from '@/lib/rbac'
 
 const actions = [
-  { id: 'overview', label: '查看今日总览', keywords: '首页 总览 今日 优先', to: '/' },
+  { id: 'overview', label: '打开今日工作台', keywords: '首页 工作台 今日 优先 角色任务', to: '/' },
   { id: 'workspace', label: '处理工单 / 客户回复', keywords: '工单 回复 客户 闭环', to: '/workspace' },
   { id: 'webchat', label: '打开 WebChat 收件箱', keywords: 'webchat 网站聊天 收件箱 客户来信', to: '/webchat' },
   { id: 'webcall-workbench', label: '打开 WebCall 工作台', keywords: 'webcall 语音 来电 接管 ai 建议 handoff', to: '/webcall', access: routeAccess['/webcall'] },

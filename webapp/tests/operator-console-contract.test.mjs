@@ -207,6 +207,10 @@ test('command palette exposes high-frequency operator workflow shortcuts', () =>
 })
 
 test('overview page provides priority action entrypoints', () => {
+  assert.match(overviewRoute, /今日工作台 \/ 我的优先事项/)
+  assert.match(overviewRoute, /api\.todayWorkbench/)
+  assert.match(overviewRoute, /role-task-card/)
+  assert.match(overviewRoute, /Command Center/)
   assert.match(overviewRoute, /data-testid="overview-priority-actions"/)
   assert.match(overviewRoute, /处理客户工单/)
   assert.match(overviewRoute, /打开工单处理/)

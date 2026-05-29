@@ -40,6 +40,61 @@ export interface LiteMeta {
   priorities: string[]
 }
 
+export interface TodayWorkbenchMetric {
+  key: string
+  label: string
+  value: number | string
+  hint?: string | null
+  tone: string
+}
+
+export interface TodayWorkbenchTask {
+  key: string
+  title: string
+  count: number
+  severity: string
+  source: string
+  next: string
+  route: string
+  description?: string | null
+}
+
+export interface TodayWorkbenchEntrypoint {
+  key: string
+  label: string
+  route: string
+  hint: string
+  source: string
+}
+
+export interface TodayWorkbenchInteractionState {
+  state: string
+  operator_signal: string
+  product_rule: string
+  source: string
+}
+
+export interface TodayWorkbenchCommand {
+  key: string
+  label: string
+  route: string
+  source: string
+  audit: string
+}
+
+export interface TodayWorkbench {
+  role: string
+  role_label: string
+  mission: string
+  generated_at: string
+  metrics: TodayWorkbenchMetric[]
+  tasks: TodayWorkbenchTask[]
+  visible_entrypoints: TodayWorkbenchEntrypoint[]
+  interaction_states: TodayWorkbenchInteractionState[]
+  command_center: TodayWorkbenchCommand[]
+  source_contracts: string[]
+}
+
 export interface CaseListItem {
   id: number
   ticket_no?: string | null

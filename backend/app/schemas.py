@@ -42,6 +42,61 @@ class LoginResponse(BaseModel):
     user: AuthUserRead
 
 
+class TodayWorkbenchMetricRead(APIModel):
+    key: str
+    label: str
+    value: int | str
+    hint: Optional[str] = None
+    tone: str = "default"
+
+
+class TodayWorkbenchTaskRead(APIModel):
+    key: str
+    title: str
+    count: int
+    severity: str
+    source: str
+    next: str
+    route: str
+    description: Optional[str] = None
+
+
+class TodayWorkbenchEntrypointRead(APIModel):
+    key: str
+    label: str
+    route: str
+    hint: str
+    source: str
+
+
+class TodayWorkbenchInteractionStateRead(APIModel):
+    state: str
+    operator_signal: str
+    product_rule: str
+    source: str
+
+
+class TodayWorkbenchCommandRead(APIModel):
+    key: str
+    label: str
+    route: str
+    source: str
+    audit: str
+
+
+class TodayWorkbenchRead(APIModel):
+    role: UserRole
+    role_label: str
+    mission: str
+    generated_at: datetime
+    metrics: list[TodayWorkbenchMetricRead]
+    tasks: list[TodayWorkbenchTaskRead]
+    visible_entrypoints: list[TodayWorkbenchEntrypointRead]
+    interaction_states: list[TodayWorkbenchInteractionStateRead]
+    command_center: list[TodayWorkbenchCommandRead]
+    source_contracts: list[str]
+
+
 class TeamRead(APIModel):
 
     id: int

@@ -25,6 +25,7 @@ import type {
   SystemAttachment,
   AIConfigResource,
   AIConfigVersion,
+  TodayWorkbench,
   KnowledgeItem,
   KnowledgeItemDetail,
   KnowledgeItemList,
@@ -321,6 +322,7 @@ export const api = {
     body: JSON.stringify({ username, password }),
   }),
   me: () => request<AuthUser>('/api/auth/me'),
+  todayWorkbench: () => request<TodayWorkbench>('/api/today/workbench'),
 
   adminUsers: () => request<AdminUser[]>('/api/admin/users?legacy=true'),
   createUser: (payload: Record<string, unknown>) => request<AdminUser>('/api/admin/users', {

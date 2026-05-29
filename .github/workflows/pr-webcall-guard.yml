@@ -68,12 +68,14 @@ jobs:
               backend/app/api/knowledge_items.py) return 0 ;;
               backend/app/api/speedaf_actions.py) return 0 ;;
               backend/app/api/speedaf_cancel.py) return 0 ;;
+              backend/app/api/today_workbench.py) return 0 ;;
               backend/app/api/webcall_ai.py) return 0 ;;
               backend/app/api/webchat.py) return 0 ;;
               backend/app/api/webchat_fast.py) return 0 ;;
               backend/app/api/webchat_ws.py) return 0 ;;
               backend/app/main.py) return 0 ;;
               backend/app/models_control_plane.py) return 0 ;;
+              backend/app/schemas.py) return 0 ;;
               backend/app/schemas_control_plane.py) return 0 ;;
               backend/app/settings.py) return 0 ;;
               backend/app/static/webchat/demo/DEPLOYMENT_NOTES.md) return 0 ;;
@@ -130,6 +132,7 @@ jobs:
               backend/requirements.txt) return 0 ;;
               backend/scripts/check_model_migration_drift.py) return 0 ;;
               backend/tests/test_channel_workbench_backend_contracts.py) return 0 ;;
+              backend/tests/test_today_workbench.py) return 0 ;;
               backend/tests/test_codex_app_server_bridge_proxy.py) return 0 ;;
               backend/tests/test_codex_app_server_image_contract.py) return 0 ;;
               backend/tests/test_codex_app_server_private_upstream_proxy.py) return 0 ;;
@@ -224,6 +227,7 @@ jobs:
               webapp/src/routes/ai-control.tsx) return 0 ;;
               webapp/src/routes/control-plane.tsx) return 0 ;;
               webapp/src/routes/email.tsx) return 0 ;;
+              webapp/src/routes/index.tsx) return 0 ;;
               webapp/src/routes/runtime.tsx) return 0 ;;
               webapp/src/routes/users.tsx) return 0 ;;
               webapp/src/routes/webcall-ai.tsx) return 0 ;;
@@ -237,6 +241,7 @@ jobs:
               webapp/tests/novice-ux-regression.test.mjs) return 0 ;;
               webapp/tests/operator-console-contract.test.mjs) return 0 ;;
               webapp/tests/route-nav-consistency.test.mjs) return 0 ;;
+              webapp/tests/today-workbench-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-ai-demo-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-livekit-lazy-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-operator-workbench-contract.test.mjs) return 0 ;;
