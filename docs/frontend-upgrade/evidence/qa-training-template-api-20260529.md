@@ -25,6 +25,16 @@ Follow-up branch `codex/qa-training-agent-appeals` adds the agent appeal write p
 
 After that follow-up, `/api/lite/qa-training` marks `agent_appeal_write_endpoint` as `implemented`.
 
+Follow-up branch `codex/qa-training-knowledge-gap` adds the knowledge gap write path:
+
+- `POST /api/lite/qa-training/knowledge-gaps`
+- creates or updates an `AIConfigResource(config_type=knowledge)` draft from a sampled QA gap
+- persists follow-up work as `operator_tasks.task_type=knowledge_gap`
+- writes ticket timeline evidence through `TicketEvent(field_name=qa_knowledge_gap)`
+- writes admin audit evidence through `AdminAuditLog(action=qa.knowledge_gap.submitted)`
+
+After that follow-up, `/api/lite/qa-training` marks `knowledge_gap_write_endpoint` and the Knowledge Gap Loop template block as `implemented`.
+
 ## Local Validation
 
 Run locally because GitHub Actions are disabled for this repo session:

@@ -14,6 +14,7 @@ import type {
   ProductionReadiness,
   QATraining,
   QATrainingAppealResult,
+  QATrainingKnowledgeGapResult,
   QueueSummary,
   RuntimeHealth,
   OpenClawConnectivityProbe,
@@ -363,6 +364,10 @@ export const api = {
   controlTower: () => request<ControlTower>('/api/lite/control-tower'),
   qaTraining: () => request<QATraining>('/api/lite/qa-training'),
   submitQATrainingAppeal: (payload: { sample_key: string; ticket_id: number; channel?: string | null; sample?: string | null; current_score?: number | null; requested_score?: number | null; reason: string; evidence?: string[] }) => request<QATrainingAppealResult>('/api/lite/qa-training/appeals', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  submitQATrainingKnowledgeGap: (payload: { gap_key: string; title: string; source?: string | null; ticket_id?: number | null; channel?: string | null; sample?: string | null; summary?: string | null; evidence?: string[] }) => request<QATrainingKnowledgeGapResult>('/api/lite/qa-training/knowledge-gaps', {
     method: 'POST',
     body: JSON.stringify(payload),
   }),

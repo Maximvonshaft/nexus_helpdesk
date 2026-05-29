@@ -217,6 +217,21 @@ def test_qa_training_lead_contract_uses_real_quality_sources(tmp_path):
         response = client.get("/api/lite/qa-training", headers=_headers(lead))
         queue_payload = response.json() if response.status_code == 200 else {}
         appeal_sample = next(item for item in queue_payload.get("qa_queue", []) if item["channel"] == "WebChat")
+        knowledge_gap_sample = next(item for item in queue_payload.get("knowledge_gaps", []) if item["key"].startswith("sample:"))
+        knowledge_gap_response = client.post(
+            "/api/lite/qa-training/knowledge-gaps",
+            headers=_headers(lead),
+            json={
+                "gap_key": knowledge_gap_sample["key"],
+                "title": knowledge_gap_sample["title"],
+                "source": knowledge_gap_sample["source"],
+                "ticket_id": knowledge_gap_sample["ticket_id"],
+                "channel": knowledge_gap_sample["channel"],
+                "sample": knowledge_gap_sample["sample"],
+                "summary": knowledge_gap_sample["evidence"],
+                "evidence": [knowledge_gap_sample["evidence"]],
+            },
+        )
         appeal_response = client.post(
             "/api/lite/qa-training/appeals",
             headers=_headers(lead),
@@ -233,16 +248,22 @@ def test_qa_training_lead_contract_uses_real_quality_sources(tmp_path):
         )
         followup = client.get("/api/lite/qa-training", headers=_headers(lead))
         appeal_task = db_session.query(OperatorTask).filter(OperatorTask.task_type == "qa_appeal").one()
+        knowledge_gap_task = db_session.query(OperatorTask).filter(OperatorTask.task_type == "knowledge_gap").one()
+        knowledge_gap_payload = knowledge_gap_response.json() if knowledge_gap_response.status_code == 200 else {}
+        knowledge_gap_resource = db_session.query(AIConfigResource).filter(AIConfigResource.id == knowledge_gap_payload.get("resource_id")).one_or_none()
         appeal_task_ticket_id = appeal_task.ticket_id
         appeal_task_source_id = appeal_task.source_id
         appeal_event_count = db_session.query(TicketEvent).filter(TicketEvent.ticket_id == appeal_sample["ticket_id"], TicketEvent.field_name == "qa_agent_appeal").count()
         appeal_audit_count = db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "qa.agent_appeal.submitted", AdminAuditLog.target_id == appeal_task.id).count()
+        knowledge_gap_event_count = db_session.query(TicketEvent).filter(TicketEvent.ticket_id == knowledge_gap_sample["ticket_id"], TicketEvent.field_name == "qa_knowledge_gap").count()
+        knowledge_gap_audit_count = db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "qa.knowledge_gap.submitted", AdminAuditLog.target_id == knowledge_gap_payload.get("resource_id")).count()
     finally:
         app.dependency_overrides.pop(get_db, None)
         db_session.close()
         Base.metadata.drop_all(engine)
 
     assert response.status_code == 200, response.text
+    assert knowledge_gap_response.status_code == 200, knowledge_gap_response.text
     assert appeal_response.status_code == 200, appeal_response.text
     assert followup.status_code == 200, followup.text
     payload = response.json()
@@ -267,9 +288,21 @@ def test_qa_training_lead_contract_uses_real_quality_sources(tmp_path):
     assert any(key.startswith("task:") for key in task_keys)
     assert "knowledge" in gap_sources
     assert blocks["qa-queue"]["status"] == "implemented"
+    assert blocks["knowledge-gap"]["status"] == "implemented"
     assert blocks["appeal"]["status"] == "implemented"
     assert payload["facts"]["qa_manage_capability"] is True
     assert payload["facts"]["agent_appeal_write_endpoint"] == "implemented"
+    assert payload["facts"]["knowledge_gap_write_endpoint"] == "implemented"
+
+    knowledge_gap_payload = knowledge_gap_response.json()
+    assert knowledge_gap_payload["created"] is True
+    assert knowledge_gap_payload["status"] == "pending"
+    assert knowledge_gap_payload["gap_key"] == knowledge_gap_sample["key"]
+    assert knowledge_gap_payload["ticket_id"] == knowledge_gap_sample["ticket_id"]
+    assert knowledge_gap_resource is not None
+    assert knowledge_gap_resource.config_type == "knowledge"
+    assert knowledge_gap_resource.published_version == 0
+    assert knowledge_gap_resource.draft_content_json["gap_key"] == knowledge_gap_sample["key"]
 
     appeal_payload = appeal_response.json()
     assert appeal_payload["created"] is True
@@ -280,11 +313,18 @@ def test_qa_training_lead_contract_uses_real_quality_sources(tmp_path):
     appealed = {item["key"]: item for item in followup_payload["qa_queue"]}[appeal_sample["key"]]
     assert appealed["appeal_status"] == "pending"
     assert appealed["appeal_task_id"] == appeal_payload["task_id"]
+    followup_gap = {item["key"]: item for item in followup_payload["knowledge_gaps"]}[knowledge_gap_sample["key"]]
+    assert followup_gap["status"] == "pending"
+    assert followup_gap["resource_id"] == knowledge_gap_payload["resource_id"]
     assert any(item["key"].startswith("task:") and item["status"] == "pending" for item in followup_payload["training_tasks"])
     assert appeal_task_ticket_id == appeal_sample["ticket_id"]
     assert appeal_task_source_id == appeal_sample["key"]
+    assert knowledge_gap_task.ticket_id == knowledge_gap_sample["ticket_id"]
+    assert knowledge_gap_task.source_id == knowledge_gap_sample["key"]
     assert appeal_event_count == 1
     assert appeal_audit_count == 1
+    assert knowledge_gap_event_count == 1
+    assert knowledge_gap_audit_count == 1
 
 
 def test_qa_training_requires_qa_manage_capability(tmp_path):
@@ -308,6 +348,11 @@ def test_qa_training_requires_qa_manage_capability(tmp_path):
             headers=_headers(agent),
             json={"sample_key": "webchat-ticket:1", "ticket_id": webchat_ticket.id, "reason": "agent tries direct appeal"},
         )
+        knowledge_gap = client.post(
+            "/api/lite/qa-training/knowledge-gaps",
+            headers=_headers(agent),
+            json={"gap_key": "sample:webchat-ticket:1", "title": "Policy citation gap", "ticket_id": webchat_ticket.id},
+        )
     finally:
         app.dependency_overrides.pop(get_db, None)
         db_session.close()
@@ -317,3 +362,5 @@ def test_qa_training_requires_qa_manage_capability(tmp_path):
     assert response.json()["detail"] == "qa_training_requires_capability"
     assert appeal.status_code == 403
     assert appeal.json()["detail"] == "qa_training_requires_capability"
+    assert knowledge_gap.status_code == 403
+    assert knowledge_gap.json()["detail"] == "qa_training_requires_capability"

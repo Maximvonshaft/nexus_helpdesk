@@ -277,6 +277,11 @@ export interface QATrainingKnowledgeGap {
   next: string
   href: string
   evidence: string
+  resource_id?: number | null
+  ticket_id?: number | null
+  sample_key?: string | null
+  channel?: string | null
+  sample?: string | null
 }
 
 export interface QATrainingLoopStep {
@@ -321,6 +326,18 @@ export interface QATrainingAppealResult {
   ticket_id: number
   sample_key: string
   appeal_status: string
+  submitted_at: string
+}
+
+export interface QATrainingKnowledgeGapResult {
+  ok: boolean
+  resource_id: number
+  resource_key: string
+  task_id: number
+  created: boolean
+  status: string
+  ticket_id?: number | null
+  gap_key: string
   submitted_at: string
 }
 

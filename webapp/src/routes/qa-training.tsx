@@ -54,6 +54,12 @@ function QATrainingPage() {
       await refresh()
     },
   })
+  const knowledgeGap = useMutation({
+    mutationFn: api.submitQATrainingKnowledgeGap,
+    onSuccess: async () => {
+      await refresh()
+    },
+  })
 
   const goTarget = (href: string) => {
     if (href === '/workspace') navigate({ to: '/workspace' })
@@ -83,6 +89,19 @@ function QATrainingPage() {
     })
   }
 
+  const submitKnowledgeGap = (item: NonNullable<typeof qa.data>['knowledge_gaps'][number]) => {
+    knowledgeGap.mutate({
+      gap_key: item.key,
+      title: item.title,
+      source: item.source,
+      ticket_id: item.ticket_id ?? null,
+      channel: item.channel ?? null,
+      sample: item.sample ?? null,
+      summary: item.evidence,
+      evidence: item.evidence ? [item.evidence] : [],
+    })
+  }
+
   return (
     <AppShell>
       <PageHeader
@@ -96,6 +115,7 @@ function QATrainingPage() {
         {qa.isLoading ? <Skeleton lines={6} /> : null}
         {qa.isError ? <ErrorSummary title="QA / Training 加载失败" errors={[qa.error instanceof Error ? qa.error.message : '请稍后重试']} action={<Button variant="secondary" onClick={() => void refresh()}>重试</Button>} /> : null}
         {appeal.isError ? <ErrorSummary title="Agent 申诉提交失败" errors={[appeal.error instanceof Error ? appeal.error.message : '请检查权限或稍后重试']} /> : null}
+        {knowledgeGap.isError ? <ErrorSummary title="知识缺口草稿创建失败" errors={[knowledgeGap.error instanceof Error ? knowledgeGap.error.message : '请检查权限或稍后重试']} /> : null}
         {qa.data ? (
           <div className="stack" data-testid="qa-training-template-blocks">
             <div className="metrics-grid metrics-grid-wide" data-testid="qa-training-real-kpis">
@@ -176,14 +196,23 @@ function QATrainingPage() {
                 <CardHeader title="Knowledge Gap Loop" subtitle="把错误回答、缺证据、缺政策引用转成 AI Ops 可处理的知识草稿或缺口。" />
                 <CardBody>
                   <DataTable
-                    columns={['缺口', '来源', '状态', 'Owner', '证据', '入口']}
+                    columns={['缺口', '来源', '状态', 'Owner', '证据', '动作']}
                     rows={qa.data.knowledge_gaps.map((item) => [
                       sanitizeDisplayText(item.title),
                       sanitizeDisplayText(item.source),
                       <Badge tone={blockTone(item.status === 'draft' || item.status === 'sampled' ? 'linked' : item.status)}>{labelize(item.status)}</Badge>,
                       sanitizeDisplayText(item.owner),
                       sanitizeDisplayText(item.evidence),
-                      <Button variant="secondary" onClick={() => goTarget(item.href)}>打开</Button>,
+                      <div className="button-row">
+                        <Button variant="secondary" onClick={() => goTarget(item.href)}>打开</Button>
+                        <Button
+                          data-testid="qa-training-knowledge-gap-command"
+                          disabled={knowledgeGap.isPending || Boolean(item.resource_id)}
+                          onClick={() => submitKnowledgeGap(item)}
+                        >
+                          {item.resource_id ? '已建草稿' : '创建草稿'}
+                        </Button>
+                      </div>,
                     ])}
                     empty={<EmptyState title="暂无知识缺口" description="当前没有草稿知识或样本派生的缺口。" />}
                   />
@@ -208,7 +237,7 @@ function QATrainingPage() {
             </div>
 
             <Card data-testid="qa-training-template-closure">
-              <CardHeader title="v1.7.8 QA / Training 模板块落地状态" subtitle="明确哪些块已接真实后端 read-model，哪些仍缺 write endpoint。" />
+              <CardHeader title="v1.7.8 QA / Training 模板块落地状态" subtitle="明确 QA 队列、培训任务、知识缺口和 Agent 申诉哪些能力已接真实后端。" />
               <CardBody>
                 <DataTable
                   columns={['模板块', '后端契约', '状态', '证据', '入口']}
@@ -220,7 +249,7 @@ function QATrainingPage() {
                     <Button variant="secondary" onClick={() => goTarget(item.href)}>查看</Button>,
                   ])}
                 />
-                <div className="section-subtitle" style={{ marginTop: 12 }}>Generated {formatDateTime(qa.data.generated_at)} · {sanitizeDisplayText(String(qa.data.facts.agent_appeal_write_endpoint))}</div>
+                <div className="section-subtitle" style={{ marginTop: 12 }}>Generated {formatDateTime(qa.data.generated_at)} · appeal {sanitizeDisplayText(String(qa.data.facts.agent_appeal_write_endpoint))} · knowledge gap {sanitizeDisplayText(String(qa.data.facts.knowledge_gap_write_endpoint))}</div>
               </CardBody>
             </Card>
           </div>

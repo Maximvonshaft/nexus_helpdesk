@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from datetime import timedelta
 from typing import Any
 
@@ -24,6 +26,7 @@ from ..webchat_models import WebchatAITurn, WebchatMessage
 from .audit_service import log_admin_audit, log_event
 from .operator_queue import create_operator_task
 from .permissions import CAP_AI_CONFIG_MANAGE, CAP_QA_MANAGE, CAP_TICKET_READ, resolve_capabilities
+from .ai_config_service import normalize_resource_key
 
 ACTIVE_TICKET_STATUSES = (
     TicketStatus.new,
@@ -162,6 +165,34 @@ def _active_appeals(db: Session, user: User) -> dict[str, OperatorTask]:
         if task.source_id:
             appeals.setdefault(task.source_id, task)
     return appeals
+
+
+def _active_knowledge_gap_tasks(db: Session, user: User) -> dict[str, OperatorTask]:
+    rows = (
+        _with_ticket_visibility(
+            db.query(OperatorTask, Ticket)
+            .outerjoin(Ticket, Ticket.id == OperatorTask.ticket_id)
+            .filter(OperatorTask.task_type == "knowledge_gap", OperatorTask.status.notin_(TERMINAL_TASK_STATUSES)),
+            user,
+        )
+        .order_by(OperatorTask.updated_at.desc(), OperatorTask.id.desc())
+        .all()
+    )
+    tasks: dict[str, OperatorTask] = {}
+    for task, _ticket in rows:
+        if task.source_id:
+            tasks.setdefault(task.source_id, task)
+    return tasks
+
+
+def _task_payload(task: OperatorTask | None) -> dict[str, Any]:
+    if not task or not task.payload_json:
+        return {}
+    try:
+        payload = json.loads(task.payload_json)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _voice_samples(db: Session, user: User) -> list[dict[str, Any]]:
@@ -374,6 +405,7 @@ def _qa_queue(db: Session, user: User) -> list[dict[str, Any]]:
 
 
 def _knowledge_gaps(db: Session, user: User, qa_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    active_tasks = _active_knowledge_gap_tasks(db, user)
     rows = (
         db.query(AIConfigResource)
         .filter(
@@ -395,6 +427,11 @@ def _knowledge_gaps(db: Session, user: User, qa_rows: list[dict[str, Any]]) -> l
             "next": "Run retrieve test, resolve conflicts, then publish or reject",
             "href": "/ai-control",
             "evidence": _short(item.draft_summary or item.description, fallback=item.resource_key),
+            "resource_id": item.id,
+            "ticket_id": None,
+            "sample_key": None,
+            "channel": None,
+            "sample": None,
         }
         for item in rows
     ]
@@ -402,16 +439,24 @@ def _knowledge_gaps(db: Session, user: User, qa_rows: list[dict[str, Any]]) -> l
         risk = str(row.get("risk") or "")
         if not any(token in risk.lower() for token in ("knowledge", "policy", "citation", "missing", "fact", "evidence")):
             continue
+        key = f"sample:{row['key']}"
+        task = active_tasks.get(key)
+        task_payload = _task_payload(task)
         gaps.append(
             {
-                "key": f"sample:{row['key']}",
+                "key": key,
                 "title": f"{row['channel']} sample needs knowledge closure",
                 "source": row["source"],
-                "status": "sampled",
-                "owner": "Lead / AI Ops",
-                "next": "Create or update a knowledge draft from the sampled customer utterance",
-                "href": row["href"],
+                "status": task.status if task else "sampled",
+                "owner": "AI Ops" if task else "Lead / AI Ops",
+                "next": "Review draft knowledge, run golden test, then publish or reject" if task else "Create or update a knowledge draft from the sampled customer utterance",
+                "href": "/ai-control" if task else row["href"],
                 "evidence": risk,
+                "resource_id": task_payload.get("resource_id") if task else None,
+                "ticket_id": row.get("ticket_id"),
+                "sample_key": row["key"],
+                "channel": row.get("channel"),
+                "sample": row.get("sample") or row.get("ticket_no"),
             }
         )
     deduped: dict[str, dict[str, Any]] = {}
@@ -506,9 +551,116 @@ def _template_blocks() -> list[dict[str, str]]:
         {"key": "qa-queue", "label": "QA Queue", "backend_contract": "/api/lite/qa-training", "status": "implemented", "evidence": "samples from WebCall, WebChat, Email and ticket AI fields", "href": "/qa-training"},
         {"key": "scorecard", "label": "Scorecard", "backend_contract": "computed QA metrics", "status": "implemented", "evidence": "identity, citation, AI quality, Email delivery and audit criteria", "href": "/qa-training"},
         {"key": "coaching", "label": "Coaching Feedback", "backend_contract": "operator_tasks + derived QA samples", "status": "implemented", "evidence": "training/coaching/knowledge_gap tasks or generated follow-up actions", "href": "/workspace"},
-        {"key": "knowledge-gap", "label": "Knowledge Gap Loop", "backend_contract": "ai_config_resources + QA samples", "status": "linked", "evidence": "draft knowledge/policy resources and sample-derived gaps flow to AI Control", "href": "/ai-control"},
+        {"key": "knowledge-gap", "label": "Knowledge Gap Loop", "backend_contract": "POST /api/lite/qa-training/knowledge-gaps + ai_config_resources + operator_tasks(task_type=knowledge_gap)", "status": "implemented", "evidence": "sample-derived gaps create knowledge drafts, operator tasks and ticket/admin audit", "href": "/qa-training"},
         {"key": "appeal", "label": "Agent Appeal", "backend_contract": "POST /api/lite/qa-training/appeals + operator_tasks(task_type=qa_appeal)", "status": "implemented", "evidence": "appeals persist as qa_appeal operator tasks and write ticket/admin audit", "href": "/qa-training"},
     ]
+
+
+def _knowledge_gap_resource_key(gap_key: str, title: str) -> str:
+    source = re.sub(r"[^a-z0-9]+", "-", f"{gap_key}-{title}".lower()).strip("-")
+    return normalize_resource_key(f"qa-gap-{source[:96] or 'draft'}")[:120]
+
+
+def submit_knowledge_gap(db: Session, current_user: User, payload) -> dict[str, Any]:
+    capabilities = resolve_capabilities(current_user, db)
+    if CAP_QA_MANAGE not in capabilities:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="qa_training_requires_capability")
+
+    ticket = None
+    if payload.ticket_id is not None:
+        ticket = _visible_ticket_query(db, current_user).filter(Ticket.id == payload.ticket_id).first()
+        if ticket is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="qa_knowledge_gap_ticket_not_found")
+
+    gap_key = str(payload.gap_key).strip()
+    evidence = [str(item).strip() for item in (payload.evidence or []) if str(item).strip()][:12]
+    summary = payload.summary or (evidence[0] if evidence else payload.title)
+    resource_key = _knowledge_gap_resource_key(gap_key, payload.title)
+    draft_content = {
+        "source": "qa_training",
+        "gap_key": gap_key,
+        "source_type": payload.source,
+        "ticket_id": payload.ticket_id,
+        "ticket_no": ticket.ticket_no if ticket else None,
+        "channel": payload.channel,
+        "sample": payload.sample,
+        "evidence": evidence,
+        "recommended_action": "draft policy or FAQ answer, run retrieval/golden tests, then publish through AI Control",
+        "submitted_by": current_user.id,
+        "submitted_at": utc_now().isoformat(),
+    }
+    row = db.query(AIConfigResource).filter(AIConfigResource.resource_key == resource_key).first()
+    created_resource = row is None
+    if row is None:
+        row = AIConfigResource(
+            resource_key=resource_key,
+            config_type="knowledge",
+            name=payload.title,
+            description=f"QA Training knowledge gap from {payload.source or 'sample'}",
+            scope_type="global",
+            is_active=True,
+            published_version=0,
+            created_by=current_user.id,
+        )
+        db.add(row)
+        db.flush()
+
+    row.name = payload.title
+    row.draft_summary = summary
+    row.draft_content_json = draft_content
+    row.updated_by = current_user.id
+    row.updated_at = utc_now()
+    db.flush()
+
+    task_payload = {
+        **draft_content,
+        "resource_id": row.id,
+        "resource_key": row.resource_key,
+    }
+    task, created_task = create_operator_task(
+        db,
+        source_type="qa",
+        task_type="knowledge_gap",
+        source_id=gap_key,
+        ticket_id=ticket.id if ticket else None,
+        reason_code="qa_knowledge_gap",
+        priority=35,
+        payload=task_payload,
+        note=summary,
+    )
+    task.updated_at = utc_now()
+
+    if ticket is not None:
+        log_event(
+            db,
+            ticket_id=ticket.id,
+            actor_id=current_user.id,
+            event_type=EventType.field_updated,
+            field_name="qa_knowledge_gap",
+            new_value=row.resource_key,
+            note=summary,
+            payload={"task_id": task.id, "created_task": created_task, "created_resource": created_resource, **task_payload},
+        )
+    log_admin_audit(
+        db,
+        actor_id=current_user.id,
+        action="qa.knowledge_gap.submitted",
+        target_type="ai_config_resource",
+        target_id=row.id,
+        new_value={"task_id": task.id, "created_task": created_task, "created_resource": created_resource, **task_payload},
+    )
+    db.flush()
+    return {
+        "ok": True,
+        "resource_id": row.id,
+        "resource_key": row.resource_key,
+        "task_id": task.id,
+        "created": created_resource,
+        "status": task.status,
+        "ticket_id": ticket.id if ticket else None,
+        "gap_key": gap_key,
+        "submitted_at": task.updated_at,
+    }
 
 
 def submit_agent_appeal(db: Session, current_user: User, payload) -> dict[str, Any]:
@@ -694,5 +846,6 @@ def build_qa_training(db: Session, current_user: User) -> dict[str, Any]:
             "qa_manage_capability": CAP_QA_MANAGE in capabilities,
             "ticket_read_capability": CAP_TICKET_READ in capabilities,
             "agent_appeal_write_endpoint": "implemented",
+            "knowledge_gap_write_endpoint": "implemented",
         },
     }

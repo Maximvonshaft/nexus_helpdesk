@@ -545,6 +545,47 @@ class LiteQAAppealResponse(APIModel):
     submitted_at: datetime
 
 
+class LiteQAKnowledgeGapRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    gap_key: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=4, max_length=200)
+    source: Optional[str] = Field(default=None, max_length=120)
+    ticket_id: Optional[int] = Field(default=None, gt=0)
+    channel: Optional[str] = Field(default=None, max_length=40)
+    sample: Optional[str] = Field(default=None, max_length=400)
+    summary: Optional[str] = Field(default=None, max_length=2000)
+    evidence: list[str] = Field(default_factory=list)
+
+    @field_validator("gap_key", "title", "source", "channel", "sample", "summary", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def normalize_evidence(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [value]
+        return [str(item).strip() for item in value if str(item).strip()][:12]
+
+
+class LiteQAKnowledgeGapResponse(APIModel):
+    ok: bool
+    resource_id: int
+    resource_key: str
+    task_id: int
+    created: bool
+    status: str
+    ticket_id: Optional[int] = None
+    gap_key: str
+    submitted_at: datetime
+
+
 class LiteMetaRead(APIModel):
     users: list[UserRead]
     teams: list[TeamRead]
