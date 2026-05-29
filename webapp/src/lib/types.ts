@@ -204,6 +204,7 @@ export type OutboundSendPayload = {
   channel: string
   subject?: string | null
   body: string
+  attachment_ids?: number[]
 }
 
 export interface EvidenceSummary {

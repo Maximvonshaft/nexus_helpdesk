@@ -593,6 +593,26 @@ class TicketOutboundMessage(Base):
 
     ticket: Mapped["Ticket"] = relationship(back_populates="outbound_messages")
     creator: Mapped[Optional["User"]] = relationship()
+    attachment_links: Mapped[list["TicketOutboundAttachment"]] = relationship(back_populates="outbound_message", cascade="all, delete-orphan")
+
+    @property
+    def attachments(self) -> list["TicketAttachment"]:
+        return [link.attachment for link in self.attachment_links if link.attachment is not None]
+
+
+class TicketOutboundAttachment(Base):
+    __tablename__ = "ticket_outbound_attachments"
+    __table_args__ = (
+        UniqueConstraint("outbound_message_id", "attachment_id", name="ux_ticket_outbound_attachment"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outbound_message_id: Mapped[int] = mapped_column(ForeignKey("ticket_outbound_messages.id", ondelete="CASCADE"), index=True)
+    attachment_id: Mapped[int] = mapped_column(ForeignKey("ticket_attachments.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+
+    outbound_message: Mapped["TicketOutboundMessage"] = relationship(back_populates="attachment_links")
+    attachment: Mapped["TicketAttachment"] = relationship()
 
 
 class TicketAIIntake(Base):

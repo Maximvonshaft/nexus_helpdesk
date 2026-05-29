@@ -23,6 +23,7 @@ from ..models import (
     TicketEvent,
     TicketFollower,
     TicketInternalNote,
+    TicketOutboundAttachment,
     TicketOutboundMessage,
     TicketTag,
     User,
@@ -72,6 +73,8 @@ from .sla_service import (
     update_pause_state_for_status,
 )
 from .state_machine import is_terminal, requires_note, validate_transition
+
+MAX_OUTBOUND_ATTACHMENTS = 10
 
 
 def generate_ticket_no() -> str:
@@ -656,6 +659,7 @@ def save_outbound_draft(db: Session, ticket_id: int, payload: OutboundDraftCreat
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
     ensure_can_save_outbound_draft(current_user, db)
+    attachments = _resolve_outbound_attachments(db, ticket, payload.attachment_ids, channel=payload.channel)
     draft = TicketOutboundMessage(
         ticket_id=ticket.id,
         channel=payload.channel,
@@ -666,13 +670,20 @@ def save_outbound_draft(db: Session, ticket_id: int, payload: OutboundDraftCreat
         created_by=current_user.id,
     )
     db.add(draft)
+    db.flush()
+    _attach_outbound_message(db, draft, attachments)
     log_event(
         db,
         ticket_id=ticket.id,
         actor_id=current_user.id,
         event_type=EventType.outbound_draft_saved,
         note="Reply draft saved",
-        payload={"channel": payload.channel.value, "summary": f"Draft saved for {payload.channel.value}"},
+        payload={
+            "channel": payload.channel.value,
+            "summary": f"Draft saved for {payload.channel.value}",
+            "attachment_ids": [attachment.id for attachment in attachments],
+            "attachments_count": len(attachments),
+        },
     )
     db.flush()
     db.refresh(draft)
@@ -691,11 +702,52 @@ def _resolve_outbound_subject(ticket: Ticket, channel: SourceChannel, subject: s
     return resolved
 
 
+def _dedupe_attachment_ids(attachment_ids: list[int] | None) -> list[int]:
+    deduped: list[int] = []
+    for raw_id in attachment_ids or []:
+        attachment_id = int(raw_id)
+        if attachment_id <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported attachment id")
+        if attachment_id not in deduped:
+            deduped.append(attachment_id)
+    if len(deduped) > MAX_OUTBOUND_ATTACHMENTS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Email outbound supports at most {MAX_OUTBOUND_ATTACHMENTS} attachments")
+    return deduped
+
+
+def _resolve_outbound_attachments(db: Session, ticket: Ticket, attachment_ids: list[int] | None, *, channel: SourceChannel) -> list[TicketAttachment]:
+    ids = _dedupe_attachment_ids(attachment_ids)
+    if not ids:
+        return []
+    if channel != SourceChannel.email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Outbound attachments are supported only for email")
+    rows = db.query(TicketAttachment).filter(TicketAttachment.id.in_(ids)).all()
+    by_id = {row.id: row for row in rows}
+    missing = [attachment_id for attachment_id in ids if attachment_id not in by_id]
+    if missing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+    attachments = [by_id[attachment_id] for attachment_id in ids]
+    for attachment in attachments:
+        if attachment.ticket_id != ticket.id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Attachment does not belong to this ticket")
+        if attachment.visibility != NoteVisibility.external:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only external attachments can be sent to customers")
+        if not attachment.file_path:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Attachment file is not available for outbound send")
+    return attachments
+
+
+def _attach_outbound_message(db: Session, message: TicketOutboundMessage, attachments: list[TicketAttachment]) -> None:
+    for attachment in attachments:
+        db.add(TicketOutboundAttachment(outbound_message_id=message.id, attachment_id=attachment.id))
+
+
 def send_outbound_message(db: Session, ticket_id: int, payload: OutboundSendRequest, current_user: User) -> TicketOutboundMessage:
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
     ensure_can_send_outbound(current_user, db)
     subject = _resolve_outbound_subject(ticket, payload.channel, getattr(payload, "subject", None))
+    attachments = _resolve_outbound_attachments(db, ticket, payload.attachment_ids, channel=payload.channel)
 
     message = queue_outbound_message(
         db,
@@ -705,6 +757,7 @@ def send_outbound_message(db: Session, ticket_id: int, payload: OutboundSendRequ
         body=payload.body,
         created_by=current_user.id,
     )
+    _attach_outbound_message(db, message, attachments)
     update_first_response(ticket)
     evaluate_sla(ticket, db)
     log_event(
@@ -713,7 +766,13 @@ def send_outbound_message(db: Session, ticket_id: int, payload: OutboundSendRequ
         actor_id=current_user.id,
         event_type=EventType.outbound_queued,
         note="Reply queued for dispatch",
-        payload={"channel": payload.channel.value, "provider_status": "queued", "subject_configured": bool(subject)},
+        payload={
+            "channel": payload.channel.value,
+            "provider_status": "queued",
+            "subject_configured": bool(subject),
+            "attachment_ids": [attachment.id for attachment in attachments],
+            "attachments_count": len(attachments),
+        },
     )
     db.flush()
     db.refresh(message)

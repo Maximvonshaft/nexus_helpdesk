@@ -9,7 +9,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from ..enums import ConversationState, EventType, MessageStatus, SourceChannel
-from ..models import ChannelAccount, OpenClawConversationLink, Ticket, TicketOutboundMessage
+from ..models import ChannelAccount, OpenClawConversationLink, Ticket, TicketOutboundAttachment, TicketOutboundMessage
 from ..settings import get_settings
 from ..utils.time import utc_now
 from .audit_service import log_event
@@ -225,7 +225,11 @@ def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: 
 
     return (
         db.query(TicketOutboundMessage)
-        .options(joinedload(TicketOutboundMessage.ticket).joinedload(Ticket.customer), joinedload(TicketOutboundMessage.ticket).joinedload(Ticket.openclaw_link))
+        .options(
+            joinedload(TicketOutboundMessage.ticket).joinedload(Ticket.customer),
+            joinedload(TicketOutboundMessage.ticket).joinedload(Ticket.openclaw_link),
+            joinedload(TicketOutboundMessage.attachment_links).joinedload(TicketOutboundAttachment.attachment),
+        )
         .filter(TicketOutboundMessage.id.in_(claimed_ids))
         .order_by(TicketOutboundMessage.created_at.asc())
         .all()

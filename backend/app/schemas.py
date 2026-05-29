@@ -223,12 +223,14 @@ class OutboundDraftCreate(BaseModel):
     channel: SourceChannel
     subject: Optional[str] = Field(default=None, max_length=255)
     body: str
+    attachment_ids: list[int] = Field(default_factory=list)
 
 
 class OutboundSendRequest(BaseModel):
     channel: SourceChannel
     subject: Optional[str] = Field(default=None, max_length=255)
     body: str
+    attachment_ids: list[int] = Field(default_factory=list)
 
 
 class AttachmentRead(APIModel):
@@ -275,6 +277,7 @@ class OutboundMessageRead(APIModel):
     max_retries: int = 0
     sent_at: Optional[datetime] = None
     created_at: datetime
+    attachments: list[AttachmentRead] = Field(default_factory=list)
 
 
 class AIIntakeRead(APIModel):

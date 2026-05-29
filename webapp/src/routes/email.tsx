@@ -66,6 +66,7 @@ function EmailComposer({
   const client = useQueryClient()
   const [subject, setSubject] = useState(defaultSubject(activeCase))
   const [body, setBody] = useState(defaultBody(activeCase))
+  const [attachmentIds, setAttachmentIds] = useState<number[]>([])
   const [confirmExternal, setConfirmExternal] = useState(false)
 
   const capabilities = useQuery({
@@ -77,6 +78,7 @@ function EmailComposer({
   useEffect(() => {
     setSubject(defaultSubject(activeCase))
     setBody(defaultBody(activeCase))
+    setAttachmentIds([])
     setConfirmExternal(false)
     // Reset only when the ticket changes; live refetches must not wipe an operator draft.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -86,14 +88,27 @@ function EmailComposer({
     () => (capabilities.data?.channels ?? []).find((item) => item.channel === 'email'),
     [capabilities.data?.channels],
   )
+  const availableAttachments = useMemo(
+    () => (activeCase.attachments ?? []).filter((attachment) => !attachment.visibility || attachment.visibility === 'external'),
+    [activeCase.attachments],
+  )
   const recipient = emailRecipient(activeCase)
   const canSaveDraft = canAccess(session.data, emailDraftAccess)
   const canSendEmail = canAccess(session.data, emailSendAccess)
-  const canDraft = Boolean(canSaveDraft && subject.trim() && body.trim())
-  const canSend = Boolean(canSendEmail && emailCapability?.supports_send && recipient && subject.trim() && body.trim() && confirmExternal)
+  const attachmentBlocked = attachmentIds.length > 0 && !emailCapability?.supports_attachments
+  const canDraft = Boolean(canSaveDraft && subject.trim() && body.trim() && !attachmentBlocked)
+  const canSend = Boolean(canSendEmail && emailCapability?.supports_send && recipient && subject.trim() && body.trim() && confirmExternal && !attachmentBlocked)
+
+  function toggleAttachment(attachmentId: number) {
+    setAttachmentIds((current) => (
+      current.includes(attachmentId)
+        ? current.filter((item) => item !== attachmentId)
+        : [...current, attachmentId]
+    ))
+  }
 
   const draftMutation = useMutation({
-    mutationFn: () => api.saveOutboundDraft(activeCase.id, { channel: 'email', subject: subject.trim(), body: body.trim() }),
+    mutationFn: () => api.saveOutboundDraft(activeCase.id, { channel: 'email', subject: subject.trim(), body: body.trim(), attachment_ids: attachmentIds }),
     onSuccess: async () => {
       onToast({ message: 'Email 草稿已保存到工单 timeline', tone: 'success' })
       await Promise.all([
@@ -107,7 +122,7 @@ function EmailComposer({
   })
 
   const sendMutation = useMutation({
-    mutationFn: () => api.sendOutboundMessage(activeCase.id, { channel: 'email', subject: subject.trim(), body: body.trim() }),
+    mutationFn: () => api.sendOutboundMessage(activeCase.id, { channel: 'email', subject: subject.trim(), body: body.trim(), attachment_ids: attachmentIds }),
     onSuccess: async (result) => {
       const semantics = String(result.delivery_semantics || '')
       onToast({
@@ -115,6 +130,7 @@ function EmailComposer({
         tone: 'success',
       })
       setBody('')
+      setAttachmentIds([])
       setConfirmExternal(false)
       await Promise.all([
         client.invalidateQueries({ queryKey: ['caseDetail', activeCase.id] }),
@@ -140,18 +156,39 @@ function EmailComposer({
             <Badge tone={channelTone(emailCapability)}>{emailCapability?.supports_send ? 'Email 可发送' : 'Email 不可发送'}</Badge>
             {emailCapability?.status ? <Badge>{labelize(emailCapability.status)}</Badge> : null}
             {emailCapability?.external_send ? <Badge tone="warning">外部 provider</Badge> : null}
+            <Badge tone={emailCapability?.supports_attachments ? 'success' : 'warning'}>attachments {emailCapability?.supports_attachments ? '可发送' : '未启用'}</Badge>
             <Badge tone={canSaveDraft ? 'success' : 'warning'}>draft.save {canSaveDraft ? '已授权' : '未授权'}</Badge>
             <Badge tone={canSendEmail ? 'success' : 'warning'}>outbound.send {canSendEmail ? '已授权' : '未授权'}</Badge>
           </div>
           {emailCapability?.missing?.length ? (
             <ErrorSummary title="发送前需要补齐" errors={emailCapability.missing.map(labelize)} />
           ) : null}
+          {attachmentBlocked ? <ErrorSummary title="附件发送未启用" errors={['当前 Email 发送能力不支持附件，请取消选择后再保存或发送。']} /> : null}
           <Field label="Email 主题" required>
             <Input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="请输入客户能识别的邮件主题" />
           </Field>
           <Field label="回复正文" required hint="保存草稿和发送都会进入 ticket timeline/ticket event audit；不要写入内部排障细节或密钥。">
             <Textarea value={body} onChange={(event) => setBody(event.target.value)} rows={9} placeholder="输入要发送给客户的 Email 回复" />
           </Field>
+          <div className="stack" data-testid="email-workbench-attachments">
+            <div className="section-subtitle">可发送附件</div>
+            {availableAttachments.length ? (
+              <div className="stack">
+                {availableAttachments.slice(0, 8).map((attachment) => (
+                  <label key={attachment.id} className="toggle-row">
+                    <input
+                      type="checkbox"
+                      checked={attachmentIds.includes(attachment.id)}
+                      onChange={() => toggleAttachment(attachment.id)}
+                    />
+                    <span>{sanitizeDisplayText(attachment.file_name)} · {sanitizeDisplayText(attachment.mime_type || 'file')}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <EmptyState title="暂无可发送附件" description="工单外部附件会显示在这里，并随 Email draft/send 绑定到 outbound message。" />
+            )}
+          </div>
           <label className="toggle-row">
             <input type="checkbox" checked={confirmExternal} onChange={(event) => setConfirmExternal(event.target.checked)} />
             <span>我确认这是 SMTP 外部邮件发送，收件人、主题和正文已核对。</span>

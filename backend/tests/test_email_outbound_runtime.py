@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -19,8 +20,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
 from app.db import Base  # noqa: E402
-from app.enums import ConversationState, MessageStatus, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
-from app.models import Customer, OutboundEmailAccount, Team, Ticket, TicketOutboundMessage, User  # noqa: E402
+from app.enums import ConversationState, MessageStatus, NoteVisibility, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
+from app.models import Customer, OutboundEmailAccount, Team, Ticket, TicketAttachment, TicketOutboundMessage, User  # noqa: E402
 from app.schemas import OutboundSendRequest  # noqa: E402
 from app.services import message_dispatch  # noqa: E402
 from app.services.outbound_adapters.email import dispatch_email_outbound, send_outbound_email_test  # noqa: E402
@@ -124,6 +125,20 @@ def _message(db_session, ticket: Ticket, *, subject="Order update", body="hello 
     return row
 
 
+def _attachment(db_session, ticket: Ticket, file_path: Path, *, visibility=NoteVisibility.external) -> TicketAttachment:
+    row = TicketAttachment(
+        ticket_id=ticket.id,
+        file_name=file_path.name,
+        file_path=str(file_path),
+        mime_type="text/plain",
+        file_size=file_path.stat().st_size,
+        visibility=visibility,
+    )
+    db_session.add(row)
+    db_session.flush()
+    return row
+
+
 class FakeSMTP:
     def __init__(self):
         self.login_calls = []
@@ -179,6 +194,40 @@ def test_dispatch_email_outbound_builds_smtp_message_and_redacted_route(db_sessi
     assert route["from_address"] == "s***@example.com"
     assert "password" not in route
     assert "username" not in route
+
+
+def test_dispatch_email_outbound_attaches_ticket_files(db_session, tmp_path):
+    ticket = _ticket(db_session, contact="Alice@Example.com")
+    _email_account(db_session)
+    attachment_path = tmp_path / "proof.txt"
+    attachment_path.write_text("delivery proof", encoding="utf-8")
+    attachment = _attachment(db_session, ticket, attachment_path)
+    admin = _admin(db_session)
+    message = send_outbound_message(
+        db_session,
+        ticket.id,
+        OutboundSendRequest(channel=SourceChannel.email, subject="Attached proof", body="hello", attachment_ids=[attachment.id]),
+        admin,
+    )
+    fake_client = FakeSMTP()
+
+    status_value, provider_status, sent_at, route = dispatch_email_outbound(
+        db_session,
+        message=message,
+        ticket=ticket,
+        idempotency_key="idem-attachment",
+        smtp_factory=lambda **kwargs: fake_client,
+    )
+
+    assert status_value == MessageStatus.sent
+    assert provider_status == "smtp_sent"
+    assert sent_at is not None
+    attachments = list(fake_client.messages[0].iter_attachments())
+    assert len(attachments) == 1
+    assert attachments[0].get_filename() == "proof.txt"
+    assert attachments[0].get_payload(decode=True) == b"delivery proof"
+    assert route["attachment_count"] == 1
+    assert route["attachment_filenames"] == ["proof.txt"]
 
 
 def test_dispatch_email_outbound_maps_smtp_auth_failure(db_session):
@@ -317,3 +366,41 @@ def test_ticket_send_email_persists_explicit_or_default_subject(db_session):
 
     assert explicit.subject == "Explicit subject"
     assert fallback.subject == "Ticket title subject"
+
+
+def test_ticket_send_email_links_only_external_ticket_attachments(db_session, tmp_path):
+    admin = _admin(db_session)
+    ticket = _ticket(db_session, title="Ticket title subject")
+    file_path = tmp_path / "customer-proof.txt"
+    file_path.write_text("customer proof", encoding="utf-8")
+    attachment = _attachment(db_session, ticket, file_path)
+    internal_path = tmp_path / "internal-note.txt"
+    internal_path.write_text("internal only", encoding="utf-8")
+    internal_attachment = _attachment(db_session, ticket, internal_path, visibility=NoteVisibility.internal)
+
+    message = send_outbound_message(
+        db_session,
+        ticket.id,
+        OutboundSendRequest(channel=SourceChannel.email, subject="With attachment", body="hello", attachment_ids=[attachment.id, attachment.id]),
+        admin,
+    )
+
+    assert [item.id for item in message.attachments] == [attachment.id]
+
+    with pytest.raises(HTTPException) as exc:
+        send_outbound_message(
+            db_session,
+            ticket.id,
+            OutboundSendRequest(channel=SourceChannel.email, subject="Internal", body="hello", attachment_ids=[internal_attachment.id]),
+            admin,
+        )
+    assert exc.value.status_code == 400
+
+    with pytest.raises(HTTPException) as channel_exc:
+        send_outbound_message(
+            db_session,
+            ticket.id,
+            OutboundSendRequest(channel=SourceChannel.web_chat, body="hello", attachment_ids=[attachment.id]),
+            admin,
+        )
+    assert channel_exc.value.status_code == 400

@@ -6,7 +6,16 @@ from typing import Optional
 from sqlalchemy.orm import Session, joinedload
 
 from ..enums import EventType, MessageStatus
-from ..models import Ticket, TicketAIIntake, TicketAttachment, TicketComment, TicketEvent, TicketInternalNote, TicketOutboundMessage
+from ..models import (
+    Ticket,
+    TicketAIIntake,
+    TicketAttachment,
+    TicketComment,
+    TicketEvent,
+    TicketInternalNote,
+    TicketOutboundAttachment,
+    TicketOutboundMessage,
+)
 from ..webchat_models import WebchatMessage
 from .outbound_semantics import outbound_is_external_send, outbound_ui_label
 
@@ -116,6 +125,17 @@ def serialize_attachment(attachment: TicketAttachment) -> dict:
 def serialize_outbound(message: TicketOutboundMessage) -> dict:
     ui_label = outbound_ui_label(message.channel, message.status, message.provider_status)
     external = outbound_is_external_send(message.channel, message.provider_status)
+    attachments = [
+        {
+            "id": attachment.id,
+            "file_name": attachment.file_name,
+            "download_url": attachment.file_url or f"/api/files/{attachment.id}/download",
+            "mime_type": attachment.mime_type,
+            "file_size": attachment.file_size,
+            "visibility": attachment.visibility.value,
+        }
+        for attachment in getattr(message, "attachments", [])
+    ]
 
     if ui_label in {"Local WebChat ACK", "WebChat Safe Fallback", "Draft / Review Required", "External Send Pending"}:
         title = ui_label
@@ -151,6 +171,9 @@ def serialize_outbound(message: TicketOutboundMessage) -> dict:
             "provider_status": message.provider_status,
             "ui_label": ui_label,
             "is_external_send": external,
+            "attachments": attachments,
+            "attachment_ids": [attachment["id"] for attachment in attachments],
+            "attachments_count": len(attachments),
         },
     }
 
@@ -204,6 +227,7 @@ def build_unified_timeline(db: Session, ticket_id: int) -> list[dict]:
             joinedload(Ticket.internal_notes).joinedload(TicketInternalNote.author),
             joinedload(Ticket.attachments).joinedload(TicketAttachment.uploader),
             joinedload(Ticket.outbound_messages).joinedload(TicketOutboundMessage.creator),
+            joinedload(Ticket.outbound_messages).joinedload(TicketOutboundMessage.attachment_links).joinedload(TicketOutboundAttachment.attachment),
             joinedload(Ticket.ai_intakes).joinedload(TicketAIIntake.creator),
         )
         .filter(Ticket.id == ticket_id)

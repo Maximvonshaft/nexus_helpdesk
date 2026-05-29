@@ -25,9 +25,9 @@ from app import voice_models as _voice_models  # noqa: E402,F401
 from app import webchat_models as _webchat_models  # noqa: E402,F401
 from app.auth_service import create_access_token  # noqa: E402
 from app.db import Base, get_db  # noqa: E402
-from app.enums import ConversationState, EventType, MessageStatus, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
+from app.enums import ConversationState, EventType, MessageStatus, NoteVisibility, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import Customer, OutboundEmailAccount, Team, Ticket, TicketEvent, TicketOutboundMessage, User  # noqa: E402
+from app.models import Customer, OutboundEmailAccount, Team, Ticket, TicketAttachment, TicketEvent, TicketOutboundMessage, User  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.webchat_models import WebchatMessage  # noqa: E402
 
@@ -139,33 +139,52 @@ def _smtp_account(db_session) -> OutboundEmailAccount:
     return row
 
 
+def _ticket_attachment(db_session, ticket: Ticket, *, uploaded_by: int | None = None) -> TicketAttachment:
+    file_path = Path(__file__)
+    row = TicketAttachment(
+        ticket_id=ticket.id,
+        uploaded_by=uploaded_by,
+        file_name="email-proof.txt",
+        file_path=str(file_path),
+        mime_type="text/plain",
+        file_size=file_path.stat().st_size,
+        visibility=NoteVisibility.external,
+    )
+    db_session.add(row)
+    db_session.flush()
+    return row
+
+
 def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_session):
     admin = _admin(db_session, user_id=9401)
     team = _team(db_session)
     ticket = _email_ticket(db_session, team=team)
     _smtp_account(db_session)
+    attachment = _ticket_attachment(db_session, ticket, uploaded_by=admin.id)
     headers = _headers(admin)
 
     capabilities = client.get(f"/api/tickets/{ticket.id}/outbound/channels/capabilities", headers=headers)
     assert capabilities.status_code == 200, capabilities.text
     email_capability = next(item for item in capabilities.json()["channels"] if item["channel"] == "email")
     assert email_capability["supports_send"] is True
+    assert email_capability["supports_attachments"] is True
     assert email_capability["external_send"] is True
     assert email_capability["missing"] == []
 
     draft = client.post(
         f"/api/tickets/{ticket.id}/outbound/draft",
         headers=headers,
-        json={"channel": "email", "subject": "Draft subject", "body": "draft body"},
+        json={"channel": "email", "subject": "Draft subject", "body": "draft body", "attachment_ids": [attachment.id]},
     )
     assert draft.status_code == 200, draft.text
     assert draft.json()["status"] == "draft"
     assert draft.json()["provider_status"] == "draft_saved"
+    assert [item["id"] for item in draft.json()["attachments"]] == [attachment.id]
 
     sent = client.post(
         f"/api/tickets/{ticket.id}/outbound/send",
         headers=headers,
-        json={"channel": "email", "subject": "Send subject", "body": "send body"},
+        json={"channel": "email", "subject": "Send subject", "body": "send body", "attachment_ids": [attachment.id]},
     )
     assert sent.status_code == 200, sent.text
     send_payload = sent.json()
@@ -173,6 +192,8 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
     assert send_payload["provider_status"] == "queued"
     assert send_payload["delivery_semantics"] == "external_provider_send"
     assert send_payload["external_send"] is True
+    assert send_payload["attachments_count"] == 1
+    assert send_payload["attachment_ids"] == [attachment.id]
 
     timeline = client.get(f"/api/tickets/{ticket.id}/timeline?limit=20", headers=headers)
     assert timeline.status_code == 200, timeline.text
@@ -181,6 +202,7 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
     event_types = {item.get("event_type") for item in items if item.get("source_type") == "ticket_event"}
     assert any(item["subject"] == "Draft subject" and item["status"] == "draft" for item in outbound_items)
     assert any(item["subject"] == "Send subject" and item["status"] == "pending" for item in outbound_items)
+    assert any(item["payload"].get("attachments_count") == 1 for item in outbound_items)
     assert EventType.outbound_draft_saved.value in event_types
     assert EventType.outbound_queued.value in event_types
 

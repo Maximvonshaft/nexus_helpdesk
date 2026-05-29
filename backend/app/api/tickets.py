@@ -67,6 +67,18 @@ from ..services.bulletin_service import list_active_bulletins
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
 
 
+def _serialize_attachment(row) -> dict:
+    return {
+        "id": row.id,
+        "file_name": row.file_name,
+        "download_url": row.download_url,
+        "mime_type": row.mime_type,
+        "file_size": row.file_size,
+        "visibility": row.visibility,
+        "created_at": row.created_at,
+    }
+
+
 def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
     settings = get_settings()
     channel_value = row.channel.value if hasattr(row.channel, "value") else str(row.channel)
@@ -98,6 +110,9 @@ def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
         "outbound_provider": settings.outbound_provider,
         "ui_label": outbound_ui_label(row.channel, row.status, row.provider_status),
         "operator_note": "Queued for external provider dispatch; wait for sent/dead/review final state" if external_send else "Local-only delivery; no external provider send occurred",
+        "attachments": [_serialize_attachment(attachment) for attachment in getattr(row, "attachments", [])],
+        "attachment_ids": [attachment.id for attachment in getattr(row, "attachments", [])],
+        "attachments_count": len(getattr(row, "attachments", [])),
     }
 
 

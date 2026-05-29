@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, inspect, or_, select, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..db import get_db
 from ..models import (
@@ -22,6 +22,7 @@ from ..models import (
     TicketComment,
     TicketEvent,
     TicketInternalNote,
+    TicketOutboundAttachment,
     TicketOutboundMessage,
     User,
 )
@@ -185,6 +186,17 @@ def _attachment_preview(db: Session, ticket_id: int, limit: int = 3) -> list[dic
         }
         for row in rows
     ]
+
+
+def _attachment_timeline_payload(row: TicketAttachment) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "file_name": row.file_name,
+        "download_url": row.file_url or f"/api/files/{row.id}/download",
+        "mime_type": row.mime_type,
+        "file_size": row.file_size,
+        "visibility": _value(row.visibility),
+    }
 
 
 def _openclaw_transcript_preview(db: Session, ticket_id: int, limit: int = 5) -> list[dict[str, Any]]:
@@ -459,8 +471,34 @@ def _timeline_items(db: Session, ticket_id: int, cursor_key: tuple[datetime, int
         items.append({"source_type": "comment", "source_id": row.id, "id": f"comment:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "visibility": _value(row.visibility), "author_id": row.author_id})
     for row in _base_timeline_query(db.query(TicketInternalNote), TicketInternalNote, "internal_note", ticket_id, cursor_key, limit):
         items.append({"source_type": "internal_note", "source_id": row.id, "id": f"internal_note:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "visibility": "internal", "author_id": row.author_id})
-    for row in _base_timeline_query(db.query(TicketOutboundMessage), TicketOutboundMessage, "outbound_message", ticket_id, cursor_key, limit):
-        items.append({"source_type": "outbound_message", "source_id": row.id, "id": f"outbound_message:{row.id}", "created_at": _dt(row.created_at), "subject": row.subject, "body": row.body, "status": _value(row.status), "channel": _value(row.channel), "created_by": row.created_by})
+    outbound_query = db.query(TicketOutboundMessage).options(
+        joinedload(TicketOutboundMessage.attachment_links).joinedload(TicketOutboundAttachment.attachment)
+    )
+    for row in _base_timeline_query(outbound_query, TicketOutboundMessage, "outbound_message", ticket_id, cursor_key, limit):
+        attachments = [_attachment_timeline_payload(attachment) for attachment in getattr(row, "attachments", [])]
+        payload = {
+            "channel": _value(row.channel),
+            "status": _value(row.status),
+            "provider_status": row.provider_status,
+            "attachments": attachments,
+            "attachment_ids": [attachment["id"] for attachment in attachments],
+            "attachments_count": len(attachments),
+        }
+        items.append({
+            "source_type": "outbound_message",
+            "source_id": row.id,
+            "id": f"outbound_message:{row.id}",
+            "created_at": _dt(row.created_at),
+            "subject": row.subject,
+            "body": row.body,
+            "status": _value(row.status),
+            "channel": _value(row.channel),
+            "created_by": row.created_by,
+            "attachments": attachments,
+            "attachment_ids": payload["attachment_ids"],
+            "attachments_count": payload["attachments_count"],
+            "payload": payload,
+        })
     for row in _base_timeline_query(db.query(TicketAIIntake), TicketAIIntake, "ai_intake", ticket_id, cursor_key, limit):
         items.append({"source_type": "ai_intake", "source_id": row.id, "id": f"ai_intake:{row.id}", "created_at": _dt(row.created_at), "summary": row.summary, "classification": row.classification, "confidence": row.confidence})
     for row in _base_timeline_query(db.query(TicketEvent), TicketEvent, "ticket_event", ticket_id, cursor_key, limit):

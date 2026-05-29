@@ -233,7 +233,7 @@ def get_outbound_channel_capability(
             supports_send=not missing,
             supports_inbound_sync=False,
             supports_delivery_receipt=False,
-            supports_attachments=False,
+            supports_attachments=True,
             external_send=True,
             target_validation=_target_validation(channel_value),
             missing=missing,
