@@ -17,13 +17,17 @@ from ..schemas_control_plane import (
     PersonaReviewDecisionRequest,
     PersonaReviewPublishRequest,
     PersonaReviewSubmitRequest,
+    PersonaRuntimeEvidenceOut,
+    PersonaRuntimeEvidenceRequest,
     PersonaResolvePreviewOut,
     PersonaResolvePreviewRequest,
     PersonaRollbackRequest,
 )
 from ..services.permissions import ensure_can_manage_ai_configs, ensure_can_read_ai_configs
 from ..services import persona_service
+from ..services.ai_runtime_context import build_webchat_runtime_context
 from ..unit_of_work import managed_session
+from ..utils.time import utc_now
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/persona-profiles", tags=["persona-profiles"])
@@ -95,6 +99,51 @@ def resolve_persona_preview(
         language=payload.language,
     )
     return PersonaResolvePreviewOut(profile=_profile_out(row) if row else None, match_rank=score)
+
+
+@router.post("/runtime-evidence", response_model=PersonaRuntimeEvidenceOut)
+def get_persona_runtime_evidence(
+    payload: PersonaRuntimeEvidenceRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_read_ai_configs(current_user, db)
+    runtime_context = build_webchat_runtime_context(
+        db,
+        tenant_key=payload.tenant_key,
+        channel_key=payload.channel or "webchat",
+        body=payload.body,
+        market_id=payload.market_id,
+        language=payload.language,
+        audience_scope=payload.audience_scope or "customer",
+    )
+    persona_context = runtime_context.get("persona_context")
+    matched_profile_key = persona_context.get("profile_key") if isinstance(persona_context, dict) else None
+    match_rank = persona_context.get("match_rank") if isinstance(persona_context, dict) else None
+    matched_expected = None
+    if payload.expected_profile_key:
+        matched_expected = matched_profile_key == payload.expected_profile_key
+    identity_context = persona_context.get("identity_context") if isinstance(persona_context, dict) else {}
+    content_json = persona_context.get("content_json") if isinstance(persona_context, dict) else {}
+    return PersonaRuntimeEvidenceOut(
+        generated_at=utc_now(),
+        matched_profile_key=matched_profile_key,
+        match_rank=match_rank,
+        expected_profile_key=payload.expected_profile_key,
+        matched_expected=matched_expected,
+        persona_context=persona_context if isinstance(persona_context, dict) else None,
+        runtime_context=runtime_context,
+        evidence={
+            "runtime_contract": "build_webchat_runtime_context",
+            "context_version": runtime_context.get("context_version"),
+            "metadata_filters": runtime_context.get("metadata_filters"),
+            "identity_ready": bool(identity_context),
+            "brand_name": identity_context.get("brand_name") if isinstance(identity_context, dict) else None,
+            "assistant_name": identity_context.get("assistant_name") if isinstance(identity_context, dict) else None,
+            "guardrail_count": len(content_json.get("guardrails") or []) if isinstance(content_json, dict) and isinstance(content_json.get("guardrails"), list) else 0,
+            "knowledge_hits": runtime_context.get("knowledge_context", {}).get("total_matches") if isinstance(runtime_context.get("knowledge_context"), dict) else None,
+        },
+    )
 
 
 @router.get("/reviews", response_model=PersonaProfileReviewListOut)

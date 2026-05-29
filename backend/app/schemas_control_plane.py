@@ -153,6 +153,31 @@ class PersonaResolvePreviewRequest(BaseModel):
         return _strip_optional_language(value)
 
 
+class PersonaRuntimeEvidenceRequest(BaseModel):
+    tenant_key: str = Field(default="default", min_length=1, max_length=120)
+    body: str = Field(default="Who are you and what can you help with?", min_length=1, max_length=1000)
+    market_id: Optional[int] = None
+    channel: Optional[str] = Field(default="webchat", max_length=40)
+    language: Optional[str] = Field(default=None, max_length=16)
+    audience_scope: str = Field(default="customer", max_length=40)
+    expected_profile_key: Optional[str] = Field(default=None, max_length=120)
+
+    @field_validator("tenant_key", "body", "channel", "audience_scope", "expected_profile_key", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value):
+        return _strip_optional_string(value)
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def strip_optional_language(cls, value):
+        return _strip_optional_language(value)
+
+    @field_validator("expected_profile_key")
+    @classmethod
+    def normalize_expected_profile_key(cls, value: str | None) -> str | None:
+        return value.strip().lower() if value else value
+
+
 class PersonaProfileVersionOut(ControlPlaneModel):
     id: int
     profile_id: int
@@ -225,6 +250,17 @@ class PersonaProfileReviewListOut(BaseModel):
 class PersonaResolvePreviewOut(BaseModel):
     profile: Optional[PersonaProfileOut] = None
     match_rank: Optional[int] = None
+
+
+class PersonaRuntimeEvidenceOut(ControlPlaneModel):
+    generated_at: datetime
+    matched_profile_key: Optional[str] = None
+    match_rank: Optional[int] = None
+    expected_profile_key: Optional[str] = None
+    matched_expected: Optional[bool] = None
+    persona_context: Optional[JsonObject] = None
+    runtime_context: JsonObject
+    evidence: JsonObject = Field(default_factory=dict)
 
 
 class KnowledgeItemBase(BaseModel):

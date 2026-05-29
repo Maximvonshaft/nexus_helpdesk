@@ -923,6 +923,17 @@ export interface PersonaResolvePreviewResult {
   match_rank?: number | null
 }
 
+export interface PersonaRuntimeEvidenceResult {
+  generated_at: string
+  matched_profile_key?: string | null
+  match_rank?: number | null
+  expected_profile_key?: string | null
+  matched_expected?: boolean | null
+  persona_context?: Record<string, unknown> | null
+  runtime_context: Record<string, unknown>
+  evidence: Record<string, unknown>
+}
+
 export interface KnowledgeItem {
   id: number
   item_key: string

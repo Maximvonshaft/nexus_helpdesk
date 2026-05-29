@@ -13,12 +13,12 @@ import { DataTable } from '@/components/ui/DataTable'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { ErrorSummary } from '@/components/ui/ErrorSummary'
-import { Field, Input } from '@/components/ui/Field'
+import { Field, Input, Textarea } from '@/components/ui/Field'
 import { MetricCard } from '@/components/ui/MetricCard'
 import { RequireCapability } from '@/components/security/RequireCapability'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { formatDateTime, labelize, sanitizeDisplayText } from '@/lib/format'
-import type { BadgeTone, PersonaBuilderSimulationScenario } from '@/lib/types'
+import type { BadgeTone, PersonaBuilderSimulationScenario, PersonaRuntimeEvidenceResult } from '@/lib/types'
 
 function safeTone(value: string | null | undefined): BadgeTone {
   return value === 'danger' || value === 'warning' || value === 'success' ? value : 'default'
@@ -53,6 +53,19 @@ function parseMarketId(raw: string) {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : Number.NaN
 }
 
+function runtimeEvidenceSnapshot(data: PersonaRuntimeEvidenceResult) {
+  const personaContext = data.persona_context ?? {}
+  return JSON.stringify({
+    matched_profile_key: data.matched_profile_key,
+    match_rank: data.match_rank,
+    expected_profile_key: data.expected_profile_key,
+    matched_expected: data.matched_expected,
+    evidence: data.evidence,
+    metadata_filters: data.runtime_context.metadata_filters,
+    identity_context: typeof personaContext === 'object' && personaContext ? personaContext.identity_context : null,
+  }, null, 2)
+}
+
 function PersonaBuilderPage() {
   const navigate = useNavigate()
   const client = useQueryClient()
@@ -60,6 +73,7 @@ function PersonaBuilderPage() {
   const [previewMarketId, setPreviewMarketId] = useState('1')
   const [previewChannel, setPreviewChannel] = useState('webchat')
   const [previewLanguage, setPreviewLanguage] = useState('en')
+  const [runtimeBody, setRuntimeBody] = useState('Who are you and can you help with delivery appointments?')
   const builder = useQuery({
     queryKey: ['personaBuilder'],
     queryFn: api.personaBuilder,
@@ -67,11 +81,23 @@ function PersonaBuilderPage() {
   })
   const marketId = parseMarketId(previewMarketId)
   const marketIdInvalid = Number.isNaN(marketId)
+  const normalizedMarketId = marketIdInvalid ? null : marketId
   const resolvePreview = useMutation({
     mutationFn: () => api.resolvePersonaPreview({
-      market_id: marketId,
+      market_id: normalizedMarketId,
       channel: previewChannel.trim() || null,
       language: previewLanguage.trim() || null,
+    }),
+  })
+  const runtimeEvidence = useMutation({
+    mutationFn: () => api.personaRuntimeEvidence({
+      tenant_key: 'default',
+      body: runtimeBody,
+      market_id: normalizedMarketId,
+      channel: previewChannel.trim() || null,
+      language: previewLanguage.trim() || null,
+      audience_scope: 'customer',
+      expected_profile_key: resolvePreview.data?.profile?.profile_key || null,
     }),
   })
   const submitReview = useMutation({
@@ -189,13 +215,42 @@ function PersonaBuilderPage() {
               </Card>
 
               <Card data-testid="persona-builder-runtime-evidence">
-                <CardHeader title="Runtime Evidence" subtitle="WebChat 运行时通过 build_webchat_runtime_context 注入已发布 Persona；专用 runtime evidence 查询端点仍明示为缺口。" />
+                <CardHeader title="Runtime Evidence" subtitle="调用真实 /api/persona-profiles/runtime-evidence，验证 WebChat 运行时注入的已发布 Persona、身份上下文、guardrails 和匹配证据。" />
                 <CardBody>
-                  <div className="kv-grid">
-                    <div className="kv"><label>Identity Ready</label><strong>{sanitizeDisplayText(builder.data.facts.identity_ready_profiles)}</strong></div>
-                    <div className="kv"><label>Boundary Ready</label><strong>{sanitizeDisplayText(builder.data.facts.boundary_ready_profiles)}</strong></div>
-                    <div className="kv"><label>Fallback Profiles</label><strong>{sanitizeDisplayText(builder.data.facts.global_fallback_profiles)}</strong></div>
-                    <div className="kv"><label>Runtime Evidence Endpoint</label><strong>{sanitizeDisplayText(String(builder.data.facts.dedicated_runtime_evidence_endpoint))}</strong></div>
+                  <div className="stack">
+                    <div className="kv-grid">
+                      <div className="kv"><label>Identity Ready</label><strong>{sanitizeDisplayText(builder.data.facts.identity_ready_profiles)}</strong></div>
+                      <div className="kv"><label>Boundary Ready</label><strong>{sanitizeDisplayText(builder.data.facts.boundary_ready_profiles)}</strong></div>
+                      <div className="kv"><label>Fallback Profiles</label><strong>{sanitizeDisplayText(builder.data.facts.global_fallback_profiles)}</strong></div>
+                      <div className="kv"><label>Runtime Evidence Endpoint</label><strong>{sanitizeDisplayText(String(builder.data.facts.dedicated_runtime_evidence_endpoint))}</strong></div>
+                    </div>
+                    <Field label="Runtime Query" hint="使用当前 market/channel/language，向后端请求真实运行时上下文证据。">
+                      <Textarea rows={4} value={runtimeBody} onChange={(event) => setRuntimeBody(event.target.value)} />
+                    </Field>
+                    <div className="button-row">
+                      <Button
+                        variant="primary"
+                        data-testid="persona-builder-runtime-evidence-command"
+                        disabled={marketIdInvalid || !runtimeBody.trim() || runtimeEvidence.isPending}
+                        onClick={() => runtimeEvidence.mutate()}
+                      >
+                        生成运行证据
+                      </Button>
+                    </div>
+                    {runtimeEvidence.isError ? <ErrorSummary title="运行证据查询失败" errors={[runtimeEvidence.error instanceof Error ? runtimeEvidence.error.message : '请检查权限或稍后重试']} /> : null}
+                    {runtimeEvidence.data ? (
+                      <div className="stack">
+                        <div className="kv-grid">
+                          <div className="kv"><label>Matched Persona</label><strong>{sanitizeDisplayText(runtimeEvidence.data.matched_profile_key)}</strong></div>
+                          <div className="kv"><label>Match Rank</label><strong>{sanitizeDisplayText(runtimeEvidence.data.match_rank ?? null)}</strong></div>
+                          <div className="kv"><label>Expected Match</label><strong>{sanitizeDisplayText(runtimeEvidence.data.matched_expected ?? null)}</strong></div>
+                          <div className="kv"><label>Brand</label><strong>{sanitizeDisplayText(String(runtimeEvidence.data.evidence.brand_name ?? '—'))}</strong></div>
+                          <div className="kv"><label>Assistant</label><strong>{sanitizeDisplayText(String(runtimeEvidence.data.evidence.assistant_name ?? '—'))}</strong></div>
+                          <div className="kv"><label>Guardrails</label><strong>{sanitizeDisplayText(String(runtimeEvidence.data.evidence.guardrail_count ?? '—'))}</strong></div>
+                        </div>
+                        <pre className="code-block">{runtimeEvidenceSnapshot(runtimeEvidence.data)}</pre>
+                      </div>
+                    ) : null}
                   </div>
                   <DataTable
                     columns={['模板块', '后端契约', '状态']}
@@ -258,7 +313,7 @@ function PersonaBuilderPage() {
               </Card>
 
               <Card data-testid="persona-builder-template-closure">
-                <CardHeader title="v1.7.8 AI Persona Builder 模板块落地状态" subtitle="真实后端已接入的能力和仍缺的 approval / runtime evidence command 在同一处明示。" />
+                <CardHeader title="v1.7.8 AI Persona Builder 模板块落地状态" subtitle="真实后端已接入的 Persona 草稿、审批、发布、resolve preview 和 runtime evidence 能力在同一处明示。" />
                 <CardBody>
                   <DataTable
                     columns={['模板块', '后端契约', '状态', '证据', '入口']}

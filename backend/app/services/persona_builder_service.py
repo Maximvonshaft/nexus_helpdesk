@@ -274,7 +274,7 @@ def build_persona_builder(db: Session, current_user) -> dict[str, Any]:
             _lifecycle_step("release-window", "Release Window", "Manager / AI Ops", "approved review publish gate", "implemented", approved_review_count, "/persona-builder", manage_enabled),
             _lifecycle_step("published", "Published", "AI Ops / Product", "PersonaProfileVersion + published_content_json", "implemented" if published_count else "linked", published_count, "/ai-control", manage_enabled),
             _lifecycle_step("rollback", "Rollback", "AI Ops / Product", "POST /api/persona-profiles/{id}/rollback", "implemented" if version_count else "linked", version_count, "/ai-control", manage_enabled),
-            _lifecycle_step("runtime-evidence", "Runtime Evidence", "AI Ops / Auditor", "webchat runtime context persona_context", "linked", identity_ready_count + boundary_ready_count, "/persona-builder", True),
+            _lifecycle_step("runtime-evidence", "Runtime Evidence", "AI Ops / Auditor", "POST /api/persona-profiles/runtime-evidence", "implemented", identity_ready_count + boundary_ready_count, "/persona-builder", True),
         ],
         "template_blocks": [
             _template_block("persona-list", "Persona List", "GET /api/persona-profiles", "implemented", "读取真实 PersonaProfile 列表、scope、启用状态和版本字段", "/persona-builder"),
@@ -282,7 +282,7 @@ def build_persona_builder(db: Session, current_user) -> dict[str, Any]:
             _template_block("resolve-preview", "Simulation / Resolve Preview", "POST /api/persona-profiles/resolve-preview", "implemented", "按 market/channel/language 返回真实匹配 profile 和 match_rank", "/persona-builder"),
             _template_block("publish-rollback", "Publish / Rollback", "POST /api/persona-profiles/{id}/publish|rollback", "implemented", "发布创建 PersonaProfileVersion；回滚复制旧快照为新版本", "/ai-control"),
             _template_block("approval", "Approval / Release Window", "POST /api/persona-profiles/{id}/submit-review + /reviews/{id}/approve|reject|publish", "implemented", "审批流写入 persona_profile_reviews，并可按 release window 发布已审批快照", "/persona-builder"),
-            _template_block("runtime-evidence", "Runtime Evidence", "build_webchat_runtime_context persona_context", "linked", "运行时读取已发布 Persona；专用 runtime evidence 查询端点仍未实现", "/persona-builder"),
+            _template_block("runtime-evidence", "Runtime Evidence", "POST /api/persona-profiles/runtime-evidence", "implemented", "专用查询端点返回脱敏 runtime_context、persona_context、identity evidence 和 match rank", "/persona-builder"),
         ],
         "facts": {
             "active_profiles": active_count,
@@ -301,6 +301,6 @@ def build_persona_builder(db: Session, current_user) -> dict[str, Any]:
             "submit_review_endpoint": "implemented",
             "approval_endpoint": "implemented",
             "release_window_command": "implemented",
-            "dedicated_runtime_evidence_endpoint": "not_implemented",
+            "dedicated_runtime_evidence_endpoint": "implemented",
         },
     }

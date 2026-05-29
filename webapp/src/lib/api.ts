@@ -44,6 +44,7 @@ import type {
   PersonaProfileReview,
   PersonaProfileReviewList,
   PersonaProfileVersion,
+  PersonaRuntimeEvidenceResult,
   PersonaResolvePreviewResult,
   Team,
   TodayWorkbench,
@@ -488,6 +489,10 @@ export const api = {
     body: JSON.stringify({ notes: notes || null }),
   }),
   resolvePersonaPreview: (payload: { market_id?: number | null; channel?: string | null; language?: string | null }) => request<PersonaResolvePreviewResult>('/api/persona-profiles/resolve-preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  personaRuntimeEvidence: (payload: { tenant_key?: string; body: string; market_id?: number | null; channel?: string | null; language?: string | null; audience_scope?: string | null; expected_profile_key?: string | null }) => request<PersonaRuntimeEvidenceResult>('/api/persona-profiles/runtime-evidence', {
     method: 'POST',
     body: JSON.stringify(payload),
   }),

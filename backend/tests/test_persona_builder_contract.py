@@ -145,6 +145,19 @@ def test_persona_builder_contract_uses_real_persona_tables_preview_and_runtime_c
             headers=_headers(admin),
             json={"market_id": 1, "channel": "webchat", "language": "en"},
         )
+        runtime_evidence = client.post(
+            "/api/persona-profiles/runtime-evidence",
+            headers=_headers(admin),
+            json={
+                "tenant_key": "default",
+                "body": "Who are you and can you help with delivery appointments?",
+                "market_id": 1,
+                "channel": "webchat",
+                "language": "en",
+                "audience_scope": "customer",
+                "expected_profile_key": exact.profile_key,
+            },
+        )
         runtime_context = build_webchat_runtime_context(
             db_session,
             tenant_key="default",
@@ -180,20 +193,34 @@ def test_persona_builder_contract_uses_real_persona_tables_preview_and_runtime_c
     assert blocks["persona-list"]["status"] == "implemented"
     assert blocks["resolve-preview"]["backend_contract"] == "POST /api/persona-profiles/resolve-preview"
     assert blocks["approval"]["status"] == "implemented"
-    assert blocks["runtime-evidence"]["status"] == "linked"
+    assert blocks["runtime-evidence"]["status"] == "implemented"
     assert lifecycle["approval"]["status"] == "implemented"
+    assert lifecycle["runtime-evidence"]["status"] == "implemented"
     assert lifecycle["published"]["count"] == 2
     assert payload["approval_queue"] == []
     assert payload["facts"]["submit_review_endpoint"] == "implemented"
     assert payload["facts"]["approval_endpoint"] == "implemented"
     assert payload["facts"]["release_window_command"] == "implemented"
-    assert payload["facts"]["dedicated_runtime_evidence_endpoint"] == "not_implemented"
+    assert payload["facts"]["dedicated_runtime_evidence_endpoint"] == "implemented"
     assert any(item["matched_profile_key"] == exact.profile_key and item["match_rank"] == 1 for item in payload["simulation_scenarios"])
 
     assert preview.status_code == 200, preview.text
     preview_payload = preview.json()
     assert preview_payload["profile"]["profile_key"] == exact.profile_key
     assert preview_payload["match_rank"] == 1
+
+    assert runtime_evidence.status_code == 200, runtime_evidence.text
+    runtime_evidence_payload = runtime_evidence.json()
+    assert runtime_evidence_payload["matched_profile_key"] == exact.profile_key
+    assert runtime_evidence_payload["match_rank"] == 1
+    assert runtime_evidence_payload["expected_profile_key"] == exact.profile_key
+    assert runtime_evidence_payload["matched_expected"] is True
+    assert runtime_evidence_payload["runtime_context"]["context_version"] == "nexus_webchat_runtime_context_v1"
+    assert runtime_evidence_payload["persona_context"]["identity_context"]["brand_name"] == "Nexus Express"
+    assert runtime_evidence_payload["evidence"]["runtime_contract"] == "build_webchat_runtime_context"
+    assert runtime_evidence_payload["evidence"]["brand_name"] == "Nexus Express"
+    assert runtime_evidence_payload["evidence"]["assistant_name"] == "Nora"
+    assert runtime_evidence_payload["evidence"]["guardrail_count"] >= 2
 
     assert runtime_context["persona_context"]["profile_key"] == exact.profile_key
     assert runtime_context["persona_context"]["match_rank"] == 1
@@ -216,6 +243,11 @@ def test_persona_builder_requires_ai_config_capability(tmp_path):
     try:
         client = TestClient(app)
         response = client.get("/api/lite/persona-builder", headers=_headers(agent))
+        runtime_evidence = client.post(
+            "/api/persona-profiles/runtime-evidence",
+            headers=_headers(agent),
+            json={"body": "Who are you?", "channel": "webchat"},
+        )
     finally:
         app.dependency_overrides.pop(get_db, None)
         db_session.close()
@@ -223,3 +255,4 @@ def test_persona_builder_requires_ai_config_capability(tmp_path):
 
     assert response.status_code == 403
     assert response.json()["detail"] == "persona_builder_requires_ai_config_capability"
+    assert runtime_evidence.status_code == 403

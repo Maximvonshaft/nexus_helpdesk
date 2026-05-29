@@ -5,7 +5,7 @@
 - Added `/api/lite/persona-builder` as a real read-model over `PersonaProfile` and `PersonaProfileVersion`.
 - Added top-level `/persona-builder` workbench with unified API client, routeAccess RBAC, AppShell navigation and CommandPalette entry.
 - Persona edit/publish/rollback commands stay linked to existing `/ai-control`.
-- Follow-up approval workflow adds `persona_profile_reviews` plus submit-review, approve/reject, and release-window publish commands. Dedicated runtime evidence query remains marked `not_implemented`.
+- Follow-up approval workflow adds `persona_profile_reviews` plus submit-review, approve/reject, and release-window publish commands. A subsequent runtime evidence PR implements `POST /api/persona-profiles/runtime-evidence` and marks the dedicated runtime evidence query as implemented.
 
 ## Local Validation
 
