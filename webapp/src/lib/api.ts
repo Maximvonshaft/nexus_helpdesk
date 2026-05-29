@@ -42,6 +42,7 @@ import type {
   WebchatReadStateResult,
   WebchatThread,
   WebchatReplyResult,
+  WorkbenchSummary,
   ProviderCredentialStatusResponse,
   CodexAuthorizationStart,
   CodexManualAuthorizationCompleteResult,
@@ -321,6 +322,11 @@ export const api = {
     body: JSON.stringify({ username, password }),
   }),
   me: () => request<AuthUser>('/api/auth/me'),
+  workbenchSummary: (params?: { limit?: number }) => {
+    const search = new URLSearchParams()
+    search.set('limit', String(params?.limit ?? 12))
+    return request<WorkbenchSummary>(`/api/workbench/summary?${search.toString()}`)
+  },
 
   adminUsers: () => request<AdminUser[]>('/api/admin/users?legacy=true'),
   createUser: (payload: Record<string, unknown>) => request<AdminUser>('/api/admin/users', {

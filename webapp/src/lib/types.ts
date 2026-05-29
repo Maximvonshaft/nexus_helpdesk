@@ -280,6 +280,64 @@ export interface QueueSummary {
   openclaw_links: number
 }
 
+export interface WorkbenchMetric {
+  key: string
+  label: string
+  value: number
+  tone?: BadgeTone | 'processing'
+  hint?: string | null
+  target_route?: string | null
+}
+
+export interface WorkbenchTask {
+  id: string
+  title: string
+  count: number
+  severity: BadgeTone | 'processing'
+  source: string
+  next_action: string
+  target_route: string
+}
+
+export interface WorkbenchQueueItem {
+  id: string
+  kind: string
+  ticket_id?: number | null
+  ticket_no?: string | null
+  title: string
+  customer_name?: string | null
+  channel?: string | null
+  status: string
+  priority?: string | null
+  assignee_name?: string | null
+  team_name?: string | null
+  due_at?: string | null
+  overdue: boolean
+  waiting_seconds?: number | null
+  recommended_action: string
+  target_route: string
+  updated_at?: string | null
+}
+
+export interface WorkbenchInteractionState {
+  key: string
+  label: string
+  count: number
+  tone?: BadgeTone
+  target_route: string
+}
+
+export interface WorkbenchSummary {
+  generated_at: string
+  user: Pick<AuthUser, 'id' | 'username' | 'display_name' | 'role' | 'team_id' | 'capabilities'>
+  metrics: WorkbenchMetric[]
+  tasks: WorkbenchTask[]
+  queue: WorkbenchQueueItem[]
+  sla_risks: WorkbenchQueueItem[]
+  interaction_states: WorkbenchInteractionState[]
+  data_sources: string[]
+}
+
 export interface RuntimeHealth {
   sync_cursor?: string | null
   sync_daemon_last_seen_at?: string | null

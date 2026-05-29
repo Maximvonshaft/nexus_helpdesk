@@ -16,6 +16,19 @@ import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { useSession } from '@/hooks/useAuth'
 import { canManageChannels, canViewOps } from '@/lib/access'
 
+function badgeTone(tone?: string | null): 'default' | 'warning' | 'success' | 'danger' {
+  if (tone === 'warning' || tone === 'success' || tone === 'danger') return tone
+  return 'default'
+}
+
+function waitLabel(seconds?: number | null) {
+  if (!seconds) return null
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+}
+
 function OverviewPage() {
   const client = useQueryClient()
   const navigate = useNavigate()
@@ -32,33 +45,63 @@ function OverviewPage() {
       { queryKey: ['signoff'], queryFn: api.signoff, refetchInterval: autoRefresh.enabled ? 30000 : false, enabled: canSeeOps },
     ],
   })
+  const workbench = useQuery({ queryKey: ['workbenchSummary'], queryFn: () => api.workbenchSummary({ limit: 12 }), refetchInterval: autoRefresh.enabled ? 15000 : false })
   const bulletins = useQuery({ queryKey: ['bulletins'], queryFn: api.bulletins, refetchInterval: autoRefresh.enabled ? 30000 : false })
-  const caseFeed = useQuery({ queryKey: ['overviewCases'], queryFn: () => api.cases(), refetchInterval: autoRefresh.enabled ? 30000 : false })
   const accounts = useQuery({ queryKey: ['channelAccounts'], queryFn: api.channelAccounts, refetchInterval: autoRefresh.enabled ? 30000 : false, enabled: canSeeChannels })
 
   const q = queue.data
   const rt = runtime.data
   const rd = readiness.data
   const so = signoff.data
+  const wb = workbench.data
   const runtimeRecoveryCount = (q?.dead_jobs ?? 0) + (q?.dead_outbound ?? 0) + (rt?.dead_sync_jobs ?? 0) + (rt?.dead_attachment_jobs ?? 0)
   const needsRuntimeRecovery = canSeeOps && runtimeRecoveryCount > 0
+
+  function goRoute(route?: string | null) {
+    if (route === '/webchat') navigate({ to: '/webchat' })
+    else if (route === '/webcall') navigate({ to: '/webcall' })
+    else if (route === '/email') navigate({ to: '/email' })
+    else if (route === '/runtime') navigate({ to: '/runtime' })
+    else navigate({ to: '/workspace' })
+  }
 
   return (
     <AppShell>
       <PageHeader
-        eyebrow="首页总览"
-        title="今天的客服全局情况"
-        description="先看待处理工单和提醒项，再看公告口径；主管再补看运营保障，一线客服也能快速抓重点。"
-        actions={<div className="button-row"><Button variant="secondary" onClick={() => autoRefresh.setEnabled(!autoRefresh.enabled)}>{autoRefresh.enabled ? '暂停刷新' : '恢复刷新'}</Button><Button onClick={async () => { await client.invalidateQueries(); setToast({ message: '首页数据已刷新', tone: 'success' }) }}>立即刷新</Button></div>}
+        eyebrow="角色工作台"
+        title="今日工作台 / 我的优先事项"
+        description="来自真实工单、WebChat handoff、WebCall 会话、Email/outbound 和 SLA 字段的当班优先队列。"
+        actions={<div className="button-row"><Button variant="secondary" onClick={() => autoRefresh.setEnabled(!autoRefresh.enabled)}>{autoRefresh.enabled ? '暂停刷新' : '恢复刷新'}</Button><Button onClick={async () => { await client.invalidateQueries(); setToast({ message: '今日工作台数据已刷新', tone: 'success' }) }}>立即刷新</Button></div>}
       />
 
-      <Card className="soft">
-        <CardHeader title="当班建议" subtitle="让客服同事先按顺序处理，而不是在多个模块里来回找重点。" />
+      <div className="metrics-grid metrics-grid-wide" data-testid="today-workbench-metrics">
+        {(wb?.metrics ?? []).map((metric) => (
+          <button key={metric.key} className="card metric metric-button" onClick={() => goRoute(metric.target_route)}>
+            <div className="metric-value">{metric.value}</div>
+            <div className="metric-label">{sanitizeDisplayText(metric.label)}</div>
+            {metric.hint ? <div className="section-subtitle">{sanitizeDisplayText(metric.hint)}</div> : null}
+          </button>
+        ))}
+        {workbench.isLoading ? <MetricCard label="正在加载" value="..." hint="读取今日工作台 API" /> : null}
+        {workbench.isError ? <MetricCard label="工作台 API" value="!" hint="无法读取 /api/workbench/summary" /> : null}
+      </div>
+
+      <Card className="soft" data-testid="today-workbench-role-tasks">
+        <CardHeader title="今日优先事项" subtitle="按角色权限和真实后端状态生成，直接跳转到可处理入口。" />
         <CardBody>
           <div className="guide-grid">
-            <div className="guide-item"><strong>1. 先看待处理任务</strong><span>优先处理最新客户来信、紧急单和等待中的客户回复。</span></div>
-            <div className="guide-item"><strong>2. 再看当前公告</strong><span>确认今天是否有延误、清关、异常公告影响回复口径。</span></div>
-            <div className="guide-item"><strong>3. 最后补看运营保障</strong><span>{canSeeOps ? '你当前有权限查看发送线路与系统健康。' : '运营保障页面由主管或管理员处理，普通客服优先专注工单。'}</span></div>
+            {(wb?.tasks ?? []).map((task) => (
+              <div className="guide-item" key={task.id}>
+                <div className="badges">
+                  <Badge tone={badgeTone(task.severity)}>{task.count}</Badge>
+                  <Badge>{sanitizeDisplayText(task.source)}</Badge>
+                </div>
+                <strong>{sanitizeDisplayText(task.title)}</strong>
+                <span>{sanitizeDisplayText(task.next_action)}</span>
+                <Button variant={task.count > 0 ? 'primary' : 'secondary'} onClick={() => goRoute(task.target_route)}>打开处理入口</Button>
+              </div>
+            ))}
+            {!workbench.isLoading && !(wb?.tasks ?? []).length ? <div className="empty">暂无需要优先处理的角色任务。</div> : null}
           </div>
         </CardBody>
       </Card>
@@ -93,26 +136,42 @@ function OverviewPage() {
         </CardBody>
       </Card>
 
-      <div className="metrics-grid metrics-grid-wide">
-        {canSeeOps ? (
-          <>
-            <MetricCard label="待处理任务" value={q?.pending_jobs ?? '—'} hint="后台待执行任务" />
-            <MetricCard label="异常任务" value={q?.dead_jobs ?? '—'} hint="需要人工排查" />
-            <MetricCard label="已关联客户会话" value={q?.openclaw_links ?? '—'} hint="工单和客户来信已对上" />
-            <MetricCard label="待补同步" value={rt?.stale_link_count ?? '—'} hint="需要补抓的客户消息" />
-            <MetricCard label="待处理附件" value={rt?.pending_attachment_jobs ?? '—'} hint="证据或附件待落库" />
-            <MetricCard label="提醒项" value={((rd?.warnings?.length ?? 0) + (rt?.warnings?.length ?? 0) + (so?.warnings?.length ?? 0)) || '0'} hint="建议先处理提醒项" />
-          </>
-        ) : (
-          <>
-            <MetricCard label="我的工单总数" value={caseFeed.data?.length ?? '—'} hint="当前账号能看到的工单" />
-            <MetricCard label="处理中" value={(caseFeed.data ?? []).filter((item) => item.status === 'in_progress').length} hint="建议优先处理最新客户来信" />
-            <MetricCard label="待客户回复" value={(caseFeed.data ?? []).filter((item) => item.status === 'waiting_customer').length} hint="需要继续跟进客户反馈" />
-            <MetricCard label="已解决" value={(caseFeed.data ?? []).filter((item) => item.status === 'resolved').length} hint="可用于交接与复盘" />
-            <MetricCard label="生效公告" value={(bulletins.data ?? []).filter((item) => item.is_active).length} hint="会影响当前回复口径" />
-            <MetricCard label="今日提醒" value={(bulletins.data ?? []).filter((item) => item.is_active && item.severity === 'critical').length} hint="优先关注紧急公告" />
-          </>
-        )}
+      <div className="page-grid split-grid">
+        <Card data-testid="today-workbench-sla-queue">
+          <CardHeader title="SLA 与优先队列" subtitle="WebCall、WebChat handoff、Email 与普通工单统一排序。" />
+          <CardBody>
+            <div className="list">
+              {(wb?.queue ?? []).map((item) => (
+                <button key={item.id} className="list-item align-left" onClick={() => goRoute(item.target_route)}>
+                  <div className="badges">
+                    <Badge tone={item.overdue ? 'danger' : badgeTone(item.kind === 'webcall' || item.kind === 'webchat_handoff' ? 'warning' : 'default')}>{labelize(item.kind)}</Badge>
+                    <Badge>{labelize(item.status)}</Badge>
+                    {item.priority ? <Badge>{labelize(item.priority)}</Badge> : null}
+                    {item.waiting_seconds ? <Badge tone="warning">等待 {waitLabel(item.waiting_seconds)}</Badge> : null}
+                  </div>
+                  <div><strong>{sanitizeDisplayText(item.ticket_no || `#${item.ticket_id}`)} · {sanitizeDisplayText(item.title)}</strong></div>
+                  <div className="section-subtitle">{sanitizeDisplayText(item.recommended_action)} · {formatDateTime(item.due_at || item.updated_at || undefined)}</div>
+                </button>
+              ))}
+              {!workbench.isLoading && !(wb?.queue ?? []).length ? <div className="empty">当前没有待处理队列项。</div> : null}
+            </div>
+          </CardBody>
+        </Card>
+        <Card data-testid="today-workbench-interaction-states">
+          <CardHeader title="交互状态表" subtitle="模板中的 interaction-state table，按真实后端状态聚合。" />
+          <CardBody>
+            <DataTable
+              loading={workbench.isLoading}
+              columns={['状态', '数量', '处理入口']}
+              rows={(wb?.interaction_states ?? []).map((state) => [
+                <span className="badges" key={`${state.key}-state`}><Badge tone={badgeTone(state.tone)}>{sanitizeDisplayText(state.label)}</Badge></span>,
+                state.count,
+                <Button key={`${state.key}-action`} variant={state.count > 0 ? 'primary' : 'secondary'} onClick={() => goRoute(state.target_route)}>打开</Button>,
+              ])}
+            />
+            <div className="section-subtitle" style={{ marginTop: 12 }}>数据源：{(wb?.data_sources ?? ['/api/workbench/summary']).map(sanitizeDisplayText).join(' / ')}</div>
+          </CardBody>
+        </Card>
       </div>
 
       {canSeeOps ? (
