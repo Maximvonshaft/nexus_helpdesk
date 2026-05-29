@@ -16,7 +16,8 @@ The previous PRs connected real WebChat, WebCall, and Email API capabilities, bu
 - Today Workbench: `/` now consumes `/api/lite/today-workbench` for the v1.7.8 Role Home blocks: role tasks, real metrics, SLA priority rows, interaction-state closure and command center actions. Remaining work is visual parity polish against the template screenshots and broader 33-screen registry migration.
 - Control Tower / Governance: `/control-tower` now consumes `/api/lite/control-tower` for KPI/tower, manager action queue, team workload, channel health, bulletin impact, RBAC/governance lanes and template closure status. Remaining work is QA/Training Loop and other visible Operations/Engineering handoff template screens.
 - QA / Training Loop: `/qa-training` now consumes `/api/lite/qa-training` for real WebCall/WebChat/Email/Ticket QA samples, scorecard, coaching tasks, knowledge gap loop and explicit template block closure status. Agent appeal remains read-model-only and is marked as missing a write endpoint.
+- Knowledge Studio: `/knowledge-studio` now consumes `/api/lite/knowledge-studio` for real KnowledgeItem/KnowledgeChunk/KnowledgeItemVersion state, including asset library readiness, retrieval-test evidence, derived conflict rows, release lifecycle and explicit template closure status. Dedicated conflict-check and golden-test write/command endpoints remain missing and are marked as not implemented.
 
 ## Next PR
 
-The next PR should continue template-block parity, with AI Persona Builder / Knowledge Studio lifecycle or remaining Operations governance write endpoints as the next likely cut after this WebCall workbench hardening lands.
+The next PR should continue template-block parity, with AI Persona Builder lifecycle, Knowledge Studio conflict/golden-test commands, or remaining Operations governance write endpoints as the next likely cut after this Knowledge Studio read-model lands.

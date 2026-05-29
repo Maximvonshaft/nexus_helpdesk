@@ -13,6 +13,7 @@ const workspaceRoute = readFileSync(resolve(root, 'src/routes/workspace.tsx'), '
 const runtimeRoute = readFileSync(resolve(root, 'src/routes/runtime.tsx'), 'utf8')
 const controlTowerRoute = readFileSync(resolve(root, 'src/routes/control-tower.tsx'), 'utf8')
 const qaTrainingRoute = readFileSync(resolve(root, 'src/routes/qa-training.tsx'), 'utf8')
+const knowledgeStudioRoute = readFileSync(resolve(root, 'src/routes/knowledge-studio.tsx'), 'utf8')
 const webchatRoute = readFileSync(resolve(root, 'src/routes/webchat.tsx'), 'utf8')
 const webcallOperatorRoute = readFileSync(resolve(root, 'src/routes/webcall-operator.tsx'), 'utf8')
 const webchatInboxV5 = readFileSync(resolve(root, 'src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx'), 'utf8')
@@ -203,6 +204,7 @@ test('command palette exposes high-frequency operator workflow shortcuts', () =>
   assert.match(commandPalette, /打开 WebCall 工作台/)
   assert.match(commandPalette, /打开 Control Tower/)
   assert.match(commandPalette, /打开 QA \/ Training Loop/)
+  assert.match(commandPalette, /打开 Knowledge Studio/)
   assert.match(commandPalette, /进入运行恢复 \/ dead 重排/)
   assert.match(commandPalette, /刷新运行状态/)
   assert.match(commandPalette, /queryClient\.invalidateQueries\(\{ queryKey: \['runtimeHealth'\] \}\)/)
@@ -249,6 +251,28 @@ test('qa training page uses the v1.7.8 training loop backend contract', () => {
   assert.doesNotMatch(qaTrainingRoute, /\bfetch\s*\(/)
 })
 
+test('knowledge studio page uses the v1.7.8 knowledge backend contract', () => {
+  assert.match(types, /export interface KnowledgeStudio \{/)
+  assert.match(types, /export interface KnowledgeStudioItem \{/)
+  assert.match(apiClient, /knowledgeStudio: \(\) => request<KnowledgeStudio>\('\/api\/lite\/knowledge-studio'\)/)
+  assert.match(apiClient, /testKnowledgeRetrieval: \(payload: \{ q: string/)
+  assert.match(rbacManifest, /'\/knowledge-studio': \{ anyOf: \[CAPABILITIES\.aiConfigRead, CAPABILITIES\.aiConfigManage\] \}/)
+  assert.match(appShell, /to: '\/knowledge-studio'[\s\S]*access: routeAccess\['\/knowledge-studio'\]/)
+  assert.match(commandPalette, /to: '\/knowledge-studio'[\s\S]*access: routeAccess\['\/knowledge-studio'\]/)
+  assert.match(knowledgeStudioRoute, /path: '\/knowledge-studio'/)
+  assert.match(knowledgeStudioRoute, /<RequireCapability requirement=\{routeAccess\['\/knowledge-studio'\]\}>/)
+  assert.match(knowledgeStudioRoute, /queryKey: \['knowledgeStudio'\]/)
+  assert.match(knowledgeStudioRoute, /api\.testKnowledgeRetrieval/)
+  assert.match(knowledgeStudioRoute, /data-testid="knowledge-studio-template-blocks"/)
+  assert.match(knowledgeStudioRoute, /data-testid="knowledge-studio-real-kpis"/)
+  assert.match(knowledgeStudioRoute, /data-testid="knowledge-studio-asset-library"/)
+  assert.match(knowledgeStudioRoute, /data-testid="knowledge-studio-retrieval-test"/)
+  assert.match(knowledgeStudioRoute, /data-testid="knowledge-studio-conflict-scan"/)
+  assert.match(knowledgeStudioRoute, /data-testid="knowledge-studio-release-lifecycle"/)
+  assert.match(knowledgeStudioRoute, /data-testid="knowledge-studio-template-closure"/)
+  assert.doesNotMatch(knowledgeStudioRoute, /\bfetch\s*\(/)
+})
+
 test('overview page provides priority action entrypoints', () => {
   assert.match(overviewRoute, /data-testid="overview-priority-actions"/)
   assert.match(overviewRoute, /处理客户工单/)
@@ -284,6 +308,7 @@ test('admin operator surfaces do not bypass unified api client with raw fetch', 
     ['src/routes/runtime.tsx', runtimeRoute],
     ['src/routes/control-tower.tsx', controlTowerRoute],
     ['src/routes/qa-training.tsx', qaTrainingRoute],
+    ['src/routes/knowledge-studio.tsx', knowledgeStudioRoute],
     ['src/routes/webchat.tsx', webchatRoute],
     ['src/routes/webcall-operator.tsx', webcallOperatorRoute],
     ['src/features/webchat-inbox-v5/WebchatInboxV5Page.tsx', webchatInboxV5],

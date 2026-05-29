@@ -61,6 +61,7 @@ export const routeAccess = {
   '/outbound-email': { allOf: [CAPABILITIES.channelAccountManage] },
   '/email': { allOf: [CAPABILITIES.ticketRead], anyOf: [CAPABILITIES.outboundDraftSave, CAPABILITIES.outboundSend] },
   '/ai-control': { allOf: [CAPABILITIES.aiConfigManage] },
+  '/knowledge-studio': { anyOf: [CAPABILITIES.aiConfigRead, CAPABILITIES.aiConfigManage] },
   '/control-plane': { anyOf: [CAPABILITIES.aiConfigRead, CAPABILITIES.aiConfigManage, CAPABILITIES.channelAccountManage, CAPABILITIES.runtimeManage] },
   '/users': { allOf: [CAPABILITIES.userManage] },
   '/webchat-voice': { allOf: [CAPABILITIES.webcallVoiceQueueView] },

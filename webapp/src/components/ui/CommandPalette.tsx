@@ -14,6 +14,7 @@ const actions = [
   { id: 'email-workbench', label: '打开 Email 工作台', keywords: 'email 邮件 工作台 草稿 回复 发送', to: '/email', access: routeAccess['/email'] },
   { id: 'control-tower', label: '打开 Control Tower', keywords: 'control tower 主管 治理 sla 队列 公告 rbac', to: '/control-tower', access: routeAccess['/control-tower'] },
   { id: 'qa-training', label: '打开 QA / Training Loop', keywords: 'qa training 质检 培训 知识缺口 scorecard coaching', to: '/qa-training', access: routeAccess['/qa-training'] },
+  { id: 'knowledge-studio', label: '打开 Knowledge Studio', keywords: 'knowledge 知识库 检索 发布 回滚 冲突 chunk golden test', to: '/knowledge-studio', access: routeAccess['/knowledge-studio'] },
   { id: 'runtime', label: '进入运行恢复 / dead 重排', keywords: 'runtime 运行恢复 dead requeue 重排 队列', to: '/runtime', access: routeAccess['/runtime'] },
   { id: 'accounts', label: '检查发送线路', keywords: '发送线路 渠道 账号 outbound', to: '/accounts', access: routeAccess['/accounts'] },
   { id: 'outbound-email', label: '维护 Outbound Email 账号', keywords: 'email smtp 邮件 账号 test-send 测试发送 outbound', to: '/outbound-email', access: routeAccess['/outbound-email'] },

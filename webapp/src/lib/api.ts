@@ -27,6 +27,7 @@ import type {
   SystemAttachment,
   AIConfigResource,
   AIConfigVersion,
+  KnowledgeStudio,
   KnowledgeItem,
   KnowledgeItemDetail,
   KnowledgeItemList,
@@ -353,6 +354,7 @@ export const api = {
   todayWorkbench: () => request<TodayWorkbench>('/api/lite/today-workbench'),
   controlTower: () => request<ControlTower>('/api/lite/control-tower'),
   qaTraining: () => request<QATraining>('/api/lite/qa-training'),
+  knowledgeStudio: () => request<KnowledgeStudio>('/api/lite/knowledge-studio'),
   ticketTimeline: (ticketId: number, params?: { cursor?: string | null; limit?: number }) => {
     const search = new URLSearchParams()
     search.set('limit', String(params?.limit ?? 50))

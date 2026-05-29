@@ -311,6 +311,84 @@ export interface QATraining {
   facts: Record<string, number | string | boolean>
 }
 
+export interface KnowledgeStudioKpi {
+  key: string
+  label: string
+  value: number
+  hint: string
+  tone: BadgeTone
+}
+
+export interface KnowledgeStudioItem {
+  id: number
+  item_key: string
+  title: string
+  status: string
+  source_type: string
+  knowledge_kind: string
+  channel?: string | null
+  audience_scope: string
+  language?: string | null
+  priority: number
+  parsing_status: string
+  fact_status: string
+  answer_mode: string
+  published_version: number
+  indexed_version: number
+  chunk_count: number
+  draft_ready: boolean
+  publish_ready: boolean
+  retrieval_test_ready: boolean
+  has_conflict: boolean
+  updated_at?: string | null
+  href: string
+  evidence: string
+}
+
+export interface KnowledgeStudioConflict {
+  key: string
+  term: string
+  scope: string
+  item_keys: string[]
+  titles: string[]
+  status: string
+  blocker: boolean
+  href: string
+}
+
+export interface KnowledgeStudioLifecycleStep {
+  key: string
+  step: string
+  owner: string
+  artifact: string
+  status: string
+  count: number
+  href: string
+  enabled: boolean
+}
+
+export interface KnowledgeStudioTemplateBlock {
+  key: string
+  label: string
+  backend_contract: string
+  status: string
+  evidence: string
+  href: string
+}
+
+export interface KnowledgeStudio {
+  generated_at: string
+  role: string
+  user_id: number
+  capabilities: string[]
+  kpis: KnowledgeStudioKpi[]
+  items: KnowledgeStudioItem[]
+  conflicts: KnowledgeStudioConflict[]
+  release_lifecycle: KnowledgeStudioLifecycleStep[]
+  template_blocks: KnowledgeStudioTemplateBlock[]
+  facts: Record<string, number | string | boolean>
+}
+
 export interface TranscriptMessage {
   id: number
   role: string
