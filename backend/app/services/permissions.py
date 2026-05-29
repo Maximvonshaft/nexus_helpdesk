@@ -21,6 +21,7 @@ CAP_OUTBOUND_SEND = "outbound.send"
 CAP_AI_INTAKE_WRITE = "ai_intake.write"
 CAP_NOTE_WRITE_INTERNAL = "note.write.internal"
 CAP_NOTE_WRITE_EXTERNAL = "note.write.external"
+CAP_AUDIT_READ = "audit.read"
 CAP_USER_MANAGE = "user.manage"
 CAP_CHANNEL_ACCOUNT_MANAGE = "channel_account.manage"
 CAP_BULLETIN_MANAGE = "bulletin.manage"
@@ -59,6 +60,7 @@ ALL_CAPABILITIES = [
     CAP_AI_INTAKE_WRITE,
     CAP_NOTE_WRITE_INTERNAL,
     CAP_NOTE_WRITE_EXTERNAL,
+    CAP_AUDIT_READ,
     CAP_USER_MANAGE,
     CAP_CHANNEL_ACCOUNT_MANAGE,
     CAP_BULLETIN_MANAGE,
@@ -114,7 +116,7 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
     },
     UserRole.auditor: {
         CAP_TICKET_READ, CAP_ATTACHMENT_READ_EXTERNAL,
-        CAP_ATTACHMENT_READ_INTERNAL, CAP_CUSTOMER_PROFILE_READ,
+        CAP_ATTACHMENT_READ_INTERNAL, CAP_CUSTOMER_PROFILE_READ, CAP_AUDIT_READ,
     },
 }
 
@@ -222,6 +224,12 @@ def ensure_can_write_comment(user, visibility: NoteVisibility, db: Session | Non
         ensure_can_write_internal_note(user, db)
         return
     ensure_can_write_external_comment(user, db)
+
+
+def ensure_can_read_audit(user, db: Session | None = None):
+    capabilities = resolve_capabilities(user, db)
+    if CAP_AUDIT_READ not in capabilities and CAP_USER_MANAGE not in capabilities:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to read audit")
 
 
 def ensure_can_manage_users(user, db: Session | None = None):

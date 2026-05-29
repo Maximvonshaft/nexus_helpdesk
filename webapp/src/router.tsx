@@ -18,6 +18,7 @@ import { Route as ControlPlaneRoute } from '@/routes/control-plane'
 import { Route as AccountsRoute } from '@/routes/accounts'
 import { Route as OutboundEmailRoute } from '@/routes/outbound-email'
 import { Route as UsersRoute } from '@/routes/users'
+import { Route as PermissionsAuditRoute } from '@/routes/permissions-audit'
 import { Route as RuntimeRoute } from '@/routes/runtime'
 
 const routeTree = RootRoute.addChildren([
@@ -43,6 +44,7 @@ const routeTree = RootRoute.addChildren([
   AccountsRoute,
   OutboundEmailRoute,
   UsersRoute,
+  PermissionsAuditRoute,
   RuntimeRoute,
 ])
 

@@ -17,6 +17,49 @@ export interface AdminUser extends AuthUser {
   updated_at: string
 }
 
+export interface CapabilityOverride {
+  id: number
+  user_id: number
+  capability: string
+  allowed: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PermissionsAuditUser extends AuthUser {
+  is_active: boolean
+  base_capabilities: string[]
+  effective_capabilities: string[]
+  overrides: CapabilityOverride[]
+}
+
+export interface AdminAuditLog {
+  id: number
+  actor_id?: number | null
+  actor_username?: string | null
+  actor_display_name?: string | null
+  action: string
+  target_type: string
+  target_id?: number | null
+  old_value: Record<string, unknown>
+  new_value: Record<string, unknown>
+  created_at: string
+}
+
+export interface PermissionsAuditDashboard {
+  capability_catalog: string[]
+  users: PermissionsAuditUser[]
+  audit_logs: AdminAuditLog[]
+  summary: {
+    total_users: number
+    active_users: number
+    admin_users: number
+    auditor_users: number
+    high_risk_override_count: number
+    recent_audit_count: number
+  }
+}
+
 export interface Market {
   id: number
   code: string

@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..db import get_db, engine
 from ..enums import JobStatus, MessageStatus, UserRole
-from ..models import AIConfigResource, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, OutboundEmailAccount, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
-from ..schemas import UserUpdate, PasswordResetRequest, OpenClawUnresolvedEventRead, AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, OpenClawConnectivityProbeRead, OpenClawConversationRead, OpenClawLinkRequest, OpenClawRuntimeHealthRead, OpenClawSyncEnqueueRequest, OpenClawSyncResult, ProductionReadinessRead, QueueSummaryRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead, UserCreate
+from ..models import AIConfigResource, AdminAuditLog, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, OutboundEmailAccount, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
+from ..schemas import UserUpdate, PasswordResetRequest, OpenClawUnresolvedEventRead, AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, AdminAuditLogRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, OpenClawConnectivityProbeRead, OpenClawConversationRead, OpenClawLinkRequest, OpenClawRuntimeHealthRead, OpenClawSyncEnqueueRequest, OpenClawSyncResult, PermissionsAuditRead, PermissionsAuditSummaryRead, PermissionsAuditUserRead, ProductionReadinessRead, QueueSummaryRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead, UserCreate
 from ..settings import get_settings
 from ..auth_service import hash_password
 from ..utils.time import utc_now
 from ..services.permissions import (
     ALL_CAPABILITIES,
+    ensure_can_read_audit,
     ensure_can_manage_users,
     ensure_can_manage_channel_accounts,
     ensure_can_manage_bulletins,
@@ -95,6 +98,48 @@ def _apply_user_capability_overrides(db: Session, *, user_id: int, role, request
             db.add(UserCapabilityOverride(user_id=user_id, capability=cap, allowed=False))
 
 
+def _read_json_object(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {"_unparsed": raw}
+    return parsed if isinstance(parsed, dict) else {"value": parsed}
+
+
+def _serialize_audit_log(row: AdminAuditLog, actor: User | None) -> AdminAuditLogRead:
+    return AdminAuditLogRead(
+        id=row.id,
+        actor_id=row.actor_id,
+        actor_username=actor.username if actor else None,
+        actor_display_name=actor.display_name if actor else None,
+        action=row.action,
+        target_type=row.target_type,
+        target_id=row.target_id,
+        old_value=_read_json_object(row.old_value_json),
+        new_value=_read_json_object(row.new_value_json),
+        created_at=row.created_at,
+    )
+
+
+HIGH_RISK_AUDIT_CAPABILITY_HINTS = (
+    ".manage",
+    ".send",
+    ".accept",
+    ".reject",
+    ".end",
+    ".force_takeover",
+    ".release",
+    ".resume_ai",
+    ":write",
+)
+
+
+def _is_high_risk_audit_capability(capability: str) -> bool:
+    return any(token in capability for token in HIGH_RISK_AUDIT_CAPABILITY_HINTS)
+
+
 def _validate_channel_account_payload(
     db: Session,
     *,
@@ -161,6 +206,61 @@ def get_user_capabilities(user_id: int, db: Session = Depends(get_db), current_u
         user=UserRead.model_validate(user),
         effective_capabilities=sorted(resolve_capabilities(user, db)),
         overrides=[CapabilityOverrideRead.model_validate(item) for item in overrides],
+    )
+
+
+@router.get('/permissions-audit', response_model=PermissionsAuditRead)
+def read_permissions_audit_workbench(
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_read_audit(current_user, db)
+    safe_limit = max(1, min(limit, 100))
+    users = db.query(User).order_by(User.is_active.desc(), User.role.asc(), User.username.asc()).all()
+    overrides = db.query(UserCapabilityOverride).order_by(UserCapabilityOverride.user_id.asc(), UserCapabilityOverride.capability.asc()).all()
+    overrides_by_user: dict[int, list[UserCapabilityOverride]] = {}
+    for override in overrides:
+        overrides_by_user.setdefault(override.user_id, []).append(override)
+
+    user_rows = [
+        PermissionsAuditUserRead(
+            id=user.id,
+            username=user.username,
+            display_name=user.display_name,
+            email=user.email,
+            role=user.role,
+            team_id=user.team_id,
+            is_active=user.is_active,
+            base_capabilities=sorted(_base_capabilities(user.role)),
+            effective_capabilities=sorted(resolve_capabilities(user, db)),
+            overrides=[CapabilityOverrideRead.model_validate(item) for item in overrides_by_user.get(user.id, [])],
+        )
+        for user in users
+    ]
+
+    audit_rows = db.query(AdminAuditLog).order_by(AdminAuditLog.id.desc()).limit(safe_limit).all()
+    actor_ids = {row.actor_id for row in audit_rows if row.actor_id is not None}
+    actors = {user.id: user for user in db.query(User).filter(User.id.in_(actor_ids)).all()} if actor_ids else {}
+    serialized_logs = [_serialize_audit_log(row, actors.get(row.actor_id)) for row in audit_rows]
+    high_risk_override_count = sum(
+        1
+        for override in overrides
+        if override.allowed and _is_high_risk_audit_capability(override.capability)
+    )
+
+    return PermissionsAuditRead(
+        capability_catalog=sorted(ALL_CAPABILITIES),
+        users=user_rows,
+        audit_logs=serialized_logs,
+        summary=PermissionsAuditSummaryRead(
+            total_users=len(users),
+            active_users=sum(1 for user in users if user.is_active),
+            admin_users=sum(1 for user in users if user.role == UserRole.admin),
+            auditor_users=sum(1 for user in users if user.role == UserRole.auditor),
+            high_risk_override_count=high_risk_override_count,
+            recent_audit_count=len(serialized_logs),
+        ),
     )
 
 

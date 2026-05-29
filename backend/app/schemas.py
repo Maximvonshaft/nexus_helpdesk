@@ -557,6 +557,48 @@ class UserCapabilityMatrixRead(APIModel):
     overrides: list[CapabilityOverrideRead]
 
 
+class AdminAuditLogRead(APIModel):
+    id: int
+    actor_id: Optional[int] = None
+    actor_username: Optional[str] = None
+    actor_display_name: Optional[str] = None
+    action: str
+    target_type: str
+    target_id: Optional[int] = None
+    old_value: dict[str, Any] = Field(default_factory=dict)
+    new_value: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class PermissionsAuditUserRead(APIModel):
+    id: int
+    username: str
+    display_name: str
+    email: Optional[str] = None
+    role: UserRole
+    team_id: Optional[int] = None
+    is_active: bool = True
+    base_capabilities: list[str] = Field(default_factory=list)
+    effective_capabilities: list[str] = Field(default_factory=list)
+    overrides: list[CapabilityOverrideRead] = Field(default_factory=list)
+
+
+class PermissionsAuditSummaryRead(APIModel):
+    total_users: int
+    active_users: int
+    admin_users: int
+    auditor_users: int
+    high_risk_override_count: int
+    recent_audit_count: int
+
+
+class PermissionsAuditRead(APIModel):
+    capability_catalog: list[str] = Field(default_factory=list)
+    users: list[PermissionsAuditUserRead] = Field(default_factory=list)
+    audit_logs: list[AdminAuditLogRead] = Field(default_factory=list)
+    summary: PermissionsAuditSummaryRead
+
+
 class IntegrationClientRead(APIModel):
     id: int
     name: str

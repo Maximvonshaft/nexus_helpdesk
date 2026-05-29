@@ -1,5 +1,9 @@
+import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("APP_ENV", "development")
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -16,6 +20,7 @@ from app.services.permissions import (
     CAP_WEBCALL_VOICE_QUEUE_VIEW,
     CAP_WEBCALL_VOICE_READ,
     CAP_WEBCALL_VOICE_REJECT,
+    CAP_AUDIT_READ,
     resolve_capabilities,
 )
 
@@ -34,6 +39,7 @@ def test_tool_and_voice_capabilities_are_in_source_of_truth_catalog():
         CAP_WEBCALL_VOICE_ACCEPT,
         CAP_WEBCALL_VOICE_REJECT,
         CAP_WEBCALL_VOICE_END,
+        CAP_AUDIT_READ,
     }
 
     assert expected.issubset(set(ALL_CAPABILITIES))
@@ -52,3 +58,10 @@ def test_admin_gets_new_high_risk_capabilities_by_default_but_agent_and_auditor_
     assert high_risk.issubset(resolve_capabilities(_user(UserRole.admin)))
     assert high_risk.isdisjoint(resolve_capabilities(_user(UserRole.agent)))
     assert high_risk.isdisjoint(resolve_capabilities(_user(UserRole.auditor)))
+
+
+def test_auditor_gets_readonly_audit_capability_but_manager_and_agent_do_not():
+    assert CAP_AUDIT_READ in resolve_capabilities(_user(UserRole.admin))
+    assert CAP_AUDIT_READ in resolve_capabilities(_user(UserRole.auditor))
+    assert CAP_AUDIT_READ not in resolve_capabilities(_user(UserRole.manager))
+    assert CAP_AUDIT_READ not in resolve_capabilities(_user(UserRole.agent))

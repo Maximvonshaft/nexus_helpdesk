@@ -62,6 +62,7 @@ jobs:
               backend/alembic/versions/20260526_0034_knowledge_rag_business_facts.py) return 0 ;;
               backend/alembic/versions/20260527_0035_webchat_handoff_control.py) return 0 ;;
               backend/alembic/versions/20260527_0038_webchat_inbox_read_state.py) return 0 ;;
+              backend/app/api/admin.py) return 0 ;;
               backend/app/api/admin_provider_credentials.py) return 0 ;;
               backend/app/api/admin_provider_runtime.py) return 0 ;;
               backend/app/api/admin_webcall_ai.py) return 0 ;;
@@ -74,6 +75,7 @@ jobs:
               backend/app/api/webchat_ws.py) return 0 ;;
               backend/app/main.py) return 0 ;;
               backend/app/models_control_plane.py) return 0 ;;
+              backend/app/schemas.py) return 0 ;;
               backend/app/schemas_control_plane.py) return 0 ;;
               backend/app/settings.py) return 0 ;;
               backend/app/static/webchat/demo/DEPLOYMENT_NOTES.md) return 0 ;;
@@ -144,6 +146,7 @@ jobs:
               backend/tests/test_oauth_refresh_concurrency.py) return 0 ;;
               backend/tests/test_operator_queue_concurrency.py) return 0 ;;
               backend/tests/test_persona_profiles.py) return 0 ;;
+              backend/tests/test_permissions_audit_workbench.py) return 0 ;;
               backend/tests/test_production_settings_contract.py) return 0 ;;
               backend/tests/test_provider_runtime_codex_oauth_webchat.py) return 0 ;;
               backend/tests/test_provider_runtime_kill_switch_canary.py) return 0 ;;
@@ -224,6 +227,7 @@ jobs:
               webapp/src/routes/ai-control.tsx) return 0 ;;
               webapp/src/routes/control-plane.tsx) return 0 ;;
               webapp/src/routes/email.tsx) return 0 ;;
+              webapp/src/routes/permissions-audit.tsx) return 0 ;;
               webapp/src/routes/runtime.tsx) return 0 ;;
               webapp/src/routes/users.tsx) return 0 ;;
               webapp/src/routes/webcall-ai.tsx) return 0 ;;
@@ -236,6 +240,7 @@ jobs:
               webapp/tests/email-workbench-contract.test.mjs) return 0 ;;
               webapp/tests/novice-ux-regression.test.mjs) return 0 ;;
               webapp/tests/operator-console-contract.test.mjs) return 0 ;;
+              webapp/tests/permissions-audit-contract.test.mjs) return 0 ;;
               webapp/tests/route-nav-consistency.test.mjs) return 0 ;;
               webapp/tests/webcall-ai-demo-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-livekit-lazy-contract.test.mjs) return 0 ;;

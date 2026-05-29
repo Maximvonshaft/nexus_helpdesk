@@ -21,6 +21,7 @@ import type {
   OutboundEmailTestSendRequest,
   OutboundEmailTestSendResult,
   OutboundSendPayload,
+  PermissionsAuditDashboard,
   SignoffChecklist,
   SystemAttachment,
   AIConfigResource,
@@ -323,6 +324,7 @@ export const api = {
   me: () => request<AuthUser>('/api/auth/me'),
 
   adminUsers: () => request<AdminUser[]>('/api/admin/users?legacy=true'),
+  permissionsAudit: () => request<PermissionsAuditDashboard>('/api/admin/permissions-audit'),
   createUser: (payload: Record<string, unknown>) => request<AdminUser>('/api/admin/users', {
     method: 'POST',
     body: JSON.stringify(payload),
