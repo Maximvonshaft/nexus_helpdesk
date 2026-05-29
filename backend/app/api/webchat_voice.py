@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..unit_of_work import managed_session
-from ..voice_schemas import WebchatVoiceCreateRequest, WebchatVoiceNoteRequest, WebchatVoiceNoteResponse, WebchatVoiceRejectRequest
+from ..voice_schemas import WebchatVoiceCreateRequest, WebchatVoiceEvidenceResponse, WebchatVoiceNoteRequest, WebchatVoiceNoteResponse, WebchatVoiceRejectRequest
 from ..webchat_voice_config import load_webchat_voice_runtime_config
 from ..services.webchat_voice_service import (
     DETAIL_EXPIRED,
@@ -13,6 +13,7 @@ from ..services.webchat_voice_service import (
     create_public_voice_session,
     end_admin_voice_session,
     list_admin_incoming_voice_sessions,
+    list_admin_voice_evidence,
     end_public_voice_session,
     list_admin_voice_sessions,
     reject_admin_voice_session,
@@ -73,6 +74,23 @@ def list_ticket_voice_sessions(
     current_user=Depends(get_current_user),
 ) -> dict:
     return list_admin_voice_sessions(db, ticket_id=ticket_id, current_user=current_user)
+
+
+@router.get("/admin/tickets/{ticket_id}/voice/{voice_session_id}/evidence", response_model=WebchatVoiceEvidenceResponse)
+def read_ticket_voice_evidence(
+    ticket_id: int,
+    voice_session_id: str,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict:
+    return list_admin_voice_evidence(
+        db,
+        ticket_id=ticket_id,
+        voice_session_public_id=voice_session_id,
+        current_user=current_user,
+        limit=limit,
+    )
 
 
 @router.get("/admin/voice/sessions")

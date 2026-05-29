@@ -101,6 +101,12 @@ function statusTone(status?: string | null) {
   return STATUS_TONES[raw] || 'default'
 }
 
+function formatOffsetMs(value?: number | null) {
+  if (value === null || value === undefined) return '-'
+  if (value < 1000) return `${value}ms`
+  return `${Math.round(value / 100) / 10}s`
+}
+
 function readableAcceptError(detail: string) {
   const lowered = detail.toLowerCase()
   for (const [needle, message] of ACCEPT_ERROR_MESSAGES) {
@@ -182,6 +188,14 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
   const canReject = Boolean(canRejectVoice && ticketId && currentSession && REJECT_READY_STATUSES.has(String(currentSession.status)) && !connected && !busyAccepting)
   const canEnd = Boolean(canEndVoice && currentSession && !terminal)
 
+  const evidence = useQuery({
+    queryKey: ['webchatVoiceEvidence', ticketId, currentSession?.voice_session_id],
+    queryFn: ({ signal }) => webchatVoiceApi.evidence(ticketId as number, currentSession?.voice_session_id as string, { limit: 50 }, { signal }),
+    enabled: !!ticketId && !!currentSession && canReadVoice,
+    refetchInterval: hasLiveCall ? 4000 : 15000,
+    retry: false,
+  })
+
   async function cleanupRoom() {
     try {
       if (localAudioRef.current) {
@@ -216,6 +230,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
     if (ticketId) {
       await client.invalidateQueries({ queryKey: ['webchatVoiceSessions', ticketId] })
       await client.invalidateQueries({ queryKey: ['webchatThread', ticketId] })
+      await client.invalidateQueries({ queryKey: ['webchatVoiceEvidence', ticketId] })
     }
     await client.invalidateQueries({ queryKey: ['webchatConversations'] })
     await client.invalidateQueries({ queryKey: ['webchatVoiceOperationalQueue'] })
@@ -441,6 +456,61 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
             {canAcceptVoice && runtimeConfig.isError ? <div className="section-subtitle">Runtime config is unavailable. Accept may fail until the page can refresh the LiveKit URL.</div> : null}
             <div role="status" className="section-subtitle">{sanitizeDisplayText(message)}</div>
             <div ref={remoteAudioRef} aria-hidden="true" />
+            <div className="stack compact" data-testid="webcall-live-transcript-evidence">
+              <div className="button-row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong>Live Transcript / AI Evidence</strong>
+                <Button variant="secondary" disabled={evidence.isFetching} onClick={() => void evidence.refetch()}>{evidence.isFetching ? 'Refreshing...' : 'Refresh evidence'}</Button>
+              </div>
+              <div className="badges">
+                <Badge>{evidence.data?.transcript_status || currentSession.transcript_status || 'transcript unknown'}</Badge>
+                <Badge>{evidence.data?.summary_status || currentSession.summary_status || 'summary unknown'}</Badge>
+                {evidence.data?.ai_agent_status ? <Badge tone="warning">AI {sanitizeDisplayText(evidence.data.ai_agent_status)}</Badge> : null}
+                {typeof evidence.data?.ai_turn_count === 'number' ? <Badge>{evidence.data.ai_turn_count} AI turns</Badge> : null}
+              </div>
+              {evidence.isLoading ? <div className="section-subtitle">Loading transcript evidence...</div> : null}
+              {evidence.isError ? <div className="section-subtitle">Unable to load transcript evidence: {safeErrorMessage(evidence.error)}</div> : null}
+              {!evidence.isLoading && !evidence.isError && !(evidence.data?.transcript_segments ?? []).length ? <EmptyState text="No redacted transcript segments for this WebCall yet." /> : null}
+              {(evidence.data?.transcript_segments ?? []).map((segment) => (
+                <div className="message" data-role={segment.speaker_type === 'agent' ? 'agent' : 'customer'} key={segment.id}>
+                  <div className="message-head">
+                    <strong>{sanitizeDisplayText(segment.speaker_label || segment.speaker_type)}</strong>
+                    <span>{formatOffsetMs(segment.start_ms)} - {formatOffsetMs(segment.end_ms)}</span>
+                  </div>
+                  <div>{sanitizeDisplayText(segment.text)}</div>
+                </div>
+              ))}
+              {(evidence.data?.ai_turns ?? []).length ? (
+                <div className="stack compact" data-testid="webcall-ai-turn-evidence">
+                  <strong>AI turn evidence</strong>
+                  {(evidence.data?.ai_turns ?? []).map((turn) => (
+                    <div className="message" data-role="agent" key={turn.id}>
+                      <div className="message-head">
+                        <strong>Turn {turn.turn_index} · {sanitizeDisplayText(turn.intent || 'unknown intent')}</strong>
+                        <span>{formatDateTime(turn.created_at || undefined)}</span>
+                      </div>
+                      {turn.customer_text_redacted ? <div>Customer: {sanitizeDisplayText(turn.customer_text_redacted)}</div> : null}
+                      {turn.ai_response_text_redacted ? <div>AI: {sanitizeDisplayText(turn.ai_response_text_redacted)}</div> : null}
+                      <div className="badges" style={{ marginTop: 8 }}>
+                        <Badge tone={turn.handoff_required ? 'warning' : 'success'}>{turn.handoff_required ? 'handoff required' : 'safe reply'}</Badge>
+                        {turn.action ? <Badge>{sanitizeDisplayText(turn.action)}</Badge> : null}
+                        {typeof turn.confidence === 'number' ? <Badge>{turn.confidence}% confidence</Badge> : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {(evidence.data?.ai_actions ?? []).length ? (
+                <div className="stack compact" data-testid="webcall-ai-action-evidence">
+                  <strong>AI action decisions</strong>
+                  {(evidence.data?.ai_actions ?? []).map((action) => (
+                    <div className="message" data-role="agent" key={action.id}>
+                      <div className="message-head"><strong>{sanitizeDisplayText(action.model_action)}</strong><span>{formatDateTime(action.created_at || undefined)}</span></div>
+                      <div>{sanitizeDisplayText(action.nexus_decision)} · {sanitizeDisplayText(action.decision_reason || action.result_status || 'no decision reason')}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             <div className="stack compact" data-testid="webcall-call-notes">
               <strong>Call Notes</strong>
               <Field label="通话备注" hint="保存后写入 TicketInternalNote、ticket timeline、WebChat event 和 admin audit。">

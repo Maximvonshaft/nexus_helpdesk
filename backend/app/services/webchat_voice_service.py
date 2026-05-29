@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from ..enums import EventType
 from ..models import Ticket, TicketInternalNote, User
 from ..utils.time import utc_now
-from ..voice_models import WebchatVoiceParticipant, WebchatVoiceSession
+from ..voice_models import WebchatVoiceAIAction, WebchatVoiceAITurn, WebchatVoiceParticipant, WebchatVoiceSession, WebchatVoiceTranscriptSegment
 from ..webchat_models import WebchatConversation, WebchatEvent, WebchatMessage
 from ..webchat_voice_config import WebchatVoiceRuntimeConfig, load_webchat_voice_runtime_config
 from .livekit_voice_provider import LiveKitVoiceProvider
@@ -413,6 +413,107 @@ def list_admin_voice_sessions(db: Session, *, ticket_id: int, current_user: User
     ensure_ticket_visible(current_user, ticket, db)
     sessions = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.ticket_id == ticket_id).order_by(WebchatVoiceSession.id.desc()).limit(20).all()
     return {"items": [_serialize_session(session) for session in sessions]}
+
+
+def list_admin_voice_evidence(
+    db: Session,
+    *,
+    ticket_id: int,
+    voice_session_public_id: str,
+    current_user: User,
+    limit: int = 50,
+) -> dict[str, Any]:
+    ensure_can_read_webcall_voice(current_user, db)
+    session = _load_voice_session(db, voice_session_public_id)
+    if session.ticket_id != ticket_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
+    _ensure_ticket_visible_for_session(db, current_user, session)
+    safe_limit = max(1, min(int(limit or 50), 100))
+    segments = (
+        db.query(WebchatVoiceTranscriptSegment)
+        .filter(WebchatVoiceTranscriptSegment.voice_session_id == session.id)
+        .order_by(WebchatVoiceTranscriptSegment.start_ms.asc().nullslast(), WebchatVoiceTranscriptSegment.id.asc())
+        .limit(safe_limit)
+        .all()
+    )
+    turns = (
+        db.query(WebchatVoiceAITurn)
+        .filter(WebchatVoiceAITurn.voice_session_id == session.id)
+        .order_by(WebchatVoiceAITurn.turn_index.asc(), WebchatVoiceAITurn.id.asc())
+        .limit(safe_limit)
+        .all()
+    )
+    actions = (
+        db.query(WebchatVoiceAIAction)
+        .filter(WebchatVoiceAIAction.voice_session_id == session.id)
+        .order_by(WebchatVoiceAIAction.id.asc())
+        .limit(safe_limit)
+        .all()
+    )
+    return {
+        "ok": True,
+        "ticket_id": ticket_id,
+        "voice_session_id": session.public_id,
+        "status": session.status,
+        "provider": session.provider,
+        "recording_status": session.recording_status,
+        "transcript_status": session.transcript_status,
+        "summary_status": session.summary_status,
+        "ai_agent_status": session.ai_agent_status,
+        "ai_turn_count": session.ai_turn_count,
+        "transcript_segments": [
+            {
+                "id": segment.id,
+                "segment_id": segment.segment_id,
+                "speaker_type": segment.speaker_type,
+                "speaker_label": segment.speaker_label,
+                "language": segment.language,
+                "is_final": segment.is_final,
+                "start_ms": segment.start_ms,
+                "end_ms": segment.end_ms,
+                "text": segment.text_redacted or "[redaction pending]",
+                "confidence": segment.confidence,
+                "redaction_status": segment.redaction_status,
+                "created_at": _serialize_dt(segment.created_at),
+            }
+            for segment in segments
+        ],
+        "ai_turns": [
+            {
+                "id": turn.id,
+                "turn_index": turn.turn_index,
+                "customer_text_redacted": turn.customer_text_redacted,
+                "ai_response_text_redacted": turn.ai_response_text_redacted,
+                "language": turn.language,
+                "intent": turn.intent,
+                "action": turn.action,
+                "handoff_required": turn.handoff_required,
+                "handoff_reason": turn.handoff_reason,
+                "confidence": turn.confidence,
+                "provider": turn.provider,
+                "stt_provider": turn.stt_provider,
+                "tts_provider": turn.tts_provider,
+                "latency_ms": turn.latency_ms,
+                "created_at": _serialize_dt(turn.created_at),
+            }
+            for turn in turns
+        ],
+        "ai_actions": [
+            {
+                "id": action.id,
+                "turn_id": action.turn_id,
+                "model_action": action.model_action,
+                "nexus_decision": action.nexus_decision,
+                "decision_reason": action.decision_reason,
+                "speedaf_tool_name": action.speedaf_tool_name,
+                "background_job_id": action.background_job_id,
+                "tool_call_log_id": action.tool_call_log_id,
+                "result_status": action.result_status,
+                "created_at": _serialize_dt(action.created_at),
+            }
+            for action in actions
+        ],
+    }
 
 
 def list_admin_incoming_voice_sessions(db: Session, *, current_user: User, status_filter: str = "ringing", limit: int = 50) -> dict[str, Any]:

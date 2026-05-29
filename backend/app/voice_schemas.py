@@ -41,6 +41,68 @@ class WebchatVoiceNoteResponse(BaseModel):
     created_at: str
 
 
+class WebchatVoiceTranscriptSegmentRead(BaseModel):
+    id: int
+    segment_id: str
+    speaker_type: str
+    speaker_label: str | None = None
+    language: str | None = None
+    is_final: bool
+    start_ms: int | None = None
+    end_ms: int | None = None
+    text: str
+    confidence: int | None = None
+    redaction_status: str
+    created_at: str | None = None
+
+
+class WebchatVoiceAITurnRead(BaseModel):
+    id: int
+    turn_index: int
+    customer_text_redacted: str | None = None
+    ai_response_text_redacted: str | None = None
+    language: str | None = None
+    intent: str | None = None
+    action: str | None = None
+    handoff_required: bool
+    handoff_reason: str | None = None
+    confidence: int | None = None
+    provider: str | None = None
+    stt_provider: str | None = None
+    tts_provider: str | None = None
+    latency_ms: int | None = None
+    created_at: str | None = None
+
+
+class WebchatVoiceAIActionRead(BaseModel):
+    id: int
+    turn_id: int | None = None
+    model_action: str
+    nexus_decision: str
+    decision_reason: str | None = None
+    speedaf_tool_name: str | None = None
+    background_job_id: int | None = None
+    tool_call_log_id: int | None = None
+    result_status: str | None = None
+    created_at: str | None = None
+
+
+class WebchatVoiceEvidenceResponse(BaseModel):
+    ok: bool = True
+    ticket_id: int
+    voice_session_id: str
+    status: str
+    provider: str
+    recording_status: str | None = None
+    transcript_status: str | None = None
+    summary_status: str | None = None
+    ai_agent_status: str | None = None
+    ai_turn_count: int = 0
+    transcript_segments: list[WebchatVoiceTranscriptSegmentRead] = Field(default_factory=list)
+    ai_turns: list[WebchatVoiceAITurnRead] = Field(default_factory=list)
+    ai_actions: list[WebchatVoiceAIActionRead] = Field(default_factory=list)
+
+
 class WebchatVoiceSessionRead(BaseModel):
     ok: bool = True
     voice_session_id: str

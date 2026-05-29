@@ -70,3 +70,14 @@ test('webcall call notes are saved through unified api client and timeline/audit
   assert.match(agentPanel, /queryKey: \['ticketTimeline', ticketId\]/)
   assert.match(agentPanel, /TicketInternalNote、ticket timeline、WebChat event 和 admin audit/)
 })
+
+test('webcall transcript and AI evidence use real redacted voice evidence API', () => {
+  assert.match(apiClient, /webchatVoiceEvidence: \(ticketId: number, voiceSessionId: string, params\?: \{ limit\?: number \}, init\?: RequestInit\)/)
+  assert.match(apiClient, /`\/api\/webchat\/admin\/tickets\/\$\{ticketId\}\/voice\/\$\{voiceSessionId\}\/evidence\?\$\{search\.toString\(\)\}`/)
+  assert.match(voiceApi, /evidence: api\.webchatVoiceEvidence/)
+  assert.match(agentPanel, /data-testid="webcall-live-transcript-evidence"/)
+  assert.match(agentPanel, /webchatVoiceApi\.evidence/)
+  assert.match(agentPanel, /data-testid="webcall-ai-turn-evidence"/)
+  assert.match(agentPanel, /data-testid="webcall-ai-action-evidence"/)
+  assert.doesNotMatch(agentPanel, /text_raw/)
+})

@@ -64,7 +64,7 @@ import type {
   CodexSessionStatus,
   CodexCredentialActionResult,
 } from '@/lib/types'
-import type { WebchatVoiceIncomingSession, WebchatVoiceNoteResult, WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
+import type { WebchatVoiceEvidence, WebchatVoiceIncomingSession, WebchatVoiceNoteResult, WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
 import { mapApiErrorMessage } from '@/lib/apiErrorMap'
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
@@ -697,6 +697,11 @@ export const api = {
     return request<{ items: WebchatVoiceIncomingSession[] }>(`/api/webchat/admin/voice/sessions?${search.toString()}`, init)
   },
   webchatVoiceSessions: (ticketId: number, init?: RequestInit) => request<{ items: WebchatVoiceSession[] }>(`/api/webchat/admin/tickets/${ticketId}/voice/sessions`, init),
+  webchatVoiceEvidence: (ticketId: number, voiceSessionId: string, params?: { limit?: number }, init?: RequestInit) => {
+    const search = new URLSearchParams()
+    search.set('limit', String(params?.limit ?? 50))
+    return request<WebchatVoiceEvidence>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/evidence?${search.toString()}`, init)
+  },
   webchatVoiceAcceptSession: (ticketId: number, voiceSessionId: string) => request<WebchatVoiceSession>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/accept`, { method: 'POST' }),
   webchatVoiceRejectSession: (ticketId: number, voiceSessionId: string, reason?: string) => request<{ ok: boolean; status: string; voice_session_id: string; accepted_by_user_id?: number | null }>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/reject`, {
     method: 'POST',

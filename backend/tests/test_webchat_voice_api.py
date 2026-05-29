@@ -24,7 +24,7 @@ from app.models import AdminAuditLog, Ticket, TicketEvent, TicketInternalNote, U
 from app.services.livekit_voice_provider import LiveKitVoiceProvider
 from app.services.voice_provider import VoiceParticipantToken
 from app.utils.time import utc_now
-from app.voice_models import WebchatVoiceSession
+from app.voice_models import WebchatVoiceAIAction, WebchatVoiceAITurn, WebchatVoiceSession, WebchatVoiceTranscriptSegment
 from app.webchat_models import WebchatEvent, WebchatMessage  # noqa: F401 - ensure metadata registration
 
 
@@ -369,6 +369,113 @@ def test_admin_voice_note_requires_voice_capability_even_when_ticket_visible():
         f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/notes",
         headers=_admin_headers(9204),
         json={"body": "visible ticket but no voice permission"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "webcall_voice_read_requires_capability"
+
+
+def test_admin_voice_evidence_returns_redacted_transcript_ai_turns_and_actions():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Transcript Visitor")
+
+    db = SessionLocal()
+    try:
+        session = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.public_id == voice_session_id).one()
+        session.transcript_status = "ready"
+        session.summary_status = "ready"
+        session.ai_agent_status = "ready"
+        session.ai_turn_count = 1
+        segment = WebchatVoiceTranscriptSegment(
+            voice_session_id=session.id,
+            conversation_id=session.conversation_id,
+            ticket_id=ticket_id,
+            provider=session.provider,
+            provider_session_id=session.public_id,
+            provider_item_id="segment-provider-1",
+            participant_identity="visitor_voice_1",
+            speaker_type="visitor",
+            speaker_label="Customer",
+            segment_id="segment-1",
+            language="en",
+            is_final=True,
+            start_ms=100,
+            end_ms=2400,
+            text_raw="My phone is +15551234567 and tracking is SF123456789CN",
+            text_redacted="My phone is [redacted_phone] and tracking is [redacted_tracking]",
+            confidence=92,
+            redaction_status="redacted",
+        )
+        db.add(segment)
+        db.flush()
+        turn = WebchatVoiceAITurn(
+            voice_session_id=session.id,
+            conversation_id=session.conversation_id,
+            ticket_id=ticket_id,
+            turn_index=1,
+            customer_text_redacted=segment.text_redacted,
+            ai_response_text_redacted="I can help with verified tracking after handoff.",
+            language="en",
+            intent="tracking",
+            action="handoff",
+            handoff_required=True,
+            handoff_reason="requires_verified_order_lookup",
+            confidence=88,
+            provider="voice-ai",
+            stt_provider="stt",
+            tts_provider="tts",
+            latency_ms=321,
+        )
+        db.add(turn)
+        db.flush()
+        db.add(WebchatVoiceAIAction(
+            voice_session_id=session.id,
+            turn_id=turn.id,
+            model_action="handoff",
+            nexus_decision="handoff",
+            decision_reason="requires_verified_order_lookup",
+            result_status="queued",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/evidence?limit=20",
+        headers=_admin_headers(9202),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["ticket_id"] == ticket_id
+    assert payload["voice_session_id"] == voice_session_id
+    assert payload["transcript_status"] == "ready"
+    assert payload["summary_status"] == "ready"
+    assert payload["ai_agent_status"] == "ready"
+    assert payload["ai_turn_count"] == 1
+    assert payload["transcript_segments"][0]["text"] == "My phone is [redacted_phone] and tracking is [redacted_tracking]"
+    assert "+15551234567" not in response.text
+    assert "SF123456789CN" not in response.text
+    assert payload["ai_turns"][0]["handoff_required"] is True
+    assert payload["ai_turns"][0]["action"] == "handoff"
+    assert payload["ai_actions"][0]["nexus_decision"] == "handoff"
+
+
+def test_admin_voice_evidence_requires_voice_capability_even_when_ticket_visible():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Evidence RBAC Visitor")
+    db = SessionLocal()
+    try:
+        ticket = db.query(Ticket).filter(Ticket.id == ticket_id).one()
+        ticket.assignee_id = 9204
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/evidence",
+        headers=_admin_headers(9204),
     )
 
     assert response.status_code == 403
