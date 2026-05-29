@@ -69,6 +69,74 @@ export interface CaseListPage {
   filters?: Record<string, unknown>
 }
 
+export interface TodayWorkbenchTask {
+  key: string
+  title: string
+  count: number | string
+  severity: BadgeTone
+  source: string
+  next: string
+  target: string
+  href: string
+  enabled: boolean
+}
+
+export interface TodayWorkbenchMetric {
+  key: string
+  label: string
+  value: number
+  hint: string
+  tone: BadgeTone
+}
+
+export interface TodayWorkbenchSlaPriority {
+  ticket_id: number
+  ticket_no?: string | null
+  title: string
+  priority: string
+  status: string
+  source_channel?: string | null
+  customer_name?: string | null
+  assignee_name?: string | null
+  team_name?: string | null
+  resolution_due_at?: string | null
+  first_response_due_at?: string | null
+  minutes_to_due?: number | null
+  overdue: boolean
+  href: string
+}
+
+export interface TodayWorkbenchInteractionState {
+  key: string
+  state: string
+  user_copy: string
+  required: string
+  status: string
+}
+
+export interface TodayWorkbenchCommand {
+  key: string
+  label: string
+  role: string
+  target: string
+  href: string
+  next: string
+  enabled: boolean
+  capability: string
+}
+
+export interface TodayWorkbench {
+  generated_at: string
+  role: string
+  user_id: number
+  capabilities: string[]
+  tasks: TodayWorkbenchTask[]
+  metrics: TodayWorkbenchMetric[]
+  sla_priorities: TodayWorkbenchSlaPriority[]
+  interaction_states: TodayWorkbenchInteractionState[]
+  command_center: TodayWorkbenchCommand[]
+}
+
 export interface TranscriptMessage {
   id: number
   role: string

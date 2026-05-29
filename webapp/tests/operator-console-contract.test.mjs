@@ -220,6 +220,21 @@ test('overview page provides priority action entrypoints', () => {
   assert.match(overviewRoute, /navigate\(\{ to: '\/runtime' \}\)/)
 })
 
+test('overview page uses the v1.7.8 today workbench backend contract', () => {
+  assert.match(types, /export interface TodayWorkbench \{/)
+  assert.match(types, /export interface TodayWorkbenchTask \{/)
+  assert.match(apiClient, /todayWorkbench: \(\) => request<TodayWorkbench>\('\/api\/lite\/today-workbench'\)/)
+  assert.match(overviewRoute, /queryKey: \['todayWorkbench'\]/)
+  assert.match(overviewRoute, /data-testid="today-workbench-template-blocks"/)
+  assert.match(overviewRoute, /data-testid="today-workbench-role-tasks"/)
+  assert.match(overviewRoute, /data-testid="today-workbench-real-metrics"/)
+  assert.match(overviewRoute, /SLA 优先处理列表/)
+  assert.match(overviewRoute, /交互状态闭环/)
+  assert.match(overviewRoute, /data-testid="today-workbench-command-center"/)
+  assert.match(overviewRoute, /goWorkbenchTarget\(task\.target\)/)
+  assert.doesNotMatch(overviewRoute, /\bfetch\s*\(/)
+})
+
 test('admin operator surfaces do not bypass unified api client with raw fetch', () => {
   const checkedFiles = [
     ['src/routes/workspace.tsx', workspaceRoute],

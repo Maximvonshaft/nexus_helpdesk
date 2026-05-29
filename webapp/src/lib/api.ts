@@ -36,6 +36,7 @@ import type {
   PersonaProfileList,
   PersonaProfileVersion,
   Team,
+  TodayWorkbench,
   WebchatConversation,
   WebchatHandoffQueue,
   WebchatHandoffRequest,
@@ -347,6 +348,7 @@ export const api = {
     return page.items
   },
   caseDetail: (ticketId: number) => request<CaseDetail>(`/api/tickets/${ticketId}/summary`),
+  todayWorkbench: () => request<TodayWorkbench>('/api/lite/today-workbench'),
   ticketTimeline: (ticketId: number, params?: { cursor?: string | null; limit?: number }) => {
     const search = new URLSearchParams()
     search.set('limit', String(params?.limit ?? 50))

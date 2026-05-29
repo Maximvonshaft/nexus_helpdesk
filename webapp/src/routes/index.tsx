@@ -12,9 +12,31 @@ import { Badge } from '@/components/ui/Badge'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Toast } from '@/components/ui/Toast'
+import { Skeleton } from '@/components/ui/Skeleton'
+import { ErrorSummary } from '@/components/ui/ErrorSummary'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { useSession } from '@/hooks/useAuth'
 import { canManageChannels, canViewOps } from '@/lib/access'
+import type { BadgeTone, TodayWorkbenchCommand, TodayWorkbenchTask } from '@/lib/types'
+
+function safeTone(value: string | null | undefined): BadgeTone {
+  return value === 'danger' || value === 'warning' || value === 'success' ? value : 'default'
+}
+
+function formatDue(minutes: number | null | undefined) {
+  if (minutes === null || minutes === undefined) return '-'
+  if (minutes < 0) return `已超 ${Math.abs(minutes)} 分钟`
+  if (minutes === 0) return '现在到期'
+  return `${minutes} 分钟`
+}
+
+function workbenchTargetLabel(target: string) {
+  if (target === 'webchat') return 'WebChat'
+  if (target === 'webcall') return 'WebCall'
+  if (target === 'email') return 'Email'
+  if (target === 'runtime') return '运行恢复'
+  return 'Workspace'
+}
 
 function OverviewPage() {
   const client = useQueryClient()
@@ -35,6 +57,7 @@ function OverviewPage() {
   const bulletins = useQuery({ queryKey: ['bulletins'], queryFn: api.bulletins, refetchInterval: autoRefresh.enabled ? 30000 : false })
   const caseFeed = useQuery({ queryKey: ['overviewCases'], queryFn: () => api.cases(), refetchInterval: autoRefresh.enabled ? 30000 : false })
   const accounts = useQuery({ queryKey: ['channelAccounts'], queryFn: api.channelAccounts, refetchInterval: autoRefresh.enabled ? 30000 : false, enabled: canSeeChannels })
+  const today = useQuery({ queryKey: ['todayWorkbench'], queryFn: api.todayWorkbench, refetchInterval: autoRefresh.enabled ? 15000 : false })
 
   const q = queue.data
   const rt = runtime.data
@@ -42,6 +65,14 @@ function OverviewPage() {
   const so = signoff.data
   const runtimeRecoveryCount = (q?.dead_jobs ?? 0) + (q?.dead_outbound ?? 0) + (rt?.dead_sync_jobs ?? 0) + (rt?.dead_attachment_jobs ?? 0)
   const needsRuntimeRecovery = canSeeOps && runtimeRecoveryCount > 0
+  const goWorkbenchTarget = (target: string) => {
+    if (target === 'webchat') navigate({ to: '/webchat' })
+    else if (target === 'webcall') navigate({ to: '/webcall' })
+    else if (target === 'email') navigate({ to: '/email' })
+    else if (target === 'runtime') navigate({ to: '/runtime' })
+    else navigate({ to: '/workspace' })
+  }
+  const enabledCommands = (today.data?.command_center ?? []).filter((item: TodayWorkbenchCommand) => item.enabled)
 
   return (
     <AppShell>
@@ -60,6 +91,62 @@ function OverviewPage() {
             <div className="guide-item"><strong>2. 再看当前公告</strong><span>确认今天是否有延误、清关、异常公告影响回复口径。</span></div>
             <div className="guide-item"><strong>3. 最后补看运营保障</strong><span>{canSeeOps ? '你当前有权限查看发送线路与系统健康。' : '运营保障页面由主管或管理员处理，普通客服优先专注工单。'}</span></div>
           </div>
+        </CardBody>
+      </Card>
+
+      <Card className="soft" data-testid="today-workbench-template-blocks">
+        <CardHeader title="今日工作台 / 我的优先事项" subtitle="根据当前角色汇总今日待办、SLA 风险和可执行入口。" />
+        <CardBody>
+          {today.isLoading ? <Skeleton lines={4} /> : null}
+          {today.isError ? <ErrorSummary title="今日工作台加载失败" errors={[today.error instanceof Error ? today.error.message : '请稍后重试']} /> : null}
+          {today.data ? (
+            <div className="stack">
+              <div className="guide-grid" data-testid="today-workbench-role-tasks">
+                {today.data.tasks.map((task: TodayWorkbenchTask) => (
+                  <div className="guide-item" key={task.key}>
+                    <div className="badges"><Badge tone={safeTone(task.severity)}>{task.count}</Badge><Badge>{workbenchTargetLabel(task.target)}</Badge></div>
+                    <strong>{sanitizeDisplayText(task.title)}</strong>
+                    <span>{sanitizeDisplayText(task.next)}</span>
+                    <Button variant={task.severity === 'danger' || task.severity === 'warning' ? 'primary' : 'secondary'} disabled={!task.enabled} onClick={() => goWorkbenchTarget(task.target)}>
+                      {task.enabled ? '打开处理入口' : '当前角色不可用'}
+                    </Button>
+                    <div className="section-subtitle">{sanitizeDisplayText(task.source)}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="metrics-grid metrics-grid-wide" data-testid="today-workbench-real-metrics">
+                {today.data.metrics.map((metric) => <MetricCard key={metric.key} label={metric.label} value={metric.value} hint={metric.hint} />)}
+              </div>
+              <DataTable
+                caption="SLA 优先处理列表"
+                columns={['工单', '客户', '优先级', '状态', 'SLA 剩余', '负责人']}
+                rows={today.data.sla_priorities.map((item) => [
+                  <Button variant="secondary" onClick={() => navigate({ to: '/workspace' })}>{sanitizeDisplayText(item.ticket_no || `#${item.ticket_id}`)} · {sanitizeDisplayText(item.title)}</Button>,
+                  sanitizeDisplayText(item.customer_name || '-'),
+                  <Badge tone={safeTone(item.overdue ? 'danger' : item.priority === 'urgent' || item.priority === 'high' ? 'warning' : 'default')}>{labelize(item.priority)}</Badge>,
+                  labelize(item.status),
+                  <Badge tone={safeTone(item.overdue ? 'danger' : (item.minutes_to_due ?? 999) <= 30 ? 'warning' : 'default')}>{formatDue(item.minutes_to_due)}</Badge>,
+                  sanitizeDisplayText(item.assignee_name || item.team_name || '未分配'),
+                ])}
+                empty="当前没有带 SLA 到期时间的活动工单。"
+              />
+              <DataTable
+                caption="交互状态闭环"
+                columns={['状态', '用户文案', '实现要求', '落地状态']}
+                rows={today.data.interaction_states.map((item) => [labelize(item.state), sanitizeDisplayText(item.user_copy), sanitizeDisplayText(item.required), <Badge tone="success">{labelize(item.status)}</Badge>])}
+              />
+              <div className="guide-grid" data-testid="today-workbench-command-center">
+                {(enabledCommands.length ? enabledCommands : today.data.command_center).map((command) => (
+                  <div className="guide-item" key={command.key}>
+                    <div className="badges"><Badge>{sanitizeDisplayText(command.role)}</Badge><Badge tone={command.enabled ? 'success' : 'warning'}>{sanitizeDisplayText(command.capability)}</Badge></div>
+                    <strong>{sanitizeDisplayText(command.label)}</strong>
+                    <span>{sanitizeDisplayText(command.next)}</span>
+                    <Button variant="secondary" disabled={!command.enabled} onClick={() => goWorkbenchTarget(command.target)}>执行命令</Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </CardBody>
       </Card>
 
