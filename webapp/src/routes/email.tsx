@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
-import type { CaseDetail, CaseListItem, OutboundChannelCapability } from '@/lib/types'
+import type { CaseDetail, OutboundChannelCapability } from '@/lib/types'
 import { formatDateTime, labelize, marketLabel, priorityTone, sanitizeDisplayText, statusTone } from '@/lib/format'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -23,14 +23,6 @@ import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 
 const emailDraftAccess = { allOf: [CAPABILITIES.outboundDraftSave] } satisfies AccessRequirement
 const emailSendAccess = { allOf: [CAPABILITIES.outboundSend] } satisfies AccessRequirement
-const EMAIL_QUEUE_TOKENS = new Set(['email', 'mail', 'smtp', 'imap', 'pop3'])
-
-function isEmailCandidate(item: CaseListItem) {
-  const text = [item.source_channel, item.category, item.sub_category]
-    .map((value) => String(value || '').toLowerCase().replace(/\be[-_\s]?mail\b/g, 'email'))
-    .join(' ')
-  return text.split(/[^a-z0-9]+/).some((token) => EMAIL_QUEUE_TOKENS.has(token))
-}
 
 function emailRecipient(activeCase: CaseDetail) {
   return activeCase.preferred_reply_contact || activeCase.customer?.email || ''
@@ -192,16 +184,12 @@ function EmailWorkbenchPage() {
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
 
   const cases = useQuery({
-    queryKey: ['emailWorkbenchCases', query, status],
-    queryFn: () => api.cases({ q: query || undefined, status: status || undefined }),
+    queryKey: ['emailWorkbenchCases', query, status, 'email'],
+    queryFn: () => api.cases({ q: query || undefined, status: status || undefined, source_channel: 'email' }),
     refetchInterval: autoRefresh.enabled ? 15000 : false,
   })
 
-  const rows = useMemo(() => {
-    const items = cases.data ?? []
-    const emailItems = items.filter(isEmailCandidate)
-    return emailItems.length ? emailItems : items
-  }, [cases.data])
+  const rows = useMemo(() => cases.data ?? [], [cases.data])
 
   useEffect(() => {
     if (!selectedId && rows.length) setSelectedId(rows[0].id)
@@ -222,7 +210,7 @@ function EmailWorkbenchPage() {
   })
 
   const activeCase = detail.data
-  const emailReadyCount = rows.filter((item) => isEmailCandidate(item)).length
+  const emailReadyCount = rows.length
   const openCount = rows.filter((item) => !['resolved', 'closed', 'canceled', 'cancelled'].includes(String(item.status))).length
   const overdueCount = rows.filter((item) => item.overdue).length
 
@@ -246,7 +234,7 @@ function EmailWorkbenchPage() {
         />
 
         <div className="metrics-grid">
-          <MetricCard label="Email 候选" value={emailReadyCount || rows.length} hint="email/source-channel 优先，否则回退 ticket queue" />
+          <MetricCard label="Email 队列" value={emailReadyCount} hint="后端 source_channel=email 过滤，无非 Email 工单兜底" />
           <MetricCard label="待处理" value={openCount} hint="未进入 resolved/closed/canceled" />
           <MetricCard label="SLA 风险" value={overdueCount} hint="overdue tickets" />
           <MetricCard label="当前工单" value={selectedId ?? '-'} hint="draft/send bind to ticket outbound API" />
@@ -280,7 +268,7 @@ function EmailWorkbenchPage() {
                     <div className="badges">
                       <Badge tone={statusTone(item.status)}>{labelize(item.status)}</Badge>
                       <Badge tone={priorityTone(item.priority)}>{labelize(item.priority)}</Badge>
-                      {isEmailCandidate(item) ? <Badge tone="success">Email</Badge> : <Badge>Ticket</Badge>}
+                      <Badge tone="success">Email</Badge>
                     </div>
                     <div className="queue-card-title">#{item.id} {sanitizeDisplayText(item.title)}</div>
                     <div className="queue-card-meta">{sanitizeDisplayText(item.customer_name || '未填写客户')} · {marketLabel(item.market_code, item.country_code)}</div>

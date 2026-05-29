@@ -12,7 +12,7 @@ The previous PRs connected real WebChat, WebCall, and Email API capabilities, bu
 
 - WebChat: verify visual parity for queue, message stream, customer profile, AI suggestions, handoff, session actions.
 - WebCall: verify visual parity for call queue, sessions, live console, transcript, notes, customer profile, identity verification, AI suggestions, handoff, session actions.
-- Email: verify visual parity for queue, thread, composer, draft/send/audit state.
+- Email: queue is now backed by `/api/lite/cases?source_channel=email`; remaining parity work is thread identity, delivery evidence, composer details, and full draft/send/audit visual proof.
 - Today Workbench: compare `/` against v1.7.8 Today Workbench blocks.
 
 ## Next PR

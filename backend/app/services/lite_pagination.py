@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
-from ..enums import TicketStatus, UserRole
+from ..enums import SourceChannel, TicketStatus, UserRole
 from ..models import Customer, Ticket, User
 from ..utils.time import utc_now
 from .lite_service import serialize_lite_list
@@ -82,6 +82,15 @@ def _lite_status_filter(status: str | None) -> tuple[str | None, list[str] | Non
     return internal.value, None
 
 
+def _source_channel_filter(source_channel: str | None) -> SourceChannel | None:
+    if not source_channel:
+        return None
+    try:
+        return SourceChannel(str(source_channel).strip().lower())
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Unsupported source_channel") from exc
+
+
 def _normalize_q(q: str | None) -> str | None:
     if q is None:
         return None
@@ -145,11 +154,13 @@ def list_lite_cases_page(
     assignee_id: int | None = None,
     team_id: int | None = None,
     overdue: bool | None = None,
+    source_channel: str | None = None,
     cursor: str | None = None,
     limit: int | None = DEFAULT_LIMIT,
 ) -> dict[str, Any]:
     safe_limit = _safe_limit(limit)
     status_value, status_in = _lite_status_filter(status)
+    source_channel_value = _source_channel_filter(source_channel)
     normalized_q = _normalize_q(q)
 
     query = db.query(Ticket).options(
@@ -188,6 +199,8 @@ def list_lite_cases_page(
             Ticket.resolution_due_at < utc_now(),
             Ticket.status.notin_([TicketStatus.closed, TicketStatus.canceled]),
         )
+    if source_channel_value:
+        query = query.filter(Ticket.source_channel == source_channel_value)
 
     decoded = _decode_cursor(cursor)
     if decoded:
@@ -221,6 +234,7 @@ def list_lite_cases_page(
             "assignee_id": assignee_id,
             "team_id": team_id,
             "overdue": overdue,
+            "source_channel": source_channel_value.value if source_channel_value else None,
             "limit": safe_limit,
         },
     }

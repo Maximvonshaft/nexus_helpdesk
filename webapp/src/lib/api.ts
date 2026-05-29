@@ -285,7 +285,7 @@ export type WebCallAIDemoTurn = {
   created_at?: string | null
 }
 
-type CaseQueryParams = { q?: string; status?: string; priority?: string; assignee_id?: number; team_id?: number; overdue?: boolean; cursor?: string | null; limit?: number }
+type CaseQueryParams = { q?: string; status?: string; priority?: string; source_channel?: string; assignee_id?: number; team_id?: number; overdue?: boolean; cursor?: string | null; limit?: number }
 
 function buildCaseSearch(params?: CaseQueryParams) {
   const search = new URLSearchParams()
@@ -293,6 +293,7 @@ function buildCaseSearch(params?: CaseQueryParams) {
   if (params?.q) search.set('q', params.q)
   if (params?.status) search.set('status', params.status)
   if (params?.priority) search.set('priority', params.priority)
+  if (params?.source_channel) search.set('source_channel', params.source_channel)
   if (typeof params?.assignee_id === 'number') search.set('assignee_id', String(params.assignee_id))
   if (typeof params?.team_id === 'number') search.set('team_id', String(params.team_id))
   if (typeof params?.overdue === 'boolean') search.set('overdue', String(params.overdue))

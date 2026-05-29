@@ -83,6 +83,7 @@ def make_ticket(
     team_id: int | None,
     market_id: int | None,
     updated_at: datetime,
+    source_channel: SourceChannel = SourceChannel.email,
 ) -> Ticket:
     customer = Customer(name=f"Customer {idx}", email=f"customer{idx}@invalid.test")
     db.add(customer)
@@ -93,7 +94,7 @@ def make_ticket(
         description="Lite pagination fixture",
         customer_id=customer.id,
         source=TicketSource.manual,
-        source_channel=SourceChannel.email,
+        source_channel=source_channel,
         priority=TicketPriority.medium,
         status=status,
         assignee_id=assignee_id,
@@ -243,6 +244,43 @@ def test_lite_cases_real_db_status_assignee_and_team_cursor_stability(db_session
     assert not {item_id(item) for item in team_first["items"]} & {item_id(item) for item in team_second["items"]}
     team_ids = {row.id for row in db_session.query(Ticket).filter(Ticket.team_id == team_a.id).all()}
     assert {item_id(item) for item in [*team_first["items"], *team_second["items"]]}.issubset(team_ids)
+
+
+def test_lite_cases_source_channel_filter_keeps_email_queue_real(db_session):
+    team = make_team(db_session, "email-team")
+    market = make_market(db_session, code="DE")
+    admin = make_user(db_session, "source-filter-admin", UserRole.admin)
+    base = datetime(2026, 5, 7, 12, 0, 0)
+    email_ticket = make_ticket(
+        db_session,
+        901,
+        status=TicketStatus.in_progress,
+        assignee_id=None,
+        team_id=team.id,
+        market_id=market.id,
+        updated_at=base + timedelta(minutes=1),
+        source_channel=SourceChannel.email,
+    )
+    make_ticket(
+        db_session,
+        902,
+        status=TicketStatus.in_progress,
+        assignee_id=None,
+        team_id=team.id,
+        market_id=market.id,
+        updated_at=base + timedelta(minutes=2),
+        source_channel=SourceChannel.web_chat,
+    )
+    db_session.commit()
+
+    page = list_lite_cases_page(db_session, admin, source_channel="email", limit=10)
+
+    assert [item["id"] for item in page["items"]] == [email_ticket.id]
+    assert page["filters"]["source_channel"] == "email"
+
+    with pytest.raises(HTTPException) as exc:
+        list_lite_cases_page(db_session, admin, source_channel="paper-mail", limit=10)
+    assert exc.value.status_code == 400
 
 
 def test_lite_cases_real_db_invalid_cursor_and_legacy_shape(db_session):

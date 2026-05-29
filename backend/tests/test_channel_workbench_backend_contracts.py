@@ -190,6 +190,42 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
     assert db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_queued).count() == 1
 
 
+def test_email_workbench_queue_uses_backend_source_channel_filter(client: TestClient, db_session):
+    admin = _admin(db_session, user_id=9403)
+    team = _team(db_session)
+    email_ticket = _email_ticket(db_session, team=team)
+    web_customer = Customer(name="WebChat Customer", email="webchat@example.test")
+    db_session.add(web_customer)
+    db_session.flush()
+    webchat_ticket = Ticket(
+        ticket_no=f"WEBCHAT-{_uid()}",
+        title="WebChat conversation",
+        description="Customer asks through web chat.",
+        customer_id=web_customer.id,
+        source=TicketSource.user_message,
+        source_channel=SourceChannel.web_chat,
+        priority=TicketPriority.medium,
+        status=TicketStatus.in_progress,
+        resolution_category=ResolutionCategory.none,
+        conversation_state=ConversationState.human_owned,
+        team_id=team.id,
+        preferred_reply_channel=SourceChannel.web_chat.value,
+        preferred_reply_contact="webchat-public-id",
+    )
+    db_session.add(webchat_ticket)
+    db_session.commit()
+
+    response = client.get("/api/lite/cases?source_channel=email&limit=20", headers=_headers(admin))
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    ids = [item["id"] for item in payload["items"]]
+    assert ids == [email_ticket.id]
+    assert webchat_ticket.id not in ids
+    assert all(item["source_channel"] == "email" for item in payload["items"])
+    assert payload["filters"]["source_channel"] == "email"
+
+
 def test_webcall_accept_end_writes_timeline_voice_evidence(client: TestClient, db_session):
     admin = _admin(db_session, user_id=9402)
     headers = _headers(admin)

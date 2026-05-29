@@ -72,6 +72,7 @@ def list_cases(
     assignee_id: int | None = Query(default=None),
     team_id: int | None = Query(default=None),
     overdue: bool | None = Query(default=None),
+    source_channel: str | None = Query(default=None),
     cursor: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
     legacy: bool = Query(default=False, description="Return the pre-pagination list shape for older clients."),
@@ -89,6 +90,7 @@ def list_cases(
         assignee_id=assignee_id,
         team_id=team_id,
         overdue=overdue,
+        source_channel=source_channel,
         cursor=cursor,
         limit=limit,
     )
