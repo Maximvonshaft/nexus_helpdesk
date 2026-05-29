@@ -110,8 +110,11 @@ function EmailComposer({
     mutationFn: () => api.sendOutboundMessage(activeCase.id, { channel: 'email', subject: subject.trim(), body: body.trim() }),
     onSuccess: async (result) => {
       const semantics = String(result.delivery_semantics || '')
+      const requestId = String(result.request_id || '')
+      const messageId = String(result.message_id || result.id || '')
+      const evidence = requestId || messageId ? ` · request_id=${requestId || '-'} · message_id=${messageId || '-'}` : ''
       onToast({
-        message: semantics === 'external_provider_send' ? 'Email 已进入外部发送队列' : 'Email 回复已发送或记录',
+        message: `${semantics === 'external_provider_send' ? 'Email 已进入外部发送队列' : 'Email 回复已发送或记录'}${evidence}`,
         tone: 'success',
       })
       setBody('')
@@ -181,6 +184,33 @@ function timelineTitle(item: Record<string, unknown>) {
 
 function timelineBody(item: Record<string, unknown>) {
   return sanitizeDisplayText(String(item.body || item.summary || item.note || item.event_type || item.id || ''))
+}
+
+function evidenceValue(item: Record<string, unknown>, key: string) {
+  const value = item[key]
+  if (value === undefined || value === null || value === '') return ''
+  return sanitizeDisplayText(String(value))
+}
+
+function EmailDeliveryEvidence({ item }: { item: Record<string, unknown> }) {
+  if (String(item.source_type || item.kind || '') !== 'outbound_message') return null
+  const fields = [
+    { label: 'message_id', value: evidenceValue(item, 'message_id'), tone: 'default' as const },
+    { label: 'request_id', value: evidenceValue(item, 'request_id'), tone: 'default' as const },
+    { label: 'provider_status', value: evidenceValue(item, 'provider_status'), tone: 'warning' as const },
+    { label: 'failure_code', value: evidenceValue(item, 'failure_code'), tone: 'danger' as const },
+    { label: 'failure_reason', value: evidenceValue(item, 'failure_reason'), tone: 'danger' as const },
+  ].filter((field) => field.value)
+  if (!fields.length) return null
+  return (
+    <div className="badges" data-testid="email-delivery-evidence">
+      {fields.map((field) => (
+        <Badge key={field.label} tone={field.tone}>
+          {field.label}: {field.value}
+        </Badge>
+      ))}
+    </div>
+  )
 }
 
 function EmailWorkbenchPage() {
@@ -323,6 +353,7 @@ function EmailWorkbenchPage() {
                           <span>{formatDateTime(String(item.created_at || ''))}</span>
                         </div>
                         <div>{timelineBody(item as Record<string, unknown>)}</div>
+                        <EmailDeliveryEvidence item={item as Record<string, unknown>} />
                       </div>
                     ))}
                     {timeline.isLoading ? <Skeleton lines={4} /> : null}

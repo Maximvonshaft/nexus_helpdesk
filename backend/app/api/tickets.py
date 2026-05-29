@@ -79,6 +79,8 @@ def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
         delivery_semantics = "local_or_non_dispatchable"
     return {
         "id": row.id,
+        "message_id": f"outbound:{row.id}",
+        "request_id": row.provider_message_id or f"nexusdesk-outbound-{row.id}",
         "ticket_id": row.ticket_id,
         "channel": row.channel,
         "status": row.status,
@@ -96,6 +98,7 @@ def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
         "delivery_semantics": delivery_semantics,
         "dispatch_enabled": bool(settings.enable_outbound_dispatch),
         "outbound_provider": settings.outbound_provider,
+        "audit_event_type": "outbound_queued",
         "ui_label": outbound_ui_label(row.channel, row.status, row.provider_status),
         "operator_note": "Queued for external provider dispatch; wait for sent/dead/review final state" if external_send else "Local-only delivery; no external provider send occurred",
     }

@@ -173,6 +173,9 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
     assert send_payload["provider_status"] == "queued"
     assert send_payload["delivery_semantics"] == "external_provider_send"
     assert send_payload["external_send"] is True
+    assert send_payload["message_id"] == f"outbound:{send_payload['id']}"
+    assert send_payload["request_id"] == f"nexusdesk-outbound-{send_payload['id']}"
+    assert send_payload["audit_event_type"] == EventType.outbound_queued.value
 
     timeline = client.get(f"/api/tickets/{ticket.id}/timeline?limit=20", headers=headers)
     assert timeline.status_code == 200, timeline.text
@@ -181,6 +184,11 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
     event_types = {item.get("event_type") for item in items if item.get("source_type") == "ticket_event"}
     assert any(item["subject"] == "Draft subject" and item["status"] == "draft" for item in outbound_items)
     assert any(item["subject"] == "Send subject" and item["status"] == "pending" for item in outbound_items)
+    sent_timeline_item = next(item for item in outbound_items if item["subject"] == "Send subject")
+    assert sent_timeline_item["message_id"] == send_payload["message_id"]
+    assert sent_timeline_item["request_id"] == send_payload["request_id"]
+    assert sent_timeline_item["provider_status"] == "queued"
+    assert "failure_code" in sent_timeline_item
     assert EventType.outbound_draft_saved.value in event_types
     assert EventType.outbound_queued.value in event_types
 
