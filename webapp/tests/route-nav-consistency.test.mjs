@@ -36,6 +36,14 @@ test('email operator workbench nav route is registered and capability gated', ()
   assert.match(rbac, /'\/email': \{ allOf: \[CAPABILITIES\.ticketRead\], anyOf: \[CAPABILITIES\.outboundDraftSave, CAPABILITIES\.outboundSend\] \}/)
 })
 
+test('fast lane workbench nav route is registered and stats gated', () => {
+  assert.match(appShell, /to: '\/fast-lane'/)
+  assert.match(router, /FastLaneRoute/)
+  assert.match(router, /@\/routes\/fast-lane/)
+  assert.match(rbac, /statsRead: 'stats\.read'/)
+  assert.match(rbac, /'\/fast-lane': \{ allOf: \[CAPABILITIES\.statsRead\] \}/)
+})
+
 test('internal webcall routes are intentionally classified', () => {
   assert.match(router, /Internal operator console for human WebCall handling/)
   assert.match(router, /Top-level operator WebCall workbench/)
@@ -54,6 +62,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'workspace.tsx',
     'webchat.tsx',
     'email.tsx',
+    'fast-lane.tsx',
     'webcall-operator.tsx',
     'runtime.tsx',
     'webcall-ai-demo.tsx',

@@ -6,6 +6,7 @@ import { Route as IndexRoute } from '@/routes/index'
 import { Route as WorkspaceRoute } from '@/routes/workspace'
 import { Route as WebchatRoute } from '@/routes/webchat'
 import { Route as EmailRoute } from '@/routes/email'
+import { Route as FastLaneRoute } from '@/routes/fast-lane'
 import { Route as WebchatVoiceRoute } from '@/routes/webchat-voice'
 import { Route as WebCallOperatorRoute } from '@/routes/webcall-operator'
 import { Route as WebCallRoute } from '@/routes/webcall'
@@ -27,6 +28,7 @@ const routeTree = RootRoute.addChildren([
   WorkspaceRoute,
   WebchatRoute,
   EmailRoute,
+  FastLaneRoute,
   // Internal operator console for human WebCall handling; retained as a legacy deep link.
   WebchatVoiceRoute,
   // Top-level operator WebCall workbench with voice, handoff, customer profile, AI suggestion, and audit context.

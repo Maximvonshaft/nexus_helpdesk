@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Ticket
-from ..schemas import TicketStatsRead
+from ..schemas import TicketStatsRead, WebchatFastStatsRead
+from ..services.permissions import ensure_can_read_stats
 from ..services.ticket_service import get_ticket_stats
 from ..services.webchat_fast_idempotency_db import WebchatFastIdempotency
 from ..utils.time import utc_now
@@ -27,7 +28,7 @@ def _rows_to_int_map(rows) -> dict[str, int]:
     return {str(key or "unknown"): int(count or 0) for key, count in rows}
 
 
-@router.get("/webchat-fast")
+@router.get("/webchat-fast", response_model=WebchatFastStatsRead)
 def webchat_fast_stats(
     days: int = Query(default=7, ge=1, le=90),
     db: Session = Depends(get_db),
@@ -39,6 +40,8 @@ def webchat_fast_stats(
     AI-resolved WebChat sessions deliberately do not create tickets. This endpoint
     exposes the deflection/handoff counters needed to prove that business loop.
     """
+
+    ensure_can_read_stats(current_user, db)
 
     since = utc_now() - timedelta(days=days)
     base_conversations = db.query(WebchatConversation).filter(

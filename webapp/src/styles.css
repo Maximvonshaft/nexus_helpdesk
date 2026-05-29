@@ -80,6 +80,8 @@ button, input, textarea, select { font: inherit; }
 .queue-card-meta { color: var(--muted); font-size: 12px; line-height: 1.45; }
 .hero-block { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding: 4px 0 8px; }
 .hero-title { font-size: 24px; font-weight: 800; line-height: 1.2; }
+.progress-track { width: 100%; min-width: 120px; height: 8px; border-radius: 999px; background: #e5e7eb; overflow: hidden; }
+.progress-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #2563eb, #039855); }
 .workspace-toolbar { display:flex; gap:12px; align-items:center; }
 .workspace-toolbar-meta { color: var(--muted); font-size: 12px; margin-left: auto; }
 .badges { display:flex; gap:8px; flex-wrap: wrap; }

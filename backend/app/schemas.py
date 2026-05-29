@@ -510,6 +510,23 @@ class TicketStatsRead(BaseModel):
     by_status: dict[str, int]
 
 
+class WebchatFastStatsRead(BaseModel):
+    days: int
+    since: str
+    total_sessions: int
+    ticketless_sessions: int
+    ai_resolved_sessions: int
+    handoff_sessions: int
+    handoff_rate: float
+    customer_messages: int
+    ai_messages: int
+    system_handoff_messages: int
+    tickets_created: int
+    idempotency_by_status: dict[str, int]
+    errors_by_code: dict[str, int]
+    sessions_by_intent: dict[str, int]
+
+
 class TimelineItemRead(APIModel):
     id: str
     kind: str

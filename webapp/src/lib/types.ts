@@ -280,6 +280,23 @@ export interface QueueSummary {
   openclaw_links: number
 }
 
+export interface WebchatFastStats {
+  days: number
+  since: string
+  total_sessions: number
+  ticketless_sessions: number
+  ai_resolved_sessions: number
+  handoff_sessions: number
+  handoff_rate: number
+  customer_messages: number
+  ai_messages: number
+  system_handoff_messages: number
+  tickets_created: number
+  idempotency_by_status: Record<string, number>
+  errors_by_code: Record<string, number>
+  sessions_by_intent: Record<string, number>
+}
+
 export interface RuntimeHealth {
   sync_cursor?: string | null
   sync_daemon_last_seen_at?: string | null

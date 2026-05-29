@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
 from app.api.stats import webchat_fast_stats
+from app.auth_service import create_access_token
 from app.db import Base, SessionLocal, engine
-from app.enums import SourceChannel, TicketPriority, TicketSource, TicketStatus
-from app.models import ChannelAccount, Customer, Market, Ticket
+from app.enums import SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole
+from app.main import app
+from app.models import ChannelAccount, Customer, Market, Ticket, User, UserCapabilityOverride
 from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency
 from app.services.webchat_fast_session_service import (
     extract_fast_business_state,
@@ -19,6 +22,7 @@ from app.webchat_models import WebchatConversation, WebchatMessage
 
 
 def _reset_db() -> None:
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
@@ -30,6 +34,8 @@ def _reset_db() -> None:
             Customer,
             ChannelAccount,
             Market,
+            UserCapabilityOverride,
+            User,
         ):
             db.execute(delete(model))
         db.commit()
@@ -39,6 +45,24 @@ def _reset_db() -> None:
 
 def setup_function() -> None:
     _reset_db()
+
+
+def _stats_user(db, *, username: str, role: UserRole = UserRole.admin) -> User:
+    row = User(
+        username=username,
+        display_name=username,
+        email=f"{username}@example.test",
+        password_hash="x",
+        role=role,
+        is_active=True,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _headers(user: User) -> dict[str, str]:
+    return {"Authorization": f"Bearer {create_access_token(user.id)}"}
 
 
 def test_fast_handoff_ticket_persists_resolved_market_and_channel_account() -> None:
@@ -119,6 +143,7 @@ def test_webchat_fast_stats_exposes_ticketless_and_handoff_operational_counters(
     db = SessionLocal()
     now = utc_now()
     try:
+        admin = _stats_user(db, username="fast-stats-admin")
         ticketless = WebchatConversation(
             public_id="wcf_ticketless",
             visitor_token_hash="hash-ticketless",
@@ -229,7 +254,7 @@ def test_webchat_fast_stats_exposes_ticketless_and_handoff_operational_counters(
         ))
         db.commit()
 
-        stats = webchat_fast_stats(days=7, db=db, current_user=object())
+        stats = webchat_fast_stats(days=7, db=db, current_user=admin)
 
         assert stats["total_sessions"] == 2
         assert stats["ticketless_sessions"] == 1
@@ -239,5 +264,20 @@ def test_webchat_fast_stats_exposes_ticketless_and_handoff_operational_counters(
         assert stats["idempotency_by_status"]["done"] == 1
         assert stats["errors_by_code"]["ai_invalid_output"] == 1
         assert stats["sessions_by_intent"]["tracking_lookup"] == 1
+    finally:
+        db.close()
+
+
+def test_webchat_fast_stats_endpoint_requires_stats_read_capability() -> None:
+    db = SessionLocal()
+    try:
+        agent = _stats_user(db, username="fast-stats-agent", role=UserRole.agent)
+        db.add(UserCapabilityOverride(user_id=agent.id, capability="stats.read", allowed=False))
+        db.commit()
+
+        response = TestClient(app).get("/api/stats/webchat-fast", headers=_headers(agent))
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "stats_read_requires_capability"
     finally:
         db.close()

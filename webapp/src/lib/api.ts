@@ -37,6 +37,7 @@ import type {
   PersonaProfileVersion,
   Team,
   WebchatConversation,
+  WebchatFastStats,
   WebchatHandoffQueue,
   WebchatHandoffRequest,
   WebchatReadStateResult,
@@ -542,6 +543,7 @@ export const api = {
     return request<RuntimeRecoveryResult>(`/api/admin/outbound/requeue-dead${search ? `?${search}` : ''}`, { method: 'POST' })
   },
   consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
+  webchatFastStats: (days = 7) => request<WebchatFastStats>(`/api/stats/webchat-fast?days=${encodeURIComponent(String(days))}`),
 
   webcallAIDemoStatus: () => request<WebCallAIDemoStatus>('/api/admin/webcall-ai-demo/status'),
   webcallAIDemoCreateSession: (payload: { locale?: string; display_name?: string; scenario?: string; initial_text?: string }) => request<{ ok: boolean; session: WebCallAIDemoSession; events: WebCallAIDemoEvent[] }>('/api/admin/webcall-ai-demo/sessions', {
