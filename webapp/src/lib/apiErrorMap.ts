@@ -15,6 +15,7 @@ const detailMessages: Record<string, string> = {
   webcall_voice_accept_requires_capability: '缺少 webcall.voice.accept，无法接听 WebCall。',
   webcall_voice_reject_requires_capability: '缺少 webcall.voice.reject，无法拒接 WebCall。',
   webcall_voice_end_requires_capability: '缺少 webcall.voice.end，无法结束 WebCall。',
+  webcall_voice_control_requires_capability: '缺少 webcall.voice.control，无法记录 WebCall 通话控制动作。',
   'Only lead or above can assign': '缺少 ticket.assign，无法分配工单。请联系组长或主管处理。',
   'Resolution category is required before closing a ticket': '关闭工单前必须填写解决分类，请先补全工单结论。',
   'This status change requires a note in workflow_update': '该状态变更必须填写内部备注，请说明原因后再保存。',

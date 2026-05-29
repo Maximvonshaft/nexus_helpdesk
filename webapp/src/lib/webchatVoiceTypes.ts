@@ -56,6 +56,35 @@ export interface WebchatVoiceNoteResult {
   created_at: string
 }
 
+export type WebchatVoiceActionType = 'hold' | 'resume' | 'mute' | 'unmute' | 'keypad' | 'transfer' | 'add_participant'
+
+export interface WebchatVoiceActionPayload {
+  target?: string
+  digits?: string
+  note?: string
+}
+
+export interface WebchatVoiceAction {
+  id: number
+  action_type: WebchatVoiceActionType | string
+  status: string
+  provider_status: string
+  provider_reason: string
+  payload: Record<string, unknown>
+  actor_user_id: number
+  ticket_event_id?: number | null
+  webchat_event_id?: number | null
+  audit_id?: number | null
+  created_at?: string | null
+}
+
+export interface WebchatVoiceActionResult {
+  ok: boolean
+  ticket_id: number
+  voice_session_id: string
+  action: WebchatVoiceAction
+}
+
 export interface WebchatVoiceTranscriptSegment {
   id: number
   segment_id: string

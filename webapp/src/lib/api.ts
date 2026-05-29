@@ -64,7 +64,7 @@ import type {
   CodexSessionStatus,
   CodexCredentialActionResult,
 } from '@/lib/types'
-import type { WebchatVoiceEvidence, WebchatVoiceIncomingSession, WebchatVoiceNoteResult, WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
+import type { WebchatVoiceAction, WebchatVoiceActionPayload, WebchatVoiceActionResult, WebchatVoiceActionType, WebchatVoiceEvidence, WebchatVoiceIncomingSession, WebchatVoiceNoteResult, WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
 import { mapApiErrorMessage } from '@/lib/apiErrorMap'
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
@@ -702,6 +702,15 @@ export const api = {
     search.set('limit', String(params?.limit ?? 50))
     return request<WebchatVoiceEvidence>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/evidence?${search.toString()}`, init)
   },
+  webchatVoiceActions: (ticketId: number, voiceSessionId: string, params?: { limit?: number }, init?: RequestInit) => {
+    const search = new URLSearchParams()
+    search.set('limit', String(params?.limit ?? 20))
+    return request<{ items: WebchatVoiceAction[] }>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/actions?${search.toString()}`, init)
+  },
+  webchatVoiceCreateAction: (ticketId: number, voiceSessionId: string, actionType: WebchatVoiceActionType, payload?: WebchatVoiceActionPayload) => request<WebchatVoiceActionResult>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/actions`, {
+    method: 'POST',
+    body: JSON.stringify({ action_type: actionType, ...(payload ?? {}) }),
+  }),
   webchatVoiceAcceptSession: (ticketId: number, voiceSessionId: string) => request<WebchatVoiceSession>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/accept`, { method: 'POST' }),
   webchatVoiceRejectSession: (ticketId: number, voiceSessionId: string, reason?: string) => request<{ ok: boolean; status: string; voice_session_id: string; accepted_by_user_id?: number | null }>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/reject`, {
     method: 'POST',

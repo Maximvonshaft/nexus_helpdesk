@@ -32,6 +32,7 @@ export const CAPABILITIES = {
   webcallVoiceAccept: 'webcall.voice.accept',
   webcallVoiceReject: 'webcall.voice.reject',
   webcallVoiceEnd: 'webcall.voice.end',
+  webcallVoiceControl: 'webcall.voice.control',
   webchatHandoffForceTakeover: 'webchat.handoff.force_takeover',
 } as const
 
@@ -84,6 +85,7 @@ export const actionAccess = {
   acceptWebcallVoice: { allOf: [CAPABILITIES.webcallVoiceAccept] },
   rejectWebcallVoice: { allOf: [CAPABILITIES.webcallVoiceReject] },
   endWebcallVoice: { allOf: [CAPABILITIES.webcallVoiceEnd] },
+  controlWebcallVoice: { allOf: [CAPABILITIES.webcallVoiceControl] },
   viewWebchatDebug: { anyOf: [CAPABILITIES.runtimeManage] },
   forceWebchatHandoff: { allOf: [CAPABILITIES.webchatHandoffForceTakeover] },
   uploadAttachment: { allOf: [CAPABILITIES.attachmentUpload] },
@@ -122,6 +124,7 @@ export const capabilityCatalogMeta: CapabilityMeta[] = [
   { capability: CAPABILITIES.webcallVoiceAccept, label: '接听 WebCall', group: 'WebCall 语音', description: '接听客户发起的 WebCall。', risk: 'high' },
   { capability: CAPABILITIES.webcallVoiceReject, label: '拒接 WebCall', group: 'WebCall 语音', description: '拒接客户发起的 WebCall。', risk: 'high' },
   { capability: CAPABILITIES.webcallVoiceEnd, label: '结束 WebCall', group: 'WebCall 语音', description: '挂断或结束语音会话。', risk: 'high' },
+  { capability: CAPABILITIES.webcallVoiceControl, label: '控制 WebCall 通话', group: 'WebCall 语音', description: '记录保持、恢复、键盘、转接和加人等通话控制动作。', risk: 'high' },
   { capability: CAPABILITIES.webchatHandoffForceTakeover, label: '强制接管 WebChat AI', group: 'WebChat 接管', description: '在 AI 正在处理时强制暂停 AI 并接管会话。', risk: 'high' },
 ]
 

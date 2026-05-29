@@ -155,3 +155,29 @@ class WebchatVoiceAIAction(Base):
     tool_call_log_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     result_status: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+
+
+class WebchatVoiceSessionAction(Base):
+    """Auditable operator command intent for WebCall controls.
+
+    These rows prove an operator requested a call-control action. Provider-side
+    execution remains explicit through provider_status/provider_reason so the
+    UI does not imply a telephony adapter action succeeded when no adapter ran.
+    """
+
+    __tablename__ = "webchat_voice_session_actions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    voice_session_id: Mapped[int] = mapped_column(ForeignKey("webchat_voice_sessions.id"), index=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("webchat_conversations.id"), index=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    actor_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    action_type: Mapped[str] = mapped_column(String(40), index=True)
+    status: Mapped[str] = mapped_column(String(40), default="recorded", index=True)
+    provider_status: Mapped[str] = mapped_column(String(40), default="not_executed", index=True)
+    provider_reason: Mapped[str] = mapped_column(String(160), default="provider_adapter_pending", index=True)
+    payload_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ticket_event_id: Mapped[Optional[int]] = mapped_column(ForeignKey("ticket_events.id"), nullable=True, index=True)
+    webchat_event_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_events.id"), nullable=True, index=True)
+    audit_id: Mapped[Optional[int]] = mapped_column(ForeignKey("admin_audit_logs.id"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)

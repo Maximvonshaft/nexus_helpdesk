@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..unit_of_work import managed_session
-from ..voice_schemas import WebchatVoiceCreateRequest, WebchatVoiceEvidenceResponse, WebchatVoiceNoteRequest, WebchatVoiceNoteResponse, WebchatVoiceRejectRequest
+from ..voice_schemas import WebchatVoiceActionList, WebchatVoiceActionRequest, WebchatVoiceActionResponse, WebchatVoiceCreateRequest, WebchatVoiceEvidenceResponse, WebchatVoiceNoteRequest, WebchatVoiceNoteResponse, WebchatVoiceRejectRequest
 from ..webchat_voice_config import load_webchat_voice_runtime_config
 from ..services.webchat_voice_service import (
     DETAIL_EXPIRED,
@@ -13,9 +13,11 @@ from ..services.webchat_voice_service import (
     create_public_voice_session,
     end_admin_voice_session,
     list_admin_incoming_voice_sessions,
+    list_admin_voice_actions,
     list_admin_voice_evidence,
     end_public_voice_session,
     list_admin_voice_sessions,
+    record_admin_voice_action,
     reject_admin_voice_session,
     save_admin_voice_note,
 )
@@ -85,6 +87,23 @@ def read_ticket_voice_evidence(
     current_user=Depends(get_current_user),
 ) -> dict:
     return list_admin_voice_evidence(
+        db,
+        ticket_id=ticket_id,
+        voice_session_public_id=voice_session_id,
+        current_user=current_user,
+        limit=limit,
+    )
+
+
+@router.get("/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions", response_model=WebchatVoiceActionList)
+def list_ticket_voice_actions(
+    ticket_id: int,
+    voice_session_id: str,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict:
+    return list_admin_voice_actions(
         db,
         ticket_id=ticket_id,
         voice_session_public_id=voice_session_id,
@@ -165,6 +184,27 @@ def save_ticket_voice_note(
             current_user=current_user,
             body=payload.body,
             source=payload.source,
+        )
+
+
+@router.post("/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions", response_model=WebchatVoiceActionResponse)
+def create_ticket_voice_action(
+    ticket_id: int,
+    voice_session_id: str,
+    payload: WebchatVoiceActionRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict:
+    with managed_session(db):
+        return record_admin_voice_action(
+            db,
+            ticket_id=ticket_id,
+            voice_session_public_id=voice_session_id,
+            current_user=current_user,
+            action_type=payload.action_type,
+            target=payload.target,
+            digits=payload.digits,
+            note=payload.note,
         )
 
 

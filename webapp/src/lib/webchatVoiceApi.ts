@@ -5,6 +5,8 @@ export const webchatVoiceApi = {
   incomingSessions: api.webchatVoiceIncomingSessions,
   listSessions: api.webchatVoiceSessions,
   evidence: api.webchatVoiceEvidence,
+  actions: api.webchatVoiceActions,
+  createAction: api.webchatVoiceCreateAction,
   acceptSession: api.webchatVoiceAcceptSession,
   rejectSession: api.webchatVoiceRejectSession,
   endSession: api.webchatVoiceEndSession,

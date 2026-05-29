@@ -419,6 +419,16 @@ def test_webcall_operator_workbench_real_api_identity_handoff_ai_and_session_con
     accepted_call = client.post(f"/api/webchat/admin/tickets/{ticket.id}/voice/{voice_session_id}/accept", headers=headers)
     assert accepted_call.status_code == 200, accepted_call.text
     assert accepted_call.json()["participant_token"]
+    recorded_action = client.post(
+        f"/api/webchat/admin/tickets/{ticket.id}/voice/{voice_session_id}/actions",
+        headers=headers,
+        json={"action_type": "hold", "note": "Hold requested from WebCall operator contract"},
+    )
+    assert recorded_action.status_code == 200, recorded_action.text
+    assert recorded_action.json()["action"]["provider_reason"] == "provider_adapter_pending"
+    action_history = client.get(f"/api/webchat/admin/tickets/{ticket.id}/voice/{voice_session_id}/actions?limit=5", headers=headers)
+    assert action_history.status_code == 200, action_history.text
+    assert action_history.json()["items"][0]["action_type"] == "hold"
 
     accepted_handoff = client.post(
         f"/api/webchat/admin/handoff/{handoff.id}/accept",
@@ -448,7 +458,7 @@ def test_webcall_operator_workbench_real_api_identity_handoff_ai_and_session_con
     assert timeline.status_code == 200, timeline.text
     event_types = {item.get("event_type") for item in timeline.json()["items"] if item.get("source_type") == "webchat_event"}
     voice_items = [item for item in timeline.json()["items"] if item.get("source_type") == "voice_call" or item.get("kind") == "voice_call"]
-    assert {"voice.session.created", "voice.session.accepted", "voice.session.ended", "handoff.accepted", "handoff.released", "ai.resumed"} <= event_types
+    assert {"voice.session.created", "voice.session.accepted", "voice.session.action_recorded", "voice.session.ended", "handoff.accepted", "handoff.released", "ai.resumed"} <= event_types
     assert voice_items and voice_items[0]["payload"]["voice_session_id"] == voice_session_id
     assert db_session.query(WebchatEvent).filter(WebchatEvent.conversation_id == conversation.id, WebchatEvent.event_type == "ai.resumed").count() == 1
 

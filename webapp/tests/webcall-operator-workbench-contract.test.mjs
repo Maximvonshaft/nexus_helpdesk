@@ -81,3 +81,20 @@ test('webcall transcript and AI evidence use real redacted voice evidence API', 
   assert.match(agentPanel, /data-testid="webcall-ai-action-evidence"/)
   assert.doesNotMatch(agentPanel, /text_raw/)
 })
+
+test('webcall template session actions use audited backend command API', () => {
+  assert.match(rbac, /webcallVoiceControl: 'webcall\.voice\.control'/)
+  assert.match(rbac, /controlWebcallVoice: \{ allOf: \[CAPABILITIES\.webcallVoiceControl\] \}/)
+  assert.match(apiClient, /webchatVoiceActions: \(ticketId: number, voiceSessionId: string, params\?: \{ limit\?: number \}, init\?: RequestInit\)/)
+  assert.match(apiClient, /webchatVoiceCreateAction: \(ticketId: number, voiceSessionId: string, actionType: WebchatVoiceActionType, payload\?: WebchatVoiceActionPayload\)/)
+  assert.match(apiClient, /`\/api\/webchat\/admin\/tickets\/\$\{ticketId\}\/voice\/\$\{voiceSessionId\}\/actions/)
+  assert.match(voiceApi, /actions: api\.webchatVoiceActions/)
+  assert.match(voiceApi, /createAction: api\.webchatVoiceCreateAction/)
+  assert.match(agentPanel, /data-testid="webcall-session-actions"/)
+  for (const action of ['hold', 'resume', 'keypad', 'transfer', 'add_participant']) {
+    assert.match(agentPanel, new RegExp(action))
+  }
+  assert.match(agentPanel, /provider_adapter_pending/)
+  assert.match(agentPanel, /queryKey: \['ticketTimeline', ticketId\]/)
+  assert.doesNotMatch(agentPanel, /\bfetch\s*\(/)
+})

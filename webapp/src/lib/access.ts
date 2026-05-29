@@ -100,6 +100,10 @@ export function canEndWebcallVoice(user?: AuthUser | null) {
   return canAccess(user, actionAccess.endWebcallVoice)
 }
 
+export function canControlWebcallVoice(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.controlWebcallVoice)
+}
+
 export function canViewWebchatDebug(user?: AuthUser | null) {
   return canAccess(user, actionAccess.viewWebchatDebug)
 }

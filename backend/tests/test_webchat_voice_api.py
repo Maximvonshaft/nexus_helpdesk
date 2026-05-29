@@ -21,10 +21,11 @@ from app.db import Base, SessionLocal, engine
 from app.enums import UserRole
 from app.main import app
 from app.models import AdminAuditLog, Ticket, TicketEvent, TicketInternalNote, User
+from app.services import webchat_rate_limit as webchat_rate_limit_service
 from app.services.livekit_voice_provider import LiveKitVoiceProvider
 from app.services.voice_provider import VoiceParticipantToken
 from app.utils.time import utc_now
-from app.voice_models import WebchatVoiceAIAction, WebchatVoiceAITurn, WebchatVoiceSession, WebchatVoiceTranscriptSegment
+from app.voice_models import WebchatVoiceAIAction, WebchatVoiceAITurn, WebchatVoiceSession, WebchatVoiceSessionAction, WebchatVoiceTranscriptSegment
 from app.webchat_models import WebchatEvent, WebchatMessage  # noqa: F401 - ensure metadata registration
 
 
@@ -60,6 +61,8 @@ def voice_env(monkeypatch):
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "mock")
     monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webchat/voice")
     monkeypatch.setenv("WEBCHAT_VOICE_CONNECT_SRC", "wss://voice.example.test")
+    monkeypatch.setattr(webchat_rate_limit_service.settings, "webchat_rate_limit_max_requests", 1000)
+    webchat_rate_limit_service._MEMORY_BUCKETS.clear()
     yield
 
 
@@ -298,6 +301,94 @@ def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
         assert event_types.count("voice.session.ended") == 1
     finally:
         db.close()
+
+
+def test_admin_voice_action_records_call_control_command_timeline_and_audit():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Action Command Visitor")
+
+    accepted = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        headers=_admin_headers(9202),
+    )
+    assert accepted.status_code == 200, accepted.text
+
+    keypad = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions",
+        headers=_admin_headers(9202),
+        json={"action_type": "keypad", "digits": "123456#", "note": "DTMF menu option"},
+    )
+    assert keypad.status_code == 200, keypad.text
+    keypad_payload = keypad.json()
+    assert keypad_payload["ok"] is True
+    assert keypad_payload["voice_session_id"] == voice_session_id
+    assert keypad_payload["action"]["action_type"] == "keypad"
+    assert keypad_payload["action"]["provider_status"] == "not_executed"
+    assert keypad_payload["action"]["provider_reason"] == "provider_adapter_pending"
+    assert keypad_payload["action"]["payload"]["digits_length"] == 7
+    assert "123456#" not in keypad.text
+
+    transfer = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions",
+        headers=_admin_headers(9202),
+        json={"action_type": "transfer", "target": "tier-2-voice", "note": "Escalate to specialist queue"},
+    )
+    assert transfer.status_code == 200, transfer.text
+
+    action_list = client.get(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions?limit=5",
+        headers=_admin_headers(9202),
+    )
+    assert action_list.status_code == 200, action_list.text
+    assert [item["action_type"] for item in action_list.json()["items"][:2]] == ["transfer", "keypad"]
+
+    timeline = client.get(f"/api/tickets/{ticket_id}/timeline?limit=20", headers=_admin_headers(9202))
+    assert timeline.status_code == 200, timeline.text
+    assert any(item["source_type"] == "ticket_event" and item["event_type"] == "field_updated" and item.get("field_name") == "webcall.voice.action" for item in timeline.json()["items"])
+    assert any(item["source_type"] == "webchat_event" and item["event_type"] == "voice.session.action_recorded" for item in timeline.json()["items"])
+
+    db = SessionLocal()
+    try:
+        actions = db.query(WebchatVoiceSessionAction).filter(WebchatVoiceSessionAction.ticket_id == ticket_id).order_by(WebchatVoiceSessionAction.id.asc()).all()
+        assert [row.action_type for row in actions] == ["keypad", "transfer"]
+        keypad_row = actions[0]
+        assert keypad_row.actor_user_id == 9202
+        assert keypad_row.provider_status == "not_executed"
+        assert keypad_row.provider_reason == "provider_adapter_pending"
+        assert "123456#" not in (keypad_row.payload_json or "")
+        ticket_event = db.query(TicketEvent).filter(TicketEvent.id == keypad_row.ticket_event_id).one()
+        assert ticket_event.field_name == "webcall.voice.action"
+        assert ticket_event.new_value == "keypad"
+        assert "123456#" not in (ticket_event.payload_json or "")
+        webchat_event = db.query(WebchatEvent).filter(WebchatEvent.id == keypad_row.webchat_event_id).one()
+        assert webchat_event.event_type == "voice.session.action_recorded"
+        audit = db.query(AdminAuditLog).filter(AdminAuditLog.id == keypad_row.audit_id).one()
+        assert audit.action == "webcall.voice.action.keypad"
+        assert audit.target_type == "webchat_voice_session_action"
+        assert "123456#" not in (audit.new_value_json or "")
+    finally:
+        db.close()
+
+
+def test_admin_voice_action_requires_control_capability_even_when_ticket_visible():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Action RBAC Visitor")
+    db = SessionLocal()
+    try:
+        ticket = db.query(Ticket).filter(Ticket.id == ticket_id).one()
+        ticket.assignee_id = 9204
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions",
+        headers=_admin_headers(9204),
+        json={"action_type": "mute"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "webcall_voice_control_requires_capability"
 
 
 def test_admin_voice_note_writes_internal_note_timeline_webchat_event_and_audit():

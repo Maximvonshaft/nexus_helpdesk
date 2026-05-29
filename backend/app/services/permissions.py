@@ -37,6 +37,7 @@ CAP_WEBCALL_VOICE_QUEUE_VIEW = "webcall.voice.queue.view"
 CAP_WEBCALL_VOICE_ACCEPT = "webcall.voice.accept"
 CAP_WEBCALL_VOICE_REJECT = "webcall.voice.reject"
 CAP_WEBCALL_VOICE_END = "webcall.voice.end"
+CAP_WEBCALL_VOICE_CONTROL = "webcall.voice.control"
 CAP_WEBCHAT_HANDOFF_ACCEPT = "webchat.handoff.accept"
 CAP_WEBCHAT_HANDOFF_DECLINE = "webchat.handoff.decline"
 CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER = "webchat.handoff.force_takeover"
@@ -76,6 +77,7 @@ ALL_CAPABILITIES = [
     CAP_WEBCALL_VOICE_ACCEPT,
     CAP_WEBCALL_VOICE_REJECT,
     CAP_WEBCALL_VOICE_END,
+    CAP_WEBCALL_VOICE_CONTROL,
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     CAP_WEBCHAT_HANDOFF_DECLINE,
     CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
@@ -288,6 +290,10 @@ def ensure_can_reject_webcall_voice(user, db: Session | None = None):
 
 def ensure_can_end_webcall_voice(user, db: Session | None = None):
     ensure_capability(user, CAP_WEBCALL_VOICE_END, db, message="webcall_voice_end_requires_capability")
+
+
+def ensure_can_control_webcall_voice(user, db: Session | None = None):
+    ensure_capability(user, CAP_WEBCALL_VOICE_CONTROL, db, message="webcall_voice_control_requires_capability")
 
 
 def ensure_can_accept_webchat_handoff(user, db: Session | None = None):

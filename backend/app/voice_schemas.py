@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -39,6 +41,47 @@ class WebchatVoiceNoteResponse(BaseModel):
     webchat_event_id: int
     audit_id: int
     created_at: str
+
+
+class WebchatVoiceActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_type: Literal["hold", "resume", "mute", "unmute", "keypad", "transfer", "add_participant"]
+    target: str | None = Field(default=None, max_length=240)
+    digits: str | None = Field(default=None, max_length=64, pattern=r"^[0-9*#]+$")
+    note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("target", "digits", "note", mode="before")
+    @classmethod
+    def strip_action_text(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class WebchatVoiceActionRead(BaseModel):
+    id: int
+    action_type: str
+    status: str
+    provider_status: str
+    provider_reason: str
+    payload: dict = Field(default_factory=dict)
+    actor_user_id: int
+    ticket_event_id: int | None = None
+    webchat_event_id: int | None = None
+    audit_id: int | None = None
+    created_at: str | None = None
+
+
+class WebchatVoiceActionResponse(BaseModel):
+    ok: bool = True
+    ticket_id: int
+    voice_session_id: str
+    action: WebchatVoiceActionRead
+
+
+class WebchatVoiceActionList(BaseModel):
+    items: list[WebchatVoiceActionRead] = Field(default_factory=list)
 
 
 class WebchatVoiceTranscriptSegmentRead(BaseModel):

@@ -164,6 +164,7 @@ test('rbac manifest centralizes route and high-risk action access', () => {
     'webcall.voice.accept',
     'webcall.voice.reject',
     'webcall.voice.end',
+    'webcall.voice.control',
   ]) {
     assert.match(rbacManifest, new RegExp(capability.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }
@@ -184,6 +185,7 @@ test('speedaf and webcall actions are capability gated in the operator UI', () =
   assert.match(agentWebCallPanel, /canAcceptWebcallVoice/)
   assert.match(agentWebCallPanel, /canRejectWebcallVoice/)
   assert.match(agentWebCallPanel, /canEndWebcallVoice/)
+  assert.match(agentWebCallPanel, /canControlWebcallVoice/)
 })
 
 test('operator navigation uses workflow-oriented entrypoints', () => {
