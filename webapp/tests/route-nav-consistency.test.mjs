@@ -47,6 +47,13 @@ test('internal webcall routes are intentionally classified', () => {
   assert.doesNotMatch(appShell, /to: '\/webchat-voice'/)
 })
 
+test('realtime health route is registered and capability gated', () => {
+  assert.match(appShell, /to: '\/realtime'/)
+  assert.match(router, /RealtimeRoute/)
+  assert.match(router, /@\/routes\/realtime/)
+  assert.match(rbac, /'\/realtime': \{ allOf: \[CAPABILITIES\.webchatRealtimeMonitor\] \}/)
+})
+
 test('primary nav internal hrefs have matching registered routes', () => {
   const routeFiles = [
     'login.tsx',
@@ -56,6 +63,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'email.tsx',
     'webcall-operator.tsx',
     'runtime.tsx',
+    'realtime.tsx',
     'webcall-ai-demo.tsx',
     'provider-credentials.tsx',
     'accounts.tsx',

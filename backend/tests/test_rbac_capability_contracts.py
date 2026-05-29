@@ -16,6 +16,7 @@ from app.services.permissions import (
     CAP_WEBCALL_VOICE_QUEUE_VIEW,
     CAP_WEBCALL_VOICE_READ,
     CAP_WEBCALL_VOICE_REJECT,
+    CAP_WEBCHAT_REALTIME_MONITOR,
     resolve_capabilities,
 )
 
@@ -34,9 +35,18 @@ def test_tool_and_voice_capabilities_are_in_source_of_truth_catalog():
         CAP_WEBCALL_VOICE_ACCEPT,
         CAP_WEBCALL_VOICE_REJECT,
         CAP_WEBCALL_VOICE_END,
+        CAP_WEBCHAT_REALTIME_MONITOR,
     }
 
     assert expected.issubset(set(ALL_CAPABILITIES))
+
+
+def test_realtime_monitor_is_read_only_and_not_agent_default():
+    assert CAP_WEBCHAT_REALTIME_MONITOR in resolve_capabilities(_user(UserRole.admin))
+    assert CAP_WEBCHAT_REALTIME_MONITOR in resolve_capabilities(_user(UserRole.manager))
+    assert CAP_WEBCHAT_REALTIME_MONITOR in resolve_capabilities(_user(UserRole.lead))
+    assert CAP_WEBCHAT_REALTIME_MONITOR in resolve_capabilities(_user(UserRole.auditor))
+    assert CAP_WEBCHAT_REALTIME_MONITOR not in resolve_capabilities(_user(UserRole.agent))
 
 
 def test_admin_gets_new_high_risk_capabilities_by_default_but_agent_and_auditor_do_not():

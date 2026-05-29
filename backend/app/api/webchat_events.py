@@ -9,14 +9,18 @@ from urllib.parse import urlparse
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Ticket
+from ..schemas import WebchatRealtimeHealthRead
 from ..settings import get_settings
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatEvent
-from ..services.permissions import ensure_ticket_visible
+from ..services.permissions import ensure_can_monitor_webchat_realtime, ensure_ticket_visible
+from ..services.realtime_broker import webchat_realtime_broker_status
+from ..services.webchat_realtime_hub import webchat_realtime_hub
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat-events"])
@@ -173,6 +177,31 @@ def _capped_wait_ms(wait_ms: int) -> int:
     return max(0, min(int(wait_ms or 0), _events_max_wait_ms()))
 
 
+def _recent_event_type_counts(db: Session) -> dict[str, int]:
+    rows = db.query(WebchatEvent.event_type).order_by(WebchatEvent.id.desc()).limit(100).all()
+    counts: dict[str, int] = {}
+    for (event_type,) in rows:
+        key = str(event_type or "unknown")
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _realtime_warnings(*, broker_cross_worker_safe: bool, hub_connections: int) -> list[str]:
+    active_settings = get_settings()
+    warnings: list[str] = []
+    if not active_settings.webchat_ws_enabled:
+        warnings.append("webchat_ws_disabled")
+    if not active_settings.webchat_ws_admin_enabled:
+        warnings.append("webchat_ws_admin_disabled")
+    if not active_settings.webchat_ws_public_enabled:
+        warnings.append("webchat_ws_public_disabled")
+    if not broker_cross_worker_safe:
+        warnings.append("webchat_ws_broker_not_cross_worker_safe")
+    if active_settings.webchat_ws_max_connections > 0 and hub_connections >= active_settings.webchat_ws_max_connections:
+        warnings.append("webchat_ws_connection_limit_reached")
+    return warnings
+
+
 def _list_events(
     db: Session,
     *,
@@ -265,4 +294,47 @@ def admin_poll_webchat_events(
         "last_event_id": events[-1]["id"] if events else after_id,
         "has_more": result["has_more"],
         "wait_ms": result["wait_ms"],
+    }
+
+
+@router.get("/admin/realtime-health", response_model=WebchatRealtimeHealthRead)
+async def admin_webchat_realtime_health(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict[str, Any]:
+    ensure_can_monitor_webchat_realtime(current_user, db)
+    active_settings = get_settings()
+    hub_snapshot = await webchat_realtime_hub.snapshot()
+    broker = webchat_realtime_broker_status(active_settings.webchat_ws_broker)
+    last_event_id = db.query(func.max(WebchatEvent.id)).scalar() or 0
+    last_event_at = db.query(func.max(WebchatEvent.created_at)).scalar()
+    recent_event_count = db.query(func.count(WebchatEvent.id)).scalar() or 0
+    recent_event_count = min(int(recent_event_count), 100)
+    return {
+        "enabled": active_settings.webchat_ws_enabled,
+        "admin_enabled": active_settings.webchat_ws_admin_enabled,
+        "public_enabled": active_settings.webchat_ws_public_enabled,
+        "ws_path": "/api/webchat/ws",
+        "broker": {
+            "name": broker.name,
+            "durable_replay": broker.durable_replay,
+            "cross_worker_safe": broker.cross_worker_safe,
+        },
+        "hub": hub_snapshot,
+        "events": {
+            "last_event_id": int(last_event_id),
+            "recent_event_count": int(recent_event_count),
+            "last_event_at": last_event_at,
+            "event_types": _recent_event_type_counts(db),
+        },
+        "replay_poll_ms": active_settings.webchat_ws_replay_poll_ms,
+        "fallback_poll_ms": active_settings.webchat_ws_fallback_poll_ms,
+        "heartbeat_ms": active_settings.webchat_ws_heartbeat_ms,
+        "hello_timeout_ms": active_settings.webchat_ws_hello_timeout_ms,
+        "max_connections": active_settings.webchat_ws_max_connections,
+        "max_connections_per_user": active_settings.webchat_ws_max_connections_per_user,
+        "warnings": _realtime_warnings(
+            broker_cross_worker_safe=broker.cross_worker_safe,
+            hub_connections=int(hub_snapshot.get("connections") or 0),
+        ),
     }

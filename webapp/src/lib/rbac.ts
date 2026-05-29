@@ -32,6 +32,7 @@ export const CAPABILITIES = {
   webcallVoiceReject: 'webcall.voice.reject',
   webcallVoiceEnd: 'webcall.voice.end',
   webchatHandoffForceTakeover: 'webchat.handoff.force_takeover',
+  webchatRealtimeMonitor: 'webchat.realtime.monitor',
 } as const
 
 export type Capability = (typeof CAPABILITIES)[keyof typeof CAPABILITIES]
@@ -54,6 +55,7 @@ export const routeAccess = {
   '/provider-credentials': { allOf: [CAPABILITIES.runtimeManage] },
   '/webcall': { allOf: [CAPABILITIES.webcallVoiceQueueView] },
   '/webcall-ai-demo': { allOf: [CAPABILITIES.runtimeManage] },
+  '/realtime': { allOf: [CAPABILITIES.webchatRealtimeMonitor] },
   '/accounts': { allOf: [CAPABILITIES.channelAccountManage] },
   '/outbound-email': { allOf: [CAPABILITIES.channelAccountManage] },
   '/email': { allOf: [CAPABILITIES.ticketRead], anyOf: [CAPABILITIES.outboundDraftSave, CAPABILITIES.outboundSend] },
@@ -117,6 +119,7 @@ export const capabilityCatalogMeta: CapabilityMeta[] = [
   { capability: CAPABILITIES.webcallVoiceReject, label: '拒接 WebCall', group: 'WebCall 语音', description: '拒接客户发起的 WebCall。', risk: 'high' },
   { capability: CAPABILITIES.webcallVoiceEnd, label: '结束 WebCall', group: 'WebCall 语音', description: '挂断或结束语音会话。', risk: 'high' },
   { capability: CAPABILITIES.webchatHandoffForceTakeover, label: '强制接管 WebChat AI', group: 'WebChat 接管', description: '在 AI 正在处理时强制暂停 AI 并接管会话。', risk: 'high' },
+  { capability: CAPABILITIES.webchatRealtimeMonitor, label: '查看实时链路', group: 'WebChat 接管', description: '查看 WebSocket、fallback polling、replay cursor 和 broker 健康状态。', risk: 'normal' },
 ]
 
 const metaByCapability = new Map(capabilityCatalogMeta.map((item) => [item.capability, item]))

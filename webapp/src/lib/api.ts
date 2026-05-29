@@ -39,6 +39,7 @@ import type {
   WebchatConversation,
   WebchatHandoffQueue,
   WebchatHandoffRequest,
+  WebchatRealtimeHealth,
   WebchatReadStateResult,
   WebchatThread,
   WebchatReplyResult,
@@ -611,6 +612,7 @@ export const api = {
   }),
   webchatThread: (ticketId: number, init?: RequestInit) => request<WebchatThread>(`/api/webchat/admin/tickets/${ticketId}/thread`, init),
   webchatEvents: (ticketId: number, afterId: number, init?: RequestInit) => request<WebchatEventsPage>(`/api/webchat/admin/tickets/${ticketId}/events?${buildWebchatEventsSearch(afterId).toString()}`, init),
+  webchatRealtimeHealth: () => request<WebchatRealtimeHealth>('/api/webchat/admin/realtime-health'),
   webchatReadState: (ticketId: number, payload: { marked_unread: boolean }) => request<WebchatReadStateResult>(`/api/webchat/admin/tickets/${ticketId}/read-state`, {
     method: 'POST',
     body: JSON.stringify(payload),

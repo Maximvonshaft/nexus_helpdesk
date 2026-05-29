@@ -88,6 +88,43 @@ class OpenClawUnresolvedEventRead(APIModel):
     updated_at: datetime
 
 
+class WebchatRealtimeBrokerRead(APIModel):
+    name: str
+    durable_replay: bool
+    cross_worker_safe: bool
+
+
+class WebchatRealtimeHubSnapshotRead(APIModel):
+    connections: int
+    agents: int
+    visitors: int
+    subscriptions: int
+
+
+class WebchatRealtimeEventCursorRead(APIModel):
+    last_event_id: int
+    recent_event_count: int
+    last_event_at: Optional[datetime] = None
+    event_types: dict[str, int] = Field(default_factory=dict)
+
+
+class WebchatRealtimeHealthRead(APIModel):
+    enabled: bool
+    admin_enabled: bool
+    public_enabled: bool
+    ws_path: str = "/api/webchat/ws"
+    broker: WebchatRealtimeBrokerRead
+    hub: WebchatRealtimeHubSnapshotRead
+    events: WebchatRealtimeEventCursorRead
+    replay_poll_ms: int
+    fallback_poll_ms: int
+    heartbeat_ms: int
+    hello_timeout_ms: int
+    max_connections: int
+    max_connections_per_user: int
+    warnings: list[str] = Field(default_factory=list)
+
+
 class TagRead(APIModel):
 
     id: int

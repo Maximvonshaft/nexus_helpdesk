@@ -306,6 +306,37 @@ export interface RuntimeHealth {
   warnings: string[]
 }
 
+export interface WebchatRealtimeHealth {
+  enabled: boolean
+  admin_enabled: boolean
+  public_enabled: boolean
+  ws_path: string
+  broker: {
+    name: string
+    durable_replay: boolean
+    cross_worker_safe: boolean
+  }
+  hub: {
+    connections: number
+    agents: number
+    visitors: number
+    subscriptions: number
+  }
+  events: {
+    last_event_id: number
+    recent_event_count: number
+    last_event_at?: string | null
+    event_types: Record<string, number>
+  }
+  replay_poll_ms: number
+  fallback_poll_ms: number
+  heartbeat_ms: number
+  hello_timeout_ms: number
+  max_connections: number
+  max_connections_per_user: number
+  warnings: string[]
+}
+
 export interface OutboundChannelCapability {
   channel: string
   label: string

@@ -70,9 +70,11 @@ jobs:
               backend/app/api/speedaf_cancel.py) return 0 ;;
               backend/app/api/webcall_ai.py) return 0 ;;
               backend/app/api/webchat.py) return 0 ;;
+              backend/app/api/webchat_events.py) return 0 ;;
               backend/app/api/webchat_fast.py) return 0 ;;
               backend/app/api/webchat_ws.py) return 0 ;;
               backend/app/main.py) return 0 ;;
+              backend/app/schemas.py) return 0 ;;
               backend/app/models_control_plane.py) return 0 ;;
               backend/app/schemas_control_plane.py) return 0 ;;
               backend/app/settings.py) return 0 ;;
@@ -169,6 +171,7 @@ jobs:
               backend/tests/test_webchat_fast_reply_provider_runtime.py) return 0 ;;
               backend/tests/test_webchat_handoff_control.py) return 0 ;;
               backend/tests/test_webchat_inbox_read_state.py) return 0 ;;
+              backend/tests/test_webchat_realtime_health_api.py) return 0 ;;
               backend/tests/test_webchat_round_b.py) return 0 ;;
               backend/tests/test_webchat_stream_feature_flag.py) return 0 ;;
               backend/tests/test_webchat_voice_api.py) return 0 ;;
@@ -224,6 +227,7 @@ jobs:
               webapp/src/routes/ai-control.tsx) return 0 ;;
               webapp/src/routes/control-plane.tsx) return 0 ;;
               webapp/src/routes/email.tsx) return 0 ;;
+              webapp/src/routes/realtime.tsx) return 0 ;;
               webapp/src/routes/runtime.tsx) return 0 ;;
               webapp/src/routes/users.tsx) return 0 ;;
               webapp/src/routes/webcall-ai.tsx) return 0 ;;
@@ -237,6 +241,7 @@ jobs:
               webapp/tests/novice-ux-regression.test.mjs) return 0 ;;
               webapp/tests/operator-console-contract.test.mjs) return 0 ;;
               webapp/tests/route-nav-consistency.test.mjs) return 0 ;;
+              webapp/tests/realtime-health-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-ai-demo-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-livekit-lazy-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-operator-workbench-contract.test.mjs) return 0 ;;
@@ -260,9 +265,13 @@ jobs:
               webapp/tests/operator-console-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-livekit-lazy-contract.test.mjs) return 0 ;;
               webapp/tests/webcall-operator-workbench-contract.test.mjs) return 0 ;;
+              webapp/tests/realtime-health-contract.test.mjs) return 0 ;;
+              webapp/src/routes/realtime.tsx) return 0 ;;
               webapp/package.json) return 0 ;;
               webapp/package-lock.json) return 0 ;;
               backend/app/webchat_voice_config.py) return 0 ;;
+              backend/app/api/webchat_events.py) return 0 ;;
+              backend/tests/test_webchat_realtime_health_api.py) return 0 ;;
               backend/tests/test_webchat_voice_mock_ui_static.py) return 0 ;;
               backend/tests/test_webchat_voice_static_headers.py) return 0 ;;
             esac
@@ -330,7 +339,7 @@ jobs:
           LIVEKIT_URL: wss://livekit.test
           WEBCALL_BROWSER_ENTRY_ENABLED: "true"
         run: |
-          pytest -q tests/test_webchat_voice_api.py tests/test_webchat_voice_static_headers.py tests/test_webchat_voice_mock_ui_static.py
+          pytest -q tests/test_webchat_voice_api.py tests/test_webchat_voice_static_headers.py tests/test_webchat_voice_mock_ui_static.py tests/test_webchat_realtime_health_api.py
 
   webcall-blocking-fix-guard:
     needs: scope-guard
@@ -348,4 +357,4 @@ jobs:
         run: npm ci
       - name: Run operator console contract tests
         working-directory: webapp
-        run: node --test tests/operator-console-contract.test.mjs tests/webcall-operator-workbench-contract.test.mjs tests/webcall-livekit-lazy-contract.test.mjs
+        run: node --test tests/operator-console-contract.test.mjs tests/webcall-operator-workbench-contract.test.mjs tests/webcall-livekit-lazy-contract.test.mjs tests/realtime-health-contract.test.mjs
