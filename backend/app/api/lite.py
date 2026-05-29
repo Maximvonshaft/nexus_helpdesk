@@ -15,6 +15,8 @@ from ..schemas import (
     LiteCaseDetail,
     LiteCaseListItem,
     LiteCaseUpdate,
+    LiteControlTowerActionRequest,
+    LiteControlTowerActionResponse,
     LiteHumanNoteRequest,
     LiteMetaRead,
     LiteQAAppealRequest,
@@ -39,7 +41,7 @@ from ..services.lite_service import (
     update_lite_case,
     workflow_update_lite_case,
 )
-from ..services.control_tower_service import build_control_tower
+from ..services.control_tower_service import build_control_tower, submit_control_tower_action
 from ..services.knowledge_studio_service import build_knowledge_studio
 from ..services.persona_builder_service import build_persona_builder
 from ..services.qa_training_service import build_qa_training, submit_agent_appeal, submit_knowledge_gap
@@ -81,6 +83,13 @@ def today_workbench(db: Session = Depends(get_db), current_user=Depends(get_curr
 @router.get("/control-tower")
 def control_tower(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     return build_control_tower(db, current_user)
+
+
+@router.post("/control-tower/actions", response_model=LiteControlTowerActionResponse)
+def control_tower_action(payload: LiteControlTowerActionRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    with managed_session(db):
+        result = submit_control_tower_action(db, current_user, payload)
+    return result
 
 
 @router.get("/qa-training")

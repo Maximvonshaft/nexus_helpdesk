@@ -586,6 +586,32 @@ class LiteQAKnowledgeGapResponse(APIModel):
     submitted_at: datetime
 
 
+class LiteControlTowerActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_key: str = Field(min_length=1, max_length=120)
+    label: Optional[str] = Field(default=None, max_length=160)
+    href: Optional[str] = Field(default=None, max_length=160)
+    count: Optional[int] = Field(default=None, ge=0)
+    note: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("action_key", "label", "href", "note", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class LiteControlTowerActionResponse(APIModel):
+    ok: bool
+    task_id: int
+    created: bool
+    status: str
+    action_key: str
+    submitted_at: datetime
+
+
 class LiteMetaRead(APIModel):
     users: list[UserRead]
     teams: list[TeamRead]

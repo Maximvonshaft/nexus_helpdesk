@@ -218,15 +218,33 @@ def test_control_tower_manager_contract_uses_real_operational_counts(tmp_path):
     try:
         client = TestClient(app)
         response = client.get("/api/lite/control-tower", headers=_headers(manager))
+        action_response = client.post(
+            "/api/lite/control-tower/actions",
+            headers=_headers(manager),
+            json={
+                "action_key": "assign-unassigned",
+                "label": "调度未分配队列",
+                "href": "/workspace",
+                "count": 1,
+                "note": "Create a manager governance task for unassigned cases.",
+            },
+        )
+        followup = client.get("/api/lite/control-tower", headers=_headers(manager))
+        action_task = db_session.query(OperatorTask).filter(OperatorTask.task_type == "control_tower_action").one()
+        action_audit_count = db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "control_tower.action.submitted", AdminAuditLog.target_id == action_task.id).count()
     finally:
         app.dependency_overrides.pop(get_db, None)
         db_session.close()
         Base.metadata.drop_all(engine)
 
     assert response.status_code == 200, response.text
+    assert action_response.status_code == 200, action_response.text
+    assert followup.status_code == 200, followup.text
     payload = response.json()
+    followup_payload = followup.json()
     kpis = {item["key"]: item for item in payload["kpis"]}
     actions = {item["key"]: item for item in payload["manager_actions"]}
+    followup_actions = {item["key"]: item for item in followup_payload["manager_actions"]}
     channels = {item["key"]: item for item in payload["channel_health"]}
     lanes = {item["key"]: item for item in payload["governance_lanes"]}
     blocks = {item["key"]: item for item in payload["template_blocks"]}
@@ -243,13 +261,31 @@ def test_control_tower_manager_contract_uses_real_operational_counts(tmp_path):
     assert actions["recover-runtime"]["count"] == 2
     assert actions["recover-runtime"]["enabled"] is True
     assert actions["fix-email-route"]["enabled"] is False
+    assert actions["provider-ops"]["count"] == 2
+    assert actions["speedaf-wizard"]["enabled"] is False
     assert channels["email"]["risk"] == 2
     assert payload["team_workload"][0]["active_tickets"] == 3
     assert payload["bulletin_impact"][0]["severity"] == "critical"
     assert lanes["rbac-lens"]["value"] == 1
     assert blocks["kpi-tower"]["status"] == "implemented"
+    assert blocks["provider-ops"]["status"] == "implemented"
+    assert blocks["speedaf-wizard"]["status"] == "implemented"
     assert payload["facts"]["ready_to_reply"] == 2
     assert payload["facts"]["draft_ai_configs"] == 1
+    assert payload["facts"]["control_tower_action_write_endpoint"] == "implemented"
+
+    action_payload = action_response.json()
+    assert action_payload["created"] is True
+    assert action_payload["status"] == "pending"
+    assert action_payload["action_key"] == "assign-unassigned"
+    assert action_task.source_type == "control_tower"
+    assert action_task.source_id == "assign-unassigned"
+    assert action_task.reason_code == "assign-unassigned"
+    assert action_task.assignee_id == manager.id
+    assert action_audit_count == 1
+    assert followup_actions["assign-unassigned"]["action_status"] == "pending"
+    assert followup_actions["assign-unassigned"]["action_task_id"] == action_payload["task_id"]
+    assert followup_payload["facts"]["active_control_tower_actions"] == 1
 
 
 def test_control_tower_requires_management_capability(tmp_path):
@@ -268,6 +304,11 @@ def test_control_tower_requires_management_capability(tmp_path):
     try:
         client = TestClient(app)
         response = client.get("/api/lite/control-tower", headers=_headers(agent))
+        action = client.post(
+            "/api/lite/control-tower/actions",
+            headers=_headers(agent),
+            json={"action_key": "assign-unassigned"},
+        )
     finally:
         app.dependency_overrides.pop(get_db, None)
         db_session.close()
@@ -275,3 +316,5 @@ def test_control_tower_requires_management_capability(tmp_path):
 
     assert response.status_code == 403
     assert response.json()["detail"] == "control_tower_requires_management_capability"
+    assert action.status_code == 403
+    assert action.json()["detail"] == "control_tower_requires_management_capability"

@@ -25,6 +25,8 @@ from ..operator_models import OperatorTask
 from ..utils.time import utc_now
 from ..voice_models import WebchatVoiceSession
 from ..webchat_models import WebchatConversation
+from .audit_service import log_admin_audit
+from .operator_queue import create_operator_task
 from .permissions import (
     CAP_AI_CONFIG_MANAGE,
     CAP_AI_CONFIG_READ,
@@ -62,6 +64,17 @@ CONTROL_TOWER_CAPABILITIES = {
     CAP_AI_CONFIG_READ,
     CAP_AI_CONFIG_MANAGE,
     CAP_USER_MANAGE,
+}
+SPEEDAF_WRITE_CAPABILITIES = {CAP_SPEEDAF_WORK_ORDER_WRITE, CAP_SPEEDAF_ADDRESS_UPDATE_WRITE, CAP_SPEEDAF_CANCEL_WRITE}
+CONTROL_TOWER_ACTIONS: dict[str, dict[str, str]] = {
+    "assign-unassigned": {"capability": CAP_TICKET_ASSIGN, "label": "调度未分配队列", "href": "/workspace"},
+    "clear-sla-risk": {"capability": CAP_TICKET_ASSIGN, "label": "处理 SLA 风险", "href": "/workspace"},
+    "publish-bulletin": {"capability": CAP_BULLETIN_MANAGE, "label": "更新公告口径", "href": "/bulletins"},
+    "recover-runtime": {"capability": CAP_RUNTIME_MANAGE, "label": "恢复 dead 队列", "href": "/runtime"},
+    "fix-email-route": {"capability": CAP_CHANNEL_ACCOUNT_MANAGE, "label": "修复 Email 线路", "href": "/outbound-email"},
+    "review-ai-rules": {"capability": CAP_AI_CONFIG_MANAGE, "label": "复核 AI 配置", "href": "/ai-control"},
+    "provider-ops": {"capability": CAP_CHANNEL_ACCOUNT_MANAGE, "label": "巡检渠道账号", "href": "/accounts"},
+    "speedaf-wizard": {"capability": CAP_SPEEDAF_WORK_ORDER_WRITE, "label": "复核 Speedaf 高危动作", "href": "/workspace"},
 }
 
 
@@ -131,7 +144,7 @@ def _kpi(key: str, label: str, value: int, hint: str, tone: str = "default") -> 
     return {"key": key, "label": label, "value": value, "hint": hint, "tone": tone}
 
 
-def _action(key: str, label: str, count: int, tone: str, next_step: str, href: str, capability: str, capabilities: set[str]) -> dict[str, Any]:
+def _action(key: str, label: str, count: int, tone: str, next_step: str, href: str, capability: str, capabilities: set[str], task: OperatorTask | None = None) -> dict[str, Any]:
     return {
         "key": key,
         "label": label,
@@ -141,6 +154,8 @@ def _action(key: str, label: str, count: int, tone: str, next_step: str, href: s
         "href": href,
         "capability": capability,
         "enabled": capability in capabilities,
+        "action_task_id": task.id if task else None,
+        "action_status": task.status if task else None,
     }
 
 
@@ -180,10 +195,82 @@ def _template_block(key: str, label: str, backend_contract: str, status_value: s
     return {"key": key, "label": label, "backend_contract": backend_contract, "status": status_value, "evidence": evidence, "href": href}
 
 
+def _active_control_tower_actions(db: Session, user: User) -> dict[str, OperatorTask]:
+    rows = (
+        _visible_operator_task_query(db, user)
+        .filter(OperatorTask.task_type == "control_tower_action", OperatorTask.status.notin_(TERMINAL_TASK_STATUSES))
+        .order_by(OperatorTask.updated_at.desc(), OperatorTask.id.desc())
+        .all()
+    )
+    tasks: dict[str, OperatorTask] = {}
+    for task in rows:
+        if task.source_id:
+            tasks.setdefault(task.source_id, task)
+    return tasks
+
+
 def _dead_runtime_count(db: Session) -> int:
     jobs = int(db.query(func.count(BackgroundJob.id)).filter(BackgroundJob.status == JobStatus.dead).scalar() or 0)
     outbound = int(db.query(func.count(TicketOutboundMessage.id)).filter(TicketOutboundMessage.status == MessageStatus.dead).scalar() or 0)
     return jobs + outbound
+
+
+def submit_control_tower_action(db: Session, current_user: User, payload) -> dict[str, Any]:
+    capabilities = resolve_capabilities(current_user, db)
+    if not (capabilities & CONTROL_TOWER_CAPABILITIES):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="control_tower_requires_management_capability")
+
+    action_key = str(payload.action_key).strip()
+    action = CONTROL_TOWER_ACTIONS.get(action_key)
+    if action is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="control_tower_action_not_found")
+    required_capability = action["capability"]
+    if required_capability not in capabilities:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="control_tower_action_requires_capability")
+
+    label = payload.label or action["label"]
+    href = payload.href or action["href"]
+    count = int(payload.count or 0)
+    note = payload.note or f"{label}: {count} current item(s)"
+    task_payload = {
+        "action_key": action_key,
+        "label": label,
+        "href": href,
+        "count": count,
+        "capability": required_capability,
+        "note": note,
+        "submitted_by": current_user.id,
+        "submitted_at": utc_now().isoformat(),
+    }
+    task, created = create_operator_task(
+        db,
+        source_type="control_tower",
+        task_type="control_tower_action",
+        source_id=action_key,
+        reason_code=action_key,
+        priority=20 if count else 60,
+        payload=task_payload,
+        note=note,
+    )
+    task.assignee_id = current_user.id
+    task.updated_at = utc_now()
+    log_admin_audit(
+        db,
+        actor_id=current_user.id,
+        action="control_tower.action.submitted",
+        target_type="operator_task",
+        target_id=task.id,
+        new_value={"created": created, **task_payload},
+    )
+    db.flush()
+    return {
+        "ok": True,
+        "task_id": task.id,
+        "created": created,
+        "status": task.status,
+        "action_key": action_key,
+        "submitted_at": task.updated_at,
+    }
 
 
 def _team_workload(db: Session, user: User, now: datetime) -> list[dict[str, Any]]:
@@ -304,6 +391,8 @@ def build_control_tower(db: Session, current_user: User) -> dict[str, Any]:
     active_users = int(db.query(func.count(User.id)).filter(User.is_active.is_(True)).scalar() or 0)
     capability_overrides = int(db.query(func.count(UserCapabilityOverride.id)).scalar() or 0)
     recent_audit = int(db.query(func.count(AdminAuditLog.id)).filter(AdminAuditLog.created_at >= now - timedelta(hours=24)).scalar() or 0)
+    active_control_actions = _active_control_tower_actions(db, current_user)
+    speedaf_capability_count = len(capabilities & SPEEDAF_WRITE_CAPABILITIES)
 
     return {
         "generated_at": now.isoformat(),
@@ -319,12 +408,14 @@ def build_control_tower(db: Session, current_user: User) -> dict[str, Any]:
             _kpi("active_bulletins", "生效公告", active_bulletins, "当前会影响客服口径的公告", _tone(critical_bulletins, danger=1, warning=1 if active_bulletins else 99)),
         ],
         "manager_actions": [
-            _action("assign-unassigned", "调度未分配队列", unassigned, _tone(unassigned, danger=10, warning=1), "按团队负载和 SLA 风险分配给 Agent", "/workspace", CAP_TICKET_ASSIGN, capabilities),
-            _action("clear-sla-risk", "处理 SLA 风险", sla_risk, _tone(sla_risk, danger=3, warning=1), "进入工单台优先处理临近 SLA 工单", "/workspace", CAP_TICKET_ASSIGN, capabilities),
-            _action("publish-bulletin", "更新公告口径", critical_bulletins, _tone(critical_bulletins, danger=1, warning=1), "发布或调整影响客户回复的紧急公告", "/bulletins", CAP_BULLETIN_MANAGE, capabilities),
-            _action("recover-runtime", "恢复 dead 队列", dead_runtime, _tone(dead_runtime, danger=1, warning=1), "进入运行恢复中心执行受控重排", "/runtime", CAP_RUNTIME_MANAGE, capabilities),
-            _action("fix-email-route", "修复 Email 线路", risky_email_accounts, _tone(risky_email_accounts, danger=1, warning=1), "检查 SMTP 账号测试、健康状态和发送失败", "/outbound-email", CAP_CHANNEL_ACCOUNT_MANAGE, capabilities),
-            _action("review-ai-rules", "复核 AI 配置", draft_ai_configs, _tone(draft_ai_configs, danger=3, warning=1), "发布、回滚或补齐 Persona / Knowledge / Policy", "/ai-control", CAP_AI_CONFIG_MANAGE, capabilities),
+            _action("assign-unassigned", "调度未分配队列", unassigned, _tone(unassigned, danger=10, warning=1), "按团队负载和 SLA 风险分配给 Agent", "/workspace", CAP_TICKET_ASSIGN, capabilities, active_control_actions.get("assign-unassigned")),
+            _action("clear-sla-risk", "处理 SLA 风险", sla_risk, _tone(sla_risk, danger=3, warning=1), "进入工单台优先处理临近 SLA 工单", "/workspace", CAP_TICKET_ASSIGN, capabilities, active_control_actions.get("clear-sla-risk")),
+            _action("publish-bulletin", "更新公告口径", critical_bulletins, _tone(critical_bulletins, danger=1, warning=1), "发布或调整影响客户回复的紧急公告", "/bulletins", CAP_BULLETIN_MANAGE, capabilities, active_control_actions.get("publish-bulletin")),
+            _action("recover-runtime", "恢复 dead 队列", dead_runtime, _tone(dead_runtime, danger=1, warning=1), "进入运行恢复中心执行受控重排", "/runtime", CAP_RUNTIME_MANAGE, capabilities, active_control_actions.get("recover-runtime")),
+            _action("fix-email-route", "修复 Email 线路", risky_email_accounts, _tone(risky_email_accounts, danger=1, warning=1), "检查 SMTP 账号测试、健康状态和发送失败", "/outbound-email", CAP_CHANNEL_ACCOUNT_MANAGE, capabilities, active_control_actions.get("fix-email-route")),
+            _action("review-ai-rules", "复核 AI 配置", draft_ai_configs, _tone(draft_ai_configs, danger=3, warning=1), "发布、回滚或补齐 Persona / Knowledge / Policy", "/ai-control", CAP_AI_CONFIG_MANAGE, capabilities, active_control_actions.get("review-ai-rules")),
+            _action("provider-ops", "巡检渠道账号", risky_email_accounts + risky_channel_accounts, _tone(risky_email_accounts + risky_channel_accounts, danger=1, warning=1), "生成渠道治理任务并进入账号健康维护", "/accounts", CAP_CHANNEL_ACCOUNT_MANAGE, capabilities, active_control_actions.get("provider-ops")),
+            _action("speedaf-wizard", "复核 Speedaf 高危动作", speedaf_capability_count, _tone(speedaf_capability_count, danger=3, warning=1), "创建 Speedaf 高风险动作复核任务，再进入受控工单台处理", "/workspace", CAP_SPEEDAF_WORK_ORDER_WRITE, capabilities, active_control_actions.get("speedaf-wizard")),
         ],
         "team_workload": _team_workload(db, current_user, now),
         "channel_health": [
@@ -346,8 +437,8 @@ def build_control_tower(db: Session, current_user: User) -> dict[str, Any]:
             _template_block("kpi-tower", "KPI / Tower Tabs", "/api/lite/control-tower", "implemented", "来自 tickets、operator_tasks、voice_sessions、runtime queues", "/control-tower"),
             _template_block("bulletin-impact", "Bulletin Impact", "/api/lookups/bulletins + market_bulletins", "implemented", "按 severity/category 聚合当前生效公告", "/bulletins"),
             _template_block("rbac-product", "RBAC Product Lens", "users + user_capability_overrides", "implemented", "展示 active users、override 数和受控入口", "/users"),
-            _template_block("provider-ops", "Provider / Channel Ops", "channel_accounts + outbound_email_accounts", "linked", "Control Tower 展示健康聚合，具体维护仍在账号页面", "/accounts"),
-            _template_block("speedaf-wizard", "Speedaf Wizard", "tool capability gates", "linked", "高风险 Speedaf 动作仍在 ticket/workspace 中受控执行", "/workspace"),
+            _template_block("provider-ops", "Provider / Channel Ops", "POST /api/lite/control-tower/actions + channel_accounts + outbound_email_accounts", "implemented", "Control Tower 可创建渠道治理任务，并链接账号健康维护页面", "/accounts"),
+            _template_block("speedaf-wizard", "Speedaf Wizard", "POST /api/lite/control-tower/actions + Speedaf capability gates", "implemented", "Control Tower 可创建 Speedaf 高风险动作复核任务，执行仍受 workspace capability gate 控制", "/workspace"),
             _template_block("empty-error-mobile", "Empty / Error / Mobile States", "frontend route state", "implemented", "页面使用 loading/error/empty state 和 responsive grid", "/control-tower"),
         ],
         "facts": {
@@ -367,6 +458,8 @@ def build_control_tower(db: Session, current_user: User) -> dict[str, Any]:
             "active_users": active_users,
             "capability_overrides": capability_overrides,
             "recent_admin_audit_24h": recent_audit,
-            "speedaf_write_capabilities": sorted(capabilities & {CAP_SPEEDAF_WORK_ORDER_WRITE, CAP_SPEEDAF_ADDRESS_UPDATE_WRITE, CAP_SPEEDAF_CANCEL_WRITE}),
+            "speedaf_write_capabilities": sorted(capabilities & SPEEDAF_WRITE_CAPABILITIES),
+            "active_control_tower_actions": len(active_control_actions),
+            "control_tower_action_write_endpoint": "implemented",
         },
     }

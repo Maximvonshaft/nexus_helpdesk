@@ -18,6 +18,16 @@ This stacked PR lands the v1.7.8 `Control Tower / Governance Console` as a real 
 
 This does not complete all 33 visible template screens. It closes the next Operations template block and keeps QA/Training Loop, broader visual parity polish and remaining template registry migration active.
 
+## Follow-up Closure
+
+Follow-up branch `codex/control-tower-governance-actions` adds the governance action write path:
+
+- `POST /api/lite/control-tower/actions`
+- persists Control Tower actions as `operator_tasks.task_type=control_tower_action`
+- writes admin audit evidence through `AdminAuditLog(action=control_tower.action.submitted)`
+- updates `/api/lite/control-tower` so active action task status is reflected back into manager actions
+- marks Provider / Channel Ops and Speedaf Wizard template blocks as `implemented` through the governance action contract plus their existing capability-gated execution pages
+
 ## Local Validation
 
 Run locally because GitHub Actions are disabled for this repo session:

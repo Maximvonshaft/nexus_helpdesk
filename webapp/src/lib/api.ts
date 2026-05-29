@@ -9,6 +9,7 @@ import type {
   ChannelAccount,
   ChannelOnboardingTaskList,
   ControlTower,
+  ControlTowerActionResult,
   LiteMeta,
   Market,
   ProductionReadiness,
@@ -362,6 +363,10 @@ export const api = {
   caseDetail: (ticketId: number) => request<CaseDetail>(`/api/tickets/${ticketId}/summary`),
   todayWorkbench: () => request<TodayWorkbench>('/api/lite/today-workbench'),
   controlTower: () => request<ControlTower>('/api/lite/control-tower'),
+  submitControlTowerAction: (payload: { action_key: string; label?: string | null; href?: string | null; count?: number | null; note?: string | null }) => request<ControlTowerActionResult>('/api/lite/control-tower/actions', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   qaTraining: () => request<QATraining>('/api/lite/qa-training'),
   submitQATrainingAppeal: (payload: { sample_key: string; ticket_id: number; channel?: string | null; sample?: string | null; current_score?: number | null; requested_score?: number | null; reason: string; evidence?: string[] }) => request<QATrainingAppealResult>('/api/lite/qa-training/appeals', {
     method: 'POST',

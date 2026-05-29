@@ -154,6 +154,8 @@ export interface ControlTowerAction {
   href: string
   capability: string
   enabled: boolean
+  action_task_id?: number | null
+  action_status?: string | null
 }
 
 export interface ControlTowerTeamWorkload {
@@ -215,7 +217,16 @@ export interface ControlTower {
   bulletin_impact: ControlTowerBulletinImpact[]
   governance_lanes: ControlTowerGovernanceLane[]
   template_blocks: ControlTowerTemplateBlock[]
-  facts: Record<string, number | string[]>
+  facts: Record<string, number | string | string[]>
+}
+
+export interface ControlTowerActionResult {
+  ok: boolean
+  task_id: number
+  created: boolean
+  status: string
+  action_key: string
+  submitted_at: string
 }
 
 export interface QATrainingKpi {

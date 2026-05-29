@@ -1,5 +1,5 @@
 import { createRoute, redirect, useNavigate } from '@tanstack/react-router'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
@@ -37,6 +37,12 @@ function ControlTowerPage() {
     queryFn: api.controlTower,
     refetchInterval: autoRefresh.enabled ? 30000 : false,
   })
+  const actionMutation = useMutation({
+    mutationFn: api.submitControlTowerAction,
+    onSuccess: async () => {
+      await refresh()
+    },
+  })
 
   const goTarget = (href: string) => {
     if (href === '/workspace') navigate({ to: '/workspace' })
@@ -61,6 +67,16 @@ function ControlTowerPage() {
     ])
   }
 
+  const submitAction = (action: ControlTowerAction) => {
+    actionMutation.mutate({
+      action_key: action.key,
+      label: action.label,
+      href: action.href,
+      count: action.count,
+      note: action.next,
+    })
+  }
+
   return (
     <AppShell>
       <PageHeader
@@ -73,6 +89,7 @@ function ControlTowerPage() {
       <RequireCapability requirement={routeAccess['/control-tower']}>
         {tower.isLoading ? <Skeleton lines={6} /> : null}
         {tower.isError ? <ErrorSummary title="Control Tower 加载失败" errors={[tower.error instanceof Error ? tower.error.message : '请稍后重试']} action={<Button variant="secondary" onClick={() => void refresh()}>重试</Button>} /> : null}
+        {actionMutation.isError ? <ErrorSummary title="治理任务创建失败" errors={[actionMutation.error instanceof Error ? actionMutation.error.message : '请检查权限或稍后重试']} /> : null}
         {tower.data ? (
           <div className="stack" data-testid="control-tower-template-blocks">
             <div className="metrics-grid metrics-grid-wide" data-testid="control-tower-real-kpis">
@@ -93,9 +110,18 @@ function ControlTowerPage() {
                       <div className="badges"><Badge tone={safeTone(action.tone)}>{action.count}</Badge><Badge>{sanitizeDisplayText(action.capability)}</Badge></div>
                       <strong>{sanitizeDisplayText(action.label)}</strong>
                       <span>{sanitizeDisplayText(action.next)}</span>
-                      <Button variant={action.tone === 'danger' || action.tone === 'warning' ? 'primary' : 'secondary'} disabled={!action.enabled} onClick={() => goTarget(action.href)}>
-                        {action.enabled ? '打开处理' : '当前角色不可用'}
-                      </Button>
+                      {action.action_status ? <Badge tone="warning">{sanitizeDisplayText(action.action_status)}</Badge> : null}
+                      <div className="button-row">
+                        <Button
+                          data-testid="control-tower-action-command"
+                          variant={action.tone === 'danger' || action.tone === 'warning' ? 'primary' : 'secondary'}
+                          disabled={!action.enabled || actionMutation.isPending || Boolean(action.action_task_id)}
+                          onClick={() => submitAction(action)}
+                        >
+                          {action.action_task_id ? '已建任务' : action.enabled ? '创建任务' : '当前角色不可用'}
+                        </Button>
+                        <Button variant="secondary" disabled={!action.enabled} onClick={() => goTarget(action.href)}>打开处理</Button>
+                      </div>
                     </div>
                   ))}
                 </div>
