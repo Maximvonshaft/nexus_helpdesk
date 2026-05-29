@@ -184,6 +184,18 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
     assert EventType.outbound_draft_saved.value in event_types
     assert EventType.outbound_queued.value in event_types
 
+    summary = client.get(f"/api/tickets/{ticket.id}/summary", headers=headers)
+    assert summary.status_code == 200, summary.text
+    email_thread = summary.json()["email_thread"]
+    assert email_thread["is_email_ticket"] is True
+    assert email_thread["recipient"] == "customer@example.com"
+    assert email_thread["source_chat_id"] == "customer@example.com"
+    assert email_thread["thread_id"].startswith("nexusdesk-outbound-")
+    assert email_thread["identity_status"] == "provider_message_linked"
+    assert email_thread["latest_outbound_status"] == "pending"
+    assert email_thread["latest_provider_status"] == "queued"
+    assert email_thread["latest_provider_message_id"] == email_thread["thread_id"]
+
     rows = db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).all()
     assert {row.status for row in rows} == {MessageStatus.draft, MessageStatus.pending}
     assert db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_draft_saved).count() == 1

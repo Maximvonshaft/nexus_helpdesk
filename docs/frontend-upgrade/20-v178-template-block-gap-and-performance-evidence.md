@@ -12,7 +12,7 @@ The previous PRs connected real WebChat, WebCall, and Email API capabilities, bu
 
 - WebChat: verify visual parity for queue, message stream, customer profile, AI suggestions, handoff, session actions.
 - WebCall: verify visual parity for call queue, sessions, live console, transcript, notes, customer profile, identity verification, AI suggestions, handoff, session actions.
-- Email: verify visual parity for queue, thread, composer, draft/send/audit state.
+- Email: verify visual parity for queue, thread, composer, draft/send/audit state. This branch closes the mailbox/thread identity sub-block; see `docs/frontend-upgrade/23-email-thread-identity-template-parity-evidence.md`.
 - Today Workbench: compare `/` against v1.7.8 Today Workbench blocks.
 
 ## Next PR

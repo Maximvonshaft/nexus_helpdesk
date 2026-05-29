@@ -241,6 +241,18 @@ export interface CaseDetail {
   missing_fields?: string | null
   customer_update?: string | null
   resolution_summary?: string | null
+  email_thread?: {
+    is_email_ticket: boolean
+    recipient?: string | null
+    source_chat_id?: string | null
+    thread_id?: string | null
+    identity_status: string
+    latest_outbound_message_id?: number | null
+    latest_outbound_status?: string | null
+    latest_provider_status?: string | null
+    latest_provider_message_id?: string | null
+    source: string
+  } | null
   evidence_summary?: EvidenceSummary
   attachments_count?: number
   openclaw_transcript_count?: number

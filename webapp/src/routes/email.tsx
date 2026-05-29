@@ -183,6 +183,32 @@ function timelineBody(item: Record<string, unknown>) {
   return sanitizeDisplayText(String(item.body || item.summary || item.note || item.event_type || item.id || ''))
 }
 
+function emailIdentityTone(status?: string | null) {
+  if (status === 'provider_message_linked' || status === 'ticket_source_linked') return 'success'
+  if (status === 'recipient_only') return 'warning'
+  return 'danger'
+}
+
+function EmailThreadIdentityPanel({ activeCase }: { activeCase: CaseDetail }) {
+  const identity = activeCase.email_thread
+  const recipient = identity?.recipient || emailRecipient(activeCase)
+  return (
+    <div className="stack" data-testid="email-template-thread-identity">
+      <div className="badges">
+        <Badge tone={emailIdentityTone(identity?.identity_status)}>{labelize(identity?.identity_status || 'missing')}</Badge>
+        {identity?.latest_outbound_status ? <Badge>{labelize(identity.latest_outbound_status)}</Badge> : null}
+        {identity?.latest_provider_status ? <Badge tone="warning">provider {labelize(identity.latest_provider_status)}</Badge> : null}
+      </div>
+      <div className="kv-grid">
+        <div className="kv"><label>Mailbox recipient</label><div>{sanitizeDisplayText(recipient || '未配置')}</div></div>
+        <div className="kv"><label>Inbound source</label><div>{sanitizeDisplayText(identity?.source_chat_id || activeCase.preferred_reply_contact || '未绑定')}</div></div>
+        <div className="kv"><label>Thread identity</label><div>{sanitizeDisplayText(identity?.thread_id || '未绑定 provider thread')}</div></div>
+        <div className="kv"><label>Latest outbound</label><div>{sanitizeDisplayText(identity?.latest_outbound_message_id ? `#${identity.latest_outbound_message_id}` : '暂无')}</div></div>
+      </div>
+    </div>
+  )
+}
+
 function EmailWorkbenchPage() {
   const autoRefresh = useAutoRefresh(true)
   const client = useQueryClient()
@@ -308,6 +334,7 @@ function EmailWorkbenchPage() {
                       <Badge tone={priorityTone(activeCase.priority)}>{labelize(activeCase.priority)}</Badge>
                     </div>
                   </div>
+                  <EmailThreadIdentityPanel activeCase={activeCase} />
                   <div className="kv-grid">
                     <div className="kv"><label>Email</label><div>{sanitizeDisplayText(emailRecipient(activeCase) || '未配置')}</div></div>
                     <div className="kv"><label>首选渠道</label><div>{sanitizeDisplayText(activeCase.preferred_reply_channel || '-')}</div></div>

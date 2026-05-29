@@ -10,6 +10,8 @@ const apiClient = readFileSync(resolve(root, 'src/lib/api.ts'), 'utf8')
 const rbac = readFileSync(resolve(root, 'src/lib/rbac.ts'), 'utf8')
 const appShell = readFileSync(resolve(root, 'src/layouts/AppShell.tsx'), 'utf8')
 const commandPalette = readFileSync(resolve(root, 'src/components/ui/CommandPalette.tsx'), 'utf8')
+const types = readFileSync(resolve(root, 'src/lib/types.ts'), 'utf8')
+const backendSummary = readFileSync(resolve(root, '../backend/app/api/ticket_perf.py'), 'utf8')
 
 test('email workbench route uses unified routeAccess RBAC semantics', () => {
   assert.match(router, /EmailRoute/)
@@ -45,4 +47,15 @@ test('email workbench closes draft save, outbound send, and timeline refresh loo
   assert.match(emailRoute, /invalidateQueries\(\{ queryKey: \['ticketTimeline', activeCase\.id\] \}\)/)
   assert.match(emailRoute, /保存草稿和发送都会进入 ticket timeline\/ticket event audit/)
   assert.doesNotMatch(emailRoute, /\bfetch\s*\(/)
+})
+
+test('email workbench exposes mailbox thread identity from ticket summary', () => {
+  assert.match(types, /email_thread\?: \{[\s\S]*identity_status: string[\s\S]*latest_provider_status\?: string \| null/)
+  assert.match(backendSummary, /"email_thread": _email_thread_identity\(ticket, customer, latest_outbound\)/)
+  assert.match(emailRoute, /function EmailThreadIdentityPanel/)
+  assert.match(emailRoute, /data-testid="email-template-thread-identity"/)
+  assert.match(emailRoute, /identity\?\.source_chat_id/)
+  assert.match(emailRoute, /identity\?\.thread_id/)
+  assert.match(emailRoute, /identity\?\.latest_outbound_message_id/)
+  assert.match(emailRoute, /identity\?\.latest_provider_status/)
 })

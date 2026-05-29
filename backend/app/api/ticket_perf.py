@@ -94,6 +94,35 @@ def _team_summary(row: Team | None) -> dict[str, Any] | None:
     return {"id": row.id, "name": row.name}
 
 
+def _email_thread_identity(ticket: Ticket, customer: Customer | None, latest_outbound: TicketOutboundMessage | None) -> dict[str, Any]:
+    source_channel = _value(ticket.source_channel)
+    preferred_channel = str(ticket.preferred_reply_channel or "").lower()
+    recipient = ticket.preferred_reply_contact or (customer.email if customer else None)
+    source_chat_id = ticket.source_chat_id
+    provider_message_id = latest_outbound.provider_message_id if latest_outbound else None
+    thread_id = provider_message_id or source_chat_id
+    if provider_message_id:
+        identity_status = "provider_message_linked"
+    elif source_chat_id:
+        identity_status = "ticket_source_linked"
+    elif recipient:
+        identity_status = "recipient_only"
+    else:
+        identity_status = "missing"
+    return {
+        "is_email_ticket": bool(source_channel == "email" or preferred_channel == "email" or recipient),
+        "recipient": recipient,
+        "source_chat_id": source_chat_id,
+        "thread_id": thread_id,
+        "identity_status": identity_status,
+        "latest_outbound_message_id": latest_outbound.id if latest_outbound else None,
+        "latest_outbound_status": _value(latest_outbound.status) if latest_outbound else None,
+        "latest_provider_status": latest_outbound.provider_status if latest_outbound else None,
+        "latest_provider_message_id": provider_message_id,
+        "source": "ticket_summary",
+    }
+
+
 def _load_ticket_tags(db: Session, ticket_id: int) -> list[dict[str, Any]]:
     """Best-effort tag summary without loading legacy detail relationships."""
 
@@ -367,6 +396,7 @@ def get_ticket_summary(ticket_id: int, db: Session = Depends(get_db), current_us
         },
         "latest_ai_summary": latest_ai.summary if latest_ai else ticket.ai_summary,
         "latest_outbound_status": _value(latest_outbound.status) if latest_outbound else None,
+        "email_thread": _email_thread_identity(ticket, customer, latest_outbound),
         "latest_timeline_event": {
             "id": latest_event.id,
             "event_type": _value(latest_event.event_type),
