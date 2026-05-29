@@ -44,6 +44,8 @@ test('internal webcall routes are intentionally classified', () => {
   assert.match(rbac, /'\/webcall': \{ allOf: \[CAPABILITIES\.webcallVoiceQueueView\] \}/)
   assert.match(appShell, /to: '\/webcall-ai-demo'[\s\S]*access: routeAccess\['\/webcall-ai-demo'\]/)
   assert.match(rbac, /'\/webcall-ai-demo': \{ allOf: \[CAPABILITIES\.runtimeManage\] \}/)
+  assert.match(appShell, /to: '\/webcall-ai-monitor'[\s\S]*access: routeAccess\['\/webcall-ai-monitor'\]/)
+  assert.match(rbac, /'\/webcall-ai-monitor': \{ allOf: \[CAPABILITIES\.runtimeRead\] \}/)
   assert.doesNotMatch(appShell, /to: '\/webchat-voice'/)
 })
 
@@ -56,6 +58,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'email.tsx',
     'webcall-operator.tsx',
     'runtime.tsx',
+    'webcall-ai-monitor.tsx',
     'webcall-ai-demo.tsx',
     'provider-credentials.tsx',
     'accounts.tsx',

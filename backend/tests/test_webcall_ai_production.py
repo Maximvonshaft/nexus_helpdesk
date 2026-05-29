@@ -33,15 +33,19 @@ def ensure_schema():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        user = User(id=9701, username="webcall_ai_admin", display_name="WebCall AI Admin", password_hash="test", role=UserRole.admin, is_active=True)
-        existing = db.query(User).filter(User.id == user.id).first()
-        if existing is None:
-            db.add(user)
-        else:
-            existing.username = user.username
-            existing.display_name = user.display_name
-            existing.role = user.role
-            existing.is_active = True
+        for user in [
+            User(id=9701, username="webcall_ai_admin", display_name="WebCall AI Admin", password_hash="test", role=UserRole.admin, is_active=True),
+            User(id=9702, username="webcall_ai_auditor", display_name="WebCall AI Auditor", password_hash="test", role=UserRole.auditor, is_active=True),
+            User(id=9703, username="webcall_ai_manager", display_name="WebCall AI Manager", password_hash="test", role=UserRole.manager, is_active=True),
+        ]:
+            existing = db.query(User).filter(User.id == user.id).first()
+            if existing is None:
+                db.add(user)
+            else:
+                existing.username = user.username
+                existing.display_name = user.display_name
+                existing.role = user.role
+                existing.is_active = True
         db.commit()
     finally:
         db.close()
@@ -234,6 +238,27 @@ def test_admin_health_reports_smoke_readiness_block():
     ]:
         assert key in readiness
     assert readiness["final_status"] in {"blocked", "degraded", "ready_for_internal_smoke"}
+
+
+def test_admin_health_allows_runtime_read_auditor_without_runtime_manage():
+    response = TestClient(app).get("/api/admin/webcall-ai/health", headers=_admin_headers(9702))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["readiness"]["final_status"] in {"blocked", "degraded", "ready_for_internal_smoke"}
+
+
+def test_admin_health_rejects_manager_without_runtime_read():
+    response = TestClient(app).get("/api/admin/webcall-ai/health", headers=_admin_headers(9703))
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Not authorized to read runtime"
+
+
+def test_admin_force_end_still_requires_runtime_manage():
+    response = TestClient(app).post("/api/admin/webcall-ai/sessions/wv_missing/force-end", headers=_admin_headers(9702))
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Not authorized to manage runtime"
 
 
 def test_fake_orchestrator_and_tool_registry_contract():

@@ -10,6 +10,7 @@ import { Route as WebchatVoiceRoute } from '@/routes/webchat-voice'
 import { Route as WebCallOperatorRoute } from '@/routes/webcall-operator'
 import { Route as WebCallRoute } from '@/routes/webcall'
 import { Route as WebCallAIProductionRoute } from '@/routes/webcall-ai'
+import { Route as WebCallAIMonitorRoute } from '@/routes/webcall-ai-monitor'
 import { Route as WebCallAIDemoRoute } from '@/routes/webcall-ai-demo'
 import { Route as ProviderCredentialsRoute } from '@/routes/provider-credentials'
 import { Route as BulletinsRoute } from '@/routes/bulletins'
@@ -34,6 +35,7 @@ const routeTree = RootRoute.addChildren([
   // Public/customer WebCall room; linked from widget runtime with visitor token context.
   WebCallRoute,
   WebCallAIProductionRoute,
+  WebCallAIMonitorRoute,
   // Internal ops-only AI sandbox; AppShell exposes it only to ops-capable users.
   WebCallAIDemoRoute,
   ProviderCredentialsRoute,

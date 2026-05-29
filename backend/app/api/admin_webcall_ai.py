@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..services.permissions import ensure_can_manage_runtime, ensure_ticket_visible
+from ..schemas import WebCallAIEventsRead, WebCallAIHealthRead, WebCallAISessionDetailRead, WebCallAISessionListRead
+from ..services.permissions import ensure_can_manage_runtime, ensure_can_read_runtime, ensure_ticket_visible
 from ..services.webcall_ai_production.agent_worker import health as worker_health
 from ..services.webcall_ai_production.event_service import write_event
 from ..services.webcall_ai_production.session_service import TERMINAL_STATUSES, get_session, list_events
@@ -17,19 +18,20 @@ from .deps import get_current_user
 router = APIRouter(prefix="/api/admin/webcall-ai", tags=["admin-webcall-ai"])
 
 
-@router.get("/health")
+@router.get("/health", response_model=WebCallAIHealthRead)
 def read_admin_webcall_ai_health(db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict:
-    ensure_can_manage_runtime(current_user, db)
+    ensure_can_read_runtime(current_user, db)
     return worker_health()
 
 
-@router.get("/sessions")
+@router.get("/sessions", response_model=WebCallAISessionListRead)
 def list_admin_webcall_ai_sessions(
     status: str = Query(default="active"),
     limit: int = Query(default=50, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ) -> dict:
+    ensure_can_read_runtime(current_user, db)
     query = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.mode == "livekit_ai_agent")
     if status == "active":
         query = query.filter(WebchatVoiceSession.status.notin_(list(TERMINAL_STATUSES)))
@@ -47,8 +49,9 @@ def list_admin_webcall_ai_sessions(
     return {"items": items}
 
 
-@router.get("/sessions/{session_public_id}")
+@router.get("/sessions/{session_public_id}", response_model=WebCallAISessionDetailRead)
 def read_admin_webcall_ai_session(session_public_id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict:
+    ensure_can_read_runtime(current_user, db)
     result = get_session(db, session_public_id, require_visitor_token=False)
     ticket = db.query(Ticket).filter(Ticket.id == result["session"]["ticket_id"]).first()
     if ticket is not None:
@@ -56,8 +59,9 @@ def read_admin_webcall_ai_session(session_public_id: str, db: Session = Depends(
     return result
 
 
-@router.get("/sessions/{session_public_id}/events")
+@router.get("/sessions/{session_public_id}/events", response_model=WebCallAIEventsRead)
 def read_admin_webcall_ai_events(session_public_id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict:
+    ensure_can_read_runtime(current_user, db)
     result = list_events(db, session_public_id, require_visitor_token=False)
     ticket = db.query(Ticket).filter(Ticket.id == result["session"]["ticket_id"]).first()
     if ticket is not None:
@@ -67,6 +71,7 @@ def read_admin_webcall_ai_events(session_public_id: str, db: Session = Depends(g
 
 @router.post("/sessions/{session_public_id}/force-end")
 def force_end_admin_webcall_ai_session(session_public_id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict:
+    ensure_can_manage_runtime(current_user, db)
     result = get_session(db, session_public_id, require_visitor_token=False)
     ticket = db.query(Ticket).filter(Ticket.id == result["session"]["ticket_id"]).first()
     if ticket is not None:

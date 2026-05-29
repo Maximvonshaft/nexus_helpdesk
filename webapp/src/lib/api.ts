@@ -285,6 +285,73 @@ export type WebCallAIDemoTurn = {
   created_at?: string | null
 }
 
+export type WebCallAIReadiness = {
+  livekit_configured: boolean
+  stt_configured: boolean
+  llm_configured: boolean
+  tts_configured: boolean
+  tracking_bridge_configured: boolean
+  kill_switch: boolean
+  rollout_mode: string
+  fake_heartbeat_enabled: boolean
+  recording_enabled: boolean
+  raw_audio_persistence: boolean
+  dangerous_write_actions_enabled: boolean
+  blockers: string[]
+  degraded: string[]
+  final_status: string
+}
+
+export type WebCallAIHealth = {
+  ok: boolean
+  agent_enabled: boolean
+  provider_profile: string
+  stt_provider: string
+  llm_provider: string
+  tts_provider: string
+  status: string
+  smoke_status: string
+  readiness: WebCallAIReadiness
+  kill_switch: boolean
+  rollout_mode: string
+  livekit_configured: boolean
+  stt_configured: boolean
+  llm_configured: boolean
+  tts_configured: boolean
+  provider_configured: boolean
+  tracking_bridge_configured: boolean
+  fake_heartbeat_enabled: boolean
+  recording_enabled: boolean
+  raw_audio_persistence: boolean
+  dangerous_write_actions_enabled: boolean
+  active_sessions: number
+  stale_leases: number
+  failed_sessions: number
+  last_heartbeat?: string | null
+}
+
+export type WebCallAIAdminSession = {
+  public_id: string
+  status: string
+  provider: string
+  room_name: string
+  mode: string
+  conversation_id: number
+  ticket_id: number
+  ai_agent_status?: string | null
+  ai_turn_count: number
+  started_at?: string | null
+  ended_at?: string | null
+  expires_at?: string | null
+}
+
+export type WebCallAIAdminEvent = {
+  id: number
+  event_type: string
+  payload: Record<string, unknown>
+  created_at?: string | null
+}
+
 type CaseQueryParams = { q?: string; status?: string; priority?: string; assignee_id?: number; team_id?: number; overdue?: boolean; cursor?: string | null; limit?: number }
 
 function buildCaseSearch(params?: CaseQueryParams) {
@@ -312,6 +379,13 @@ function buildRecoverySearch(params?: { job_type?: string; limit?: number }) {
   const search = new URLSearchParams()
   if (params?.job_type) search.set('job_type', params.job_type)
   if (typeof params?.limit === 'number') search.set('limit', String(params.limit))
+  return search.toString()
+}
+
+function buildWebCallAISessionsSearch(params?: { status?: string; limit?: number }) {
+  const search = new URLSearchParams()
+  search.set('status', params?.status || 'active')
+  search.set('limit', String(params?.limit ?? 50))
   return search.toString()
 }
 
@@ -557,6 +631,10 @@ export const api = {
     body: JSON.stringify({ reason }),
   }),
   webcallAIDemoEvents: (sessionId: string) => request<{ ok: boolean; session: Pick<WebCallAIDemoSession, 'public_id' | 'status' | 'mode'>; events: WebCallAIDemoEvent[]; turns: Array<Pick<WebCallAIDemoTurn, 'turn_index' | 'customer_text_redacted' | 'ai_response_text_redacted' | 'handoff_required' | 'created_at'> & { turn_id: number }> }>(`/api/admin/webcall-ai-demo/sessions/${sessionId}/events`),
+  webcallAIHealth: () => request<WebCallAIHealth>('/api/admin/webcall-ai/health'),
+  webcallAISessions: (params?: { status?: string; limit?: number }) => request<{ items: WebCallAIAdminSession[] }>(`/api/admin/webcall-ai/sessions?${buildWebCallAISessionsSearch(params)}`),
+  webcallAISessionEvents: (sessionId: string) => request<{ ok: boolean; session: WebCallAIAdminSession; events: WebCallAIAdminEvent[] }>(`/api/admin/webcall-ai/sessions/${sessionId}/events`),
+  webcallAIForceEndSession: (sessionId: string) => request<Record<string, unknown>>(`/api/admin/webcall-ai/sessions/${sessionId}/force-end`, { method: 'POST' }),
 
   codexCredentialStatus: () => request<ProviderCredentialStatusResponse>('/api/admin/provider-credentials/codex/status'),
   startCodexAuthorization: (scopes?: string[]) => request<CodexAuthorizationStart>('/api/admin/provider-credentials/codex/authorize', {

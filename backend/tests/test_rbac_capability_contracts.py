@@ -8,6 +8,7 @@ from app.enums import UserRole
 from app.models import User
 from app.services.permissions import (
     ALL_CAPABILITIES,
+    CAP_RUNTIME_READ,
     CAP_SPEEDAF_ADDRESS_UPDATE_WRITE,
     CAP_SPEEDAF_CANCEL_WRITE,
     CAP_SPEEDAF_WORK_ORDER_WRITE,
@@ -34,6 +35,7 @@ def test_tool_and_voice_capabilities_are_in_source_of_truth_catalog():
         CAP_WEBCALL_VOICE_ACCEPT,
         CAP_WEBCALL_VOICE_REJECT,
         CAP_WEBCALL_VOICE_END,
+        CAP_RUNTIME_READ,
     }
 
     assert expected.issubset(set(ALL_CAPABILITIES))
@@ -52,3 +54,11 @@ def test_admin_gets_new_high_risk_capabilities_by_default_but_agent_and_auditor_
     assert high_risk.issubset(resolve_capabilities(_user(UserRole.admin)))
     assert high_risk.isdisjoint(resolve_capabilities(_user(UserRole.agent)))
     assert high_risk.isdisjoint(resolve_capabilities(_user(UserRole.auditor)))
+
+
+def test_runtime_read_is_read_only_monitoring_capability():
+    assert CAP_RUNTIME_READ in ALL_CAPABILITIES
+    assert CAP_RUNTIME_READ in resolve_capabilities(_user(UserRole.admin))
+    assert CAP_RUNTIME_READ in resolve_capabilities(_user(UserRole.auditor))
+    assert CAP_RUNTIME_READ not in resolve_capabilities(_user(UserRole.agent))
+    assert CAP_RUNTIME_READ not in resolve_capabilities(_user(UserRole.manager))

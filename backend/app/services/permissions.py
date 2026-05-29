@@ -26,6 +26,7 @@ CAP_CHANNEL_ACCOUNT_MANAGE = "channel_account.manage"
 CAP_BULLETIN_MANAGE = "bulletin.manage"
 CAP_AI_CONFIG_READ = "ai_config.read"
 CAP_AI_CONFIG_MANAGE = "ai_config.manage"
+CAP_RUNTIME_READ = "runtime.read"
 CAP_RUNTIME_MANAGE = "runtime.manage"
 CAP_MARKET_MANAGE = "market.manage"
 CAP_SPEEDAF_WORK_ORDER_WRITE = "tool:speedaf.work_order.create:write"
@@ -64,6 +65,7 @@ ALL_CAPABILITIES = [
     CAP_BULLETIN_MANAGE,
     CAP_AI_CONFIG_READ,
     CAP_AI_CONFIG_MANAGE,
+    CAP_RUNTIME_READ,
     CAP_RUNTIME_MANAGE,
     CAP_MARKET_MANAGE,
     CAP_SPEEDAF_WORK_ORDER_WRITE,
@@ -114,7 +116,7 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
     },
     UserRole.auditor: {
         CAP_TICKET_READ, CAP_ATTACHMENT_READ_EXTERNAL,
-        CAP_ATTACHMENT_READ_INTERNAL, CAP_CUSTOMER_PROFILE_READ,
+        CAP_ATTACHMENT_READ_INTERNAL, CAP_CUSTOMER_PROFILE_READ, CAP_RUNTIME_READ,
     },
 }
 
@@ -244,6 +246,12 @@ def ensure_can_read_ai_configs(user, db: Session | None = None):
 
 def ensure_can_manage_ai_configs(user, db: Session | None = None):
     ensure_capability(user, CAP_AI_CONFIG_MANAGE, db, message="Not authorized to manage AI config")
+
+
+def ensure_can_read_runtime(user, db: Session | None = None):
+    capabilities = resolve_capabilities(user, db)
+    if CAP_RUNTIME_READ not in capabilities and CAP_RUNTIME_MANAGE not in capabilities:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to read runtime")
 
 
 def ensure_can_manage_runtime(user, db: Session | None = None):

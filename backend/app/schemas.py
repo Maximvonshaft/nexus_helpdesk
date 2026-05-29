@@ -88,6 +88,88 @@ class OpenClawUnresolvedEventRead(APIModel):
     updated_at: datetime
 
 
+class WebCallAIReadinessRead(APIModel):
+    livekit_configured: bool
+    stt_configured: bool
+    llm_configured: bool
+    tts_configured: bool
+    tracking_bridge_configured: bool
+    kill_switch: bool
+    rollout_mode: str
+    fake_heartbeat_enabled: bool
+    recording_enabled: bool
+    raw_audio_persistence: bool
+    dangerous_write_actions_enabled: bool
+    blockers: list[str] = Field(default_factory=list)
+    degraded: list[str] = Field(default_factory=list)
+    final_status: str
+
+
+class WebCallAIHealthRead(APIModel):
+    ok: bool
+    agent_enabled: bool
+    provider_profile: str
+    stt_provider: str
+    llm_provider: str
+    tts_provider: str
+    status: str
+    smoke_status: str
+    readiness: WebCallAIReadinessRead
+    kill_switch: bool
+    rollout_mode: str
+    livekit_configured: bool
+    stt_configured: bool
+    llm_configured: bool
+    tts_configured: bool
+    provider_configured: bool
+    tracking_bridge_configured: bool
+    fake_heartbeat_enabled: bool
+    recording_enabled: bool
+    raw_audio_persistence: bool
+    dangerous_write_actions_enabled: bool
+    active_sessions: int
+    stale_leases: int
+    failed_sessions: int
+    last_heartbeat: Optional[datetime] = None
+
+
+class WebCallAISessionRead(APIModel):
+    public_id: str
+    status: str
+    provider: str
+    room_name: str
+    mode: str
+    conversation_id: int
+    ticket_id: int
+    ai_agent_status: Optional[str] = None
+    ai_turn_count: int
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+
+
+class WebCallAISessionListRead(APIModel):
+    items: list[WebCallAISessionRead] = Field(default_factory=list)
+
+
+class WebCallAISessionDetailRead(APIModel):
+    ok: bool
+    session: WebCallAISessionRead
+
+
+class WebCallAIEventRead(APIModel):
+    id: int
+    event_type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[datetime] = None
+
+
+class WebCallAIEventsRead(APIModel):
+    ok: bool
+    session: WebCallAISessionRead
+    events: list[WebCallAIEventRead] = Field(default_factory=list)
+
+
 class TagRead(APIModel):
 
     id: int
