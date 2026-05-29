@@ -674,6 +674,48 @@ export type OutboundSendPayload = {
   attachment_ids?: number[]
 }
 
+export type InboundEmailPayload = {
+  from_address: string
+  from_name?: string | null
+  to_address?: string | null
+  cc?: string | null
+  subject?: string | null
+  body: string
+  provider?: string | null
+  provider_message_id?: string | null
+  mailbox_thread_id?: string | null
+  mailbox_message_id?: string | null
+  mailbox_references?: string | null
+  in_reply_to?: string | null
+  received_at?: string | null
+}
+
+export interface InboundEmailIngestResult {
+  ok: boolean
+  created: boolean
+  ticket_event_id?: number | null
+  audit_id?: number | null
+  message: {
+    id: number
+    ticket_id: number
+    source: string
+    provider: string
+    provider_message_id?: string | null
+    from_address: string
+    from_name?: string | null
+    to_address?: string | null
+    cc?: string | null
+    subject?: string | null
+    body_preview?: string | null
+    mailbox_thread_id: string
+    mailbox_message_id?: string | null
+    mailbox_references?: string | null
+    in_reply_to?: string | null
+    received_at: string
+    created_at: string
+  }
+}
+
 export interface EvidenceSummary {
   loaded: boolean
   preview_limit: number

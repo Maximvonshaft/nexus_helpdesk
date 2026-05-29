@@ -14,6 +14,9 @@ from ..schemas import (
     CommentRead,
     InternalNoteCreate,
     InternalNoteRead,
+    InboundEmailIngestRequest,
+    InboundEmailIngestResponse,
+    InboundEmailMessageRead,
     OutboundDraftCreate,
     OutboundMessageRead,
     OutboundSendRequest,
@@ -53,6 +56,7 @@ from ..services.ticket_service import (
     send_outbound_message,
     update_ticket,
 )
+from ..services.email_inbound_service import ingest_ticket_inbound_email
 from ..services.timeline_service import build_unified_timeline
 from ..services.permissions import ensure_ticket_visible
 from ..services.sla_service import compute_sla_snapshot
@@ -347,6 +351,20 @@ def send_message_endpoint(ticket_id: int, payload: OutboundSendRequest, db: Sess
         row = send_outbound_message(db, ticket_id, payload, current_user)
         db.flush()
     return _serialize_outbound_message(row)
+
+
+@router.post("/{ticket_id}/email/inbound", response_model=InboundEmailIngestResponse)
+def ingest_inbound_email_endpoint(ticket_id: int, payload: InboundEmailIngestRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    with managed_session(db):
+        result = ingest_ticket_inbound_email(db, ticket_id=ticket_id, payload=payload, current_user=current_user)
+        db.flush()
+    return InboundEmailIngestResponse(
+        ok=True,
+        created=result.created,
+        message=InboundEmailMessageRead.model_validate(result.row),
+        ticket_event_id=result.row.ticket_event_id,
+        audit_id=result.row.audit_id,
+    )
 
 
 @router.post("/{ticket_id}/ai-intakes", response_model=AIIntakeRead)

@@ -491,6 +491,7 @@ class Ticket(Base):
     events: Mapped[list["TicketEvent"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
     attachments: Mapped[list["TicketAttachment"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
     outbound_messages: Mapped[list["TicketOutboundMessage"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
+    inbound_email_messages: Mapped[list["TicketInboundEmailMessage"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
     ai_intakes: Mapped[list["TicketAIIntake"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
     openclaw_link: Mapped[Optional["OpenClawConversationLink"]] = relationship(back_populates="ticket", uselist=False, cascade="all, delete-orphan")
     openclaw_attachment_references: Mapped[list["OpenClawAttachmentReference"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
@@ -616,6 +617,56 @@ class TicketOutboundAttachment(Base):
 
     outbound_message: Mapped["TicketOutboundMessage"] = relationship(back_populates="attachment_links")
     attachment: Mapped["TicketAttachment"] = relationship()
+
+
+class TicketInboundEmailMessage(Base):
+    __tablename__ = "ticket_inbound_email_messages"
+    __table_args__ = (
+        Index("ix_ticket_inbound_email_messages_ticket_received", "ticket_id", "received_at"),
+        Index(
+            "ux_ticket_inbound_email_messages_ticket_mailbox_message",
+            "ticket_id",
+            "mailbox_message_id",
+            unique=True,
+            sqlite_where=text("mailbox_message_id IS NOT NULL"),
+            postgresql_where=text("mailbox_message_id IS NOT NULL"),
+        ),
+        Index(
+            "ux_ticket_inbound_email_messages_provider_message",
+            "provider",
+            "provider_message_id",
+            unique=True,
+            sqlite_where=text("provider_message_id IS NOT NULL"),
+            postgresql_where=text("provider_message_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    actor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    source: Mapped[str] = mapped_column(String(40), default="manual_sync", index=True)
+    provider: Mapped[str] = mapped_column(String(80), default="manual", index=True)
+    provider_message_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    from_address: Mapped[str] = mapped_column(String(320), index=True)
+    from_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    to_address: Mapped[Optional[str]] = mapped_column(String(320), nullable=True)
+    cc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    subject: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    body: Mapped[str] = mapped_column(Text)
+    body_preview: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    mailbox_thread_id: Mapped[str] = mapped_column(String(255), index=True)
+    mailbox_message_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    mailbox_references: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    in_reply_to: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    ticket_event_id: Mapped[Optional[int]] = mapped_column(ForeignKey("ticket_events.id"), nullable=True, index=True)
+    audit_id: Mapped[Optional[int]] = mapped_column(ForeignKey("admin_audit_logs.id"), nullable=True, index=True)
+    received_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+
+    ticket: Mapped["Ticket"] = relationship(back_populates="inbound_email_messages")
+    actor: Mapped[Optional["User"]] = relationship()
+    ticket_event: Mapped[Optional["TicketEvent"]] = relationship()
+    audit: Mapped[Optional["AdminAuditLog"]] = relationship()
 
 
 class TicketAIIntake(Base):

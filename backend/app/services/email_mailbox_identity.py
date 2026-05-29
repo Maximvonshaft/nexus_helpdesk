@@ -21,6 +21,14 @@ def _references(value: Any) -> str | None:
     return " ".join(cleaned) if cleaned else None
 
 
+def normalize_mailbox_header_id(value: Any) -> str | None:
+    return _header_id(value)
+
+
+def normalize_mailbox_references(value: Any) -> str | None:
+    return _references(value)
+
+
 def _ticket_id(message, ticket=None) -> int | None:
     return getattr(ticket, "id", None) or getattr(message, "ticket_id", None)
 
@@ -31,6 +39,10 @@ def build_mailbox_thread_id(ticket_id: int) -> str:
 
 def build_mailbox_message_id(ticket_id: int, outbound_message_id: int) -> str:
     return f"<nexusdesk-ticket-{ticket_id}-outbound-{outbound_message_id}@{MAILBOX_ID_DOMAIN}>"
+
+
+def build_inbound_mailbox_message_id(ticket_id: int, inbound_message_id: int) -> str:
+    return f"<nexusdesk-ticket-{ticket_id}-inbound-{inbound_message_id}@{MAILBOX_ID_DOMAIN}>"
 
 
 def ensure_outbound_mailbox_identity(message, *, ticket=None, include_message_id: bool = True) -> None:

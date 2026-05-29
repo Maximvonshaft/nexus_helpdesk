@@ -10,6 +10,8 @@ import type {
   ChannelOnboardingTaskList,
   ControlTower,
   ControlTowerActionResult,
+  InboundEmailIngestResult,
+  InboundEmailPayload,
   LiteMeta,
   Market,
   ProductionReadiness,
@@ -403,6 +405,10 @@ export const api = {
     body: JSON.stringify(payload),
   }),
   sendOutboundMessage: (ticketId: number, payload: OutboundSendPayload) => request<Record<string, unknown>>(`/api/tickets/${ticketId}/outbound/send`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  ingestInboundEmail: (ticketId: number, payload: InboundEmailPayload) => request<InboundEmailIngestResult>(`/api/tickets/${ticketId}/email/inbound`, {
     method: 'POST',
     body: JSON.stringify(payload),
   }),

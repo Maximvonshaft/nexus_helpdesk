@@ -13,6 +13,7 @@ from ..models import (
     TicketComment,
     TicketEvent,
     TicketInternalNote,
+    TicketInboundEmailMessage,
     TicketOutboundAttachment,
     TicketOutboundMessage,
 )
@@ -101,6 +102,37 @@ def serialize_note(note: TicketInternalNote) -> dict:
         "actor_display_name": _actor_name(note),
         "created_at": note.created_at,
         "payload": {},
+    }
+
+
+def serialize_inbound_email(message: TicketInboundEmailMessage) -> dict:
+    return {
+        "id": f"inbound-email-{message.id}",
+        "kind": "inbound_email",
+        "title": "Inbound Email received",
+        "summary": message.body_preview or message.body,
+        "visibility": "external",
+        "actor_id": message.actor_id,
+        "actor_display_name": _actor_name(message),
+        "created_at": message.created_at,
+        "payload": {
+            "source": message.source,
+            "provider": message.provider,
+            "provider_message_id": message.provider_message_id,
+            "from_address": message.from_address,
+            "from_name": message.from_name,
+            "to_address": message.to_address,
+            "cc": message.cc,
+            "subject": message.subject,
+            "body_preview": message.body_preview,
+            "mailbox_thread_id": message.mailbox_thread_id,
+            "mailbox_message_id": message.mailbox_message_id,
+            "mailbox_references": message.mailbox_references,
+            "in_reply_to": message.in_reply_to,
+            "ticket_event_id": message.ticket_event_id,
+            "audit_id": message.audit_id,
+            "received_at": message.received_at.isoformat() if message.received_at else None,
+        },
     }
 
 
@@ -236,6 +268,7 @@ def build_unified_timeline(db: Session, ticket_id: int) -> list[dict]:
             joinedload(Ticket.events).joinedload(TicketEvent.actor),
             joinedload(Ticket.comments).joinedload(TicketComment.author),
             joinedload(Ticket.internal_notes).joinedload(TicketInternalNote.author),
+            joinedload(Ticket.inbound_email_messages).joinedload(TicketInboundEmailMessage.actor),
             joinedload(Ticket.attachments).joinedload(TicketAttachment.uploader),
             joinedload(Ticket.outbound_messages).joinedload(TicketOutboundMessage.creator),
             joinedload(Ticket.outbound_messages).joinedload(TicketOutboundMessage.attachment_links).joinedload(TicketOutboundAttachment.attachment),
@@ -259,6 +292,7 @@ def build_unified_timeline(db: Session, ticket_id: int) -> list[dict]:
     items.extend(serialize_event(x) for x in ticket.events)
     items.extend(serialize_comment(x) for x in ticket.comments)
     items.extend(serialize_note(x) for x in ticket.internal_notes)
+    items.extend(serialize_inbound_email(x) for x in ticket.inbound_email_messages)
     items.extend(serialize_attachment(x) for x in ticket.attachments)
     items.extend(serialize_outbound(x) for x in ticket.outbound_messages)
     items.extend(serialize_ai_intake(x) for x in ticket.ai_intakes)

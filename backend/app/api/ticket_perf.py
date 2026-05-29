@@ -22,6 +22,7 @@ from ..models import (
     TicketComment,
     TicketEvent,
     TicketInternalNote,
+    TicketInboundEmailMessage,
     TicketOutboundAttachment,
     TicketOutboundMessage,
     User,
@@ -38,11 +39,12 @@ MAX_TIMELINE_LIMIT = 100
 SOURCE_ORDER = {
     "comment": 0,
     "internal_note": 1,
-    "outbound_message": 2,
-    "ai_intake": 3,
-    "ticket_event": 4,
-    "webchat_event": 5,
-    "voice_call": 6,
+    "inbound_email": 2,
+    "outbound_message": 3,
+    "ai_intake": 4,
+    "ticket_event": 5,
+    "webchat_event": 6,
+    "voice_call": 7,
 }
 
 
@@ -471,6 +473,47 @@ def _timeline_items(db: Session, ticket_id: int, cursor_key: tuple[datetime, int
         items.append({"source_type": "comment", "source_id": row.id, "id": f"comment:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "visibility": _value(row.visibility), "author_id": row.author_id})
     for row in _base_timeline_query(db.query(TicketInternalNote), TicketInternalNote, "internal_note", ticket_id, cursor_key, limit):
         items.append({"source_type": "internal_note", "source_id": row.id, "id": f"internal_note:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "visibility": "internal", "author_id": row.author_id})
+    for row in _base_timeline_query(db.query(TicketInboundEmailMessage), TicketInboundEmailMessage, "inbound_email", ticket_id, cursor_key, limit):
+        payload = {
+            "source": row.source,
+            "provider": row.provider,
+            "provider_message_id": row.provider_message_id,
+            "from_address": row.from_address,
+            "from_name": row.from_name,
+            "to_address": row.to_address,
+            "cc": row.cc,
+            "subject": row.subject,
+            "body_preview": row.body_preview,
+            "mailbox_thread_id": row.mailbox_thread_id,
+            "mailbox_message_id": row.mailbox_message_id,
+            "mailbox_references": row.mailbox_references,
+            "in_reply_to": row.in_reply_to,
+            "ticket_event_id": row.ticket_event_id,
+            "audit_id": row.audit_id,
+            "received_at": _dt(row.received_at),
+        }
+        items.append(
+            {
+                "source_type": "inbound_email",
+                "source_id": row.id,
+                "id": f"inbound_email:{row.id}",
+                "created_at": _dt(row.created_at),
+                "received_at": _dt(row.received_at),
+                "body": row.body,
+                "summary": row.body_preview or row.body,
+                "subject": row.subject,
+                "from_address": row.from_address,
+                "from_name": row.from_name,
+                "to_address": row.to_address,
+                "provider": row.provider,
+                "provider_message_id": row.provider_message_id,
+                "mailbox_thread_id": row.mailbox_thread_id,
+                "mailbox_message_id": row.mailbox_message_id,
+                "mailbox_references": row.mailbox_references,
+                "in_reply_to": row.in_reply_to,
+                "payload": payload,
+            }
+        )
     outbound_query = db.query(TicketOutboundMessage).options(
         joinedload(TicketOutboundMessage.attachment_links).joinedload(TicketOutboundAttachment.attachment)
     )

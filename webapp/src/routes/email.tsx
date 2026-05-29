@@ -24,6 +24,7 @@ import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 const emailDraftAccess = { allOf: [CAPABILITIES.outboundDraftSave] } satisfies AccessRequirement
 const emailSendAccess = { allOf: [CAPABILITIES.outboundSend] } satisfies AccessRequirement
 const emailRetryAccess = { allOf: [CAPABILITIES.runtimeManage] } satisfies AccessRequirement
+const emailInboundSyncAccess = { allOf: [CAPABILITIES.runtimeManage] } satisfies AccessRequirement
 const EMAIL_QUEUE_TOKENS = new Set(['email', 'mail', 'smtp', 'imap', 'pop3'])
 const MAX_EMAIL_ATTACHMENTS = 10
 
@@ -50,11 +51,98 @@ function defaultBody(activeCase: CaseDetail) {
   ].filter(Boolean).join('\n\n')
 }
 
+function defaultInboundSubject(activeCase: CaseDetail) {
+  return `Re: ${defaultSubject(activeCase).replace(/^re:\s*/i, '')}`
+}
+
 function channelTone(capability?: OutboundChannelCapability) {
   if (!capability) return 'default'
   if (capability.supports_send) return 'success'
   if (capability.configured) return 'warning'
   return 'danger'
+}
+
+function EmailInboundSync({
+  activeCase,
+  onToast,
+}: {
+  activeCase: CaseDetail
+  onToast: (toast: { message: string; tone?: 'default' | 'danger' | 'success' }) => void
+}) {
+  const session = useSession()
+  const client = useQueryClient()
+  const [fromAddress, setFromAddress] = useState(emailRecipient(activeCase))
+  const [provider, setProvider] = useState('manual')
+  const [providerMessageId, setProviderMessageId] = useState('')
+  const [mailboxMessageId, setMailboxMessageId] = useState('')
+  const [mailboxReferences, setMailboxReferences] = useState('')
+  const [subject, setSubject] = useState(defaultInboundSubject(activeCase))
+  const [body, setBody] = useState('')
+  const canSyncInbound = canAccess(session.data, emailInboundSyncAccess)
+  const canSubmit = Boolean(canSyncInbound && fromAddress.trim() && body.trim())
+
+  useEffect(() => {
+    setFromAddress(emailRecipient(activeCase))
+    setProvider('manual')
+    setProviderMessageId('')
+    setMailboxMessageId('')
+    setMailboxReferences('')
+    setSubject(defaultInboundSubject(activeCase))
+    setBody('')
+    // Reset only when the selected ticket changes; live refetches must not wipe an operator replay body.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCase.id])
+
+  const ingestMutation = useMutation({
+    mutationFn: () => api.ingestInboundEmail(activeCase.id, {
+      from_address: fromAddress.trim(),
+      provider: provider.trim() || 'manual',
+      provider_message_id: providerMessageId.trim() || null,
+      mailbox_message_id: mailboxMessageId.trim() || null,
+      mailbox_references: mailboxReferences.trim() || null,
+      subject: subject.trim() || null,
+      body: body.trim(),
+    }),
+    onSuccess: async (result) => {
+      onToast({ message: result.created ? 'Inbound Email 已写入 timeline/audit' : 'Inbound Email 已存在，已返回现有记录', tone: 'success' })
+      if (result.created) setBody('')
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['caseDetail', activeCase.id] }),
+        client.invalidateQueries({ queryKey: ['ticketTimeline', activeCase.id] }),
+        client.invalidateQueries({ queryKey: ['cases'] }),
+        client.invalidateQueries({ queryKey: ['emailWorkbenchCases'] }),
+      ])
+    },
+    onError: (err: Error) => onToast({ message: err.message || '记录 inbound Email 失败', tone: 'danger' }),
+  })
+
+  return (
+    <div className="stack" data-testid="email-inbound-sync">
+      <div className="badges">
+        <Badge tone={canSyncInbound ? 'success' : 'warning'}>runtime.manage {canSyncInbound ? '已授权' : '未授权'}</Badge>
+        <Badge>ticket timeline/audit</Badge>
+      </div>
+      <div className="kv-grid">
+        <Field label="From" required><Input type="email" value={fromAddress} onChange={(event) => setFromAddress(event.target.value)} placeholder="customer@example.com" /></Field>
+        <Field label="Provider"><Input value={provider} onChange={(event) => setProvider(event.target.value)} placeholder="imap, webhook, manual" /></Field>
+      </div>
+      <Field label="Email 主题"><Input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="客户来信主题" /></Field>
+      <div className="kv-grid">
+        <Field label="Provider message id"><Input value={providerMessageId} onChange={(event) => setProviderMessageId(event.target.value)} placeholder="provider-message-id" /></Field>
+        <Field label="Mailbox message id"><Input value={mailboxMessageId} onChange={(event) => setMailboxMessageId(event.target.value)} placeholder="<message@example.com>" /></Field>
+      </div>
+      <Field label="References / In-Reply-To"><Input value={mailboxReferences} onChange={(event) => setMailboxReferences(event.target.value)} placeholder="<nexusdesk-ticket-...@nexusdesk.local>" /></Field>
+      <Field label="客户来信正文" required>
+        <Textarea value={body} onChange={(event) => setBody(event.target.value)} rows={6} placeholder="粘贴 provider 收到的客户邮件正文" />
+      </Field>
+      <div className="button-row">
+        <Button onClick={() => ingestMutation.mutate()} disabled={!canSubmit || ingestMutation.isPending}>
+          {ingestMutation.isPending ? '写入中...' : '记录入站邮件'}
+        </Button>
+        {!canSyncInbound ? <span className="section-subtitle">需要 runtime.manage 权限</span> : null}
+      </div>
+    </div>
+  )
 }
 
 function EmailComposer({
@@ -270,6 +358,7 @@ function EmailComposer({
 function timelineTitle(item: Record<string, unknown>) {
   const sourceType = String(item.source_type || item.kind || '')
   if (sourceType === 'outbound_message') return 'Email/外部回复'
+  if (sourceType === 'inbound_email') return '客户来信（Email）'
   if (sourceType === 'comment') return '客户来信'
   if (sourceType === 'internal_note') return '内部备注'
   if (sourceType === 'ticket_event') return '工单事件'
@@ -291,6 +380,10 @@ function providerField(item: Record<string, unknown>, key: string) {
 
 function isOutboundTimelineItem(item: Record<string, unknown>) {
   return String(item.source_type || item.kind || '') === 'outbound_message'
+}
+
+function isInboundEmailTimelineItem(item: Record<string, unknown>) {
+  return String(item.source_type || item.kind || '') === 'inbound_email'
 }
 
 function outboundStatusTone(status: string): BadgeTone {
@@ -354,6 +447,36 @@ function OutboundProviderStatus({
           {!canRequeue ? <span className="section-subtitle">需要 runtime.manage 权限</span> : null}
         </div>
       ) : null}
+    </div>
+  )
+}
+
+function InboundProviderStatus({ item }: { item: Record<string, unknown> }) {
+  const provider = String(providerField(item, 'provider') || '-')
+  const providerMessageId = String(providerField(item, 'provider_message_id') || '')
+  const fromAddress = String(providerField(item, 'from_address') || '')
+  const mailboxThreadId = String(providerField(item, 'mailbox_thread_id') || '')
+  const mailboxMessageId = String(providerField(item, 'mailbox_message_id') || '')
+  const mailboxReferences = String(providerField(item, 'mailbox_references') || '')
+  const receivedAt = String(providerField(item, 'received_at') || item.created_at || '')
+
+  return (
+    <div className="stack" data-testid="email-inbound-provider-status">
+      <div className="badges">
+        <Badge tone="success">inbound sync</Badge>
+        <Badge>{sanitizeDisplayText(provider)}</Badge>
+        {fromAddress ? <Badge>{sanitizeDisplayText(fromAddress)}</Badge> : null}
+        {receivedAt ? <Badge>{formatDateTime(receivedAt)}</Badge> : null}
+      </div>
+      {providerMessageId ? <div className="section-subtitle">provider-message {sanitizeDisplayText(providerMessageId)}</div> : null}
+      {mailboxThreadId || mailboxMessageId ? (
+        <div className="section-subtitle">
+          {mailboxThreadId ? <>thread {sanitizeDisplayText(mailboxThreadId)}</> : null}
+          {mailboxThreadId && mailboxMessageId ? ' · ' : null}
+          {mailboxMessageId ? <>message-id {sanitizeDisplayText(mailboxMessageId)}</> : null}
+        </div>
+      ) : null}
+      {mailboxReferences ? <div className="section-subtitle">references {sanitizeDisplayText(mailboxReferences)}</div> : null}
     </div>
   )
 }
@@ -513,12 +636,15 @@ function EmailWorkbenchPage() {
                   <div className="message" data-role="user">{sanitizeDisplayText(activeCase.last_customer_message || activeCase.customer_request || activeCase.issue_summary || '暂无客户来信摘要。')}</div>
                   <div className="timeline">
                     {(timeline.data?.items ?? []).map((item, index) => (
-                      <div key={String(item.id || index)} className="message" data-role={String(item.source_type) === 'comment' ? 'user' : 'agent'}>
+                      <div key={String(item.id || index)} className="message" data-role={['comment', 'inbound_email'].includes(String(item.source_type)) ? 'user' : 'agent'}>
                         <div className="message-head">
                           <strong>{timelineTitle(item as Record<string, unknown>)}</strong>
                           <span>{formatDateTime(String(item.created_at || ''))}</span>
                         </div>
                         <div>{timelineBody(item as Record<string, unknown>)}</div>
+                        {isInboundEmailTimelineItem(item as Record<string, unknown>) ? (
+                          <InboundProviderStatus item={item as Record<string, unknown>} />
+                        ) : null}
                         {isOutboundTimelineItem(item as Record<string, unknown>) ? (
                           <OutboundProviderStatus
                             item={item as Record<string, unknown>}
@@ -535,6 +661,17 @@ function EmailWorkbenchPage() {
                 </div>
               ) : (
                 <EmptyState title="请选择一条 Email 队列项" description="选择后展示客户上下文、timeline 和回复草稿。" />
+              )}
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader title="Inbound Sync / Audit" subtitle="把 provider 收到的客户来信写入 ticket timeline、mailbox thread 和审计链路。" />
+            <CardBody>
+              {activeCase ? (
+                <EmailInboundSync activeCase={activeCase} onToast={setToast} />
+              ) : (
+                <EmptyState title="等待选择工单" description="Inbound Email 必须绑定 ticket，才能合并 mailbox thread 并写入审计。" />
               )}
             </CardBody>
           </Card>

@@ -28,7 +28,7 @@ from app.auth_service import create_access_token  # noqa: E402
 from app.db import Base, get_db  # noqa: E402
 from app.enums import ConversationState, EventType, JobStatus, MessageStatus, NoteVisibility, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import BackgroundJob, Customer, OutboundEmailAccount, Team, Ticket, TicketAttachment, TicketEvent, TicketOutboundMessage, User  # noqa: E402
+from app.models import AdminAuditLog, BackgroundJob, Customer, OutboundEmailAccount, Team, Ticket, TicketAttachment, TicketEvent, TicketInboundEmailMessage, TicketOutboundMessage, User  # noqa: E402
 from app.services.webchat_handoff_service import request_webchat_handoff  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatMessage  # noqa: E402
@@ -290,6 +290,94 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
     queued_event = db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_queued).one()
     assert json.loads(draft_event.payload_json or "{}")["mailbox_thread_id"] == draft_payload["mailbox_thread_id"]
     assert json.loads(queued_event.payload_json or "{}")["mailbox_message_id"] == send_payload["mailbox_message_id"]
+
+
+def test_email_inbound_ingest_sync_merges_thread_and_writes_timeline_audit(client: TestClient, db_session):
+    admin = _admin(db_session, user_id=9405)
+    team = _team(db_session)
+    ticket = _email_ticket(db_session, team=team)
+    thread_id = f"<nexusdesk-ticket-{ticket.id}@nexusdesk.local>"
+    outbound = TicketOutboundMessage(
+        ticket_id=ticket.id,
+        channel=SourceChannel.email,
+        status=MessageStatus.pending,
+        subject="Outbound thread anchor",
+        body="Please reply with the delivery proof.",
+        provider_status="queued",
+        provider_message_id="smtp-anchor-1",
+        mailbox_thread_id=thread_id,
+        mailbox_message_id=f"<nexusdesk-ticket-{ticket.id}-outbound-anchor@nexusdesk.local>",
+        mailbox_references=thread_id,
+        created_by=admin.id,
+    )
+    db_session.add(outbound)
+    db_session.flush()
+    headers = _headers(admin)
+    body = "Customer replied with new delivery evidence. " + ("audit-preview-boundary " * 40)
+    payload = {
+        "from_address": "Customer@Example.com",
+        "from_name": "Email Customer",
+        "to_address": "support@example.test",
+        "subject": "Re: Outbound thread anchor",
+        "body": body,
+        "provider": "imap",
+        "provider_message_id": "imap-provider-msg-1",
+        "mailbox_message_id": "<customer-reply-1@example.test>",
+        "mailbox_references": f"{outbound.mailbox_message_id} {thread_id}",
+    }
+
+    ingested = client.post(f"/api/tickets/{ticket.id}/email/inbound", headers=headers, json=payload)
+    assert ingested.status_code == 200, ingested.text
+    ingested_payload = ingested.json()
+    assert ingested_payload["created"] is True
+    message = ingested_payload["message"]
+    assert message["from_address"] == "customer@example.com"
+    assert message["provider"] == "imap"
+    assert message["provider_message_id"] == "imap-provider-msg-1"
+    assert message["mailbox_thread_id"] == thread_id
+    assert message["mailbox_message_id"] == "<customer-reply-1@example.test>"
+    assert message["ticket_event_id"] == ingested_payload["ticket_event_id"]
+    assert message["audit_id"] == ingested_payload["audit_id"]
+
+    db_session.refresh(ticket)
+    assert ticket.last_customer_message.startswith("Customer replied with new delivery evidence.")
+    assert ticket.preferred_reply_channel == SourceChannel.email.value
+    assert ticket.preferred_reply_contact == "customer@example.com"
+    assert ticket.conversation_state == ConversationState.human_owned
+    row = db_session.query(TicketInboundEmailMessage).filter(TicketInboundEmailMessage.ticket_id == ticket.id).one()
+    assert row.mailbox_thread_id == thread_id
+    assert row.ticket_event_id is not None
+    assert row.audit_id is not None
+
+    event = db_session.query(TicketEvent).filter(TicketEvent.id == row.ticket_event_id).one()
+    assert event.event_type == EventType.comment_added
+    assert event.field_name == "email.inbound"
+    event_payload = json.loads(event.payload_json or "{}")
+    assert event_payload["mailbox_message_id"] == "<customer-reply-1@example.test>"
+    assert event_payload["provider_message_id"] == "imap-provider-msg-1"
+    audit = db_session.query(AdminAuditLog).filter(AdminAuditLog.id == row.audit_id).one()
+    assert audit.action == "email.inbound.ingested"
+    audit_payload = json.loads(audit.new_value_json or "{}")
+    assert audit_payload["mailbox_thread_id"] == thread_id
+    assert audit_payload["body_preview"] != body
+    assert len(audit_payload["body_preview"]) <= 500
+
+    timeline = client.get(f"/api/tickets/{ticket.id}/timeline?limit=20", headers=headers)
+    assert timeline.status_code == 200, timeline.text
+    items = timeline.json()["items"]
+    inbound = next(item for item in items if item.get("source_type") == "inbound_email")
+    assert inbound["source_id"] == row.id
+    assert inbound["from_address"] == "customer@example.com"
+    assert inbound["mailbox_thread_id"] == thread_id
+    assert inbound["payload"]["audit_id"] == row.audit_id
+    ticket_events = [item for item in items if item.get("source_type") == "ticket_event"]
+    assert any(item.get("field_name") == "email.inbound" for item in ticket_events)
+
+    duplicate = client.post(f"/api/tickets/{ticket.id}/email/inbound", headers=headers, json=payload)
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json()["created"] is False
+    assert db_session.query(TicketInboundEmailMessage).filter(TicketInboundEmailMessage.ticket_id == ticket.id).count() == 1
+    assert db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "email.inbound.ingested").count() == 1
 
 
 def test_email_dead_outbound_timeline_and_requeue_contract(client: TestClient, db_session):

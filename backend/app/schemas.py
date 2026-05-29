@@ -233,6 +233,45 @@ class OutboundSendRequest(BaseModel):
     attachment_ids: list[int] = Field(default_factory=list)
 
 
+class InboundEmailIngestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    from_address: str = Field(min_length=3, max_length=320)
+    from_name: Optional[str] = Field(default=None, max_length=160)
+    to_address: Optional[str] = Field(default=None, max_length=320)
+    cc: Optional[str] = Field(default=None, max_length=2000)
+    subject: Optional[str] = Field(default=None, max_length=255)
+    body: str = Field(min_length=1, max_length=40000)
+    provider: str = Field(default="manual", min_length=1, max_length=80)
+    provider_message_id: Optional[str] = Field(default=None, max_length=255)
+    mailbox_thread_id: Optional[str] = Field(default=None, max_length=255)
+    mailbox_message_id: Optional[str] = Field(default=None, max_length=255)
+    mailbox_references: Optional[str] = Field(default=None, max_length=4000)
+    in_reply_to: Optional[str] = Field(default=None, max_length=255)
+    received_at: Optional[datetime] = None
+
+    @field_validator(
+        "from_address",
+        "from_name",
+        "to_address",
+        "cc",
+        "subject",
+        "body",
+        "provider",
+        "provider_message_id",
+        "mailbox_thread_id",
+        "mailbox_message_id",
+        "mailbox_references",
+        "in_reply_to",
+        mode="before",
+    )
+    @classmethod
+    def strip_strings(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
 class AttachmentRead(APIModel):
 
     id: int
@@ -284,6 +323,38 @@ class OutboundMessageRead(APIModel):
     sent_at: Optional[datetime] = None
     created_at: datetime
     attachments: list[AttachmentRead] = Field(default_factory=list)
+
+
+class InboundEmailMessageRead(APIModel):
+    id: int
+    ticket_id: int
+    actor_id: Optional[int] = None
+    source: str
+    provider: str
+    provider_message_id: Optional[str] = None
+    from_address: str
+    from_name: Optional[str] = None
+    to_address: Optional[str] = None
+    cc: Optional[str] = None
+    subject: Optional[str] = None
+    body: str
+    body_preview: Optional[str] = None
+    mailbox_thread_id: str
+    mailbox_message_id: Optional[str] = None
+    mailbox_references: Optional[str] = None
+    in_reply_to: Optional[str] = None
+    ticket_event_id: Optional[int] = None
+    audit_id: Optional[int] = None
+    received_at: datetime
+    created_at: datetime
+
+
+class InboundEmailIngestResponse(APIModel):
+    ok: bool
+    created: bool
+    message: InboundEmailMessageRead
+    ticket_event_id: Optional[int] = None
+    audit_id: Optional[int] = None
 
 
 class AIIntakeRead(APIModel):
