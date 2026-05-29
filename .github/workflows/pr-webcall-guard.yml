@@ -66,6 +66,8 @@ jobs:
               backend/app/api/admin_provider_runtime.py) return 0 ;;
               backend/app/api/admin_webcall_ai.py) return 0 ;;
               backend/app/api/knowledge_items.py) return 0 ;;
+              backend/app/api/ticket_perf.py) return 0 ;;
+              backend/app/api/tickets.py) return 0 ;;
               backend/app/api/speedaf_actions.py) return 0 ;;
               backend/app/api/speedaf_cancel.py) return 0 ;;
               backend/app/api/webcall_ai.py) return 0 ;;
