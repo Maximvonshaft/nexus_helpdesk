@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import uuid
@@ -177,9 +178,13 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
         json={"channel": "email", "subject": "Draft subject", "body": "draft body", "attachment_ids": [attachment.id]},
     )
     assert draft.status_code == 200, draft.text
-    assert draft.json()["status"] == "draft"
-    assert draft.json()["provider_status"] == "draft_saved"
-    assert [item["id"] for item in draft.json()["attachments"]] == [attachment.id]
+    draft_payload = draft.json()
+    assert draft_payload["status"] == "draft"
+    assert draft_payload["provider_status"] == "draft_saved"
+    assert draft_payload["mailbox_thread_id"] == f"<nexusdesk-ticket-{ticket.id}@nexusdesk.local>"
+    assert draft_payload["mailbox_message_id"] is None
+    assert draft_payload["mailbox_references"] == draft_payload["mailbox_thread_id"]
+    assert [item["id"] for item in draft_payload["attachments"]] == [attachment.id]
 
     sent = client.post(
         f"/api/tickets/{ticket.id}/outbound/send",
@@ -194,6 +199,9 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
     assert send_payload["external_send"] is True
     assert send_payload["attachments_count"] == 1
     assert send_payload["attachment_ids"] == [attachment.id]
+    assert send_payload["mailbox_thread_id"] == draft_payload["mailbox_thread_id"]
+    assert send_payload["mailbox_message_id"] == f"<nexusdesk-ticket-{ticket.id}-outbound-{send_payload['id']}@nexusdesk.local>"
+    assert send_payload["mailbox_references"] == draft_payload["mailbox_thread_id"]
 
     timeline = client.get(f"/api/tickets/{ticket.id}/timeline?limit=20", headers=headers)
     assert timeline.status_code == 200, timeline.text
@@ -201,15 +209,21 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
     outbound_items = [item for item in items if item.get("source_type") == "outbound_message"]
     event_types = {item.get("event_type") for item in items if item.get("source_type") == "ticket_event"}
     assert any(item["subject"] == "Draft subject" and item["status"] == "draft" for item in outbound_items)
-    assert any(item["subject"] == "Send subject" and item["status"] == "pending" for item in outbound_items)
+    sent_timeline_item = next(item for item in outbound_items if item["subject"] == "Send subject" and item["status"] == "pending")
     assert any(item["payload"].get("attachments_count") == 1 for item in outbound_items)
+    assert sent_timeline_item["mailbox_thread_id"] == send_payload["mailbox_thread_id"]
+    assert sent_timeline_item["mailbox_message_id"] == send_payload["mailbox_message_id"]
+    assert sent_timeline_item["payload"]["mailbox_thread_id"] == send_payload["mailbox_thread_id"]
+    assert sent_timeline_item["payload"]["mailbox_message_id"] == send_payload["mailbox_message_id"]
     assert EventType.outbound_draft_saved.value in event_types
     assert EventType.outbound_queued.value in event_types
 
     rows = db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).all()
     assert {row.status for row in rows} == {MessageStatus.draft, MessageStatus.pending}
-    assert db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_draft_saved).count() == 1
-    assert db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_queued).count() == 1
+    draft_event = db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_draft_saved).one()
+    queued_event = db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_queued).one()
+    assert json.loads(draft_event.payload_json or "{}")["mailbox_thread_id"] == draft_payload["mailbox_thread_id"]
+    assert json.loads(queued_event.payload_json or "{}")["mailbox_message_id"] == send_payload["mailbox_message_id"]
 
 
 def test_email_dead_outbound_timeline_and_requeue_contract(client: TestClient, db_session):
@@ -225,6 +239,9 @@ def test_email_dead_outbound_timeline_and_requeue_contract(client: TestClient, d
         body="provider failed",
         provider_status="dead:smtp_timeout",
         provider_message_id="nexusdesk-outbound-dead-contract",
+        mailbox_thread_id=f"<nexusdesk-ticket-{ticket.id}@nexusdesk.local>",
+        mailbox_message_id="<nexusdesk-ticket-dead-contract-outbound@example.test>",
+        mailbox_references=f"<nexusdesk-ticket-{ticket.id}@nexusdesk.local>",
         retry_count=3,
         max_retries=3,
         failure_code="smtp_timeout",
@@ -244,6 +261,8 @@ def test_email_dead_outbound_timeline_and_requeue_contract(client: TestClient, d
     assert outbound["retry_count"] == 3
     assert outbound["failure_code"] == "smtp_timeout"
     assert outbound["payload"]["provider_message_id"] == "nexusdesk-outbound-dead-contract"
+    assert outbound["payload"]["mailbox_thread_id"] == f"<nexusdesk-ticket-{ticket.id}@nexusdesk.local>"
+    assert outbound["payload"]["mailbox_message_id"] == "<nexusdesk-ticket-dead-contract-outbound@example.test>"
     assert outbound["payload"]["failure_reason"] == "SMTP timed out"
     db_session.commit()
 
@@ -256,6 +275,7 @@ def test_email_dead_outbound_timeline_and_requeue_contract(client: TestClient, d
     assert row.retry_count == 0
     assert row.failure_code is None
     assert row.failure_reason is None
+    assert row.mailbox_message_id == "<nexusdesk-ticket-dead-contract-outbound@example.test>"
 
 
 def test_webcall_accept_end_writes_timeline_voice_evidence(client: TestClient, db_session):

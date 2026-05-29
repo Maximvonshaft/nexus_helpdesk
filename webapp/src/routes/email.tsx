@@ -316,6 +316,9 @@ function OutboundProviderStatus({
   const failureReason = String(providerField(item, 'failure_reason') || providerField(item, 'failure_code') || '')
   const nextRetryAt = String(providerField(item, 'next_retry_at') || '')
   const sentAt = String(providerField(item, 'sent_at') || '')
+  const mailboxThreadId = String(providerField(item, 'mailbox_thread_id') || '')
+  const mailboxMessageId = String(providerField(item, 'mailbox_message_id') || '')
+  const mailboxReferences = String(providerField(item, 'mailbox_references') || '')
   const retryCount = Number(providerField(item, 'retry_count') ?? 0)
   const maxRetries = Number(providerField(item, 'max_retries') ?? 0)
   const messageId = Number(item.source_id)
@@ -330,6 +333,14 @@ function OutboundProviderStatus({
         {nextRetryAt ? <Badge tone="warning">next {formatDateTime(nextRetryAt)}</Badge> : null}
         {sentAt ? <Badge tone="success">sent {formatDateTime(sentAt)}</Badge> : null}
       </div>
+      {mailboxThreadId || mailboxMessageId ? (
+        <div className="section-subtitle">
+          {mailboxThreadId ? <>thread {sanitizeDisplayText(mailboxThreadId)}</> : null}
+          {mailboxThreadId && mailboxMessageId ? ' · ' : null}
+          {mailboxMessageId ? <>message-id {sanitizeDisplayText(mailboxMessageId)}</> : null}
+        </div>
+      ) : null}
+      {mailboxReferences ? <div className="section-subtitle">references {sanitizeDisplayText(mailboxReferences)}</div> : null}
       {failureReason ? <div className="section-subtitle">{sanitizeDisplayText(failureReason)}</div> : null}
       {dead ? (
         <div className="button-row">

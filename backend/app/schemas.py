@@ -272,9 +272,15 @@ class OutboundMessageRead(APIModel):
     subject: Optional[str] = None
     body: str
     provider_status: Optional[str] = None
+    provider_message_id: Optional[str] = None
+    mailbox_thread_id: Optional[str] = None
+    mailbox_message_id: Optional[str] = None
+    mailbox_references: Optional[str] = None
     error_message: Optional[str] = None
     retry_count: int = 0
     max_retries: int = 0
+    failure_code: Optional[str] = None
+    failure_reason: Optional[str] = None
     sent_at: Optional[datetime] = None
     created_at: datetime
     attachments: list[AttachmentRead] = Field(default_factory=list)

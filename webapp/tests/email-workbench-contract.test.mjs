@@ -86,3 +86,13 @@ test('email timeline exposes provider delivery status and dead-message retry con
   assert.match(emailRoute, /client\.invalidateQueries\(\{ queryKey: \['ticketTimeline', selectedId\] \}\)/)
   assert.doesNotMatch(emailRoute, /\bfetch\s*\(/)
 })
+
+test('email timeline exposes mailbox thread and SMTP message identity', () => {
+  assert.match(emailRoute, /providerField\(item, 'mailbox_thread_id'\)/)
+  assert.match(emailRoute, /providerField\(item, 'mailbox_message_id'\)/)
+  assert.match(emailRoute, /providerField\(item, 'mailbox_references'\)/)
+  assert.match(emailRoute, /thread \{sanitizeDisplayText\(mailboxThreadId\)\}/)
+  assert.match(emailRoute, /message-id \{sanitizeDisplayText\(mailboxMessageId\)\}/)
+  assert.match(emailRoute, /references \{sanitizeDisplayText\(mailboxReferences\)\}/)
+  assert.doesNotMatch(emailRoute, /\bfetch\s*\(/)
+})

@@ -13,6 +13,7 @@ from ..models import ChannelAccount, OpenClawConversationLink, Ticket, TicketOut
 from ..settings import get_settings
 from ..utils.time import utc_now
 from .audit_service import log_event
+from .email_mailbox_identity import ensure_outbound_mailbox_identity
 from .observability import LOGGER
 from .openclaw_bridge import dispatch_via_openclaw_bridge, dispatch_via_openclaw_cli, dispatch_via_openclaw_mcp, resolve_channel_account
 from .outbound_adapters.email import dispatch_email_outbound
@@ -91,6 +92,9 @@ def queue_outbound_message(
     db.add(message)
     db.flush()
     _ensure_provider_idempotency_key(message)
+    channel_value = channel.value if hasattr(channel, "value") else str(channel)
+    if channel_value == SourceChannel.email.value:
+        ensure_outbound_mailbox_identity(message, include_message_id=True)
     db.flush()
     return message
 
@@ -288,6 +292,8 @@ def _dispatch_whatsapp_message(db: Session, message: TicketOutboundMessage, tick
 
 def _dispatch_email_message(db: Session, message: TicketOutboundMessage, ticket: Ticket | None, idempotency_key: str) -> tuple[MessageStatus, str | None, object | None, dict[str, Any]]:
     try:
+        ensure_outbound_mailbox_identity(message, ticket=ticket, include_message_id=True)
+        db.flush()
         return dispatch_email_outbound(db, message=message, ticket=ticket, idempotency_key=idempotency_key)
     except ValueError as exc:
         error_code = str(exc)

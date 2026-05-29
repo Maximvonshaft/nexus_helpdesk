@@ -186,12 +186,22 @@ def test_dispatch_email_outbound_builds_smtp_message_and_redacted_route(db_sessi
     assert fake_client.login_calls == [("support@example.com", "smtp-secret")]
     assert fake_client.messages[0]["To"] == "alice@example.com"
     assert fake_client.messages[0]["Subject"] == "Order update"
+    assert fake_client.messages[0]["Message-ID"] == message.mailbox_message_id
+    assert fake_client.messages[0]["In-Reply-To"] == message.mailbox_thread_id
+    assert fake_client.messages[0]["References"] == message.mailbox_references
+    assert fake_client.messages[0]["X-NexusDesk-Mailbox-Thread-ID"] == message.mailbox_thread_id
     assert fake_client.messages[0]["X-NexusDesk-Idempotency-Key"] == "idem-1"
     assert fake_client.closed is True
+    assert message.mailbox_thread_id == f"<nexusdesk-ticket-{ticket.id}@nexusdesk.local>"
+    assert message.mailbox_message_id == f"<nexusdesk-ticket-{ticket.id}-outbound-{message.id}@nexusdesk.local>"
+    assert message.mailbox_references == message.mailbox_thread_id
     assert route["adapter"] == "smtp"
     assert route["account_id"] is not None
     assert route["to_address"] == "a***@example.com"
     assert route["from_address"] == "s***@example.com"
+    assert route["mailbox_thread_id"] == message.mailbox_thread_id
+    assert route["mailbox_message_id"] == message.mailbox_message_id
+    assert route["mailbox_references"] == message.mailbox_references
     assert "password" not in route
     assert "username" not in route
 
@@ -222,12 +232,16 @@ def test_dispatch_email_outbound_attaches_ticket_files(db_session, tmp_path):
     assert status_value == MessageStatus.sent
     assert provider_status == "smtp_sent"
     assert sent_at is not None
+    assert fake_client.messages[0]["Message-ID"] == message.mailbox_message_id
+    assert fake_client.messages[0]["In-Reply-To"] == message.mailbox_thread_id
+    assert fake_client.messages[0]["References"] == message.mailbox_references
     attachments = list(fake_client.messages[0].iter_attachments())
     assert len(attachments) == 1
     assert attachments[0].get_filename() == "proof.txt"
     assert attachments[0].get_payload(decode=True) == b"delivery proof"
     assert route["attachment_count"] == 1
     assert route["attachment_filenames"] == ["proof.txt"]
+    assert route["mailbox_message_id"] == message.mailbox_message_id
 
 
 def test_dispatch_email_outbound_maps_smtp_auth_failure(db_session):

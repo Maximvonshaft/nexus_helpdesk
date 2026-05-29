@@ -13,6 +13,7 @@ from ..models import BackgroundJob, OpenClawConversationLink, OpenClawTranscript
 from ..settings import get_settings
 from ..utils.time import utc_now
 from . import openclaw_bridge, openclaw_client_factory
+from .email_mailbox_identity import ensure_outbound_mailbox_identity
 
 settings = get_settings()
 AUTO_REPLY_JOB = 'auto_reply.send_update'
@@ -149,6 +150,9 @@ def _draft_ai_auto_reply(db: Session, *, ticket, user, body: str, channel: Sourc
     message = TicketOutboundMessage(ticket_id=ticket.id, channel=channel, status=MessageStatus.draft, body=body, provider_status='ai_review_required', error_message='AI-generated auto reply saved as draft by outbound safety gate', failure_code='ai_review_required', failure_reason='AI-generated outbound requires human review before direct send', created_by=user.id, max_retries=settings.outbox_max_retries)
     db.add(message)
     db.flush()
+    if channel == SourceChannel.email:
+        ensure_outbound_mailbox_identity(message, ticket=ticket, include_message_id=False)
+        db.flush()
     return message
 
 

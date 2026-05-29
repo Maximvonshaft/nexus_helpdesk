@@ -43,6 +43,7 @@ from ..schemas import (
     TicketUpdate,
 )
 from .audit_service import log_event
+from .email_mailbox_identity import ensure_outbound_mailbox_identity
 from .file_service import build_attachment_download_url, save_upload
 from .message_dispatch import queue_outbound_message
 from .outbound_adapters.email import clean_email_subject
@@ -671,6 +672,8 @@ def save_outbound_draft(db: Session, ticket_id: int, payload: OutboundDraftCreat
     )
     db.add(draft)
     db.flush()
+    if payload.channel == SourceChannel.email:
+        ensure_outbound_mailbox_identity(draft, ticket=ticket, include_message_id=False)
     _attach_outbound_message(db, draft, attachments)
     log_event(
         db,
@@ -683,6 +686,8 @@ def save_outbound_draft(db: Session, ticket_id: int, payload: OutboundDraftCreat
             "summary": f"Draft saved for {payload.channel.value}",
             "attachment_ids": [attachment.id for attachment in attachments],
             "attachments_count": len(attachments),
+            "mailbox_thread_id": draft.mailbox_thread_id,
+            "mailbox_references": draft.mailbox_references,
         },
     )
     db.flush()
@@ -772,6 +777,9 @@ def send_outbound_message(db: Session, ticket_id: int, payload: OutboundSendRequ
             "subject_configured": bool(subject),
             "attachment_ids": [attachment.id for attachment in attachments],
             "attachments_count": len(attachments),
+            "mailbox_thread_id": message.mailbox_thread_id,
+            "mailbox_message_id": message.mailbox_message_id,
+            "mailbox_references": message.mailbox_references,
         },
     )
     db.flush()
