@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..unit_of_work import managed_session
-from ..voice_schemas import WebchatVoiceCreateRequest, WebchatVoiceRejectRequest
+from ..voice_schemas import WebchatVoiceCreateRequest, WebchatVoiceNoteRequest, WebchatVoiceNoteResponse, WebchatVoiceRejectRequest
 from ..webchat_voice_config import load_webchat_voice_runtime_config
 from ..services.webchat_voice_service import (
     DETAIL_EXPIRED,
@@ -16,6 +16,7 @@ from ..services.webchat_voice_service import (
     end_public_voice_session,
     list_admin_voice_sessions,
     reject_admin_voice_session,
+    save_admin_voice_note,
 )
 from .deps import get_current_user
 
@@ -127,6 +128,25 @@ def reject_ticket_voice_session(
             voice_session_public_id=voice_session_id,
             current_user=current_user,
             reason=payload.reason if payload else None,
+        )
+
+
+@router.post("/admin/tickets/{ticket_id}/voice/{voice_session_id}/notes", response_model=WebchatVoiceNoteResponse)
+def save_ticket_voice_note(
+    ticket_id: int,
+    voice_session_id: str,
+    payload: WebchatVoiceNoteRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict:
+    with managed_session(db):
+        return save_admin_voice_note(
+            db,
+            ticket_id=ticket_id,
+            voice_session_public_id=voice_session_id,
+            current_user=current_user,
+            body=payload.body,
+            source=payload.source,
         )
 
 

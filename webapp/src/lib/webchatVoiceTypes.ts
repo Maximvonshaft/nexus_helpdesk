@@ -44,3 +44,14 @@ export interface WebchatVoiceRuntimeConfig {
   recording_enabled: boolean
   transcription_enabled: boolean
 }
+
+export interface WebchatVoiceNoteResult {
+  ok: boolean
+  ticket_id: number
+  voice_session_id: string
+  note_id: number
+  ticket_event_id: number
+  webchat_event_id: number
+  audit_id: number
+  created_at: string
+}

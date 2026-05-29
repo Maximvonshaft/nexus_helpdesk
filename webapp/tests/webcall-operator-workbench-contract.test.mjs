@@ -10,6 +10,9 @@ const appShell = readFileSync(resolve(root, 'src/layouts/AppShell.tsx'), 'utf8')
 const commandPalette = readFileSync(resolve(root, 'src/components/ui/CommandPalette.tsx'), 'utf8')
 const rbac = readFileSync(resolve(root, 'src/lib/rbac.ts'), 'utf8')
 const publicWebcall = readFileSync(resolve(root, 'src/routes/webcall.tsx'), 'utf8')
+const apiClient = readFileSync(resolve(root, 'src/lib/api.ts'), 'utf8')
+const voiceApi = readFileSync(resolve(root, 'src/lib/webchatVoiceApi.ts'), 'utf8')
+const agentPanel = readFileSync(resolve(root, 'src/components/webcall/AgentWebCallPanel.tsx'), 'utf8')
 
 test('top-level /webcall operator route is registered without replacing customer room route', () => {
   assert.match(route, /path: '\/webcall'/)
@@ -56,4 +59,14 @@ test('webcall workbench uses real backend contracts for queue, identity, AI, han
   assert.match(route, /thread\.data\?\.events/)
   assert.doesNotMatch(route, /\bfetch\s*\(/)
   assert.doesNotMatch(route, /Mock voice session|Accept mock call|End mock call/)
+})
+
+test('webcall call notes are saved through unified api client and timeline/audit refresh', () => {
+  assert.match(apiClient, /webchatVoiceSaveNote: \(ticketId: number, voiceSessionId: string, payload: \{ body: string; source\?: string \| null \}\)/)
+  assert.match(apiClient, /`\/api\/webchat\/admin\/tickets\/\$\{ticketId\}\/voice\/\$\{voiceSessionId\}\/notes`/)
+  assert.match(voiceApi, /saveNote: api\.webchatVoiceSaveNote/)
+  assert.match(agentPanel, /data-testid="webcall-call-notes"/)
+  assert.match(agentPanel, /webchatVoiceApi\.saveNote/)
+  assert.match(agentPanel, /queryKey: \['ticketTimeline', ticketId\]/)
+  assert.match(agentPanel, /TicketInternalNote、ticket timeline、WebChat event 和 admin audit/)
 })

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class WebchatVoiceCreateRequest(BaseModel):
@@ -14,6 +14,31 @@ class WebchatVoiceRejectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reason: str | None = Field(default=None, max_length=240)
+
+
+class WebchatVoiceNoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(min_length=1, max_length=4000)
+    source: str | None = Field(default=None, max_length=80)
+
+    @field_validator("body", "source", mode="before")
+    @classmethod
+    def strip_text(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class WebchatVoiceNoteResponse(BaseModel):
+    ok: bool = True
+    ticket_id: int
+    voice_session_id: str
+    note_id: int
+    ticket_event_id: int
+    webchat_event_id: int
+    audit_id: int
+    created_at: str
 
 
 class WebchatVoiceSessionRead(BaseModel):

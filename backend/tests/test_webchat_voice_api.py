@@ -20,7 +20,7 @@ from app.auth_service import create_access_token
 from app.db import Base, SessionLocal, engine
 from app.enums import UserRole
 from app.main import app
-from app.models import Ticket, User
+from app.models import AdminAuditLog, Ticket, TicketEvent, TicketInternalNote, User
 from app.services.livekit_voice_provider import LiveKitVoiceProvider
 from app.services.voice_provider import VoiceParticipantToken
 from app.utils.time import utc_now
@@ -30,6 +30,7 @@ from app.webchat_models import WebchatEvent, WebchatMessage  # noqa: F401 - ensu
 
 @pytest.fixture(scope="module", autouse=True)
 def ensure_schema():
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
@@ -297,6 +298,81 @@ def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
         assert event_types.count("voice.session.ended") == 1
     finally:
         db.close()
+
+
+def test_admin_voice_note_writes_internal_note_timeline_webchat_event_and_audit():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Call Note Visitor")
+
+    response = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/notes",
+        headers=_admin_headers(9202),
+        json={"body": "  Customer verified name and requested a callback after delivery scan.  ", "source": "operator_workbench"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["ticket_id"] == ticket_id
+    assert payload["voice_session_id"] == voice_session_id
+    assert payload["note_id"] > 0
+    assert payload["ticket_event_id"] > 0
+    assert payload["webchat_event_id"] > 0
+    assert payload["audit_id"] > 0
+
+    timeline = client.get(f"/api/tickets/{ticket_id}/timeline?limit=20", headers=_admin_headers(9202))
+    assert timeline.status_code == 200, timeline.text
+    timeline_items = timeline.json()["items"]
+    assert any(item["source_type"] == "internal_note" and "Customer verified name" in item["body"] for item in timeline_items)
+    assert any(item["source_type"] == "ticket_event" and item["event_type"] == "internal_note_added" for item in timeline_items)
+    assert any(item["source_type"] == "webchat_event" and item["event_type"] == "voice.session.note_saved" for item in timeline_items)
+
+    db = SessionLocal()
+    try:
+        note = db.query(TicketInternalNote).filter(TicketInternalNote.id == payload["note_id"]).one()
+        assert note.ticket_id == ticket_id
+        assert note.author_id == 9202
+        assert note.body == "Customer verified name and requested a callback after delivery scan."
+        ticket_event = db.query(TicketEvent).filter(TicketEvent.id == payload["ticket_event_id"]).one()
+        assert ticket_event.event_type.value == "internal_note_added"
+        assert ticket_event.note == "WebCall call note saved"
+        event_payload = json.loads(ticket_event.payload_json)
+        assert event_payload["voice_session_id"] == voice_session_id
+        assert event_payload["note_id"] == note.id
+        webchat_event = db.query(WebchatEvent).filter(WebchatEvent.id == payload["webchat_event_id"]).one()
+        assert webchat_event.event_type == "voice.session.note_saved"
+        webchat_payload = json.loads(webchat_event.payload_json)
+        assert webchat_payload["voice_session_id"] == voice_session_id
+        assert webchat_payload["author_id"] == 9202
+        audit = db.query(AdminAuditLog).filter(AdminAuditLog.id == payload["audit_id"]).one()
+        assert audit.action == "webcall.voice.note_saved"
+        assert audit.target_type == "webchat_voice_session"
+        audit_payload = json.loads(audit.new_value_json)
+        assert audit_payload["ticket_id"] == ticket_id
+        assert audit_payload["voice_session_id"] == voice_session_id
+    finally:
+        db.close()
+
+
+def test_admin_voice_note_requires_voice_capability_even_when_ticket_visible():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Note RBAC Visitor")
+    db = SessionLocal()
+    try:
+        ticket = db.query(Ticket).filter(Ticket.id == ticket_id).one()
+        ticket.assignee_id = 9204
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/notes",
+        headers=_admin_headers(9204),
+        json={"body": "visible ticket but no voice permission"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "webcall_voice_read_requires_capability"
 
 
 def test_expired_ringing_session_accept_marks_missed_without_agent_token():

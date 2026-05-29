@@ -7,4 +7,5 @@ export const webchatVoiceApi = {
   acceptSession: api.webchatVoiceAcceptSession,
   rejectSession: api.webchatVoiceRejectSession,
   endSession: api.webchatVoiceEndSession,
+  saveNote: api.webchatVoiceSaveNote,
 }

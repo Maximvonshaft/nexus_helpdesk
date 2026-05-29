@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { Field, Textarea } from '@/components/ui/Field'
 import { useSession } from '@/hooks/useAuth'
 import {
   canAcceptWebcallVoice,
@@ -136,6 +137,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
   const [muted, setMuted] = useState(false)
   const [joinedVoiceSessionId, setJoinedVoiceSessionId] = useState<string | null>(null)
   const [queueTab, setQueueTab] = useState<(typeof QUEUE_TABS)[number]['key']>('incoming')
+  const [callNote, setCallNote] = useState('')
   const roomRef = useRef<any | null>(null)
   const localAudioRef = useRef<LocalAudioTrack | null>(null)
   const remoteAudioRef = useRef<HTMLDivElement | null>(null)
@@ -322,6 +324,23 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
     onError: (err: unknown) => setMessage(safeErrorMessage(err)),
   })
 
+  const saveNoteMutation = useMutation({
+    mutationFn: async () => {
+      if (!ticketId || !currentSession) throw new Error('No WebCall session selected')
+      return webchatVoiceApi.saveNote(ticketId, currentSession.voice_session_id, {
+        body: callNote,
+        source: 'operator_workbench',
+      })
+    },
+    onSuccess: async (result) => {
+      setCallNote('')
+      setMessage(`Call note saved to ticket timeline (#${result.note_id}).`)
+      await invalidateVoiceViews()
+      if (ticketId) await client.invalidateQueries({ queryKey: ['ticketTimeline', ticketId] })
+    },
+    onError: (err: unknown) => setMessage(safeErrorMessage(err)),
+  })
+
   async function toggleMute() {
     const audioTrack = localAudioRef.current
     if (!audioTrack || !connected) return
@@ -422,6 +441,26 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
             {canAcceptVoice && runtimeConfig.isError ? <div className="section-subtitle">Runtime config is unavailable. Accept may fail until the page can refresh the LiveKit URL.</div> : null}
             <div role="status" className="section-subtitle">{sanitizeDisplayText(message)}</div>
             <div ref={remoteAudioRef} aria-hidden="true" />
+            <div className="stack compact" data-testid="webcall-call-notes">
+              <strong>Call Notes</strong>
+              <Field label="通话备注" hint="保存后写入 TicketInternalNote、ticket timeline、WebChat event 和 admin audit。">
+                <Textarea
+                  rows={4}
+                  value={callNote}
+                  onChange={(event) => setCallNote(event.target.value)}
+                  placeholder="记录身份核验、客户承诺、后续动作或需要交接的信息"
+                />
+              </Field>
+              <div className="inline-actions">
+                <Button
+                  variant="secondary"
+                  disabled={!ticketId || !currentSession || !callNote.trim() || saveNoteMutation.isPending}
+                  onClick={() => saveNoteMutation.mutate()}
+                >
+                  {saveNoteMutation.isPending ? 'Saving note...' : 'Save call note'}
+                </Button>
+              </div>
+            </div>
             <div className="inline-actions">
               {canAcceptVoice ? (
                 <Button variant="primary" disabled={!canAccept} onClick={() => currentSession && acceptMutation.mutate(currentSession)}>

@@ -10,7 +10,8 @@ from typing import Any
 from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from ..models import Ticket, User
+from ..enums import EventType
+from ..models import Ticket, TicketInternalNote, User
 from ..utils.time import utc_now
 from ..voice_models import WebchatVoiceParticipant, WebchatVoiceSession
 from ..webchat_models import WebchatConversation, WebchatEvent, WebchatMessage
@@ -29,9 +30,11 @@ from .permissions import (
     ensure_can_end_webcall_voice,
     ensure_can_read_webcall_voice,
     ensure_can_reject_webcall_voice,
+    ensure_can_write_internal_note,
     ensure_can_view_webcall_voice_queue,
     ensure_ticket_visible,
 )
+from .audit_service import log_admin_audit, log_event
 from .voice_provider import VoiceProvider, VoiceProviderError
 from .webchat_rate_limit import enforce_webchat_rate_limit
 
@@ -107,8 +110,10 @@ def _participant_identity(session: WebchatVoiceSession, participant_type: str, s
     return f"{participant_type}_{session.public_id}_{suffix}"[:160]
 
 
-def _write_voice_event(db: Session, *, conversation_id: int, ticket_id: int, event_type: str, payload: dict[str, Any] | None = None) -> None:
-    db.add(WebchatEvent(conversation_id=conversation_id, ticket_id=ticket_id, event_type=event_type, payload_json=json.dumps(payload or {}, ensure_ascii=False)))
+def _write_voice_event(db: Session, *, conversation_id: int, ticket_id: int, event_type: str, payload: dict[str, Any] | None = None) -> WebchatEvent:
+    row = WebchatEvent(conversation_id=conversation_id, ticket_id=ticket_id, event_type=event_type, payload_json=json.dumps(payload or {}, ensure_ascii=False))
+    db.add(row)
+    return row
 
 
 def _voice_duration_seconds(started_at: Any, ended_at: Any) -> int | None:
@@ -463,6 +468,73 @@ def list_admin_incoming_voice_sessions(db: Session, *, current_user: User, statu
         if len(items) >= safe_limit:
             break
     return {"items": items}
+
+
+def save_admin_voice_note(
+    db: Session,
+    *,
+    ticket_id: int,
+    voice_session_public_id: str,
+    current_user: User,
+    body: str,
+    source: str | None = None,
+) -> dict[str, Any]:
+    ensure_can_read_webcall_voice(current_user, db)
+    ensure_can_write_internal_note(current_user, db)
+    session = _load_voice_session(db, voice_session_public_id)
+    if session.ticket_id != ticket_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
+    _ensure_ticket_visible_for_session(db, current_user, session)
+    normalized_body = (body or "").strip()
+    if not normalized_body:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="voice note body is required")
+
+    now = utc_now()
+    note = TicketInternalNote(ticket_id=ticket_id, author_id=current_user.id, body=normalized_body, created_at=now, updated_at=now)
+    db.add(note)
+    db.flush()
+    payload = {
+        "voice_session_id": session.public_id,
+        "note_id": note.id,
+        "source": (source or "webcall_operator_workbench").strip() or "webcall_operator_workbench",
+        "provider": session.provider,
+        "status": session.status,
+    }
+    ticket_event = log_event(
+        db,
+        ticket_id=ticket_id,
+        actor_id=current_user.id,
+        event_type=EventType.internal_note_added,
+        note="WebCall call note saved",
+        payload=payload,
+    )
+    webchat_event = _write_voice_event(
+        db,
+        conversation_id=session.conversation_id,
+        ticket_id=ticket_id,
+        event_type="voice.session.note_saved",
+        payload={**payload, "author_id": current_user.id},
+    )
+    audit = log_admin_audit(
+        db,
+        actor_id=current_user.id,
+        action="webcall.voice.note_saved",
+        target_type="webchat_voice_session",
+        target_id=session.id,
+        old_value=None,
+        new_value={**payload, "ticket_id": ticket_id},
+    )
+    db.flush()
+    return {
+        "ok": True,
+        "ticket_id": ticket_id,
+        "voice_session_id": session.public_id,
+        "note_id": note.id,
+        "ticket_event_id": ticket_event.id,
+        "webchat_event_id": webchat_event.id,
+        "audit_id": audit.id,
+        "created_at": note.created_at.isoformat(),
+    }
 
 
 def accept_admin_voice_session(db: Session, *, ticket_id: int, voice_session_public_id: str, current_user: User) -> dict[str, Any]:

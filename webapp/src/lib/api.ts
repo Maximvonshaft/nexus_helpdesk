@@ -64,7 +64,7 @@ import type {
   CodexSessionStatus,
   CodexCredentialActionResult,
 } from '@/lib/types'
-import type { WebchatVoiceIncomingSession, WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
+import type { WebchatVoiceIncomingSession, WebchatVoiceNoteResult, WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
 import { mapApiErrorMessage } from '@/lib/apiErrorMap'
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
@@ -703,6 +703,10 @@ export const api = {
     body: JSON.stringify({ reason: reason || null }),
   }),
   webchatVoiceEndSession: (ticketId: number, voiceSessionId: string) => request<{ ok: boolean; status: string; voice_session_id: string; accepted_by_user_id?: number | null }>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/end`, { method: 'POST' }),
+  webchatVoiceSaveNote: (ticketId: number, voiceSessionId: string, payload: { body: string; source?: string | null }) => request<WebchatVoiceNoteResult>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/notes`, {
+    method: 'POST',
+    body: JSON.stringify({ body: payload.body, source: payload.source || null }),
+  }),
 
   unresolvedEvents: () => request<OpenClawUnresolvedEvent[]>('/api/admin/openclaw/unresolved-events'),
   replayUnresolvedEvent: (eventId: number) => request<{ ok: boolean; linked_ticket_id?: number | null }>(`/api/admin/openclaw/unresolved-events/${eventId}/replay`, {
