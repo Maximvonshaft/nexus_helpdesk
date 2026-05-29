@@ -13,7 +13,7 @@ from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketPriority, TicketSource, TicketStatus
-from ..models import Customer, Ticket, TicketComment, TicketEvent, TicketOutboundMessage, User
+from ..models import Customer, Ticket, TicketAIIntake, TicketComment, TicketEvent, TicketOutboundMessage, User
 from ..utils.time import utc_now
 from ..settings import get_settings
 from ..webchat_models import WebchatCardAction, WebchatConversation, WebchatHandoffRequest, WebchatMessage
@@ -143,6 +143,97 @@ def _message_read(row: WebchatMessage) -> dict[str, Any]:
         "author_label": row.author_label,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
+
+
+def _latest_ai_intake(db: Session, ticket_id: int) -> TicketAIIntake | None:
+    return (
+        db.query(TicketAIIntake)
+        .filter(TicketAIIntake.ticket_id == ticket_id)
+        .order_by(TicketAIIntake.created_at.desc(), TicketAIIntake.id.desc())
+        .first()
+    )
+
+
+def _missing_fields(ai_intake: TicketAIIntake | None) -> list[str]:
+    if ai_intake is None:
+        return []
+    parsed = _loads_json(ai_intake.missing_fields_json)
+    if isinstance(parsed, list):
+        return [str(item).strip() for item in parsed if str(item).strip()]
+    return []
+
+
+def _ai_suggestion(
+    *,
+    key: str,
+    title: str,
+    body: str | None,
+    source_type: str,
+    source_id: int | None = None,
+    confidence: float | None = None,
+    action: str | None = None,
+    insertable_reply: str | None = None,
+) -> dict[str, Any] | None:
+    clipped_body = _clip(body, 800)
+    if not clipped_body:
+        return None
+    return {
+        "key": key,
+        "title": title,
+        "body": clipped_body,
+        "source_type": source_type,
+        "source_id": source_id,
+        "confidence": confidence,
+        "action": _clip(action, 300),
+        "insertable_reply": _clip(insertable_reply, 1200),
+    }
+
+
+def _webchat_ai_suggestions(db: Session, ticket: Ticket, handoff_row: WebchatHandoffRequest | None) -> list[dict[str, Any]]:
+    ai_intake = _latest_ai_intake(db, ticket.id)
+    recommended_action = (ai_intake.recommended_action if ai_intake else None) or ticket.required_action or (handoff_row.recommended_agent_action if handoff_row else None)
+    recommended_source_type = "ticket_ai_intake" if ai_intake and ai_intake.recommended_action else "ticket" if ticket.required_action else "webchat_handoff"
+    recommended_source_id = ai_intake.id if ai_intake and ai_intake.recommended_action else ticket.id if ticket.required_action else handoff_row.id if handoff_row else None
+    suggestions = [
+        _ai_suggestion(
+            key="ai-summary",
+            title="AI 摘要",
+            body=ai_intake.summary if ai_intake else ticket.ai_summary,
+            source_type="ticket_ai_intake" if ai_intake else "ticket",
+            source_id=ai_intake.id if ai_intake else ticket.id,
+            confidence=ai_intake.confidence if ai_intake else ticket.ai_confidence,
+            action=ai_intake.classification if ai_intake else ticket.ai_classification,
+        ),
+        _ai_suggestion(
+            key="recommended-action",
+            title="建议下一步",
+            body=recommended_action,
+            source_type=recommended_source_type,
+            source_id=recommended_source_id,
+            confidence=ai_intake.confidence if ai_intake else None,
+            action="agent_next_step",
+        ),
+        _ai_suggestion(
+            key="suggested-reply",
+            title="建议回复",
+            body=ai_intake.suggested_reply if ai_intake else None,
+            source_type="ticket_ai_intake",
+            source_id=ai_intake.id if ai_intake else None,
+            confidence=ai_intake.confidence if ai_intake else None,
+            action="insert_reply",
+            insertable_reply=ai_intake.suggested_reply if ai_intake else None,
+        ),
+        _ai_suggestion(
+            key="missing-fields",
+            title="待补信息",
+            body=", ".join(_missing_fields(ai_intake)) or ticket.missing_fields,
+            source_type="ticket_ai_intake" if ai_intake else "ticket",
+            source_id=ai_intake.id if ai_intake else ticket.id,
+            confidence=ai_intake.confidence if ai_intake else None,
+            action="collect_missing_fields",
+        ),
+    ]
+    return [item for item in suggestions if item is not None]
 
 
 def create_or_resume_conversation(db: Session, payload: Any, request: Request) -> dict[str, Any]:
@@ -734,6 +825,7 @@ def admin_get_thread(db: Session, ticket_id: int, current_user: User) -> dict[st
         "status": ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status),
         "conversation_state": ticket.conversation_state.value if hasattr(ticket.conversation_state, "value") else str(ticket.conversation_state),
         "required_action": ticket.required_action,
+        "ai_suggestions": _webchat_ai_suggestions(db, ticket, handoff_row),
         "handoff": serialize_handoff_request(db, handoff_row, current_user=current_user, conversation=conversation, ticket=ticket) if handoff_row else None,
         "visitor": {
             "name": conversation.visitor_name,

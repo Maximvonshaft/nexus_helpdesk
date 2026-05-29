@@ -171,6 +171,7 @@ jobs:
               backend/tests/test_webchat_inbox_read_state.py) return 0 ;;
               backend/tests/test_webchat_round_b.py) return 0 ;;
               backend/tests/test_webchat_stream_feature_flag.py) return 0 ;;
+              backend/tests/test_webchat_thread_ai_suggestions.py) return 0 ;;
               backend/tests/test_webchat_voice_api.py) return 0 ;;
               backend/tests/test_webchat_voice_mock_ui_static.py) return 0 ;;
               backend/tests/test_webchat_voice_p0_static.py) return 0 ;;

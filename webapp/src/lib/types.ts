@@ -858,6 +858,17 @@ export interface WebchatEventSummary {
   created_at?: string | null
 }
 
+export interface WebchatAISuggestion {
+  key: string
+  title: string
+  body: string
+  source_type: string
+  source_id?: number | null
+  confidence?: number | null
+  action?: string | null
+  insertable_reply?: string | null
+}
+
 export interface WebchatThread extends WebchatAIRuntimeSnapshot {
   conversation_id: string
   ticket_id: number
@@ -876,6 +887,7 @@ export interface WebchatThread extends WebchatAIRuntimeSnapshot {
   }
   messages: WebchatMessage[]
   actions?: WebchatActionAudit[]
+  ai_suggestions?: WebchatAISuggestion[]
   ai_turns?: WebchatAITurnSummary[]
   events?: WebchatEventSummary[]
   last_event_id?: number

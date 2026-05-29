@@ -105,6 +105,11 @@
 .v5-action-audit-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .v5-action-audit-meta { display: flex; flex-wrap: wrap; gap: 8px 12px; color: var(--v5-muted); font-size: 12px; }
 .v5-action-audit-item p { margin: 0; color: var(--v5-text); overflow-wrap: anywhere; }
+.v5-ai-suggestion-list { display: grid; gap: 8px; }
+.v5-ai-suggestion-item { border: 1px solid rgba(148,163,184,.26); border-radius: 12px; background: #f8fafc; padding: 10px; display: grid; gap: 8px; }
+.v5-ai-suggestion-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.v5-ai-suggestion-head span { color: var(--v5-muted); font-size: 12px; text-align: right; }
+.v5-ai-suggestion-item p { margin: 0; color: var(--v5-text); line-height: 1.55; overflow-wrap: anywhere; }
 .v5-error-block { border: 1px solid #fecaca; background: #fef2f2; color: #991b1b; border-radius: 12px; padding: 10px; display: grid; gap: 8px; }
 .v5-error-block p { margin: 0; }
 .v5-evidence { display: grid; gap: 10px; }

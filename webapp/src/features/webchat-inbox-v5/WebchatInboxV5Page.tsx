@@ -712,6 +712,26 @@ function ActionAuditPanel({ actions = [], allowDebug }: { actions?: WebchatActio
   )
 }
 
+function AISuggestionsPanel({ thread, onInsert }: { thread?: WebchatThread; onInsert: (text: string) => void }) {
+  const suggestions = thread?.ai_suggestions ?? []
+  if (!suggestions.length) return <p className="section-subtitle">暂无 AI suggestions；会优先读取 Ticket AI intake、handoff recommended action 和工单 required action。</p>
+  return (
+    <div className="v5-ai-suggestion-list" data-testid="webchat-ai-suggestions">
+      {suggestions.map((item) => (
+        <div className="v5-ai-suggestion-item" key={item.key}>
+          <div className="v5-ai-suggestion-head">
+            <strong>{sanitizeDisplayText(item.title)}</strong>
+            <span>{sanitizeDisplayText(item.source_type)}{typeof item.confidence === 'number' ? ` · ${Math.round(item.confidence * 100)}%` : ''}</span>
+          </div>
+          <p>{sanitizeDisplayText(item.body)}</p>
+          {item.action ? <Badge>{sanitizeDisplayText(item.action)}</Badge> : null}
+          {item.insertable_reply ? <Button variant="secondary" onClick={() => onInsert(item.insertable_reply as string)}>插入建议回复</Button> : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function EscalateDialog({
   state,
   setState,
@@ -772,6 +792,7 @@ function ContextPanel({
   onForce,
   onRelease,
   onResume,
+  onInsert,
   busy,
 }: {
   row: InboxRow | null
@@ -789,6 +810,7 @@ function ContextPanel({
   onForce: (ticketId: number) => void
   onRelease: (requestId: number) => void
   onResume: (requestId: number) => void
+  onInsert: (text: string) => void
   busy: boolean
 }) {
   if (!row) return <Card className="v5-panel v5-side-panel"><CardBody><EmptyState text="请选择会话查看上下文。" /></CardBody></Card>
@@ -818,10 +840,13 @@ function ContextPanel({
           </div>
           {!handoff ? <p className="section-subtitle">当前没有开放的 handoff 请求；AI 活跃时需具备权限才能强制接管。</p> : null}
         </Section>
-        <Section title="下一步动作 / Required action">
-          <p className="v5-recommendation">{shortText(thread?.required_action || selectedHandoff?.recommended_agent_action || row.rawHandoff?.recommended_agent_action || '暂无明确下一步动作。')}</p>
-        </Section>
-        <Section title="系统证据" defaultOpen={false}>
+          <Section title="下一步动作 / Required action">
+            <p className="v5-recommendation">{shortText(thread?.required_action || selectedHandoff?.recommended_agent_action || row.rawHandoff?.recommended_agent_action || '暂无明确下一步动作。')}</p>
+          </Section>
+          <Section title="AI suggestions">
+            <AISuggestionsPanel thread={thread} onInsert={onInsert} />
+          </Section>
+          <Section title="系统证据" defaultOpen={false}>
           <CaseEvidencePanel detail={caseDetail} isLoading={evidenceLoading} isError={evidenceError} onRetry={onRetryEvidence} />
         </Section>
         <Section title="WebCall 状态" defaultOpen={false}>
@@ -1257,6 +1282,7 @@ export function WebchatInboxV5Page() {
             onForce={(ticketId) => setConfirm({ title: '确认强制接管？', body: '该操作会暂停 AI，并取消未完成 AI 回复。', tone: 'danger', confirmLabel: '强制接管', onConfirm: () => forceMutation.mutate(ticketId) })}
             onRelease={(requestId) => setConfirm({ title: '释放回队列？', body: '释放后你将不能继续回复，其他客服可接入。', confirmLabel: '释放回队列', onConfirm: () => releaseMutation.mutate(requestId) })}
             onResume={(requestId) => setConfirm({ title: '恢复 AI？', body: '恢复后下一条客户消息可重新触发 AI 自动回复。', confirmLabel: '恢复 AI', onConfirm: () => resumeAiMutation.mutate(requestId) })}
+            onInsert={insertReply}
           />
         </div>
       </div>
@@ -1282,6 +1308,7 @@ export function WebchatInboxV5Page() {
               onForce={(ticketId) => setConfirm({ title: '确认强制接管？', body: '该操作会暂停 AI，并取消未完成 AI 回复。', tone: 'danger', confirmLabel: '强制接管', onConfirm: () => forceMutation.mutate(ticketId) })}
               onRelease={(requestId) => releaseMutation.mutate(requestId)}
               onResume={(requestId) => resumeAiMutation.mutate(requestId)}
+              onInsert={insertReply}
             />
           </Dialog.Content>
         </Dialog.Portal>

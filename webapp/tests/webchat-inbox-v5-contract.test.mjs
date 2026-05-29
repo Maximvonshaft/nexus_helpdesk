@@ -91,3 +91,12 @@ test('webchat inbox V5 displays redacted action audit from thread actions', () =
   assert.match(inbox, /SENSITIVE_AUDIT_KEY/)
   assert.match(inbox, /redacted payload/)
 })
+
+test('webchat inbox V5 exposes backend AI suggestions as a template block', () => {
+  assert.match(inbox, /function AISuggestionsPanel/)
+  assert.match(inbox, /data-testid="webchat-ai-suggestions"/)
+  assert.match(inbox, /thread\?\.ai_suggestions/)
+  assert.match(inbox, /Ticket AI intake/)
+  assert.match(inbox, /插入建议回复/)
+  assert.match(inbox, /onInsert\(item\.insertable_reply as string\)/)
+})
