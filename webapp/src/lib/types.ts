@@ -552,6 +552,10 @@ export interface KnowledgeRetrievalTestResult {
   grounding_source?: Record<string, unknown> | null
 }
 
+export interface KnowledgeRuntimeContextTestResult {
+  context: Record<string, unknown>
+}
+
 export interface ChannelOnboardingTask {
   id: number
   provider: string

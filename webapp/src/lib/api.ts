@@ -30,6 +30,7 @@ import type {
   KnowledgeItemList,
   KnowledgeItemVersion,
   KnowledgeRetrievalTestResult,
+  KnowledgeRuntimeContextTestResult,
   OpenClawUnresolvedEvent,
   PersonaProfile,
   PersonaProfileDetail,
@@ -444,12 +445,13 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ version, notes: notes || null }),
   }),
-  knowledgeItems: (params?: { q?: string; status?: string; source_type?: string; channel?: string; audience_scope?: string }) => {
+  knowledgeItems: (params?: { q?: string; status?: string; source_type?: string; market_id?: number | null; channel?: string; audience_scope?: string }) => {
     const search = new URLSearchParams()
     search.set('limit', '200')
     if (params?.q) search.set('q', params.q)
     if (params?.status) search.set('status', params.status)
     if (params?.source_type) search.set('source_type', params.source_type)
+    if (params?.market_id !== undefined && params.market_id !== null) search.set('market_id', String(params.market_id))
     if (params?.channel) search.set('channel', params.channel)
     if (params?.audience_scope) search.set('audience_scope', params.audience_scope)
     return request<KnowledgeItemList>(`/api/knowledge-items?${search.toString()}`)
@@ -496,6 +498,10 @@ export const api = {
   testKnowledgeRetrieval: (payload: { q: string; market_id?: number | null; channel?: string | null; audience_scope?: string | null; language?: string | null; limit?: number }) => request<KnowledgeRetrievalTestResult>('/api/knowledge-items/retrieve-test', {
     method: 'POST',
     body: JSON.stringify(payload),
+  }),
+  testKnowledgeRuntimeContext: (payload: { q: string; tenant_key?: string; market_id?: number | null; channel?: string | null; audience_scope?: string | null; language?: string | null; limit?: number }) => request<KnowledgeRuntimeContextTestResult>('/api/knowledge-items/runtime-context-test', {
+    method: 'POST',
+    body: JSON.stringify({ tenant_key: 'default', ...payload }),
   }),
   channelOnboardingTasks: () => request<ChannelOnboardingTaskList>('/api/channel-control/onboarding-tasks?limit=200'),
 

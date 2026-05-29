@@ -36,6 +36,13 @@ test('email operator workbench nav route is registered and capability gated', ()
   assert.match(rbac, /'\/email': \{ allOf: \[CAPABILITIES\.ticketRead\], anyOf: \[CAPABILITIES\.outboundDraftSave, CAPABILITIES\.outboundSend\] \}/)
 })
 
+test('knowledge studio nav route is registered and read/manage capability gated', () => {
+  assert.match(appShell, /to: '\/knowledge-studio'/)
+  assert.match(router, /KnowledgeStudioRoute/)
+  assert.match(router, /@\/routes\/knowledge-studio/)
+  assert.match(rbac, /'\/knowledge-studio': \{ anyOf: \[CAPABILITIES\.aiConfigRead, CAPABILITIES\.aiConfigManage\] \}/)
+})
+
 test('internal webcall routes are intentionally classified', () => {
   assert.match(router, /Internal operator console for human WebCall handling/)
   assert.match(router, /Top-level operator WebCall workbench/)
@@ -61,6 +68,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'accounts.tsx',
     'outbound-email.tsx',
     'bulletins.tsx',
+    'knowledge-studio.tsx',
     'ai-control.tsx',
     'control-plane.tsx',
     'users.tsx',
