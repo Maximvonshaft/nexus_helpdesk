@@ -54,4 +54,4 @@ Observed:
 
 ## Product Gap Update
 
-Email outbound attachment support now covers both existing external ticket attachments and inline upload from the Email composer. Remaining Email gaps are true inbound Email ingestion/sync, mailbox thread identity, delivery receipt UI, and provider retry control UI.
+Email outbound attachment support now covers both existing external ticket attachments and inline upload from the Email composer. A later stacked PR adds provider retry controls. Remaining Email gaps are true inbound Email ingestion/sync, mailbox thread identity, and provider delivery receipt ingestion/UI beyond the current provider status fields.

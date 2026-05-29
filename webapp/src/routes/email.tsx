@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
-import type { CaseDetail, CaseListItem, OutboundChannelCapability, SystemAttachment } from '@/lib/types'
+import type { BadgeTone, CaseDetail, CaseListItem, OutboundChannelCapability, SystemAttachment } from '@/lib/types'
 import { formatDateTime, labelize, marketLabel, priorityTone, sanitizeDisplayText, statusTone } from '@/lib/format'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -23,6 +23,7 @@ import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 
 const emailDraftAccess = { allOf: [CAPABILITIES.outboundDraftSave] } satisfies AccessRequirement
 const emailSendAccess = { allOf: [CAPABILITIES.outboundSend] } satisfies AccessRequirement
+const emailRetryAccess = { allOf: [CAPABILITIES.runtimeManage] } satisfies AccessRequirement
 const EMAIL_QUEUE_TOKENS = new Set(['email', 'mail', 'smtp', 'imap', 'pop3'])
 const MAX_EMAIL_ATTACHMENTS = 10
 
@@ -279,9 +280,77 @@ function timelineBody(item: Record<string, unknown>) {
   return sanitizeDisplayText(String(item.body || item.summary || item.note || item.event_type || item.id || ''))
 }
 
+function timelinePayload(item: Record<string, unknown>) {
+  return item.payload && typeof item.payload === 'object' ? item.payload as Record<string, unknown> : {}
+}
+
+function providerField(item: Record<string, unknown>, key: string) {
+  const payload = timelinePayload(item)
+  return item[key] ?? payload[key] ?? null
+}
+
+function isOutboundTimelineItem(item: Record<string, unknown>) {
+  return String(item.source_type || item.kind || '') === 'outbound_message'
+}
+
+function outboundStatusTone(status: string): BadgeTone {
+  if (status === 'sent') return 'success'
+  if (status === 'dead' || status === 'failed') return 'danger'
+  if (status === 'pending' || status === 'processing') return 'warning'
+  return 'default'
+}
+
+function OutboundProviderStatus({
+  item,
+  canRequeue,
+  pending,
+  onRequeue,
+}: {
+  item: Record<string, unknown>
+  canRequeue: boolean
+  pending: boolean
+  onRequeue: (messageId: number) => void
+}) {
+  const statusValue = String(providerField(item, 'status') || '-')
+  const providerStatus = String(providerField(item, 'provider_status') || '-')
+  const failureReason = String(providerField(item, 'failure_reason') || providerField(item, 'failure_code') || '')
+  const nextRetryAt = String(providerField(item, 'next_retry_at') || '')
+  const sentAt = String(providerField(item, 'sent_at') || '')
+  const retryCount = Number(providerField(item, 'retry_count') ?? 0)
+  const maxRetries = Number(providerField(item, 'max_retries') ?? 0)
+  const messageId = Number(item.source_id)
+  const dead = statusValue === 'dead'
+
+  return (
+    <div className="stack" data-testid="email-provider-delivery-status">
+      <div className="badges">
+        <Badge tone={outboundStatusTone(statusValue)}>delivery {labelize(statusValue)}</Badge>
+        <Badge>{sanitizeDisplayText(providerStatus)}</Badge>
+        {retryCount || maxRetries ? <Badge>retry {retryCount}/{maxRetries}</Badge> : null}
+        {nextRetryAt ? <Badge tone="warning">next {formatDateTime(nextRetryAt)}</Badge> : null}
+        {sentAt ? <Badge tone="success">sent {formatDateTime(sentAt)}</Badge> : null}
+      </div>
+      {failureReason ? <div className="section-subtitle">{sanitizeDisplayText(failureReason)}</div> : null}
+      {dead ? (
+        <div className="button-row">
+          <Button
+            variant="secondary"
+            disabled={!canRequeue || pending || !Number.isFinite(messageId)}
+            onClick={() => onRequeue(messageId)}
+          >
+            {pending ? '重排中...' : '重排发送'}
+          </Button>
+          {!canRequeue ? <span className="section-subtitle">需要 runtime.manage 权限</span> : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function EmailWorkbenchPage() {
   const autoRefresh = useAutoRefresh(true)
   const client = useQueryClient()
+  const session = useSession()
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('')
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -318,9 +387,29 @@ function EmailWorkbenchPage() {
   })
 
   const activeCase = detail.data
+  const canRequeueOutbound = canAccess(session.data, emailRetryAccess)
   const emailReadyCount = rows.filter((item) => isEmailCandidate(item)).length
   const openCount = rows.filter((item) => !['resolved', 'closed', 'canceled', 'cancelled'].includes(String(item.status))).length
   const overdueCount = rows.filter((item) => item.overdue).length
+  const requeueMutation = useMutation({
+    mutationFn: (messageId: number) => api.requeueOutboundMessage(messageId),
+    onSuccess: async (result) => {
+      setToast({ message: `已重排 outbound #${result.message_id ?? ''}`, tone: 'success' })
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['caseDetail', selectedId] }),
+        client.invalidateQueries({ queryKey: ['ticketTimeline', selectedId] }),
+        client.invalidateQueries({ queryKey: ['cases'] }),
+        client.invalidateQueries({ queryKey: ['emailWorkbenchCases'] }),
+      ])
+    },
+    onError: (err: Error) => setToast({ message: err.message || '重排 outbound 失败', tone: 'danger' }),
+  })
+
+  function handleRequeueOutbound(messageId: number) {
+    if (!Number.isFinite(messageId)) return
+    if (!window.confirm(`确认重排 outbound message #${messageId}？后端会重新进入发送队列并记录审计。`)) return
+    requeueMutation.mutate(messageId)
+  }
 
   return (
     <AppShell>
@@ -419,6 +508,14 @@ function EmailWorkbenchPage() {
                           <span>{formatDateTime(String(item.created_at || ''))}</span>
                         </div>
                         <div>{timelineBody(item as Record<string, unknown>)}</div>
+                        {isOutboundTimelineItem(item as Record<string, unknown>) ? (
+                          <OutboundProviderStatus
+                            item={item as Record<string, unknown>}
+                            canRequeue={canRequeueOutbound}
+                            pending={requeueMutation.isPending}
+                            onRequeue={handleRequeueOutbound}
+                          />
+                        ) : null}
                       </div>
                     ))}
                     {timeline.isLoading ? <Skeleton lines={4} /> : null}

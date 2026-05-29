@@ -212,6 +212,52 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
     assert db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_queued).count() == 1
 
 
+def test_email_dead_outbound_timeline_and_requeue_contract(client: TestClient, db_session):
+    admin = _admin(db_session, user_id=9403)
+    team = _team(db_session)
+    ticket = _email_ticket(db_session, team=team)
+    headers = _headers(admin)
+    row = TicketOutboundMessage(
+        ticket_id=ticket.id,
+        channel=SourceChannel.email,
+        status=MessageStatus.dead,
+        subject="Dead provider message",
+        body="provider failed",
+        provider_status="dead:smtp_timeout",
+        provider_message_id="nexusdesk-outbound-dead-contract",
+        retry_count=3,
+        max_retries=3,
+        failure_code="smtp_timeout",
+        failure_reason="SMTP timed out",
+        created_by=admin.id,
+    )
+    db_session.add(row)
+    db_session.flush()
+    db_session.commit()
+
+    timeline = client.get(f"/api/tickets/{ticket.id}/timeline?limit=20", headers=headers)
+    assert timeline.status_code == 200, timeline.text
+    outbound = next(item for item in timeline.json()["items"] if item.get("source_type") == "outbound_message")
+    assert outbound["source_id"] == row.id
+    assert outbound["status"] == "dead"
+    assert outbound["provider_status"] == "dead:smtp_timeout"
+    assert outbound["retry_count"] == 3
+    assert outbound["failure_code"] == "smtp_timeout"
+    assert outbound["payload"]["provider_message_id"] == "nexusdesk-outbound-dead-contract"
+    assert outbound["payload"]["failure_reason"] == "SMTP timed out"
+    db_session.commit()
+
+    requeued = client.post(f"/api/admin/outbound/{row.id}/requeue", headers=headers)
+    assert requeued.status_code == 200, requeued.text
+    assert requeued.json()["status"] == "pending"
+    db_session.refresh(row)
+    assert row.status == MessageStatus.pending
+    assert row.provider_status == "requeued_by_admin"
+    assert row.retry_count == 0
+    assert row.failure_code is None
+    assert row.failure_reason is None
+
+
 def test_webcall_accept_end_writes_timeline_voice_evidence(client: TestClient, db_session):
     admin = _admin(db_session, user_id=9402)
     headers = _headers(admin)

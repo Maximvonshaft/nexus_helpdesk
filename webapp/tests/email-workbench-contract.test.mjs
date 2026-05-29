@@ -73,3 +73,16 @@ test('email composer uploads external ticket attachments through unified API cli
   assert.match(emailRoute, /mergeAttachmentIds\(attachments\.map\(\(attachment\) => attachment\.id\)\)/)
   assert.doesNotMatch(emailRoute, /\bfetch\s*\(/)
 })
+
+test('email timeline exposes provider delivery status and dead-message retry controls', () => {
+  assert.match(apiClient, /requeueOutboundMessage: \(messageId: number\) => request<RuntimeRecoveryResult>\(`\/api\/admin\/outbound\/\$\{messageId\}\/requeue`, \{ method: 'POST' \}\)/)
+  assert.match(emailRoute, /const emailRetryAccess = \{ allOf: \[CAPABILITIES\.runtimeManage\] \}/)
+  assert.match(emailRoute, /const canRequeueOutbound = canAccess\(session\.data, emailRetryAccess\)/)
+  assert.match(emailRoute, /data-testid="email-provider-delivery-status"/)
+  assert.match(emailRoute, /provider_status/)
+  assert.match(emailRoute, /failure_reason/)
+  assert.match(emailRoute, /api\.requeueOutboundMessage\(messageId\)/)
+  assert.match(emailRoute, /window\.confirm\(`确认重排 outbound message #\$\{messageId\}/)
+  assert.match(emailRoute, /client\.invalidateQueries\(\{ queryKey: \['ticketTimeline', selectedId\] \}\)/)
+  assert.doesNotMatch(emailRoute, /\bfetch\s*\(/)
+})
