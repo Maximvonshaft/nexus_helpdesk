@@ -132,6 +132,26 @@ def test_knowledge_studio_contract_uses_real_knowledge_tables_and_retrieval(tmp_
             headers=_headers(admin),
             json={"q": "Can I change delivery address?", "channel": "webchat", "audience_scope": "customer", "language": "en", "limit": 5},
         )
+        conflict_check = client.post(
+            "/api/knowledge-items/conflict-check",
+            headers=_headers(admin),
+            json={"q": "address change", "channel": "webchat", "audience_scope": "customer", "language": "en", "limit": 12},
+        )
+        golden_test = client.post(
+            "/api/knowledge-items/golden-test",
+            headers=_headers(admin),
+            json={
+                "q": "Can I change delivery address?",
+                "channel": "webchat",
+                "audience_scope": "customer",
+                "language": "en",
+                "expected_item_key": published.item_key,
+                "expected_answer_contains": "before dispatch",
+                "forbidden_answer_terms": ["manual verification after dispatch"],
+                "min_score": 1,
+                "limit": 5,
+            },
+        )
     finally:
         app.dependency_overrides.pop(get_db, None)
         db_session.close()
@@ -156,16 +176,37 @@ def test_knowledge_studio_contract_uses_real_knowledge_tables_and_retrieval(tmp_
     assert items[document.item_key]["source_type"] == "file"
     assert blocks["asset-library"]["status"] == "implemented"
     assert blocks["retrieval-test"]["backend_contract"] == "POST /api/knowledge-items/retrieve-test"
-    assert blocks["conflict-scan"]["status"] == "linked"
+    assert blocks["conflict-scan"]["status"] == "implemented"
+    assert blocks["golden-test"]["status"] == "implemented"
+    assert lifecycle["conflict-scan"]["status"] == "implemented"
+    assert lifecycle["golden-test"]["status"] == "implemented"
     assert lifecycle["rollback"]["count"] >= 2
-    assert payload["facts"]["dedicated_conflict_check_endpoint"] == "not_implemented"
-    assert payload["facts"]["dedicated_golden_test_endpoint"] == "not_implemented"
+    assert payload["facts"]["dedicated_conflict_check_endpoint"] == "implemented"
+    assert payload["facts"]["dedicated_golden_test_endpoint"] == "implemented"
 
     assert retrieval.status_code == 200, retrieval.text
     retrieval_payload = retrieval.json()
     assert retrieval_payload["total"] >= 1
     assert any(hit["item_key"] == published.item_key for hit in retrieval_payload["hits"])
     assert retrieval_payload["grounding_would_apply"] is True
+
+    assert conflict_check.status_code == 200, conflict_check.text
+    conflict_payload = conflict_check.json()
+    assert conflict_payload["total"] >= 1
+    assert any(
+        {published.item_key, conflict_draft.item_key}.issubset(set(item["item_keys"]))
+        for item in conflict_payload["conflicts"]
+    )
+    assert all("evidence" in item for item in conflict_payload["conflicts"])
+
+    assert golden_test.status_code == 200, golden_test.text
+    golden_payload = golden_test.json()
+    assert golden_payload["passed"] is True
+    assertions = {item["key"]: item for item in golden_payload["assertions"]}
+    assert assertions["expected-source"]["passed"] is True
+    assert assertions["expected-answer"]["passed"] is True
+    assert assertions["forbidden-answer"]["passed"] is True
+    assert golden_payload["retrieval"]["total"] >= 1
 
 
 def test_knowledge_studio_requires_ai_config_capability(tmp_path):

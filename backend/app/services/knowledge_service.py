@@ -428,6 +428,93 @@ def search_published(
     return rows, total
 
 
+def evaluate_golden_test(payload, retrieval) -> tuple[bool, list[dict]]:
+    hits = list(getattr(retrieval, "hits", []) or [])
+    top_hit = hits[0] if hits else None
+    top_score = float(getattr(top_hit, "score", 0.0) or 0.0)
+    min_score = float(getattr(payload, "min_score", 0.0) or 0.0)
+    expected_item_key = _clean_optional_text(getattr(payload, "expected_item_key", None))
+    expected_answer_contains = _clean_optional_text(getattr(payload, "expected_answer_contains", None))
+    forbidden_terms = [
+        term
+        for term in (_clean_optional_text(str(item)) for item in (getattr(payload, "forbidden_answer_terms", []) or []))
+        if term
+    ][:20]
+
+    hit_keys = [str(getattr(hit, "item_key", "") or "").lower() for hit in hits]
+    answer_texts = []
+    for hit in hits:
+        direct_answer = _clean_optional_text(getattr(hit, "direct_answer", None))
+        chunk_text = _clean_optional_text(getattr(hit, "text", None))
+        if direct_answer:
+            answer_texts.append(direct_answer)
+        if chunk_text:
+            answer_texts.append(chunk_text)
+    combined_answer_text = "\n".join(answer_texts)
+    normalized_answers = _normalize_assertion_text(combined_answer_text)
+
+    assertions: list[dict] = []
+    assertions.append(
+        {
+            "key": "top-hit-score",
+            "label": "Top hit score",
+            "passed": bool(top_hit and top_score >= min_score),
+            "expected": f">= {min_score:g}",
+            "actual": f"{top_score:g}" if top_hit else "no published hit",
+            "evidence": getattr(top_hit, "item_key", None) or "retrieve-test returned no hit",
+        }
+    )
+
+    if expected_item_key:
+        normalized_expected_key = expected_item_key.lower()
+        assertions.append(
+            {
+                "key": "expected-source",
+                "label": "Expected source item",
+                "passed": normalized_expected_key in hit_keys,
+                "expected": normalized_expected_key,
+                "actual": ", ".join(hit_keys[:5]) or "no published hit",
+                "evidence": "retrieval hits include expected item_key" if normalized_expected_key in hit_keys else "expected item_key missing from hits",
+            }
+        )
+
+    if expected_answer_contains:
+        normalized_expected_answer = _normalize_assertion_text(expected_answer_contains)
+        answer_matched = bool(normalized_expected_answer and normalized_expected_answer in normalized_answers)
+        assertions.append(
+            {
+                "key": "expected-answer",
+                "label": "Expected answer evidence",
+                "passed": answer_matched,
+                "expected": expected_answer_contains,
+                "actual": combined_answer_text[:300] if combined_answer_text else "no answer text",
+                "evidence": "expected answer text was present in retrieved evidence" if answer_matched else "expected answer text was not present",
+            }
+        )
+
+    found_forbidden = [
+        term
+        for term in forbidden_terms
+        if _normalize_assertion_text(term) and _normalize_assertion_text(term) in normalized_answers
+    ]
+    assertions.append(
+        {
+            "key": "forbidden-answer",
+            "label": "Forbidden answer guard",
+            "passed": not found_forbidden,
+            "expected": "no forbidden terms" if forbidden_terms else "no forbidden terms configured",
+            "actual": ", ".join(found_forbidden) if found_forbidden else "none",
+            "evidence": "retrieved evidence does not contain forbidden terms" if not found_forbidden else "forbidden term appeared in retrieved evidence",
+        }
+    )
+
+    return all(item["passed"] for item in assertions), assertions
+
+
+def _normalize_assertion_text(value: str | None) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
 def _safe_item_key_from_filename(filename: str) -> str:
     import re
 

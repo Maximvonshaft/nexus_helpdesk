@@ -105,15 +105,79 @@ def _build_conflicts(rows: list[KnowledgeItem]) -> tuple[list[dict[str, Any]], s
                 "key": f"conflict:{key[-1]}:{len(conflicts) + 1}",
                 "term": key[-1],
                 "scope": _scope_label(item_rows[0]),
+                "item_ids": [item.id for item in item_rows],
                 "item_keys": [item.item_key for item in item_rows],
                 "titles": [item.title for item in item_rows],
                 "status": "needs_review",
                 "blocker": any(item.published_version > 0 or item.status == "active" for item in item_rows),
                 "href": "/ai-control",
+                "evidence": [
+                    f"{item.item_key}: status={item.status}, published_version={item.published_version}, priority={item.priority}"
+                    for item in item_rows
+                ],
             }
         )
     conflicts.sort(key=lambda item: (not item["blocker"], item["term"]))
-    return conflicts[:12], conflicting_ids
+    return conflicts, conflicting_ids
+
+
+def run_conflict_check(db: Session, payload) -> dict[str, Any]:
+    query = db.query(KnowledgeItem)
+    if not getattr(payload, "include_archived", False):
+        query = query.filter(KnowledgeItem.status != "archived")
+    if getattr(payload, "market_id", None) is not None:
+        query = query.filter(KnowledgeItem.market_id == payload.market_id)
+    if getattr(payload, "channel", None):
+        query = query.filter(KnowledgeItem.channel == payload.channel)
+    if getattr(payload, "audience_scope", None):
+        query = query.filter(KnowledgeItem.audience_scope == payload.audience_scope)
+    if getattr(payload, "language", None):
+        query = query.filter(KnowledgeItem.language == payload.language)
+
+    rows = (
+        query.order_by(KnowledgeItem.status.asc(), KnowledgeItem.priority.asc(), KnowledgeItem.updated_at.desc(), KnowledgeItem.item_key.asc())
+        .limit(500)
+        .all()
+    )
+    conflicts, _conflicting_ids = _build_conflicts(rows)
+    item_id = getattr(payload, "item_id", None)
+    if item_id is not None:
+        conflicts = [item for item in conflicts if item_id in set(item.get("item_ids") or [])]
+
+    needle = " ".join(str(getattr(payload, "q", "") or "").strip().lower().split())
+    if needle:
+        conflicts = [
+            item
+            for item in conflicts
+            if needle in _conflict_search_text(item)
+        ]
+
+    limit = max(1, min(int(getattr(payload, "limit", 12) or 12), 50))
+    return {
+        "generated_at": utc_now(),
+        "total": len(conflicts),
+        "conflicts": conflicts[:limit],
+        "filters": {
+            "q": getattr(payload, "q", None),
+            "item_id": item_id,
+            "market_id": getattr(payload, "market_id", None),
+            "channel": getattr(payload, "channel", None),
+            "audience_scope": getattr(payload, "audience_scope", None),
+            "language": getattr(payload, "language", None),
+            "include_archived": getattr(payload, "include_archived", False),
+            "limit": limit,
+        },
+    }
+
+
+def _conflict_search_text(item: dict[str, Any]) -> str:
+    parts = [
+        item.get("term"),
+        item.get("scope"),
+        *(item.get("item_keys") or []),
+        *(item.get("titles") or []),
+    ]
+    return " ".join(str(part or "").lower() for part in parts)
 
 
 def _item(row: KnowledgeItem, *, conflicting_ids: set[int]) -> dict[str, Any]:
@@ -173,6 +237,7 @@ def build_knowledge_studio(db: Session, current_user) -> dict[str, Any]:
     version_count = int(db.query(func.count(KnowledgeItemVersion.id)).scalar() or 0)
     stale_index_count = sum(1 for row in rows if row.published_version > 0 and row.indexed_version < row.published_version)
     conflicts, conflicting_ids = _build_conflicts(rows)
+    visible_conflicts = conflicts[:12]
     manage_enabled = CAP_AI_CONFIG_MANAGE in capabilities
 
     return {
@@ -189,12 +254,13 @@ def build_knowledge_studio(db: Session, current_user) -> dict[str, Any]:
             _kpi("stale_index", "索引滞后", stale_index_count, "published_version 已更新但 indexed_version 未追上", _tone(stale_index_count, danger=1, warning=1)),
         ],
         "items": [_item(row, conflicting_ids=conflicting_ids) for row in rows[:50]],
-        "conflicts": conflicts,
+        "conflicts": visible_conflicts,
         "release_lifecycle": [
             _lifecycle_step("draft", "Draft", "Product / AI Ops", "KnowledgeItem draft_body, aliases, scope", "implemented", ready_drafts, "/ai-control", manage_enabled),
             _lifecycle_step("document-ingestion", "Document Ingestion", "AI Ops", "UploadFile -> parsed draft body", "implemented" if file_items else "linked", parsed_files, "/ai-control", manage_enabled),
             _lifecycle_step("retrieval-test", "Retrieval Test", "AI Ops", "POST /api/knowledge-items/retrieve-test", "implemented" if indexed_chunks else "linked", indexed_chunks, "/knowledge-studio", True),
-            _lifecycle_step("conflict-scan", "Conflict Scan", "Product / Manager", "derived scope/alias conflict read-model", "linked", len(conflicts), "/knowledge-studio", True),
+            _lifecycle_step("conflict-scan", "Conflict Scan", "Product / Manager", "POST /api/knowledge-items/conflict-check", "implemented", len(conflicts), "/knowledge-studio", True),
+            _lifecycle_step("golden-test", "Golden Test", "Product / QA", "POST /api/knowledge-items/golden-test", "implemented", indexed_chunks, "/knowledge-studio", True),
             _lifecycle_step("published", "Published", "AI Ops / Product", "KnowledgeItemVersion + KnowledgeChunk", "implemented" if published_count else "linked", published_count, "/ai-control", manage_enabled),
             _lifecycle_step("rollback", "Rollback", "AI Ops / Product", "POST /api/knowledge-items/{id}/rollback", "implemented" if version_count else "linked", version_count, "/ai-control", manage_enabled),
         ],
@@ -204,7 +270,8 @@ def build_knowledge_studio(db: Session, current_user) -> dict[str, Any]:
             _template_block("document-upload", "Document Upload / Parse Preview", "POST /api/knowledge-items/upload and /{id}/upload", "implemented", "上传文件解析为 draft_body，并记录 file_storage_key/parsing_status", "/ai-control"),
             _template_block("retrieval-test", "Retrieval Test / Runtime Evidence", "POST /api/knowledge-items/retrieve-test", "implemented", "只检索 active published chunks，返回 score、matched_terms 和 grounding_source", "/knowledge-studio"),
             _template_block("publish-rollback", "Publish / Rollback", "POST /api/knowledge-items/{id}/publish|rollback", "implemented", "发布创建 KnowledgeItemVersion 和 KnowledgeChunk；回滚创建新发布版本", "/ai-control"),
-            _template_block("conflict-scan", "Conflict Scan", "GET /api/lite/knowledge-studio", "linked", "当前 PR 提供派生冲突 read-model；专用 POST /knowledge/conflict-check 仍未实现", "/knowledge-studio"),
+            _template_block("conflict-scan", "Conflict Scan", "POST /api/knowledge-items/conflict-check", "implemented", "专用命令按 scope、问题和别名扫描冲突，并返回 blocker/evidence", "/knowledge-studio"),
+            _template_block("golden-test", "Golden Test Command", "POST /api/knowledge-items/golden-test", "implemented", "基于已发布检索结果校验 expected source、expected answer、forbidden terms 和最低分", "/knowledge-studio"),
         ],
         "facts": {
             "draft_items": draft_count,
@@ -220,7 +287,7 @@ def build_knowledge_studio(db: Session, current_user) -> dict[str, Any]:
             "stale_index_count": stale_index_count,
             "ai_config_read_capability": CAP_AI_CONFIG_READ in capabilities,
             "ai_config_manage_capability": CAP_AI_CONFIG_MANAGE in capabilities,
-            "dedicated_conflict_check_endpoint": "not_implemented",
-            "dedicated_golden_test_endpoint": "not_implemented",
+            "dedicated_conflict_check_endpoint": "implemented",
+            "dedicated_golden_test_endpoint": "implemented",
         },
     }

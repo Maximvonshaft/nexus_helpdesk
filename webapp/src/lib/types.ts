@@ -349,11 +349,13 @@ export interface KnowledgeStudioConflict {
   key: string
   term: string
   scope: string
+  item_ids?: number[]
   item_keys: string[]
   titles: string[]
   status: string
   blocker: boolean
   href: string
+  evidence?: string[]
 }
 
 export interface KnowledgeStudioLifecycleStep {
@@ -1007,6 +1009,31 @@ export interface KnowledgeRetrievalTestResult {
   top_hits?: Record<string, unknown>[]
   grounding_would_apply?: boolean
   grounding_source?: Record<string, unknown> | null
+}
+
+export interface KnowledgeConflictCheckResult {
+  generated_at: string
+  total: number
+  conflicts: KnowledgeStudioConflict[]
+  filters: Record<string, unknown>
+}
+
+export interface KnowledgeGoldenAssertion {
+  key: string
+  label: string
+  passed: boolean
+  expected?: string | null
+  actual?: string | null
+  evidence: string
+}
+
+export interface KnowledgeGoldenTestResult {
+  generated_at: string
+  passed: boolean
+  query: string
+  expected_item_key?: string | null
+  assertions: KnowledgeGoldenAssertion[]
+  retrieval: KnowledgeRetrievalTestResult
 }
 
 export interface ChannelOnboardingTask {

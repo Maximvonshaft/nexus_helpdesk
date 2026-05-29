@@ -18,7 +18,7 @@ import { MetricCard } from '@/components/ui/MetricCard'
 import { RequireCapability } from '@/components/security/RequireCapability'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { formatDateTime, labelize, sanitizeDisplayText } from '@/lib/format'
-import type { BadgeTone, KnowledgeChunkHit } from '@/lib/types'
+import type { BadgeTone, KnowledgeChunkHit, KnowledgeStudioConflict } from '@/lib/types'
 
 function safeTone(value: string | null | undefined): BadgeTone {
   return value === 'danger' || value === 'warning' || value === 'success' ? value : 'default'
@@ -43,6 +43,11 @@ function KnowledgeStudioPage() {
   const client = useQueryClient()
   const autoRefresh = useAutoRefresh()
   const [retrievalQuery, setRetrievalQuery] = useState('POD proof of delivery')
+  const [conflictQuery, setConflictQuery] = useState('address change')
+  const [goldenExpectedItemKey, setGoldenExpectedItemKey] = useState('')
+  const [goldenExpectedAnswer, setGoldenExpectedAnswer] = useState('proof of delivery')
+  const [goldenForbiddenTerms, setGoldenForbiddenTerms] = useState('manual verification')
+  const [goldenMinScore, setGoldenMinScore] = useState(12)
   const studio = useQuery({
     queryKey: ['knowledgeStudio'],
     queryFn: api.knowledgeStudio,
@@ -50,6 +55,21 @@ function KnowledgeStudioPage() {
   })
   const retrieval = useMutation({
     mutationFn: () => api.testKnowledgeRetrieval({ q: retrievalQuery, channel: 'webchat', audience_scope: 'customer', limit: 5 }),
+  })
+  const conflictCheck = useMutation({
+    mutationFn: () => api.checkKnowledgeConflicts({ q: conflictQuery, channel: 'webchat', audience_scope: 'customer', limit: 12 }),
+  })
+  const goldenTest = useMutation({
+    mutationFn: () => api.runKnowledgeGoldenTest({
+      q: retrievalQuery,
+      channel: 'webchat',
+      audience_scope: 'customer',
+      limit: 5,
+      expected_item_key: goldenExpectedItemKey.trim() || null,
+      expected_answer_contains: goldenExpectedAnswer.trim() || null,
+      forbidden_answer_terms: goldenForbiddenTerms.split(',').map((item) => item.trim()).filter(Boolean),
+      min_score: Number.isFinite(goldenMinScore) ? goldenMinScore : 12,
+    }),
   })
 
   const goTarget = (href: string) => {
@@ -73,6 +93,7 @@ function KnowledgeStudioPage() {
       .map((item) => item.title)
       .slice(0, 3)
   }, [studio.data?.items])
+  const displayedConflicts: KnowledgeStudioConflict[] = conflictCheck.data?.conflicts ?? studio.data?.conflicts ?? []
 
   return (
     <AppShell>
@@ -145,16 +166,45 @@ function KnowledgeStudioPage() {
                       ))}
                       {retrieval.data && !retrieval.data.hits.length ? <EmptyState title="没有命中可注入知识" description="当前问题没有匹配到已发布并索引的知识。" reason="系统不会读取草稿或错误 scope 的知识来补答案。" /> : null}
                     </div>
+                    <div className="list-item" data-testid="knowledge-studio-golden-test">
+                      <div className="message-head"><strong>Golden Test Command</strong><Badge tone={goldenTest.data?.passed ? 'success' : goldenTest.data ? 'danger' : 'default'}>{goldenTest.data ? (goldenTest.data.passed ? 'passed' : 'failed') : 'ready'}</Badge></div>
+                      <div className="form-grid">
+                        <Field label="Expected item_key"><Input value={goldenExpectedItemKey} onChange={(event) => setGoldenExpectedItemKey(event.target.value)} placeholder="knowledge.studio.pod.document" /></Field>
+                        <Field label="Expected answer"><Input value={goldenExpectedAnswer} onChange={(event) => setGoldenExpectedAnswer(event.target.value)} placeholder="proof of delivery" /></Field>
+                        <Field label="Forbidden terms"><Input value={goldenForbiddenTerms} onChange={(event) => setGoldenForbiddenTerms(event.target.value)} placeholder="manual verification, unsafe answer" /></Field>
+                        <Field label="Min score"><Input type="number" min="0" max="1000" value={goldenMinScore} onChange={(event) => setGoldenMinScore(Number(event.target.value))} /></Field>
+                      </div>
+                      <div className="button-row"><Button variant="primary" disabled={!retrievalQuery.trim() || goldenTest.isPending} onClick={() => goldenTest.mutate()}>运行黄金测试</Button></div>
+                      {goldenTest.isError ? <ErrorSummary title="黄金测试失败" errors={[goldenTest.error instanceof Error ? goldenTest.error.message : '请检查权限或稍后重试']} /> : null}
+                      {goldenTest.data ? (
+                        <DataTable
+                          columns={['断言', '结果', 'Expected', 'Actual', 'Evidence']}
+                          rows={goldenTest.data.assertions.map((item) => [
+                            sanitizeDisplayText(item.label),
+                            <Badge tone={item.passed ? 'success' : 'danger'}>{item.passed ? 'pass' : 'fail'}</Badge>,
+                            sanitizeDisplayText(item.expected || '-'),
+                            sanitizeDisplayText(item.actual || '-'),
+                            sanitizeDisplayText(item.evidence),
+                          ])}
+                        />
+                      ) : null}
+                    </div>
                   </div>
                 </CardBody>
               </Card>
 
               <Card data-testid="knowledge-studio-conflict-scan">
-                <CardHeader title="Conflict Scan" subtitle="当前是后端派生 read-model；专用 conflict-check command 仍明确标为缺口。" />
+                <CardHeader title="Conflict Scan" subtitle="调用真实 /api/knowledge-items/conflict-check，按 scope、问题和别名返回 blocker 与 evidence。" />
                 <CardBody>
+                  <div className="stack">
+                    <Field label="冲突关键词"><Input value={conflictQuery} onChange={(event) => setConflictQuery(event.target.value)} placeholder="address change" /></Field>
+                    <div className="button-row"><Button variant="primary" disabled={conflictCheck.isPending} onClick={() => conflictCheck.mutate()}>运行冲突检查</Button></div>
+                    {conflictCheck.isError ? <ErrorSummary title="冲突检查失败" errors={[conflictCheck.error instanceof Error ? conflictCheck.error.message : '请检查权限或稍后重试']} /> : null}
+                    {conflictCheck.data ? <div className="section-subtitle">Checked {formatDateTime(conflictCheck.data.generated_at)} · {conflictCheck.data.total} conflict groups</div> : null}
+                  </div>
                   <DataTable
                     columns={['冲突词', 'Scope', '涉及知识', '阻断', '入口']}
-                    rows={studio.data.conflicts.map((item) => [
+                    rows={displayedConflicts.map((item) => [
                       sanitizeDisplayText(item.term),
                       sanitizeDisplayText(item.scope),
                       <div className="stack">{item.item_keys.map((key) => <span key={key}>{sanitizeDisplayText(key)}</span>)}</div>,

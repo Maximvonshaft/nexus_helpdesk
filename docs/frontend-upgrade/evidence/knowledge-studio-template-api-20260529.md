@@ -15,9 +15,14 @@ This stacked PR lands the v1.7.8 `Knowledge Studio / 知识库配置与发布` a
 - shows release lifecycle counts from draft, upload/parse, publish, version and rollback tables
 - adds `/knowledge-studio` to router, AppShell navigation and CommandPalette behind unified routeAccess
 
-## Remaining Work
+## Follow-up Closure
 
-This PR does not add dedicated write/command endpoints for conflict resolution or golden tests. The page marks those as `not_implemented` instead of claiming full Knowledge Studio closure.
+Follow-up branch `codex/knowledge-studio-conflict-golden` adds the dedicated conflict and golden-test commands:
+
+- `POST /api/knowledge-items/conflict-check`
+- `POST /api/knowledge-items/golden-test`
+
+After that follow-up, `/api/lite/knowledge-studio` marks `dedicated_conflict_check_endpoint` and `dedicated_golden_test_endpoint` as `implemented` instead of `not_implemented`.
 
 ## Local Validation
 

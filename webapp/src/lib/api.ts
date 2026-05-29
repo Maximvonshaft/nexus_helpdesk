@@ -28,6 +28,8 @@ import type {
   AIConfigResource,
   AIConfigVersion,
   KnowledgeStudio,
+  KnowledgeConflictCheckResult,
+  KnowledgeGoldenTestResult,
   PersonaBuilder,
   KnowledgeItem,
   KnowledgeItemDetail,
@@ -534,6 +536,14 @@ export const api = {
     body: JSON.stringify({ version, notes: notes || null }),
   }),
   testKnowledgeRetrieval: (payload: { q: string; market_id?: number | null; channel?: string | null; audience_scope?: string | null; language?: string | null; limit?: number }) => request<KnowledgeRetrievalTestResult>('/api/knowledge-items/retrieve-test', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  checkKnowledgeConflicts: (payload: { q?: string | null; item_id?: number | null; market_id?: number | null; channel?: string | null; audience_scope?: string | null; language?: string | null; include_archived?: boolean; limit?: number }) => request<KnowledgeConflictCheckResult>('/api/knowledge-items/conflict-check', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  runKnowledgeGoldenTest: (payload: { q: string; market_id?: number | null; channel?: string | null; audience_scope?: string | null; language?: string | null; limit?: number; expected_item_key?: string | null; expected_answer_contains?: string | null; forbidden_answer_terms?: string[]; min_score?: number }) => request<KnowledgeGoldenTestResult>('/api/knowledge-items/golden-test', {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
