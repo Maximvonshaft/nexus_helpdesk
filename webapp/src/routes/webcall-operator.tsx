@@ -61,6 +61,11 @@ function valueOrDash(value?: string | number | null) {
   return sanitizeDisplayText(String(value))
 }
 
+function compactPayload(value?: Record<string, unknown> | null) {
+  if (!value || !Object.keys(value).length) return ''
+  return sanitizeDisplayText(JSON.stringify(value)).slice(0, 220)
+}
+
 function visitorLabelFromConversation(item?: WebchatConversation | null) {
   if (!item) return 'Anonymous visitor'
   return item.visitor_name || item.visitor_email || item.visitor_phone || 'Anonymous visitor'
@@ -525,6 +530,15 @@ function WebCallOperatorWorkbenchPage() {
                     </div>
                   ))}
                   {!(thread.data?.actions ?? []).length && !thread.isLoading ? <EmptyState text="暂无 WebChat action audit。" /> : null}
+                </Section>
+                <Section title="WebChat events">
+                  {(thread.data?.events ?? []).slice(-8).map((event) => (
+                    <div className="message" data-role="agent" key={event.id}>
+                      <div className="message-head"><strong>{labelize(event.event_type)}</strong><span>{formatDateTime(event.created_at)}</span></div>
+                      <div>{compactPayload(event.payload_json)}</div>
+                    </div>
+                  ))}
+                  {!(thread.data?.events ?? []).length && !thread.isLoading ? <EmptyState text="暂无 WebChat runtime events。" /> : null}
                 </Section>
               </CardBody>
             </Card>

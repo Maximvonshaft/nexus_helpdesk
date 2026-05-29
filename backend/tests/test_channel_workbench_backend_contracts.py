@@ -21,15 +21,17 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
 from app import models as _models  # noqa: E402,F401
+from app import operator_models as _operator_models  # noqa: E402,F401
 from app import voice_models as _voice_models  # noqa: E402,F401
 from app import webchat_models as _webchat_models  # noqa: E402,F401
 from app.auth_service import create_access_token  # noqa: E402
 from app.db import Base, get_db  # noqa: E402
-from app.enums import ConversationState, EventType, MessageStatus, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
+from app.enums import ConversationState, EventType, JobStatus, MessageStatus, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import Customer, OutboundEmailAccount, Team, Ticket, TicketEvent, TicketOutboundMessage, User  # noqa: E402
+from app.models import BackgroundJob, Customer, OutboundEmailAccount, Team, Ticket, TicketEvent, TicketOutboundMessage, User  # noqa: E402
+from app.services.webchat_handoff_service import request_webchat_handoff  # noqa: E402
 from app.settings import get_settings  # noqa: E402
-from app.webchat_models import WebchatMessage  # noqa: E402
+from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatMessage  # noqa: E402
 
 
 @pytest.fixture()
@@ -139,6 +141,71 @@ def _smtp_account(db_session) -> OutboundEmailAccount:
     return row
 
 
+def _attach_webcall_operator_context(db_session, *, ticket_id: int, conversation_id: str):
+    ticket = db_session.query(Ticket).filter(Ticket.id == ticket_id).one()
+    conversation = db_session.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id).one()
+    customer = Customer(name="Voice Visitor", email="voice@example.test", phone="+15550129999", external_ref="verified-voice")
+    db_session.add(customer)
+    db_session.flush()
+    ticket.customer_id = customer.id
+    ticket.tracking_number = "SPX-WEBCALL-123"
+    ticket.ai_summary = "Customer needs a verified WebCall handoff for a delivery exception."
+    ticket.missing_fields = "Confirm delivery address"
+    ticket.customer_update = "We are checking the delivery exception with the carrier."
+    ticket.required_action = "Verify identity before continuing the call."
+    conversation.visitor_name = "Voice Visitor"
+    conversation.visitor_email = "voice@example.test"
+    conversation.visitor_phone = "+15550129999"
+    message = WebchatMessage(
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        direction="visitor",
+        body="I want a human agent on the call.",
+        body_text="I want a human agent on the call.",
+        author_label="Voice Visitor",
+    )
+    db_session.add(message)
+    db_session.flush()
+    job = BackgroundJob(
+        queue_name="webchat_ai_reply",
+        job_type="webchat.ai_reply",
+        payload_json="{}",
+        dedupe_key=f"channel-workbench-webcall-ai-turn:{message.id}",
+        status=JobStatus.pending,
+    )
+    db_session.add(job)
+    db_session.flush()
+    turn = WebchatAITurn(
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        trigger_message_id=message.id,
+        latest_visitor_message_id=message.id,
+        job_id=job.id,
+        status="bridge_calling",
+        reply_source="codex",
+        bridge_elapsed_ms=321,
+        is_public_reply_allowed=True,
+    )
+    db_session.add(turn)
+    db_session.flush()
+    conversation.active_ai_turn_id = turn.id
+    conversation.active_ai_status = "bridge_calling"
+    conversation.active_ai_for_message_id = message.id
+    handoff = request_webchat_handoff(
+        db_session,
+        conversation=conversation,
+        ticket=ticket,
+        source="ai_auto",
+        trigger_type="webcall_operator_context",
+        reason_code="identity_verification_required",
+        recommended_agent_action="Verify identity, review the carrier exception, then continue the WebCall.",
+        trigger_message_id=message.id,
+        ai_turn_id=turn.id,
+    )
+    db_session.flush()
+    return ticket, conversation, handoff, turn
+
+
 def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_session):
     admin = _admin(db_session, user_id=9401)
     team = _team(db_session)
@@ -188,6 +255,100 @@ def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_ses
     assert {row.status for row in rows} == {MessageStatus.draft, MessageStatus.pending}
     assert db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_draft_saved).count() == 1
     assert db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_queued).count() == 1
+
+
+def test_webcall_operator_workbench_real_api_identity_handoff_and_session_contract(client: TestClient, db_session):
+    admin = _admin(db_session, user_id=9403)
+    headers = _headers(admin)
+
+    init = client.post(
+        "/api/webchat/init",
+        json={
+            "tenant_key": "channel-contract-webcall",
+            "channel_key": "website",
+            "visitor_name": "Voice Visitor",
+            "visitor_email": "voice@example.test",
+            "visitor_phone": "+15550129999",
+            "page_url": "https://example.test/webcall",
+        },
+    )
+    assert init.status_code == 200, init.text
+    conversation_id = init.json()["conversation_id"]
+    visitor_token = init.json()["visitor_token"]
+
+    conversations = client.get("/api/webchat/admin/conversations", headers=headers)
+    assert conversations.status_code == 200, conversations.text
+    ticket_id = next(item["ticket_id"] for item in conversations.json() if item["conversation_id"] == conversation_id)
+    ticket, conversation, handoff, turn = _attach_webcall_operator_context(db_session, ticket_id=ticket_id, conversation_id=conversation_id)
+
+    summary = client.get(f"/api/tickets/{ticket.id}/summary", headers=headers)
+    assert summary.status_code == 200, summary.text
+    summary_payload = summary.json()
+    assert summary_payload["customer"]["email"] == "voice@example.test"
+    assert summary_payload["tracking_number"] == "SPX-WEBCALL-123"
+    assert summary_payload["ai_summary"] == "Customer needs a verified WebCall handoff for a delivery exception."
+    assert summary_payload["missing_fields"] == "Confirm delivery address"
+
+    thread = client.get(f"/api/webchat/admin/tickets/{ticket.id}/thread", headers=headers)
+    assert thread.status_code == 200, thread.text
+    thread_payload = thread.json()
+    assert thread_payload["visitor"]["email"] == "voice@example.test"
+    assert thread_payload["handoff"]["id"] == handoff.id
+    assert thread_payload["handoff"]["recommended_agent_action"] == "Verify identity, review the carrier exception, then continue the WebCall."
+    assert thread_payload["ai_turns"][-1]["id"] == turn.id
+    assert thread_payload["ai_turns"][-1]["status"] == "cancelled"
+    assert {event["event_type"] for event in thread_payload["events"]} >= {"ai_turn.cancelled_by_handoff", "handoff.requested"}
+
+    created = client.post(
+        f"/api/webchat/conversations/{conversation.public_id}/voice/sessions",
+        headers={"X-Webchat-Visitor-Token": visitor_token},
+        json={"recording_consent": True},
+    )
+    assert created.status_code == 200, created.text
+    voice_session_id = created.json()["voice_session_id"]
+
+    queue = client.get("/api/webchat/admin/voice/sessions?status=incoming&limit=20", headers=headers)
+    assert queue.status_code == 200, queue.text
+    queue_item = next(item for item in queue.json()["items"] if item["voice_session_id"] == voice_session_id)
+    assert queue_item["ticket_id"] == ticket.id
+    assert queue_item["visitor_label"] == "Voice Visitor"
+    assert "participant_token" not in queue_item
+
+    accepted_call = client.post(f"/api/webchat/admin/tickets/{ticket.id}/voice/{voice_session_id}/accept", headers=headers)
+    assert accepted_call.status_code == 200, accepted_call.text
+    assert accepted_call.json()["participant_token"]
+
+    accepted_handoff = client.post(
+        f"/api/webchat/admin/handoff/{handoff.id}/accept",
+        headers=headers,
+        json={"note": "Accepted from WebCall operator workbench contract"},
+    )
+    assert accepted_handoff.status_code == 200, accepted_handoff.text
+    assert accepted_handoff.json()["status"] == "accepted"
+    released_handoff = client.post(
+        f"/api/webchat/admin/handoff/{handoff.id}/release",
+        headers=headers,
+        json={"note": "Release after identity check"},
+    )
+    assert released_handoff.status_code == 200, released_handoff.text
+    assert released_handoff.json()["status"] == "requested"
+    resumed_ai = client.post(
+        f"/api/webchat/admin/handoff/{handoff.id}/resume-ai",
+        headers=headers,
+        json={"note": "Resume after WebCall context review"},
+    )
+    assert resumed_ai.status_code == 200, resumed_ai.text
+    assert resumed_ai.json()["status"] == "resumed_ai"
+
+    ended_call = client.post(f"/api/webchat/admin/tickets/{ticket.id}/voice/{voice_session_id}/end", headers=headers)
+    assert ended_call.status_code == 200, ended_call.text
+    timeline = client.get(f"/api/tickets/{ticket.id}/timeline?limit=40", headers=headers)
+    assert timeline.status_code == 200, timeline.text
+    event_types = {item.get("event_type") for item in timeline.json()["items"] if item.get("source_type") == "webchat_event"}
+    voice_items = [item for item in timeline.json()["items"] if item.get("source_type") == "voice_call" or item.get("kind") == "voice_call"]
+    assert {"voice.session.created", "voice.session.accepted", "voice.session.ended", "handoff.accepted", "handoff.released", "ai.resumed"} <= event_types
+    assert voice_items and voice_items[0]["payload"]["voice_session_id"] == voice_session_id
+    assert db_session.query(WebchatEvent).filter(WebchatEvent.conversation_id == conversation.id, WebchatEvent.event_type == "ai.resumed").count() == 1
 
 
 def test_webcall_accept_end_writes_timeline_voice_evidence(client: TestClient, db_session):

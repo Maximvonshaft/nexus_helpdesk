@@ -227,6 +227,7 @@ jobs:
               webapp/src/routes/runtime.tsx) return 0 ;;
               webapp/src/routes/users.tsx) return 0 ;;
               webapp/src/routes/webcall-ai.tsx) return 0 ;;
+              webapp/src/routes/webcall-ai-demo.tsx) return 0 ;;
               webapp/src/routes/webcall-operator.tsx) return 0 ;;
               webapp/src/routes/webcall.tsx) return 0 ;;
               webapp/src/routes/webchat-voice.tsx) return 0 ;;
@@ -253,8 +254,11 @@ jobs:
 
           requires_webcall_quality_checks() {
             case "$1" in
+              backend/app/services/webchat_service.py) return 0 ;;
+              backend/tests/test_channel_workbench_backend_contracts.py) return 0 ;;
               webapp/src/components/webcall/AgentWebCallPanel.tsx) return 0 ;;
               webapp/src/routes/webcall-ai.tsx) return 0 ;;
+              webapp/src/routes/webcall-ai-demo.tsx) return 0 ;;
               webapp/src/routes/webcall-operator.tsx) return 0 ;;
               webapp/src/routes/webcall.tsx) return 0 ;;
               webapp/tests/operator-console-contract.test.mjs) return 0 ;;
@@ -330,7 +334,7 @@ jobs:
           LIVEKIT_URL: wss://livekit.test
           WEBCALL_BROWSER_ENTRY_ENABLED: "true"
         run: |
-          pytest -q tests/test_webchat_voice_api.py tests/test_webchat_voice_static_headers.py tests/test_webchat_voice_mock_ui_static.py
+          pytest -q tests/test_webchat_voice_api.py tests/test_webchat_voice_static_headers.py tests/test_webchat_voice_mock_ui_static.py tests/test_channel_workbench_backend_contracts.py
 
   webcall-blocking-fix-guard:
     needs: scope-guard

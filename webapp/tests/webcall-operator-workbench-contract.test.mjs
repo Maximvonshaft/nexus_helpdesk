@@ -52,6 +52,8 @@ test('webcall workbench uses real backend contracts for queue, identity, AI, han
   assert.match(route, /data-testid="webcall-handoff-actions"/)
   assert.match(route, /data-testid="webcall-demo-shape"/)
   assert.match(route, /data-testid="webcall-timeline-audit"/)
+  assert.match(route, /thread\?\.ai_turns/)
+  assert.match(route, /thread\.data\?\.events/)
   assert.doesNotMatch(route, /\bfetch\s*\(/)
   assert.doesNotMatch(route, /Mock voice session|Accept mock call|End mock call/)
 })
