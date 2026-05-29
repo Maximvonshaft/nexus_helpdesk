@@ -221,6 +221,7 @@ jobs:
               webapp/src/lib/types.ts) return 0 ;;
               webapp/src/lib/webchatRealtime.ts) return 0 ;;
               webapp/src/router.tsx) return 0 ;;
+              webapp/src/routes/ai-persona.tsx) return 0 ;;
               webapp/src/routes/ai-control.tsx) return 0 ;;
               webapp/src/routes/control-plane.tsx) return 0 ;;
               webapp/src/routes/email.tsx) return 0 ;;
@@ -233,6 +234,7 @@ jobs:
               webapp/src/routes/webchat.tsx) return 0 ;;
               webapp/src/routes/workspace.tsx) return 0 ;;
               webapp/src/styles.css) return 0 ;;
+              webapp/tests/ai-persona-builder-contract.test.mjs) return 0 ;;
               webapp/tests/email-workbench-contract.test.mjs) return 0 ;;
               webapp/tests/novice-ux-regression.test.mjs) return 0 ;;
               webapp/tests/operator-console-contract.test.mjs) return 0 ;;

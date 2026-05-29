@@ -57,6 +57,7 @@ export const routeAccess = {
   '/accounts': { allOf: [CAPABILITIES.channelAccountManage] },
   '/outbound-email': { allOf: [CAPABILITIES.channelAccountManage] },
   '/email': { allOf: [CAPABILITIES.ticketRead], anyOf: [CAPABILITIES.outboundDraftSave, CAPABILITIES.outboundSend] },
+  '/ai-persona': { anyOf: [CAPABILITIES.aiConfigRead, CAPABILITIES.aiConfigManage] },
   '/ai-control': { allOf: [CAPABILITIES.aiConfigManage] },
   '/control-plane': { anyOf: [CAPABILITIES.aiConfigRead, CAPABILITIES.aiConfigManage, CAPABILITIES.channelAccountManage, CAPABILITIES.runtimeManage] },
   '/users': { allOf: [CAPABILITIES.userManage] },

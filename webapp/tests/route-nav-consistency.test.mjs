@@ -36,6 +36,13 @@ test('email operator workbench nav route is registered and capability gated', ()
   assert.match(rbac, /'\/email': \{ allOf: \[CAPABILITIES\.ticketRead\], anyOf: \[CAPABILITIES\.outboundDraftSave, CAPABILITIES\.outboundSend\] \}/)
 })
 
+test('ai persona builder nav route is registered and readable through ai config capability', () => {
+  assert.match(appShell, /to: '\/ai-persona'/)
+  assert.match(router, /AIPersonaRoute/)
+  assert.match(router, /@\/routes\/ai-persona/)
+  assert.match(rbac, /'\/ai-persona': \{ anyOf: \[CAPABILITIES\.aiConfigRead, CAPABILITIES\.aiConfigManage\] \}/)
+})
+
 test('internal webcall routes are intentionally classified', () => {
   assert.match(router, /Internal operator console for human WebCall handling/)
   assert.match(router, /Top-level operator WebCall workbench/)
@@ -61,6 +68,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'accounts.tsx',
     'outbound-email.tsx',
     'bulletins.tsx',
+    'ai-persona.tsx',
     'ai-control.tsx',
     'control-plane.tsx',
     'users.tsx',

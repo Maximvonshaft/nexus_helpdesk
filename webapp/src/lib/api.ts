@@ -34,6 +34,7 @@ import type {
   PersonaProfile,
   PersonaProfileDetail,
   PersonaProfileList,
+  PersonaResolvePreview,
   PersonaProfileVersion,
   Team,
   WebchatConversation,
@@ -428,6 +429,10 @@ export const api = {
     return request<PersonaProfileList>(`/api/persona-profiles?${search.toString()}`)
   },
   personaProfile: (profileId: number) => request<PersonaProfileDetail>(`/api/persona-profiles/${profileId}`),
+  personaResolvePreview: (payload: { market_id?: number | null; channel?: string | null; language?: string | null }) => request<PersonaResolvePreview>('/api/persona-profiles/resolve-preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   createPersonaProfile: (payload: Partial<PersonaProfile>) => request<PersonaProfile>('/api/persona-profiles', {
     method: 'POST',
     body: JSON.stringify(payload),

@@ -13,6 +13,7 @@ import { Route as WebCallAIProductionRoute } from '@/routes/webcall-ai'
 import { Route as WebCallAIDemoRoute } from '@/routes/webcall-ai-demo'
 import { Route as ProviderCredentialsRoute } from '@/routes/provider-credentials'
 import { Route as BulletinsRoute } from '@/routes/bulletins'
+import { Route as AIPersonaRoute } from '@/routes/ai-persona'
 import { Route as AIControlRoute } from '@/routes/ai-control'
 import { Route as ControlPlaneRoute } from '@/routes/control-plane'
 import { Route as AccountsRoute } from '@/routes/accounts'
@@ -38,6 +39,7 @@ const routeTree = RootRoute.addChildren([
   WebCallAIDemoRoute,
   ProviderCredentialsRoute,
   BulletinsRoute,
+  AIPersonaRoute,
   AIControlRoute,
   ControlPlaneRoute,
   AccountsRoute,

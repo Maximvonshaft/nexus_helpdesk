@@ -451,6 +451,11 @@ export interface PersonaProfileList {
   total: number
 }
 
+export interface PersonaResolvePreview {
+  profile?: PersonaProfile | null
+  match_rank?: number | null
+}
+
 export interface KnowledgeItem {
   id: number
   item_key: string
