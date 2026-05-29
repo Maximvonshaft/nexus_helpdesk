@@ -196,7 +196,7 @@ def _seed_qa_training(db_session):
     db_session.add(TicketEvent(ticket_id=webchat_ticket.id, actor_id=lead.id, event_type=EventType.field_updated, field_name="qa_review", note="QA sample marked for review"))
     db_session.add(AdminAuditLog(actor_id=lead.id, action="qa.score.preview", target_type="ticket", target_id=webchat_ticket.id, created_at=utc_now()))
     db_session.flush()
-    return lead, agent
+    return lead, agent, webchat_ticket
 
 
 def test_qa_training_lead_contract_uses_real_quality_sources(tmp_path):
@@ -205,7 +205,7 @@ def test_qa_training_lead_contract_uses_real_quality_sources(tmp_path):
     TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     Base.metadata.create_all(engine)
     db_session = TestingSession()
-    lead, _agent = _seed_qa_training(db_session)
+    lead, _agent, _webchat_ticket = _seed_qa_training(db_session)
     db_session.commit()
 
     def override_db():
@@ -215,15 +215,42 @@ def test_qa_training_lead_contract_uses_real_quality_sources(tmp_path):
     try:
         client = TestClient(app)
         response = client.get("/api/lite/qa-training", headers=_headers(lead))
+        queue_payload = response.json() if response.status_code == 200 else {}
+        appeal_sample = next(item for item in queue_payload.get("qa_queue", []) if item["channel"] == "WebChat")
+        appeal_response = client.post(
+            "/api/lite/qa-training/appeals",
+            headers=_headers(lead),
+            json={
+                "sample_key": appeal_sample["key"],
+                "ticket_id": appeal_sample["ticket_id"],
+                "channel": appeal_sample["channel"],
+                "sample": appeal_sample["sample"],
+                "current_score": appeal_sample["ai_pre_score"],
+                "requested_score": appeal_sample["ai_pre_score"] + 10,
+                "reason": "Agent supplied policy evidence and requests lead score review.",
+                "evidence": appeal_sample["evidence"],
+            },
+        )
+        followup = client.get("/api/lite/qa-training", headers=_headers(lead))
+        appeal_task = db_session.query(OperatorTask).filter(OperatorTask.task_type == "qa_appeal").one()
+        appeal_task_ticket_id = appeal_task.ticket_id
+        appeal_task_source_id = appeal_task.source_id
+        appeal_event_count = db_session.query(TicketEvent).filter(TicketEvent.ticket_id == appeal_sample["ticket_id"], TicketEvent.field_name == "qa_agent_appeal").count()
+        appeal_audit_count = db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "qa.agent_appeal.submitted", AdminAuditLog.target_id == appeal_task.id).count()
     finally:
         app.dependency_overrides.pop(get_db, None)
         db_session.close()
         Base.metadata.drop_all(engine)
 
     assert response.status_code == 200, response.text
+    assert appeal_response.status_code == 200, appeal_response.text
+    assert followup.status_code == 200, followup.text
     payload = response.json()
+    followup_payload = followup.json()
     kpis = {item["key"]: item for item in payload["kpis"]}
+    followup_kpis = {item["key"]: item for item in followup_payload["kpis"]}
     blocks = {item["key"]: item for item in payload["template_blocks"]}
+    followup_blocks = {item["key"]: item for item in followup_payload["template_blocks"]}
     channels = {item["channel"] for item in payload["qa_queue"]}
     sample_sources = {item["source"] for item in payload["qa_queue"]}
     task_keys = {item["key"] for item in payload["training_tasks"]}
@@ -240,9 +267,24 @@ def test_qa_training_lead_contract_uses_real_quality_sources(tmp_path):
     assert any(key.startswith("task:") for key in task_keys)
     assert "knowledge" in gap_sources
     assert blocks["qa-queue"]["status"] == "implemented"
-    assert blocks["appeal"]["status"] == "not_implemented"
+    assert blocks["appeal"]["status"] == "implemented"
     assert payload["facts"]["qa_manage_capability"] is True
-    assert payload["facts"]["agent_appeal_write_endpoint"] == "not_implemented"
+    assert payload["facts"]["agent_appeal_write_endpoint"] == "implemented"
+
+    appeal_payload = appeal_response.json()
+    assert appeal_payload["created"] is True
+    assert appeal_payload["status"] == "pending"
+    assert appeal_payload["sample_key"] == appeal_sample["key"]
+    assert followup_blocks["appeal"]["status"] == "implemented"
+    assert followup_kpis["agent_appeals"]["value"] == 1
+    appealed = {item["key"]: item for item in followup_payload["qa_queue"]}[appeal_sample["key"]]
+    assert appealed["appeal_status"] == "pending"
+    assert appealed["appeal_task_id"] == appeal_payload["task_id"]
+    assert any(item["key"].startswith("task:") and item["status"] == "pending" for item in followup_payload["training_tasks"])
+    assert appeal_task_ticket_id == appeal_sample["ticket_id"]
+    assert appeal_task_source_id == appeal_sample["key"]
+    assert appeal_event_count == 1
+    assert appeal_audit_count == 1
 
 
 def test_qa_training_requires_qa_manage_capability(tmp_path):
@@ -251,7 +293,7 @@ def test_qa_training_requires_qa_manage_capability(tmp_path):
     TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     Base.metadata.create_all(engine)
     db_session = TestingSession()
-    _lead, agent = _seed_qa_training(db_session)
+    _lead, agent, webchat_ticket = _seed_qa_training(db_session)
     db_session.commit()
 
     def override_db():
@@ -261,6 +303,11 @@ def test_qa_training_requires_qa_manage_capability(tmp_path):
     try:
         client = TestClient(app)
         response = client.get("/api/lite/qa-training", headers=_headers(agent))
+        appeal = client.post(
+            "/api/lite/qa-training/appeals",
+            headers=_headers(agent),
+            json={"sample_key": "webchat-ticket:1", "ticket_id": webchat_ticket.id, "reason": "agent tries direct appeal"},
+        )
     finally:
         app.dependency_overrides.pop(get_db, None)
         db_session.close()
@@ -268,3 +315,5 @@ def test_qa_training_requires_qa_manage_capability(tmp_path):
 
     assert response.status_code == 403
     assert response.json()["detail"] == "qa_training_requires_capability"
+    assert appeal.status_code == 403
+    assert appeal.json()["detail"] == "qa_training_requires_capability"

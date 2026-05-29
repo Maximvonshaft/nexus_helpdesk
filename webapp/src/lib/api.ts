@@ -13,6 +13,7 @@ import type {
   Market,
   ProductionReadiness,
   QATraining,
+  QATrainingAppealResult,
   QueueSummary,
   RuntimeHealth,
   OpenClawConnectivityProbe,
@@ -360,6 +361,10 @@ export const api = {
   todayWorkbench: () => request<TodayWorkbench>('/api/lite/today-workbench'),
   controlTower: () => request<ControlTower>('/api/lite/control-tower'),
   qaTraining: () => request<QATraining>('/api/lite/qa-training'),
+  submitQATrainingAppeal: (payload: { sample_key: string; ticket_id: number; channel?: string | null; sample?: string | null; current_score?: number | null; requested_score?: number | null; reason: string; evidence?: string[] }) => request<QATrainingAppealResult>('/api/lite/qa-training/appeals', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   knowledgeStudio: () => request<KnowledgeStudio>('/api/lite/knowledge-studio'),
   personaBuilder: () => request<PersonaBuilder>('/api/lite/persona-builder'),
   ticketTimeline: (ticketId: number, params?: { cursor?: string | null; limit?: number }) => {

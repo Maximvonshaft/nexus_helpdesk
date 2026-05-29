@@ -238,6 +238,8 @@ export interface QATrainingQueueItem {
   risk: string
   feedback: string
   agent_appeal: string
+  appeal_status?: string | null
+  appeal_task_id?: number | null
   source: string
   created_at?: string | null
   href: string
@@ -309,6 +311,17 @@ export interface QATraining {
   loop_steps: QATrainingLoopStep[]
   template_blocks: QATrainingTemplateBlock[]
   facts: Record<string, number | string | boolean>
+}
+
+export interface QATrainingAppealResult {
+  ok: boolean
+  task_id: number
+  created: boolean
+  status: string
+  ticket_id: number
+  sample_key: string
+  appeal_status: string
+  submitted_at: string
 }
 
 export interface KnowledgeStudioKpi {

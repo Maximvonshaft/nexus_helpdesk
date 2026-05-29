@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from ..enums import ConversationState, MessageStatus, SourceChannel, TicketStatus, UserRole
+from ..enums import ConversationState, EventType, MessageStatus, SourceChannel, TicketStatus, UserRole
 from ..models import (
     AIConfigResource,
     AdminAuditLog,
@@ -21,6 +21,8 @@ from ..operator_models import OperatorTask
 from ..utils.time import ensure_utc, utc_now
 from ..voice_models import WebchatVoiceSession
 from ..webchat_models import WebchatAITurn, WebchatMessage
+from .audit_service import log_admin_audit, log_event
+from .operator_queue import create_operator_task
 from .permissions import CAP_AI_CONFIG_MANAGE, CAP_QA_MANAGE, CAP_TICKET_READ, resolve_capabilities
 
 ACTIVE_TICKET_STATUSES = (
@@ -32,7 +34,7 @@ ACTIVE_TICKET_STATUSES = (
 )
 PRIVILEGED_ROLES = {UserRole.admin, UserRole.manager, UserRole.auditor}
 TERMINAL_TASK_STATUSES = ("resolved", "dropped", "replayed", "replay_failed", "cancelled")
-TRAINING_TASK_TYPES = ("training", "coaching", "qa_feedback", "knowledge_gap")
+TRAINING_TASK_TYPES = ("training", "coaching", "qa_feedback", "knowledge_gap", "qa_appeal")
 KNOWLEDGE_CONFIG_TYPES = ("knowledge", "policy", "sop", "rules")
 HEALTHY_VOICE_TRANSCRIPT_STATUSES = ("ready", "completed", "done", "redacted")
 LOW_AI_CONFIDENCE = 0.75
@@ -135,11 +137,31 @@ def _sample(
         "risk": " · ".join(risks) if risks else "none",
         "feedback": feedback,
         "agent_appeal": agent_appeal,
+        "appeal_status": "not_applicable" if agent_appeal == "n/a" else "available",
+        "appeal_task_id": None,
         "source": source,
         "created_at": ensure_utc(created_at).isoformat() if created_at else None,
         "href": "/workspace",
         "evidence": risks or ["eligible QA sample"],
     }
+
+
+def _active_appeals(db: Session, user: User) -> dict[str, OperatorTask]:
+    rows = (
+        _with_ticket_visibility(
+            db.query(OperatorTask, Ticket)
+            .outerjoin(Ticket, Ticket.id == OperatorTask.ticket_id)
+            .filter(OperatorTask.task_type == "qa_appeal", OperatorTask.status.notin_(TERMINAL_TASK_STATUSES)),
+            user,
+        )
+        .order_by(OperatorTask.updated_at.desc(), OperatorTask.id.desc())
+        .all()
+    )
+    appeals: dict[str, OperatorTask] = {}
+    for task, _ticket in rows:
+        if task.source_id:
+            appeals.setdefault(task.source_id, task)
+    return appeals
 
 
 def _voice_samples(db: Session, user: User) -> list[dict[str, Any]]:
@@ -340,6 +362,14 @@ def _qa_queue(db: Session, user: User) -> list[dict[str, Any]]:
     deduped: dict[str, dict[str, Any]] = {}
     for row in rows:
         deduped.setdefault(row["key"], row)
+    appeals = _active_appeals(db, user)
+    for row in deduped.values():
+        task = appeals.get(row["key"])
+        if task is None:
+            continue
+        row["appeal_status"] = task.status
+        row["appeal_task_id"] = task.id
+        row["agent_appeal"] = f"appeal {task.status}"
     return sorted(deduped.values(), key=lambda item: (item["ai_pre_score"], item.get("created_at") or ""), reverse=False)[:12]
 
 
@@ -410,7 +440,7 @@ def _training_tasks(db: Session, user: User, qa_rows: list[dict[str, Any]]) -> l
             "priority": task.priority,
             "status": task.status,
             "source": task.source_type,
-            "next": "Score sample, send coaching feedback, then close or escalate",
+            "next": "Review agent appeal, adjust score if valid, then close with audit note" if task.task_type == "qa_appeal" else "Score sample, send coaching feedback, then close or escalate",
             "href": "/workspace",
             "enabled": True,
             "capability": CAP_QA_MANAGE,
@@ -464,6 +494,7 @@ def _loop_steps(knowledge_gap_count: int, coaching_task_count: int, capabilities
         {"key": "customer-sample", "step": "客户问题", "owner": "Agent / System", "artifact": "conversation/call/email sample", "status": "implemented", "href": "/qa-training", "enabled": True},
         {"key": "gap-detection", "step": "标记知识缺口", "owner": "Lead", "artifact": f"{knowledge_gap_count} current gap candidates", "status": "implemented" if knowledge_gap_count else "linked", "href": "/qa-training", "enabled": True},
         {"key": "coaching", "step": "Coaching feedback", "owner": "Lead", "artifact": f"{coaching_task_count} active/derived coaching tasks", "status": "implemented" if coaching_task_count else "linked", "href": "/qa-training", "enabled": True},
+        {"key": "agent-appeal", "step": "Agent appeal", "owner": "Lead / Agent", "artifact": "qa_appeal operator_tasks with ticket audit", "status": "implemented", "href": "/qa-training", "enabled": True},
         {"key": "ai-ops-review", "step": "AI Ops 审核", "owner": "AI Ops", "artifact": "draft knowledge item or reject reason", "status": "linked", "href": "/ai-control", "enabled": ai_ops_enabled},
         {"key": "golden-test", "step": "黄金测试", "owner": "Product / QA", "artifact": "retrieve-test expected and forbidden answer", "status": "linked", "href": "/ai-control", "enabled": ai_ops_enabled},
         {"key": "publish-monitor", "step": "发布与命中监控", "owner": "Manager / Admin", "artifact": "release version, rollback plan, hit-rate trend", "status": "linked", "href": "/ai-control", "enabled": ai_ops_enabled},
@@ -476,8 +507,75 @@ def _template_blocks() -> list[dict[str, str]]:
         {"key": "scorecard", "label": "Scorecard", "backend_contract": "computed QA metrics", "status": "implemented", "evidence": "identity, citation, AI quality, Email delivery and audit criteria", "href": "/qa-training"},
         {"key": "coaching", "label": "Coaching Feedback", "backend_contract": "operator_tasks + derived QA samples", "status": "implemented", "evidence": "training/coaching/knowledge_gap tasks or generated follow-up actions", "href": "/workspace"},
         {"key": "knowledge-gap", "label": "Knowledge Gap Loop", "backend_contract": "ai_config_resources + QA samples", "status": "linked", "evidence": "draft knowledge/policy resources and sample-derived gaps flow to AI Control", "href": "/ai-control"},
-        {"key": "appeal", "label": "Agent Appeal", "backend_contract": "read-model status only", "status": "not_implemented", "evidence": "no write endpoint for appeal submission in this PR", "href": "/qa-training"},
+        {"key": "appeal", "label": "Agent Appeal", "backend_contract": "POST /api/lite/qa-training/appeals + operator_tasks(task_type=qa_appeal)", "status": "implemented", "evidence": "appeals persist as qa_appeal operator tasks and write ticket/admin audit", "href": "/qa-training"},
     ]
+
+
+def submit_agent_appeal(db: Session, current_user: User, payload) -> dict[str, Any]:
+    capabilities = resolve_capabilities(current_user, db)
+    if CAP_QA_MANAGE not in capabilities:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="qa_training_requires_capability")
+    ticket = _visible_ticket_query(db, current_user).filter(Ticket.id == payload.ticket_id).first()
+    if ticket is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="qa_appeal_ticket_not_found")
+
+    sample_key = str(payload.sample_key).strip()
+    appeal_payload = {
+        "sample_key": sample_key,
+        "ticket_id": ticket.id,
+        "ticket_no": ticket.ticket_no,
+        "channel": payload.channel,
+        "sample": payload.sample,
+        "current_score": payload.current_score,
+        "requested_score": payload.requested_score,
+        "reason": payload.reason,
+        "evidence": payload.evidence,
+        "submitted_by": current_user.id,
+        "submitted_at": utc_now().isoformat(),
+    }
+    priority = max(10, 100 - int(payload.current_score or 70))
+    task, created = create_operator_task(
+        db,
+        source_type="qa",
+        task_type="qa_appeal",
+        source_id=sample_key,
+        ticket_id=ticket.id,
+        reason_code="agent_appeal",
+        priority=priority,
+        payload=appeal_payload,
+        note=payload.reason,
+    )
+    task.assignee_id = current_user.id
+    task.updated_at = utc_now()
+    log_event(
+        db,
+        ticket_id=ticket.id,
+        actor_id=current_user.id,
+        event_type=EventType.field_updated,
+        field_name="qa_agent_appeal",
+        new_value=task.status,
+        note=payload.reason,
+        payload={"task_id": task.id, "created": created, **appeal_payload},
+    )
+    log_admin_audit(
+        db,
+        actor_id=current_user.id,
+        action="qa.agent_appeal.submitted",
+        target_type="operator_task",
+        target_id=task.id,
+        new_value={"created": created, **appeal_payload},
+    )
+    db.flush()
+    return {
+        "ok": True,
+        "task_id": task.id,
+        "created": created,
+        "status": task.status,
+        "ticket_id": ticket.id,
+        "sample_key": sample_key,
+        "appeal_status": task.status,
+        "submitted_at": task.updated_at,
+    }
 
 
 def build_qa_training(db: Session, current_user: User) -> dict[str, Any]:
@@ -489,6 +587,7 @@ def build_qa_training(db: Session, current_user: User) -> dict[str, Any]:
     qa_rows = _qa_queue(db, current_user)
     knowledge_gaps = _knowledge_gaps(db, current_user, qa_rows)
     training_tasks = _training_tasks(db, current_user, qa_rows)
+    appeal_count = len(_active_appeals(db, current_user))
     recent_window = now - timedelta(days=7)
 
     safety_reviews = _count(
@@ -576,6 +675,7 @@ def build_qa_training(db: Session, current_user: User) -> dict[str, Any]:
             {"key": "ai_failures", "label": "AI 失败/降级", "value": ai_failures, "hint": "fallback、fact gate、timeout 或 blocked public reply", "tone": _tone(ai_failures, danger=3, warning=1)},
             {"key": "knowledge_gaps", "label": "知识缺口", "value": len(knowledge_gaps), "hint": "AI config draft + sample-derived gaps", "tone": _tone(len(knowledge_gaps), danger=5, warning=1)},
             {"key": "coaching_tasks", "label": "培训任务", "value": len(training_tasks), "hint": "operator_tasks + QA-derived coaching", "tone": _tone(len(training_tasks), danger=6, warning=1)},
+            {"key": "agent_appeals", "label": "Agent 申诉", "value": appeal_count, "hint": "active qa_appeal operator_tasks", "tone": _tone(appeal_count, danger=5, warning=1)},
             {"key": "golden_examples", "label": "可复用样本", "value": golden_examples, "hint": "pre-score >= 90", "tone": "success" if golden_examples else "default"},
         ],
         "qa_queue": qa_rows,
@@ -593,6 +693,6 @@ def build_qa_training(db: Session, current_user: User) -> dict[str, Any]:
             "recent_audit_7d": recent_audit,
             "qa_manage_capability": CAP_QA_MANAGE in capabilities,
             "ticket_read_capability": CAP_TICKET_READ in capabilities,
-            "agent_appeal_write_endpoint": "not_implemented",
+            "agent_appeal_write_endpoint": "implemented",
         },
     }

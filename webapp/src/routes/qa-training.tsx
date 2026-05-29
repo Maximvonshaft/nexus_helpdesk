@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { createRoute, redirect, useNavigate } from '@tanstack/react-router'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
@@ -12,6 +13,7 @@ import { DataTable } from '@/components/ui/DataTable'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { ErrorSummary } from '@/components/ui/ErrorSummary'
+import { Input } from '@/components/ui/Field'
 import { MetricCard } from '@/components/ui/MetricCard'
 import { RequireCapability } from '@/components/security/RequireCapability'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
@@ -39,10 +41,18 @@ function QATrainingPage() {
   const navigate = useNavigate()
   const client = useQueryClient()
   const autoRefresh = useAutoRefresh()
+  const [appealReasons, setAppealReasons] = useState<Record<string, string>>({})
   const qa = useQuery({
     queryKey: ['qaTraining'],
     queryFn: api.qaTraining,
     refetchInterval: autoRefresh.enabled ? 30000 : false,
+  })
+  const appeal = useMutation({
+    mutationFn: api.submitQATrainingAppeal,
+    onSuccess: async () => {
+      setAppealReasons({})
+      await refresh()
+    },
   })
 
   const goTarget = (href: string) => {
@@ -59,6 +69,20 @@ function QATrainingPage() {
     ])
   }
 
+  const submitAppeal = (item: NonNullable<typeof qa.data>['qa_queue'][number]) => {
+    const reason = appealReasons[item.key]?.trim() || item.feedback || 'Agent disputes QA score and requests lead review.'
+    appeal.mutate({
+      sample_key: item.key,
+      ticket_id: item.ticket_id,
+      channel: item.channel,
+      sample: item.sample || item.ticket_no || null,
+      current_score: item.ai_pre_score,
+      requested_score: Math.min(100, item.ai_pre_score + 10),
+      reason,
+      evidence: item.evidence || [],
+    })
+  }
+
   return (
     <AppShell>
       <PageHeader
@@ -71,6 +95,7 @@ function QATrainingPage() {
       <RequireCapability requirement={routeAccess['/qa-training']}>
         {qa.isLoading ? <Skeleton lines={6} /> : null}
         {qa.isError ? <ErrorSummary title="QA / Training 加载失败" errors={[qa.error instanceof Error ? qa.error.message : '请稍后重试']} action={<Button variant="secondary" onClick={() => void refresh()}>重试</Button>} /> : null}
+        {appeal.isError ? <ErrorSummary title="Agent 申诉提交失败" errors={[appeal.error instanceof Error ? appeal.error.message : '请检查权限或稍后重试']} /> : null}
         {qa.data ? (
           <div className="stack" data-testid="qa-training-template-blocks">
             <div className="metrics-grid metrics-grid-wide" data-testid="qa-training-real-kpis">
@@ -94,7 +119,17 @@ function QATrainingPage() {
                     <Badge tone={scoreTone(item.ai_pre_score)}>{item.ai_pre_score}</Badge>,
                     sanitizeDisplayText(item.risk),
                     sanitizeDisplayText(item.feedback),
-                    sanitizeDisplayText(item.agent_appeal),
+                    item.appeal_status && item.appeal_status !== 'available'
+                      ? <Badge tone={item.appeal_status === 'not_applicable' ? 'default' : 'warning'}>{sanitizeDisplayText(item.agent_appeal)}</Badge>
+                      : <div className="stack" data-testid="qa-training-agent-appeal">
+                          <Input
+                            aria-label={`申诉理由 ${item.key}`}
+                            value={appealReasons[item.key] || ''}
+                            onChange={(event) => setAppealReasons((current) => ({ ...current, [item.key]: event.target.value }))}
+                            placeholder="申诉理由"
+                          />
+                          <Button variant="secondary" disabled={appeal.isPending} onClick={() => submitAppeal(item)}>提交申诉</Button>
+                        </div>,
                   ])}
                   empty={<EmptyState title="暂无 QA 样本" description="当前可见范围内没有需要质检的通话、聊天、邮件或工单样本。" />}
                 />

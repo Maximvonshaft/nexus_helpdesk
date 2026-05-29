@@ -17,6 +17,8 @@ from ..schemas import (
     LiteCaseUpdate,
     LiteHumanNoteRequest,
     LiteMetaRead,
+    LiteQAAppealRequest,
+    LiteQAAppealResponse,
     LiteStatusRequest,
     LiteWorkflowUpdateRequest,
     TeamRead,
@@ -38,7 +40,7 @@ from ..services.lite_service import (
 from ..services.control_tower_service import build_control_tower
 from ..services.knowledge_studio_service import build_knowledge_studio
 from ..services.persona_builder_service import build_persona_builder
-from ..services.qa_training_service import build_qa_training
+from ..services.qa_training_service import build_qa_training, submit_agent_appeal
 from ..services.today_workbench_service import build_today_workbench
 from .deps import get_current_user
 from ..unit_of_work import managed_session
@@ -82,6 +84,13 @@ def control_tower(db: Session = Depends(get_db), current_user=Depends(get_curren
 @router.get("/qa-training")
 def qa_training(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     return build_qa_training(db, current_user)
+
+
+@router.post("/qa-training/appeals", response_model=LiteQAAppealResponse)
+def qa_training_appeal(payload: LiteQAAppealRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    with managed_session(db):
+        result = submit_agent_appeal(db, current_user, payload)
+    return result
 
 
 @router.get("/knowledge-studio")

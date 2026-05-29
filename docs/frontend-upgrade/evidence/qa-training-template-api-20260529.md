@@ -14,9 +14,16 @@ This stacked PR lands the v1.7.8 `QA / Training / Knowledge Gap Loop` as a real 
 - exposes scorecard rows, coaching/training tasks, knowledge-gap candidates, loop steps and template block closure state
 - adds `/qa-training` to the authenticated router, AppShell navigation and CommandPalette
 
-## Remaining Work
+## Follow-up Closure
 
-This PR does not add write endpoints for scoring submission, agent appeal, or automatic knowledge-draft creation. The route marks agent appeal as `not_implemented` instead of pretending the loop is fully writable.
+Follow-up branch `codex/qa-training-agent-appeals` adds the agent appeal write path:
+
+- `POST /api/lite/qa-training/appeals`
+- persists appeals as `operator_tasks.task_type=qa_appeal`
+- writes ticket timeline evidence through `TicketEvent(field_name=qa_agent_appeal)`
+- writes admin audit evidence through `AdminAuditLog(action=qa.agent_appeal.submitted)`
+
+After that follow-up, `/api/lite/qa-training` marks `agent_appeal_write_endpoint` as `implemented`.
 
 ## Local Validation
 

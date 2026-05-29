@@ -505,6 +505,46 @@ class LiteAIIntakeRequest(BaseModel):
     last_customer_message: Optional[str] = None
 
 
+class LiteQAAppealRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sample_key: str = Field(min_length=1, max_length=160)
+    ticket_id: int = Field(gt=0)
+    channel: Optional[str] = Field(default=None, max_length=40)
+    sample: Optional[str] = Field(default=None, max_length=200)
+    current_score: Optional[int] = Field(default=None, ge=0, le=100)
+    requested_score: Optional[int] = Field(default=None, ge=0, le=100)
+    reason: str = Field(min_length=4, max_length=2000)
+    evidence: list[str] = Field(default_factory=list)
+
+    @field_validator("sample_key", "channel", "sample", "reason", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def normalize_evidence(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [value]
+        return [str(item).strip() for item in value if str(item).strip()][:12]
+
+
+class LiteQAAppealResponse(APIModel):
+    ok: bool
+    task_id: int
+    created: bool
+    status: str
+    ticket_id: int
+    sample_key: str
+    appeal_status: str
+    submitted_at: datetime
+
+
 class LiteMetaRead(APIModel):
     users: list[UserRead]
     teams: list[TeamRead]
