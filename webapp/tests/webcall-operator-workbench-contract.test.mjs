@@ -21,12 +21,20 @@ test('top-level /webcall operator route is registered without replacing customer
 })
 
 test('webcall operator entry is routeAccess gated and visible in operator navigation', () => {
-  assert.match(rbac, /'\/webcall': \{ allOf: \[CAPABILITIES\.webcallVoiceQueueView\] \}/)
+  assert.match(rbac, /'\/webcall': \{\s*allOf: \[[\s\S]*CAPABILITIES\.ticketRead[\s\S]*CAPABILITIES\.customerProfileRead[\s\S]*CAPABILITIES\.webcallVoiceQueueView[\s\S]*CAPABILITIES\.webcallVoiceRead[\s\S]*\],[\s\S]*anyOf: \[[\s\S]*CAPABILITIES\.webcallVoiceAccept[\s\S]*CAPABILITIES\.webchatHandoffAccept[\s\S]*CAPABILITIES\.webchatConversationMonitorAi[\s\S]*\]/)
   assert.match(route, /<RequireCapability requirement=\{routeAccess\['\/webcall'\]\}>/)
   assert.match(appShell, /to: '\/webcall'[\s\S]*label: 'WebCall 工作台'[\s\S]*access: routeAccess\['\/webcall'\]/)
   assert.match(appShell, /isActiveNavPath\(location\.pathname, item\.to\)/)
   assert.match(appShell, /pathname\.startsWith\(`\$\{target\}\/`\)/)
   assert.match(commandPalette, /id: 'webcall-workbench'[\s\S]*to: '\/webcall'[\s\S]*access: routeAccess\['\/webcall'\]/)
+})
+
+test('handoff queues are enabled only for matching backend capabilities', () => {
+  assert.match(route, /CAPABILITIES\.webchatHandoffAccept/)
+  assert.match(route, /CAPABILITIES\.webchatConversationMonitorAi/)
+  assert.match(route, /data-testid="webcall-handoff-capability-tabs"/)
+  assert.match(route, /enabled: !!activeHandoffView/)
+  assert.match(route, /view: activeHandoffView \|\| 'requested'/)
 })
 
 test('webcall workbench uses real backend contracts for queue, identity, AI, handoff, and audit', () => {

@@ -262,6 +262,7 @@ jobs:
               webapp/tests/webcall-operator-workbench-contract.test.mjs) return 0 ;;
               webapp/package.json) return 0 ;;
               webapp/package-lock.json) return 0 ;;
+              backend/tests/test_channel_workbench_backend_contracts.py) return 0 ;;
               backend/app/webchat_voice_config.py) return 0 ;;
               backend/tests/test_webchat_voice_mock_ui_static.py) return 0 ;;
               backend/tests/test_webchat_voice_static_headers.py) return 0 ;;
@@ -330,7 +331,11 @@ jobs:
           LIVEKIT_URL: wss://livekit.test
           WEBCALL_BROWSER_ENTRY_ENABLED: "true"
         run: |
-          pytest -q tests/test_webchat_voice_api.py tests/test_webchat_voice_static_headers.py tests/test_webchat_voice_mock_ui_static.py
+          pytest -q \
+            tests/test_webchat_voice_api.py \
+            tests/test_webchat_voice_static_headers.py \
+            tests/test_webchat_voice_mock_ui_static.py \
+            tests/test_channel_workbench_backend_contracts.py
 
   webcall-blocking-fix-guard:
     needs: scope-guard

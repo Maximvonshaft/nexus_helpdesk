@@ -17,11 +17,12 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { Toast } from '@/components/ui/Toast'
 import { RequireCapability } from '@/components/security/RequireCapability'
 import { useSession } from '@/hooks/useAuth'
-import { canAccess, routeAccess } from '@/lib/rbac'
+import { CAPABILITIES, canAccess, routeAccess } from '@/lib/rbac'
 import { canForceWebchatHandoff } from '@/lib/access'
 import { formatDateTime, labelize, marketLabel, sanitizeDisplayText, statusTone } from '@/lib/format'
 
 type QueueSource = 'voice' | 'handoff' | 'conversation'
+type HandoffView = 'requested' | 'mine' | 'ai_active'
 
 type WorkbenchRow = {
   key: string
@@ -250,10 +251,21 @@ function WebCallOperatorWorkbenchPage() {
   const navigate = useNavigate()
   const canOpenDemo = canAccess(session.data, routeAccess['/webcall-ai-demo'])
   const canForceTakeover = canForceWebchatHandoff(session.data)
+  const canViewRequestedHandoff = canAccess(session.data, { allOf: [CAPABILITIES.webchatHandoffAccept] })
+  const canMonitorAiHandoff = canAccess(session.data, { allOf: [CAPABILITIES.webchatConversationMonitorAi] })
   const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null)
-  const [handoffView, setHandoffView] = useState<'requested' | 'mine' | 'ai_active'>('requested')
+  const [handoffView, setHandoffView] = useState<HandoffView>('requested')
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null)
+  const handoffTabs = useMemo(() => {
+    const tabs: Array<{ key: HandoffView; label: string }> = []
+    if (canViewRequestedHandoff) {
+      tabs.push({ key: 'requested', label: 'Requested' }, { key: 'mine', label: 'Mine' })
+    }
+    if (canMonitorAiHandoff) tabs.push({ key: 'ai_active', label: 'AI Active' })
+    return tabs
+  }, [canMonitorAiHandoff, canViewRequestedHandoff])
+  const activeHandoffView = handoffTabs.some((tab) => tab.key === handoffView) ? handoffView : handoffTabs[0]?.key
 
   const voiceQueue = useQuery({
     queryKey: ['webcallWorkbenchVoiceQueue'],
@@ -263,8 +275,9 @@ function WebCallOperatorWorkbenchPage() {
   })
 
   const handoffQueue = useQuery({
-    queryKey: ['webcallWorkbenchHandoffQueue', handoffView],
-    queryFn: ({ signal }) => api.webchatHandoffQueue({ view: handoffView, limit: 80 }, { signal }),
+    queryKey: ['webcallWorkbenchHandoffQueue', activeHandoffView],
+    queryFn: ({ signal }) => api.webchatHandoffQueue({ view: activeHandoffView || 'requested', limit: 80 }, { signal }),
+    enabled: !!activeHandoffView,
     refetchInterval: 8000,
     retry: false,
   })
@@ -288,6 +301,10 @@ function WebCallOperatorWorkbenchPage() {
     () => queueRows(voiceQueue.data?.items ?? [], handoffQueue.data?.items ?? [], conversations.data ?? []),
     [conversations.data, handoffQueue.data?.items, voiceQueue.data?.items],
   )
+
+  useEffect(() => {
+    if (activeHandoffView && activeHandoffView !== handoffView) setHandoffView(activeHandoffView)
+  }, [activeHandoffView, handoffView])
 
   useEffect(() => {
     if (!selectedTicketId && rows.length) setSelectedTicketId(rows[0].ticketId)
@@ -379,13 +396,14 @@ function WebCallOperatorWorkbenchPage() {
           <Card>
             <CardHeader title="WebCall Queue" subtitle="Incoming voice, handoff and WebChat context." />
             <CardBody>
-              <div className="button-row">
-                {(['requested', 'mine', 'ai_active'] as const).map((view) => (
-                  <Button key={view} variant={handoffView === view ? 'primary' : 'secondary'} onClick={() => setHandoffView(view)}>
-                    {labelize(view)}
+              <div className="button-row" data-testid="webcall-handoff-capability-tabs">
+                {handoffTabs.map((tab) => (
+                  <Button key={tab.key} variant={activeHandoffView === tab.key ? 'primary' : 'secondary'} onClick={() => setHandoffView(tab.key)}>
+                    {tab.label}
                   </Button>
                 ))}
               </div>
+              {!handoffTabs.length ? <p className="section-subtitle">当前账号没有 WebChat handoff queue 权限；仍可处理已授权的 WebCall 语音队列。</p> : null}
               {voiceQueue.isLoading || handoffQueue.isLoading || conversations.isLoading ? <Skeleton lines={5} /> : null}
               {voiceQueue.isError || handoffQueue.isError || conversations.isError ? <EmptyState title="无法加载 WebCall 工作队列" description="请刷新或检查当前账号的 WebCall/WebChat 权限。" /> : null}
               {!rows.length && !voiceQueue.isLoading && !handoffQueue.isLoading && !conversations.isLoading ? <EmptyState text="暂无 WebCall 或 handoff 队列项。" /> : null}
