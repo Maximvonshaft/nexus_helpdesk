@@ -61,6 +61,22 @@ test('webcall workbench uses real backend contracts for queue, identity, AI, han
   assert.doesNotMatch(route, /Mock voice session|Accept mock call|End mock call/)
 })
 
+test('webcall operator handoff actions are capability-gated', () => {
+  assert.match(route, /canAcceptWebchatHandoff/)
+  assert.match(route, /canDeclineWebchatHandoff/)
+  assert.match(route, /canReleaseWebchatHandoff/)
+  assert.match(route, /canResumeWebchatHandoff/)
+  assert.match(rbac, /acceptWebchatHandoff: \{ allOf: \[CAPABILITIES\.webchatHandoffAccept\] \}/)
+  assert.match(rbac, /declineWebchatHandoff: \{ allOf: \[CAPABILITIES\.webchatHandoffDecline\] \}/)
+  assert.match(rbac, /releaseWebchatHandoff: \{ allOf: \[CAPABILITIES\.webchatHandoffRelease\] \}/)
+  assert.match(rbac, /resumeWebchatHandoff: \{ allOf: \[CAPABILITIES\.webchatHandoffResumeAI\] \}/)
+  assert.match(rbac, /webchatHandoffAccept: 'webchat\.handoff\.accept'/)
+  assert.match(rbac, /webchatHandoffDecline: 'webchat\.handoff\.decline'/)
+  assert.match(rbac, /webchatHandoffRelease: 'webchat\.handoff\.release'/)
+  assert.match(rbac, /webchatHandoffResumeAI: 'webchat\.handoff\.resume_ai'/)
+  assert.match(rbac, /webchatHandoffForceTakeover/)
+})
+
 test('webcall call notes are saved through unified api client and timeline/audit refresh', () => {
   assert.match(apiClient, /webchatVoiceSaveNote: \(ticketId: number, voiceSessionId: string, payload: \{ body: string; source\?: string \| null \}\)/)
   assert.match(apiClient, /`\/api\/webchat\/admin\/tickets\/\$\{ticketId\}\/voice\/\$\{voiceSessionId\}\/notes`/)

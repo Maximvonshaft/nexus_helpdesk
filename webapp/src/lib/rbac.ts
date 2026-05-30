@@ -35,6 +35,10 @@ export const CAPABILITIES = {
   webcallVoiceReject: 'webcall.voice.reject',
   webcallVoiceEnd: 'webcall.voice.end',
   webcallVoiceControl: 'webcall.voice.control',
+  webchatHandoffAccept: 'webchat.handoff.accept',
+  webchatHandoffDecline: 'webchat.handoff.decline',
+  webchatHandoffRelease: 'webchat.handoff.release',
+  webchatHandoffResumeAI: 'webchat.handoff.resume_ai',
   webchatHandoffForceTakeover: 'webchat.handoff.force_takeover',
 } as const
 
@@ -90,6 +94,10 @@ export const actionAccess = {
   rejectWebcallVoice: { allOf: [CAPABILITIES.webcallVoiceReject] },
   endWebcallVoice: { allOf: [CAPABILITIES.webcallVoiceEnd] },
   controlWebcallVoice: { allOf: [CAPABILITIES.webcallVoiceControl] },
+  acceptWebchatHandoff: { allOf: [CAPABILITIES.webchatHandoffAccept] },
+  declineWebchatHandoff: { allOf: [CAPABILITIES.webchatHandoffDecline] },
+  releaseWebchatHandoff: { allOf: [CAPABILITIES.webchatHandoffRelease] },
+  resumeWebchatHandoff: { allOf: [CAPABILITIES.webchatHandoffResumeAI] },
   viewWebchatDebug: { anyOf: [CAPABILITIES.runtimeManage] },
   forceWebchatHandoff: { allOf: [CAPABILITIES.webchatHandoffForceTakeover] },
   uploadAttachment: { allOf: [CAPABILITIES.attachmentUpload] },
@@ -131,6 +139,10 @@ export const capabilityCatalogMeta: CapabilityMeta[] = [
   { capability: CAPABILITIES.webcallVoiceReject, label: '拒接 WebCall', group: 'WebCall 语音', description: '拒接客户发起的 WebCall。', risk: 'high' },
   { capability: CAPABILITIES.webcallVoiceEnd, label: '结束 WebCall', group: 'WebCall 语音', description: '挂断或结束语音会话。', risk: 'high' },
   { capability: CAPABILITIES.webcallVoiceControl, label: '控制 WebCall 通话', group: 'WebCall 语音', description: '记录保持、恢复、键盘、转接和加人等通话控制动作。', risk: 'high' },
+  { capability: CAPABILITIES.webchatHandoffAccept, label: '接受 WebChat 接管', group: 'WebChat 接管', description: '接收 AI 已标记待人工处理的 WebChat 会话。', risk: 'high' },
+  { capability: CAPABILITIES.webchatHandoffDecline, label: '拒绝 WebChat 接管', group: 'WebChat 接管', description: '拒绝当前接管请求并按策略推进队列。', risk: 'high' },
+  { capability: CAPABILITIES.webchatHandoffRelease, label: '释放 WebChat 接管', group: 'WebChat 接管', description: '将已接管会话释放回待处理队列。', risk: 'high' },
+  { capability: CAPABILITIES.webchatHandoffResumeAI, label: '恢复 WebChat AI', group: 'WebChat 接管', description: '在手工处理完成后恢复 AI 回答能力。', risk: 'high' },
   { capability: CAPABILITIES.webchatHandoffForceTakeover, label: '强制接管 WebChat AI', group: 'WebChat 接管', description: '在 AI 正在处理时强制暂停 AI 并接管会话。', risk: 'high' },
 ]
 
