@@ -22,6 +22,7 @@ from .api.admin_queue import router as admin_queue_router
 from .api.auth import router as auth_router
 from .api.channel_control import router as channel_control_router
 from .api.customers import router as customers_router
+from .api.email import router as email_router
 from .api.files import router as files_router
 from .api.integration import router as integration_router
 from .api.knowledge_items import router as knowledge_items_router
@@ -253,6 +254,7 @@ app.include_router(knowledge_items_router)
 app.include_router(lookups_router)
 app.include_router(lite_router)
 app.include_router(customers_router)
+app.include_router(email_router)
 app.include_router(persona_profiles_router)
 app.include_router(stats_router)
 app.include_router(tickets_router)

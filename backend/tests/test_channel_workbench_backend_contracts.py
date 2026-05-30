@@ -222,6 +222,145 @@ def _attach_webcall_operator_context(db_session, *, ticket_id: int, conversation
     return ticket, conversation, handoff, turn
 
 
+def test_email_mailbox_queue_projection_uses_real_mailbox_rows(client: TestClient, db_session):
+    admin = _admin(db_session, user_id=9401)
+    auditor = User(
+        username=f"channel-contract-auditor-{_uid()}",
+        display_name="Channel Contract Auditor",
+        email=f"channel-contract-auditor-{_uid()}@example.test",
+        password_hash="test",
+        role=UserRole.auditor,
+        is_active=True,
+    )
+    team = _team(db_session)
+    db_session.add(auditor)
+    db_session.flush()
+
+    inbound_customer = Customer(name="Inbound Customer", email="inbound@example.test")
+    outbound_customer = Customer(name="Outbound Customer", email="outbound@example.test")
+    marker_customer = Customer(name="Marker Customer", email="marker@example.test")
+    false_customer = Customer(name="Voicemail Customer", email="voice-mail@example.test")
+    db_session.add_all([inbound_customer, outbound_customer, marker_customer, false_customer])
+    db_session.flush()
+
+    inbound_ticket = Ticket(
+        ticket_no=f"MAIL-IN-{_uid()}",
+        title="Webhook ticket with inbound email",
+        description="This ticket was not created as an Email ticket.",
+        customer_id=inbound_customer.id,
+        source=TicketSource.api,
+        source_channel=SourceChannel.web_chat,
+        priority=TicketPriority.high,
+        status=TicketStatus.in_progress,
+        resolution_category=ResolutionCategory.none,
+        conversation_state=ConversationState.human_owned,
+        team_id=team.id,
+    )
+    outbound_ticket = Ticket(
+        ticket_no=f"MAIL-OUT-{_uid()}",
+        title="WhatsApp ticket with Email outbound failure",
+        description="This ticket has a failed SMTP reply.",
+        customer_id=outbound_customer.id,
+        source=TicketSource.user_message,
+        source_channel=SourceChannel.whatsapp,
+        priority=TicketPriority.urgent,
+        status=TicketStatus.waiting_internal,
+        resolution_category=ResolutionCategory.none,
+        conversation_state=ConversationState.ready_to_reply,
+        team_id=team.id,
+    )
+    marker_ticket = Ticket(
+        ticket_no=f"MAIL-MARK-{_uid()}",
+        title="Native Email source ticket",
+        description="Email marker ticket.",
+        customer_id=marker_customer.id,
+        source=TicketSource.user_message,
+        source_channel=SourceChannel.email,
+        priority=TicketPriority.medium,
+        status=TicketStatus.in_progress,
+        resolution_category=ResolutionCategory.none,
+        conversation_state=ConversationState.human_owned,
+        team_id=team.id,
+    )
+    false_ticket = Ticket(
+        ticket_no=f"VOICE-{_uid()}",
+        title="Voicemail should not be Email",
+        description="Category contains mail as part of another word.",
+        customer_id=false_customer.id,
+        source=TicketSource.user_message,
+        source_channel=SourceChannel.whatsapp,
+        priority=TicketPriority.medium,
+        status=TicketStatus.in_progress,
+        category="voicemail",
+        resolution_category=ResolutionCategory.none,
+        conversation_state=ConversationState.human_owned,
+        team_id=team.id,
+    )
+    db_session.add_all([inbound_ticket, outbound_ticket, marker_ticket, false_ticket])
+    db_session.flush()
+
+    inbound = TicketInboundEmailMessage(
+        ticket_id=inbound_ticket.id,
+        actor_id=admin.id,
+        source="imap_poll",
+        provider="imap",
+        provider_message_id="provider-inbound-search",
+        from_address="inbound@example.test",
+        subject="Inbound mailbox projection proof",
+        body="Customer replied from a real mailbox row.",
+        body_preview="Customer replied from a real mailbox row.",
+        mailbox_thread_id="<thread-inbound@example.test>",
+        mailbox_message_id="<inbound-search@example.test>",
+        mailbox_references="<previous@example.test>",
+    )
+    outbound = TicketOutboundMessage(
+        ticket_id=outbound_ticket.id,
+        channel=SourceChannel.email,
+        status=MessageStatus.dead,
+        subject="Failed SMTP projection proof",
+        body="Failed outbound body",
+        provider_status="smtp_550",
+        error_message="Mailbox unavailable",
+        created_by=admin.id,
+        mailbox_thread_id="<thread-outbound@example.test>",
+        mailbox_message_id="<outbound-dead@example.test>",
+        mailbox_references="<thread-outbound@example.test>",
+        failure_code="smtp_550",
+        failure_reason="Mailbox unavailable",
+    )
+    db_session.add_all([inbound, outbound])
+    db_session.flush()
+
+    response = client.get("/api/email/queue", headers=_headers(admin))
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["source"] == "mailbox_projection"
+    items = {item["ticket_id"]: item for item in payload["items"]}
+    assert inbound_ticket.id in items
+    assert outbound_ticket.id in items
+    assert marker_ticket.id in items
+    assert false_ticket.id not in items
+
+    assert items[inbound_ticket.id]["queue_source"] == "inbound_email"
+    assert items[inbound_ticket.id]["queue_reason"] == "customer_reply_received"
+    assert items[inbound_ticket.id]["inbound_message_id"] == inbound.id
+    assert items[inbound_ticket.id]["mailbox_message_id"] == "<inbound-search@example.test>"
+    assert items[inbound_ticket.id]["provider"] == "imap"
+    assert items[outbound_ticket.id]["queue_source"] == "outbound_message"
+    assert items[outbound_ticket.id]["queue_reason"] == "outbound_dead"
+    assert items[outbound_ticket.id]["outbound_message_id"] == outbound.id
+    assert items[outbound_ticket.id]["provider_status"] == "smtp_550"
+    assert items[marker_ticket.id]["queue_source"] == "ticket_marker"
+
+    searched = client.get("/api/email/queue?q=inbound-search", headers=_headers(admin))
+    assert searched.status_code == 200, searched.text
+    assert [item["ticket_id"] for item in searched.json()["items"]] == [inbound_ticket.id]
+
+    denied = client.get("/api/email/queue", headers=_headers(auditor))
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "email_queue_requires_outbound_capability"
+
+
 def test_email_draft_send_and_timeline_audit_contract(client: TestClient, db_session):
     admin = _admin(db_session, user_id=9401)
     team = _team(db_session)

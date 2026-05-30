@@ -29,10 +29,17 @@ test('email workbench is reachable from AppShell navigation and command palette'
   assert.match(commandPalette, /id: 'email-workbench'[\s\S]*label: '打开 Email 工作台'[\s\S]*to: '\/email'[\s\S]*access: routeAccess\['\/email'\]/)
 })
 
-test('email queue filter uses tokenized channel markers instead of loose substring regex', () => {
-  assert.match(emailRoute, /const EMAIL_QUEUE_TOKENS = new Set\(\['email', 'mail', 'smtp', 'imap', 'pop3'\]\)/)
-  assert.match(emailRoute, /replace\(\/\\be\[-_\\s\]\?mail\\b\/g, 'email'\)/)
-  assert.match(emailRoute, /split\(\/\[\^a-z0-9\]\+\/\)\.some\(\(token\) => EMAIL_QUEUE_TOKENS\.has\(token\)\)/)
+test('email queue uses backend mailbox projection instead of frontend ticket filtering', () => {
+  assert.match(types, /export interface EmailMailboxQueueItem/)
+  assert.match(types, /export interface EmailMailboxQueueResponse/)
+  assert.match(apiClient, /emailMailboxQueue: \(params\?: CaseQueryParams\) => request<EmailMailboxQueueResponse>\(`\/api\/email\/queue\?\$\{buildCaseSearch\(params\)\.toString\(\)\}`\)/)
+  assert.match(emailRoute, /queryFn: \(\) => api\.emailMailboxQueue\(\{ q: query \|\| undefined, status: status \|\| undefined \}\)/)
+  assert.match(emailRoute, /queueReasonTone\(item\.queue_reason\)/)
+  assert.match(emailRoute, /item\.queue_source/)
+  assert.match(emailRoute, /独立 mailbox projection/)
+  assert.doesNotMatch(emailRoute, /function isEmailCandidate/)
+  assert.doesNotMatch(emailRoute, /EMAIL_QUEUE_TOKENS/)
+  assert.doesNotMatch(emailRoute, /api\.cases\(\{ q: query/)
   assert.doesNotMatch(emailRoute, /\/email\|mail\|smtp\/i/)
 })
 

@@ -701,6 +701,52 @@ export interface EmailDeliveryReceiptResult {
   audit_id?: number | null
 }
 
+export interface EmailMailboxQueueItem {
+  id: number
+  ticket_id: number
+  ticket_no?: string | null
+  title: string
+  status: string
+  priority: string
+  source_channel?: string | null
+  category?: string | null
+  sub_category?: string | null
+  tracking_number?: string | null
+  customer_name?: string | null
+  customer_email?: string | null
+  assignee_name?: string | null
+  team_name?: string | null
+  market_id?: number | null
+  market_code?: string | null
+  country_code?: string | null
+  conversation_state?: string | null
+  updated_at: string
+  resolution_due_at?: string | null
+  overdue: boolean
+  queue_source: 'inbound_email' | 'outbound_message' | 'ticket_marker'
+  queue_reason: string
+  direction: 'inbound' | 'outbound' | 'ticket'
+  last_message_at?: string | null
+  last_message_subject?: string | null
+  last_message_preview?: string | null
+  mailbox_thread_id?: string | null
+  mailbox_message_id?: string | null
+  mailbox_references?: string | null
+  provider?: string | null
+  provider_status?: string | null
+  delivery_status?: string | null
+  outbound_message_id?: number | null
+  inbound_message_id?: number | null
+}
+
+export interface EmailMailboxQueueResponse {
+  generated_at: string
+  source: 'mailbox_projection'
+  items: EmailMailboxQueueItem[]
+  total: number
+  filters: Record<string, unknown>
+}
+
 export type OutboundSendPayload = {
   channel: string
   subject?: string | null

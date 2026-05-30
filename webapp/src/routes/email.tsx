@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
-import type { BadgeTone, CaseDetail, CaseListItem, OutboundChannelCapability, SystemAttachment } from '@/lib/types'
+import type { BadgeTone, CaseDetail, OutboundChannelCapability, SystemAttachment } from '@/lib/types'
 import { formatDateTime, labelize, marketLabel, priorityTone, sanitizeDisplayText, statusTone } from '@/lib/format'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -26,17 +26,9 @@ const emailSendAccess = { allOf: [CAPABILITIES.outboundSend] } satisfies AccessR
 const emailRetryAccess = { allOf: [CAPABILITIES.runtimeManage] } satisfies AccessRequirement
 const emailInboundSyncAccess = { allOf: [CAPABILITIES.runtimeManage] } satisfies AccessRequirement
 const emailDeliveryReceiptAccess = { allOf: [CAPABILITIES.runtimeManage] } satisfies AccessRequirement
-const EMAIL_QUEUE_TOKENS = new Set(['email', 'mail', 'smtp', 'imap', 'pop3'])
 const MAX_EMAIL_ATTACHMENTS = 10
 const EMAIL_DELIVERY_STATUSES = ['accepted', 'delivered', 'opened', 'deferred', 'bounced', 'failed', 'rejected', 'complained'] as const
 type EmailDeliveryStatus = (typeof EMAIL_DELIVERY_STATUSES)[number]
-
-function isEmailCandidate(item: CaseListItem) {
-  const text = [item.source_channel, item.category, item.sub_category]
-    .map((value) => String(value || '').toLowerCase().replace(/\be[-_\s]?mail\b/g, 'email'))
-    .join(' ')
-  return text.split(/[^a-z0-9]+/).some((token) => EMAIL_QUEUE_TOKENS.has(token))
-}
 
 function emailRecipient(activeCase: CaseDetail) {
   return activeCase.preferred_reply_contact || activeCase.customer?.email || ''
@@ -408,6 +400,13 @@ function receiptTone(status: string): BadgeTone {
   return 'default'
 }
 
+function queueReasonTone(reason: string): BadgeTone {
+  if (reason === 'customer_reply_received') return 'success'
+  if (['outbound_dead', 'outbound_failed'].includes(reason)) return 'danger'
+  if (['outbound_pending', 'draft_saved'].includes(reason)) return 'warning'
+  return 'default'
+}
+
 function OutboundProviderStatus({
   item,
   canRequeue,
@@ -636,17 +635,15 @@ function EmailWorkbenchPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
 
-  const cases = useQuery({
+  const mailboxQueue = useQuery({
     queryKey: ['emailWorkbenchCases', query, status],
-    queryFn: () => api.cases({ q: query || undefined, status: status || undefined }),
+    queryFn: () => api.emailMailboxQueue({ q: query || undefined, status: status || undefined }),
     refetchInterval: autoRefresh.enabled ? 15000 : false,
   })
 
   const rows = useMemo(() => {
-    const items = cases.data ?? []
-    const emailItems = items.filter(isEmailCandidate)
-    return emailItems.length ? emailItems : items
-  }, [cases.data])
+    return mailboxQueue.data?.items ?? []
+  }, [mailboxQueue.data?.items])
 
   useEffect(() => {
     if (!selectedId && rows.length) setSelectedId(rows[0].id)
@@ -670,7 +667,7 @@ function EmailWorkbenchPage() {
 
   const activeCase = detail.data
   const canRequeueOutbound = canAccess(session.data, emailRetryAccess)
-  const emailReadyCount = rows.filter((item) => isEmailCandidate(item)).length
+  const emailReadyCount = mailboxQueue.data?.total ?? rows.length
   const openCount = rows.filter((item) => !['resolved', 'closed', 'canceled', 'cancelled'].includes(String(item.status))).length
   const overdueCount = rows.filter((item) => item.overdue).length
   const requeueMutation = useMutation({
@@ -705,15 +702,15 @@ function EmailWorkbenchPage() {
               <Button variant="secondary" onClick={() => autoRefresh.setEnabled(!autoRefresh.enabled)}>
                 {autoRefresh.enabled ? '暂停刷新' : '恢复刷新'}
               </Button>
-              <Button onClick={() => client.invalidateQueries()} disabled={cases.isFetching}>
-                {cases.isFetching ? '刷新中...' : '立即刷新'}
+              <Button onClick={() => client.invalidateQueries()} disabled={mailboxQueue.isFetching}>
+                {mailboxQueue.isFetching ? '刷新中...' : '立即刷新'}
               </Button>
             </div>
           }
         />
 
         <div className="metrics-grid">
-          <MetricCard label="Email 候选" value={emailReadyCount || rows.length} hint="email/source-channel 优先，否则回退 ticket queue" />
+          <MetricCard label="Email 候选" value={emailReadyCount} hint="独立 mailbox projection，不再前端筛 ticket queue" />
           <MetricCard label="待处理" value={openCount} hint="未进入 resolved/closed/canceled" />
           <MetricCard label="SLA 风险" value={overdueCount} hint="overdue tickets" />
           <MetricCard label="当前工单" value={selectedId ?? '-'} hint="draft/send bind to ticket outbound API" />
@@ -732,11 +729,11 @@ function EmailWorkbenchPage() {
 
         <div className="page-grid workspace">
           <Card>
-            <CardHeader title="Email Queue" subtitle="按 ticket 队列承载 Email 处理，避免绕过既有权限、证据和 timeline。" />
+            <CardHeader title="Email Queue" subtitle="从后端 mailbox projection 读取入站、出站和 ticket marker 队列项。" />
             <CardBody>
               <div className="stack">
-                {cases.isLoading ? <Skeleton lines={6} /> : null}
-                {cases.isError ? <div className="message" data-role="agent">无法加载 Email 队列。</div> : null}
+                {mailboxQueue.isLoading ? <Skeleton lines={6} /> : null}
+                {mailboxQueue.isError ? <div className="message" data-role="agent">无法加载 Email mailbox 队列。</div> : null}
                 {rows.map((item) => (
                   <button
                     key={item.id}
@@ -747,14 +744,25 @@ function EmailWorkbenchPage() {
                     <div className="badges">
                       <Badge tone={statusTone(item.status)}>{labelize(item.status)}</Badge>
                       <Badge tone={priorityTone(item.priority)}>{labelize(item.priority)}</Badge>
-                      {isEmailCandidate(item) ? <Badge tone="success">Email</Badge> : <Badge>Ticket</Badge>}
+                      <Badge tone={queueReasonTone(item.queue_reason)}>{labelize(item.queue_reason)}</Badge>
+                      <Badge>{labelize(item.queue_source)}</Badge>
+                      {item.delivery_status ? <Badge tone={receiptTone(item.delivery_status)}>{labelize(item.delivery_status)}</Badge> : null}
                     </div>
                     <div className="queue-card-title">#{item.id} {sanitizeDisplayText(item.title)}</div>
                     <div className="queue-card-meta">{sanitizeDisplayText(item.customer_name || '未填写客户')} · {marketLabel(item.market_code, item.country_code)}</div>
-                    <div className="queue-card-meta">更新 {formatDateTime(item.updated_at)} · 来源 {sanitizeDisplayText(item.source_channel || '-')}</div>
+                    <div className="queue-card-meta">
+                      {item.last_message_at ? `邮件 ${formatDateTime(item.last_message_at)}` : `更新 ${formatDateTime(item.updated_at)}`} · {sanitizeDisplayText(item.last_message_subject || item.source_channel || '-')}
+                    </div>
+                    {item.mailbox_thread_id || item.mailbox_message_id ? (
+                      <div className="queue-card-meta">
+                        {item.mailbox_thread_id ? `thread ${sanitizeDisplayText(item.mailbox_thread_id)}` : null}
+                        {item.mailbox_thread_id && item.mailbox_message_id ? ' · ' : null}
+                        {item.mailbox_message_id ? `message ${sanitizeDisplayText(item.mailbox_message_id)}` : null}
+                      </div>
+                    ) : null}
                   </button>
                 ))}
-                {!rows.length && !cases.isLoading ? <EmptyState title="没有 Email 队列项" description="当前筛选没有可处理的邮件或工单。" /> : null}
+                {!rows.length && !mailboxQueue.isLoading ? <EmptyState title="没有 Email 队列项" description="当前筛选没有可处理的 mailbox projection 项。" /> : null}
               </div>
             </CardBody>
           </Card>

@@ -418,6 +418,52 @@ class EmailDeliveryReceiptResponse(APIModel):
     audit_id: Optional[int] = None
 
 
+class EmailMailboxQueueItem(APIModel):
+    id: int
+    ticket_id: int
+    ticket_no: Optional[str] = None
+    title: str
+    status: str
+    priority: str
+    source_channel: Optional[str] = None
+    category: Optional[str] = None
+    sub_category: Optional[str] = None
+    tracking_number: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_email: Optional[str] = None
+    assignee_name: Optional[str] = None
+    team_name: Optional[str] = None
+    market_id: Optional[int] = None
+    market_code: Optional[str] = None
+    country_code: Optional[str] = None
+    conversation_state: Optional[str] = None
+    updated_at: datetime
+    resolution_due_at: Optional[datetime] = None
+    overdue: bool = False
+    queue_source: Literal["inbound_email", "outbound_message", "ticket_marker"]
+    queue_reason: str
+    direction: Literal["inbound", "outbound", "ticket"]
+    last_message_at: Optional[datetime] = None
+    last_message_subject: Optional[str] = None
+    last_message_preview: Optional[str] = None
+    mailbox_thread_id: Optional[str] = None
+    mailbox_message_id: Optional[str] = None
+    mailbox_references: Optional[str] = None
+    provider: Optional[str] = None
+    provider_status: Optional[str] = None
+    delivery_status: Optional[str] = None
+    outbound_message_id: Optional[int] = None
+    inbound_message_id: Optional[int] = None
+
+
+class EmailMailboxQueueResponse(APIModel):
+    generated_at: datetime
+    source: Literal["mailbox_projection"] = "mailbox_projection"
+    items: list[EmailMailboxQueueItem] = Field(default_factory=list)
+    total: int
+    filters: dict[str, Any] = Field(default_factory=dict)
+
+
 class AIIntakeRead(APIModel):
 
     id: int

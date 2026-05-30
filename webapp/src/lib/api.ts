@@ -12,6 +12,7 @@ import type {
   ControlTowerActionResult,
   EmailDeliveryReceiptPayload,
   EmailDeliveryReceiptResult,
+  EmailMailboxQueueResponse,
   InboundEmailIngestResult,
   InboundEmailPayload,
   LiteMeta,
@@ -364,6 +365,7 @@ export const api = {
     const page = await request<CaseListPage>(`/api/lite/cases?${buildCaseSearch(params).toString()}`)
     return page.items
   },
+  emailMailboxQueue: (params?: CaseQueryParams) => request<EmailMailboxQueueResponse>(`/api/email/queue?${buildCaseSearch(params).toString()}`),
   caseDetail: (ticketId: number) => request<CaseDetail>(`/api/tickets/${ticketId}/summary`),
   todayWorkbench: () => request<TodayWorkbench>('/api/lite/today-workbench'),
   controlTower: () => request<ControlTower>('/api/lite/control-tower'),
