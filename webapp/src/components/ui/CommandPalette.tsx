@@ -19,7 +19,7 @@ const actions = [
   { id: 'runtime', label: '进入运行恢复 / dead 重排', keywords: 'runtime 运行恢复 dead requeue 重排 队列', to: '/runtime', access: routeAccess['/runtime'] },
   { id: 'accounts', label: '检查发送线路', keywords: '发送线路 渠道 账号 outbound', to: '/accounts', access: routeAccess['/accounts'] },
   { id: 'outbound-email', label: '维护 Outbound Email 账号', keywords: 'email smtp 邮件 账号 test-send 测试发送 outbound', to: '/outbound-email', access: routeAccess['/outbound-email'] },
-  { id: 'bulletins', label: '查看公告口径', keywords: '公告 口径 通知', to: '/bulletins' },
+  { id: 'bulletins', label: '查看公告口径', keywords: '公告 口径 通知 影响预览', to: '/bulletins', access: routeAccess['/bulletins'] },
   { id: 'refresh', label: '刷新全部数据', keywords: '刷新 reload invalidate', action: 'refresh' },
   { id: 'runtime-refresh', label: '刷新运行状态', keywords: '刷新 runtime 运行 状态', action: 'runtime-refresh', access: routeAccess['/runtime'] },
   { id: 'new-bulletin', label: '新建公告', keywords: '公告 新建 口径', to: '/bulletins', access: { allOf: [CAPABILITIES.bulletinManage] } },

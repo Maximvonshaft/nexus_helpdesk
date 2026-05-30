@@ -586,6 +586,42 @@ export interface Bulletin {
   updated_at?: string
 }
 
+export interface BulletinImpactPreviewPayload {
+  market_id?: number | null
+  country_code?: string | null
+  channels_csv?: string | null
+  audience?: string | null
+  auto_inject_to_ai?: boolean
+  is_active?: boolean
+  starts_at?: string | null
+  ends_at?: string | null
+}
+
+export interface BulletinImpactChannelCount {
+  channel: string
+  count: number
+}
+
+export interface BulletinImpactTicket {
+  id: number
+  ticket_no: string
+  title: string
+  status: string
+  channel: string
+  updated_at: string
+}
+
+export interface BulletinImpactPreview {
+  matching_tickets: number
+  ready_to_reply_tickets: number
+  channel_counts: BulletinImpactChannelCount[]
+  sample_tickets: BulletinImpactTicket[]
+  window_status: string
+  scope_label: string
+  auto_inject_to_ai: boolean
+  ai_context_enabled: boolean
+}
+
 export interface ChannelAccount {
   id: number
   provider: string

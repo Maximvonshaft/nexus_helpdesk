@@ -60,6 +60,7 @@ export const routeAccess = {
   '/webcall-ai-demo': { allOf: [CAPABILITIES.runtimeManage] },
   '/accounts': { allOf: [CAPABILITIES.channelAccountManage] },
   '/outbound-email': { allOf: [CAPABILITIES.channelAccountManage] },
+  '/bulletins': {},
   '/email': { allOf: [CAPABILITIES.ticketRead], anyOf: [CAPABILITIES.outboundDraftSave, CAPABILITIES.outboundSend] },
   '/ai-control': { allOf: [CAPABILITIES.aiConfigManage] },
   '/knowledge-studio': { anyOf: [CAPABILITIES.aiConfigRead, CAPABILITIES.aiConfigManage] },

@@ -3,6 +3,8 @@ import type {
   AuthUser,
   BackgroundJob,
   Bulletin,
+  BulletinImpactPreview,
+  BulletinImpactPreviewPayload,
   CaseDetail,
   CaseListItem,
   CaseListPage,
@@ -444,6 +446,10 @@ export const api = {
   }),
   updateBulletin: (bulletinId: number, payload: Partial<Bulletin>) => request<Bulletin>(`/api/admin/bulletins/${bulletinId}`, {
     method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  previewBulletinImpact: (payload: BulletinImpactPreviewPayload) => request<BulletinImpactPreview>('/api/admin/bulletins/impact-preview', {
+    method: 'POST',
     body: JSON.stringify(payload),
   }),
   aiConfigs: (configType?: string) => request<AIConfigResource[]>(`/api/admin/ai-configs${configType ? `?config_type=${encodeURIComponent(configType)}` : ''}`),

@@ -1277,6 +1277,8 @@ class MarketBulletinCreate(BaseModel):
 
 
 class MarketBulletinUpdate(BaseModel):
+    market_id: Optional[int] = None
+    country_code: Optional[str] = None
     title: Optional[str] = None
     body: Optional[str] = None
     summary: Optional[str] = None
@@ -1288,6 +1290,42 @@ class MarketBulletinUpdate(BaseModel):
     is_active: Optional[bool] = None
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
+
+
+class MarketBulletinImpactPreviewRequest(BaseModel):
+    market_id: Optional[int] = None
+    country_code: Optional[str] = None
+    channels_csv: Optional[str] = None
+    audience: str = "customer"
+    auto_inject_to_ai: bool = True
+    is_active: bool = True
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+
+
+class MarketBulletinImpactChannelCount(APIModel):
+    channel: str
+    count: int
+
+
+class MarketBulletinImpactTicket(APIModel):
+    id: int
+    ticket_no: str
+    title: str
+    status: str
+    channel: str
+    updated_at: datetime
+
+
+class MarketBulletinImpactPreviewRead(APIModel):
+    matching_tickets: int
+    ready_to_reply_tickets: int
+    channel_counts: list[MarketBulletinImpactChannelCount] = Field(default_factory=list)
+    sample_tickets: list[MarketBulletinImpactTicket] = Field(default_factory=list)
+    window_status: str
+    scope_label: str
+    auto_inject_to_ai: bool
+    ai_context_enabled: bool
 
 
 class AIConfigResourceRead(APIModel):

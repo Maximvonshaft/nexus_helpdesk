@@ -24,7 +24,7 @@ const nav = [
   { to: '/provider-credentials', label: 'Code X 授权', hint: '云端授权与 Token 托管', access: routeAccess['/provider-credentials'] },
   { to: '/accounts', label: '发送线路', hint: '账号与兜底线路', access: routeAccess['/accounts'] },
   { to: '/outbound-email', label: 'Email 账号', hint: 'SMTP 配置与测试发送', access: routeAccess['/outbound-email'] },
-  { to: '/bulletins', label: '公告口径', hint: '统一客服话术', permission: 'bulletins' },
+  { to: '/bulletins', label: '公告口径', hint: '统一客服话术', access: routeAccess['/bulletins'] },
   { to: '/ai-control', label: 'AI 规则', hint: '助手口径治理', access: routeAccess['/ai-control'] },
   { to: '/knowledge-studio', label: 'Knowledge Studio', hint: '知识发布、检索与冲突', access: routeAccess['/knowledge-studio'] },
   { to: '/persona-builder', label: 'AI Persona Builder', hint: '人格、匹配与发布证据', access: routeAccess['/persona-builder'] },
@@ -87,7 +87,6 @@ export function AppShell({ children }: PropsWithChildren) {
 
   const availableNav = useMemo(() => nav.filter((item) => {
     if ('access' in item && item.access) return canAccess(session.data, item.access)
-    if (item.permission === 'bulletins') return true
     return true
   }), [session.data])
 

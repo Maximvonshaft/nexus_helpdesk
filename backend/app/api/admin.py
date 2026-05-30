@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db, engine
 from ..enums import JobStatus, MessageStatus, UserRole
 from ..models import AIConfigResource, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, OutboundEmailAccount, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
-from ..schemas import UserUpdate, PasswordResetRequest, OpenClawUnresolvedEventRead, AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, OpenClawConnectivityProbeRead, OpenClawConversationRead, OpenClawLinkRequest, OpenClawRuntimeHealthRead, OpenClawSyncEnqueueRequest, OpenClawSyncResult, ProductionReadinessRead, QueueSummaryRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead, UserCreate
+from ..schemas import UserUpdate, PasswordResetRequest, OpenClawUnresolvedEventRead, AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinImpactPreviewRead, MarketBulletinImpactPreviewRequest, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, OpenClawConnectivityProbeRead, OpenClawConversationRead, OpenClawLinkRequest, OpenClawRuntimeHealthRead, OpenClawSyncEnqueueRequest, OpenClawSyncResult, ProductionReadinessRead, QueueSummaryRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead, UserCreate
 from ..settings import get_settings
 from ..auth_service import hash_password
 from ..utils.time import utc_now
@@ -26,6 +26,7 @@ from ..services.audit_service import log_admin_audit
 from ..services.admin_action_rate_limit import enforce_admin_action_rate_limit
 from ..services.ai_config_service import create_resource as create_ai_config_resource, list_admin_resources, list_versions as list_ai_config_versions, publish_resource, rollback_resource, update_resource as update_ai_config_resource
 from ..services.background_jobs import enqueue_openclaw_sync_job, enqueue_stale_openclaw_sync_jobs
+from ..services.bulletin_service import bulletin_audit_snapshot, build_bulletin_impact_preview, normalize_bulletin_country_code
 from ..unit_of_work import managed_session
 from ..services.openclaw_bridge import ALLOWED_CHANNEL_ACCOUNT_PROVIDERS, consume_openclaw_events_once, count_stale_openclaw_links, link_ticket_to_openclaw_session, list_stale_openclaw_links, replay_unresolved_openclaw_event as replay_unresolved_openclaw_event_payload, sync_openclaw_conversation
 from ..services.openclaw_runtime_service import probe_openclaw_connectivity
@@ -621,7 +622,7 @@ def create_bulletin(payload: MarketBulletinCreate, db: Session = Depends(get_db)
     with managed_session(db):
         row = MarketBulletin(
             market_id=payload.market_id,
-            country_code=payload.country_code.upper() if payload.country_code else None,
+            country_code=normalize_bulletin_country_code(payload.country_code),
             title=payload.title,
             body=payload.body,
             summary=payload.summary,
@@ -637,8 +638,35 @@ def create_bulletin(payload: MarketBulletinCreate, db: Session = Depends(get_db)
         )
         db.add(row)
         db.flush()
+        log_admin_audit(
+            db,
+            actor_id=current_user.id,
+            action='bulletin.create',
+            target_type='market_bulletin',
+            target_id=row.id,
+            old_value=None,
+            new_value=bulletin_audit_snapshot(row),
+        )
     db.refresh(row)
     return MarketBulletinRead.model_validate(row)
+
+
+@router.post('/bulletins/impact-preview', response_model=MarketBulletinImpactPreviewRead)
+def preview_bulletin_impact(payload: MarketBulletinImpactPreviewRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_can_manage_bulletins(current_user, db)
+    return MarketBulletinImpactPreviewRead.model_validate(
+        build_bulletin_impact_preview(
+            db,
+            market_id=payload.market_id,
+            country_code=payload.country_code,
+            channels_csv=payload.channels_csv,
+            audience=payload.audience,
+            auto_inject_to_ai=payload.auto_inject_to_ai,
+            is_active=payload.is_active,
+            starts_at=payload.starts_at,
+            ends_at=payload.ends_at,
+        )
+    )
 
 
 @router.patch('/bulletins/{bulletin_id}', response_model=MarketBulletinRead)
@@ -647,12 +675,22 @@ def update_bulletin(bulletin_id: int, payload: MarketBulletinUpdate, db: Session
     row = db.query(MarketBulletin).filter(MarketBulletin.id == bulletin_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail='Bulletin not found')
+    before = bulletin_audit_snapshot(row)
     with managed_session(db):
         for key, value in payload.model_dump(exclude_unset=True).items():
-            if key == 'country_code' and value:
-                value = value.upper()
+            if key == 'country_code':
+                value = normalize_bulletin_country_code(value)
             setattr(row, key, value)
         db.flush()
+        log_admin_audit(
+            db,
+            actor_id=current_user.id,
+            action='bulletin.update',
+            target_type='market_bulletin',
+            target_id=row.id,
+            old_value=before,
+            new_value=bulletin_audit_snapshot(row),
+        )
     db.refresh(row)
     return MarketBulletinRead.model_validate(row)
 
