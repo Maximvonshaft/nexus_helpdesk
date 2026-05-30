@@ -432,6 +432,108 @@ def test_email_dead_outbound_timeline_and_requeue_contract(client: TestClient, d
     assert row.mailbox_message_id == "<nexusdesk-ticket-dead-contract-outbound@example.test>"
 
 
+def test_email_delivery_receipt_updates_outbound_timeline_and_audit(client: TestClient, db_session):
+    admin = _admin(db_session, user_id=9406)
+    team = _team(db_session)
+    ticket = _email_ticket(db_session, team=team)
+    headers = _headers(admin)
+    row = TicketOutboundMessage(
+        ticket_id=ticket.id,
+        channel=SourceChannel.email,
+        status=MessageStatus.pending,
+        subject="Receipt target",
+        body="receipt target",
+        provider_status="queued",
+        provider_message_id="smtp-provider-target",
+        mailbox_thread_id=f"<nexusdesk-ticket-{ticket.id}@nexusdesk.local>",
+        mailbox_message_id=f"<nexusdesk-ticket-{ticket.id}-outbound-receipt@nexusdesk.local>",
+        mailbox_references=f"<nexusdesk-ticket-{ticket.id}@nexusdesk.local>",
+        created_by=admin.id,
+    )
+    db_session.add(row)
+    db_session.flush()
+    payload = {
+        "delivery_status": "delivered",
+        "provider": "smtp-webhook",
+        "provider_event_type": "delivered",
+        "provider_event_id": "receipt-event-1",
+        "provider_status": "provider_delivered",
+        "detail": "Provider accepted and delivered the message.",
+        "raw_payload": {"message": "safe", "api_key": "secret-value"},
+    }
+
+    receipt = client.post(f"/api/tickets/{ticket.id}/email/outbound/{row.id}/delivery-receipt", headers=headers, json=payload)
+    assert receipt.status_code == 200, receipt.text
+    receipt_payload = receipt.json()
+    assert receipt_payload["created"] is True
+    assert receipt_payload["status"] == "sent"
+    assert receipt_payload["delivery_status"] == "delivered"
+    assert receipt_payload["delivery_receipt_provider"] == "smtp-webhook"
+    assert receipt_payload["delivery_receipt_id"] == "receipt-event-1"
+    assert receipt_payload["ticket_event_id"] is not None
+    assert receipt_payload["audit_id"] is not None
+    db_session.refresh(row)
+    assert row.status == MessageStatus.sent
+    assert row.provider_status == "provider_delivered"
+    assert row.delivery_status == "delivered"
+    assert row.delivery_receipt_id == "receipt-event-1"
+    assert row.failure_code is None
+    assert row.sent_at is not None
+    delivery_payload = json.loads(row.delivery_payload_json or "{}")
+    assert delivery_payload["api_key"] == "[redacted]"
+
+    timeline = client.get(f"/api/tickets/{ticket.id}/timeline?limit=20", headers=headers)
+    assert timeline.status_code == 200, timeline.text
+    items = timeline.json()["items"]
+    outbound = next(item for item in items if item.get("source_type") == "outbound_message")
+    assert outbound["delivery_status"] == "delivered"
+    assert outbound["delivery_receipt_provider"] == "smtp-webhook"
+    assert outbound["payload"]["delivery_receipt_id"] == "receipt-event-1"
+    receipt_event = next(item for item in items if item.get("source_type") == "ticket_event" and item.get("field_name") == "email.delivery_receipt")
+    assert receipt_event["event_type"] == EventType.outbound_sent.value
+    audit = db_session.query(AdminAuditLog).filter(AdminAuditLog.id == receipt_payload["audit_id"]).one()
+    assert audit.action == "email.delivery_receipt.ingested"
+    assert json.loads(audit.new_value_json or "{}")["delivery_status"] == "delivered"
+
+    duplicate = client.post(f"/api/tickets/{ticket.id}/email/outbound/{row.id}/delivery-receipt", headers=headers, json=payload)
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json()["created"] is False
+    assert db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "email.delivery_receipt.ingested").count() == 1
+
+    bounced = TicketOutboundMessage(
+        ticket_id=ticket.id,
+        channel=SourceChannel.email,
+        status=MessageStatus.sent,
+        subject="Bounce target",
+        body="bounce target",
+        provider_status="smtp_sent",
+        provider_message_id="smtp-provider-bounce",
+        mailbox_thread_id=f"<nexusdesk-ticket-{ticket.id}@nexusdesk.local>",
+        mailbox_message_id=f"<nexusdesk-ticket-{ticket.id}-outbound-bounce@nexusdesk.local>",
+        mailbox_references=f"<nexusdesk-ticket-{ticket.id}@nexusdesk.local>",
+        created_by=admin.id,
+    )
+    db_session.add(bounced)
+    db_session.flush()
+    bounced_receipt = client.post(
+        f"/api/tickets/{ticket.id}/email/outbound/{bounced.id}/delivery-receipt",
+        headers=headers,
+        json={
+            "delivery_status": "bounced",
+            "provider": "smtp-webhook",
+            "provider_event_id": "receipt-event-bounce",
+            "failure_code": "mailbox_unavailable",
+            "failure_reason": "Mailbox unavailable",
+        },
+    )
+    assert bounced_receipt.status_code == 200, bounced_receipt.text
+    db_session.refresh(bounced)
+    assert bounced.status == MessageStatus.dead
+    assert bounced.provider_status == "receipt:bounced"
+    assert bounced.failure_code == "mailbox_unavailable"
+    assert bounced.failure_reason == "Mailbox unavailable"
+
+
 def test_webcall_operator_workbench_real_api_identity_handoff_ai_and_session_contract(client: TestClient, db_session):
     admin = _admin(db_session, user_id=9404)
     headers = _headers(admin)

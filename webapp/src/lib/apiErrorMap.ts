@@ -22,6 +22,7 @@ const detailMessages: Record<string, string> = {
   email_subject_required: 'Email 主题不能为空。请填写主题后再发送客户邮件。',
   invalid_inbound_email_from_address: 'Inbound Email 的 From 地址无效，请填写客户邮箱。',
   inbound_email_body_required: 'Inbound Email 正文不能为空。',
+  delivery_receipt_email_only: 'Delivery receipt 只能写入 Email outbound message。',
   smtp_configuration_missing: '没有可用的 Outbound Email SMTP 账号。请先配置并启用市场账号或全局 fallback。',
   smtp_auth_failed: 'SMTP 认证失败。请核对 username、密码和服务端授权方式后重试。',
   smtp_tls_failed: 'SMTP TLS/SSL 握手失败。请核对 security mode、端口和证书配置。',

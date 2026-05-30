@@ -87,6 +87,22 @@ test('email timeline exposes provider delivery status and dead-message retry con
   assert.doesNotMatch(emailRoute, /\bfetch\s*\(/)
 })
 
+test('email delivery receipts use real provider event API and render receipt evidence', () => {
+  assert.match(types, /export type EmailDeliveryReceiptPayload/)
+  assert.match(types, /export interface EmailDeliveryReceiptResult/)
+  assert.match(apiClient, /recordEmailDeliveryReceipt: \(ticketId: number, messageId: number, payload: EmailDeliveryReceiptPayload\) => request<EmailDeliveryReceiptResult>\(`\/api\/tickets\/\$\{ticketId\}\/email\/outbound\/\$\{messageId\}\/delivery-receipt`/)
+  assert.match(emailRoute, /const emailDeliveryReceiptAccess = \{ allOf: \[CAPABILITIES\.runtimeManage\] \}/)
+  assert.match(emailRoute, /const EMAIL_DELIVERY_STATUSES = \['accepted', 'delivered', 'opened', 'deferred', 'bounced', 'failed', 'rejected', 'complained'\] as const/)
+  assert.match(emailRoute, /data-testid="email-delivery-receipt-recorder"/)
+  assert.match(emailRoute, /api\.recordEmailDeliveryReceipt\(activeCase\.id, messageId as number/)
+  assert.match(emailRoute, /providerField\(item, 'delivery_status'\)/)
+  assert.match(emailRoute, /providerField\(item, 'delivery_receipt_provider'\)/)
+  assert.match(emailRoute, /providerField\(item, 'delivery_receipt_id'\)/)
+  assert.match(emailRoute, /providerField\(item, 'delivery_receipt_at'\)/)
+  assert.match(emailRoute, /Delivery Receipt \/ Provider Event/)
+  assert.doesNotMatch(emailRoute, /\bfetch\s*\(/)
+})
+
 test('email timeline exposes mailbox thread and SMTP message identity', () => {
   assert.match(emailRoute, /providerField\(item, 'mailbox_thread_id'\)/)
   assert.match(emailRoute, /providerField\(item, 'mailbox_message_id'\)/)

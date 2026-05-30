@@ -592,6 +592,13 @@ class TicketOutboundMessage(Base):
     mailbox_references: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     failure_code: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     failure_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    delivery_status: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
+    delivery_event_type: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    delivery_receipt_provider: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    delivery_receipt_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    delivery_receipt_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    delivery_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    delivery_payload_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
 

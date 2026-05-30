@@ -25,8 +25,11 @@ const emailDraftAccess = { allOf: [CAPABILITIES.outboundDraftSave] } satisfies A
 const emailSendAccess = { allOf: [CAPABILITIES.outboundSend] } satisfies AccessRequirement
 const emailRetryAccess = { allOf: [CAPABILITIES.runtimeManage] } satisfies AccessRequirement
 const emailInboundSyncAccess = { allOf: [CAPABILITIES.runtimeManage] } satisfies AccessRequirement
+const emailDeliveryReceiptAccess = { allOf: [CAPABILITIES.runtimeManage] } satisfies AccessRequirement
 const EMAIL_QUEUE_TOKENS = new Set(['email', 'mail', 'smtp', 'imap', 'pop3'])
 const MAX_EMAIL_ATTACHMENTS = 10
+const EMAIL_DELIVERY_STATUSES = ['accepted', 'delivered', 'opened', 'deferred', 'bounced', 'failed', 'rejected', 'complained'] as const
+type EmailDeliveryStatus = (typeof EMAIL_DELIVERY_STATUSES)[number]
 
 function isEmailCandidate(item: CaseListItem) {
   const text = [item.source_channel, item.category, item.sub_category]
@@ -386,10 +389,22 @@ function isInboundEmailTimelineItem(item: Record<string, unknown>) {
   return String(item.source_type || item.kind || '') === 'inbound_email'
 }
 
+function outboundTimelineMessageId(item: Record<string, unknown>) {
+  const value = Number(item.source_id)
+  return Number.isFinite(value) && value > 0 ? value : null
+}
+
 function outboundStatusTone(status: string): BadgeTone {
   if (status === 'sent') return 'success'
   if (status === 'dead' || status === 'failed') return 'danger'
   if (status === 'pending' || status === 'processing') return 'warning'
+  return 'default'
+}
+
+function receiptTone(status: string): BadgeTone {
+  if (['accepted', 'delivered', 'opened'].includes(status)) return 'success'
+  if (status === 'deferred') return 'warning'
+  if (['bounced', 'failed', 'rejected', 'complained'].includes(status)) return 'danger'
   return 'default'
 }
 
@@ -412,6 +427,12 @@ function OutboundProviderStatus({
   const mailboxThreadId = String(providerField(item, 'mailbox_thread_id') || '')
   const mailboxMessageId = String(providerField(item, 'mailbox_message_id') || '')
   const mailboxReferences = String(providerField(item, 'mailbox_references') || '')
+  const deliveryStatus = String(providerField(item, 'delivery_status') || '')
+  const deliveryEventType = String(providerField(item, 'delivery_event_type') || '')
+  const deliveryReceiptProvider = String(providerField(item, 'delivery_receipt_provider') || '')
+  const deliveryReceiptId = String(providerField(item, 'delivery_receipt_id') || '')
+  const deliveryReceiptAt = String(providerField(item, 'delivery_receipt_at') || '')
+  const deliveryDetail = String(providerField(item, 'delivery_detail') || '')
   const retryCount = Number(providerField(item, 'retry_count') ?? 0)
   const maxRetries = Number(providerField(item, 'max_retries') ?? 0)
   const messageId = Number(item.source_id)
@@ -422,10 +443,16 @@ function OutboundProviderStatus({
       <div className="badges">
         <Badge tone={outboundStatusTone(statusValue)}>delivery {labelize(statusValue)}</Badge>
         <Badge>{sanitizeDisplayText(providerStatus)}</Badge>
+        {deliveryStatus ? <Badge tone={receiptTone(deliveryStatus)}>receipt {labelize(deliveryStatus)}</Badge> : null}
+        {deliveryReceiptProvider ? <Badge>{sanitizeDisplayText(deliveryReceiptProvider)}</Badge> : null}
         {retryCount || maxRetries ? <Badge>retry {retryCount}/{maxRetries}</Badge> : null}
         {nextRetryAt ? <Badge tone="warning">next {formatDateTime(nextRetryAt)}</Badge> : null}
         {sentAt ? <Badge tone="success">sent {formatDateTime(sentAt)}</Badge> : null}
+        {deliveryReceiptAt ? <Badge>receipt {formatDateTime(deliveryReceiptAt)}</Badge> : null}
       </div>
+      {deliveryEventType || deliveryReceiptId ? (
+        <div className="section-subtitle">receipt {sanitizeDisplayText(deliveryEventType || '-')} {deliveryReceiptId ? `· ${sanitizeDisplayText(deliveryReceiptId)}` : ''}</div>
+      ) : null}
       {mailboxThreadId || mailboxMessageId ? (
         <div className="section-subtitle">
           {mailboxThreadId ? <>thread {sanitizeDisplayText(mailboxThreadId)}</> : null}
@@ -434,6 +461,7 @@ function OutboundProviderStatus({
         </div>
       ) : null}
       {mailboxReferences ? <div className="section-subtitle">references {sanitizeDisplayText(mailboxReferences)}</div> : null}
+      {deliveryDetail ? <div className="section-subtitle">{sanitizeDisplayText(deliveryDetail)}</div> : null}
       {failureReason ? <div className="section-subtitle">{sanitizeDisplayText(failureReason)}</div> : null}
       {dead ? (
         <div className="button-row">
@@ -481,6 +509,124 @@ function InboundProviderStatus({ item }: { item: Record<string, unknown> }) {
   )
 }
 
+function EmailDeliveryReceiptRecorder({
+  activeCase,
+  outboundItems,
+  onToast,
+}: {
+  activeCase: CaseDetail
+  outboundItems: Record<string, unknown>[]
+  onToast: (toast: { message: string; tone?: 'default' | 'danger' | 'success' }) => void
+}) {
+  const session = useSession()
+  const client = useQueryClient()
+  const firstMessageId = useMemo(() => outboundTimelineMessageId(outboundItems[0] ?? {}) ?? null, [outboundItems])
+  const [messageId, setMessageId] = useState<number | null>(firstMessageId)
+  const [deliveryStatus, setDeliveryStatus] = useState<EmailDeliveryStatus>('delivered')
+  const [provider, setProvider] = useState('manual')
+  const [providerEventType, setProviderEventType] = useState('delivered')
+  const [providerEventId, setProviderEventId] = useState('')
+  const [providerStatus, setProviderStatus] = useState('')
+  const [detail, setDetail] = useState('')
+  const [failureCode, setFailureCode] = useState('')
+  const [failureReason, setFailureReason] = useState('')
+  const canRecordReceipt = canAccess(session.data, emailDeliveryReceiptAccess)
+  const canSubmit = Boolean(canRecordReceipt && messageId && deliveryStatus)
+  const selectedItem = outboundItems.find((item) => outboundTimelineMessageId(item) === messageId)
+
+  useEffect(() => {
+    setMessageId(firstMessageId)
+    setDeliveryStatus('delivered')
+    setProvider('manual')
+    setProviderEventType('delivered')
+    setProviderEventId('')
+    setProviderStatus('')
+    setDetail('')
+    setFailureCode('')
+    setFailureReason('')
+  }, [activeCase.id, firstMessageId])
+
+  const receiptMutation = useMutation({
+    mutationFn: () => api.recordEmailDeliveryReceipt(activeCase.id, messageId as number, {
+      delivery_status: deliveryStatus,
+      provider: provider.trim() || 'manual',
+      provider_event_type: providerEventType.trim() || deliveryStatus,
+      provider_event_id: providerEventId.trim() || null,
+      provider_status: providerStatus.trim() || null,
+      detail: detail.trim() || null,
+      failure_code: failureCode.trim() || null,
+      failure_reason: failureReason.trim() || null,
+    }),
+    onSuccess: async (result) => {
+      onToast({ message: result.created ? `Delivery receipt ${result.delivery_status} 已写入 timeline/audit` : 'Delivery receipt 已存在，未重复写入', tone: 'success' })
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['caseDetail', activeCase.id] }),
+        client.invalidateQueries({ queryKey: ['ticketTimeline', activeCase.id] }),
+        client.invalidateQueries({ queryKey: ['cases'] }),
+        client.invalidateQueries({ queryKey: ['emailWorkbenchCases'] }),
+      ])
+    },
+    onError: (err: Error) => onToast({ message: err.message || '记录 delivery receipt 失败', tone: 'danger' }),
+  })
+
+  return (
+    <div className="stack" data-testid="email-delivery-receipt-recorder">
+      <div className="badges">
+        <Badge tone={canRecordReceipt ? 'success' : 'warning'}>runtime.manage {canRecordReceipt ? '已授权' : '未授权'}</Badge>
+        <Badge>provider receipt</Badge>
+      </div>
+      {!outboundItems.length ? <EmptyState title="暂无 outbound message" description="保存草稿或发送 Email 后，才能写入 provider delivery receipt。" /> : null}
+      {outboundItems.length ? (
+        <>
+          <Field label="Outbound message" required>
+            <Select value={messageId ? String(messageId) : ''} onChange={(event) => setMessageId(Number(event.target.value) || null)}>
+              {outboundItems.map((item) => {
+                const id = outboundTimelineMessageId(item)
+                return id ? <option key={id} value={id}>#{id} · {sanitizeDisplayText(String(providerField(item, 'subject') || providerField(item, 'status') || 'outbound'))}</option> : null
+              })}
+            </Select>
+          </Field>
+          {selectedItem ? (
+            <div className="section-subtitle">
+              当前 provider 状态：{sanitizeDisplayText(String(providerField(selectedItem, 'provider_status') || '-'))}
+            </div>
+          ) : null}
+          <div className="kv-grid">
+            <Field label="Receipt status" required>
+              <Select value={deliveryStatus} onChange={(event) => {
+                const next = event.target.value as EmailDeliveryStatus
+                setDeliveryStatus(next)
+                setProviderEventType(next)
+              }}>
+                {EMAIL_DELIVERY_STATUSES.map((item) => <option key={item} value={item}>{labelize(item)}</option>)}
+              </Select>
+            </Field>
+            <Field label="Provider"><Input value={provider} onChange={(event) => setProvider(event.target.value)} placeholder="smtp, ses, mailgun, manual" /></Field>
+          </div>
+          <div className="kv-grid">
+            <Field label="Provider event"><Input value={providerEventType} onChange={(event) => setProviderEventType(event.target.value)} placeholder="delivered" /></Field>
+            <Field label="Event id"><Input value={providerEventId} onChange={(event) => setProviderEventId(event.target.value)} placeholder="receipt-event-id" /></Field>
+          </div>
+          <Field label="Provider status"><Input value={providerStatus} onChange={(event) => setProviderStatus(event.target.value)} placeholder="provider raw status, optional" /></Field>
+          <Field label="Receipt detail"><Textarea value={detail} onChange={(event) => setDetail(event.target.value)} rows={3} placeholder="provider 回执摘要，不要填写密钥或完整原始 header" /></Field>
+          {['deferred', 'bounced', 'failed', 'rejected', 'complained'].includes(deliveryStatus) ? (
+            <div className="kv-grid">
+              <Field label="Failure code"><Input value={failureCode} onChange={(event) => setFailureCode(event.target.value)} placeholder={deliveryStatus} /></Field>
+              <Field label="Failure reason"><Input value={failureReason} onChange={(event) => setFailureReason(event.target.value)} placeholder="provider failure reason" /></Field>
+            </div>
+          ) : null}
+          <div className="button-row">
+            <Button onClick={() => receiptMutation.mutate()} disabled={!canSubmit || receiptMutation.isPending}>
+              {receiptMutation.isPending ? '写入中...' : '记录回执'}
+            </Button>
+            {!canRecordReceipt ? <span className="section-subtitle">需要 runtime.manage 权限</span> : null}
+          </div>
+        </>
+      ) : null}
+    </div>
+  )
+}
+
 function EmailWorkbenchPage() {
   const autoRefresh = useAutoRefresh(true)
   const client = useQueryClient()
@@ -519,6 +665,8 @@ function EmailWorkbenchPage() {
     enabled: !!selectedId,
     refetchInterval: autoRefresh.enabled ? 10000 : false,
   })
+  const timelineItems = useMemo(() => timeline.data?.items ?? [], [timeline.data?.items])
+  const outboundReceiptItems = useMemo(() => timelineItems.filter((item) => isOutboundTimelineItem(item as Record<string, unknown>)) as Record<string, unknown>[], [timelineItems])
 
   const activeCase = detail.data
   const canRequeueOutbound = canAccess(session.data, emailRetryAccess)
@@ -635,7 +783,7 @@ function EmailWorkbenchPage() {
                   </div>
                   <div className="message" data-role="user">{sanitizeDisplayText(activeCase.last_customer_message || activeCase.customer_request || activeCase.issue_summary || '暂无客户来信摘要。')}</div>
                   <div className="timeline">
-                    {(timeline.data?.items ?? []).map((item, index) => (
+                    {timelineItems.map((item, index) => (
                       <div key={String(item.id || index)} className="message" data-role={['comment', 'inbound_email'].includes(String(item.source_type)) ? 'user' : 'agent'}>
                         <div className="message-head">
                           <strong>{timelineTitle(item as Record<string, unknown>)}</strong>
@@ -656,7 +804,7 @@ function EmailWorkbenchPage() {
                       </div>
                     ))}
                     {timeline.isLoading ? <Skeleton lines={4} /> : null}
-                    {!timeline.isLoading && !(timeline.data?.items ?? []).length ? <EmptyState title="暂无 timeline" description="发送或保存动作成功后，后端应把证据写回 timeline。" /> : null}
+                    {!timeline.isLoading && !timelineItems.length ? <EmptyState title="暂无 timeline" description="发送或保存动作成功后，后端应把证据写回 timeline。" /> : null}
                   </div>
                 </div>
               ) : (
@@ -672,6 +820,17 @@ function EmailWorkbenchPage() {
                 <EmailInboundSync activeCase={activeCase} onToast={setToast} />
               ) : (
                 <EmptyState title="等待选择工单" description="Inbound Email 必须绑定 ticket，才能合并 mailbox thread 并写入审计。" />
+              )}
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader title="Delivery Receipt / Provider Event" subtitle="把 provider delivered/bounced/deferred 回执写回 outbound message、timeline 和审计链路。" />
+            <CardBody>
+              {activeCase ? (
+                <EmailDeliveryReceiptRecorder activeCase={activeCase} outboundItems={outboundReceiptItems} onToast={setToast} />
+              ) : (
+                <EmptyState title="等待选择工单" description="Delivery receipt 必须绑定 Email outbound message，才能更新 provider 状态和审计。" />
               )}
             </CardBody>
           </Card>

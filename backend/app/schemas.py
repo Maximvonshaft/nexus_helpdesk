@@ -320,6 +320,12 @@ class OutboundMessageRead(APIModel):
     max_retries: int = 0
     failure_code: Optional[str] = None
     failure_reason: Optional[str] = None
+    delivery_status: Optional[str] = None
+    delivery_event_type: Optional[str] = None
+    delivery_receipt_provider: Optional[str] = None
+    delivery_receipt_id: Optional[str] = None
+    delivery_receipt_at: Optional[datetime] = None
+    delivery_detail: Optional[str] = None
     sent_at: Optional[datetime] = None
     created_at: datetime
     attachments: list[AttachmentRead] = Field(default_factory=list)
@@ -353,6 +359,61 @@ class InboundEmailIngestResponse(APIModel):
     ok: bool
     created: bool
     message: InboundEmailMessageRead
+    ticket_event_id: Optional[int] = None
+    audit_id: Optional[int] = None
+
+
+class EmailDeliveryReceiptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    delivery_status: Literal["accepted", "delivered", "opened", "deferred", "bounced", "failed", "rejected", "complained"]
+    provider: str = Field(default="manual", min_length=1, max_length=80)
+    provider_event_type: Optional[str] = Field(default=None, max_length=80)
+    provider_event_id: Optional[str] = Field(default=None, max_length=255)
+    provider_status: Optional[str] = Field(default=None, max_length=120)
+    provider_message_id: Optional[str] = Field(default=None, max_length=255)
+    mailbox_message_id: Optional[str] = Field(default=None, max_length=255)
+    detail: Optional[str] = Field(default=None, max_length=2000)
+    failure_code: Optional[str] = Field(default=None, max_length=120)
+    failure_reason: Optional[str] = Field(default=None, max_length=2000)
+    occurred_at: Optional[datetime] = None
+    raw_payload: Optional[dict[str, Any]] = None
+
+    @field_validator(
+        "delivery_status",
+        "provider",
+        "provider_event_type",
+        "provider_event_id",
+        "provider_status",
+        "provider_message_id",
+        "mailbox_message_id",
+        "detail",
+        "failure_code",
+        "failure_reason",
+        mode="before",
+    )
+    @classmethod
+    def strip_receipt_strings(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class EmailDeliveryReceiptResponse(APIModel):
+    ok: bool
+    created: bool
+    message_id: int
+    ticket_id: int
+    status: MessageStatus
+    provider_status: Optional[str] = None
+    delivery_status: str
+    delivery_event_type: Optional[str] = None
+    delivery_receipt_provider: Optional[str] = None
+    delivery_receipt_id: Optional[str] = None
+    delivery_receipt_at: Optional[datetime] = None
+    delivery_detail: Optional[str] = None
+    failure_code: Optional[str] = None
+    failure_reason: Optional[str] = None
     ticket_event_id: Optional[int] = None
     audit_id: Optional[int] = None
 

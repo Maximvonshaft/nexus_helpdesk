@@ -667,6 +667,40 @@ export interface OutboundEmailTestSendResult {
   health_status: string
 }
 
+export type EmailDeliveryReceiptPayload = {
+  delivery_status: 'accepted' | 'delivered' | 'opened' | 'deferred' | 'bounced' | 'failed' | 'rejected' | 'complained'
+  provider?: string | null
+  provider_event_type?: string | null
+  provider_event_id?: string | null
+  provider_status?: string | null
+  provider_message_id?: string | null
+  mailbox_message_id?: string | null
+  detail?: string | null
+  failure_code?: string | null
+  failure_reason?: string | null
+  occurred_at?: string | null
+  raw_payload?: Record<string, unknown> | null
+}
+
+export interface EmailDeliveryReceiptResult {
+  ok: boolean
+  created: boolean
+  message_id: number
+  ticket_id: number
+  status: string
+  provider_status?: string | null
+  delivery_status: string
+  delivery_event_type?: string | null
+  delivery_receipt_provider?: string | null
+  delivery_receipt_id?: string | null
+  delivery_receipt_at?: string | null
+  delivery_detail?: string | null
+  failure_code?: string | null
+  failure_reason?: string | null
+  ticket_event_id?: number | null
+  audit_id?: number | null
+}
+
 export type OutboundSendPayload = {
   channel: string
   subject?: string | null

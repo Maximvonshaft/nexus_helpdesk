@@ -14,6 +14,8 @@ from ..schemas import (
     CommentRead,
     InternalNoteCreate,
     InternalNoteRead,
+    EmailDeliveryReceiptRequest,
+    EmailDeliveryReceiptResponse,
     InboundEmailIngestRequest,
     InboundEmailIngestResponse,
     InboundEmailMessageRead,
@@ -56,6 +58,7 @@ from ..services.ticket_service import (
     send_outbound_message,
     update_ticket,
 )
+from ..services.email_delivery_receipt_service import record_email_delivery_receipt
 from ..services.email_inbound_service import ingest_ticket_inbound_email
 from ..services.timeline_service import build_unified_timeline
 from ..services.permissions import ensure_ticket_visible
@@ -112,6 +115,12 @@ def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
         "created_at": row.created_at,
         "failure_code": getattr(row, "failure_code", None),
         "failure_reason": getattr(row, "failure_reason", None),
+        "delivery_status": getattr(row, "delivery_status", None),
+        "delivery_event_type": getattr(row, "delivery_event_type", None),
+        "delivery_receipt_provider": getattr(row, "delivery_receipt_provider", None),
+        "delivery_receipt_id": getattr(row, "delivery_receipt_id", None),
+        "delivery_receipt_at": getattr(row, "delivery_receipt_at", None),
+        "delivery_detail": getattr(row, "delivery_detail", None),
         "external_send": external_send,
         "delivery_semantics": delivery_semantics,
         "dispatch_enabled": bool(settings.enable_outbound_dispatch),
@@ -364,6 +373,32 @@ def ingest_inbound_email_endpoint(ticket_id: int, payload: InboundEmailIngestReq
         message=InboundEmailMessageRead.model_validate(result.row),
         ticket_event_id=result.row.ticket_event_id,
         audit_id=result.row.audit_id,
+    )
+
+
+@router.post("/{ticket_id}/email/outbound/{message_id}/delivery-receipt", response_model=EmailDeliveryReceiptResponse)
+def record_email_delivery_receipt_endpoint(ticket_id: int, message_id: int, payload: EmailDeliveryReceiptRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    with managed_session(db):
+        result = record_email_delivery_receipt(db, ticket_id=ticket_id, message_id=message_id, payload=payload, current_user=current_user)
+        db.flush()
+    message = result.message
+    return EmailDeliveryReceiptResponse(
+        ok=True,
+        created=result.created,
+        message_id=message.id,
+        ticket_id=message.ticket_id,
+        status=message.status,
+        provider_status=message.provider_status,
+        delivery_status=message.delivery_status or payload.delivery_status,
+        delivery_event_type=message.delivery_event_type,
+        delivery_receipt_provider=message.delivery_receipt_provider,
+        delivery_receipt_id=message.delivery_receipt_id,
+        delivery_receipt_at=message.delivery_receipt_at,
+        delivery_detail=message.delivery_detail,
+        failure_code=message.failure_code,
+        failure_reason=message.failure_reason,
+        ticket_event_id=result.ticket_event_id,
+        audit_id=result.audit_id,
     )
 
 

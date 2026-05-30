@@ -10,6 +10,8 @@ import type {
   ChannelOnboardingTaskList,
   ControlTower,
   ControlTowerActionResult,
+  EmailDeliveryReceiptPayload,
+  EmailDeliveryReceiptResult,
   InboundEmailIngestResult,
   InboundEmailPayload,
   LiteMeta,
@@ -409,6 +411,10 @@ export const api = {
     body: JSON.stringify(payload),
   }),
   ingestInboundEmail: (ticketId: number, payload: InboundEmailPayload) => request<InboundEmailIngestResult>(`/api/tickets/${ticketId}/email/inbound`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  recordEmailDeliveryReceipt: (ticketId: number, messageId: number, payload: EmailDeliveryReceiptPayload) => request<EmailDeliveryReceiptResult>(`/api/tickets/${ticketId}/email/outbound/${messageId}/delivery-receipt`, {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
