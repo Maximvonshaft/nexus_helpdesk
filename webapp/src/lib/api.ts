@@ -13,6 +13,8 @@ import type {
   EmailDeliveryReceiptPayload,
   EmailDeliveryReceiptResult,
   EmailMailboxQueueResponse,
+  EmailMailboxSyncEnqueueResult,
+  EmailMailboxSyncStatus,
   InboundEmailIngestResult,
   InboundEmailPayload,
   LiteMeta,
@@ -366,6 +368,11 @@ export const api = {
     return page.items
   },
   emailMailboxQueue: (params?: CaseQueryParams) => request<EmailMailboxQueueResponse>(`/api/email/queue?${buildCaseSearch(params).toString()}`),
+  emailMailboxSyncStatus: () => request<EmailMailboxSyncStatus>('/api/email/mailbox-sync/status'),
+  enqueueEmailMailboxSync: (payload?: { account_id?: number | null }) => request<EmailMailboxSyncEnqueueResult>('/api/email/mailbox-sync/enqueue', {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  }),
   caseDetail: (ticketId: number) => request<CaseDetail>(`/api/tickets/${ticketId}/summary`),
   todayWorkbench: () => request<TodayWorkbench>('/api/lite/today-workbench'),
   controlTower: () => request<ControlTower>('/api/lite/control-tower'),

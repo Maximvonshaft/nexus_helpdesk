@@ -157,7 +157,46 @@ def ingest_ticket_inbound_email(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     ensure_ticket_visible(current_user, ticket, db)
     ensure_can_manage_runtime(current_user, db)
+    return _ingest_ticket_inbound_email(
+        db,
+        ticket=ticket,
+        payload=payload,
+        actor_id=current_user.id,
+        source="manual_sync",
+        audit_action="email.inbound.ingested",
+    )
 
+
+def ingest_ticket_inbound_email_system(
+    db: Session,
+    *,
+    ticket_id: int,
+    payload: InboundEmailIngestRequest,
+    actor_id: int | None = None,
+    source: str = "imap_poll",
+) -> InboundEmailIngestResult:
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if ticket is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    return _ingest_ticket_inbound_email(
+        db,
+        ticket=ticket,
+        payload=payload,
+        actor_id=actor_id,
+        source=source,
+        audit_action="email.inbound.ingested",
+    )
+
+
+def _ingest_ticket_inbound_email(
+    db: Session,
+    *,
+    ticket: Ticket,
+    payload: InboundEmailIngestRequest,
+    actor_id: int | None,
+    source: str,
+    audit_action: str,
+) -> InboundEmailIngestResult:
     from_address = _valid_from_address(payload.from_address)
     provider = _clip(payload.provider, 80) or "manual"
     mailbox_message_id = normalize_mailbox_header_id(payload.mailbox_message_id)
@@ -182,8 +221,8 @@ def ingest_ticket_inbound_email(
 
     row = TicketInboundEmailMessage(
         ticket_id=ticket.id,
-        actor_id=current_user.id,
-        source="manual_sync",
+        actor_id=actor_id,
+        source=_clip(source, 40) or "manual_sync",
         provider=provider,
         provider_message_id=_clip(payload.provider_message_id, 255),
         from_address=from_address,
@@ -213,7 +252,7 @@ def ingest_ticket_inbound_email(
     event = log_event(
         db,
         ticket_id=ticket.id,
-        actor_id=current_user.id,
+        actor_id=actor_id,
         event_type=EventType.comment_added,
         field_name="email.inbound",
         note="Inbound Email received",
@@ -233,8 +272,8 @@ def ingest_ticket_inbound_email(
     )
     audit = log_admin_audit(
         db,
-        actor_id=current_user.id,
-        action="email.inbound.ingested",
+        actor_id=actor_id,
+        action=audit_action,
         target_type="ticket_inbound_email_message",
         target_id=row.id,
         old_value=None,

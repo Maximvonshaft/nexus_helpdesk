@@ -26,6 +26,7 @@ const emailSendAccess = { allOf: [CAPABILITIES.outboundSend] } satisfies AccessR
 const emailRetryAccess = { allOf: [CAPABILITIES.runtimeManage] } satisfies AccessRequirement
 const emailInboundSyncAccess = { allOf: [CAPABILITIES.runtimeManage] } satisfies AccessRequirement
 const emailDeliveryReceiptAccess = { allOf: [CAPABILITIES.runtimeManage] } satisfies AccessRequirement
+const emailMailboxSyncAccess = { allOf: [CAPABILITIES.runtimeManage] } satisfies AccessRequirement
 const MAX_EMAIL_ATTACHMENTS = 10
 const EMAIL_DELIVERY_STATUSES = ['accepted', 'delivered', 'opened', 'deferred', 'bounced', 'failed', 'rejected', 'complained'] as const
 type EmailDeliveryStatus = (typeof EMAIL_DELIVERY_STATUSES)[number]
@@ -55,6 +56,91 @@ function channelTone(capability?: OutboundChannelCapability) {
   if (capability.supports_send) return 'success'
   if (capability.configured) return 'warning'
   return 'danger'
+}
+
+function mailboxSyncTone(value?: string | null): BadgeTone {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'ok' || normalized === 'configured') return 'success'
+  if (normalized === 'error' || normalized === 'not_configured') return 'danger'
+  if (normalized === 'pending' || normalized === 'processing') return 'warning'
+  return 'default'
+}
+
+function EmailMailboxDaemon({
+  onToast,
+}: {
+  onToast: (toast: { message: string; tone?: 'default' | 'danger' | 'success' }) => void
+}) {
+  const session = useSession()
+  const client = useQueryClient()
+  const canManageSync = canAccess(session.data, emailMailboxSyncAccess)
+  const status = useQuery({
+    queryKey: ['emailMailboxSyncStatus'],
+    queryFn: api.emailMailboxSyncStatus,
+    enabled: canManageSync,
+    refetchInterval: canManageSync ? 30000 : false,
+  })
+  const enqueueMutation = useMutation({
+    mutationFn: () => api.enqueueEmailMailboxSync({}),
+    onSuccess: async (result) => {
+      onToast({ message: `已入队 ${result.enqueued} 个 mailbox sync job`, tone: 'success' })
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['emailMailboxSyncStatus'] }),
+        client.invalidateQueries({ queryKey: ['emailWorkbenchCases'] }),
+      ])
+    },
+    onError: (err: Error) => onToast({ message: err.message || '入队 mailbox sync 失败', tone: 'danger' }),
+  })
+  if (!canManageSync) {
+    return (
+      <div className="stack" data-testid="email-mailbox-daemon">
+        <Badge tone="warning">runtime.manage 未授权</Badge>
+        <EmptyState title="Mailbox polling 需要 runtime.manage" description="入站 IMAP daemon 状态和手动同步只对运行时管理员开放。" />
+      </div>
+    )
+  }
+  const data = status.data
+  return (
+    <div className="stack" data-testid="email-mailbox-daemon">
+      <div className="badges">
+        <Badge tone={data?.daemon_enabled ? 'success' : 'warning'}>daemon {data?.daemon_enabled ? 'enabled' : 'disabled'}</Badge>
+        <Badge>{data?.interval_seconds ?? '-'}s interval</Badge>
+        <Badge tone={(data?.pending_jobs ?? 0) > 0 ? 'warning' : 'default'}>{data?.pending_jobs ?? 0} pending</Badge>
+        <Badge tone={(data?.dead_jobs ?? 0) > 0 ? 'danger' : 'default'}>{data?.dead_jobs ?? 0} dead</Badge>
+      </div>
+      {status.isLoading ? <Skeleton lines={3} /> : null}
+      {status.isError ? <ErrorSummary title="无法加载 mailbox daemon 状态" errors={[status.error?.message || '请稍后重试']} /> : null}
+      {data ? (
+        <>
+          <div className="kv-grid">
+            <div className="kv"><label>启用账号</label><div>{data.enabled_accounts}</div></div>
+            <div className="kv"><label>配置完整</label><div>{data.configured_accounts}</div></div>
+            <div className="kv"><label>生成时间</label><div>{formatDateTime(data.generated_at)}</div></div>
+            <div className="kv"><label>队列</label><div>{data.pending_jobs} pending · {data.dead_jobs} dead</div></div>
+          </div>
+          <div className="stack">
+            {data.accounts.map((account) => (
+              <div key={account.account_id} className="message" data-role="agent">
+                <div className="message-head">
+                  <strong>{sanitizeDisplayText(account.display_name || account.from_address)}</strong>
+                  <Badge tone={mailboxSyncTone(account.imap_last_status)}>{sanitizeDisplayText(account.imap_last_status || (account.configured ? 'configured' : 'not_configured'))}</Badge>
+                </div>
+                <div>{sanitizeDisplayText(account.imap_host || '-')} · {sanitizeDisplayText(account.imap_mailbox || 'INBOX')} · cursor {sanitizeDisplayText(account.imap_sync_cursor || '-')}</div>
+                <div className="section-subtitle">last seen {formatDateTime(account.imap_last_seen_at)} · job {account.imap_last_sync_job_id ?? '-'}</div>
+                {account.imap_last_error ? <div className="section-subtitle">{sanitizeDisplayText(account.imap_last_error)}</div> : null}
+              </div>
+            ))}
+            {!data.accounts.length ? <EmptyState title="暂无 mailbox sync 账号" description="在 Outbound Email 账号配置中启用 IMAP 后会出现在这里。" /> : null}
+          </div>
+        </>
+      ) : null}
+      <div className="button-row">
+        <Button onClick={() => enqueueMutation.mutate()} disabled={enqueueMutation.isPending || status.isLoading}>
+          {enqueueMutation.isPending ? '入队中...' : '立即同步 mailbox'}
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 function EmailInboundSync({
@@ -818,6 +904,13 @@ function EmailWorkbenchPage() {
               ) : (
                 <EmptyState title="请选择一条 Email 队列项" description="选择后展示客户上下文、timeline 和回复草稿。" />
               )}
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader title="Mailbox Polling / IMAP Daemon" subtitle="读取 runtime mailbox sync 状态，并可手动把已配置的 IMAP 账号入队。" />
+            <CardBody>
+              <EmailMailboxDaemon onToast={setToast} />
             </CardBody>
           </Card>
 

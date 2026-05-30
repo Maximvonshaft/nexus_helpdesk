@@ -39,6 +39,9 @@ test('outbound email frontend types expose masked account reads and subject send
     'from_address: string',
     'reply_to?: string | null',
     'security_mode: OutboundEmailSecurityMode | string',
+    'inbound_enabled: boolean',
+    'imap_host?: string | null',
+    'imap_password_configured: boolean',
     'market_id?: number | null',
     'is_active: boolean',
     'priority: number',
@@ -67,6 +70,11 @@ test('outbound email admin page protects secrets and supports test-send workflow
   assert.match(route, /api\.testOutboundEmailAccount/)
   assert.match(route, /password_configured/)
   assert.match(route, /password_mask/)
+  assert.match(route, /inbound_enabled/)
+  assert.match(route, /data-testid="outbound-email-imap-config"/)
+  assert.match(route, /Email mailbox polling/)
+  assert.match(route, /轮换 IMAP password/)
+  assert.match(route, /imap_password_configured/)
   assert.match(route, /轮换密码/)
   assert.match(route, /留空表示不修改已保存密码/)
   assert.match(route, /Plain SMTP 不加密传输凭证/)

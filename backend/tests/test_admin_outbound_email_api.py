@@ -151,6 +151,62 @@ def test_update_password_rotates_secret_and_writes_redacted_audit(db_session):
     assert db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "outbound_email_account.password_change").count() == 1
 
 
+def test_admin_can_configure_inbound_imap_and_rotate_redacted_secret(db_session):
+    admin = _user(db_session, UserRole.admin, "admin")
+
+    created = create_outbound_email_account(
+        _payload(
+            inbound_enabled=True,
+            imap_host="IMAP.EXAMPLE.TEST",
+            imap_port=993,
+            imap_username="inbound@nexusdesk-mail.com",
+            imap_password="imap-secret",
+            imap_security_mode="ssl",
+            imap_mailbox="Support",
+        ),
+        db=db_session,
+        current_user=admin,
+    )
+
+    assert created.inbound_enabled is True
+    assert created.imap_host == "imap.example.test"
+    assert created.imap_mailbox == "Support"
+    assert created.imap_password_configured is True
+    assert created.imap_password_mask == "********"
+    row = db_session.query(OutboundEmailAccount).filter(OutboundEmailAccount.id == created.id).one()
+    assert row.imap_password_encrypted != "imap-secret"
+    assert SecretCryptoService.outbound_email().decrypt(row.imap_password_encrypted) == "imap-secret"
+
+    updated = update_outbound_email_account(
+        created.id,
+        OutboundEmailAccountUpdate(imap_password="rotated-imap-secret", imap_host="imap2.example.test"),
+        db=db_session,
+        current_user=admin,
+    )
+
+    assert updated.imap_host == "imap2.example.test"
+    db_session.refresh(row)
+    assert SecretCryptoService.outbound_email().decrypt(row.imap_password_encrypted) == "rotated-imap-secret"
+    audit_text = _audit_payloads(db_session)
+    assert "imap-secret" not in audit_text
+    assert "rotated-imap-secret" not in audit_text
+    assert db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "outbound_email_account.imap_password_change").count() == 1
+
+
+def test_inbound_imap_requires_complete_config_when_enabled(db_session):
+    admin = _user(db_session, UserRole.admin, "admin")
+
+    with pytest.raises(HTTPException) as exc:
+        create_outbound_email_account(
+            _payload(inbound_enabled=True, imap_host="imap.example.test", imap_port=993, imap_username="inbound@example.test", imap_security_mode="ssl"),
+            db=db_session,
+            current_user=admin,
+        )
+
+    assert exc.value.status_code == 400
+    assert "imap_password" in str(exc.value.detail)
+
+
 def test_test_send_updates_health_and_writes_redacted_audit(db_session, monkeypatch):
     admin = _user(db_session, UserRole.admin, "admin")
     created = create_outbound_email_account(_payload(), db=db_session, current_user=admin)

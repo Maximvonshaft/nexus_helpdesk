@@ -610,6 +610,19 @@ export interface OutboundEmailAccount {
   from_address: string
   reply_to?: string | null
   security_mode: OutboundEmailSecurityMode | string
+  inbound_enabled: boolean
+  imap_host?: string | null
+  imap_port?: number | null
+  imap_username?: string | null
+  imap_security_mode?: OutboundEmailSecurityMode | string | null
+  imap_mailbox?: string | null
+  imap_sync_cursor?: string | null
+  imap_last_seen_at?: string | null
+  imap_last_status?: string | null
+  imap_last_error?: string | null
+  imap_last_sync_job_id?: number | null
+  imap_password_configured: boolean
+  imap_password_mask?: string | null
   market_id?: number | null
   is_active: boolean
   priority: number
@@ -632,6 +645,13 @@ export type OutboundEmailAccountCreate = {
   from_address: string
   reply_to?: string | null
   security_mode: OutboundEmailSecurityMode
+  inbound_enabled?: boolean
+  imap_host?: string | null
+  imap_port?: number | null
+  imap_username?: string | null
+  imap_password?: string | null
+  imap_security_mode?: OutboundEmailSecurityMode | null
+  imap_mailbox?: string | null
   market_id?: number | null
   priority?: number
   is_active?: boolean
@@ -646,6 +666,13 @@ export type OutboundEmailAccountUpdate = Partial<{
   from_address: string
   reply_to: string | null
   security_mode: OutboundEmailSecurityMode
+  inbound_enabled: boolean
+  imap_host: string | null
+  imap_port: number | null
+  imap_username: string | null
+  imap_password: string
+  imap_security_mode: OutboundEmailSecurityMode | null
+  imap_mailbox: string | null
   market_id: number | null
   priority: number
   is_active: boolean
@@ -745,6 +772,38 @@ export interface EmailMailboxQueueResponse {
   items: EmailMailboxQueueItem[]
   total: number
   filters: Record<string, unknown>
+}
+
+export interface EmailMailboxSyncAccountStatus {
+  account_id: number
+  display_name?: string | null
+  from_address: string
+  inbound_enabled: boolean
+  configured: boolean
+  imap_host?: string | null
+  imap_mailbox?: string | null
+  imap_sync_cursor?: string | null
+  imap_last_seen_at?: string | null
+  imap_last_status?: string | null
+  imap_last_error?: string | null
+  imap_last_sync_job_id?: number | null
+}
+
+export interface EmailMailboxSyncStatus {
+  generated_at: string
+  daemon_enabled: boolean
+  interval_seconds: number
+  enabled_accounts: number
+  configured_accounts: number
+  pending_jobs: number
+  dead_jobs: number
+  accounts: EmailMailboxSyncAccountStatus[]
+}
+
+export interface EmailMailboxSyncEnqueueResult {
+  ok: boolean
+  enqueued: number
+  job_ids: number[]
 }
 
 export type OutboundSendPayload = {

@@ -1052,6 +1052,13 @@ class OutboundEmailAccountCreate(BaseModel):
     from_address: EmailStr
     reply_to: Optional[EmailStr] = None
     security_mode: OutboundEmailSecurityMode = "starttls"
+    inbound_enabled: bool = False
+    imap_host: Optional[str] = Field(default=None, max_length=253)
+    imap_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    imap_username: Optional[str] = Field(default=None, max_length=255)
+    imap_password: Optional[str] = Field(default=None, min_length=1, max_length=4096)
+    imap_security_mode: Optional[OutboundEmailSecurityMode] = None
+    imap_mailbox: Optional[str] = Field(default=None, max_length=120)
     market_id: Optional[int] = None
     priority: int = Field(default=100, ge=1, le=1000)
     is_active: bool = True
@@ -1061,15 +1068,19 @@ class OutboundEmailAccountCreate(BaseModel):
     def clean_display_name(cls, value):
         return _clean_optional_string(value)
 
-    @field_validator("host", "username")
+    @field_validator("host", "username", "imap_host", "imap_username", "imap_mailbox")
     @classmethod
-    def clean_required_text(cls, value: str) -> str:
+    def clean_required_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return _clean_required_string(value)
 
-    @field_validator("password")
+    @field_validator("password", "imap_password")
     @classmethod
-    def validate_password(cls, value: str) -> str:
-        if not value or not value.strip():
+    def validate_password(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip():
             raise ValueError("password cannot be blank")
         return value
 
@@ -1083,6 +1094,13 @@ class OutboundEmailAccountUpdate(BaseModel):
     from_address: Optional[EmailStr] = None
     reply_to: Optional[EmailStr] = None
     security_mode: Optional[OutboundEmailSecurityMode] = None
+    inbound_enabled: Optional[bool] = None
+    imap_host: Optional[str] = Field(default=None, min_length=1, max_length=253)
+    imap_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    imap_username: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    imap_password: Optional[str] = Field(default=None, min_length=1, max_length=4096)
+    imap_security_mode: Optional[OutboundEmailSecurityMode] = None
+    imap_mailbox: Optional[str] = Field(default=None, min_length=1, max_length=120)
     market_id: Optional[int] = None
     priority: Optional[int] = Field(default=None, ge=1, le=1000)
     is_active: Optional[bool] = None
@@ -1092,14 +1110,14 @@ class OutboundEmailAccountUpdate(BaseModel):
     def clean_display_name(cls, value):
         return _clean_optional_string(value)
 
-    @field_validator("host", "username")
+    @field_validator("host", "username", "imap_host", "imap_username", "imap_mailbox")
     @classmethod
     def clean_required_text(cls, value: str | None) -> str | None:
         if value is None:
             return None
         return _clean_required_string(value)
 
-    @field_validator("password")
+    @field_validator("password", "imap_password")
     @classmethod
     def validate_password(cls, value: str | None) -> str | None:
         if value is not None and not value.strip():
@@ -1116,6 +1134,19 @@ class OutboundEmailAccountRead(APIModel):
     from_address: str
     reply_to: Optional[str] = None
     security_mode: str
+    inbound_enabled: bool = False
+    imap_host: Optional[str] = None
+    imap_port: Optional[int] = None
+    imap_username: Optional[str] = None
+    imap_security_mode: Optional[str] = None
+    imap_mailbox: Optional[str] = None
+    imap_sync_cursor: Optional[str] = None
+    imap_last_seen_at: Optional[datetime] = None
+    imap_last_status: Optional[str] = None
+    imap_last_error: Optional[str] = None
+    imap_last_sync_job_id: Optional[int] = None
+    imap_password_configured: bool = False
+    imap_password_mask: Optional[str] = None
     market_id: Optional[int] = None
     is_active: bool
     priority: int
@@ -1143,6 +1174,42 @@ class OutboundEmailTestSendRead(APIModel):
     error_message: Optional[str] = None
     sent_at: Optional[datetime] = None
     health_status: str
+
+
+class EmailMailboxSyncAccountStatus(APIModel):
+    account_id: int
+    display_name: Optional[str] = None
+    from_address: str
+    inbound_enabled: bool
+    configured: bool
+    imap_host: Optional[str] = None
+    imap_mailbox: Optional[str] = None
+    imap_sync_cursor: Optional[str] = None
+    imap_last_seen_at: Optional[datetime] = None
+    imap_last_status: Optional[str] = None
+    imap_last_error: Optional[str] = None
+    imap_last_sync_job_id: Optional[int] = None
+
+
+class EmailMailboxSyncStatusRead(APIModel):
+    generated_at: datetime
+    daemon_enabled: bool
+    interval_seconds: int
+    enabled_accounts: int
+    configured_accounts: int
+    pending_jobs: int
+    dead_jobs: int
+    accounts: list[EmailMailboxSyncAccountStatus] = Field(default_factory=list)
+
+
+class EmailMailboxSyncEnqueueRequest(BaseModel):
+    account_id: Optional[int] = None
+
+
+class EmailMailboxSyncEnqueueResponse(APIModel):
+    ok: bool = True
+    enqueued: int
+    job_ids: list[int] = Field(default_factory=list)
 
 
 class OpenClawRuntimeHealthRead(APIModel):
