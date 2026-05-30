@@ -29,6 +29,8 @@ CAP_AI_CONFIG_MANAGE = "ai_config.manage"
 CAP_RUNTIME_MANAGE = "runtime.manage"
 CAP_MARKET_MANAGE = "market.manage"
 CAP_QA_MANAGE = "qa.manage"
+CAP_SECURITY_READ = "security.read"
+CAP_AUDIT_READ = "audit.read"
 CAP_SPEEDAF_WORK_ORDER_WRITE = "tool:speedaf.work_order.create:write"
 CAP_SPEEDAF_ADDRESS_UPDATE_WRITE = "tool:speedaf.order.update_address:write"
 CAP_SPEEDAF_CANCEL_WRITE = "tool:speedaf.order.cancel:write"
@@ -69,6 +71,8 @@ ALL_CAPABILITIES = [
     CAP_RUNTIME_MANAGE,
     CAP_MARKET_MANAGE,
     CAP_QA_MANAGE,
+    CAP_SECURITY_READ,
+    CAP_AUDIT_READ,
     CAP_SPEEDAF_WORK_ORDER_WRITE,
     CAP_SPEEDAF_ADDRESS_UPDATE_WRITE,
     CAP_SPEEDAF_CANCEL_WRITE,
@@ -121,6 +125,7 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
     UserRole.auditor: {
         CAP_TICKET_READ, CAP_ATTACHMENT_READ_EXTERNAL,
         CAP_ATTACHMENT_READ_INTERNAL, CAP_CUSTOMER_PROFILE_READ,
+        CAP_SECURITY_READ, CAP_AUDIT_READ,
     },
 }
 
@@ -232,6 +237,13 @@ def ensure_can_write_comment(user, visibility: NoteVisibility, db: Session | Non
 
 def ensure_can_manage_users(user, db: Session | None = None):
     ensure_capability(user, CAP_USER_MANAGE, db, message="Not authorized to manage users")
+
+
+def ensure_can_view_security_audit(user, db: Session | None = None):
+    capabilities = resolve_capabilities(user, db)
+    if CAP_USER_MANAGE in capabilities or CAP_SECURITY_READ in capabilities or CAP_AUDIT_READ in capabilities:
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to view security audit")
 
 
 def ensure_can_manage_channel_accounts(user, db: Session | None = None):

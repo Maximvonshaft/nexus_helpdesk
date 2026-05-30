@@ -30,12 +30,13 @@ const nav = [
   { to: '/persona-builder', label: 'AI Persona Builder', hint: '人格、匹配与发布证据', access: routeAccess['/persona-builder'] },
   { to: '/control-plane', label: '控制面', hint: '高级治理入口', access: routeAccess['/control-plane'] },
   { to: '/users', label: '账号权限', hint: '人员与权限', access: routeAccess['/users'] },
+  { to: '/security', label: '权限与审计', hint: '只读矩阵与审计', access: routeAccess['/security'] },
 ]
 
 const navGroups = [
   { label: '日常处理', items: ['/', '/workspace', '/webchat', '/webcall', '/email', '/bulletins'] },
   { label: '渠道与授权', items: ['/accounts', '/outbound-email', '/provider-credentials'] },
-  { label: '治理与运维', items: ['/control-tower', '/qa-training', '/runtime', '/ai-control', '/knowledge-studio', '/persona-builder', '/control-plane', '/users', '/webcall-ai-demo'] },
+  { label: '治理与运维', items: ['/control-tower', '/qa-training', '/runtime', '/ai-control', '/knowledge-studio', '/persona-builder', '/control-plane', '/users', '/security', '/webcall-ai-demo'] },
 ]
 
 function isActiveNavPath(pathname: string, target: string) {

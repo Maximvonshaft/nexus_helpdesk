@@ -24,6 +24,8 @@ export const CAPABILITIES = {
   runtimeManage: 'runtime.manage',
   marketManage: 'market.manage',
   qaManage: 'qa.manage',
+  securityRead: 'security.read',
+  auditRead: 'audit.read',
   speedafWorkOrderWrite: 'tool:speedaf.work_order.create:write',
   speedafAddressUpdateWrite: 'tool:speedaf.order.update_address:write',
   speedafCancelWrite: 'tool:speedaf.order.cancel:write',
@@ -67,6 +69,7 @@ export const routeAccess = {
   '/persona-builder': { anyOf: [CAPABILITIES.aiConfigRead, CAPABILITIES.aiConfigManage] },
   '/control-plane': { anyOf: [CAPABILITIES.aiConfigRead, CAPABILITIES.aiConfigManage, CAPABILITIES.channelAccountManage, CAPABILITIES.runtimeManage] },
   '/users': { allOf: [CAPABILITIES.userManage] },
+  '/security': { anyOf: [CAPABILITIES.userManage, CAPABILITIES.securityRead, CAPABILITIES.auditRead] },
   '/webchat-voice': { allOf: [CAPABILITIES.webcallVoiceQueueView] },
 } satisfies Record<string, AccessRequirement>
 
@@ -117,6 +120,8 @@ export const capabilityCatalogMeta: CapabilityMeta[] = [
   { capability: CAPABILITIES.marketManage, label: '管理市场', group: '治理配置', description: '维护市场和团队归属。', risk: 'high' },
   { capability: CAPABILITIES.qaManage, label: '质检与培训', group: '治理配置', description: '查看质检样本、培训任务和知识缺口闭环。', risk: 'normal' },
   { capability: CAPABILITIES.userManage, label: '管理员工账号', group: '账号权限', description: '创建账号、停用账号、重置密码和授权。', risk: 'high' },
+  { capability: CAPABILITIES.securityRead, label: '查看安全权限', group: '账号权限', description: '查看账号、角色和 capability 矩阵。', risk: 'normal' },
+  { capability: CAPABILITIES.auditRead, label: '查看审计日志', group: '账号权限', description: '查看管理员审计记录和变更差异。', risk: 'normal' },
   { capability: CAPABILITIES.speedafWorkOrderWrite, label: 'Speedaf 催派工单', group: 'Speedaf 工具', description: '创建 Speedaf 派送跟进工单。', risk: 'high' },
   { capability: CAPABILITIES.speedafAddressUpdateWrite, label: 'Speedaf 地址更新', group: 'Speedaf 工具', description: '提交地址更新确认流程。', risk: 'high' },
   { capability: CAPABILITIES.speedafCancelWrite, label: 'Speedaf 取消运单', group: 'Speedaf 工具', description: '执行取消运单预检和确认提交。', risk: 'high' },

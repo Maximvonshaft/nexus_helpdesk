@@ -76,6 +76,15 @@ test('internal webcall routes are intentionally classified', () => {
   assert.doesNotMatch(appShell, /to: '\/webchat-voice'/)
 })
 
+test('security audit nav route is registered and capability gated', () => {
+  assert.match(appShell, /to: '\/security'/)
+  assert.match(router, /SecurityRoute/)
+  assert.match(router, /@\/routes\/security/)
+  assert.match(rbac, /securityRead: 'security\.read'/)
+  assert.match(rbac, /auditRead: 'audit\.read'/)
+  assert.match(rbac, /'\/security': \{ anyOf: \[CAPABILITIES\.userManage, CAPABILITIES\.securityRead, CAPABILITIES\.auditRead\] \}/)
+})
+
 test('primary nav internal hrefs have matching registered routes', () => {
   const routeFiles = [
     'login.tsx',
@@ -97,6 +106,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'ai-control.tsx',
     'control-plane.tsx',
     'users.tsx',
+    'security.tsx',
   ]
   const registered = new Set(routeFiles.flatMap((file) => registeredStaticRoutes(readFileSync(resolve(root, `src/routes/${file}`), 'utf8'))))
   const missing = staticNavTargets(appShell).filter((target) => target.startsWith('/') && !registered.has(target))

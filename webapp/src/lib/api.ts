@@ -66,6 +66,7 @@ import type {
   WebchatThread,
   WebchatReplyResult,
   ProviderCredentialStatusResponse,
+  SecurityAudit,
   CodexAuthorizationStart,
   CodexManualAuthorizationCompleteResult,
   CodexManualAuthorizationStart,
@@ -362,6 +363,11 @@ export const api = {
   }),
   teams: () => request<Team[]>('/api/lookups/teams'),
   capabilityCatalog: () => request<string[]>('/api/admin/capabilities/catalog'),
+  securityAudit: (params?: { limit?: number }) => {
+    const search = new URLSearchParams()
+    search.set('limit', String(params?.limit ?? 30))
+    return request<SecurityAudit>(`/api/admin/security-audit?${search.toString()}`)
+  },
 
   liteMeta: () => request<LiteMeta>('/api/lite/meta'),
   casesPage: (params?: CaseQueryParams) => request<CaseListPage>(`/api/lite/cases?${buildCaseSearch(params).toString()}`),
