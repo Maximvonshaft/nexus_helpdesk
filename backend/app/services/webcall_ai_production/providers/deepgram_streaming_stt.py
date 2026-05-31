@@ -12,6 +12,7 @@ from typing import Any
 from ..audio.livekit_io import PCMFrame
 from .base import ProviderError, STTProvider, STTResult
 from .http_utils import read_secret_file
+from ..metrics import record_webcall_ai_stage
 from .streaming_stt_base import STTEvent, final_transcript_from_events
 
 _DEFAULT_DEEPGRAM_URL = "wss://api.deepgram.com/v1/listen"
@@ -71,6 +72,7 @@ class DeepgramStreamingSTTSession:
     _provider_session_id: str | None = field(default=None, init=False)
     _sample_rate: int | None = field(default=None, init=False)
     _channels: int | None = field(default=None, init=False)
+    _first_partial_recorded: bool = field(default=False, init=False)
 
     def start(self, *, language: str | None = None, sample_rate: int, channels: int) -> None:
         if self._ws is not None:
@@ -136,9 +138,18 @@ class DeepgramStreamingSTTSession:
                 continue
             if event.provider_session_id:
                 self._provider_session_id = event.provider_session_id
+            self._record_event_metric(event)
             events.append(event)
             timeout = 0
         return events
+
+    def _record_event_metric(self, event: STTEvent) -> None:
+        if self._started_at is None:
+            return
+        elapsed_ms = int((time.monotonic() - self._started_at) * 1000)
+        if event.type == "partial" and not self._first_partial_recorded:
+            self._first_partial_recorded = True
+            record_webcall_ai_stage(stage="stt_first_partial", provider=self.provider_name, elapsed_ms=elapsed_ms)
 
 
 def prepare_streaming_pcm16(

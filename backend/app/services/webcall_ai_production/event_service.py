@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ...utils.time import utc_now
 from ...webchat_models import WebchatEvent
+from .metrics import record_webcall_ai_event
 
 
 def write_event(
@@ -25,6 +26,8 @@ def write_event(
         created_at=utc_now(),
     )
     db.add(event)
+    if event_type.startswith("webcall_ai."):
+        record_webcall_ai_event(event_type)
     return event
 
 
@@ -39,4 +42,3 @@ def serialize_event(event: WebchatEvent) -> dict[str, Any]:
         "payload": payload,
         "created_at": event.created_at.isoformat() if event.created_at else None,
     }
-

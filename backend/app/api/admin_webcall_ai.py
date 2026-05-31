@@ -7,6 +7,7 @@ from ..db import get_db
 from ..services.permissions import ensure_can_manage_runtime, ensure_ticket_visible
 from ..services.webcall_ai_production.agent_worker import health as worker_health
 from ..services.webcall_ai_production.event_service import write_event
+from ..services.webcall_ai_production.metrics import webcall_ai_metrics_snapshot
 from ..services.webcall_ai_production.session_service import TERMINAL_STATUSES, get_session, list_events
 from ..services.webchat_voice_service import end_admin_voice_session
 from ..unit_of_work import managed_session
@@ -20,7 +21,9 @@ router = APIRouter(prefix="/api/admin/webcall-ai", tags=["admin-webcall-ai"])
 @router.get("/health")
 def read_admin_webcall_ai_health(db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict:
     ensure_can_manage_runtime(current_user, db)
-    return worker_health()
+    payload = worker_health()
+    payload["metrics"] = webcall_ai_metrics_snapshot(db)
+    return payload
 
 
 @router.get("/sessions")
