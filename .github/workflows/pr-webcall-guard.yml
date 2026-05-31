@@ -89,6 +89,7 @@ jobs:
               backend/app/services/ai_runtime/provider_router.py) return 0 ;;
               backend/app/services/ai_runtime/schemas.py) return 0 ;;
               backend/app/services/ai_runtime_context.py) return 0 ;;
+              backend/app/services/control_tower_service.py) return 0 ;;
               backend/app/services/knowledge_document_service.py) return 0 ;;
               backend/app/services/knowledge_grounding_service.py) return 0 ;;
               backend/app/services/knowledge_prompt_service.py) return 0 ;;
@@ -129,7 +130,9 @@ jobs:
               backend/app/services/webchat_voice_service.py) return 0 ;;
               backend/app/services/background_jobs.py) return 0 ;;
               backend/app/services/background_job_transaction_boundary.py) return 0 ;;
+              backend/app/services/speedaf/action_service.py) return 0 ;;
               backend/app/services/speedaf/redactor.py) return 0 ;;
+              backend/app/services/speedaf/schemas.py) return 0 ;;
               backend/app/webcall_ai_schemas.py) return 0 ;;
               backend/app/webchat_models.py) return 0 ;;
               backend/app/webchat_voice_config.py) return 0 ;;
@@ -137,6 +140,7 @@ jobs:
               backend/requirements.txt) return 0 ;;
               backend/scripts/check_model_migration_drift.py) return 0 ;;
               backend/scripts/speedaf_full_uat_probe.py) return 0 ;;
+              backend/tests/test_background_job_transaction_boundary.py) return 0 ;;
               backend/tests/test_channel_workbench_backend_contracts.py) return 0 ;;
               backend/tests/test_codex_app_server_bridge_proxy.py) return 0 ;;
               backend/tests/test_codex_app_server_image_contract.py) return 0 ;;
