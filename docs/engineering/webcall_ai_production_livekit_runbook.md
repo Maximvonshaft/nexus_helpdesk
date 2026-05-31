@@ -43,7 +43,7 @@ WEBCALL_AI_PROVIDER_RUNTIME_SCENARIO=webcall_ai_decision
 WEBCALL_AI_PROVIDER_RUNTIME_OUTPUT_CONTRACT=speedaf_webchat_fast_reply_v1
 ```
 
-For real audio rollout, replace fake STT/TTS with approved external or streaming providers in a separate canary PR. The current ProviderRuntime LLM path proves strict text-in/text-out decisioning and persisted turn evidence; it does not by itself add streaming STT, streaming TTS audio chunks, or barge-in.
+For real audio rollout, replace fake STT/TTS with approved external or streaming providers during a controlled canary. ProviderRuntime LLM, streaming STT, streaming TTS chunk publish, and server-side barge-in are checked in but remain fail-closed until secrets and rollout flags are present.
 
 Deepgram streaming STT can be canaried on the STT leg:
 
@@ -59,7 +59,7 @@ LLM_PROVIDER=provider_runtime
 TTS_PROVIDER=fake
 ```
 
-This streams PCM16 frames over Deepgram WebSocket and consumes interim/final transcript events. The current worker still uses a sequential utterance loop; duplex listening while speaking remains the barge-in PR.
+This streams PCM16 frames over Deepgram WebSocket and consumes interim/final transcript events. Use the barge-in flags below to detect visitor speech while AI audio is publishing.
 
 Cartesia streaming TTS can be canaried on the TTS leg:
 
@@ -132,4 +132,4 @@ Then restart the app and stop the `webcall-ai-agent` service. Human WebCall and 
 
 ## Current Limitation
 
-The checked-in runtime remains fail-closed until approved LiveKit, STT, LLM, TTS, and read-only tracking provider configuration is present and a real browser voice smoke test passes. ProviderRuntime LLM is supported for WebCall AI production turns, but streaming STT, streaming TTS chunk publish, duplex barge-in, and metrics dashboards remain separate rollout gaps.
+The checked-in runtime remains fail-closed until approved LiveKit, STT, LLM, TTS, and read-only tracking provider configuration is present and a real browser voice smoke test passes. ProviderRuntime LLM, Deepgram streaming STT, Cartesia streaming TTS chunk publish, server-side barge-in, and admin/Prometheus metrics are available for controlled canary. Provider-side TTS generation cancellation and public rollout still depend on provider behavior, credentials, and spoken canary evidence.
