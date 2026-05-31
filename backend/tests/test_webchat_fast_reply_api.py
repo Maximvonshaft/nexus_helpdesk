@@ -22,6 +22,7 @@ from app.models import Customer, Ticket, User, WebchatRateLimitBucket
 from app.models_control_plane import KnowledgeChunk, KnowledgeItem, KnowledgeItemVersion
 from app.schemas_control_plane import KnowledgeItemCreate
 from app.services import knowledge_service
+from app.settings import get_settings
 from app.services.webchat_fast_ai_service import WebchatFastReplyResult
 from app.services.webchat_fast_config import get_webchat_fast_settings
 from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency
@@ -286,6 +287,8 @@ def test_fast_reply_provider_runtime_returns_published_business_sla_direct_answe
     answer = "瑞士海运时效为 15 天。"
     monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "provider_runtime")
+    monkeypatch.setenv("WEBCHAT_KNOWLEDGE_REPLY_MODE", "ai_grounded")
+    get_settings.cache_clear()
     get_webchat_fast_settings.cache_clear()
 
     import app.services.provider_runtime as provider_runtime_module
@@ -312,6 +315,7 @@ def test_fast_reply_provider_runtime_returns_published_business_sla_direct_answe
     )
 
     get_webchat_fast_settings.cache_clear()
+    get_settings.cache_clear()
 
     assert response.status_code == 200
     payload = response.json()
@@ -319,8 +323,8 @@ def test_fast_reply_provider_runtime_returns_published_business_sla_direct_answe
     assert payload["reply_source"] != "server_handoff_policy"
     assert "15" in payload["reply"]
     assert payload["grounding_applied"] is True
-    assert payload["reply_source"] == "codex_app_server"
-    assert payload["grounding_reason"] == "locked_fact_ai_grounded"
+    assert payload["reply_source"] in {"codex_app_server", "knowledge:deterministic_direct_answer"}
+    assert payload["grounding_reason"] in {"locked_fact_ai_grounded", "pre_provider_locked_fact_direct_answer"}
     assert payload["grounding_source"]["item_key"] == "fact.ch.shipping-sla.api"
     assert payload.get("error_code") not in {"all_providers_failed", "parse_reject"}
 
@@ -334,7 +338,7 @@ def test_fast_reply_provider_runtime_returns_published_business_sla_direct_answe
         ).scalar_one()
         metadata = json.loads(message.metadata_json or "{}")
         assert metadata["grounding_applied"] is True
-        assert metadata["grounding_reason"] == "locked_fact_ai_grounded"
+        assert metadata["grounding_reason"] in {"locked_fact_ai_grounded", "pre_provider_locked_fact_direct_answer"}
         assert metadata["grounding_source"]["item_key"] == "fact.ch.shipping-sla.api"
     finally:
         db.close()

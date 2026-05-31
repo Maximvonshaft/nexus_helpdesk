@@ -54,6 +54,8 @@ jobs:
           is_webcall_relevant_file() {
             case "$1" in
               .github/workflows/pr-webcall-guard.yml) return 0 ;;
+              .github/workflows/speedaf-contract-gate.yml) return 0 ;;
+              .github/workflows/speedaf-full-uat-probe.yml) return 0 ;;
               .gitignore) return 0 ;;
               Dockerfile) return 0 ;;
               backend/.env.example) return 0 ;;
@@ -71,6 +73,7 @@ jobs:
               backend/app/api/webcall_ai.py) return 0 ;;
               backend/app/api/webchat.py) return 0 ;;
               backend/app/api/webchat_fast.py) return 0 ;;
+              backend/app/api/webchat_voice.py) return 0 ;;
               backend/app/api/webchat_ws.py) return 0 ;;
               backend/app/main.py) return 0 ;;
               backend/app/models_control_plane.py) return 0 ;;
@@ -124,11 +127,16 @@ jobs:
               backend/app/services/webchat_realtime_hub.py) return 0 ;;
               backend/app/services/webchat_service.py) return 0 ;;
               backend/app/services/webchat_voice_service.py) return 0 ;;
+              backend/app/services/background_jobs.py) return 0 ;;
+              backend/app/services/background_job_transaction_boundary.py) return 0 ;;
+              backend/app/services/speedaf/redactor.py) return 0 ;;
               backend/app/webcall_ai_schemas.py) return 0 ;;
               backend/app/webchat_models.py) return 0 ;;
               backend/app/webchat_voice_config.py) return 0 ;;
+              backend/app/voice_schemas.py) return 0 ;;
               backend/requirements.txt) return 0 ;;
               backend/scripts/check_model_migration_drift.py) return 0 ;;
+              backend/scripts/speedaf_full_uat_probe.py) return 0 ;;
               backend/tests/test_channel_workbench_backend_contracts.py) return 0 ;;
               backend/tests/test_codex_app_server_bridge_proxy.py) return 0 ;;
               backend/tests/test_codex_app_server_image_contract.py) return 0 ;;
@@ -155,6 +163,7 @@ jobs:
               backend/tests/test_round24_hardening.py) return 0 ;;
               backend/tests/test_round27_frontend_hardening.py) return 0 ;;
               backend/tests/test_spa_fallback_hardening.py) return 0 ;;
+              backend/tests/test_speedaf_client_contract.py) return 0 ;;
               backend/tests/test_speedaf_workorder_address_actions.py) return 0 ;;
               backend/tests/test_webcall_ai_production.py) return 0 ;;
               backend/tests/test_webcall_ai_voice_loop.py) return 0 ;;
@@ -253,8 +262,12 @@ jobs:
 
           requires_webcall_quality_checks() {
             case "$1" in
+              backend/app/api/webchat_voice.py) return 0 ;;
               backend/app/services/webchat_service.py) return 0 ;;
+              backend/app/services/webchat_voice_service.py) return 0 ;;
+              backend/app/voice_schemas.py) return 0 ;;
               backend/tests/test_channel_workbench_backend_contracts.py) return 0 ;;
+              backend/tests/test_webchat_voice_api.py) return 0 ;;
               webapp/src/components/webcall/AgentWebCallPanel.tsx) return 0 ;;
               webapp/src/routes/webcall-ai.tsx) return 0 ;;
               webapp/src/routes/webcall-ai-demo.tsx) return 0 ;;

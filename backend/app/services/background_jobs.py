@@ -29,7 +29,33 @@ SPEEDAF_WORK_ORDER_DESCRIPTION_MAX_LENGTH = 200
 
 
 def _find_active_dedupe_job(db: Session, *, dedupe_key: str) -> BackgroundJob | None:
-    return db.query(BackgroundJob).filter(BackgroundJob.dedupe_key == dedupe_key, BackgroundJob.status.in_([JobStatus.pending, JobStatus.processing])).order_by(BackgroundJob.id.desc()).first()
+    query = db.query(BackgroundJob).filter(BackgroundJob.dedupe_key == dedupe_key, BackgroundJob.status.in_([JobStatus.pending, JobStatus.processing]))
+    if hasattr(query, "order_by"):
+        query = query.order_by(BackgroundJob.id.desc())
+    return query.first()
+
+
+def _find_recent_dedupe_job(db: Session, *, dedupe_key: str, statuses: list[JobStatus], ttl: timedelta) -> BackgroundJob | None:
+    cutoff = utc_now() - ttl
+    return (
+        db.query(BackgroundJob)
+        .filter(
+            BackgroundJob.dedupe_key == dedupe_key,
+            BackgroundJob.status.in_(statuses),
+            BackgroundJob.created_at >= cutoff,
+        )
+        .order_by(BackgroundJob.id.desc())
+        .first()
+    )
+
+
+def find_recent_speedaf_voice_callback_job(db: Session, *, dedupe_key: str) -> BackgroundJob | None:
+    return _find_recent_dedupe_job(
+        db,
+        dedupe_key=dedupe_key,
+        statuses=[JobStatus.pending, JobStatus.processing, JobStatus.done],
+        ttl=timedelta(hours=24),
+    )
 
 
 def enqueue_background_job(db: Session, *, queue_name: str, job_type: str, payload: dict, max_attempts: int | None = None, next_run_at=None, dedupe_key: str | None = None) -> BackgroundJob:
@@ -89,6 +115,9 @@ def enqueue_speedaf_voice_callback_job(
     dedupe_key: str,
     request_id: str | None = None,
 ) -> BackgroundJob:
+    existing = find_recent_speedaf_voice_callback_job(db, dedupe_key=dedupe_key)
+    if existing is not None:
+        return existing
     payload = {
         'ticket_id': ticket_id,
         'voice_session_id': voice_session_id,
@@ -213,6 +242,8 @@ def _process_speedaf_work_order_create_job(db: Session, job: BackgroundJob, payl
     result_payload.update({'ok': result.ok, 'status': result.status, 'external_id': result.external_id, 'error_code': result.error_code, 'error_message': result.error_message, 'safe_payload': result.safe_payload})
     _append_ticket_event(db, ticket_id=ticket_id, note='Speedaf work order creation completed.' if result.ok else 'Speedaf work order creation failed.', payload=result_payload, new_value='completed' if result.ok else 'failed')
     if not result.ok:
+        if not result.retryable:
+            return
         raise RuntimeError(result.error_code or 'speedaf_work_order_create_failed')
 
 
@@ -238,6 +269,8 @@ def _process_speedaf_address_update_job(db: Session, job: BackgroundJob, payload
         return
     _update_speedaf_address_idempotency_status(db, dedupe_key=dedupe_key, status_value='failed')
     _append_ticket_event(db, ticket_id=ticket_id, field_name='speedaf_address_update', new_value='failed', note='Speedaf address update confirmation request failed.', payload=result_payload)
+    if not result.retryable:
+        return
     raise RuntimeError(result.error_code or 'speedaf_address_update_failed')
 
 
@@ -274,6 +307,8 @@ def _process_speedaf_voice_callback_job(db: Session, job: BackgroundJob, payload
         _append_ticket_event(db, ticket_id=ticket_id, field_name='speedaf_voice_callback', new_value='completed', note='Speedaf voice callback completed.', payload=result_payload)
         return
     _append_ticket_event(db, ticket_id=ticket_id, field_name='speedaf_voice_callback', new_value='failed', note='Speedaf voice callback failed.', payload=result_payload)
+    if not result.retryable:
+        return
     raise RuntimeError(result.error_code or 'speedaf_voice_callback_failed')
 
 

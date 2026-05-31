@@ -187,7 +187,7 @@ class SpeedafVoiceCallbackResponse(BaseModel):
     message: str
     jobId: int
     dedupeKey: str
-    ai_action_id: int
+    ai_action_id: int | None = None
 
 
 class WebchatVoiceSessionRead(BaseModel):

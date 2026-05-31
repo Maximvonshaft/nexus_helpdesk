@@ -127,7 +127,19 @@ def main() -> int:
         except (SpeedafActionDisabled, Exception) as exc:
             report["checks"]["voice_callback"] = _check(False, **_safe_error(exc))
 
-    report["ok"] = bool(report["ok"] and report["checks"].get("order_query", {}).get("ok"))
+    required_checks = [
+        "order_query",
+        "waybill_code_query",
+        "work_order_create",
+        "address_update",
+        "cancel_order",
+        "voice_callback",
+    ]
+    report["ok"] = bool(
+        report["ok"]
+        and report["write_acknowledged"]
+        and all(report["checks"].get(name, {}).get("ok") for name in required_checks)
+    )
     text = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
     if args.output_json:
         Path(args.output_json).parent.mkdir(parents=True, exist_ok=True)

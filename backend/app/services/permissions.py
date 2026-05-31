@@ -34,6 +34,7 @@ CAP_AUDIT_READ = "audit.read"
 CAP_SPEEDAF_WORK_ORDER_WRITE = "tool:speedaf.work_order.create:write"
 CAP_SPEEDAF_ADDRESS_UPDATE_WRITE = "tool:speedaf.order.update_address:write"
 CAP_SPEEDAF_CANCEL_WRITE = "tool:speedaf.order.cancel:write"
+CAP_SPEEDAF_VOICE_CALLBACK_WRITE = "tool:speedaf.voice.callback:write"
 CAP_WEBCALL_VOICE_READ = "webcall.voice.read"
 CAP_WEBCALL_VOICE_QUEUE_VIEW = "webcall.voice.queue.view"
 CAP_WEBCALL_VOICE_ACCEPT = "webcall.voice.accept"
@@ -76,6 +77,7 @@ ALL_CAPABILITIES = [
     CAP_SPEEDAF_WORK_ORDER_WRITE,
     CAP_SPEEDAF_ADDRESS_UPDATE_WRITE,
     CAP_SPEEDAF_CANCEL_WRITE,
+    CAP_SPEEDAF_VOICE_CALLBACK_WRITE,
     CAP_WEBCALL_VOICE_READ,
     CAP_WEBCALL_VOICE_QUEUE_VIEW,
     CAP_WEBCALL_VOICE_ACCEPT,
@@ -282,6 +284,10 @@ def ensure_can_update_speedaf_address(user, db: Session | None = None):
 
 def ensure_can_cancel_speedaf_order(user, db: Session | None = None):
     ensure_capability(user, CAP_SPEEDAF_CANCEL_WRITE, db, message="speedaf_cancel_requires_capability")
+
+
+def ensure_can_send_speedaf_voice_callback(user, db: Session | None = None):
+    ensure_capability(user, CAP_SPEEDAF_VOICE_CALLBACK_WRITE, db, message="speedaf_voice_callback_requires_capability")
 
 
 def ensure_can_read_webcall_voice(user, db: Session | None = None):

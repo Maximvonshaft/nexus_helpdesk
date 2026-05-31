@@ -72,6 +72,7 @@ class SpeedafWorkOrderResult:
     external_id: str | None = None
     error_code: str | None = None
     error_message: str | None = None
+    retryable: bool = False
     safe_payload: dict[str, Any] = field(default_factory=dict)
 
 

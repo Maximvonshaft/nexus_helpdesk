@@ -26,13 +26,14 @@ from .observability import (
     record_voice_ringing_duration,
     record_voice_session_event,
 )
-from .background_jobs import enqueue_speedaf_voice_callback_job
+from .background_jobs import enqueue_speedaf_voice_callback_job, find_recent_speedaf_voice_callback_job
 from .permissions import (
     ensure_can_accept_webcall_voice,
     ensure_can_control_webcall_voice,
     ensure_can_end_webcall_voice,
     ensure_can_read_webcall_voice,
     ensure_can_reject_webcall_voice,
+    ensure_can_send_speedaf_voice_callback,
     ensure_can_write_internal_note,
     ensure_can_view_webcall_voice_queue,
     ensure_ticket_visible,
@@ -813,6 +814,7 @@ def queue_speedaf_voice_callback(
     if os.getenv("SPEEDAF_VOICE_CALLBACK_ENABLED", "false").strip().lower() not in {"1", "true", "yes", "on"}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="speedaf_voice_callback_disabled")
     ensure_can_control_webcall_voice(current_user, db)
+    ensure_can_send_speedaf_voice_callback(current_user, db)
     session = _load_voice_session(db, voice_session_public_id)
     if session.ticket_id != ticket_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
@@ -833,7 +835,8 @@ def queue_speedaf_voice_callback(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="speedaf_voice_callback_status_invalid")
 
     now = utc_now()
-    action_time = str(action.get("actionTime") or "").strip() or now.strftime("%Y-%m-%d %H:%M:%S")
+    action_time_input = str(action.get("actionTime") or "").strip()
+    action_time = action_time_input or now.strftime("%Y-%m-%d %H:%M:%S")
     callback_action = {
         "waybillCode": waybill_code,
         "action": action_name,
@@ -843,17 +846,32 @@ def queue_speedaf_voice_callback(
         "errorCode": error_code,
     }
     resolved_call_session_id = (call_session_id or session.public_id or str(session.id)).strip()
+    dedupe_action = {**callback_action, "actionTime": action_time_input}
     dedupe_material = json.dumps(
         {
             "voice_session_id": session.id,
             "callSessionId": resolved_call_session_id,
             "isTransferredToHuman": bool(is_transferred_to_human),
-            "action": callback_action,
+            "action": dedupe_action,
         },
         ensure_ascii=False,
         sort_keys=True,
     )
     dedupe_key = f"speedaf-voice-callback:voice:{session.id}:payload:{hashlib.sha256(dedupe_material.encode('utf-8')).hexdigest()[:16]}"
+    existing_job = find_recent_speedaf_voice_callback_job(db, dedupe_key=dedupe_key)
+    if existing_job is not None:
+        status_value = getattr(existing_job.status, "value", str(existing_job.status))
+        response_status = "already_submitted" if status_value == "done" else "already_queued"
+        return {
+            "ok": True,
+            "ticket_id": ticket_id,
+            "voice_session_id": session.public_id,
+            "status": response_status,
+            "message": "Speedaf voice callback already submitted." if response_status == "already_submitted" else "Speedaf voice callback already queued.",
+            "jobId": existing_job.id,
+            "dedupeKey": dedupe_key,
+            "ai_action_id": None,
+        }
     job = enqueue_speedaf_voice_callback_job(
         db,
         ticket_id=ticket_id,
