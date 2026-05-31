@@ -7,7 +7,7 @@ from functools import lru_cache
 
 TRUE_VALUES = {"1", "true", "yes", "on"}
 PROVIDER_PROFILES = {"fake", "external", "hybrid"}
-STT_PROVIDERS = {"fake", "external"}
+STT_PROVIDERS = {"fake", "external", "deepgram_streaming"}
 LLM_PROVIDERS = {"fake", "external", "provider_runtime"}
 TTS_PROVIDERS = {"fake", "external"}
 ROLLOUT_MODES = {"off", "internal", "canary", "public"}
@@ -84,6 +84,7 @@ class WebCallAIProductionSettings:
     external_stt_configured: bool
     external_llm_configured: bool
     external_tts_configured: bool
+    deepgram_stt_configured: bool
 
     @property
     def livekit_configured(self) -> bool:
@@ -91,16 +92,18 @@ class WebCallAIProductionSettings:
 
     @property
     def provider_configured(self) -> bool:
-        return self._stt_configured and self._llm_configured and self._tts_configured
+        return self.stt_configured and self.llm_configured and self.tts_configured
 
     @property
-    def _stt_configured(self) -> bool:
+    def stt_configured(self) -> bool:
         if self.stt_provider == "fake":
             return True
+        if self.stt_provider == "deepgram_streaming":
+            return self.deepgram_stt_configured
         return self.stt_provider == "external" and self.external_stt_configured
 
     @property
-    def _llm_configured(self) -> bool:
+    def llm_configured(self) -> bool:
         if self.llm_provider == "fake":
             return True
         if self.llm_provider == "provider_runtime":
@@ -108,7 +111,7 @@ class WebCallAIProductionSettings:
         return self.llm_provider == "external" and self.external_llm_configured
 
     @property
-    def _tts_configured(self) -> bool:
+    def tts_configured(self) -> bool:
         if self.tts_provider == "fake":
             return True
         return self.tts_provider == "external" and self.external_tts_configured
@@ -130,7 +133,7 @@ class WebCallAIProductionSettings:
         if self.provider_profile not in PROVIDER_PROFILES:
             raise ValueError("WEBCALL_AI_PROVIDER_PROFILE must be fake, external, or hybrid")
         if self.stt_provider not in STT_PROVIDERS:
-            raise ValueError("STT_PROVIDER must be fake or external")
+            raise ValueError("STT_PROVIDER must be fake, external, or deepgram_streaming")
         if self.llm_provider not in LLM_PROVIDERS:
             raise ValueError("LLM_PROVIDER must be fake, external, or provider_runtime")
         if self.tts_provider not in TTS_PROVIDERS:
@@ -211,6 +214,7 @@ def get_webcall_ai_production_settings() -> WebCallAIProductionSettings:
         external_stt_configured=bool((os.getenv("STT_API_KEY_FILE") or "").strip() and (os.getenv("STT_ENDPOINT") or "").strip()),
         external_llm_configured=bool((os.getenv("LLM_API_KEY_FILE") or "").strip() and (os.getenv("LLM_ENDPOINT") or "").strip()),
         external_tts_configured=bool((os.getenv("TTS_API_KEY_FILE") or "").strip() and (os.getenv("TTS_ENDPOINT") or "").strip()),
+        deepgram_stt_configured=bool((os.getenv("STT_API_KEY_FILE") or "").strip()),
     )
     settings.validate()
     return settings

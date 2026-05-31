@@ -58,4 +58,20 @@ WEBCALL_AI_PROVIDER_RUNTIME_SCENARIO=webcall_ai_decision
 WEBCALL_AI_PROVIDER_RUNTIME_OUTPUT_CONTRACT=speedaf_webchat_fast_reply_v1
 ```
 
+For streaming STT, switch the STT leg to Deepgram WebSocket streaming:
+
+```dotenv
+WEBCALL_AI_PROVIDER_PROFILE=hybrid
+STT_PROVIDER=deepgram_streaming
+STT_API_KEY_FILE=/run/secrets/deepgram_api_key
+STT_MODEL=nova-3
+STT_LANGUAGE=en
+STT_INTERIM_RESULTS=true
+STT_ENDPOINTING_MS=300
+LLM_PROVIDER=provider_runtime
+TTS_PROVIDER=fake
+```
+
+The checked-in streaming STT path sends PCM16 frames and consumes partial/final transcript events. It does not yet change the worker into a duplex barge-in loop.
+
 `LIVEKIT_API_KEY` may be sourced by deployment automation from `/opt/livekit_nexus/secrets.env`, but the API secret must be mounted as a file for production. If a rollback is needed, set `WEBCALL_AI_KILL_SWITCH=true` and stop the `webcall-ai-agent` compose profile.

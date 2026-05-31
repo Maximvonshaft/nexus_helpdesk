@@ -90,9 +90,9 @@ def health() -> dict[str, object]:
 
 
 def _smoke_readiness(settings) -> dict[str, object]:
-    stt_configured = settings.stt_provider == "external" and settings.external_stt_configured
-    llm_configured = settings.llm_provider == "external" and settings.external_llm_configured
-    tts_configured = settings.tts_provider == "external" and settings.external_tts_configured
+    stt_configured = settings.stt_configured
+    llm_configured = settings.llm_configured
+    tts_configured = settings.tts_configured
     tracking_bridge_configured = bool((os.getenv("TRACKING_LOOKUP_ENDPOINT") or "").strip() and (os.getenv("TRACKING_LOOKUP_API_KEY_FILE") or "").strip())
     fake_heartbeat_enabled = _test_fake_heartbeat_enabled()
     recording_enabled = (os.getenv("WEBCHAT_VOICE_RECORDING_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}

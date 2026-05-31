@@ -45,6 +45,22 @@ WEBCALL_AI_PROVIDER_RUNTIME_OUTPUT_CONTRACT=speedaf_webchat_fast_reply_v1
 
 For real audio rollout, replace fake STT/TTS with approved external or streaming providers in a separate canary PR. The current ProviderRuntime LLM path proves strict text-in/text-out decisioning and persisted turn evidence; it does not by itself add streaming STT, streaming TTS audio chunks, or barge-in.
 
+Deepgram streaming STT can be canaried on the STT leg:
+
+```text
+WEBCALL_AI_PROVIDER_PROFILE=hybrid
+STT_PROVIDER=deepgram_streaming
+STT_API_KEY_FILE=/run/secrets/deepgram_api_key
+STT_MODEL=nova-3
+STT_LANGUAGE=en
+STT_INTERIM_RESULTS=true
+STT_ENDPOINTING_MS=300
+LLM_PROVIDER=provider_runtime
+TTS_PROVIDER=fake
+```
+
+This streams PCM16 frames over Deepgram WebSocket and consumes interim/final transcript events. The current worker still uses a sequential utterance loop; duplex listening while speaking remains the barge-in PR.
+
 Keep these disabled for the initial rollout:
 
 ```text
