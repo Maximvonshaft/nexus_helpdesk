@@ -5,6 +5,8 @@ PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-}"
 SESSION_PUBLIC_ID="${SESSION_PUBLIC_ID:-}"
 WINDOW_MINUTES="${WINDOW_MINUTES:-60}"
+EXPECTED_STT_PROVIDER="${EXPECTED_STT_PROVIDER:-}"
+EXPECTED_TTS_PROVIDER="${EXPECTED_TTS_PROVIDER:-}"
 
 if [[ -z "$PUBLIC_BASE_URL" || -z "$ADMIN_TOKEN" ]]; then
   echo "Usage: PUBLIC_BASE_URL=https://support.example.com ADMIN_TOKEN=<admin bearer token> [SESSION_PUBLIC_ID=wv_...] bash scripts/probe_webcall_ai_spoken_canary.sh" >&2
@@ -36,7 +38,7 @@ import re, sys
 path = sys.argv[1]
 text = open(path, "r", encoding="utf-8", errors="replace").read()
 text = re.sub(r'("(?:participant_token|visitor_token|access_token|refresh_token|password)"\s*:\s*")([^"]+)(")', r'\1<redacted>\3', text, flags=re.I)
-text = re.sub(r'(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}', r'\1<redacted>', text, flags=re.I)
+text = re.sub(r'((?:Bearer|Token)\s+)[A-Za-z0-9._~+/=-]{12,}', r'\1<redacted>', text, flags=re.I)
 open(path, "w", encoding="utf-8").write(text)
 PY
 }
@@ -46,6 +48,8 @@ probe_timestamp_utc=$TS
 PUBLIC_BASE_URL=$PUBLIC_BASE_URL
 SESSION_PUBLIC_ID_SET=$([[ -n "$SESSION_PUBLIC_ID" ]] && echo true || echo false)
 WINDOW_MINUTES=$WINDOW_MINUTES
+EXPECTED_STT_PROVIDER=${EXPECTED_STT_PROVIDER:-}
+EXPECTED_TTS_PROVIDER=${EXPECTED_TTS_PROVIDER:-}
 ADMIN_TOKEN_SET=true
 EOF_ENV
 
@@ -61,13 +65,15 @@ else
 EOF_SKIP
 fi
 
-python3 - "$OUT_DIR/01_admin_webcall_ai_health.json" "$OUT_DIR/02_session_events.json" "$WINDOW_MINUTES" <<'PY'
+python3 - "$OUT_DIR/01_admin_webcall_ai_health.json" "$OUT_DIR/02_session_events.json" "$WINDOW_MINUTES" "$EXPECTED_STT_PROVIDER" "$EXPECTED_TTS_PROVIDER" <<'PY'
 import json, sys
 from pathlib import Path
 
 health_path = Path(sys.argv[1])
 events_path = Path(sys.argv[2])
 window_minutes = int(sys.argv[3])
+expected_stt_provider = sys.argv[4]
+expected_tts_provider = sys.argv[5]
 health = json.loads(health_path.read_text(encoding="utf-8"))
 events_payload = json.loads(events_path.read_text(encoding="utf-8"))
 metrics = health.get("metrics") or {}
@@ -79,12 +85,20 @@ publish_failed = int(metrics.get("publish_failed_count") or 0)
 session_spoken = "webcall_ai.response.spoken" in session_events
 session_interrupted = "webcall_ai.response.interrupted" in session_events
 session_publish_failed = "webcall_ai.response.publish_failed" in session_events
-ok = (spoken > 0 or session_spoken or interrupted > 0 or session_interrupted) and not session_publish_failed
+stt_provider = health.get("stt_provider")
+tts_provider = health.get("tts_provider")
+provider_mismatch = bool(expected_stt_provider and stt_provider != expected_stt_provider) or bool(expected_tts_provider and tts_provider != expected_tts_provider)
+ok = (spoken > 0 or session_spoken or interrupted > 0 or session_interrupted) and not session_publish_failed and not provider_mismatch
 summary = {
     "ok": ok,
     "window_minutes": window_minutes,
     "health_status": health.get("status"),
     "smoke_status": health.get("smoke_status"),
+    "stt_provider": stt_provider,
+    "tts_provider": tts_provider,
+    "expected_stt_provider": expected_stt_provider or None,
+    "expected_tts_provider": expected_tts_provider or None,
+    "provider_mismatch": provider_mismatch,
     "spoken_count": spoken,
     "barge_in_count": interrupted,
     "publish_failed_count": publish_failed,
@@ -94,7 +108,7 @@ summary = {
     "session_publish_failed": session_publish_failed,
 }
 print(json.dumps(summary, ensure_ascii=False, indent=2))
-sys.exit(0 if ok and publish_failed == 0 else 1)
+sys.exit(0 if ok and publish_failed == 0 and not provider_mismatch else 1)
 PY
 
 echo "Artifacts: $OUT_DIR"

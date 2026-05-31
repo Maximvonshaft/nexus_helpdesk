@@ -90,6 +90,22 @@ CARTESIA_VERSION=2026-03-01
 
 Cartesia SSE chunks are decoded into PCM audio chunks and streamed into the server-side LiveKit `publish_ai_audio_stream()` path as they arrive; the worker no longer waits for the full TTS response before starting LiveKit publication. During server-side publication, barge-in can stop remaining LiveKit audio and preserve visitor frames for the next listening turn.
 
+For Deepgram Aura-2 streaming TTS using the same Deepgram key as STT:
+
+```dotenv
+WEBCALL_AI_PROVIDER_PROFILE=hybrid
+STT_PROVIDER=deepgram_streaming
+TTS_PROVIDER=deepgram_streaming
+STT_API_KEY_FILE=/run/secrets/deepgram_api_key
+TTS_API_KEY_FILE=/run/secrets/deepgram_api_key
+TTS_MODEL=aura-2-thalia-en
+TTS_ENCODING=linear16
+TTS_SAMPLE_RATE=48000
+LLM_PROVIDER=provider_runtime
+```
+
+Deepgram TTS uses `wss://api.deepgram.com/v1/speak`, streams binary linear16 audio chunks into LiveKit as each chunk arrives, and supports the shared WebCall cancel token so barge-in can stop later provider chunks. API keys stay server-side in `*_API_KEY_FILE` secrets and are not exposed through runtime config or probe artifacts.
+
 For barge-in:
 
 ```dotenv
@@ -98,6 +114,6 @@ WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS=300
 WEBCALL_AI_BARGE_IN_ENERGY_THRESHOLD=350
 ```
 
-When customer speech is detected while AI audio is publishing, remaining AI audio publication is stopped, `webcall_ai.response.interrupted` is written, and the captured customer frames are reused by the next listening turn. This is server-side publication cancellation; provider stream cancellation still depends on the streaming TTS adapter boundary.
+When customer speech is detected while AI audio is publishing, remaining AI audio publication is stopped, the streaming TTS cancel token is signaled, `webcall_ai.response.interrupted` is written, and the captured customer frames are reused by the next listening turn.
 
 `LIVEKIT_API_KEY` may be sourced by deployment automation from `/opt/livekit_nexus/secrets.env`, but the API secret must be mounted as a file for production. If a rollback is needed, set `WEBCALL_AI_KILL_SWITCH=true` and stop the `webcall-ai-agent` compose profile.

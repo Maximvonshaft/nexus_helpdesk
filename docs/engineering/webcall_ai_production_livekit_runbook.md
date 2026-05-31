@@ -77,6 +77,22 @@ CARTESIA_VERSION=2026-03-01
 
 This uses `POST /tts/sse`, decodes `chunk` event audio data, and streams each chunk through `publish_ai_audio_stream()` as it arrives. The complete-audio `synthesize()` path is still available as a fallback and for contract tests, but the production worker uses the lazy stream path for lower first-audio latency.
 
+Deepgram Aura-2 streaming TTS can be canaried on the TTS leg and can share the same API key file as Deepgram STT:
+
+```text
+WEBCALL_AI_PROVIDER_PROFILE=hybrid
+STT_PROVIDER=deepgram_streaming
+TTS_PROVIDER=deepgram_streaming
+STT_API_KEY_FILE=/run/secrets/deepgram_api_key
+TTS_API_KEY_FILE=/run/secrets/deepgram_api_key
+TTS_MODEL=aura-2-thalia-en
+TTS_ENCODING=linear16
+TTS_SAMPLE_RATE=48000
+LLM_PROVIDER=provider_runtime
+```
+
+This uses Deepgram `wss://api.deepgram.com/v1/speak`, sends `Speak` then `Flush`, publishes each binary linear16 audio chunk to LiveKit as it arrives, and signals a cancel token on barge-in so later provider chunks are not published. Deepgram API keys must remain in server-side secret files and must not appear in logs, browser runtime config, or probe artifacts.
+
 Duplex barge-in can be enabled with:
 
 ```text
@@ -85,7 +101,7 @@ WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS=300
 WEBCALL_AI_BARGE_IN_ENERGY_THRESHOLD=350
 ```
 
-During AI audio publication the worker checks inbound LiveKit audio frames. If visitor speech crosses the threshold, the worker stops publishing the remaining AI audio, writes `webcall_ai.response.interrupted`, preserves the visitor frames for the next `collect_next_customer_utterance()`, and returns to listening. Provider-side TTS generation cancellation is still limited by each TTS adapter; this path cancels server-side LiveKit publication.
+During AI audio publication the worker checks inbound LiveKit audio frames. If visitor speech crosses the threshold, the worker stops publishing the remaining AI audio, signals the streaming TTS cancel token, writes `webcall_ai.response.interrupted`, preserves the visitor frames for the next `collect_next_customer_utterance()`, and returns to listening.
 
 Keep these disabled for the initial rollout:
 
@@ -132,4 +148,4 @@ Then restart the app and stop the `webcall-ai-agent` service. Human WebCall and 
 
 ## Current Limitation
 
-The checked-in runtime remains fail-closed until approved LiveKit, STT, LLM, TTS, and read-only tracking provider configuration is present and a real browser voice smoke test passes. ProviderRuntime LLM, Deepgram streaming STT, Cartesia streaming TTS chunk publish, server-side barge-in, and admin/Prometheus metrics are available for controlled canary. Provider-side TTS generation cancellation and public rollout still depend on provider behavior, credentials, and spoken canary evidence.
+The checked-in runtime remains fail-closed until approved LiveKit, STT, LLM, TTS, and read-only tracking provider configuration is present and a real browser voice smoke test passes. ProviderRuntime LLM, Deepgram streaming STT, Cartesia streaming TTS, Deepgram Aura-2 streaming TTS, server-side barge-in cancellation, and admin/Prometheus metrics are available for controlled canary. Public rollout still depends on provider behavior, credentials, and spoken canary evidence.

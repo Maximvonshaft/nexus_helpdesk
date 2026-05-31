@@ -351,6 +351,7 @@ def _publish_tts_payload(io: LiveKitAgentIO, tts_payload: dict) -> None:
         record_webcall_ai_audio(provider=provider, status="ok", chunks=1 if audio_bytes else 0, bytes_count=byte_count)
         record_webcall_ai_stage(stage="audio_publish", status="ok", provider=provider, elapsed_ms=int((time.monotonic() - started) * 1000))
     except BargeInInterrupted:
+        _cancel_tts_payload(tts_payload, reason="barge_in")
         record_webcall_ai_audio(provider=provider, status="interrupted", chunks=stats["chunks"], bytes_count=stats["bytes"])
         record_webcall_ai_stage(stage="audio_publish", status="interrupted", provider=provider, elapsed_ms=int((time.monotonic() - started) * 1000))
         raise
@@ -372,25 +373,45 @@ def _tts_audio_chunks(tts_payload: dict):
 
 def _meter_tts_chunks(chunks, *, provider: str, stats: dict[str, int], started: float, tts_payload: dict):
     first_chunk_recorded = False
-    for chunk in chunks:
-        audio = bytes(getattr(chunk, "audio_bytes", b"") or b"")
-        if not audio:
-            yield chunk
-            continue
-        if not first_chunk_recorded:
-            first_chunk_recorded = True
-            provider_latency = getattr(chunk, "provider_latency_ms", None)
-            latency_ms = int(provider_latency) if isinstance(provider_latency, int | float) else int((time.monotonic() - started) * 1000)
-            record_webcall_ai_stage(stage="tts_first_audio", provider=provider, elapsed_ms=latency_ms)
-            turn_started_at = tts_payload.get("_turn_started_at") if isinstance(tts_payload, dict) else None
-            if isinstance(turn_started_at, int | float):
-                record_webcall_ai_stage(stage="end_to_first_audio", provider=provider, elapsed_ms=int((time.monotonic() - float(turn_started_at)) * 1000))
-        stats["chunks"] += 1
-        stats["bytes"] += len(audio)
-        yield chunk
-    tts_started_at = tts_payload.get("_tts_started_at") if isinstance(tts_payload, dict) else None
-    if isinstance(tts_started_at, int | float):
-        record_webcall_ai_stage(stage="tts_total", provider=provider, elapsed_ms=int((time.monotonic() - float(tts_started_at)) * 1000))
+    try:
+        for chunk in chunks:
+            audio = bytes(getattr(chunk, "audio_bytes", b"") or b"")
+            if not audio:
+                try:
+                    yield chunk
+                except GeneratorExit:
+                    _cancel_tts_payload(tts_payload, reason="barge_in")
+                    raise
+                continue
+            if not first_chunk_recorded:
+                first_chunk_recorded = True
+                provider_latency = getattr(chunk, "provider_latency_ms", None)
+                latency_ms = int(provider_latency) if isinstance(provider_latency, int | float) else int((time.monotonic() - started) * 1000)
+                record_webcall_ai_stage(stage="tts_first_audio", provider=provider, elapsed_ms=latency_ms)
+                turn_started_at = tts_payload.get("_turn_started_at") if isinstance(tts_payload, dict) else None
+                if isinstance(turn_started_at, int | float):
+                    record_webcall_ai_stage(stage="end_to_first_audio", provider=provider, elapsed_ms=int((time.monotonic() - float(turn_started_at)) * 1000))
+            stats["chunks"] += 1
+            stats["bytes"] += len(audio)
+            try:
+                yield chunk
+            except GeneratorExit:
+                _cancel_tts_payload(tts_payload, reason="barge_in")
+                raise
+        tts_started_at = tts_payload.get("_tts_started_at") if isinstance(tts_payload, dict) else None
+        if isinstance(tts_started_at, int | float):
+            record_webcall_ai_stage(stage="tts_total", provider=provider, elapsed_ms=int((time.monotonic() - float(tts_started_at)) * 1000))
+    finally:
+        close = getattr(chunks, "close", None)
+        if callable(close):
+            close()
+
+
+def _cancel_tts_payload(tts_payload: dict, *, reason: str) -> None:
+    token = tts_payload.get("_cancel_token") if isinstance(tts_payload, dict) else None
+    cancel = getattr(token, "cancel", None)
+    if callable(cancel):
+        cancel(reason)
 
 
 def main() -> None:

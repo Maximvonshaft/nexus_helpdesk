@@ -10,6 +10,7 @@ from typing import Any, Iterable
 import httpx
 
 from .base import ProviderError, TTSProvider, TTSResult
+from .cancel_token import CancelToken
 from .http_utils import classify_http_error, read_secret_file
 from .streaming_tts_base import TTSChunk
 
@@ -40,13 +41,15 @@ class CartesiaStreamingTTSProvider(TTSProvider):
             audio_chunks=chunks,
         )
 
-    def synthesize_lazy(self, text: str, *, language: str | None = None) -> TTSResult:
+    def synthesize_lazy(self, text: str, *, language: str | None = None, cancel_token: CancelToken | None = None) -> TTSResult:
+        token = cancel_token or CancelToken()
         return TTSResult(
             audio_bytes=b"",
             mime_type=_RAW_PCM_MIME,
             text=text,
             provider_name=self.provider_name,
             audio_stream=self.synthesize_stream(text, language=language),
+            cancel_token=token,
         )
 
     def synthesize_stream(self, text: str, *, language: str | None = None) -> Iterable[TTSChunk]:

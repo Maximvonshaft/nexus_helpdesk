@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 from ...voice_models import WebchatVoiceSession
 from .evidence import persist_turn_evidence
 from .metrics import record_webcall_ai_stage
-from .providers.base import LLMResult, ProviderError, STTResult
+from .providers.base import LLMResult, ProviderError, STTResult, TTSResult
+from .providers.cancel_token import CancelToken
 from .providers.fake import FakeLLMProvider, FakeSTTProvider, FakeTTSProvider
 from .providers.router import get_llm_provider, get_stt_provider, get_tts_provider
 from .tool_registry import default_registry
@@ -153,7 +154,7 @@ def _synthesize_tts(settings, text: str, *, language: str | None) -> TTSResult:
     provider = get_tts_provider(settings.tts_provider)
     lazy_synthesize = getattr(provider, "synthesize_lazy", None)
     if callable(lazy_synthesize):
-        return lazy_synthesize(text, language=language)
+        return lazy_synthesize(text, language=language, cancel_token=CancelToken())
     return provider.synthesize(text, language=language)
 
 
@@ -228,4 +229,6 @@ def _tts_payload(tts: TTSResult, *, turn_started_at: float | None = None, tts_st
         payload["_audio_chunks"] = tts.audio_chunks
     if tts.audio_stream is not None:
         payload["_audio_stream"] = tts.audio_stream
+    if tts.cancel_token is not None:
+        payload["_cancel_token"] = tts.cancel_token
     return payload

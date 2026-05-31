@@ -36,6 +36,7 @@ class TTSResult:
     provider_name: str | None = None
     audio_chunks: tuple[Any, ...] = ()
     audio_stream: Iterable[Any] | None = None
+    cancel_token: Any | None = None
 
 
 class STTProvider:

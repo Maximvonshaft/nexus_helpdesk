@@ -9,7 +9,7 @@ TRUE_VALUES = {"1", "true", "yes", "on"}
 PROVIDER_PROFILES = {"fake", "external", "hybrid"}
 STT_PROVIDERS = {"fake", "external", "deepgram_streaming"}
 LLM_PROVIDERS = {"fake", "external", "provider_runtime"}
-TTS_PROVIDERS = {"fake", "external", "cartesia_streaming"}
+TTS_PROVIDERS = {"fake", "external", "cartesia_streaming", "deepgram_streaming"}
 ROLLOUT_MODES = {"off", "internal", "canary", "public"}
 
 
@@ -85,6 +85,7 @@ class WebCallAIProductionSettings:
     external_llm_configured: bool
     external_tts_configured: bool
     deepgram_stt_configured: bool
+    deepgram_tts_configured: bool
     cartesia_tts_configured: bool
 
     @property
@@ -115,6 +116,8 @@ class WebCallAIProductionSettings:
     def tts_configured(self) -> bool:
         if self.tts_provider == "fake":
             return True
+        if self.tts_provider == "deepgram_streaming":
+            return self.deepgram_tts_configured
         if self.tts_provider == "cartesia_streaming":
             return self.cartesia_tts_configured
         return self.tts_provider == "external" and self.external_tts_configured
@@ -140,7 +143,7 @@ class WebCallAIProductionSettings:
         if self.llm_provider not in LLM_PROVIDERS:
             raise ValueError("LLM_PROVIDER must be fake, external, or provider_runtime")
         if self.tts_provider not in TTS_PROVIDERS:
-            raise ValueError("TTS_PROVIDER must be fake, external, or cartesia_streaming")
+            raise ValueError("TTS_PROVIDER must be fake, external, cartesia_streaming, or deepgram_streaming")
         if self.public_rollout_mode not in ROLLOUT_MODES:
             raise ValueError("WEBCALL_AI_PUBLIC_ROLLOUT_MODE must be off, internal, canary, or public")
         if self.record_raw_audio:
@@ -218,6 +221,7 @@ def get_webcall_ai_production_settings() -> WebCallAIProductionSettings:
         external_llm_configured=bool((os.getenv("LLM_API_KEY_FILE") or "").strip() and (os.getenv("LLM_ENDPOINT") or "").strip()),
         external_tts_configured=bool((os.getenv("TTS_API_KEY_FILE") or "").strip() and (os.getenv("TTS_ENDPOINT") or "").strip()),
         deepgram_stt_configured=bool((os.getenv("STT_API_KEY_FILE") or "").strip()),
+        deepgram_tts_configured=bool((os.getenv("TTS_API_KEY_FILE") or "").strip()),
         cartesia_tts_configured=bool((os.getenv("TTS_API_KEY_FILE") or "").strip() and (os.getenv("TTS_VOICE_ID") or "").strip()),
     )
     settings.validate()
