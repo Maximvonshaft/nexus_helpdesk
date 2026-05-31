@@ -23,6 +23,13 @@ class VisitorDisconnected(LiveKitIOError):
     pass
 
 
+class BargeInInterrupted(LiveKitIOError):
+    def __init__(self, *, speech_ms: int, buffered_frames: int) -> None:
+        super().__init__("barge_in_interrupted")
+        self.speech_ms = speech_ms
+        self.buffered_frames = buffered_frames
+
+
 @dataclass(frozen=True)
 class LiveKitMediaTurn:
     audio_bytes: bytes
@@ -48,6 +55,7 @@ class LiveKitRTCBackend(Protocol):
     def collect_next_customer_utterance(self, *, timeout_seconds: float, max_seconds: float) -> LiveKitMediaTurn: ...
     def publish_ai_audio(self, audio_bytes: bytes, *, mime_type: str) -> None: ...
     def publish_ai_audio_stream(self, chunks: Iterable[Any], *, mime_type: str) -> None: ...
+    def cancel_ai_audio_stream(self, *, reason: str) -> None: ...
     def close(self) -> None: ...
 
 
@@ -111,6 +119,9 @@ class LiveKitAgentIO:
             self.connect()
         try:
             self._backend.publish_ai_audio(audio_bytes, mime_type=mime_type)
+        except BargeInInterrupted:
+            self.cancel_ai_audio_stream(reason="barge_in")
+            raise
         except Exception as exc:
             LOGGER.exception("webcall_ai_livekit_publish_failed", extra={"room_name": self.room_name, "participant_identity": self.participant_identity, "mime_type": mime_type, "error": type(exc).__name__})
             raise LiveKitIOError("livekit_publish_failed") from exc
@@ -127,9 +138,16 @@ class LiveKitAgentIO:
                 return
             audio = b"".join(bytes(getattr(chunk, "audio_bytes", b"") or b"") for chunk in chunk_list)
             self._backend.publish_ai_audio(audio, mime_type=mime_type)
+        except BargeInInterrupted:
+            self.cancel_ai_audio_stream(reason="barge_in")
+            raise
         except Exception as exc:
             LOGGER.exception("webcall_ai_livekit_stream_publish_failed", extra={"room_name": self.room_name, "participant_identity": self.participant_identity, "mime_type": mime_type, "error": type(exc).__name__})
             raise LiveKitIOError("livekit_stream_publish_failed") from exc
+
+    def cancel_ai_audio_stream(self, *, reason: str) -> None:
+        if hasattr(self._backend, "cancel_ai_audio_stream"):
+            self._backend.cancel_ai_audio_stream(reason=reason)
 
     def close(self) -> None:
         try:
@@ -144,6 +162,7 @@ class SDKLiveKitRTCBackend:
         self._audio_source = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._audio_queue: asyncio.Queue[PCMFrame | None] | None = None
+        self._barge_in_buffer: list[PCMFrame] = []
         self._participant_identity: str | None = None
         self._thread: threading.Thread | None = None
 
@@ -232,7 +251,9 @@ class SDKLiveKitRTCBackend:
         silence_ms = 0
         while time.monotonic() < deadline:
             timeout = min(timeout_seconds, max(0.1, deadline - time.monotonic()))
-            frame = await asyncio.wait_for(self._audio_queue.get(), timeout=timeout)
+            frame = self._pop_buffered_audio_frame()
+            if frame is None:
+                frame = await asyncio.wait_for(self._audio_queue.get(), timeout=timeout)
             if frame is None:
                 raise VisitorDisconnected("visitor_disconnected")
             sample_rate = frame.sample_rate
@@ -294,6 +315,7 @@ class SDKLiveKitRTCBackend:
         samples_per_channel = max(1, int(sample_rate * 0.02))
         bytes_per_sample = 2
         frame_bytes = samples_per_channel * channels * bytes_per_sample
+        barge_in_speech_ms = 0
         for offset in range(0, len(pcm), frame_bytes):
             chunk = pcm[offset : offset + frame_bytes]
             if len(chunk) < frame_bytes:
@@ -305,6 +327,10 @@ class SDKLiveKitRTCBackend:
                 samples_per_channel=samples_per_channel,
             )
             await self._audio_source.capture_frame(frame)
+            barge_in_speech_ms = self._raise_if_barge_in_detected(barge_in_speech_ms)
+
+    def cancel_ai_audio_stream(self, *, reason: str) -> None:
+        LOGGER.info("webcall_ai_livekit_audio_stream_cancelled", extra={"participant_identity": self._participant_identity, "reason": reason})
 
     def close(self) -> None:
         if self._room is not None:
@@ -321,8 +347,36 @@ class SDKLiveKitRTCBackend:
         self._room = None
         self._audio_source = None
         self._audio_queue = None
+        self._barge_in_buffer = []
         self._loop = None
         self._thread = None
+
+    def _pop_buffered_audio_frame(self) -> PCMFrame | None:
+        if not self._barge_in_buffer:
+            return None
+        return self._barge_in_buffer.pop(0)
+
+    def _raise_if_barge_in_detected(self, speech_ms: int) -> int:
+        if not _barge_in_enabled() or self._audio_queue is None:
+            return speech_ms
+        current_speech_ms = speech_ms
+        drained_frames = 0
+        while True:
+            try:
+                frame = self._audio_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return current_speech_ms
+            if frame is None:
+                raise VisitorDisconnected("visitor_disconnected")
+            self._barge_in_buffer.append(frame)
+            drained_frames += 1
+            frame_ms = _pcm_frame_duration_ms(frame.data, sample_rate=frame.sample_rate, channels=frame.channels)
+            if is_speech_pcm16(frame.data, threshold=_barge_in_energy_threshold()):
+                current_speech_ms += frame_ms
+            else:
+                current_speech_ms = 0
+            if current_speech_ms >= _barge_in_min_speech_ms():
+                raise BargeInInterrupted(speech_ms=current_speech_ms, buffered_frames=len(self._barge_in_buffer) or drained_frames)
 
 
 def decode_audio_for_livekit(audio_bytes: bytes, *, mime_type: str) -> tuple[bytes, int, int]:
@@ -368,3 +422,21 @@ def _pcm_frame_duration_ms(pcm_bytes: bytes, *, sample_rate: int, channels: int)
         return 0
     samples_per_channel = len(pcm_bytes) / 2 / channels
     return int((samples_per_channel / sample_rate) * 1000)
+
+
+def _barge_in_enabled() -> bool:
+    return (os.getenv("WEBCALL_AI_BARGE_IN_ENABLED") or "true").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _barge_in_min_speech_ms() -> int:
+    try:
+        return max(40, min(int(os.getenv("WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS", "300")), 3000))
+    except ValueError:
+        return 300
+
+
+def _barge_in_energy_threshold() -> int:
+    try:
+        return max(1, min(int(os.getenv("WEBCALL_AI_BARGE_IN_ENERGY_THRESHOLD", os.getenv("WEBCALL_AI_VAD_ENERGY_THRESHOLD", "350"))), 32000))
+    except ValueError:
+        return 350

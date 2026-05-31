@@ -25,7 +25,7 @@ from .agent_session_claims import (
     claim_next_session,
     should_continue_session,
 )
-from .audio.livekit_io import LiveKitAgentIO, VisitorDisconnected
+from .audio.livekit_io import BargeInInterrupted, LiveKitAgentIO, VisitorDisconnected
 from .config import get_webcall_ai_production_settings
 from .event_service import write_event
 from .orchestrator import build_handoff_turn, run_fake_turn, run_session_turn
@@ -245,6 +245,25 @@ def run_claimed_session_loop(session_id: int, *, worker_id: str, io: LiveKitAgen
                     payload={"voice_session_id": claimed_session.public_id, "turn_id": result.get("turn_id"), "tts_provider": tts_payload.get("provider"), "mime_type": tts_payload["mime_type"]},
                 )
                 db.commit()
+            except BargeInInterrupted as exc:
+                db.rollback()
+                if hasattr(managed_io, "cancel_ai_audio_stream"):
+                    managed_io.cancel_ai_audio_stream(reason="barge_in")
+                write_event(
+                    db,
+                    conversation_id=claimed_session.conversation_id,
+                    ticket_id=claimed_session.ticket_id,
+                    event_type="webcall_ai.response.interrupted",
+                    payload={
+                        "voice_session_id": claimed_session.public_id,
+                        "turn_id": result.get("turn_id"),
+                        "reason": "barge_in",
+                        "speech_ms": exc.speech_ms,
+                        "buffered_frames": exc.buffered_frames,
+                    },
+                )
+                db.commit()
+                continue
             except Exception:
                 db.rollback()
                 write_event(
@@ -293,7 +312,25 @@ def _speak_greeting(db, *, session: WebchatVoiceSession, worker_id: str, io: Liv
         handoff_reason=None,
     )
     tts_payload = turn["tts"]
-    _publish_tts_payload(io, tts_payload)
+    try:
+        _publish_tts_payload(io, tts_payload)
+    except BargeInInterrupted as exc:
+        if hasattr(io, "cancel_ai_audio_stream"):
+            io.cancel_ai_audio_stream(reason="barge_in")
+        write_event(
+            db,
+            conversation_id=session.conversation_id,
+            ticket_id=session.ticket_id,
+            event_type="webcall_ai.response.interrupted",
+            payload={
+                "voice_session_id": session.public_id,
+                "turn_id": turn.get("turn_id"),
+                "reason": "barge_in",
+                "speech_ms": exc.speech_ms,
+                "buffered_frames": exc.buffered_frames,
+            },
+        )
+        db.commit()
 
 
 def _publish_tts_payload(io: LiveKitAgentIO, tts_payload: dict) -> None:

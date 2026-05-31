@@ -77,6 +77,16 @@ CARTESIA_VERSION=2026-03-01
 
 This uses `POST /tts/sse`, decodes `chunk` event audio data, and publishes audio chunks through `publish_ai_audio_stream()`. The full audio bytes are still retained in the existing turn payload for fallback publication and evidence compatibility.
 
+Duplex barge-in can be enabled with:
+
+```text
+WEBCALL_AI_BARGE_IN_ENABLED=true
+WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS=300
+WEBCALL_AI_BARGE_IN_ENERGY_THRESHOLD=350
+```
+
+During AI audio publication the worker checks inbound LiveKit audio frames. If visitor speech crosses the threshold, the worker stops publishing the remaining AI audio, writes `webcall_ai.response.interrupted`, preserves the visitor frames for the next `collect_next_customer_utterance()`, and returns to listening. Provider-side TTS generation cancellation is still limited by each TTS adapter; this path cancels server-side LiveKit publication.
+
 Keep these disabled for the initial rollout:
 
 ```text
