@@ -44,6 +44,7 @@ class SpeedafActionResult:
     safe_payload: dict[str, Any]
     error_code: str | None = None
     error_message: str | None = None
+    retryable: bool = False
 
 
 class SpeedafActionService:
@@ -106,6 +107,7 @@ class SpeedafActionService:
                 status="failed",
                 error_code=exc.error.code,
                 error_message=exc.error.message,
+                retryable=exc.error.retryable,
                 safe_payload=safe_payload,
             )
         data = response.data if isinstance(response.data, dict) else {}
@@ -146,7 +148,7 @@ class SpeedafActionService:
             response = self.client.post(path, payload)
         except SpeedafMcpClientError as exc:
             self._record_action_audit(action_type=action_type, payload=payload, output_payload=exc.safe_payload, status="failed", error_code=exc.error.code, error_message=exc.error.message, elapsed_ms=int((time.monotonic() - started) * 1000))
-            return SpeedafActionResult(ok=False, action_type=action_type, status="failed", error_code=exc.error.code, error_message=exc.error.message, safe_payload=exc.safe_payload)
+            return SpeedafActionResult(ok=False, action_type=action_type, status="failed", error_code=exc.error.code, error_message=exc.error.message, retryable=exc.error.retryable, safe_payload=exc.safe_payload)
         safe_payload = {"request": redact_mapping(payload), "response": response.safe_summary.get("response")}
         self._record_action_audit(action_type=action_type, payload=payload, output_payload=safe_payload, status="success", elapsed_ms=int((time.monotonic() - started) * 1000))
         return SpeedafActionResult(ok=True, action_type=action_type, status="success", safe_payload=safe_payload)

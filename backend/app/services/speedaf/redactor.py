@@ -15,6 +15,8 @@ SENSITIVE_KEYS = {
     "acceptAddress",
     "accept_address",
     "address",
+    "waybillCode",
+    "waybill_code",
     "secretKey",
     "secret_key",
     "appCode",

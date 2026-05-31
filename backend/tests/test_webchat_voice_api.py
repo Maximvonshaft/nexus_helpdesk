@@ -18,11 +18,13 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app.auth_service import create_access_token
 from app.db import Base, SessionLocal, engine
-from app.enums import UserRole
+from app.enums import JobStatus, UserRole
 from app.main import app
-from app.models import AdminAuditLog, Ticket, TicketEvent, TicketInternalNote, User
+from app.models import AdminAuditLog, BackgroundJob, Ticket, TicketEvent, TicketInternalNote, User, UserCapabilityOverride
 from app.services import webchat_rate_limit as webchat_rate_limit_service
+from app.services.background_jobs import SPEEDAF_VOICE_CALLBACK_JOB, process_background_job
 from app.services.livekit_voice_provider import LiveKitVoiceProvider
+from app.services.speedaf.action_service import SpeedafActionResult, SpeedafActionService
 from app.services.voice_provider import VoiceParticipantToken
 from app.utils.time import utc_now
 from app.voice_models import WebchatVoiceAIAction, WebchatVoiceAITurn, WebchatVoiceSession, WebchatVoiceSessionAction, WebchatVoiceTranscriptSegment
@@ -551,6 +553,191 @@ def test_admin_voice_evidence_returns_redacted_transcript_ai_turns_and_actions()
     assert payload["ai_turns"][0]["handoff_required"] is True
     assert payload["ai_turns"][0]["action"] == "handoff"
     assert payload["ai_actions"][0]["nexus_decision"] == "handoff"
+
+
+def test_admin_voice_speedaf_callback_queues_and_worker_submits_without_leaking_waybill(monkeypatch):
+    monkeypatch.setenv("SPEEDAF_VOICE_CALLBACK_ENABLED", "true")
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Speedaf Callback Visitor")
+
+    body = {
+        "callSessionId": "call-session-123",
+        "isTransferredToHuman": True,
+        "action": {
+            "waybillCode": "WBVOICE12345",
+            "action": "查询订单",
+            "aiActionSummary": "AI checked the customer order status",
+            "actionStatus": "SUCCESS",
+            "errorCode": "",
+        },
+    }
+    response = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/speedaf/callback",
+        headers=_admin_headers(9202),
+        json=body,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["status"] == "queued"
+    assert payload["jobId"] > 0
+    assert payload["ai_action_id"] > 0
+    assert "WBVOICE12345" not in response.text
+
+    calls = []
+
+    def fake_send(self, payload):
+        calls.append(payload)
+        return SpeedafActionResult(ok=True, action_type="voice_callback", status="success", safe_payload={"ok": True})
+
+    monkeypatch.setattr(SpeedafActionService, "send_voice_callback", fake_send)
+    with SessionLocal() as db:
+        job = db.query(BackgroundJob).filter(BackgroundJob.id == payload["jobId"]).one()
+        assert job.job_type == SPEEDAF_VOICE_CALLBACK_JOB
+        process_background_job(db, job)
+        db.commit()
+
+    assert calls == [{
+        "callSessionId": "call-session-123",
+        "isTransferredToHuman": 1,
+        "action": {
+            "waybillCode": "WBVOICE12345",
+            "action": "查询订单",
+            "actionTime": calls[0]["action"]["actionTime"],
+            "aiActionSummary": "AI checked the customer order status",
+            "actionStatus": "SUCCESS",
+            "errorCode": "",
+        },
+    }]
+    with SessionLocal() as db:
+        assert db.query(WebchatVoiceAIAction).filter(WebchatVoiceAIAction.background_job_id == payload["jobId"], WebchatVoiceAIAction.speedaf_tool_name == "speedaf.voice.callback").count() == 1
+        completed = db.query(TicketEvent).filter(TicketEvent.ticket_id == ticket_id, TicketEvent.field_name == "speedaf_voice_callback", TicketEvent.new_value == "completed").one()
+        assert "WBVOICE12345" not in (completed.payload_json or "")
+
+    duplicate = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/speedaf/callback",
+        headers=_admin_headers(9202),
+        json=body,
+    )
+    assert duplicate.status_code == 200, duplicate.text
+    duplicate_payload = duplicate.json()
+    assert duplicate_payload["status"] == "already_submitted"
+    assert duplicate_payload["jobId"] == payload["jobId"]
+    assert duplicate_payload["ai_action_id"] is None
+    with SessionLocal() as db:
+        assert db.query(BackgroundJob).filter(BackgroundJob.dedupe_key == payload["dedupeKey"]).count() == 1
+
+
+def test_admin_voice_speedaf_callback_requires_speedaf_write_capability(monkeypatch):
+    monkeypatch.setenv("SPEEDAF_VOICE_CALLBACK_ENABLED", "true")
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Speedaf Callback RBAC Visitor")
+
+    db = SessionLocal()
+    try:
+        db.query(UserCapabilityOverride).filter(
+            UserCapabilityOverride.user_id == 9202,
+            UserCapabilityOverride.capability == "tool:speedaf.voice.callback:write",
+        ).delete()
+        db.add(UserCapabilityOverride(user_id=9202, capability="tool:speedaf.voice.callback:write", allowed=False))
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        response = client.post(
+            f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/speedaf/callback",
+            headers=_admin_headers(9202),
+            json={
+                "action": {
+                    "waybillCode": "WBVOICE12345",
+                    "action": "查询订单",
+                    "aiActionSummary": "AI checked the customer order status",
+                    "actionStatus": "SUCCESS",
+                },
+            },
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"] == "speedaf_voice_callback_requires_capability"
+    finally:
+        db = SessionLocal()
+        try:
+            db.query(UserCapabilityOverride).filter(
+                UserCapabilityOverride.user_id == 9202,
+                UserCapabilityOverride.capability == "tool:speedaf.voice.callback:write",
+            ).delete()
+            db.commit()
+        finally:
+            db.close()
+
+
+def test_speedaf_voice_callback_non_retryable_failure_does_not_replay(monkeypatch):
+    monkeypatch.setenv("SPEEDAF_VOICE_CALLBACK_ENABLED", "true")
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Speedaf Callback Nonretry Visitor")
+
+    response = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/speedaf/callback",
+        headers=_admin_headers(9202),
+        json={
+            "callSessionId": "call-session-nonretry",
+            "action": {
+                "waybillCode": "WBVOICE99999",
+                "action": "查询订单",
+                "aiActionSummary": "AI checked the customer order status",
+                "actionStatus": "SUCCESS",
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    calls = []
+
+    def fake_send(self, submitted_payload):
+        calls.append(submitted_payload)
+        return SpeedafActionResult(
+            ok=False,
+            action_type="voice_callback",
+            status="failed",
+            error_code="sign_rule_not_configured",
+            error_message="Speedaf sign rule is not configured",
+            retryable=False,
+            safe_payload={"error": "redacted"},
+        )
+
+    monkeypatch.setattr(SpeedafActionService, "send_voice_callback", fake_send)
+    with SessionLocal() as db:
+        job = db.query(BackgroundJob).filter(BackgroundJob.id == payload["jobId"]).one()
+        process_background_job(db, job)
+        db.commit()
+        db.refresh(job)
+        assert job.status == JobStatus.done
+        assert job.attempt_count == 0
+        assert job.last_error is None
+
+    assert len(calls) == 1
+
+
+def test_admin_voice_speedaf_callback_disabled_by_default():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Disabled Speedaf Callback Visitor")
+
+    response = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/speedaf/callback",
+        headers=_admin_headers(9202),
+        json={
+            "action": {
+                "waybillCode": "WBVOICE12345",
+                "action": "查询订单",
+                "aiActionSummary": "AI checked the customer order status",
+                "actionStatus": "SUCCESS",
+            },
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "speedaf_voice_callback_disabled"
 
 
 def test_admin_voice_evidence_requires_voice_capability_even_when_ticket_visible():

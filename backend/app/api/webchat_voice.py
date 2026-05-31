@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..unit_of_work import managed_session
-from ..voice_schemas import WebchatVoiceActionList, WebchatVoiceActionRequest, WebchatVoiceActionResponse, WebchatVoiceCreateRequest, WebchatVoiceEvidenceResponse, WebchatVoiceNoteRequest, WebchatVoiceNoteResponse, WebchatVoiceRejectRequest
+from ..voice_schemas import SpeedafVoiceCallbackRequest, SpeedafVoiceCallbackResponse, WebchatVoiceActionList, WebchatVoiceActionRequest, WebchatVoiceActionResponse, WebchatVoiceCreateRequest, WebchatVoiceEvidenceResponse, WebchatVoiceNoteRequest, WebchatVoiceNoteResponse, WebchatVoiceRejectRequest
 from ..webchat_voice_config import load_webchat_voice_runtime_config
 from ..services.webchat_voice_service import (
     DETAIL_EXPIRED,
@@ -17,6 +17,7 @@ from ..services.webchat_voice_service import (
     list_admin_voice_evidence,
     end_public_voice_session,
     list_admin_voice_sessions,
+    queue_speedaf_voice_callback,
     record_admin_voice_action,
     reject_admin_voice_session,
     save_admin_voice_note,
@@ -205,6 +206,28 @@ def create_ticket_voice_action(
             target=payload.target,
             digits=payload.digits,
             note=payload.note,
+        )
+
+
+@router.post("/admin/tickets/{ticket_id}/voice/{voice_session_id}/speedaf/callback", response_model=SpeedafVoiceCallbackResponse)
+def queue_ticket_voice_speedaf_callback(
+    ticket_id: int,
+    voice_session_id: str,
+    payload: SpeedafVoiceCallbackRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> dict:
+    with managed_session(db):
+        return queue_speedaf_voice_callback(
+            db,
+            ticket_id=ticket_id,
+            voice_session_public_id=voice_session_id,
+            current_user=current_user,
+            call_session_id=payload.callSessionId,
+            is_transferred_to_human=payload.isTransferredToHuman,
+            action=payload.action.model_dump(),
+            request_id=getattr(request.state, "request_id", None),
         )
 
 

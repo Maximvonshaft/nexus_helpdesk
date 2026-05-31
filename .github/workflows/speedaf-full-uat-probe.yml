@@ -1,0 +1,104 @@
+name: speedaf-full-uat-probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      waybill_code:
+        description: 'UAT waybill code for full Speedaf probe'
+        required: true
+        type: string
+      caller_id:
+        description: 'UAT callerID bound to the waybill'
+        required: true
+        type: string
+      whatsapp_phone:
+        description: 'UAT WhatsApp phone for updateAddress'
+        required: true
+        type: string
+      country_code:
+        description: 'Country code for waybillCode/query'
+        required: true
+        default: 'CH'
+        type: string
+      cancel_reason:
+        description: 'Cancel reason code'
+        required: true
+        default: 'CC01'
+        type: string
+      write_ack:
+        description: 'Must equal I_UNDERSTAND_SPEEDAF_UAT_WRITES to run write/system actions'
+        required: true
+        type: string
+
+jobs:
+  speedaf-full-uat-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: backend
+      SPEEDAF_MCP_ENABLED: ${{ secrets.SPEEDAF_UAT_MCP_ENABLED }}
+      SPEEDAF_MCP_BASE_URL: ${{ secrets.SPEEDAF_UAT_MCP_BASE_URL }}
+      SPEEDAF_MCP_APP_CODE: ${{ secrets.SPEEDAF_UAT_MCP_APP_CODE }}
+      SPEEDAF_MCP_SECRET_KEY: ${{ secrets.SPEEDAF_UAT_MCP_SECRET_KEY }}
+      SPEEDAF_MCP_CONTENT_TYPE: ${{ vars.SPEEDAF_UAT_MCP_CONTENT_TYPE || 'text/plain' }}
+      SPEEDAF_MCP_DATA_MODE: ${{ vars.SPEEDAF_UAT_MCP_DATA_MODE || 'string' }}
+      SPEEDAF_MCP_REQUIRE_SIGN: ${{ vars.SPEEDAF_UAT_MCP_REQUIRE_SIGN || 'false' }}
+      SPEEDAF_WORK_ORDER_CREATE_ENABLED: 'true'
+      SPEEDAF_UPDATE_ADDRESS_ENABLED: 'true'
+      SPEEDAF_CANCEL_ENABLED: 'true'
+      SPEEDAF_VOICE_CALLBACK_ENABLED: 'true'
+      SPEEDAF_FULL_UAT_WRITE_ACK: ${{ inputs.write_ack }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Validate destructive UAT acknowledgement
+        run: |
+          set -Eeuo pipefail
+          if [ "${SPEEDAF_FULL_UAT_WRITE_ACK}" != "I_UNDERSTAND_SPEEDAF_UAT_WRITES" ]; then
+            echo "Refusing to run Speedaf UAT write/system probe without exact acknowledgement."
+            exit 2
+          fi
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r backend/requirements.txt
+
+      - name: Run full Speedaf UAT probe
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts
+          python backend/scripts/speedaf_full_uat_probe.py \
+            --waybill-code '${{ inputs.waybill_code }}' \
+            --caller-id '${{ inputs.caller_id }}' \
+            --whatsapp-phone '${{ inputs.whatsapp_phone }}' \
+            --country-code '${{ inputs.country_code }}' \
+            --cancel-reason '${{ inputs.cancel_reason }}' \
+            --write-ack '${{ inputs.write_ack }}' \
+            --output-json artifacts/speedaf-full-uat-report.json
+
+      - name: Assert full report is sanitized
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          REPORT="artifacts/speedaf-full-uat-report.json"
+          test -f "$REPORT"
+          if grep -E '${{ inputs.waybill_code }}|${{ inputs.caller_id }}|${{ inputs.whatsapp_phone }}|${{ secrets.SPEEDAF_UAT_MCP_APP_CODE }}|${{ secrets.SPEEDAF_UAT_MCP_SECRET_KEY }}' "$REPORT" >/dev/null 2>&1; then
+            echo 'ERROR: report contains sensitive material.'
+            exit 3
+          fi
+
+      - name: Upload redacted full UAT report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: speedaf-full-uat-report
+          path: artifacts/speedaf-full-uat-report.json
+          if-no-files-found: warn

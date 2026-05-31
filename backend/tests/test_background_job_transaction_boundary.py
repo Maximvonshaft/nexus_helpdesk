@@ -60,6 +60,7 @@ def test_dispatch_pending_background_jobs_recovers_one_failed_attempt_and_contin
     processed_ids: list[int] = []
 
     monkeypatch.setattr(background_jobs.settings, 'openclaw_sync_enabled', False)
+    monkeypatch.setattr(background_jobs.settings, 'email_mailbox_sync_enabled', False)
     monkeypatch.setattr(background_jobs, 'claim_pending_jobs', lambda db, limit=None, worker_id=None, job_types=None: [first, second])
 
     def fake_process(db_arg, job):
@@ -98,6 +99,7 @@ def test_dispatch_pending_background_jobs_marks_dead_when_recovered_attempt_exha
     db.current_recovery_row = row
 
     monkeypatch.setattr(background_jobs.settings, 'openclaw_sync_enabled', False)
+    monkeypatch.setattr(background_jobs.settings, 'email_mailbox_sync_enabled', False)
     monkeypatch.setattr(background_jobs, 'claim_pending_jobs', lambda db, limit=None, worker_id=None, job_types=None: [row])
     monkeypatch.setattr(background_jobs, 'process_background_job', lambda db, job: (_ for _ in ()).throw(RuntimeError('last retry failed')))
 
@@ -118,6 +120,7 @@ def test_dispatch_pending_sync_jobs_uses_same_attempt_boundary(monkeypatch):
     db = _FakeDB([row])
 
     monkeypatch.setattr(background_jobs.settings, 'openclaw_sync_enabled', False)
+    monkeypatch.setattr(background_jobs.settings, 'email_mailbox_sync_enabled', False)
     monkeypatch.setattr(background_jobs, 'claim_pending_jobs', lambda db, limit=None, worker_id=None, job_types=None: [row])
 
     def fake_process(db_arg, job):

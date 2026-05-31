@@ -86,6 +86,7 @@ def _dispatch_pending_background_jobs_with_attempt_boundary(db: Any, *, limit: i
             background_jobs.WEBCHAT_HANDOFF_SNAPSHOT_JOB,
             background_jobs.SPEEDAF_WORK_ORDER_CREATE_JOB,
             background_jobs.SPEEDAF_ADDRESS_UPDATE_JOB,
+            background_jobs.SPEEDAF_VOICE_CALLBACK_JOB,
             background_jobs.EMAIL_MAILBOX_SYNC_JOB,
         ],
     )
