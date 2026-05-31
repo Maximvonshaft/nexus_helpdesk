@@ -44,4 +44,60 @@ TRACKING_LOOKUP_ENDPOINT=
 TRACKING_LOOKUP_API_KEY_FILE=
 ```
 
+For the ProviderRuntime/Codex LLM bridge canary, keep STT/TTS fake or externally configured and switch only the LLM leg:
+
+```dotenv
+WEBCALL_AI_PROVIDER_PROFILE=hybrid
+STT_PROVIDER=fake
+LLM_PROVIDER=provider_runtime
+TTS_PROVIDER=fake
+WEBCALL_AI_PROVIDER_RUNTIME_PROVIDER=codex_app_server
+WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID=default
+WEBCALL_AI_PROVIDER_RUNTIME_CHANNEL_KEY=webcall_ai
+WEBCALL_AI_PROVIDER_RUNTIME_SCENARIO=webcall_ai_decision
+WEBCALL_AI_PROVIDER_RUNTIME_OUTPUT_CONTRACT=speedaf_webchat_fast_reply_v1
+```
+
+For streaming STT, switch the STT leg to Deepgram WebSocket streaming:
+
+```dotenv
+WEBCALL_AI_PROVIDER_PROFILE=hybrid
+STT_PROVIDER=deepgram_streaming
+STT_API_KEY_FILE=/run/secrets/deepgram_api_key
+STT_MODEL=nova-3
+STT_LANGUAGE=en
+STT_INTERIM_RESULTS=true
+STT_ENDPOINTING_MS=300
+LLM_PROVIDER=provider_runtime
+TTS_PROVIDER=fake
+```
+
+The checked-in streaming STT path sends PCM16 frames and consumes partial/final transcript events. It does not yet change the worker into a duplex barge-in loop.
+
+For streaming TTS and chunk publish, switch the TTS leg to Cartesia SSE:
+
+```dotenv
+WEBCALL_AI_PROVIDER_PROFILE=hybrid
+STT_PROVIDER=deepgram_streaming
+LLM_PROVIDER=provider_runtime
+TTS_PROVIDER=cartesia_streaming
+TTS_API_KEY_FILE=/run/secrets/cartesia_api_key
+TTS_VOICE_ID=<server-only voice id>
+TTS_MODEL=sonic-3.5
+TTS_SAMPLE_RATE=24000
+CARTESIA_VERSION=2026-03-01
+```
+
+Cartesia SSE chunks are decoded into PCM audio chunks and published through the server-side LiveKit `publish_ai_audio_stream()` path. Duplex barge-in and TTS cancellation are still a separate rollout.
+
+For barge-in:
+
+```dotenv
+WEBCALL_AI_BARGE_IN_ENABLED=true
+WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS=300
+WEBCALL_AI_BARGE_IN_ENERGY_THRESHOLD=350
+```
+
+When customer speech is detected while AI audio is publishing, remaining AI audio publication is stopped, `webcall_ai.response.interrupted` is written, and the captured customer frames are reused by the next listening turn. This is server-side publication cancellation; provider stream cancellation still depends on the streaming TTS adapter boundary.
+
 `LIVEKIT_API_KEY` may be sourced by deployment automation from `/opt/livekit_nexus/secrets.env`, but the API secret must be mounted as a file for production. If a rollback is needed, set `WEBCALL_AI_KILL_SWITCH=true` and stop the `webcall-ai-agent` compose profile.

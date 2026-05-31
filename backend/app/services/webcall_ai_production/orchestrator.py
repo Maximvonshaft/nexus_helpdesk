@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from ...voice_models import WebchatVoiceSession
 from .evidence import persist_turn_evidence
+from .metrics import record_webcall_ai_stage
 from .providers.base import LLMResult, ProviderError, STTResult
 from .providers.fake import FakeLLMProvider, FakeSTTProvider, FakeTTSProvider
 from .providers.router import get_llm_provider, get_stt_provider, get_tts_provider
@@ -26,7 +27,7 @@ def run_fake_turn(audio_or_text: bytes | str, *, language: str | None = None) ->
         "transcript": stt.__dict__,
         "response": llm.__dict__,
         "tool_result": tool_result,
-        "tts": {"mime_type": tts.mime_type, "bytes": len(tts.audio_bytes), "text": tts.text, "provider": tts.provider_name, "_audio_bytes": tts.audio_bytes},
+        "tts": _tts_payload(tts),
     }
 
 
@@ -46,6 +47,7 @@ def run_session_turn(
     settings = get_webcall_ai_production_settings()
     started = time.monotonic()
     try:
+        stage_started = time.monotonic()
         stt = get_stt_provider(settings.stt_provider).transcribe(
             audio,
             language=language or session.ai_language,
@@ -53,7 +55,9 @@ def run_session_turn(
             channels=channels,
             mime_type=mime_type,
         )
+        record_webcall_ai_stage(stage="stt_final", provider=stt.provider_name, elapsed_ms=int((time.monotonic() - stage_started) * 1000))
     except ProviderError as exc:
+        record_webcall_ai_stage(stage="stt_final", status=exc.code, provider=exc.provider, elapsed_ms=int((time.monotonic() - started) * 1000))
         return build_handoff_turn(
             db,
             session=session,
@@ -78,9 +82,9 @@ def run_session_turn(
                 provider_name="tool_policy",
             )
         else:
-            llm = _safe_llm_response(settings, stt)
+            llm = _timed_llm_response(settings, stt)
     else:
-        llm = _safe_llm_response(settings, stt)
+        llm = _timed_llm_response(settings, stt)
     if tracking_number and not llm.handoff_required:
         summary = ((tool_result or {}).get("result") or {}).get("summary")
         if summary:
@@ -91,7 +95,13 @@ def run_session_turn(
                 handoff_reason=llm.handoff_reason,
                 provider_name=llm.provider_name,
             )
+    tts_started = time.monotonic()
     tts = get_tts_provider(settings.tts_provider).synthesize(llm.response_text, language=stt.language)
+    first_chunk_latency = _first_tts_chunk_latency(tts)
+    if first_chunk_latency is not None:
+        record_webcall_ai_stage(stage="tts_first_audio", provider=tts.provider_name, elapsed_ms=first_chunk_latency)
+        record_webcall_ai_stage(stage="end_to_first_audio", provider=tts.provider_name, elapsed_ms=int((time.monotonic() - started) * 1000))
+    record_webcall_ai_stage(stage="tts_total", provider=tts.provider_name, elapsed_ms=int((time.monotonic() - tts_started) * 1000))
     evidence = persist_turn_evidence(
         db,
         session=session,
@@ -108,7 +118,7 @@ def run_session_turn(
         "transcript": stt.__dict__,
         "response": llm.__dict__,
         "tool_result": tool_result,
-        "tts": {"mime_type": tts.mime_type, "bytes": len(tts.audio_bytes), "text": tts.text, "provider": tts.provider_name, "_audio_bytes": tts.audio_bytes},
+        "tts": _tts_payload(tts),
         "worker_id": worker_id,
         "handoff_required": llm.handoff_required,
         "handoff_reason": llm.handoff_reason,
@@ -126,6 +136,26 @@ def _safe_llm_response(settings, stt: STTResult) -> LLMResult:
             handoff_reason=exc.code,
             provider_name="provider_failure",
         )
+
+
+def _timed_llm_response(settings, stt: STTResult) -> LLMResult:
+    started = time.monotonic()
+    llm = _safe_llm_response(settings, stt)
+    status = "handoff" if llm.handoff_required else "ok"
+    if llm.intent == "llm_provider_failed":
+        status = llm.handoff_reason or "llm_provider_failed"
+    record_webcall_ai_stage(stage="llm_decision", status=status, provider=llm.provider_name, elapsed_ms=int((time.monotonic() - started) * 1000))
+    return llm
+
+
+def _first_tts_chunk_latency(tts: TTSResult) -> int | None:
+    if not tts.audio_chunks:
+        return None
+    first = tts.audio_chunks[0]
+    value = getattr(first, "provider_latency_ms", None)
+    if isinstance(value, int | float):
+        return int(value)
+    return None
 
 
 def build_handoff_turn(
@@ -165,8 +195,21 @@ def build_handoff_turn(
     return {
         "turn_id": evidence.turn.id,
         "response": llm.__dict__,
-        "tts": {"mime_type": tts.mime_type, "bytes": len(tts.audio_bytes), "text": tts.text, "provider": tts.provider_name, "_audio_bytes": tts.audio_bytes},
+        "tts": _tts_payload(tts),
         "worker_id": worker_id,
         "handoff_required": handoff_required,
         "handoff_reason": handoff_reason,
     }
+
+
+def _tts_payload(tts: TTSResult) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "mime_type": tts.mime_type,
+        "bytes": len(tts.audio_bytes),
+        "text": tts.text,
+        "provider": tts.provider_name,
+        "_audio_bytes": tts.audio_bytes,
+    }
+    if tts.audio_chunks:
+        payload["_audio_chunks"] = tts.audio_chunks
+    return payload

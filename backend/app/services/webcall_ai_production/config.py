@@ -6,7 +6,10 @@ from functools import lru_cache
 
 
 TRUE_VALUES = {"1", "true", "yes", "on"}
-PROVIDER_PROFILES = {"fake", "external"}
+PROVIDER_PROFILES = {"fake", "external", "hybrid"}
+STT_PROVIDERS = {"fake", "external", "deepgram_streaming"}
+LLM_PROVIDERS = {"fake", "external", "provider_runtime"}
+TTS_PROVIDERS = {"fake", "external", "cartesia_streaming"}
 ROLLOUT_MODES = {"off", "internal", "canary", "public"}
 
 
@@ -42,6 +45,14 @@ def _secret_configured(name: str, file_name: str) -> bool:
     return bool((os.getenv(name) or "").strip() or (os.getenv(file_name) or "").strip())
 
 
+def _default_provider_profile(stt_provider: str, llm_provider: str, tts_provider: str) -> str:
+    if stt_provider == llm_provider == tts_provider == "fake":
+        return "fake"
+    if stt_provider == llm_provider == tts_provider == "external":
+        return "external"
+    return "hybrid"
+
+
 @dataclass(frozen=True)
 class WebCallAIProductionSettings:
     production_enabled: bool
@@ -73,6 +84,8 @@ class WebCallAIProductionSettings:
     external_stt_configured: bool
     external_llm_configured: bool
     external_tts_configured: bool
+    deepgram_stt_configured: bool
+    cartesia_tts_configured: bool
 
     @property
     def livekit_configured(self) -> bool:
@@ -80,9 +93,31 @@ class WebCallAIProductionSettings:
 
     @property
     def provider_configured(self) -> bool:
-        if self.provider_profile == "fake":
-            return self.stt_provider == self.llm_provider == self.tts_provider == "fake"
-        return self.external_stt_configured and self.external_llm_configured and self.external_tts_configured
+        return self.stt_configured and self.llm_configured and self.tts_configured
+
+    @property
+    def stt_configured(self) -> bool:
+        if self.stt_provider == "fake":
+            return True
+        if self.stt_provider == "deepgram_streaming":
+            return self.deepgram_stt_configured
+        return self.stt_provider == "external" and self.external_stt_configured
+
+    @property
+    def llm_configured(self) -> bool:
+        if self.llm_provider == "fake":
+            return True
+        if self.llm_provider == "provider_runtime":
+            return True
+        return self.llm_provider == "external" and self.external_llm_configured
+
+    @property
+    def tts_configured(self) -> bool:
+        if self.tts_provider == "fake":
+            return True
+        if self.tts_provider == "cartesia_streaming":
+            return self.cartesia_tts_configured
+        return self.tts_provider == "external" and self.external_tts_configured
 
     @property
     def status(self) -> str:
@@ -99,7 +134,13 @@ class WebCallAIProductionSettings:
     def validate(self) -> None:
         app_env = (os.getenv("APP_ENV") or "development").strip().lower()
         if self.provider_profile not in PROVIDER_PROFILES:
-            raise ValueError("WEBCALL_AI_PROVIDER_PROFILE must be fake or external")
+            raise ValueError("WEBCALL_AI_PROVIDER_PROFILE must be fake, external, or hybrid")
+        if self.stt_provider not in STT_PROVIDERS:
+            raise ValueError("STT_PROVIDER must be fake, external, or deepgram_streaming")
+        if self.llm_provider not in LLM_PROVIDERS:
+            raise ValueError("LLM_PROVIDER must be fake, external, or provider_runtime")
+        if self.tts_provider not in TTS_PROVIDERS:
+            raise ValueError("TTS_PROVIDER must be fake, external, or cartesia_streaming")
         if self.public_rollout_mode not in ROLLOUT_MODES:
             raise ValueError("WEBCALL_AI_PUBLIC_ROLLOUT_MODE must be off, internal, canary, or public")
         if self.record_raw_audio:
@@ -116,6 +157,8 @@ class WebCallAIProductionSettings:
             raise ValueError("fake provider profile cannot be used for canary or public WebCall AI rollout")
         if self.production_enabled and self.agent_enabled and self.provider_profile == "external" and not self.provider_configured:
             raise ValueError("external WebCall AI providers require STT, LLM, and TTS provider configuration")
+        if self.production_enabled and self.agent_enabled and self.provider_profile == "hybrid" and not self.provider_configured:
+            raise ValueError("hybrid WebCall AI providers require each selected STT, LLM, and TTS provider to be configured")
         if app_env == "production":
             for name in ["STT_API_KEY", "LLM_API_KEY", "TTS_API_KEY", "LIVEKIT_API_SECRET"]:
                 if (os.getenv(name) or "").strip():
@@ -141,6 +184,9 @@ class WebCallAIProductionSettings:
 
 @lru_cache(maxsize=1)
 def get_webcall_ai_production_settings() -> WebCallAIProductionSettings:
+    stt_provider = _provider_env("STT_PROVIDER", "fake")
+    llm_provider = _provider_env("LLM_PROVIDER", "fake")
+    tts_provider = _provider_env("TTS_PROVIDER", "fake")
     settings = WebCallAIProductionSettings(
         production_enabled=_bool_env("WEBCALL_AI_PRODUCTION_ENABLED", False),
         agent_enabled=_bool_env("WEBCALL_AI_AGENT_ENABLED", False),
@@ -148,7 +194,7 @@ def get_webcall_ai_production_settings() -> WebCallAIProductionSettings:
         public_rollout_mode=_provider_env("WEBCALL_AI_PUBLIC_ROLLOUT_MODE", "internal"),
         allowed_origins=tuple(item.strip() for item in (os.getenv("WEBCALL_AI_ALLOWED_ORIGINS") or "").split(",") if item.strip()),
         agent_lease_seconds=_int_env("WEBCALL_AI_AGENT_LEASE_SECONDS", 45, minimum=5, maximum=300),
-        provider_profile=_provider_env("WEBCALL_AI_PROVIDER_PROFILE", "fake"),
+        provider_profile=_provider_env("WEBCALL_AI_PROVIDER_PROFILE", _default_provider_profile(stt_provider, llm_provider, tts_provider)),
         max_active_sessions=_int_env("WEBCALL_AI_MAX_ACTIVE_SESSIONS", 3, minimum=1, maximum=100),
         max_turns_per_session=_int_env("WEBCALL_AI_MAX_TURNS_PER_SESSION", 10, minimum=1, maximum=100),
         max_session_seconds=_int_env("WEBCALL_AI_MAX_SESSION_SECONDS", 600, minimum=60, maximum=3600),
@@ -165,12 +211,14 @@ def get_webcall_ai_production_settings() -> WebCallAIProductionSettings:
         livekit_url=(os.getenv("LIVEKIT_URL") or "").strip() or None,
         livekit_api_key_configured=_secret_configured("LIVEKIT_API_KEY", "LIVEKIT_API_KEY_FILE"),
         livekit_api_secret_configured=_secret_configured("LIVEKIT_API_SECRET", "LIVEKIT_API_SECRET_FILE"),
-        stt_provider=_provider_env("STT_PROVIDER", "fake"),
-        llm_provider=_provider_env("LLM_PROVIDER", "fake"),
-        tts_provider=_provider_env("TTS_PROVIDER", "fake"),
+        stt_provider=stt_provider,
+        llm_provider=llm_provider,
+        tts_provider=tts_provider,
         external_stt_configured=bool((os.getenv("STT_API_KEY_FILE") or "").strip() and (os.getenv("STT_ENDPOINT") or "").strip()),
         external_llm_configured=bool((os.getenv("LLM_API_KEY_FILE") or "").strip() and (os.getenv("LLM_ENDPOINT") or "").strip()),
         external_tts_configured=bool((os.getenv("TTS_API_KEY_FILE") or "").strip() and (os.getenv("TTS_ENDPOINT") or "").strip()),
+        deepgram_stt_configured=bool((os.getenv("STT_API_KEY_FILE") or "").strip()),
+        cartesia_tts_configured=bool((os.getenv("TTS_API_KEY_FILE") or "").strip() and (os.getenv("TTS_VOICE_ID") or "").strip()),
     )
     settings.validate()
     return settings

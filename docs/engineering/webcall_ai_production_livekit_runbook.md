@@ -29,6 +29,64 @@ LLM_API_KEY_FILE=/run/secrets/webcall_llm_api_key
 TTS_API_KEY_FILE=/run/secrets/webcall_tts_api_key
 ```
 
+Codex/ProviderRuntime LLM can be enabled independently from STT/TTS with the hybrid profile:
+
+```text
+WEBCALL_AI_PROVIDER_PROFILE=hybrid
+STT_PROVIDER=fake
+LLM_PROVIDER=provider_runtime
+TTS_PROVIDER=fake
+WEBCALL_AI_PROVIDER_RUNTIME_PROVIDER=codex_app_server
+WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID=default
+WEBCALL_AI_PROVIDER_RUNTIME_CHANNEL_KEY=webcall_ai
+WEBCALL_AI_PROVIDER_RUNTIME_SCENARIO=webcall_ai_decision
+WEBCALL_AI_PROVIDER_RUNTIME_OUTPUT_CONTRACT=speedaf_webchat_fast_reply_v1
+```
+
+For real audio rollout, replace fake STT/TTS with approved external or streaming providers in a separate canary PR. The current ProviderRuntime LLM path proves strict text-in/text-out decisioning and persisted turn evidence; it does not by itself add streaming STT, streaming TTS audio chunks, or barge-in.
+
+Deepgram streaming STT can be canaried on the STT leg:
+
+```text
+WEBCALL_AI_PROVIDER_PROFILE=hybrid
+STT_PROVIDER=deepgram_streaming
+STT_API_KEY_FILE=/run/secrets/deepgram_api_key
+STT_MODEL=nova-3
+STT_LANGUAGE=en
+STT_INTERIM_RESULTS=true
+STT_ENDPOINTING_MS=300
+LLM_PROVIDER=provider_runtime
+TTS_PROVIDER=fake
+```
+
+This streams PCM16 frames over Deepgram WebSocket and consumes interim/final transcript events. The current worker still uses a sequential utterance loop; duplex listening while speaking remains the barge-in PR.
+
+Cartesia streaming TTS can be canaried on the TTS leg:
+
+```text
+WEBCALL_AI_PROVIDER_PROFILE=hybrid
+STT_PROVIDER=deepgram_streaming
+LLM_PROVIDER=provider_runtime
+TTS_PROVIDER=cartesia_streaming
+TTS_API_KEY_FILE=/run/secrets/cartesia_api_key
+TTS_VOICE_ID=<server-only voice id>
+TTS_MODEL=sonic-3.5
+TTS_SAMPLE_RATE=24000
+CARTESIA_VERSION=2026-03-01
+```
+
+This uses `POST /tts/sse`, decodes `chunk` event audio data, and publishes audio chunks through `publish_ai_audio_stream()`. The full audio bytes are still retained in the existing turn payload for fallback publication and evidence compatibility.
+
+Duplex barge-in can be enabled with:
+
+```text
+WEBCALL_AI_BARGE_IN_ENABLED=true
+WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS=300
+WEBCALL_AI_BARGE_IN_ENERGY_THRESHOLD=350
+```
+
+During AI audio publication the worker checks inbound LiveKit audio frames. If visitor speech crosses the threshold, the worker stops publishing the remaining AI audio, writes `webcall_ai.response.interrupted`, preserves the visitor frames for the next `collect_next_customer_utterance()`, and returns to listening. Provider-side TTS generation cancellation is still limited by each TTS adapter; this path cancels server-side LiveKit publication.
+
 Keep these disabled for the initial rollout:
 
 ```text
@@ -74,4 +132,4 @@ Then restart the app and stop the `webcall-ai-agent` service. Human WebCall and 
 
 ## Current Limitation
 
-The checked-in runtime remains fail-closed until approved LiveKit, STT, LLM, TTS, and read-only tracking provider configuration is present and a real browser voice smoke test passes.
+The checked-in runtime remains fail-closed until approved LiveKit, STT, LLM, TTS, and read-only tracking provider configuration is present and a real browser voice smoke test passes. ProviderRuntime LLM is supported for WebCall AI production turns, but streaming STT, streaming TTS chunk publish, duplex barge-in, and metrics dashboards remain separate rollout gaps.
