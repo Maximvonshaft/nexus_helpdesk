@@ -117,8 +117,21 @@ WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS=900
 WEBCALL_AI_BARGE_IN_ENERGY_THRESHOLD=350
 WEBCALL_AI_STT_MIN_AUDIO_MS=300
 WEBCALL_AI_STT_SILENCE_RMS_THRESHOLD=80
+WEBCALL_AI_STT_LOW_RMS_THRESHOLD=900
+WEBCALL_AI_STT_SHADOW_CANARY_ENABLED=false
+WEBCALL_AI_STT_NORMALIZE_PCM_ENABLED=false
+WEBCALL_AI_STT_NORMALIZE_TARGET_RMS=2600
+WEBCALL_AI_STT_NORMALIZE_MAX_GAIN_DB=12
+WEBCALL_AI_STT_ECHO_SIMILARITY_THRESHOLD=0.82
+WEBCALL_AI_STT_ECHO_MAX_AGE_MS=10000
 ```
 
 When customer speech is detected while AI audio is publishing, remaining AI audio publication is stopped, the streaming TTS cancel token is signaled, `webcall_ai.response.interrupted` is written, and the captured customer frames are reused by the next listening turn. The default 900ms threshold is intentionally above short noise, echo, and brief acknowledgements during AI playback.
+
+Before each Deepgram STT call the worker writes `webcall_ai.stt.request_contract` with the actual model, language, encoding, sample rate, channels, endpointing, VAD, interim, smart-format, punctuate, input PCM duration, RMS, dBFS, clipping ratio, zero-crossing rate, and `contract_match`. For 48k mono LiveKit PCM, `request_encoding=linear16`, `request_sample_rate=48000`, and `request_channels=1` must be present with `contract_match=true`.
+
+`WEBCALL_AI_STT_SHADOW_CANARY_ENABLED=false` keeps the comparative Deepgram canary disabled by default. When enabled during a controlled canary, the worker runs the same in-memory PCM through current production config, `explicit_48k_linear16_en`, and `explicit_48k_linear16_en_with_smart_format`, then writes redacted `webcall_ai.stt.shadow_result` and `webcall_ai.stt.shadow_winner` events. It never writes raw PCM to disk and never includes provider tokens.
+
+`WEBCALL_AI_STT_NORMALIZE_PCM_ENABLED=false` keeps audio normalization disabled by default. If enabled, normalization is in-memory only and records `normalization_applied`, `gain_db`, and clipping ratio in the request contract. Possible post-TTS echo is evidence-only via `webcall_ai.stt.possible_tts_echo`; it does not trigger handoff or interrupt the session.
 
 `LIVEKIT_API_KEY` may be sourced by deployment automation from `/opt/livekit_nexus/secrets.env`, but the API secret must be mounted as a file for production. If a rollback is needed, set `WEBCALL_AI_KILL_SWITCH=true` and stop the `webcall-ai-agent` compose profile.

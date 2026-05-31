@@ -13,6 +13,7 @@ from .providers.base import LLMResult, ProviderError, STTResult, TTSResult
 from .providers.cancel_token import CancelToken
 from .providers.fake import FakeLLMProvider, FakeSTTProvider, FakeTTSProvider
 from .providers.router import get_llm_provider, get_stt_provider, get_tts_provider
+from .stt_quality import prepare_stt_input, run_deepgram_shadow_canary, write_possible_tts_echo_event, write_stt_request_contract_event
 from .tool_registry import default_registry
 from .tools.tracking_lookup import extract_tracking_number, is_tracking_question
 
@@ -74,18 +75,39 @@ def run_session_turn(
         payload=stt_audio_stats,
     )
     db.flush()
+    prepared_stt = prepare_stt_input(
+        settings,
+        session=session,
+        audio=audio,
+        language=language,
+        sample_rate=sample_rate,
+        channels=channels,
+        mime_type=mime_type,
+        audio_stats=stt_audio_stats,
+        turn_index=turn_index,
+    )
+    write_stt_request_contract_event(db, session=session, contract=prepared_stt.request_contract)
     try:
         stage_started = time.monotonic()
         stt = get_stt_provider(settings.stt_provider).transcribe(
-            audio,
+            prepared_stt.audio,
             language=language or session.ai_language,
-            sample_rate=sample_rate,
-            channels=channels,
-            mime_type=mime_type,
+            sample_rate=prepared_stt.sample_rate,
+            channels=prepared_stt.channels,
+            mime_type=prepared_stt.mime_type,
         )
         record_webcall_ai_stage(stage="stt_final", provider=stt.provider_name, elapsed_ms=int((time.monotonic() - stage_started) * 1000))
     except ProviderError as exc:
         record_webcall_ai_stage(stage="stt_final", status=exc.code, provider=exc.provider, elapsed_ms=int((time.monotonic() - started) * 1000))
+        run_deepgram_shadow_canary(
+            db,
+            settings,
+            session=session,
+            prepared=prepared_stt,
+            language=language,
+            audio_stats=stt_audio_stats,
+            turn_index=turn_index,
+        )
         if exc.code == "stt_empty_transcript":
             _write_empty_audio_stats_event(db, session=session, provider_name=exc.provider, audio_stats=stt_audio_stats)
             return _handle_empty_transcript(
@@ -106,6 +128,16 @@ def run_session_turn(
             latency_ms=int((time.monotonic() - started) * 1000),
             stt_provider=exc.provider,
         )
+    run_deepgram_shadow_canary(
+        db,
+        settings,
+        session=session,
+        prepared=prepared_stt,
+        language=language,
+        audio_stats=stt_audio_stats,
+        turn_index=turn_index,
+    )
+    write_possible_tts_echo_event(db, session=session, stt=stt, turn_index=turn_index)
     tracking_number = extract_tracking_number(stt.text)
     tool_result = None
     tracking_lookup_status = None

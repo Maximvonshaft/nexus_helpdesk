@@ -70,6 +70,9 @@ class WebCallAIProductionSettings:
     silence_end_ms: int
     post_tts_listen_grace_ms: int
     audio_sample_rate: int
+    stt_shadow_canary_enabled: bool
+    stt_normalize_pcm_enabled: bool
+    stt_low_rms_threshold: int
     record_raw_audio: bool
     allow_speedaf_work_order: bool
     allow_cancel: bool
@@ -207,6 +210,9 @@ def get_webcall_ai_production_settings() -> WebCallAIProductionSettings:
         silence_end_ms=_int_env("WEBCALL_AI_SILENCE_END_MS", 1500, minimum=0, maximum=8000),
         post_tts_listen_grace_ms=_int_env("WEBCALL_AI_POST_TTS_LISTEN_GRACE_MS", 800, minimum=0, maximum=5000),
         audio_sample_rate=_int_env("WEBCALL_AI_AUDIO_SAMPLE_RATE", 48000, minimum=8000, maximum=48000),
+        stt_shadow_canary_enabled=_bool_env("WEBCALL_AI_STT_SHADOW_CANARY_ENABLED", False),
+        stt_normalize_pcm_enabled=_bool_env("WEBCALL_AI_STT_NORMALIZE_PCM_ENABLED", False),
+        stt_low_rms_threshold=_int_env("WEBCALL_AI_STT_LOW_RMS_THRESHOLD", 900, minimum=0, maximum=32000),
         record_raw_audio=_bool_env("WEBCALL_AI_RECORD_RAW_AUDIO", False),
         allow_speedaf_work_order=_bool_env("WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER", False),
         allow_cancel=_bool_env("WEBCALL_AI_ALLOW_CANCEL", False),

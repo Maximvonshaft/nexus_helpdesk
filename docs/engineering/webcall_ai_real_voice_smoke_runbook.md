@@ -16,6 +16,9 @@ WEBCALL_AI_MAX_UTTERANCE_AUDIO_MS=12000
 WEBCALL_AI_SILENCE_END_MS=1500
 WEBCALL_AI_POST_TTS_LISTEN_GRACE_MS=800
 WEBCALL_AI_AUDIO_SAMPLE_RATE=48000
+WEBCALL_AI_STT_LOW_RMS_THRESHOLD=900
+WEBCALL_AI_STT_SHADOW_CANARY_ENABLED=false
+WEBCALL_AI_STT_NORMALIZE_PCM_ENABLED=false
 WEBCALL_AI_RECORD_RAW_AUDIO=false
 WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER=false
 WEBCALL_AI_ALLOW_CANCEL=false
@@ -53,6 +56,19 @@ TRACKING_LOOKUP_API_KEY_FILE=/run/secrets/webcall_tracking_api_key
 - Mount `LIVEKIT_API_SECRET_FILE` from a root-owned secret file. Do not use inline `LIVEKIT_API_SECRET` in production.
 - Provider tokens must be mounted as `*_API_KEY_FILE` under `/run/secrets` or an equivalent read-only secret path.
 - Never paste secret values into logs, PRs, chat, docs, or browser responses.
+
+## STT Quality Evidence
+
+For the phrase `BANANA SPEEDAF TEST. My tracking number is ABC123456789. Where is my parcel?`, inspect the session events after the call. A passing Deepgram request contract has:
+
+- `webcall_ai.stt.request_contract`
+- `contract_match=true`
+- `request_encoding=linear16`
+- `request_sample_rate=48000`
+- `request_channels=1`
+- `input_audio_ms >= 4000`
+
+If transcript quality is still poor after the request contract matches, run one controlled repeat with `WEBCALL_AI_STT_SHADOW_CANARY_ENABLED=true`. Compare `webcall_ai.stt.shadow_result` and `webcall_ai.stt.shadow_winner`; do not enable PCM normalization unless the readonly diagnostics show sustained `low_input_level`.
 
 ## Provider Contracts
 

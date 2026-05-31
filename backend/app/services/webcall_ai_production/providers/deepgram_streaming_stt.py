@@ -21,9 +21,10 @@ _DEFAULT_DEEPGRAM_URL = "wss://api.deepgram.com/v1/listen"
 class DeepgramStreamingSTTProvider(STTProvider):
     provider_name = "deepgram_streaming"
 
-    def __init__(self, *, endpoint: str | None = None, token_file: str | None = None) -> None:
+    def __init__(self, *, endpoint: str | None = None, token_file: str | None = None, request_overrides: dict[str, str] | None = None) -> None:
         self.endpoint = endpoint or os.getenv("STT_ENDPOINT") or _DEFAULT_DEEPGRAM_URL
         self.token_file = token_file or os.getenv("STT_API_KEY_FILE")
+        self.request_overrides = dict(request_overrides or {})
 
     def transcribe(
         self,
@@ -43,7 +44,7 @@ class DeepgramStreamingSTTProvider(STTProvider):
         session = DeepgramStreamingSTTSession(endpoint=self.endpoint, token_file=self.token_file)
         events: list[STTEvent] = []
         try:
-            session.start(language=language, sample_rate=resolved_sample_rate, channels=resolved_channels)
+            session.start(language=language, sample_rate=resolved_sample_rate, channels=resolved_channels, request_overrides=self.request_overrides)
             for frame in iter_pcm_frames(pcm, sample_rate=resolved_sample_rate, channels=resolved_channels):
                 session.send_pcm_frame(frame)
                 events.extend(session.poll_events())
@@ -74,7 +75,7 @@ class DeepgramStreamingSTTSession:
     _channels: int | None = field(default=None, init=False)
     _first_partial_recorded: bool = field(default=False, init=False)
 
-    def start(self, *, language: str | None = None, sample_rate: int, channels: int) -> None:
+    def start(self, *, language: str | None = None, sample_rate: int, channels: int, request_overrides: dict[str, str] | None = None) -> None:
         if self._ws is not None:
             return
         endpoint = (self.endpoint or _DEFAULT_DEEPGRAM_URL).strip()
@@ -85,7 +86,7 @@ class DeepgramStreamingSTTSession:
         self._channels = channels
         self._started_at = time.monotonic()
         self._ws = websocket_connect(
-            _url_with_query(endpoint, _deepgram_query(language=language, sample_rate=sample_rate, channels=channels)),
+            _url_with_query(endpoint, deepgram_query(language=language, sample_rate=sample_rate, channels=channels, overrides=request_overrides)),
             additional_headers={"Authorization": f"Token {token}"},
             open_timeout=float(os.getenv("STT_CONNECT_TIMEOUT_SECONDS", "5")),
             close_timeout=float(os.getenv("STT_CLOSE_TIMEOUT_SECONDS", "3")),
@@ -229,10 +230,10 @@ def parse_deepgram_event(raw: str | bytes, *, provider: str, provider_session_id
     )
 
 
-def _deepgram_query(*, language: str | None, sample_rate: int, channels: int) -> dict[str, str]:
+def deepgram_query(*, language: str | None, sample_rate: int, channels: int, overrides: dict[str, str] | None = None) -> dict[str, str]:
     query = {
         "model": os.getenv("STT_MODEL", "nova-3"),
-        "encoding": "linear16",
+        "encoding": os.getenv("STT_ENCODING", "linear16"),
         "sample_rate": str(sample_rate),
         "channels": str(channels),
         "interim_results": _bool_query(os.getenv("STT_INTERIM_RESULTS", "true")),
@@ -247,6 +248,9 @@ def _deepgram_query(*, language: str | None, sample_rate: int, channels: int) ->
     utterance_end_ms = (os.getenv("STT_UTTERANCE_END_MS") or "").strip()
     if utterance_end_ms:
         query["utterance_end_ms"] = utterance_end_ms
+    for key, value in (overrides or {}).items():
+        if value is not None:
+            query[str(key)] = str(value)
     return query
 
 

@@ -78,7 +78,11 @@ health = json.loads(health_path.read_text(encoding="utf-8"))
 events_payload = json.loads(events_path.read_text(encoding="utf-8"))
 metrics = health.get("metrics") or {}
 events_by_type = metrics.get("events_by_type") or {}
-session_events = [item.get("event_type") for item in (events_payload.get("events") or []) if isinstance(item, dict)]
+session_event_items = [item for item in (events_payload.get("events") or []) if isinstance(item, dict)]
+session_events = [item.get("event_type") for item in session_event_items]
+payloads_by_type = {}
+for item in session_event_items:
+    payloads_by_type.setdefault(item.get("event_type"), []).append(item.get("payload") or {})
 spoken = int(metrics.get("spoken_count") or 0)
 interrupted = int(metrics.get("barge_in_count") or 0)
 publish_failed = int(metrics.get("publish_failed_count") or 0)
@@ -88,7 +92,15 @@ session_publish_failed = "webcall_ai.response.publish_failed" in session_events
 stt_provider = health.get("stt_provider")
 tts_provider = health.get("tts_provider")
 provider_mismatch = bool(expected_stt_provider and stt_provider != expected_stt_provider) or bool(expected_tts_provider and tts_provider != expected_tts_provider)
-ok = (spoken > 0 or session_spoken or interrupted > 0 or session_interrupted) and not session_publish_failed and not provider_mismatch
+contracts = payloads_by_type.get("webcall_ai.stt.request_contract") or []
+latest_contract = contracts[-1] if contracts else {}
+audio_inputs = payloads_by_type.get("webcall_ai.stt.audio_input_stats") or []
+latest_audio_input = audio_inputs[-1] if audio_inputs else {}
+shadow_results = payloads_by_type.get("webcall_ai.stt.shadow_result") or []
+shadow_winners = payloads_by_type.get("webcall_ai.stt.shadow_winner") or []
+contract_required = expected_stt_provider == "deepgram_streaming"
+contract_ok = bool(latest_contract.get("contract_match"))
+ok = (spoken > 0 or session_spoken or interrupted > 0 or session_interrupted) and not session_publish_failed and not provider_mismatch and (not contract_required or contract_ok)
 summary = {
     "ok": ok,
     "window_minutes": window_minutes,
@@ -106,6 +118,16 @@ summary = {
     "session_spoken": session_spoken,
     "session_interrupted": session_interrupted,
     "session_publish_failed": session_publish_failed,
+    "stt_request_contract_seen": bool(contracts),
+    "stt_contract_match": latest_contract.get("contract_match"),
+    "request_encoding": latest_contract.get("request_encoding"),
+    "request_sample_rate": latest_contract.get("request_sample_rate"),
+    "request_channels": latest_contract.get("request_channels"),
+    "request_model": latest_contract.get("request_model"),
+    "input_audio_ms": latest_contract.get("input_audio_ms") or latest_audio_input.get("audio_ms"),
+    "low_input_level": latest_contract.get("low_input_level"),
+    "shadow_result_count": len(shadow_results),
+    "shadow_winner": (shadow_winners[-1].get("shadow_candidate") if shadow_winners else None),
 }
 print(json.dumps(summary, ensure_ascii=False, indent=2))
 sys.exit(0 if ok and publish_failed == 0 and not provider_mismatch else 1)

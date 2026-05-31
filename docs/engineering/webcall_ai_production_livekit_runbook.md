@@ -107,6 +107,13 @@ WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS=900
 WEBCALL_AI_BARGE_IN_ENERGY_THRESHOLD=350
 WEBCALL_AI_STT_MIN_AUDIO_MS=300
 WEBCALL_AI_STT_SILENCE_RMS_THRESHOLD=80
+WEBCALL_AI_STT_LOW_RMS_THRESHOLD=900
+WEBCALL_AI_STT_SHADOW_CANARY_ENABLED=false
+WEBCALL_AI_STT_NORMALIZE_PCM_ENABLED=false
+WEBCALL_AI_STT_NORMALIZE_TARGET_RMS=2600
+WEBCALL_AI_STT_NORMALIZE_MAX_GAIN_DB=12
+WEBCALL_AI_STT_ECHO_SIMILARITY_THRESHOLD=0.82
+WEBCALL_AI_STT_ECHO_MAX_AGE_MS=10000
 ```
 
 During AI audio publication the worker checks inbound LiveKit audio frames. If visitor speech crosses the threshold, the worker stops publishing the remaining AI audio, signals the streaming TTS cancel token, writes `webcall_ai.response.interrupted`, preserves the visitor frames for the next `collect_next_customer_utterance()`, and returns to listening. The default 900ms threshold is designed to ignore short noise, echo, and brief acknowledgements during AI playback.
@@ -120,9 +127,15 @@ The server-side LiveKit agent writes read-only audio evidence before each STT ca
 - `webcall_ai.livekit.remote_track_subscribed`
 - `webcall_ai.livekit.audio_frame_stats`
 - `webcall_ai.stt.audio_input_stats`
+- `webcall_ai.stt.request_contract`
 - `webcall_ai.stt.empty_with_audio_stats`
+- `webcall_ai.stt.possible_tts_echo`
 
 Each STT input stats event includes `voice_session_id`, `turn_index`, `participant_identity`, `track_sid`, `frame_count`, `audio_ms`, `pcm_bytes`, `sample_rate`, `channels`, `rms_min` / `rms_avg` / `rms_max`, and capture metadata such as `capture_min_audio_ms`, `capture_max_audio_ms`, `capture_silence_end_ms`, and `capture_end_reason`. Empty transcript events classify the cause as `no_remote_audio_track`, `audio_track_muted`, `no_pcm_frames`, `pcm_too_short`, `pcm_silent`, or `deepgram_empty_transcript`.
+
+For Deepgram STT, `webcall_ai.stt.request_contract` is the source of truth for request quality. It must show `request_encoding=linear16`, `request_sample_rate=48000`, `request_channels=1`, and `contract_match=true` for LiveKit 48k mono PCM. The payload also includes readonly input diagnostics: dBFS, RMS range, peak clipping ratio, zero-crossing rate, `low_input_level`, and optional normalization metadata. It must not include API keys, Authorization headers, participant tokens, visitor tokens, raw audio, or full tracking numbers.
+
+During a controlled STT canary, set `WEBCALL_AI_STT_SHADOW_CANARY_ENABLED=true` to write `webcall_ai.stt.shadow_result` for `current_production_config`, `explicit_48k_linear16_en`, and `explicit_48k_linear16_en_with_smart_format`, followed by `webcall_ai.stt.shadow_winner`. Shadow events persist only redacted transcripts, confidence, provider latency, and request contracts; the same PCM remains in memory and is not written to disk.
 
 Keep these disabled for the initial rollout:
 
