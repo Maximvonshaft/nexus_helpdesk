@@ -134,6 +134,7 @@ def clean_db_and_env(monkeypatch, tmp_path):
     token_file.write_text("unit-cartesia-token", encoding="utf-8")
     monkeypatch.setenv("WEBCALL_AI_PRODUCTION_ENABLED", "true")
     monkeypatch.setenv("WEBCALL_AI_AGENT_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_POST_TTS_LISTEN_GRACE_MS", "0")
     monkeypatch.delenv("WEBCALL_AI_PROVIDER_PROFILE", raising=False)
     monkeypatch.setenv("STT_PROVIDER", "fake")
     monkeypatch.setenv("LLM_PROVIDER", "fake")

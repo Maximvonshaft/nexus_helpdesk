@@ -9,9 +9,10 @@ WEBCALL_AI_KILL_SWITCH=false
 WEBCALL_AI_PUBLIC_ROLLOUT_MODE=internal
 WEBCALL_AI_ALLOWED_ORIGINS=https://www.leakle.com
 WEBCALL_AI_AGENT_LEASE_SECONDS=45
-WEBCALL_AI_MIN_UTTERANCE_SECONDS=1
-WEBCALL_AI_MAX_UTTERANCE_SECONDS=12
-WEBCALL_AI_SILENCE_END_MS=700
+WEBCALL_AI_MIN_UTTERANCE_AUDIO_MS=4000
+WEBCALL_AI_MAX_UTTERANCE_AUDIO_MS=12000
+WEBCALL_AI_SILENCE_END_MS=1500
+WEBCALL_AI_POST_TTS_LISTEN_GRACE_MS=800
 WEBCALL_AI_AUDIO_SAMPLE_RATE=48000
 WEBCALL_AI_RECORD_RAW_AUDIO=false
 WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER=false
@@ -73,6 +74,8 @@ TTS_PROVIDER=fake
 ```
 
 The checked-in streaming STT path sends PCM16 frames and consumes partial/final transcript events. Keep barge-in enabled only for the controlled LiveKit canary below so interruption evidence can be verified before public rollout.
+
+The LiveKit collector uses a tracking-safe utterance window by default: at least 4000ms of customer audio, up to 12000ms, with 1500ms of post-speech silence before finalizing the turn. This prevents short pauses inside phrases like "BANANA SPEEDAF TEST. My tracking number is ABC123456789. Where is my parcel?" from being finalized after roughly 1.5 seconds. `WEBCALL_AI_POST_TTS_LISTEN_GRACE_MS=800` adds a short grace period after AI playback before the next listening turn so echo and playback tail do not become a fragmented STT request.
 
 For streaming TTS and chunk publish, switch the TTS leg to Cartesia SSE:
 

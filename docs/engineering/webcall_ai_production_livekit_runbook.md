@@ -16,6 +16,10 @@ WEBCALL_AI_PROVIDER_PROFILE=external
 WEBCALL_AI_KILL_SWITCH=false
 WEBCALL_AI_PUBLIC_ROLLOUT_MODE=internal
 WEBCALL_AI_RECORD_RAW_AUDIO=false
+WEBCALL_AI_MIN_UTTERANCE_AUDIO_MS=4000
+WEBCALL_AI_MAX_UTTERANCE_AUDIO_MS=12000
+WEBCALL_AI_SILENCE_END_MS=1500
+WEBCALL_AI_POST_TTS_LISTEN_GRACE_MS=800
 WEBCHAT_VOICE_PROVIDER=livekit
 WEBCHAT_VOICE_ENABLED=true
 LIVEKIT_URL=wss://voice.leakle.com
@@ -44,6 +48,8 @@ WEBCALL_AI_PROVIDER_RUNTIME_OUTPUT_CONTRACT=speedaf_webchat_fast_reply_v1
 ```
 
 For real audio rollout, replace fake STT/TTS with approved external or streaming providers during a controlled canary. ProviderRuntime LLM, streaming STT, streaming TTS chunk publish, and server-side barge-in are checked in but remain fail-closed until secrets and rollout flags are present.
+
+The production collector is intentionally tracking-safe: it waits for at least 4000ms of customer audio before a silence endpoint can finalize a turn, caps the utterance at 12000ms, and requires 1500ms of silence after speech. This avoids the previous 1.5s finalization pattern where a short pause could send a fragment such as `GOO...AN.` to STT before the tracking number was spoken. The 800ms post-TTS listen grace prevents playback tail or echo from becoming the next customer utterance.
 
 Deepgram streaming STT can be canaried on the STT leg:
 
@@ -116,7 +122,7 @@ The server-side LiveKit agent writes read-only audio evidence before each STT ca
 - `webcall_ai.stt.audio_input_stats`
 - `webcall_ai.stt.empty_with_audio_stats`
 
-Each STT input stats event includes `voice_session_id`, `turn_index`, `participant_identity`, `track_sid`, `frame_count`, `audio_ms`, `pcm_bytes`, `sample_rate`, `channels`, and `rms_min` / `rms_avg` / `rms_max`. Empty transcript events classify the cause as `no_remote_audio_track`, `audio_track_muted`, `no_pcm_frames`, `pcm_too_short`, `pcm_silent`, or `deepgram_empty_transcript`.
+Each STT input stats event includes `voice_session_id`, `turn_index`, `participant_identity`, `track_sid`, `frame_count`, `audio_ms`, `pcm_bytes`, `sample_rate`, `channels`, `rms_min` / `rms_avg` / `rms_max`, and capture metadata such as `capture_min_audio_ms`, `capture_max_audio_ms`, `capture_silence_end_ms`, and `capture_end_reason`. Empty transcript events classify the cause as `no_remote_audio_track`, `audio_track_muted`, `no_pcm_frames`, `pcm_too_short`, `pcm_silent`, or `deepgram_empty_transcript`.
 
 Keep these disabled for the initial rollout:
 

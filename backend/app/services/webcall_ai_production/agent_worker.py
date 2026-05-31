@@ -213,7 +213,8 @@ def run_claimed_session_loop(session_id: int, *, worker_id: str, io: LiveKitAgen
             payload={"voice_session_id": claimed_session.public_id, "worker_id": worker_id},
         )
         db.commit()
-        _speak_greeting(db, session=claimed_session, worker_id=worker_id, io=managed_io)
+        if _speak_greeting(db, session=claimed_session, worker_id=worker_id, io=managed_io):
+            _sleep_post_tts_listen_grace(settings)
         started_at = time.monotonic()
         while not SHUTDOWN_REQUESTED and (time.monotonic() - started_at) < settings.max_session_seconds:
             can_continue, reason = should_continue_session(db, session_id=session_id, worker_id=worker_id)
@@ -232,7 +233,7 @@ def run_claimed_session_loop(session_id: int, *, worker_id: str, io: LiveKitAgen
             try:
                 media_turn = managed_io.collect_next_customer_utterance(
                     timeout_seconds=float(os.getenv("WEBCALL_AI_UTTERANCE_TIMEOUT_SECONDS", "20")),
-                    max_seconds=float(settings.max_utterance_seconds),
+                    max_seconds=float(settings.max_utterance_audio_ms) / 1000.0,
                 )
             except VisitorDisconnected:
                 release_session(db, session_id=session_id, worker_id=worker_id, reason="visitor_disconnected")
@@ -316,6 +317,7 @@ def run_claimed_session_loop(session_id: int, *, worker_id: str, io: LiveKitAgen
             if bool(result.get("handoff_required")):
                 release_session(db, session_id=session_id, worker_id=worker_id, reason=str(result.get("handoff_reason") or "handoff_required"))
                 return {"claimed": 1, "processed": turns, "failed": 0, "status": "handoff_required"}
+            _sleep_post_tts_listen_grace(settings)
         release_session(db, session_id=session_id, worker_id=worker_id, reason="max_session_seconds")
         return {"claimed": 1, "processed": turns, "failed": 0, "status": "max_session_seconds"}
     except Exception as exc:
@@ -339,7 +341,7 @@ def run_claimed_session_loop(session_id: int, *, worker_id: str, io: LiveKitAgen
         db.close()
 
 
-def _speak_greeting(db, *, session: WebchatVoiceSession, worker_id: str, io: LiveKitAgentIO) -> None:
+def _speak_greeting(db, *, session: WebchatVoiceSession, worker_id: str, io: LiveKitAgentIO) -> bool:
     turn = build_handoff_turn(
         db,
         session=session,
@@ -352,6 +354,7 @@ def _speak_greeting(db, *, session: WebchatVoiceSession, worker_id: str, io: Liv
     tts_payload = turn["tts"]
     try:
         _publish_tts_payload(io, tts_payload)
+        return True
     except BargeInInterrupted as exc:
         if hasattr(io, "cancel_ai_audio_stream"):
             io.cancel_ai_audio_stream(reason="barge_in")
@@ -369,6 +372,7 @@ def _speak_greeting(db, *, session: WebchatVoiceSession, worker_id: str, io: Liv
             },
         )
         db.commit()
+        return False
 
 
 def _publish_tts_payload(io: LiveKitAgentIO, tts_payload: dict) -> None:
@@ -491,6 +495,11 @@ def _safe_audio_event_payload(payload: dict | None) -> dict[str, object]:
         "rms_avg",
         "rms_max",
         "audio_input_classification",
+        "capture_mode",
+        "capture_min_audio_ms",
+        "capture_max_audio_ms",
+        "capture_silence_end_ms",
+        "capture_end_reason",
     }
     sanitized: dict[str, object] = {}
     for key, value in (payload or {}).items():
@@ -524,6 +533,12 @@ def _write_audio_ingress_empty_event(db, *, session: WebchatVoiceSession, io: Li
         payload=payload,
     )
     db.commit()
+
+
+def _sleep_post_tts_listen_grace(settings) -> None:
+    grace_ms = int(getattr(settings, "post_tts_listen_grace_ms", 800) or 0)
+    if grace_ms > 0:
+        time.sleep(grace_ms / 1000.0)
 
 
 def main() -> None:

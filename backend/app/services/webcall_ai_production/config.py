@@ -65,9 +65,10 @@ class WebCallAIProductionSettings:
     max_active_sessions: int
     max_turns_per_session: int
     max_session_seconds: int
-    min_utterance_seconds: int
-    max_utterance_seconds: int
+    min_utterance_audio_ms: int
+    max_utterance_audio_ms: int
     silence_end_ms: int
+    post_tts_listen_grace_ms: int
     audio_sample_rate: int
     record_raw_audio: bool
     allow_speedaf_work_order: bool
@@ -201,9 +202,10 @@ def get_webcall_ai_production_settings() -> WebCallAIProductionSettings:
         max_active_sessions=_int_env("WEBCALL_AI_MAX_ACTIVE_SESSIONS", 3, minimum=1, maximum=100),
         max_turns_per_session=_int_env("WEBCALL_AI_MAX_TURNS_PER_SESSION", 10, minimum=1, maximum=100),
         max_session_seconds=_int_env("WEBCALL_AI_MAX_SESSION_SECONDS", 600, minimum=60, maximum=3600),
-        min_utterance_seconds=_int_env("WEBCALL_AI_MIN_UTTERANCE_SECONDS", 1, minimum=0, maximum=10),
-        max_utterance_seconds=_int_env("WEBCALL_AI_MAX_UTTERANCE_SECONDS", 12, minimum=1, maximum=60),
-        silence_end_ms=_int_env("WEBCALL_AI_SILENCE_END_MS", 700, minimum=100, maximum=5000),
+        min_utterance_audio_ms=_int_env("WEBCALL_AI_MIN_UTTERANCE_AUDIO_MS", 4000, minimum=0, maximum=30000),
+        max_utterance_audio_ms=_int_env("WEBCALL_AI_MAX_UTTERANCE_AUDIO_MS", 12000, minimum=1000, maximum=60000),
+        silence_end_ms=_int_env("WEBCALL_AI_SILENCE_END_MS", 1500, minimum=0, maximum=8000),
+        post_tts_listen_grace_ms=_int_env("WEBCALL_AI_POST_TTS_LISTEN_GRACE_MS", 800, minimum=0, maximum=5000),
         audio_sample_rate=_int_env("WEBCALL_AI_AUDIO_SAMPLE_RATE", 48000, minimum=8000, maximum=48000),
         record_raw_audio=_bool_env("WEBCALL_AI_RECORD_RAW_AUDIO", False),
         allow_speedaf_work_order=_bool_env("WEBCALL_AI_ALLOW_SPEEDAF_WORK_ORDER", False),

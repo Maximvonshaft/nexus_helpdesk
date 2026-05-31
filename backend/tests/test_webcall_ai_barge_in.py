@@ -104,6 +104,7 @@ def clean_db_and_env(monkeypatch):
     monkeypatch.setenv("WEBCALL_AI_AGENT_ENABLED", "true")
     monkeypatch.setenv("WEBCALL_AI_PROVIDER_PROFILE", "fake")
     monkeypatch.setenv("WEBCALL_AI_MAX_SESSION_SECONDS", "60")
+    monkeypatch.setenv("WEBCALL_AI_POST_TTS_LISTEN_GRACE_MS", "0")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "mock")
     monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "true")
     monkeypatch.setenv("STT_PROVIDER", "fake")
@@ -153,7 +154,7 @@ def _claimed_session(db) -> WebchatVoiceSession:
 def test_livekit_publish_stream_interrupts_and_preserves_barge_in_audio(monkeypatch):
     fake_livekit = types.SimpleNamespace(rtc=types.SimpleNamespace(AudioFrame=FakeAudioFrame))
     monkeypatch.setitem(sys.modules, "livekit", fake_livekit)
-    monkeypatch.setenv("WEBCALL_AI_MIN_UTTERANCE_SECONDS", "0")
+    monkeypatch.setenv("WEBCALL_AI_MIN_UTTERANCE_AUDIO_MS", "0")
     monkeypatch.setenv("WEBCALL_AI_SILENCE_END_MS", "0")
     backend = SDKLiveKitRTCBackend()
     backend._audio_queue = asyncio.Queue()

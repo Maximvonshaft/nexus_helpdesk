@@ -41,6 +41,7 @@ def clean_db_and_env(monkeypatch):
     monkeypatch.setenv("WEBCALL_AI_PROVIDER_PROFILE", "fake")
     monkeypatch.setenv("WEBCALL_AI_MAX_SESSION_SECONDS", "60")
     monkeypatch.setenv("WEBCALL_AI_MAX_TURNS_PER_SESSION", "5")
+    monkeypatch.setenv("WEBCALL_AI_POST_TTS_LISTEN_GRACE_MS", "0")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "mock")
     monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "true")
     monkeypatch.setenv("STT_PROVIDER", "fake")
@@ -254,7 +255,7 @@ def test_pcm16_to_wav_wraps_livekit_raw_pcm_for_stt_contract():
 
 
 def test_vad_returns_after_speech_and_silence_without_waiting_for_max(monkeypatch):
-    monkeypatch.setenv("WEBCALL_AI_MIN_UTTERANCE_SECONDS", "0")
+    monkeypatch.setenv("WEBCALL_AI_MIN_UTTERANCE_AUDIO_MS", "0")
     monkeypatch.setenv("WEBCALL_AI_SILENCE_END_MS", "40")
     backend = SDKLiveKitRTCBackend()
     backend._audio_queue = __import__("asyncio").Queue()

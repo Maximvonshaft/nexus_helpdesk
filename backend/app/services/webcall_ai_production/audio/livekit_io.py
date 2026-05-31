@@ -306,11 +306,15 @@ class SDKLiveKitRTCBackend:
         participant_identity: str | None = self._remote_participant_identity
         frame_count = 0
         muted_frames = 0
-        deadline = time.monotonic() + max_seconds
-        min_seconds = float(os.getenv("WEBCALL_AI_MIN_UTTERANCE_SECONDS", "0.35"))
-        silence_end_ms = int(os.getenv("WEBCALL_AI_SILENCE_END_MS", "700"))
+        max_audio_ms = _max_utterance_audio_ms(max_seconds=max_seconds)
+        min_audio_ms = min(_min_utterance_audio_ms(), max_audio_ms)
+        silence_end_ms = _silence_end_ms()
+        deadline = time.monotonic() + max(max_seconds, max_audio_ms / 1000.0)
         speech_seen = False
         silence_ms = 0
+        audio_ms = 0
+        pcm_bytes = 0
+        end_reason = "deadline"
         while time.monotonic() < deadline:
             timeout = min(timeout_seconds, max(0.1, deadline - time.monotonic()))
             frame = self._pop_buffered_audio_frame()
@@ -326,15 +330,21 @@ class SDKLiveKitRTCBackend:
             muted_frames += 1 if frame.muted else 0
             chunks.append(frame.data)
             frame_ms = _pcm_frame_duration_ms(frame.data, sample_rate=sample_rate, channels=channels)
+            audio_ms += frame_ms
+            pcm_bytes += len(frame.data)
             if is_speech_pcm16(frame.data):
                 speech_seen = True
                 silence_ms = 0
             elif speech_seen:
                 silence_ms += frame_ms
-            utterance_seconds = sum(_pcm_frame_duration_ms(item, sample_rate=sample_rate, channels=channels) for item in chunks) / 1000.0
-            if speech_seen and utterance_seconds >= min_seconds and silence_ms >= silence_end_ms:
+            if pcm_bytes >= int(os.getenv("WEBCALL_AI_MAX_UTTERANCE_BYTES", "768000")):
+                end_reason = "max_utterance_bytes"
                 break
-            if sum(len(item) for item in chunks) >= int(os.getenv("WEBCALL_AI_MAX_UTTERANCE_BYTES", "768000")):
+            if audio_ms >= max_audio_ms:
+                end_reason = "max_utterance_audio_ms"
+                break
+            if speech_seen and audio_ms >= min_audio_ms and silence_ms >= silence_end_ms:
+                end_reason = "silence_after_min_utterance"
                 break
         if not chunks:
             raise LiveKitIOError("customer_audio_timeout")
@@ -353,6 +363,11 @@ class SDKLiveKitRTCBackend:
                 "track_sid": track_sid,
                 "remote_track_seen": self._remote_audio_track_seen,
                 "audio_track_muted": frame_count > 0 and muted_frames == frame_count,
+                "capture_mode": "tracking_long",
+                "capture_min_audio_ms": min_audio_ms,
+                "capture_max_audio_ms": max_audio_ms,
+                "capture_silence_end_ms": silence_end_ms,
+                "capture_end_reason": end_reason,
             }
         )
         return LiveKitMediaTurn(audio_bytes=audio, sample_rate=sample_rate, channels=channels, mime_type="audio/pcm", language=None, audio_stats=stats)
@@ -556,6 +571,28 @@ def _pcm_frame_duration_ms(pcm_bytes: bytes, *, sample_rate: int, channels: int)
         return 0
     samples_per_channel = len(pcm_bytes) / 2 / channels
     return int((samples_per_channel / sample_rate) * 1000)
+
+
+def _min_utterance_audio_ms() -> int:
+    return _bounded_int_env("WEBCALL_AI_MIN_UTTERANCE_AUDIO_MS", 4000, minimum=0, maximum=30000)
+
+
+def _max_utterance_audio_ms(*, max_seconds: float) -> int:
+    env_max_ms = _bounded_int_env("WEBCALL_AI_MAX_UTTERANCE_AUDIO_MS", 12000, minimum=1000, maximum=60000)
+    caller_max_ms = int(max(0.1, max_seconds) * 1000)
+    return max(100, min(env_max_ms, caller_max_ms))
+
+
+def _silence_end_ms() -> int:
+    return _bounded_int_env("WEBCALL_AI_SILENCE_END_MS", 1500, minimum=0, maximum=8000)
+
+
+def _bounded_int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return max(minimum, min(value, maximum))
 
 
 def _barge_in_enabled() -> bool:

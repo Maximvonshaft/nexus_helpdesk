@@ -228,6 +228,11 @@ def _safe_audio_stats_payload(payload: dict[str, object]) -> dict[str, object]:
         "stt_provider",
         "remote_track_seen",
         "audio_track_muted",
+        "capture_mode",
+        "capture_min_audio_ms",
+        "capture_max_audio_ms",
+        "capture_silence_end_ms",
+        "capture_end_reason",
     }
     sanitized: dict[str, object] = {}
     for key, value in payload.items():

@@ -112,6 +112,15 @@ def test_default_runtime_is_fail_closed(monkeypatch):
     assert payload["record_raw_audio"] is False
 
 
+def test_audio_capture_window_defaults_are_tracking_safe():
+    settings = get_webcall_ai_production_settings()
+
+    assert settings.min_utterance_audio_ms == 4000
+    assert settings.max_utterance_audio_ms == 12000
+    assert settings.silence_end_ms == 1500
+    assert settings.post_tts_listen_grace_ms == 800
+
+
 def test_kill_switch_disables_runtime(monkeypatch):
     monkeypatch.setenv("WEBCALL_AI_KILL_SWITCH", "true")
     get_webcall_ai_production_settings.cache_clear()
