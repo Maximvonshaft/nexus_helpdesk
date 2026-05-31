@@ -83,7 +83,6 @@ jobs:
 
           write_flag = re.compile(r'SPEEDAF_(?:CANCEL|UPDATE_ADDRESS|WORK_ORDER_CREATE)_ENABLED\s*=\s*(?:true|TRUE|1|yes|YES|on|ON)')
           credential = re.compile(r'(?:appCode|secretKey|SPEEDAF_[A-Z0-9_]*(?:SECRET|TOKEN|KEY)|SPEEDAF_[A-Z0-9_]*SIGN)\s*[:=]\s*[\"\']?(?P<value>[A-Za-z0-9_\-]{20,})')
-          voice_enabled = re.compile(r'SPEEDAF_VOICE_CALLBACK_ENABLED.*true')
           placeholder = re.compile(r'(?:PASTE|PLACEHOLDER|EXAMPLE|DUMMY|REDACTED|CHANGEME|YOUR_|_HERE)', re.IGNORECASE)
 
           violations: list[str] = []
@@ -104,8 +103,6 @@ jobs:
               for idx, line in enumerate(text.splitlines(), 1):
                   if write_flag.search(line):
                       violations.append(f'{path}:{idx}: Speedaf write feature flag enabled in runtime file')
-                  if voice_enabled.search(line):
-                      violations.append(f'{path}:{idx}: Speedaf voice callback must remain disabled/excluded')
                   match = credential.search(line)
                   if match and not placeholder.search(match.group('value')):
                       violations.append(f'{path}:{idx}: possible Speedaf credential-like material')
@@ -168,6 +165,9 @@ jobs:
 
           cancel = Path('backend/app/api/speedaf_cancel.py').read_text(encoding='utf-8')
           actions = Path('backend/app/api/speedaf_actions.py').read_text(encoding='utf-8')
+          voice = Path('backend/app/api/webchat_voice.py').read_text(encoding='utf-8')
+          voice_service = Path('backend/app/services/webchat_voice_service.py').read_text(encoding='utf-8')
+          jobs = Path('backend/app/services/background_jobs.py').read_text(encoding='utf-8')
           tracking = Path('backend/app/services/speedaf/tracking_fact_source.py').read_text(encoding='utf-8')
           schema = Path('backend/app/services/tracking_fact_schema.py').read_text(encoding='utf-8')
 
@@ -195,6 +195,18 @@ jobs:
           missing = [item for item in required_actions if item not in actions]
           if missing:
               raise SystemExit(f'MISSING_ACTION_CONTRACTS={missing}')
+
+          required_voice = [
+              'speedaf/callback',
+              'SpeedafVoiceCallbackRequest',
+              'queue_speedaf_voice_callback',
+              'SPEEDAF_VOICE_CALLBACK_ENABLED',
+              'speedaf.voice.callback',
+          ]
+          combined_voice = '\n'.join([voice, voice_service, jobs])
+          missing = [item for item in required_voice if item not in combined_voice]
+          if missing:
+              raise SystemExit(f'MISSING_VOICE_CALLBACK_CONTRACTS={missing}')
 
           required_tracking = [
               'query_waybills_by_caller',
@@ -231,4 +243,5 @@ jobs:
           timeout 600 python -m pytest -q \
             backend/tests/test_speedaf_tracking_full_value.py \
             backend/tests/test_speedaf_cancel_controlled_action.py \
-            backend/tests/test_speedaf_workorder_address_actions.py
+            backend/tests/test_speedaf_workorder_address_actions.py \
+            backend/tests/test_webchat_voice_api.py

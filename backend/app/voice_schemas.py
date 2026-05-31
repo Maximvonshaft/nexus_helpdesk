@@ -146,6 +146,50 @@ class WebchatVoiceEvidenceResponse(BaseModel):
     ai_actions: list[WebchatVoiceAIActionRead] = Field(default_factory=list)
 
 
+class SpeedafVoiceCallbackActionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    waybillCode: str = Field(min_length=1, max_length=64)
+    action: str = Field(min_length=1, max_length=32)
+    actionTime: str | None = Field(default=None, max_length=19)
+    aiActionSummary: str = Field(min_length=1, max_length=200)
+    actionStatus: Literal["SUCCESS", "FAILED"] = "SUCCESS"
+    errorCode: str = Field(default="", max_length=80)
+
+    @field_validator("waybillCode", "action", "actionTime", "aiActionSummary", "errorCode", mode="before")
+    @classmethod
+    def strip_speedaf_voice_callback_text(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class SpeedafVoiceCallbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    callSessionId: str | None = Field(default=None, max_length=64)
+    isTransferredToHuman: bool = False
+    action: SpeedafVoiceCallbackActionPayload
+
+    @field_validator("callSessionId", mode="before")
+    @classmethod
+    def strip_call_session_id(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class SpeedafVoiceCallbackResponse(BaseModel):
+    ok: bool = True
+    ticket_id: int
+    voice_session_id: str
+    status: str
+    message: str
+    jobId: int
+    dedupeKey: str
+    ai_action_id: int
+
+
 class WebchatVoiceSessionRead(BaseModel):
     ok: bool = True
     voice_session_id: str

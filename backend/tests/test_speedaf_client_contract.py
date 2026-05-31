@@ -95,8 +95,9 @@ def test_post_redacts_request_and_response_payloads():
 
 
 def test_redactor_blocks_sensitive_fields():
-    redacted = redact_mapping({"callerID": "41000000000", "acceptAddress": "Private Address", "nested": {"acceptMobile": "41000001111"}})
+    redacted = redact_mapping({"callerID": "41000000000", "waybillCode": "WBVOICE12345", "acceptAddress": "Private Address", "nested": {"acceptMobile": "41000001111"}})
     text = json.dumps(redacted, ensure_ascii=False)
     assert "41000000000" not in text
+    assert "WBVOICE12345" not in text
     assert "Private Address" not in text
     assert "41000001111" not in text

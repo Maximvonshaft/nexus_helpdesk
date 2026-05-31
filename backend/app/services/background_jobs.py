@@ -23,6 +23,7 @@ WEBCHAT_AI_REPLY_JOB = 'webchat.ai_reply'
 WEBCHAT_HANDOFF_SNAPSHOT_JOB = 'webchat.handoff_snapshot'
 SPEEDAF_WORK_ORDER_CREATE_JOB = 'speedaf.work_order.create'
 SPEEDAF_ADDRESS_UPDATE_JOB = 'speedaf.address_update.submit'
+SPEEDAF_VOICE_CALLBACK_JOB = 'speedaf.voice.callback'
 EMAIL_MAILBOX_SYNC_JOB = 'email.mailbox_sync'
 SPEEDAF_WORK_ORDER_DESCRIPTION_MAX_LENGTH = 200
 
@@ -75,6 +76,29 @@ def enqueue_speedaf_work_order_create_job(db: Session, *, ticket_id: int, waybil
 def enqueue_speedaf_address_update_job(db: Session, *, ticket_id: int, waybill_code: str, caller_id: str, whatsapp_phone: str, dedupe_key: str, request_id: str | None = None) -> BackgroundJob:
     payload = {'ticket_id': ticket_id, 'waybillCode': waybill_code, 'callerID': caller_id, 'whatsAppPhone': whatsapp_phone, 'addressUpdateDedupeKey': dedupe_key, 'request_id': request_id}
     return enqueue_background_job(db, queue_name='speedaf_address_update', job_type=SPEEDAF_ADDRESS_UPDATE_JOB, payload=payload, dedupe_key=dedupe_key)
+
+
+def enqueue_speedaf_voice_callback_job(
+    db: Session,
+    *,
+    ticket_id: int,
+    voice_session_id: int,
+    call_session_id: str,
+    is_transferred_to_human: bool,
+    action: dict,
+    dedupe_key: str,
+    request_id: str | None = None,
+) -> BackgroundJob:
+    payload = {
+        'ticket_id': ticket_id,
+        'voice_session_id': voice_session_id,
+        'callSessionId': call_session_id,
+        'isTransferredToHuman': 1 if is_transferred_to_human else 0,
+        'action': action,
+        'voiceCallbackDedupeKey': dedupe_key,
+        'request_id': request_id,
+    }
+    return enqueue_background_job(db, queue_name='speedaf_voice_callback', job_type=SPEEDAF_VOICE_CALLBACK_JOB, payload=payload, dedupe_key=dedupe_key)
 
 
 def enqueue_stale_openclaw_sync_jobs(db: Session, *, limit: int | None = None) -> list[BackgroundJob]:
@@ -217,6 +241,42 @@ def _process_speedaf_address_update_job(db: Session, job: BackgroundJob, payload
     raise RuntimeError(result.error_code or 'speedaf_address_update_failed')
 
 
+def _process_speedaf_voice_callback_job(db: Session, job: BackgroundJob, payload: dict) -> None:
+    from .speedaf.action_service import SpeedafActionDisabled, SpeedafActionService
+    from .speedaf.redactor import safe_waybill_payload
+    ticket_id = int(payload['ticket_id'])
+    voice_session_id = _int_or_none(payload.get('voice_session_id'))
+    dedupe_key = str(payload.get('voiceCallbackDedupeKey') or job.dedupe_key or f'speedaf-voice-callback:{job.id}')
+    action = payload.get('action') if isinstance(payload.get('action'), dict) else {}
+    waybill_code = str(action.get('waybillCode') or '')
+    callback_payload = {
+        'callSessionId': str(payload.get('callSessionId') or ''),
+        'isTransferredToHuman': int(payload.get('isTransferredToHuman') or 0),
+        'action': action,
+    }
+    result_payload: dict = {
+        'job_id': job.id,
+        'job_type': SPEEDAF_VOICE_CALLBACK_JOB,
+        'ticket_id': ticket_id,
+        'voice_session_id': voice_session_id,
+        'dedupe_key': dedupe_key,
+        **safe_waybill_payload(waybill_code),
+    }
+    try:
+        result = SpeedafActionService(ticket_id=ticket_id, background_job_id=job.id, request_id=dedupe_key).send_voice_callback(callback_payload)
+    except SpeedafActionDisabled as exc:
+        result_payload.update({'ok': False, 'status': 'disabled', 'error_code': type(exc).__name__, 'error_message': str(exc)})
+        _append_ticket_event(db, ticket_id=ticket_id, field_name='speedaf_voice_callback', new_value='skipped', note='Speedaf voice callback skipped by feature gate.', payload=result_payload)
+        _mark_done(job)
+        return
+    result_payload.update({'ok': result.ok, 'status': result.status, 'error_code': result.error_code, 'error_message': result.error_message, 'safe_payload': result.safe_payload})
+    if result.ok:
+        _append_ticket_event(db, ticket_id=ticket_id, field_name='speedaf_voice_callback', new_value='completed', note='Speedaf voice callback completed.', payload=result_payload)
+        return
+    _append_ticket_event(db, ticket_id=ticket_id, field_name='speedaf_voice_callback', new_value='failed', note='Speedaf voice callback failed.', payload=result_payload)
+    raise RuntimeError(result.error_code or 'speedaf_voice_callback_failed')
+
+
 def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
     payload = json.loads(job.payload_json or '{}')
     try:
@@ -277,6 +337,10 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             _process_speedaf_address_update_job(db, job, payload)
             _mark_done(job)
             return job
+        if job.job_type == SPEEDAF_VOICE_CALLBACK_JOB:
+            _process_speedaf_voice_callback_job(db, job, payload)
+            _mark_done(job)
+            return job
         if job.job_type == EMAIL_MAILBOX_SYNC_JOB:
             from .email_mailbox_polling_service import process_email_mailbox_sync_job
             process_email_mailbox_sync_job(db, account_id=int(payload['account_id']))
@@ -304,7 +368,7 @@ def dispatch_pending_background_jobs(db: Session, *, limit: int | None = None, w
         from .email_mailbox_polling_service import enqueue_due_email_mailbox_sync_jobs
         enqueue_due_email_mailbox_sync_jobs(db, interval_seconds=settings.email_mailbox_sync_interval_seconds, limit=settings.email_mailbox_sync_batch_size)
         db.commit()
-    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB, WEBCHAT_AI_REPLY_JOB, WEBCHAT_HANDOFF_SNAPSHOT_JOB, SPEEDAF_WORK_ORDER_CREATE_JOB, SPEEDAF_ADDRESS_UPDATE_JOB, EMAIL_MAILBOX_SYNC_JOB])
+    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB, WEBCHAT_AI_REPLY_JOB, WEBCHAT_HANDOFF_SNAPSHOT_JOB, SPEEDAF_WORK_ORDER_CREATE_JOB, SPEEDAF_ADDRESS_UPDATE_JOB, SPEEDAF_VOICE_CALLBACK_JOB, EMAIL_MAILBOX_SYNC_JOB])
     processed: list[BackgroundJob] = []
     for job in claimed:
         process_background_job(db, job)
