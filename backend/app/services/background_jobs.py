@@ -13,6 +13,7 @@ from ..models import BackgroundJob, OpenClawConversationLink, OpenClawTranscript
 from ..settings import get_settings
 from ..utils.time import utc_now
 from . import openclaw_bridge, openclaw_client_factory
+from .email_mailbox_identity import ensure_outbound_mailbox_identity
 
 settings = get_settings()
 AUTO_REPLY_JOB = 'auto_reply.send_update'
@@ -22,6 +23,7 @@ WEBCHAT_AI_REPLY_JOB = 'webchat.ai_reply'
 WEBCHAT_HANDOFF_SNAPSHOT_JOB = 'webchat.handoff_snapshot'
 SPEEDAF_WORK_ORDER_CREATE_JOB = 'speedaf.work_order.create'
 SPEEDAF_ADDRESS_UPDATE_JOB = 'speedaf.address_update.submit'
+EMAIL_MAILBOX_SYNC_JOB = 'email.mailbox_sync'
 SPEEDAF_WORK_ORDER_DESCRIPTION_MAX_LENGTH = 200
 
 
@@ -149,6 +151,9 @@ def _draft_ai_auto_reply(db: Session, *, ticket, user, body: str, channel: Sourc
     message = TicketOutboundMessage(ticket_id=ticket.id, channel=channel, status=MessageStatus.draft, body=body, provider_status='ai_review_required', error_message='AI-generated auto reply saved as draft by outbound safety gate', failure_code='ai_review_required', failure_reason='AI-generated outbound requires human review before direct send', created_by=user.id, max_retries=settings.outbox_max_retries)
     db.add(message)
     db.flush()
+    if channel == SourceChannel.email:
+        ensure_outbound_mailbox_identity(message, ticket=ticket, include_message_id=False)
+        db.flush()
     return message
 
 
@@ -272,6 +277,11 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             _process_speedaf_address_update_job(db, job, payload)
             _mark_done(job)
             return job
+        if job.job_type == EMAIL_MAILBOX_SYNC_JOB:
+            from .email_mailbox_polling_service import process_email_mailbox_sync_job
+            process_email_mailbox_sync_job(db, account_id=int(payload['account_id']))
+            _mark_done(job)
+            return job
         if job.job_type == OPENCLAW_SYNC_JOB:
             if not settings.openclaw_sync_enabled:
                 _mark_done(job)
@@ -290,7 +300,11 @@ def dispatch_pending_background_jobs(db: Session, *, limit: int | None = None, w
     if settings.openclaw_sync_enabled:
         enqueue_stale_openclaw_sync_jobs(db, limit=settings.openclaw_sync_batch_size)
         db.commit()
-    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB, WEBCHAT_AI_REPLY_JOB, WEBCHAT_HANDOFF_SNAPSHOT_JOB, SPEEDAF_WORK_ORDER_CREATE_JOB, SPEEDAF_ADDRESS_UPDATE_JOB])
+    if settings.email_mailbox_sync_enabled:
+        from .email_mailbox_polling_service import enqueue_due_email_mailbox_sync_jobs
+        enqueue_due_email_mailbox_sync_jobs(db, interval_seconds=settings.email_mailbox_sync_interval_seconds, limit=settings.email_mailbox_sync_batch_size)
+        db.commit()
+    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB, WEBCHAT_AI_REPLY_JOB, WEBCHAT_HANDOFF_SNAPSHOT_JOB, SPEEDAF_WORK_ORDER_CREATE_JOB, SPEEDAF_ADDRESS_UPDATE_JOB, EMAIL_MAILBOX_SYNC_JOB])
     processed: list[BackgroundJob] = []
     for job in claimed:
         process_background_job(db, job)

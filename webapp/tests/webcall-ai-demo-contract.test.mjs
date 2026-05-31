@@ -30,4 +30,8 @@ test('webcall ai demo route is visible only through ops navigation', () => {
   assert.match(shell, /\/webcall-ai-demo/)
   assert.match(shell, /access: routeAccess\['\/webcall-ai-demo'\]/)
   assert.match(rbac, /'\/webcall-ai-demo': \{ allOf: \[CAPABILITIES\.runtimeManage\] \}/)
+  assert.match(route, /<RequireCapability requirement=\{routeAccess\['\/webcall-ai-demo'\]\}>/)
+  assert.match(route, /canAccess\(session\.data, routeAccess\['\/webcall-ai-demo'\]\)/)
+  assert.doesNotMatch(route, /useNavigate/)
+  assert.doesNotMatch(route, /navigate\(\{ to: '\/' \}\)/)
 })

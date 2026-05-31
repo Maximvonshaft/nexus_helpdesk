@@ -106,6 +106,37 @@ class PersonaRollbackRequest(PersonaPublishRequest):
     version: int = Field(gt=0)
 
 
+class PersonaReviewSubmitRequest(BaseModel):
+    notes: Optional[str] = Field(default=None, max_length=4000)
+    release_window_start: Optional[datetime] = None
+    release_window_end: Optional[datetime] = None
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_notes(cls, value):
+        return _strip_optional_string(value)
+
+
+class PersonaReviewDecisionRequest(BaseModel):
+    decision_note: Optional[str] = Field(default=None, max_length=4000)
+    release_window_start: Optional[datetime] = None
+    release_window_end: Optional[datetime] = None
+
+    @field_validator("decision_note", mode="before")
+    @classmethod
+    def strip_decision_note(cls, value):
+        return _strip_optional_string(value)
+
+
+class PersonaReviewPublishRequest(BaseModel):
+    notes: Optional[str] = Field(default=None, max_length=4000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_notes(cls, value):
+        return _strip_optional_string(value)
+
+
 class PersonaResolvePreviewRequest(BaseModel):
     market_id: Optional[int] = None
     channel: Optional[str] = Field(default=None, max_length=40)
@@ -122,6 +153,31 @@ class PersonaResolvePreviewRequest(BaseModel):
         return _strip_optional_language(value)
 
 
+class PersonaRuntimeEvidenceRequest(BaseModel):
+    tenant_key: str = Field(default="default", min_length=1, max_length=120)
+    body: str = Field(default="Who are you and what can you help with?", min_length=1, max_length=1000)
+    market_id: Optional[int] = None
+    channel: Optional[str] = Field(default="webchat", max_length=40)
+    language: Optional[str] = Field(default=None, max_length=16)
+    audience_scope: str = Field(default="customer", max_length=40)
+    expected_profile_key: Optional[str] = Field(default=None, max_length=120)
+
+    @field_validator("tenant_key", "body", "channel", "audience_scope", "expected_profile_key", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value):
+        return _strip_optional_string(value)
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def strip_optional_language(cls, value):
+        return _strip_optional_language(value)
+
+    @field_validator("expected_profile_key")
+    @classmethod
+    def normalize_expected_profile_key(cls, value: str | None) -> str | None:
+        return value.strip().lower() if value else value
+
+
 class PersonaProfileVersionOut(ControlPlaneModel):
     id: int
     profile_id: int
@@ -131,6 +187,28 @@ class PersonaProfileVersionOut(ControlPlaneModel):
     notes: Optional[str] = None
     published_by: Optional[int] = None
     published_at: datetime
+
+
+class PersonaProfileReviewOut(ControlPlaneModel):
+    id: int
+    profile_id: int
+    review_version: int
+    status: str
+    snapshot_json: JsonObject
+    summary: Optional[str] = None
+    notes: Optional[str] = None
+    requested_by: Optional[int] = None
+    requested_at: datetime
+    reviewed_by: Optional[int] = None
+    reviewed_at: Optional[datetime] = None
+    decision_note: Optional[str] = None
+    release_window_start: Optional[datetime] = None
+    release_window_end: Optional[datetime] = None
+    published_by: Optional[int] = None
+    published_version: Optional[int] = None
+    published_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class PersonaProfileOut(ControlPlaneModel):
@@ -164,9 +242,25 @@ class PersonaProfileListOut(BaseModel):
     total: int
 
 
+class PersonaProfileReviewListOut(BaseModel):
+    reviews: list[PersonaProfileReviewOut]
+    total: int
+
+
 class PersonaResolvePreviewOut(BaseModel):
     profile: Optional[PersonaProfileOut] = None
     match_rank: Optional[int] = None
+
+
+class PersonaRuntimeEvidenceOut(ControlPlaneModel):
+    generated_at: datetime
+    matched_profile_key: Optional[str] = None
+    match_rank: Optional[int] = None
+    expected_profile_key: Optional[str] = None
+    matched_expected: Optional[bool] = None
+    persona_context: Optional[JsonObject] = None
+    runtime_context: JsonObject
+    evidence: JsonObject = Field(default_factory=dict)
 
 
 class KnowledgeItemBase(BaseModel):
@@ -291,6 +385,48 @@ class KnowledgeRuntimeContextTestRequest(KnowledgeRetrievalTestRequest):
     tenant_key: str = Field(default="default", min_length=1, max_length=120)
 
 
+class KnowledgeConflictCheckRequest(BaseModel):
+    q: Optional[str] = Field(default=None, max_length=500)
+    item_id: Optional[int] = Field(default=None, gt=0)
+    market_id: Optional[int] = None
+    channel: Optional[str] = Field(default=None, max_length=40)
+    audience_scope: Optional[str] = Field(default=None, max_length=40)
+    language: Optional[str] = Field(default=None, max_length=16)
+    include_archived: bool = False
+    limit: int = Field(default=12, ge=1, le=50)
+
+    @field_validator("q", "channel", "audience_scope", "language", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value):
+        return _strip_optional_string(value)
+
+
+class KnowledgeGoldenTestRequest(KnowledgeRetrievalTestRequest):
+    expected_item_key: Optional[str] = Field(default=None, max_length=120)
+    expected_answer_contains: Optional[str] = Field(default=None, max_length=1000)
+    forbidden_answer_terms: list[str] = Field(default_factory=list)
+    min_score: float = Field(default=12.0, ge=0, le=1000)
+
+    @field_validator("expected_item_key", "expected_answer_contains", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value):
+        return _strip_optional_string(value)
+
+    @field_validator("expected_item_key")
+    @classmethod
+    def normalize_expected_item_key(cls, value: str | None) -> str | None:
+        return value.strip().lower() if value else value
+
+    @field_validator("forbidden_answer_terms", mode="before")
+    @classmethod
+    def normalize_forbidden_terms(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [value]
+        return [str(item).strip() for item in value if str(item).strip()][:20]
+
+
 class KnowledgeItemVersionOut(ControlPlaneModel):
     id: int
     item_id: int
@@ -398,6 +534,44 @@ class KnowledgeRetrievalTestOut(BaseModel):
     top_hits: list[JsonObject] = Field(default_factory=list)
     grounding_would_apply: bool = False
     grounding_source: Optional[JsonObject] = None
+
+
+class KnowledgeConflictGroupOut(BaseModel):
+    key: str
+    term: str
+    scope: str
+    item_ids: list[int] = Field(default_factory=list)
+    item_keys: list[str] = Field(default_factory=list)
+    titles: list[str] = Field(default_factory=list)
+    status: str
+    blocker: bool
+    href: str
+    evidence: list[str] = Field(default_factory=list)
+
+
+class KnowledgeConflictCheckOut(ControlPlaneModel):
+    generated_at: datetime
+    total: int
+    conflicts: list[KnowledgeConflictGroupOut]
+    filters: JsonObject = Field(default_factory=dict)
+
+
+class KnowledgeGoldenAssertionOut(BaseModel):
+    key: str
+    label: str
+    passed: bool
+    expected: Optional[str] = None
+    actual: Optional[str] = None
+    evidence: str
+
+
+class KnowledgeGoldenTestOut(ControlPlaneModel):
+    generated_at: datetime
+    passed: bool
+    query: str
+    expected_item_key: Optional[str] = None
+    assertions: list[KnowledgeGoldenAssertionOut]
+    retrieval: KnowledgeRetrievalTestOut
 
 
 class KnowledgeRuntimeContextTestOut(BaseModel):

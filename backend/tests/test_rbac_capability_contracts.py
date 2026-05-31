@@ -12,6 +12,7 @@ from app.services.permissions import (
     CAP_SPEEDAF_CANCEL_WRITE,
     CAP_SPEEDAF_WORK_ORDER_WRITE,
     CAP_WEBCALL_VOICE_ACCEPT,
+    CAP_WEBCALL_VOICE_CONTROL,
     CAP_WEBCALL_VOICE_END,
     CAP_WEBCALL_VOICE_QUEUE_VIEW,
     CAP_WEBCALL_VOICE_READ,
@@ -34,6 +35,7 @@ def test_tool_and_voice_capabilities_are_in_source_of_truth_catalog():
         CAP_WEBCALL_VOICE_ACCEPT,
         CAP_WEBCALL_VOICE_REJECT,
         CAP_WEBCALL_VOICE_END,
+        CAP_WEBCALL_VOICE_CONTROL,
     }
 
     assert expected.issubset(set(ALL_CAPABILITIES))
@@ -47,6 +49,7 @@ def test_admin_gets_new_high_risk_capabilities_by_default_but_agent_and_auditor_
         CAP_WEBCALL_VOICE_ACCEPT,
         CAP_WEBCALL_VOICE_REJECT,
         CAP_WEBCALL_VOICE_END,
+        CAP_WEBCALL_VOICE_CONTROL,
     }
 
     assert high_risk.issubset(resolve_capabilities(_user(UserRole.admin)))

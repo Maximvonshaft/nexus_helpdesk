@@ -32,6 +32,13 @@ type EmailForm = {
   from_address: string
   reply_to: string
   security_mode: OutboundEmailSecurityMode
+  inbound_enabled: boolean
+  imap_host: string
+  imap_port: number
+  imap_username: string
+  imap_password: string
+  imap_security_mode: OutboundEmailSecurityMode
+  imap_mailbox: string
   market_id: number | null
   priority: number
   is_active: boolean
@@ -43,8 +50,18 @@ const SECURITY_OPTIONS: Array<{ label: string; value: OutboundEmailSecurityMode;
   { label: 'Plain', value: 'plain', port: 25 },
 ]
 
+const IMAP_SECURITY_OPTIONS: Array<{ label: string; value: OutboundEmailSecurityMode; port: number }> = [
+  { label: 'SSL/TLS', value: 'ssl', port: 993 },
+  { label: 'STARTTLS', value: 'starttls', port: 143 },
+  { label: 'Plain', value: 'plain', port: 143 },
+]
+
 function suggestedPort(mode: OutboundEmailSecurityMode) {
   return SECURITY_OPTIONS.find((item) => item.value === mode)?.port ?? 587
+}
+
+function suggestedImapPort(mode: OutboundEmailSecurityMode) {
+  return IMAP_SECURITY_OPTIONS.find((item) => item.value === mode)?.port ?? 993
 }
 
 function emptyForm(): EmailForm {
@@ -57,6 +74,13 @@ function emptyForm(): EmailForm {
     from_address: '',
     reply_to: '',
     security_mode: 'starttls',
+    inbound_enabled: false,
+    imap_host: '',
+    imap_port: 993,
+    imap_username: '',
+    imap_password: '',
+    imap_security_mode: 'ssl',
+    imap_mailbox: 'INBOX',
     market_id: null,
     priority: 100,
     is_active: true,
@@ -74,6 +98,13 @@ function formFromAccount(account: OutboundEmailAccount): EmailForm {
     from_address: account.from_address,
     reply_to: account.reply_to ?? '',
     security_mode: securityMode,
+    inbound_enabled: account.inbound_enabled,
+    imap_host: account.imap_host ?? '',
+    imap_port: account.imap_port ?? suggestedImapPort(account.imap_security_mode === 'starttls' || account.imap_security_mode === 'plain' || account.imap_security_mode === 'ssl' ? account.imap_security_mode : 'ssl'),
+    imap_username: account.imap_username ?? '',
+    imap_password: '',
+    imap_security_mode: account.imap_security_mode === 'starttls' || account.imap_security_mode === 'plain' || account.imap_security_mode === 'ssl' ? account.imap_security_mode : 'ssl',
+    imap_mailbox: account.imap_mailbox ?? 'INBOX',
     market_id: account.market_id ?? null,
     priority: account.priority,
     is_active: account.is_active,
@@ -119,6 +150,13 @@ function buildCreatePayload(form: EmailForm): OutboundEmailAccountCreate {
     from_address: form.from_address.trim(),
     reply_to: normalizeOptional(form.reply_to),
     security_mode: form.security_mode,
+    inbound_enabled: Boolean(form.inbound_enabled),
+    imap_host: normalizeOptional(form.imap_host),
+    imap_port: form.inbound_enabled ? Number(form.imap_port || suggestedImapPort(form.imap_security_mode)) : null,
+    imap_username: normalizeOptional(form.imap_username),
+    imap_password: normalizeOptional(form.imap_password),
+    imap_security_mode: form.inbound_enabled ? form.imap_security_mode : null,
+    imap_mailbox: normalizeOptional(form.imap_mailbox),
     market_id: form.market_id,
     priority: Number(form.priority || 100),
     is_active: Boolean(form.is_active),
@@ -134,12 +172,20 @@ function buildUpdatePayload(form: EmailForm): OutboundEmailAccountUpdate {
     from_address: form.from_address.trim(),
     reply_to: normalizeOptional(form.reply_to),
     security_mode: form.security_mode,
+    inbound_enabled: Boolean(form.inbound_enabled),
+    imap_host: normalizeOptional(form.imap_host),
+    imap_port: form.inbound_enabled ? Number(form.imap_port || suggestedImapPort(form.imap_security_mode)) : null,
+    imap_username: normalizeOptional(form.imap_username),
+    imap_security_mode: form.inbound_enabled ? form.imap_security_mode : null,
+    imap_mailbox: normalizeOptional(form.imap_mailbox),
     market_id: form.market_id,
     priority: Number(form.priority || 100),
     is_active: Boolean(form.is_active),
   }
   const rotatedPassword = form.password.trim()
   if (rotatedPassword) payload.password = rotatedPassword
+  const rotatedImapPassword = form.imap_password.trim()
+  if (rotatedImapPassword) payload.imap_password = rotatedImapPassword
   return payload
 }
 
@@ -201,6 +247,15 @@ function OutboundEmailPage() {
       ...current,
       security_mode: nextMode,
       port: isDefaultPort(current.port, current.security_mode) ? suggestedPort(nextMode) : current.port,
+    }))
+    setDirty(true)
+  }
+
+  const onImapSecurityModeChange = (nextMode: OutboundEmailSecurityMode) => {
+    setForm((current) => ({
+      ...current,
+      imap_security_mode: nextMode,
+      imap_port: current.imap_port === suggestedImapPort(current.imap_security_mode) ? suggestedImapPort(nextMode) : current.imap_port,
     }))
     setDirty(true)
   }
@@ -278,6 +333,10 @@ function OutboundEmailPage() {
     !form.username.trim() ? 'SMTP username 不能为空。' : null,
     !form.from_address.trim() ? 'From address 不能为空。' : null,
     !selectedId && !form.password.trim() ? '创建账号时必须填写 SMTP password。' : null,
+    form.inbound_enabled && !form.imap_host.trim() ? '启用入站同步时 IMAP host 不能为空。' : null,
+    form.inbound_enabled && !form.imap_username.trim() ? '启用入站同步时 IMAP username 不能为空。' : null,
+    form.inbound_enabled && !Number(form.imap_port) ? '启用入站同步时 IMAP port 不能为空。' : null,
+    form.inbound_enabled && !selected?.imap_password_configured && !form.imap_password.trim() ? '启用入站同步时必须填写 IMAP password。' : null,
   ].filter(Boolean) as string[]
 
   return (
@@ -302,6 +361,7 @@ function OutboundEmailPage() {
             <MetricCard label="测试失败" value={(accounts.data ?? []).filter((account) => account.health_status === 'error').length} />
             <MetricCard label="全局 fallback" value={(accounts.data ?? []).filter((account) => account.market_id == null).length} />
             <MetricCard label="市场绑定" value={(accounts.data ?? []).filter((account) => account.market_id != null).length} />
+            <MetricCard label="入站 IMAP" value={(accounts.data ?? []).filter((account) => account.inbound_enabled).length} />
           </div>
 
           <div className="workspace-toolbar">
@@ -326,11 +386,13 @@ function OutboundEmailPage() {
                         <Badge tone={account.is_active ? 'success' : 'danger'}>{account.is_active ? '启用中' : '已停用'}</Badge>
                         <Badge tone={emailHealthTone(account.health_status)}>{emailHealthLabel(account.health_status)}</Badge>
                         <Badge>{labelize(account.security_mode)}</Badge>
+                        <Badge tone={account.inbound_enabled ? 'success' : 'default'}>IMAP {account.inbound_enabled ? '启用' : '关闭'}</Badge>
                       </div>
                       <div className="queue-card-title">{sanitizeDisplayText(account.display_name || account.from_address)}</div>
                       <div className="queue-card-meta">{sanitizeDisplayText(account.host)}:{account.port} · {sanitizeDisplayText(account.from_address)}</div>
                       <div className="queue-card-meta">范围：{sanitizeDisplayText(marketLabel(marketMap, account.market_id))} · 优先级：{account.priority} · 密码：{account.password_configured ? account.password_mask || '********' : '未配置'}</div>
                       <div className="queue-card-meta">最近测试：{sanitizeDisplayText(emailHealthLabel(account.last_test_status || account.health_status))} · {formatDateTime(account.last_test_at)}</div>
+                      {account.inbound_enabled ? <div className="queue-card-meta">入站：{sanitizeDisplayText(account.imap_host || '-')} · {sanitizeDisplayText(account.imap_last_status || 'configured')} · {formatDateTime(account.imap_last_seen_at)}</div> : null}
                     </button>
                   ))}
                   {!filteredAccounts.length ? <EmptyState title="没有 Outbound Email 账号" description="当前筛选下没有可维护的 SMTP 账号。" reason="创建账号后，先执行测试发送，再让客服使用 Email 外部发送。" action={<Button variant="secondary" onClick={() => { setStatusFilter('all'); resetForm() }}>新建账号</Button>} /> : null}
@@ -374,6 +436,34 @@ function OutboundEmailPage() {
                     </div>
                   ) : null}
 
+                  <div className="section-title">入站 IMAP 同步</div>
+                  <label className="toggle-row">
+                    <input type="checkbox" checked={form.inbound_enabled} onChange={(event) => patchForm({ inbound_enabled: event.target.checked })} />
+                    启用 Email mailbox polling
+                  </label>
+                  <div className="form-grid" data-testid="outbound-email-imap-config">
+                    <Field label="IMAP host" required={form.inbound_enabled} example="imap.example.com">
+                      <Input value={form.imap_host} onChange={(event) => patchForm({ imap_host: event.target.value })} />
+                    </Field>
+                    <Field label="IMAP port" required={form.inbound_enabled} hint={`当前安全模式建议端口：${suggestedImapPort(form.imap_security_mode)}`}>
+                      <Input type="number" min={1} max={65535} value={String(form.imap_port)} onChange={(event) => patchForm({ imap_port: Number(event.target.value) })} />
+                    </Field>
+                    <Field label="IMAP username" required={form.inbound_enabled}>
+                      <Input value={form.imap_username} onChange={(event) => patchForm({ imap_username: event.target.value })} />
+                    </Field>
+                    <Field label={selectedId ? '轮换 IMAP password' : 'IMAP password'} required={form.inbound_enabled && !selected?.imap_password_configured} description={selectedId ? '留空表示不修改已保存 IMAP 密码。' : '启用入站同步时必填。'}>
+                      <Input type="password" autoComplete="new-password" value={form.imap_password} onChange={(event) => patchForm({ imap_password: event.target.value })} />
+                    </Field>
+                    <Field label="IMAP security" required={form.inbound_enabled}>
+                      <Select value={form.imap_security_mode} onChange={(event) => onImapSecurityModeChange(event.target.value as OutboundEmailSecurityMode)}>
+                        {IMAP_SECURITY_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label} · {item.port}</option>)}
+                      </Select>
+                    </Field>
+                    <Field label="Mailbox" example="INBOX">
+                      <Input value={form.imap_mailbox} onChange={(event) => patchForm({ imap_mailbox: event.target.value })} />
+                    </Field>
+                  </div>
+
                   <label className="toggle-row">
                     <input type="checkbox" checked={form.is_active} onChange={(event) => patchForm({ is_active: event.target.checked })} />
                     当前账号启用
@@ -385,6 +475,8 @@ function OutboundEmailPage() {
                       <div className="kv"><label>最近测试</label><div>{sanitizeDisplayText(emailHealthLabel(selected.last_test_status || selected.health_status))} · {formatDateTime(selected.last_test_at)}</div></div>
                       <div className="kv"><label>账号范围</label><div>{sanitizeDisplayText(marketLabel(marketMap, selected.market_id))}</div></div>
                       <div className="kv"><label>是否启用</label><div>{boolLabel(selected.is_active, '启用中', '已停用')}</div></div>
+                      <div className="kv"><label>IMAP 密码</label><div>{selected.imap_password_configured ? selected.imap_password_mask || '********' : '未配置'}</div></div>
+                      <div className="kv"><label>IMAP 最近同步</label><div>{sanitizeDisplayText(selected.imap_last_status || '-')} · {formatDateTime(selected.imap_last_seen_at)}</div></div>
                     </div>
                   ) : null}
 

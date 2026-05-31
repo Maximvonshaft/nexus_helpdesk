@@ -6,14 +6,16 @@ import ssl
 from dataclasses import asdict, dataclass
 from email.message import EmailMessage
 from email.utils import make_msgid
+from pathlib import Path
 from typing import Any, Callable
 
 from email_validator import EmailNotValidError, validate_email
 from sqlalchemy.orm import Session
 
 from ...enums import MessageStatus, SourceChannel
-from ...models import OutboundEmailAccount, Ticket, TicketOutboundMessage
+from ...models import OutboundEmailAccount, Ticket, TicketAttachment, TicketOutboundMessage
 from ...utils.time import utc_now
+from ..email_mailbox_identity import ensure_outbound_mailbox_identity
 from ..outbound_email_account_service import resolve_outbound_email_account
 from ..secret_crypto import SecretCryptoService
 
@@ -31,6 +33,7 @@ SMTP_RECIPIENT_REJECTED = "smtp_recipient_rejected"
 SMTP_RATE_LIMITED = "smtp_rate_limited"
 SMTP_MESSAGE_REJECTED = "smtp_message_rejected"
 SMTP_UNEXPECTED_ERROR = "smtp_unexpected_error"
+SMTP_ATTACHMENT_UNAVAILABLE = "smtp_attachment_unavailable"
 
 SMTPClientFactory = Callable[..., Any]
 
@@ -221,17 +224,63 @@ def _connect_smtp(route: EmailOutboundRoute, *, smtp_factory: SMTPClientFactory 
     return client
 
 
-def _build_message(route: EmailOutboundRoute, *, body: str, idempotency_key: str) -> EmailMessage:
+def _attachment_mime_parts(attachment: TicketAttachment) -> tuple[str, str]:
+    raw = str(attachment.mime_type or "application/octet-stream").strip().lower()
+    if "/" not in raw:
+        return "application", "octet-stream"
+    maintype, subtype = raw.split("/", 1)
+    return maintype or "application", subtype or "octet-stream"
+
+
+def _read_attachment_bytes(attachment: TicketAttachment) -> bytes:
+    if not attachment.file_path:
+        raise EmailOutboundError(SMTP_ATTACHMENT_UNAVAILABLE, f"Attachment {attachment.id} has no stored file")
+    path = Path(attachment.file_path)
+    if not path.is_file():
+        raise EmailOutboundError(SMTP_ATTACHMENT_UNAVAILABLE, f"Attachment {attachment.id} file is not available")
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise EmailOutboundError(SMTP_ATTACHMENT_UNAVAILABLE, f"Attachment {attachment.id} could not be read") from exc
+
+
+def _build_message(
+    route: EmailOutboundRoute,
+    *,
+    body: str,
+    idempotency_key: str,
+    attachments: list[TicketAttachment] | None = None,
+    mailbox_thread_id: str | None = None,
+    mailbox_message_id: str | None = None,
+    mailbox_references: str | None = None,
+) -> EmailMessage:
     message = EmailMessage()
     message["From"] = route.from_address
     message["To"] = route.to_address
     if route.reply_to:
         message["Reply-To"] = route.reply_to
     message["Subject"] = route.subject
-    message["Message-ID"] = make_msgid(domain=route.from_address.rsplit("@", 1)[-1])
+    message["Message-ID"] = mailbox_message_id or make_msgid(domain=route.from_address.rsplit("@", 1)[-1])
+    if mailbox_thread_id:
+        message["In-Reply-To"] = mailbox_thread_id
+        message["X-NexusDesk-Mailbox-Thread-ID"] = mailbox_thread_id
+    if mailbox_references:
+        message["References"] = mailbox_references
     message["X-NexusDesk-Idempotency-Key"] = idempotency_key
     message.set_content(body or "")
+    for attachment in attachments or []:
+        maintype, subtype = _attachment_mime_parts(attachment)
+        message.add_attachment(
+            _read_attachment_bytes(attachment),
+            maintype=maintype,
+            subtype=subtype,
+            filename=attachment.file_name,
+        )
     return message
+
+
+def _message_attachments(message: TicketOutboundMessage) -> list[TicketAttachment]:
+    return [attachment for attachment in getattr(message, "attachments", []) if attachment is not None]
 
 
 def send_email_route(
@@ -239,15 +288,32 @@ def send_email_route(
     *,
     body: str,
     idempotency_key: str,
+    attachments: list[TicketAttachment] | None = None,
+    mailbox_thread_id: str | None = None,
+    mailbox_message_id: str | None = None,
+    mailbox_references: str | None = None,
     smtp_factory: SMTPClientFactory | None = None,
 ) -> tuple[MessageStatus, str | None, object | None, dict[str, Any]]:
     context = route.to_context(idempotency_key=idempotency_key)
+    context["attachment_count"] = len(attachments or [])
+    context["attachment_filenames"] = [attachment.file_name for attachment in attachments or []]
+    context["mailbox_thread_id"] = mailbox_thread_id
+    context["mailbox_message_id"] = mailbox_message_id
+    context["mailbox_references"] = mailbox_references
     client = None
     try:
         client = _connect_smtp(route, smtp_factory=smtp_factory)
         if route.username or route.password:
             client.login(route.username, route.password)
-        refused = client.send_message(_build_message(route, body=body, idempotency_key=idempotency_key))
+        refused = client.send_message(_build_message(
+            route,
+            body=body,
+            idempotency_key=idempotency_key,
+            attachments=attachments,
+            mailbox_thread_id=mailbox_thread_id,
+            mailbox_message_id=mailbox_message_id,
+            mailbox_references=mailbox_references,
+        ))
         if refused:
             return _failed(SMTP_RECIPIENT_REJECTED, "SMTP server rejected one or more recipients", context)
         return MessageStatus.sent, "smtp_sent", utc_now(), context
@@ -307,7 +373,18 @@ def dispatch_email_outbound(
             "channel": SourceChannel.email.value,
             "idempotency_key": idempotency_key,
         })
-    return send_email_route(route, body=message.body, idempotency_key=idempotency_key, smtp_factory=smtp_factory)
+    ensure_outbound_mailbox_identity(message, ticket=ticket, include_message_id=True)
+    db.flush()
+    return send_email_route(
+        route,
+        body=message.body,
+        idempotency_key=idempotency_key,
+        attachments=_message_attachments(message),
+        mailbox_thread_id=message.mailbox_thread_id,
+        mailbox_message_id=message.mailbox_message_id,
+        mailbox_references=message.mailbox_references,
+        smtp_factory=smtp_factory,
+    )
 
 
 def send_outbound_email_test(

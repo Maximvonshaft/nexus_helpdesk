@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
-import type { Bulletin } from '@/lib/types'
+import type { BadgeTone, Bulletin, BulletinImpactPreviewPayload } from '@/lib/types'
 import { formatDateTime, labelize, sanitizeDisplayText, severityTone } from '@/lib/format'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -17,6 +17,8 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { useSession } from '@/hooks/useAuth'
 import { canEditBulletins } from '@/lib/access'
+import { routeAccess } from '@/lib/rbac'
+import { RequireCapability } from '@/components/security/RequireCapability'
 
 function emptyForm(): Partial<Bulletin> {
   return {
@@ -32,6 +34,45 @@ function emptyForm(): Partial<Bulletin> {
     country_code: '',
     channels_csv: '',
   }
+}
+
+function bulletinPayload(form: Partial<Bulletin>): Partial<Bulletin> {
+  return {
+    market_id: form.market_id || null,
+    country_code: form.country_code || null,
+    title: form.title || '',
+    body: form.body || '',
+    summary: form.summary || null,
+    category: form.category || 'notice',
+    channels_csv: form.channels_csv || null,
+    audience: form.audience || 'customer',
+    severity: form.severity || 'info',
+    auto_inject_to_ai: Boolean(form.auto_inject_to_ai),
+    is_active: Boolean(form.is_active),
+    starts_at: form.starts_at || null,
+    ends_at: form.ends_at || null,
+  }
+}
+
+function impactPayload(form: Partial<Bulletin>): BulletinImpactPreviewPayload {
+  const payload = bulletinPayload(form)
+  return {
+    market_id: payload.market_id,
+    country_code: payload.country_code,
+    channels_csv: payload.channels_csv,
+    audience: payload.audience,
+    auto_inject_to_ai: payload.auto_inject_to_ai,
+    is_active: payload.is_active,
+    starts_at: payload.starts_at,
+    ends_at: payload.ends_at,
+  }
+}
+
+function windowTone(status: string): BadgeTone {
+  if (status === 'active') return 'success'
+  if (status === 'scheduled') return 'warning'
+  if (status === 'expired' || status === 'inactive') return 'danger'
+  return 'default'
 }
 
 function BulletinsPage() {
@@ -72,19 +113,7 @@ function BulletinsPage() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const payload = {
-        market_id: form.market_id || null,
-        country_code: form.country_code || null,
-        title: form.title || '',
-        body: form.body || '',
-        summary: form.summary || null,
-        category: form.category || 'notice',
-        channels_csv: form.channels_csv || null,
-        audience: form.audience || 'customer',
-        severity: form.severity || 'info',
-        auto_inject_to_ai: Boolean(form.auto_inject_to_ai),
-        is_active: Boolean(form.is_active),
-      }
+      const payload = bulletinPayload(form)
       if (selectedId) return api.updateBulletin(selectedId, payload)
       return api.createBulletin(payload)
     },
@@ -96,7 +125,18 @@ function BulletinsPage() {
     onError: (err: Error) => setToast({ message: err.message || '保存公告失败', tone: 'danger' }),
   })
 
+  const impactMutation = useMutation({
+    mutationFn: () => api.previewBulletinImpact(impactPayload(form)),
+    onError: (err: Error) => setToast({ message: err.message || '影响预览失败', tone: 'danger' }),
+  })
+  const resetImpactPreview = impactMutation.reset
+
+  useEffect(() => {
+    resetImpactPreview()
+  }, [selectedId, form.market_id, form.country_code, form.channels_csv, form.audience, form.auto_inject_to_ai, form.is_active, resetImpactPreview])
+
   return (
+    <RequireCapability requirement={routeAccess['/bulletins']}>
     <AppShell>
       <PageHeader
         eyebrow="通知公告"
@@ -204,6 +244,49 @@ function BulletinsPage() {
                   </div>
                 </CardBody>
               </Card>
+              <Card className="soft" data-testid="bulletin-impact-preview">
+                <CardHeader title="发布影响预览" subtitle="保存前用真实工单数据确认会影响哪些客户队列和 AI 口径。" />
+                <CardBody>
+                  <div className="button-row">
+                    <Button onClick={() => impactMutation.mutate()} disabled={impactMutation.isPending || !canEdit}>
+                      {impactMutation.isPending ? '计算中…' : '预览影响工单'}
+                    </Button>
+                    {impactMutation.data ? <Badge tone={windowTone(impactMutation.data.window_status)}>{labelize(impactMutation.data.window_status)}</Badge> : null}
+                    {impactMutation.data ? (impactMutation.data.ai_context_enabled ? <Badge tone="success">会注入 AI 上下文</Badge> : <Badge>不注入 AI 上下文</Badge>) : null}
+                  </div>
+                  {impactMutation.data ? (
+                    <div className="stack" style={{ marginTop: 12 }}>
+                      <div className="metrics-grid">
+                        <div className="metric">
+                          <div className="metric-label">匹配工单</div>
+                          <div className="metric-value">{impactMutation.data.matching_tickets}</div>
+                          <div className="queue-card-meta">{impactMutation.data.scope_label}</div>
+                        </div>
+                        <div className="metric">
+                          <div className="metric-label">需要回复/人工处理</div>
+                          <div className="metric-value">{impactMutation.data.ready_to_reply_tickets}</div>
+                          <div className="queue-card-meta">ready / review / owned</div>
+                        </div>
+                      </div>
+                      <div className="badges">
+                        {impactMutation.data.channel_counts.map((item) => <Badge key={item.channel}>{labelize(item.channel)} · {item.count}</Badge>)}
+                        {!impactMutation.data.channel_counts.length ? <Badge>暂无渠道命中</Badge> : null}
+                      </div>
+                      <div className="list compact">
+                        {impactMutation.data.sample_tickets.map((ticket) => (
+                          <div key={ticket.id} className="queue-card">
+                            <div className="queue-card-title">{sanitizeDisplayText(ticket.ticket_no)} · {sanitizeDisplayText(ticket.title)}</div>
+                            <div className="queue-card-meta">{labelize(ticket.status)} · {labelize(ticket.channel)} · {formatDateTime(ticket.updated_at)}</div>
+                          </div>
+                        ))}
+                        {!impactMutation.data.sample_tickets.length ? <EmptyState text="当前范围没有命中未关闭工单。" /> : null}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="message" style={{ marginTop: 12 }}>点击预览后会展示真实未关闭工单数量、渠道分布和样例工单；该动作不写入公告。</div>
+                  )}
+                </CardBody>
+              </Card>
               <div className="button-row">
                 <Button variant="primary" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending || !canEdit}>
                   {saveMutation.isPending ? '保存中…' : selectedId ? '保存修改' : '创建公告'}
@@ -215,7 +298,8 @@ function BulletinsPage() {
         </Card>
       </div>
       {toast ? <Toast message={toast.message} tone={toast.tone} onClose={() => setToast(null)} /> : null}
-    </AppShell>
+      </AppShell>
+    </RequireCapability>
   )
 }
 

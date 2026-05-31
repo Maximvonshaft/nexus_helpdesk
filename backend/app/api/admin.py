@@ -1,19 +1,25 @@
 from __future__ import annotations
 
+import json
+from datetime import timedelta
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from ..db import get_db, engine
 from ..enums import JobStatus, MessageStatus, UserRole
-from ..models import AIConfigResource, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, OutboundEmailAccount, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
-from ..schemas import UserUpdate, PasswordResetRequest, OpenClawUnresolvedEventRead, AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, OpenClawConnectivityProbeRead, OpenClawConversationRead, OpenClawLinkRequest, OpenClawRuntimeHealthRead, OpenClawSyncEnqueueRequest, OpenClawSyncResult, ProductionReadinessRead, QueueSummaryRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead, UserCreate
+from ..models import AIConfigResource, AdminAuditLog, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, OutboundEmailAccount, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
+from ..schemas import UserUpdate, PasswordResetRequest, OpenClawUnresolvedEventRead, AdminAuditLogRead, AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinImpactPreviewRead, MarketBulletinImpactPreviewRequest, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, OpenClawConnectivityProbeRead, OpenClawConversationRead, OpenClawLinkRequest, OpenClawRuntimeHealthRead, OpenClawSyncEnqueueRequest, OpenClawSyncResult, ProductionReadinessRead, QueueSummaryRead, SecurityAuditRead, SecurityAuditSummaryRead, SecurityCapabilityUserRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead, UserCreate
 from ..settings import get_settings
 from ..auth_service import hash_password
 from ..utils.time import utc_now
 from ..services.permissions import (
     ALL_CAPABILITIES,
+    CAP_USER_MANAGE,
     ensure_can_manage_users,
+    ensure_can_view_security_audit,
     ensure_can_manage_channel_accounts,
     ensure_can_manage_bulletins,
     ensure_can_manage_ai_configs,
@@ -26,6 +32,7 @@ from ..services.audit_service import log_admin_audit
 from ..services.admin_action_rate_limit import enforce_admin_action_rate_limit
 from ..services.ai_config_service import create_resource as create_ai_config_resource, list_admin_resources, list_versions as list_ai_config_versions, publish_resource, rollback_resource, update_resource as update_ai_config_resource
 from ..services.background_jobs import enqueue_openclaw_sync_job, enqueue_stale_openclaw_sync_jobs
+from ..services.bulletin_service import bulletin_audit_snapshot, build_bulletin_impact_preview, normalize_bulletin_country_code
 from ..unit_of_work import managed_session
 from ..services.openclaw_bridge import ALLOWED_CHANNEL_ACCOUNT_PROVIDERS, consume_openclaw_events_once, count_stale_openclaw_links, link_ticket_to_openclaw_session, list_stale_openclaw_links, replay_unresolved_openclaw_event as replay_unresolved_openclaw_event_payload, sync_openclaw_conversation
 from ..services.openclaw_runtime_service import probe_openclaw_connectivity
@@ -148,6 +155,120 @@ def _validate_channel_account_payload(
 def list_capability_catalog(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     ensure_can_manage_users(current_user, db)
     return sorted(ALL_CAPABILITIES)
+
+
+SENSITIVE_AUDIT_KEY_FRAGMENTS = ('password', 'secret', 'token', 'credential', 'authorization', 'api_key', 'private_key')
+
+
+def _audit_value(raw: str | None) -> Any:
+    if raw is None:
+        return None
+    try:
+        return _redact_sensitive_audit_value(json.loads(raw))
+    except json.JSONDecodeError:
+        return raw
+
+
+def _redact_sensitive_audit_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized = str(key).lower()
+            if any(fragment in normalized for fragment in SENSITIVE_AUDIT_KEY_FRAGMENTS):
+                redacted[key] = '[redacted]'
+            else:
+                redacted[key] = _redact_sensitive_audit_value(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_sensitive_audit_value(item) for item in value]
+    return value
+
+
+def _is_high_risk_capability(capability: str) -> bool:
+    if capability.startswith('tool:'):
+        return True
+    return capability.endswith((
+        '.accept',
+        '.assign',
+        '.close',
+        '.control',
+        '.end',
+        '.escalate',
+        '.manage',
+        '.reject',
+        '.send',
+        '.write',
+    ))
+
+
+def _serialize_security_audit_log(row: AdminAuditLog, actor_by_id: dict[int, User]) -> AdminAuditLogRead:
+    actor = actor_by_id.get(row.actor_id) if row.actor_id is not None else None
+    return AdminAuditLogRead(
+        id=row.id,
+        actor_id=row.actor_id,
+        actor_username=actor.username if actor else None,
+        actor_display_name=actor.display_name if actor else None,
+        action=row.action,
+        target_type=row.target_type,
+        target_id=row.target_id,
+        old_value=_audit_value(row.old_value_json),
+        new_value=_audit_value(row.new_value_json),
+        created_at=row.created_at,
+    )
+
+
+@router.get('/security-audit', response_model=SecurityAuditRead)
+def security_audit(limit: int = 30, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_can_view_security_audit(current_user, db)
+    clamped_limit = min(max(limit, 1), 100)
+    current_capabilities = resolve_capabilities(current_user, db)
+
+    users = db.query(User).order_by(User.is_active.desc(), User.role.asc(), User.username.asc()).all()
+    override_rows = db.query(UserCapabilityOverride).all()
+    override_counts: dict[int, int] = {}
+    high_risk_overrides = 0
+    for override in override_rows:
+        override_counts[override.user_id] = override_counts.get(override.user_id, 0) + 1
+        if override.allowed and _is_high_risk_capability(override.capability):
+            high_risk_overrides += 1
+
+    user_lens = [
+        SecurityCapabilityUserRead(
+            user_id=user.id,
+            username=user.username,
+            display_name=user.display_name,
+            role=user.role,
+            is_active=user.is_active,
+            effective_capabilities=sorted(resolve_capabilities(user, db)),
+            override_count=override_counts.get(user.id, 0),
+            high_risk_count=sum(1 for capability in resolve_capabilities(user, db) if _is_high_risk_capability(capability)),
+        )
+        for user in users
+    ]
+
+    audit_rows = db.query(AdminAuditLog).order_by(AdminAuditLog.created_at.desc(), AdminAuditLog.id.desc()).limit(clamped_limit).all()
+    actor_ids = {row.actor_id for row in audit_rows if row.actor_id is not None}
+    actors = {row.id: row for row in db.query(User).filter(User.id.in_(actor_ids)).all()} if actor_ids else {}
+    recent_audit = [_serialize_security_audit_log(row, actors) for row in audit_rows]
+
+    recent_cutoff = utc_now() - timedelta(hours=24)
+    summary = SecurityAuditSummaryRead(
+        total_users=len(users),
+        active_users=sum(1 for user in users if user.is_active),
+        inactive_users=sum(1 for user in users if not user.is_active),
+        admin_users=sum(1 for user in users if user.role == UserRole.admin),
+        auditor_users=sum(1 for user in users if user.role == UserRole.auditor),
+        high_risk_overrides=high_risk_overrides,
+        recent_audit_24h=db.query(func.count(AdminAuditLog.id)).filter(AdminAuditLog.created_at >= recent_cutoff).scalar() or 0,
+        catalog_size=len(ALL_CAPABILITIES),
+        read_only=CAP_USER_MANAGE not in current_capabilities,
+    )
+    return SecurityAuditRead(
+        capability_catalog=sorted(ALL_CAPABILITIES),
+        users=user_lens,
+        recent_audit=recent_audit,
+        summary=summary,
+    )
 
 
 @router.get('/users/{user_id}/capabilities', response_model=UserCapabilityMatrixRead)
@@ -621,7 +742,7 @@ def create_bulletin(payload: MarketBulletinCreate, db: Session = Depends(get_db)
     with managed_session(db):
         row = MarketBulletin(
             market_id=payload.market_id,
-            country_code=payload.country_code.upper() if payload.country_code else None,
+            country_code=normalize_bulletin_country_code(payload.country_code),
             title=payload.title,
             body=payload.body,
             summary=payload.summary,
@@ -637,8 +758,35 @@ def create_bulletin(payload: MarketBulletinCreate, db: Session = Depends(get_db)
         )
         db.add(row)
         db.flush()
+        log_admin_audit(
+            db,
+            actor_id=current_user.id,
+            action='bulletin.create',
+            target_type='market_bulletin',
+            target_id=row.id,
+            old_value=None,
+            new_value=bulletin_audit_snapshot(row),
+        )
     db.refresh(row)
     return MarketBulletinRead.model_validate(row)
+
+
+@router.post('/bulletins/impact-preview', response_model=MarketBulletinImpactPreviewRead)
+def preview_bulletin_impact(payload: MarketBulletinImpactPreviewRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_can_manage_bulletins(current_user, db)
+    return MarketBulletinImpactPreviewRead.model_validate(
+        build_bulletin_impact_preview(
+            db,
+            market_id=payload.market_id,
+            country_code=payload.country_code,
+            channels_csv=payload.channels_csv,
+            audience=payload.audience,
+            auto_inject_to_ai=payload.auto_inject_to_ai,
+            is_active=payload.is_active,
+            starts_at=payload.starts_at,
+            ends_at=payload.ends_at,
+        )
+    )
 
 
 @router.patch('/bulletins/{bulletin_id}', response_model=MarketBulletinRead)
@@ -647,12 +795,22 @@ def update_bulletin(bulletin_id: int, payload: MarketBulletinUpdate, db: Session
     row = db.query(MarketBulletin).filter(MarketBulletin.id == bulletin_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail='Bulletin not found')
+    before = bulletin_audit_snapshot(row)
     with managed_session(db):
         for key, value in payload.model_dump(exclude_unset=True).items():
-            if key == 'country_code' and value:
-                value = value.upper()
+            if key == 'country_code':
+                value = normalize_bulletin_country_code(value)
             setattr(row, key, value)
         db.flush()
+        log_admin_audit(
+            db,
+            actor_id=current_user.id,
+            action='bulletin.update',
+            target_type='market_bulletin',
+            target_id=row.id,
+            old_value=before,
+            new_value=bulletin_audit_snapshot(row),
+        )
     db.refresh(row)
     return MarketBulletinRead.model_validate(row)
 

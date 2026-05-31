@@ -28,6 +28,9 @@ CAP_AI_CONFIG_READ = "ai_config.read"
 CAP_AI_CONFIG_MANAGE = "ai_config.manage"
 CAP_RUNTIME_MANAGE = "runtime.manage"
 CAP_MARKET_MANAGE = "market.manage"
+CAP_QA_MANAGE = "qa.manage"
+CAP_SECURITY_READ = "security.read"
+CAP_AUDIT_READ = "audit.read"
 CAP_SPEEDAF_WORK_ORDER_WRITE = "tool:speedaf.work_order.create:write"
 CAP_SPEEDAF_ADDRESS_UPDATE_WRITE = "tool:speedaf.order.update_address:write"
 CAP_SPEEDAF_CANCEL_WRITE = "tool:speedaf.order.cancel:write"
@@ -36,6 +39,7 @@ CAP_WEBCALL_VOICE_QUEUE_VIEW = "webcall.voice.queue.view"
 CAP_WEBCALL_VOICE_ACCEPT = "webcall.voice.accept"
 CAP_WEBCALL_VOICE_REJECT = "webcall.voice.reject"
 CAP_WEBCALL_VOICE_END = "webcall.voice.end"
+CAP_WEBCALL_VOICE_CONTROL = "webcall.voice.control"
 CAP_WEBCHAT_HANDOFF_ACCEPT = "webchat.handoff.accept"
 CAP_WEBCHAT_HANDOFF_DECLINE = "webchat.handoff.decline"
 CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER = "webchat.handoff.force_takeover"
@@ -66,6 +70,9 @@ ALL_CAPABILITIES = [
     CAP_AI_CONFIG_MANAGE,
     CAP_RUNTIME_MANAGE,
     CAP_MARKET_MANAGE,
+    CAP_QA_MANAGE,
+    CAP_SECURITY_READ,
+    CAP_AUDIT_READ,
     CAP_SPEEDAF_WORK_ORDER_WRITE,
     CAP_SPEEDAF_ADDRESS_UPDATE_WRITE,
     CAP_SPEEDAF_CANCEL_WRITE,
@@ -74,6 +81,7 @@ ALL_CAPABILITIES = [
     CAP_WEBCALL_VOICE_ACCEPT,
     CAP_WEBCALL_VOICE_REJECT,
     CAP_WEBCALL_VOICE_END,
+    CAP_WEBCALL_VOICE_CONTROL,
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     CAP_WEBCHAT_HANDOFF_DECLINE,
     CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
@@ -92,6 +100,7 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
         CAP_ATTACHMENT_READ_INTERNAL, CAP_ATTACHMENT_UPLOAD, CAP_CUSTOMER_PROFILE_READ,
         CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND, CAP_AI_INTAKE_WRITE,
         CAP_NOTE_WRITE_INTERNAL, CAP_NOTE_WRITE_EXTERNAL, CAP_BULLETIN_MANAGE,
+        CAP_QA_MANAGE,
         CAP_WEBCHAT_HANDOFF_ACCEPT, CAP_WEBCHAT_HANDOFF_DECLINE, CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
         CAP_WEBCHAT_HANDOFF_RELEASE, CAP_WEBCHAT_HANDOFF_RESUME_AI, CAP_WEBCHAT_CONVERSATION_MONITOR_AI,
     },
@@ -101,6 +110,7 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
         CAP_ATTACHMENT_READ_INTERNAL, CAP_ATTACHMENT_UPLOAD, CAP_CUSTOMER_PROFILE_READ,
         CAP_OUTBOUND_DRAFT_SAVE, CAP_OUTBOUND_SEND, CAP_AI_INTAKE_WRITE,
         CAP_NOTE_WRITE_INTERNAL, CAP_NOTE_WRITE_EXTERNAL,
+        CAP_QA_MANAGE,
         CAP_WEBCHAT_HANDOFF_ACCEPT, CAP_WEBCHAT_HANDOFF_DECLINE, CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER,
         CAP_WEBCHAT_HANDOFF_RELEASE, CAP_WEBCHAT_HANDOFF_RESUME_AI, CAP_WEBCHAT_CONVERSATION_MONITOR_AI,
     },
@@ -115,6 +125,7 @@ ROLE_CAPABILITIES: dict[UserRole, set[str]] = {
     UserRole.auditor: {
         CAP_TICKET_READ, CAP_ATTACHMENT_READ_EXTERNAL,
         CAP_ATTACHMENT_READ_INTERNAL, CAP_CUSTOMER_PROFILE_READ,
+        CAP_SECURITY_READ, CAP_AUDIT_READ,
     },
 }
 
@@ -228,6 +239,13 @@ def ensure_can_manage_users(user, db: Session | None = None):
     ensure_capability(user, CAP_USER_MANAGE, db, message="Not authorized to manage users")
 
 
+def ensure_can_view_security_audit(user, db: Session | None = None):
+    capabilities = resolve_capabilities(user, db)
+    if CAP_USER_MANAGE in capabilities or CAP_SECURITY_READ in capabilities or CAP_AUDIT_READ in capabilities:
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to view security audit")
+
+
 def ensure_can_manage_channel_accounts(user, db: Session | None = None):
     ensure_capability(user, CAP_CHANNEL_ACCOUNT_MANAGE, db, message="Not authorized to manage channel accounts")
 
@@ -284,6 +302,10 @@ def ensure_can_reject_webcall_voice(user, db: Session | None = None):
 
 def ensure_can_end_webcall_voice(user, db: Session | None = None):
     ensure_capability(user, CAP_WEBCALL_VOICE_END, db, message="webcall_voice_end_requires_capability")
+
+
+def ensure_can_control_webcall_voice(user, db: Session | None = None):
+    ensure_capability(user, CAP_WEBCALL_VOICE_CONTROL, db, message="webcall_voice_control_requires_capability")
 
 
 def ensure_can_accept_webchat_handoff(user, db: Session | None = None):

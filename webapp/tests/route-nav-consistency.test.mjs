@@ -36,6 +36,35 @@ test('email operator workbench nav route is registered and capability gated', ()
   assert.match(rbac, /'\/email': \{ allOf: \[CAPABILITIES\.ticketRead\], anyOf: \[CAPABILITIES\.outboundDraftSave, CAPABILITIES\.outboundSend\] \}/)
 })
 
+test('control tower nav route is registered and capability gated', () => {
+  assert.match(appShell, /to: '\/control-tower'/)
+  assert.match(router, /ControlTowerRoute/)
+  assert.match(router, /@\/routes\/control-tower/)
+  assert.match(rbac, /'\/control-tower': \{ anyOf: \[CAPABILITIES\.ticketAssign, CAPABILITIES\.bulletinManage, CAPABILITIES\.channelAccountManage, CAPABILITIES\.runtimeManage, CAPABILITIES\.aiConfigRead, CAPABILITIES\.aiConfigManage, CAPABILITIES\.userManage\] \}/)
+})
+
+test('qa training nav route is registered and capability gated', () => {
+  assert.match(appShell, /to: '\/qa-training'/)
+  assert.match(router, /QATrainingRoute/)
+  assert.match(router, /@\/routes\/qa-training/)
+  assert.match(rbac, /qaManage: 'qa\.manage'/)
+  assert.match(rbac, /'\/qa-training': \{ allOf: \[CAPABILITIES\.qaManage\] \}/)
+})
+
+test('knowledge studio nav route is registered and capability gated', () => {
+  assert.match(appShell, /to: '\/knowledge-studio'/)
+  assert.match(router, /KnowledgeStudioRoute/)
+  assert.match(router, /@\/routes\/knowledge-studio/)
+  assert.match(rbac, /'\/knowledge-studio': \{ anyOf: \[CAPABILITIES\.aiConfigRead, CAPABILITIES\.aiConfigManage\] \}/)
+})
+
+test('persona builder nav route is registered and capability gated', () => {
+  assert.match(appShell, /to: '\/persona-builder'/)
+  assert.match(router, /PersonaBuilderRoute/)
+  assert.match(router, /@\/routes\/persona-builder/)
+  assert.match(rbac, /'\/persona-builder': \{ anyOf: \[CAPABILITIES\.aiConfigRead, CAPABILITIES\.aiConfigManage\] \}/)
+})
+
 test('internal webcall routes are intentionally classified', () => {
   assert.match(router, /Internal operator console for human WebCall handling/)
   assert.match(router, /Top-level operator WebCall workbench/)
@@ -47,6 +76,15 @@ test('internal webcall routes are intentionally classified', () => {
   assert.doesNotMatch(appShell, /to: '\/webchat-voice'/)
 })
 
+test('security audit nav route is registered and capability gated', () => {
+  assert.match(appShell, /to: '\/security'/)
+  assert.match(router, /SecurityRoute/)
+  assert.match(router, /@\/routes\/security/)
+  assert.match(rbac, /securityRead: 'security\.read'/)
+  assert.match(rbac, /auditRead: 'audit\.read'/)
+  assert.match(rbac, /'\/security': \{ anyOf: \[CAPABILITIES\.userManage, CAPABILITIES\.securityRead, CAPABILITIES\.auditRead\] \}/)
+})
+
 test('primary nav internal hrefs have matching registered routes', () => {
   const routeFiles = [
     'login.tsx',
@@ -56,6 +94,10 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'email.tsx',
     'webcall-operator.tsx',
     'runtime.tsx',
+    'control-tower.tsx',
+    'qa-training.tsx',
+    'knowledge-studio.tsx',
+    'persona-builder.tsx',
     'webcall-ai-demo.tsx',
     'provider-credentials.tsx',
     'accounts.tsx',
@@ -64,6 +106,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'ai-control.tsx',
     'control-plane.tsx',
     'users.tsx',
+    'security.tsx',
   ]
   const registered = new Set(routeFiles.flatMap((file) => registeredStaticRoutes(readFileSync(resolve(root, `src/routes/${file}`), 'utf8'))))
   const missing = staticNavTargets(appShell).filter((target) => target.startsWith('/') && !registered.has(target))

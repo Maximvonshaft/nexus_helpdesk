@@ -6,8 +6,8 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..models_control_plane import PersonaProfile, PersonaProfileVersion
-from ..utils.time import utc_now
+from ..models_control_plane import PersonaProfile, PersonaProfileReview, PersonaProfileVersion
+from ..utils.time import ensure_utc, utc_now
 
 
 def _normalize_key(value: str) -> str:
@@ -33,6 +33,38 @@ def _snapshot(row: PersonaProfile, *, version: int, published_at) -> dict:
         "published_version": version,
         "published_at": published_at.isoformat() if published_at else None,
     }
+
+
+def _review_snapshot(row: PersonaProfile) -> dict:
+    return {
+        "profile_key": row.profile_key,
+        "name": row.name,
+        "description": row.description,
+        "summary": row.draft_summary,
+        "content_json": row.draft_content_json or {},
+        "market_id": row.market_id,
+        "channel": row.channel,
+        "language": row.language,
+        "draft_updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "published_version_at_submission": row.published_version or 0,
+    }
+
+
+def _validate_release_window(start, end) -> None:
+    start = ensure_utc(start)
+    end = ensure_utc(end)
+    if start is not None and end is not None and start > end:
+        raise HTTPException(status_code=400, detail="release_window_start must be before release_window_end")
+
+
+def _next_review_version(db: Session, profile_id: int) -> int:
+    latest = (
+        db.query(PersonaProfileReview.review_version)
+        .filter(PersonaProfileReview.profile_id == profile_id)
+        .order_by(PersonaProfileReview.review_version.desc())
+        .first()
+    )
+    return int(latest[0] if latest else 0) + 1
 
 
 def list_profiles(
@@ -72,6 +104,37 @@ def get_profile_or_404(db: Session, profile_id: int) -> PersonaProfile:
 
 def list_versions(db: Session, profile_id: int) -> list[PersonaProfileVersion]:
     return db.query(PersonaProfileVersion).filter(PersonaProfileVersion.profile_id == profile_id).order_by(PersonaProfileVersion.version.desc()).all()
+
+
+def list_reviews(
+    db: Session,
+    *,
+    profile_id: Optional[int] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[PersonaProfileReview], int]:
+    query = db.query(PersonaProfileReview)
+    if profile_id is not None:
+        query = query.filter(PersonaProfileReview.profile_id == profile_id)
+    if status:
+        query = query.filter(PersonaProfileReview.status == status.strip())
+    total = query.count()
+    rows = (
+        query
+        .order_by(PersonaProfileReview.requested_at.desc(), PersonaProfileReview.id.desc())
+        .offset(max(offset, 0))
+        .limit(min(max(limit, 1), 200))
+        .all()
+    )
+    return rows, total
+
+
+def get_review_or_404(db: Session, review_id: int) -> PersonaProfileReview:
+    row = db.query(PersonaProfileReview).filter(PersonaProfileReview.id == review_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Persona profile review not found")
+    return row
 
 
 def create_profile(db: Session, payload, actor) -> PersonaProfile:
@@ -146,6 +209,97 @@ def rollback_profile(db: Session, row: PersonaProfile, *, version: int, actor, n
     row.channel = snapshot.get("channel")
     row.language = snapshot.get("language")
     return publish_profile(db, row, actor, notes=notes or f"Rollback to v{version}")
+
+
+def submit_review(db: Session, row: PersonaProfile, payload, actor) -> PersonaProfileReview:
+    if not _has_draft_content(row):
+        raise HTTPException(status_code=400, detail="Draft persona content is empty")
+    existing = (
+        db.query(PersonaProfileReview)
+        .filter(PersonaProfileReview.profile_id == row.id, PersonaProfileReview.status == "pending")
+        .first()
+    )
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="persona_review_already_pending")
+    _validate_release_window(payload.release_window_start, payload.release_window_end)
+    now = utc_now()
+    review = PersonaProfileReview(
+        profile_id=row.id,
+        review_version=_next_review_version(db, row.id),
+        status="pending",
+        snapshot_json=_review_snapshot(row),
+        summary=row.draft_summary,
+        notes=payload.notes,
+        requested_by=getattr(actor, "id", None),
+        requested_at=now,
+        release_window_start=payload.release_window_start,
+        release_window_end=payload.release_window_end,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(review)
+    db.flush()
+    return review
+
+
+def approve_review(db: Session, review: PersonaProfileReview, payload, actor) -> PersonaProfileReview:
+    if review.status != "pending":
+        raise HTTPException(status_code=409, detail="persona_review_not_pending")
+    start = payload.release_window_start if payload.release_window_start is not None else review.release_window_start
+    end = payload.release_window_end if payload.release_window_end is not None else review.release_window_end
+    _validate_release_window(start, end)
+    now = utc_now()
+    review.status = "approved"
+    review.reviewed_by = getattr(actor, "id", None)
+    review.reviewed_at = now
+    review.decision_note = payload.decision_note
+    review.release_window_start = start
+    review.release_window_end = end
+    review.updated_at = now
+    db.flush()
+    return review
+
+
+def reject_review(db: Session, review: PersonaProfileReview, payload, actor) -> PersonaProfileReview:
+    if review.status != "pending":
+        raise HTTPException(status_code=409, detail="persona_review_not_pending")
+    now = utc_now()
+    review.status = "rejected"
+    review.reviewed_by = getattr(actor, "id", None)
+    review.reviewed_at = now
+    review.decision_note = payload.decision_note
+    review.updated_at = now
+    db.flush()
+    return review
+
+
+def publish_approved_review(db: Session, review: PersonaProfileReview, actor, *, notes: Optional[str] = None) -> PersonaProfileVersion:
+    if review.status != "approved":
+        raise HTTPException(status_code=409, detail="persona_review_not_approved")
+    now = utc_now()
+    release_start = ensure_utc(review.release_window_start)
+    release_end = ensure_utc(review.release_window_end)
+    if release_start is not None and now < release_start:
+        raise HTTPException(status_code=409, detail="persona_release_window_not_open")
+    if release_end is not None and now > release_end:
+        raise HTTPException(status_code=409, detail="persona_release_window_expired")
+    profile = get_profile_or_404(db, review.profile_id)
+    snapshot = review.snapshot_json or {}
+    profile.name = snapshot.get("name") or profile.name
+    profile.description = snapshot.get("description")
+    profile.market_id = snapshot.get("market_id")
+    profile.channel = snapshot.get("channel")
+    profile.language = snapshot.get("language")
+    profile.draft_summary = snapshot.get("summary")
+    profile.draft_content_json = snapshot.get("content_json") or {}
+    version_row = publish_profile(db, profile, actor, notes=notes or f"Publish approved review #{review.id}")
+    review.status = "published"
+    review.published_by = getattr(actor, "id", None)
+    review.published_version = version_row.version
+    review.published_at = version_row.published_at
+    review.updated_at = now
+    db.flush()
+    return version_row
 
 
 def resolve_preview(

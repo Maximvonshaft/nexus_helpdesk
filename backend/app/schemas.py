@@ -223,12 +223,53 @@ class OutboundDraftCreate(BaseModel):
     channel: SourceChannel
     subject: Optional[str] = Field(default=None, max_length=255)
     body: str
+    attachment_ids: list[int] = Field(default_factory=list)
 
 
 class OutboundSendRequest(BaseModel):
     channel: SourceChannel
     subject: Optional[str] = Field(default=None, max_length=255)
     body: str
+    attachment_ids: list[int] = Field(default_factory=list)
+
+
+class InboundEmailIngestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    from_address: str = Field(min_length=3, max_length=320)
+    from_name: Optional[str] = Field(default=None, max_length=160)
+    to_address: Optional[str] = Field(default=None, max_length=320)
+    cc: Optional[str] = Field(default=None, max_length=2000)
+    subject: Optional[str] = Field(default=None, max_length=255)
+    body: str = Field(min_length=1, max_length=40000)
+    provider: str = Field(default="manual", min_length=1, max_length=80)
+    provider_message_id: Optional[str] = Field(default=None, max_length=255)
+    mailbox_thread_id: Optional[str] = Field(default=None, max_length=255)
+    mailbox_message_id: Optional[str] = Field(default=None, max_length=255)
+    mailbox_references: Optional[str] = Field(default=None, max_length=4000)
+    in_reply_to: Optional[str] = Field(default=None, max_length=255)
+    received_at: Optional[datetime] = None
+
+    @field_validator(
+        "from_address",
+        "from_name",
+        "to_address",
+        "cc",
+        "subject",
+        "body",
+        "provider",
+        "provider_message_id",
+        "mailbox_thread_id",
+        "mailbox_message_id",
+        "mailbox_references",
+        "in_reply_to",
+        mode="before",
+    )
+    @classmethod
+    def strip_strings(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
 
 class AttachmentRead(APIModel):
@@ -270,11 +311,157 @@ class OutboundMessageRead(APIModel):
     subject: Optional[str] = None
     body: str
     provider_status: Optional[str] = None
+    provider_message_id: Optional[str] = None
+    mailbox_thread_id: Optional[str] = None
+    mailbox_message_id: Optional[str] = None
+    mailbox_references: Optional[str] = None
     error_message: Optional[str] = None
     retry_count: int = 0
     max_retries: int = 0
+    failure_code: Optional[str] = None
+    failure_reason: Optional[str] = None
+    delivery_status: Optional[str] = None
+    delivery_event_type: Optional[str] = None
+    delivery_receipt_provider: Optional[str] = None
+    delivery_receipt_id: Optional[str] = None
+    delivery_receipt_at: Optional[datetime] = None
+    delivery_detail: Optional[str] = None
     sent_at: Optional[datetime] = None
     created_at: datetime
+    attachments: list[AttachmentRead] = Field(default_factory=list)
+
+
+class InboundEmailMessageRead(APIModel):
+    id: int
+    ticket_id: int
+    actor_id: Optional[int] = None
+    source: str
+    provider: str
+    provider_message_id: Optional[str] = None
+    from_address: str
+    from_name: Optional[str] = None
+    to_address: Optional[str] = None
+    cc: Optional[str] = None
+    subject: Optional[str] = None
+    body: str
+    body_preview: Optional[str] = None
+    mailbox_thread_id: str
+    mailbox_message_id: Optional[str] = None
+    mailbox_references: Optional[str] = None
+    in_reply_to: Optional[str] = None
+    ticket_event_id: Optional[int] = None
+    audit_id: Optional[int] = None
+    received_at: datetime
+    created_at: datetime
+
+
+class InboundEmailIngestResponse(APIModel):
+    ok: bool
+    created: bool
+    message: InboundEmailMessageRead
+    ticket_event_id: Optional[int] = None
+    audit_id: Optional[int] = None
+
+
+class EmailDeliveryReceiptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    delivery_status: Literal["accepted", "delivered", "opened", "deferred", "bounced", "failed", "rejected", "complained"]
+    provider: str = Field(default="manual", min_length=1, max_length=80)
+    provider_event_type: Optional[str] = Field(default=None, max_length=80)
+    provider_event_id: Optional[str] = Field(default=None, max_length=255)
+    provider_status: Optional[str] = Field(default=None, max_length=120)
+    provider_message_id: Optional[str] = Field(default=None, max_length=255)
+    mailbox_message_id: Optional[str] = Field(default=None, max_length=255)
+    detail: Optional[str] = Field(default=None, max_length=2000)
+    failure_code: Optional[str] = Field(default=None, max_length=120)
+    failure_reason: Optional[str] = Field(default=None, max_length=2000)
+    occurred_at: Optional[datetime] = None
+    raw_payload: Optional[dict[str, Any]] = None
+
+    @field_validator(
+        "delivery_status",
+        "provider",
+        "provider_event_type",
+        "provider_event_id",
+        "provider_status",
+        "provider_message_id",
+        "mailbox_message_id",
+        "detail",
+        "failure_code",
+        "failure_reason",
+        mode="before",
+    )
+    @classmethod
+    def strip_receipt_strings(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class EmailDeliveryReceiptResponse(APIModel):
+    ok: bool
+    created: bool
+    message_id: int
+    ticket_id: int
+    status: MessageStatus
+    provider_status: Optional[str] = None
+    delivery_status: str
+    delivery_event_type: Optional[str] = None
+    delivery_receipt_provider: Optional[str] = None
+    delivery_receipt_id: Optional[str] = None
+    delivery_receipt_at: Optional[datetime] = None
+    delivery_detail: Optional[str] = None
+    failure_code: Optional[str] = None
+    failure_reason: Optional[str] = None
+    ticket_event_id: Optional[int] = None
+    audit_id: Optional[int] = None
+
+
+class EmailMailboxQueueItem(APIModel):
+    id: int
+    ticket_id: int
+    ticket_no: Optional[str] = None
+    title: str
+    status: str
+    priority: str
+    source_channel: Optional[str] = None
+    category: Optional[str] = None
+    sub_category: Optional[str] = None
+    tracking_number: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_email: Optional[str] = None
+    assignee_name: Optional[str] = None
+    team_name: Optional[str] = None
+    market_id: Optional[int] = None
+    market_code: Optional[str] = None
+    country_code: Optional[str] = None
+    conversation_state: Optional[str] = None
+    updated_at: datetime
+    resolution_due_at: Optional[datetime] = None
+    overdue: bool = False
+    queue_source: Literal["inbound_email", "outbound_message", "ticket_marker"]
+    queue_reason: str
+    direction: Literal["inbound", "outbound", "ticket"]
+    last_message_at: Optional[datetime] = None
+    last_message_subject: Optional[str] = None
+    last_message_preview: Optional[str] = None
+    mailbox_thread_id: Optional[str] = None
+    mailbox_message_id: Optional[str] = None
+    mailbox_references: Optional[str] = None
+    provider: Optional[str] = None
+    provider_status: Optional[str] = None
+    delivery_status: Optional[str] = None
+    outbound_message_id: Optional[int] = None
+    inbound_message_id: Optional[int] = None
+
+
+class EmailMailboxQueueResponse(APIModel):
+    generated_at: datetime
+    source: Literal["mailbox_projection"] = "mailbox_projection"
+    items: list[EmailMailboxQueueItem] = Field(default_factory=list)
+    total: int
+    filters: dict[str, Any] = Field(default_factory=dict)
 
 
 class AIIntakeRead(APIModel):
@@ -496,6 +683,113 @@ class LiteAIIntakeRequest(BaseModel):
     last_customer_message: Optional[str] = None
 
 
+class LiteQAAppealRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sample_key: str = Field(min_length=1, max_length=160)
+    ticket_id: int = Field(gt=0)
+    channel: Optional[str] = Field(default=None, max_length=40)
+    sample: Optional[str] = Field(default=None, max_length=200)
+    current_score: Optional[int] = Field(default=None, ge=0, le=100)
+    requested_score: Optional[int] = Field(default=None, ge=0, le=100)
+    reason: str = Field(min_length=4, max_length=2000)
+    evidence: list[str] = Field(default_factory=list)
+
+    @field_validator("sample_key", "channel", "sample", "reason", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def normalize_evidence(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [value]
+        return [str(item).strip() for item in value if str(item).strip()][:12]
+
+
+class LiteQAAppealResponse(APIModel):
+    ok: bool
+    task_id: int
+    created: bool
+    status: str
+    ticket_id: int
+    sample_key: str
+    appeal_status: str
+    submitted_at: datetime
+
+
+class LiteQAKnowledgeGapRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    gap_key: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=4, max_length=200)
+    source: Optional[str] = Field(default=None, max_length=120)
+    ticket_id: Optional[int] = Field(default=None, gt=0)
+    channel: Optional[str] = Field(default=None, max_length=40)
+    sample: Optional[str] = Field(default=None, max_length=400)
+    summary: Optional[str] = Field(default=None, max_length=2000)
+    evidence: list[str] = Field(default_factory=list)
+
+    @field_validator("gap_key", "title", "source", "channel", "sample", "summary", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def normalize_evidence(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [value]
+        return [str(item).strip() for item in value if str(item).strip()][:12]
+
+
+class LiteQAKnowledgeGapResponse(APIModel):
+    ok: bool
+    resource_id: int
+    resource_key: str
+    task_id: int
+    created: bool
+    status: str
+    ticket_id: Optional[int] = None
+    gap_key: str
+    submitted_at: datetime
+
+
+class LiteControlTowerActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_key: str = Field(min_length=1, max_length=120)
+    label: Optional[str] = Field(default=None, max_length=160)
+    href: Optional[str] = Field(default=None, max_length=160)
+    count: Optional[int] = Field(default=None, ge=0)
+    note: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("action_key", "label", "href", "note", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class LiteControlTowerActionResponse(APIModel):
+    ok: bool
+    task_id: int
+    created: bool
+    status: str
+    action_key: str
+    submitted_at: datetime
+
+
 class LiteMetaRead(APIModel):
     users: list[UserRead]
     teams: list[TeamRead]
@@ -555,6 +849,49 @@ class UserCapabilityMatrixRead(APIModel):
     user: UserRead
     effective_capabilities: list[str]
     overrides: list[CapabilityOverrideRead]
+
+
+class SecurityCapabilityUserRead(APIModel):
+    user_id: int
+    username: str
+    display_name: str
+    role: UserRole
+    is_active: bool
+    effective_capabilities: list[str] = Field(default_factory=list)
+    override_count: int = 0
+    high_risk_count: int = 0
+
+
+class AdminAuditLogRead(APIModel):
+    id: int
+    actor_id: Optional[int] = None
+    actor_username: Optional[str] = None
+    actor_display_name: Optional[str] = None
+    action: str
+    target_type: str
+    target_id: Optional[int] = None
+    old_value: Optional[Any] = None
+    new_value: Optional[Any] = None
+    created_at: datetime
+
+
+class SecurityAuditSummaryRead(APIModel):
+    total_users: int
+    active_users: int
+    inactive_users: int
+    admin_users: int
+    auditor_users: int
+    high_risk_overrides: int
+    recent_audit_24h: int
+    catalog_size: int
+    read_only: bool
+
+
+class SecurityAuditRead(APIModel):
+    capability_catalog: list[str] = Field(default_factory=list)
+    users: list[SecurityCapabilityUserRead] = Field(default_factory=list)
+    recent_audit: list[AdminAuditLogRead] = Field(default_factory=list)
+    summary: SecurityAuditSummaryRead
 
 
 class IntegrationClientRead(APIModel):
@@ -758,6 +1095,13 @@ class OutboundEmailAccountCreate(BaseModel):
     from_address: EmailStr
     reply_to: Optional[EmailStr] = None
     security_mode: OutboundEmailSecurityMode = "starttls"
+    inbound_enabled: bool = False
+    imap_host: Optional[str] = Field(default=None, max_length=253)
+    imap_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    imap_username: Optional[str] = Field(default=None, max_length=255)
+    imap_password: Optional[str] = Field(default=None, min_length=1, max_length=4096)
+    imap_security_mode: Optional[OutboundEmailSecurityMode] = None
+    imap_mailbox: Optional[str] = Field(default=None, max_length=120)
     market_id: Optional[int] = None
     priority: int = Field(default=100, ge=1, le=1000)
     is_active: bool = True
@@ -767,15 +1111,19 @@ class OutboundEmailAccountCreate(BaseModel):
     def clean_display_name(cls, value):
         return _clean_optional_string(value)
 
-    @field_validator("host", "username")
+    @field_validator("host", "username", "imap_host", "imap_username", "imap_mailbox")
     @classmethod
-    def clean_required_text(cls, value: str) -> str:
+    def clean_required_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return _clean_required_string(value)
 
-    @field_validator("password")
+    @field_validator("password", "imap_password")
     @classmethod
-    def validate_password(cls, value: str) -> str:
-        if not value or not value.strip():
+    def validate_password(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip():
             raise ValueError("password cannot be blank")
         return value
 
@@ -789,6 +1137,13 @@ class OutboundEmailAccountUpdate(BaseModel):
     from_address: Optional[EmailStr] = None
     reply_to: Optional[EmailStr] = None
     security_mode: Optional[OutboundEmailSecurityMode] = None
+    inbound_enabled: Optional[bool] = None
+    imap_host: Optional[str] = Field(default=None, min_length=1, max_length=253)
+    imap_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    imap_username: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    imap_password: Optional[str] = Field(default=None, min_length=1, max_length=4096)
+    imap_security_mode: Optional[OutboundEmailSecurityMode] = None
+    imap_mailbox: Optional[str] = Field(default=None, min_length=1, max_length=120)
     market_id: Optional[int] = None
     priority: Optional[int] = Field(default=None, ge=1, le=1000)
     is_active: Optional[bool] = None
@@ -798,14 +1153,14 @@ class OutboundEmailAccountUpdate(BaseModel):
     def clean_display_name(cls, value):
         return _clean_optional_string(value)
 
-    @field_validator("host", "username")
+    @field_validator("host", "username", "imap_host", "imap_username", "imap_mailbox")
     @classmethod
     def clean_required_text(cls, value: str | None) -> str | None:
         if value is None:
             return None
         return _clean_required_string(value)
 
-    @field_validator("password")
+    @field_validator("password", "imap_password")
     @classmethod
     def validate_password(cls, value: str | None) -> str | None:
         if value is not None and not value.strip():
@@ -822,6 +1177,19 @@ class OutboundEmailAccountRead(APIModel):
     from_address: str
     reply_to: Optional[str] = None
     security_mode: str
+    inbound_enabled: bool = False
+    imap_host: Optional[str] = None
+    imap_port: Optional[int] = None
+    imap_username: Optional[str] = None
+    imap_security_mode: Optional[str] = None
+    imap_mailbox: Optional[str] = None
+    imap_sync_cursor: Optional[str] = None
+    imap_last_seen_at: Optional[datetime] = None
+    imap_last_status: Optional[str] = None
+    imap_last_error: Optional[str] = None
+    imap_last_sync_job_id: Optional[int] = None
+    imap_password_configured: bool = False
+    imap_password_mask: Optional[str] = None
     market_id: Optional[int] = None
     is_active: bool
     priority: int
@@ -849,6 +1217,42 @@ class OutboundEmailTestSendRead(APIModel):
     error_message: Optional[str] = None
     sent_at: Optional[datetime] = None
     health_status: str
+
+
+class EmailMailboxSyncAccountStatus(APIModel):
+    account_id: int
+    display_name: Optional[str] = None
+    from_address: str
+    inbound_enabled: bool
+    configured: bool
+    imap_host: Optional[str] = None
+    imap_mailbox: Optional[str] = None
+    imap_sync_cursor: Optional[str] = None
+    imap_last_seen_at: Optional[datetime] = None
+    imap_last_status: Optional[str] = None
+    imap_last_error: Optional[str] = None
+    imap_last_sync_job_id: Optional[int] = None
+
+
+class EmailMailboxSyncStatusRead(APIModel):
+    generated_at: datetime
+    daemon_enabled: bool
+    interval_seconds: int
+    enabled_accounts: int
+    configured_accounts: int
+    pending_jobs: int
+    dead_jobs: int
+    accounts: list[EmailMailboxSyncAccountStatus] = Field(default_factory=list)
+
+
+class EmailMailboxSyncEnqueueRequest(BaseModel):
+    account_id: Optional[int] = None
+
+
+class EmailMailboxSyncEnqueueResponse(APIModel):
+    ok: bool = True
+    enqueued: int
+    job_ids: list[int] = Field(default_factory=list)
 
 
 class OpenClawRuntimeHealthRead(APIModel):
@@ -916,6 +1320,8 @@ class MarketBulletinCreate(BaseModel):
 
 
 class MarketBulletinUpdate(BaseModel):
+    market_id: Optional[int] = None
+    country_code: Optional[str] = None
     title: Optional[str] = None
     body: Optional[str] = None
     summary: Optional[str] = None
@@ -927,6 +1333,42 @@ class MarketBulletinUpdate(BaseModel):
     is_active: Optional[bool] = None
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
+
+
+class MarketBulletinImpactPreviewRequest(BaseModel):
+    market_id: Optional[int] = None
+    country_code: Optional[str] = None
+    channels_csv: Optional[str] = None
+    audience: str = "customer"
+    auto_inject_to_ai: bool = True
+    is_active: bool = True
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+
+
+class MarketBulletinImpactChannelCount(APIModel):
+    channel: str
+    count: int
+
+
+class MarketBulletinImpactTicket(APIModel):
+    id: int
+    ticket_no: str
+    title: str
+    status: str
+    channel: str
+    updated_at: datetime
+
+
+class MarketBulletinImpactPreviewRead(APIModel):
+    matching_tickets: int
+    ready_to_reply_tickets: int
+    channel_counts: list[MarketBulletinImpactChannelCount] = Field(default_factory=list)
+    sample_tickets: list[MarketBulletinImpactTicket] = Field(default_factory=list)
+    window_status: str
+    scope_label: str
+    auto_inject_to_ai: bool
+    ai_context_enabled: bool
 
 
 class AIConfigResourceRead(APIModel):

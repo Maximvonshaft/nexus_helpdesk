@@ -3,14 +3,28 @@ import type {
   AuthUser,
   BackgroundJob,
   Bulletin,
+  BulletinImpactPreview,
+  BulletinImpactPreviewPayload,
   CaseDetail,
   CaseListItem,
   CaseListPage,
   ChannelAccount,
   ChannelOnboardingTaskList,
+  ControlTower,
+  ControlTowerActionResult,
+  EmailDeliveryReceiptPayload,
+  EmailDeliveryReceiptResult,
+  EmailMailboxQueueResponse,
+  EmailMailboxSyncEnqueueResult,
+  EmailMailboxSyncStatus,
+  InboundEmailIngestResult,
+  InboundEmailPayload,
   LiteMeta,
   Market,
   ProductionReadiness,
+  QATraining,
+  QATrainingAppealResult,
+  QATrainingKnowledgeGapResult,
   QueueSummary,
   RuntimeHealth,
   OpenClawConnectivityProbe,
@@ -25,6 +39,10 @@ import type {
   SystemAttachment,
   AIConfigResource,
   AIConfigVersion,
+  KnowledgeStudio,
+  KnowledgeConflictCheckResult,
+  KnowledgeGoldenTestResult,
+  PersonaBuilder,
   KnowledgeItem,
   KnowledgeItemDetail,
   KnowledgeItemList,
@@ -34,8 +52,13 @@ import type {
   PersonaProfile,
   PersonaProfileDetail,
   PersonaProfileList,
+  PersonaProfileReview,
+  PersonaProfileReviewList,
   PersonaProfileVersion,
+  PersonaRuntimeEvidenceResult,
+  PersonaResolvePreviewResult,
   Team,
+  TodayWorkbench,
   WebchatConversation,
   WebchatHandoffQueue,
   WebchatHandoffRequest,
@@ -43,6 +66,7 @@ import type {
   WebchatThread,
   WebchatReplyResult,
   ProviderCredentialStatusResponse,
+  SecurityAudit,
   CodexAuthorizationStart,
   CodexManualAuthorizationCompleteResult,
   CodexManualAuthorizationStart,
@@ -50,7 +74,7 @@ import type {
   CodexSessionStatus,
   CodexCredentialActionResult,
 } from '@/lib/types'
-import type { WebchatVoiceIncomingSession, WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
+import type { WebchatVoiceAction, WebchatVoiceActionPayload, WebchatVoiceActionResult, WebchatVoiceActionType, WebchatVoiceEvidence, WebchatVoiceIncomingSession, WebchatVoiceNoteResult, WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
 import { mapApiErrorMessage } from '@/lib/apiErrorMap'
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
@@ -339,6 +363,11 @@ export const api = {
   }),
   teams: () => request<Team[]>('/api/lookups/teams'),
   capabilityCatalog: () => request<string[]>('/api/admin/capabilities/catalog'),
+  securityAudit: (params?: { limit?: number }) => {
+    const search = new URLSearchParams()
+    search.set('limit', String(params?.limit ?? 30))
+    return request<SecurityAudit>(`/api/admin/security-audit?${search.toString()}`)
+  },
 
   liteMeta: () => request<LiteMeta>('/api/lite/meta'),
   casesPage: (params?: CaseQueryParams) => request<CaseListPage>(`/api/lite/cases?${buildCaseSearch(params).toString()}`),
@@ -346,7 +375,30 @@ export const api = {
     const page = await request<CaseListPage>(`/api/lite/cases?${buildCaseSearch(params).toString()}`)
     return page.items
   },
+  emailMailboxQueue: (params?: CaseQueryParams) => request<EmailMailboxQueueResponse>(`/api/email/queue?${buildCaseSearch(params).toString()}`),
+  emailMailboxSyncStatus: () => request<EmailMailboxSyncStatus>('/api/email/mailbox-sync/status'),
+  enqueueEmailMailboxSync: (payload?: { account_id?: number | null }) => request<EmailMailboxSyncEnqueueResult>('/api/email/mailbox-sync/enqueue', {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  }),
   caseDetail: (ticketId: number) => request<CaseDetail>(`/api/tickets/${ticketId}/summary`),
+  todayWorkbench: () => request<TodayWorkbench>('/api/lite/today-workbench'),
+  controlTower: () => request<ControlTower>('/api/lite/control-tower'),
+  submitControlTowerAction: (payload: { action_key: string; label?: string | null; href?: string | null; count?: number | null; note?: string | null }) => request<ControlTowerActionResult>('/api/lite/control-tower/actions', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  qaTraining: () => request<QATraining>('/api/lite/qa-training'),
+  submitQATrainingAppeal: (payload: { sample_key: string; ticket_id: number; channel?: string | null; sample?: string | null; current_score?: number | null; requested_score?: number | null; reason: string; evidence?: string[] }) => request<QATrainingAppealResult>('/api/lite/qa-training/appeals', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  submitQATrainingKnowledgeGap: (payload: { gap_key: string; title: string; source?: string | null; ticket_id?: number | null; channel?: string | null; sample?: string | null; summary?: string | null; evidence?: string[] }) => request<QATrainingKnowledgeGapResult>('/api/lite/qa-training/knowledge-gaps', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  knowledgeStudio: () => request<KnowledgeStudio>('/api/lite/knowledge-studio'),
+  personaBuilder: () => request<PersonaBuilder>('/api/lite/persona-builder'),
   ticketTimeline: (ticketId: number, params?: { cursor?: string | null; limit?: number }) => {
     const search = new URLSearchParams()
     search.set('limit', String(params?.limit ?? 50))
@@ -375,6 +427,14 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
+  ingestInboundEmail: (ticketId: number, payload: InboundEmailPayload) => request<InboundEmailIngestResult>(`/api/tickets/${ticketId}/email/inbound`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  recordEmailDeliveryReceipt: (ticketId: number, messageId: number, payload: EmailDeliveryReceiptPayload) => request<EmailDeliveryReceiptResult>(`/api/tickets/${ticketId}/email/outbound/${messageId}/delivery-receipt`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   workflowUpdate: (ticketId: number, payload: unknown) => request<CaseDetail>(`/api/lite/cases/${ticketId}/workflow-update`, {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -392,6 +452,10 @@ export const api = {
   }),
   updateBulletin: (bulletinId: number, payload: Partial<Bulletin>) => request<Bulletin>(`/api/admin/bulletins/${bulletinId}`, {
     method: 'PATCH',
+    body: JSON.stringify(payload),
+  }),
+  previewBulletinImpact: (payload: BulletinImpactPreviewPayload) => request<BulletinImpactPreview>('/api/admin/bulletins/impact-preview', {
+    method: 'POST',
     body: JSON.stringify(payload),
   }),
   aiConfigs: (configType?: string) => request<AIConfigResource[]>(`/api/admin/ai-configs${configType ? `?config_type=${encodeURIComponent(configType)}` : ''}`),
@@ -444,6 +508,37 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ version, notes: notes || null }),
   }),
+  personaReviews: (params?: { profile_id?: number; status?: string; limit?: number }) => {
+    const search = new URLSearchParams()
+    search.set('limit', String(params?.limit ?? 50))
+    if (typeof params?.profile_id === 'number') search.set('profile_id', String(params.profile_id))
+    if (params?.status) search.set('status', params.status)
+    return request<PersonaProfileReviewList>(`/api/persona-profiles/reviews?${search.toString()}`)
+  },
+  submitPersonaReview: (profileId: number, payload?: { notes?: string | null; release_window_start?: string | null; release_window_end?: string | null }) => request<PersonaProfileReview>(`/api/persona-profiles/${profileId}/submit-review`, {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  }),
+  approvePersonaReview: (reviewId: number, payload?: { decision_note?: string | null; release_window_start?: string | null; release_window_end?: string | null }) => request<PersonaProfileReview>(`/api/persona-profiles/reviews/${reviewId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  }),
+  rejectPersonaReview: (reviewId: number, payload?: { decision_note?: string | null }) => request<PersonaProfileReview>(`/api/persona-profiles/reviews/${reviewId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  }),
+  publishPersonaReview: (reviewId: number, notes?: string) => request<PersonaProfileVersion>(`/api/persona-profiles/reviews/${reviewId}/publish`, {
+    method: 'POST',
+    body: JSON.stringify({ notes: notes || null }),
+  }),
+  resolvePersonaPreview: (payload: { market_id?: number | null; channel?: string | null; language?: string | null }) => request<PersonaResolvePreviewResult>('/api/persona-profiles/resolve-preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  personaRuntimeEvidence: (payload: { tenant_key?: string; body: string; market_id?: number | null; channel?: string | null; language?: string | null; audience_scope?: string | null; expected_profile_key?: string | null }) => request<PersonaRuntimeEvidenceResult>('/api/persona-profiles/runtime-evidence', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
   knowledgeItems: (params?: { q?: string; status?: string; source_type?: string; channel?: string; audience_scope?: string }) => {
     const search = new URLSearchParams()
     search.set('limit', '200')
@@ -494,6 +589,14 @@ export const api = {
     body: JSON.stringify({ version, notes: notes || null }),
   }),
   testKnowledgeRetrieval: (payload: { q: string; market_id?: number | null; channel?: string | null; audience_scope?: string | null; language?: string | null; limit?: number }) => request<KnowledgeRetrievalTestResult>('/api/knowledge-items/retrieve-test', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  checkKnowledgeConflicts: (payload: { q?: string | null; item_id?: number | null; market_id?: number | null; channel?: string | null; audience_scope?: string | null; language?: string | null; include_archived?: boolean; limit?: number }) => request<KnowledgeConflictCheckResult>('/api/knowledge-items/conflict-check', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  runKnowledgeGoldenTest: (payload: { q: string; market_id?: number | null; channel?: string | null; audience_scope?: string | null; language?: string | null; limit?: number; expected_item_key?: string | null; expected_answer_contains?: string | null; forbidden_answer_terms?: string[]; min_score?: number }) => request<KnowledgeGoldenTestResult>('/api/knowledge-items/golden-test', {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
@@ -627,12 +730,30 @@ export const api = {
     return request<{ items: WebchatVoiceIncomingSession[] }>(`/api/webchat/admin/voice/sessions?${search.toString()}`, init)
   },
   webchatVoiceSessions: (ticketId: number, init?: RequestInit) => request<{ items: WebchatVoiceSession[] }>(`/api/webchat/admin/tickets/${ticketId}/voice/sessions`, init),
+  webchatVoiceEvidence: (ticketId: number, voiceSessionId: string, params?: { limit?: number }, init?: RequestInit) => {
+    const search = new URLSearchParams()
+    search.set('limit', String(params?.limit ?? 50))
+    return request<WebchatVoiceEvidence>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/evidence?${search.toString()}`, init)
+  },
+  webchatVoiceActions: (ticketId: number, voiceSessionId: string, params?: { limit?: number }, init?: RequestInit) => {
+    const search = new URLSearchParams()
+    search.set('limit', String(params?.limit ?? 20))
+    return request<{ items: WebchatVoiceAction[] }>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/actions?${search.toString()}`, init)
+  },
+  webchatVoiceCreateAction: (ticketId: number, voiceSessionId: string, actionType: WebchatVoiceActionType, payload?: WebchatVoiceActionPayload) => request<WebchatVoiceActionResult>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/actions`, {
+    method: 'POST',
+    body: JSON.stringify({ action_type: actionType, ...(payload ?? {}) }),
+  }),
   webchatVoiceAcceptSession: (ticketId: number, voiceSessionId: string) => request<WebchatVoiceSession>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/accept`, { method: 'POST' }),
   webchatVoiceRejectSession: (ticketId: number, voiceSessionId: string, reason?: string) => request<{ ok: boolean; status: string; voice_session_id: string; accepted_by_user_id?: number | null }>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/reject`, {
     method: 'POST',
     body: JSON.stringify({ reason: reason || null }),
   }),
   webchatVoiceEndSession: (ticketId: number, voiceSessionId: string) => request<{ ok: boolean; status: string; voice_session_id: string; accepted_by_user_id?: number | null }>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/end`, { method: 'POST' }),
+  webchatVoiceSaveNote: (ticketId: number, voiceSessionId: string, payload: { body: string; source?: string | null }) => request<WebchatVoiceNoteResult>(`/api/webchat/admin/tickets/${ticketId}/voice/${voiceSessionId}/notes`, {
+    method: 'POST',
+    body: JSON.stringify({ body: payload.body, source: payload.source || null }),
+  }),
 
   unresolvedEvents: () => request<OpenClawUnresolvedEvent[]>('/api/admin/openclaw/unresolved-events'),
   replayUnresolvedEvent: (eventId: number) => request<{ ok: boolean; linked_ticket_id?: number | null }>(`/api/admin/openclaw/unresolved-events/${eventId}/replay`, {

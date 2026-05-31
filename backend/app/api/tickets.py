@@ -14,6 +14,11 @@ from ..schemas import (
     CommentRead,
     InternalNoteCreate,
     InternalNoteRead,
+    EmailDeliveryReceiptRequest,
+    EmailDeliveryReceiptResponse,
+    InboundEmailIngestRequest,
+    InboundEmailIngestResponse,
+    InboundEmailMessageRead,
     OutboundDraftCreate,
     OutboundMessageRead,
     OutboundSendRequest,
@@ -53,6 +58,8 @@ from ..services.ticket_service import (
     send_outbound_message,
     update_ticket,
 )
+from ..services.email_delivery_receipt_service import record_email_delivery_receipt
+from ..services.email_inbound_service import ingest_ticket_inbound_email
 from ..services.timeline_service import build_unified_timeline
 from ..services.permissions import ensure_ticket_visible
 from ..services.sla_service import compute_sla_snapshot
@@ -65,6 +72,18 @@ from ..unit_of_work import managed_session
 from ..services.bulletin_service import list_active_bulletins
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
+
+
+def _serialize_attachment(row) -> dict:
+    return {
+        "id": row.id,
+        "file_name": row.file_name,
+        "download_url": row.download_url,
+        "mime_type": row.mime_type,
+        "file_size": row.file_size,
+        "visibility": row.visibility,
+        "created_at": row.created_at,
+    }
 
 
 def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
@@ -85,6 +104,10 @@ def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
         "subject": getattr(row, "subject", None),
         "body": row.body,
         "provider_status": row.provider_status,
+        "provider_message_id": row.provider_message_id,
+        "mailbox_thread_id": row.mailbox_thread_id,
+        "mailbox_message_id": row.mailbox_message_id,
+        "mailbox_references": row.mailbox_references,
         "error_message": row.error_message,
         "retry_count": row.retry_count,
         "max_retries": row.max_retries,
@@ -92,12 +115,21 @@ def _serialize_outbound_message(row: TicketOutboundMessage) -> dict:
         "created_at": row.created_at,
         "failure_code": getattr(row, "failure_code", None),
         "failure_reason": getattr(row, "failure_reason", None),
+        "delivery_status": getattr(row, "delivery_status", None),
+        "delivery_event_type": getattr(row, "delivery_event_type", None),
+        "delivery_receipt_provider": getattr(row, "delivery_receipt_provider", None),
+        "delivery_receipt_id": getattr(row, "delivery_receipt_id", None),
+        "delivery_receipt_at": getattr(row, "delivery_receipt_at", None),
+        "delivery_detail": getattr(row, "delivery_detail", None),
         "external_send": external_send,
         "delivery_semantics": delivery_semantics,
         "dispatch_enabled": bool(settings.enable_outbound_dispatch),
         "outbound_provider": settings.outbound_provider,
         "ui_label": outbound_ui_label(row.channel, row.status, row.provider_status),
         "operator_note": "Queued for external provider dispatch; wait for sent/dead/review final state" if external_send else "Local-only delivery; no external provider send occurred",
+        "attachments": [_serialize_attachment(attachment) for attachment in getattr(row, "attachments", [])],
+        "attachment_ids": [attachment.id for attachment in getattr(row, "attachments", [])],
+        "attachments_count": len(getattr(row, "attachments", [])),
     }
 
 
@@ -328,6 +360,46 @@ def send_message_endpoint(ticket_id: int, payload: OutboundSendRequest, db: Sess
         row = send_outbound_message(db, ticket_id, payload, current_user)
         db.flush()
     return _serialize_outbound_message(row)
+
+
+@router.post("/{ticket_id}/email/inbound", response_model=InboundEmailIngestResponse)
+def ingest_inbound_email_endpoint(ticket_id: int, payload: InboundEmailIngestRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    with managed_session(db):
+        result = ingest_ticket_inbound_email(db, ticket_id=ticket_id, payload=payload, current_user=current_user)
+        db.flush()
+    return InboundEmailIngestResponse(
+        ok=True,
+        created=result.created,
+        message=InboundEmailMessageRead.model_validate(result.row),
+        ticket_event_id=result.row.ticket_event_id,
+        audit_id=result.row.audit_id,
+    )
+
+
+@router.post("/{ticket_id}/email/outbound/{message_id}/delivery-receipt", response_model=EmailDeliveryReceiptResponse)
+def record_email_delivery_receipt_endpoint(ticket_id: int, message_id: int, payload: EmailDeliveryReceiptRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    with managed_session(db):
+        result = record_email_delivery_receipt(db, ticket_id=ticket_id, message_id=message_id, payload=payload, current_user=current_user)
+        db.flush()
+    message = result.message
+    return EmailDeliveryReceiptResponse(
+        ok=True,
+        created=result.created,
+        message_id=message.id,
+        ticket_id=message.ticket_id,
+        status=message.status,
+        provider_status=message.provider_status,
+        delivery_status=message.delivery_status or payload.delivery_status,
+        delivery_event_type=message.delivery_event_type,
+        delivery_receipt_provider=message.delivery_receipt_provider,
+        delivery_receipt_id=message.delivery_receipt_id,
+        delivery_receipt_at=message.delivery_receipt_at,
+        delivery_detail=message.delivery_detail,
+        failure_code=message.failure_code,
+        failure_reason=message.failure_reason,
+        ticket_event_id=result.ticket_event_id,
+        audit_id=result.audit_id,
+    )
 
 
 @router.post("/{ticket_id}/ai-intakes", response_model=AIIntakeRead)

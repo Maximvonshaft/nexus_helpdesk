@@ -79,6 +79,9 @@ class Settings:
         self.outbox_batch_size = int(os.getenv("OUTBOX_BATCH_SIZE", "50"))
         self.outbox_lock_seconds = int(os.getenv("OUTBOX_LOCK_SECONDS", "300"))
         self.outbox_max_retries = int(os.getenv("OUTBOX_MAX_RETRIES", "3"))
+        self.email_mailbox_sync_enabled = _env_bool("EMAIL_MAILBOX_SYNC_ENABLED", True)
+        self.email_mailbox_sync_interval_seconds = int(os.getenv("EMAIL_MAILBOX_SYNC_INTERVAL_SECONDS", "60"))
+        self.email_mailbox_sync_batch_size = int(os.getenv("EMAIL_MAILBOX_SYNC_BATCH_SIZE", "20"))
 
         self.job_batch_size = int(os.getenv("JOB_BATCH_SIZE", "25"))
         self.job_lock_seconds = int(os.getenv("JOB_LOCK_SECONDS", "300"))
@@ -214,6 +217,10 @@ class Settings:
             raise RuntimeError("WEBCHAT_WS_MAX_CONNECTIONS_PER_USER must be between 1 and 1000")
         if self.outbound_email_test_send_max_age_hours < 1 or self.outbound_email_test_send_max_age_hours > 168:
             raise RuntimeError("OUTBOUND_EMAIL_TEST_SEND_MAX_AGE_HOURS must be between 1 and 168")
+        if self.email_mailbox_sync_interval_seconds < 5 or self.email_mailbox_sync_interval_seconds > 3600:
+            raise RuntimeError("EMAIL_MAILBOX_SYNC_INTERVAL_SECONDS must be between 5 and 3600")
+        if self.email_mailbox_sync_batch_size < 1 or self.email_mailbox_sync_batch_size > 100:
+            raise RuntimeError("EMAIL_MAILBOX_SYNC_BATCH_SIZE must be between 1 and 100")
         if self.webchat_tracking_fact_lookup_enabled and not self.webchat_tracking_fact_redaction_enabled:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED must be true when tracking lookup is enabled")
         if self.app_env == "production":

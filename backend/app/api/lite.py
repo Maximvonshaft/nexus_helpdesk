@@ -15,8 +15,14 @@ from ..schemas import (
     LiteCaseDetail,
     LiteCaseListItem,
     LiteCaseUpdate,
+    LiteControlTowerActionRequest,
+    LiteControlTowerActionResponse,
     LiteHumanNoteRequest,
     LiteMetaRead,
+    LiteQAAppealRequest,
+    LiteQAAppealResponse,
+    LiteQAKnowledgeGapRequest,
+    LiteQAKnowledgeGapResponse,
     LiteStatusRequest,
     LiteWorkflowUpdateRequest,
     TeamRead,
@@ -35,6 +41,11 @@ from ..services.lite_service import (
     update_lite_case,
     workflow_update_lite_case,
 )
+from ..services.control_tower_service import build_control_tower, submit_control_tower_action
+from ..services.knowledge_studio_service import build_knowledge_studio
+from ..services.persona_builder_service import build_persona_builder
+from ..services.qa_training_service import build_qa_training, submit_agent_appeal, submit_knowledge_gap
+from ..services.today_workbench_service import build_today_workbench
 from .deps import get_current_user
 from ..unit_of_work import managed_session
 
@@ -62,6 +73,52 @@ def get_lite_meta(db: Session = Depends(get_db), current_user=Depends(get_curren
         statuses=LITE_STATUS_ORDER,
         priorities=["low", "medium", "high", "urgent"],
     )
+
+
+@router.get("/today-workbench")
+def today_workbench(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return build_today_workbench(db, current_user)
+
+
+@router.get("/control-tower")
+def control_tower(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return build_control_tower(db, current_user)
+
+
+@router.post("/control-tower/actions", response_model=LiteControlTowerActionResponse)
+def control_tower_action(payload: LiteControlTowerActionRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    with managed_session(db):
+        result = submit_control_tower_action(db, current_user, payload)
+    return result
+
+
+@router.get("/qa-training")
+def qa_training(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return build_qa_training(db, current_user)
+
+
+@router.post("/qa-training/appeals", response_model=LiteQAAppealResponse)
+def qa_training_appeal(payload: LiteQAAppealRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    with managed_session(db):
+        result = submit_agent_appeal(db, current_user, payload)
+    return result
+
+
+@router.post("/qa-training/knowledge-gaps", response_model=LiteQAKnowledgeGapResponse)
+def qa_training_knowledge_gap(payload: LiteQAKnowledgeGapRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    with managed_session(db):
+        result = submit_knowledge_gap(db, current_user, payload)
+    return result
+
+
+@router.get("/knowledge-studio")
+def knowledge_studio(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return build_knowledge_studio(db, current_user)
+
+
+@router.get("/persona-builder")
+def persona_builder(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return build_persona_builder(db, current_user)
 
 
 @router.get("/cases")

@@ -18,7 +18,13 @@ import { Toast } from '@/components/ui/Toast'
 import { RequireCapability } from '@/components/security/RequireCapability'
 import { useSession } from '@/hooks/useAuth'
 import { canAccess, routeAccess } from '@/lib/rbac'
-import { canForceWebchatHandoff } from '@/lib/access'
+import {
+  canAcceptWebchatHandoff,
+  canDeclineWebchatHandoff,
+  canForceWebchatHandoff,
+  canReleaseWebchatHandoff,
+  canResumeWebchatHandoff,
+} from '@/lib/access'
 import { formatDateTime, labelize, marketLabel, sanitizeDisplayText, statusTone } from '@/lib/format'
 
 type QueueSource = 'voice' | 'handoff' | 'conversation'
@@ -59,6 +65,11 @@ type ConfirmAction = {
 function valueOrDash(value?: string | number | null) {
   if (value === null || value === undefined || value === '') return '-'
   return sanitizeDisplayText(String(value))
+}
+
+function compactPayload(value?: Record<string, unknown> | null) {
+  if (!value || !Object.keys(value).length) return ''
+  return sanitizeDisplayText(JSON.stringify(value)).slice(0, 220)
 }
 
 function visitorLabelFromConversation(item?: WebchatConversation | null) {
@@ -250,6 +261,10 @@ function WebCallOperatorWorkbenchPage() {
   const navigate = useNavigate()
   const canOpenDemo = canAccess(session.data, routeAccess['/webcall-ai-demo'])
   const canForceTakeover = canForceWebchatHandoff(session.data)
+  const canAcceptHandoffByCap = canAcceptWebchatHandoff(session.data)
+  const canDeclineHandoffByCap = canDeclineWebchatHandoff(session.data)
+  const canReleaseHandoffByCap = canReleaseWebchatHandoff(session.data)
+  const canResumeHandoffByCap = canResumeWebchatHandoff(session.data)
   const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null)
   const [handoffView, setHandoffView] = useState<'requested' | 'mine' | 'ai_active'>('requested')
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
@@ -358,12 +373,13 @@ function WebCallOperatorWorkbenchPage() {
   })
 
   const handoffBusy = handoffMutation.isPending
-  const canAcceptHandoff = selectedHandoff?.status === 'requested' && typeof selectedHandoff.id === 'number' && selectedHandoff.can_accept !== false
-  const canDeclineHandoff = selectedHandoff?.status === 'requested' && typeof selectedHandoff.id === 'number' && selectedHandoff.can_decline !== false
-  const canReleaseHandoff = selectedHandoff?.status === 'accepted' && typeof selectedHandoff.id === 'number' && selectedHandoff.can_release === true
-  const canResumeAi = selectedHandoff?.can_resume_ai === true && typeof selectedHandoff.id === 'number'
+  const canAcceptHandoff = selectedHandoff?.status === 'requested' && typeof selectedHandoff.id === 'number' && selectedHandoff.can_accept === true && canAcceptHandoffByCap
+  const canDeclineHandoff = selectedHandoff?.status === 'requested' && typeof selectedHandoff.id === 'number' && selectedHandoff.can_decline === true && canDeclineHandoffByCap
+  const canReleaseHandoff = selectedHandoff?.status === 'accepted' && typeof selectedHandoff.id === 'number' && selectedHandoff.can_release === true && canReleaseHandoffByCap
+  const canResumeAi = selectedHandoff?.can_resume_ai === true && typeof selectedHandoff.id === 'number' && canResumeHandoffByCap
   const showForceTakeover = Boolean(selectedTicketId && (thread.data?.ai_pending || thread.data?.ai_status || selectedRow?.aiStatus))
   const allowForceTakeover = Boolean(canForceTakeover && (selectedHandoff?.can_force_takeover ?? true))
+  const selectedHandoffId = selectedHandoff?.id
 
   return (
     <AppShell>
@@ -440,10 +456,18 @@ function WebCallOperatorWorkbenchPage() {
                   {thread.data?.ai_suspended ? <Badge tone="success">AI suspended</Badge> : null}
                 </div>
                 <div className="button-row">
-                  {canAcceptHandoff ? <Button variant="primary" disabled={handoffBusy} onClick={() => handoffMutation.mutate({ type: 'accept', requestId: selectedHandoff.id as number })}>接管</Button> : null}
-                  {canDeclineHandoff ? <Button variant="secondary" disabled={handoffBusy} onClick={() => handoffMutation.mutate({ type: 'decline', requestId: selectedHandoff.id as number })}>跳过</Button> : null}
-                  {canReleaseHandoff ? <Button variant="secondary" disabled={handoffBusy} onClick={() => handoffMutation.mutate({ type: 'release', requestId: selectedHandoff.id as number })}>释放回队列</Button> : null}
-                  {canResumeAi ? <Button variant="secondary" disabled={handoffBusy} onClick={() => handoffMutation.mutate({ type: 'resume', requestId: selectedHandoff.id as number })}>恢复 AI</Button> : null}
+                  {canAcceptHandoff && selectedHandoffId != null ? (
+                    <Button variant="primary" disabled={handoffBusy} onClick={() => handoffMutation.mutate({ type: 'accept', requestId: selectedHandoffId })}>接管</Button>
+                  ) : null}
+                  {canDeclineHandoff && selectedHandoffId != null ? (
+                    <Button variant="secondary" disabled={handoffBusy} onClick={() => handoffMutation.mutate({ type: 'decline', requestId: selectedHandoffId })}>跳过</Button>
+                  ) : null}
+                  {canReleaseHandoff && selectedHandoffId != null ? (
+                    <Button variant="secondary" disabled={handoffBusy} onClick={() => handoffMutation.mutate({ type: 'release', requestId: selectedHandoffId })}>释放回队列</Button>
+                  ) : null}
+                  {canResumeAi && selectedHandoffId != null ? (
+                    <Button variant="secondary" disabled={handoffBusy} onClick={() => handoffMutation.mutate({ type: 'resume', requestId: selectedHandoffId })}>恢复 AI</Button>
+                  ) : null}
                   {showForceTakeover ? (
                     <Button
                       variant="danger"
@@ -525,6 +549,15 @@ function WebCallOperatorWorkbenchPage() {
                     </div>
                   ))}
                   {!(thread.data?.actions ?? []).length && !thread.isLoading ? <EmptyState text="暂无 WebChat action audit。" /> : null}
+                </Section>
+                <Section title="WebChat events">
+                  {(thread.data?.events ?? []).slice(-8).map((event) => (
+                    <div className="message" data-role="agent" key={event.id}>
+                      <div className="message-head"><strong>{labelize(event.event_type)}</strong><span>{formatDateTime(event.created_at)}</span></div>
+                      <div>{compactPayload(event.payload_json)}</div>
+                    </div>
+                  ))}
+                  {!(thread.data?.events ?? []).length && !thread.isLoading ? <EmptyState text="暂无 WebChat runtime events。" /> : null}
                 </Section>
               </CardBody>
             </Card>

@@ -6,7 +6,17 @@ from typing import Optional
 from sqlalchemy.orm import Session, joinedload
 
 from ..enums import EventType, MessageStatus
-from ..models import Ticket, TicketAIIntake, TicketAttachment, TicketComment, TicketEvent, TicketInternalNote, TicketOutboundMessage
+from ..models import (
+    Ticket,
+    TicketAIIntake,
+    TicketAttachment,
+    TicketComment,
+    TicketEvent,
+    TicketInternalNote,
+    TicketInboundEmailMessage,
+    TicketOutboundAttachment,
+    TicketOutboundMessage,
+)
 from ..webchat_models import WebchatMessage
 from .outbound_semantics import outbound_is_external_send, outbound_ui_label
 
@@ -95,6 +105,37 @@ def serialize_note(note: TicketInternalNote) -> dict:
     }
 
 
+def serialize_inbound_email(message: TicketInboundEmailMessage) -> dict:
+    return {
+        "id": f"inbound-email-{message.id}",
+        "kind": "inbound_email",
+        "title": "Inbound Email received",
+        "summary": message.body_preview or message.body,
+        "visibility": "external",
+        "actor_id": message.actor_id,
+        "actor_display_name": _actor_name(message),
+        "created_at": message.created_at,
+        "payload": {
+            "source": message.source,
+            "provider": message.provider,
+            "provider_message_id": message.provider_message_id,
+            "from_address": message.from_address,
+            "from_name": message.from_name,
+            "to_address": message.to_address,
+            "cc": message.cc,
+            "subject": message.subject,
+            "body_preview": message.body_preview,
+            "mailbox_thread_id": message.mailbox_thread_id,
+            "mailbox_message_id": message.mailbox_message_id,
+            "mailbox_references": message.mailbox_references,
+            "in_reply_to": message.in_reply_to,
+            "ticket_event_id": message.ticket_event_id,
+            "audit_id": message.audit_id,
+            "received_at": message.received_at.isoformat() if message.received_at else None,
+        },
+    }
+
+
 def serialize_attachment(attachment: TicketAttachment) -> dict:
     return {
         "id": f"attachment-{attachment.id}",
@@ -116,6 +157,17 @@ def serialize_attachment(attachment: TicketAttachment) -> dict:
 def serialize_outbound(message: TicketOutboundMessage) -> dict:
     ui_label = outbound_ui_label(message.channel, message.status, message.provider_status)
     external = outbound_is_external_send(message.channel, message.provider_status)
+    attachments = [
+        {
+            "id": attachment.id,
+            "file_name": attachment.file_name,
+            "download_url": attachment.file_url or f"/api/files/{attachment.id}/download",
+            "mime_type": attachment.mime_type,
+            "file_size": attachment.file_size,
+            "visibility": attachment.visibility.value,
+        }
+        for attachment in getattr(message, "attachments", [])
+    ]
 
     if ui_label in {"Local WebChat ACK", "WebChat Safe Fallback", "Draft / Review Required", "External Send Pending"}:
         title = ui_label
@@ -149,8 +201,28 @@ def serialize_outbound(message: TicketOutboundMessage) -> dict:
             "channel": message.channel.value,
             "status": message.status.value,
             "provider_status": message.provider_status,
+            "provider_message_id": message.provider_message_id,
+            "mailbox_thread_id": message.mailbox_thread_id,
+            "mailbox_message_id": message.mailbox_message_id,
+            "mailbox_references": message.mailbox_references,
+            "retry_count": message.retry_count,
+            "max_retries": message.max_retries,
+            "failure_code": message.failure_code,
+            "failure_reason": message.failure_reason,
+            "delivery_status": message.delivery_status,
+            "delivery_event_type": message.delivery_event_type,
+            "delivery_receipt_provider": message.delivery_receipt_provider,
+            "delivery_receipt_id": message.delivery_receipt_id,
+            "delivery_receipt_at": message.delivery_receipt_at.isoformat() if message.delivery_receipt_at else None,
+            "delivery_detail": message.delivery_detail,
+            "sent_at": message.sent_at.isoformat() if message.sent_at else None,
+            "last_attempt_at": message.last_attempt_at.isoformat() if message.last_attempt_at else None,
+            "next_retry_at": message.next_retry_at.isoformat() if message.next_retry_at else None,
             "ui_label": ui_label,
             "is_external_send": external,
+            "attachments": attachments,
+            "attachment_ids": [attachment["id"] for attachment in attachments],
+            "attachments_count": len(attachments),
         },
     }
 
@@ -202,8 +274,10 @@ def build_unified_timeline(db: Session, ticket_id: int) -> list[dict]:
             joinedload(Ticket.events).joinedload(TicketEvent.actor),
             joinedload(Ticket.comments).joinedload(TicketComment.author),
             joinedload(Ticket.internal_notes).joinedload(TicketInternalNote.author),
+            joinedload(Ticket.inbound_email_messages).joinedload(TicketInboundEmailMessage.actor),
             joinedload(Ticket.attachments).joinedload(TicketAttachment.uploader),
             joinedload(Ticket.outbound_messages).joinedload(TicketOutboundMessage.creator),
+            joinedload(Ticket.outbound_messages).joinedload(TicketOutboundMessage.attachment_links).joinedload(TicketOutboundAttachment.attachment),
             joinedload(Ticket.ai_intakes).joinedload(TicketAIIntake.creator),
         )
         .filter(Ticket.id == ticket_id)
@@ -224,6 +298,7 @@ def build_unified_timeline(db: Session, ticket_id: int) -> list[dict]:
     items.extend(serialize_event(x) for x in ticket.events)
     items.extend(serialize_comment(x) for x in ticket.comments)
     items.extend(serialize_note(x) for x in ticket.internal_notes)
+    items.extend(serialize_inbound_email(x) for x in ticket.inbound_email_messages)
     items.extend(serialize_attachment(x) for x in ticket.attachments)
     items.extend(serialize_outbound(x) for x in ticket.outbound_messages)
     items.extend(serialize_ai_intake(x) for x in ticket.ai_intakes)

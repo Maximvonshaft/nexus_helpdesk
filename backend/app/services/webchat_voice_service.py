@@ -10,9 +10,10 @@ from typing import Any
 from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from ..models import Ticket, User
+from ..enums import EventType
+from ..models import Ticket, TicketInternalNote, User
 from ..utils.time import utc_now
-from ..voice_models import WebchatVoiceParticipant, WebchatVoiceSession
+from ..voice_models import WebchatVoiceAIAction, WebchatVoiceAITurn, WebchatVoiceParticipant, WebchatVoiceSession, WebchatVoiceSessionAction, WebchatVoiceTranscriptSegment
 from ..webchat_models import WebchatConversation, WebchatEvent, WebchatMessage
 from ..webchat_voice_config import WebchatVoiceRuntimeConfig, load_webchat_voice_runtime_config
 from .livekit_voice_provider import LiveKitVoiceProvider
@@ -26,12 +27,15 @@ from .observability import (
 )
 from .permissions import (
     ensure_can_accept_webcall_voice,
+    ensure_can_control_webcall_voice,
     ensure_can_end_webcall_voice,
     ensure_can_read_webcall_voice,
     ensure_can_reject_webcall_voice,
+    ensure_can_write_internal_note,
     ensure_can_view_webcall_voice_queue,
     ensure_ticket_visible,
 )
+from .audit_service import log_admin_audit, log_event
 from .voice_provider import VoiceProvider, VoiceProviderError
 from .webchat_rate_limit import enforce_webchat_rate_limit
 
@@ -41,6 +45,8 @@ ACTIVE_STATUSES = {"created", "ringing", "accepted", "active"}
 ACCEPT_READY_STATUSES = {"created", "ringing"}
 ACCEPTED_STATUSES = {"accepted", "active"}
 REJECT_READY_STATUSES = {"created", "ringing"}
+CALL_CONTROL_ACTIONS = {"hold", "resume", "mute", "unmute", "keypad", "transfer", "add_participant"}
+CALL_CONTROL_ACTIVE_STATUSES = {"accepted", "active"}
 
 DETAIL_ALREADY_ACCEPTED_BY_OTHER = "voice session already accepted by another agent"
 DETAIL_ALREADY_ACTIVE = "voice session already active"
@@ -107,8 +113,10 @@ def _participant_identity(session: WebchatVoiceSession, participant_type: str, s
     return f"{participant_type}_{session.public_id}_{suffix}"[:160]
 
 
-def _write_voice_event(db: Session, *, conversation_id: int, ticket_id: int, event_type: str, payload: dict[str, Any] | None = None) -> None:
-    db.add(WebchatEvent(conversation_id=conversation_id, ticket_id=ticket_id, event_type=event_type, payload_json=json.dumps(payload or {}, ensure_ascii=False)))
+def _write_voice_event(db: Session, *, conversation_id: int, ticket_id: int, event_type: str, payload: dict[str, Any] | None = None) -> WebchatEvent:
+    row = WebchatEvent(conversation_id=conversation_id, ticket_id=ticket_id, event_type=event_type, payload_json=json.dumps(payload or {}, ensure_ascii=False))
+    db.add(row)
+    return row
 
 
 def _voice_duration_seconds(started_at: Any, ended_at: Any) -> int | None:
@@ -206,6 +214,40 @@ def _serialize_session(session: WebchatVoiceSession, *, participant_token: str |
     }
     payload.update({k: v for k, v in _voice_evidence_payload(session).items() if k.endswith("_duration_seconds")})
     return payload
+
+
+def _safe_action_payload(action_type: str, *, target: str | None = None, digits: str | None = None, note: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if target:
+        payload["target"] = target[:240]
+    if digits:
+        payload["digits_length"] = len(digits)
+        payload["digits_redacted"] = "*" * min(len(digits), 8)
+    if note:
+        payload["note"] = note[:500]
+    if action_type in {"hold", "resume", "mute", "unmute"}:
+        payload["client_media_state"] = action_type
+    return payload
+
+
+def _serialize_session_action(action: WebchatVoiceSessionAction) -> dict[str, Any]:
+    try:
+        payload = json.loads(action.payload_json or "{}")
+    except Exception:
+        payload = {}
+    return {
+        "id": action.id,
+        "action_type": action.action_type,
+        "status": action.status,
+        "provider_status": action.provider_status,
+        "provider_reason": action.provider_reason,
+        "payload": payload,
+        "actor_user_id": action.actor_user_id,
+        "ticket_event_id": action.ticket_event_id,
+        "webchat_event_id": action.webchat_event_id,
+        "audit_id": action.audit_id,
+        "created_at": _serialize_dt(action.created_at),
+    }
 
 
 def _conflict(detail: str) -> HTTPException:
@@ -410,6 +452,227 @@ def list_admin_voice_sessions(db: Session, *, ticket_id: int, current_user: User
     return {"items": [_serialize_session(session) for session in sessions]}
 
 
+def list_admin_voice_evidence(
+    db: Session,
+    *,
+    ticket_id: int,
+    voice_session_public_id: str,
+    current_user: User,
+    limit: int = 50,
+) -> dict[str, Any]:
+    ensure_can_read_webcall_voice(current_user, db)
+    session = _load_voice_session(db, voice_session_public_id)
+    if session.ticket_id != ticket_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
+    _ensure_ticket_visible_for_session(db, current_user, session)
+    safe_limit = max(1, min(int(limit or 50), 100))
+    segments = (
+        db.query(WebchatVoiceTranscriptSegment)
+        .filter(WebchatVoiceTranscriptSegment.voice_session_id == session.id)
+        .order_by(WebchatVoiceTranscriptSegment.start_ms.asc().nullslast(), WebchatVoiceTranscriptSegment.id.asc())
+        .limit(safe_limit)
+        .all()
+    )
+    turns = (
+        db.query(WebchatVoiceAITurn)
+        .filter(WebchatVoiceAITurn.voice_session_id == session.id)
+        .order_by(WebchatVoiceAITurn.turn_index.asc(), WebchatVoiceAITurn.id.asc())
+        .limit(safe_limit)
+        .all()
+    )
+    actions = (
+        db.query(WebchatVoiceAIAction)
+        .filter(WebchatVoiceAIAction.voice_session_id == session.id)
+        .order_by(WebchatVoiceAIAction.id.asc())
+        .limit(safe_limit)
+        .all()
+    )
+    return {
+        "ok": True,
+        "ticket_id": ticket_id,
+        "voice_session_id": session.public_id,
+        "status": session.status,
+        "provider": session.provider,
+        "recording_status": session.recording_status,
+        "transcript_status": session.transcript_status,
+        "summary_status": session.summary_status,
+        "ai_agent_status": session.ai_agent_status,
+        "ai_turn_count": session.ai_turn_count,
+        "transcript_segments": [
+            {
+                "id": segment.id,
+                "segment_id": segment.segment_id,
+                "speaker_type": segment.speaker_type,
+                "speaker_label": segment.speaker_label,
+                "language": segment.language,
+                "is_final": segment.is_final,
+                "start_ms": segment.start_ms,
+                "end_ms": segment.end_ms,
+                "text": segment.text_redacted or "[redaction pending]",
+                "confidence": segment.confidence,
+                "redaction_status": segment.redaction_status,
+                "created_at": _serialize_dt(segment.created_at),
+            }
+            for segment in segments
+        ],
+        "ai_turns": [
+            {
+                "id": turn.id,
+                "turn_index": turn.turn_index,
+                "customer_text_redacted": turn.customer_text_redacted,
+                "ai_response_text_redacted": turn.ai_response_text_redacted,
+                "language": turn.language,
+                "intent": turn.intent,
+                "action": turn.action,
+                "handoff_required": turn.handoff_required,
+                "handoff_reason": turn.handoff_reason,
+                "confidence": turn.confidence,
+                "provider": turn.provider,
+                "stt_provider": turn.stt_provider,
+                "tts_provider": turn.tts_provider,
+                "latency_ms": turn.latency_ms,
+                "created_at": _serialize_dt(turn.created_at),
+            }
+            for turn in turns
+        ],
+        "ai_actions": [
+            {
+                "id": action.id,
+                "turn_id": action.turn_id,
+                "model_action": action.model_action,
+                "nexus_decision": action.nexus_decision,
+                "decision_reason": action.decision_reason,
+                "speedaf_tool_name": action.speedaf_tool_name,
+                "background_job_id": action.background_job_id,
+                "tool_call_log_id": action.tool_call_log_id,
+                "result_status": action.result_status,
+                "created_at": _serialize_dt(action.created_at),
+            }
+            for action in actions
+        ],
+    }
+
+
+def list_admin_voice_actions(
+    db: Session,
+    *,
+    ticket_id: int,
+    voice_session_public_id: str,
+    current_user: User,
+    limit: int = 20,
+) -> dict[str, Any]:
+    ensure_can_read_webcall_voice(current_user, db)
+    session = _load_voice_session(db, voice_session_public_id)
+    if session.ticket_id != ticket_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
+    _ensure_ticket_visible_for_session(db, current_user, session)
+    safe_limit = max(1, min(int(limit or 20), 50))
+    actions = (
+        db.query(WebchatVoiceSessionAction)
+        .filter(WebchatVoiceSessionAction.voice_session_id == session.id)
+        .order_by(WebchatVoiceSessionAction.id.desc())
+        .limit(safe_limit)
+        .all()
+    )
+    return {"items": [_serialize_session_action(action) for action in actions]}
+
+
+def record_admin_voice_action(
+    db: Session,
+    *,
+    ticket_id: int,
+    voice_session_public_id: str,
+    current_user: User,
+    action_type: str,
+    target: str | None = None,
+    digits: str | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    ensure_can_control_webcall_voice(current_user, db)
+    session = _load_voice_session(db, voice_session_public_id)
+    if session.ticket_id != ticket_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
+    _ensure_ticket_visible_for_session(db, current_user, session)
+
+    requested = (action_type or "").strip().lower()
+    if requested not in CALL_CONTROL_ACTIONS:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="unsupported webcall voice action")
+    if session.status in TERMINAL_STATUSES:
+        raise _conflict("voice session already closed")
+    if requested in {"hold", "resume", "keypad", "transfer", "add_participant"} and session.status not in CALL_CONTROL_ACTIVE_STATUSES:
+        raise _conflict("voice session action requires an active call")
+    if requested == "keypad" and not digits:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="keypad digits are required")
+    if requested in {"transfer", "add_participant"} and not target:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="action target is required")
+
+    now = utc_now()
+    safe_payload = _safe_action_payload(requested, target=target, digits=digits, note=note)
+    provider_status = "not_executed"
+    provider_reason = "provider_adapter_pending"
+    action = WebchatVoiceSessionAction(
+        voice_session_id=session.id,
+        conversation_id=session.conversation_id,
+        ticket_id=ticket_id,
+        actor_user_id=current_user.id,
+        action_type=requested,
+        status="recorded",
+        provider_status=provider_status,
+        provider_reason=provider_reason,
+        payload_json=json.dumps(safe_payload, ensure_ascii=False, sort_keys=True),
+        created_at=now,
+    )
+    db.add(action)
+    db.flush()
+    event_payload = {
+        "voice_session_id": session.public_id,
+        "action_id": action.id,
+        "action_type": requested,
+        "status": action.status,
+        "provider": session.provider,
+        "provider_status": provider_status,
+        "provider_reason": provider_reason,
+        "payload": safe_payload,
+    }
+    ticket_event = log_event(
+        db,
+        ticket_id=ticket_id,
+        actor_id=current_user.id,
+        event_type=EventType.field_updated,
+        field_name="webcall.voice.action",
+        new_value=requested,
+        note="WebCall session action recorded",
+        payload=event_payload,
+    )
+    webchat_event = _write_voice_event(
+        db,
+        conversation_id=session.conversation_id,
+        ticket_id=ticket_id,
+        event_type="voice.session.action_recorded",
+        payload={**event_payload, "actor_user_id": current_user.id},
+    )
+    audit = log_admin_audit(
+        db,
+        actor_id=current_user.id,
+        action=f"webcall.voice.action.{requested}",
+        target_type="webchat_voice_session_action",
+        target_id=action.id,
+        old_value=None,
+        new_value={**event_payload, "ticket_id": ticket_id},
+    )
+    action.ticket_event_id = ticket_event.id
+    action.webchat_event_id = webchat_event.id
+    action.audit_id = audit.id
+    session.updated_at = now
+    db.flush()
+    return {
+        "ok": True,
+        "ticket_id": ticket_id,
+        "voice_session_id": session.public_id,
+        "action": _serialize_session_action(action),
+    }
+
+
 def list_admin_incoming_voice_sessions(db: Session, *, current_user: User, status_filter: str = "ringing", limit: int = 50) -> dict[str, Any]:
     ensure_can_view_webcall_voice_queue(current_user, db)
     requested = (status_filter or "ringing").strip().lower()
@@ -463,6 +726,73 @@ def list_admin_incoming_voice_sessions(db: Session, *, current_user: User, statu
         if len(items) >= safe_limit:
             break
     return {"items": items}
+
+
+def save_admin_voice_note(
+    db: Session,
+    *,
+    ticket_id: int,
+    voice_session_public_id: str,
+    current_user: User,
+    body: str,
+    source: str | None = None,
+) -> dict[str, Any]:
+    ensure_can_read_webcall_voice(current_user, db)
+    ensure_can_write_internal_note(current_user, db)
+    session = _load_voice_session(db, voice_session_public_id)
+    if session.ticket_id != ticket_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="webchat voice session not found")
+    _ensure_ticket_visible_for_session(db, current_user, session)
+    normalized_body = (body or "").strip()
+    if not normalized_body:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="voice note body is required")
+
+    now = utc_now()
+    note = TicketInternalNote(ticket_id=ticket_id, author_id=current_user.id, body=normalized_body, created_at=now, updated_at=now)
+    db.add(note)
+    db.flush()
+    payload = {
+        "voice_session_id": session.public_id,
+        "note_id": note.id,
+        "source": (source or "webcall_operator_workbench").strip() or "webcall_operator_workbench",
+        "provider": session.provider,
+        "status": session.status,
+    }
+    ticket_event = log_event(
+        db,
+        ticket_id=ticket_id,
+        actor_id=current_user.id,
+        event_type=EventType.internal_note_added,
+        note="WebCall call note saved",
+        payload=payload,
+    )
+    webchat_event = _write_voice_event(
+        db,
+        conversation_id=session.conversation_id,
+        ticket_id=ticket_id,
+        event_type="voice.session.note_saved",
+        payload={**payload, "author_id": current_user.id},
+    )
+    audit = log_admin_audit(
+        db,
+        actor_id=current_user.id,
+        action="webcall.voice.note_saved",
+        target_type="webchat_voice_session",
+        target_id=session.id,
+        old_value=None,
+        new_value={**payload, "ticket_id": ticket_id},
+    )
+    db.flush()
+    return {
+        "ok": True,
+        "ticket_id": ticket_id,
+        "voice_session_id": session.public_id,
+        "note_id": note.id,
+        "ticket_event_id": ticket_event.id,
+        "webchat_event_id": webchat_event.id,
+        "audit_id": audit.id,
+        "created_at": note.created_at.isoformat(),
+    }
 
 
 def accept_admin_voice_session(db: Session, *, ticket_id: int, voice_session_public_id: str, current_user: User) -> dict[str, Any]:

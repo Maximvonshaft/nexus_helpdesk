@@ -203,6 +203,18 @@ class OutboundEmailAccount(Base):
     from_address: Mapped[str] = mapped_column(String(320), index=True)
     reply_to: Mapped[Optional[str]] = mapped_column(String(320), nullable=True)
     security_mode: Mapped[str] = mapped_column(String(20), default="starttls", index=True)
+    inbound_enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    imap_host: Mapped[Optional[str]] = mapped_column(String(253), nullable=True, index=True)
+    imap_port: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    imap_username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    imap_password_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    imap_security_mode: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    imap_mailbox: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    imap_sync_cursor: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    imap_last_seen_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    imap_last_status: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
+    imap_last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    imap_last_sync_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     market_id: Mapped[Optional[int]] = mapped_column(ForeignKey("markets.id"), nullable=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     priority: Mapped[int] = mapped_column(Integer, default=100)
@@ -491,6 +503,7 @@ class Ticket(Base):
     events: Mapped[list["TicketEvent"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
     attachments: Mapped[list["TicketAttachment"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
     outbound_messages: Mapped[list["TicketOutboundMessage"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
+    inbound_email_messages: Mapped[list["TicketInboundEmailMessage"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
     ai_intakes: Mapped[list["TicketAIIntake"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
     openclaw_link: Mapped[Optional["OpenClawConversationLink"]] = relationship(back_populates="ticket", uselist=False, cascade="all, delete-orphan")
     openclaw_attachment_references: Mapped[list["OpenClawAttachmentReference"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
@@ -586,13 +599,93 @@ class TicketOutboundMessage(Base):
     locked_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
     locked_by: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     provider_message_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    mailbox_thread_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    mailbox_message_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    mailbox_references: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     failure_code: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     failure_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    delivery_status: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
+    delivery_event_type: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    delivery_receipt_provider: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    delivery_receipt_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    delivery_receipt_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    delivery_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    delivery_payload_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
 
     ticket: Mapped["Ticket"] = relationship(back_populates="outbound_messages")
     creator: Mapped[Optional["User"]] = relationship()
+    attachment_links: Mapped[list["TicketOutboundAttachment"]] = relationship(back_populates="outbound_message", cascade="all, delete-orphan")
+
+    @property
+    def attachments(self) -> list["TicketAttachment"]:
+        return [link.attachment for link in self.attachment_links if link.attachment is not None]
+
+
+class TicketOutboundAttachment(Base):
+    __tablename__ = "ticket_outbound_attachments"
+    __table_args__ = (
+        UniqueConstraint("outbound_message_id", "attachment_id", name="ux_ticket_outbound_attachment"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outbound_message_id: Mapped[int] = mapped_column(ForeignKey("ticket_outbound_messages.id", ondelete="CASCADE"), index=True)
+    attachment_id: Mapped[int] = mapped_column(ForeignKey("ticket_attachments.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+
+    outbound_message: Mapped["TicketOutboundMessage"] = relationship(back_populates="attachment_links")
+    attachment: Mapped["TicketAttachment"] = relationship()
+
+
+class TicketInboundEmailMessage(Base):
+    __tablename__ = "ticket_inbound_email_messages"
+    __table_args__ = (
+        Index("ix_ticket_inbound_email_messages_ticket_received", "ticket_id", "received_at"),
+        Index(
+            "ux_ticket_inbound_email_messages_ticket_mailbox_message",
+            "ticket_id",
+            "mailbox_message_id",
+            unique=True,
+            sqlite_where=text("mailbox_message_id IS NOT NULL"),
+            postgresql_where=text("mailbox_message_id IS NOT NULL"),
+        ),
+        Index(
+            "ux_ticket_inbound_email_messages_provider_message",
+            "provider",
+            "provider_message_id",
+            unique=True,
+            sqlite_where=text("provider_message_id IS NOT NULL"),
+            postgresql_where=text("provider_message_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    actor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    source: Mapped[str] = mapped_column(String(40), default="manual_sync", index=True)
+    provider: Mapped[str] = mapped_column(String(80), default="manual", index=True)
+    provider_message_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    from_address: Mapped[str] = mapped_column(String(320), index=True)
+    from_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    to_address: Mapped[Optional[str]] = mapped_column(String(320), nullable=True)
+    cc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    subject: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    body: Mapped[str] = mapped_column(Text)
+    body_preview: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    mailbox_thread_id: Mapped[str] = mapped_column(String(255), index=True)
+    mailbox_message_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    mailbox_references: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    in_reply_to: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    ticket_event_id: Mapped[Optional[int]] = mapped_column(ForeignKey("ticket_events.id"), nullable=True, index=True)
+    audit_id: Mapped[Optional[int]] = mapped_column(ForeignKey("admin_audit_logs.id"), nullable=True, index=True)
+    received_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+
+    ticket: Mapped["Ticket"] = relationship(back_populates="inbound_email_messages")
+    actor: Mapped[Optional["User"]] = relationship()
+    ticket_event: Mapped[Optional["TicketEvent"]] = relationship()
+    audit: Mapped[Optional["AdminAuditLog"]] = relationship()
 
 
 class TicketAIIntake(Base):

@@ -14,10 +14,15 @@ import { Route as WebCallAIDemoRoute } from '@/routes/webcall-ai-demo'
 import { Route as ProviderCredentialsRoute } from '@/routes/provider-credentials'
 import { Route as BulletinsRoute } from '@/routes/bulletins'
 import { Route as AIControlRoute } from '@/routes/ai-control'
+import { Route as KnowledgeStudioRoute } from '@/routes/knowledge-studio'
+import { Route as PersonaBuilderRoute } from '@/routes/persona-builder'
+import { Route as ControlTowerRoute } from '@/routes/control-tower'
+import { Route as QATrainingRoute } from '@/routes/qa-training'
 import { Route as ControlPlaneRoute } from '@/routes/control-plane'
 import { Route as AccountsRoute } from '@/routes/accounts'
 import { Route as OutboundEmailRoute } from '@/routes/outbound-email'
 import { Route as UsersRoute } from '@/routes/users'
+import { Route as SecurityRoute } from '@/routes/security'
 import { Route as RuntimeRoute } from '@/routes/runtime'
 
 const routeTree = RootRoute.addChildren([
@@ -39,10 +44,15 @@ const routeTree = RootRoute.addChildren([
   ProviderCredentialsRoute,
   BulletinsRoute,
   AIControlRoute,
+  KnowledgeStudioRoute,
+  PersonaBuilderRoute,
+  ControlTowerRoute,
+  QATrainingRoute,
   ControlPlaneRoute,
   AccountsRoute,
   OutboundEmailRoute,
   UsersRoute,
+  SecurityRoute,
   RuntimeRoute,
 ])
 

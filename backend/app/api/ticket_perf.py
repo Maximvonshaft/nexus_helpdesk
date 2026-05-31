@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, inspect, or_, select, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..db import get_db
 from ..models import (
@@ -22,6 +22,8 @@ from ..models import (
     TicketComment,
     TicketEvent,
     TicketInternalNote,
+    TicketInboundEmailMessage,
+    TicketOutboundAttachment,
     TicketOutboundMessage,
     User,
 )
@@ -37,11 +39,12 @@ MAX_TIMELINE_LIMIT = 100
 SOURCE_ORDER = {
     "comment": 0,
     "internal_note": 1,
-    "outbound_message": 2,
-    "ai_intake": 3,
-    "ticket_event": 4,
-    "webchat_event": 5,
-    "voice_call": 6,
+    "inbound_email": 2,
+    "outbound_message": 3,
+    "ai_intake": 4,
+    "ticket_event": 5,
+    "webchat_event": 6,
+    "voice_call": 7,
 }
 
 
@@ -185,6 +188,17 @@ def _attachment_preview(db: Session, ticket_id: int, limit: int = 3) -> list[dic
         }
         for row in rows
     ]
+
+
+def _attachment_timeline_payload(row: TicketAttachment) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "file_name": row.file_name,
+        "download_url": row.file_url or f"/api/files/{row.id}/download",
+        "mime_type": row.mime_type,
+        "file_size": row.file_size,
+        "visibility": _value(row.visibility),
+    }
 
 
 def _openclaw_transcript_preview(db: Session, ticket_id: int, limit: int = 5) -> list[dict[str, Any]]:
@@ -459,8 +473,110 @@ def _timeline_items(db: Session, ticket_id: int, cursor_key: tuple[datetime, int
         items.append({"source_type": "comment", "source_id": row.id, "id": f"comment:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "visibility": _value(row.visibility), "author_id": row.author_id})
     for row in _base_timeline_query(db.query(TicketInternalNote), TicketInternalNote, "internal_note", ticket_id, cursor_key, limit):
         items.append({"source_type": "internal_note", "source_id": row.id, "id": f"internal_note:{row.id}", "created_at": _dt(row.created_at), "body": row.body, "visibility": "internal", "author_id": row.author_id})
-    for row in _base_timeline_query(db.query(TicketOutboundMessage), TicketOutboundMessage, "outbound_message", ticket_id, cursor_key, limit):
-        items.append({"source_type": "outbound_message", "source_id": row.id, "id": f"outbound_message:{row.id}", "created_at": _dt(row.created_at), "subject": row.subject, "body": row.body, "status": _value(row.status), "channel": _value(row.channel), "created_by": row.created_by})
+    for row in _base_timeline_query(db.query(TicketInboundEmailMessage), TicketInboundEmailMessage, "inbound_email", ticket_id, cursor_key, limit):
+        payload = {
+            "source": row.source,
+            "provider": row.provider,
+            "provider_message_id": row.provider_message_id,
+            "from_address": row.from_address,
+            "from_name": row.from_name,
+            "to_address": row.to_address,
+            "cc": row.cc,
+            "subject": row.subject,
+            "body_preview": row.body_preview,
+            "mailbox_thread_id": row.mailbox_thread_id,
+            "mailbox_message_id": row.mailbox_message_id,
+            "mailbox_references": row.mailbox_references,
+            "in_reply_to": row.in_reply_to,
+            "ticket_event_id": row.ticket_event_id,
+            "audit_id": row.audit_id,
+            "received_at": _dt(row.received_at),
+        }
+        items.append(
+            {
+                "source_type": "inbound_email",
+                "source_id": row.id,
+                "id": f"inbound_email:{row.id}",
+                "created_at": _dt(row.created_at),
+                "received_at": _dt(row.received_at),
+                "body": row.body,
+                "summary": row.body_preview or row.body,
+                "subject": row.subject,
+                "from_address": row.from_address,
+                "from_name": row.from_name,
+                "to_address": row.to_address,
+                "provider": row.provider,
+                "provider_message_id": row.provider_message_id,
+                "mailbox_thread_id": row.mailbox_thread_id,
+                "mailbox_message_id": row.mailbox_message_id,
+                "mailbox_references": row.mailbox_references,
+                "in_reply_to": row.in_reply_to,
+                "payload": payload,
+            }
+        )
+    outbound_query = db.query(TicketOutboundMessage).options(
+        joinedload(TicketOutboundMessage.attachment_links).joinedload(TicketOutboundAttachment.attachment)
+    )
+    for row in _base_timeline_query(outbound_query, TicketOutboundMessage, "outbound_message", ticket_id, cursor_key, limit):
+        attachments = [_attachment_timeline_payload(attachment) for attachment in getattr(row, "attachments", [])]
+        payload = {
+            "channel": _value(row.channel),
+            "status": _value(row.status),
+            "provider_status": row.provider_status,
+            "provider_message_id": row.provider_message_id,
+            "mailbox_thread_id": row.mailbox_thread_id,
+            "mailbox_message_id": row.mailbox_message_id,
+            "mailbox_references": row.mailbox_references,
+            "retry_count": row.retry_count,
+            "max_retries": row.max_retries,
+            "failure_code": row.failure_code,
+            "failure_reason": row.failure_reason,
+            "delivery_status": row.delivery_status,
+            "delivery_event_type": row.delivery_event_type,
+            "delivery_receipt_provider": row.delivery_receipt_provider,
+            "delivery_receipt_id": row.delivery_receipt_id,
+            "delivery_receipt_at": _dt(row.delivery_receipt_at),
+            "delivery_detail": row.delivery_detail,
+            "sent_at": _dt(row.sent_at),
+            "last_attempt_at": _dt(row.last_attempt_at),
+            "next_retry_at": _dt(row.next_retry_at),
+            "attachments": attachments,
+            "attachment_ids": [attachment["id"] for attachment in attachments],
+            "attachments_count": len(attachments),
+        }
+        items.append({
+            "source_type": "outbound_message",
+            "source_id": row.id,
+            "id": f"outbound_message:{row.id}",
+            "created_at": _dt(row.created_at),
+            "subject": row.subject,
+            "body": row.body,
+            "status": _value(row.status),
+            "channel": _value(row.channel),
+            "created_by": row.created_by,
+            "provider_status": row.provider_status,
+            "provider_message_id": row.provider_message_id,
+            "mailbox_thread_id": row.mailbox_thread_id,
+            "mailbox_message_id": row.mailbox_message_id,
+            "mailbox_references": row.mailbox_references,
+            "retry_count": row.retry_count,
+            "max_retries": row.max_retries,
+            "failure_code": row.failure_code,
+            "failure_reason": row.failure_reason,
+            "delivery_status": row.delivery_status,
+            "delivery_event_type": row.delivery_event_type,
+            "delivery_receipt_provider": row.delivery_receipt_provider,
+            "delivery_receipt_id": row.delivery_receipt_id,
+            "delivery_receipt_at": _dt(row.delivery_receipt_at),
+            "delivery_detail": row.delivery_detail,
+            "sent_at": _dt(row.sent_at),
+            "last_attempt_at": _dt(row.last_attempt_at),
+            "next_retry_at": _dt(row.next_retry_at),
+            "attachments": attachments,
+            "attachment_ids": payload["attachment_ids"],
+            "attachments_count": payload["attachments_count"],
+            "payload": payload,
+        })
     for row in _base_timeline_query(db.query(TicketAIIntake), TicketAIIntake, "ai_intake", ticket_id, cursor_key, limit):
         items.append({"source_type": "ai_intake", "source_id": row.id, "id": f"ai_intake:{row.id}", "created_at": _dt(row.created_at), "summary": row.summary, "classification": row.classification, "confidence": row.confidence})
     for row in _base_timeline_query(db.query(TicketEvent), TicketEvent, "ticket_event", ticket_id, cursor_key, limit):

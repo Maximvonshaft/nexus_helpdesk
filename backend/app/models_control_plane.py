@@ -50,6 +50,31 @@ class PersonaProfileVersion(Base):
     published_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
 
 
+class PersonaProfileReview(Base):
+    __tablename__ = "persona_profile_reviews"
+    __table_args__ = (UniqueConstraint("profile_id", "review_version", name="uq_persona_profile_review_version"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("persona_profiles.id"), index=True)
+    review_version: Mapped[int] = mapped_column(Integer, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    snapshot_json: Mapped[dict] = mapped_column(JSON)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    requested_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    requested_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    reviewed_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    decision_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    release_window_start: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    release_window_end: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    published_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    published_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    published_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, index=True)
+
+
 class KnowledgeItem(Base):
     __tablename__ = "knowledge_items"
 

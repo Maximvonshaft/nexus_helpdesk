@@ -20,16 +20,18 @@ from app.auth_service import create_access_token
 from app.db import Base, SessionLocal, engine
 from app.enums import UserRole
 from app.main import app
-from app.models import Ticket, User
+from app.models import AdminAuditLog, Ticket, TicketEvent, TicketInternalNote, User
+from app.services import webchat_rate_limit as webchat_rate_limit_service
 from app.services.livekit_voice_provider import LiveKitVoiceProvider
 from app.services.voice_provider import VoiceParticipantToken
 from app.utils.time import utc_now
-from app.voice_models import WebchatVoiceSession
+from app.voice_models import WebchatVoiceAIAction, WebchatVoiceAITurn, WebchatVoiceSession, WebchatVoiceSessionAction, WebchatVoiceTranscriptSegment
 from app.webchat_models import WebchatEvent, WebchatMessage  # noqa: F401 - ensure metadata registration
 
 
 @pytest.fixture(scope="module", autouse=True)
 def ensure_schema():
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
@@ -59,6 +61,8 @@ def voice_env(monkeypatch):
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "mock")
     monkeypatch.setenv("WEBCHAT_VOICE_ALLOWED_PATH_PREFIXES", "/webchat/voice")
     monkeypatch.setenv("WEBCHAT_VOICE_CONNECT_SRC", "wss://voice.example.test")
+    monkeypatch.setattr(webchat_rate_limit_service.settings, "webchat_rate_limit_max_requests", 1000)
+    webchat_rate_limit_service._MEMORY_BUCKETS.clear()
     yield
 
 
@@ -297,6 +301,276 @@ def test_admin_accept_first_agent_wins_and_end_writes_single_final_message():
         assert event_types.count("voice.session.ended") == 1
     finally:
         db.close()
+
+
+def test_admin_voice_action_records_call_control_command_timeline_and_audit():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Action Command Visitor")
+
+    accepted = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/accept",
+        headers=_admin_headers(9202),
+    )
+    assert accepted.status_code == 200, accepted.text
+
+    keypad = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions",
+        headers=_admin_headers(9202),
+        json={"action_type": "keypad", "digits": "123456#", "note": "DTMF menu option"},
+    )
+    assert keypad.status_code == 200, keypad.text
+    keypad_payload = keypad.json()
+    assert keypad_payload["ok"] is True
+    assert keypad_payload["voice_session_id"] == voice_session_id
+    assert keypad_payload["action"]["action_type"] == "keypad"
+    assert keypad_payload["action"]["provider_status"] == "not_executed"
+    assert keypad_payload["action"]["provider_reason"] == "provider_adapter_pending"
+    assert keypad_payload["action"]["payload"]["digits_length"] == 7
+    assert "123456#" not in keypad.text
+
+    transfer = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions",
+        headers=_admin_headers(9202),
+        json={"action_type": "transfer", "target": "tier-2-voice", "note": "Escalate to specialist queue"},
+    )
+    assert transfer.status_code == 200, transfer.text
+
+    action_list = client.get(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions?limit=5",
+        headers=_admin_headers(9202),
+    )
+    assert action_list.status_code == 200, action_list.text
+    assert [item["action_type"] for item in action_list.json()["items"][:2]] == ["transfer", "keypad"]
+
+    timeline = client.get(f"/api/tickets/{ticket_id}/timeline?limit=20", headers=_admin_headers(9202))
+    assert timeline.status_code == 200, timeline.text
+    assert any(item["source_type"] == "ticket_event" and item["event_type"] == "field_updated" and item.get("field_name") == "webcall.voice.action" for item in timeline.json()["items"])
+    assert any(item["source_type"] == "webchat_event" and item["event_type"] == "voice.session.action_recorded" for item in timeline.json()["items"])
+
+    db = SessionLocal()
+    try:
+        actions = db.query(WebchatVoiceSessionAction).filter(WebchatVoiceSessionAction.ticket_id == ticket_id).order_by(WebchatVoiceSessionAction.id.asc()).all()
+        assert [row.action_type for row in actions] == ["keypad", "transfer"]
+        keypad_row = actions[0]
+        assert keypad_row.actor_user_id == 9202
+        assert keypad_row.provider_status == "not_executed"
+        assert keypad_row.provider_reason == "provider_adapter_pending"
+        assert "123456#" not in (keypad_row.payload_json or "")
+        ticket_event = db.query(TicketEvent).filter(TicketEvent.id == keypad_row.ticket_event_id).one()
+        assert ticket_event.field_name == "webcall.voice.action"
+        assert ticket_event.new_value == "keypad"
+        assert "123456#" not in (ticket_event.payload_json or "")
+        webchat_event = db.query(WebchatEvent).filter(WebchatEvent.id == keypad_row.webchat_event_id).one()
+        assert webchat_event.event_type == "voice.session.action_recorded"
+        audit = db.query(AdminAuditLog).filter(AdminAuditLog.id == keypad_row.audit_id).one()
+        assert audit.action == "webcall.voice.action.keypad"
+        assert audit.target_type == "webchat_voice_session_action"
+        assert "123456#" not in (audit.new_value_json or "")
+    finally:
+        db.close()
+
+
+def test_admin_voice_action_requires_control_capability_even_when_ticket_visible():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Action RBAC Visitor")
+    db = SessionLocal()
+    try:
+        ticket = db.query(Ticket).filter(Ticket.id == ticket_id).one()
+        ticket.assignee_id = 9204
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/actions",
+        headers=_admin_headers(9204),
+        json={"action_type": "mute"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "webcall_voice_control_requires_capability"
+
+
+def test_admin_voice_note_writes_internal_note_timeline_webchat_event_and_audit():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Call Note Visitor")
+
+    response = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/notes",
+        headers=_admin_headers(9202),
+        json={"body": "  Customer verified name and requested a callback after delivery scan.  ", "source": "operator_workbench"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["ticket_id"] == ticket_id
+    assert payload["voice_session_id"] == voice_session_id
+    assert payload["note_id"] > 0
+    assert payload["ticket_event_id"] > 0
+    assert payload["webchat_event_id"] > 0
+    assert payload["audit_id"] > 0
+
+    timeline = client.get(f"/api/tickets/{ticket_id}/timeline?limit=20", headers=_admin_headers(9202))
+    assert timeline.status_code == 200, timeline.text
+    timeline_items = timeline.json()["items"]
+    assert any(item["source_type"] == "internal_note" and "Customer verified name" in item["body"] for item in timeline_items)
+    assert any(item["source_type"] == "ticket_event" and item["event_type"] == "internal_note_added" for item in timeline_items)
+    assert any(item["source_type"] == "webchat_event" and item["event_type"] == "voice.session.note_saved" for item in timeline_items)
+
+    db = SessionLocal()
+    try:
+        note = db.query(TicketInternalNote).filter(TicketInternalNote.id == payload["note_id"]).one()
+        assert note.ticket_id == ticket_id
+        assert note.author_id == 9202
+        assert note.body == "Customer verified name and requested a callback after delivery scan."
+        ticket_event = db.query(TicketEvent).filter(TicketEvent.id == payload["ticket_event_id"]).one()
+        assert ticket_event.event_type.value == "internal_note_added"
+        assert ticket_event.note == "WebCall call note saved"
+        event_payload = json.loads(ticket_event.payload_json)
+        assert event_payload["voice_session_id"] == voice_session_id
+        assert event_payload["note_id"] == note.id
+        webchat_event = db.query(WebchatEvent).filter(WebchatEvent.id == payload["webchat_event_id"]).one()
+        assert webchat_event.event_type == "voice.session.note_saved"
+        webchat_payload = json.loads(webchat_event.payload_json)
+        assert webchat_payload["voice_session_id"] == voice_session_id
+        assert webchat_payload["author_id"] == 9202
+        audit = db.query(AdminAuditLog).filter(AdminAuditLog.id == payload["audit_id"]).one()
+        assert audit.action == "webcall.voice.note_saved"
+        assert audit.target_type == "webchat_voice_session"
+        audit_payload = json.loads(audit.new_value_json)
+        assert audit_payload["ticket_id"] == ticket_id
+        assert audit_payload["voice_session_id"] == voice_session_id
+    finally:
+        db.close()
+
+
+def test_admin_voice_note_requires_voice_capability_even_when_ticket_visible():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Note RBAC Visitor")
+    db = SessionLocal()
+    try:
+        ticket = db.query(Ticket).filter(Ticket.id == ticket_id).one()
+        ticket.assignee_id = 9204
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/notes",
+        headers=_admin_headers(9204),
+        json={"body": "visible ticket but no voice permission"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "webcall_voice_read_requires_capability"
+
+
+def test_admin_voice_evidence_returns_redacted_transcript_ai_turns_and_actions():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Transcript Visitor")
+
+    db = SessionLocal()
+    try:
+        session = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.public_id == voice_session_id).one()
+        session.transcript_status = "ready"
+        session.summary_status = "ready"
+        session.ai_agent_status = "ready"
+        session.ai_turn_count = 1
+        segment = WebchatVoiceTranscriptSegment(
+            voice_session_id=session.id,
+            conversation_id=session.conversation_id,
+            ticket_id=ticket_id,
+            provider=session.provider,
+            provider_session_id=session.public_id,
+            provider_item_id="segment-provider-1",
+            participant_identity="visitor_voice_1",
+            speaker_type="visitor",
+            speaker_label="Customer",
+            segment_id="segment-1",
+            language="en",
+            is_final=True,
+            start_ms=100,
+            end_ms=2400,
+            text_raw="My phone is +15551234567 and tracking is SF123456789CN",
+            text_redacted="My phone is [redacted_phone] and tracking is [redacted_tracking]",
+            confidence=92,
+            redaction_status="redacted",
+        )
+        db.add(segment)
+        db.flush()
+        turn = WebchatVoiceAITurn(
+            voice_session_id=session.id,
+            conversation_id=session.conversation_id,
+            ticket_id=ticket_id,
+            turn_index=1,
+            customer_text_redacted=segment.text_redacted,
+            ai_response_text_redacted="I can help with verified tracking after handoff.",
+            language="en",
+            intent="tracking",
+            action="handoff",
+            handoff_required=True,
+            handoff_reason="requires_verified_order_lookup",
+            confidence=88,
+            provider="voice-ai",
+            stt_provider="stt",
+            tts_provider="tts",
+            latency_ms=321,
+        )
+        db.add(turn)
+        db.flush()
+        db.add(WebchatVoiceAIAction(
+            voice_session_id=session.id,
+            turn_id=turn.id,
+            model_action="handoff",
+            nexus_decision="handoff",
+            decision_reason="requires_verified_order_lookup",
+            result_status="queued",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/evidence?limit=20",
+        headers=_admin_headers(9202),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["ticket_id"] == ticket_id
+    assert payload["voice_session_id"] == voice_session_id
+    assert payload["transcript_status"] == "ready"
+    assert payload["summary_status"] == "ready"
+    assert payload["ai_agent_status"] == "ready"
+    assert payload["ai_turn_count"] == 1
+    assert payload["transcript_segments"][0]["text"] == "My phone is [redacted_phone] and tracking is [redacted_tracking]"
+    assert "+15551234567" not in response.text
+    assert "SF123456789CN" not in response.text
+    assert payload["ai_turns"][0]["handoff_required"] is True
+    assert payload["ai_turns"][0]["action"] == "handoff"
+    assert payload["ai_actions"][0]["nexus_decision"] == "handoff"
+
+
+def test_admin_voice_evidence_requires_voice_capability_even_when_ticket_visible():
+    client = TestClient(app)
+    _conversation_id, _visitor_token, ticket_id, voice_session_id = _create_voice_session(client, name="Evidence RBAC Visitor")
+    db = SessionLocal()
+    try:
+        ticket = db.query(Ticket).filter(Ticket.id == ticket_id).one()
+        ticket.assignee_id = 9204
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/evidence",
+        headers=_admin_headers(9204),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "webcall_voice_read_requires_capability"
 
 
 def test_expired_ringing_session_accept_marks_missed_without_agent_token():

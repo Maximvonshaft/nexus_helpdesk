@@ -4,7 +4,11 @@ export const webchatVoiceApi = {
   runtimeConfig: api.webchatVoiceRuntimeConfig,
   incomingSessions: api.webchatVoiceIncomingSessions,
   listSessions: api.webchatVoiceSessions,
+  evidence: api.webchatVoiceEvidence,
+  actions: api.webchatVoiceActions,
+  createAction: api.webchatVoiceCreateAction,
   acceptSession: api.webchatVoiceAcceptSession,
   rejectSession: api.webchatVoiceRejectSession,
   endSession: api.webchatVoiceEndSession,
+  saveNote: api.webchatVoiceSaveNote,
 }

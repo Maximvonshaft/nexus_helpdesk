@@ -67,6 +67,14 @@ def _dispatch_pending_background_jobs_with_attempt_boundary(db: Any, *, limit: i
     if background_jobs.settings.openclaw_sync_enabled:
         background_jobs.enqueue_stale_openclaw_sync_jobs(db, limit=background_jobs.settings.openclaw_sync_batch_size)
         db.commit()
+    if background_jobs.settings.email_mailbox_sync_enabled:
+        from .email_mailbox_polling_service import enqueue_due_email_mailbox_sync_jobs
+        enqueue_due_email_mailbox_sync_jobs(
+            db,
+            interval_seconds=background_jobs.settings.email_mailbox_sync_interval_seconds,
+            limit=background_jobs.settings.email_mailbox_sync_batch_size,
+        )
+        db.commit()
     claimed = background_jobs.claim_pending_jobs(
         db,
         limit=limit,
@@ -78,6 +86,7 @@ def _dispatch_pending_background_jobs_with_attempt_boundary(db: Any, *, limit: i
             background_jobs.WEBCHAT_HANDOFF_SNAPSHOT_JOB,
             background_jobs.SPEEDAF_WORK_ORDER_CREATE_JOB,
             background_jobs.SPEEDAF_ADDRESS_UPDATE_JOB,
+            background_jobs.EMAIL_MAILBOX_SYNC_JOB,
         ],
     )
     return _process_claimed_jobs_with_attempt_boundary(db, claimed)

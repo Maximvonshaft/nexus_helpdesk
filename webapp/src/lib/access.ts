@@ -100,12 +100,32 @@ export function canEndWebcallVoice(user?: AuthUser | null) {
   return canAccess(user, actionAccess.endWebcallVoice)
 }
 
+export function canControlWebcallVoice(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.controlWebcallVoice)
+}
+
 export function canViewWebchatDebug(user?: AuthUser | null) {
   return canAccess(user, actionAccess.viewWebchatDebug)
 }
 
 export function canForceWebchatHandoff(user?: AuthUser | null) {
   return canAccess(user, actionAccess.forceWebchatHandoff)
+}
+
+export function canAcceptWebchatHandoff(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.acceptWebchatHandoff)
+}
+
+export function canDeclineWebchatHandoff(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.declineWebchatHandoff)
+}
+
+export function canReleaseWebchatHandoff(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.releaseWebchatHandoff)
+}
+
+export function canResumeWebchatHandoff(user?: AuthUser | null) {
+  return canAccess(user, actionAccess.resumeWebchatHandoff)
 }
 
 export function canUploadAttachment(user?: AuthUser | null) {

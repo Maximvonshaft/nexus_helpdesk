@@ -2,15 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '@/lib/api'
 import { webchatVoiceApi } from '@/lib/webchatVoiceApi'
-import type { WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
+import type { WebchatVoiceActionType, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
 import { formatDateTime, sanitizeDisplayText } from '@/lib/format'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { Field, Input, Textarea } from '@/components/ui/Field'
 import { useSession } from '@/hooks/useAuth'
 import {
   canAcceptWebcallVoice,
+  canControlWebcallVoice,
   canEndWebcallVoice,
   canReadWebcallVoice,
   canRejectWebcallVoice,
@@ -19,6 +21,7 @@ import {
 } from '@/lib/access'
 
 const ACTIVE_STATUSES = new Set(['created', 'ringing', 'accepted', 'active'])
+const CALL_CONTROL_READY_STATUSES = new Set(['accepted', 'active'])
 const REJECT_READY_STATUSES = new Set(['created', 'ringing'])
 const TERMINAL_STATUSES = new Set(['ended', 'failed', 'cancelled', 'missed'])
 const QUEUE_TABS = [
@@ -47,6 +50,15 @@ const STATUS_TONES: Record<string, 'default' | 'warning' | 'success' | 'danger'>
   missed: 'danger',
   failed: 'danger',
   cancelled: 'danger',
+}
+const ACTION_LABELS: Record<string, string> = {
+  hold: 'Hold',
+  resume: 'Resume',
+  mute: 'Mute',
+  unmute: 'Unmute',
+  keypad: 'Keypad',
+  transfer: 'Transfer',
+  add_participant: 'Add participant',
 }
 const ACCEPT_ERROR_MESSAGES: Array<[string, string]> = [
   ['already accepted by another agent', '该通话已被其他客服接起。请刷新来电队列。'],
@@ -100,6 +112,17 @@ function statusTone(status?: string | null) {
   return STATUS_TONES[raw] || 'default'
 }
 
+function formatOffsetMs(value?: number | null) {
+  if (value === null || value === undefined) return '-'
+  if (value < 1000) return `${value}ms`
+  return `${Math.round(value / 100) / 10}s`
+}
+
+function actionLabel(actionType?: string | null) {
+  const raw = String(actionType || '').toLowerCase()
+  return ACTION_LABELS[raw] || valueOrDash(actionType)
+}
+
 function readableAcceptError(detail: string) {
   const lowered = detail.toLowerCase()
   for (const [needle, message] of ACCEPT_ERROR_MESSAGES) {
@@ -136,6 +159,10 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
   const [muted, setMuted] = useState(false)
   const [joinedVoiceSessionId, setJoinedVoiceSessionId] = useState<string | null>(null)
   const [queueTab, setQueueTab] = useState<(typeof QUEUE_TABS)[number]['key']>('incoming')
+  const [callNote, setCallNote] = useState('')
+  const [keypadDigits, setKeypadDigits] = useState('')
+  const [transferTarget, setTransferTarget] = useState('')
+  const [participantTarget, setParticipantTarget] = useState('')
   const roomRef = useRef<any | null>(null)
   const localAudioRef = useRef<LocalAudioTrack | null>(null)
   const remoteAudioRef = useRef<HTMLDivElement | null>(null)
@@ -144,6 +171,7 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
   const canAcceptVoice = canAcceptWebcallVoice(session.data)
   const canRejectVoice = canRejectWebcallVoice(session.data)
   const canEndVoice = canEndWebcallVoice(session.data)
+  const canControlVoice = canControlWebcallVoice(session.data)
   const canViewDebug = canViewWebchatDebug(session.data)
 
   const runtimeConfig = useQuery({
@@ -179,6 +207,23 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
   const canAccept = Boolean(canAcceptVoice && ticketId && currentSession && !terminal && !connected && !busyAccepting)
   const canReject = Boolean(canRejectVoice && ticketId && currentSession && REJECT_READY_STATUSES.has(String(currentSession.status)) && !connected && !busyAccepting)
   const canEnd = Boolean(canEndVoice && currentSession && !terminal)
+  const canUseSessionActions = Boolean(canControlVoice && currentSession && CALL_CONTROL_READY_STATUSES.has(String(currentSession.status)))
+
+  const evidence = useQuery({
+    queryKey: ['webchatVoiceEvidence', ticketId, currentSession?.voice_session_id],
+    queryFn: ({ signal }) => webchatVoiceApi.evidence(ticketId as number, currentSession?.voice_session_id as string, { limit: 50 }, { signal }),
+    enabled: !!ticketId && !!currentSession && canReadVoice,
+    refetchInterval: hasLiveCall ? 4000 : 15000,
+    retry: false,
+  })
+
+  const actionHistory = useQuery({
+    queryKey: ['webchatVoiceActions', ticketId, currentSession?.voice_session_id],
+    queryFn: ({ signal }) => webchatVoiceApi.actions(ticketId as number, currentSession?.voice_session_id as string, { limit: 8 }, { signal }),
+    enabled: !!ticketId && !!currentSession && canReadVoice,
+    refetchInterval: hasLiveCall ? 8000 : 20000,
+    retry: false,
+  })
 
   async function cleanupRoom() {
     try {
@@ -214,6 +259,8 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
     if (ticketId) {
       await client.invalidateQueries({ queryKey: ['webchatVoiceSessions', ticketId] })
       await client.invalidateQueries({ queryKey: ['webchatThread', ticketId] })
+      await client.invalidateQueries({ queryKey: ['webchatVoiceEvidence', ticketId] })
+      await client.invalidateQueries({ queryKey: ['webchatVoiceActions', ticketId] })
     }
     await client.invalidateQueries({ queryKey: ['webchatConversations'] })
     await client.invalidateQueries({ queryKey: ['webchatVoiceOperationalQueue'] })
@@ -322,6 +369,41 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
     onError: (err: unknown) => setMessage(safeErrorMessage(err)),
   })
 
+  const saveNoteMutation = useMutation({
+    mutationFn: async () => {
+      if (!ticketId || !currentSession) throw new Error('No WebCall session selected')
+      return webchatVoiceApi.saveNote(ticketId, currentSession.voice_session_id, {
+        body: callNote,
+        source: 'operator_workbench',
+      })
+    },
+    onSuccess: async (result) => {
+      setCallNote('')
+      setMessage(`Call note saved to ticket timeline (#${result.note_id}).`)
+      await invalidateVoiceViews()
+      if (ticketId) await client.invalidateQueries({ queryKey: ['ticketTimeline', ticketId] })
+    },
+    onError: (err: unknown) => setMessage(safeErrorMessage(err)),
+  })
+
+  const actionMutation = useMutation({
+    mutationFn: async ({ actionType, target, digits, note }: { actionType: WebchatVoiceActionType; target?: string; digits?: string; note?: string }) => {
+      if (!ticketId || !currentSession) throw new Error('No WebCall session selected')
+      return webchatVoiceApi.createAction(ticketId, currentSession.voice_session_id, actionType, {
+        target: target?.trim() || undefined,
+        digits: digits?.trim() || undefined,
+        note: note?.trim() || undefined,
+      })
+    },
+    onSuccess: async (result) => {
+      setMessage(`${actionLabel(result.action.action_type)} recorded. ${result.action.provider_reason === 'provider_adapter_pending' ? 'Provider adapter execution is still pending.' : result.action.provider_status}`)
+      if (result.action.action_type === 'keypad') setKeypadDigits('')
+      await invalidateVoiceViews()
+      if (ticketId) await client.invalidateQueries({ queryKey: ['ticketTimeline', ticketId] })
+    },
+    onError: (err: unknown) => setMessage(safeErrorMessage(err)),
+  })
+
   async function toggleMute() {
     const audioTrack = localAudioRef.current
     if (!audioTrack || !connected) return
@@ -329,10 +411,12 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
       await audioTrack.unmute()
       setMuted(false)
       setMessage('Microphone unmuted.')
+      if (canControlVoice && ticketId && currentSession) actionMutation.mutate({ actionType: 'unmute' })
     } else {
       await audioTrack.mute()
       setMuted(true)
       setMessage('Microphone muted.')
+      if (canControlVoice && ticketId && currentSession) actionMutation.mutate({ actionType: 'mute' })
     }
   }
 
@@ -422,6 +506,120 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
             {canAcceptVoice && runtimeConfig.isError ? <div className="section-subtitle">Runtime config is unavailable. Accept may fail until the page can refresh the LiveKit URL.</div> : null}
             <div role="status" className="section-subtitle">{sanitizeDisplayText(message)}</div>
             <div ref={remoteAudioRef} aria-hidden="true" />
+            <div className="stack compact" data-testid="webcall-live-transcript-evidence">
+              <div className="button-row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong>Live Transcript / AI Evidence</strong>
+                <Button variant="secondary" disabled={evidence.isFetching} onClick={() => void evidence.refetch()}>{evidence.isFetching ? 'Refreshing...' : 'Refresh evidence'}</Button>
+              </div>
+              <div className="badges">
+                <Badge>{evidence.data?.transcript_status || currentSession.transcript_status || 'transcript unknown'}</Badge>
+                <Badge>{evidence.data?.summary_status || currentSession.summary_status || 'summary unknown'}</Badge>
+                {evidence.data?.ai_agent_status ? <Badge tone="warning">AI {sanitizeDisplayText(evidence.data.ai_agent_status)}</Badge> : null}
+                {typeof evidence.data?.ai_turn_count === 'number' ? <Badge>{evidence.data.ai_turn_count} AI turns</Badge> : null}
+              </div>
+              {evidence.isLoading ? <div className="section-subtitle">Loading transcript evidence...</div> : null}
+              {evidence.isError ? <div className="section-subtitle">Unable to load transcript evidence: {safeErrorMessage(evidence.error)}</div> : null}
+              {!evidence.isLoading && !evidence.isError && !(evidence.data?.transcript_segments ?? []).length ? <EmptyState text="No redacted transcript segments for this WebCall yet." /> : null}
+              {(evidence.data?.transcript_segments ?? []).map((segment) => (
+                <div className="message" data-role={segment.speaker_type === 'agent' ? 'agent' : 'customer'} key={segment.id}>
+                  <div className="message-head">
+                    <strong>{sanitizeDisplayText(segment.speaker_label || segment.speaker_type)}</strong>
+                    <span>{formatOffsetMs(segment.start_ms)} - {formatOffsetMs(segment.end_ms)}</span>
+                  </div>
+                  <div>{sanitizeDisplayText(segment.text)}</div>
+                </div>
+              ))}
+              {(evidence.data?.ai_turns ?? []).length ? (
+                <div className="stack compact" data-testid="webcall-ai-turn-evidence">
+                  <strong>AI turn evidence</strong>
+                  {(evidence.data?.ai_turns ?? []).map((turn) => (
+                    <div className="message" data-role="agent" key={turn.id}>
+                      <div className="message-head">
+                        <strong>Turn {turn.turn_index} · {sanitizeDisplayText(turn.intent || 'unknown intent')}</strong>
+                        <span>{formatDateTime(turn.created_at || undefined)}</span>
+                      </div>
+                      {turn.customer_text_redacted ? <div>Customer: {sanitizeDisplayText(turn.customer_text_redacted)}</div> : null}
+                      {turn.ai_response_text_redacted ? <div>AI: {sanitizeDisplayText(turn.ai_response_text_redacted)}</div> : null}
+                      <div className="badges" style={{ marginTop: 8 }}>
+                        <Badge tone={turn.handoff_required ? 'warning' : 'success'}>{turn.handoff_required ? 'handoff required' : 'safe reply'}</Badge>
+                        {turn.action ? <Badge>{sanitizeDisplayText(turn.action)}</Badge> : null}
+                        {typeof turn.confidence === 'number' ? <Badge>{turn.confidence}% confidence</Badge> : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {(evidence.data?.ai_actions ?? []).length ? (
+                <div className="stack compact" data-testid="webcall-ai-action-evidence">
+                  <strong>AI action decisions</strong>
+                  {(evidence.data?.ai_actions ?? []).map((action) => (
+                    <div className="message" data-role="agent" key={action.id}>
+                      <div className="message-head"><strong>{sanitizeDisplayText(action.model_action)}</strong><span>{formatDateTime(action.created_at || undefined)}</span></div>
+                      <div>{sanitizeDisplayText(action.nexus_decision)} · {sanitizeDisplayText(action.decision_reason || action.result_status || 'no decision reason')}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <div className="stack compact" data-testid="webcall-call-notes">
+              <strong>Call Notes</strong>
+              <Field label="通话备注" hint="保存后写入 TicketInternalNote、ticket timeline、WebChat event 和 admin audit。">
+                <Textarea
+                  rows={4}
+                  value={callNote}
+                  onChange={(event) => setCallNote(event.target.value)}
+                  placeholder="记录身份核验、客户承诺、后续动作或需要交接的信息"
+                />
+              </Field>
+              <div className="inline-actions">
+                <Button
+                  variant="secondary"
+                  disabled={!ticketId || !currentSession || !callNote.trim() || saveNoteMutation.isPending}
+                  onClick={() => saveNoteMutation.mutate()}
+                >
+                  {saveNoteMutation.isPending ? 'Saving note...' : 'Save call note'}
+                </Button>
+              </div>
+            </div>
+            <div className="stack compact" data-testid="webcall-session-actions">
+              <div className="button-row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong>Session Actions</strong>
+                <Badge tone={canControlVoice ? 'warning' : 'default'}>{canControlVoice ? 'audited command path' : 'control restricted'}</Badge>
+              </div>
+              <div className="button-row">
+                <Button variant="secondary" disabled={!canUseSessionActions || actionMutation.isPending} onClick={() => actionMutation.mutate({ actionType: 'hold' })}>Hold</Button>
+                <Button variant="secondary" disabled={!canUseSessionActions || actionMutation.isPending} onClick={() => actionMutation.mutate({ actionType: 'resume' })}>Resume</Button>
+              </div>
+              <div className="kv-grid">
+                <Field label="Keypad digits" hint="Digits are redacted in timeline and audit evidence.">
+                  <Input value={keypadDigits} onChange={(event) => setKeypadDigits(event.target.value.replace(/[^0-9*#]/g, ''))} placeholder="123#" inputMode="tel" />
+                </Field>
+                <Field label="Transfer target">
+                  <Input value={transferTarget} onChange={(event) => setTransferTarget(event.target.value)} placeholder="queue or agent" />
+                </Field>
+                <Field label="Participant">
+                  <Input value={participantTarget} onChange={(event) => setParticipantTarget(event.target.value)} placeholder="agent, queue, or verified contact" />
+                </Field>
+              </div>
+              <div className="button-row">
+                <Button variant="secondary" disabled={!canUseSessionActions || !keypadDigits || actionMutation.isPending} onClick={() => actionMutation.mutate({ actionType: 'keypad', digits: keypadDigits })}>Send keypad</Button>
+                <Button variant="secondary" disabled={!canUseSessionActions || !transferTarget.trim() || actionMutation.isPending} onClick={() => actionMutation.mutate({ actionType: 'transfer', target: transferTarget, note: 'Requested from WebCall operator workbench' })}>Transfer</Button>
+                <Button variant="secondary" disabled={!canUseSessionActions || !participantTarget.trim() || actionMutation.isPending} onClick={() => actionMutation.mutate({ actionType: 'add_participant', target: participantTarget, note: 'Requested from WebCall operator workbench' })}>Add participant</Button>
+              </div>
+              {actionHistory.isLoading ? <div className="section-subtitle">Loading session actions...</div> : null}
+              {actionHistory.isError ? <div className="section-subtitle">Unable to load session actions: {safeErrorMessage(actionHistory.error)}</div> : null}
+              {!actionHistory.isLoading && !actionHistory.isError && !(actionHistory.data?.items ?? []).length ? <EmptyState text="No audited session actions for this WebCall yet." /> : null}
+              {(actionHistory.data?.items ?? []).map((action) => (
+                <div className="queue-card" key={action.id}>
+                  <div className="badges">
+                    <Badge tone={action.provider_reason === 'provider_adapter_pending' ? 'warning' : 'success'}>{sanitizeDisplayText(action.provider_status)}</Badge>
+                    <Badge>{sanitizeDisplayText(action.provider_reason)}</Badge>
+                  </div>
+                  <div className="queue-card-title">{actionLabel(action.action_type)} · {formatDateTime(action.created_at || undefined)}</div>
+                  <div className="queue-card-meta">Actor {valueOrDash(action.actor_user_id)} · Ticket event {valueOrDash(action.ticket_event_id)} · Audit {valueOrDash(action.audit_id)}</div>
+                </div>
+              ))}
+            </div>
             <div className="inline-actions">
               {canAcceptVoice ? (
                 <Button variant="primary" disabled={!canAccept} onClick={() => currentSession && acceptMutation.mutate(currentSession)}>
