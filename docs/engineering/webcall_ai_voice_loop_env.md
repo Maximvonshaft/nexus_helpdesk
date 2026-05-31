@@ -44,4 +44,18 @@ TRACKING_LOOKUP_ENDPOINT=
 TRACKING_LOOKUP_API_KEY_FILE=
 ```
 
+For the ProviderRuntime/Codex LLM bridge canary, keep STT/TTS fake or externally configured and switch only the LLM leg:
+
+```dotenv
+WEBCALL_AI_PROVIDER_PROFILE=hybrid
+STT_PROVIDER=fake
+LLM_PROVIDER=provider_runtime
+TTS_PROVIDER=fake
+WEBCALL_AI_PROVIDER_RUNTIME_PROVIDER=codex_app_server
+WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID=default
+WEBCALL_AI_PROVIDER_RUNTIME_CHANNEL_KEY=webcall_ai
+WEBCALL_AI_PROVIDER_RUNTIME_SCENARIO=webcall_ai_decision
+WEBCALL_AI_PROVIDER_RUNTIME_OUTPUT_CONTRACT=speedaf_webchat_fast_reply_v1
+```
+
 `LIVEKIT_API_KEY` may be sourced by deployment automation from `/opt/livekit_nexus/secrets.env`, but the API secret must be mounted as a file for production. If a rollback is needed, set `WEBCALL_AI_KILL_SWITCH=true` and stop the `webcall-ai-agent` compose profile.

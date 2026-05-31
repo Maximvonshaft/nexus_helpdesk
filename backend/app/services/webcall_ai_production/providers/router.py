@@ -7,6 +7,7 @@ from .external_llm import ExternalLLMProvider
 from .external_stt import ExternalSTTProvider
 from .external_tts import ExternalTTSProvider
 from .fake import FakeLLMProvider, FakeSTTProvider, FakeTTSProvider
+from .provider_runtime_llm import ProviderRuntimeLLMProvider
 
 
 def get_stt_provider(name: str) -> STTProvider:
@@ -22,6 +23,8 @@ def get_llm_provider(name: str) -> LLMProvider:
         return FakeLLMProvider()
     if name == "external":
         return ExternalLLMProvider(endpoint=os.getenv("LLM_ENDPOINT"), token_file=os.getenv("LLM_API_KEY_FILE"))
+    if name == "provider_runtime":
+        return ProviderRuntimeLLMProvider()
     raise RuntimeError(f"unsupported LLM_PROVIDER={name}")
 
 

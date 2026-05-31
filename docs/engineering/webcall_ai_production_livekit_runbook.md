@@ -29,6 +29,22 @@ LLM_API_KEY_FILE=/run/secrets/webcall_llm_api_key
 TTS_API_KEY_FILE=/run/secrets/webcall_tts_api_key
 ```
 
+Codex/ProviderRuntime LLM can be enabled independently from STT/TTS with the hybrid profile:
+
+```text
+WEBCALL_AI_PROVIDER_PROFILE=hybrid
+STT_PROVIDER=fake
+LLM_PROVIDER=provider_runtime
+TTS_PROVIDER=fake
+WEBCALL_AI_PROVIDER_RUNTIME_PROVIDER=codex_app_server
+WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID=default
+WEBCALL_AI_PROVIDER_RUNTIME_CHANNEL_KEY=webcall_ai
+WEBCALL_AI_PROVIDER_RUNTIME_SCENARIO=webcall_ai_decision
+WEBCALL_AI_PROVIDER_RUNTIME_OUTPUT_CONTRACT=speedaf_webchat_fast_reply_v1
+```
+
+For real audio rollout, replace fake STT/TTS with approved external or streaming providers in a separate canary PR. The current ProviderRuntime LLM path proves strict text-in/text-out decisioning and persisted turn evidence; it does not by itself add streaming STT, streaming TTS audio chunks, or barge-in.
+
 Keep these disabled for the initial rollout:
 
 ```text
@@ -74,4 +90,4 @@ Then restart the app and stop the `webcall-ai-agent` service. Human WebCall and 
 
 ## Current Limitation
 
-The checked-in runtime remains fail-closed until approved LiveKit, STT, LLM, TTS, and read-only tracking provider configuration is present and a real browser voice smoke test passes.
+The checked-in runtime remains fail-closed until approved LiveKit, STT, LLM, TTS, and read-only tracking provider configuration is present and a real browser voice smoke test passes. ProviderRuntime LLM is supported for WebCall AI production turns, but streaming STT, streaming TTS chunk publish, duplex barge-in, and metrics dashboards remain separate rollout gaps.
