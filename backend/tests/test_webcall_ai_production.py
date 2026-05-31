@@ -188,6 +188,48 @@ def test_create_session_is_idempotent_and_persists_ai_mode():
         db.close()
 
 
+def test_client_audio_telemetry_records_sanitized_backend_event():
+    client = TestClient(app)
+    created = client.post(
+        "/api/webcall-ai/sessions",
+        headers={"Idempotency-Key": f"idem-webcall-ai-audio-{uuid.uuid4().hex}"},
+        json={"visitor_name": "Audio Telemetry Visitor", "page_url": "https://example.test/webcall-ai", "locale": "en"},
+    )
+    assert created.status_code == 200, created.text
+    payload = created.json()
+    session_id = payload["session"]["public_id"]
+    visitor_token = payload["visitor_token"]
+
+    response = client.post(
+        f"/api/webcall-ai/sessions/{session_id}/client-audio-telemetry",
+        json={
+            "visitor_token": visitor_token,
+            "stage": "livekit_publish_success",
+            "status": "success",
+            "selected_audio_input_label": "Unit Test Microphone",
+            "selected_audio_input_device_id_hash": "abc123hash",
+            "local_track_ready_state": "live",
+            "local_track_enabled": True,
+            "local_track_muted": False,
+            "livekit_track_sid": "TRK_unit",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    db = SessionLocal()
+    try:
+        row = db.query(WebchatVoiceSession).filter(WebchatVoiceSession.public_id == session_id).one()
+        events = db.query(WebchatEvent).filter(WebchatEvent.conversation_id == row.conversation_id, WebchatEvent.event_type == "webcall_ai.client.audio_published").all()
+        assert len(events) == 1
+        rendered = events[0].payload_json or ""
+        assert "Unit Test Microphone" in rendered
+        assert "abc123hash" in rendered
+        assert visitor_token not in rendered
+        assert "participant_token" not in rendered
+    finally:
+        db.close()
+
+
 def test_idempotency_conflict_rejects_different_payload():
     client = TestClient(app)
     idempotency_key = f"idem-webcall-ai-conflict-{uuid.uuid4().hex}"

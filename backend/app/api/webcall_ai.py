@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..webcall_ai_schemas import WebCallAIEndRequest, WebCallAIHandoffRequest, WebCallAISessionCreateRequest, WebCallAITrackingFallbackRequest
+from ..webcall_ai_schemas import WebCallAIClientAudioTelemetryRequest, WebCallAIEndRequest, WebCallAIHandoffRequest, WebCallAISessionCreateRequest, WebCallAITrackingFallbackRequest
 from ..services.webcall_ai_production.config import get_webcall_ai_production_settings
 from ..services.webcall_ai_production.session_service import (
     WebCallAIInitPayload,
@@ -13,6 +13,7 @@ from ..services.webcall_ai_production.session_service import (
     end_session,
     get_session,
     list_events,
+    record_client_audio_telemetry,
     request_handoff,
     save_tracking_fallback,
 )
@@ -76,6 +77,12 @@ def handoff_webcall_ai_session(session_public_id: str, payload: WebCallAIHandoff
 def tracking_fallback_webcall_ai_session(session_public_id: str, payload: WebCallAITrackingFallbackRequest, db: Session = Depends(get_db)) -> dict:
     with managed_session(db):
         return save_tracking_fallback(db, session_public_id, payload.visitor_token, payload.tracking_number)
+
+
+@router.post("/sessions/{session_public_id}/client-audio-telemetry")
+def client_audio_telemetry_webcall_ai_session(session_public_id: str, payload: WebCallAIClientAudioTelemetryRequest, db: Session = Depends(get_db)) -> dict:
+    with managed_session(db):
+        return record_client_audio_telemetry(db, session_public_id, payload.visitor_token, payload.model_dump())
 
 
 @router.get("/sessions/{session_public_id}/events")

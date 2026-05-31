@@ -5,7 +5,9 @@ import time
 from sqlalchemy.orm import Session
 
 from ...voice_models import WebchatVoiceAITurn, WebchatVoiceSession
+from .audio.stats import analyze_pcm16_audio, classify_empty_transcript
 from .evidence import persist_turn_evidence
+from .event_service import write_event
 from .metrics import record_webcall_ai_stage
 from .providers.base import LLMResult, ProviderError, STTResult, TTSResult
 from .providers.cancel_token import CancelToken
@@ -49,11 +51,29 @@ def run_session_turn(
     sample_rate: int | None = None,
     channels: int | None = None,
     mime_type: str | None = None,
+    audio_stats: dict[str, object] | None = None,
 ) -> dict[str, object]:
     from .config import get_webcall_ai_production_settings
 
     settings = get_webcall_ai_production_settings()
     started = time.monotonic()
+    turn_index = int(session.ai_turn_count or 0) + 1
+    stt_audio_stats = _stt_audio_stats_payload(
+        session=session,
+        audio=audio,
+        sample_rate=sample_rate,
+        channels=channels,
+        audio_stats=audio_stats,
+        turn_index=turn_index,
+    )
+    write_event(
+        db,
+        conversation_id=session.conversation_id,
+        ticket_id=session.ticket_id,
+        event_type="webcall_ai.stt.audio_input_stats",
+        payload=stt_audio_stats,
+    )
+    db.flush()
     try:
         stage_started = time.monotonic()
         stt = get_stt_provider(settings.stt_provider).transcribe(
@@ -67,6 +87,7 @@ def run_session_turn(
     except ProviderError as exc:
         record_webcall_ai_stage(stage="stt_final", status=exc.code, provider=exc.provider, elapsed_ms=int((time.monotonic() - started) * 1000))
         if exc.code == "stt_empty_transcript":
+            _write_empty_audio_stats_event(db, session=session, provider_name=exc.provider, audio_stats=stt_audio_stats)
             return _handle_empty_transcript(
                 db,
                 session=session,
@@ -150,6 +171,73 @@ def run_session_turn(
         "handoff_required": llm.handoff_required,
         "handoff_reason": llm.handoff_reason,
     }
+
+
+def _stt_audio_stats_payload(
+    *,
+    session: WebchatVoiceSession,
+    audio: bytes,
+    sample_rate: int | None,
+    channels: int | None,
+    audio_stats: dict[str, object] | None,
+    turn_index: int,
+) -> dict[str, object]:
+    if isinstance(audio_stats, dict):
+        payload = dict(audio_stats)
+    else:
+        payload = analyze_pcm16_audio(audio, sample_rate=sample_rate, channels=channels).as_payload()
+    payload.update(
+        {
+            "voice_session_id": session.public_id,
+            "turn_index": turn_index,
+        }
+    )
+    return _safe_audio_stats_payload(payload)
+
+
+def _write_empty_audio_stats_event(db: Session, *, session: WebchatVoiceSession, provider_name: str | None, audio_stats: dict[str, object]) -> None:
+    payload = dict(audio_stats)
+    payload["stt_provider"] = provider_name or "unknown"
+    payload["empty_reason"] = classify_empty_transcript(payload)
+    write_event(
+        db,
+        conversation_id=session.conversation_id,
+        ticket_id=session.ticket_id,
+        event_type="webcall_ai.stt.empty_with_audio_stats",
+        payload=_safe_audio_stats_payload(payload),
+    )
+    db.flush()
+
+
+def _safe_audio_stats_payload(payload: dict[str, object]) -> dict[str, object]:
+    allowed = {
+        "voice_session_id",
+        "turn_index",
+        "participant_identity",
+        "track_sid",
+        "frame_count",
+        "audio_ms",
+        "pcm_bytes",
+        "sample_rate",
+        "channels",
+        "rms_min",
+        "rms_avg",
+        "rms_max",
+        "audio_input_classification",
+        "empty_reason",
+        "stt_provider",
+        "remote_track_seen",
+        "audio_track_muted",
+    }
+    sanitized: dict[str, object] = {}
+    for key, value in payload.items():
+        if key not in allowed:
+            continue
+        if isinstance(value, str):
+            sanitized[key] = value[:240]
+        elif isinstance(value, bool) or isinstance(value, int) or value is None:
+            sanitized[key] = value
+    return sanitized
 
 
 def _safe_llm_response(settings, stt: STTResult) -> LLMResult:

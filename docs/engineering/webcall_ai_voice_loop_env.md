@@ -112,6 +112,8 @@ For barge-in:
 WEBCALL_AI_BARGE_IN_ENABLED=true
 WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS=900
 WEBCALL_AI_BARGE_IN_ENERGY_THRESHOLD=350
+WEBCALL_AI_STT_MIN_AUDIO_MS=300
+WEBCALL_AI_STT_SILENCE_RMS_THRESHOLD=80
 ```
 
 When customer speech is detected while AI audio is publishing, remaining AI audio publication is stopped, the streaming TTS cancel token is signaled, `webcall_ai.response.interrupted` is written, and the captured customer frames are reused by the next listening turn. The default 900ms threshold is intentionally above short noise, echo, and brief acknowledgements during AI playback.

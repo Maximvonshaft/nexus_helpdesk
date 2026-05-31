@@ -99,9 +99,24 @@ Duplex barge-in can be enabled with:
 WEBCALL_AI_BARGE_IN_ENABLED=true
 WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS=900
 WEBCALL_AI_BARGE_IN_ENERGY_THRESHOLD=350
+WEBCALL_AI_STT_MIN_AUDIO_MS=300
+WEBCALL_AI_STT_SILENCE_RMS_THRESHOLD=80
 ```
 
 During AI audio publication the worker checks inbound LiveKit audio frames. If visitor speech crosses the threshold, the worker stops publishing the remaining AI audio, signals the streaming TTS cancel token, writes `webcall_ai.response.interrupted`, preserves the visitor frames for the next `collect_next_customer_utterance()`, and returns to listening. The default 900ms threshold is designed to ignore short noise, echo, and brief acknowledgements during AI playback.
+
+## Audio Evidence Chain
+
+The production WebCall AI page shows a microphone level meter after Start call and writes client-side audio telemetry to `webcall_ai.client.audio_published`. The payload records only metadata: getUserMedia success/failure, selected input label or device id hash, local track `readyState` / `enabled` / `muted`, and LiveKit publish success/failure. It must not include participant tokens, raw audio, or tracking numbers.
+
+The server-side LiveKit agent writes read-only audio evidence before each STT call:
+
+- `webcall_ai.livekit.remote_track_subscribed`
+- `webcall_ai.livekit.audio_frame_stats`
+- `webcall_ai.stt.audio_input_stats`
+- `webcall_ai.stt.empty_with_audio_stats`
+
+Each STT input stats event includes `voice_session_id`, `turn_index`, `participant_identity`, `track_sid`, `frame_count`, `audio_ms`, `pcm_bytes`, `sample_rate`, `channels`, and `rms_min` / `rms_avg` / `rms_max`. Empty transcript events classify the cause as `no_remote_audio_track`, `audio_track_muted`, `no_pcm_frames`, `pcm_too_short`, `pcm_silent`, or `deepgram_empty_transcript`.
 
 Keep these disabled for the initial rollout:
 

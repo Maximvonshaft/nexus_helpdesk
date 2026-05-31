@@ -14,7 +14,7 @@ from ..webchat_service import create_or_resume_conversation
 from ..webchat_voice_service import create_public_voice_session, end_public_voice_session
 from .config import get_webcall_ai_production_settings
 from .event_service import serialize_event, write_event
-from .evidence import hash_tracking_number
+from .evidence import hash_tracking_number, redact_customer_text
 from .livekit_service import issue_join_token
 from .tools.tracking_lookup import extract_tracking_number
 
@@ -259,6 +259,45 @@ def save_tracking_fallback(db: Session, session_public_id: str, visitor_token: s
         },
     )
     return {"ok": True, "tracking_number_redacted": f"{normalized[:3]}...{normalized[-2:]}"}
+
+
+def record_client_audio_telemetry(db: Session, session_public_id: str, visitor_token: str | None, payload: dict[str, Any]) -> dict[str, Any]:
+    session = _load_ai_session(db, session_public_id)
+    _validate_visitor_token(db, session, visitor_token)
+    event_payload = _sanitize_client_audio_payload(payload)
+    event_payload["voice_session_id"] = session.public_id
+    write_event(
+        db,
+        conversation_id=session.conversation_id,
+        ticket_id=session.ticket_id,
+        event_type="webcall_ai.client.audio_published",
+        payload=event_payload,
+    )
+    return {"ok": True, "event_type": "webcall_ai.client.audio_published"}
+
+
+def _sanitize_client_audio_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "stage",
+        "status",
+        "selected_audio_input_label",
+        "selected_audio_input_device_id_hash",
+        "local_track_ready_state",
+        "local_track_enabled",
+        "local_track_muted",
+        "livekit_track_sid",
+        "error_name",
+        "error_message",
+    }
+    sanitized: dict[str, Any] = {}
+    for key, value in payload.items():
+        if key not in allowed:
+            continue
+        if isinstance(value, str):
+            sanitized[key] = (redact_customer_text(value) if key == "error_message" else value)[:240]
+        elif isinstance(value, bool) or value is None:
+            sanitized[key] = value
+    return sanitized
 
 
 def list_events(db: Session, session_public_id: str, visitor_token: str | None = None, *, require_visitor_token: bool = True) -> dict[str, Any]:

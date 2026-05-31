@@ -26,6 +26,28 @@ type WebCallEvent = {
 }
 
 type CallState = 'loading' | 'disabled' | 'ready' | 'requesting_mic' | 'connecting' | 'connected' | 'ai_joined' | 'listening' | 'thinking' | 'speaking' | 'handoff' | 'ended' | 'error'
+type ClientAudioTelemetryStage = 'session_created' | 'get_user_media_success' | 'get_user_media_failure' | 'local_track_state' | 'livekit_publish_success' | 'livekit_publish_failure'
+
+type ClientAudioTelemetry = {
+  stage: ClientAudioTelemetryStage
+  status: 'success' | 'failure' | 'info'
+  selected_audio_input_label?: string | null
+  selected_audio_input_device_id_hash?: string | null
+  local_track_ready_state?: string | null
+  local_track_enabled?: boolean | null
+  local_track_muted?: boolean | null
+  livekit_track_sid?: string | null
+  error_name?: string | null
+  error_message?: string | null
+}
+
+type TrackDiagnostics = {
+  selected_audio_input_label: string | null
+  selected_audio_input_device_id_hash: string | null
+  local_track_ready_state: string | null
+  local_track_enabled: boolean | null
+  local_track_muted: boolean | null
+}
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
@@ -44,6 +66,44 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+function resolveMediaStreamTrack(audioTrack: any): MediaStreamTrack | null {
+  return audioTrack?.mediaStreamTrack || audioTrack?.track || null
+}
+
+async function readTrackDiagnostics(audioTrack: any): Promise<TrackDiagnostics> {
+  const mediaTrack = resolveMediaStreamTrack(audioTrack)
+  const settings = mediaTrack?.getSettings?.() || {}
+  const deviceId = typeof settings.deviceId === 'string' ? settings.deviceId : ''
+  return {
+    selected_audio_input_label: safeTelemetryText(mediaTrack?.label || null),
+    selected_audio_input_device_id_hash: deviceId ? await hashDeviceId(deviceId) : null,
+    local_track_ready_state: safeTelemetryText(mediaTrack?.readyState || null),
+    local_track_enabled: typeof mediaTrack?.enabled === 'boolean' ? mediaTrack.enabled : null,
+    local_track_muted: typeof mediaTrack?.muted === 'boolean' ? mediaTrack.muted : null,
+  }
+}
+
+async function hashDeviceId(value: string): Promise<string> {
+  if (crypto?.subtle) {
+    const bytes = new TextEncoder().encode(value)
+    const digest = await crypto.subtle.digest('SHA-256', bytes)
+    return Array.from(new Uint8Array(digest)).map((item) => item.toString(16).padStart(2, '0')).join('').slice(0, 32)
+  }
+  let hash = 0
+  for (let index = 0; index < value.length; index += 1) hash = Math.imul(31, hash) + value.charCodeAt(index) | 0
+  return `fallback-${Math.abs(hash).toString(16)}`
+}
+
+function safeTrackSid(publication: any): string | null {
+  const value = publication?.trackSid || publication?.sid || null
+  return safeTelemetryText(value)
+}
+
+function safeTelemetryText(value: string | null | undefined): string | null {
+  const trimmed = String(value || '').trim()
+  return trimmed ? trimmed.slice(0, 160) : null
+}
+
 function WebCallAIProductionPage() {
   const [runtime, setRuntime] = useState<RuntimeConfig | null>(null)
   const [created, setCreated] = useState<CreatedSession | null>(null)
@@ -52,16 +112,81 @@ function WebCallAIProductionPage() {
   const [trackingNumber, setTrackingNumber] = useState('')
   const [events, setEvents] = useState<WebCallEvent[]>([])
   const [muted, setMuted] = useState(false)
+  const [micLevel, setMicLevel] = useState(0)
+  const [micDiagnostics, setMicDiagnostics] = useState<TrackDiagnostics | null>(null)
   const roomRef = useRef<any | null>(null)
   const localAudioRef = useRef<any>(null)
   const remoteAudioRef = useRef<HTMLDivElement | null>(null)
+  const meterCleanupRef = useRef<(() => void) | null>(null)
 
   async function disconnectRoom() {
+    meterCleanupRef.current?.()
+    meterCleanupRef.current = null
+    setMicLevel(0)
     localAudioRef.current?.stop?.()
     localAudioRef.current = null
     roomRef.current?.disconnect()
     roomRef.current = null
     if (remoteAudioRef.current) remoteAudioRef.current.innerHTML = ''
+  }
+
+  function startMicMeter(audioTrack: any) {
+    meterCleanupRef.current?.()
+    const mediaTrack = resolveMediaStreamTrack(audioTrack)
+    if (!mediaTrack || typeof AudioContext === 'undefined') return
+    try {
+      const audioContext = new AudioContext()
+      const stream = new MediaStream([mediaTrack])
+      const source = audioContext.createMediaStreamSource(stream)
+      const analyser = audioContext.createAnalyser()
+      analyser.fftSize = 1024
+      source.connect(analyser)
+      const data = new Uint8Array(analyser.fftSize)
+      let frame = 0
+      let lastUpdate = 0
+      const tick = (now: number) => {
+        analyser.getByteTimeDomainData(data)
+        let total = 0
+        for (let index = 0; index < data.length; index += 1) {
+          const centered = data[index] - 128
+          total += centered * centered
+        }
+        const level = Math.min(1, Math.sqrt(total / data.length) / 64)
+        if (now - lastUpdate > 80) {
+          lastUpdate = now
+          setMicLevel(level)
+        }
+        frame = window.requestAnimationFrame(tick)
+      }
+      frame = window.requestAnimationFrame(tick)
+      meterCleanupRef.current = () => {
+        window.cancelAnimationFrame(frame)
+        try {
+          source.disconnect()
+        } catch {
+          // Source may already be disconnected during page unload.
+        }
+        void audioContext.close()
+      }
+    } catch {
+      setMicLevel(0)
+    }
+  }
+
+  async function reportClientAudioTelemetry(activeSession: CreatedSession, telemetry: ClientAudioTelemetry) {
+    const safeTelemetry = {
+      ...telemetry,
+      error_message: telemetry.error_message ? telemetry.error_message.slice(0, 180) : null,
+    }
+    console.info('[webcall-ai-audio]', safeTelemetry)
+    try {
+      await apiRequest(`/api/webcall-ai/sessions/${activeSession.session.public_id}/client-audio-telemetry`, {
+        method: 'POST',
+        body: JSON.stringify({ visitor_token: activeSession.visitor_token, ...safeTelemetry }),
+      })
+    } catch {
+      // Client telemetry must not break the call path.
+    }
   }
 
   useEffect(() => {
@@ -124,13 +249,8 @@ function WebCallAIProductionPage() {
 
   async function startCall() {
     if (!runtime?.livekit_url || state !== 'ready') return
+    let activeSession: CreatedSession | null = null
     try {
-      setState('requesting_mic')
-      setMessage('Requesting microphone permission...')
-      const { Room, RoomEvent, Track, createLocalAudioTrack } = await import('livekit-client')
-      const audioTrack = await createLocalAudioTrack({ echoCancellation: true, noiseSuppression: true, autoGainControl: true })
-      localAudioRef.current = audioTrack
-
       const session = await apiRequest<CreatedSession>('/api/webcall-ai/sessions', {
         method: 'POST',
         headers: { 'Idempotency-Key': `webcall-ai-ui-${Date.now()}` },
@@ -140,7 +260,31 @@ function WebCallAIProductionPage() {
           locale: navigator.language || 'en',
         }),
       })
+      activeSession = session
       setCreated(session)
+      await reportClientAudioTelemetry(session, { stage: 'session_created', status: 'success' })
+
+      setState('requesting_mic')
+      setMessage('Requesting microphone permission...')
+      const { Room, RoomEvent, Track, createLocalAudioTrack } = await import('livekit-client')
+      let audioTrack: any
+      try {
+        audioTrack = await createLocalAudioTrack({ echoCancellation: true, noiseSuppression: true, autoGainControl: true })
+      } catch (error: any) {
+        await reportClientAudioTelemetry(session, {
+          stage: 'get_user_media_failure',
+          status: 'failure',
+          error_name: error?.name || 'getUserMediaError',
+          error_message: error?.message || 'getUserMedia failed',
+        })
+        throw error
+      }
+      localAudioRef.current = audioTrack
+      const diagnostics = await readTrackDiagnostics(audioTrack)
+      setMicDiagnostics(diagnostics)
+      startMicMeter(audioTrack)
+      await reportClientAudioTelemetry(session, { stage: 'get_user_media_success', status: 'success', ...diagnostics })
+      await reportClientAudioTelemetry(session, { stage: 'local_track_state', status: 'info', ...diagnostics })
 
       setState('connecting')
       setMessage('Connecting to the AI voice room...')
@@ -161,13 +305,30 @@ function WebCallAIProductionPage() {
         setMessage('Voice room disconnected.')
       })
       await room.connect(runtime.livekit_url, session.join.participant_token)
-      await room.localParticipant.publishTrack(audioTrack)
+      try {
+        const publication = await room.localParticipant.publishTrack(audioTrack)
+        await reportClientAudioTelemetry(session, {
+          stage: 'livekit_publish_success',
+          status: 'success',
+          livekit_track_sid: safeTrackSid(publication),
+          ...(await readTrackDiagnostics(audioTrack)),
+        })
+      } catch (error: any) {
+        await reportClientAudioTelemetry(session, {
+          stage: 'livekit_publish_failure',
+          status: 'failure',
+          error_name: error?.name || 'publishTrackError',
+          error_message: error?.message || 'LiveKit publishTrack failed',
+          ...(await readTrackDiagnostics(audioTrack)),
+        })
+        throw error
+      }
       setState('connected')
       setMessage('Connected. The AI participant will greet you when the worker joins.')
     } catch (error: any) {
       await disconnectRoom()
       setState('error')
-      setMessage(error?.message || 'Unable to start WebCall AI.')
+      setMessage(error?.message || (activeSession ? 'Unable to publish microphone audio for WebCall AI.' : 'Unable to start WebCall AI.'))
     }
   }
 
@@ -234,6 +395,16 @@ function WebCallAIProductionPage() {
           <h1>WebCall AI</h1>
           <p className="lead">Speak with the AI support agent for shipment questions. Raw audio is not stored by default.</p>
           <div className={`call-status ${state}`} role="status">{message}</div>
+          <div className="mic-meter" aria-label="Microphone input level" data-testid="webcall-ai-mic-meter">
+            <div className="mic-meter-head">
+              <span>Mic input</span>
+              <strong>{Math.round(micLevel * 100)}%</strong>
+            </div>
+            <div className="mic-meter-track">
+              <div className="mic-level-bar" data-testid="webcall-ai-mic-level-bar" style={{ width: `${Math.max(2, Math.round(micLevel * 100))}%` }} />
+            </div>
+            <small>{micDiagnostics?.local_track_ready_state || 'not started'} · {micDiagnostics?.local_track_muted ? 'muted' : 'not muted'}</small>
+          </div>
           <div className="call-actions">
             <button type="button" className="primary-action" disabled={!canStart} onClick={() => void startCall()}>{state === 'requesting_mic' || state === 'connecting' ? 'Connecting' : 'Start call'}</button>
             <button type="button" disabled={!connectedState} onClick={() => void toggleMute()}>{muted ? 'Unmute' : 'Mute'}</button>

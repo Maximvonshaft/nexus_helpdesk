@@ -8,9 +8,10 @@ import threading
 import time
 import wave
 from dataclasses import dataclass
-from typing import Any, Iterable, Protocol
+from typing import Any, Callable, Iterable, Protocol
 
 from ..livekit_service import issue_join_token
+from .stats import analyze_pcm16_audio
 
 LOGGER = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class LiveKitMediaTurn:
     channels: int
     mime_type: str = "audio/pcm"
     language: str | None = None
+    audio_stats: dict[str, Any] | None = None
 
     @property
     def customer_audio(self) -> bytes:
@@ -48,6 +50,9 @@ class PCMFrame:
     data: bytes
     sample_rate: int
     channels: int
+    track_sid: str | None = None
+    participant_identity: str | None = None
+    muted: bool = False
 
 
 class LiveKitRTCBackend(Protocol):
@@ -68,6 +73,7 @@ class LiveKitAgentIO:
         ttl_seconds: int,
         livekit_url: str | None = None,
         backend: LiveKitRTCBackend | None = None,
+        telemetry_callback: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         self.room_name = room_name
         self.participant_identity = participant_identity
@@ -80,7 +86,7 @@ class LiveKitAgentIO:
             participant_identity=participant_identity,
             ttl_seconds=ttl_seconds,
         )
-        self._backend = backend or SDKLiveKitRTCBackend()
+        self._backend = backend or SDKLiveKitRTCBackend(telemetry_callback=telemetry_callback)
         self._connected = False
 
     def connect(self) -> None:
@@ -111,6 +117,12 @@ class LiveKitAgentIO:
         except Exception as exc:
             LOGGER.exception("webcall_ai_livekit_collect_failed", extra={"room_name": self.room_name, "participant_identity": self.participant_identity, "error": type(exc).__name__})
             raise LiveKitIOError("livekit_collect_failed") from exc
+
+    def audio_ingress_snapshot(self) -> dict[str, Any] | None:
+        snapshot = getattr(self._backend, "audio_ingress_snapshot", None)
+        if callable(snapshot):
+            return snapshot()
+        return None
 
     def publish_ai_audio(self, audio_bytes: bytes, *, mime_type: str) -> None:
         if not audio_bytes:
@@ -157,7 +169,7 @@ class LiveKitAgentIO:
 
 
 class SDKLiveKitRTCBackend:
-    def __init__(self) -> None:
+    def __init__(self, *, telemetry_callback: Callable[[str, dict[str, Any]], None] | None = None) -> None:
         self._room = None
         self._audio_source = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -165,6 +177,11 @@ class SDKLiveKitRTCBackend:
         self._barge_in_buffer: list[PCMFrame] = []
         self._participant_identity: str | None = None
         self._thread: threading.Thread | None = None
+        self._telemetry_callback = telemetry_callback
+        self._remote_audio_track_seen = False
+        self._remote_audio_track_muted = False
+        self._remote_track_sid: str | None = None
+        self._remote_participant_identity: str | None = None
 
     def connect(self, *, url: str, token: str, room_name: str, participant_identity: str) -> None:
         self._participant_identity = participant_identity
@@ -202,7 +219,18 @@ class SDKLiveKitRTCBackend:
         @self._room.on("track_subscribed")
         def on_track_subscribed(track, publication, participant):
             if getattr(track, "kind", None) == rtc.TrackKind.KIND_AUDIO:
-                asyncio.run_coroutine_threadsafe(self._drain_audio_track(track), self._loop)
+                self._record_remote_track_subscribed(track=track, publication=publication, participant=participant)
+                asyncio.run_coroutine_threadsafe(self._drain_audio_track(track, publication=publication, participant=participant), self._loop)
+
+        @self._room.on("track_muted")
+        def on_track_muted(publication, participant):
+            if self._track_sid(publication=publication) == self._remote_track_sid:
+                self._remote_audio_track_muted = True
+
+        @self._room.on("track_unmuted")
+        def on_track_unmuted(publication, participant):
+            if self._track_sid(publication=publication) == self._remote_track_sid:
+                self._remote_audio_track_muted = False
 
         @self._room.on("participant_disconnected")
         def on_participant_disconnected(participant):
@@ -217,17 +245,28 @@ class SDKLiveKitRTCBackend:
         await self._room.local_participant.publish_track(track)
         LOGGER.info("webcall_ai_livekit_room_joined", extra={"room_name": room_name, "participant_identity": self._participant_identity})
 
-    async def _drain_audio_track(self, track) -> None:
+    async def _drain_audio_track(self, track, *, publication=None, participant=None) -> None:
         from livekit import rtc
 
         stream = rtc.AudioStream(track)
+        track_sid = self._track_sid(track=track, publication=publication)
+        participant_identity = self._participant_identity_value(participant)
         async for event in stream:
             frame = getattr(event, "frame", event)
             data = getattr(frame, "data", None)
             if data is not None and self._audio_queue is not None:
                 sample_rate = int(getattr(frame, "sample_rate", 0) or os.getenv("WEBCALL_AI_AUDIO_SAMPLE_RATE", "48000"))
                 channels = int(getattr(frame, "num_channels", 0) or getattr(frame, "channels", 0) or 1)
-                await self._audio_queue.put(PCMFrame(data=bytes(data), sample_rate=sample_rate, channels=channels))
+                await self._audio_queue.put(
+                    PCMFrame(
+                        data=bytes(data),
+                        sample_rate=sample_rate,
+                        channels=channels,
+                        track_sid=track_sid,
+                        participant_identity=participant_identity,
+                        muted=self._remote_audio_track_muted,
+                    )
+                )
 
     def collect_next_customer_utterance(self, *, timeout_seconds: float, max_seconds: float) -> LiveKitMediaTurn:
         if self._loop is None:
@@ -238,12 +277,35 @@ class SDKLiveKitRTCBackend:
         )
         return future.result(timeout=timeout_seconds + max_seconds + 1)
 
+    def audio_ingress_snapshot(self) -> dict[str, Any]:
+        stats = analyze_pcm16_audio(
+            b"",
+            sample_rate=int(os.getenv("WEBCALL_AI_AUDIO_SAMPLE_RATE", "48000")),
+            channels=1,
+            frame_count=0,
+            remote_track_seen=self._remote_audio_track_seen,
+            audio_track_muted=self._remote_audio_track_muted,
+        ).as_payload()
+        stats.update(
+            {
+                "participant_identity": self._remote_participant_identity,
+                "track_sid": self._remote_track_sid,
+                "remote_track_seen": self._remote_audio_track_seen,
+                "audio_track_muted": self._remote_audio_track_muted,
+            }
+        )
+        return stats
+
     async def _collect_next_customer_utterance(self, *, timeout_seconds: float, max_seconds: float) -> LiveKitMediaTurn:
         if self._audio_queue is None:
             raise LiveKitIOError("livekit_audio_queue_not_ready")
         chunks: list[bytes] = []
         sample_rate = int(os.getenv("WEBCALL_AI_AUDIO_SAMPLE_RATE", "48000"))
         channels = 1
+        track_sid: str | None = self._remote_track_sid
+        participant_identity: str | None = self._remote_participant_identity
+        frame_count = 0
+        muted_frames = 0
         deadline = time.monotonic() + max_seconds
         min_seconds = float(os.getenv("WEBCALL_AI_MIN_UTTERANCE_SECONDS", "0.35"))
         silence_end_ms = int(os.getenv("WEBCALL_AI_SILENCE_END_MS", "700"))
@@ -258,6 +320,10 @@ class SDKLiveKitRTCBackend:
                 raise VisitorDisconnected("visitor_disconnected")
             sample_rate = frame.sample_rate
             channels = frame.channels
+            track_sid = frame.track_sid or track_sid
+            participant_identity = frame.participant_identity or participant_identity
+            frame_count += 1
+            muted_frames += 1 if frame.muted else 0
             chunks.append(frame.data)
             frame_ms = _pcm_frame_duration_ms(frame.data, sample_rate=sample_rate, channels=channels)
             if is_speech_pcm16(frame.data):
@@ -272,7 +338,24 @@ class SDKLiveKitRTCBackend:
                 break
         if not chunks:
             raise LiveKitIOError("customer_audio_timeout")
-        return LiveKitMediaTurn(audio_bytes=b"".join(chunks), sample_rate=sample_rate, channels=channels, mime_type="audio/pcm", language=None)
+        audio = b"".join(chunks)
+        stats = analyze_pcm16_audio(
+            audio,
+            sample_rate=sample_rate,
+            channels=channels,
+            frame_count=frame_count,
+            remote_track_seen=self._remote_audio_track_seen,
+            audio_track_muted=frame_count > 0 and muted_frames == frame_count,
+        ).as_payload()
+        stats.update(
+            {
+                "participant_identity": participant_identity,
+                "track_sid": track_sid,
+                "remote_track_seen": self._remote_audio_track_seen,
+                "audio_track_muted": frame_count > 0 and muted_frames == frame_count,
+            }
+        )
+        return LiveKitMediaTurn(audio_bytes=audio, sample_rate=sample_rate, channels=channels, mime_type="audio/pcm", language=None, audio_stats=stats)
 
     def publish_ai_audio(self, audio_bytes: bytes, *, mime_type: str) -> None:
         if self._loop is None:
@@ -364,6 +447,10 @@ class SDKLiveKitRTCBackend:
         self._barge_in_buffer = []
         self._loop = None
         self._thread = None
+        self._remote_audio_track_seen = False
+        self._remote_audio_track_muted = False
+        self._remote_track_sid = None
+        self._remote_participant_identity = None
 
     def _pop_buffered_audio_frame(self) -> PCMFrame | None:
         if not self._barge_in_buffer:
@@ -391,6 +478,39 @@ class SDKLiveKitRTCBackend:
                 current_speech_ms = 0
             if current_speech_ms >= _barge_in_min_speech_ms():
                 raise BargeInInterrupted(speech_ms=current_speech_ms, buffered_frames=len(self._barge_in_buffer) or drained_frames)
+
+    def _record_remote_track_subscribed(self, *, track=None, publication=None, participant=None) -> None:
+        self._remote_audio_track_seen = True
+        self._remote_audio_track_muted = bool(getattr(publication, "muted", False) or getattr(track, "muted", False))
+        self._remote_track_sid = self._track_sid(track=track, publication=publication)
+        self._remote_participant_identity = self._participant_identity_value(participant)
+        self._emit_telemetry(
+            "webcall_ai.livekit.remote_track_subscribed",
+            {
+                "participant_identity": self._remote_participant_identity,
+                "track_sid": self._remote_track_sid,
+                "track_kind": "audio",
+                "track_muted": self._remote_audio_track_muted,
+            },
+        )
+
+    def _emit_telemetry(self, event_type: str, payload: dict[str, Any]) -> None:
+        if not self._telemetry_callback:
+            return
+        try:
+            self._telemetry_callback(event_type, payload)
+        except Exception:
+            LOGGER.exception("webcall_ai_livekit_telemetry_failed", extra={"event_type": event_type, "participant_identity": self._participant_identity})
+
+    @staticmethod
+    def _track_sid(*, track=None, publication=None) -> str | None:
+        value = getattr(publication, "sid", None) or getattr(publication, "track_sid", None) or getattr(track, "sid", None)
+        return str(value)[:160] if value else None
+
+    @staticmethod
+    def _participant_identity_value(participant=None) -> str | None:
+        value = getattr(participant, "identity", None) or getattr(participant, "sid", None)
+        return str(value)[:160] if value else None
 
 
 def decode_audio_for_livekit(audio_bytes: bytes, *, mime_type: str) -> tuple[bytes, int, int]:

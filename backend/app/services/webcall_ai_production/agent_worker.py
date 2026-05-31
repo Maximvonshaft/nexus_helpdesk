@@ -25,7 +25,8 @@ from .agent_session_claims import (
     claim_next_session,
     should_continue_session,
 )
-from .audio.livekit_io import BargeInInterrupted, LiveKitAgentIO, VisitorDisconnected
+from .audio.livekit_io import BargeInInterrupted, LiveKitAgentIO, LiveKitIOError, VisitorDisconnected
+from .audio.stats import analyze_pcm16_audio
 from .config import get_webcall_ai_production_settings
 from .event_service import write_event
 from .metrics import record_webcall_ai_audio, record_webcall_ai_stage
@@ -154,7 +155,30 @@ def _make_io(session: WebchatVoiceSession, settings) -> LiveKitAgentIO:
         participant_identity=f"ai_{session.public_id}"[:160],
         ttl_seconds=settings.max_session_seconds,
         livekit_url=settings.livekit_url,
+        telemetry_callback=_livekit_telemetry_writer(session),
     )
+
+
+def _livekit_telemetry_writer(session: WebchatVoiceSession):
+    def record(event_type: str, payload: dict) -> None:
+        db = SessionLocal()
+        try:
+            enriched = {"voice_session_id": session.public_id, **_safe_audio_event_payload(payload)}
+            write_event(
+                db,
+                conversation_id=session.conversation_id,
+                ticket_id=session.ticket_id,
+                event_type=event_type,
+                payload=enriched,
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("webcall_ai_livekit_event_write_failed", extra={"voice_session_id": session.public_id, "event_type": event_type})
+        finally:
+            db.close()
+
+    return record
 
 
 def run_worker_once(worker_id: str) -> dict[str, int | str]:
@@ -213,8 +237,20 @@ def run_claimed_session_loop(session_id: int, *, worker_id: str, io: LiveKitAgen
             except VisitorDisconnected:
                 release_session(db, session_id=session_id, worker_id=worker_id, reason="visitor_disconnected")
                 return {"claimed": 1, "processed": turns, "failed": 0, "status": "visitor_disconnected"}
+            except LiveKitIOError:
+                _write_audio_ingress_empty_event(db, session=claimed_session, io=managed_io)
+                raise
             mark_status(db, session_id=session_id, worker_id=worker_id, status=AI_STATUS_THINKING)
             db.refresh(claimed_session)
+            audio_stats = _audio_stats_payload(claimed_session, media_turn)
+            write_event(
+                db,
+                conversation_id=claimed_session.conversation_id,
+                ticket_id=claimed_session.ticket_id,
+                event_type="webcall_ai.livekit.audio_frame_stats",
+                payload=audio_stats,
+            )
+            db.flush()
             result = run_session_turn(
                 db,
                 session=claimed_session,
@@ -224,6 +260,7 @@ def run_claimed_session_loop(session_id: int, *, worker_id: str, io: LiveKitAgen
                 sample_rate=media_turn.sample_rate,
                 channels=media_turn.channels,
                 mime_type=media_turn.mime_type,
+                audio_stats=audio_stats,
             )
             turns += 1
             mark_status(db, session_id=session_id, worker_id=worker_id, status=AI_STATUS_SPEAKING)
@@ -412,6 +449,81 @@ def _cancel_tts_payload(tts_payload: dict, *, reason: str) -> None:
     cancel = getattr(token, "cancel", None)
     if callable(cancel):
         cancel(reason)
+
+
+def _audio_stats_payload(session: WebchatVoiceSession, media_turn) -> dict[str, object]:
+    provided = getattr(media_turn, "audio_stats", None)
+    if isinstance(provided, dict):
+        stats = dict(provided)
+    else:
+        stats = analyze_pcm16_audio(
+            media_turn.audio_bytes,
+            sample_rate=media_turn.sample_rate,
+            channels=media_turn.channels,
+        ).as_payload()
+    stats.update(
+        {
+            "voice_session_id": session.public_id,
+            "turn_index": int(session.ai_turn_count or 0) + 1,
+            "participant_identity": stats.get("participant_identity"),
+            "track_sid": stats.get("track_sid"),
+        }
+    )
+    return _safe_audio_event_payload(stats)
+
+
+def _safe_audio_event_payload(payload: dict | None) -> dict[str, object]:
+    allowed = {
+        "voice_session_id",
+        "turn_index",
+        "participant_identity",
+        "track_sid",
+        "track_kind",
+        "track_muted",
+        "remote_track_seen",
+        "audio_track_muted",
+        "frame_count",
+        "audio_ms",
+        "pcm_bytes",
+        "sample_rate",
+        "channels",
+        "rms_min",
+        "rms_avg",
+        "rms_max",
+        "audio_input_classification",
+    }
+    sanitized: dict[str, object] = {}
+    for key, value in (payload or {}).items():
+        if key not in allowed:
+            continue
+        if isinstance(value, str):
+            sanitized[key] = value[:240]
+        elif isinstance(value, bool) or isinstance(value, int) or value is None:
+            sanitized[key] = value
+    return sanitized
+
+
+def _write_audio_ingress_empty_event(db, *, session: WebchatVoiceSession, io: LiveKitAgentIO) -> None:
+    snapshot = io.audio_ingress_snapshot() if hasattr(io, "audio_ingress_snapshot") else None
+    if not isinstance(snapshot, dict):
+        snapshot = analyze_pcm16_audio(b"", sample_rate=48000, channels=1, frame_count=0, remote_track_seen=False).as_payload()
+    snapshot.update(
+        {
+            "voice_session_id": session.public_id,
+            "turn_index": int(session.ai_turn_count or 0) + 1,
+            "empty_reason": snapshot.get("audio_input_classification") or "no_pcm_frames",
+        }
+    )
+    payload = _safe_audio_event_payload(snapshot)
+    payload["empty_reason"] = str(snapshot.get("empty_reason") or "no_pcm_frames")[:240]
+    write_event(
+        db,
+        conversation_id=session.conversation_id,
+        ticket_id=session.ticket_id,
+        event_type="webcall_ai.stt.empty_with_audio_stats",
+        payload=payload,
+    )
+    db.commit()
 
 
 def main() -> None:
