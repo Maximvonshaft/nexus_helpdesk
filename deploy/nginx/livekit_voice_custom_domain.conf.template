@@ -1,0 +1,70 @@
+# NexusDesk WebCall / LiveKit custom-domain Nginx template
+#
+# Purpose:
+# - Expose a stable public voice hostname, for example voice.leakle.com.
+# - Reverse-proxy BOTH browser WebSocket media traffic and backend LiveKit server API/Twirp calls.
+# - Keep LiveKit API key and secret out of Git. This template contains no secrets.
+#
+# Required substitutions before installation:
+# - __VOICE_HOST__              e.g. voice.leakle.com
+# - __LIVEKIT_UPSTREAM_HOST__   e.g. speedaf-th0pg5cj.livekit.cloud
+# - __SSL_CERTIFICATE__         e.g. /etc/letsencrypt/live/voice.leakle.com/fullchain.pem
+# - __SSL_CERTIFICATE_KEY__     e.g. /etc/letsencrypt/live/voice.leakle.com/privkey.pem
+#
+# Important:
+# LiveKit browser clients use WSS, but NexusDesk backend also calls the LiveKit server API.
+# The upstream must see the LiveKit Cloud hostname through Host and SNI, otherwise room
+# create/list/delete may fail even when /rtc appears reachable.
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
+server {
+    listen 80;
+    server_name __VOICE_HOST__;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name __VOICE_HOST__;
+
+    ssl_certificate __SSL_CERTIFICATE__;
+    ssl_certificate_key __SSL_CERTIFICATE_KEY__;
+
+    client_max_body_size 20m;
+
+    location / {
+        proxy_pass https://__LIVEKIT_UPSTREAM_HOST__;
+        proxy_http_version 1.1;
+
+        # Critical for LiveKit Cloud behind a custom proxy.
+        proxy_ssl_server_name on;
+        proxy_ssl_name __LIVEKIT_UPSTREAM_HOST__;
+        proxy_set_header Host __LIVEKIT_UPSTREAM_HOST__;
+
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+
+        # Required for LiveKit /rtc WebSocket upgrade.
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_connect_timeout 30s;
+        proxy_buffering off;
+        proxy_cache off;
+    }
+}
