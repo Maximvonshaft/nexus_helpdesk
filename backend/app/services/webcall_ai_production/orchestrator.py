@@ -26,7 +26,7 @@ def run_fake_turn(audio_or_text: bytes | str, *, language: str | None = None) ->
         "transcript": stt.__dict__,
         "response": llm.__dict__,
         "tool_result": tool_result,
-        "tts": {"mime_type": tts.mime_type, "bytes": len(tts.audio_bytes), "text": tts.text, "provider": tts.provider_name, "_audio_bytes": tts.audio_bytes},
+        "tts": _tts_payload(tts),
     }
 
 
@@ -108,7 +108,7 @@ def run_session_turn(
         "transcript": stt.__dict__,
         "response": llm.__dict__,
         "tool_result": tool_result,
-        "tts": {"mime_type": tts.mime_type, "bytes": len(tts.audio_bytes), "text": tts.text, "provider": tts.provider_name, "_audio_bytes": tts.audio_bytes},
+        "tts": _tts_payload(tts),
         "worker_id": worker_id,
         "handoff_required": llm.handoff_required,
         "handoff_reason": llm.handoff_reason,
@@ -165,8 +165,21 @@ def build_handoff_turn(
     return {
         "turn_id": evidence.turn.id,
         "response": llm.__dict__,
-        "tts": {"mime_type": tts.mime_type, "bytes": len(tts.audio_bytes), "text": tts.text, "provider": tts.provider_name, "_audio_bytes": tts.audio_bytes},
+        "tts": _tts_payload(tts),
         "worker_id": worker_id,
         "handoff_required": handoff_required,
         "handoff_reason": handoff_reason,
     }
+
+
+def _tts_payload(tts: TTSResult) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "mime_type": tts.mime_type,
+        "bytes": len(tts.audio_bytes),
+        "text": tts.text,
+        "provider": tts.provider_name,
+        "_audio_bytes": tts.audio_bytes,
+    }
+    if tts.audio_chunks:
+        payload["_audio_chunks"] = tts.audio_chunks
+    return payload

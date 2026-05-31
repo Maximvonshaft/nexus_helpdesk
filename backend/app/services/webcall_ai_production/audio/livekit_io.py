@@ -8,7 +8,7 @@ import threading
 import time
 import wave
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Iterable, Protocol
 
 from ..livekit_service import issue_join_token
 
@@ -47,6 +47,7 @@ class LiveKitRTCBackend(Protocol):
     def connect(self, *, url: str, token: str, room_name: str, participant_identity: str) -> None: ...
     def collect_next_customer_utterance(self, *, timeout_seconds: float, max_seconds: float) -> LiveKitMediaTurn: ...
     def publish_ai_audio(self, audio_bytes: bytes, *, mime_type: str) -> None: ...
+    def publish_ai_audio_stream(self, chunks: Iterable[Any], *, mime_type: str) -> None: ...
     def close(self) -> None: ...
 
 
@@ -113,6 +114,22 @@ class LiveKitAgentIO:
         except Exception as exc:
             LOGGER.exception("webcall_ai_livekit_publish_failed", extra={"room_name": self.room_name, "participant_identity": self.participant_identity, "mime_type": mime_type, "error": type(exc).__name__})
             raise LiveKitIOError("livekit_publish_failed") from exc
+
+    def publish_ai_audio_stream(self, chunks: Iterable[Any], *, mime_type: str) -> None:
+        chunk_list = tuple(chunks)
+        if not chunk_list:
+            raise LiveKitIOError("AI audio stream publication requires at least one chunk")
+        if not self._connected:
+            self.connect()
+        try:
+            if hasattr(self._backend, "publish_ai_audio_stream"):
+                self._backend.publish_ai_audio_stream(chunk_list, mime_type=mime_type)
+                return
+            audio = b"".join(bytes(getattr(chunk, "audio_bytes", b"") or b"") for chunk in chunk_list)
+            self._backend.publish_ai_audio(audio, mime_type=mime_type)
+        except Exception as exc:
+            LOGGER.exception("webcall_ai_livekit_stream_publish_failed", extra={"room_name": self.room_name, "participant_identity": self.participant_identity, "mime_type": mime_type, "error": type(exc).__name__})
+            raise LiveKitIOError("livekit_stream_publish_failed") from exc
 
     def close(self) -> None:
         try:
@@ -242,12 +259,38 @@ class SDKLiveKitRTCBackend:
         future = asyncio.run_coroutine_threadsafe(self._publish_ai_audio(audio_bytes, mime_type=mime_type), self._loop)
         future.result(timeout=float(os.getenv("WEBCALL_AI_LIVEKIT_PUBLISH_TIMEOUT_SECONDS", "20")))
 
+    def publish_ai_audio_stream(self, chunks: Iterable[Any], *, mime_type: str) -> None:
+        if self._loop is None:
+            raise LiveKitIOError("livekit_loop_not_ready")
+        future = asyncio.run_coroutine_threadsafe(self._publish_ai_audio_stream(tuple(chunks), mime_type=mime_type), self._loop)
+        future.result(timeout=float(os.getenv("WEBCALL_AI_LIVEKIT_PUBLISH_TIMEOUT_SECONDS", "20")))
+
     async def _publish_ai_audio(self, audio_bytes: bytes, *, mime_type: str) -> None:
         if self._audio_source is None:
             raise LiveKitIOError("livekit_audio_source_not_ready")
+        pcm, sample_rate, channels = decode_audio_for_livekit(audio_bytes, mime_type=mime_type)
+        await self._capture_pcm_frames(pcm, sample_rate=sample_rate, channels=channels)
+
+    async def _publish_ai_audio_stream(self, chunks: tuple[Any, ...], *, mime_type: str) -> None:
+        if self._audio_source is None:
+            raise LiveKitIOError("livekit_audio_source_not_ready")
+        for chunk in chunks:
+            audio = bytes(getattr(chunk, "audio_bytes", b"") or b"")
+            if not audio:
+                continue
+            chunk_mime = str(getattr(chunk, "mime_type", None) or mime_type)
+            normalized = chunk_mime.split(";")[0].strip().lower()
+            if normalized in {"audio/l16", "audio/pcm", "application/octet-stream"}:
+                sample_rate = int(getattr(chunk, "sample_rate", 0) or os.getenv("WEBCALL_AI_TTS_SAMPLE_RATE", "24000"))
+                channels = int(getattr(chunk, "channels", 0) or os.getenv("WEBCALL_AI_TTS_CHANNELS", "1"))
+                await self._capture_pcm_frames(audio, sample_rate=sample_rate, channels=channels)
+                continue
+            pcm, sample_rate, channels = decode_audio_for_livekit(audio, mime_type=chunk_mime)
+            await self._capture_pcm_frames(pcm, sample_rate=sample_rate, channels=channels)
+
+    async def _capture_pcm_frames(self, pcm: bytes, *, sample_rate: int, channels: int) -> None:
         from livekit import rtc
 
-        pcm, sample_rate, channels = decode_audio_for_livekit(audio_bytes, mime_type=mime_type)
         samples_per_channel = max(1, int(sample_rate * 0.02))
         bytes_per_sample = 2
         frame_bytes = samples_per_channel * channels * bytes_per_sample

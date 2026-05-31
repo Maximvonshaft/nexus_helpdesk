@@ -61,6 +61,22 @@ TTS_PROVIDER=fake
 
 This streams PCM16 frames over Deepgram WebSocket and consumes interim/final transcript events. The current worker still uses a sequential utterance loop; duplex listening while speaking remains the barge-in PR.
 
+Cartesia streaming TTS can be canaried on the TTS leg:
+
+```text
+WEBCALL_AI_PROVIDER_PROFILE=hybrid
+STT_PROVIDER=deepgram_streaming
+LLM_PROVIDER=provider_runtime
+TTS_PROVIDER=cartesia_streaming
+TTS_API_KEY_FILE=/run/secrets/cartesia_api_key
+TTS_VOICE_ID=<server-only voice id>
+TTS_MODEL=sonic-3.5
+TTS_SAMPLE_RATE=24000
+CARTESIA_VERSION=2026-03-01
+```
+
+This uses `POST /tts/sse`, decodes `chunk` event audio data, and publishes audio chunks through `publish_ai_audio_stream()`. The full audio bytes are still retained in the existing turn payload for fallback publication and evidence compatibility.
+
 Keep these disabled for the initial rollout:
 
 ```text

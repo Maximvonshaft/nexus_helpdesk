@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from .base import LLMProvider, STTProvider, TTSProvider
+from .cartesia_streaming_tts import CartesiaStreamingTTSProvider
 from .deepgram_streaming_stt import DeepgramStreamingSTTProvider
 from .external_llm import ExternalLLMProvider
 from .external_stt import ExternalSTTProvider
@@ -36,4 +37,6 @@ def get_tts_provider(name: str) -> TTSProvider:
         return FakeTTSProvider()
     if name == "external":
         return ExternalTTSProvider(endpoint=os.getenv("TTS_ENDPOINT"), token_file=os.getenv("TTS_API_KEY_FILE"))
+    if name == "cartesia_streaming":
+        return CartesiaStreamingTTSProvider(endpoint=os.getenv("TTS_ENDPOINT"), token_file=os.getenv("TTS_API_KEY_FILE"))
     raise RuntimeError(f"unsupported TTS_PROVIDER={name}")

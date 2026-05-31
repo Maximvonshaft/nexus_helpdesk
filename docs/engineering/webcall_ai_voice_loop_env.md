@@ -74,4 +74,20 @@ TTS_PROVIDER=fake
 
 The checked-in streaming STT path sends PCM16 frames and consumes partial/final transcript events. It does not yet change the worker into a duplex barge-in loop.
 
+For streaming TTS and chunk publish, switch the TTS leg to Cartesia SSE:
+
+```dotenv
+WEBCALL_AI_PROVIDER_PROFILE=hybrid
+STT_PROVIDER=deepgram_streaming
+LLM_PROVIDER=provider_runtime
+TTS_PROVIDER=cartesia_streaming
+TTS_API_KEY_FILE=/run/secrets/cartesia_api_key
+TTS_VOICE_ID=<server-only voice id>
+TTS_MODEL=sonic-3.5
+TTS_SAMPLE_RATE=24000
+CARTESIA_VERSION=2026-03-01
+```
+
+Cartesia SSE chunks are decoded into PCM audio chunks and published through the server-side LiveKit `publish_ai_audio_stream()` path. Duplex barge-in and TTS cancellation are still a separate rollout.
+
 `LIVEKIT_API_KEY` may be sourced by deployment automation from `/opt/livekit_nexus/secrets.env`, but the API secret must be mounted as a file for production. If a rollback is needed, set `WEBCALL_AI_KILL_SWITCH=true` and stop the `webcall-ai-agent` compose profile.

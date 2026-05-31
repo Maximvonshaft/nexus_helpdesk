@@ -235,9 +235,8 @@ def run_claimed_session_loop(session_id: int, *, worker_id: str, io: LiveKitAgen
             )
             db.commit()
             tts_payload = result["tts"]
-            audio_bytes = tts_payload.get("_audio_bytes") if isinstance(tts_payload, dict) else None
             try:
-                managed_io.publish_ai_audio(audio_bytes or b"", mime_type=tts_payload["mime_type"])
+                _publish_tts_payload(managed_io, tts_payload)
                 write_event(
                     db,
                     conversation_id=claimed_session.conversation_id,
@@ -294,7 +293,16 @@ def _speak_greeting(db, *, session: WebchatVoiceSession, worker_id: str, io: Liv
         handoff_reason=None,
     )
     tts_payload = turn["tts"]
-    io.publish_ai_audio(tts_payload.get("_audio_bytes") or b"", mime_type=tts_payload["mime_type"])
+    _publish_tts_payload(io, tts_payload)
+
+
+def _publish_tts_payload(io: LiveKitAgentIO, tts_payload: dict) -> None:
+    chunks = tts_payload.get("_audio_chunks") if isinstance(tts_payload, dict) else None
+    if chunks and hasattr(io, "publish_ai_audio_stream"):
+        io.publish_ai_audio_stream(chunks, mime_type=tts_payload["mime_type"])
+        return
+    audio_bytes = tts_payload.get("_audio_bytes") if isinstance(tts_payload, dict) else None
+    io.publish_ai_audio(audio_bytes or b"", mime_type=tts_payload["mime_type"])
 
 
 def main() -> None:
