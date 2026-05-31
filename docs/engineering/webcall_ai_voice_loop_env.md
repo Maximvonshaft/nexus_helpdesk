@@ -88,7 +88,7 @@ TTS_SAMPLE_RATE=24000
 CARTESIA_VERSION=2026-03-01
 ```
 
-Cartesia SSE chunks are decoded into PCM audio chunks and published through the server-side LiveKit `publish_ai_audio_stream()` path. During server-side publication, barge-in can stop remaining LiveKit audio and preserve visitor frames for the next listening turn.
+Cartesia SSE chunks are decoded into PCM audio chunks and streamed into the server-side LiveKit `publish_ai_audio_stream()` path as they arrive; the worker no longer waits for the full TTS response before starting LiveKit publication. During server-side publication, barge-in can stop remaining LiveKit audio and preserve visitor frames for the next listening turn.
 
 For barge-in:
 

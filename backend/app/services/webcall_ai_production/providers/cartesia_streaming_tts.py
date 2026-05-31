@@ -40,6 +40,15 @@ class CartesiaStreamingTTSProvider(TTSProvider):
             audio_chunks=chunks,
         )
 
+    def synthesize_lazy(self, text: str, *, language: str | None = None) -> TTSResult:
+        return TTSResult(
+            audio_bytes=b"",
+            mime_type=_RAW_PCM_MIME,
+            text=text,
+            provider_name=self.provider_name,
+            audio_stream=self.synthesize_stream(text, language=language),
+        )
+
     def synthesize_stream(self, text: str, *, language: str | None = None) -> Iterable[TTSChunk]:
         if not (text or "").strip():
             raise ProviderError(self.provider_name, "tts_text_required", "TTS requires response text")

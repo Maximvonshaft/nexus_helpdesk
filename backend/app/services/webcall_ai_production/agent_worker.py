@@ -337,34 +337,60 @@ def _speak_greeting(db, *, session: WebchatVoiceSession, worker_id: str, io: Liv
 def _publish_tts_payload(io: LiveKitAgentIO, tts_payload: dict) -> None:
     provider = str(tts_payload.get("provider") or "unknown") if isinstance(tts_payload, dict) else "unknown"
     started = time.monotonic()
-    chunks, chunk_count, byte_count = _tts_audio_stats(tts_payload)
+    chunks = _tts_audio_chunks(tts_payload)
+    stats = {"chunks": 0, "bytes": 0}
     try:
         if chunks and hasattr(io, "publish_ai_audio_stream"):
-            io.publish_ai_audio_stream(chunks, mime_type=tts_payload["mime_type"])
-            record_webcall_ai_audio(provider=provider, status="ok", chunks=chunk_count, bytes_count=byte_count)
+            io.publish_ai_audio_stream(_meter_tts_chunks(chunks, provider=provider, stats=stats, started=started, tts_payload=tts_payload), mime_type=tts_payload["mime_type"])
+            record_webcall_ai_audio(provider=provider, status="ok", chunks=stats["chunks"], bytes_count=stats["bytes"])
             record_webcall_ai_stage(stage="audio_publish", status="ok", provider=provider, elapsed_ms=int((time.monotonic() - started) * 1000))
             return
         audio_bytes = tts_payload.get("_audio_bytes") if isinstance(tts_payload, dict) else None
         io.publish_ai_audio(audio_bytes or b"", mime_type=tts_payload["mime_type"])
-        record_webcall_ai_audio(provider=provider, status="ok", chunks=max(chunk_count, 1), bytes_count=byte_count)
+        byte_count = len(audio_bytes or b"")
+        record_webcall_ai_audio(provider=provider, status="ok", chunks=1 if audio_bytes else 0, bytes_count=byte_count)
         record_webcall_ai_stage(stage="audio_publish", status="ok", provider=provider, elapsed_ms=int((time.monotonic() - started) * 1000))
     except BargeInInterrupted:
-        record_webcall_ai_audio(provider=provider, status="interrupted", chunks=chunk_count, bytes_count=byte_count)
+        record_webcall_ai_audio(provider=provider, status="interrupted", chunks=stats["chunks"], bytes_count=stats["bytes"])
         record_webcall_ai_stage(stage="audio_publish", status="interrupted", provider=provider, elapsed_ms=int((time.monotonic() - started) * 1000))
         raise
     except Exception:
-        record_webcall_ai_audio(provider=provider, status="failed", chunks=chunk_count, bytes_count=byte_count)
+        record_webcall_ai_audio(provider=provider, status="failed", chunks=stats["chunks"], bytes_count=stats["bytes"])
         record_webcall_ai_stage(stage="audio_publish", status="failed", provider=provider, elapsed_ms=int((time.monotonic() - started) * 1000))
         raise
 
 
-def _tts_audio_stats(tts_payload: dict) -> tuple[tuple[object, ...], int, int]:
+def _tts_audio_chunks(tts_payload: dict):
+    chunks = tts_payload.get("_audio_stream") if isinstance(tts_payload, dict) else None
+    if chunks:
+        return chunks
     chunks = tts_payload.get("_audio_chunks") if isinstance(tts_payload, dict) else None
     if chunks:
-        chunk_list = tuple(chunks)
-        return chunk_list, len(chunk_list), sum(len(getattr(chunk, "audio_bytes", b"") or b"") for chunk in chunk_list)
-    audio_bytes = tts_payload.get("_audio_bytes") if isinstance(tts_payload, dict) else b""
-    return (), (1 if audio_bytes else 0), len(audio_bytes or b"")
+        return chunks
+    return None
+
+
+def _meter_tts_chunks(chunks, *, provider: str, stats: dict[str, int], started: float, tts_payload: dict):
+    first_chunk_recorded = False
+    for chunk in chunks:
+        audio = bytes(getattr(chunk, "audio_bytes", b"") or b"")
+        if not audio:
+            yield chunk
+            continue
+        if not first_chunk_recorded:
+            first_chunk_recorded = True
+            provider_latency = getattr(chunk, "provider_latency_ms", None)
+            latency_ms = int(provider_latency) if isinstance(provider_latency, int | float) else int((time.monotonic() - started) * 1000)
+            record_webcall_ai_stage(stage="tts_first_audio", provider=provider, elapsed_ms=latency_ms)
+            turn_started_at = tts_payload.get("_turn_started_at") if isinstance(tts_payload, dict) else None
+            if isinstance(turn_started_at, int | float):
+                record_webcall_ai_stage(stage="end_to_first_audio", provider=provider, elapsed_ms=int((time.monotonic() - float(turn_started_at)) * 1000))
+        stats["chunks"] += 1
+        stats["bytes"] += len(audio)
+        yield chunk
+    tts_started_at = tts_payload.get("_tts_started_at") if isinstance(tts_payload, dict) else None
+    if isinstance(tts_started_at, int | float):
+        record_webcall_ai_stage(stage="tts_total", provider=provider, elapsed_ms=int((time.monotonic() - float(tts_started_at)) * 1000))
 
 
 def main() -> None:

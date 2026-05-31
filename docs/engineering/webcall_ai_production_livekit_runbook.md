@@ -75,7 +75,7 @@ TTS_SAMPLE_RATE=24000
 CARTESIA_VERSION=2026-03-01
 ```
 
-This uses `POST /tts/sse`, decodes `chunk` event audio data, and publishes audio chunks through `publish_ai_audio_stream()`. The full audio bytes are still retained in the existing turn payload for fallback publication and evidence compatibility.
+This uses `POST /tts/sse`, decodes `chunk` event audio data, and streams each chunk through `publish_ai_audio_stream()` as it arrives. The complete-audio `synthesize()` path is still available as a fallback and for contract tests, but the production worker uses the lazy stream path for lower first-audio latency.
 
 Duplex barge-in can be enabled with:
 

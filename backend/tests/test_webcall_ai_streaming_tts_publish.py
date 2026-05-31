@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 from uuid import uuid4
 
@@ -20,16 +21,19 @@ from app import models, operator_models, tool_models, voice_models, webchat_fast
 from app.db import Base, SessionLocal, engine
 from app.services.webcall_ai_production.agent_session_claims import AI_STATUS_CLAIMED
 from app.services.webcall_ai_production.agent_worker import run_claimed_session_loop
-from app.services.webcall_ai_production.audio.livekit_io import LiveKitMediaTurn
+from app.services.webcall_ai_production.audio.livekit_io import LiveKitAgentIO, LiveKitMediaTurn
 from app.services.webcall_ai_production.config import get_webcall_ai_production_settings
 from app.services.webcall_ai_production.providers.cartesia_streaming_tts import CartesiaStreamingTTSProvider, parse_cartesia_sse_line
 from app.services.webcall_ai_production.providers.router import get_tts_provider
+from app.services.webcall_ai_production.providers.streaming_tts_base import TTSChunk
 from app.utils.time import utc_now
 from app.voice_models import WebchatVoiceAITurn, WebchatVoiceSession
 from app.webchat_models import WebchatEvent
 
 
 class FakeCartesiaResponse:
+    chunk_sequence = 0
+
     def __init__(self, lines: list[str]) -> None:
         self.lines = lines
 
@@ -43,11 +47,16 @@ class FakeCartesiaResponse:
         return None
 
     def iter_lines(self):
-        yield from self.lines
+        for line in self.lines:
+            if '"type":"chunk"' in line:
+                FakeCartesiaResponse.chunk_sequence += 1
+                FakeCartesiaClient.event_order.append(f"cartesia:chunk:{FakeCartesiaResponse.chunk_sequence}")
+            yield line
 
 
 class FakeCartesiaClient:
     calls: list[dict] = []
+    event_order: list[str] = []
 
     def __init__(self, timeout):
         self.timeout = timeout
@@ -80,13 +89,41 @@ class FakeStreamingAgentIO:
         return LiveKitMediaTurn(audio_bytes=self.utterances.pop(0), sample_rate=48000, channels=1, mime_type="audio/pcm", language="en")
 
     def publish_ai_audio_stream(self, chunks, *, mime_type: str):
-        self.published_streams.append([chunk.audio_bytes for chunk in chunks])
+        stream: list[bytes] = []
+        self.published_streams.append(stream)
+        for chunk in chunks:
+            stream.append(chunk.audio_bytes)
+            FakeCartesiaClient.event_order.append(f"livekit:publish:{len(stream)}")
 
     def publish_ai_audio(self, audio_bytes: bytes, *, mime_type: str):
         self.published_fallback.append((audio_bytes, mime_type))
 
     def close(self):
         self.closed = True
+
+
+class LazyStreamBackend:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    def connect(self, *, url: str, token: str, room_name: str, participant_identity: str) -> None:
+        self.events.append("backend:connect")
+
+    def collect_next_customer_utterance(self, *, timeout_seconds: float, max_seconds: float):
+        raise AssertionError("not used")
+
+    def publish_ai_audio_stream(self, chunks, *, mime_type: str) -> None:
+        for chunk in chunks:
+            self.events.append(f"backend:publish:{chunk.audio_bytes!r}")
+
+    def publish_ai_audio(self, audio_bytes: bytes, *, mime_type: str) -> None:
+        raise AssertionError("fallback publish should not be used")
+
+    def cancel_ai_audio_stream(self, *, reason: str) -> None:
+        self.events.append(f"backend:cancel:{reason}")
+
+    def close(self) -> None:
+        self.events.append("backend:close")
 
 
 @pytest.fixture(autouse=True)
@@ -108,6 +145,8 @@ def clean_db_and_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CARTESIA_VERSION", "2026-03-01")
     monkeypatch.delenv("TTS_ENDPOINT", raising=False)
     FakeCartesiaClient.calls = []
+    FakeCartesiaClient.event_order = []
+    FakeCartesiaResponse.chunk_sequence = 0
     get_webcall_ai_production_settings.cache_clear()
     yield
     Base.metadata.drop_all(bind=engine)
@@ -186,6 +225,32 @@ def test_provider_router_returns_cartesia_streaming_provider():
     assert isinstance(get_tts_provider("cartesia_streaming"), CartesiaStreamingTTSProvider)
 
 
+def test_livekit_agent_io_does_not_materialize_stream_before_backend(monkeypatch):
+    events: list[str] = []
+    monkeypatch.setattr(
+        "app.services.webcall_ai_production.audio.livekit_io.issue_join_token",
+        lambda **kwargs: SimpleNamespace(participant_token="unit-token"),
+    )
+
+    def chunks():
+        events.append("provider:chunk:1")
+        yield TTSChunk(audio_bytes=b"one", mime_type="audio/pcm", sample_rate=24000, channels=1)
+        events.append("provider:chunk:2")
+        yield TTSChunk(audio_bytes=b"two", mime_type="audio/pcm", sample_rate=24000, channels=1)
+
+    io = LiveKitAgentIO(room_name="room", participant_identity="ai", ttl_seconds=60, livekit_url="wss://voice.example", backend=LazyStreamBackend(events))
+
+    io.publish_ai_audio_stream(chunks(), mime_type="audio/pcm")
+
+    assert events == [
+        "backend:connect",
+        "provider:chunk:1",
+        "backend:publish:b'one'",
+        "provider:chunk:2",
+        "backend:publish:b'two'",
+    ]
+
+
 def test_cartesia_streaming_tts_collects_chunks_and_builds_request(monkeypatch):
     monkeypatch.setattr("app.services.webcall_ai_production.providers.cartesia_streaming_tts.httpx.Client", FakeCartesiaClient)
 
@@ -222,6 +287,12 @@ def test_agent_loop_publishes_cartesia_chunks_through_stream_path(db, monkeypatc
     assert len(io.published_streams) >= 2
     assert io.published_fallback == []
     assert all(stream == [b"\x01\x00\x02\x00", b"\x03\x00\x04\x00"] for stream in io.published_streams)
+    assert FakeCartesiaClient.event_order[:4] == [
+        "cartesia:chunk:1",
+        "livekit:publish:1",
+        "cartesia:chunk:2",
+        "livekit:publish:2",
+    ]
     assert {turn.tts_provider for turn in turns} == {"cartesia_streaming"}
     assert "webcall_ai.response.spoken" in event_types
     assert len(FakeCartesiaClient.calls) >= 2

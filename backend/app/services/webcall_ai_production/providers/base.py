@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
 
 class ProviderError(RuntimeError):
@@ -35,6 +35,7 @@ class TTSResult:
     text: str
     provider_name: str | None = None
     audio_chunks: tuple[Any, ...] = ()
+    audio_stream: Iterable[Any] | None = None
 
 
 class STTProvider:
