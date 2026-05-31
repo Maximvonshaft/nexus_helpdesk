@@ -30,7 +30,8 @@ def upgrade() -> None:
     op.add_column("outbound_email_accounts", sa.Column("imap_last_error", sa.Text(), nullable=True))
     op.add_column("outbound_email_accounts", sa.Column("imap_last_sync_job_id", sa.Integer(), nullable=True))
     op.execute(sa.text("UPDATE outbound_email_accounts SET inbound_enabled = 0 WHERE inbound_enabled IS NULL"))
-    op.alter_column("outbound_email_accounts", "inbound_enabled", nullable=False)
+    with op.batch_alter_table("outbound_email_accounts") as batch_op:
+        batch_op.alter_column("inbound_enabled", nullable=False)
     op.create_index("ix_outbound_email_accounts_inbound_enabled", "outbound_email_accounts", ["inbound_enabled"], unique=False)
     op.create_index("ix_outbound_email_accounts_imap_host", "outbound_email_accounts", ["imap_host"], unique=False)
     op.create_index("ix_outbound_email_accounts_imap_security_mode", "outbound_email_accounts", ["imap_security_mode"], unique=False)
@@ -57,4 +58,5 @@ def downgrade() -> None:
     op.drop_column("outbound_email_accounts", "imap_username")
     op.drop_column("outbound_email_accounts", "imap_port")
     op.drop_column("outbound_email_accounts", "imap_host")
-    op.drop_column("outbound_email_accounts", "inbound_enabled")
+    with op.batch_alter_table("outbound_email_accounts") as batch_op:
+        batch_op.drop_column("inbound_enabled")
