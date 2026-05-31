@@ -97,11 +97,11 @@ Duplex barge-in can be enabled with:
 
 ```text
 WEBCALL_AI_BARGE_IN_ENABLED=true
-WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS=300
+WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS=900
 WEBCALL_AI_BARGE_IN_ENERGY_THRESHOLD=350
 ```
 
-During AI audio publication the worker checks inbound LiveKit audio frames. If visitor speech crosses the threshold, the worker stops publishing the remaining AI audio, signals the streaming TTS cancel token, writes `webcall_ai.response.interrupted`, preserves the visitor frames for the next `collect_next_customer_utterance()`, and returns to listening.
+During AI audio publication the worker checks inbound LiveKit audio frames. If visitor speech crosses the threshold, the worker stops publishing the remaining AI audio, signals the streaming TTS cancel token, writes `webcall_ai.response.interrupted`, preserves the visitor frames for the next `collect_next_customer_utterance()`, and returns to listening. The default 900ms threshold is designed to ignore short noise, echo, and brief acknowledgements during AI playback.
 
 Keep these disabled for the initial rollout:
 

@@ -21,7 +21,7 @@ from app import models, operator_models, tool_models, voice_models, webchat_fast
 from app.db import Base, SessionLocal, engine
 from app.services.webcall_ai_production.agent_session_claims import AI_STATUS_CLAIMED
 from app.services.webcall_ai_production.agent_worker import run_claimed_session_loop
-from app.services.webcall_ai_production.audio.livekit_io import LiveKitAgentIO, LiveKitMediaTurn
+from app.services.webcall_ai_production.audio.livekit_io import LiveKitAgentIO, LiveKitMediaTurn, VisitorDisconnected
 from app.services.webcall_ai_production.config import get_webcall_ai_production_settings
 from app.services.webcall_ai_production.providers.cartesia_streaming_tts import CartesiaStreamingTTSProvider, parse_cartesia_sse_line
 from app.services.webcall_ai_production.providers.router import get_tts_provider
@@ -85,7 +85,7 @@ class FakeStreamingAgentIO:
 
     def collect_next_customer_utterance(self, *, timeout_seconds=20.0, max_seconds=12.0):
         if not self.utterances:
-            raise RuntimeError("no more utterances")
+            raise VisitorDisconnected("visitor_disconnected")
         return LiveKitMediaTurn(audio_bytes=self.utterances.pop(0), sample_rate=48000, channels=1, mime_type="audio/pcm", language="en")
 
     def publish_ai_audio_stream(self, chunks, *, mime_type: str):
@@ -281,7 +281,7 @@ def test_agent_loop_publishes_cartesia_chunks_through_stream_path(db, monkeypatc
     turns = db.query(WebchatVoiceAITurn).order_by(WebchatVoiceAITurn.id.asc()).all()
     event_types = [event.event_type for event in db.query(WebchatEvent).order_by(WebchatEvent.id.asc()).all()]
 
-    assert result["status"] == "handoff_required"
+    assert result["status"] == "visitor_disconnected"
     assert io.connected is True
     assert io.closed is True
     assert len(io.published_streams) >= 2

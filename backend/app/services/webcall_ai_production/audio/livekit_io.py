@@ -444,9 +444,9 @@ def _barge_in_enabled() -> bool:
 
 def _barge_in_min_speech_ms() -> int:
     try:
-        return max(40, min(int(os.getenv("WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS", "300")), 3000))
+        return max(40, min(int(os.getenv("WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS", "900")), 3000))
     except ValueError:
-        return 300
+        return 900
 
 
 def _barge_in_energy_threshold() -> int:

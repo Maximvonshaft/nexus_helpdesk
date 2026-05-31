@@ -4,7 +4,7 @@ import time
 
 from sqlalchemy.orm import Session
 
-from ...voice_models import WebchatVoiceSession
+from ...voice_models import WebchatVoiceAITurn, WebchatVoiceSession
 from .evidence import persist_turn_evidence
 from .metrics import record_webcall_ai_stage
 from .providers.base import LLMResult, ProviderError, STTResult, TTSResult
@@ -12,7 +12,14 @@ from .providers.cancel_token import CancelToken
 from .providers.fake import FakeLLMProvider, FakeSTTProvider, FakeTTSProvider
 from .providers.router import get_llm_provider, get_stt_provider, get_tts_provider
 from .tool_registry import default_registry
-from .tools.tracking_lookup import extract_tracking_number
+from .tools.tracking_lookup import extract_tracking_number, is_tracking_question
+
+
+ASK_TRACKING_NUMBER_REPLY = "Please provide your tracking number."
+TRACKING_LOOKUP_NOT_CONNECTED_REPLY = "Tracking lookup is not connected yet. I have recorded your tracking number and a human agent will follow up if needed."
+EMPTY_TRANSCRIPT_FIRST_REPLY = "Sorry, I didn’t catch that. Could you repeat your question or tracking number?"
+EMPTY_TRANSCRIPT_SECOND_REPLY = "Please say the tracking number slowly, or type it if available."
+EMPTY_TRANSCRIPT_HANDOFF_REPLY = "I still cannot reliably hear the caller. I will hand this to a human support agent."
 
 
 def run_fake_turn(audio_or_text: bytes | str, *, language: str | None = None) -> dict[str, object]:
@@ -59,6 +66,14 @@ def run_session_turn(
         record_webcall_ai_stage(stage="stt_final", provider=stt.provider_name, elapsed_ms=int((time.monotonic() - stage_started) * 1000))
     except ProviderError as exc:
         record_webcall_ai_stage(stage="stt_final", status=exc.code, provider=exc.provider, elapsed_ms=int((time.monotonic() - started) * 1000))
+        if exc.code == "stt_empty_transcript":
+            return _handle_empty_transcript(
+                db,
+                session=session,
+                worker_id=worker_id,
+                provider_name=exc.provider,
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
         return build_handoff_turn(
             db,
             session=session,
@@ -68,25 +83,35 @@ def run_session_turn(
             handoff_required=True,
             handoff_reason=exc.code,
             latency_ms=int((time.monotonic() - started) * 1000),
+            stt_provider=exc.provider,
         )
     tracking_number = extract_tracking_number(stt.text)
     tool_result = None
+    tracking_lookup_status = None
     if tracking_number:
         tool_result = default_registry().call("tracking_lookup", {"tracking_number": tracking_number})
-        status = ((tool_result or {}).get("result") or {}).get("status")
-        if status == "not_configured":
+        tracking_lookup_status = ((tool_result or {}).get("result") or {}).get("status")
+        if tracking_lookup_status == "not_configured":
             llm = LLMResult(
-                response_text=((tool_result or {}).get("result") or {}).get("summary") or "Tracking lookup is not configured. I will hand this request to a human support agent.",
+                response_text=((tool_result or {}).get("result") or {}).get("summary") or TRACKING_LOOKUP_NOT_CONNECTED_REPLY,
                 intent="tracking_lookup_not_configured",
-                handoff_required=True,
-                handoff_reason="tracking_lookup_not_configured",
+                handoff_required=False,
+                handoff_reason=None,
                 provider_name="tool_policy",
             )
         else:
             llm = _timed_llm_response(settings, stt)
+    elif is_tracking_question(stt.text):
+        llm = LLMResult(
+            response_text=ASK_TRACKING_NUMBER_REPLY,
+            intent="ask_tracking_number",
+            handoff_required=False,
+            handoff_reason=None,
+            provider_name="tool_policy",
+        )
     else:
         llm = _timed_llm_response(settings, stt)
-    if tracking_number and not llm.handoff_required:
+    if tracking_number and not llm.handoff_required and tracking_lookup_status != "not_configured":
         summary = ((tool_result or {}).get("result") or {}).get("summary")
         if summary:
             llm = type(llm)(
@@ -150,6 +175,61 @@ def _timed_llm_response(settings, stt: STTResult) -> LLMResult:
     return llm
 
 
+def _handle_empty_transcript(
+    db: Session,
+    *,
+    session: WebchatVoiceSession,
+    worker_id: str,
+    provider_name: str | None,
+    latency_ms: int | None,
+) -> dict[str, object]:
+    retry_count = _consecutive_empty_transcript_count(db, session=session) + 1
+    if retry_count == 1:
+        response_text = EMPTY_TRANSCRIPT_FIRST_REPLY
+        handoff_required = False
+        handoff_reason = None
+    elif retry_count == 2:
+        response_text = EMPTY_TRANSCRIPT_SECOND_REPLY
+        handoff_required = False
+        handoff_reason = None
+    else:
+        response_text = EMPTY_TRANSCRIPT_HANDOFF_REPLY
+        handoff_required = True
+        handoff_reason = "stt_empty_transcript"
+    result = build_handoff_turn(
+        db,
+        session=session,
+        worker_id=worker_id,
+        response_text=response_text,
+        intent="stt_empty_transcript",
+        handoff_required=handoff_required,
+        handoff_reason=handoff_reason,
+        latency_ms=latency_ms,
+        stt_provider=provider_name or "unknown",
+    )
+    result["empty_transcript_retry_count"] = retry_count
+    return result
+
+
+def _consecutive_empty_transcript_count(db: Session, *, session: WebchatVoiceSession) -> int:
+    rows = (
+        db.query(WebchatVoiceAITurn.intent)
+        .filter(
+            WebchatVoiceAITurn.voice_session_id == session.id,
+            WebchatVoiceAITurn.conversation_id == session.conversation_id,
+        )
+        .order_by(WebchatVoiceAITurn.id.desc())
+        .limit(10)
+        .all()
+    )
+    count = 0
+    for (intent,) in rows:
+        if intent != "stt_empty_transcript":
+            break
+        count += 1
+    return count
+
+
 def _synthesize_tts(settings, text: str, *, language: str | None) -> TTSResult:
     provider = get_tts_provider(settings.tts_provider)
     lazy_synthesize = getattr(provider, "synthesize_lazy", None)
@@ -178,11 +258,12 @@ def build_handoff_turn(
     handoff_required: bool,
     handoff_reason: str | None,
     latency_ms: int | None = None,
+    stt_provider: str = "none",
 ) -> dict[str, object]:
     from .config import get_webcall_ai_production_settings
 
     settings = get_webcall_ai_production_settings()
-    stt = STTResult(text="", language=session.ai_language or "en", confidence=None, provider_name="none")
+    stt = STTResult(text="", language=session.ai_language or "en", confidence=None, provider_name=stt_provider)
     llm = LLMResult(
         response_text=response_text,
         intent=intent,

@@ -21,7 +21,7 @@ from app import models, operator_models, tool_models, voice_models, webchat_fast
 from app.db import Base, SessionLocal, engine
 from app.services.webcall_ai_production.agent_session_claims import AI_STATUS_CLAIMED
 from app.services.webcall_ai_production.agent_worker import run_claimed_session_loop
-from app.services.webcall_ai_production.audio.livekit_io import BargeInInterrupted, LiveKitMediaTurn, PCMFrame, SDKLiveKitRTCBackend
+from app.services.webcall_ai_production.audio.livekit_io import BargeInInterrupted, LiveKitMediaTurn, PCMFrame, SDKLiveKitRTCBackend, VisitorDisconnected
 from app.services.webcall_ai_production.config import get_webcall_ai_production_settings
 from app.services.webcall_ai_production.providers.base import TTSResult
 from app.services.webcall_ai_production.providers.streaming_tts_base import TTSChunk
@@ -77,7 +77,7 @@ class BargeInAgentIO:
 
     def collect_next_customer_utterance(self, *, timeout_seconds=20.0, max_seconds=12.0):
         if not self.utterances:
-            raise RuntimeError("no more utterances")
+            raise VisitorDisconnected("visitor_disconnected")
         return LiveKitMediaTurn(audio_bytes=self.utterances.pop(0), sample_rate=48000, channels=1, mime_type="audio/pcm", language="en")
 
     def publish_ai_audio_stream(self, chunks, *, mime_type: str) -> None:
@@ -175,6 +175,19 @@ def test_livekit_publish_stream_interrupts_and_preserves_barge_in_audio(monkeypa
     assert turn.channels == 1
 
 
+def test_short_barge_in_300ms_speech_does_not_interrupt(monkeypatch):
+    monkeypatch.delenv("WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS", raising=False)
+    backend = SDKLiveKitRTCBackend()
+    backend._audio_queue = asyncio.Queue()
+    speech_20ms = (1200).to_bytes(2, "little", signed=True) * 960
+    for _ in range(15):
+        backend._audio_queue.put_nowait(PCMFrame(data=speech_20ms, sample_rate=48000, channels=1))
+
+    speech_ms = backend._raise_if_barge_in_detected(0)
+
+    assert speech_ms == 300
+
+
 def test_agent_loop_records_interruption_and_returns_to_listening(db, monkeypatch):
     monkeypatch.setattr("app.services.webcall_ai_production.orchestrator.get_tts_provider", lambda name: ChunkTTSProvider())
     session = _claimed_session(db)
@@ -186,7 +199,7 @@ def test_agent_loop_records_interruption_and_returns_to_listening(db, monkeypatc
     event_types = [event.event_type for event in events]
     interrupted_index = event_types.index("webcall_ai.response.interrupted")
 
-    assert result["status"] == "handoff_required"
+    assert result["status"] == "visitor_disconnected"
     assert io.connected is True
     assert io.closed is True
     assert io.cancel_reasons == ["barge_in"]

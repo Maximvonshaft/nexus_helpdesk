@@ -1,18 +1,35 @@
 from __future__ import annotations
 
-import re
 import os
+import re
 from typing import Any
 
 
-TRACKING_RE = re.compile(r"[A-Z0-9][A-Z0-9\- ]{5,40}", re.IGNORECASE)
+TRACKING_RE = re.compile(
+    r"\b(?:1Z[A-Z0-9]{16}|[A-Z]{1,4}\d[A-Z0-9]{6,35}|\d{10,40})\b",
+    re.IGNORECASE,
+)
+TRACKING_QUESTION_RE = re.compile(
+    r"\b(track|tracking|parcel|package|shipment|delivery)\b",
+    re.IGNORECASE,
+)
 
 
 def extract_tracking_number(text: str) -> str | None:
     match = TRACKING_RE.search(text or "")
     if not match:
         return None
-    return re.sub(r"[^A-Z0-9]", "", match.group(0).upper())[:40]
+    normalized = re.sub(r"[^A-Z0-9]", "", match.group(0).upper())[:40]
+    digit_count = sum(ch.isdigit() for ch in normalized)
+    if digit_count < 4:
+        return None
+    if normalized.isdigit() and len(normalized) < 10:
+        return None
+    return normalized
+
+
+def is_tracking_question(text: str) -> bool:
+    return bool(TRACKING_QUESTION_RE.search(text or ""))
 
 
 def lookup_tracking(payload: dict[str, Any]) -> dict[str, Any]:
@@ -25,10 +42,10 @@ def lookup_tracking(payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "status": "not_configured",
             "tracking_number_redacted": f"{tracking_number[:3]}...{tracking_number[-2:]}",
-            "summary": "Tracking lookup is not configured. I cannot verify this shipment right now and will hand the request to a human agent.",
+            "summary": "Tracking lookup is not connected yet. I have recorded your tracking number and a human agent will follow up if needed.",
         }
     return {
         "status": "not_configured",
         "tracking_number_redacted": f"{tracking_number[:3]}...{tracking_number[-2:]}",
-        "summary": "Tracking lookup provider interface is configured but the approved read-only adapter has not been enabled in this build.",
+        "summary": "Tracking lookup is not connected yet. I have recorded your tracking number and a human agent will follow up if needed.",
     }

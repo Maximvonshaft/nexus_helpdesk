@@ -110,10 +110,10 @@ For barge-in:
 
 ```dotenv
 WEBCALL_AI_BARGE_IN_ENABLED=true
-WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS=300
+WEBCALL_AI_BARGE_IN_MIN_SPEECH_MS=900
 WEBCALL_AI_BARGE_IN_ENERGY_THRESHOLD=350
 ```
 
-When customer speech is detected while AI audio is publishing, remaining AI audio publication is stopped, the streaming TTS cancel token is signaled, `webcall_ai.response.interrupted` is written, and the captured customer frames are reused by the next listening turn.
+When customer speech is detected while AI audio is publishing, remaining AI audio publication is stopped, the streaming TTS cancel token is signaled, `webcall_ai.response.interrupted` is written, and the captured customer frames are reused by the next listening turn. The default 900ms threshold is intentionally above short noise, echo, and brief acknowledgements during AI playback.
 
 `LIVEKIT_API_KEY` may be sourced by deployment automation from `/opt/livekit_nexus/secrets.env`, but the API secret must be mounted as a file for production. If a rollback is needed, set `WEBCALL_AI_KILL_SWITCH=true` and stop the `webcall-ai-agent` compose profile.
