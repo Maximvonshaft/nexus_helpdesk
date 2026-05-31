@@ -14,7 +14,7 @@ from .ai_runtime.openclaw_responses_provider import (
 from .ai_runtime.provider_router import generate_fast_reply
 from .ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
 from .ai_runtime_context import build_webchat_runtime_context
-from .knowledge_grounding_service import enforce_grounded_answer
+from .knowledge_grounding_service import enforce_grounded_answer, select_approved_direct_answer_override
 from .knowledge_prompt_service import summarize_rag_trace
 from .provider_runtime.webchat_fast_dispatcher import dispatch_webchat_fast_reply
 from .webchat_fast_config import get_webchat_fast_settings
@@ -159,6 +159,55 @@ def _deterministic_direct_answer_enabled() -> bool:
     return get_settings().webchat_knowledge_reply_mode == "deterministic_direct_answer"
 
 
+
+def _knowledge_context(runtime_context: dict[str, Any] | None) -> dict[str, Any]:
+    knowledge = runtime_context.get("knowledge_context") if isinstance(runtime_context, dict) else None
+    return knowledge if isinstance(knowledge, dict) else {}
+
+
+def _pre_provider_locked_fact_direct_answer_result(
+    *,
+    body: str,
+    runtime_context: dict[str, Any] | None,
+    tracking_fact_evidence_present: bool,
+) -> WebchatFastReplyResult | None:
+    knowledge_context = _knowledge_context(runtime_context)
+    locked_facts = knowledge_context.get("locked_facts")
+    if not isinstance(locked_facts, list) or not locked_facts:
+        return None
+
+    grounding_decision = select_approved_direct_answer_override(
+        query=body,
+        provider_output=None,
+        knowledge_context=knowledge_context,
+        tracking_fact_evidence_present=tracking_fact_evidence_present,
+    )
+    if not grounding_decision.applied or not grounding_decision.reply:
+        return None
+
+    source = grounding_decision.source or {}
+    if not isinstance(source, dict):
+        source = {}
+
+    return WebchatFastReplyResult(
+        ok=True,
+        ai_generated=False,
+        reply_source="knowledge:deterministic_direct_answer",
+        reply=grounding_decision.reply,
+        intent="other",
+        tracking_number=None,
+        handoff_required=False,
+        handoff_reason=None,
+        recommended_agent_action=None,
+        ticket_creation_queued=False,
+        elapsed_ms=0,
+        rag_trace=summarize_rag_trace(runtime_context),
+        grounding_applied=True,
+        grounding_source=source,
+        grounding_reason="pre_provider_locked_fact_direct_answer",
+    )
+
+
 def _apply_grounding(
     *,
     provider_result: FastAIProviderResult,
@@ -255,6 +304,20 @@ async def generate_webchat_fast_reply(
         market_id=market_id,
         language=language,
     )
+    pre_provider_direct_answer = _pre_provider_locked_fact_direct_answer_result(
+        body=body,
+        runtime_context=runtime_context,
+        tracking_fact_evidence_present=evidence_present,
+    )
+    if pre_provider_direct_answer is not None:
+        record_fast_reply_metric(
+            status="ok",
+            intent=pre_provider_direct_answer.intent,
+            handoff_required=pre_provider_direct_answer.handoff_required,
+            elapsed_ms=pre_provider_direct_answer.elapsed_ms,
+        )
+        return pre_provider_direct_answer
+
     provider_request = FastAIProviderRequest(
         tenant_key=tenant_key,
         channel_key=channel_key,
