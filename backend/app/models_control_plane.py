@@ -5,11 +5,26 @@ from typing import Optional
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import UserDefinedType
 
 from .db import Base
 from .utils.time import utc_now
 
 UTCDateTime = DateTime(timezone=True)
+
+
+class PGTSVectorType(UserDefinedType):
+    cache_ok = True
+
+    def get_col_spec(self, **kw):
+        return "tsvector"
+
+
+class PGVectorType(UserDefinedType):
+    cache_ok = True
+
+    def get_col_spec(self, **kw):
+        return "vector"
 
 
 class PersonaProfile(Base):
@@ -150,9 +165,9 @@ class KnowledgeChunk(Base):
     file_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     search_vector: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    search_tsvector: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    search_tsvector: Mapped[Optional[str]] = mapped_column(PGTSVectorType(), nullable=True)
     embedding: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
-    embedding_vector: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    embedding_vector: Mapped[Optional[str]] = mapped_column(PGVectorType(), nullable=True)
     embedding_model: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     embedding_dim: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     embedding_status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
