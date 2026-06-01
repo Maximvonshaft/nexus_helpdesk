@@ -55,6 +55,7 @@ jobs:
             case "$1" in
               .github/workflows/pr-webcall-guard.yml) return 0 ;;
               .github/workflows/knowledge-runtime-eval.yml) return 0 ;;
+              .github/workflows/knowledge-runtime-pg-hybrid.yml) return 0 ;;
               .github/workflows/knowledge-runtime-readiness.yml) return 0 ;;
               .github/workflows/speedaf-contract-gate.yml) return 0 ;;
               .github/workflows/speedaf-uat-smoke.yml) return 0 ;;
@@ -148,6 +149,7 @@ jobs:
               backend/requirements.txt) return 0 ;;
               backend/scripts/check_model_migration_drift.py) return 0 ;;
               backend/scripts/backfill_knowledge_embeddings.py) return 0 ;;
+              backend/scripts/probe_knowledge_runtime_pg_hybrid.py) return 0 ;;
               backend/scripts/production_knowledge_runtime_fixup.py) return 0 ;;
               backend/scripts/run_knowledge_eval.py) return 0 ;;
               backend/scripts/speedaf_readonly_uat_probe.py) return 0 ;;
