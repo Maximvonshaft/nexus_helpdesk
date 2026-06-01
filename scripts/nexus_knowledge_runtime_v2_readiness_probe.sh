@@ -5,6 +5,20 @@ BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
 WAYBILL="${SPEEDAF_MCP_TEST_WAYBILL_CODE:-CH020000006856}"
 CALLER_ID="${SPEEDAF_MCP_TEST_CALLER_ID:-}"
 
+KNOWLEDGE_EMBEDDING_PROVIDER="${KNOWLEDGE_EMBEDDING_PROVIDER:-openai_compatible}"
+KNOWLEDGE_EMBEDDING_BASE_URL="${KNOWLEDGE_EMBEDDING_BASE_URL:-http://nexus-tei-embeddings:80/v1}"
+KNOWLEDGE_EMBEDDING_API_KEY="${KNOWLEDGE_EMBEDDING_API_KEY:-local-not-secret}"
+KNOWLEDGE_EMBEDDING_MODEL="${KNOWLEDGE_EMBEDDING_MODEL:-text-embeddings-inference}"
+KNOWLEDGE_EMBEDDING_DIM="${KNOWLEDGE_EMBEDDING_DIM:-384}"
+
+export KNOWLEDGE_RUNTIME_VERSION="${KNOWLEDGE_RUNTIME_VERSION:-v2}"
+export KNOWLEDGE_EMBEDDINGS_ENABLED="${KNOWLEDGE_EMBEDDINGS_ENABLED:-true}"
+export KNOWLEDGE_EMBEDDING_PROVIDER
+export KNOWLEDGE_EMBEDDING_BASE_URL
+export KNOWLEDGE_EMBEDDING_API_KEY
+export KNOWLEDGE_EMBEDDING_MODEL
+export KNOWLEDGE_EMBEDDING_DIM
+
 echo "== Nexus Knowledge Runtime v2 readiness probe =="
 echo "base_url=${BASE_URL}"
 
@@ -29,8 +43,7 @@ assert payload["speedaf_persona"] == "speedaf_support_webchat_default", payload
 print("production_fixup_ok=true")
 PY
 
-PYTHONPATH=backend KNOWLEDGE_RUNTIME_VERSION=v2 KNOWLEDGE_EMBEDDINGS_ENABLED=true KNOWLEDGE_EMBEDDING_PROVIDER=deterministic_hash \
-  python backend/scripts/run_knowledge_eval.py \
+PYTHONPATH=backend python backend/scripts/run_knowledge_eval.py \
     --min-recall-at-5 1.0 \
     --max-hallucination-rate 0 \
     --max-unsupported-answer-rate 0 \
