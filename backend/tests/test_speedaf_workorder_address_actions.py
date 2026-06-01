@@ -92,6 +92,37 @@ def test_work_order_enabled_queues_job_and_truncates_description(harness, monkey
         assert db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_work_order").count() == 1
 
 
+def test_work_order_dedupe_allows_distinct_waybills_on_same_ticket(harness, monkeypatch):
+    monkeypatch.setenv("SPEEDAF_WORK_ORDER_CREATE_ENABLED", "true")
+    first_payload = work_order_payload()
+    second_payload = {**work_order_payload(), "waybillCode": "WB456"}
+
+    first = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/work-orders", json=first_payload)
+    second = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/work-orders", json=second_payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["jobId"] != second.json()["jobId"]
+    assert first.json()["dedupeKey"] != second.json()["dedupeKey"]
+    with harness.SessionLocal() as db:
+        jobs = db.query(BackgroundJob).order_by(BackgroundJob.id.asc()).all()
+        assert [json.loads(job.payload_json)["waybillCode"] for job in jobs] == ["WB123", "WB456"]
+
+
+def test_work_order_dedupe_reuses_same_waybill_and_type_pending_job(harness, monkeypatch):
+    monkeypatch.setenv("SPEEDAF_WORK_ORDER_CREATE_ENABLED", "true")
+
+    first = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/work-orders", json=work_order_payload())
+    second = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/work-orders", json=work_order_payload("Follow up again"))
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["jobId"] == second.json()["jobId"]
+    assert first.json()["dedupeKey"] == second.json()["dedupeKey"]
+    with harness.SessionLocal() as db:
+        assert db.query(BackgroundJob).count() == 1
+
+
 def test_work_order_enabled_requires_tool_capability_for_visible_agent(harness, monkeypatch):
     monkeypatch.setenv("SPEEDAF_WORK_ORDER_CREATE_ENABLED", "true")
     with harness.SessionLocal() as db:
