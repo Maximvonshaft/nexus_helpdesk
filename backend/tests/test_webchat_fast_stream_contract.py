@@ -68,6 +68,53 @@ def _settings(enabled: bool = True):
     )
 
 
+def _runtime_context_with_evidence() -> dict:
+    return {
+        "knowledge_context": {
+            "retrieval": "hybrid_rag_v2",
+            "candidate_count": 1,
+            "total_matches": 1,
+            "retrieval_methods": ["structured_exact"],
+            "hits": [
+                {
+                    "item_key": "fact.shipping_sla",
+                    "title": "Shipping SLA",
+                    "score": 1.0,
+                    "retrieval_method": "structured_exact",
+                    "answer_mode": "direct_answer",
+                    "direct_answer": "Shipping takes 3-5 business days.",
+                    "text": "Shipping takes 3-5 business days.",
+                }
+            ],
+            "evidence_pack": [
+                {
+                    "item_key": "fact.shipping_sla",
+                    "title": "Shipping SLA",
+                    "source_version": 3,
+                    "chunk_index": 0,
+                    "score": 1.0,
+                    "retrieval_method": "structured_exact",
+                    "citation": {"label": "KB"},
+                }
+            ],
+        }
+    }
+
+
+def _runtime_context_without_evidence() -> dict:
+    return {
+        "knowledge_context": {
+            "retrieval": "hybrid_rag_v2",
+            "candidate_count": 0,
+            "total_matches": 0,
+            "retrieval_methods": [],
+            "hits": [],
+            "evidence_pack": [],
+            "no_answer_reason": "no_evidence",
+        }
+    }
+
+
 def test_stream_feature_flag_disabled(monkeypatch):
     monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", lambda: _settings(False))
     monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
@@ -93,6 +140,7 @@ def test_successful_stream_contract(monkeypatch):
         "prepare_webchat_fast_stream",
         lambda **kwargs: StreamBeginOutcome(status="owner", request_hash="h", row_id=1),
     )
+    monkeypatch.setattr(webchat_fast, "_webchat_fast_runtime_context", lambda **_kwargs: _runtime_context_with_evidence())
     monkeypatch.setattr(webchat_fast, "stream_webchat_fast_reply_events", fake_stream)
 
     response = client.post(
@@ -125,6 +173,7 @@ def test_stream_error_contract(monkeypatch):
         "prepare_webchat_fast_stream",
         lambda **kwargs: StreamBeginOutcome(status="owner", request_hash="h", row_id=1),
     )
+    monkeypatch.setattr(webchat_fast, "_webchat_fast_runtime_context", lambda **_kwargs: _runtime_context_with_evidence())
     monkeypatch.setattr(webchat_fast, "stream_webchat_fast_reply_events", fake_stream)
 
     response = client.post(
@@ -140,36 +189,7 @@ def test_stream_error_contract(monkeypatch):
 
 def test_stream_provider_receives_knowledge_context_and_returns_evidence_trace(monkeypatch):
     seen: dict[str, str] = {}
-    runtime_context = {
-        "knowledge_context": {
-            "retrieval": "hybrid_rag_v2",
-            "candidate_count": 1,
-            "total_matches": 1,
-            "retrieval_methods": ["structured_exact"],
-            "hits": [
-                {
-                    "item_key": "fact.shipping_sla",
-                    "title": "Shipping SLA",
-                    "score": 1.0,
-                    "retrieval_method": "structured_exact",
-                    "answer_mode": "direct_answer",
-                    "direct_answer": "Shipping takes 3-5 business days.",
-                    "text": "Shipping takes 3-5 business days.",
-                }
-            ],
-            "evidence_pack": [
-                {
-                    "item_key": "fact.shipping_sla",
-                    "title": "Shipping SLA",
-                    "source_version": 3,
-                    "chunk_index": 0,
-                    "score": 1.0,
-                    "retrieval_method": "structured_exact",
-                    "citation": {"label": "KB"},
-                }
-            ],
-        }
-    }
+    runtime_context = _runtime_context_with_evidence()
 
     async def fake_call_openclaw_responses_stream(**kwargs):
         seen["input_text"] = kwargs["input_text"]
@@ -201,6 +221,42 @@ def test_stream_provider_receives_knowledge_context_and_returns_evidence_trace(m
         assert row.status == "done"
         assert row.response_json["evidence_trace"]["retrieval"] == "hybrid_rag_v2"
         assert row.response_json["evidence_trace"]["evidence_pack"][0]["item_key"] == "fact.shipping_sla"
+    finally:
+        db.close()
+
+
+def test_stream_no_knowledge_evidence_returns_server_owned_fallback_without_provider(monkeypatch):
+    async def fail_if_stream_provider_called(**_kwargs):
+        raise AssertionError("stream provider must not answer without knowledge evidence")
+        yield ""  # pragma: no cover
+
+    monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", lambda: _settings(True))
+    monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
+    monkeypatch.setattr(webchat_fast, "_webchat_fast_runtime_context", lambda **_kwargs: _runtime_context_without_evidence())
+    monkeypatch.setattr(webchat_fast, "stream_webchat_fast_reply_events", fail_if_stream_provider_called)
+
+    response = client.post(
+        "/api/webchat/fast-reply/stream",
+        json=_payload("client-stream-no-evidence", body="What services do you offer?"),
+        headers={"Accept": "text/event-stream"},
+    )
+
+    assert response.status_code == 200
+    text = response.text
+    assert '"reply_source":"server_knowledge_no_evidence"' in text
+    assert '"ai_generated":false' in text
+    assert '"handoff_required":true' in text
+    assert '"evidence_trace":' in text
+    assert '"retrieval":"hybrid_rag_v2"' in text
+    assert '"no_answer_reason":"no_evidence"' in text
+    assert "openclaw_responses_stream" not in text
+
+    db = SessionLocal()
+    try:
+        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == "client-stream-no-evidence")).scalar_one()
+        assert row.status == "done"
+        assert row.response_json["reply_source"] == "server_knowledge_no_evidence"
+        assert row.response_json["evidence_trace"]["no_answer_reason"] == "no_evidence"
     finally:
         db.close()
 
@@ -282,6 +338,7 @@ def test_partial_delta_then_invalid_final_marks_failed_without_ticket_or_handoff
 
     monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", lambda: _settings(True))
     monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
+    monkeypatch.setattr(webchat_fast, "_webchat_fast_runtime_context", lambda **_kwargs: _runtime_context_with_evidence())
     monkeypatch.setattr(webchat_fast_stream_service.openclaw_client, "call_openclaw_responses_stream", fake_call_openclaw_responses_stream)
 
     response = client.post(

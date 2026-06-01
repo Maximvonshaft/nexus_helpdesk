@@ -16,6 +16,7 @@ from ..services.background_jobs import enqueue_speedaf_work_order_create_job
 from ..services.tracking_fact_schema import TrackingFactResult, hash_tracking_number
 from ..services.tracking_fact_service import extract_tracking_number, lookup_tracking_fact
 from ..services.ai_runtime_context import build_webchat_runtime_context
+from ..services.knowledge_prompt_service import summarize_rag_trace
 from ..services.webchat_fast_ai_service import generate_webchat_fast_reply
 from ..services.webchat_fast_idempotency_db import (
     WebchatFastIdempotency,
@@ -483,6 +484,39 @@ def _provider_safe_fallback_payload(*, error_code: str | None, body: str | None)
     return {"ok": True, "ai_generated": False, "reply_source": "server_safe_fallback", "reply": reply, "intent": "handoff", "tracking_number": None, "handoff_required": True, "handoff_reason": reason, "ticket_creation_queued": False, "elapsed_ms": 0, "evidence_trace": _server_no_evidence_trace(source="server_safe_fallback", no_answer_reason=reason)}
 
 
+def _knowledge_no_evidence_payload(*, runtime_context: dict[str, Any] | None) -> dict[str, Any]:
+    trace = summarize_rag_trace(runtime_context) if runtime_context else {
+        "retrieval": "hybrid_rag_v2",
+        "candidate_count": 0,
+        "total_matches": 0,
+        "retrieval_methods": [],
+        "no_answer_reason": "runtime_context_unavailable",
+        "top_hits": [],
+        "evidence_pack": [],
+        "injected_knowledge": [],
+    }
+    return {
+        "ok": True,
+        "ai_generated": False,
+        "reply_source": "server_knowledge_no_evidence",
+        "reply": "I do not have verified knowledge for this request yet. A human teammate can review it and help you further.",
+        "intent": "handoff",
+        "tracking_number": None,
+        "handoff_required": True,
+        "handoff_reason": trace.get("no_answer_reason") or "knowledge_no_evidence",
+        "ticket_creation_queued": False,
+        "elapsed_ms": 0,
+        "evidence_trace": trace,
+    }
+
+
+def _runtime_context_has_knowledge_evidence(runtime_context: dict[str, Any] | None) -> bool:
+    knowledge = runtime_context.get("knowledge_context") if isinstance(runtime_context, dict) else None
+    if not isinstance(knowledge, dict):
+        return False
+    return bool(knowledge.get("total_matches") or knowledge.get("hits") or knowledge.get("locked_facts"))
+
+
 def _with_fast_public_session(db, conversation, payload: dict[str, Any]) -> dict[str, Any]:
     session_payload = fast_public_session_payload(db, conversation)
     return {**payload, **session_payload, "webchat_session": session_payload}
@@ -897,5 +931,18 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         market_id=routing_context.market_id,
         language=None,
     )
+    if not tracking_fact_evidence_present and get_settings().webchat_knowledge_no_evidence_fallback_enabled and not _runtime_context_has_knowledge_evidence(runtime_context):
+        result_payload = _knowledge_no_evidence_payload(runtime_context=runtime_context)
+        return StreamingResponse(
+            _tracking_fact_forced_stream_events(
+                row_id=begin.row_id,
+                payload=payload,
+                result_payload=result_payload,
+                tracking_fact_metadata=None,
+                request=request,
+            ),
+            media_type="text/event-stream",
+            headers=headers,
+        )
     generator = stream_webchat_fast_reply_events(begin=begin, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=merged_context, visitor=payload.visitor, request_id=getattr(request.state, "request_id", None), settings=stream_settings, routing_context=routing_context, tracking_fact_summary=tracking_fact_summary, tracking_fact_metadata=tracking_fact_metadata, tracking_fact_evidence_present=tracking_fact_evidence_present, runtime_context=runtime_context)
     return StreamingResponse(generator, media_type="text/event-stream", headers=headers)

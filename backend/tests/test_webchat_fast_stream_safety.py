@@ -72,6 +72,19 @@ def _settings():
     return SimpleNamespace(stream_enabled=True, stream_require_accept=True, openclaw_responses_agent_id='webchat-fast', is_openclaw_stream_configured=True)
 
 
+def _runtime_context_with_evidence() -> dict:
+    return {
+        'knowledge_context': {
+            'retrieval': 'hybrid_rag_v2',
+            'candidate_count': 1,
+            'total_matches': 1,
+            'retrieval_methods': ['structured_exact'],
+            'hits': [{'item_key': 'fact.stream_safety', 'title': 'Stream Safety', 'score': 1.0, 'retrieval_method': 'structured_exact'}],
+            'evidence_pack': [{'item_key': 'fact.stream_safety', 'title': 'Stream Safety', 'source_version': 1, 'chunk_index': 0, 'score': 1.0, 'retrieval_method': 'structured_exact'}],
+        }
+    }
+
+
 def test_only_customer_visible_surfaces_are_exposed_and_final_intent_is_allowed(monkeypatch):
     async def fake_stream(**kwargs):
         yield 'event: meta\ndata: {"replayed":false}\n\n'
@@ -81,6 +94,7 @@ def test_only_customer_visible_surfaces_are_exposed_and_final_intent_is_allowed(
     monkeypatch.setattr(webchat_fast, 'get_webchat_fast_settings', _settings)
     monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
     monkeypatch.setattr(webchat_fast, 'prepare_webchat_fast_stream', lambda **kwargs: StreamBeginOutcome(status='owner', request_hash='h', row_id=1))
+    monkeypatch.setattr(webchat_fast, '_webchat_fast_runtime_context', lambda **_kwargs: _runtime_context_with_evidence())
     monkeypatch.setattr(webchat_fast, 'stream_webchat_fast_reply_events', fake_stream)
 
     response = client.post('/api/webchat/fast-reply/stream', json=_payload(), headers={'Accept': 'text/event-stream'})
@@ -100,6 +114,7 @@ def test_tool_call_detected_aborts_without_reply_delta_or_side_effects(monkeypat
 
     monkeypatch.setattr(webchat_fast, 'get_webchat_fast_settings', _settings)
     monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
+    monkeypatch.setattr(webchat_fast, '_webchat_fast_runtime_context', lambda **_kwargs: _runtime_context_with_evidence())
     monkeypatch.setattr(webchat_fast_stream_service.openclaw_client, 'call_openclaw_responses_stream', fake_call_stream)
 
     response = client.post('/api/webchat/fast-reply/stream', json=_payload('tool-call'), headers={'Accept': 'text/event-stream'})
@@ -141,6 +156,7 @@ def test_stream_handoff_persistence_failure_does_not_emit_final_success(monkeypa
 
     monkeypatch.setattr(webchat_fast, 'get_webchat_fast_settings', _settings)
     monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
+    monkeypatch.setattr(webchat_fast, '_webchat_fast_runtime_context', lambda **_kwargs: _runtime_context_with_evidence())
     monkeypatch.setattr(webchat_fast_stream_service.openclaw_client, 'call_openclaw_responses_stream', fake_call_stream)
     monkeypatch.setattr(webchat_fast_stream_service, '_persist_stream_result', fail_persist)
 
