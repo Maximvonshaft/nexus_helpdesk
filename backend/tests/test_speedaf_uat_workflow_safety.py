@@ -38,6 +38,21 @@ def test_speedaf_legacy_uat_smoke_uses_secret_samples_only():
     assert "variables SPEEDAF_UAT_TEST_CALLER_ID" not in workflow
 
 
+def test_speedaf_contract_gate_treats_voice_callback_as_write_surface():
+    workflow = _workflow("speedaf-contract-gate.yml")
+
+    assert "WORK_ORDER_CREATE|VOICE_CALLBACK" in workflow
+    assert "'SPEEDAF_VOICE_CALLBACK_ENABLED: true'" in workflow
+    assert "SPEEDAF_VOICE_CALLBACK_ENABLED" in workflow
+
+
+def test_production_readiness_blocks_speedaf_voice_callback_in_smoke_workflows():
+    workflow = _workflow("production-readiness.yml")
+
+    assert "'SPEEDAF_VOICE_CALLBACK_ENABLED: true'" in workflow
+    assert "'/open-api/mcp/callData/voice/callBack'" in workflow
+
+
 def test_speedaf_full_uat_probe_does_not_inline_sensitive_dispatch_inputs():
     workflow = _workflow("speedaf-full-uat-probe.yml")
 
