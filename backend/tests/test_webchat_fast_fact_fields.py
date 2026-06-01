@@ -9,6 +9,7 @@ from app.services.ai_runtime.schemas import FastAIProviderRequest, FastAIProvide
 from app.services.webchat_fast_ai_service import generate_webchat_fast_reply
 from app.services.webchat_fast_stream_service import StreamBeginOutcome, stream_webchat_fast_reply_events
 from app.services.webchat_openclaw_stream_adapter import Completed
+from app.settings import get_settings
 
 
 def test_input_text_adds_fact_block_only_when_enabled():
@@ -59,6 +60,8 @@ def test_fast_service_forwards_fact_fields(monkeypatch):
 
     import app.services.webchat_fast_ai_service as service
 
+    monkeypatch.setenv("WEBCHAT_KNOWLEDGE_NO_EVIDENCE_FALLBACK_ENABLED", "false")
+    get_settings.cache_clear()
     monkeypatch.setattr(service, "get_webchat_fast_settings", lambda: Settings())
     monkeypatch.setattr(service, "generate_fast_reply", fake_provider)
 
@@ -110,6 +113,8 @@ def test_fast_service_drops_fact_fields_without_evidence(monkeypatch):
 
     import app.services.webchat_fast_ai_service as service
 
+    monkeypatch.setenv("WEBCHAT_KNOWLEDGE_NO_EVIDENCE_FALLBACK_ENABLED", "false")
+    get_settings.cache_clear()
     monkeypatch.setattr(service, "get_webchat_fast_settings", lambda: Settings())
     monkeypatch.setattr(service, "generate_fast_reply", fake_provider)
 
@@ -132,6 +137,7 @@ def test_fast_service_drops_fact_fields_without_evidence(monkeypatch):
     assert request.tracking_fact_summary is None
     assert request.tracking_fact_metadata is None
     assert result.ok is True
+    get_settings.cache_clear()
 
 
 def test_stream_service_forwards_fact_fields_to_provider_input(monkeypatch):

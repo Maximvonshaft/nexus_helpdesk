@@ -6,13 +6,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import Text, or_
+from sqlalchemy import Text, text, or_
 from sqlalchemy.orm import Session
 
 from ...models_control_plane import KnowledgeChunk, KnowledgeItem
 from ...settings import get_settings
 from ...utils.time import utc_now
-from .embeddings import cosine_similarity, get_embedding_provider
+from .embeddings import cosine_similarity, get_embedding_provider, vector_literal
 
 STRUCTURED_KINDS = {"faq", "business_fact"}
 TRACKING_TERMS = {"tracking", "track", "waybill", "物流", "运单", "单号", "包裹", "查件"}
@@ -88,36 +88,46 @@ def retrieve_knowledge(
     }
     candidate_rows = _candidate_rows(db, terms=terms, normalized_query=normalized, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language)
     candidate_hits: dict[tuple[int, int, int], KnowledgeRuntimeHit] = {}
-    source_counts = {"structured_exact": 0, "fts": 0, "vector": 0, "legacy_candidate": len(candidate_rows)}
+    source_counts = {"structured_exact": 0, "fts": 0, "postgres_fts": 0, "vector": 0, "pgvector": 0, "legacy_candidate": len(candidate_rows)}
     vector_degraded: str | None = None
 
     for chunk, item in candidate_rows:
-        hit = _score_row(chunk, item, terms=terms, normalized_query=normalized, retrieval_source="fts")
+        source = "postgres_fts" if _is_postgres(db) else "fts"
+        hit = _score_row(chunk, item, terms=terms, normalized_query=normalized, retrieval_source=source)
         if hit.score > 0 or not terms:
             candidate_hits[(hit.item_id, hit.published_version, hit.chunk_index)] = hit
             if "structured_exact" in hit.retrieval_method:
                 source_counts["structured_exact"] += 1
             if "fts" in hit.retrieval_method:
                 source_counts["fts"] += 1
+            if "postgres_fts" in hit.retrieval_method:
+                source_counts["postgres_fts"] += 1
 
     if settings.knowledge_embeddings_enabled:
         try:
-            provider = get_embedding_provider(settings.knowledge_embedding_provider, dim=settings.knowledge_embedding_dim)
+            provider = get_embedding_provider(
+                settings.knowledge_embedding_provider,
+                dim=settings.knowledge_embedding_dim,
+                model=settings.knowledge_embedding_model,
+                base_url=settings.knowledge_embedding_base_url,
+                api_key=settings.knowledge_embedding_api_key,
+                api_key_file=settings.knowledge_embedding_api_key_file,
+                timeout_seconds=settings.knowledge_embedding_timeout_seconds,
+            )
             query_embedding = provider.embed_texts([normalized])[0]
-            vector_rows = [
-                (chunk, item, cosine_similarity(query_embedding, chunk.embedding))
-                for chunk, item in candidate_rows
-                if isinstance(chunk.embedding, list) and chunk.embedding
-            ]
+            vector_rows = _vector_rows(db, query_embedding=query_embedding, fallback_rows=candidate_rows, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language, limit=limit)
             vector_rows.sort(key=lambda item: item[2], reverse=True)
             for chunk, item, similarity in vector_rows[: max(limit * 4, 20)]:
                 if similarity <= 0:
                     continue
-                hit = _score_row(chunk, item, terms=terms, normalized_query=normalized, retrieval_source="vector", vector_score=similarity)
+                source = "pgvector" if _is_postgres(db) else "vector"
+                hit = _score_row(chunk, item, terms=terms, normalized_query=normalized, retrieval_source=source, vector_score=similarity)
                 key = (hit.item_id, hit.published_version, hit.chunk_index)
                 previous = candidate_hits.get(key)
                 candidate_hits[key] = _merge_hits(previous, hit) if previous else hit
                 source_counts["vector"] += 1
+                if source == "pgvector":
+                    source_counts["pgvector"] += 1
         except Exception as exc:
             vector_degraded = type(exc).__name__
     else:
@@ -149,6 +159,7 @@ def retrieve_knowledge(
             "provider": settings.knowledge_embedding_provider,
             "model": settings.knowledge_embedding_model,
             "dim": settings.knowledge_embedding_dim,
+            "storage": "pgvector" if _is_postgres(db) else "json_vector_fallback",
             "degraded_reason": vector_degraded,
             "fallback_allowed": settings.knowledge_vector_fallback_allowed,
         },
@@ -177,6 +188,8 @@ def _candidate_rows(
     audience_scope: str,
     language: str | None,
 ) -> list[tuple[KnowledgeChunk, KnowledgeItem]]:
+    if _is_postgres(db):
+        return _postgres_candidate_rows(db, terms=terms, normalized_query=normalized_query, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language)
     now = utc_now()
     query = (
         db.query(KnowledgeChunk, KnowledgeItem)
@@ -221,6 +234,221 @@ def _candidate_rows(
     return query.order_by(KnowledgeItem.priority.asc(), KnowledgeChunk.priority.asc(), KnowledgeChunk.chunk_index.asc()).limit(320).all()
 
 
+def _postgres_candidate_rows(
+    db: Session,
+    *,
+    terms: list[str],
+    normalized_query: str,
+    market_id: int | None,
+    channel: str | None,
+    audience_scope: str,
+    language: str | None,
+) -> list[tuple[KnowledgeChunk, KnowledgeItem]]:
+    rows_by_id: dict[int, tuple[KnowledgeChunk, KnowledgeItem]] = {}
+    for chunk, item in _structured_exact_rows(db, terms=terms, normalized_query=normalized_query, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language):
+        rows_by_id[chunk.id] = (chunk, item)
+    search_ids = _postgres_fts_ids(db, query_text=normalized_query or " ".join(terms), market_id=market_id, channel=channel, audience_scope=audience_scope, language=language)
+    if search_ids:
+        ordered = _rows_by_chunk_ids(db, search_ids)
+        rows_by_id.update({chunk.id: (chunk, item) for chunk, item in ordered})
+    return list(rows_by_id.values())[:320]
+
+
+def _structured_exact_rows(
+    db: Session,
+    *,
+    terms: list[str],
+    normalized_query: str,
+    market_id: int | None,
+    channel: str | None,
+    audience_scope: str,
+    language: str | None,
+) -> list[tuple[KnowledgeChunk, KnowledgeItem]]:
+    now = utc_now()
+    query = (
+        db.query(KnowledgeChunk, KnowledgeItem)
+        .join(KnowledgeItem, KnowledgeItem.id == KnowledgeChunk.item_id)
+        .filter(
+            KnowledgeChunk.status == "active",
+            KnowledgeItem.status == "active",
+            KnowledgeChunk.published_version > 0,
+            KnowledgeChunk.published_version == KnowledgeItem.published_version,
+            or_(KnowledgeChunk.starts_at.is_(None), KnowledgeChunk.starts_at <= now),
+            or_(KnowledgeChunk.ends_at.is_(None), KnowledgeChunk.ends_at >= now),
+            KnowledgeItem.knowledge_kind.in_(tuple(STRUCTURED_KINDS)),
+            KnowledgeItem.fact_status == "approved",
+        )
+    )
+    query = _exclude_probe_rows(query)
+    if market_id is not None:
+        query = query.filter(or_(KnowledgeChunk.market_id.is_(None), KnowledgeChunk.market_id == market_id))
+    if channel:
+        query = query.filter(or_(KnowledgeChunk.channel.is_(None), KnowledgeChunk.channel == channel.strip()))
+    if audience_scope:
+        query = query.filter(KnowledgeChunk.audience_scope == audience_scope.strip())
+    if language:
+        lang = language.strip().lower()
+        query = query.filter(or_(KnowledgeChunk.language.is_(None), KnowledgeChunk.language == lang, KnowledgeChunk.language.like(f"{lang}-%")))
+    needles = [normalized_query, *terms][:25]
+    predicates = []
+    for term in needles:
+        if not term:
+            continue
+        needle = f"%{term}%"
+        predicates.extend([
+            KnowledgeItem.item_key.ilike(needle),
+            KnowledgeItem.title.ilike(needle),
+            KnowledgeItem.fact_question.ilike(needle),
+            KnowledgeItem.fact_answer.ilike(needle),
+            KnowledgeChunk.normalized_text.ilike(needle),
+        ])
+    if predicates:
+        query = query.filter(or_(*predicates))
+    return query.order_by(KnowledgeItem.priority.asc(), KnowledgeChunk.priority.asc(), KnowledgeChunk.chunk_index.asc()).limit(80).all()
+
+
+def _postgres_fts_ids(
+    db: Session,
+    *,
+    query_text: str,
+    market_id: int | None,
+    channel: str | None,
+    audience_scope: str,
+    language: str | None,
+) -> list[int]:
+    if not query_text.strip():
+        return []
+    sql, params = _postgres_candidate_sql(
+        vector=False,
+        market_id=market_id,
+        channel=channel,
+        audience_scope=audience_scope,
+        language=language,
+    )
+    params["query_text"] = query_text[:512]
+    rows = db.execute(text(sql), params).mappings().all()
+    return [int(row["chunk_id"]) for row in rows]
+
+
+def _rows_by_chunk_ids(db: Session, ids: list[int]) -> list[tuple[KnowledgeChunk, KnowledgeItem]]:
+    if not ids:
+        return []
+    ordering = {chunk_id: index for index, chunk_id in enumerate(ids)}
+    rows = (
+        db.query(KnowledgeChunk, KnowledgeItem)
+        .join(KnowledgeItem, KnowledgeItem.id == KnowledgeChunk.item_id)
+        .filter(KnowledgeChunk.id.in_(ids))
+        .all()
+    )
+    return sorted(rows, key=lambda row: ordering.get(row[0].id, 10_000))
+
+
+def _vector_rows(
+    db: Session,
+    *,
+    query_embedding: list[float],
+    fallback_rows: list[tuple[KnowledgeChunk, KnowledgeItem]],
+    market_id: int | None,
+    channel: str | None,
+    audience_scope: str,
+    language: str | None,
+    limit: int,
+) -> list[tuple[KnowledgeChunk, KnowledgeItem, float]]:
+    if _is_postgres(db):
+        ids_and_scores = _postgres_vector_ids(db, query_embedding=query_embedding, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language, limit=max(limit * 8, 40))
+        rows_by_id = {chunk.id: (chunk, item) for chunk, item in _rows_by_chunk_ids(db, [chunk_id for chunk_id, _score in ids_and_scores])}
+        return [(rows_by_id[chunk_id][0], rows_by_id[chunk_id][1], score) for chunk_id, score in ids_and_scores if chunk_id in rows_by_id]
+    return [
+        (chunk, item, cosine_similarity(query_embedding, chunk.embedding))
+        for chunk, item in fallback_rows
+        if isinstance(chunk.embedding, list) and chunk.embedding
+    ]
+
+
+def _postgres_vector_ids(
+    db: Session,
+    *,
+    query_embedding: list[float],
+    market_id: int | None,
+    channel: str | None,
+    audience_scope: str,
+    language: str | None,
+    limit: int,
+) -> list[tuple[int, float]]:
+    sql, params = _postgres_candidate_sql(
+        vector=True,
+        market_id=market_id,
+        channel=channel,
+        audience_scope=audience_scope,
+        language=language,
+        limit=limit,
+    )
+    params["query_vector"] = vector_literal(query_embedding)
+    rows = db.execute(text(sql), params).mappings().all()
+    return [(int(row["chunk_id"]), max(0.0, 1.0 - float(row["distance"]))) for row in rows]
+
+
+def _postgres_candidate_sql(
+    *,
+    vector: bool,
+    market_id: int | None,
+    channel: str | None,
+    audience_scope: str,
+    language: str | None,
+    limit: int = 320,
+) -> tuple[str, dict[str, Any]]:
+    params: dict[str, Any] = {"audience_scope": audience_scope, "limit": limit}
+    filters = [
+        "kc.status = 'active'",
+        "ki.status = 'active'",
+        "kc.published_version > 0",
+        "kc.published_version = ki.published_version",
+        "(kc.starts_at IS NULL OR kc.starts_at <= now())",
+        "(kc.ends_at IS NULL OR kc.ends_at >= now())",
+        "(ki.knowledge_kind IS NULL OR ki.knowledge_kind NOT IN ('faq', 'business_fact') OR ki.fact_status = 'approved')",
+        "ki.item_key NOT ILIKE '%probe%'",
+        "kc.item_key NOT ILIKE '%probe%'",
+        "ki.title NOT LIKE '[PROBE]%'",
+        "kc.title NOT LIKE '[PROBE]%'",
+        "(ki.citation_metadata_json IS NULL OR CAST(ki.citation_metadata_json AS TEXT) NOT ILIKE '%probe_category%')",
+        "(kc.metadata_json IS NULL OR CAST(kc.metadata_json AS TEXT) NOT ILIKE '%probe_category%')",
+        "(kc.metadata_json IS NULL OR CAST(kc.metadata_json AS TEXT) NOT ILIKE '%probe_seed%')",
+        "kc.audience_scope = :audience_scope",
+    ]
+    if market_id is not None:
+        filters.append("(kc.market_id IS NULL OR kc.market_id = :market_id)")
+        params["market_id"] = market_id
+    if channel:
+        filters.append("(kc.channel IS NULL OR kc.channel = :channel)")
+        params["channel"] = channel.strip()
+    if language:
+        filters.append("(kc.language IS NULL OR kc.language = :language OR kc.language LIKE :language_prefix)")
+        params["language"] = language.strip().lower()
+        params["language_prefix"] = f"{language.strip().lower()}-%"
+    where = " AND ".join(filters)
+    if vector:
+        sql = f"""
+            SELECT kc.id AS chunk_id, (kc.embedding_vector <=> CAST(:query_vector AS vector)) AS distance
+            FROM knowledge_chunks kc
+            JOIN knowledge_items ki ON ki.id = kc.item_id
+            WHERE {where} AND kc.embedding_vector IS NOT NULL
+            ORDER BY kc.embedding_vector <=> CAST(:query_vector AS vector), ki.priority ASC, kc.priority ASC
+            LIMIT :limit
+        """
+    else:
+        sql = f"""
+            WITH q AS (SELECT websearch_to_tsquery('simple', :query_text) AS query)
+            SELECT kc.id AS chunk_id, ts_rank_cd(kc.search_tsvector, q.query) AS rank
+            FROM knowledge_chunks kc
+            JOIN knowledge_items ki ON ki.id = kc.item_id
+            CROSS JOIN q
+            WHERE {where} AND kc.search_tsvector @@ q.query
+            ORDER BY rank DESC, ki.priority ASC, kc.priority ASC
+            LIMIT :limit
+        """
+    return sql, params
+
+
 def _exclude_probe_rows(query):
     probe_title = "[PROBE]%"
     return query.filter(
@@ -240,7 +468,7 @@ def _score_row(chunk: KnowledgeChunk, item: KnowledgeItem, *, terms: list[str], 
     structured = (item.knowledge_kind or "document") in STRUCTURED_KINDS and item.fact_status == "approved"
     direct = structured and item.answer_mode == "direct_answer" and bool((item.fact_answer or "").strip())
     breakdown: dict[str, float] = {}
-    methods: set[str] = set()
+    methods: set[str] = {retrieval_source}
     if structured:
         breakdown["structured_exact"] = 18.0
         methods.add("structured_exact")
@@ -266,7 +494,7 @@ def _score_row(chunk: KnowledgeChunk, item: KnowledgeItem, *, terms: list[str], 
         "fact_status": item.fact_status,
         "answer_mode": item.answer_mode,
         "citation": item.citation_metadata_json or metadata.get("citation") or {},
-        "retrieval_method": "+".join(sorted(methods or {retrieval_source})),
+        "retrieval_method": "+".join(sorted(methods)),
         "matched_terms": matched[:16],
         "score_breakdown": breakdown,
     })
@@ -279,7 +507,7 @@ def _score_row(chunk: KnowledgeChunk, item: KnowledgeItem, *, terms: list[str], 
         score=score,
         text=chunk.chunk_text,
         metadata=metadata,
-        retrieval_method="+".join(sorted(methods or {retrieval_source})),
+        retrieval_method="+".join(sorted(methods)),
         matched_terms=matched[:16],
         score_breakdown=breakdown,
         direct_answer=(item.fact_answer or "").strip() if direct else None,
@@ -355,3 +583,7 @@ def _terms(value: str) -> list[str]:
             seen.add(cleaned)
             items.append(cleaned)
     return items[:32]
+
+
+def _is_postgres(db: Session) -> bool:
+    return db.get_bind().dialect.name == "postgresql"

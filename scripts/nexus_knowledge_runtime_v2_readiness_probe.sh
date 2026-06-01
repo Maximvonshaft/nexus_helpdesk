@@ -29,6 +29,23 @@ assert payload["speedaf_persona"] == "speedaf_support_webchat_default", payload
 print("production_fixup_ok=true")
 PY
 
+PYTHONPATH=backend KNOWLEDGE_RUNTIME_VERSION=v2 KNOWLEDGE_EMBEDDINGS_ENABLED=true KNOWLEDGE_EMBEDDING_PROVIDER=deterministic_hash \
+  python backend/scripts/run_knowledge_eval.py \
+    --min-recall-at-5 1.0 \
+    --max-hallucination-rate 0 \
+    --max-unsupported-answer-rate 0 \
+    --min-handoff-correctness 1.0 \
+  >/tmp/nexus_knowledge_eval.json
+PYTHONPATH=backend python - <<'PY'
+import json
+payload=json.load(open("/tmp/nexus_knowledge_eval.json", encoding="utf-8"))
+assert payload["ok"] is True, payload
+metrics=payload["metrics"]
+for key in ("recall_at_5", "direct_answer_correctness", "unsupported_answer_rate", "hallucination_rate", "handoff_correctness", "p95_latency_ms"):
+    assert key in metrics, payload
+print("knowledge_eval_ok=true")
+PY
+
 if [ -n "${CALLER_ID}" ]; then
   PYTHONPATH=backend python - <<PY
 from app.services.tracking_fact_service import lookup_tracking_fact
@@ -51,6 +68,8 @@ payload=json.load(open("/tmp/nexus_fast_reply.json", encoding="utf-8"))
 assert payload.get("reply_source") == "server_tracking_fact", payload
 assert payload.get("tracking_number") == "CH020000006856", payload
 assert payload.get("tracking_fact", {}).get("fact_evidence_present") is True, payload
+assert payload.get("tracking_fact", {}).get("truth_trace", {}).get("source") == "speedaf_trusted_tracking_fact", payload
+assert payload.get("tracking_fact", {}).get("truth_trace", {}).get("raw_tracking_number_exposed") is False, payload
 assert payload.get("error_code") != "all_providers_failed", payload
 text=json.dumps(payload, ensure_ascii=False)
 assert "猴王山" not in text and "[PROBE]" not in text, text

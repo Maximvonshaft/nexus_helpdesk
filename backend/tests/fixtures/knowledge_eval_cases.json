@@ -1,0 +1,35 @@
+[
+  {
+    "id": "address_change_zh",
+    "query": "我想改地址，怎么处理？",
+    "language": "zh",
+    "expected_item_key": "eval.address_change",
+    "expected_answer_contains": "发出前",
+    "expected_supported": true,
+    "expected_handoff": false
+  },
+  {
+    "id": "delivery_sla_en",
+    "query": "How long does delivery take after dispatch?",
+    "language": "en",
+    "expected_item_key": "eval.delivery_sla",
+    "expected_answer_contains": "3-5 business days",
+    "expected_supported": true,
+    "expected_handoff": false
+  },
+  {
+    "id": "unsupported_driver_phone",
+    "query": "给我司机手机号",
+    "language": "zh",
+    "expected_supported": false,
+    "expected_handoff": true
+  },
+  {
+    "id": "tracking_status_boundary",
+    "query": "CH020000006856现在到哪里了？",
+    "language": "zh",
+    "expected_supported": false,
+    "expected_handoff": true,
+    "tracking_truth_boundary": true
+  }
+]

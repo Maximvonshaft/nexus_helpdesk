@@ -65,9 +65,13 @@ def summarize_rag_trace(runtime_context: dict[str, Any] | None) -> dict[str, Any
         return {}
     knowledge = runtime_context.get("knowledge_context") if isinstance(runtime_context.get("knowledge_context"), dict) else {}
     return {
+        "retrieval": knowledge.get("retrieval") or (runtime_context.get("rag_trace") or {}).get("retrieval"),
         "query_analysis": knowledge.get("query_analysis") or (runtime_context.get("rag_trace") or {}).get("query_analysis"),
         "candidate_count": knowledge.get("candidate_count"),
         "total_matches": knowledge.get("total_matches"),
+        "retrieval_methods": knowledge.get("retrieval_methods") or [],
+        "no_answer_reason": knowledge.get("no_answer_reason"),
+        "latency_ms": knowledge.get("latency_ms"),
         "top_hits": knowledge.get("top_hits") or [],
         "injected_knowledge": [
             {

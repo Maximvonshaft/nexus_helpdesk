@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, select, text
 
 from app import models_control_plane  # noqa: F401
 from app.api import webchat_fast
+from app.services import webchat_fast_ai_service
 from app.db import Base, SessionLocal, engine
 from app.enums import UserRole
 from app.main import app
@@ -252,6 +253,9 @@ def test_fast_reply_chinese_waybill_uses_trusted_tracking_fact_without_provider(
     assert payload["tracking_number"] == "CH020000006856"
     assert payload["tracking_fact"]["fact_evidence_present"] is True
     assert payload["tracking_fact"]["tool_status"] == "success"
+    assert payload["tracking_fact"]["truth_trace"]["source"] == "speedaf_trusted_tracking_fact"
+    assert payload["tracking_fact"]["truth_trace"]["raw_tracking_number_exposed"] is False
+    assert "CH020000006856" not in json.dumps(payload["tracking_fact"], ensure_ascii=False)
     assert calls[0]["tracking_number"] == "CH020000006856"
 
 
@@ -286,6 +290,32 @@ def test_fast_reply_extracted_waybill_failure_returns_safe_tracking_reply(monkey
     assert payload["handoff_required"] is True
     assert "请提供" not in payload["reply"]
     assert payload.get("error_code") != "all_providers_failed"
+
+
+def test_fast_reply_no_knowledge_evidence_returns_handoff_without_provider(monkeypatch):
+    monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
+    get_webchat_fast_settings.cache_clear()
+
+    async def fail_if_provider_called(*_args, **_kwargs):
+        raise AssertionError("provider must not answer without retrieval evidence")
+
+    monkeypatch.setattr(webchat_fast_ai_service, "generate_fast_reply", fail_if_provider_called)
+    monkeypatch.setattr(webchat_fast_ai_service, "dispatch_webchat_fast_reply", fail_if_provider_called)
+
+    response = client.post(
+        "/api/webchat/fast-reply",
+        json=_payload("knowledge-no-evidence", session_id="knowledge-no-evidence-session", body="请给我司机手机号"),
+        headers={"Origin": "http://localhost"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["reply_source"] == "server_knowledge_no_evidence"
+    assert payload["handoff_required"] is True
+    assert payload["evidence_trace"]["retrieval"] == "hybrid_rag_v2"
+    assert payload["evidence_trace"]["no_answer_reason"] == "no_evidence"
+    get_webchat_fast_settings.cache_clear()
 
 
 def test_fast_reply_same_session_reuses_conversation_and_uses_server_context(monkeypatch):
@@ -353,9 +383,9 @@ def test_fast_reply_provider_runtime_unavailable_returns_controlled_non_500(monk
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
-    assert payload["reply_source"] == "server_safe_fallback"
+    assert payload["reply_source"] == "server_knowledge_no_evidence"
     assert payload["handoff_required"] is True
-    assert payload["handoff_reason"] == "openclaw_responses_unavailable"
+    assert payload["handoff_reason"] == "no_evidence"
     assert payload["reply"]
     assert payload.get("error_code") is None
 

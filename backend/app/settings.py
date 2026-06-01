@@ -133,14 +133,18 @@ class Settings:
             self.webchat_ai_reconciler_interval_seconds = 30
         self.webchat_static_quick_replies_mode = os.getenv("WEBCHAT_STATIC_QUICK_REPLIES_MODE", "off").strip().lower() or "off"
         self.webchat_knowledge_reply_mode = os.getenv("WEBCHAT_KNOWLEDGE_REPLY_MODE", "ai_grounded").strip().lower() or "ai_grounded"
+        self.webchat_knowledge_no_evidence_fallback_enabled = _env_bool("WEBCHAT_KNOWLEDGE_NO_EVIDENCE_FALLBACK_ENABLED", True)
         self.knowledge_runtime_version = os.getenv("KNOWLEDGE_RUNTIME_VERSION", "v2").strip().lower() or "v2"
-        self.knowledge_embeddings_enabled = _env_bool("KNOWLEDGE_EMBEDDINGS_ENABLED", False)
+        self.knowledge_embeddings_enabled = _env_bool("KNOWLEDGE_EMBEDDINGS_ENABLED", self.app_env == "production")
         self.knowledge_embedding_provider = os.getenv("KNOWLEDGE_EMBEDDING_PROVIDER", "deterministic_hash").strip().lower() or "deterministic_hash"
         self.knowledge_embedding_model = os.getenv("KNOWLEDGE_EMBEDDING_MODEL", "nexus-deterministic-hash-v1").strip()
-        self.knowledge_embedding_dim = int(os.getenv("KNOWLEDGE_EMBEDDING_DIM", "64"))
+        self.knowledge_embedding_dim = int(os.getenv("KNOWLEDGE_EMBEDDING_DIM", "1536"))
         self.knowledge_embedding_batch_size = int(os.getenv("KNOWLEDGE_EMBEDDING_BATCH_SIZE", "32"))
         self.knowledge_embedding_timeout_seconds = int(os.getenv("KNOWLEDGE_EMBEDDING_TIMEOUT_SECONDS", "20"))
         self.knowledge_vector_fallback_allowed = _env_bool("KNOWLEDGE_VECTOR_FALLBACK_ALLOWED", True)
+        self.knowledge_embedding_base_url = os.getenv("KNOWLEDGE_EMBEDDING_BASE_URL", "https://api.openai.com/v1").strip().rstrip("/")
+        self.knowledge_embedding_api_key = os.getenv("KNOWLEDGE_EMBEDDING_API_KEY", "").strip() or None
+        self.knowledge_embedding_api_key_file = os.getenv("KNOWLEDGE_EMBEDDING_API_KEY_FILE", "").strip() or None
         self.webchat_tracking_fact_lookup_enabled = os.getenv("WEBCHAT_TRACKING_FACT_LOOKUP_ENABLED", "false").strip().lower() == "true"
         self.webchat_tracking_fact_source = os.getenv("WEBCHAT_TRACKING_FACT_SOURCE", "openclaw_bridge").strip().lower() or "openclaw_bridge"
         self.webchat_tracking_fact_timeout_seconds = int(os.getenv("WEBCHAT_TRACKING_FACT_TIMEOUT_SECONDS", "8"))
@@ -207,6 +211,8 @@ class Settings:
             raise RuntimeError("KNOWLEDGE_EMBEDDING_BATCH_SIZE must be between 1 and 512")
         if self.knowledge_embedding_timeout_seconds < 1 or self.knowledge_embedding_timeout_seconds > 120:
             raise RuntimeError("KNOWLEDGE_EMBEDDING_TIMEOUT_SECONDS must be between 1 and 120")
+        if self.knowledge_embedding_provider not in {"deterministic_hash", "hash", "test", "openai_compatible"}:
+            raise RuntimeError("KNOWLEDGE_EMBEDDING_PROVIDER must be deterministic_hash, hash, test, or openai_compatible")
         if self.webchat_tracking_fact_source not in {"openclaw_bridge", "speedaf_api"}:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_SOURCE must be openclaw_bridge or speedaf_api")
         if self.webchat_tracking_fact_timeout_seconds < 1 or self.webchat_tracking_fact_timeout_seconds > 30:
@@ -277,6 +283,13 @@ class Settings:
                 raise RuntimeError("OPENCLAW_ATTACHMENT_ALLOWED_HOSTS must be set when OPENCLAW_ATTACHMENT_URL_FETCH_ENABLED=true in production")
             if not self.frontend_dist_available:
                 raise RuntimeError("frontend_dist/index.html must exist in production; refusing legacy frontend fallback")
+            if self.knowledge_runtime_version == "v2":
+                if not self.knowledge_embeddings_enabled:
+                    raise RuntimeError("KNOWLEDGE_EMBEDDINGS_ENABLED=true is required in production for Knowledge Runtime v2")
+                if self.knowledge_embedding_provider in {"deterministic_hash", "hash", "test"}:
+                    raise RuntimeError("Production Knowledge Runtime v2 requires a real embedding provider")
+                if self.knowledge_embedding_provider == "openai_compatible" and not (self.knowledge_embedding_api_key or self.knowledge_embedding_api_key_file):
+                    raise RuntimeError("KNOWLEDGE_EMBEDDING_API_KEY_FILE or KNOWLEDGE_EMBEDDING_API_KEY is required for openai_compatible embeddings")
             if self.require_prometheus_client_in_production:
                 try:
                     import prometheus_client  # noqa: F401
