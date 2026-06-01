@@ -255,6 +255,34 @@ def _tracking_fact_forced_reply_payload(*, tracking_number: str | None, result: 
     }
 
 
+def _tracking_fact_safe_failure_payload(*, tracking_number: str | None, result: TrackingFactResult | None, body: str | None) -> dict[str, Any]:
+    zh = any("\u4e00" <= ch <= "\u9fff" for ch in (body or ""))
+    reply = (
+        "已收到你的运单号，但系统暂时无法确认该单的实时状态。我已为你记录，建议转人工进一步核实。"
+        if zh
+        else "I received your waybill number, but the system cannot confirm its live status right now. I have recorded it and recommend a human teammate reviews it."
+    )
+    return {
+        "ok": True,
+        "ai_generated": False,
+        "reply_source": "server_tracking_fact_unavailable",
+        "reply": reply,
+        "intent": "tracking",
+        "tracking_number": (tracking_number or "").strip().upper() or None,
+        "handoff_required": True,
+        "handoff_reason": (result.failure_reason if result else "tracking_fact_unavailable") or "tracking_fact_unavailable",
+        "ticket_creation_queued": False,
+        "elapsed_ms": 0,
+        "tracking_fact": _tracking_fact_public_payload(result),
+    }
+
+
+def _tracking_number_request_payload(*, body: str | None) -> dict[str, Any]:
+    zh = any("\u4e00" <= ch <= "\u9fff" for ch in (body or ""))
+    reply = "请提供你的运单号，我会帮你查询物流状态。" if zh else "Please provide your waybill or tracking number so I can check the shipment status."
+    return {"ok": True, "ai_generated": False, "reply_source": "server_tracking_number_required", "reply": reply, "intent": "tracking", "tracking_number": None, "handoff_required": False, "handoff_reason": None, "ticket_creation_queued": False, "elapsed_ms": 0}
+
+
 def _should_attempt_fact_first_lookup(*, body: str | None, tracking_number: str | None, caller_id: str | None) -> bool:
     if tracking_number:
         return True
@@ -367,6 +395,12 @@ def _handoff_enqueue_failure_payload(result: Any) -> dict[str, Any]:
 
 def _server_handoff_response_payload(*, handoff_reason: str | None, customer_reply: str | None) -> dict[str, Any]:
     return {"ok": True, "ai_generated": False, "reply_source": "server_handoff_policy", "reply": customer_reply or "A human teammate will review this request.", "intent": "handoff", "tracking_number": None, "handoff_required": True, "handoff_reason": handoff_reason or "server_policy_handoff_required", "ticket_creation_queued": False, "elapsed_ms": 0}
+
+
+def _provider_safe_fallback_payload(*, error_code: str | None, body: str | None) -> dict[str, Any]:
+    zh = any("\u4e00" <= ch <= "\u9fff" for ch in (body or ""))
+    reply = "助手暂时不可用，人工同事可以继续帮你核实这个请求。" if zh else "The assistant is temporarily unavailable. A human teammate can review this request."
+    return {"ok": True, "ai_generated": False, "reply_source": "server_safe_fallback", "reply": reply, "intent": "handoff", "tracking_number": None, "handoff_required": True, "handoff_reason": error_code or "provider_unavailable", "ticket_creation_queued": False, "elapsed_ms": 0}
 
 
 def _with_fast_public_session(db, conversation, payload: dict[str, Any]) -> dict[str, Any]:
@@ -588,14 +622,34 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
             request=request,
         )
         return JSONResponse(public_payload, status_code=200, headers=headers)
+    if tracking_number:
+        result_payload = _tracking_fact_safe_failure_payload(tracking_number=tracking_number, result=tracking_fact, body=payload.body)
+        public_payload = _persist_tracking_fact_forced_reply(
+            row_id=row_id,
+            payload=payload,
+            result_payload=result_payload,
+            tracking_fact_metadata=tracking_fact.metadata_payload() if tracking_fact else None,
+            request=request,
+        )
+        return JSONResponse(public_payload, status_code=200, headers=headers)
+    if _should_attempt_fact_first_lookup(body=payload.body, tracking_number=None, caller_id=None):
+        result_payload = _tracking_number_request_payload(body=payload.body)
+        public_payload = _persist_tracking_fact_forced_reply(
+            row_id=row_id,
+            payload=payload,
+            result_payload=result_payload,
+            tracking_fact_metadata=None,
+            request=request,
+        )
+        return JSONResponse(public_payload, status_code=200, headers=headers)
 
     tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _tracking_fact_provider_fields(tracking_fact)
     result = await generate_webchat_fast_reply(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, body=payload.body, recent_context=merged_context, request_id=getattr(request.state, "request_id", None), tracking_fact_summary=tracking_fact_summary, tracking_fact_metadata=tracking_fact_metadata, tracking_fact_evidence_present=tracking_fact_evidence_present, market_id=routing_context.market_id)
-    result_payload = result.to_response()
+    result_payload = result.to_response() if result.ok else _provider_safe_fallback_payload(error_code=result.error_code, body=payload.body)
     with db_context() as db:
         conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
-        if result.ok:
-            metadata = {"handoff_required": result.handoff_required, "reply_source": result.reply_source}
+        if result_payload.get("ok"):
+            metadata = {"handoff_required": bool(result_payload.get("handoff_required")), "reply_source": result_payload.get("reply_source")}
             if result.rag_trace:
                 metadata["rag_trace"] = result.rag_trace
             if result.grounding_applied:
@@ -606,8 +660,8 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
                     metadata["grounding_reason"] = result.grounding_reason
             if tracking_fact_metadata:
                 metadata["tracking_fact"] = tracking_fact_metadata
-            append_fast_ai_message(db, conversation=conversation, reply=result.reply, client_message_id=payload.client_message_id, metadata=metadata)
-        if result.ok and result.handoff_required:
+            append_fast_ai_message(db, conversation=conversation, reply=result_payload.get("reply"), client_message_id=payload.client_message_id, metadata=metadata)
+        if result_payload.get("ok") and result_payload.get("handoff_required"):
             handoff_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
             if result.tracking_number:
                 handoff_state = type(handoff_state)(intent=handoff_state.intent, issue_type=handoff_state.issue_type, tracking_number=result.tracking_number, fast_issue_key=f"tracking:{result.tracking_number}:intent:{handoff_state.issue_type}"[:240], missing_fields=())
@@ -619,10 +673,7 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
             if speedaf_job_id:
                 result_payload["speedaf_work_order_job_id"] = speedaf_job_id
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
-        if result.ok:
-            mark_webchat_fast_done(db, row, response_json=result_payload)
-        else:
-            mark_webchat_fast_failed(db, row, error_code=result.error_code or "request_failed")
+        mark_webchat_fast_done(db, row, response_json=result_payload)
         public_payload = _with_fast_public_session(db, conversation, result_payload)
     return JSONResponse(public_payload, status_code=200, headers=headers)
 

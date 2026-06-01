@@ -215,7 +215,7 @@ def test_persona_builder_contract_uses_real_persona_tables_preview_and_runtime_c
     assert runtime_evidence_payload["match_rank"] == 1
     assert runtime_evidence_payload["expected_profile_key"] == exact.profile_key
     assert runtime_evidence_payload["matched_expected"] is True
-    assert runtime_evidence_payload["runtime_context"]["context_version"] == "nexus_webchat_runtime_context_v1"
+    assert runtime_evidence_payload["runtime_context"]["context_version"] == "nexus_webchat_runtime_context_v2"
     assert runtime_evidence_payload["persona_context"]["identity_context"]["brand_name"] == "Nexus Express"
     assert runtime_evidence_payload["evidence"]["runtime_contract"] == "build_webchat_runtime_context"
     assert runtime_evidence_payload["evidence"]["brand_name"] == "Nexus Express"

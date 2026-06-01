@@ -10,6 +10,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..models_control_plane import KnowledgeChunk, KnowledgeItem
+from ..settings import get_settings
 from ..utils.time import utc_now
 from .knowledge_document_service import normalize_document_text
 
@@ -116,8 +117,14 @@ class KnowledgeRetrievalResult:
     top_hits: list[dict[str, Any]]
     grounding_would_apply: bool
     grounding_source: dict[str, Any] | None
+    runtime_trace: dict[str, Any] | None = None
+    retrieval_methods: list[str] = field(default_factory=list)
+    no_answer_reason: str | None = None
+    latency_ms: int | None = None
 
     def as_trace(self) -> dict[str, Any]:
+        if self.runtime_trace:
+            return self.runtime_trace
         return {
             "query_analysis": self.query_analysis.as_trace(),
             "candidate_count": self.candidate_count,
@@ -125,6 +132,7 @@ class KnowledgeRetrievalResult:
             "top_hits": self.top_hits,
             "grounding_would_apply": self.grounding_would_apply,
             "grounding_source": self.grounding_source,
+            "retrieval": "legacy_keyword_v1",
         }
 
 
@@ -217,6 +225,17 @@ def index_published_item(db: Session, item: KnowledgeItem) -> int:
                     "fact_aliases": item.fact_aliases_json or [],
                     "citation": item.citation_metadata_json or {},
                 },
+                search_vector=normalized,
+                embedding_status="pending",
+                retrieval_metadata_json={
+                    "runtime": "hybrid_rag_v2",
+                    "chunk_type": "structured_fact" if (item.knowledge_kind or "document") in STRUCTURED_KINDS else "paragraph",
+                    "source_document_id": item.file_storage_key or item.item_key,
+                },
+                section_path=item.title,
+                chunk_type="structured_fact" if (item.knowledge_kind or "document") in STRUCTURED_KINDS else "paragraph",
+                source_document_id=item.file_storage_key or item.item_key,
+                semantic_hash=hashlib.sha256(normalized.encode("utf-8", errors="ignore")).hexdigest(),
             )
         )
 
@@ -289,6 +308,55 @@ def retrieve_published_chunks(
     language: str | None = None,
     limit: int = 5,
 ) -> KnowledgeRetrievalResult:
+    if get_settings().knowledge_runtime_version == "v2":
+        from .knowledge_runtime_v2 import retrieve_knowledge
+
+        runtime = retrieve_knowledge(
+            db,
+            query=q or "",
+            tenant_key=None,
+            market_id=market_id,
+            channel=channel,
+            audience_scope=audience_scope or "customer",
+            language=language,
+            limit=limit,
+        )
+        analysis = analyze_query(q, language=language)
+        hits = [
+            KnowledgeChunkHit(
+                item_id=hit.item_id,
+                item_key=hit.item_key,
+                title=hit.title,
+                published_version=hit.published_version,
+                chunk_index=hit.chunk_index,
+                score=hit.score,
+                text=hit.text,
+                metadata=hit.metadata,
+                retrieval_method=hit.retrieval_method,
+                matched_terms=hit.matched_terms,
+                score_breakdown=hit.score_breakdown,
+                direct_answer=hit.direct_answer,
+                answer_mode=hit.answer_mode,
+                source_metadata=hit.source_metadata,
+            )
+            for hit in runtime.hits
+        ]
+        grounding_source = _grounding_source_from_hits(hits)
+        top_hits = [_top_hit_trace(hit) for hit in hits[:5]]
+        return KnowledgeRetrievalResult(
+            hits=hits,
+            total=len(hits),
+            query_analysis=analysis,
+            candidate_count=runtime.trace.get("candidates_by_source", {}).get("legacy_candidate", len(hits)),
+            top_hits=top_hits,
+            grounding_would_apply=grounding_source is not None,
+            grounding_source=grounding_source,
+            runtime_trace=runtime.trace,
+            retrieval_methods=runtime.retrieval_methods,
+            no_answer_reason=runtime.no_answer_reason,
+            latency_ms=runtime.latency_ms,
+        )
+
     analysis = analyze_query(q, language=language)
     rows = _candidate_rows(
         db,

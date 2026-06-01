@@ -78,7 +78,7 @@ def build_webchat_runtime_context(
         limit=MAX_CONTEXT_HITS,
     )
     return sanitize_runtime_context({
-        "context_version": "nexus_webchat_runtime_context_v1",
+        "context_version": "nexus_webchat_runtime_context_v2",
         "tenant_key": tenant_key,
         "metadata_filters": {
             "market_id": market_id,
@@ -219,11 +219,14 @@ def _knowledge_context(retrieval, *, query: str) -> dict[str, Any]:
         for hit in hits
     ]
     return {
-        "retrieval": "hybrid_metadata_fusion_v1",
+        "retrieval": "hybrid_rag_v2",
         "total_matches": retrieval.total,
         "candidate_count": retrieval.candidate_count,
         "query_analysis": retrieval.query_analysis.as_trace(),
         "top_hits": retrieval.top_hits,
+        "retrieval_methods": getattr(retrieval, "retrieval_methods", []),
+        "no_answer_reason": getattr(retrieval, "no_answer_reason", None),
+        "latency_ms": getattr(retrieval, "latency_ms", None),
         "grounding_would_apply": retrieval.grounding_would_apply,
         "grounding_source": retrieval.grounding_source,
         "locked_facts": _locked_facts(query=query, hits=serialized_hits, entity_terms=retrieval.query_analysis.entity_terms),
