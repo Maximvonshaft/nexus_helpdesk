@@ -117,8 +117,8 @@ def run(*, reindex: bool = True) -> dict:
             output_contract VARCHAR(120) NOT NULL,
             timeout_ms INTEGER NOT NULL,
             canary_percent INTEGER NOT NULL DEFAULT 100,
-            kill_switch BOOLEAN NOT NULL DEFAULT 0,
-            enabled BOOLEAN NOT NULL DEFAULT 1,
+            kill_switch BOOLEAN NOT NULL DEFAULT false,
+            enabled BOOLEAN NOT NULL DEFAULT true,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE (tenant_id, channel_key, scenario)
@@ -131,7 +131,7 @@ def run(*, reindex: bool = True) -> dict:
                 output_contract, timeout_ms, canary_percent, kill_switch, enabled, created_at, updated_at
             ) VALUES (
                 'default:website:webchat_fast_reply', 'default', 'website', 'webchat_fast_reply',
-                'codex_app_server', :fallbacks, 'speedaf_webchat_fast_reply_v1', 10000, 100, 0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                'codex_app_server', :fallbacks, 'speedaf_webchat_fast_reply_v1', 10000, 100, false, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
             ON CONFLICT(tenant_id, channel_key, scenario) DO UPDATE SET
                 primary_provider = 'codex_app_server',
@@ -139,8 +139,8 @@ def run(*, reindex: bool = True) -> dict:
                 output_contract = 'speedaf_webchat_fast_reply_v1',
                 timeout_ms = 10000,
                 canary_percent = 100,
-                kill_switch = 0,
-                enabled = 1,
+                kill_switch = false,
+                enabled = true,
                 updated_at = CURRENT_TIMESTAMP
             """),
             {"fallbacks": json.dumps(["openclaw_responses", "rule_engine"], separators=(",", ":"))},
