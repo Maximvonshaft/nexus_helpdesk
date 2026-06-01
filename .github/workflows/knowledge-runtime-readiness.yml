@@ -23,7 +23,7 @@ jobs:
     env:
       PYTHONPATH: backend
       APP_ENV: test
-      DATABASE_URL: sqlite:///./knowledge-runtime-readiness.db
+      DATABASE_URL: sqlite:////tmp/knowledge-runtime-readiness.db
       AUTO_INIT_DB: "false"
       SEED_DEMO_DATA: "false"
       KNOWLEDGE_RUNTIME_VERSION: v2
@@ -40,8 +40,6 @@ jobs:
       SPEEDAF_MCP_CONTENT_TYPE: ${{ vars.SPEEDAF_UAT_MCP_CONTENT_TYPE || 'text/plain' }}
       SPEEDAF_MCP_DATA_MODE: ${{ vars.SPEEDAF_UAT_MCP_DATA_MODE || 'string' }}
       SPEEDAF_MCP_REQUIRE_SIGN: ${{ vars.SPEEDAF_UAT_MCP_REQUIRE_SIGN || 'false' }}
-      SPEEDAF_MCP_TEST_WAYBILL_CODE: ${{ inputs.waybill_code }}
-      SPEEDAF_MCP_TEST_CALLER_ID: ${{ inputs.caller_id }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,6 +58,7 @@ jobs:
       - name: Prepare database
         run: |
           set -Eeuo pipefail
+          rm -f /tmp/knowledge-runtime-readiness.db
           cd backend
           alembic upgrade head
 
@@ -80,17 +79,31 @@ jobs:
           exit 1
 
       - name: Run knowledge runtime readiness probe
+        env:
+          SPEEDAF_MCP_TEST_WAYBILL_CODE: ${{ secrets.SPEEDAF_UAT_TEST_WAYBILL_CODE || inputs.waybill_code }}
+          SPEEDAF_MCP_TEST_CALLER_ID: ${{ secrets.SPEEDAF_UAT_TEST_CALLER_ID || inputs.caller_id }}
         run: |
           set -Eeuo pipefail
+          if [ -z "${SPEEDAF_MCP_TEST_WAYBILL_CODE:-}" ] || [ -z "${SPEEDAF_MCP_TEST_CALLER_ID:-}" ]; then
+            echo "ERROR: configure SPEEDAF_UAT_TEST_WAYBILL_CODE and SPEEDAF_UAT_TEST_CALLER_ID as secrets, or provide workflow inputs."
+            exit 2
+          fi
           bash scripts/nexus_knowledge_runtime_v2_readiness_probe.sh | tee artifacts/knowledge-runtime-readiness.log
 
       - name: Assert readiness log is sanitized
         if: always()
+        env:
+          SPEEDAF_MCP_TEST_WAYBILL_CODE: ${{ secrets.SPEEDAF_UAT_TEST_WAYBILL_CODE || inputs.waybill_code }}
+          SPEEDAF_MCP_TEST_CALLER_ID: ${{ secrets.SPEEDAF_UAT_TEST_CALLER_ID || inputs.caller_id }}
         run: |
           set -Eeuo pipefail
           REPORT="artifacts/knowledge-runtime-readiness.log"
           test -f "$REPORT"
-          if grep -E '${{ inputs.caller_id }}|${{ secrets.SPEEDAF_UAT_MCP_APP_CODE }}|${{ secrets.SPEEDAF_UAT_MCP_SECRET_KEY }}' "$REPORT" >/dev/null 2>&1; then
+          if [ -n "${SPEEDAF_MCP_TEST_CALLER_ID:-}" ] && grep -F "$SPEEDAF_MCP_TEST_CALLER_ID" "$REPORT" >/dev/null 2>&1; then
+            echo 'ERROR: readiness log contains callerID.'
+            exit 3
+          fi
+          if grep -E '${{ secrets.SPEEDAF_UAT_MCP_APP_CODE }}|${{ secrets.SPEEDAF_UAT_MCP_SECRET_KEY }}' "$REPORT" >/dev/null 2>&1; then
             echo 'ERROR: readiness log contains sensitive material.'
             exit 3
           fi
