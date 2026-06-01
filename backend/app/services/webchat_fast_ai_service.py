@@ -210,8 +210,52 @@ def _pre_provider_locked_fact_direct_answer_result(
     )
 
 
+_ASCII_LOW_SIGNAL = {"?", "??", "???", "hi", "hello", "hey", "yo", "test", "testing", "asd", "asdasd", "qwe", "qwer", "321", "123"}
+_CJK_LOW_SIGNAL = {"你好", "您好", "哈喽", "嗨", "霓虹", "撒旦"}
+_BUSINESS_SIGNALS = (
+    "track", "tracking", "waybill", "shipment", "parcel", "package", "delivery", "redelivery", "refuse", "refusal",
+    "return", "address", "change address", "complaint", "claim", "refund", "compensation", "lost", "damage", "damaged", "delayed", "late", "customs", "pickup", "cod",
+    "运单", "单号", "物流", "包裹", "快递", "派送", "配送", "重派", "重新派送", "拒收", "退回", "退货", "改地址", "地址", "投诉", "赔偿", "理赔", "退款", "丢件", "丢失", "破损", "延误", "清关", "取件",
+)
+
+
+def _customer_context_text(recent_context: list[dict[str, Any]] | None) -> str:
+    texts: list[str] = []
+    for item in recent_context or []:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        if role in {"customer", "visitor", "user"}:
+            value = str(item.get("text") or item.get("body") or "").strip()
+            if value:
+                texts.append(value[:500])
+    return "\n".join(texts[-4:])
+
+
+def _is_low_signal_no_evidence_input(body: str | None, recent_context: list[dict[str, Any]] | None) -> bool:
+    raw = str(body or "").strip()
+    compact = "".join(raw.split())
+    lowered = compact.lower()
+    if not compact:
+        return True
+    combined = f"{raw}\n{_customer_context_text(recent_context)}".lower()
+    if any(signal in combined for signal in _BUSINESS_SIGNALS):
+        return False
+    if lowered in _ASCII_LOW_SIGNAL or compact in _CJK_LOW_SIGNAL:
+        return True
+    if compact.isdigit() and len(compact) <= 6:
+        return True
+    if compact.isascii() and compact.isalpha() and len(compact) <= 8:
+        return True
+    if len(compact) <= 4:
+        return True
+    return False
+
+
 def _pre_provider_no_evidence_result(
     *,
+    body: str,
+    recent_context: list[dict[str, Any]] | None,
     runtime_context: dict[str, Any] | None,
     tracking_fact_evidence_present: bool,
 ) -> WebchatFastReplyResult | None:
@@ -219,6 +263,8 @@ def _pre_provider_no_evidence_result(
         return None
     knowledge_context = _knowledge_context(runtime_context)
     if knowledge_context.get("total_matches", 0) or knowledge_context.get("hits"):
+        return None
+    if _is_low_signal_no_evidence_input(body, recent_context):
         return None
     return WebchatFastReplyResult(
         ok=True,
@@ -348,6 +394,8 @@ async def generate_webchat_fast_reply(
         )
         return pre_provider_direct_answer
     no_evidence_result = _pre_provider_no_evidence_result(
+        body=body,
+        recent_context=recent_context,
         runtime_context=runtime_context,
         tracking_fact_evidence_present=evidence_present,
     )
