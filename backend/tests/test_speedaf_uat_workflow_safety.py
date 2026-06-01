@@ -24,6 +24,20 @@ def test_speedaf_readonly_uat_probe_does_not_inline_sensitive_dispatch_inputs():
     assert "inputs.caller_id" not in workflow
 
 
+def test_speedaf_legacy_uat_smoke_uses_secret_samples_only():
+    workflow = _workflow("speedaf-uat-smoke.yml")
+
+    assert "SPEEDAF_MCP_APP_CODE: ${{ secrets.SPEEDAF_UAT_MCP_APP_CODE }}" in workflow
+    assert "SPEEDAF_MCP_SECRET_KEY: ${{ secrets.SPEEDAF_UAT_MCP_SECRET_KEY }}" in workflow
+    assert "SPEEDAF_MCP_TEST_CALLER_ID: ${{ secrets.SPEEDAF_UAT_TEST_CALLER_ID }}" in workflow
+    assert "SPEEDAF_MCP_TEST_WAYBILL_CODE: ${{ secrets.SPEEDAF_UAT_TEST_WAYBILL_CODE }}" in workflow
+    assert "vars.SPEEDAF_UAT_TEST_CALLER_ID" not in workflow
+    assert "vars.SPEEDAF_UAT_TEST_WAYBILL_CODE" not in workflow
+    assert "secrets.SPEEDAF_UAT_APP_CODE" not in workflow
+    assert "secrets.SPEEDAF_UAT_SECRET_KEY" not in workflow
+    assert "variables SPEEDAF_UAT_TEST_CALLER_ID" not in workflow
+
+
 def test_speedaf_full_uat_probe_does_not_inline_sensitive_dispatch_inputs():
     workflow = _workflow("speedaf-full-uat-probe.yml")
 

@@ -132,10 +132,10 @@ jobs:
           text = path.read_text(encoding='utf-8')
           required = [
               'workflow_dispatch:',
-              'SPEEDAF_UAT_APP_CODE',
-              'SPEEDAF_UAT_SECRET_KEY',
-              'SPEEDAF_UAT_TEST_CALLER_ID',
-              'SPEEDAF_UAT_TEST_WAYBILL_CODE',
+              'secrets.SPEEDAF_UAT_MCP_APP_CODE',
+              'secrets.SPEEDAF_UAT_MCP_SECRET_KEY',
+              'secrets.SPEEDAF_UAT_TEST_CALLER_ID',
+              'secrets.SPEEDAF_UAT_TEST_WAYBILL_CODE',
               'smoke_speedaf_mcp_contract.sh',
               'Upload sanitized smoke report',
           ]
@@ -150,6 +150,10 @@ jobs:
               '/open-api/mcp/order/updateAddress',
               '/open-api/mcp/order/cancel',
               '/open-api/mcp/callData/voice/callBack',
+              'vars.SPEEDAF_UAT_TEST_CALLER_ID',
+              'vars.SPEEDAF_UAT_TEST_WAYBILL_CODE',
+              'secrets.SPEEDAF_UAT_APP_CODE',
+              'secrets.SPEEDAF_UAT_SECRET_KEY',
           ]
           found = [item for item in forbidden if item in text]
           if found:
