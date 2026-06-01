@@ -46,6 +46,10 @@ def production_env(**overrides: str) -> dict[str, str]:
         'WEBCHAT_WS_ADMIN_ENABLED': 'false',
         'WEBCHAT_WS_PUBLIC_ENABLED': 'false',
         'WEBCHAT_WS_BROKER': 'database',
+        'KNOWLEDGE_EMBEDDINGS_ENABLED': 'true',
+        'KNOWLEDGE_EMBEDDING_PROVIDER': 'openai_compatible',
+        'KNOWLEDGE_EMBEDDING_MODEL': 'text-embedding-3-small',
+        'KNOWLEDGE_EMBEDDING_API_KEY_FILE': '/run/secrets/knowledge_embedding_api_key',
     }
     env.update(overrides)
     return env
@@ -81,6 +85,8 @@ def test_production_settings_accept_hardened_contract(monkeypatch):
         ('OPENCLAW_CLI_FALLBACK_ENABLED', 'true', 'OPENCLAW_CLI_FALLBACK_ENABLED'),
         ('WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT', 'true', 'WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT'),
         ('WEBCHAT_KNOWLEDGE_REPLY_MODE', 'direct_answer', 'WEBCHAT_KNOWLEDGE_REPLY_MODE'),
+        ('KNOWLEDGE_EMBEDDINGS_ENABLED', 'false', 'KNOWLEDGE_EMBEDDINGS_ENABLED'),
+        ('KNOWLEDGE_EMBEDDING_PROVIDER', 'deterministic_hash', 'real embedding provider'),
         ('WEBCHAT_WS_BROKER', 'memory', 'WEBCHAT_WS_BROKER=memory'),
     ],
 )

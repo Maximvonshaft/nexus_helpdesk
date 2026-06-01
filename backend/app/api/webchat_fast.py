@@ -176,6 +176,14 @@ def _tracking_fact_public_payload(result: TrackingFactResult | None) -> dict[str
         "pii_redacted": result.pii_redacted,
         "failure_reason": result.failure_reason,
         "tracking_number_hash": metadata.get("tracking_number_hash"),
+        "truth_trace": {
+            "source": "speedaf_trusted_tracking_fact",
+            "tool_status": result.tool_status,
+            "fact_evidence_present": result.fact_evidence_present,
+            "pii_redacted": result.pii_redacted,
+            "tracking_number_hash": metadata.get("tracking_number_hash"),
+            "raw_tracking_number_exposed": False,
+        },
     }
     if result.fact_evidence_present and result.pii_redacted:
         if result.status:

@@ -11,6 +11,7 @@ from app.services.ai_runtime.schemas import FastAIProviderRequest, FastAIProvide
 from app.services.ai_runtime.safety_contract import redact_secret_text
 from app.services.ai_runtime.tool_intent import normalize_tool_intents
 from app.services.ai_runtime_probe.endpoint_guard import validate_probe_endpoint
+from app.settings import get_settings
 from app.services.webchat_fast_config import get_webchat_fast_settings
 
 
@@ -206,6 +207,8 @@ def test_webchat_fast_service_provider_runtime_uses_dispatcher(monkeypatch):
         )
     )
     legacy_router = AsyncMock(side_effect=AssertionError("provider_runtime must not enter legacy provider_router"))
+    monkeypatch.setenv("WEBCHAT_KNOWLEDGE_NO_EVIDENCE_FALLBACK_ENABLED", "false")
+    get_settings.cache_clear()
     monkeypatch.setattr(service, "get_webchat_fast_settings", lambda: Settings())
     monkeypatch.setattr(service, "dispatch_webchat_fast_reply", dispatcher)
     monkeypatch.setattr(service, "generate_fast_reply", legacy_router)
@@ -229,6 +232,7 @@ def test_webchat_fast_service_provider_runtime_uses_dispatcher(monkeypatch):
     assert forwarded.channel_key == "website"
     assert forwarded.session_id == "s1"
     assert forwarded.request_id == "r1"
+    get_settings.cache_clear()
 
 
 def test_legacy_provider_router_no_longer_dispatches_provider_runtime():

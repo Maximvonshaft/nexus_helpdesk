@@ -54,6 +54,7 @@ jobs:
           is_webcall_relevant_file() {
             case "$1" in
               .github/workflows/pr-webcall-guard.yml) return 0 ;;
+              .github/workflows/knowledge-runtime-eval.yml) return 0 ;;
               .github/workflows/speedaf-contract-gate.yml) return 0 ;;
               .github/workflows/speedaf-full-uat-probe.yml) return 0 ;;
               .gitignore) return 0 ;;
@@ -65,6 +66,7 @@ jobs:
               backend/alembic/versions/20260527_0035_webchat_handoff_control.py) return 0 ;;
               backend/alembic/versions/20260527_0038_webchat_inbox_read_state.py) return 0 ;;
               backend/alembic/versions/20260601_0046_knowledge_runtime_v2.py) return 0 ;;
+              backend/alembic/versions/20260601_0047_knowledge_runtime_pg_hybrid.py) return 0 ;;
               backend/app/api/admin_provider_credentials.py) return 0 ;;
               backend/app/api/admin_provider_runtime.py) return 0 ;;
               backend/app/api/admin_webcall_ai.py) return 0 ;;
@@ -144,6 +146,7 @@ jobs:
               backend/scripts/check_model_migration_drift.py) return 0 ;;
               backend/scripts/backfill_knowledge_embeddings.py) return 0 ;;
               backend/scripts/production_knowledge_runtime_fixup.py) return 0 ;;
+              backend/scripts/run_knowledge_eval.py) return 0 ;;
               backend/scripts/speedaf_full_uat_probe.py) return 0 ;;
               backend/tests/test_background_job_transaction_boundary.py) return 0 ;;
               backend/tests/test_channel_workbench_backend_contracts.py) return 0 ;;
@@ -157,6 +160,8 @@ jobs:
               backend/tests/test_knowledge_items.py) return 0 ;;
               backend/tests/test_knowledge_rag_runtime.py) return 0 ;;
               backend/tests/test_knowledge_runtime_context.py) return 0 ;;
+              backend/tests/test_knowledge_runtime_v3_contract.py) return 0 ;;
+              backend/tests/fixtures/knowledge_eval_cases.json) return 0 ;;
               backend/tests/test_knowledge_text_upload_encoding.py) return 0 ;;
               backend/tests/test_oauth_refresh_concurrency.py) return 0 ;;
               backend/tests/test_operator_queue_concurrency.py) return 0 ;;

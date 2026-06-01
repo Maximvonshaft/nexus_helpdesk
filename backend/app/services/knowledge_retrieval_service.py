@@ -6,7 +6,7 @@ import unicodedata
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable
 
-from sqlalchemy import or_
+from sqlalchemy import text, or_
 from sqlalchemy.orm import Session
 
 from ..models_control_plane import KnowledgeChunk, KnowledgeItem
@@ -226,6 +226,7 @@ def index_published_item(db: Session, item: KnowledgeItem) -> int:
                     "citation": item.citation_metadata_json or {},
                 },
                 search_vector=normalized,
+                lexical_config="simple",
                 embedding_status="pending",
                 retrieval_metadata_json={
                     "runtime": "hybrid_rag_v2",
@@ -243,6 +244,15 @@ def index_published_item(db: Session, item: KnowledgeItem) -> int:
     item.indexed_at = utc_now()
     item.chunk_count = len(chunks)
     db.flush()
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("""
+                UPDATE knowledge_chunks
+                SET search_tsvector = to_tsvector('simple', COALESCE(search_vector, normalized_text, chunk_text, ''))
+                WHERE item_id = :item_id AND published_version = :published_version
+            """),
+            {"item_id": item.id, "published_version": published_version},
+        )
     return len(chunks)
 
 

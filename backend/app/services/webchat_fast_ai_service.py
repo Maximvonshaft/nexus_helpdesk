@@ -44,7 +44,9 @@ class WebchatFastReplyResult:
     def to_response(self) -> dict[str, Any]:
         payload = asdict(self)
         payload.pop("recommended_agent_action", None)
-        payload.pop("rag_trace", None)
+        rag_trace = payload.pop("rag_trace", None)
+        if rag_trace:
+            payload["evidence_trace"] = rag_trace
         return payload
 
 
@@ -208,6 +210,34 @@ def _pre_provider_locked_fact_direct_answer_result(
     )
 
 
+def _pre_provider_no_evidence_result(
+    *,
+    runtime_context: dict[str, Any] | None,
+    tracking_fact_evidence_present: bool,
+) -> WebchatFastReplyResult | None:
+    if tracking_fact_evidence_present or not get_settings().webchat_knowledge_no_evidence_fallback_enabled:
+        return None
+    knowledge_context = _knowledge_context(runtime_context)
+    if knowledge_context.get("total_matches", 0) or knowledge_context.get("hits"):
+        return None
+    return WebchatFastReplyResult(
+        ok=True,
+        ai_generated=False,
+        reply_source="server_knowledge_no_evidence",
+        reply="I do not have verified knowledge for this request yet. A human teammate can review it and help you further.",
+        intent="handoff",
+        tracking_number=None,
+        handoff_required=True,
+        handoff_reason=knowledge_context.get("no_answer_reason") or "knowledge_no_evidence",
+        recommended_agent_action="review_no_evidence_customer_question",
+        ticket_creation_queued=False,
+        elapsed_ms=0,
+        rag_trace=summarize_rag_trace(runtime_context),
+        grounding_applied=False,
+        grounding_reason="pre_provider_no_evidence_fallback",
+    )
+
+
 def _apply_grounding(
     *,
     provider_result: FastAIProviderResult,
@@ -317,6 +347,18 @@ async def generate_webchat_fast_reply(
             elapsed_ms=pre_provider_direct_answer.elapsed_ms,
         )
         return pre_provider_direct_answer
+    no_evidence_result = _pre_provider_no_evidence_result(
+        runtime_context=runtime_context,
+        tracking_fact_evidence_present=evidence_present,
+    )
+    if no_evidence_result is not None:
+        record_fast_reply_metric(
+            status="ok",
+            intent=no_evidence_result.intent,
+            handoff_required=no_evidence_result.handoff_required,
+            elapsed_ms=no_evidence_result.elapsed_ms,
+        )
+        return no_evidence_result
 
     provider_request = FastAIProviderRequest(
         tenant_key=tenant_key,
