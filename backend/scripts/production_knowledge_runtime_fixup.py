@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT))
 
 from sqlalchemy import Text, text  # noqa: E402
 
+from app import models as _core_models  # noqa: F401,E402
 from app.db import SessionLocal  # noqa: E402
 from app.models_control_plane import KnowledgeChunk, KnowledgeItem, PersonaProfile, PersonaProfileVersion  # noqa: E402
 from app.services.knowledge_retrieval_service import index_published_item  # noqa: E402
