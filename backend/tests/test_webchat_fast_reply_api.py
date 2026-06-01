@@ -250,12 +250,15 @@ def test_fast_reply_chinese_waybill_uses_trusted_tracking_fact_without_provider(
     assert payload["ok"] is True
     assert payload["reply_source"] == "server_tracking_fact"
     assert payload["intent"] == "tracking"
-    assert payload["tracking_number"] == "CH020000006856"
+    assert payload["tracking_number"] is None
+    assert payload["tracking_number_suffix"] == "006856"
+    assert payload["tracking_number_hash"]
     assert payload["tracking_fact"]["fact_evidence_present"] is True
     assert payload["tracking_fact"]["tool_status"] == "success"
     assert payload["tracking_fact"]["truth_trace"]["source"] == "speedaf_trusted_tracking_fact"
     assert payload["tracking_fact"]["truth_trace"]["raw_tracking_number_exposed"] is False
     assert "CH020000006856" not in json.dumps(payload["tracking_fact"], ensure_ascii=False)
+    assert "CH020000006856" not in json.dumps(payload, ensure_ascii=False)
     assert calls[0]["tracking_number"] == "CH020000006856"
 
 
@@ -286,10 +289,13 @@ def test_fast_reply_extracted_waybill_failure_returns_safe_tracking_reply(monkey
     payload = response.json()
     assert payload["ok"] is True
     assert payload["reply_source"] == "server_tracking_fact_unavailable"
-    assert payload["tracking_number"] == "CH020000006856"
+    assert payload["tracking_number"] is None
+    assert payload["tracking_number_suffix"] == "006856"
+    assert payload["tracking_number_hash"]
     assert payload["handoff_required"] is True
     assert "请提供" not in payload["reply"]
     assert payload.get("error_code") != "all_providers_failed"
+    assert "CH020000006856" not in json.dumps(payload, ensure_ascii=False)
 
 
 def test_fast_reply_no_knowledge_evidence_returns_handoff_without_provider(monkeypatch):
@@ -336,7 +342,9 @@ def test_fast_reply_same_session_reuses_conversation_and_uses_server_context(mon
     assert second.status_code == 200
     assert len(seen_contexts) == 1
     assert second.json()["reply_source"] == "server_tracking_fact_unavailable"
-    assert second.json()["tracking_number"] == "SPX123456789CH"
+    assert second.json()["tracking_number"] is None
+    assert second.json()["tracking_number_suffix"] == "6789CH"
+    assert "SPX123456789CH" not in json.dumps(second.json(), ensure_ascii=False)
 
     db = SessionLocal()
     try:

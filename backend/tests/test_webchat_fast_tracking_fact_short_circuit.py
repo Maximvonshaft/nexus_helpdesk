@@ -27,6 +27,9 @@ def test_tracking_fact_forced_reply_payload_returns_grounded_status():
     assert payload["ai_generated"] is False
     assert payload["reply_source"] == "server_tracking_fact"
     assert payload["intent"] == "tracking"
+    assert payload["tracking_number"] is None
+    assert payload["tracking_number_suffix"] == "008030"
+    assert payload["tracking_number_hash"]
     assert payload["handoff_required"] is False
     assert payload["ticket_creation_queued"] is False
     assert "730" in payload["reply"]
