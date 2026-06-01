@@ -107,4 +107,10 @@ def match_support_hours_policy_reply(body: Any) -> dict[str, Any] | None:
         "elapsed_ms": 0,
         "error_code": None,
         "retry_after_ms": None,
+        "evidence_trace": {
+            "retrieval": "server_policy",
+            "source": "support_hours_policy",
+            "policy_evidence_present": True,
+            "raw_tracking_number_exposed": False,
+        },
     }

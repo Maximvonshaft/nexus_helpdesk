@@ -29,6 +29,8 @@ def test_support_hours_json_uses_full_fast_lane_pipeline():
     assert data["reply_source"] == "server_support_hours_policy"
     assert data["ai_generated"] is False
     assert data["handoff_required"] is False
+    assert data["evidence_trace"]["retrieval"] == "server_policy"
+    assert data["evidence_trace"]["source"] == "support_hours_policy"
     assert second.status_code == 200
     assert second.json()["idempotent"] is True
 
@@ -65,6 +67,9 @@ def test_support_hours_stream_matches_json_policy_and_persists(monkeypatch):
     assert response.headers["access-control-allow-origin"] == "http://localhost"
     text = response.text
     assert "server_support_hours_policy" in text
+    assert '"evidence_trace":' in text
+    assert '"retrieval":"server_policy"' in text
+    assert '"source":"support_hours_policy"' in text
     assert "event: reply_delta" in text
     assert "event: final" in text
 
@@ -73,6 +78,7 @@ def test_support_hours_stream_matches_json_policy_and_persists(monkeypatch):
         idem = db.execute(select(WebchatFastIdempotency)).scalar_one()
         assert idem.status == "done"
         assert idem.response_json["reply_source"] == "server_support_hours_policy"
+        assert idem.response_json["evidence_trace"]["source"] == "support_hours_policy"
         conversation = db.execute(select(WebchatConversation)).scalar_one()
         messages = db.execute(
             select(WebchatMessage)

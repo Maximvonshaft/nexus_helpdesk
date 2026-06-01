@@ -334,6 +334,45 @@ def test_fast_reply_no_knowledge_evidence_returns_handoff_without_provider(monke
     get_webchat_fast_settings.cache_clear()
 
 
+def test_fast_reply_provider_failure_returns_no_evidence_trace(monkeypatch):
+    async def fake_generate(**_kwargs):
+        return WebchatFastReplyResult(
+            ok=False,
+            ai_generated=False,
+            reply_source=None,
+            reply=None,
+            intent=None,
+            tracking_number=None,
+            handoff_required=True,
+            handoff_reason="all_providers_failed",
+            recommended_agent_action=None,
+            ticket_creation_queued=False,
+            elapsed_ms=42,
+            error_code="all_providers_failed",
+        )
+
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
+
+    response = client.post(
+        "/api/webchat/fast-reply",
+        json=_payload("provider-failure-safe-fallback", session_id="provider-failure-safe-session", body="Tell me about your services"),
+        headers={"Origin": "http://localhost"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["reply_source"] == "server_safe_fallback"
+    assert payload["handoff_required"] is True
+    assert payload["handoff_reason"] == "all_providers_failed"
+    assert payload["evidence_trace"]["retrieval"] == "no_evidence_fallback"
+    assert payload["evidence_trace"]["source"] == "server_safe_fallback"
+    assert payload["evidence_trace"]["fact_evidence_present"] is False
+    assert payload["evidence_trace"]["policy_evidence_present"] is False
+    assert payload["evidence_trace"]["no_answer_reason"] == "all_providers_failed"
+    assert payload["evidence_trace"]["raw_tracking_number_exposed"] is False
+
+
 def test_fast_reply_same_session_reuses_conversation_and_uses_server_context(monkeypatch):
     seen_contexts: list[list[dict]] = []
 

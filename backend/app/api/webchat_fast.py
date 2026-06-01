@@ -335,6 +335,31 @@ def _tracking_number_request_payload(*, body: str | None) -> dict[str, Any]:
     return {"ok": True, "ai_generated": False, "reply_source": "server_tracking_number_required", "reply": reply, "intent": "tracking", "tracking_number": None, "handoff_required": False, "handoff_reason": None, "ticket_creation_queued": False, "elapsed_ms": 0, "evidence_trace": _tracking_fact_evidence_trace(None, no_answer_reason="missing_tracking_number")}
 
 
+def _server_policy_evidence_trace(*, source: str, policy_reason: str | None = None) -> dict[str, Any]:
+    trace: dict[str, Any] = {
+        "retrieval": "server_policy",
+        "source": source,
+        "policy_evidence_present": True,
+        "raw_tracking_number_exposed": False,
+    }
+    if policy_reason:
+        trace["policy_reason"] = policy_reason
+    return trace
+
+
+def _server_no_evidence_trace(*, source: str, no_answer_reason: str | None = None) -> dict[str, Any]:
+    trace: dict[str, Any] = {
+        "retrieval": "no_evidence_fallback",
+        "source": source,
+        "fact_evidence_present": False,
+        "policy_evidence_present": False,
+        "raw_tracking_number_exposed": False,
+    }
+    if no_answer_reason:
+        trace["no_answer_reason"] = no_answer_reason
+    return trace
+
+
 def _should_attempt_fact_first_lookup(*, body: str | None, tracking_number: str | None, caller_id: str | None) -> bool:
     if tracking_number:
         return True
@@ -446,13 +471,15 @@ def _handoff_enqueue_failure_payload(result: Any) -> dict[str, Any]:
 
 
 def _server_handoff_response_payload(*, handoff_reason: str | None, customer_reply: str | None) -> dict[str, Any]:
-    return {"ok": True, "ai_generated": False, "reply_source": "server_handoff_policy", "reply": customer_reply or "A human teammate will review this request.", "intent": "handoff", "tracking_number": None, "handoff_required": True, "handoff_reason": handoff_reason or "server_policy_handoff_required", "ticket_creation_queued": False, "elapsed_ms": 0}
+    reason = handoff_reason or "server_policy_handoff_required"
+    return {"ok": True, "ai_generated": False, "reply_source": "server_handoff_policy", "reply": customer_reply or "A human teammate will review this request.", "intent": "handoff", "tracking_number": None, "handoff_required": True, "handoff_reason": reason, "ticket_creation_queued": False, "elapsed_ms": 0, "evidence_trace": _server_policy_evidence_trace(source="server_handoff_policy", policy_reason=reason)}
 
 
 def _provider_safe_fallback_payload(*, error_code: str | None, body: str | None) -> dict[str, Any]:
     zh = any("\u4e00" <= ch <= "\u9fff" for ch in (body or ""))
     reply = "助手暂时不可用，人工同事可以继续帮你核实这个请求。" if zh else "The assistant is temporarily unavailable. A human teammate can review this request."
-    return {"ok": True, "ai_generated": False, "reply_source": "server_safe_fallback", "reply": reply, "intent": "handoff", "tracking_number": None, "handoff_required": True, "handoff_reason": error_code or "provider_unavailable", "ticket_creation_queued": False, "elapsed_ms": 0}
+    reason = error_code or "provider_unavailable"
+    return {"ok": True, "ai_generated": False, "reply_source": "server_safe_fallback", "reply": reply, "intent": "handoff", "tracking_number": None, "handoff_required": True, "handoff_reason": reason, "ticket_creation_queued": False, "elapsed_ms": 0, "evidence_trace": _server_no_evidence_trace(source="server_safe_fallback", no_answer_reason=reason)}
 
 
 def _with_fast_public_session(db, conversation, payload: dict[str, Any]) -> dict[str, Any]:

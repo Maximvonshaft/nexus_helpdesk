@@ -37,3 +37,7 @@ def test_support_hours_policy_reply_contract():
     assert data["handoff_required"] is False
     assert data["ticket_creation_queued"] is False
     assert data["error_code"] is None
+    assert data["evidence_trace"]["retrieval"] == "server_policy"
+    assert data["evidence_trace"]["source"] == "support_hours_policy"
+    assert data["evidence_trace"]["policy_evidence_present"] is True
+    assert data["evidence_trace"]["raw_tracking_number_exposed"] is False
