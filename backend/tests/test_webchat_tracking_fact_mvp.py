@@ -31,6 +31,22 @@ def test_tracking_number_extraction_skips_plain_words_and_accepts_waybill():
     assert tracking_fact_service.extract_tracking_number("waybill abcd12345678 now") == "ABCD12345678"
 
 
+def test_tracking_number_extraction_handles_cjk_boundaries_and_dash_normalization():
+    examples = {
+        "CH020000006856": "CH020000006856",
+        "CH020000006856这是我的订单号": "CH020000006856",
+        "这是我的订单号CH020000006856": "CH020000006856",
+        "单号：CH020000006856": "CH020000006856",
+        "waybill CH020000006856": "CH020000006856",
+        "CH-020000006856": "CH020000006856",
+        "MA020001092814这是我的订单号": "MA020001092814",
+    }
+    for text, expected in examples.items():
+        assert tracking_fact_service.extract_tracking_number(text) == expected
+    assert tracking_fact_service.extract_tracking_number("订单 12345") is None
+    assert tracking_fact_service.extract_tracking_number("Speedaf customer service") is None
+
+
 def test_tracking_payload_redacts_pii_fields_and_raw_names():
     safe = sanitize_payload({
         "status": "delivered",

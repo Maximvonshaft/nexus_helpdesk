@@ -133,6 +133,14 @@ class Settings:
             self.webchat_ai_reconciler_interval_seconds = 30
         self.webchat_static_quick_replies_mode = os.getenv("WEBCHAT_STATIC_QUICK_REPLIES_MODE", "off").strip().lower() or "off"
         self.webchat_knowledge_reply_mode = os.getenv("WEBCHAT_KNOWLEDGE_REPLY_MODE", "ai_grounded").strip().lower() or "ai_grounded"
+        self.knowledge_runtime_version = os.getenv("KNOWLEDGE_RUNTIME_VERSION", "v2").strip().lower() or "v2"
+        self.knowledge_embeddings_enabled = _env_bool("KNOWLEDGE_EMBEDDINGS_ENABLED", False)
+        self.knowledge_embedding_provider = os.getenv("KNOWLEDGE_EMBEDDING_PROVIDER", "deterministic_hash").strip().lower() or "deterministic_hash"
+        self.knowledge_embedding_model = os.getenv("KNOWLEDGE_EMBEDDING_MODEL", "nexus-deterministic-hash-v1").strip()
+        self.knowledge_embedding_dim = int(os.getenv("KNOWLEDGE_EMBEDDING_DIM", "64"))
+        self.knowledge_embedding_batch_size = int(os.getenv("KNOWLEDGE_EMBEDDING_BATCH_SIZE", "32"))
+        self.knowledge_embedding_timeout_seconds = int(os.getenv("KNOWLEDGE_EMBEDDING_TIMEOUT_SECONDS", "20"))
+        self.knowledge_vector_fallback_allowed = _env_bool("KNOWLEDGE_VECTOR_FALLBACK_ALLOWED", True)
         self.webchat_tracking_fact_lookup_enabled = os.getenv("WEBCHAT_TRACKING_FACT_LOOKUP_ENABLED", "false").strip().lower() == "true"
         self.webchat_tracking_fact_source = os.getenv("WEBCHAT_TRACKING_FACT_SOURCE", "openclaw_bridge").strip().lower() or "openclaw_bridge"
         self.webchat_tracking_fact_timeout_seconds = int(os.getenv("WEBCHAT_TRACKING_FACT_TIMEOUT_SECONDS", "8"))
@@ -191,6 +199,14 @@ class Settings:
             raise RuntimeError("WEBCHAT_STATIC_QUICK_REPLIES_MODE must be off or legacy")
         if self.webchat_knowledge_reply_mode not in {"ai_grounded", "deterministic_direct_answer"}:
             raise RuntimeError("WEBCHAT_KNOWLEDGE_REPLY_MODE must be ai_grounded or deterministic_direct_answer")
+        if self.knowledge_runtime_version not in {"v2", "legacy"}:
+            raise RuntimeError("KNOWLEDGE_RUNTIME_VERSION must be v2 or legacy")
+        if self.knowledge_embedding_dim < 8 or self.knowledge_embedding_dim > 4096:
+            raise RuntimeError("KNOWLEDGE_EMBEDDING_DIM must be between 8 and 4096")
+        if self.knowledge_embedding_batch_size < 1 or self.knowledge_embedding_batch_size > 512:
+            raise RuntimeError("KNOWLEDGE_EMBEDDING_BATCH_SIZE must be between 1 and 512")
+        if self.knowledge_embedding_timeout_seconds < 1 or self.knowledge_embedding_timeout_seconds > 120:
+            raise RuntimeError("KNOWLEDGE_EMBEDDING_TIMEOUT_SECONDS must be between 1 and 120")
         if self.webchat_tracking_fact_source not in {"openclaw_bridge", "speedaf_api"}:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_SOURCE must be openclaw_bridge or speedaf_api")
         if self.webchat_tracking_fact_timeout_seconds < 1 or self.webchat_tracking_fact_timeout_seconds > 30:

@@ -18,7 +18,7 @@ from .tool_governance import record_tool_call
 LOGGER = logging.getLogger("nexusdesk")
 settings = get_settings()
 
-TRACKING_NUMBER_RE = re.compile(r"\b([A-Z0-9][A-Z0-9-]{7,34}[A-Z0-9])\b", re.IGNORECASE)
+TRACKING_NUMBER_RE = re.compile(r"(?<![A-Z0-9])([A-Z0-9][A-Z0-9-]{7,34}[A-Z0-9])(?![A-Z0-9])", re.IGNORECASE)
 
 
 def extract_tracking_number(*values: str | None) -> str | None:
@@ -27,7 +27,7 @@ def extract_tracking_number(*values: str | None) -> str | None:
         if not text:
             continue
         for match in TRACKING_NUMBER_RE.finditer(text):
-            candidate = match.group(1).strip().upper().replace("-", "")
+            candidate = re.sub(r"[-\u2010-\u2015\u2212]+", "", match.group(1).strip().upper())
             if _looks_like_tracking_number(candidate):
                 return candidate
     return None

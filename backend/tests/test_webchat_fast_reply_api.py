@@ -29,6 +29,7 @@ from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency
 from app.services.webchat_fast_rate_limit import reset_webchat_fast_rate_limit_for_tests
 from app.services.provider_runtime.registry import ProviderAdapter, ProviderRegistry
 from app.services.provider_runtime.schemas import ProviderResult
+from app.services.tracking_fact_schema import TrackingFactResult
 from app.webchat_models import WebchatConversation, WebchatMessage
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -209,10 +210,82 @@ def _ensure_provider_runtime_route(db) -> None:
             output_contract, timeout_ms, canary_percent, kill_switch, enabled, created_at, updated_at
         )
         VALUES (
-            :id, 'default', 'website', 'webchat_fast_reply', 'codex_app_server', '[]',
+            :id, 'default', 'website', 'webchat_fast_reply', 'codex_app_server', '["openclaw_responses","rule_engine"]',
             'speedaf_webchat_fast_reply_v1', 10000, 100, 0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
         )
     """), {"id": str(uuid4())})
+
+
+def test_fast_reply_chinese_waybill_uses_trusted_tracking_fact_without_provider(monkeypatch):
+    calls = []
+
+    def fake_lookup_fast_tracking_fact(**kwargs):
+        calls.append(kwargs)
+        return TrackingFactResult(
+            ok=True,
+            tracking_number=kwargs["tracking_number"],
+            status="10",
+            status_label="In transit",
+            checked_at="2026-06-01T00:00:00Z",
+            tool_status="success",
+            pii_redacted=True,
+            fact_evidence_present=True,
+        )
+
+    async def fail_if_provider_called(**_kwargs):
+        raise AssertionError("provider must not answer live parcel status")
+
+    monkeypatch.setattr(webchat_fast, "_lookup_fast_tracking_fact", fake_lookup_fast_tracking_fact)
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fail_if_provider_called)
+
+    response = client.post(
+        "/api/webchat/fast-reply",
+        json=_payload("tracking-chinese-1", session_id="tracking-chinese-session", body="CH020000006856这是我的订单号"),
+        headers={"Origin": "http://localhost"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["reply_source"] == "server_tracking_fact"
+    assert payload["intent"] == "tracking"
+    assert payload["tracking_number"] == "CH020000006856"
+    assert payload["tracking_fact"]["fact_evidence_present"] is True
+    assert payload["tracking_fact"]["tool_status"] == "success"
+    assert calls[0]["tracking_number"] == "CH020000006856"
+
+
+def test_fast_reply_extracted_waybill_failure_returns_safe_tracking_reply(monkeypatch):
+    def fake_lookup_fast_tracking_fact(**kwargs):
+        return TrackingFactResult(
+            ok=False,
+            tracking_number=kwargs["tracking_number"],
+            tool_status="timeout",
+            pii_redacted=True,
+            fact_evidence_present=False,
+            failure_reason="timeout",
+        )
+
+    async def fail_if_provider_called(**_kwargs):
+        raise AssertionError("provider must not handle live tracking failure")
+
+    monkeypatch.setattr(webchat_fast, "_lookup_fast_tracking_fact", fake_lookup_fast_tracking_fact)
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fail_if_provider_called)
+
+    response = client.post(
+        "/api/webchat/fast-reply",
+        json=_payload("tracking-chinese-fail", session_id="tracking-chinese-fail-session", body="CH020000006856这是我的订单号"),
+        headers={"Origin": "http://localhost"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["reply_source"] == "server_tracking_fact_unavailable"
+    assert payload["tracking_number"] == "CH020000006856"
+    assert payload["handoff_required"] is True
+    assert "请提供" not in payload["reply"]
+    assert payload.get("error_code") != "all_providers_failed"
 
 
 def test_fast_reply_same_session_reuses_conversation_and_uses_server_context(monkeypatch):
@@ -231,9 +304,9 @@ def test_fast_reply_same_session_reuses_conversation_and_uses_server_context(mon
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert len(seen_contexts) == 2
-    assert any(item["text"] == "Where is my parcel?" for item in seen_contexts[1])
-    assert any("tracking number" in item["text"].lower() for item in seen_contexts[1])
+    assert len(seen_contexts) == 1
+    assert second.json()["reply_source"] == "server_tracking_fact_unavailable"
+    assert second.json()["tracking_number"] == "SPX123456789CH"
 
     db = SessionLocal()
     try:
@@ -279,8 +352,12 @@ def test_fast_reply_provider_runtime_unavailable_returns_controlled_non_500(monk
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["ok"] is False
-    assert payload["error_code"] == "openclaw_responses_unavailable"
+    assert payload["ok"] is True
+    assert payload["reply_source"] == "server_safe_fallback"
+    assert payload["handoff_required"] is True
+    assert payload["handoff_reason"] == "openclaw_responses_unavailable"
+    assert payload["reply"]
+    assert payload.get("error_code") is None
 
 
 def test_fast_reply_provider_runtime_returns_published_business_sla_direct_answer(monkeypatch):

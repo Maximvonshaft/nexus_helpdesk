@@ -21,6 +21,7 @@ from app.schemas_control_plane import KnowledgeItemCreate, KnowledgePublishReque
 from app.services import knowledge_service, persona_service  # noqa: E402
 from app.services.ai_runtime_context import build_webchat_runtime_context  # noqa: E402
 from app.services.knowledge_retrieval_service import search_published_chunks  # noqa: E402
+from app.services.knowledge_runtime_v2 import retrieve_knowledge  # noqa: E402
 
 
 @pytest.fixture()
@@ -154,6 +155,8 @@ def test_runtime_context_includes_published_persona_and_safe_knowledge(db_sessio
     )
 
     assert context["persona_context"]["profile_key"] == "default.website.en"
+    assert context["knowledge_context"]["retrieval"] == "hybrid_rag_v2"
+    assert context["rag_trace"]["retrieval"] == "hybrid_rag_v2"
     assert context["knowledge_context"]["hits"][0]["item_key"] == "runtime.address"
     assert context["safety_policy"]["knowledge_scope"] == "policy_sop_faq_only"
     assert "tracking_fact_evidence_present=true" in context["safety_policy"]["tracking_truth_boundary"]
@@ -197,3 +200,34 @@ def test_runtime_context_includes_persona_identity_context_without_description(d
     assert identity["assistant_name"] == "悟空客服"
     assert identity["identity_statement"] == "我是猴王山的悟空客服，可以协助处理客户服务问题。"
     assert identity["capabilities"] == ["回答常见问题", "转人工"]
+
+
+def test_knowledge_runtime_v2_excludes_probe_knowledge_and_reports_trace(db_session):
+    admin = _user(db_session)
+    real = knowledge_service.create_item(
+        db_session,
+        _knowledge_payload(item_key="production.address", title="Address Change Policy", channel="website", priority=5, draft_body="客户可以在发出前申请改地址。", draft_normalized_text="客户 可以 发出 前 申请 改地址"),
+        admin,
+    )
+    probe = knowledge_service.create_item(
+        db_session,
+        _knowledge_payload(item_key="probe.address", title="[PROBE] Switzerland Address Change Fee", channel="website", priority=1),
+        admin,
+    )
+    probe.citation_metadata_json = {"probe_category": "static_kb_boundary", "seed_source": "probe_seed_v3"}
+    knowledge_service.publish_item(db_session, real, admin, notes="publish")
+    knowledge_service.publish_item(db_session, probe, admin, notes="publish")
+
+    result = retrieve_knowledge(
+        db_session,
+        query="我想改地址",
+        tenant_key="default",
+        channel="website",
+        audience_scope="customer",
+        limit=5,
+    )
+
+    assert result.trace["retrieval"] == "hybrid_rag_v2"
+    assert "structured_exact" in result.trace["retrieval_methods"] or "fts" in result.trace["retrieval_methods"]
+    assert [hit.item_key for hit in result.hits] == ["production.address"]
+    assert "[PROBE]" not in str(result.trace)
