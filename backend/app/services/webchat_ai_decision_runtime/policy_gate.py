@@ -101,18 +101,24 @@ def validate_ai_decision(
 ) -> PolicyGateResult:
     """Validate an AI decision before WebChat executes or returns it.
 
-    The policy gate is intentionally stricter than prompt instructions.  Prompt
+    The policy gate is intentionally stricter than prompt instructions. Prompt
     rules can shape behavior; this function is the backend authority.
     """
 
     violations: list[PolicyViolation] = []
     warnings: list[str] = []
     checked_tools: list[str] = []
+    evidence_present = _tracking_fact_evidence_present(tracking_fact_metadata)
+    live_tracking_claim = _contains_live_tracking_claim(decision.customer_reply)
 
     try:
         assert_customer_visible_reply_is_safe(decision.customer_reply)
     except FastReplyParseError as exc:
-        violations.append(PolicyViolation(code="unsafe_customer_reply", message=str(exc), risk_level="high"))
+        message = str(exc)
+        if decision.intent == "tracking" and evidence_present and live_tracking_claim and "unsafe business promise" in message:
+            warnings.append("tracking_status_claim_allowed_by_trusted_fact_evidence")
+        else:
+            violations.append(PolicyViolation(code="unsafe_customer_reply", message=message, risk_level="high"))
 
     if _raw_tracking_exposed(decision.customer_reply, tracking_number=tracking_number):
         violations.append(
@@ -131,8 +137,7 @@ def validate_ai_decision(
             )
         )
 
-    evidence_present = _tracking_fact_evidence_present(tracking_fact_metadata)
-    if decision.intent == "tracking" and _contains_live_tracking_claim(decision.customer_reply) and not evidence_present:
+    if decision.intent == "tracking" and live_tracking_claim and not evidence_present:
         violations.append(
             PolicyViolation(
                 code="tracking_status_without_trusted_fact",
