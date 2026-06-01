@@ -113,6 +113,7 @@ jobs:
               backend/app/services/storage.py) return 0 ;;
               backend/app/services/text_decoding.py) return 0 ;;
               backend/app/services/timeline_service.py) return 0 ;;
+              backend/app/services/tracking_fact_service.py) return 0 ;;
               backend/app/services/webcall_ai/participant_service.py) return 0 ;;
               backend/app/services/webcall_ai_production/**) return 0 ;;
               backend/app/services/webchat_ai_safe_service.py) return 0 ;;
@@ -159,6 +160,7 @@ jobs:
               backend/tests/test_knowledge_text_upload_encoding.py) return 0 ;;
               backend/tests/test_oauth_refresh_concurrency.py) return 0 ;;
               backend/tests/test_operator_queue_concurrency.py) return 0 ;;
+              backend/tests/test_persona_builder_contract.py) return 0 ;;
               backend/tests/test_persona_profiles.py) return 0 ;;
               backend/tests/test_production_settings_contract.py) return 0 ;;
               backend/tests/test_provider_runtime_codex_oauth_webchat.py) return 0 ;;
@@ -184,6 +186,7 @@ jobs:
               backend/tests/test_webchat_fast_production_legacy_guard.py) return 0 ;;
               backend/tests/test_webchat_fast_reply_api.py) return 0 ;;
               backend/tests/test_webchat_fast_reply_provider_runtime.py) return 0 ;;
+              backend/tests/test_webchat_tracking_fact_mvp.py) return 0 ;;
               backend/tests/test_webchat_handoff_control.py) return 0 ;;
               backend/tests/test_webchat_inbox_read_state.py) return 0 ;;
               backend/tests/test_webchat_round_b.py) return 0 ;;
