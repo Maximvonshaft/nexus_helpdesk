@@ -1,0 +1,114 @@
+name: knowledge-runtime-readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      waybill_code:
+        description: 'UAT waybill code for WebChat truth-routing readiness'
+        required: true
+        default: 'CH020000006856'
+        type: string
+      caller_id:
+        description: 'UAT callerID bound to the waybill'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  knowledge-runtime-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      PYTHONPATH: backend
+      APP_ENV: test
+      DATABASE_URL: sqlite:///./knowledge-runtime-readiness.db
+      AUTO_INIT_DB: "false"
+      SEED_DEMO_DATA: "false"
+      KNOWLEDGE_RUNTIME_VERSION: v2
+      KNOWLEDGE_EMBEDDINGS_ENABLED: "true"
+      KNOWLEDGE_EMBEDDING_PROVIDER: deterministic_hash
+      WEBCHAT_TRACKING_FACT_LOOKUP_ENABLED: "true"
+      WEBCHAT_TRACKING_FACT_SOURCE: speedaf_api
+      WEBCHAT_TRACKING_FACT_REDACTION_ENABLED: "true"
+      WEBCHAT_KNOWLEDGE_NO_EVIDENCE_FALLBACK_ENABLED: "true"
+      SPEEDAF_MCP_ENABLED: ${{ secrets.SPEEDAF_UAT_MCP_ENABLED }}
+      SPEEDAF_MCP_BASE_URL: ${{ secrets.SPEEDAF_UAT_MCP_BASE_URL }}
+      SPEEDAF_MCP_APP_CODE: ${{ secrets.SPEEDAF_UAT_MCP_APP_CODE }}
+      SPEEDAF_MCP_SECRET_KEY: ${{ secrets.SPEEDAF_UAT_MCP_SECRET_KEY }}
+      SPEEDAF_MCP_CONTENT_TYPE: ${{ vars.SPEEDAF_UAT_MCP_CONTENT_TYPE || 'text/plain' }}
+      SPEEDAF_MCP_DATA_MODE: ${{ vars.SPEEDAF_UAT_MCP_DATA_MODE || 'string' }}
+      SPEEDAF_MCP_REQUIRE_SIGN: ${{ vars.SPEEDAF_UAT_MCP_REQUIRE_SIGN || 'false' }}
+      SPEEDAF_MCP_TEST_WAYBILL_CODE: ${{ inputs.waybill_code }}
+      SPEEDAF_MCP_TEST_CALLER_ID: ${{ inputs.caller_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r backend/requirements.txt
+
+      - name: Prepare database
+        run: |
+          set -Eeuo pipefail
+          cd backend
+          alembic upgrade head
+
+      - name: Start backend
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts
+          cd backend
+          python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > ../artifacts/knowledge-runtime-server.log 2>&1 &
+          echo "$!" > ../artifacts/server.pid
+          for _ in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat ../artifacts/knowledge-runtime-server.log
+          exit 1
+
+      - name: Run knowledge runtime readiness probe
+        run: |
+          set -Eeuo pipefail
+          bash scripts/nexus_knowledge_runtime_v2_readiness_probe.sh | tee artifacts/knowledge-runtime-readiness.log
+
+      - name: Assert readiness log is sanitized
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          REPORT="artifacts/knowledge-runtime-readiness.log"
+          test -f "$REPORT"
+          if grep -E '${{ inputs.caller_id }}|${{ secrets.SPEEDAF_UAT_MCP_APP_CODE }}|${{ secrets.SPEEDAF_UAT_MCP_SECRET_KEY }}' "$REPORT" >/dev/null 2>&1; then
+            echo 'ERROR: readiness log contains sensitive material.'
+            exit 3
+          fi
+
+      - name: Stop backend
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          if [ -f artifacts/server.pid ]; then
+            kill "$(cat artifacts/server.pid)" >/dev/null 2>&1 || true
+          fi
+
+      - name: Upload readiness logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: knowledge-runtime-readiness
+          path: |
+            artifacts/knowledge-runtime-readiness.log
+            artifacts/knowledge-runtime-server.log
+          if-no-files-found: warn

@@ -17,7 +17,7 @@ PYTHONPATH=backend python - <<'PY'
 from app.services.tracking_fact_service import extract_tracking_number
 value = extract_tracking_number("CH020000006856这是我的订单号")
 assert value == "CH020000006856", value
-print("tracking_extraction=CH020000006856")
+print("tracking_extraction_ok=true")
 PY
 
 python backend/scripts/production_knowledge_runtime_fixup.py >/tmp/nexus_knowledge_fixup.json
@@ -64,9 +64,11 @@ curl -fsS -X POST "${BASE_URL}/api/webchat/fast-reply" \
 
 PYTHONPATH=backend python - <<'PY'
 import json
+import os
 payload=json.load(open("/tmp/nexus_fast_reply.json", encoding="utf-8"))
+waybill=os.environ.get("SPEEDAF_MCP_TEST_WAYBILL_CODE") or "CH020000006856"
 assert payload.get("reply_source") == "server_tracking_fact", payload
-assert payload.get("tracking_number") == "CH020000006856", payload
+assert payload.get("tracking_number") == waybill, payload
 assert payload.get("tracking_fact", {}).get("fact_evidence_present") is True, payload
 assert payload.get("tracking_fact", {}).get("truth_trace", {}).get("source") == "speedaf_trusted_tracking_fact", payload
 assert payload.get("tracking_fact", {}).get("truth_trace", {}).get("raw_tracking_number_exposed") is False, payload
