@@ -96,6 +96,10 @@ jobs:
             echo 'ERROR: readiness log contains callerID.'
             exit 3
           fi
+          if [ -n "${SPEEDAF_MCP_TEST_WAYBILL_CODE:-}" ] && grep -F "$SPEEDAF_MCP_TEST_WAYBILL_CODE" "$REPORT" >/dev/null 2>&1; then
+            echo 'ERROR: readiness log contains waybill code.'
+            exit 3
+          fi
           if grep -E '${{ secrets.SPEEDAF_UAT_MCP_APP_CODE }}|${{ secrets.SPEEDAF_UAT_MCP_SECRET_KEY }}' "$REPORT" >/dev/null 2>&1; then
             echo 'ERROR: readiness log contains sensitive material.'
             exit 3
