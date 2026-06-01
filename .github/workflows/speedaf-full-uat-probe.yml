@@ -3,18 +3,6 @@ name: speedaf-full-uat-probe
 on:
   workflow_dispatch:
     inputs:
-      waybill_code:
-        description: 'UAT waybill code for full Speedaf probe'
-        required: true
-        type: string
-      caller_id:
-        description: 'UAT callerID bound to the waybill'
-        required: true
-        type: string
-      whatsapp_phone:
-        description: 'UAT WhatsApp phone for updateAddress'
-        required: true
-        type: string
       country_code:
         description: 'Country code for waybillCode/query'
         required: true
@@ -48,6 +36,11 @@ jobs:
       SPEEDAF_CANCEL_ENABLED: 'true'
       SPEEDAF_VOICE_CALLBACK_ENABLED: 'true'
       SPEEDAF_FULL_UAT_WRITE_ACK: ${{ inputs.write_ack }}
+      SPEEDAF_FULL_UAT_WAYBILL_CODE: ${{ secrets.SPEEDAF_UAT_TEST_WAYBILL_CODE }}
+      SPEEDAF_FULL_UAT_CALLER_ID: ${{ secrets.SPEEDAF_UAT_TEST_CALLER_ID }}
+      SPEEDAF_FULL_UAT_WHATSAPP_PHONE: ${{ secrets.SPEEDAF_UAT_TEST_WHATSAPP_PHONE }}
+      SPEEDAF_FULL_UAT_COUNTRY_CODE: ${{ inputs.country_code }}
+      SPEEDAF_FULL_UAT_CANCEL_REASON: ${{ inputs.cancel_reason }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,12 +69,12 @@ jobs:
           set -Eeuo pipefail
           mkdir -p artifacts
           python backend/scripts/speedaf_full_uat_probe.py \
-            --waybill-code '${{ inputs.waybill_code }}' \
-            --caller-id '${{ inputs.caller_id }}' \
-            --whatsapp-phone '${{ inputs.whatsapp_phone }}' \
-            --country-code '${{ inputs.country_code }}' \
-            --cancel-reason '${{ inputs.cancel_reason }}' \
-            --write-ack '${{ inputs.write_ack }}' \
+            --waybill-code "$SPEEDAF_FULL_UAT_WAYBILL_CODE" \
+            --caller-id "$SPEEDAF_FULL_UAT_CALLER_ID" \
+            --whatsapp-phone "$SPEEDAF_FULL_UAT_WHATSAPP_PHONE" \
+            --country-code "$SPEEDAF_FULL_UAT_COUNTRY_CODE" \
+            --cancel-reason "$SPEEDAF_FULL_UAT_CANCEL_REASON" \
+            --write-ack "$SPEEDAF_FULL_UAT_WRITE_ACK" \
             --output-json artifacts/speedaf-full-uat-report.json
 
       - name: Assert full report is sanitized
@@ -90,10 +83,17 @@ jobs:
           set -Eeuo pipefail
           REPORT="artifacts/speedaf-full-uat-report.json"
           test -f "$REPORT"
-          if grep -E '${{ inputs.waybill_code }}|${{ inputs.caller_id }}|${{ inputs.whatsapp_phone }}|${{ secrets.SPEEDAF_UAT_MCP_APP_CODE }}|${{ secrets.SPEEDAF_UAT_MCP_SECRET_KEY }}' "$REPORT" >/dev/null 2>&1; then
-            echo 'ERROR: report contains sensitive material.'
-            exit 3
-          fi
+          for value in \
+            "$SPEEDAF_FULL_UAT_WAYBILL_CODE" \
+            "$SPEEDAF_FULL_UAT_CALLER_ID" \
+            "$SPEEDAF_FULL_UAT_WHATSAPP_PHONE" \
+            "$SPEEDAF_MCP_APP_CODE" \
+            "$SPEEDAF_MCP_SECRET_KEY"; do
+            if [ -n "$value" ] && grep -F "$value" "$REPORT" >/dev/null 2>&1; then
+              echo 'ERROR: report contains sensitive material.'
+              exit 3
+            fi
+          done
 
       - name: Upload redacted full UAT report
         uses: actions/upload-artifact@v4
