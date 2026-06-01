@@ -21,6 +21,7 @@ from app.schemas_control_plane import KnowledgeItemCreate, KnowledgePublishReque
 from app.services import knowledge_service, persona_service  # noqa: E402
 from app.services.ai_runtime_context import build_webchat_runtime_context  # noqa: E402
 from app.services.knowledge_retrieval_service import search_published_chunks  # noqa: E402
+from app.services.knowledge_runtime_v2 import runtime as knowledge_runtime  # noqa: E402
 from app.services.knowledge_runtime_v2 import retrieve_knowledge  # noqa: E402
 
 
@@ -231,3 +232,56 @@ def test_knowledge_runtime_v2_excludes_probe_knowledge_and_reports_trace(db_sess
     assert "structured_exact" in result.trace["retrieval_methods"] or "fts" in result.trace["retrieval_methods"]
     assert [hit.item_key for hit in result.hits] == ["production.address"]
     assert "[PROBE]" not in str(result.trace)
+
+
+def test_knowledge_runtime_v2_fails_closed_when_vector_fallback_is_disabled(monkeypatch, db_session):
+    admin = _user(db_session)
+    item = knowledge_service.create_item(
+        db_session,
+        _knowledge_payload(
+            item_key="production.vector.required",
+            title="Address Change Policy",
+            channel="website",
+            priority=5,
+            draft_body="Customers can change delivery address before dispatch only.",
+            draft_normalized_text="change delivery address before dispatch",
+        ),
+        admin,
+    )
+    knowledge_service.publish_item(db_session, item, admin, notes="publish")
+
+    monkeypatch.setattr(
+        knowledge_runtime,
+        "get_settings",
+        lambda: SimpleNamespace(
+            knowledge_embeddings_enabled=True,
+            knowledge_embedding_provider="openai_compatible",
+            knowledge_embedding_dim=1536,
+            knowledge_embedding_model="text-embedding-3-small",
+            knowledge_embedding_base_url="https://embedding.example/v1",
+            knowledge_embedding_api_key="not-used",
+            knowledge_embedding_api_key_file=None,
+            knowledge_embedding_timeout_seconds=5,
+            knowledge_vector_fallback_allowed=False,
+        ),
+    )
+    monkeypatch.setattr(
+        knowledge_runtime,
+        "get_embedding_provider",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("embedding_provider_unreachable")),
+    )
+
+    result = retrieve_knowledge(
+        db_session,
+        query="change delivery address",
+        tenant_key="default",
+        channel="website",
+        audience_scope="customer",
+        limit=5,
+    )
+
+    assert result.hits == []
+    assert result.no_answer_reason == "vector_retrieval_unavailable"
+    assert result.trace["evidence_selected"] == []
+    assert result.trace["vector"]["fallback_allowed"] is False
+    assert result.trace["vector"]["degraded_reason"] == "RuntimeError"
