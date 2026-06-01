@@ -2,11 +2,16 @@
 set -Eeuo pipefail
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
-WAYBILL="${SPEEDAF_MCP_TEST_WAYBILL_CODE:-CH020000006856}"
+WAYBILL="${SPEEDAF_MCP_TEST_WAYBILL_CODE:-}"
 CALLER_ID="${SPEEDAF_MCP_TEST_CALLER_ID:-}"
 
 echo "== Nexus Knowledge Runtime v2 readiness probe =="
 echo "base_url=${BASE_URL}"
+
+if [ -z "${WAYBILL}" ] || [ -z "${CALLER_ID}" ]; then
+  echo "ERROR: set SPEEDAF_MCP_TEST_WAYBILL_CODE and SPEEDAF_MCP_TEST_CALLER_ID from GitHub Secrets or a production secret store."
+  exit 2
+fi
 
 curl -fsS "${BASE_URL}/healthz" >/tmp/nexus_healthz.json
 curl -fsS "${BASE_URL}/readyz" >/tmp/nexus_readyz.json
@@ -66,7 +71,7 @@ PYTHONPATH=backend python - <<'PY'
 import json
 import os
 payload=json.load(open("/tmp/nexus_fast_reply.json", encoding="utf-8"))
-waybill=os.environ.get("SPEEDAF_MCP_TEST_WAYBILL_CODE") or "CH020000006856"
+waybill=os.environ["SPEEDAF_MCP_TEST_WAYBILL_CODE"]
 assert payload.get("reply_source") == "server_tracking_fact", payload
 assert payload.get("tracking_number") == waybill, payload
 assert payload.get("tracking_fact", {}).get("fact_evidence_present") is True, payload
