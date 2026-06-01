@@ -19,6 +19,7 @@ from .knowledge_prompt_service import summarize_rag_trace
 from .provider_runtime.webchat_fast_dispatcher import dispatch_webchat_fast_reply
 from .webchat_fast_config import get_webchat_fast_settings
 from .webchat_fast_reply_metrics import record_fast_reply_metric
+from .webchat_low_signal import classify_low_signal_customer_message
 
 
 @dataclass(frozen=True)
@@ -212,6 +213,8 @@ def _pre_provider_locked_fact_direct_answer_result(
 
 def _pre_provider_no_evidence_result(
     *,
+    body: str,
+    recent_context: list[dict[str, Any]] | None,
     runtime_context: dict[str, Any] | None,
     tracking_fact_evidence_present: bool,
 ) -> WebchatFastReplyResult | None:
@@ -220,6 +223,11 @@ def _pre_provider_no_evidence_result(
     knowledge_context = _knowledge_context(runtime_context)
     if knowledge_context.get("total_matches", 0) or knowledge_context.get("hits"):
         return None
+
+    low_signal = classify_low_signal_customer_message(body, recent_context)
+    if low_signal.is_low_signal:
+        return None
+
     return WebchatFastReplyResult(
         ok=True,
         ai_generated=False,
@@ -348,6 +356,8 @@ async def generate_webchat_fast_reply(
         )
         return pre_provider_direct_answer
     no_evidence_result = _pre_provider_no_evidence_result(
+        body=body,
+        recent_context=recent_context,
         runtime_context=runtime_context,
         tracking_fact_evidence_present=evidence_present,
     )
