@@ -3,14 +3,10 @@ name: knowledge-runtime-readiness
 on:
   workflow_dispatch:
     inputs:
-      waybill_code:
-        description: 'UAT waybill code for WebChat truth-routing readiness'
-        required: true
-        default: 'CH020000006856'
-        type: string
-      caller_id:
-        description: 'UAT callerID bound to the waybill'
-        required: true
+      country_code:
+        description: 'Country code used by Speedaf UAT truth-routing readiness'
+        required: false
+        default: 'CH'
         type: string
 
 permissions:
@@ -40,6 +36,9 @@ jobs:
       SPEEDAF_MCP_CONTENT_TYPE: ${{ vars.SPEEDAF_UAT_MCP_CONTENT_TYPE || 'text/plain' }}
       SPEEDAF_MCP_DATA_MODE: ${{ vars.SPEEDAF_UAT_MCP_DATA_MODE || 'string' }}
       SPEEDAF_MCP_REQUIRE_SIGN: ${{ vars.SPEEDAF_UAT_MCP_REQUIRE_SIGN || 'false' }}
+      SPEEDAF_MCP_TEST_WAYBILL_CODE: ${{ secrets.SPEEDAF_UAT_TEST_WAYBILL_CODE }}
+      SPEEDAF_MCP_TEST_CALLER_ID: ${{ secrets.SPEEDAF_UAT_TEST_CALLER_ID }}
+      SPEEDAF_MCP_COUNTRY_CODE_DEFAULT: ${{ inputs.country_code }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -79,22 +78,16 @@ jobs:
           exit 1
 
       - name: Run knowledge runtime readiness probe
-        env:
-          SPEEDAF_MCP_TEST_WAYBILL_CODE: ${{ secrets.SPEEDAF_UAT_TEST_WAYBILL_CODE || inputs.waybill_code }}
-          SPEEDAF_MCP_TEST_CALLER_ID: ${{ secrets.SPEEDAF_UAT_TEST_CALLER_ID || inputs.caller_id }}
         run: |
           set -Eeuo pipefail
           if [ -z "${SPEEDAF_MCP_TEST_WAYBILL_CODE:-}" ] || [ -z "${SPEEDAF_MCP_TEST_CALLER_ID:-}" ]; then
-            echo "ERROR: configure SPEEDAF_UAT_TEST_WAYBILL_CODE and SPEEDAF_UAT_TEST_CALLER_ID as secrets, or provide workflow inputs."
+            echo "ERROR: configure SPEEDAF_UAT_TEST_WAYBILL_CODE and SPEEDAF_UAT_TEST_CALLER_ID as GitHub Secrets."
             exit 2
           fi
           bash scripts/nexus_knowledge_runtime_v2_readiness_probe.sh | tee artifacts/knowledge-runtime-readiness.log
 
       - name: Assert readiness log is sanitized
         if: always()
-        env:
-          SPEEDAF_MCP_TEST_WAYBILL_CODE: ${{ secrets.SPEEDAF_UAT_TEST_WAYBILL_CODE || inputs.waybill_code }}
-          SPEEDAF_MCP_TEST_CALLER_ID: ${{ secrets.SPEEDAF_UAT_TEST_CALLER_ID || inputs.caller_id }}
         run: |
           set -Eeuo pipefail
           REPORT="artifacts/knowledge-runtime-readiness.log"
