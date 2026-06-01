@@ -1,48 +1,37 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, inspect, select, text
+from sqlalchemy import delete, select
 
 from app.api import webchat_fast
 from app.db import Base, SessionLocal, engine
 from app.main import app
-from app.models import BackgroundJob, Ticket
+from app.models import Customer, Ticket
 from app.services.tracking_fact_schema import TrackingFactResult
-from app.services import webchat_fast_stream_service
+from app.services.webchat_fast_ai_service import WebchatFastReplyResult
 from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency
-from app.services.webchat_fast_stream_service import StreamBeginOutcome, sse_event
-from app.services.webchat_openclaw_stream_adapter import Completed, ContentDelta
+from app.services.webchat_fast_stream_service import StreamBeginOutcome
+from app.webchat_models import WebchatConversation, WebchatHandoffRequest, WebchatMessage
 
 pytestmark = pytest.mark.fast_lane_v2_2_2
 
 client = TestClient(app)
 
 
-def _ensure_fast_lane_test_schema() -> None:
-    Base.metadata.create_all(bind=engine)
-    inspector = inspect(engine)
-    if "tickets" not in inspector.get_table_names():
-        return
-
-    columns = {col["name"] for col in inspector.get_columns("tickets")}
-    indexes = {idx["name"] for idx in inspector.get_indexes("tickets")}
-    with engine.begin() as conn:
-        if "source_dedupe_key" not in columns:
-            conn.execute(text("ALTER TABLE tickets ADD COLUMN source_dedupe_key VARCHAR(300)"))
-        if "ux_tickets_source_dedupe_key" not in indexes:
-            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_tickets_source_dedupe_key ON tickets(source_dedupe_key)"))
-
-
 def setup_function():
-    _ensure_fast_lane_test_schema()
+    Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        db.execute(delete(BackgroundJob))
-        db.execute(delete(Ticket))
         db.execute(delete(WebchatFastIdempotency))
+        db.execute(delete(WebchatHandoffRequest))
+        db.execute(delete(WebchatMessage))
+        db.execute(delete(WebchatConversation))
+        db.execute(delete(Ticket))
+        db.execute(delete(Customer))
         db.commit()
     finally:
         db.close()
@@ -68,51 +57,44 @@ def _settings(enabled: bool = True):
     )
 
 
-def _runtime_context_with_evidence() -> dict:
-    return {
-        "knowledge_context": {
-            "retrieval": "hybrid_rag_v2",
-            "candidate_count": 1,
-            "total_matches": 1,
-            "retrieval_methods": ["structured_exact"],
-            "hits": [
-                {
-                    "item_key": "fact.shipping_sla",
-                    "title": "Shipping SLA",
-                    "score": 1.0,
-                    "retrieval_method": "structured_exact",
-                    "answer_mode": "direct_answer",
-                    "direct_answer": "Shipping takes 3-5 business days.",
-                    "text": "Shipping takes 3-5 business days.",
-                }
-            ],
-            "evidence_pack": [
-                {
-                    "item_key": "fact.shipping_sla",
-                    "title": "Shipping SLA",
-                    "source_version": 3,
-                    "chunk_index": 0,
-                    "score": 1.0,
-                    "retrieval_method": "structured_exact",
-                    "citation": {"label": "KB"},
-                }
-            ],
-        }
-    }
+def _parse_sse(body: str) -> list[tuple[str, dict]]:
+    events: list[tuple[str, dict]] = []
+    for block in body.split("\n\n"):
+        if not block.strip():
+            continue
+        event = "message"
+        data_lines: list[str] = []
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                event = line.split(":", 1)[1].strip()
+            elif line.startswith("data:"):
+                data_lines.append(line.split(":", 1)[1].lstrip())
+        if data_lines:
+            events.append((event, json.loads("\n".join(data_lines))))
+    return events
 
 
-def _runtime_context_without_evidence() -> dict:
-    return {
-        "knowledge_context": {
-            "retrieval": "hybrid_rag_v2",
-            "candidate_count": 0,
-            "total_matches": 0,
-            "retrieval_methods": [],
-            "hits": [],
-            "evidence_pack": [],
-            "no_answer_reason": "no_evidence",
-        }
-    }
+def _ai_reply(
+    text: str,
+    *,
+    intent: str = "general_support",
+    handoff: bool = False,
+    handoff_reason: str | None = None,
+    tracking: str | None = None,
+) -> WebchatFastReplyResult:
+    return WebchatFastReplyResult(
+        ok=True,
+        ai_generated=True,
+        reply_source="openclaw_responses",
+        reply=text,
+        intent=intent,
+        tracking_number=tracking,
+        handoff_required=handoff,
+        handoff_reason=handoff_reason or ("customer_requested_human_review" if handoff else None),
+        recommended_agent_action="Review the conversation and reply with verified information." if handoff else None,
+        ticket_creation_queued=False,
+        elapsed_ms=20,
+    )
 
 
 def test_stream_feature_flag_disabled(monkeypatch):
@@ -127,141 +109,101 @@ def test_stream_feature_flag_disabled(monkeypatch):
     assert response.json()["error_code"] == "stream_disabled"
 
 
-def test_successful_stream_contract(monkeypatch):
-    async def fake_stream(**kwargs):
-        yield sse_event("meta", {"replayed": False})
-        yield sse_event("reply_delta", {"text": "Hello"})
-        yield sse_event("final", {"intent": "greeting", "handoff_required": False, "ticket_creation_queued": False})
+def test_successful_stream_contract_uses_ai_decision_runtime(monkeypatch):
+    async def fake_generate(**kwargs):
+        assert kwargs["body"] == "Hi"
+        return _ai_reply("Hello. How can I help you today?", intent="general_support")
 
     monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", lambda: _settings(True))
     monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
-    monkeypatch.setattr(
-        webchat_fast,
-        "prepare_webchat_fast_stream",
-        lambda **kwargs: StreamBeginOutcome(status="owner", request_hash="h", row_id=1),
-    )
-    monkeypatch.setattr(webchat_fast, "_webchat_fast_runtime_context", lambda **_kwargs: _runtime_context_with_evidence())
-    monkeypatch.setattr(webchat_fast, "stream_webchat_fast_reply_events", fake_stream)
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
 
     response = client.post(
         "/api/webchat/fast-reply/stream",
-        json=_payload(),
+        json=_payload("client-stream-success", body="Hi"),
         headers={"Accept": "text/event-stream"},
     )
 
     assert response.status_code == 200
     assert "text/event-stream" in response.headers["content-type"]
-    body = response.text
-    assert "event: meta" in body
-    assert "event: reply_delta" in body
-    assert '"text":"Hello"' in body
-    assert "event: final" in body
-    assert '"intent":"greeting"' in body
-    assert '"reply"' not in body.split("event: final", 1)[1]
-    assert '{"reply"' not in body
+    events = _parse_sse(response.text)
+    assert [event for event, _payload in events] == ["meta", "final", "reply_delta"]
+    final = [payload for event, payload in events if event == "final"][0]
+    assert final["ok"] is True
+    assert final["ai_generated"] is True
+    assert final["reply_source"] == "openclaw_responses"
+    assert final["handoff_required"] is False
+    assert final["ai_decision_trace"]["schema_version"] == "webchat_ai_decision_v1"
+    assert final["ai_decision_trace"]["policy_gate"]["ok"] is True
+    assert "reply" not in final
+    assert [payload for event, payload in events if event == "reply_delta"][0]["text"] == "Hello. How can I help you today?"
 
 
-def test_stream_error_contract(monkeypatch):
-    async def fake_stream(**kwargs):
-        yield sse_event("meta", {"replayed": False})
-        yield sse_event("error", {"error_code": "ai_invalid_output", "retry_after_ms": 1500})
+def test_stream_provider_failure_returns_safe_final_without_500(monkeypatch):
+    async def fake_generate(**kwargs):
+        return WebchatFastReplyResult(
+            ok=False,
+            ai_generated=False,
+            reply_source=None,
+            reply=None,
+            intent=None,
+            tracking_number=None,
+            handoff_required=False,
+            handoff_reason=None,
+            recommended_agent_action=None,
+            ticket_creation_queued=False,
+            elapsed_ms=30,
+            error_code="ai_unavailable",
+        )
 
     monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", lambda: _settings(True))
     monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
-    monkeypatch.setattr(
-        webchat_fast,
-        "prepare_webchat_fast_stream",
-        lambda **kwargs: StreamBeginOutcome(status="owner", request_hash="h", row_id=1),
-    )
-    monkeypatch.setattr(webchat_fast, "_webchat_fast_runtime_context", lambda **_kwargs: _runtime_context_with_evidence())
-    monkeypatch.setattr(webchat_fast, "stream_webchat_fast_reply_events", fake_stream)
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
 
     response = client.post(
         "/api/webchat/fast-reply/stream",
-        json=_payload("client-stream-error"),
+        json=_payload("client-stream-fallback", body="What services do you offer?"),
         headers={"Accept": "text/event-stream"},
     )
+
     assert response.status_code == 200
-    assert "event: error" in response.text
-    assert "ai_invalid_output" in response.text
+    events = _parse_sse(response.text)
+    final = [payload for event, payload in events if event == "final"][0]
+    assert final["reply_source"] == "server_safe_fallback"
+    assert final["ai_generated"] is False
+    assert final["handoff_required"] is True
+    assert final["ai_decision_trace"]["mode"] in {"emergency_fallback_only", "gated"}
     assert "OpenClaw" not in response.text
 
 
-def test_stream_provider_receives_knowledge_context_and_returns_evidence_trace(monkeypatch):
-    seen: dict[str, str] = {}
-    runtime_context = _runtime_context_with_evidence()
+def test_stream_no_evidence_low_signal_still_calls_ai_decision(monkeypatch):
+    calls = {"ai": 0}
 
-    async def fake_call_openclaw_responses_stream(**kwargs):
-        seen["input_text"] = kwargs["input_text"]
-        yield Completed(full_text='{"reply":"Shipping takes 3-5 business days.","intent":"other","tracking_number":null,"handoff_required":false,"handoff_reason":null,"recommended_agent_action":null}')
+    async def fake_generate(**kwargs):
+        calls["ai"] += 1
+        return _ai_reply("Please tell me what you need help with.", intent="unclear")
 
     monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", lambda: _settings(True))
     monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
-    monkeypatch.setattr(webchat_fast, "_webchat_fast_runtime_context", lambda **_kwargs: runtime_context)
-    monkeypatch.setattr(webchat_fast_stream_service.openclaw_client, "call_openclaw_responses_stream", fake_call_openclaw_responses_stream)
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
 
     response = client.post(
         "/api/webchat/fast-reply/stream",
-        json=_payload("client-stream-rag-evidence", body="What is the shipping SLA?"),
+        json=_payload("client-stream-low-signal", body="321"),
         headers={"Accept": "text/event-stream"},
     )
 
     assert response.status_code == 200
     text = response.text
-    assert "Knowledge context" in seen["input_text"]
-    assert "Shipping takes 3-5 business days." in seen["input_text"]
-    assert '"reply_source":"openclaw_responses_stream"' in text
-    assert '"evidence_trace":' in text
-    assert '"retrieval":"hybrid_rag_v2"' in text
-    assert '"item_key":"fact.shipping_sla"' in text
-
-    db = SessionLocal()
-    try:
-        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == "client-stream-rag-evidence")).scalar_one()
-        assert row.status == "done"
-        assert row.response_json["evidence_trace"]["retrieval"] == "hybrid_rag_v2"
-        assert row.response_json["evidence_trace"]["evidence_pack"][0]["item_key"] == "fact.shipping_sla"
-    finally:
-        db.close()
+    assert '"reply_source":"openclaw_responses"' in text
+    assert '"ai_generated":true' in text
+    assert '"handoff_required":false' in text
+    assert '"ai_decision_trace":' in text
+    assert '"server_knowledge_no_evidence"' not in text
+    assert calls == {"ai": 1}
 
 
-def test_stream_no_knowledge_evidence_returns_server_owned_fallback_without_provider(monkeypatch):
-    async def fail_if_stream_provider_called(**_kwargs):
-        raise AssertionError("stream provider must not answer without knowledge evidence")
-        yield ""  # pragma: no cover
-
-    monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", lambda: _settings(True))
-    monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
-    monkeypatch.setattr(webchat_fast, "_webchat_fast_runtime_context", lambda **_kwargs: _runtime_context_without_evidence())
-    monkeypatch.setattr(webchat_fast, "stream_webchat_fast_reply_events", fail_if_stream_provider_called)
-
-    response = client.post(
-        "/api/webchat/fast-reply/stream",
-        json=_payload("client-stream-no-evidence", body="What services do you offer?"),
-        headers={"Accept": "text/event-stream"},
-    )
-
-    assert response.status_code == 200
-    text = response.text
-    assert '"reply_source":"server_knowledge_no_evidence"' in text
-    assert '"ai_generated":false' in text
-    assert '"handoff_required":true' in text
-    assert '"evidence_trace":' in text
-    assert '"retrieval":"hybrid_rag_v2"' in text
-    assert '"no_answer_reason":"no_evidence"' in text
-    assert "openclaw_responses_stream" not in text
-
-    db = SessionLocal()
-    try:
-        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == "client-stream-no-evidence")).scalar_one()
-        assert row.status == "done"
-        assert row.response_json["reply_source"] == "server_knowledge_no_evidence"
-        assert row.response_json["evidence_trace"]["no_answer_reason"] == "no_evidence"
-    finally:
-        db.close()
-
-
-def test_stream_tracking_fact_failure_returns_server_owned_safe_reply(monkeypatch):
+def test_stream_tracking_status_claim_without_fact_is_policy_blocked(monkeypatch):
     def fake_lookup_fast_tracking_fact(**kwargs):
         return TrackingFactResult(
             ok=False,
@@ -272,93 +214,79 @@ def test_stream_tracking_fact_failure_returns_server_owned_safe_reply(monkeypatc
             failure_reason="timeout",
         )
 
-    async def fail_if_stream_provider_called(**_kwargs):
-        raise AssertionError("stream provider must not handle live tracking failure")
-        yield ""  # pragma: no cover
+    async def fake_generate(**kwargs):
+        return _ai_reply("Your parcel ending 006856 is delivered.", intent="tracking", tracking="CH020000006856")
 
     monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", lambda: _settings(True))
     monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
     monkeypatch.setattr(webchat_fast, "_lookup_fast_tracking_fact", fake_lookup_fast_tracking_fact)
-    monkeypatch.setattr(webchat_fast, "stream_webchat_fast_reply_events", fail_if_stream_provider_called)
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
 
     response = client.post(
         "/api/webchat/fast-reply/stream",
-        json=_payload("client-stream-tracking-fail", body="CH020000006856这是我的订单号"),
+        json=_payload("client-stream-tracking-blocked", body="CH020000006856这是我的订单号"),
         headers={"Accept": "text/event-stream"},
     )
 
     assert response.status_code == 200
     text = response.text
-    assert "event: meta" in text
-    assert '"reply_source":"server_tracking_fact_unavailable"' in text
-    assert "event: reply_delta" in text
-    assert "event: final" in text
-    assert '"tracking_number":null' in text
-    assert '"tracking_number_suffix":"006856"' in text
-    assert '"tracking_number_hash":"' in text
-    assert '"evidence_trace":' in text
-    assert '"retrieval":"trusted_tracking_fact"' in text
-    assert '"fact_evidence_present":false' in text
-    assert '"no_answer_reason":"timeout"' in text
+    assert '"reply_source":"server_safe_fallback"' in text
+    assert '"handoff_required":true' in text
+    assert '"policy_gate":{"ok":false' in text
     assert '"raw_tracking_number_exposed":false' in text
     assert "CH020000006856" not in text
-    assert "all_providers_failed" not in text
 
 
 def test_active_processing_returns_202_before_streaming(monkeypatch):
-    calls = {"stream": 0}
+    calls = {"ai": 0}
 
-    async def fake_stream(**kwargs):
-        calls["stream"] += 1
-        yield sse_event("reply_delta", {"text": "should not run"})
+    async def fake_generate(**kwargs):
+        calls["ai"] += 1
+        return _ai_reply("should not run")
 
     monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", lambda: _settings(True))
     monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
     monkeypatch.setattr(
         webchat_fast,
         "prepare_webchat_fast_stream",
-        lambda **kwargs: StreamBeginOutcome(status="processing", request_hash="h", error_code="request_processing"),
+        lambda **kwargs: StreamBeginOutcome(status="processing", request_hash="h"),
     )
-    monkeypatch.setattr(webchat_fast, "stream_webchat_fast_reply_events", fake_stream)
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
 
     response = client.post(
         "/api/webchat/fast-reply/stream",
-        json=_payload("client-processing"),
+        json=_payload("client-stream-processing"),
         headers={"Accept": "text/event-stream"},
     )
     assert response.status_code == 202
     assert response.json()["error_code"] == "request_processing"
-    assert calls["stream"] == 0
+    assert calls == {"ai": 0}
 
 
-def test_partial_delta_then_invalid_final_marks_failed_without_ticket_or_handoff(monkeypatch):
-    async def fake_call_openclaw_responses_stream(**kwargs):
-        yield ContentDelta('{"reply":"Hello there, I can help with that.","intent":"greeting","tracking_number":null,"handoff_required":')
-        yield Completed(full_text='{"reply":"Hello there, I can help with that.","intent":"greeting","tracking_number":null,"handoff_required":"bad","handoff_reason":null,"recommended_agent_action":null}')
+def test_stream_idempotent_replay_not_polluted_by_fallback(monkeypatch):
+    calls = {"ai": 0}
+
+    async def fake_generate(**kwargs):
+        calls["ai"] += 1
+        return _ai_reply("Hello from one stream run.", intent="general_support")
 
     monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", lambda: _settings(True))
     monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
-    monkeypatch.setattr(webchat_fast, "_webchat_fast_runtime_context", lambda **_kwargs: _runtime_context_with_evidence())
-    monkeypatch.setattr(webchat_fast_stream_service.openclaw_client, "call_openclaw_responses_stream", fake_call_openclaw_responses_stream)
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
 
-    response = client.post(
-        "/api/webchat/fast-reply/stream",
-        json=_payload("client-invalid-final"),
-        headers={"Accept": "text/event-stream"},
-    )
+    payload = _payload("client-stream-idempotent", body="Hi")
+    first = client.post("/api/webchat/fast-reply/stream", json=payload, headers={"Accept": "text/event-stream"})
+    second = client.post("/api/webchat/fast-reply/stream", json=payload, headers={"Accept": "text/event-stream"})
 
-    assert response.status_code == 200
-    assert "event: reply_delta" not in response.text
-    assert "event: error" in response.text
-    assert "ai_invalid_output" in response.text
-    assert "event: final" not in response.text
-
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert '"replayed":true' in second.text
+    assert calls == {"ai": 1}
     db = SessionLocal()
     try:
-        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == "client-invalid-final")).scalar_one()
-        assert row.status == "failed"
-        assert row.error_code == "ai_invalid_output"
-        assert db.execute(select(Ticket)).scalars().all() == []
-        assert db.execute(select(BackgroundJob)).scalars().all() == []
+        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == "client-stream-idempotent")).scalar_one()
+        assert row.status == "done"
+        assert row.response_json["reply_source"] == "openclaw_responses"
+        assert row.response_json["ai_decision_trace"]["policy_gate"]["ok"] is True
     finally:
         db.close()
