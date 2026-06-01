@@ -7,6 +7,8 @@ Create Date: 2026-06-01
 
 from __future__ import annotations
 
+import os
+
 import sqlalchemy as sa
 from alembic import op
 
@@ -20,11 +22,20 @@ def _is_postgres() -> bool:
     return op.get_bind().dialect.name == "postgresql"
 
 
+def _embedding_dim() -> int:
+    value = os.getenv("KNOWLEDGE_EMBEDDING_DIM", "").strip()
+    if value.isdigit():
+        parsed = int(value)
+        if 1 <= parsed <= 2000:
+            return parsed
+    return 1536
+
+
 def upgrade() -> None:
     if _is_postgres():
         op.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
         op.execute(sa.text("ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS search_tsvector tsvector"))
-        op.execute(sa.text("ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS embedding_vector vector(1536)"))
+        op.execute(sa.text(f"ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS embedding_vector vector({_embedding_dim()})"))
     else:
         op.add_column("knowledge_chunks", sa.Column("search_tsvector", sa.Text(), nullable=True))
         op.add_column("knowledge_chunks", sa.Column("embedding_vector", sa.Text(), nullable=True))
