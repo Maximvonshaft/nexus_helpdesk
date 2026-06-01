@@ -55,7 +55,7 @@ if [ -n "${CALLER_ID}" ]; then
   PYTHONPATH=backend python - <<PY
 from app.services.tracking_fact_service import lookup_tracking_fact
 result = lookup_tracking_fact(tracking_number="${WAYBILL}", caller_id="${CALLER_ID}", request_id="knowledge-runtime-v2-readiness")
-assert result.ok and result.fact_evidence_present and result.tool_status == "success", result
+assert result.ok and result.fact_evidence_present and result.tool_status == "success", "speedaf_direct_lookup_failed"
 print("speedaf_direct_lookup_ok=true")
 PY
 else
@@ -72,14 +72,24 @@ import json
 import os
 payload=json.load(open("/tmp/nexus_fast_reply.json", encoding="utf-8"))
 waybill=os.environ["SPEEDAF_MCP_TEST_WAYBILL_CODE"]
-assert payload.get("reply_source") == "server_tracking_fact", payload
-assert payload.get("tracking_number") == waybill, payload
-assert payload.get("tracking_fact", {}).get("fact_evidence_present") is True, payload
-assert payload.get("tracking_fact", {}).get("truth_trace", {}).get("source") == "speedaf_trusted_tracking_fact", payload
-assert payload.get("tracking_fact", {}).get("truth_trace", {}).get("raw_tracking_number_exposed") is False, payload
-assert payload.get("error_code") != "all_providers_failed", payload
+def safe_payload():
+    text=json.dumps(payload, ensure_ascii=False)
+    caller=os.environ.get("SPEEDAF_MCP_TEST_CALLER_ID") or ""
+    for secret in (waybill, caller):
+        if secret:
+            text=text.replace(secret, "[REDACTED]")
+    return text
+def require(condition, message):
+    if not condition:
+        raise AssertionError(f"{message}: {safe_payload()}")
+require(payload.get("reply_source") == "server_tracking_fact", "reply_source_not_server_tracking_fact")
+require(payload.get("tracking_number") == waybill, "tracking_number_mismatch")
+require(payload.get("tracking_fact", {}).get("fact_evidence_present") is True, "tracking_fact_evidence_missing")
+require(payload.get("tracking_fact", {}).get("truth_trace", {}).get("source") == "speedaf_trusted_tracking_fact", "truth_trace_source_mismatch")
+require(payload.get("tracking_fact", {}).get("truth_trace", {}).get("raw_tracking_number_exposed") is False, "raw_tracking_number_exposed")
+require(payload.get("error_code") != "all_providers_failed", "provider_failure_leaked")
 text=json.dumps(payload, ensure_ascii=False)
-assert "猴王山" not in text and "[PROBE]" not in text, text
+require("猴王山" not in text and "[PROBE]" not in text, "production_data_hygiene_failed")
 print("fast_reply_truth_routing_ok=true")
 PY
 

@@ -60,6 +60,8 @@ def test_knowledge_runtime_readiness_does_not_inline_sensitive_dispatch_inputs()
     assert "SPEEDAF_MCP_TEST_CALLER_ID: ${{ secrets.SPEEDAF_UAT_TEST_CALLER_ID }}" in workflow
     assert "configure SPEEDAF_UAT_TEST_WAYBILL_CODE and SPEEDAF_UAT_TEST_CALLER_ID as GitHub Secrets" in workflow
     assert "Assert readiness log is sanitized" in workflow
+    assert "readiness log contains waybill code" in workflow
+    assert 'grep -F "$SPEEDAF_MCP_TEST_WAYBILL_CODE" "$REPORT"' in workflow
     assert "inputs.waybill_code" not in workflow
     assert "inputs.caller_id" not in workflow
     assert "CH020000006856" not in workflow
@@ -72,3 +74,6 @@ def test_knowledge_runtime_readiness_probe_requires_secret_samples():
     assert "SPEEDAF_MCP_TEST_WAYBILL_CODE\") or" not in script
     assert "set SPEEDAF_MCP_TEST_WAYBILL_CODE and SPEEDAF_MCP_TEST_CALLER_ID from GitHub Secrets" in script
     assert 'waybill=os.environ["SPEEDAF_MCP_TEST_WAYBILL_CODE"]' in script
+    assert "def safe_payload():" in script
+    assert 'text=text.replace(secret, "[REDACTED]")' in script
+    assert 'assert result.ok and result.fact_evidence_present and result.tool_status == "success", "speedaf_direct_lookup_failed"' in script
