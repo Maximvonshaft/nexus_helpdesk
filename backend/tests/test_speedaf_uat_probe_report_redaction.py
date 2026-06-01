@@ -130,3 +130,157 @@ def test_full_uat_probe_does_not_run_writes_when_required_samples_are_missing(mo
     for name in ("work_order_create", "address_update", "cancel_order", "voice_callback"):
         assert payload["checks"][name]["skipped"] is True
         assert payload["checks"][name]["failure_reason"] == "missing_required_write_input"
+
+
+def test_full_uat_probe_runs_all_surfaces_with_ack_and_redacts_report(monkeypatch, tmp_path):
+    module = _load_script("speedaf_full_uat_probe.py")
+    output = tmp_path / "full-uat-report.json"
+    calls: list[tuple[str, dict]] = []
+
+    class FakeFact:
+        ok = True
+        fact_evidence_present = True
+        pii_redacted = True
+        tool_status = "success"
+        failure_reason = None
+        status = "1"
+        status_label = "status:1"
+
+        def metadata_payload(self):
+            return {"tracking_number_hash": "sha256:redacted", "raw_tracking_number_exposed": False}
+
+    class FakeAdapter:
+        def query_order_tracking_fact(self, *, waybill_code, caller_id):
+            calls.append(("order_query", {"waybill_code": waybill_code, "caller_id": caller_id}))
+            return FakeFact()
+
+        def query_waybills_by_caller(self, *, caller_id, country_code):
+            calls.append(("waybill_code_query", {"caller_id": caller_id, "country_code": country_code}))
+            candidate = SimpleNamespace(waybill_code="CH020000006856", suffix="06856")
+            return SimpleNamespace(ok=True, failure_reason=None, candidates=(candidate,))
+
+    class FakeActionService:
+        def create_work_order(self, *, waybill_code, caller_id, work_order_type, description):
+            calls.append(
+                (
+                    "work_order_create",
+                    {
+                        "waybill_code": waybill_code,
+                        "caller_id": caller_id,
+                        "work_order_type": work_order_type,
+                        "description": description,
+                    },
+                )
+            )
+            return SimpleNamespace(
+                ok=True,
+                status="created",
+                error_code=None,
+                safe_payload={"external_id": "wo-redacted", "debug": "CH020000006856 41000000000 PK000023"},
+            )
+
+        def submit_update_address_flow(self, *, waybill_code, caller_id, whatsapp_phone):
+            calls.append(
+                (
+                    "address_update",
+                    {"waybill_code": waybill_code, "caller_id": caller_id, "whatsapp_phone": whatsapp_phone},
+                )
+            )
+            return SimpleNamespace(
+                ok=True,
+                status="success",
+                error_code=None,
+                safe_payload={"request": "redacted", "debug": "+41000009999"},
+            )
+
+        def cancel_order(self, *, waybill_code, caller_id, reason_code):
+            calls.append(
+                (
+                    "cancel_order",
+                    {"waybill_code": waybill_code, "caller_id": caller_id, "reason_code": reason_code},
+                )
+            )
+            return SimpleNamespace(
+                ok=True,
+                status="success",
+                error_code=None,
+                safe_payload={"request": "redacted", "debug": "EXbSJrzZ"},
+            )
+
+        def send_voice_callback(self, payload):
+            calls.append(("voice_callback", payload))
+            return SimpleNamespace(
+                ok=True,
+                status="success",
+                error_code=None,
+                safe_payload={"request": "redacted", "debug": "CH020000006856"},
+            )
+
+    monkeypatch.setattr(
+        module,
+        "load_speedaf_mcp_config",
+        lambda: SimpleNamespace(
+            configured=True,
+            enabled=True,
+            base_url="https://uat-api.speedaf.com",
+            app_code="PK000023",
+            secret_key="EXbSJrzZ",
+            content_type="text/plain",
+            data_mode="string",
+            require_sign=False,
+        ),
+    )
+    monkeypatch.setattr(module, "SpeedafCoreAdapter", FakeAdapter)
+    monkeypatch.setattr(module, "SpeedafActionService", FakeActionService)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "speedaf_full_uat_probe.py",
+            "--waybill-code",
+            "CH020000006856",
+            "--caller-id",
+            "41000000000",
+            "--whatsapp-phone",
+            "+41000009999",
+            "--cancel-reason",
+            "CC01",
+            "--country-code",
+            "CH",
+            "--write-ack",
+            module.WRITE_ACK,
+            "--output-json",
+            str(output),
+        ],
+    )
+
+    code = module.main()
+
+    assert code == 0
+    assert [name for name, _payload in calls] == [
+        "order_query",
+        "waybill_code_query",
+        "work_order_create",
+        "address_update",
+        "cancel_order",
+        "voice_callback",
+    ]
+    assert calls[2][1]["description"] == "Nexus full UAT probe delivery follow-up"
+    assert calls[4][1]["reason_code"] == "CC01"
+    assert calls[5][1]["isTransferredToHuman"] == 1
+    text = output.read_text(encoding="utf-8")
+    for sensitive in ("CH020000006856", "41000000000", "+41000009999", "PK000023", "EXbSJrzZ"):
+        assert sensitive not in text
+    payload = json.loads(text)
+    assert payload["ok"] is True
+    assert payload["write_acknowledged"] is True
+    assert payload["redaction_guard"]["replacement_count"] >= 5
+    for name in (
+        "order_query",
+        "waybill_code_query",
+        "work_order_create",
+        "address_update",
+        "cancel_order",
+        "voice_callback",
+    ):
+        assert payload["checks"][name]["ok"] is True
