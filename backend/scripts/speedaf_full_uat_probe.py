@@ -22,6 +22,36 @@ def _safe_error(exc: Exception) -> dict[str, Any]:
     return {"error_type": type(exc).__name__, "message": str(exc)[:240]}
 
 
+def _sensitive_values(*values: str | None) -> list[str]:
+    seen: set[str] = set()
+    sensitive: list[str] = []
+    for value in values:
+        cleaned = str(value or "").strip()
+        if len(cleaned) < 4 or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        sensitive.append(cleaned)
+    return sensitive
+
+
+def render_redacted_report(report: dict[str, Any], *, sensitive_values: list[str]) -> str:
+    report["redaction_guard"] = {
+        "enabled": True,
+        "exact_value_count": len(sensitive_values),
+    }
+    text = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
+    replacements = 0
+    for value in sensitive_values:
+        if value in text:
+            replacements += text.count(value)
+            text = text.replace(value, "[REDACTED]")
+    report["redaction_guard"]["replacement_count"] = replacements
+    text = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
+    for value in sensitive_values:
+        text = text.replace(value, "[REDACTED]")
+    return text
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run full Speedaf UAT probe with explicit write acknowledgement.")
     parser.add_argument("--waybill-code", default=os.getenv("SPEEDAF_MCP_TEST_WAYBILL_CODE") or "")
@@ -140,7 +170,16 @@ def main() -> int:
         and report["write_acknowledged"]
         and all(report["checks"].get(name, {}).get("ok") for name in required_checks)
     )
-    text = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
+    text = render_redacted_report(
+        report,
+        sensitive_values=_sensitive_values(
+            waybill,
+            caller,
+            args.whatsapp_phone,
+            config.app_code,
+            config.secret_key,
+        ),
+    )
     if args.output_json:
         Path(args.output_json).parent.mkdir(parents=True, exist_ok=True)
         Path(args.output_json).write_text(text + "\n", encoding="utf-8")

@@ -150,6 +150,7 @@ jobs:
               backend/scripts/backfill_knowledge_embeddings.py) return 0 ;;
               backend/scripts/production_knowledge_runtime_fixup.py) return 0 ;;
               backend/scripts/run_knowledge_eval.py) return 0 ;;
+              backend/scripts/speedaf_readonly_uat_probe.py) return 0 ;;
               backend/scripts/speedaf_full_uat_probe.py) return 0 ;;
               backend/tests/test_background_job_transaction_boundary.py) return 0 ;;
               backend/tests/test_channel_workbench_backend_contracts.py) return 0 ;;
@@ -182,6 +183,7 @@ jobs:
               backend/tests/test_round27_frontend_hardening.py) return 0 ;;
               backend/tests/test_spa_fallback_hardening.py) return 0 ;;
               backend/tests/test_speedaf_client_contract.py) return 0 ;;
+              backend/tests/test_speedaf_uat_probe_report_redaction.py) return 0 ;;
               backend/tests/test_speedaf_uat_workflow_safety.py) return 0 ;;
               backend/tests/test_speedaf_work_order_background_job.py) return 0 ;;
               backend/tests/test_speedaf_workorder_address_actions.py) return 0 ;;
