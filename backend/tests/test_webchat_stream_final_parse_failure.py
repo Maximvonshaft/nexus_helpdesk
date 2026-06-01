@@ -53,6 +53,39 @@ def _payload(client_message_id: str = 'client-invalid-final') -> dict:
     }
 
 
+def _runtime_context_with_evidence() -> dict:
+    knowledge_context = {
+        'retrieval': 'hybrid_rag_v2',
+        'total_matches': 1,
+        'hits': [
+            {
+                'chunk_id': 'faq:greeting:1',
+                'content': 'Approved evidence: customer support greeting policy.',
+                'score': 0.91,
+                'retrieval_method': 'lexical',
+                'source_version': 'test',
+                'citation': {'title': 'Greeting policy'},
+            }
+        ],
+        'top_hits': [
+            {
+                'chunk_id': 'faq:greeting:1',
+                'score': 0.91,
+                'retrieval_method': 'lexical',
+                'source_version': 'test',
+                'citation': {'title': 'Greeting policy'},
+            }
+        ],
+        'evidence_pack': [{'chunk_id': 'faq:greeting:1', 'source_version': 'test'}],
+        'locked_facts': [],
+        'no_answer_reason': None,
+    }
+    return {
+        'knowledge_context': knowledge_context,
+        'rag_trace': knowledge_context,
+    }
+
+
 def test_partial_reply_then_invalid_final_rejected_and_failed(monkeypatch):
     async def fake_call_stream(**kwargs):
         yield ContentDelta('{"reply":"Hello there, I can help with that.","intent":"greeting","tracking_number":null,"handoff_required":')
@@ -60,6 +93,7 @@ def test_partial_reply_then_invalid_final_rejected_and_failed(monkeypatch):
 
     monkeypatch.setattr(webchat_fast, 'get_webchat_fast_settings', _settings)
     monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
+    monkeypatch.setattr(webchat_fast, '_webchat_fast_runtime_context', lambda **_kwargs: _runtime_context_with_evidence())
     monkeypatch.setattr(webchat_fast_stream_service.openclaw_client, 'call_openclaw_responses_stream', fake_call_stream)
 
     response = client.post('/api/webchat/fast-reply/stream', json=_payload(), headers={'Accept': 'text/event-stream'})

@@ -44,6 +44,19 @@ class FakeRow:
     id = 1
 
 
+def _runtime_context_with_evidence() -> dict:
+    return {
+        "knowledge_context": {
+            "retrieval": "hybrid_rag_v2",
+            "candidate_count": 1,
+            "total_matches": 1,
+            "retrieval_methods": ["structured_exact"],
+            "hits": [{"item_key": "fact.greeting", "title": "Greeting", "score": 1.0, "retrieval_method": "structured_exact"}],
+            "evidence_pack": [{"item_key": "fact.greeting", "title": "Greeting", "source_version": 1, "chunk_index": 0, "score": 1.0, "retrieval_method": "structured_exact"}],
+        }
+    }
+
+
 def test_stream_disabled_env_blocks_stream_but_non_stream_still_works(monkeypatch):
     monkeypatch.setenv('WEBCHAT_FAST_STREAM_ENABLED', 'false')
     get_webchat_fast_settings.cache_clear()
@@ -80,6 +93,7 @@ def test_stream_enabled_env_allows_stream_path(monkeypatch):
     get_webchat_fast_settings.cache_clear()
     monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
     monkeypatch.setattr(webchat_fast, 'prepare_webchat_fast_stream', lambda **kwargs: StreamBeginOutcome(status='owner', request_hash='h', row_id=1))
+    monkeypatch.setattr(webchat_fast, '_webchat_fast_runtime_context', lambda **_kwargs: _runtime_context_with_evidence())
 
     async def fake_stream(**kwargs):
         yield 'event: meta\ndata: {"replayed":false}\n\n'
@@ -123,6 +137,7 @@ def test_stream_canary_override_allows_bypass(monkeypatch):
     
     monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
     monkeypatch.setattr(webchat_fast, 'prepare_webchat_fast_stream', lambda **kwargs: StreamBeginOutcome(status='owner', request_hash='h', row_id=1))
+    monkeypatch.setattr(webchat_fast, '_webchat_fast_runtime_context', lambda **_kwargs: _runtime_context_with_evidence())
 
     async def fake_stream(**kwargs):
         yield 'event: final\ndata: {"intent":"greeting","handoff_required":false,"ticket_creation_queued":false}\n\n'
@@ -177,6 +192,7 @@ def test_stream_canary_override_allows_bypass_for_loopback_in_production(monkeyp
     
     monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
     monkeypatch.setattr(webchat_fast, 'prepare_webchat_fast_stream', lambda **kwargs: StreamBeginOutcome(status='owner', request_hash='h', row_id=1))
+    monkeypatch.setattr(webchat_fast, '_webchat_fast_runtime_context', lambda **_kwargs: _runtime_context_with_evidence())
 
     async def fake_stream(**kwargs):
         yield 'event: final\ndata: {"intent":"greeting","handoff_required":false,"ticket_creation_queued":false}\n\n'
