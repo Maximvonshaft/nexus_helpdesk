@@ -81,7 +81,7 @@ jobs:
               'docs/production-gates/',
           )
 
-          write_flag = re.compile(r'SPEEDAF_(?:CANCEL|UPDATE_ADDRESS|WORK_ORDER_CREATE)_ENABLED\s*=\s*(?:true|TRUE|1|yes|YES|on|ON)')
+          write_flag = re.compile(r'SPEEDAF_(?:CANCEL|UPDATE_ADDRESS|WORK_ORDER_CREATE|VOICE_CALLBACK)_ENABLED\s*=\s*(?:true|TRUE|1|yes|YES|on|ON)')
           credential = re.compile(r'(?:appCode|secretKey|SPEEDAF_[A-Z0-9_]*(?:SECRET|TOKEN|KEY)|SPEEDAF_[A-Z0-9_]*SIGN)\s*[:=]\s*[\"\']?(?P<value>[A-Za-z0-9_\-]{20,})')
           placeholder = re.compile(r'(?:PASTE|PLACEHOLDER|EXAMPLE|DUMMY|REDACTED|CHANGEME|YOUR_|_HERE)', re.IGNORECASE)
 
@@ -146,6 +146,7 @@ jobs:
               'SPEEDAF_CANCEL_ENABLED: true',
               'SPEEDAF_UPDATE_ADDRESS_ENABLED: true',
               'SPEEDAF_WORK_ORDER_CREATE_ENABLED: true',
+              'SPEEDAF_VOICE_CALLBACK_ENABLED: true',
               '/open-api/mcp/workOrder/create',
               '/open-api/mcp/order/updateAddress',
               '/open-api/mcp/order/cancel',

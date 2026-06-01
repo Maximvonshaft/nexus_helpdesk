@@ -116,6 +116,7 @@ jobs:
               'SPEEDAF_CANCEL_ENABLED: true',
               'SPEEDAF_UPDATE_ADDRESS_ENABLED: true',
               'SPEEDAF_WORK_ORDER_CREATE_ENABLED: true',
+              'SPEEDAF_VOICE_CALLBACK_ENABLED: true',
               '/open-api/mcp/workOrder/create',
               '/open-api/mcp/order/updateAddress',
               '/open-api/mcp/order/cancel',
