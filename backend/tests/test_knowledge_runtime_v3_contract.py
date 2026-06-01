@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from sqlalchemy.dialects import postgresql
+
+from app.models_control_plane import KnowledgeChunk
 from app.services.knowledge_runtime_v2.embeddings import OpenAICompatibleEmbeddingProvider, vector_literal
 from app.services.knowledge_runtime_v2.runtime import _postgres_candidate_sql
 
@@ -34,6 +37,13 @@ def test_postgres_hybrid_sql_uses_tsvector_and_pgvector():
     assert "kc.embedding_vector IS NOT NULL" in vector_sql
     assert fts_params["market_id"] == 1
     assert vector_params["channel"] == "website"
+
+
+def test_knowledge_chunk_pg_hybrid_columns_use_postgres_types():
+    dialect = postgresql.dialect()
+
+    assert KnowledgeChunk.__table__.c.search_tsvector.type.dialect_impl(dialect).compile(dialect=dialect) == "TSVECTOR"
+    assert KnowledgeChunk.__table__.c.embedding_vector.type.dialect_impl(dialect).compile(dialect=dialect) == "vector(1536)"
 
 
 def test_openai_compatible_embedding_provider_parses_ordered_vectors(monkeypatch):
