@@ -15,6 +15,7 @@ from ..settings import get_settings
 from ..services.background_jobs import enqueue_speedaf_work_order_create_job
 from ..services.tracking_fact_schema import TrackingFactResult, hash_tracking_number
 from ..services.tracking_fact_service import extract_tracking_number, lookup_tracking_fact
+from ..services.ai_runtime_context import build_webchat_runtime_context
 from ..services.webchat_fast_ai_service import generate_webchat_fast_reply
 from ..services.webchat_fast_idempotency_db import (
     WebchatFastIdempotency,
@@ -536,6 +537,29 @@ def _support_hours_policy_payload(body: str) -> dict[str, Any] | None:
     return match_support_hours_policy_reply(body)
 
 
+def _webchat_fast_runtime_context(
+    *,
+    tenant_key: str,
+    channel_key: str,
+    body: str,
+    market_id: int | None,
+    language: str | None = None,
+) -> dict[str, Any] | None:
+    with db_context() as db:
+        try:
+            return build_webchat_runtime_context(
+                db,
+                tenant_key=tenant_key,
+                channel_key=channel_key,
+                body=body,
+                market_id=market_id,
+                language=language,
+            )
+        except Exception:
+            LOGGER.warning("webchat_fast_runtime_context_failed", exc_info=True)
+            return None
+
+
 def _persist_support_hours_policy_reply(*, row_id: int, payload: WebchatFastReplyRequest, result_payload: dict[str, Any], request: Request | None = None) -> dict[str, Any]:
     with db_context() as db:
         conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
@@ -866,5 +890,12 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
         return JSONResponse({"error_code": "stream_not_in_rollout"}, status_code=503, headers=headers)
 
     tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _tracking_fact_provider_fields(tracking_fact)
-    generator = stream_webchat_fast_reply_events(begin=begin, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=merged_context, visitor=payload.visitor, request_id=getattr(request.state, "request_id", None), settings=stream_settings, routing_context=routing_context, tracking_fact_summary=tracking_fact_summary, tracking_fact_metadata=tracking_fact_metadata, tracking_fact_evidence_present=tracking_fact_evidence_present)
+    runtime_context = _webchat_fast_runtime_context(
+        tenant_key=payload.tenant_key,
+        channel_key=payload.channel_key,
+        body=payload.body,
+        market_id=routing_context.market_id,
+        language=None,
+    )
+    generator = stream_webchat_fast_reply_events(begin=begin, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=merged_context, visitor=payload.visitor, request_id=getattr(request.state, "request_id", None), settings=stream_settings, routing_context=routing_context, tracking_fact_summary=tracking_fact_summary, tracking_fact_metadata=tracking_fact_metadata, tracking_fact_evidence_present=tracking_fact_evidence_present, runtime_context=runtime_context)
     return StreamingResponse(generator, media_type="text/event-stream", headers=headers)

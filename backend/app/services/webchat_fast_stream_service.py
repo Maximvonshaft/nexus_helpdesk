@@ -33,6 +33,7 @@ from .webchat_handoff_service import request_webchat_handoff
 from .webchat_fast_stream_parser import StreamingReplyAbort, StreamingReplyExtractor
 from .webchat_openclaw_responses_client import OpenClawResponsesError
 from .webchat_openclaw_stream_adapter import Completed
+from .knowledge_prompt_service import summarize_rag_trace
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,13 @@ def sse_event(event: str, payload: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {safe_payload}\n\n"
 
 
-def public_final_from_parsed(parsed: ParsedFastReply, *, ticket_creation_queued: bool, replayed: bool = False) -> dict[str, Any]:
+def public_final_from_parsed(
+    parsed: ParsedFastReply,
+    *,
+    ticket_creation_queued: bool,
+    replayed: bool = False,
+    evidence_trace: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     final = {
         "ok": True,
         "ai_generated": True,
@@ -62,7 +69,24 @@ def public_final_from_parsed(parsed: ParsedFastReply, *, ticket_creation_queued:
     }
     if replayed:
         final["replayed"] = True
+    if evidence_trace:
+        final["evidence_trace"] = evidence_trace
     return final
+
+
+def _stream_evidence_trace(runtime_context: dict[str, Any] | None) -> dict[str, Any]:
+    if runtime_context:
+        return summarize_rag_trace(runtime_context)
+    return {
+        "retrieval": "hybrid_rag_v2",
+        "candidate_count": 0,
+        "total_matches": 0,
+        "retrieval_methods": [],
+        "no_answer_reason": "runtime_context_unavailable",
+        "top_hits": [],
+        "evidence_pack": [],
+        "injected_knowledge": [],
+    }
 
 
 def _context_payload(items: list[Any]) -> list[dict[str, str]]:
@@ -150,12 +174,15 @@ def _persist_stream_result(
     recent_context: list[dict[str, Any]] | None,
     routing_context: FastRoutingContext | None = None,
     tracking_fact_metadata: dict[str, Any] | None = None,
+    evidence_trace: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     with db_context() as db:
         conversation = get_or_create_fast_conversation(db, tenant_key=tenant_key, channel_key=channel_key, session_id=session_id)
         metadata = {"handoff_required": parsed.handoff_required, "reply_source": "openclaw_responses_stream"}
         if tracking_fact_metadata:
             metadata["tracking_fact"] = tracking_fact_metadata
+        if evidence_trace:
+            metadata["rag_trace"] = evidence_trace
         append_fast_ai_message(db, conversation=conversation, reply=parsed.reply, client_message_id=client_message_id, metadata=metadata)
         if not parsed.handoff_required:
             return fast_public_session_payload(db, conversation)
@@ -205,6 +232,7 @@ async def stream_webchat_fast_reply_events(
     tracking_fact_summary: str | None = None,
     tracking_fact_metadata: dict[str, Any] | None = None,
     tracking_fact_evidence_present: bool = False,
+    runtime_context: dict[str, Any] | None = None,
 ) -> AsyncIterator[str]:
     if begin.status == "replay":
         stored = dict(begin.response_json or {})
@@ -237,6 +265,8 @@ async def stream_webchat_fast_reply_events(
     try:
         yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2"})
         context = _context_payload(recent_context or [])
+        knowledge_context = runtime_context.get("knowledge_context") if isinstance(runtime_context, dict) else None
+        evidence_trace = _stream_evidence_trace(runtime_context)
         async for event in openclaw_client.call_openclaw_responses_stream(
             session_key=_session_key(tenant_key=tenant_key, session_id=session_id),
             instructions=_instructions(),
@@ -245,6 +275,7 @@ async def stream_webchat_fast_reply_events(
                 recent_context=context,
                 tracking_fact_summary=tracking_fact_summary,
                 tracking_fact_evidence_present=tracking_fact_evidence_present,
+                knowledge_context=knowledge_context if isinstance(knowledge_context, dict) else None,
             ),
             request_id=request_id,
             settings=settings,
@@ -269,6 +300,7 @@ async def stream_webchat_fast_reply_events(
                 recent_context=recent_context,
                 routing_context=routing_context,
                 tracking_fact_metadata=tracking_fact_metadata,
+                evidence_trace=evidence_trace,
             )
             public_session = public_session or {}
         except Exception:
@@ -278,7 +310,7 @@ async def stream_webchat_fast_reply_events(
                 yield sse_event("error", {"error_code": "handoff_enqueue_failed", "retry_after_ms": 1500})
                 return
             raise
-        stored_final = public_final_from_parsed(parsed, ticket_creation_queued=False, replayed=False)
+        stored_final = public_final_from_parsed(parsed, ticket_creation_queued=False, replayed=False, evidence_trace=evidence_trace)
         if public_session.get("ticket_id") is not None:
             stored_final["ticket_id"] = public_session["ticket_id"]
         final = dict(stored_final)
