@@ -130,8 +130,30 @@ def retrieve_knowledge(
                     source_counts["pgvector"] += 1
         except Exception as exc:
             vector_degraded = type(exc).__name__
+            if not settings.knowledge_vector_fallback_allowed:
+                latency_ms = int((time.monotonic() - started) * 1000)
+                return _vector_fail_closed_result(
+                    normalized=normalized,
+                    terms=terms,
+                    filters=filters,
+                    source_counts=source_counts,
+                    settings=settings,
+                    vector_degraded=vector_degraded,
+                    latency_ms=latency_ms,
+                )
     else:
         vector_degraded = "disabled"
+        if not settings.knowledge_vector_fallback_allowed:
+            latency_ms = int((time.monotonic() - started) * 1000)
+            return _vector_fail_closed_result(
+                normalized=normalized,
+                terms=terms,
+                filters=filters,
+                source_counts=source_counts,
+                settings=settings,
+                vector_degraded=vector_degraded,
+                latency_ms=latency_ms,
+            )
 
     fused = _rrf_fuse(list(candidate_hits.values()))
     fused.sort(key=lambda hit: (-hit.score, hit.metadata.get("priority") or 10000, hit.item_key, hit.chunk_index))
@@ -540,6 +562,49 @@ def _rrf_fuse(hits: list[KnowledgeRuntimeHit]) -> list[KnowledgeRuntimeHit]:
         fused_score = round(hit.score + (60.0 / (60 + rank)), 3)
         fused.append(KnowledgeRuntimeHit(**{**hit.__dict__, "score": fused_score}))
     return fused
+
+
+def _vector_fail_closed_result(
+    *,
+    normalized: str,
+    terms: list[str],
+    filters: dict[str, Any],
+    source_counts: dict[str, int],
+    settings: Any,
+    vector_degraded: str,
+    latency_ms: int,
+) -> KnowledgeRuntimeResult:
+    trace = {
+        "retrieval": "hybrid_rag_v2",
+        "filters": filters,
+        "query": {"normalized": normalized, "terms": terms},
+        "candidates_by_source": source_counts,
+        "fusion": "reciprocal_rank_fusion",
+        "rerank": {"strategy": "deterministic_policy_v1", "top_item_keys": []},
+        "evidence_selected": [],
+        "retrieval_methods": ["vector_degraded"],
+        "vector": {
+            "enabled": settings.knowledge_embeddings_enabled,
+            "provider": settings.knowledge_embedding_provider,
+            "model": settings.knowledge_embedding_model,
+            "dim": settings.knowledge_embedding_dim,
+            "storage": "unavailable",
+            "degraded_reason": vector_degraded,
+            "fallback_allowed": False,
+        },
+        "no_answer_reason": "vector_retrieval_unavailable",
+        "latency_ms": latency_ms,
+    }
+    return KnowledgeRuntimeResult(
+        hits=[],
+        direct_facts=[],
+        locked_facts=[],
+        confidence=0.0,
+        no_answer_reason="vector_retrieval_unavailable",
+        trace=trace,
+        retrieval_methods=["vector_degraded"],
+        latency_ms=latency_ms,
+    )
 
 
 def _fact_from_hit(hit: KnowledgeRuntimeHit) -> dict[str, Any]:
