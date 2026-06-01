@@ -91,8 +91,17 @@ def test_production_settings_accept_hardened_contract(monkeypatch):
     ],
 )
 def test_production_settings_reject_unsafe_contract(key: str, value: str, expected_message: str):
+    real_exists = Path.exists
+
+    def fake_exists(path):
+        if path.name == 'index.html' and path.parent.name == 'frontend_dist':
+            return True
+        return real_exists(path)
+
     extra = {'WEBCHAT_WS_ENABLED': 'true'} if key == 'WEBCHAT_WS_BROKER' else {}
-    with patched_env(production_env(**extra, **{key: value})):
-        with pytest.raises(RuntimeError) as exc:
-            Settings()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(Path, 'exists', fake_exists)
+        with patched_env(production_env(**extra, **{key: value})):
+            with pytest.raises(RuntimeError) as exc:
+                Settings()
     assert expected_message in str(exc.value)

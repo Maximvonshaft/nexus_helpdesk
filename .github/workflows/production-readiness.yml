@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_DB: helpdesk
           POSTGRES_USER: helpdesk
@@ -79,6 +79,10 @@ jobs:
           METRICS_ENABLED: "true"
           METRICS_TOKEN: ci-metrics-token
           REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
+          KNOWLEDGE_EMBEDDINGS_ENABLED: "true"
+          KNOWLEDGE_EMBEDDING_PROVIDER: openai_compatible
+          KNOWLEDGE_EMBEDDING_MODEL: text-embedding-3-small
+          KNOWLEDGE_EMBEDDING_API_KEY_FILE: /run/secrets/knowledge_embedding_api_key
         run: cd backend && python scripts/validate_production_readiness.py
 
       - name: Manual staging smoke workflow contract check
