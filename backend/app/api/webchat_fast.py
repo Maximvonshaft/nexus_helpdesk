@@ -196,6 +196,34 @@ def _tracking_fact_public_payload(result: TrackingFactResult | None) -> dict[str
     return payload
 
 
+def _tracking_fact_evidence_trace(
+    result: TrackingFactResult | None,
+    *,
+    tracking_number: str | None = None,
+    no_answer_reason: str | None = None,
+    candidate_count: int | None = None,
+) -> dict[str, Any]:
+    metadata = result.metadata_payload() if result is not None else {}
+    safe_number = str(tracking_number or getattr(result, "tracking_number", "") or "").strip().upper()
+    tracking_hash = metadata.get("tracking_number_hash") or _public_tracking_reference(safe_number).get("tracking_number_hash")
+    fact_present = bool(result and result.fact_evidence_present and result.pii_redacted)
+    reason = no_answer_reason or (result.failure_reason if result else None)
+    trace: dict[str, Any] = {
+        "retrieval": "trusted_tracking_fact",
+        "source": "speedaf_trusted_tracking_fact",
+        "tool_status": result.tool_status if result else "not_available",
+        "fact_evidence_present": fact_present,
+        "pii_redacted": bool(result.pii_redacted) if result else True,
+        "tracking_number_hash": tracking_hash,
+        "raw_tracking_number_exposed": False,
+    }
+    if reason:
+        trace["no_answer_reason"] = reason
+    if candidate_count is not None:
+        trace["candidate_count"] = candidate_count
+    return trace
+
+
 def _tracking_candidate_selection_payload(result: TrackingFactResult | None) -> dict[str, Any] | None:
     if result is None or result.failure_reason != "multiple_waybill_candidates":
         return None
@@ -204,7 +232,7 @@ def _tracking_candidate_selection_payload(result: TrackingFactResult | None) -> 
     if not candidates:
         return None
     suffixes = ", ".join(str(item["waybill_suffix"]) for item in candidates)
-    return {"ok": True, "ai_generated": False, "reply_source": "server_tracking_candidate_selection", "reply": f"I found multiple shipments linked to this phone number. Please reply with the last 4 digits of the shipment you want to check: {suffixes}", "intent": "tracking_candidate_selection", "tracking_number": None, "handoff_required": False, "handoff_reason": None, "ticket_creation_queued": False, "elapsed_ms": 0, "safe_candidates": candidates}
+    return {"ok": True, "ai_generated": False, "reply_source": "server_tracking_candidate_selection", "reply": f"I found multiple shipments linked to this phone number. Please reply with the last 4 digits of the shipment you want to check: {suffixes}", "intent": "tracking_candidate_selection", "tracking_number": None, "handoff_required": False, "handoff_reason": None, "ticket_creation_queued": False, "elapsed_ms": 0, "safe_candidates": candidates, "evidence_trace": _tracking_fact_evidence_trace(result, no_answer_reason="multiple_waybill_candidates", candidate_count=len(candidates))}
 
 
 def _public_tracking_reference(tracking_number: str | None) -> dict[str, Any]:
@@ -270,6 +298,7 @@ def _tracking_fact_forced_reply_payload(*, tracking_number: str | None, result: 
         "ticket_creation_queued": False,
         "elapsed_ms": 0,
         "tracking_fact": _tracking_fact_public_payload(result),
+        "evidence_trace": _tracking_fact_evidence_trace(result, tracking_number=safe_number),
     }
 
 
@@ -292,13 +321,18 @@ def _tracking_fact_safe_failure_payload(*, tracking_number: str | None, result: 
         "ticket_creation_queued": False,
         "elapsed_ms": 0,
         "tracking_fact": _tracking_fact_public_payload(result),
+        "evidence_trace": _tracking_fact_evidence_trace(
+            result,
+            tracking_number=tracking_number,
+            no_answer_reason=(result.failure_reason if result else "tracking_fact_unavailable") or "tracking_fact_unavailable",
+        ),
     }
 
 
 def _tracking_number_request_payload(*, body: str | None) -> dict[str, Any]:
     zh = any("\u4e00" <= ch <= "\u9fff" for ch in (body or ""))
     reply = "请提供你的运单号，我会帮你查询物流状态。" if zh else "Please provide your waybill or tracking number so I can check the shipment status."
-    return {"ok": True, "ai_generated": False, "reply_source": "server_tracking_number_required", "reply": reply, "intent": "tracking", "tracking_number": None, "handoff_required": False, "handoff_reason": None, "ticket_creation_queued": False, "elapsed_ms": 0}
+    return {"ok": True, "ai_generated": False, "reply_source": "server_tracking_number_required", "reply": reply, "intent": "tracking", "tracking_number": None, "handoff_required": False, "handoff_reason": None, "ticket_creation_queued": False, "elapsed_ms": 0, "evidence_trace": _tracking_fact_evidence_trace(None, no_answer_reason="missing_tracking_number")}
 
 
 def _should_attempt_fact_first_lookup(*, body: str | None, tracking_number: str | None, caller_id: str | None) -> bool:

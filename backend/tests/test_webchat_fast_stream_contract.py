@@ -173,6 +173,11 @@ def test_stream_tracking_fact_failure_returns_server_owned_safe_reply(monkeypatc
     assert '"tracking_number":null' in text
     assert '"tracking_number_suffix":"006856"' in text
     assert '"tracking_number_hash":"' in text
+    assert '"evidence_trace":' in text
+    assert '"retrieval":"trusted_tracking_fact"' in text
+    assert '"fact_evidence_present":false' in text
+    assert '"no_answer_reason":"timeout"' in text
+    assert '"raw_tracking_number_exposed":false' in text
     assert "CH020000006856" not in text
     assert "all_providers_failed" not in text
 
