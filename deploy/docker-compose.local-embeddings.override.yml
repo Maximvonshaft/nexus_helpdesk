@@ -1,0 +1,45 @@
+services:
+  tei-embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    container_name: nexus-tei-embeddings
+    command: ["--model-id", "${KNOWLEDGE_LOCAL_EMBEDDING_MODEL_ID:-intfloat/multilingual-e5-small}", "--hostname", "0.0.0.0", "--port", "80"]
+    ports:
+      - "127.0.0.1:${KNOWLEDGE_LOCAL_EMBEDDING_PORT:-18088}:80"
+    volumes:
+      - ../data/tei-cache:/data
+    restart: unless-stopped
+
+  app:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      tei-embeddings:
+        condition: service_started
+
+  worker-background:
+    depends_on:
+      app:
+        condition: service_healthy
+      tei-embeddings:
+        condition: service_started
+
+  worker-webchat-ai:
+    depends_on:
+      app:
+        condition: service_healthy
+      tei-embeddings:
+        condition: service_started
+
+  worker-handoff-snapshot:
+    depends_on:
+      app:
+        condition: service_healthy
+      tei-embeddings:
+        condition: service_started
+
+  worker-outbound:
+    depends_on:
+      app:
+        condition: service_healthy
+      tei-embeddings:
+        condition: service_started
