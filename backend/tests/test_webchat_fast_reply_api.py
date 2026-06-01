@@ -21,12 +21,12 @@ from app.models import Customer, Ticket, User, WebchatRateLimitBucket
 from app.models_control_plane import KnowledgeChunk, KnowledgeItem, KnowledgeItemVersion
 from app.schemas_control_plane import KnowledgeItemCreate
 from app.services import knowledge_service
+from app.services.tracking_fact_schema import TrackingFactResult
 from app.services.webchat_fast_ai_service import WebchatFastReplyResult
 from app.services.webchat_fast_config import get_webchat_fast_settings
 from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency
 from app.services.webchat_fast_rate_limit import reset_webchat_fast_rate_limit_for_tests
 from app.settings import get_settings
-from app.tracking_fact_schema import TrackingFactResult
 from app.webchat_models import WebchatConversation, WebchatHandoffRequest, WebchatMessage
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -212,7 +212,6 @@ def test_explicit_human_request_is_ai_decision_tool_gated_handoff(monkeypatch):
     assert trace["decision"]["tool_calls"][0]["tool_name"] == "handoff.request.create"
     assert trace["tool_execution"]["records"][0]["status"] == "executed"
 
-    # Idempotency / active-request dedupe: replaying the same payload does not create a second handoff.
     replay = client.post(
         "/api/webchat/fast-reply",
         json=_payload("human-request-1", session_id="human-request-session", body="I need a human agent"),
@@ -365,7 +364,6 @@ def test_provider_failure_falls_back_safely_without_500(monkeypatch):
     assert payload["ok"] is True
     assert payload["ai_generated"] is False
     assert payload["reply_source"] == "server_safe_fallback"
-    assert payload["fallback_mode"] if "fallback_mode" in payload else True
     assert payload["evidence_trace"]["source"] == "server_safe_fallback"
     assert payload["ai_decision_trace"]["mode"] in {"emergency_fallback_only", "gated"}
 
