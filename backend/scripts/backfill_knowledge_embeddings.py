@@ -34,6 +34,7 @@ def main() -> int:
         timeout_seconds=settings.knowledge_embedding_timeout_seconds,
     )
     db = SessionLocal()
+    dialect_name = db.get_bind().dialect.name
     processed = embedded = skipped = failed = 0
     try:
         query = db.query(KnowledgeChunk).filter(KnowledgeChunk.status == "active").order_by(KnowledgeChunk.id.asc())
@@ -65,14 +66,15 @@ def main() -> int:
                 continue
             for (row, current_hash), vector in zip(batch, vectors):
                 row.embedding = vector
-                row.embedding_vector = vector_literal(vector)
+                if dialect_name != "postgresql":
+                    row.embedding_vector = vector_literal(vector)
                 row.embedding_model = settings.knowledge_embedding_model
                 row.embedding_dim = len(vector)
                 row.embedding_status = "embedded"
                 row.embedding_error = None
                 row.embedded_at = utc_now()
                 row.semantic_hash = current_hash
-                if db.get_bind().dialect.name == "postgresql":
+                if dialect_name == "postgresql":
                     db.execute(
                         text("UPDATE knowledge_chunks SET embedding_vector = CAST(:vector AS vector) WHERE id = :id"),
                         {"id": row.id, "vector": vector_literal(vector)},
