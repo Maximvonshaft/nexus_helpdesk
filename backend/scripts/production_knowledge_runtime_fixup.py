@@ -120,7 +120,8 @@ def run(*, reindex: bool = True) -> dict:
             kill_switch BOOLEAN NOT NULL DEFAULT 0,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (tenant_id, channel_key, scenario)
         )
         """))
         db.execute(
@@ -132,7 +133,7 @@ def run(*, reindex: bool = True) -> dict:
                 'default:website:webchat_fast_reply', 'default', 'website', 'webchat_fast_reply',
                 'codex_app_server', :fallbacks, 'speedaf_webchat_fast_reply_v1', 10000, 100, 0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
-            ON CONFLICT(id) DO UPDATE SET
+            ON CONFLICT(tenant_id, channel_key, scenario) DO UPDATE SET
                 primary_provider = 'codex_app_server',
                 fallback_providers = :fallbacks,
                 output_contract = 'speedaf_webchat_fast_reply_v1',
