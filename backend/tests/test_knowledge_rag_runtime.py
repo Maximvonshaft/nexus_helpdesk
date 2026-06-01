@@ -22,7 +22,7 @@ from app.services.knowledge_grounding_service import (  # noqa: E402
     enforce_grounded_answer,
     select_approved_direct_answer_override,
 )
-from app.services.knowledge_prompt_service import build_knowledge_prompt_block  # noqa: E402
+from app.services.knowledge_prompt_service import build_knowledge_prompt_block, summarize_rag_trace  # noqa: E402
 from app.services.knowledge_retrieval_service import analyze_query, retrieve_published_chunks  # noqa: E402
 from app.services.provider_runtime.output_contracts import OutputContracts  # noqa: E402
 from app.services.webchat_ai_service import _build_prompt  # noqa: E402
@@ -167,6 +167,7 @@ def test_swiss_ocean_shipping_sla_direct_answer_retrieval_and_runtime_context(db
         fact_question="瑞士海运时效是多少？",
         fact_answer="瑞士海运时效为 15 天。",
         fact_aliases_json=["瑞士海运多久", "瑞士海运时效", "瑞士海运15天"],
+        citation_metadata_json={"source": "Speedaf CH SLA", "version": "2026-06-01"},
     )
 
     result = retrieve_published_chunks(
@@ -194,6 +195,19 @@ def test_swiss_ocean_shipping_sla_direct_answer_retrieval_and_runtime_context(db
     assert context["knowledge_context"]["grounding_source"]["item_key"] == fact.item_key
     assert context["knowledge_context"]["locked_facts"][0]["item_key"] == fact.item_key
     assert context["knowledge_context"]["locked_facts"][0]["answer"] == "瑞士海运时效为 15 天。"
+    evidence = context["knowledge_context"]["evidence_pack"][0]
+    assert evidence["item_key"] == fact.item_key
+    assert evidence["source_version"] == 1
+    assert evidence["published_version"] == 1
+    assert evidence["chunk_index"] == 0
+    assert evidence["score"] > 0
+    assert evidence["retrieval_method"]
+    assert evidence["citation"] == {"source": "Speedaf CH SLA", "version": "2026-06-01"}
+
+    trace = summarize_rag_trace(context)
+    assert trace["evidence_pack"][0]["item_key"] == fact.item_key
+    assert trace["evidence_pack"][0]["source_version"] == 1
+    assert trace["evidence_pack"][0]["citation"]["version"] == "2026-06-01"
 
 
 def test_approved_qa_outranks_raw_chunk_and_unapproved_facts_are_excluded(db_session):
