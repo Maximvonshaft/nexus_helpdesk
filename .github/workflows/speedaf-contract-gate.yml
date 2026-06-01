@@ -249,4 +249,7 @@ jobs:
             backend/tests/test_speedaf_tracking_full_value.py \
             backend/tests/test_speedaf_cancel_controlled_action.py \
             backend/tests/test_speedaf_workorder_address_actions.py \
+            backend/tests/test_speedaf_tool_governance.py \
+            backend/tests/test_speedaf_uat_probe_report_redaction.py \
+            backend/tests/test_speedaf_uat_workflow_safety.py \
             backend/tests/test_webchat_voice_api.py
