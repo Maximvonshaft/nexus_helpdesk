@@ -119,6 +119,11 @@ def test_non_stream_server_policy_handoff_skips_ai_and_creates_ticket(monkeypatc
     assert data["handoff_reason"] == "address_change_requires_human_review"
     assert data["ticket_creation_queued"] is False
     assert data["ticket_id"] == 9001
+    assert data["evidence_trace"]["retrieval"] == "server_policy"
+    assert data["evidence_trace"]["source"] == "server_handoff_policy"
+    assert data["evidence_trace"]["policy_evidence_present"] is True
+    assert data["evidence_trace"]["policy_reason"] == "address_change_requires_human_review"
+    assert data["evidence_trace"]["raw_tracking_number_exposed"] is False
     assert calls == {"ai": 0, "ticket": 1}
 
     db = SessionLocal()
@@ -168,6 +173,9 @@ def test_stream_server_policy_handoff_skips_openclaw_and_creates_ticket(monkeypa
     assert finals[0]["handoff_reason"] == "refund_or_compensation_requires_human_review"
     assert finals[0]["ticket_creation_queued"] is False
     assert finals[0]["ticket_id"] == 9002
+    assert finals[0]["evidence_trace"]["retrieval"] == "server_policy"
+    assert finals[0]["evidence_trace"]["source"] == "server_handoff_policy"
+    assert finals[0]["evidence_trace"]["policy_reason"] == "refund_or_compensation_requires_human_review"
     assert "reply" not in finals[0]
     assert calls == {"stream": 0, "ticket": 1}
 
