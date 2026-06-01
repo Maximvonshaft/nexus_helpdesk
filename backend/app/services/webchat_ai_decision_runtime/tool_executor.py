@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models import Ticket
-from app.webchat_models import WebchatConversation
+from app.webchat_models import WebchatConversation, WebchatHandoffRequest
 from app.services.tracking_fact_schema import hash_tracking_number
 from app.services.webchat_fast_session_service import (
     FastBusinessState,
@@ -20,6 +20,8 @@ from .audit import log_ai_decision_audit, stable_json_hash
 from .policy_gate import PolicyGateResult
 from .schemas import AIDecision, AIDecisionToolCall
 from .tool_registry import get_tool_contract
+
+_OPEN_HANDOFF_STATUSES = {"requested", "accepted"}
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,34 @@ def _recommended_action(decision: AIDecision, call: AIDecisionToolCall) -> str:
     ) or "Review AI decision and reply with verified information."
 
 
+def _active_handoff_for_ticket(db: Session, *, ticket_id: int) -> WebchatHandoffRequest | None:
+    return (
+        db.query(WebchatHandoffRequest)
+        .filter(
+            WebchatHandoffRequest.ticket_id == ticket_id,
+            WebchatHandoffRequest.status.in_(_OPEN_HANDOFF_STATUSES),
+        )
+        .order_by(WebchatHandoffRequest.id.asc())
+        .first()
+    )
+
+
+def _mark_conversation_ai_suspended_for_reused_handoff(
+    *,
+    conversation: WebchatConversation,
+    request_row: WebchatHandoffRequest,
+    reason: str,
+) -> None:
+    # request_webchat_handoff dedupes per conversation.  For tracking-scoped
+    # ticket reuse across browser sessions, avoid creating a duplicate handoff
+    # request while still reflecting that this conversation is now AI-suspended.
+    conversation.current_handoff_request_id = request_row.id
+    conversation.handoff_status = request_row.status
+    conversation.ai_suspended = True
+    conversation.ai_suspended_reason = _clip(reason, 240)
+    conversation.last_handoff_reason = _clip(reason, 240)
+
+
 def execute_decision_tools(
     db: Session,
     *,
@@ -152,6 +182,26 @@ def execute_decision_tools(
                 customer_message=customer_message,
                 routing_context=routing_context,
             )
+            existing_request = _active_handoff_for_ticket(db, ticket_id=ticket.id)
+            if existing_request is not None:
+                _mark_conversation_ai_suspended_for_reused_handoff(
+                    conversation=conversation,
+                    request_row=existing_request,
+                    reason=reason,
+                )
+                records.append(
+                    ToolExecutionRecord(
+                        tool_name=call.tool_name,
+                        status="reused_active_handoff",
+                        idempotency_key=idem,
+                        result={
+                            "ticket_id": ticket.id,
+                            "handoff_request_id": existing_request.id,
+                            "conversation_ai_suspended": True,
+                        },
+                    )
+                )
+                continue
             handoff_message = append_fast_system_handoff_message(
                 db,
                 conversation=conversation,
