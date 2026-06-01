@@ -613,6 +613,14 @@ def test_admin_voice_speedaf_callback_queues_and_worker_submits_without_leaking_
         assert db.query(WebchatVoiceAIAction).filter(WebchatVoiceAIAction.background_job_id == payload["jobId"], WebchatVoiceAIAction.speedaf_tool_name == "speedaf.voice.callback").count() == 1
         completed = db.query(TicketEvent).filter(TicketEvent.ticket_id == ticket_id, TicketEvent.field_name == "speedaf_voice_callback", TicketEvent.new_value == "completed").one()
         assert "WBVOICE12345" not in (completed.payload_json or "")
+        completed_job = db.query(BackgroundJob).filter(BackgroundJob.id == payload["jobId"]).one()
+        rendered_job_payload = completed_job.payload_json or ""
+        assert "WBVOICE12345" not in rendered_job_payload
+        assert "call-session-123" not in rendered_job_payload
+        assert "AI checked the customer order status" not in rendered_job_payload
+        safe_job_payload = json.loads(rendered_job_payload)
+        assert safe_job_payload["scrubbed"] is True
+        assert safe_job_payload["action"]["waybill_suffix"] == "2345"
 
     duplicate = client.post(
         f"/api/webchat/admin/tickets/{ticket_id}/voice/{voice_session_id}/speedaf/callback",
@@ -715,6 +723,8 @@ def test_speedaf_voice_callback_non_retryable_failure_does_not_replay(monkeypatc
         assert job.status == JobStatus.done
         assert job.attempt_count == 0
         assert job.last_error is None
+        assert "WBVOICE99999" not in (job.payload_json or "")
+        assert "call-session-nonretry" not in (job.payload_json or "")
 
     assert len(calls) == 1
 
