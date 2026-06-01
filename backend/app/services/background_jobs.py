@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import uuid
 from datetime import timedelta
 
@@ -26,6 +27,11 @@ SPEEDAF_ADDRESS_UPDATE_JOB = 'speedaf.address_update.submit'
 SPEEDAF_VOICE_CALLBACK_JOB = 'speedaf.voice.callback'
 EMAIL_MAILBOX_SYNC_JOB = 'email.mailbox_sync'
 SPEEDAF_WORK_ORDER_DESCRIPTION_MAX_LENGTH = 200
+
+
+def _stable_hash_prefix(value: object, *, length: int = 16) -> str:
+    cleaned = str(value or "").strip().upper()
+    return hashlib.sha256(cleaned.encode("utf-8", errors="ignore")).hexdigest()[:length]
 
 
 def _find_active_dedupe_job(db: Session, *, dedupe_key: str) -> BackgroundJob | None:
@@ -96,7 +102,8 @@ def enqueue_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
 
 def enqueue_speedaf_work_order_create_job(db: Session, *, ticket_id: int, waybill_code: str, caller_id: str, description: str, work_order_type: str = 'WT0103-05', conversation_id: int | None = None) -> BackgroundJob:
     payload = {'ticket_id': ticket_id, 'conversation_id': conversation_id, 'waybillCode': waybill_code, 'callerID': caller_id, 'workOrderType': work_order_type, 'description': description[:SPEEDAF_WORK_ORDER_DESCRIPTION_MAX_LENGTH]}
-    return enqueue_background_job(db, queue_name='speedaf_work_order', job_type=SPEEDAF_WORK_ORDER_CREATE_JOB, payload=payload, dedupe_key=f'speedaf-workorder:ticket:{ticket_id}:{work_order_type}')
+    waybill_hash = _stable_hash_prefix(waybill_code)
+    return enqueue_background_job(db, queue_name='speedaf_work_order', job_type=SPEEDAF_WORK_ORDER_CREATE_JOB, payload=payload, dedupe_key=f'speedaf-workorder:ticket:{ticket_id}:waybill:{waybill_hash}:type:{work_order_type}')
 
 
 def enqueue_speedaf_address_update_job(db: Session, *, ticket_id: int, waybill_code: str, caller_id: str, whatsapp_phone: str, dedupe_key: str, request_id: str | None = None) -> BackgroundJob:
