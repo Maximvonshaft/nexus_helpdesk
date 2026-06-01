@@ -73,6 +73,20 @@ def summarize_rag_trace(runtime_context: dict[str, Any] | None) -> dict[str, Any
         "no_answer_reason": knowledge.get("no_answer_reason"),
         "latency_ms": knowledge.get("latency_ms"),
         "top_hits": knowledge.get("top_hits") or [],
+        "evidence_pack": [
+            {
+                "item_key": item.get("item_key"),
+                "title": item.get("title"),
+                "source_version": item.get("source_version"),
+                "published_version": item.get("published_version"),
+                "chunk_index": item.get("chunk_index"),
+                "score": item.get("score"),
+                "retrieval_method": item.get("retrieval_method"),
+                "citation": item.get("citation") or {},
+            }
+            for item in (knowledge.get("evidence_pack") or [])[:MAX_PROMPT_HITS]
+            if isinstance(item, dict)
+        ],
         "injected_knowledge": [
             {
                 "item_key": hit.get("item_key"),

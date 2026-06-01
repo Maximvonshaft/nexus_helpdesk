@@ -218,6 +218,7 @@ def _knowledge_context(retrieval, *, query: str) -> dict[str, Any]:
         }
         for hit in hits
     ]
+    evidence_pack = [_evidence_pack_hit(hit) for hit in serialized_hits]
     return {
         "retrieval": "hybrid_rag_v2",
         "total_matches": retrieval.total,
@@ -229,8 +230,36 @@ def _knowledge_context(retrieval, *, query: str) -> dict[str, Any]:
         "latency_ms": getattr(retrieval, "latency_ms", None),
         "grounding_would_apply": retrieval.grounding_would_apply,
         "grounding_source": retrieval.grounding_source,
+        "evidence_pack": evidence_pack,
         "locked_facts": _locked_facts(query=query, hits=serialized_hits, entity_terms=retrieval.query_analysis.entity_terms),
         "hits": serialized_hits,
+    }
+
+
+def _evidence_pack_hit(hit: dict[str, Any]) -> dict[str, Any]:
+    metadata = hit.get("metadata") if isinstance(hit.get("metadata"), dict) else {}
+    source_metadata = hit.get("source_metadata") if isinstance(hit.get("source_metadata"), dict) else {}
+    citation = metadata.get("citation") or source_metadata.get("citation") or {}
+    source_version = hit.get("published_version") or source_metadata.get("published_version")
+    return {
+        "item_key": hit.get("item_key"),
+        "title": hit.get("title"),
+        "source_version": source_version,
+        "published_version": hit.get("published_version"),
+        "chunk_index": hit.get("chunk_index"),
+        "score": hit.get("score"),
+        "retrieval_method": hit.get("retrieval_method"),
+        "matched_terms": hit.get("matched_terms") or [],
+        "score_breakdown": hit.get("score_breakdown") or {},
+        "citation": citation,
+        "source_metadata": {
+            "source_type": metadata.get("source_type") or source_metadata.get("source_type"),
+            "file_name": metadata.get("file_name") or source_metadata.get("file_name"),
+            "market_id": metadata.get("market_id") or source_metadata.get("market_id"),
+            "channel": metadata.get("channel") or source_metadata.get("channel"),
+            "audience_scope": metadata.get("audience_scope") or source_metadata.get("audience_scope"),
+            "language": metadata.get("language") or source_metadata.get("language"),
+        },
     }
 
 
