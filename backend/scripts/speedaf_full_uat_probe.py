@@ -94,6 +94,17 @@ def main() -> int:
     adapter = SpeedafCoreAdapter()
     waybill = args.waybill_code.strip().upper()
     caller = args.caller_id.strip()
+    whatsapp_phone = args.whatsapp_phone.strip()
+    required_write_inputs = {
+        "waybill_code": bool(waybill),
+        "caller_id": bool(caller),
+        "whatsapp_phone": bool(whatsapp_phone),
+    }
+    missing_write_inputs = [name for name, present in required_write_inputs.items() if not present]
+    report["input_guards"] = {
+        "write_inputs_present": required_write_inputs,
+        "missing_write_inputs": missing_write_inputs,
+    }
     if waybill and caller and report["ok"]:
         fact = adapter.query_order_tracking_fact(waybill_code=waybill, caller_id=caller)
         report["checks"]["order_query"] = _check(
@@ -123,6 +134,14 @@ def main() -> int:
         report["checks"]["address_update"] = _check(False, skipped=True, failure_reason="write_ack_required")
         report["checks"]["cancel_order"] = _check(False, skipped=True, failure_reason="write_ack_required")
         report["checks"]["voice_callback"] = _check(False, skipped=True, failure_reason="write_ack_required")
+    elif missing_write_inputs:
+        for name in ("work_order_create", "address_update", "cancel_order", "voice_callback"):
+            report["checks"][name] = _check(
+                False,
+                skipped=True,
+                failure_reason="missing_required_write_input",
+                missing_inputs=missing_write_inputs,
+            )
     elif report["ok"]:
         service = SpeedafActionService()
         try:
@@ -131,7 +150,7 @@ def main() -> int:
         except (SpeedafActionDisabled, Exception) as exc:
             report["checks"]["work_order_create"] = _check(False, **_safe_error(exc))
         try:
-            result = service.submit_update_address_flow(waybill_code=waybill, caller_id=caller, whatsapp_phone=args.whatsapp_phone.strip())
+            result = service.submit_update_address_flow(waybill_code=waybill, caller_id=caller, whatsapp_phone=whatsapp_phone)
             report["checks"]["address_update"] = _check(result.ok, status=result.status, error_code=result.error_code, safe_payload=result.safe_payload)
         except (SpeedafActionDisabled, Exception) as exc:
             report["checks"]["address_update"] = _check(False, **_safe_error(exc))
