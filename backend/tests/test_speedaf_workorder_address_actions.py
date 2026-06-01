@@ -191,6 +191,14 @@ def test_address_update_worker_executes_speedaf_action_and_writes_completion(har
         job = db.query(BackgroundJob).filter(BackgroundJob.job_type == SPEEDAF_ADDRESS_UPDATE_JOB).one()
         process_background_job(db, job)
         db.commit()
+        db.refresh(job)
+        rendered_job_payload = job.payload_json or ""
+        assert "WB123" not in rendered_job_payload
+        assert "41000000000" not in rendered_job_payload
+        assert "41790000000" not in rendered_job_payload
+        safe_job_payload = json.loads(rendered_job_payload)
+        assert safe_job_payload["scrubbed"] is True
+        assert safe_job_payload["waybill_suffix"] == "B123"
     assert calls == [{"waybill_code": "WB123", "whatsapp_phone": "41790000000", "caller_id": "41000000000"}]
     with harness.SessionLocal() as db:
         assert db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_address_update", TicketEvent.new_value == "completed").count() == 1

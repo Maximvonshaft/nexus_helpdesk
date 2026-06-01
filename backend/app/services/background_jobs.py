@@ -15,6 +15,7 @@ from ..settings import get_settings
 from ..utils.time import utc_now
 from . import openclaw_bridge, openclaw_client_factory
 from .email_mailbox_identity import ensure_outbound_mailbox_identity
+from .speedaf.redactor import mask_phone, safe_caller_payload, safe_waybill_payload, sha256_prefix, suffix
 
 settings = get_settings()
 AUTO_REPLY_JOB = 'auto_reply.send_update'
@@ -32,6 +33,74 @@ SPEEDAF_WORK_ORDER_DESCRIPTION_MAX_LENGTH = 200
 def _stable_hash_prefix(value: object, *, length: int = 16) -> str:
     cleaned = str(value or "").strip().upper()
     return hashlib.sha256(cleaned.encode("utf-8", errors="ignore")).hexdigest()[:length]
+
+
+SPEEDAF_SENSITIVE_JOB_TYPES = {
+    SPEEDAF_WORK_ORDER_CREATE_JOB,
+    SPEEDAF_ADDRESS_UPDATE_JOB,
+    SPEEDAF_VOICE_CALLBACK_JOB,
+}
+
+
+def _scrub_completed_speedaf_job_payload(job: BackgroundJob) -> None:
+    if job.job_type not in SPEEDAF_SENSITIVE_JOB_TYPES:
+        return
+    try:
+        payload = json.loads(job.payload_json or "{}")
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    safe_payload: dict[str, object] = {
+        "scrubbed": True,
+        "scrub_reason": "speedaf_job_completed",
+        "job_type": job.job_type,
+    }
+    if "ticket_id" in payload:
+        safe_payload["ticket_id"] = payload.get("ticket_id")
+    if "conversation_id" in payload:
+        safe_payload["conversation_id"] = payload.get("conversation_id")
+    if "request_id" in payload:
+        safe_payload["request_id"] = payload.get("request_id")
+    if job.job_type == SPEEDAF_WORK_ORDER_CREATE_JOB:
+        safe_payload.update(
+            {
+                "workOrderType": payload.get("workOrderType"),
+                "description_present": bool(payload.get("description")),
+                **safe_waybill_payload(str(payload.get("waybillCode") or "")),
+                **safe_caller_payload(str(payload.get("callerID") or "")),
+            }
+        )
+    elif job.job_type == SPEEDAF_ADDRESS_UPDATE_JOB:
+        phone = str(payload.get("whatsAppPhone") or "")
+        safe_payload.update(
+            {
+                "addressUpdateDedupeKey": payload.get("addressUpdateDedupeKey"),
+                **safe_waybill_payload(str(payload.get("waybillCode") or "")),
+                **safe_caller_payload(str(payload.get("callerID") or "")),
+                "whatsapp_phone": {"redacted": True, "masked": mask_phone(phone), "sha256_prefix": sha256_prefix(phone)},
+            }
+        )
+    elif job.job_type == SPEEDAF_VOICE_CALLBACK_JOB:
+        action = payload.get("action") if isinstance(payload.get("action"), dict) else {}
+        waybill_code = str(action.get("waybillCode") or "")
+        safe_payload.update(
+            {
+                "voice_session_id": payload.get("voice_session_id"),
+                "voiceCallbackDedupeKey": payload.get("voiceCallbackDedupeKey"),
+                "call_session": {"redacted": True, "suffix": suffix(payload.get("callSessionId")), "sha256_prefix": sha256_prefix(payload.get("callSessionId"))},
+                "isTransferredToHuman": payload.get("isTransferredToHuman"),
+                "action": {
+                    "action": action.get("action"),
+                    "actionStatus": action.get("actionStatus"),
+                    "actionTime_present": bool(action.get("actionTime")),
+                    "aiActionSummary_present": bool(action.get("aiActionSummary")),
+                    "errorCode_present": bool(action.get("errorCode")),
+                    **safe_waybill_payload(waybill_code),
+                },
+            }
+        )
+    job.payload_json = json.dumps(safe_payload, ensure_ascii=False, sort_keys=True)
 
 
 def _find_active_dedupe_job(db: Session, *, dedupe_key: str) -> BackgroundJob | None:
@@ -184,6 +253,7 @@ def claim_pending_jobs(db: Session, *, limit: int | None = None, worker_id: str 
 
 
 def _mark_done(job: BackgroundJob) -> None:
+    _scrub_completed_speedaf_job_payload(job)
     job.status = JobStatus.done
     job.locked_at = None
     job.locked_by = None

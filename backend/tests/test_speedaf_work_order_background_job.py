@@ -135,6 +135,13 @@ def test_process_speedaf_work_order_job_writes_ticket_event_and_marks_done(db_se
     assert calls[0]["init"]["ticket_id"] == ticket.id
     assert calls[0]["init"]["webchat_conversation_id"] == 202
     assert calls[0]["init"]["background_job_id"] == job.id
+    rendered_job_payload = job.payload_json or ""
+    assert "SPX123456789CH" not in rendered_job_payload
+    assert "41000000000" not in rendered_job_payload
+    assert "Please urge delivery" not in rendered_job_payload
+    safe_job_payload = json.loads(rendered_job_payload)
+    assert safe_job_payload["scrubbed"] is True
+    assert safe_job_payload["waybill_suffix"] == "89CH"
 
 
 def test_disabled_speedaf_work_order_job_records_skip_and_does_not_retry(db_session, monkeypatch):
@@ -165,6 +172,8 @@ def test_disabled_speedaf_work_order_job_records_skip_and_does_not_retry(db_sess
 
     assert job.status == JobStatus.done
     assert job.attempt_count == 0
+    assert "SPX123456789CH" not in (job.payload_json or "")
+    assert "41000000000" not in (job.payload_json or "")
     event = db_session.query(TicketEvent).filter_by(ticket_id=ticket.id, field_name="speedaf_work_order").one()
     payload = json.loads(event.payload_json)
     assert payload["status"] == "disabled"
