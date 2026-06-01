@@ -51,6 +51,34 @@ class ProviderRuntimeRouter:
         digest = hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()
         return int(digest[:8], 16) % 100
 
+    @staticmethod
+    def _parse_webchat_fast_output(request: ProviderRequest, result: ProviderResult) -> dict:
+        """Accept legacy fast-reply JSON and the new AI decision JSON.
+
+        ProviderRuntime historically enforced speedaf_webchat_fast_reply_v1 with
+        additionalProperties=false.  WebChat fast now owns the final policy gate;
+        this parser keeps router-level JSON safety while allowing decision fields
+        such as next_action/tool_calls/evidence_used to pass into the runtime.
+        Non-WebChat scenarios continue to use OutputContracts unchanged.
+        """
+
+        from app.services.webchat_fast_output_parser import parse_openclaw_fast_reply
+
+        parsed_reply = parse_openclaw_fast_reply(result.structured_output)
+        parsed = dict(result.structured_output or {})
+        parsed.setdefault("customer_reply", parsed_reply.reply)
+        parsed.setdefault("reply", parsed_reply.reply)
+        parsed.setdefault("language", "unknown")
+        parsed.setdefault("intent", parsed_reply.intent)
+        parsed.setdefault("tracking_number", parsed_reply.tracking_number)
+        parsed.setdefault("handoff_required", parsed_reply.handoff_required)
+        parsed.setdefault("handoff_reason", parsed_reply.handoff_reason)
+        parsed.setdefault("recommended_agent_action", parsed_reply.recommended_agent_action)
+        parsed.setdefault("ticket_should_create", bool(parsed_reply.handoff_required))
+        if parsed_reply.ai_decision:
+            parsed.setdefault("ai_decision", parsed_reply.ai_decision)
+        return parsed
+
     async def route(self, request: ProviderRequest) -> ProviderResult:
         from . import bootstrap_provider_runtime
 
@@ -119,14 +147,17 @@ class ProviderRuntimeRouter:
             try:
                 if not result.structured_output:
                     raise ValueError("No structured output provided")
-                parsed = OutputContracts.validate_and_parse(
-                    output_contract,
-                    json.dumps(result.structured_output),
-                    request.tracking_fact_evidence_present,
-                    (request.metadata or {}).get("persona_context"),
-                    request.body,
-                    (request.metadata or {}).get("knowledge_context"),
-                )
+                if request.scenario == "webchat_fast_reply" and output_contract == "speedaf_webchat_fast_reply_v1":
+                    parsed = self._parse_webchat_fast_output(request, result)
+                else:
+                    parsed = OutputContracts.validate_and_parse(
+                        output_contract,
+                        json.dumps(result.structured_output),
+                        request.tracking_fact_evidence_present,
+                        (request.metadata or {}).get("persona_context"),
+                        request.body,
+                        (request.metadata or {}).get("knowledge_context"),
+                    )
                 result.structured_output = parsed
                 self._write_audit(request, "generate", "ok", provider_name, result.elapsed_ms, result.raw_payload_safe_summary)
                 return result
