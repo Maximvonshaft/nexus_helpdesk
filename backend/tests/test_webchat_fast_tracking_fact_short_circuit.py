@@ -30,6 +30,10 @@ def test_tracking_fact_forced_reply_payload_returns_grounded_status():
     assert payload["tracking_number"] is None
     assert payload["tracking_number_suffix"] == "008030"
     assert payload["tracking_number_hash"]
+    assert payload["evidence_trace"]["retrieval"] == "trusted_tracking_fact"
+    assert payload["evidence_trace"]["source"] == "speedaf_trusted_tracking_fact"
+    assert payload["evidence_trace"]["fact_evidence_present"] is True
+    assert payload["evidence_trace"]["raw_tracking_number_exposed"] is False
     assert payload["handoff_required"] is False
     assert payload["ticket_creation_queued"] is False
     assert "730" in payload["reply"]

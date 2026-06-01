@@ -257,7 +257,12 @@ def test_fast_reply_chinese_waybill_uses_trusted_tracking_fact_without_provider(
     assert payload["tracking_fact"]["tool_status"] == "success"
     assert payload["tracking_fact"]["truth_trace"]["source"] == "speedaf_trusted_tracking_fact"
     assert payload["tracking_fact"]["truth_trace"]["raw_tracking_number_exposed"] is False
+    assert payload["evidence_trace"]["retrieval"] == "trusted_tracking_fact"
+    assert payload["evidence_trace"]["source"] == "speedaf_trusted_tracking_fact"
+    assert payload["evidence_trace"]["fact_evidence_present"] is True
+    assert payload["evidence_trace"]["raw_tracking_number_exposed"] is False
     assert "CH020000006856" not in json.dumps(payload["tracking_fact"], ensure_ascii=False)
+    assert "CH020000006856" not in json.dumps(payload["evidence_trace"], ensure_ascii=False)
     assert "CH020000006856" not in json.dumps(payload, ensure_ascii=False)
     assert calls[0]["tracking_number"] == "CH020000006856"
 
@@ -293,6 +298,11 @@ def test_fast_reply_extracted_waybill_failure_returns_safe_tracking_reply(monkey
     assert payload["tracking_number_suffix"] == "006856"
     assert payload["tracking_number_hash"]
     assert payload["handoff_required"] is True
+    assert payload["evidence_trace"]["retrieval"] == "trusted_tracking_fact"
+    assert payload["evidence_trace"]["source"] == "speedaf_trusted_tracking_fact"
+    assert payload["evidence_trace"]["fact_evidence_present"] is False
+    assert payload["evidence_trace"]["no_answer_reason"] == "timeout"
+    assert payload["evidence_trace"]["raw_tracking_number_exposed"] is False
     assert "请提供" not in payload["reply"]
     assert payload.get("error_code") != "all_providers_failed"
     assert "CH020000006856" not in json.dumps(payload, ensure_ascii=False)
@@ -344,6 +354,8 @@ def test_fast_reply_same_session_reuses_conversation_and_uses_server_context(mon
     assert second.json()["reply_source"] == "server_tracking_fact_unavailable"
     assert second.json()["tracking_number"] is None
     assert second.json()["tracking_number_suffix"] == "6789CH"
+    assert second.json()["evidence_trace"]["retrieval"] == "trusted_tracking_fact"
+    assert second.json()["evidence_trace"]["no_answer_reason"] == "tracking_fact_lookup_disabled"
     assert "SPX123456789CH" not in json.dumps(second.json(), ensure_ascii=False)
 
     db = SessionLocal()
