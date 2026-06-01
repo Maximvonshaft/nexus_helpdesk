@@ -108,12 +108,43 @@ def run_waybill_lookup(adapter: SpeedafCoreAdapter, *, caller_id: str, country_c
         return {"ok": False, "elapsed_ms": int((time.monotonic() - started) * 1000), "error_code": type(exc).__name__, "error_message": str(exc)}
 
 
-def write_report(path: str | None, payload: dict[str, Any]) -> None:
-    if not path:
-        return
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+def sensitive_values(*values: str | None) -> list[str]:
+    seen: set[str] = set()
+    sensitive: list[str] = []
+    for value in values:
+        cleaned = str(value or "").strip()
+        if len(cleaned) < 4 or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        sensitive.append(cleaned)
+    return sensitive
+
+
+def render_redacted_report(payload: dict[str, Any], *, sensitive_values: list[str]) -> str:
+    payload["redaction_guard"] = {
+        "enabled": True,
+        "exact_value_count": len(sensitive_values),
+    }
+    text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+    replacements = 0
+    for value in sensitive_values:
+        if value in text:
+            replacements += text.count(value)
+            text = text.replace(value, "[REDACTED]")
+    payload["redaction_guard"]["replacement_count"] = replacements
+    text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+    for value in sensitive_values:
+        text = text.replace(value, "[REDACTED]")
+    return text
+
+
+def emit_report(path: str | None, payload: dict[str, Any], *, sensitive_values: list[str]) -> None:
+    text = render_redacted_report(payload, sensitive_values=sensitive_values)
+    if path:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    print(text)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -142,24 +173,22 @@ def main(argv: list[str] | None = None) -> int:
     if guard_failure:
         report["ok"] = False
         report["guards"]["write_flags"] = guard_failure
-        write_report(args.output_json, report)
-        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        emit_report(args.output_json, report, sensitive_values=sensitive_values(args.waybill_code, args.caller_id))
         return 2
     report["guards"]["write_flags"] = {"ok": True, "enabled_flags": []}
 
     config = load_speedaf_mcp_config()
+    report_sensitive_values = sensitive_values(args.waybill_code, args.caller_id, config.app_code, config.secret_key)
     if not config.configured:
         report["ok"] = False
         report["checks"]["configuration"] = fail("speedaf_mcp_not_configured", "SPEEDAF_MCP_ENABLED and SPEEDAF_MCP_APP_CODE are required for live UAT.")
-        write_report(args.output_json, report)
-        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        emit_report(args.output_json, report, sensitive_values=report_sensitive_values)
         return 2
 
     if config.require_sign:
         report["checks"]["sign_rule"] = fail("sign_rule_required", "SPEEDAF_MCP_REQUIRE_SIGN=true but the current client intentionally does not guess the sign algorithm.")
         report["ok"] = False
-        write_report(args.output_json, report)
-        print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+        emit_report(args.output_json, report, sensitive_values=report_sensitive_values)
         return 2
 
     adapter = SpeedafCoreAdapter()
@@ -177,8 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     if any(value.get("ok") is False for value in requested_results):
         report["ok"] = False
 
-    write_report(args.output_json, report)
-    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    emit_report(args.output_json, report, sensitive_values=report_sensitive_values)
     return 1 if args.strict and not report["ok"] else 0
 
 
