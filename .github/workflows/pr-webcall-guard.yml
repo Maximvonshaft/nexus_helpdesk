@@ -57,6 +57,7 @@ jobs:
               .github/workflows/knowledge-runtime-eval.yml) return 0 ;;
               .github/workflows/knowledge-runtime-readiness.yml) return 0 ;;
               .github/workflows/speedaf-contract-gate.yml) return 0 ;;
+              .github/workflows/speedaf-uat-smoke.yml) return 0 ;;
               .github/workflows/speedaf-full-uat-probe.yml) return 0 ;;
               .github/workflows/speedaf-readonly-uat-probe.yml) return 0 ;;
               .gitignore) return 0 ;;
@@ -228,6 +229,7 @@ jobs:
               docs/ops/CODEX_APPSERVER_RUNTIME_V3_ROLLBACK.md) return 0 ;;
               docs/ops/CODEX_APPSERVER_RUNTIME_V3_RUNBOOK.md) return 0 ;;
               docs/ops/WEBCHAT_WEBSOCKET_RUNTIME.md) return 0 ;;
+              docs/speedaf-mcp-uat-github-workflow.md) return 0 ;;
               docs/security/CODEX_APPSERVER_TOKEN_BOUNDARY.md) return 0 ;;
               scripts/export_release_metadata.sh) return 0 ;;
               scripts/probe_codex_appserver_discovery.sh) return 0 ;;

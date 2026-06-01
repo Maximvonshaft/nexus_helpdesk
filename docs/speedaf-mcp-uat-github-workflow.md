@@ -25,15 +25,12 @@ It does not validate or execute write actions:
 
 Configure repository secrets:
 
-- `SPEEDAF_UAT_APP_CODE`
-- `SPEEDAF_UAT_SECRET_KEY`
-
-Configure repository variables:
-
+- `SPEEDAF_UAT_MCP_APP_CODE`
+- `SPEEDAF_UAT_MCP_SECRET_KEY`
 - `SPEEDAF_UAT_TEST_CALLER_ID`
 - `SPEEDAF_UAT_TEST_WAYBILL_CODE`
 
-Do not paste these values into PRs, issues, comments, screenshots, or committed files.
+Do not store Speedaf UAT sample caller IDs or waybills as repository variables. Do not paste these values into PRs, issues, comments, screenshots, or committed files.
 
 ## Workflow
 

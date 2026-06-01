@@ -50,10 +50,10 @@ jobs:
 
       - name: Validate required secrets and variables
         env:
-          SPEEDAF_MCP_APP_CODE: ${{ secrets.SPEEDAF_UAT_APP_CODE }}
-          SPEEDAF_MCP_SECRET_KEY: ${{ secrets.SPEEDAF_UAT_SECRET_KEY }}
-          SPEEDAF_MCP_TEST_CALLER_ID: ${{ vars.SPEEDAF_UAT_TEST_CALLER_ID }}
-          SPEEDAF_MCP_TEST_WAYBILL_CODE: ${{ vars.SPEEDAF_UAT_TEST_WAYBILL_CODE }}
+          SPEEDAF_MCP_APP_CODE: ${{ secrets.SPEEDAF_UAT_MCP_APP_CODE }}
+          SPEEDAF_MCP_SECRET_KEY: ${{ secrets.SPEEDAF_UAT_MCP_SECRET_KEY }}
+          SPEEDAF_MCP_TEST_CALLER_ID: ${{ secrets.SPEEDAF_UAT_TEST_CALLER_ID }}
+          SPEEDAF_MCP_TEST_WAYBILL_CODE: ${{ secrets.SPEEDAF_UAT_TEST_WAYBILL_CODE }}
         run: |
           set -Eeuo pipefail
           missing=0
@@ -64,21 +64,21 @@ jobs:
             fi
           done
           if [ "$missing" -ne 0 ]; then
-            echo "Configure repository secrets SPEEDAF_UAT_APP_CODE / SPEEDAF_UAT_SECRET_KEY and variables SPEEDAF_UAT_TEST_CALLER_ID / SPEEDAF_UAT_TEST_WAYBILL_CODE before running this workflow."
+            echo "Configure repository secrets SPEEDAF_UAT_MCP_APP_CODE / SPEEDAF_UAT_MCP_SECRET_KEY / SPEEDAF_UAT_TEST_CALLER_ID / SPEEDAF_UAT_TEST_WAYBILL_CODE before running this workflow."
             exit 2
           fi
 
       - name: Run read-only Speedaf UAT smoke
         env:
           SPEEDAF_MCP_BASE_URL: ${{ inputs.base_url }}
-          SPEEDAF_MCP_APP_CODE: ${{ secrets.SPEEDAF_UAT_APP_CODE }}
-          SPEEDAF_MCP_SECRET_KEY: ${{ secrets.SPEEDAF_UAT_SECRET_KEY }}
+          SPEEDAF_MCP_APP_CODE: ${{ secrets.SPEEDAF_UAT_MCP_APP_CODE }}
+          SPEEDAF_MCP_SECRET_KEY: ${{ secrets.SPEEDAF_UAT_MCP_SECRET_KEY }}
           SPEEDAF_MCP_COUNTRY_CODE_DEFAULT: ${{ inputs.country_code }}
           SPEEDAF_MCP_CONTENT_TYPE: ${{ inputs.content_type }}
           SPEEDAF_MCP_DATA_MODE: ${{ inputs.data_mode }}
           SPEEDAF_MCP_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
-          SPEEDAF_MCP_TEST_CALLER_ID: ${{ vars.SPEEDAF_UAT_TEST_CALLER_ID }}
-          SPEEDAF_MCP_TEST_WAYBILL_CODE: ${{ vars.SPEEDAF_UAT_TEST_WAYBILL_CODE }}
+          SPEEDAF_MCP_TEST_CALLER_ID: ${{ secrets.SPEEDAF_UAT_TEST_CALLER_ID }}
+          SPEEDAF_MCP_TEST_WAYBILL_CODE: ${{ secrets.SPEEDAF_UAT_TEST_WAYBILL_CODE }}
         run: |
           set -Eeuo pipefail
           bash scripts/smoke/smoke_speedaf_mcp_contract.sh
@@ -88,7 +88,7 @@ jobs:
           set -Eeuo pipefail
           REPORT="$REPORT_DIR/speedaf_mcp_contract_report.txt"
           test -f "$REPORT"
-          if grep -E '[0-9]{6,}|SPEEDAF_UAT_APP_CODE|SPEEDAF_UAT_SECRET_KEY' "$REPORT" >/dev/null 2>&1; then
+          if grep -E '[0-9]{6,}|SPEEDAF_UAT_MCP_APP_CODE|SPEEDAF_UAT_MCP_SECRET_KEY' "$REPORT" >/dev/null 2>&1; then
             echo 'ERROR: sanitized report still contains sensitive-looking material.'
             exit 3
           fi
