@@ -55,6 +55,7 @@ jobs:
             case "$1" in
               .github/workflows/pr-webcall-guard.yml) return 0 ;;
               .github/workflows/knowledge-runtime-eval.yml) return 0 ;;
+              .github/workflows/knowledge-runtime-readiness.yml) return 0 ;;
               .github/workflows/speedaf-contract-gate.yml) return 0 ;;
               .github/workflows/speedaf-full-uat-probe.yml) return 0 ;;
               .gitignore) return 0 ;;
