@@ -138,6 +138,73 @@ def test_stream_error_contract(monkeypatch):
     assert "OpenClaw" not in response.text
 
 
+def test_stream_provider_receives_knowledge_context_and_returns_evidence_trace(monkeypatch):
+    seen: dict[str, str] = {}
+    runtime_context = {
+        "knowledge_context": {
+            "retrieval": "hybrid_rag_v2",
+            "candidate_count": 1,
+            "total_matches": 1,
+            "retrieval_methods": ["structured_exact"],
+            "hits": [
+                {
+                    "item_key": "fact.shipping_sla",
+                    "title": "Shipping SLA",
+                    "score": 1.0,
+                    "retrieval_method": "structured_exact",
+                    "answer_mode": "direct_answer",
+                    "direct_answer": "Shipping takes 3-5 business days.",
+                    "text": "Shipping takes 3-5 business days.",
+                }
+            ],
+            "evidence_pack": [
+                {
+                    "item_key": "fact.shipping_sla",
+                    "title": "Shipping SLA",
+                    "source_version": 3,
+                    "chunk_index": 0,
+                    "score": 1.0,
+                    "retrieval_method": "structured_exact",
+                    "citation": {"label": "KB"},
+                }
+            ],
+        }
+    }
+
+    async def fake_call_openclaw_responses_stream(**kwargs):
+        seen["input_text"] = kwargs["input_text"]
+        yield Completed(full_text='{"reply":"Shipping takes 3-5 business days.","intent":"other","tracking_number":null,"handoff_required":false,"handoff_reason":null,"recommended_agent_action":null}')
+
+    monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", lambda: _settings(True))
+    monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
+    monkeypatch.setattr(webchat_fast, "_webchat_fast_runtime_context", lambda **_kwargs: runtime_context)
+    monkeypatch.setattr(webchat_fast_stream_service.openclaw_client, "call_openclaw_responses_stream", fake_call_openclaw_responses_stream)
+
+    response = client.post(
+        "/api/webchat/fast-reply/stream",
+        json=_payload("client-stream-rag-evidence", body="What is the shipping SLA?"),
+        headers={"Accept": "text/event-stream"},
+    )
+
+    assert response.status_code == 200
+    text = response.text
+    assert "Knowledge context" in seen["input_text"]
+    assert "Shipping takes 3-5 business days." in seen["input_text"]
+    assert '"reply_source":"openclaw_responses_stream"' in text
+    assert '"evidence_trace":' in text
+    assert '"retrieval":"hybrid_rag_v2"' in text
+    assert '"item_key":"fact.shipping_sla"' in text
+
+    db = SessionLocal()
+    try:
+        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == "client-stream-rag-evidence")).scalar_one()
+        assert row.status == "done"
+        assert row.response_json["evidence_trace"]["retrieval"] == "hybrid_rag_v2"
+        assert row.response_json["evidence_trace"]["evidence_pack"][0]["item_key"] == "fact.shipping_sla"
+    finally:
+        db.close()
+
+
 def test_stream_tracking_fact_failure_returns_server_owned_safe_reply(monkeypatch):
     def fake_lookup_fast_tracking_fact(**kwargs):
         return TrackingFactResult(
