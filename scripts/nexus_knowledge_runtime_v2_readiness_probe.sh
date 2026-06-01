@@ -83,12 +83,15 @@ def require(condition, message):
     if not condition:
         raise AssertionError(f"{message}: {safe_payload()}")
 require(payload.get("reply_source") == "server_tracking_fact", "reply_source_not_server_tracking_fact")
-require(payload.get("tracking_number") == waybill, "tracking_number_mismatch")
+require(payload.get("tracking_number") in (None, ""), "tracking_number_not_redacted")
+require(payload.get("tracking_number_suffix") == waybill[-6:], "tracking_number_suffix_mismatch")
+require(bool(payload.get("tracking_number_hash")), "tracking_number_hash_missing")
 require(payload.get("tracking_fact", {}).get("fact_evidence_present") is True, "tracking_fact_evidence_missing")
 require(payload.get("tracking_fact", {}).get("truth_trace", {}).get("source") == "speedaf_trusted_tracking_fact", "truth_trace_source_mismatch")
 require(payload.get("tracking_fact", {}).get("truth_trace", {}).get("raw_tracking_number_exposed") is False, "raw_tracking_number_exposed")
 require(payload.get("error_code") != "all_providers_failed", "provider_failure_leaked")
 text=json.dumps(payload, ensure_ascii=False)
+require(waybill not in text, "waybill_exposed_in_public_payload")
 require("猴王山" not in text and "[PROBE]" not in text, "production_data_hygiene_failed")
 print("fast_reply_truth_routing_ok=true")
 PY

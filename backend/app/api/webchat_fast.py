@@ -207,6 +207,16 @@ def _tracking_candidate_selection_payload(result: TrackingFactResult | None) -> 
     return {"ok": True, "ai_generated": False, "reply_source": "server_tracking_candidate_selection", "reply": f"I found multiple shipments linked to this phone number. Please reply with the last 4 digits of the shipment you want to check: {suffixes}", "intent": "tracking_candidate_selection", "tracking_number": None, "handoff_required": False, "handoff_reason": None, "ticket_creation_queued": False, "elapsed_ms": 0, "safe_candidates": candidates}
 
 
+def _public_tracking_reference(tracking_number: str | None) -> dict[str, Any]:
+    safe_number = str(tracking_number or "").strip().upper()
+    if not safe_number:
+        return {"tracking_number": None, "tracking_number_hash": None, "tracking_number_suffix": None}
+    return {
+        "tracking_number": None,
+        "tracking_number_hash": hash_tracking_number(safe_number),
+        "tracking_number_suffix": safe_number[-6:],
+    }
+
 
 # STREAM_ROUTE_FORCE_ENABLE_BEGIN
 def _webchat_stream_route_forced_enabled() -> bool:
@@ -254,7 +264,7 @@ def _tracking_fact_forced_reply_payload(*, tracking_number: str | None, result: 
         "reply_source": "server_tracking_fact",
         "reply": reply,
         "intent": "tracking",
-        "tracking_number": safe_number or None,
+        **_public_tracking_reference(safe_number),
         "handoff_required": False,
         "handoff_reason": None,
         "ticket_creation_queued": False,
@@ -276,7 +286,7 @@ def _tracking_fact_safe_failure_payload(*, tracking_number: str | None, result: 
         "reply_source": "server_tracking_fact_unavailable",
         "reply": reply,
         "intent": "tracking",
-        "tracking_number": (tracking_number or "").strip().upper() or None,
+        **_public_tracking_reference(tracking_number),
         "handoff_required": True,
         "handoff_reason": (result.failure_reason if result else "tracking_fact_unavailable") or "tracking_fact_unavailable",
         "ticket_creation_queued": False,
@@ -328,8 +338,8 @@ def _persist_tracking_fact_forced_reply(
             reply=result_payload["reply"],
             client_message_id=payload.client_message_id,
             metadata={
-                "handoff_required": False,
-                "source": "server_tracking_fact",
+                "handoff_required": bool(result_payload.get("handoff_required")),
+                "source": result_payload.get("reply_source") or "server_tracking_fact",
                 "tracking_fact": tracking_fact_metadata or {},
             },
         )
@@ -353,7 +363,7 @@ async def _tracking_fact_forced_stream_events(
         tracking_fact_metadata=tracking_fact_metadata,
         request=request,
     )
-    yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2", "reply_source": "server_tracking_fact"})
+    yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2", "reply_source": result_payload.get("reply_source") or "server_tracking_fact"})
     yield sse_event("reply_delta", {"text": result_payload["reply"]})
     yield sse_event("final", {k: v for k, v in public_payload.items() if k != "reply"})
 
@@ -398,7 +408,7 @@ def _tracking_fact_provider_fields(result: TrackingFactResult | None) -> tuple[s
 
 
 def _handoff_enqueue_failure_payload(result: Any) -> dict[str, Any]:
-    return {"ok": False, "ai_generated": result.ai_generated, "reply_source": result.reply_source, "reply": None, "intent": result.intent, "tracking_number": result.tracking_number, "handoff_required": True, "handoff_reason": result.handoff_reason, "ticket_creation_queued": False, "elapsed_ms": result.elapsed_ms, "error_code": "handoff_enqueue_failed", "retry_after_ms": 1500}
+    return {"ok": False, "ai_generated": result.ai_generated, "reply_source": result.reply_source, "reply": None, "intent": result.intent, **_public_tracking_reference(result.tracking_number), "handoff_required": True, "handoff_reason": result.handoff_reason, "ticket_creation_queued": False, "elapsed_ms": result.elapsed_ms, "error_code": "handoff_enqueue_failed", "retry_after_ms": 1500}
 
 
 def _server_handoff_response_payload(*, handoff_reason: str | None, customer_reply: str | None) -> dict[str, Any]:
@@ -767,6 +777,19 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
                 row_id=begin.row_id,
                 payload=payload,
                 result_payload=forced_payload,
+                tracking_fact_metadata=tracking_fact.metadata_payload() if tracking_fact else None,
+                request=request,
+            ),
+            media_type="text/event-stream",
+            headers=headers,
+        )
+    if tracking_number:
+        result_payload = _tracking_fact_safe_failure_payload(tracking_number=tracking_number, result=tracking_fact, body=payload.body)
+        return StreamingResponse(
+            _tracking_fact_forced_stream_events(
+                row_id=begin.row_id,
+                payload=payload,
+                result_payload=result_payload,
                 tracking_fact_metadata=tracking_fact.metadata_payload() if tracking_fact else None,
                 request=request,
             ),

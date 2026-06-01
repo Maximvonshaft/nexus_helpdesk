@@ -10,6 +10,7 @@ from app.api import webchat_fast
 from app.db import Base, SessionLocal, engine
 from app.main import app
 from app.models import BackgroundJob, Ticket
+from app.services.tracking_fact_schema import TrackingFactResult
 from app.services import webchat_fast_stream_service
 from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency
 from app.services.webchat_fast_stream_service import StreamBeginOutcome, sse_event
@@ -47,13 +48,13 @@ def setup_function():
         db.close()
 
 
-def _payload(client_message_id: str = "client-stream-1") -> dict:
+def _payload(client_message_id: str = "client-stream-1", *, body: str = "Hi") -> dict:
     return {
         "tenant_key": "default",
         "channel_key": "website",
-        "session_id": "session-stream-1",
+        "session_id": f"session-{client_message_id}",
         "client_message_id": client_message_id,
-        "body": "Hi",
+        "body": body,
         "recent_context": [],
     }
 
@@ -135,6 +136,45 @@ def test_stream_error_contract(monkeypatch):
     assert "event: error" in response.text
     assert "ai_invalid_output" in response.text
     assert "OpenClaw" not in response.text
+
+
+def test_stream_tracking_fact_failure_returns_server_owned_safe_reply(monkeypatch):
+    def fake_lookup_fast_tracking_fact(**kwargs):
+        return TrackingFactResult(
+            ok=False,
+            tracking_number=kwargs["tracking_number"],
+            tool_status="timeout",
+            pii_redacted=True,
+            fact_evidence_present=False,
+            failure_reason="timeout",
+        )
+
+    async def fail_if_stream_provider_called(**_kwargs):
+        raise AssertionError("stream provider must not handle live tracking failure")
+        yield ""  # pragma: no cover
+
+    monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", lambda: _settings(True))
+    monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
+    monkeypatch.setattr(webchat_fast, "_lookup_fast_tracking_fact", fake_lookup_fast_tracking_fact)
+    monkeypatch.setattr(webchat_fast, "stream_webchat_fast_reply_events", fail_if_stream_provider_called)
+
+    response = client.post(
+        "/api/webchat/fast-reply/stream",
+        json=_payload("client-stream-tracking-fail", body="CH020000006856这是我的订单号"),
+        headers={"Accept": "text/event-stream"},
+    )
+
+    assert response.status_code == 200
+    text = response.text
+    assert "event: meta" in text
+    assert '"reply_source":"server_tracking_fact_unavailable"' in text
+    assert "event: reply_delta" in text
+    assert "event: final" in text
+    assert '"tracking_number":null' in text
+    assert '"tracking_number_suffix":"006856"' in text
+    assert '"tracking_number_hash":"' in text
+    assert "CH020000006856" not in text
+    assert "all_providers_failed" not in text
 
 
 def test_active_processing_returns_202_before_streaming(monkeypatch):
