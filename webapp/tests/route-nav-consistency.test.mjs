@@ -36,6 +36,12 @@ test('email operator workbench nav route is registered and capability gated', ()
   assert.match(rbac, /'\/email': \{ allOf: \[CAPABILITIES\.ticketRead\], anyOf: \[CAPABILITIES\.outboundDraftSave, CAPABILITIES\.outboundSend\] \}/)
 })
 
+test('customer search nav route is registered as a first-class operator lookup', () => {
+  assert.match(appShell, /to: '\/customer-search'/)
+  assert.match(router, /CustomerSearchRoute/)
+  assert.match(router, /@\/routes\/customer-search/)
+})
+
 test('control tower nav route is registered and capability gated', () => {
   assert.match(appShell, /to: '\/control-tower'/)
   assert.match(router, /ControlTowerRoute/)
@@ -90,6 +96,7 @@ test('primary nav internal hrefs have matching registered routes', () => {
     'login.tsx',
     'index.tsx',
     'workspace.tsx',
+    'customer-search.tsx',
     'webchat.tsx',
     'email.tsx',
     'webcall-operator.tsx',
