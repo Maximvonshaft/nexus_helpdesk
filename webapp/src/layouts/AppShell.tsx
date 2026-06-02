@@ -11,6 +11,7 @@ import { labelize } from '@/lib/format'
 import { canViewOps, roleWorkspaceHint } from '@/lib/access'
 import { canAccess, routeAccess, type AccessRequirement } from '@/lib/rbac'
 import { NoAccessCard } from '@/components/security/RequireCapability'
+import '@/styles-production-a11y.css'
 
 type NavItem = {
   to: string
