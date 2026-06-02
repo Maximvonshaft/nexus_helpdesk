@@ -44,7 +44,7 @@ const navGroups = [
   { label: '系统管理', items: ['/runtime', '/users', '/security', '/control-plane', '/webcall-ai-demo'] },
 ]
 
-const legacyNavigationAliases = ['处理工单', 'WebChat 收件箱', 'WebCall 工作台', '客户 / 运单查询']
+const legacyNavigationAliases = ['日常处理', '渠道与授权', '治理与运维', '处理工单', 'WebChat 收件箱', 'WebCall 工作台', '客户 / 运单查询']
 void legacyNavigationAliases
 
 function isActiveNavPath(pathname: string, target: string) {
