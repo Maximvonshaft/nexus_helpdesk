@@ -15,14 +15,18 @@ export function DataTable({
   loading?: boolean
 }) {
   return (
-    <table className="table">
-      {caption ? <caption>{caption}</caption> : null}
-      <thead><tr>{columns.map((col) => <th key={col}>{col}</th>)}</tr></thead>
-      <tbody>
-        {loading ? <tr><td colSpan={columns.length}>正在加载…</td></tr> : null}
-        {!loading && rows.map((row, idx) => <tr key={idx}>{row.map((cell, cIdx) => <td key={cIdx}>{cell}</td>)}</tr>)}
-        {!loading && !rows.length ? <tr><td colSpan={columns.length}>{empty ?? <EmptyState text="暂无数据。" />}</td></tr> : null}
-      </tbody>
-    </table>
+    <div className="table-wrap">
+      <table className="table">
+        {caption ? <caption>{caption}</caption> : null}
+        <thead>
+          <tr>{columns.map((col) => <th key={col} scope="col">{col}</th>)}</tr>
+        </thead>
+        <tbody>
+          {loading ? <tr><td colSpan={columns.length} role="status" aria-live="polite">正在加载…</td></tr> : null}
+          {!loading && rows.map((row, idx) => <tr key={idx}>{row.map((cell, cIdx) => <td key={cIdx}>{cell}</td>)}</tr>)}
+          {!loading && !rows.length ? <tr><td colSpan={columns.length}>{empty ?? <EmptyState text="暂无数据。" />}</td></tr> : null}
+        </tbody>
+      </table>
+    </div>
   )
 }
