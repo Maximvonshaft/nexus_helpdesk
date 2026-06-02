@@ -66,6 +66,7 @@ export const routeAccess = {
   '/webcall-ai-demo': { allOf: [CAPABILITIES.runtimeManage] },
   '/accounts': { allOf: [CAPABILITIES.channelAccountManage] },
   '/outbound-email': { allOf: [CAPABILITIES.channelAccountManage] },
+  '/customer-waybill': { allOf: [CAPABILITIES.customerProfileRead] },
   '/bulletins': {},
   '/email': { allOf: [CAPABILITIES.ticketRead], anyOf: [CAPABILITIES.outboundDraftSave, CAPABILITIES.outboundSend] },
   '/ai-control': { allOf: [CAPABILITIES.aiConfigManage] },
@@ -114,7 +115,7 @@ export const capabilityCatalogMeta: CapabilityMeta[] = [
   { capability: CAPABILITIES.attachmentReadExternal, label: '查看客户附件', group: '附件与客户资料', description: '查看客户侧附件和证据。', risk: 'normal' },
   { capability: CAPABILITIES.attachmentReadInternal, label: '查看内部附件', group: '附件与客户资料', description: '查看内部可见附件。', risk: 'normal' },
   { capability: CAPABILITIES.attachmentUpload, label: '上传附件', group: '附件与客户资料', description: '向工单补充附件。', risk: 'normal' },
-  { capability: CAPABILITIES.customerProfileRead, label: '查看客户资料', group: '附件与客户资料', description: '查看客户联系方式和基本资料。', risk: 'normal' },
+  { capability: CAPABILITIES.customerProfileRead, label: '查看客户资料', group: '附件与客户资料', description: '查看客户联系方式、Customer 360、Caller ID 和运单关联线索。', risk: 'normal' },
   { capability: CAPABILITIES.outboundDraftSave, label: '保存回复草稿', group: '客户沟通', description: '保存客户回复草稿。', risk: 'normal' },
   { capability: CAPABILITIES.outboundSend, label: '发送客户回复', group: '客户沟通', description: '发送或记录客户回复。', risk: 'high' },
   { capability: CAPABILITIES.noteWriteInternal, label: '写内部备注', group: '客户沟通', description: '写入内部处理备注。', risk: 'normal' },
@@ -143,7 +144,7 @@ export const capabilityCatalogMeta: CapabilityMeta[] = [
   { capability: CAPABILITIES.webchatHandoffDecline, label: '拒绝 WebChat 接管', group: 'WebChat 接管', description: '拒绝当前接管请求并按策略推进队列。', risk: 'high' },
   { capability: CAPABILITIES.webchatHandoffRelease, label: '释放 WebChat 接管', group: 'WebChat 接管', description: '将已接管会话释放回待处理队列。', risk: 'high' },
   { capability: CAPABILITIES.webchatHandoffResumeAI, label: '恢复 WebChat AI', group: 'WebChat 接管', description: '在手工处理完成后恢复 AI 回答能力。', risk: 'high' },
-  { capability: CAPABILITIES.webchatHandoffForceTakeover, label: '强制接管 WebChat AI', group: 'WebChat 接管', description: '在 AI 正在处理时强制暂停 AI 并接管会话。', risk: 'high' },
+  { capability: CAPABILITIES.webchatHandoffForceTakeover, label: '强制接管 WebChat AI', group: 'WebChat 接管', description: '在 AI 正在处理时强制切换到人工处理。', risk: 'high' },
 ]
 
 const metaByCapability = new Map(capabilityCatalogMeta.map((item) => [item.capability, item]))
