@@ -72,7 +72,7 @@ export function ConfirmDialog({
         {children}
         <div className="button-row dialog-actions">
           <button ref={cancelRef} className="button" onClick={onCancel} disabled={pending}>{cancelLabel}</button>
-          <Button ref={confirmRef as any} variant={tone === 'danger' ? 'danger' : 'primary'} onClick={onConfirm} disabled={pending}>{pending ? '处理中...' : confirmLabel}</Button>
+          <Button ref={confirmRef} variant={tone === 'danger' ? 'danger' : 'primary'} onClick={onConfirm} disabled={pending}>{pending ? '处理中...' : confirmLabel}</Button>
         </div>
       </div>
     </div>
