@@ -1,30 +1,15 @@
 from __future__ import annotations
 
 import os
-import sys
-from pathlib import Path
-from types import SimpleNamespace
 
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_fast_speedaf_enqueue_tests.db")
 os.environ.setdefault("ALLOW_DEV_AUTH", "false")
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT.parent))
-
 from app.api import webchat_fast  # noqa: E402
-from app.services.webchat_fast_session_service import FastBusinessState  # noqa: E402
-
-
-def _state(*, issue_type: str = "delivery_reschedule", tracking_number: str | None = "SPX123456789CH") -> FastBusinessState:
-    return FastBusinessState(
-        intent=issue_type,
-        issue_type=issue_type,
-        tracking_number=tracking_number,
-        fast_issue_key=f"tracking:{tracking_number}:intent:{issue_type}" if tracking_number else f"session:s1:intent:{issue_type}",
-        missing_fields=(),
-    )
+from app.services.webchat_ai_decision_runtime.policy_gate import validate_ai_decision  # noqa: E402
+from app.services.webchat_ai_decision_runtime.schemas import AIDecision, AIDecisionToolCall  # noqa: E402
+from app.services.webchat_ai_decision_runtime.tool_registry import get_tool_contract  # noqa: E402
 
 
 def test_caller_id_is_extracted_from_visitor_phone():
@@ -34,82 +19,74 @@ def test_caller_id_is_extracted_from_visitor_phone():
     assert webchat_fast._caller_id(None) is None
 
 
-def test_delivery_follow_up_detection_is_conservative():
-    assert webchat_fast._is_delivery_follow_up_request(
-        body="Please urge delivery for this package, it is still not delivered.",
-        business_state=_state(issue_type="tracking_lookup"),
-    ) is True
-    assert webchat_fast._is_delivery_follow_up_request(
-        body="What are your customer service hours?",
-        business_state=_state(issue_type="general_question", tracking_number=None),
-    ) is False
-    assert webchat_fast._is_delivery_follow_up_request(
-        body="Please deliver again tomorrow.",
-        business_state=_state(issue_type="delivery_reschedule"),
-    ) is True
+def test_speedaf_work_order_tool_is_registered_as_high_risk_confirmation_required():
+    contract = get_tool_contract("speedaf.workOrder.create")
+
+    assert contract is not None
+    assert contract.classification == "write"
+    assert contract.risk_level == "high"
+    assert contract.confirmation_required is True
+    assert contract.controlled_action_required is True
+    assert contract.allowed_auto_execution_mode == "confirmation_required"
+    assert "speedaf:work_order:create" in contract.required_permissions
+    assert "hash_waybill" in contract.redaction_requirements
 
 
-def test_speedaf_work_order_enqueue_requires_ticket_waybill_caller_and_delivery_intent(monkeypatch):
-    calls = []
-
-    def fake_enqueue(**kwargs):
-        calls.append(kwargs)
-        return SimpleNamespace(id=987)
-
-    monkeypatch.setattr(webchat_fast, "enqueue_speedaf_work_order_create_job", fake_enqueue)
-
-    visitor = webchat_fast.WebchatFastVisitor(phone="41000000000")
-    job_id = webchat_fast._maybe_enqueue_speedaf_work_order(
-        db=object(),
-        ticket_id=123,
-        conversation_id=456,
-        business_state=_state(issue_type="tracking_lookup", tracking_number="SPX123456789CH"),
-        body="Please urge delivery for my parcel.",
-        visitor=visitor,
-        handoff_reason="delivery follow up required",
-        recommended_action="delivery follow-up",
+def test_speedaf_write_tool_without_confirmation_is_blocked_by_policy_gate():
+    decision = AIDecision(
+        customer_reply="A human teammate will verify the delivery follow-up before creating a work order.",
+        intent="complaint",
+        confidence=0.8,
+        risk_level="high",
+        next_action="call_tool",
+        handoff_required=False,
+        tool_calls=[
+            AIDecisionToolCall(
+                tool_name="speedaf.workOrder.create",
+                arguments={
+                    "waybill_hash": "sha256:test",
+                    "caller_id_hash": "sha256:test-caller",
+                    "work_order_type": "WT0103-05",
+                },
+                requires_confirmation=False,
+            )
+        ],
+        evidence_used=[],
+        safety_notes=[],
     )
 
-    assert job_id == 987
-    assert calls == [
-        {
-            "db": calls[0]["db"],
-            "ticket_id": 123,
-            "conversation_id": 456,
-            "waybill_code": "SPX123456789CH",
-            "caller_id": "41000000000",
-            "description": "WebChat delivery follow-up request: Please urge delivery for my parcel.",
-            "work_order_type": "WT0103-05",
-        }
-    ]
+    result = validate_ai_decision(decision)
+
+    assert result.ok is False
+    codes = {violation.code for violation in result.violations}
+    assert "write_tool_confirmation_required" in codes
+    assert "high_risk_write_tool_blocked" in codes
 
 
-def test_speedaf_work_order_enqueue_skips_without_required_data(monkeypatch):
-    calls = []
-    monkeypatch.setattr(webchat_fast, "enqueue_speedaf_work_order_create_job", lambda **kwargs: calls.append(kwargs))
+def test_speedaf_write_tool_with_confirmation_is_still_not_auto_executed_in_phase_one():
+    decision = AIDecision(
+        customer_reply="A human teammate will verify the delivery follow-up before creating a work order.",
+        intent="complaint",
+        confidence=0.8,
+        risk_level="high",
+        next_action="call_tool",
+        handoff_required=False,
+        tool_calls=[
+            AIDecisionToolCall(
+                tool_name="speedaf.workOrder.create",
+                arguments={
+                    "waybill_hash": "sha256:test",
+                    "caller_id_hash": "sha256:test-caller",
+                    "work_order_type": "WT0103-05",
+                },
+                requires_confirmation=True,
+            )
+        ],
+        evidence_used=[],
+        safety_notes=[],
+    )
 
-    assert webchat_fast._maybe_enqueue_speedaf_work_order(
-        db=object(),
-        ticket_id=123,
-        conversation_id=456,
-        business_state=_state(tracking_number=None),
-        body="Please urge delivery.",
-        visitor=webchat_fast.WebchatFastVisitor(phone="41000000000"),
-    ) is None
-    assert webchat_fast._maybe_enqueue_speedaf_work_order(
-        db=object(),
-        ticket_id=123,
-        conversation_id=456,
-        business_state=_state(tracking_number="SPX123456789CH"),
-        body="Please urge delivery.",
-        visitor=None,
-    ) is None
-    assert webchat_fast._maybe_enqueue_speedaf_work_order(
-        db=object(),
-        ticket_id=123,
-        conversation_id=456,
-        business_state=_state(issue_type="general_question", tracking_number="SPX123456789CH"),
-        body="What are your working hours?",
-        visitor=webchat_fast.WebchatFastVisitor(phone="41000000000"),
-    ) is None
-    assert calls == []
+    result = validate_ai_decision(decision)
+
+    assert result.ok is False
+    assert any(violation.code == "high_risk_write_tool_blocked" for violation in result.violations)
