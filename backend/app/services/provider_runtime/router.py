@@ -56,10 +56,9 @@ class ProviderRuntimeRouter:
         """Accept legacy fast-reply JSON and the new AI decision JSON.
 
         ProviderRuntime historically enforced speedaf_webchat_fast_reply_v1 with
-        additionalProperties=false.  WebChat fast now owns the final policy gate;
-        this parser keeps router-level JSON safety while allowing decision fields
-        such as next_action/tool_calls/evidence_used to pass into the runtime.
-        Non-WebChat scenarios continue to use OutputContracts unchanged.
+        additionalProperties=false. WebChat fast now owns final tool execution,
+        but router-level security still rejects leaked internals, secrets, and
+        unsupported live tracking status claims before customer visibility.
         """
 
         from app.services.webchat_fast_output_parser import parse_openclaw_fast_reply
@@ -77,6 +76,13 @@ class ProviderRuntimeRouter:
         parsed.setdefault("ticket_should_create", bool(parsed_reply.handoff_required))
         if parsed_reply.ai_decision:
             parsed.setdefault("ai_decision", parsed_reply.ai_decision)
+        OutputContracts.check_security_rules(
+            raw_output=json.dumps(parsed, ensure_ascii=False, default=str),
+            parsed=parsed,
+            evidence_present=request.tracking_fact_evidence_present,
+            request_body=request.body,
+            knowledge_context=(request.metadata or {}).get("knowledge_context"),
+        )
         return parsed
 
     async def route(self, request: ProviderRequest) -> ProviderResult:
