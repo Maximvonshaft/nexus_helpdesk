@@ -28,6 +28,7 @@ from ..services.webchat_fast_idempotency_db import (
     mark_webchat_fast_done,
     mark_webchat_fast_failed,
 )
+from ..services.webchat_fast_output_parser import FastReplyParseError, assert_customer_visible_reply_is_safe
 from ..services.webchat_fast_rate_limit import enforce_webchat_fast_rate_limit
 from ..services.webchat_fast_session_service import (
     FastBusinessState,
@@ -721,15 +722,36 @@ def _stream_begin_status_response(begin: StreamBeginOutcome, headers: dict[str, 
 async def _stream_replay_events(*, payload: WebchatFastReplyRequest, stored: dict[str, Any]) -> AsyncIterator[str]:
     final = {k: v for k, v in dict(stored).items() if k != "reply"}
     final["replayed"] = True
+
+    replay_reply: str | None = None
+    replay_error: str | None = None
+    raw_reply = stored.get("reply")
+    if raw_reply is not None:
+        if not isinstance(raw_reply, str):
+            replay_error = "ai_invalid_output"
+        else:
+            cleaned = raw_reply.strip()
+            if cleaned:
+                try:
+                    assert_customer_visible_reply_is_safe(cleaned)
+                    replay_reply = cleaned
+                except FastReplyParseError:
+                    replay_error = "ai_invalid_output"
+
+    yield sse_event("replay", {"replayed": True})
+    if replay_error:
+        yield sse_event("error", {"error_code": replay_error, "replayed": True})
+        return
+
     with db_context() as db:
         conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id)
         session_payload = fast_public_session_payload(db, conversation)
         final.update(session_payload)
         final["webchat_session"] = session_payload
-    yield sse_event("replay", {"replayed": True})
+
     yield sse_event("final", final)
-    if stored.get("reply"):
-        yield sse_event("reply_delta", {"text": stored["reply"]})
+    if replay_reply:
+        yield sse_event("reply_delta", {"text": replay_reply})
 
 
 async def _stream_process_events(*, row_id: int, payload: WebchatFastReplyRequest, request: Request | None) -> AsyncIterator[str]:
