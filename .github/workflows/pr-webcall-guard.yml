@@ -122,6 +122,7 @@ jobs:
               backend/app/services/tracking_fact_service.py) return 0 ;;
               backend/app/services/webcall_ai/participant_service.py) return 0 ;;
               backend/app/services/webcall_ai_production/**) return 0 ;;
+              backend/app/services/webchat_ai_decision_runtime/**) return 0 ;;
               backend/app/services/webchat_ai_safe_service.py) return 0 ;;
               backend/app/services/webchat_ai_service.py) return 0 ;;
               backend/app/services/webchat_ai_turn_service.py) return 0 ;;
@@ -192,6 +193,7 @@ jobs:
               backend/tests/test_speedaf_workorder_address_actions.py) return 0 ;;
               backend/tests/test_webcall_ai_production.py) return 0 ;;
               backend/tests/test_webcall_ai_voice_loop.py) return 0 ;;
+              backend/tests/test_webchat_ai_decision_runtime.py) return 0 ;;
               backend/tests/test_webchat_ai_turn_runtime.py) return 0 ;;
               backend/tests/test_webchat_codex_app_server_canary_observability.py) return 0 ;;
               backend/tests/test_webchat_codex_app_server_provider.py) return 0 ;;
