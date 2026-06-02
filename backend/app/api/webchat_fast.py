@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, AsyncIterator
 from urllib.parse import urlparse
 
@@ -430,19 +431,36 @@ def _prepare_request_hashes(payload: WebchatFastReplyRequest, frontend_context: 
     return compute_request_hash(**kwargs), compute_legacy_v1_request_hash_aliases(**kwargs)
 
 
-def _fallback_runtime_trace(runtime_context: dict[str, Any] | None) -> dict[str, Any]:
+def _redact_tracking_number_from_public_trace(value: Any, tracking_number: str | None) -> Any:
+    raw = str(tracking_number or "").strip()
+    if not raw:
+        return value
+    suffix = "".join(ch for ch in raw.upper() if ch.isalnum())[-6:]
+    replacement = f"tracking_number_ending_{suffix}" if suffix else "tracking_number_redacted"
+    if isinstance(value, str):
+        return re.sub(re.escape(raw), replacement, value, flags=re.IGNORECASE)
+    if isinstance(value, list):
+        return [_redact_tracking_number_from_public_trace(item, raw) for item in value]
+    if isinstance(value, dict):
+        return {key: _redact_tracking_number_from_public_trace(item, raw) for key, item in value.items()}
+    return value
+
+
+def _fallback_runtime_trace(runtime_context: dict[str, Any] | None, tracking_number: str | None = None) -> dict[str, Any]:
     if runtime_context:
-        return summarize_rag_trace(runtime_context)
-    return {
-        "retrieval": "hybrid_rag_v2",
-        "candidate_count": 0,
-        "total_matches": 0,
-        "retrieval_methods": [],
-        "no_answer_reason": "runtime_context_unavailable",
-        "top_hits": [],
-        "evidence_pack": [],
-        "injected_knowledge": [],
-    }
+        trace = summarize_rag_trace(runtime_context)
+    else:
+        trace = {
+            "retrieval": "hybrid_rag_v2",
+            "candidate_count": 0,
+            "total_matches": 0,
+            "retrieval_methods": [],
+            "no_answer_reason": "runtime_context_unavailable",
+            "top_hits": [],
+            "evidence_pack": [],
+            "injected_knowledge": [],
+        }
+    return _redact_tracking_number_from_public_trace(trace, tracking_number)
 
 
 def _decision_for_execution(
@@ -515,6 +533,7 @@ def _merge_ai_decision_trace(
     policy_summary: dict[str, Any],
     execution_summary: dict[str, Any],
     runtime_context: dict[str, Any] | None,
+    tracking_number: str | None = None,
 ) -> None:
     trace = dict(result_payload.get("ai_decision_trace") or {})
     trace.setdefault("schema_version", "webchat_ai_decision_v1")
@@ -522,7 +541,7 @@ def _merge_ai_decision_trace(
     trace["decision"] = decision.safe_public_summary()
     trace["policy_gate"] = policy_summary
     trace["tool_execution"] = execution_summary
-    trace["runtime_context_trace"] = _fallback_runtime_trace(runtime_context)
+    trace["runtime_context_trace"] = _fallback_runtime_trace(runtime_context, tracking_number=tracking_number)
     trace["raw_tracking_number_exposed"] = False
     result_payload["ai_decision_trace"] = trace
 
@@ -588,9 +607,9 @@ async def _process_fast_reply(
     if tracking_fact is not None:
         result_payload["tracking_fact"] = _tracking_fact_public_payload(tracking_fact)
     if tracking_fact is not None and tracking_fact.fact_evidence_present:
-        result_payload.setdefault("evidence_trace", _tracking_fact_evidence_trace(tracking_fact, tracking_number=tracking_number))
+        result_payload["evidence_trace"] = _tracking_fact_evidence_trace(tracking_fact, tracking_number=tracking_number)
     else:
-        result_payload.setdefault("evidence_trace", _fallback_runtime_trace(runtime_context))
+        result_payload.setdefault("evidence_trace", _fallback_runtime_trace(runtime_context, tracking_number=tracking_number))
 
     with db_context() as db:
         conversation = get_or_create_fast_conversation(
@@ -639,6 +658,7 @@ async def _process_fast_reply(
             policy_summary=policy.safe_summary(),
             execution_summary=execution.safe_summary(),
             runtime_context=runtime_context,
+            tracking_number=tracking_number,
         )
         metadata = {
             "handoff_required": bool(result_payload.get("handoff_required")),

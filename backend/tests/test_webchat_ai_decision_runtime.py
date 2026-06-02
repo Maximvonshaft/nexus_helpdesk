@@ -228,3 +228,29 @@ def test_raw_waybill_caller_and_secret_are_blocked_from_reply():
     codes = {violation.code for violation in result.violations}
     assert "raw_tracking_exposed" in codes
     assert "raw_caller_or_secret_exposed" in codes or "unsafe_customer_reply" in codes
+
+
+
+def test_runtime_trace_tracking_number_is_redacted_from_public_trace():
+    from app.api.webchat_fast import _fallback_runtime_trace, _redact_tracking_number_from_public_trace
+
+    tracking_number = "CH120000011425"
+    raw_trace = {
+        "retrieval": "hybrid_rag_v2",
+        "query_analysis": {
+            "normalized_query": "track ch120000011425",
+            "numeric_terms": ["ch120000011425"],
+            "high_value_terms": ["CH120000011425", "tracking"],
+        },
+        "candidate_count": 0,
+        "total_matches": 0,
+    }
+
+    redacted = _redact_tracking_number_from_public_trace(raw_trace, tracking_number)
+    rendered = str(redacted).lower()
+
+    assert tracking_number.lower() not in rendered
+    assert "tracking_number_ending_011425" in rendered
+
+    fallback_trace = _fallback_runtime_trace(raw_trace, tracking_number=tracking_number)
+    assert tracking_number.lower() not in str(fallback_trace).lower()
