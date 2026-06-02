@@ -14,6 +14,7 @@ on:
       - 'backend/app/services/webchat_voice_service.py'
       - 'backend/alembic/versions/*speedaf*.py'
       - 'backend/tests/test_speedaf*.py'
+      - 'backend/tests/test_webchat_voice_api.py'
       - 'backend/scripts/speedaf_full_uat_probe.py'
       - 'backend/scripts/speedaf_readonly_uat_probe.py'
       - 'scripts/nexus_knowledge_runtime_v2_readiness_probe.sh'
