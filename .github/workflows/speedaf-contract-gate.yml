@@ -10,6 +10,7 @@ on:
       - 'backend/app/services/speedaf/**'
       - 'backend/app/services/tracking_fact*.py'
       - 'backend/app/services/background_jobs.py'
+      - 'backend/app/services/tool_governance.py'
       - 'backend/app/services/webchat_voice_service.py'
       - 'backend/alembic/versions/*speedaf*.py'
       - 'backend/tests/test_speedaf*.py'
