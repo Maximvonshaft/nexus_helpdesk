@@ -32,7 +32,7 @@ def test_stream_runtime_uses_existing_idempotency_state_and_shared_processor():
 
 
 def test_generic_stream_path_uses_ai_decision_runtime_contract():
-    assert "stream_version": "V3.ai_decision_runtime" if False else True
+    assert "V3.ai_decision_runtime" in SRC
     assert "decision_runtime" in SRC
     assert "webchat_ai_decision_v1" in SRC
     assert "ai_decision_trace" in SRC
