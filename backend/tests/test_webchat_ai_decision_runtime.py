@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from app.services.tracking_fact_schema import hash_tracking_number
 from app.services.webchat_ai_decision_runtime.policy_gate import validate_ai_decision
 from app.services.webchat_ai_decision_runtime.schemas import AIDecision, AIDecisionEvidence, AIDecisionToolCall
+from app.services.webchat_ai_decision_runtime.service import decision_from_provider_result
 from app.services.webchat_ai_decision_runtime.tool_registry import get_tool_contract, registered_tool_names, safe_registry_summary
 
 
@@ -142,6 +145,67 @@ def test_tracking_status_claim_passes_with_trusted_fact_and_redacted_evidence():
         tracking_number=tracking_number,
     )
 
+    assert result.ok is True
+
+
+def test_trusted_tracking_decision_sanitizes_raw_waybill_and_tool_args():
+    tracking_number = "CH020000006856"
+    tracking_hash = hash_tracking_number(tracking_number)
+    provider_result = SimpleNamespace(
+        ok=True,
+        reply="Your package CH020000006856 is in transit.",
+        intent="tracking",
+        handoff_required=False,
+        handoff_reason=None,
+        tracking_number=None,
+        raw_payload_safe_summary={
+            "ai_decision": {
+                "customer_reply": "Your package CH020000006856 is in transit.",
+                "intent": "tracking",
+                "confidence": 0.9,
+                "risk_level": "low",
+                "next_action": "call_tool",
+                "handoff_required": False,
+                "handoff_reason": None,
+                "tool_calls": [
+                    {"tool_name": "speedaf.order.query", "arguments": {"tracking_number": tracking_number}},
+                ],
+                "evidence_used": [
+                    {
+                        "source": "speedaf_trusted_tracking_fact",
+                        "evidence_type": "trusted_tracking_fact",
+                        "fact_evidence_present": True,
+                        "tracking_number_hash": "not-a-valid-hash",
+                        "raw_tracking_number_exposed": True,
+                    }
+                ],
+                "safety_notes": [],
+            }
+        },
+    )
+
+    decision = decision_from_provider_result(
+        provider_result,
+        tracking_fact_metadata={"fact_evidence_present": True, "pii_redacted": True, "tracking_number_hash": tracking_hash},
+        tracking_number=tracking_number,
+    )
+
+    assert tracking_number not in decision.customer_reply
+    assert "006856" in decision.customer_reply
+    assert decision.tool_calls[0].tool_name == "speedaf.order.query"
+    assert decision.tool_calls[0].arguments == {"tracking_number_hash": tracking_hash}
+    assert any(
+        item.source == "speedaf_trusted_tracking_fact"
+        and item.fact_evidence_present is True
+        and item.tracking_number_hash == tracking_hash
+        and item.raw_tracking_number_exposed is False
+        for item in decision.evidence_used
+    )
+    result = validate_ai_decision(
+        decision,
+        tracking_fact_metadata={"fact_evidence_present": True, "pii_redacted": True, "tracking_number_hash": tracking_hash},
+        tracking_number=tracking_number,
+    )
     assert result.ok is True
 
 
