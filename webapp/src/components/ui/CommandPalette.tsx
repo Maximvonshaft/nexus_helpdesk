@@ -7,15 +7,16 @@ import { useSession } from '@/hooks/useAuth'
 import { CAPABILITIES, canAccess, routeAccess } from '@/lib/rbac'
 
 const actions = [
-  { id: 'overview', label: '查看今日总览', keywords: '首页 总览 今日 优先', to: '/' },
-  { id: 'workspace', label: '处理工单 / 客户回复', keywords: '工单 回复 客户 闭环', to: '/workspace' },
-  { id: 'webchat', label: '打开 WebChat 收件箱', keywords: 'webchat 网站聊天 收件箱 客户来信', to: '/webchat' },
-  { id: 'webcall-workbench', label: '打开 WebCall 工作台', keywords: 'webcall 语音 来电 接管 ai 建议 handoff', to: '/webcall', access: routeAccess['/webcall'] },
-  { id: 'email-workbench', label: '打开 Email 工作台', keywords: 'email 邮件 工作台 草稿 回复 发送', to: '/email', access: routeAccess['/email'] },
-  { id: 'control-tower', label: '打开 Control Tower', keywords: 'control tower 主管 治理 sla 队列 公告 rbac', to: '/control-tower', access: routeAccess['/control-tower'] },
-  { id: 'qa-training', label: '打开 QA / Training Loop', keywords: 'qa training 质检 培训 知识缺口 scorecard coaching', to: '/qa-training', access: routeAccess['/qa-training'] },
-  { id: 'knowledge-studio', label: '打开 Knowledge Studio', keywords: 'knowledge 知识库 检索 发布 回滚 冲突 chunk golden test', to: '/knowledge-studio', access: routeAccess['/knowledge-studio'] },
-  { id: 'persona-builder', label: '打开 AI Persona Builder', keywords: 'persona ai 人格 语气 身份 匹配 发布 回滚 simulation resolve preview', to: '/persona-builder', access: routeAccess['/persona-builder'] },
+  { id: 'overview', label: '查看今日工作台', keywords: '首页 总览 今日 优先 待办', to: '/' },
+  { id: 'webchat', label: '打开 WebChat', keywords: 'webchat 网站聊天 收件箱 客户来信 接管', to: '/webchat' },
+  { id: 'webcall-workbench', label: '打开 WebCall', keywords: 'webcall 语音 来电 接听 ai 建议 handoff', to: '/webcall', access: routeAccess['/webcall'] },
+  { id: 'email-workbench', label: '打开 Email', keywords: 'email 邮件 工作台 草稿 回复 发送', to: '/email', access: routeAccess['/email'] },
+  { id: 'workspace', label: '进入工单中心', keywords: '工单 回复 客户 闭环 分配 升级', to: '/workspace' },
+  { id: 'customer-search', label: '客户 / 运单查询', keywords: '客户 运单 waybill tracking callerid 电话 手机 查单 查询', to: '/customer-search' },
+  { id: 'control-tower', label: '打开运营报表 / Control Tower', keywords: 'control tower 主管 治理 sla 队列 公告 rbac', to: '/control-tower', access: routeAccess['/control-tower'] },
+  { id: 'qa-training', label: '打开 QA / Training', keywords: 'qa training 质检 培训 知识缺口 scorecard coaching', to: '/qa-training', access: routeAccess['/qa-training'] },
+  { id: 'knowledge-studio', label: '打开知识库', keywords: 'knowledge 知识库 检索 发布 回滚 冲突 chunk golden test', to: '/knowledge-studio', access: routeAccess['/knowledge-studio'] },
+  { id: 'persona-builder', label: '打开 AI Persona', keywords: 'persona ai 人格 语气 身份 匹配 发布 回滚 simulation resolve preview', to: '/persona-builder', access: routeAccess['/persona-builder'] },
   { id: 'runtime', label: '进入运行恢复 / dead 重排', keywords: 'runtime 运行恢复 dead requeue 重排 队列', to: '/runtime', access: routeAccess['/runtime'] },
   { id: 'accounts', label: '检查发送线路', keywords: '发送线路 渠道 账号 outbound', to: '/accounts', access: routeAccess['/accounts'] },
   { id: 'outbound-email', label: '维护 Outbound Email 账号', keywords: 'email smtp 邮件 账号 test-send 测试发送 outbound', to: '/outbound-email', access: routeAccess['/outbound-email'] },
@@ -46,15 +47,16 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   if (!open) return null
 
   return (
-    <div className="command-backdrop" onClick={onClose}>
-      <div className="command-card" onClick={(e) => e.stopPropagation()}>
+    <div className="command-backdrop" onClick={onClose} role="presentation">
+      <div className="command-card" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="快捷操作">
         <div className="command-head">快捷操作</div>
-        <Input autoFocus placeholder="输入关键词，例如：工单、WebChat、dead、重排、公告" value={query} onChange={(e) => setQuery(e.target.value)} />
-        <div className="command-list" data-testid="operator-command-palette-actions">
+        <Input autoFocus placeholder="输入关键词，例如：工单、WebChat、运单、CallerID、dead、公告" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <div className="command-list" data-testid="operator-command-palette-actions" role="listbox" aria-label="可执行操作">
           {filtered.map((item) => (
             <button
               key={item.id}
               className="command-item"
+              role="option"
               onClick={async () => {
                 if (item.action === 'refresh') {
                   await queryClient.invalidateQueries()
