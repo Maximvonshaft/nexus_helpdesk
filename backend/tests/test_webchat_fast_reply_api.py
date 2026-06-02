@@ -404,6 +404,7 @@ def test_fast_reply_same_session_reuses_conversation_and_ai_context(monkeypatch)
 
 def test_fast_reply_published_business_sla_direct_answer(monkeypatch):
     answer = "瑞士海运时效为 15 天。"
+    monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_KNOWLEDGE_REPLY_MODE", "deterministic_direct_answer")
     get_settings.cache_clear()
     get_webchat_fast_settings.cache_clear()
