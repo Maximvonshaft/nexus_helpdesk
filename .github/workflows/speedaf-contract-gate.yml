@@ -11,10 +11,17 @@ on:
       - 'backend/app/services/background_jobs.py'
       - 'backend/alembic/versions/*speedaf*.py'
       - 'backend/tests/test_speedaf*.py'
+      - 'backend/scripts/speedaf_full_uat_probe.py'
+      - 'backend/scripts/speedaf_readonly_uat_probe.py'
+      - 'scripts/nexus_knowledge_runtime_v2_readiness_probe.sh'
       - 'docs/speedaf-mcp-full-closure/**'
       - 'docs/speedaf-mcp-uat-github-workflow.md'
       - '.github/workflows/speedaf-contract-gate.yml'
       - '.github/workflows/speedaf-uat-smoke.yml'
+      - '.github/workflows/speedaf-full-uat-probe.yml'
+      - '.github/workflows/speedaf-readonly-uat-probe.yml'
+      - '.github/workflows/production-readiness.yml'
+      - '.github/workflows/knowledge-runtime-readiness.yml'
   push:
     branches: [main]
   workflow_dispatch:
