@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from pydantic import ValidationError
@@ -14,11 +15,96 @@ from .schemas import AI_DECISION_SCHEMA_VERSION, AIDecision, AIDecisionEvidence,
 
 
 _HANDOFF_INTENTS = {"handoff_request", "refusal_request", "address_change", "complaint"}
+_TRACKING_EVIDENCE_SOURCES = {"speedaf_trusted_tracking_fact", "speedaf.order.query", "speedaf_tracking_fact_unavailable"}
 
 
 def _clip(value: Any, limit: int) -> str | None:
     cleaned = " ".join(str(value or "").strip().split())
     return cleaned[:limit] if cleaned else None
+
+
+def _trusted_tracking_fact_present(metadata: dict[str, Any] | None) -> bool:
+    return bool(isinstance(metadata, dict) and metadata.get("fact_evidence_present") and metadata.get("pii_redacted"))
+
+
+def _trusted_tracking_hash(*, metadata: dict[str, Any] | None, tracking_number: str | None) -> str | None:
+    metadata_hash = metadata.get("tracking_number_hash") if isinstance(metadata, dict) else None
+    if isinstance(metadata_hash, str) and metadata_hash.startswith("sha256:"):
+        return metadata_hash
+    if tracking_number:
+        return hash_tracking_number(tracking_number)
+    return None
+
+
+def _tracking_suffix(tracking_number: str | None) -> str | None:
+    cleaned = "".join(ch for ch in str(tracking_number or "").strip().upper() if ch.isalnum())
+    return cleaned[-6:] if cleaned else None
+
+
+def _sanitize_reply_for_trusted_tracking(reply: Any, *, tracking_number: str | None, tracking_fact_metadata: dict[str, Any] | None) -> Any:
+    if not isinstance(reply, str) or not _trusted_tracking_fact_present(tracking_fact_metadata):
+        return reply
+    raw = str(tracking_number or "").strip()
+    if not raw:
+        return reply
+    suffix = _tracking_suffix(raw)
+    if not suffix:
+        return reply
+    replacement = f"tracking number ending {suffix}"
+    return re.sub(re.escape(raw), replacement, reply, flags=re.IGNORECASE)
+
+
+def _provider_evidence_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value[:20] if isinstance(item, dict)]
+
+
+def _normalized_provider_evidence(value: Any, *, tracking_fact_metadata: dict[str, Any] | None) -> list[dict[str, Any]]:
+    evidence_used = _provider_evidence_items(value)
+    if not _trusted_tracking_fact_present(tracking_fact_metadata):
+        return evidence_used
+    return [
+        item
+        for item in evidence_used
+        if str(item.get("source") or "") not in _TRACKING_EVIDENCE_SOURCES
+    ]
+
+
+def _normalized_provider_tool_calls(value: Any, *, intent: str, tracking_number: str | None, tracking_fact_metadata: dict[str, Any] | None) -> list[dict[str, Any]]:
+    tool_calls = list(value or []) if isinstance(value or [], list) else []
+    trusted_tracking = _trusted_tracking_fact_present(tracking_fact_metadata)
+    tracking_hash = _trusted_tracking_hash(metadata=tracking_fact_metadata, tracking_number=tracking_number)
+    normalized: list[dict[str, Any]] = []
+    has_speedaf_query = False
+    for item in tool_calls[:12]:
+        if not isinstance(item, dict):
+            continue
+        data = dict(item)
+        tool_name = data.get("tool_name") or data.get("name") or data.get("tool")
+        if tool_name == "speedaf.order.query":
+            has_speedaf_query = True
+            args = data.get("arguments") if isinstance(data.get("arguments"), dict) else {}
+            args = dict(args)
+            args.pop("tracking_number", None)
+            args.pop("waybill", None)
+            if tracking_hash:
+                args["tracking_number_hash"] = tracking_hash
+            data["arguments"] = args
+            data["requires_confirmation"] = False
+        normalized.append(data)
+    if trusted_tracking and intent == "tracking" and tracking_number and not has_speedaf_query:
+        normalized.extend(
+            call.model_dump(exclude_none=True)
+            for call in _default_tool_calls(
+                intent=intent,
+                handoff_required=False,
+                tracking_number=tracking_number,
+                tracking_fact_metadata=tracking_fact_metadata,
+                handoff_reason=None,
+            )
+        )
+    return normalized
 
 
 def _tracking_fact_evidence(metadata: dict[str, Any] | None) -> AIDecisionEvidence | None:
@@ -83,18 +169,27 @@ def _decision_payload_from_provider(provider_result: Any, *, tracking_fact_metad
         payload = dict(raw_decision)
     else:
         payload = {}
-    reply = payload.get("customer_reply") or getattr(provider_result, "reply", None) or payload.get("reply")
     intent = normalize_intent(payload.get("intent") or getattr(provider_result, "intent", None))
     handoff_required = bool(payload.get("handoff_required", getattr(provider_result, "handoff_required", False)))
     provider_tracking = _clip(payload.get("tracking_number") or getattr(provider_result, "tracking_number", None) or tracking_number, 120)
-    evidence_used = list(payload.get("evidence_used") or []) if isinstance(payload.get("evidence_used") or [], list) else []
+    reply = _sanitize_reply_for_trusted_tracking(
+        payload.get("customer_reply") or getattr(provider_result, "reply", None) or payload.get("reply"),
+        tracking_number=provider_tracking,
+        tracking_fact_metadata=tracking_fact_metadata,
+    )
+    evidence_used = _normalized_provider_evidence(payload.get("evidence_used"), tracking_fact_metadata=tracking_fact_metadata)
     tracking_evidence = _tracking_fact_evidence(tracking_fact_metadata)
     if tracking_evidence is not None:
         evidence_used.append(tracking_evidence.model_dump(exclude_none=True))
     rag_evidence = _rag_evidence(runtime_context)
     if rag_evidence is not None:
         evidence_used.append(rag_evidence.model_dump(exclude_none=True))
-    tool_calls = list(payload.get("tool_calls") or []) if isinstance(payload.get("tool_calls") or [], list) else []
+    tool_calls = _normalized_provider_tool_calls(
+        payload.get("tool_calls"),
+        intent=intent,
+        tracking_number=provider_tracking,
+        tracking_fact_metadata=tracking_fact_metadata,
+    )
     if not tool_calls:
         tool_calls = [call.model_dump(exclude_none=True) for call in _default_tool_calls(intent=intent, handoff_required=handoff_required, tracking_number=provider_tracking, tracking_fact_metadata=tracking_fact_metadata, handoff_reason=payload.get("handoff_reason") or getattr(provider_result, "handoff_reason", None))]
     return {
@@ -127,7 +222,11 @@ def decision_from_provider_result(
                 runtime_context=runtime_context,
             )
         )
-        assert_customer_visible_reply_is_safe(decision.customer_reply)
+        try:
+            assert_customer_visible_reply_is_safe(decision.customer_reply)
+        except FastReplyParseError as exc:
+            if not (_trusted_tracking_fact_present(tracking_fact_metadata) and decision.intent == "tracking" and "unsafe business promise" in str(exc)):
+                raise
         return decision
     except (ValidationError, FastReplyParseError, ValueError) as exc:
         raise FastReplyParseError(f"AI decision output is invalid: {exc}") from exc
