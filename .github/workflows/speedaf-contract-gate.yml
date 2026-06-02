@@ -6,9 +6,11 @@ on:
     paths:
       - 'backend/app/api/speedaf*.py'
       - 'backend/app/api/webchat_fast.py'
+      - 'backend/app/api/webchat_voice.py'
       - 'backend/app/services/speedaf/**'
       - 'backend/app/services/tracking_fact*.py'
       - 'backend/app/services/background_jobs.py'
+      - 'backend/app/services/webchat_voice_service.py'
       - 'backend/alembic/versions/*speedaf*.py'
       - 'backend/tests/test_speedaf*.py'
       - 'backend/scripts/speedaf_full_uat_probe.py'
