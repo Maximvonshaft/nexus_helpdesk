@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '@/lib/api'
 import type { CaseListItem } from '@/lib/types'
@@ -21,26 +21,10 @@ type LookupResult = {
 }
 
 const MODE_COPY: Record<LookupMode, { label: string; placeholder: string; help: string }> = {
-  customer: {
-    label: 'Customer 360',
-    placeholder: '输入客户姓名、邮箱、手机号或客户关键字',
-    help: '优先展示客户资料线索、历史会话、历史工单和风险提示。',
-  },
-  waybill: {
-    label: '运单查询',
-    placeholder: '输入 waybill / tracking number / order number',
-    help: '复用真实工单搜索接口按运单号、订单号或标题关键字检索。',
-  },
-  phone: {
-    label: '手机号查询',
-    placeholder: '输入客户手机号，支持国家码或本地号码片段',
-    help: '复用真实工单搜索接口按 preferred contact、客户电话或标题关键字检索。',
-  },
-  caller: {
-    label: 'Caller ID 查询',
-    placeholder: '输入 WebCall caller ID 或来电号码',
-    help: '当前前端未发现独立 callerID 后端查询 API；先通过工单搜索兜底并明确标记缺口。',
-  },
+  customer: { label: 'Customer 360', placeholder: '输入客户姓名、邮箱、手机号或客户关键字', help: '优先展示客户资料线索、历史会话、历史工单和风险提示。' },
+  waybill: { label: '运单查询', placeholder: '输入 waybill / tracking number / order number', help: '复用真实工单搜索接口按运单号、订单号或标题关键字检索。' },
+  phone: { label: '手机号查询', placeholder: '输入客户手机号，支持国家码或本地号码片段', help: '复用真实工单搜索接口按 preferred contact、客户电话或标题关键字检索。' },
+  caller: { label: 'Caller ID 查询', placeholder: '输入 WebCall caller ID 或来电号码', help: '当前前端未发现独立 callerID 后端查询 API；先通过工单搜索兜底并明确标记缺口。' },
 }
 
 function errorMessage(error: unknown) {
@@ -59,6 +43,11 @@ function modeRiskNote(mode: LookupMode) {
   if (mode === 'waybill') return '如果后端未按 tracking_number 建索引，搜索结果可能只覆盖标题/客户字段命中的工单。'
   if (mode === 'phone') return '手机号属于客户资料；当前页必须由 customer_profile.read 控制。'
   return 'Customer 360 读取客户历史信息；禁止在无权限时渲染敏感内容。'
+}
+
+function timelineCreatedAt(item: Record<string, unknown> | undefined) {
+  const value = item?.created_at
+  return typeof value === 'string' && value ? formatDateTime(value) : '-'
 }
 
 export function CustomerSearchPanel({ initialMode = 'customer' }: { initialMode?: LookupMode }) {
@@ -101,7 +90,7 @@ export function CustomerSearchPanel({ initialMode = 'customer' }: { initialMode?
   const canUpdateSpeedafAddress = canAccess(session.data, actionAccess.updateSpeedafAddress)
   const canCancelSpeedafOrder = canAccess(session.data, actionAccess.cancelSpeedafOrder)
 
-  function submitLookup(event: React.FormEvent) {
+  function submitLookup(event: FormEvent) {
     event.preventDefault()
     const trimmed = query.trim()
     if (!trimmed) return
@@ -175,7 +164,7 @@ export function CustomerSearchPanel({ initialMode = 'customer' }: { initialMode?
                     <div className="kv"><label>运单号</label><div>{sanitizeDisplayText(detailQuery.data.tracking_number || '-')}</div></div>
                     <div className="kv"><label>市场</label><div>{sanitizeDisplayText(detailQuery.data.market_code || detailQuery.data.country_code || '-')}</div></div>
                     <div className="kv"><label>异常状态解释</label><div>{sanitizeDisplayText(detailQuery.data.customer_update || detailQuery.data.missing_fields || '暂无异常说明')}</div></div>
-                    <div className="kv"><label>风险提示</label><div>{detailQuery.data.overdue ? 'SLA overdue，需要优先处理。' : '未发现 SLA overdue 标记。'}</div></div>
+                    <div className="kv"><label>风险提示</label><div>{detailQuery.data.required_action ? sanitizeDisplayText(detailQuery.data.required_action) : '未发现 required action 标记。'}</div></div>
                   </div>
                 ) : null}
               </CardBody>
@@ -190,7 +179,7 @@ export function CustomerSearchPanel({ initialMode = 'customer' }: { initialMode?
                 <div className="stack compact">
                   <div className="message" data-role="agent"><strong>历史会话</strong><div>{threadQuery.data?.messages?.length ?? 0} messages · conversation {threadQuery.data?.conversation_id || '-'}</div></div>
                   <div className="message" data-role="agent"><strong>历史工单</strong><div>当前查询结果共 {tickets.length} 条；进一步跨客户全量历史需要后端 Customer 360 聚合 API。</div></div>
-                  <div className="message" data-role="agent"><strong>Timeline</strong><div>{timelineQuery.data?.items?.length ?? 0} events · latest {timelineQuery.data?.items?.[0]?.created_at ? formatDateTime(String(timelineQuery.data.items[0].created_at)) : '-'}</div></div>
+                  <div className="message" data-role="agent"><strong>Timeline</strong><div>{timelineQuery.data?.items?.length ?? 0} events · latest {timelineCreatedAt(timelineQuery.data?.items?.[0])}</div></div>
                 </div>
               </CardBody>
             </Card>
