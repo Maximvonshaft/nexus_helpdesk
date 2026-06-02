@@ -4,6 +4,7 @@ import { Route as LoginRoute } from '@/routes/login'
 import { Route as AdminRoute } from '@/routes/admin'
 import { Route as IndexRoute } from '@/routes/index'
 import { Route as WorkspaceRoute } from '@/routes/workspace'
+import { Route as CustomerSearchRoute } from '@/routes/customer-search'
 import { Route as WebchatRoute } from '@/routes/webchat'
 import { Route as EmailRoute } from '@/routes/email'
 import { Route as WebchatVoiceRoute } from '@/routes/webchat-voice'
@@ -30,6 +31,7 @@ const routeTree = RootRoute.addChildren([
   AdminRoute,
   IndexRoute,
   WorkspaceRoute,
+  CustomerSearchRoute,
   WebchatRoute,
   EmailRoute,
   // Internal operator console for human WebCall handling; retained as a legacy deep link.
