@@ -3,19 +3,17 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 os.environ.setdefault("APP_ENV", "development")
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_fast_reply_api_tests.db")
-os.environ.setdefault("WEBCHAT_FAST_AI_ENABLED", "false")
+os.environ.setdefault("WEBCHAT_FAST_AI_ENABLED", "true")
 
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, func, select, text
 
 from app import models_control_plane  # noqa: F401
 from app.api import webchat_fast
-from app.services import webchat_fast_ai_service
 from app.db import Base, SessionLocal, engine
 from app.enums import UserRole
 from app.main import app
@@ -23,15 +21,13 @@ from app.models import Customer, Ticket, User, WebchatRateLimitBucket
 from app.models_control_plane import KnowledgeChunk, KnowledgeItem, KnowledgeItemVersion
 from app.schemas_control_plane import KnowledgeItemCreate
 from app.services import knowledge_service
-from app.settings import get_settings
+from app.services.tracking_fact_schema import TrackingFactResult
 from app.services.webchat_fast_ai_service import WebchatFastReplyResult
 from app.services.webchat_fast_config import get_webchat_fast_settings
 from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency
 from app.services.webchat_fast_rate_limit import reset_webchat_fast_rate_limit_for_tests
-from app.services.provider_runtime.registry import ProviderAdapter, ProviderRegistry
-from app.services.provider_runtime.schemas import ProviderResult
-from app.services.tracking_fact_schema import TrackingFactResult
-from app.webchat_models import WebchatConversation, WebchatMessage
+from app.settings import get_settings
+from app.webchat_models import WebchatConversation, WebchatHandoffRequest, WebchatMessage
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 client = TestClient(app)
@@ -51,6 +47,7 @@ def setup_function():
     db = SessionLocal()
     try:
         db.execute(delete(WebchatFastIdempotency))
+        db.execute(delete(WebchatHandoffRequest))
         db.execute(delete(WebchatMessage))
         db.execute(delete(WebchatConversation))
         db.execute(delete(Ticket))
@@ -79,43 +76,28 @@ def _payload(
     }
 
 
-def _ok_reply(text: str = "Hi, this is Speedy.", *, handoff: bool = False, tracking: str | None = None) -> WebchatFastReplyResult:
+def _ai_reply(
+    text: str,
+    *,
+    intent: str = "general_support",
+    handoff: bool = False,
+    handoff_reason: str | None = None,
+    tracking: str | None = None,
+    reply_source: str = "openclaw_responses",
+) -> WebchatFastReplyResult:
     return WebchatFastReplyResult(
         ok=True,
         ai_generated=True,
-        reply_source="openclaw_responses",
+        reply_source=reply_source,
         reply=text,
-        intent="tracking_lookup" if tracking else "greeting",
+        intent=intent,
         tracking_number=tracking,
         handoff_required=handoff,
-        handoff_reason="manual_review_required" if handoff else None,
-        recommended_agent_action="Review shipment and reply." if handoff else None,
+        handoff_reason=handoff_reason or ("customer_requested_human_review" if handoff else None),
+        recommended_agent_action="Review the conversation and reply with verified information." if handoff else None,
         ticket_creation_queued=False,
         elapsed_ms=20,
     )
-
-
-class _BusinessSlaAdapter(ProviderAdapter):
-    name = "codex_app_server"
-
-    def __init__(self, answer: str):
-        self.answer = answer
-
-    async def generate(self, db, request):
-        return ProviderResult(
-            ok=True,
-            provider=self.name,
-            elapsed_ms=12,
-            structured_output={
-                "customer_reply": self.answer,
-                "language": "zh",
-                "intent": "other",
-                "tracking_number": None,
-                "handoff_required": False,
-                "ticket_should_create": False,
-            },
-            raw_payload_safe_summary={"safe": True},
-        )
 
 
 def _admin_user(db) -> User:
@@ -166,62 +148,118 @@ def _seed_shipping_sla_fact(db, *, item_key: str, answer: str) -> None:
     knowledge_service.publish_item(db, item, _admin_user(db), notes="api acceptance")
 
 
-def _ensure_provider_runtime_route(db) -> None:
-    db.execute(text("""
-        CREATE TABLE IF NOT EXISTS provider_runtime_audit_logs (
-            id VARCHAR(36) PRIMARY KEY,
-            tenant_id VARCHAR(36) NOT NULL,
-            provider VARCHAR(100) NOT NULL,
-            credential_id VARCHAR(36),
-            request_id VARCHAR(100) NOT NULL,
-            channel_key VARCHAR(100) NOT NULL,
-            session_id VARCHAR(100),
-            operation VARCHAR(50) NOT NULL,
-            status VARCHAR(50) NOT NULL,
-            safe_summary JSON,
-            error_code VARCHAR(255),
-            elapsed_ms INTEGER,
-            created_at DATETIME NOT NULL
+def test_low_signal_goes_to_ai_decision_without_handoff(monkeypatch):
+    calls: list[dict] = []
+
+    async def fake_generate(**kwargs):
+        calls.append(kwargs)
+        return _ai_reply("Please tell me what you need help with, such as tracking a parcel or changing delivery details.", intent="unclear")
+
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
+
+    for idx, body in enumerate(["321", "123", "hello", "hi", "你好", "霓虹", "撒旦", "asdasd"]):
+        response = client.post(
+            "/api/webchat/fast-reply",
+            json=_payload(f"low-signal-{idx}", session_id=f"low-signal-{idx}", body=body),
+            headers={"Origin": "http://localhost"},
         )
-    """))
-    db.execute(text("""
-        CREATE TABLE IF NOT EXISTS provider_routing_rules (
-            id VARCHAR(36) PRIMARY KEY,
-            tenant_id VARCHAR(36) NOT NULL,
-            channel_key VARCHAR(100) NOT NULL,
-            scenario VARCHAR(100) NOT NULL,
-            primary_provider VARCHAR(100) NOT NULL,
-            fallback_providers JSON,
-            output_contract VARCHAR(100) NOT NULL,
-            timeout_ms INTEGER NOT NULL,
-            canary_percent INTEGER NOT NULL DEFAULT 0,
-            kill_switch BOOLEAN NOT NULL DEFAULT 0,
-            enabled BOOLEAN NOT NULL DEFAULT 1,
-            created_at DATETIME NOT NULL,
-            updated_at DATETIME NOT NULL
-        )
-    """))
-    db.execute(text("""
-        DELETE FROM provider_routing_rules
-        WHERE tenant_id = 'default' AND channel_key = 'website' AND scenario = 'webchat_fast_reply'
-    """))
-    db.execute(text("""
-        INSERT INTO provider_routing_rules (
-            id, tenant_id, channel_key, scenario, primary_provider, fallback_providers,
-            output_contract, timeout_ms, canary_percent, kill_switch, enabled, created_at, updated_at
-        )
-        VALUES (
-            :id, 'default', 'website', 'webchat_fast_reply', 'codex_app_server', '["openclaw_responses","rule_engine"]',
-            'speedaf_webchat_fast_reply_v1', 10000, 100, 0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-        )
-    """), {"id": str(uuid4())})
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["ai_generated"] is True
+        assert payload["reply_source"] == "openclaw_responses"
+        assert payload["intent"] == "unclear"
+        assert payload["handoff_required"] is False
+        assert payload["ai_decision_trace"]["decision"]["next_action"] in {"reply", "ask_clarifying_question"}
+        assert payload["ai_decision_trace"]["policy_gate"]["ok"] is True
+
+    assert len(calls) == 8
+    db = SessionLocal()
+    try:
+        assert db.execute(select(func.count(Ticket.id))).scalar_one() == 0
+        assert db.execute(select(func.count(WebchatHandoffRequest.id))).scalar_one() == 0
+    finally:
+        db.close()
 
 
-def test_fast_reply_chinese_waybill_uses_trusted_tracking_fact_without_provider(monkeypatch):
-    calls = []
+def test_explicit_human_request_is_ai_decision_tool_gated_handoff(monkeypatch):
+    async def fake_generate(**kwargs):
+        return _ai_reply(
+            "I’ll ask a human teammate to review this conversation.",
+            intent="handoff_request",
+            handoff=True,
+            handoff_reason="customer_requested_human_review",
+        )
+
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
+
+    response = client.post(
+        "/api/webchat/fast-reply",
+        json=_payload("human-request-1", session_id="human-request-session", body="I need a human agent"),
+        headers={"Origin": "http://localhost"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["reply_source"] == "openclaw_responses"
+    assert payload["handoff_required"] is True
+    assert payload["handoff_reason"] == "customer_requested_human_review"
+    assert payload["ticket_id"]
+    assert payload["handoff_request_id"]
+    trace = payload["ai_decision_trace"]
+    assert trace["decision"]["next_action"] == "request_handoff"
+    assert trace["decision"]["tool_calls"][0]["tool_name"] == "handoff.request.create"
+    assert trace["tool_execution"]["records"][0]["status"] == "executed"
+
+    replay = client.post(
+        "/api/webchat/fast-reply",
+        json=_payload("human-request-1", session_id="human-request-session", body="I need a human agent"),
+        headers={"Origin": "http://localhost"},
+    )
+    assert replay.status_code == 200
+    assert replay.json()["idempotent"] is True
+    db = SessionLocal()
+    try:
+        assert db.execute(select(func.count(Ticket.id))).scalar_one() == 1
+        assert db.execute(select(func.count(WebchatHandoffRequest.id))).scalar_one() == 1
+        conversation = db.execute(select(WebchatConversation)).scalar_one()
+        assert conversation.ai_suspended is True
+    finally:
+        db.close()
+
+
+def test_refusal_request_is_ai_decision_tool_gated_handoff(monkeypatch):
+    async def fake_generate(**kwargs):
+        return _ai_reply(
+            "I’ll ask a human teammate to verify whether refusal or return can be arranged for this shipment.",
+            intent="refusal_request",
+            handoff=True,
+            handoff_reason="refusal_or_return_requires_human_review",
+        )
+
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
+
+    response = client.post(
+        "/api/webchat/fast-reply",
+        json=_payload("refusal-request-1", session_id="refusal-request-session", body="I want to refuse delivery"),
+        headers={"Origin": "http://localhost"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["handoff_required"] is True
+    assert payload["handoff_reason"] == "refusal_or_return_requires_human_review"
+    assert payload["ai_decision_trace"]["decision"]["tool_calls"][0]["tool_name"] == "handoff.request.create"
+    assert payload["ai_decision_trace"]["policy_gate"]["ok"] is True
+
+
+def test_tracking_request_uses_trusted_fact_and_ai_final_reply(monkeypatch):
+    calls = {"tracking": 0, "ai": 0}
 
     def fake_lookup_fast_tracking_fact(**kwargs):
-        calls.append(kwargs)
+        calls["tracking"] += 1
+        assert kwargs["tracking_number"] == "CH020000006856"
         return TrackingFactResult(
             ok=True,
             tracking_number=kwargs["tracking_number"],
@@ -233,41 +271,38 @@ def test_fast_reply_chinese_waybill_uses_trusted_tracking_fact_without_provider(
             fact_evidence_present=True,
         )
 
-    async def fail_if_provider_called(**_kwargs):
-        raise AssertionError("provider must not answer live parcel status")
+    async def fake_generate(**kwargs):
+        calls["ai"] += 1
+        assert kwargs["tracking_fact_evidence_present"] is True
+        assert kwargs["tracking_fact_summary"]
+        return _ai_reply("Your parcel ending 006856 is currently In transit.", intent="tracking", tracking="CH020000006856")
 
     monkeypatch.setattr(webchat_fast, "_lookup_fast_tracking_fact", fake_lookup_fast_tracking_fact)
-    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fail_if_provider_called)
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
 
     response = client.post(
         "/api/webchat/fast-reply",
-        json=_payload("tracking-chinese-1", session_id="tracking-chinese-session", body="CH020000006856这是我的订单号"),
+        json=_payload("tracking-ai-1", session_id="tracking-ai-session", body="Track CH020000006856"),
         headers={"Origin": "http://localhost"},
     )
 
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["ok"] is True
-    assert payload["reply_source"] == "server_tracking_fact"
+    assert payload["reply_source"] == "openclaw_responses"
     assert payload["intent"] == "tracking"
     assert payload["tracking_number"] is None
     assert payload["tracking_number_suffix"] == "006856"
-    assert payload["tracking_number_hash"]
     assert payload["tracking_fact"]["fact_evidence_present"] is True
-    assert payload["tracking_fact"]["tool_status"] == "success"
-    assert payload["tracking_fact"]["truth_trace"]["source"] == "speedaf_trusted_tracking_fact"
-    assert payload["tracking_fact"]["truth_trace"]["raw_tracking_number_exposed"] is False
-    assert payload["evidence_trace"]["retrieval"] == "trusted_tracking_fact"
     assert payload["evidence_trace"]["source"] == "speedaf_trusted_tracking_fact"
-    assert payload["evidence_trace"]["fact_evidence_present"] is True
-    assert payload["evidence_trace"]["raw_tracking_number_exposed"] is False
-    assert "CH020000006856" not in json.dumps(payload["tracking_fact"], ensure_ascii=False)
-    assert "CH020000006856" not in json.dumps(payload["evidence_trace"], ensure_ascii=False)
+    trace = payload["ai_decision_trace"]
+    assert trace["decision"]["tool_calls"][0]["tool_name"] == "speedaf.order.query"
+    assert trace["tool_execution"]["records"][0]["status"] == "already_resolved_by_context"
     assert "CH020000006856" not in json.dumps(payload, ensure_ascii=False)
-    assert calls[0]["tracking_number"] == "CH020000006856"
+    assert calls == {"tracking": 1, "ai": 1}
 
 
-def test_fast_reply_extracted_waybill_failure_returns_safe_tracking_reply(monkeypatch):
+def test_unsupported_tracking_status_claim_is_blocked(monkeypatch):
     def fake_lookup_fast_tracking_fact(**kwargs):
         return TrackingFactResult(
             ok=False,
@@ -278,63 +313,28 @@ def test_fast_reply_extracted_waybill_failure_returns_safe_tracking_reply(monkey
             failure_reason="timeout",
         )
 
-    async def fail_if_provider_called(**_kwargs):
-        raise AssertionError("provider must not handle live tracking failure")
+    async def fake_generate(**kwargs):
+        return _ai_reply("Your parcel ending 006856 is delivered.", intent="tracking", tracking="CH020000006856")
 
     monkeypatch.setattr(webchat_fast, "_lookup_fast_tracking_fact", fake_lookup_fast_tracking_fact)
-    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fail_if_provider_called)
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
 
     response = client.post(
         "/api/webchat/fast-reply",
-        json=_payload("tracking-chinese-fail", session_id="tracking-chinese-fail-session", body="CH020000006856这是我的订单号"),
+        json=_payload("tracking-blocked-1", session_id="tracking-blocked-session", body="where is my parcel CH020000006856"),
         headers={"Origin": "http://localhost"},
     )
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["ok"] is True
-    assert payload["reply_source"] == "server_tracking_fact_unavailable"
-    assert payload["tracking_number"] is None
-    assert payload["tracking_number_suffix"] == "006856"
-    assert payload["tracking_number_hash"]
+    assert payload["reply_source"] == "server_safe_fallback"
     assert payload["handoff_required"] is True
-    assert payload["evidence_trace"]["retrieval"] == "trusted_tracking_fact"
-    assert payload["evidence_trace"]["source"] == "speedaf_trusted_tracking_fact"
-    assert payload["evidence_trace"]["fact_evidence_present"] is False
-    assert payload["evidence_trace"]["no_answer_reason"] == "timeout"
-    assert payload["evidence_trace"]["raw_tracking_number_exposed"] is False
-    assert "请提供" not in payload["reply"]
-    assert payload.get("error_code") != "all_providers_failed"
+    assert payload["ai_decision_trace"]["policy_gate"]["ok"] is False
+    assert payload["ai_decision_trace"]["policy_gate"]["violations"][0]["code"] in {"tracking_status_without_trusted_fact", "unsafe_customer_reply"}
     assert "CH020000006856" not in json.dumps(payload, ensure_ascii=False)
 
 
-def test_fast_reply_no_knowledge_evidence_returns_handoff_without_provider(monkeypatch):
-    monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
-    get_webchat_fast_settings.cache_clear()
-
-    async def fail_if_provider_called(*_args, **_kwargs):
-        raise AssertionError("provider must not answer without retrieval evidence")
-
-    monkeypatch.setattr(webchat_fast_ai_service, "generate_fast_reply", fail_if_provider_called)
-    monkeypatch.setattr(webchat_fast_ai_service, "dispatch_webchat_fast_reply", fail_if_provider_called)
-
-    response = client.post(
-        "/api/webchat/fast-reply",
-        json=_payload("knowledge-no-evidence", session_id="knowledge-no-evidence-session", body="请给我司机手机号"),
-        headers={"Origin": "http://localhost"},
-    )
-
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["ok"] is True
-    assert payload["reply_source"] == "server_knowledge_no_evidence"
-    assert payload["handoff_required"] is True
-    assert payload["evidence_trace"]["retrieval"] == "hybrid_rag_v2"
-    assert payload["evidence_trace"]["no_answer_reason"] == "no_evidence"
-    get_webchat_fast_settings.cache_clear()
-
-
-def test_fast_reply_provider_failure_returns_no_evidence_trace(monkeypatch):
+def test_provider_failure_falls_back_safely_without_500(monkeypatch):
     async def fake_generate(**_kwargs):
         return WebchatFastReplyResult(
             ok=False,
@@ -343,8 +343,8 @@ def test_fast_reply_provider_failure_returns_no_evidence_trace(monkeypatch):
             reply=None,
             intent=None,
             tracking_number=None,
-            handoff_required=True,
-            handoff_reason="all_providers_failed",
+            handoff_required=False,
+            handoff_reason=None,
             recommended_agent_action=None,
             ticket_creation_queued=False,
             elapsed_ms=42,
@@ -362,25 +362,20 @@ def test_fast_reply_provider_failure_returns_no_evidence_trace(monkeypatch):
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["ok"] is True
+    assert payload["ai_generated"] is False
     assert payload["reply_source"] == "server_safe_fallback"
-    assert payload["handoff_required"] is True
-    assert payload["handoff_reason"] == "all_providers_failed"
-    assert payload["evidence_trace"]["retrieval"] == "no_evidence_fallback"
     assert payload["evidence_trace"]["source"] == "server_safe_fallback"
-    assert payload["evidence_trace"]["fact_evidence_present"] is False
-    assert payload["evidence_trace"]["policy_evidence_present"] is False
-    assert payload["evidence_trace"]["no_answer_reason"] == "all_providers_failed"
-    assert payload["evidence_trace"]["raw_tracking_number_exposed"] is False
+    assert payload["ai_decision_trace"]["mode"] in {"emergency_fallback_only", "gated"}
 
 
-def test_fast_reply_same_session_reuses_conversation_and_uses_server_context(monkeypatch):
+def test_fast_reply_same_session_reuses_conversation_and_ai_context(monkeypatch):
     seen_contexts: list[list[dict]] = []
 
     async def fake_generate(**kwargs):
         seen_contexts.append(kwargs["recent_context"])
         if kwargs["body"] == "Where is my parcel?":
-            return _ok_reply("Please provide your tracking number.")
-        return _ok_reply("I can see this is the tracking number for your parcel inquiry.", tracking="SPX123456789CH")
+            return _ai_reply("Please provide your tracking number.", intent="tracking_missing_number")
+        return _ai_reply("I received the tracking number and will check it with trusted shipment data.", intent="tracking", tracking="SPX123456789CH")
 
     monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
 
@@ -389,12 +384,9 @@ def test_fast_reply_same_session_reuses_conversation_and_uses_server_context(mon
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert len(seen_contexts) == 1
-    assert second.json()["reply_source"] == "server_tracking_fact_unavailable"
+    assert len(seen_contexts) == 2
     assert second.json()["tracking_number"] is None
     assert second.json()["tracking_number_suffix"] == "6789CH"
-    assert second.json()["evidence_trace"]["retrieval"] == "trusted_tracking_fact"
-    assert second.json()["evidence_trace"]["no_answer_reason"] == "tracking_fact_lookup_disabled"
     assert "SPX123456789CH" not in json.dumps(second.json(), ensure_ascii=False)
 
     db = SessionLocal()
@@ -402,81 +394,30 @@ def test_fast_reply_same_session_reuses_conversation_and_uses_server_context(mon
         conversations = db.execute(select(WebchatConversation).where(WebchatConversation.fast_session_id == "session-1")).scalars().all()
         assert len(conversations) == 1
         messages = db.execute(select(WebchatMessage).where(WebchatMessage.conversation_id == conversations[0].id)).scalars().all()
-        assert len(messages) == 4
         assert [m.direction for m in messages].count("visitor") == 2
         assert [m.direction for m in messages].count("ai") == 2
+        ai_metadata = [json.loads(m.metadata_json or "{}") for m in messages if m.direction == "ai"]
+        assert all("ai_decision_trace" in item for item in ai_metadata)
     finally:
         db.close()
 
 
-def test_fast_reply_provider_runtime_unavailable_returns_controlled_non_500(monkeypatch):
-    monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
-    monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "provider_runtime")
-    get_webchat_fast_settings.cache_clear()
-    monkeypatch.setattr(
-        "app.services.provider_runtime.webchat_fast_dispatcher.ProviderRuntimeRouter.route",
-        AsyncMock(
-            return_value=ProviderResult(
-                ok=False,
-                provider="provider_runtime",
-                elapsed_ms=13,
-                error_code="openclaw_responses_unavailable",
-                structured_output=None,
-                raw_payload_safe_summary={"safe": True},
-            )
-        ),
-    )
-
-    response = client.post(
-        "/api/webchat/fast-reply",
-        json=_payload(
-            "provider-runtime-unavailable",
-            session_id="provider-runtime-unavailable-session",
-            body="Hello, I need help.",
-        ),
-        headers={"Origin": "http://localhost"},
-    )
-
-    get_webchat_fast_settings.cache_clear()
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["ok"] is True
-    assert payload["reply_source"] == "server_knowledge_no_evidence"
-    assert payload["handoff_required"] is True
-    assert payload["handoff_reason"] == "no_evidence"
-    assert payload["reply"]
-    assert payload.get("error_code") is None
-
-
-def test_fast_reply_provider_runtime_returns_published_business_sla_direct_answer(monkeypatch):
+def test_fast_reply_published_business_sla_direct_answer(monkeypatch):
     answer = "瑞士海运时效为 15 天。"
     monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
-    monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "provider_runtime")
-    monkeypatch.setenv("WEBCHAT_KNOWLEDGE_REPLY_MODE", "ai_grounded")
+    monkeypatch.setenv("WEBCHAT_KNOWLEDGE_REPLY_MODE", "deterministic_direct_answer")
     get_settings.cache_clear()
     get_webchat_fast_settings.cache_clear()
-
-    import app.services.provider_runtime as provider_runtime_module
-
-    monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
-    ProviderRegistry.register("codex_app_server", lambda db: _BusinessSlaAdapter(answer))
-
     db = SessionLocal()
     try:
         _seed_shipping_sla_fact(db, item_key="fact.ch.shipping-sla.api", answer=answer)
-        _ensure_provider_runtime_route(db)
         db.commit()
     finally:
         db.close()
 
     response = client.post(
         "/api/webchat/fast-reply",
-        json=_payload(
-            "provider-runtime-shipping-sla",
-            session_id="provider-runtime-shipping-sla-session",
-            body="瑞士海运时效是多少？",
-        ),
+        json=_payload("provider-runtime-shipping-sla", session_id="provider-runtime-shipping-sla-session", body="瑞士海运时效是多少？"),
         headers={"Origin": "http://localhost"},
     )
 
@@ -486,51 +427,16 @@ def test_fast_reply_provider_runtime_returns_published_business_sla_direct_answe
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
-    assert payload["reply_source"] != "server_handoff_policy"
     assert "15" in payload["reply"]
     assert payload["grounding_applied"] is True
-    assert payload["reply_source"] in {"codex_app_server", "knowledge:deterministic_direct_answer"}
-    assert payload["grounding_reason"] in {"locked_fact_ai_grounded", "pre_provider_locked_fact_direct_answer"}
-    assert payload["grounding_source"]["item_key"] == "fact.ch.shipping-sla.api"
-    assert payload.get("error_code") not in {"all_providers_failed", "parse_reject"}
-
-    db = SessionLocal()
-    try:
-        message = db.execute(
-            select(WebchatMessage).where(
-                WebchatMessage.direction == "ai",
-                WebchatMessage.body == answer,
-            )
-        ).scalar_one()
-        metadata = json.loads(message.metadata_json or "{}")
-        assert metadata["grounding_applied"] is True
-        assert metadata["grounding_reason"] in {"locked_fact_ai_grounded", "pre_provider_locked_fact_direct_answer"}
-        assert metadata["grounding_source"]["item_key"] == "fact.ch.shipping-sla.api"
-    finally:
-        db.close()
+    assert payload["ai_decision_trace"]["mode"] == "controlled_direct_answer_compatibility"
 
 
-def test_fast_handoff_same_session_does_not_create_duplicate_ticket():
-    for idx in range(3):
-        response = client.post(
-            "/api/webchat/fast-reply",
-            json=_payload(f"lost-{idx}", body="My parcel is lost SPX123456789CH"),
-        )
-        assert response.status_code == 200
-        assert response.json()["handoff_required"] is True
+def test_fast_handoff_same_tracking_number_reuses_ticket_across_sessions(monkeypatch):
+    async def fake_generate(**kwargs):
+        return _ai_reply("A human teammate will review the lost parcel report.", intent="complaint", handoff=True, handoff_reason="lost_or_damaged_parcel_requires_human_review", tracking="SPX123456789CH")
 
-    db = SessionLocal()
-    try:
-        assert db.execute(select(func.count(WebchatConversation.id))).scalar_one() == 1
-        assert db.execute(select(func.count(Ticket.id))).scalar_one() == 1
-        conversation = db.execute(select(WebchatConversation)).scalar_one()
-        assert conversation.ticket_id is not None
-        assert db.execute(select(func.count(WebchatMessage.id)).where(WebchatMessage.conversation_id == conversation.id)).scalar_one() >= 5
-    finally:
-        db.close()
-
-
-def test_fast_handoff_same_tracking_number_reuses_ticket_across_sessions():
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
     first = client.post("/api/webchat/fast-reply", json=_payload("msg-a001", session_id="session-a", body="My parcel is lost SPX123456789CH"))
     second = client.post("/api/webchat/fast-reply", json=_payload("msg-b001", session_id="session-b", body="My parcel is lost SPX123456789CH"))
     assert first.status_code == 200
@@ -540,28 +446,23 @@ def test_fast_handoff_same_tracking_number_reuses_ticket_across_sessions():
     try:
         assert db.execute(select(func.count(WebchatConversation.id))).scalar_one() == 2
         assert db.execute(select(func.count(Ticket.id))).scalar_one() == 1
+        assert db.execute(select(func.count(WebchatHandoffRequest.id))).scalar_one() == 1
     finally:
         db.close()
 
 
-def test_fast_customer_external_ref_is_channel_scoped_for_same_session():
+def test_fast_customer_external_ref_is_channel_scoped_for_same_session(monkeypatch):
+    async def fake_generate(**kwargs):
+        return _ai_reply("A human teammate will review this request.", intent="complaint", handoff=True, handoff_reason="complaint_requires_human_review")
+
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
     first = client.post(
         "/api/webchat/fast-reply",
-        json=_payload(
-            "channel-customer-1",
-            session_id="shared-browser-session",
-            channel_key="website",
-            body="My parcel is lost WEB111111111CH",
-        ),
+        json=_payload("channel-customer-1", session_id="shared-browser-session", channel_key="website", body="Please escalate WEB111111111CH"),
     )
     second = client.post(
         "/api/webchat/fast-reply",
-        json=_payload(
-            "channel-customer-2",
-            session_id="shared-browser-session",
-            channel_key="mobile",
-            body="My parcel is lost MOB222222222CH",
-        ),
+        json=_payload("channel-customer-2", session_id="shared-browser-session", channel_key="mobile", body="Please escalate MOB222222222CH"),
     )
     assert first.status_code == 200
     assert second.status_code == 200
@@ -584,7 +485,7 @@ def test_fast_reply_idempotency_same_client_message_id_returns_cached_response(m
 
     async def fake_generate(**kwargs):
         calls["generate"] += 1
-        return _ok_reply("Hi, this is Speedy.")
+        return _ai_reply("Hi, this is Speedy.")
 
     monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
     first = client.post("/api/webchat/fast-reply", json=_payload("same-msg"))
@@ -603,7 +504,7 @@ def test_fast_reply_idempotency_same_client_message_id_returns_cached_response(m
 
 def test_fast_reply_different_session_creates_different_conversation(monkeypatch):
     async def fake_generate(**kwargs):
-        return _ok_reply("Hi, this is Speedy.")
+        return _ai_reply("Hi, this is Speedy.")
 
     monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
     assert client.post("/api/webchat/fast-reply", json=_payload("msg-1001", session_id="session-a")).status_code == 200
@@ -637,7 +538,7 @@ def test_fast_rate_limit_still_blocks_rotated_sessions(monkeypatch):
     monkeypatch.setenv("WEBCHAT_FAST_RATE_LIMIT_WINDOW_SECONDS", "60")
 
     async def fake_generate(**kwargs):
-        return _ok_reply("Hi, this is Speedy.")
+        return _ai_reply("Hi, this is Speedy.")
 
     monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
     headers = {"User-Agent": "pytest-fast-limit/1.0"}

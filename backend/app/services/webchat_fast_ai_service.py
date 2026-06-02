@@ -17,7 +17,9 @@ from .ai_runtime_context import build_webchat_runtime_context
 from .knowledge_grounding_service import enforce_grounded_answer, select_approved_direct_answer_override
 from .knowledge_prompt_service import summarize_rag_trace
 from .provider_runtime.webchat_fast_dispatcher import dispatch_webchat_fast_reply
+from .webchat_ai_decision_runtime.service import decision_from_provider_result, validate_and_trace_decision
 from .webchat_fast_config import get_webchat_fast_settings
+from .webchat_fast_output_parser import FastReplyParseError
 from .webchat_fast_reply_metrics import record_fast_reply_metric
 
 
@@ -40,6 +42,7 @@ class WebchatFastReplyResult:
     grounding_applied: bool = False
     grounding_source: dict[str, Any] | None = None
     grounding_reason: str | None = None
+    ai_decision_trace: dict[str, Any] | None = None
 
     def to_response(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -99,19 +102,102 @@ def _session_key(*, tenant_key: str, session_id: str) -> str:
     return build_fast_reply_session_key(tenant_key=tenant_key, session_id=session_id)
 
 
-def _result_from_provider(provider_result: FastAIProviderResult) -> WebchatFastReplyResult:
+def _result_from_provider(
+    provider_result: FastAIProviderResult,
+    *,
+    tracking_fact_metadata: dict[str, Any] | None = None,
+    tracking_number: str | None = None,
+    runtime_context: dict[str, Any] | None = None,
+    tenant_key: str | None = None,
+    channel_key: str | None = None,
+    session_id: str | None = None,
+    request_id: str | None = None,
+) -> WebchatFastReplyResult:
     safe_summary = provider_result.raw_payload_safe_summary or {}
     grounded_reply_source = str(provider_result.reply_source or "").endswith(":grounded_knowledge")
     grounding_applied = bool(safe_summary.get("grounding_applied")) or grounded_reply_source
+    ai_decision_trace = safe_summary.get("ai_decision_trace") if isinstance(safe_summary.get("ai_decision_trace"), dict) else None
+    intent = provider_result.intent
+    handoff_required = provider_result.handoff_required
+    handoff_reason = provider_result.handoff_reason
+    reply = provider_result.reply
+
+    if provider_result.ok and provider_result.reply:
+        try:
+            decision = decision_from_provider_result(
+                provider_result,
+                tracking_fact_metadata=tracking_fact_metadata,
+                tracking_number=tracking_number or provider_result.tracking_number,
+                runtime_context=runtime_context,
+            )
+            policy, ai_decision_trace = validate_and_trace_decision(
+                decision=decision,
+                tracking_fact_metadata=tracking_fact_metadata,
+                tracking_number=tracking_number or provider_result.tracking_number,
+                reply_source=provider_result.reply_source,
+                runtime_context=runtime_context,
+                mode="gated",
+                request_id=request_id,
+                tenant_key=tenant_key,
+                channel_key=channel_key,
+                session_id=session_id,
+            )
+            if not policy.ok:
+                return WebchatFastReplyResult(
+                    ok=False,
+                    ai_generated=False,
+                    reply_source=provider_result.reply_source,
+                    reply=None,
+                    intent=decision.intent,
+                    tracking_number=None,
+                    handoff_required=False,
+                    handoff_reason=None,
+                    recommended_agent_action=None,
+                    ticket_creation_queued=False,
+                    elapsed_ms=provider_result.elapsed_ms,
+                    error_code="ai_decision_policy_blocked",
+                    retry_after_ms=1500,
+                    rag_trace=safe_summary.get("rag_trace"),
+                    grounding_applied=grounding_applied,
+                    grounding_source=safe_summary.get("grounding_source"),
+                    grounding_reason=safe_summary.get("grounding_reason"),
+                    ai_decision_trace=ai_decision_trace,
+                )
+            intent = decision.intent
+            handoff_required = decision.handoff_required
+            handoff_reason = decision.handoff_reason
+            reply = decision.customer_reply
+        except FastReplyParseError:
+            return WebchatFastReplyResult(
+                ok=False,
+                ai_generated=False,
+                reply_source=provider_result.reply_source,
+                reply=None,
+                intent=provider_result.intent,
+                tracking_number=None,
+                handoff_required=False,
+                handoff_reason=None,
+                recommended_agent_action=None,
+                ticket_creation_queued=False,
+                elapsed_ms=provider_result.elapsed_ms,
+                error_code="ai_decision_invalid_output",
+                retry_after_ms=1500,
+                rag_trace=safe_summary.get("rag_trace"),
+                grounding_applied=grounding_applied,
+                grounding_source=safe_summary.get("grounding_source"),
+                grounding_reason=safe_summary.get("grounding_reason"),
+                ai_decision_trace=ai_decision_trace,
+            )
+
     return WebchatFastReplyResult(
         ok=provider_result.ok,
         ai_generated=provider_result.ai_generated,
         reply_source=provider_result.reply_source,
-        reply=provider_result.reply,
-        intent=provider_result.intent,
+        reply=reply,
+        intent=intent,
         tracking_number=provider_result.tracking_number,
-        handoff_required=provider_result.handoff_required,
-        handoff_reason=provider_result.handoff_reason,
+        handoff_required=handoff_required,
+        handoff_reason=handoff_reason,
         recommended_agent_action=provider_result.recommended_agent_action,
         ticket_creation_queued=False,
         elapsed_ms=provider_result.elapsed_ms,
@@ -121,6 +207,7 @@ def _result_from_provider(provider_result: FastAIProviderResult) -> WebchatFastR
         grounding_applied=grounding_applied,
         grounding_source=safe_summary.get("grounding_source"),
         grounding_reason=safe_summary.get("grounding_reason"),
+        ai_decision_trace=ai_decision_trace,
     )
 
 
@@ -159,7 +246,6 @@ def _is_already_grounded_provider_result(provider_result: FastAIProviderResult) 
 
 def _deterministic_direct_answer_enabled() -> bool:
     return get_settings().webchat_knowledge_reply_mode == "deterministic_direct_answer"
-
 
 
 def _knowledge_context(runtime_context: dict[str, Any] | None) -> dict[str, Any]:
@@ -207,81 +293,35 @@ def _pre_provider_locked_fact_direct_answer_result(
         grounding_applied=True,
         grounding_source=source,
         grounding_reason="pre_provider_locked_fact_direct_answer",
+        ai_decision_trace={
+            "schema_version": "webchat_ai_decision_v1",
+            "mode": "controlled_direct_answer_compatibility",
+            "reply_source": "knowledge:deterministic_direct_answer",
+            "decision": {
+                "intent": "general_support",
+                "risk_level": "low",
+                "next_action": "reply",
+                "handoff_required": False,
+                "tool_calls": [],
+                "evidence_used": [{"source": "hybrid_rag_v2", "evidence_type": "locked_fact", "fact_evidence_present": True}],
+                "safety_notes": ["compatibility direct answer from approved locked fact"],
+            },
+            "policy_gate": {"ok": True, "violations": [], "warnings": [], "checked_tools": []},
+            "raw_tracking_number_exposed": False,
+        },
     )
-
-
-_ASCII_LOW_SIGNAL = {"?", "??", "???", "hi", "hello", "hey", "yo", "test", "testing", "asd", "asdasd", "qwe", "qwer", "321", "123"}
-_CJK_LOW_SIGNAL = {"你好", "您好", "哈喽", "嗨", "霓虹", "撒旦"}
-_BUSINESS_SIGNALS = (
-    "track", "tracking", "waybill", "shipment", "parcel", "package", "delivery", "redelivery", "refuse", "refusal",
-    "return", "address", "change address", "complaint", "claim", "refund", "compensation", "lost", "damage", "damaged", "delayed", "late", "customs", "pickup", "cod",
-    "运单", "单号", "物流", "包裹", "快递", "派送", "配送", "重派", "重新派送", "拒收", "退回", "退货", "改地址", "地址", "投诉", "赔偿", "理赔", "退款", "丢件", "丢失", "破损", "延误", "清关", "取件",
-)
-
-
-def _customer_context_text(recent_context: list[dict[str, Any]] | None) -> str:
-    texts: list[str] = []
-    for item in recent_context or []:
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role") or "").strip().lower()
-        if role in {"customer", "visitor", "user"}:
-            value = str(item.get("text") or item.get("body") or "").strip()
-            if value:
-                texts.append(value[:500])
-    return "\n".join(texts[-4:])
-
-
-def _is_low_signal_no_evidence_input(body: str | None, recent_context: list[dict[str, Any]] | None) -> bool:
-    raw = str(body or "").strip()
-    compact = "".join(raw.split())
-    lowered = compact.lower()
-    if not compact:
-        return True
-    combined = f"{raw}\n{_customer_context_text(recent_context)}".lower()
-    if any(signal in combined for signal in _BUSINESS_SIGNALS):
-        return False
-    if lowered in _ASCII_LOW_SIGNAL or compact in _CJK_LOW_SIGNAL:
-        return True
-    if compact.isdigit() and len(compact) <= 6:
-        return True
-    if compact.isascii() and compact.isalpha() and len(compact) <= 8:
-        return True
-    if len(compact) <= 4:
-        return True
-    return False
 
 
 def _pre_provider_no_evidence_result(
     *,
-    body: str,
-    recent_context: list[dict[str, Any]] | None,
     runtime_context: dict[str, Any] | None,
     tracking_fact_evidence_present: bool,
 ) -> WebchatFastReplyResult | None:
-    if tracking_fact_evidence_present or not get_settings().webchat_knowledge_no_evidence_fallback_enabled:
-        return None
-    knowledge_context = _knowledge_context(runtime_context)
-    if knowledge_context.get("total_matches", 0) or knowledge_context.get("hits"):
-        return None
-    if _is_low_signal_no_evidence_input(body, recent_context):
-        return None
-    return WebchatFastReplyResult(
-        ok=True,
-        ai_generated=False,
-        reply_source="server_knowledge_no_evidence",
-        reply="I do not have verified knowledge for this request yet. A human teammate can review it and help you further.",
-        intent="handoff",
-        tracking_number=None,
-        handoff_required=True,
-        handoff_reason=knowledge_context.get("no_answer_reason") or "knowledge_no_evidence",
-        recommended_agent_action="review_no_evidence_customer_question",
-        ticket_creation_queued=False,
-        elapsed_ms=0,
-        rag_trace=summarize_rag_trace(runtime_context),
-        grounding_applied=False,
-        grounding_reason="pre_provider_no_evidence_fallback",
-    )
+    # Transitional note: server_knowledge_no_evidence is no longer a normal
+    # customer-service brain. Low-signal/no-evidence input must reach the AI
+    # decision runtime. Provider-unavailable emergency fallback remains in the
+    # API layer and is explicitly marked as server_safe_fallback.
+    return None
 
 
 def _apply_grounding(
@@ -394,8 +434,6 @@ async def generate_webchat_fast_reply(
         )
         return pre_provider_direct_answer
     no_evidence_result = _pre_provider_no_evidence_result(
-        body=body,
-        recent_context=recent_context,
         runtime_context=runtime_context,
         tracking_fact_evidence_present=evidence_present,
     )
@@ -438,11 +476,21 @@ async def generate_webchat_fast_reply(
             tracking_fact_evidence_present=evidence_present,
         )
 
-    status = "ok" if provider_result.ok else (provider_result.error_code or "ai_unavailable")
+    result = _result_from_provider(
+        provider_result,
+        tracking_fact_metadata=tracking_fact_metadata if evidence_present else None,
+        tracking_number=tracking_fact_metadata.get("tracking_number") if isinstance(tracking_fact_metadata, dict) else provider_result.tracking_number,
+        runtime_context=runtime_context,
+        tenant_key=tenant_key,
+        channel_key=channel_key,
+        session_id=session_id,
+        request_id=request_id,
+    )
+    status = "ok" if result.ok else (result.error_code or provider_result.error_code or "ai_unavailable")
     record_fast_reply_metric(
         status=status,
-        intent=provider_result.intent,
-        handoff_required=provider_result.handoff_required,
-        elapsed_ms=provider_result.elapsed_ms,
+        intent=result.intent,
+        handoff_required=result.handoff_required,
+        elapsed_ms=result.elapsed_ms,
     )
-    return _result_from_provider(provider_result)
+    return result

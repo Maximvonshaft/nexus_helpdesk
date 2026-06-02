@@ -186,7 +186,7 @@ def test_fast_stream_conflict_does_not_mutate_conversation(monkeypatch):
         db.close()
 
 
-def test_fast_stream_replay_does_not_mutate_conversation(monkeypatch):
+def test_fast_stream_replay_does_not_create_new_messages_or_tickets(monkeypatch):
     monkeypatch.setattr(
         webchat_fast,
         "get_webchat_fast_settings",
@@ -201,12 +201,7 @@ def test_fast_stream_replay_does_not_mutate_conversation(monkeypatch):
     monkeypatch.setattr(
         webchat_fast,
         "prepare_webchat_fast_stream",
-        lambda **kwargs: SimpleNamespace(status="replay", row_id=1, response_json={"reply": "cached reply", "ok": True}, error_code=None),
-    )
-    monkeypatch.setattr(
-        webchat_fast,
-        "stream_webchat_fast_reply_events",
-        lambda **kwargs: iter([webchat_fast.sse_event("replay", {"reply": "cached reply"}), webchat_fast.sse_event("final", {"replayed": True})]),
+        lambda **kwargs: SimpleNamespace(status="replay", row_id=1, response_json={"reply": "cached reply", "ok": True, "ai_decision_trace": {"schema_version": "webchat_ai_decision_v1"}}, error_code=None),
     )
 
     response = client.post(
@@ -216,9 +211,10 @@ def test_fast_stream_replay_does_not_mutate_conversation(monkeypatch):
     )
 
     assert response.status_code == 200
+    assert "cached reply" in response.text
     db = SessionLocal()
     try:
-        assert db.execute(select(func.count(WebchatConversation.id))).scalar_one() == 0
         assert db.execute(select(func.count(WebchatMessage.id))).scalar_one() == 0
+        assert db.execute(select(func.count(Ticket.id))).scalar_one() == 0
     finally:
         db.close()

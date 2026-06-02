@@ -10,34 +10,31 @@ def _section(start: str, end: str | None = None) -> str:
     return SRC[s:e]
 
 
-def test_non_stream_fact_first_does_not_precede_server_handoff_policy():
+def test_non_stream_uses_unified_ai_decision_runtime_processor():
     section = _section(
         '@router.post("/fast-reply")',
         '@router.post("/fast-reply/stream")',
     )
 
-    assert "FACT_FIRST_TRACKING_NON_STREAM_BEGIN" not in section
-    assert "FACT_FIRST_TRACKING_NON_STREAM_END" not in section
-
-    policy_idx = section.index("server_policy = decide_server_handoff_policy")
-    lookup_idx = section.index("tracking_fact = _lookup_fast_tracking_fact")
-
-    assert policy_idx < lookup_idx
+    assert "server_policy = decide_server_handoff_policy" not in section
+    assert "_tracking_fact_forced_reply_payload" not in section
+    assert "_process_fast_reply(row_id=row_id" in section
+    assert "begin_webchat_fast_idempotency" in section
 
 
-def test_stream_fact_first_does_not_precede_server_handoff_policy():
+def test_stream_uses_same_decision_runtime_processor_as_non_stream():
     section = _section('@router.post("/fast-reply/stream")')
 
-    assert "FACT_FIRST_TRACKING_STREAM_BEGIN" not in section
-    assert "FACT_FIRST_TRACKING_STREAM_END" not in section
-
-    policy_idx = section.index("server_policy = decide_server_handoff_policy")
-    lookup_idx = section.index("tracking_fact = _lookup_fast_tracking_fact")
-
-    assert policy_idx < lookup_idx
+    assert "server_policy = decide_server_handoff_policy" not in section
+    assert "_tracking_fact_forced_stream_events" not in section
+    assert "_stream_process_events" in section
+    assert "prepare_webchat_fast_stream" in section
+    assert "ai_decision_trace" in SRC
 
 
-def test_forced_tracking_fact_reply_still_exists_after_policy_path():
-    assert "_tracking_fact_forced_reply_payload" in SRC
-    assert 'reply_source": "server_tracking_fact"' in SRC
-    assert "server_policy = decide_server_handoff_policy" in SRC
+def test_tracking_fact_is_evidence_source_not_server_owned_final_reply():
+    assert "_tracking_fact_public_payload" in SRC
+    assert "_tracking_fact_evidence_trace" in SRC
+    assert "speedaf_trusted_tracking_fact" in SRC
+    assert '"server_tracking_fact"' not in SRC
+    assert "_tracking_fact_forced_reply_payload" not in SRC

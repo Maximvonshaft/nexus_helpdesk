@@ -1,24 +1,22 @@
 from __future__ import annotations
 
 import os
-
-os.environ.setdefault('APP_ENV', 'development')
-os.environ.setdefault('DATABASE_URL', 'sqlite:////tmp/webchat_stream_final_parse_failure.db')
-os.environ.setdefault('WEBCHAT_FAST_AI_ENABLED', 'false')
-
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text as sql_text
+
+os.environ.setdefault("APP_ENV", "development")
+os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_stream_final_parse_failure.db")
+os.environ.setdefault("WEBCHAT_FAST_AI_ENABLED", "false")
 
 from app.api import webchat_fast
 from app.db import Base, SessionLocal, engine
 from app.main import app
-from app.models import BackgroundJob, Ticket
-from app.services import webchat_fast_stream_service
+from app.models import BackgroundJob, Customer, Ticket
 from app.services.webchat_fast_idempotency_db import WebchatFastIdempotency
-from app.services.webchat_openclaw_stream_adapter import Completed, ContentDelta
+from app.webchat_models import WebchatConversation, WebchatHandoffRequest, WebchatMessage
 
 pytestmark = pytest.mark.fast_lane_v2_2_2
 
@@ -30,88 +28,56 @@ def setup_function():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
+        db.execute(delete(WebchatFastIdempotency))
+        db.execute(delete(WebchatHandoffRequest))
+        db.execute(delete(WebchatMessage))
+        db.execute(delete(WebchatConversation))
         db.execute(delete(BackgroundJob))
         db.execute(delete(Ticket))
-        db.execute(delete(WebchatFastIdempotency))
+        db.execute(delete(Customer))
         db.commit()
     finally:
         db.close()
 
 
 def _settings():
-    return SimpleNamespace(stream_enabled=True, stream_require_accept=True, openclaw_responses_agent_id='webchat-fast')
+    return SimpleNamespace(stream_enabled=True, stream_require_accept=True, openclaw_responses_agent_id="webchat-fast", is_openclaw_stream_configured=True)
 
 
-def _payload(client_message_id: str = 'client-invalid-final') -> dict:
+def _payload(client_message_id: str = "client-invalid-final") -> dict:
     return {
-        'tenant_key': 'default',
-        'channel_key': 'website',
-        'session_id': 'session-invalid-final',
-        'client_message_id': client_message_id,
-        'body': 'Hi',
-        'recent_context': [],
+        "tenant_key": "default",
+        "channel_key": "website",
+        "session_id": "session-invalid-final",
+        "client_message_id": client_message_id,
+        "body": "Hi",
+        "recent_context": [],
     }
 
 
-def _runtime_context_with_evidence() -> dict:
-    knowledge_context = {
-        'retrieval': 'hybrid_rag_v2',
-        'total_matches': 1,
-        'hits': [
-            {
-                'chunk_id': 'faq:greeting:1',
-                'content': 'Approved evidence: customer support greeting policy.',
-                'score': 0.91,
-                'retrieval_method': 'lexical',
-                'source_version': 'test',
-                'citation': {'title': 'Greeting policy'},
-            }
-        ],
-        'top_hits': [
-            {
-                'chunk_id': 'faq:greeting:1',
-                'score': 0.91,
-                'retrieval_method': 'lexical',
-                'source_version': 'test',
-                'citation': {'title': 'Greeting policy'},
-            }
-        ],
-        'evidence_pack': [{'chunk_id': 'faq:greeting:1', 'source_version': 'test'}],
-        'locked_facts': [],
-        'no_answer_reason': None,
-    }
-    return {
-        'knowledge_context': knowledge_context,
-        'rag_trace': knowledge_context,
-    }
+def test_decision_runtime_exception_emits_error_without_partial_or_final(monkeypatch):
+    async def fail_generate(**kwargs):
+        raise ValueError("invalid decision output")
 
+    monkeypatch.setattr(webchat_fast, "get_webchat_fast_settings", _settings)
+    monkeypatch.setattr(webchat_fast, "enforce_webchat_fast_rate_limit", lambda *a, **k: None)
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fail_generate)
 
-def test_partial_reply_then_invalid_final_rejected_and_failed(monkeypatch):
-    async def fake_call_stream(**kwargs):
-        yield ContentDelta('{"reply":"Hello there, I can help with that.","intent":"greeting","tracking_number":null,"handoff_required":')
-        yield Completed(full_text='{"reply":"Hello there, I can help with that.","intent":"greeting","tracking_number":null,"handoff_required":"bad","handoff_reason":null,"recommended_agent_action":null}')
-
-    monkeypatch.setattr(webchat_fast, 'get_webchat_fast_settings', _settings)
-    monkeypatch.setattr(webchat_fast, 'enforce_webchat_fast_rate_limit', lambda *a, **k: None)
-    monkeypatch.setattr(webchat_fast, '_webchat_fast_runtime_context', lambda **_kwargs: _runtime_context_with_evidence())
-    monkeypatch.setattr(webchat_fast_stream_service.openclaw_client, 'call_openclaw_responses_stream', fake_call_stream)
-
-    response = client.post('/api/webchat/fast-reply/stream', json=_payload(), headers={'Accept': 'text/event-stream'})
+    response = client.post("/api/webchat/fast-reply/stream", json=_payload(), headers={"Accept": "text/event-stream"})
 
     assert response.status_code == 200
-    assert 'event: reply_delta' not in response.text
-    assert 'Hello there, I can help with that.' not in response.text
-    assert 'event: error' in response.text
-    assert 'ai_invalid_output' in response.text
-    assert 'event: final' not in response.text
+    assert "event: reply_delta" not in response.text
+    assert "invalid decision output" not in response.text
+    assert "event: error" in response.text
+    assert "stream_internal_error" in response.text
+    assert "event: final" not in response.text
 
     db = SessionLocal()
     try:
-        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == 'client-invalid-final')).scalar_one()
-        assert row.status == 'failed'
-        assert row.error_code == 'ai_invalid_output'
-        from sqlalchemy import text as sql_text
-        assert db.execute(sql_text('select count(*) from tickets')).scalar_one() == 0
-        assert db.execute(sql_text('select count(*) from background_jobs')).scalar_one() == 0
+        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == "client-invalid-final")).scalar_one()
+        assert row.status == "failed"
+        assert row.error_code == "stream_internal_error"
+        assert db.execute(sql_text("select count(*) from tickets")).scalar_one() == 0
+        assert db.execute(sql_text("select count(*) from background_jobs")).scalar_one() == 0
     finally:
         db.close()

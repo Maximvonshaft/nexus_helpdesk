@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, AsyncIterator
 from urllib.parse import urlparse
 
@@ -10,14 +11,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
 from ..db import db_context
-from ..models import Ticket
 from ..settings import get_settings
-from ..services.background_jobs import enqueue_speedaf_work_order_create_job
-from ..services.tracking_fact_schema import TrackingFactResult, hash_tracking_number
-from ..services.tracking_fact_service import extract_tracking_number, lookup_tracking_fact
 from ..services.ai_runtime_context import build_webchat_runtime_context
 from ..services.knowledge_prompt_service import summarize_rag_trace
-from ..services.webchat_fast_ai_service import generate_webchat_fast_reply
+from ..services.tracking_fact_schema import TrackingFactResult, hash_tracking_number
+from ..services.tracking_fact_service import extract_tracking_number, lookup_tracking_fact
+from ..services.webchat_ai_decision_runtime.policy_gate import validate_ai_decision
+from ..services.webchat_ai_decision_runtime.schemas import AIDecision, AIDecisionEvidence, AIDecisionToolCall
+from ..services.webchat_ai_decision_runtime.tool_executor import execute_decision_tools
+from ..services.webchat_fast_ai_service import WebchatFastReplyResult, generate_webchat_fast_reply
+from ..services.webchat_fast_config import WebchatFastSettings, get_webchat_fast_settings
 from ..services.webchat_fast_idempotency_db import (
     WebchatFastIdempotency,
     begin_webchat_fast_idempotency,
@@ -26,29 +29,22 @@ from ..services.webchat_fast_idempotency_db import (
     mark_webchat_fast_done,
     mark_webchat_fast_failed,
 )
+from ..services.webchat_fast_output_parser import FastReplyParseError, assert_customer_visible_reply_is_safe
 from ..services.webchat_fast_rate_limit import enforce_webchat_fast_rate_limit
-from ..services.webchat_fast_stream_service import prepare_webchat_fast_stream, sse_event, stream_webchat_fast_reply_events
-from ..services.webchat_handoff_policy import HandoffPolicyDecision, decide_server_handoff_policy
-from ..services.webchat_handoff_policy_config import load_webchat_handoff_rules
-from ..services.webchat_handoff_service import request_webchat_handoff
-from ..services.webchat_fast_config import get_webchat_fast_settings, WebchatFastSettings
-from ..services.webchat_fast_rollout import is_stream_rollout_selected
 from ..services.webchat_fast_session_service import (
     FastBusinessState,
     FastRoutingContext,
     append_fast_ai_message,
-    append_fast_system_handoff_message,
     append_fast_visitor_message,
     build_fast_server_context,
     extract_fast_business_state,
     fast_public_session_payload,
     get_or_create_fast_conversation,
-    get_or_create_fast_ticket,
     merge_fast_context,
     resolve_fast_routing_context,
     update_fast_business_state,
 )
-from app.services.webchat_fast_policy import match_support_hours_policy_reply
+from ..services.webchat_fast_stream_service import StreamBeginOutcome, prepare_webchat_fast_stream, sse_event
 from ..webchat_models import WebchatConversation
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat-fast"])
@@ -126,7 +122,7 @@ def _public_cors_headers(request: Request) -> dict[str, str]:
     origin = _validated_origin(request)
     headers = {
         "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, X-Requested-With, Accept",
+        "Access-Control-Allow-Headers": "Content-Type, X-Requested-With, Accept, X-Nexus-Stream-Canary",
         "Access-Control-Max-Age": "600",
         "Vary": "Origin",
         "Cache-Control": "no-store",
@@ -166,6 +162,17 @@ def _context_values(body: str, context: list[dict[str, Any]] | None, tracking_nu
 def _tracking_candidate(*, body: str, context: list[dict[str, Any]] | None, tracking_number: str | None) -> str | None:
     cleaned = (tracking_number or "").strip().upper()
     return cleaned or extract_tracking_number(*_context_values(body, context, tracking_number))
+
+
+def _public_tracking_reference(tracking_number: str | None) -> dict[str, Any]:
+    safe_number = str(tracking_number or "").strip().upper()
+    if not safe_number:
+        return {"tracking_number": None, "tracking_number_hash": None, "tracking_number_suffix": None}
+    return {
+        "tracking_number": None,
+        "tracking_number_hash": hash_tracking_number(safe_number),
+        "tracking_number_suffix": safe_number[-6:],
+    }
 
 
 def _tracking_fact_public_payload(result: TrackingFactResult | None) -> dict[str, Any] | None:
@@ -226,129 +233,6 @@ def _tracking_fact_evidence_trace(
     return trace
 
 
-def _tracking_candidate_selection_payload(result: TrackingFactResult | None) -> dict[str, Any] | None:
-    if result is None or result.failure_reason != "multiple_waybill_candidates":
-        return None
-    metadata = result.metadata_payload()
-    candidates = [item for item in metadata.get("safe_candidates") or [] if item.get("waybill_suffix")]
-    if not candidates:
-        return None
-    suffixes = ", ".join(str(item["waybill_suffix"]) for item in candidates)
-    return {"ok": True, "ai_generated": False, "reply_source": "server_tracking_candidate_selection", "reply": f"I found multiple shipments linked to this phone number. Please reply with the last 4 digits of the shipment you want to check: {suffixes}", "intent": "tracking_candidate_selection", "tracking_number": None, "handoff_required": False, "handoff_reason": None, "ticket_creation_queued": False, "elapsed_ms": 0, "safe_candidates": candidates, "evidence_trace": _tracking_fact_evidence_trace(result, no_answer_reason="multiple_waybill_candidates", candidate_count=len(candidates))}
-
-
-def _public_tracking_reference(tracking_number: str | None) -> dict[str, Any]:
-    safe_number = str(tracking_number or "").strip().upper()
-    if not safe_number:
-        return {"tracking_number": None, "tracking_number_hash": None, "tracking_number_suffix": None}
-    return {
-        "tracking_number": None,
-        "tracking_number_hash": hash_tracking_number(safe_number),
-        "tracking_number_suffix": safe_number[-6:],
-    }
-
-
-# STREAM_ROUTE_FORCE_ENABLE_BEGIN
-def _webchat_stream_route_forced_enabled() -> bool:
-    truthy = {"1", "true", "yes", "y", "on", "enabled"}
-    for key in (
-        "WEBCHAT_FAST_REPLY_STREAM_ENABLED",
-        "WEBCHAT_FAST_REPLY_STREAMING_ENABLED",
-        "WEBCHAT_FAST_REPLY_STREAM_ROUTE_ENABLED",
-        "WEBCHAT_FAST_STREAM_ENABLED",
-        "WEBCHAT_STREAM_ENABLED",
-        "WEBCHAT_STREAMING_ENABLED",
-        "WEBCHAT_ENABLE_STREAM",
-    ):
-        value = str(__import__("os").environ.get(key, "")).strip().lower()
-        if value in truthy:
-            return True
-    return False
-# STREAM_ROUTE_FORCE_ENABLE_END
-
-def _tracking_fact_forced_reply_payload(*, tracking_number: str | None, result: TrackingFactResult | None) -> dict[str, Any] | None:
-    if result is None:
-        return None
-    if not bool(result.ok and result.fact_evidence_present and result.pii_redacted):
-        return None
-
-    status_code = str(result.status or "").strip()
-    status_label = str(result.status_label or "").strip()
-    if not status_code and not status_label:
-        return None
-
-    safe_number = str(result.tracking_number or tracking_number or "").strip().upper()
-    suffix = safe_number[-6:] if safe_number else ""
-    parcel_ref = f"ending {suffix}" if suffix else "provided by you"
-
-    if status_code and status_label:
-        reply = f"Your parcel {parcel_ref} is currently {status_label} (status code: {status_code})."
-    elif status_label:
-        reply = f"Your parcel {parcel_ref} is currently {status_label}."
-    else:
-        reply = f"Your parcel {parcel_ref} currently has status code {status_code}."
-
-    return {
-        "ok": True,
-        "ai_generated": False,
-        "reply_source": "server_tracking_fact",
-        "reply": reply,
-        "intent": "tracking",
-        **_public_tracking_reference(safe_number),
-        "handoff_required": False,
-        "handoff_reason": None,
-        "ticket_creation_queued": False,
-        "elapsed_ms": 0,
-        "tracking_fact": _tracking_fact_public_payload(result),
-        "evidence_trace": _tracking_fact_evidence_trace(result, tracking_number=safe_number),
-    }
-
-
-def _tracking_fact_safe_failure_payload(*, tracking_number: str | None, result: TrackingFactResult | None, body: str | None) -> dict[str, Any]:
-    zh = any("\u4e00" <= ch <= "\u9fff" for ch in (body or ""))
-    reply = (
-        "已收到你的运单号，但系统暂时无法确认该单的实时状态。我已为你记录，建议转人工进一步核实。"
-        if zh
-        else "I received your waybill number, but the system cannot confirm its live status right now. I have recorded it and recommend a human teammate reviews it."
-    )
-    return {
-        "ok": True,
-        "ai_generated": False,
-        "reply_source": "server_tracking_fact_unavailable",
-        "reply": reply,
-        "intent": "tracking",
-        **_public_tracking_reference(tracking_number),
-        "handoff_required": True,
-        "handoff_reason": (result.failure_reason if result else "tracking_fact_unavailable") or "tracking_fact_unavailable",
-        "ticket_creation_queued": False,
-        "elapsed_ms": 0,
-        "tracking_fact": _tracking_fact_public_payload(result),
-        "evidence_trace": _tracking_fact_evidence_trace(
-            result,
-            tracking_number=tracking_number,
-            no_answer_reason=(result.failure_reason if result else "tracking_fact_unavailable") or "tracking_fact_unavailable",
-        ),
-    }
-
-
-def _tracking_number_request_payload(*, body: str | None) -> dict[str, Any]:
-    zh = any("\u4e00" <= ch <= "\u9fff" for ch in (body or ""))
-    reply = "请提供你的运单号，我会帮你查询物流状态。" if zh else "Please provide your waybill or tracking number so I can check the shipment status."
-    return {"ok": True, "ai_generated": False, "reply_source": "server_tracking_number_required", "reply": reply, "intent": "tracking", "tracking_number": None, "handoff_required": False, "handoff_reason": None, "ticket_creation_queued": False, "elapsed_ms": 0, "evidence_trace": _tracking_fact_evidence_trace(None, no_answer_reason="missing_tracking_number")}
-
-
-def _server_policy_evidence_trace(*, source: str, policy_reason: str | None = None) -> dict[str, Any]:
-    trace: dict[str, Any] = {
-        "retrieval": "server_policy",
-        "source": source,
-        "policy_evidence_present": True,
-        "raw_tracking_number_exposed": False,
-    }
-    if policy_reason:
-        trace["policy_reason"] = policy_reason
-    return trace
-
-
 def _server_no_evidence_trace(*, source: str, no_answer_reason: str | None = None) -> dict[str, Any]:
     trace: dict[str, Any] = {
         "retrieval": "no_evidence_fallback",
@@ -360,128 +244,6 @@ def _server_no_evidence_trace(*, source: str, no_answer_reason: str | None = Non
     if no_answer_reason:
         trace["no_answer_reason"] = no_answer_reason
     return trace
-
-
-def _should_attempt_fact_first_lookup(*, body: str | None, tracking_number: str | None, caller_id: str | None) -> bool:
-    if tracking_number:
-        return True
-    if not caller_id:
-        return False
-    text = (body or "").lower()
-    markers = (
-        "track", "tracking", "parcel", "package", "shipment", "waybill", "status",
-        "where is", "where's", "delivery",
-        "查件", "查询", "物流", "包裹", "快递", "单号", "运单", "派送", "签收", "妥投"
-    )
-    return any(marker in text for marker in markers)
-
-
-def _persist_tracking_fact_forced_reply(
-    *,
-    row_id: int,
-    payload: WebchatFastReplyRequest,
-    result_payload: dict[str, Any],
-    tracking_fact_metadata: dict[str, Any] | None,
-    request: Request | None = None,
-) -> dict[str, Any]:
-    with db_context() as db:
-        conversation = get_or_create_fast_conversation(
-            db,
-            tenant_key=payload.tenant_key,
-            channel_key=payload.channel_key,
-            session_id=payload.session_id,
-            request=request,
-            visitor=payload.visitor,
-        )
-        append_fast_ai_message(
-            db,
-            conversation=conversation,
-            reply=result_payload["reply"],
-            client_message_id=payload.client_message_id,
-            metadata={
-                "handoff_required": bool(result_payload.get("handoff_required")),
-                "source": result_payload.get("reply_source") or "server_tracking_fact",
-                "tracking_fact": tracking_fact_metadata or {},
-            },
-        )
-        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
-        mark_webchat_fast_done(db, row, response_json=result_payload)
-        return _with_fast_public_session(db, conversation, result_payload)
-
-
-async def _tracking_fact_forced_stream_events(
-    *,
-    row_id: int,
-    payload: WebchatFastReplyRequest,
-    result_payload: dict[str, Any],
-    tracking_fact_metadata: dict[str, Any] | None,
-    request: Request | None = None,
-) -> AsyncIterator[str]:
-    public_payload = _persist_tracking_fact_forced_reply(
-        row_id=row_id,
-        payload=payload,
-        result_payload=result_payload,
-        tracking_fact_metadata=tracking_fact_metadata,
-        request=request,
-    )
-    yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2", "reply_source": result_payload.get("reply_source") or "server_tracking_fact"})
-    yield sse_event("reply_delta", {"text": result_payload["reply"]})
-    yield sse_event("final", {k: v for k, v in public_payload.items() if k != "reply"})
-
-
-def _is_delivery_follow_up_request(*, body: str | None, business_state: FastBusinessState, handoff_reason: str | None = None, recommended_action: str | None = None) -> bool:
-    text = " ".join([body or "", business_state.intent or "", business_state.issue_type or "", handoff_reason or "", recommended_action or ""]).lower()
-    markers = ("催派", "催一下", "尽快派送", "加急派送", "还没到", "没有派送", "urge delivery", "delivery follow", "follow up delivery", "too slow", "late delivery", "not delivered", "still not delivered", "where is my parcel", "where is my package", "redelivery", "reschedule", "deliver again")
-    return business_state.issue_type == "delivery_reschedule" or any(marker in text for marker in markers)
-
-
-def _maybe_enqueue_speedaf_work_order(*, db, ticket_id: int, conversation_id: int | None, business_state: FastBusinessState, body: str, visitor: WebchatFastVisitor | None, handoff_reason: str | None = None, recommended_action: str | None = None) -> int | None:
-    caller_id = _caller_id(visitor)
-    waybill_code = (business_state.tracking_number or "").strip().upper()
-    if not caller_id or not waybill_code or not _is_delivery_follow_up_request(body=body, business_state=business_state, handoff_reason=handoff_reason, recommended_action=recommended_action):
-        return None
-    job = enqueue_speedaf_work_order_create_job(db=db, ticket_id=ticket_id, conversation_id=conversation_id, waybill_code=waybill_code, caller_id=caller_id, description=f"WebChat delivery follow-up request: {body}"[:200], work_order_type="WT0103-05")
-    return job.id
-
-
-def _lookup_fast_tracking_fact(*, tracking_number: str | None, conversation_id: int | None, ticket_id: int | None, request_id: str | None, caller_id: str | None = None, country_code: str | None = None) -> TrackingFactResult | None:
-    if not tracking_number and not caller_id:
-        LOGGER.info("webchat_fast_tracking_fact_not_used", extra={"event_payload": {"reason": "missing_tracking_number_and_caller", "conversation_id": conversation_id, "request_id": request_id}})
-        return None
-    LOGGER.info("webchat_fast_tracking_fact_lookup_started", extra={"event_payload": {"conversation_id": conversation_id, "ticket_id": ticket_id, "request_id": request_id, "tracking_number_hash": hash_tracking_number(tracking_number), "caller_id_present": bool(caller_id), "country_code": country_code}})
-    try:
-        result = lookup_tracking_fact(tracking_number=tracking_number, caller_id=caller_id, country_code=country_code, conversation_id=conversation_id, ticket_id=ticket_id, request_id=request_id)
-    except Exception as exc:
-        LOGGER.warning("webchat_fast_tracking_fact_lookup_failed", extra={"event_payload": {"conversation_id": conversation_id, "ticket_id": ticket_id, "request_id": request_id, "tracking_number_hash": hash_tracking_number(tracking_number), "error_type": type(exc).__name__}})
-        return None
-    LOGGER.info("webchat_fast_tracking_fact_lookup_result", extra={"event_payload": {"conversation_id": conversation_id, "ticket_id": ticket_id, "request_id": request_id, **(_tracking_fact_public_payload(result) or {})}})
-    return result
-
-
-def _tracking_fact_provider_fields(result: TrackingFactResult | None) -> tuple[str | None, dict[str, Any] | None, bool]:
-    if result is None:
-        return None, None, False
-    metadata = result.metadata_payload()
-    if not bool(result.fact_evidence_present and result.pii_redacted):
-        return None, metadata, False
-    summary = result.prompt_summary().strip()
-    return (summary, metadata, True) if summary else (None, metadata, False)
-
-
-def _handoff_enqueue_failure_payload(result: Any) -> dict[str, Any]:
-    return {"ok": False, "ai_generated": result.ai_generated, "reply_source": result.reply_source, "reply": None, "intent": result.intent, **_public_tracking_reference(result.tracking_number), "handoff_required": True, "handoff_reason": result.handoff_reason, "ticket_creation_queued": False, "elapsed_ms": result.elapsed_ms, "error_code": "handoff_enqueue_failed", "retry_after_ms": 1500}
-
-
-def _server_handoff_response_payload(*, handoff_reason: str | None, customer_reply: str | None) -> dict[str, Any]:
-    reason = handoff_reason or "server_policy_handoff_required"
-    return {"ok": True, "ai_generated": False, "reply_source": "server_handoff_policy", "reply": customer_reply or "A human teammate will review this request.", "intent": "handoff", "tracking_number": None, "handoff_required": True, "handoff_reason": reason, "ticket_creation_queued": False, "elapsed_ms": 0, "evidence_trace": _server_policy_evidence_trace(source="server_handoff_policy", policy_reason=reason)}
-
-
-def _provider_safe_fallback_payload(*, error_code: str | None, body: str | None) -> dict[str, Any]:
-    zh = any("\u4e00" <= ch <= "\u9fff" for ch in (body or ""))
-    reply = "助手暂时不可用，人工同事可以继续帮你核实这个请求。" if zh else "The assistant is temporarily unavailable. A human teammate can review this request."
-    reason = error_code or "provider_unavailable"
-    return {"ok": True, "ai_generated": False, "reply_source": "server_safe_fallback", "reply": reply, "intent": "handoff", "tracking_number": None, "handoff_required": True, "handoff_reason": reason, "ticket_creation_queued": False, "elapsed_ms": 0, "evidence_trace": _server_no_evidence_trace(source="server_safe_fallback", no_answer_reason=reason)}
 
 
 def _knowledge_no_evidence_payload(*, runtime_context: dict[str, Any] | None) -> dict[str, Any]:
@@ -507,6 +269,33 @@ def _knowledge_no_evidence_payload(*, runtime_context: dict[str, Any] | None) ->
         "ticket_creation_queued": False,
         "elapsed_ms": 0,
         "evidence_trace": trace,
+        "fallback_mode": "emergency_compatibility_only",
+    }
+
+
+def _provider_safe_fallback_payload(*, error_code: str | None, body: str | None) -> dict[str, Any]:
+    zh = any("\u4e00" <= ch <= "\u9fff" for ch in (body or ""))
+    reply = "助手暂时不可用，人工同事可以继续帮你核实这个请求。" if zh else "The assistant is temporarily unavailable. A human teammate can review this request."
+    reason = error_code or "provider_unavailable"
+    return {
+        "ok": True,
+        "ai_generated": False,
+        "reply_source": "server_safe_fallback",
+        "reply": reply,
+        "intent": "handoff",
+        "tracking_number": None,
+        "handoff_required": True,
+        "handoff_reason": reason,
+        "ticket_creation_queued": False,
+        "elapsed_ms": 0,
+        "evidence_trace": _server_no_evidence_trace(source="server_safe_fallback", no_answer_reason=reason),
+        "ai_decision_trace": {
+            "schema_version": "webchat_ai_decision_v1",
+            "mode": "emergency_fallback_only",
+            "reply_source": "server_safe_fallback",
+            "policy_gate": {"ok": True, "violations": [], "warnings": ["provider unavailable; fallback not presented as AI"], "checked_tools": []},
+            "raw_tracking_number_exposed": False,
+        },
     }
 
 
@@ -517,7 +306,7 @@ def _runtime_context_has_knowledge_evidence(runtime_context: dict[str, Any] | No
     return bool(knowledge.get("total_matches") or knowledge.get("hits") or knowledge.get("locked_facts"))
 
 
-def _with_fast_public_session(db, conversation, payload: dict[str, Any]) -> dict[str, Any]:
+def _with_fast_public_session(db, conversation: WebchatConversation, payload: dict[str, Any]) -> dict[str, Any]:
     session_payload = fast_public_session_payload(db, conversation)
     return {**payload, **session_payload, "webchat_session": session_payload}
 
@@ -535,40 +324,61 @@ def _with_fast_public_session_from_request(payload: WebchatFastReplyRequest, res
         return _with_fast_public_session(db, conversation, response_payload)
 
 
-def _request_fast_handoff(
-    db,
+def _should_attempt_fact_first_lookup(*, body: str | None, tracking_number: str | None, caller_id: str | None) -> bool:
+    if tracking_number:
+        return True
+    if not caller_id:
+        return False
+    text = (body or "").lower()
+    markers = (
+        "track", "tracking", "parcel", "package", "shipment", "waybill", "status",
+        "where is", "where's", "delivery", "查件", "查询", "物流", "包裹", "快递", "单号", "运单", "派送", "签收", "妥投",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _lookup_fast_tracking_fact(
     *,
-    conversation,
-    ticket,
-    source: str,
-    trigger_type: str,
-    handoff_reason: str | None,
-    recommended_agent_action: str | None,
-    trigger_message_id: int | None = None,
-) -> int | None:
-    if not isinstance(conversation, WebchatConversation) or not isinstance(ticket, Ticket):
+    tracking_number: str | None,
+    conversation_id: int | None,
+    ticket_id: int | None,
+    request_id: str | None,
+    caller_id: str | None = None,
+    country_code: str | None = None,
+) -> TrackingFactResult | None:
+    if not tracking_number and not caller_id:
+        return None
+    LOGGER.info(
+        "webchat_fast_tracking_fact_lookup_started",
+        extra={"event_payload": {"conversation_id": conversation_id, "ticket_id": ticket_id, "request_id": request_id, "tracking_number_hash": hash_tracking_number(tracking_number), "caller_id_present": bool(caller_id), "country_code": country_code}},
+    )
+    try:
+        result = lookup_tracking_fact(
+            tracking_number=tracking_number,
+            caller_id=caller_id,
+            country_code=country_code,
+            conversation_id=conversation_id,
+            ticket_id=ticket_id,
+            request_id=request_id,
+        )
+    except Exception as exc:
         LOGGER.warning(
-            "webchat_fast_handoff_request_skipped_for_mocked_source",
-            extra={"event_payload": {"source": source, "trigger_type": trigger_type, "ticket_id": getattr(ticket, "id", None), "conversation_id": getattr(conversation, "id", None)}},
+            "webchat_fast_tracking_fact_lookup_failed",
+            extra={"event_payload": {"conversation_id": conversation_id, "ticket_id": ticket_id, "request_id": request_id, "tracking_number_hash": hash_tracking_number(tracking_number), "error_type": type(exc).__name__}},
         )
         return None
-    row = request_webchat_handoff(
-        db,
-        conversation=conversation,
-        ticket=ticket,
-        source=source,
-        trigger_type=trigger_type,
-        reason_code=handoff_reason or f"{trigger_type}_requires_human_review",
-        reason_text=handoff_reason,
-        recommended_agent_action=recommended_agent_action,
-        trigger_message_id=trigger_message_id,
-        requested_by_actor_type="ai",
-    )
-    return row.id
+    LOGGER.info("webchat_fast_tracking_fact_lookup_result", extra={"event_payload": {"conversation_id": conversation_id, "ticket_id": ticket_id, "request_id": request_id, **(_tracking_fact_public_payload(result) or {})}})
+    return result
 
 
-def _support_hours_policy_payload(body: str) -> dict[str, Any] | None:
-    return match_support_hours_policy_reply(body)
+def _tracking_fact_provider_fields(result: TrackingFactResult | None) -> tuple[str | None, dict[str, Any] | None, bool]:
+    if result is None:
+        return None, None, False
+    metadata = result.metadata_payload()
+    if not bool(result.fact_evidence_present and result.pii_redacted):
+        return None, metadata, False
+    summary = result.prompt_summary().strip()
+    return (summary, metadata, True) if summary else (None, metadata, False)
 
 
 def _webchat_fast_runtime_context(
@@ -594,78 +404,6 @@ def _webchat_fast_runtime_context(
             return None
 
 
-def _persist_support_hours_policy_reply(*, row_id: int, payload: WebchatFastReplyRequest, result_payload: dict[str, Any], request: Request | None = None) -> dict[str, Any]:
-    with db_context() as db:
-        conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
-        append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"handoff_required": False, "source": "server_support_hours_policy"})
-        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
-        mark_webchat_fast_done(db, row, response_json=result_payload)
-        return _with_fast_public_session(db, conversation, result_payload)
-
-
-async def _support_hours_policy_stream_events(*, row_id: int, payload: WebchatFastReplyRequest, result_payload: dict[str, Any], request: Request | None = None) -> AsyncIterator[str]:
-    public_payload = _persist_support_hours_policy_reply(row_id=row_id, payload=payload, result_payload=result_payload, request=request)
-    yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2", "reply_source": "server_support_hours_policy"})
-    yield sse_event("reply_delta", {"text": result_payload["reply"]})
-    yield sse_event("final", {k: v for k, v in public_payload.items() if k != "reply"})
-
-
-async def _server_policy_stream_events(*, row_id: int, payload: WebchatFastReplyRequest, context_payload: list[dict[str, str]], server_policy: HandoffPolicyDecision, routing_context: FastRoutingContext) -> AsyncIterator[str]:
-    result_payload = _server_handoff_response_payload(handoff_reason=server_policy.handoff_reason, customer_reply=server_policy.customer_reply)
-    with db_context() as db:
-        conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id)
-        merged_context = _trusted_context(build_fast_server_context(db, conversation=conversation), context_payload)
-        business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
-        update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
-        ticket = get_or_create_fast_ticket(db, conversation=conversation, business_state=business_state, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, customer_message=payload.body, routing_context=routing_context)
-        speedaf_job_id = _maybe_enqueue_speedaf_work_order(db=db, ticket_id=ticket.id, conversation_id=conversation.id, business_state=business_state, body=payload.body, visitor=payload.visitor, handoff_reason=server_policy.handoff_reason, recommended_action=server_policy.recommended_agent_action)
-        append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"handoff_required": True, "source": "server_handoff_policy", "speedaf_work_order_job_id": speedaf_job_id})
-        handoff_message = append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, client_message_id=payload.client_message_id)
-        handoff_request_id = _request_fast_handoff(db, conversation=conversation, ticket=ticket, source="server_rule", trigger_type="server_handoff_policy", handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, trigger_message_id=handoff_message.id)
-        result_payload.update({"ticket_id": ticket.id, "tracking_number": business_state.tracking_number})
-        result_payload["handoff_request_id"] = handoff_request_id
-        if speedaf_job_id:
-            result_payload["speedaf_work_order_job_id"] = speedaf_job_id
-        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
-        mark_webchat_fast_done(db, row, response_json=result_payload)
-        public_payload = _with_fast_public_session(db, conversation, result_payload)
-    yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2", "reply_source": "server_handoff_policy"})
-    yield sse_event("reply_delta", {"text": result_payload["reply"]})
-    yield sse_event("final", {k: v for k, v in public_payload.items() if k != "reply"})
-
-
-async def _tracking_candidate_selection_stream_events(*, row_id: int, payload: WebchatFastReplyRequest, result_payload: dict[str, Any]) -> AsyncIterator[str]:
-    with db_context() as db:
-        conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id)
-        append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"source": "server_tracking_candidate_selection", "safe_candidates": result_payload.get("safe_candidates")})
-        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
-        mark_webchat_fast_done(db, row, response_json=result_payload)
-        public_payload = _with_fast_public_session(db, conversation, result_payload)
-    yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2", "reply_source": "server_tracking_candidate_selection"})
-    yield sse_event("final", {k: v for k, v in public_payload.items() if k != "reply"})
-    yield sse_event("reply_delta", {"text": result_payload["reply"]})
-
-
-def _is_stream_canary_override_allowed(request: Request, settings: WebchatFastSettings) -> bool:
-    canary_header = request.headers.get("x-nexus-stream-canary")
-    if canary_header != "1":
-        return False
-    client_host = request.client.host if request.client else None
-    return client_host in ("127.0.0.1", "::1") or getattr(settings, "app_env", "development") in {"development", "test", "local"}
-
-
-@router.options("/fast-reply")
-def webchat_fast_reply_options(request: Request):
-    return Response(status_code=204, headers=_public_cors_headers(request))
-
-
-@router.options("/fast-reply/stream")
-def webchat_fast_reply_stream_options(request: Request):
-    headers = _public_cors_headers(request)
-    headers["X-Accel-Buffering"] = "no"
-    return Response(status_code=204, headers=headers)
-
-
 def _begin_status_response(begin, headers: dict[str, str], payload: WebchatFastReplyRequest, request: Request | None = None) -> JSONResponse | None:
     if begin.kind == "replay":
         replayed = dict(begin.response_json or {})
@@ -682,8 +420,278 @@ def _begin_status_response(begin, headers: dict[str, str], payload: WebchatFastR
 
 
 def _prepare_request_hashes(payload: WebchatFastReplyRequest, frontend_context: list[dict[str, str]]) -> tuple[str, tuple[str, ...]]:
-    kwargs = dict(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=frontend_context)
+    kwargs = dict(
+        tenant_key=payload.tenant_key,
+        channel_key=payload.channel_key,
+        session_id=payload.session_id,
+        client_message_id=payload.client_message_id,
+        body=payload.body,
+        recent_context=frontend_context,
+    )
     return compute_request_hash(**kwargs), compute_legacy_v1_request_hash_aliases(**kwargs)
+
+
+def _redact_tracking_number_from_public_trace(value: Any, tracking_number: str | None) -> Any:
+    raw = str(tracking_number or "").strip()
+    if not raw:
+        return value
+    suffix = "".join(ch for ch in raw.upper() if ch.isalnum())[-6:]
+    replacement = f"tracking_number_ending_{suffix}" if suffix else "tracking_number_redacted"
+    if isinstance(value, str):
+        return re.sub(re.escape(raw), replacement, value, flags=re.IGNORECASE)
+    if isinstance(value, list):
+        return [_redact_tracking_number_from_public_trace(item, raw) for item in value]
+    if isinstance(value, dict):
+        return {key: _redact_tracking_number_from_public_trace(item, raw) for key, item in value.items()}
+    return value
+
+
+def _fallback_runtime_trace(runtime_context: dict[str, Any] | None, tracking_number: str | None = None) -> dict[str, Any]:
+    if runtime_context:
+        trace = summarize_rag_trace(runtime_context)
+    else:
+        trace = {
+            "retrieval": "hybrid_rag_v2",
+            "candidate_count": 0,
+            "total_matches": 0,
+            "retrieval_methods": [],
+            "no_answer_reason": "runtime_context_unavailable",
+            "top_hits": [],
+            "evidence_pack": [],
+            "injected_knowledge": [],
+        }
+    return _redact_tracking_number_from_public_trace(trace, tracking_number)
+
+
+def _decision_for_execution(
+    *,
+    result: WebchatFastReplyResult,
+    tracking_number: str | None,
+    tracking_fact: TrackingFactResult | None,
+    runtime_context: dict[str, Any] | None,
+) -> AIDecision:
+    tool_calls: list[AIDecisionToolCall] = []
+    if (result.intent == "tracking" or tracking_number) and tracking_number:
+        tool_calls.append(
+            AIDecisionToolCall(
+                tool_name="speedaf.order.query",
+                arguments={"tracking_number_hash": hash_tracking_number(tracking_number)},
+                reason="trusted_tracking_fact_required_for_live_status",
+                requires_confirmation=False,
+            )
+        )
+    if result.handoff_required:
+        tool_calls.append(
+            AIDecisionToolCall(
+                tool_name="handoff.request.create",
+                arguments={"reason": result.handoff_reason or "ai_requested_human_review", "intent": result.intent or "handoff_request"},
+                reason="ai_requested_human_review_through_controlled_tool",
+                requires_confirmation=False,
+            )
+        )
+    evidence: list[AIDecisionEvidence] = []
+    if tracking_fact is not None:
+        metadata = tracking_fact.metadata_payload()
+        evidence.append(
+            AIDecisionEvidence(
+                source="speedaf_trusted_tracking_fact" if tracking_fact.fact_evidence_present else "speedaf_tracking_fact_unavailable",
+                evidence_type="trusted_tracking_fact",
+                evidence_id=str(tracking_fact.tool_status or tracking_fact.failure_reason or "tracking_fact")[:240],
+                fact_evidence_present=bool(tracking_fact.fact_evidence_present and tracking_fact.pii_redacted),
+                tracking_number_hash=metadata.get("tracking_number_hash"),
+                raw_tracking_number_exposed=False,
+            )
+        )
+    rag_trace = _fallback_runtime_trace(runtime_context)
+    evidence.append(
+        AIDecisionEvidence(
+            source="hybrid_rag_v2",
+            evidence_type="knowledge_context",
+            evidence_id=str(rag_trace.get("retrieval") or "hybrid_rag_v2")[:240],
+            fact_evidence_present=bool(rag_trace.get("total_matches") or rag_trace.get("candidate_count") or rag_trace.get("evidence_pack")),
+            raw_tracking_number_exposed=False,
+        )
+    )
+    return AIDecision(
+        customer_reply=result.reply or "A human teammate can review this request.",
+        intent=result.intent or ("handoff_request" if result.handoff_required else "other"),
+        confidence=0.7 if result.ai_generated else 0.0,
+        risk_level="medium" if result.handoff_required or tracking_number else "low",
+        next_action="request_handoff" if result.handoff_required else ("call_tool" if tool_calls else "reply"),
+        handoff_required=result.handoff_required,
+        handoff_reason=result.handoff_reason,
+        tool_calls=tool_calls,
+        evidence_used=evidence,
+        safety_notes=[] if result.ai_generated else ["server emergency fallback is not presented as AI"],
+    )
+
+
+def _merge_ai_decision_trace(
+    *,
+    result_payload: dict[str, Any],
+    decision: AIDecision,
+    policy_summary: dict[str, Any],
+    execution_summary: dict[str, Any],
+    runtime_context: dict[str, Any] | None,
+    tracking_number: str | None = None,
+) -> None:
+    trace = dict(result_payload.get("ai_decision_trace") or {})
+    trace.setdefault("schema_version", "webchat_ai_decision_v1")
+    trace.setdefault("mode", "gated")
+    trace["decision"] = decision.safe_public_summary()
+    trace["policy_gate"] = policy_summary
+    trace["tool_execution"] = execution_summary
+    trace["runtime_context_trace"] = _fallback_runtime_trace(runtime_context, tracking_number=tracking_number)
+    trace["raw_tracking_number_exposed"] = False
+    result_payload["ai_decision_trace"] = trace
+
+
+async def _process_fast_reply(
+    *,
+    row_id: int,
+    payload: WebchatFastReplyRequest,
+    request: Request | None,
+) -> dict[str, Any]:
+    frontend_context = _context_payload(payload.recent_context)
+    caller_id = _caller_id(payload.visitor)
+    request_id = getattr(request.state, "request_id", None) if request is not None else None
+
+    with db_context() as db:
+        conversation = get_or_create_fast_conversation(
+            db,
+            tenant_key=payload.tenant_key,
+            channel_key=payload.channel_key,
+            session_id=payload.session_id,
+            request=request,
+            visitor=payload.visitor,
+        )
+        visitor_message = append_fast_visitor_message(db, conversation=conversation, body=payload.body, client_message_id=payload.client_message_id, metadata={"source": "webchat_fast"})
+        merged_context = _trusted_context(build_fast_server_context(db, conversation=conversation, exclude_message_id=visitor_message.id), frontend_context)
+        business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
+        update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
+        conversation_id = conversation.id
+        routing_context = resolve_fast_routing_context(db, country_code=payload.country_code, market_code=payload.market_code, channel_account_key=payload.channel_account_key)
+
+    tracking_number = _tracking_candidate(body=payload.body, context=merged_context, tracking_number=business_state.tracking_number)
+    tracking_fact = _lookup_fast_tracking_fact(
+        tracking_number=tracking_number,
+        conversation_id=conversation_id,
+        ticket_id=None,
+        request_id=request_id,
+        caller_id=caller_id if _should_attempt_fact_first_lookup(body=payload.body, tracking_number=tracking_number, caller_id=caller_id) else None,
+        country_code=payload.country_code or routing_context.country_code,
+    )
+    tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _tracking_fact_provider_fields(tracking_fact)
+    runtime_context = _webchat_fast_runtime_context(
+        tenant_key=payload.tenant_key,
+        channel_key=payload.channel_key,
+        body=payload.body,
+        market_id=routing_context.market_id,
+        language=None,
+    )
+
+    result = await generate_webchat_fast_reply(
+        tenant_key=payload.tenant_key,
+        channel_key=payload.channel_key,
+        session_id=payload.session_id,
+        body=payload.body,
+        recent_context=merged_context,
+        request_id=request_id,
+        tracking_fact_summary=tracking_fact_summary,
+        tracking_fact_metadata=tracking_fact_metadata,
+        tracking_fact_evidence_present=tracking_fact_evidence_present,
+        market_id=routing_context.market_id,
+    )
+    result_payload = result.to_response() if result.ok else _provider_safe_fallback_payload(error_code=result.error_code, body=payload.body)
+    result_payload.update(_public_tracking_reference(result.tracking_number or tracking_number))
+    if tracking_fact is not None:
+        result_payload["tracking_fact"] = _tracking_fact_public_payload(tracking_fact)
+    if tracking_fact is not None and tracking_fact.fact_evidence_present:
+        result_payload["evidence_trace"] = _tracking_fact_evidence_trace(tracking_fact, tracking_number=tracking_number)
+    else:
+        result_payload.setdefault("evidence_trace", _fallback_runtime_trace(runtime_context, tracking_number=tracking_number))
+
+    with db_context() as db:
+        conversation = get_or_create_fast_conversation(
+            db,
+            tenant_key=payload.tenant_key,
+            channel_key=payload.channel_key,
+            session_id=payload.session_id,
+            request=request,
+            visitor=payload.visitor,
+        )
+        business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
+        if tracking_number:
+            business_state = FastBusinessState(
+                intent=business_state.intent,
+                issue_type=business_state.issue_type,
+                tracking_number=tracking_number,
+                fast_issue_key=f"tracking:{tracking_number}:intent:{business_state.issue_type}"[:240],
+                missing_fields=business_state.missing_fields,
+            )
+        decision = _decision_for_execution(result=result if result.ok else WebchatFastReplyResult(**{**result.__dict__, "reply": result_payload.get("reply"), "handoff_required": bool(result_payload.get("handoff_required")), "handoff_reason": result_payload.get("handoff_reason"), "intent": result_payload.get("intent")}), tracking_number=tracking_number, tracking_fact=tracking_fact, runtime_context=runtime_context)
+        policy = validate_ai_decision(decision, tracking_fact_metadata=tracking_fact_metadata if tracking_fact_evidence_present else None, tracking_number=tracking_number)
+        execution = execute_decision_tools(
+            db,
+            decision=decision,
+            policy_result=policy,
+            conversation=conversation,
+            business_state=business_state,
+            routing_context=routing_context,
+            tenant_key=payload.tenant_key,
+            channel_key=payload.channel_key,
+            session_id=payload.session_id,
+            client_message_id=payload.client_message_id,
+            customer_message=payload.body,
+            request_id=request_id,
+        )
+        if not policy.ok:
+            result_payload = _provider_safe_fallback_payload(error_code="ai_decision_policy_blocked", body=payload.body)
+        else:
+            for record in execution.records:
+                if record.tool_name == "handoff.request.create" and record.status == "executed":
+                    result_payload.update(record.result)
+                    result_payload["ticket_creation_queued"] = False
+        _merge_ai_decision_trace(
+            result_payload=result_payload,
+            decision=decision,
+            policy_summary=policy.safe_summary(),
+            execution_summary=execution.safe_summary(),
+            runtime_context=runtime_context,
+            tracking_number=tracking_number,
+        )
+        metadata = {
+            "handoff_required": bool(result_payload.get("handoff_required")),
+            "reply_source": result_payload.get("reply_source"),
+            "ai_decision_trace": result_payload.get("ai_decision_trace"),
+        }
+        if result.rag_trace:
+            metadata["rag_trace"] = result.rag_trace
+        if result.grounding_applied:
+            metadata["grounding_applied"] = True
+            if result.grounding_source:
+                metadata["grounding_source"] = result.grounding_source
+            if result.grounding_reason:
+                metadata["grounding_reason"] = result.grounding_reason
+        if tracking_fact_metadata:
+            metadata["tracking_fact"] = tracking_fact_metadata
+        if result_payload.get("reply"):
+            append_fast_ai_message(db, conversation=conversation, reply=result_payload.get("reply"), client_message_id=payload.client_message_id, metadata=metadata)
+        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
+        mark_webchat_fast_done(db, row, response_json=result_payload)
+        return _with_fast_public_session(db, conversation, result_payload)
+
+
+@router.options("/fast-reply")
+def webchat_fast_reply_options(request: Request):
+    return Response(status_code=204, headers=_public_cors_headers(request))
+
+
+@router.options("/fast-reply/stream")
+def webchat_fast_reply_stream_options(request: Request):
+    headers = _public_cors_headers(request)
+    headers["X-Accel-Buffering"] = "no"
+    return Response(status_code=204, headers=headers)
 
 
 @router.post("/fast-reply")
@@ -693,126 +701,95 @@ async def webchat_fast_reply(payload: WebchatFastReplyRequest, request: Request,
     headers = _public_cors_headers(request)
     frontend_context = _context_payload(payload.recent_context)
     request_hash, request_hash_aliases = _prepare_request_hashes(payload, frontend_context)
-    caller_id = _caller_id(payload.visitor)
     with db_context() as db:
-        begin = begin_webchat_fast_idempotency(db, tenant_key=payload.tenant_key, session_id=payload.session_id, client_message_id=payload.client_message_id, request_hash=request_hash, request_hash_aliases=request_hash_aliases, owner_request_id=getattr(request.state, "request_id", None))
+        begin = begin_webchat_fast_idempotency(
+            db,
+            tenant_key=payload.tenant_key,
+            session_id=payload.session_id,
+            client_message_id=payload.client_message_id,
+            request_hash=request_hash,
+            request_hash_aliases=request_hash_aliases,
+            owner_request_id=getattr(request.state, "request_id", None),
+        )
         row_id = begin.row.id if begin.row is not None else None
     status_response = _begin_status_response(begin, headers, payload, request=request)
     if status_response is not None:
         return status_response
     if row_id is None:
         return JSONResponse({"error_code": "idempotency_error", "retry_after_ms": 1500}, status_code=500, headers=headers)
+    try:
+        public_payload = await _process_fast_reply(row_id=row_id, payload=payload, request=request)
+        return JSONResponse(public_payload, status_code=200, headers=headers)
+    except Exception:
+        with db_context() as db:
+            row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one_or_none()
+            if row is not None:
+                mark_webchat_fast_failed(db, row, error_code="webchat_fast_internal_error")
+        LOGGER.exception("webchat_fast_reply_failed")
+        return JSONResponse({"error_code": "webchat_fast_internal_error", "retry_after_ms": 1500}, status_code=500, headers=headers)
+
+
+def _stream_begin_status_response(begin: StreamBeginOutcome, headers: dict[str, str]) -> JSONResponse | None:
+    if begin.status == "processing":
+        return JSONResponse({"error_code": "request_processing", "retry_after_ms": 1500}, status_code=202, headers=headers)
+    if begin.status == "conflict":
+        return JSONResponse({"error_code": "idempotency_key_reused_with_different_payload"}, status_code=409, headers=headers)
+    if begin.status == "failed_non_retryable":
+        return JSONResponse({"error_code": begin.error_code or "request_failed"}, status_code=409, headers=headers)
+    return None
+
+
+async def _stream_replay_events(*, payload: WebchatFastReplyRequest, stored: dict[str, Any]) -> AsyncIterator[str]:
+    final = {k: v for k, v in dict(stored).items() if k != "reply"}
+    final["replayed"] = True
+
+    replay_reply: str | None = None
+    replay_error: str | None = None
+    raw_reply = stored.get("reply")
+    if raw_reply is not None:
+        if not isinstance(raw_reply, str):
+            replay_error = "ai_invalid_output"
+        else:
+            cleaned = raw_reply.strip()
+            if cleaned:
+                try:
+                    assert_customer_visible_reply_is_safe(cleaned)
+                    replay_reply = cleaned
+                except FastReplyParseError:
+                    replay_error = "ai_invalid_output"
+
+    yield sse_event("replay", {"replayed": True})
+    if replay_error:
+        yield sse_event("error", {"error_code": replay_error, "replayed": True})
+        return
 
     with db_context() as db:
-        conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
-        visitor_message = append_fast_visitor_message(db, conversation=conversation, body=payload.body, client_message_id=payload.client_message_id, metadata={"source": "webchat_fast"})
-        merged_context = _trusted_context(build_fast_server_context(db, conversation=conversation, exclude_message_id=visitor_message.id), frontend_context)
-        business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
-        update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
-        conversation_id = conversation.id
-        routing_context = resolve_fast_routing_context(db, country_code=payload.country_code, market_code=payload.market_code, channel_account_key=payload.channel_account_key)
-        configured_rules = load_webchat_handoff_rules(db, market_id=routing_context.market_id, country_code=routing_context.country_code)
+        conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id)
+        session_payload = fast_public_session_payload(db, conversation)
+        final.update(session_payload)
+        final["webchat_session"] = session_payload
+
+    yield sse_event("final", final)
+    if replay_reply:
+        yield sse_event("reply_delta", {"text": replay_reply})
 
 
-    support_payload = _support_hours_policy_payload(payload.body)
-    if support_payload is not None:
-        public_payload = _persist_support_hours_policy_reply(row_id=row_id, payload=payload, result_payload=support_payload, request=request)
-        return JSONResponse(public_payload, status_code=200, headers=headers)
-
-    server_policy = decide_server_handoff_policy(body=payload.body, recent_context=merged_context, configured_rules=configured_rules)
-    if server_policy.handoff_required:
-        result_payload = _server_handoff_response_payload(handoff_reason=server_policy.handoff_reason, customer_reply=server_policy.customer_reply)
+async def _stream_process_events(*, row_id: int, payload: WebchatFastReplyRequest, request: Request | None) -> AsyncIterator[str]:
+    try:
+        yield sse_event("meta", {"replayed": False, "stream_version": "V3.ai_decision_runtime", "decision_runtime": "webchat_ai_decision_v1"})
+        public_payload = await _process_fast_reply(row_id=row_id, payload=payload, request=request)
+        reply = public_payload.get("reply") or ""
+        final = {k: v for k, v in public_payload.items() if k != "reply"}
+        yield sse_event("final", final)
+        if reply:
+            yield sse_event("reply_delta", {"text": reply})
+    except Exception:
         with db_context() as db:
-            conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
-            ticket = get_or_create_fast_ticket(db, conversation=conversation, business_state=business_state, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, customer_message=payload.body, routing_context=routing_context)
-            speedaf_job_id = _maybe_enqueue_speedaf_work_order(db=db, ticket_id=ticket.id, conversation_id=conversation.id, business_state=business_state, body=payload.body, visitor=payload.visitor, handoff_reason=server_policy.handoff_reason, recommended_action=server_policy.recommended_agent_action)
-            append_fast_ai_message(db, conversation=conversation, reply=result_payload["reply"], client_message_id=payload.client_message_id, metadata={"handoff_required": True, "source": "server_handoff_policy", "speedaf_work_order_job_id": speedaf_job_id})
-            handoff_message = append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, client_message_id=payload.client_message_id)
-            handoff_request_id = _request_fast_handoff(db, conversation=conversation, ticket=ticket, source="server_rule", trigger_type="server_handoff_policy", handoff_reason=server_policy.handoff_reason, recommended_agent_action=server_policy.recommended_agent_action, trigger_message_id=handoff_message.id)
-            result_payload.update({"ticket_id": ticket.id, "tracking_number": business_state.tracking_number})
-            result_payload["handoff_request_id"] = handoff_request_id
-            if speedaf_job_id:
-                result_payload["speedaf_work_order_job_id"] = speedaf_job_id
-            row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
-            mark_webchat_fast_done(db, row, response_json=result_payload)
-            public_payload = _with_fast_public_session(db, conversation, result_payload)
-        return JSONResponse(public_payload, status_code=200, headers=headers)
-
-    tracking_number = _tracking_candidate(body=payload.body, context=merged_context, tracking_number=business_state.tracking_number)
-    tracking_fact = _lookup_fast_tracking_fact(tracking_number=tracking_number, conversation_id=conversation_id, ticket_id=None, request_id=getattr(request.state, "request_id", None), caller_id=caller_id, country_code=payload.country_code or routing_context.country_code)
-    candidate_payload = _tracking_candidate_selection_payload(tracking_fact)
-    if candidate_payload:
-        with db_context() as db:
-            conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
-            append_fast_ai_message(db, conversation=conversation, reply=candidate_payload["reply"], client_message_id=payload.client_message_id, metadata={"source": "server_tracking_candidate_selection", "safe_candidates": candidate_payload.get("safe_candidates")})
-            row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
-            mark_webchat_fast_done(db, row, response_json=candidate_payload)
-            public_payload = _with_fast_public_session(db, conversation, candidate_payload)
-        return JSONResponse(public_payload, status_code=200, headers=headers)
-    forced_payload = _tracking_fact_forced_reply_payload(tracking_number=tracking_number, result=tracking_fact)
-    if forced_payload:
-        public_payload = _persist_tracking_fact_forced_reply(
-            row_id=row_id,
-            payload=payload,
-            result_payload=forced_payload,
-            tracking_fact_metadata=tracking_fact.metadata_payload() if tracking_fact else None,
-            request=request,
-        )
-        return JSONResponse(public_payload, status_code=200, headers=headers)
-    if tracking_number:
-        result_payload = _tracking_fact_safe_failure_payload(tracking_number=tracking_number, result=tracking_fact, body=payload.body)
-        public_payload = _persist_tracking_fact_forced_reply(
-            row_id=row_id,
-            payload=payload,
-            result_payload=result_payload,
-            tracking_fact_metadata=tracking_fact.metadata_payload() if tracking_fact else None,
-            request=request,
-        )
-        return JSONResponse(public_payload, status_code=200, headers=headers)
-    if _should_attempt_fact_first_lookup(body=payload.body, tracking_number=None, caller_id=None):
-        result_payload = _tracking_number_request_payload(body=payload.body)
-        public_payload = _persist_tracking_fact_forced_reply(
-            row_id=row_id,
-            payload=payload,
-            result_payload=result_payload,
-            tracking_fact_metadata=None,
-            request=request,
-        )
-        return JSONResponse(public_payload, status_code=200, headers=headers)
-
-    tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _tracking_fact_provider_fields(tracking_fact)
-    result = await generate_webchat_fast_reply(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, body=payload.body, recent_context=merged_context, request_id=getattr(request.state, "request_id", None), tracking_fact_summary=tracking_fact_summary, tracking_fact_metadata=tracking_fact_metadata, tracking_fact_evidence_present=tracking_fact_evidence_present, market_id=routing_context.market_id)
-    result_payload = result.to_response() if result.ok else _provider_safe_fallback_payload(error_code=result.error_code, body=payload.body)
-    with db_context() as db:
-        conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
-        if result_payload.get("ok"):
-            metadata = {"handoff_required": bool(result_payload.get("handoff_required")), "reply_source": result_payload.get("reply_source")}
-            if result.rag_trace:
-                metadata["rag_trace"] = result.rag_trace
-            if result.grounding_applied:
-                metadata["grounding_applied"] = True
-                if result.grounding_source:
-                    metadata["grounding_source"] = result.grounding_source
-                if result.grounding_reason:
-                    metadata["grounding_reason"] = result.grounding_reason
-            if tracking_fact_metadata:
-                metadata["tracking_fact"] = tracking_fact_metadata
-            append_fast_ai_message(db, conversation=conversation, reply=result_payload.get("reply"), client_message_id=payload.client_message_id, metadata=metadata)
-        if result_payload.get("ok") and result_payload.get("handoff_required"):
-            handoff_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
-            if result.tracking_number:
-                handoff_state = type(handoff_state)(intent=handoff_state.intent, issue_type=handoff_state.issue_type, tracking_number=result.tracking_number, fast_issue_key=f"tracking:{result.tracking_number}:intent:{handoff_state.issue_type}"[:240], missing_fields=())
-            ticket = get_or_create_fast_ticket(db, conversation=conversation, business_state=handoff_state, handoff_reason=result.handoff_reason, recommended_agent_action=result.recommended_agent_action, customer_message=payload.body, routing_context=routing_context)
-            speedaf_job_id = _maybe_enqueue_speedaf_work_order(db=db, ticket_id=ticket.id, conversation_id=conversation.id, business_state=handoff_state, body=payload.body, visitor=payload.visitor, handoff_reason=result.handoff_reason, recommended_action=result.recommended_agent_action)
-            handoff_message = append_fast_system_handoff_message(db, conversation=conversation, handoff_reason=result.handoff_reason, recommended_agent_action=result.recommended_agent_action, client_message_id=payload.client_message_id)
-            handoff_request_id = _request_fast_handoff(db, conversation=conversation, ticket=ticket, source="ai_auto", trigger_type="ai_result_handoff_required", handoff_reason=result.handoff_reason, recommended_agent_action=result.recommended_agent_action, trigger_message_id=handoff_message.id)
-            result_payload.update({"ticket_creation_queued": False, "ticket_id": ticket.id, "handoff_request_id": handoff_request_id})
-            if speedaf_job_id:
-                result_payload["speedaf_work_order_job_id"] = speedaf_job_id
-        row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one()
-        mark_webchat_fast_done(db, row, response_json=result_payload)
-        public_payload = _with_fast_public_session(db, conversation, result_payload)
-    return JSONResponse(public_payload, status_code=200, headers=headers)
+            row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.id == row_id)).scalar_one_or_none()
+            if row is not None:
+                mark_webchat_fast_failed(db, row, error_code="stream_internal_error")
+        LOGGER.exception("webchat_fast_stream_failed")
+        yield sse_event("error", {"error_code": "stream_internal_error", "retry_after_ms": 1500})
 
 
 @router.post("/fast-reply/stream")
@@ -821,128 +798,25 @@ async def webchat_fast_reply_stream(payload: WebchatFastReplyRequest, request: R
     headers = _public_cors_headers(request)
     headers.update({"Content-Type": "text/event-stream", "X-Accel-Buffering": "no", "Cache-Control": "no-store", "Vary": "Origin"})
     if not stream_settings.stream_enabled:
-        if not _webchat_stream_route_forced_enabled():
-            return JSONResponse({"error_code": "stream_disabled"}, status_code=503, headers=headers)
+        return JSONResponse({"error_code": "stream_disabled"}, status_code=503, headers=headers)
     if stream_settings.stream_require_accept and "text/event-stream" not in (request.headers.get("accept") or ""):
         return JSONResponse({"error_code": "stream_accept_required"}, status_code=406, headers=headers)
     enforce_webchat_fast_rate_limit(request, tenant_key=payload.tenant_key, session_id=payload.session_id)
     frontend_context = _context_payload(payload.recent_context)
-    caller_id = _caller_id(payload.visitor)
-    begin = prepare_webchat_fast_stream(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=frontend_context, request_id=getattr(request.state, "request_id", None))
-    if begin.status == "processing":
-        return JSONResponse({"error_code": "request_processing", "retry_after_ms": 1500}, status_code=202, headers=headers)
-    if begin.status == "conflict":
-        return JSONResponse({"error_code": "idempotency_key_reused_with_different_payload"}, status_code=409, headers=headers)
-    if begin.status == "failed_non_retryable":
-        return JSONResponse({"error_code": begin.error_code or "request_failed"}, status_code=409, headers=headers)
-    if begin.status == "replay":
-        generator = stream_webchat_fast_reply_events(begin=begin, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=[], visitor=payload.visitor, request_id=getattr(request.state, "request_id", None), settings=stream_settings)
-        return StreamingResponse(generator, media_type="text/event-stream", headers=headers)
-    if begin.row_id is None:
-        return JSONResponse({"error_code": "idempotency_error", "retry_after_ms": 1500}, status_code=500, headers=headers)
-
-    with db_context() as db:
-        conversation = get_or_create_fast_conversation(db, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, request=request, visitor=payload.visitor)
-        visitor_message = append_fast_visitor_message(db, conversation=conversation, body=payload.body, client_message_id=payload.client_message_id, metadata={"source": "webchat_fast_stream"})
-        merged_context = _trusted_context(build_fast_server_context(db, conversation=conversation, exclude_message_id=visitor_message.id), frontend_context)
-        business_state = extract_fast_business_state(body=payload.body, context=merged_context, session_id=payload.session_id)
-        update_fast_business_state(db, conversation=conversation, business_state=business_state, client_message_id=payload.client_message_id)
-        conversation_id = conversation.id
-        routing_context = resolve_fast_routing_context(db, country_code=payload.country_code, market_code=payload.market_code, channel_account_key=payload.channel_account_key)
-        configured_rules = load_webchat_handoff_rules(db, market_id=routing_context.market_id, country_code=routing_context.country_code)
-
-
-    support_payload = _support_hours_policy_payload(payload.body)
-    if support_payload is not None:
-        return StreamingResponse(_support_hours_policy_stream_events(row_id=begin.row_id, payload=payload, result_payload=support_payload, request=request), media_type="text/event-stream", headers=headers)
-
-    # SERVER_OWNED_STREAM_BEFORE_OPENCLAW_SETTINGS_BEGIN
-    # These deterministic server-owned responses must work even when generic OpenClaw streaming is not configured.
-    server_policy = decide_server_handoff_policy(body=payload.body, recent_context=merged_context, configured_rules=configured_rules)
-    if server_policy.handoff_required:
-        return StreamingResponse(
-            _server_policy_stream_events(
-                row_id=begin.row_id,
-                payload=payload,
-                context_payload=merged_context,
-                server_policy=server_policy,
-                routing_context=routing_context,
-            ),
-            media_type="text/event-stream",
-            headers=headers,
-        )
-
-    tracking_number = _tracking_candidate(body=payload.body, context=merged_context, tracking_number=business_state.tracking_number)
-    tracking_fact = _lookup_fast_tracking_fact(
-        tracking_number=tracking_number,
-        conversation_id=conversation_id,
-        ticket_id=None,
-        request_id=getattr(request.state, "request_id", None),
-        caller_id=caller_id,
-        country_code=payload.country_code or routing_context.country_code,
-    )
-    candidate_payload = _tracking_candidate_selection_payload(tracking_fact)
-    if candidate_payload:
-        return StreamingResponse(
-            _tracking_candidate_selection_stream_events(row_id=begin.row_id, payload=payload, result_payload=candidate_payload),
-            media_type="text/event-stream",
-            headers=headers,
-        )
-
-    forced_payload = _tracking_fact_forced_reply_payload(tracking_number=tracking_number, result=tracking_fact)
-    if forced_payload:
-        return StreamingResponse(
-            _tracking_fact_forced_stream_events(
-                row_id=begin.row_id,
-                payload=payload,
-                result_payload=forced_payload,
-                tracking_fact_metadata=tracking_fact.metadata_payload() if tracking_fact else None,
-                request=request,
-            ),
-            media_type="text/event-stream",
-            headers=headers,
-        )
-    if tracking_number:
-        result_payload = _tracking_fact_safe_failure_payload(tracking_number=tracking_number, result=tracking_fact, body=payload.body)
-        return StreamingResponse(
-            _tracking_fact_forced_stream_events(
-                row_id=begin.row_id,
-                payload=payload,
-                result_payload=result_payload,
-                tracking_fact_metadata=tracking_fact.metadata_payload() if tracking_fact else None,
-                request=request,
-            ),
-            media_type="text/event-stream",
-            headers=headers,
-        )
-    # SERVER_OWNED_STREAM_BEFORE_OPENCLAW_SETTINGS_END
-
-    if not getattr(stream_settings, "is_openclaw_stream_configured", bool(getattr(stream_settings, "stream_enabled", False))):
-        return JSONResponse({"error_code": "stream_upstream_not_configured"}, status_code=503, headers=headers)
-    is_selected = is_stream_rollout_selected(tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, rollout_percent=getattr(stream_settings, "stream_rollout_percent", 100))
-    if not is_selected and not _is_stream_canary_override_allowed(request, stream_settings):
-        return JSONResponse({"error_code": "stream_not_in_rollout"}, status_code=503, headers=headers)
-
-    tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _tracking_fact_provider_fields(tracking_fact)
-    runtime_context = _webchat_fast_runtime_context(
+    begin = prepare_webchat_fast_stream(
         tenant_key=payload.tenant_key,
         channel_key=payload.channel_key,
+        session_id=payload.session_id,
+        client_message_id=payload.client_message_id,
         body=payload.body,
-        market_id=routing_context.market_id,
-        language=None,
+        recent_context=frontend_context,
+        request_id=getattr(request.state, "request_id", None),
     )
-    if not tracking_fact_evidence_present and get_settings().webchat_knowledge_no_evidence_fallback_enabled and not _runtime_context_has_knowledge_evidence(runtime_context):
-        result_payload = _knowledge_no_evidence_payload(runtime_context=runtime_context)
-        return StreamingResponse(
-            _tracking_fact_forced_stream_events(
-                row_id=begin.row_id,
-                payload=payload,
-                result_payload=result_payload,
-                tracking_fact_metadata=None,
-                request=request,
-            ),
-            media_type="text/event-stream",
-            headers=headers,
-        )
-    generator = stream_webchat_fast_reply_events(begin=begin, tenant_key=payload.tenant_key, channel_key=payload.channel_key, session_id=payload.session_id, client_message_id=payload.client_message_id, body=payload.body, recent_context=merged_context, visitor=payload.visitor, request_id=getattr(request.state, "request_id", None), settings=stream_settings, routing_context=routing_context, tracking_fact_summary=tracking_fact_summary, tracking_fact_metadata=tracking_fact_metadata, tracking_fact_evidence_present=tracking_fact_evidence_present, runtime_context=runtime_context)
-    return StreamingResponse(generator, media_type="text/event-stream", headers=headers)
+    status_response = _stream_begin_status_response(begin, headers)
+    if status_response is not None:
+        return status_response
+    if begin.status == "replay":
+        return StreamingResponse(_stream_replay_events(payload=payload, stored=dict(begin.response_json or {})), media_type="text/event-stream", headers=headers)
+    if begin.row_id is None:
+        return JSONResponse({"error_code": "idempotency_error", "retry_after_ms": 1500}, status_code=500, headers=headers)
+    return StreamingResponse(_stream_process_events(row_id=begin.row_id, payload=payload, request=request), media_type="text/event-stream", headers=headers)

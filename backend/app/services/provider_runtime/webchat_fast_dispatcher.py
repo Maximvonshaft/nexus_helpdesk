@@ -96,6 +96,27 @@ def _ai_grounded_validation_failed(output: dict, knowledge_context: dict) -> boo
     return OutputContracts.locked_fact_validation(reply, knowledge_context)["status"] == "fail"
 
 
+def _ai_decision_summary_from_output(output: dict) -> dict | None:
+    if not isinstance(output, dict):
+        return None
+    reply = output.get("customer_reply") or output.get("reply")
+    if not isinstance(reply, str) or not reply.strip():
+        return None
+    handoff_required = bool(output.get("handoff_required", False))
+    return {
+        "customer_reply": reply,
+        "intent": output.get("intent") or "other",
+        "confidence": output.get("confidence", 0.7),
+        "risk_level": output.get("risk_level") or ("medium" if handoff_required else "low"),
+        "next_action": output.get("next_action") or ("request_handoff" if handoff_required else "reply"),
+        "handoff_required": handoff_required,
+        "handoff_reason": output.get("handoff_reason"),
+        "tool_calls": output.get("tool_calls") if isinstance(output.get("tool_calls"), list) else [],
+        "evidence_used": output.get("evidence_used") if isinstance(output.get("evidence_used"), list) else [],
+        "safety_notes": output.get("safety_notes") if isinstance(output.get("safety_notes"), list) else [],
+    }
+
+
 def _pre_provider_direct_answer_result(
     *,
     request: FastAIProviderRequest,
@@ -124,6 +145,18 @@ def _pre_provider_direct_answer_result(
         "grounding_source": grounding_decision.source,
         "provider_bypassed": True,
         "provider_bypass_reason": "approved_direct_answer_pre_provider",
+        "ai_decision": {
+            "customer_reply": grounding_decision.reply,
+            "intent": "general_support",
+            "confidence": 1.0,
+            "risk_level": "low",
+            "next_action": "reply",
+            "handoff_required": False,
+            "handoff_reason": None,
+            "tool_calls": [],
+            "evidence_used": [{"source": "hybrid_rag_v2", "evidence_type": "locked_fact", "fact_evidence_present": True}],
+            "safety_notes": ["provider bypassed by approved deterministic locked fact"],
+        },
     }
     return FastAIProviderResult(
         ok=True,
@@ -178,6 +211,7 @@ async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> Fast
         safe_summary["provider_runtime"] = True
         safe_summary["rag_trace"] = summarize_rag_trace(runtime_context)
         knowledge_context = _knowledge_context(runtime_context)
+        grounding_decision = None
         if _knowledge_reply_mode() == "deterministic_direct_answer":
             grounding_decision = select_approved_direct_answer_override(
                 query=request.body,
@@ -206,6 +240,8 @@ async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> Fast
                     "handoff_reason": None,
                     "recommended_agent_action": None,
                     "ticket_should_create": False,
+                    "tool_calls": [],
+                    "next_action": "reply",
                 }
         else:
             if _ai_grounded_validation_failed(output, knowledge_context):
@@ -216,13 +252,16 @@ async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> Fast
                 )
             safe_summary["provider_bypassed"] = False
             safe_summary.update(_ai_grounded_summary(output, knowledge_context))
+        ai_decision = _ai_decision_summary_from_output(output)
+        if ai_decision is not None:
+            safe_summary["ai_decision"] = ai_decision
         reply = output.get("customer_reply") or output.get("reply")
 
         return FastAIProviderResult(
             ok=True,
             ai_generated=True,
             reply_source=res.provider if _knowledge_reply_mode() != "deterministic_direct_answer" else (
-                f"{res.provider}:grounded_knowledge" if grounding_decision.applied else res.provider
+                f"{res.provider}:grounded_knowledge" if grounding_decision and grounding_decision.applied else res.provider
             ),
             raw_provider=res.provider,
             raw_payload_safe_summary=safe_summary,
