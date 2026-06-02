@@ -9,38 +9,56 @@ import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { labelize } from '@/lib/format'
 import { canViewOps, roleWorkspaceHint } from '@/lib/access'
-import { canAccess, routeAccess } from '@/lib/rbac'
+import { canAccess, routeAccess, type AccessRequirement } from '@/lib/rbac'
+import { NoAccessCard } from '@/components/security/RequireCapability'
 
-const nav = [
-  { to: '/', label: '今日总览', hint: '异常与优先入口' },
-  { to: '/workspace', label: '处理工单', hint: '回复、分配、闭环' },
-  { to: '/webchat', label: 'WebChat 收件箱', hint: '客户实时来信' },
-  { to: '/webcall', label: 'WebCall 工作台', hint: '来电、接管与 AI 建议', access: routeAccess['/webcall'] },
-  { to: '/email', label: 'Email 工作台', hint: '邮件队列、草稿与发送', access: routeAccess['/email'] },
-  { to: '/control-tower', label: 'Control Tower', hint: '主管队列、SLA、治理动作', access: routeAccess['/control-tower'] },
+type NavItem = {
+  to: string
+  label: string
+  hint: string
+  access?: AccessRequirement
+  attention?: 'runtime'
+}
+
+const nav: NavItem[] = [
+  { to: '/', label: '今日工作台', hint: '今日待办、SLA 与公告' },
+  { to: '/webchat', label: 'WebChat', hint: '聊天接管与客户回复' },
+  { to: '/webcall', label: 'WebCall', hint: '来电队列与通话处理', access: routeAccess['/webcall'] },
+  { to: '/email', label: 'Email', hint: '邮件队列与回复草稿', access: routeAccess['/email'] },
+  { to: '/workspace', label: '工单中心', hint: '处理、分配、升级、闭环' },
+  { to: '/customer-search', label: '客户 / 运单查询', hint: '运单、客户、CallerID 快查' },
+  { to: '/control-tower', label: '运营报表', hint: '主管队列、SLA、治理动作', access: routeAccess['/control-tower'] },
   { to: '/qa-training', label: 'QA / Training', hint: '质检样本、培训与知识缺口', access: routeAccess['/qa-training'] },
-  { to: '/runtime', label: '运行恢复', hint: 'dead/requeue 自助处理', access: routeAccess['/runtime'], attention: 'runtime' },
-  { to: '/webcall-ai-demo', label: 'WebCall AI Demo', hint: '内部语音 AI 沙盒', access: routeAccess['/webcall-ai-demo'] },
-  { to: '/provider-credentials', label: 'Code X 授权', hint: '云端授权与 Token 托管', access: routeAccess['/provider-credentials'] },
-  { to: '/accounts', label: '发送线路', hint: '账号与兜底线路', access: routeAccess['/accounts'] },
-  { to: '/outbound-email', label: 'Email 账号', hint: 'SMTP 配置与测试发送', access: routeAccess['/outbound-email'] },
   { to: '/bulletins', label: '公告口径', hint: '统一客服话术', access: routeAccess['/bulletins'] },
+  { to: '/knowledge-studio', label: '知识库', hint: '知识发布、检索与冲突', access: routeAccess['/knowledge-studio'] },
   { to: '/ai-control', label: 'AI 规则', hint: '助手口径治理', access: routeAccess['/ai-control'] },
-  { to: '/knowledge-studio', label: 'Knowledge Studio', hint: '知识发布、检索与冲突', access: routeAccess['/knowledge-studio'] },
-  { to: '/persona-builder', label: 'AI Persona Builder', hint: '人格、匹配与发布证据', access: routeAccess['/persona-builder'] },
-  { to: '/control-plane', label: '控制面', hint: '高级治理入口', access: routeAccess['/control-plane'] },
+  { to: '/persona-builder', label: 'AI Persona', hint: '人格、匹配与发布证据', access: routeAccess['/persona-builder'] },
+  { to: '/accounts', label: '发送线路', hint: '账号与兜底线路', access: routeAccess['/accounts'] },
+  { to: '/outbound-email', label: 'Email 账号配置', hint: 'SMTP 配置与测试发送', access: routeAccess['/outbound-email'] },
+  { to: '/provider-credentials', label: 'Provider 授权', hint: '云端授权管理', access: routeAccess['/provider-credentials'] },
+  { to: '/runtime', label: '运行恢复', hint: 'dead/requeue 自助处理', access: routeAccess['/runtime'], attention: 'runtime' },
   { to: '/users', label: '账号权限', hint: '人员与权限', access: routeAccess['/users'] },
   { to: '/security', label: '权限与审计', hint: '只读矩阵与审计', access: routeAccess['/security'] },
+  { to: '/control-plane', label: '控制面', hint: '高级治理入口', access: routeAccess['/control-plane'] },
+  { to: '/webcall-ai-demo', label: 'WebCall AI Demo', hint: '内部语音 AI 沙盒', access: routeAccess['/webcall-ai-demo'] },
 ]
 
 const navGroups = [
-  { label: '日常处理', items: ['/', '/workspace', '/webchat', '/webcall', '/email', '/bulletins'] },
-  { label: '渠道与授权', items: ['/accounts', '/outbound-email', '/provider-credentials'] },
-  { label: '治理与运维', items: ['/control-tower', '/qa-training', '/runtime', '/ai-control', '/knowledge-studio', '/persona-builder', '/control-plane', '/users', '/security', '/webcall-ai-demo'] },
+  { label: '工作台', items: ['/', '/webchat', '/webcall', '/email'] },
+  { label: '工单与查询', items: ['/workspace', '/customer-search'] },
+  { label: '运营与质量', items: ['/control-tower', '/qa-training'] },
+  { label: '配置管理', items: ['/bulletins', '/knowledge-studio', '/ai-control', '/persona-builder', '/accounts', '/outbound-email', '/provider-credentials'] },
+  { label: '系统管理', items: ['/runtime', '/users', '/security', '/control-plane', '/webcall-ai-demo'] },
 ]
 
 function isActiveNavPath(pathname: string, target: string) {
   return pathname === target || (target !== '/' && pathname.startsWith(`${target}/`))
+}
+
+function routeRequirementForPath(pathname: string): AccessRequirement | undefined {
+  const entries = Object.entries(routeAccess).sort((a, b) => b[0].length - a[0].length)
+  const match = entries.find(([route]) => pathname === route || pathname.startsWith(`${route}/`))
+  return match?.[1]
 }
 
 export function AppShell({ children }: PropsWithChildren) {
@@ -87,9 +105,12 @@ export function AppShell({ children }: PropsWithChildren) {
   }, [session.data])
 
   const availableNav = useMemo(() => nav.filter((item) => {
-    if ('access' in item && item.access) return canAccess(session.data, item.access)
+    if (item.access) return canAccess(session.data, item.access)
     return true
   }), [session.data])
+
+  const routeRequirement = useMemo(() => routeRequirementForPath(location.pathname), [location.pathname])
+  const routeDenied = Boolean(session.data && routeRequirement && !canAccess(session.data, routeRequirement))
 
   const runtimeNeedsAttention = Boolean(
     canSeeOps
@@ -102,7 +123,7 @@ export function AppShell({ children }: PropsWithChildren) {
   const runtimeAttentionCount = (queue.data?.dead_jobs ?? 0) + (queue.data?.dead_outbound ?? 0) + (runtime.data?.dead_sync_jobs ?? 0) + (runtime.data?.dead_attachment_jobs ?? 0)
 
   if (!session.data && (session.isLoading || session.isFetching)) {
-    return <div className="auth-shell"><div className="auth-card">正在确认登录状态…</div></div>
+    return <div className="auth-shell"><div className="auth-card" role="status" aria-live="polite">正在确认登录状态…</div></div>
   }
 
   if (!session.data) return null
@@ -113,11 +134,11 @@ export function AppShell({ children }: PropsWithChildren) {
         <div className="brand">
           <div className="brand-kicker">客服协同中心</div>
           <h1>客服工作台</h1>
-          <div className="subtle">工单、客户消息、公告与渠道统一处理</div>
+          <div className="subtle">按真实客服工作流组织：先处理渠道，再跟进工单，再查询客户与运单。</div>
         </div>
-        <nav className="nav" data-testid="operator-primary-navigation">
+        <nav className="nav" data-testid="operator-primary-navigation" aria-label="客服运营后台主导航">
           {navGroups.map((group) => {
-            const groupItems = group.items.map((to) => availableNav.find((item) => item.to === to)).filter(Boolean) as typeof nav
+            const groupItems = group.items.map((to) => availableNav.find((item) => item.to === to)).filter(Boolean) as NavItem[]
             if (!groupItems.length) return null
             return (
               <div className="nav-group" key={group.label}>
@@ -126,7 +147,7 @@ export function AppShell({ children }: PropsWithChildren) {
                   const active = isActiveNavPath(location.pathname, item.to)
                   const showRuntimeAttention = item.attention === 'runtime' && runtimeNeedsAttention
                   return (
-                    <Link key={item.to} to={item.to} data-active={active ? 'true' : 'false'}>
+                    <Link key={item.to} to={item.to} data-active={active ? 'true' : 'false'} aria-current={active ? 'page' : undefined}>
                       <span>{item.label}</span>
                       <small>{item.hint}</small>
                       {showRuntimeAttention ? <Badge tone="danger">需处理 {runtimeAttentionCount}</Badge> : null}
@@ -147,11 +168,11 @@ export function AppShell({ children }: PropsWithChildren) {
           </div>
         </div>
       </aside>
-      <main>
+      <main role="main">
         <div className="topbar">
           <div>
             <div className="section-title">客服运营台</div>
-            <div className="section-subtitle">先看今日总览，再进工单/WebChat；出现 dead 或同步异常时直接进入运行恢复。</div>
+            <div className="section-subtitle">先处理 WebChat / WebCall / Email，再跟进工单；查询客户或运单请走一级入口。</div>
           </div>
           <div className="button-row topbar-status">
             <Badge tone={!canSeeOps ? 'default' : runtimeNeedsAttention ? 'danger' : runtime.data?.warnings?.length ? 'warning' : 'success'}>{!canSeeOps ? '客服模式' : runtimeNeedsAttention ? '运行需处理' : runtime.data?.warnings?.length ? '需要关注' : '运行正常'}</Badge>
@@ -161,7 +182,13 @@ export function AppShell({ children }: PropsWithChildren) {
           </div>
         </div>
         <div className="content">
-          {children ?? <Outlet />}
+          {routeDenied ? (
+            <NoAccessCard
+              title="当前账号无权访问此页面"
+              description="该入口需要额外 capability；左侧菜单已自动隐藏无权限入口，直接 URL 访问会在这里被拦截。"
+              action="请联系主管或管理员开通对应权限，或返回今日工作台继续处理可见任务。"
+            />
+          ) : (children ?? <Outlet />)}
         </div>
       </main>
       <CommandPalette open={commandOpen} onClose={() => setCommandOpen(false)} />
