@@ -29,13 +29,29 @@ export function ConfirmDialog({
   children,
 }: ConfirmDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null)
+  const confirmRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (!open) return
     const previous = document.activeElement as HTMLElement | null
     const timer = window.setTimeout(() => cancelRef.current?.focus(), 0)
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCancel()
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCancel()
+      }
+      if (event.key === 'Tab') {
+        const first = cancelRef.current
+        const last = confirmRef.current
+        if (!first || !last) return
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault()
+          last.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first.focus()
+        }
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => {
@@ -56,7 +72,7 @@ export function ConfirmDialog({
         {children}
         <div className="button-row dialog-actions">
           <button ref={cancelRef} className="button" onClick={onCancel} disabled={pending}>{cancelLabel}</button>
-          <Button variant={tone === 'danger' ? 'danger' : 'primary'} onClick={onConfirm} disabled={pending}>{pending ? '处理中...' : confirmLabel}</Button>
+          <Button ref={confirmRef as any} variant={tone === 'danger' ? 'danger' : 'primary'} onClick={onConfirm} disabled={pending}>{pending ? '处理中...' : confirmLabel}</Button>
         </div>
       </div>
     </div>
