@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -14,7 +15,7 @@ from .ai_runtime.openclaw_responses_provider import (
 from .ai_runtime.provider_router import generate_fast_reply
 from .ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
 from .ai_runtime_context import build_webchat_runtime_context
-from .knowledge_grounding_service import enforce_grounded_answer, select_approved_direct_answer_override
+from .knowledge_grounding_service import enforce_grounded_answer, is_explicit_handoff_or_business_action, select_approved_direct_answer_override, select_trusted_direct_answer_evidence
 from .knowledge_prompt_service import summarize_rag_trace
 from .provider_runtime.webchat_fast_dispatcher import dispatch_webchat_fast_reply
 from .webchat_ai_decision_runtime.service import decision_from_provider_result, validate_and_trace_decision
@@ -255,6 +256,94 @@ def _knowledge_context(runtime_context: dict[str, Any] | None) -> dict[str, Any]
     return knowledge if isinstance(knowledge, dict) else {}
 
 
+
+
+def _direct_answer_repair_blocked_by_tracking_query(body: str | None) -> bool:
+    text = (body or "").strip().lower()
+    if not text:
+        return False
+    if re.search(r"\b(?=[a-z0-9]{8,30}\b)(?=[a-z0-9]*\d)[a-z0-9]+\b", text, re.I):
+        return True
+    markers = (
+        "where is", "where's", "tracking", "track", "parcel", "package", "shipment",
+        "waybill", "status", "delivery status", "delivered", "in transit",
+        "out for delivery", "customs", "returned", "failed delivery",
+        "在哪里", "到哪里", "查件", "查询", "物流", "包裹", "快递", "单号", "运单",
+        "派送", "签收", "妥投", "运输中", "清关", "退回", "状态",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _provider_unavailable_trusted_direct_answer_result(
+    *,
+    provider_result: FastAIProviderResult,
+    body: str,
+    runtime_context: dict[str, Any] | None,
+    tracking_fact_evidence_present: bool,
+) -> WebchatFastReplyResult | None:
+    if tracking_fact_evidence_present:
+        return None
+    if is_explicit_handoff_or_business_action(body):
+        return None
+    if _direct_answer_repair_blocked_by_tracking_query(body):
+        return None
+
+    decision = select_trusted_direct_answer_evidence(
+        _knowledge_context(runtime_context),
+        query=body,
+        tracking_fact_evidence_present=False,
+    )
+    if not decision.applied or not decision.reply:
+        return None
+
+    source = decision.source if isinstance(decision.source, dict) else {}
+    reply_source = provider_result.raw_provider or provider_result.reply_source or "provider_runtime"
+    return WebchatFastReplyResult(
+        ok=True,
+        ai_generated=True,
+        reply_source=reply_source,
+        reply=decision.reply,
+        intent="other",
+        tracking_number=None,
+        handoff_required=False,
+        handoff_reason=None,
+        recommended_agent_action=None,
+        ticket_creation_queued=False,
+        elapsed_ms=provider_result.elapsed_ms,
+        rag_trace=summarize_rag_trace(runtime_context),
+        grounding_applied=True,
+        grounding_source=source,
+        grounding_reason="trusted_kb_direct_answer_provider_unavailable_repair",
+        ai_decision_trace={
+            "schema_version": "webchat_ai_decision_v1",
+            "mode": "trusted_kb_direct_answer_provider_unavailable_repair",
+            "reply_source": reply_source,
+            "repair_applied": True,
+            "repair_reason": "trusted_kb_direct_answer_provider_unavailable_repair",
+            "decision": {
+                "intent": "general_support",
+                "risk_level": "low",
+                "next_action": "reply",
+                "handoff_required": False,
+                "handoff_reason": None,
+                "tool_calls": [],
+                "evidence_used": [
+                    {
+                        "source": "hybrid_rag_v2",
+                        "evidence_type": "knowledge_context",
+                        "evidence_id": str(source.get("item_key") or source.get("title") or "trusted_direct_answer")[:240],
+                        "fact_evidence_present": True,
+                        "raw_tracking_number_exposed": False,
+                    }
+                ],
+                "safety_notes": ["provider unavailable path repaired by trusted KB direct_answer"],
+            },
+            "policy_gate": {"ok": True, "violations": [], "warnings": [], "checked_tools": []},
+            "raw_tracking_number_exposed": False,
+        },
+    )
+
+
 def _pre_provider_locked_fact_direct_answer_result(
     *,
     body: str,
@@ -469,6 +558,22 @@ async def generate_webchat_fast_reply(
             request=provider_request,
             settings=settings,
         )
+
+    if not provider_result.ok:
+        provider_unavailable_direct_answer = _provider_unavailable_trusted_direct_answer_result(
+            provider_result=provider_result,
+            body=body,
+            runtime_context=runtime_context,
+            tracking_fact_evidence_present=evidence_present,
+        )
+        if provider_unavailable_direct_answer is not None:
+            record_fast_reply_metric(
+                status="ok",
+                intent=provider_unavailable_direct_answer.intent,
+                handoff_required=provider_unavailable_direct_answer.handoff_required,
+                elapsed_ms=provider_unavailable_direct_answer.elapsed_ms,
+            )
+            return provider_unavailable_direct_answer
 
     if provider_result.ok:
         provider_result = _apply_grounding(
