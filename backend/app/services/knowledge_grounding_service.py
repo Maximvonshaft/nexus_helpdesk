@@ -45,6 +45,13 @@ UNSAFE_MARKERS = (
 PROMISE_MARKERS = (
     "guarantee", "guaranteed", "promise", "will deliver", "will refund", "一定", "保证", "承诺会",
 )
+EXPLICIT_HANDOFF_OR_BUSINESS_ACTION_MARKERS = (
+    "human", "agent", "representative", "manual review", "handoff", "hand off", "transfer",
+    "escalate", "escalation", "complaint", "complain", "cancel", "cancellation", "refuse",
+    "refusal", "return", "address change", "change address", "modify address", "refund", "claim",
+    "compensation", "人工", "真人", "人工客服", "转人工", "客服接入", "升级", "投诉", "取消",
+    "拒收", "拒签", "退回", "退货", "改地址", "地址变更", "更改地址", "修改地址", "退款", "赔偿", "理赔",
+)
 
 
 @dataclass(frozen=True)
@@ -56,6 +63,103 @@ class GroundingDecision:
 
     def as_trace(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def is_explicit_handoff_or_business_action(query: str | None) -> bool:
+    text = _unsafe_match_text(query)
+    return bool(text and any(marker in text for marker in EXPLICIT_HANDOFF_OR_BUSINESS_ACTION_MARKERS))
+
+
+def select_trusted_direct_answer_evidence(
+    knowledge_context: dict[str, Any] | None,
+    *,
+    tracking_fact_evidence_present: bool = False,
+) -> GroundingDecision:
+    if tracking_fact_evidence_present:
+        return GroundingDecision(applied=False, reason="tracking_fact_evidence_present")
+    if not isinstance(knowledge_context, dict):
+        return GroundingDecision(applied=False, reason="knowledge_context_missing")
+    if knowledge_context.get("grounding_would_apply") is not True:
+        return GroundingDecision(applied=False, reason="grounding_context_not_applicable")
+
+    hits = knowledge_context.get("hits")
+    if not isinstance(hits, list) or not hits:
+        return GroundingDecision(applied=False, reason="knowledge_hits_missing")
+
+    entity_terms = _query_entity_terms(knowledge_context)
+    locked_facts = knowledge_context.get("locked_facts") if isinstance(knowledge_context.get("locked_facts"), list) else []
+    grounding_source = knowledge_context.get("grounding_source") if isinstance(knowledge_context.get("grounding_source"), dict) else {}
+
+    def has_citation_or_source_metadata(data: dict[str, Any], metadata: dict[str, Any], source: dict[str, Any]) -> bool:
+        source_metadata = data.get("source_metadata") if isinstance(data.get("source_metadata"), dict) else {}
+        if source_metadata:
+            return True
+        if isinstance(metadata.get("citation"), dict) and metadata.get("citation"):
+            return True
+        if isinstance(source.get("source_metadata"), dict) and source.get("source_metadata"):
+            return True
+        if isinstance(source.get("citation"), dict) and source.get("citation"):
+            return True
+        return False
+
+    def candidate_from_hit(hit: KnowledgeChunkHit | dict[str, Any]) -> dict[str, Any] | None:
+        data = _hit_dict(hit)
+        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        candidate = select_grounding_candidate(
+            query="",
+            hits=[data],
+            tracking_fact_evidence_present=False,
+            required_entity_terms=entity_terms,
+        )
+        if not candidate:
+            return None
+        if not has_citation_or_source_metadata(data, metadata, candidate.get("source") or {}):
+            return None
+        return candidate
+
+    source_item_key = str(grounding_source.get("item_key") or "")
+    for hit in hits:
+        data = _hit_dict(hit)
+        if source_item_key and str(data.get("item_key") or "") != source_item_key:
+            continue
+        candidate = candidate_from_hit(data)
+        if candidate:
+            source = dict(candidate.get("source") or {})
+            if grounding_source:
+                source = {**source, **{key: value for key, value in grounding_source.items() if value not in (None, "", [], {})}}
+            return GroundingDecision(applied=True, reply=candidate["answer"], reason="trusted_direct_answer_evidence", source=source)
+
+    for fact in locked_facts:
+        if not isinstance(fact, dict):
+            continue
+        answer = str(fact.get("answer") or "").strip()
+        if not answer or fact.get("answer_mode") != "direct_answer" or _unsafe_answer(answer):
+            continue
+        fact_key = str(fact.get("item_key") or "")
+        for hit in hits:
+            data = _hit_dict(hit)
+            if fact_key and str(data.get("item_key") or "") != fact_key:
+                continue
+            candidate = candidate_from_hit(data)
+            if candidate and candidate.get("answer") == answer:
+                return GroundingDecision(
+                    applied=True,
+                    reply=answer,
+                    reason="trusted_locked_fact_direct_answer_evidence",
+                    source=candidate.get("source"),
+                )
+
+    for hit in hits:
+        candidate = candidate_from_hit(hit)
+        if candidate:
+            return GroundingDecision(
+                applied=True,
+                reply=candidate["answer"],
+                reason="trusted_hit_direct_answer_evidence",
+                source=candidate.get("source"),
+            )
+
+    return GroundingDecision(applied=False, reason="no_trusted_direct_answer")
 
 
 def enforce_grounded_answer(
