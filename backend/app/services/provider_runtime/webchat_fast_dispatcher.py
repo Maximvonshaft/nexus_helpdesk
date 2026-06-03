@@ -97,6 +97,15 @@ def _ai_grounded_summary(output: dict, knowledge_context: dict) -> dict:
 
 
 def _ai_grounded_validation_failed(output: dict, knowledge_context: dict) -> bool:
+    # Explicit handoff/business-action decisions are allowed to say that a
+    # human teammate will review the request; they are not customer-visible
+    # fact answers and therefore must not be rejected for not paraphrasing a
+    # locked direct_answer. This mirrors OutputContracts.check_security_rules,
+    # where locked fact validation applies only to non-handoff replies.
+    intent = str(output.get("intent") or "").strip().lower()
+    next_action = str(output.get("next_action") or "").strip().lower()
+    if output.get("handoff_required") is True or intent in {"handoff", "handoff_request", "refusal_request", "address_change", "complaint"} or next_action in {"handoff", "request_handoff"}:
+        return False
     reply = output.get("customer_reply") or output.get("reply")
     return OutputContracts.locked_fact_validation(reply, knowledge_context)["status"] == "fail"
 
