@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.services.knowledge_grounding_service import is_explicit_handoff_or_business_action, select_trusted_direct_answer_evidence
 from app.services.knowledge_prompt_service import summarize_rag_trace
 from app.services.tracking_fact_schema import hash_tracking_number
 from app.services.webchat_fast_output_parser import FastReplyParseError, assert_customer_visible_reply_is_safe
@@ -162,13 +163,96 @@ def _default_tool_calls(*, intent: str, handoff_required: bool, tracking_number:
     return calls
 
 
-def _decision_payload_from_provider(provider_result: Any, *, tracking_fact_metadata: dict[str, Any] | None = None, tracking_number: str | None = None, runtime_context: dict[str, Any] | None = None) -> dict[str, Any]:
+
+def _decision_knowledge_context(runtime_context: dict[str, Any] | None) -> dict[str, Any]:
+    knowledge = runtime_context.get("knowledge_context") if isinstance(runtime_context, dict) else None
+    return knowledge if isinstance(knowledge, dict) else {}
+
+
+def _decision_requests_handoff_or_fallback(payload: dict[str, Any], provider_result: Any) -> bool:
+    intent = normalize_intent(payload.get("intent") or getattr(provider_result, "intent", None))
+    next_action = str(payload.get("next_action") or "").strip().lower()
+    reply = str(payload.get("customer_reply") or getattr(provider_result, "reply", None) or payload.get("reply") or "").strip().lower()
+    calls = payload.get("tool_calls") if isinstance(payload.get("tool_calls"), list) else []
+    return bool(
+        payload.get("handoff_required", getattr(provider_result, "handoff_required", False)) is True
+        or intent in _HANDOFF_INTENTS
+        or next_action == "request_handoff"
+        or any(isinstance(call, dict) and (call.get("tool_name") or call.get("name") or call.get("tool")) == "handoff.request.create" for call in calls)
+        or "human teammate" in reply
+        or "support team will check" in reply
+        or "support specialist will check" in reply
+        or "temporarily unavailable" in reply
+        or "人工" in reply
+        or "暂时不可用" in reply
+    )
+
+
+def _apply_trusted_kb_direct_answer_decision_repair(
+    *,
+    payload: dict[str, Any],
+    provider_result: Any,
+    tracking_fact_metadata: dict[str, Any] | None,
+    runtime_context: dict[str, Any] | None,
+    request_body: str | None,
+) -> dict[str, Any]:
+    if _trusted_tracking_fact_present(tracking_fact_metadata):
+        return payload
+    if is_explicit_handoff_or_business_action(request_body):
+        return payload
+    if not _decision_requests_handoff_or_fallback(payload, provider_result):
+        return payload
+
+    selected = select_trusted_direct_answer_evidence(
+        _decision_knowledge_context(runtime_context),
+        query=request_body,
+        tracking_fact_evidence_present=False,
+    )
+    if not selected.applied or not selected.reply:
+        return payload
+
+    source = selected.source if isinstance(selected.source, dict) else {}
+    evidence_id = str(source.get("item_key") or source.get("title") or "trusted_direct_answer")[:240]
+    return {
+        **payload,
+        "customer_reply": selected.reply,
+        "intent": "general_support",
+        "confidence": 1.0,
+        "risk_level": "low",
+        "next_action": "reply",
+        "handoff_required": False,
+        "handoff_reason": None,
+        "tool_calls": [],
+        "tracking_number": None,
+        "evidence_used": [
+            {
+                "source": "hybrid_rag_v2",
+                "evidence_type": "knowledge_context",
+                "evidence_id": evidence_id,
+                "fact_evidence_present": True,
+                "raw_tracking_number_exposed": False,
+                "repair_applied": True,
+                "repair_reason": "trusted_kb_direct_answer_decision_repair",
+            }
+        ],
+        "safety_notes": ["trusted KB direct_answer repaired provider handoff/fallback decision"],
+    }
+
+
+def _decision_payload_from_provider(provider_result: Any, *, tracking_fact_metadata: dict[str, Any] | None = None, tracking_number: str | None = None, runtime_context: dict[str, Any] | None = None, request_body: str | None = None) -> dict[str, Any]:
     safe_summary = getattr(provider_result, "raw_payload_safe_summary", None) or {}
     raw_decision = safe_summary.get("ai_decision") if isinstance(safe_summary, dict) else None
     if isinstance(raw_decision, dict):
         payload = dict(raw_decision)
     else:
         payload = {}
+    payload = _apply_trusted_kb_direct_answer_decision_repair(
+        payload=payload,
+        provider_result=provider_result,
+        tracking_fact_metadata=tracking_fact_metadata,
+        runtime_context=runtime_context,
+        request_body=request_body,
+    )
     intent = normalize_intent(payload.get("intent") or getattr(provider_result, "intent", None))
     handoff_required = bool(payload.get("handoff_required", getattr(provider_result, "handoff_required", False)))
     provider_tracking = _clip(payload.get("tracking_number") or getattr(provider_result, "tracking_number", None) or tracking_number, 120)
@@ -212,6 +296,7 @@ def decision_from_provider_result(
     tracking_fact_metadata: dict[str, Any] | None = None,
     tracking_number: str | None = None,
     runtime_context: dict[str, Any] | None = None,
+    request_body: str | None = None,
 ) -> AIDecision:
     try:
         decision = AIDecision.model_validate(
@@ -220,6 +305,7 @@ def decision_from_provider_result(
                 tracking_fact_metadata=tracking_fact_metadata,
                 tracking_number=tracking_number,
                 runtime_context=runtime_context,
+                request_body=request_body,
             )
         )
         try:
@@ -252,6 +338,13 @@ def build_ai_decision_trace(
     }
     if runtime_context:
         trace["runtime_context_trace"] = summarize_rag_trace(runtime_context)
+    if any(
+        isinstance(getattr(evidence, "model_extra", None), dict)
+        and evidence.model_extra.get("repair_applied")
+        for evidence in decision.evidence_used
+    ):
+        trace["repair_applied"] = True
+        trace["repair_reason"] = "trusted_kb_direct_answer_decision_repair"
     return trace
 
 

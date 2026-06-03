@@ -112,6 +112,7 @@ def _result_from_provider(
     channel_key: str | None = None,
     session_id: str | None = None,
     request_id: str | None = None,
+    body: str | None = None,
 ) -> WebchatFastReplyResult:
     safe_summary = provider_result.raw_payload_safe_summary or {}
     grounded_reply_source = str(provider_result.reply_source or "").endswith(":grounded_knowledge")
@@ -129,6 +130,7 @@ def _result_from_provider(
                 tracking_fact_metadata=tracking_fact_metadata,
                 tracking_number=tracking_number or provider_result.tracking_number,
                 runtime_context=runtime_context,
+                request_body=body,
             )
             policy, ai_decision_trace = validate_and_trace_decision(
                 decision=decision,
@@ -485,6 +487,7 @@ async def generate_webchat_fast_reply(
         channel_key=channel_key,
         session_id=session_id,
         request_id=request_id,
+        body=body,
     )
     status = "ok" if result.ok else (result.error_code or provider_result.error_code or "ai_unavailable")
     record_fast_reply_metric(
