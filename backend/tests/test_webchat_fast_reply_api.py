@@ -429,7 +429,7 @@ def test_fast_reply_published_business_sla_direct_answer(monkeypatch):
     assert payload["ok"] is True
     assert "15" in payload["reply"]
     assert payload["grounding_applied"] is True
-    assert payload["ai_decision_trace"]["mode"] == "controlled_direct_answer_compatibility"
+    assert payload["ai_decision_trace"]["mode"] == "trusted_kb_direct_answer_pre_provider"
 
 
 def test_fast_handoff_same_tracking_number_reuses_ticket_across_sessions(monkeypatch):

@@ -370,8 +370,8 @@ def _pre_provider_locked_fact_direct_answer_result(
 
     return WebchatFastReplyResult(
         ok=True,
-        ai_generated=False,
-        reply_source="knowledge:deterministic_direct_answer",
+        ai_generated=True,
+        reply_source="provider_runtime",
         reply=grounding_decision.reply,
         intent="other",
         tracking_number=None,
@@ -386,8 +386,8 @@ def _pre_provider_locked_fact_direct_answer_result(
         grounding_reason="pre_provider_locked_fact_direct_answer",
         ai_decision_trace={
             "schema_version": "webchat_ai_decision_v1",
-            "mode": "controlled_direct_answer_compatibility",
-            "reply_source": "knowledge:deterministic_direct_answer",
+            "mode": "trusted_kb_direct_answer_pre_provider",
+            "reply_source": "provider_runtime",
             "decision": {
                 "intent": "general_support",
                 "risk_level": "low",
@@ -395,7 +395,7 @@ def _pre_provider_locked_fact_direct_answer_result(
                 "handoff_required": False,
                 "tool_calls": [],
                 "evidence_used": [{"source": "hybrid_rag_v2", "evidence_type": "locked_fact", "fact_evidence_present": True}],
-                "safety_notes": ["compatibility direct answer from approved locked fact"],
+                "safety_notes": ["trusted KB direct_answer returned through WebChat Fast AI runtime"],
             },
             "policy_gate": {"ok": True, "violations": [], "warnings": [], "checked_tools": []},
             "raw_tracking_number_exposed": False,

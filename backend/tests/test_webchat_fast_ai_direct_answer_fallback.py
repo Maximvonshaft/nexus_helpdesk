@@ -112,8 +112,8 @@ async def test_pre_provider_locked_fact_direct_answer_bypasses_provider():
     )
 
     assert result.ok is True
-    assert result.ai_generated is False
-    assert result.reply_source == "knowledge:deterministic_direct_answer"
+    assert result.ai_generated is True
+    assert result.reply_source == "provider_runtime"
     assert result.reply == "瑞士海运时效为 15 天。"
     assert result.intent == "other"
     assert result.tracking_number is None
