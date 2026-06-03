@@ -129,7 +129,7 @@ async def test_provider_runtime_wrong_handoff_decision_is_repaired_to_trusted_di
 
 
 @pytest.mark.asyncio
-async def test_provider_runtime_safe_fallback_is_repaired_to_trusted_direct_answer():
+async def test_provider_runtime_safe_fallback_without_structured_output_is_not_repaired_to_direct_answer():
     async def route_unavailable(_provider_request):
         return ProviderResult.unavailable("router", "all_providers_failed", 7)
 
@@ -137,13 +137,11 @@ async def test_provider_runtime_safe_fallback_is_repaired_to_trusted_direct_answ
         with patch("app.services.provider_runtime.webchat_fast_dispatcher.SessionLocal"):
             result = await dispatch_webchat_fast_reply(request=_request())
 
-    assert result.ok is True
-    assert result.ai_generated is True
-    assert result.reply == "瑞士海运时效为 15 天。"
-    assert result.reply_source == "router"
-    assert result.handoff_required is False
-    assert result.raw_payload_safe_summary["repair_applied"] is True
-    assert result.raw_payload_safe_summary["provider_failure_repaired"] is True
+    assert result.ok is False
+    assert result.ai_generated is False
+    assert result.reply is None
+    assert result.raw_provider == "provider_runtime"
+    assert result.error_code == "all_providers_failed"
 
 
 @pytest.mark.asyncio
