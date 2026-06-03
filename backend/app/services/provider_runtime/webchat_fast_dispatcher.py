@@ -176,6 +176,72 @@ def _repair_output_with_trusted_direct_answer(
     return repaired, repair_trace
 
 
+def _trusted_direct_answer_provider_result(
+    *,
+    request: FastAIProviderRequest,
+    runtime_context: dict | None,
+    provider: str,
+    elapsed_ms: int,
+    error_code: str | None = None,
+) -> FastAIProviderResult | None:
+    if request.tracking_fact_evidence_present or is_explicit_handoff_or_business_action(request.body):
+        return None
+    knowledge_context = _knowledge_context(runtime_context)
+    decision = select_trusted_direct_answer_evidence(
+        knowledge_context,
+        tracking_fact_evidence_present=request.tracking_fact_evidence_present,
+    )
+    if not decision.applied or not decision.reply:
+        return None
+    safe_summary = {
+        "provider_runtime": True,
+        "provider_bypassed": False,
+        "provider_failure_repaired": bool(error_code),
+        "repair_applied": True,
+        "repair_reason": "trusted_kb_direct_answer_policy_repair",
+        "grounding_reason": "trusted_kb_direct_answer_policy_repair",
+        "grounding_applied": True,
+        "grounding_source": decision.source,
+        "rag_trace": summarize_rag_trace(runtime_context),
+        "ai_decision": {
+            "customer_reply": decision.reply,
+            "intent": "general_support",
+            "confidence": 1.0,
+            "risk_level": "low",
+            "next_action": "reply",
+            "handoff_required": False,
+            "handoff_reason": None,
+            "tool_calls": [],
+            "evidence_used": [{"source": "hybrid_rag_v2", "evidence_type": "knowledge_context", "fact_evidence_present": True}],
+            "safety_notes": ["trusted KB direct_answer repaired provider fallback/handoff path"],
+        },
+        "ai_decision_trace": {
+            "schema_version": "webchat_ai_decision_v1",
+            "mode": "trusted_kb_direct_answer_policy_repair",
+            "reply_source": provider or "provider_runtime",
+            "repair_applied": True,
+            "repair_reason": "trusted_kb_direct_answer_policy_repair",
+            "policy_gate": {"ok": True, "violations": [], "warnings": ["trusted KB direct_answer repaired provider fallback/handoff path"], "checked_tools": []},
+            "raw_tracking_number_exposed": False,
+        },
+    }
+    return FastAIProviderResult(
+        ok=True,
+        ai_generated=True,
+        reply_source=provider or "provider_runtime",
+        raw_provider=provider or "provider_runtime",
+        raw_payload_safe_summary=safe_summary,
+        reply=decision.reply,
+        intent="other",
+        tracking_number=None,
+        handoff_required=False,
+        handoff_reason=None,
+        recommended_agent_action=None,
+        tool_intents=[],
+        elapsed_ms=elapsed_ms,
+    )
+
+
 def _pre_provider_direct_answer_result(
     *,
     request: FastAIProviderRequest,
@@ -259,6 +325,15 @@ async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> Fast
         router = ProviderRuntimeRouter(db)
         res = await router.route(build_webchat_fast_provider_request(request, metadata=runtime_context))
         if not res.ok or not res.structured_output:
+            repaired_result = _trusted_direct_answer_provider_result(
+                request=request,
+                runtime_context=runtime_context,
+                provider=res.provider or "provider_runtime",
+                elapsed_ms=res.elapsed_ms,
+                error_code=res.error_code or "all_failed",
+            )
+            if repaired_result is not None:
+                return repaired_result
             return FastAIProviderResult.unavailable(
                 provider="provider_runtime",
                 error_code=res.error_code or "all_failed",
@@ -311,6 +386,15 @@ async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> Fast
                 }
         else:
             if _ai_grounded_validation_failed(output, knowledge_context):
+                repaired_result = _trusted_direct_answer_provider_result(
+                    request=request,
+                    runtime_context=runtime_context,
+                    provider=res.provider or "provider_runtime",
+                    elapsed_ms=res.elapsed_ms,
+                    error_code="locked_fact_grounding_conflict",
+                )
+                if repaired_result is not None:
+                    return repaired_result
                 return FastAIProviderResult.unavailable(
                     provider=res.provider,
                     error_code="locked_fact_grounding_conflict",
@@ -321,6 +405,16 @@ async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> Fast
         ai_decision = _ai_decision_summary_from_output(output)
         if ai_decision is not None:
             safe_summary["ai_decision"] = ai_decision
+        if safe_summary.get("repair_applied"):
+            safe_summary["ai_decision_trace"] = {
+                "schema_version": "webchat_ai_decision_v1",
+                "mode": "trusted_kb_direct_answer_policy_repair",
+                "reply_source": res.provider,
+                "repair_applied": True,
+                "repair_reason": "trusted_kb_direct_answer_policy_repair",
+                "policy_gate": {"ok": True, "violations": [], "warnings": ["trusted KB direct_answer repaired provider fallback/handoff path"], "checked_tools": []},
+                "raw_tracking_number_exposed": False,
+            }
         reply = output.get("customer_reply") or output.get("reply")
 
         return FastAIProviderResult(
