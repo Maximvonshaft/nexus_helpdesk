@@ -1,0 +1,30 @@
+{
+  "schema_version": "domain_intent_cases_v1",
+  "cases": [
+    {
+      "id": "GEN001",
+      "query": "hello",
+      "expected_primary_intent": null
+    },
+    {
+      "id": "LOG001",
+      "query": "Where is my parcel now?",
+      "expected_primary_intent": "logistics.tracking_status"
+    },
+    {
+      "id": "LOG002",
+      "query": "The courier arrived while I was not home. Will you deliver again?",
+      "expected_primary_intent": "logistics.delivery_attempt_failed.recipient_absent"
+    },
+    {
+      "id": "LOG003",
+      "query": "地址写错了，可以改地址吗？",
+      "expected_primary_intent": "logistics.address_change"
+    },
+    {
+      "id": "LOG004",
+      "query": "I want to complain about the courier.",
+      "expected_primary_intent": "logistics.complaint_escalation"
+    }
+  ]
+}
