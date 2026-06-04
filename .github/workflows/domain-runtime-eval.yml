@@ -10,6 +10,8 @@ on:
       - 'backend/tests/test_domain_query_understanding.py'
       - 'backend/tests/test_webchat_domain_shadow_trace.py'
       - 'backend/tests/fixtures/domain_intent_cases.json'
+      - 'scripts/probe_domain_webchat_shadow_trace_e2e.py'
+      - 'scripts/probe_domain_webchat_shadow_trace_e2e.sh'
       - '.github/workflows/domain-runtime-eval.yml'
 
 jobs:
@@ -30,3 +32,6 @@ jobs:
       - name: Run domain fixture eval
         run: |
           PYTHONPATH=backend python backend/scripts/run_domain_runtime_eval.py --fixture backend/tests/fixtures/domain_intent_cases.json --strict
+      - name: Run WebChat shadow trace E2E probe
+        run: |
+          bash scripts/probe_domain_webchat_shadow_trace_e2e.sh
