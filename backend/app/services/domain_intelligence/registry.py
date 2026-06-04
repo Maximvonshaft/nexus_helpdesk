@@ -56,3 +56,9 @@ class DomainRegistry:
             if intent:
                 return intent
         return None
+
+
+def build_default_registry() -> DomainRegistry:
+    from ...domain_packs.logistics import LOGISTICS_DOMAIN_PACK
+
+    return DomainRegistry((LOGISTICS_DOMAIN_PACK,))
