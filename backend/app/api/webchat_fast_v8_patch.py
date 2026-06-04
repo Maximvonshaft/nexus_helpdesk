@@ -92,6 +92,14 @@ def _trusted_kb_direct_answer_final_api_guard_payload(
     if not decision.applied or not decision.reply:
         return None
 
+    already_grounded_direct_answer = (
+        result_payload.get("handoff_required") is not True
+        and result_payload.get("grounding_applied") is True
+        and str(result_payload.get("reply") or "").strip() == str(decision.reply or "").strip()
+    )
+    if already_grounded_direct_answer:
+        return None
+
     source = decision.source if isinstance(decision.source, dict) else {}
     trace = _wf._fallback_runtime_trace(runtime_context, tracking_number=tracking_number)
     if isinstance(trace, dict):
