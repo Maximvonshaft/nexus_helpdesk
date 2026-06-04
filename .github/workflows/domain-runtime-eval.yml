@@ -5,8 +5,10 @@ on:
     paths:
       - 'backend/app/services/domain_intelligence/**'
       - 'backend/app/domain_packs/**'
+      - 'backend/app/services/webchat_fast_ai_service.py'
       - 'backend/scripts/run_domain_runtime_eval.py'
       - 'backend/tests/test_domain_query_understanding.py'
+      - 'backend/tests/test_webchat_domain_shadow_trace.py'
       - 'backend/tests/fixtures/domain_intent_cases.json'
       - '.github/workflows/domain-runtime-eval.yml'
 
@@ -24,7 +26,7 @@ jobs:
           pip install -r backend/requirements.txt
       - name: Run domain unit tests
         run: |
-          PYTHONPATH=backend python -m pytest -q backend/tests/test_domain_query_understanding.py
+          PYTHONPATH=backend python -m pytest -q backend/tests/test_domain_query_understanding.py backend/tests/test_webchat_domain_shadow_trace.py
       - name: Run domain fixture eval
         run: |
           PYTHONPATH=backend python backend/scripts/run_domain_runtime_eval.py --fixture backend/tests/fixtures/domain_intent_cases.json --strict

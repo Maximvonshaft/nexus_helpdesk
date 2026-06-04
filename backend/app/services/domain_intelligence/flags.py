@@ -19,6 +19,7 @@ class DomainRuntimeFlags:
     guard_enforcement_enabled: bool = False
     answer_planner_enabled: bool = False
     trace_enabled: bool = True
+    webchat_shadow_trace_enabled: bool = False
     eval_strict_mode: bool = True
 
     @classmethod
@@ -30,5 +31,6 @@ class DomainRuntimeFlags:
             guard_enforcement_enabled=_env_bool("DOMAIN_GUARD_ENFORCEMENT_ENABLED", False),
             answer_planner_enabled=_env_bool("DOMAIN_ANSWER_PLANNER_ENABLED", False),
             trace_enabled=_env_bool("DOMAIN_TRACE_ENABLED", True),
+            webchat_shadow_trace_enabled=_env_bool("DOMAIN_INTELLIGENCE_WEBCHAT_SHADOW_TRACE_ENABLED", False),
             eval_strict_mode=_env_bool("DOMAIN_EVAL_STRICT_MODE", True),
         )

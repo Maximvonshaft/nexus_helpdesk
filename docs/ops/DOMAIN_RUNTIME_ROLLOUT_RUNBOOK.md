@@ -1,6 +1,6 @@
 # Domain Intelligence Runtime Rollout Runbook
 
-Status: draft for PR383
+Status: draft for PR384
 Production default: disabled / shadow-only
 
 ## 1. Scope
@@ -28,23 +28,30 @@ DOMAIN_RETRIEVAL_RERANK_ENABLED=false
 DOMAIN_GUARD_ENFORCEMENT_ENABLED=false
 DOMAIN_ANSWER_PLANNER_ENABLED=false
 DOMAIN_TRACE_ENABLED=true
+DOMAIN_INTELLIGENCE_WEBCHAT_SHADOW_TRACE_ENABLED=false
 DOMAIN_EVAL_STRICT_MODE=true
 ```
 
-## 4. Stage 1: shadow only
+## 4. Stage 1: WebChat shadow trace only
 
-Enable trace calculation only where explicitly integrated:
+Enable WebChat shadow trace only after CI passes and after confirming the trace does not enter customer prompt construction as authoritative knowledge.
 
 ```env
 DOMAIN_INTELLIGENCE_ENABLED=false
 DOMAIN_INTELLIGENCE_SHADOW_MODE=true
 DOMAIN_TRACE_ENABLED=true
+DOMAIN_INTELLIGENCE_WEBCHAT_SHADOW_TRACE_ENABLED=true
+DOMAIN_RETRIEVAL_RERANK_ENABLED=false
+DOMAIN_GUARD_ENFORCEMENT_ENABLED=false
+DOMAIN_ANSWER_PLANNER_ENABLED=false
 ```
 
 Expected result:
 
-- customer-facing response remains controlled by the existing PR381 runtime;
-- domain trace may be recorded for comparison;
+- customer-facing response remains controlled by the existing WebChat Fast runtime;
+- domain trace is attached only as `domain_intelligence_trace` metadata;
+- no retrieval order is changed;
+- no model reply is changed;
 - no tool execution is triggered by the domain runtime;
 - no handoff or ticket is created by the domain runtime.
 
