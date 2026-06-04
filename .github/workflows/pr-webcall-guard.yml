@@ -74,12 +74,14 @@ jobs:
               backend/app/api/admin_provider_credentials.py) return 0 ;;
               backend/app/api/admin_provider_runtime.py) return 0 ;;
               backend/app/api/admin_webcall_ai.py) return 0 ;;
+              backend/app/api/__init__.py) return 0 ;;
               backend/app/api/knowledge_items.py) return 0 ;;
               backend/app/api/speedaf_actions.py) return 0 ;;
               backend/app/api/speedaf_cancel.py) return 0 ;;
               backend/app/api/webcall_ai.py) return 0 ;;
               backend/app/api/webchat.py) return 0 ;;
               backend/app/api/webchat_fast.py) return 0 ;;
+              backend/app/api/webchat_fast_v8_patch.py) return 0 ;;
               backend/app/api/webchat_voice.py) return 0 ;;
               backend/app/api/webchat_ws.py) return 0 ;;
               backend/app/main.py) return 0 ;;
@@ -200,6 +202,8 @@ jobs:
               backend/tests/test_webchat_codex_app_server_provider.py) return 0 ;;
               backend/tests/test_webchat_demo_static_hotfix.py) return 0 ;;
               backend/tests/test_webchat_fast_ai_provider_router_phase1.py) return 0 ;;
+              backend/tests/test_webchat_fast_direct_answer_policy_repair.py) return 0 ;;
+              backend/tests/test_webchat_fast_ai_direct_answer_fallback.py) return 0 ;;
               backend/tests/test_webchat_fast_fact_fields.py) return 0 ;;
               backend/tests/test_webchat_fast_fact_first_orchestrator.py) return 0 ;;
               backend/tests/test_webchat_fast_fact_first_policy_order.py) return 0 ;;
@@ -216,6 +220,7 @@ jobs:
               backend/tests/test_webchat_fast_support_hours_pipeline.py) return 0 ;;
               backend/tests/test_webchat_fast_support_hours_policy.py) return 0 ;;
               backend/tests/test_webchat_fast_tracking_fact_short_circuit.py) return 0 ;;
+              backend/tests/test_webchat_fast_v8_final_api_guard.py) return 0 ;;
               backend/tests/test_webchat_tracking_fact_mvp.py) return 0 ;;
               backend/tests/test_webchat_handoff_control.py) return 0 ;;
               backend/tests/test_webchat_inbox_read_state.py) return 0 ;;
