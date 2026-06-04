@@ -13,10 +13,8 @@ from sqlalchemy import delete, func, select, text
 from app import models_control_plane  # noqa: F401
 from app.api import webchat_fast
 from app.db import Base, SessionLocal, engine
-from app.enums import UserRole
 from app.main import app
-from app.models import Customer, Ticket, User, WebchatRateLimitBucket
-from app.models_control_plane import KnowledgeChunk, KnowledgeItem, KnowledgeItemVersion
+from app.models import Customer, Ticket, WebchatRateLimitBucket
 from app.services.tracking_fact_schema import TrackingFactResult
 from app.services.webchat_fast_ai_service import WebchatFastReplyResult
 from app.services.webchat_fast_rate_limit import reset_webchat_fast_rate_limit_for_tests
@@ -40,7 +38,7 @@ def setup_function():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        db.execute(delete(WebchatFastRateLimitBucket) if False else delete(WebchatRateLimitBucket))
+        db.execute(delete(WebchatRateLimitBucket))
         db.execute(delete(WebchatHandoffRequest))
         db.execute(delete(WebchatMessage))
         db.execute(delete(WebchatConversation))
