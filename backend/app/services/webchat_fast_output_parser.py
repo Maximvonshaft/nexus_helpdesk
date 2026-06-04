@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -14,7 +14,7 @@ class FastReplyParseError(ValueError):
 
 
 class UnexpectedToolCallError(FastReplyParseError):
-    """Raised when the webchat fast agent attempts to return a tool/function call."""
+    """Raised when a model emits provider-native tool calls instead of the decision JSON contract."""
 
     error_code = "ai_unexpected_tool_call"
 
@@ -28,6 +28,11 @@ _ALLOWED_INTENTS = {
     "address_change",
     "handoff",
     "other",
+    # New AI decision runtime intents. Keep legacy values above for backward compatibility.
+    "unclear",
+    "handoff_request",
+    "refusal_request",
+    "general_support",
 }
 _REQUIRED_KEYS = {
     "reply",
@@ -36,6 +41,18 @@ _REQUIRED_KEYS = {
     "handoff_required",
     "handoff_reason",
     "recommended_agent_action",
+}
+_DECISION_KEYS = {
+    "customer_reply",
+    "intent",
+    "confidence",
+    "risk_level",
+    "next_action",
+    "handoff_required",
+    "handoff_reason",
+    "tool_calls",
+    "evidence_used",
+    "safety_notes",
 }
 _INTERNAL_PATTERNS = [
     r"\bOpenClaw\b",
@@ -81,7 +98,6 @@ _ZERO_WIDTH_CODEPOINTS = {
 }
 _CONFUSABLE_TRANSLATION = str.maketrans(
     {
-        # Cyrillic and Greek homoglyphs that commonly bypass ASCII keyword filters.
         "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O", "Р": "P", "С": "C", "Т": "T", "Х": "X",
         "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x", "І": "I", "і": "i", "ј": "j",
         "Α": "A", "Β": "B", "Ε": "E", "Η": "H", "Ι": "I", "Κ": "K", "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Χ": "X", "Υ": "Y", "Ζ": "Z",
@@ -98,6 +114,35 @@ class ParsedFastReply:
     handoff_required: bool
     handoff_reason: str | None
     recommended_agent_action: str | None
+    confidence: float = 0.0
+    risk_level: str = "low"
+    next_action: str = "reply"
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    evidence_used: list[dict[str, Any]] = field(default_factory=list)
+    safety_notes: list[str] = field(default_factory=list)
+    ai_decision: dict[str, Any] | None = None
+
+
+# Provider-native tool/function calls are still forbidden at this boundary. The
+# new WebChat AI decision runtime accepts tool *proposals* only inside strict JSON
+# as [{"tool_name": ...}], which are then validated by Policy Gate.
+def _looks_like_decision_json(payload: dict[str, Any]) -> bool:
+    if "customer_reply" in payload:
+        return True
+    return _DECISION_KEYS.issubset(set(payload.keys())) or _REQUIRED_KEYS.issubset(set(payload.keys()))
+
+
+def _looks_like_runtime_tool_proposals(value: Any) -> bool:
+    if value in (None, []):
+        return True
+    if not isinstance(value, list):
+        return False
+    for item in value:
+        if not isinstance(item, dict):
+            return False
+        if not (item.get("tool_name") or item.get("name") or item.get("tool")):
+            return False
+    return True
 
 
 def _content_text_from_block(block: Any) -> str | None:
@@ -107,7 +152,7 @@ def _content_text_from_block(block: Any) -> str | None:
         return None
     block_type = str(block.get("type") or "").lower()
     if "function" in block_type or "tool" in block_type:
-        raise UnexpectedToolCallError("OpenClaw returned a tool/function call in webchat fast reply output")
+        raise UnexpectedToolCallError("OpenClaw returned a provider-native tool/function call in webchat fast reply output")
     for key in ("text", "output_text", "content"):
         value = block.get(key)
         if isinstance(value, str) and value.strip():
@@ -120,11 +165,11 @@ def _content_text_from_block(block: Any) -> str | None:
     return None
 
 
-def _declares_tool_or_function_call(payload: dict[str, Any]) -> bool:
+def _declares_provider_tool_or_function_call(payload: dict[str, Any]) -> bool:
     payload_type = str(payload.get("type") or "").lower()
     if "function" in payload_type or "tool" in payload_type:
         return True
-    if payload.get("tool_calls"):
+    if payload.get("tool_calls") and not (_looks_like_decision_json(payload) and _looks_like_runtime_tool_proposals(payload.get("tool_calls"))):
         return True
 
     output = payload.get("output")
@@ -180,7 +225,7 @@ def _extract_response_text(payload: Any) -> str:
                 continue
             item_type = str(item.get("type") or "").lower()
             if "function" in item_type or "tool" in item_type:
-                raise UnexpectedToolCallError("OpenClaw returned a tool/function call in webchat fast reply output")
+                raise UnexpectedToolCallError("OpenClaw returned a provider-native tool/function call in webchat fast reply output")
             content = item.get("content")
             if isinstance(content, list):
                 for block in content:
@@ -204,7 +249,7 @@ def _extract_response_text(payload: Any) -> str:
             if isinstance(message, dict):
                 tool_calls = message.get("tool_calls")
                 if tool_calls:
-                    raise UnexpectedToolCallError("OpenClaw returned tool calls in webchat fast reply output")
+                    raise UnexpectedToolCallError("OpenClaw returned provider-native tool calls in webchat fast reply output")
                 content = message.get("content")
                 if isinstance(content, str) and content.strip():
                     texts.append(content)
@@ -241,9 +286,6 @@ def _clean_optional_string(value: Any, *, max_chars: int = 500) -> str | None:
 
 
 def _safety_normalized_text(value: str) -> str:
-    # NFKC folds full-width compatibility forms; zero-width stripping blocks
-    # split-token bypasses such as se\u200bcret; the small homoglyph map covers
-    # common Cyrillic/Greek substitutions used to hide internal terms like prompt.
     normalized = unicodedata.normalize("NFKC", value or "")
     normalized = normalized.translate(_ZERO_WIDTH_CODEPOINTS)
     normalized = normalized.translate(_CONFUSABLE_TRANSLATION)
@@ -274,26 +316,80 @@ def _sanitize_reply(reply: str) -> str:
     return cleaned[:1200]
 
 
-def parse_openclaw_fast_reply_from_strict_json(payload: dict[str, Any]) -> ParsedFastReply:
-    """Validate a strict Fast Lane JSON object.
+def _clean_float(value: Any) -> float:
+    try:
+        cleaned = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, cleaned))
 
-    Accepted shape:
-    {
-      "reply": str,
-      "intent": str,
-      "tracking_number": str | null,
-      "handoff_required": bool,
-      "handoff_reason": str | null,
-      "recommended_agent_action": str | null,
-    }
+
+def _clean_tool_calls(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not _looks_like_runtime_tool_proposals(value):
+        raise FastReplyParseError("AI decision tool_calls must be runtime tool proposals with tool_name/name/tool")
+    out: list[dict[str, Any]] = []
+    for item in value[:12]:
+        data = dict(item)
+        tool_name = _clean_optional_string(data.get("tool_name") or data.get("name") or data.get("tool"), max_chars=160)
+        if not tool_name:
+            continue
+        args = data.get("arguments") if isinstance(data.get("arguments"), dict) else {}
+        out.append(
+            {
+                "tool_name": tool_name,
+                "arguments": args,
+                "idempotency_key": _clean_optional_string(data.get("idempotency_key"), max_chars=240),
+                "reason": _clean_optional_string(data.get("reason"), max_chars=500),
+                "requires_confirmation": data.get("requires_confirmation") if isinstance(data.get("requires_confirmation"), bool) else None,
+            }
+        )
+    return out
+
+
+def _clean_dict_list(value: Any, *, max_items: int) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value[:max_items] if isinstance(item, dict)]
+
+
+def _clean_str_list(value: Any, *, max_items: int) -> list[str]:
+    if value is None:
+        return []
+    raw = value if isinstance(value, list) else [value]
+    out: list[str] = []
+    for item in raw[:max_items]:
+        cleaned = _clean_optional_string(item, max_chars=300)
+        if cleaned:
+            out.append(cleaned)
+    return out
+
+
+def parse_openclaw_fast_reply_from_strict_json(payload: dict[str, Any]) -> ParsedFastReply:
+    """Validate strict WebChat Fast JSON output.
+
+    Accepted shapes:
+    1. Legacy reply contract with reply/intent/tracking_number/handoff_required.
+    2. AI decision runtime contract with customer_reply, next_action, tool_calls,
+       evidence_used, and safety_notes.
     """
 
     parsed = dict(payload)
-    missing = sorted(_REQUIRED_KEYS - set(parsed.keys()))
+    if _declares_provider_tool_or_function_call(parsed):
+        raise UnexpectedToolCallError("OpenClaw returned a provider-native tool/function call in webchat fast reply output")
+
+    is_decision = "customer_reply" in parsed or "next_action" in parsed or "risk_level" in parsed
+    if is_decision:
+        missing = sorted({"customer_reply", "intent", "handoff_required"} - set(parsed.keys()))
+    else:
+        missing = sorted(_REQUIRED_KEYS - set(parsed.keys()))
     if missing:
         raise FastReplyParseError(f"AI output missing required keys: {', '.join(missing)}")
 
-    reply_raw = parsed.get("reply")
+    reply_raw = parsed.get("customer_reply") if is_decision else parsed.get("reply")
     if not isinstance(reply_raw, str) or not reply_raw.strip():
         raise FastReplyParseError("AI output reply must be a non-empty string")
     reply = _sanitize_reply(reply_raw)
@@ -311,6 +407,26 @@ def parse_openclaw_fast_reply_from_strict_json(payload: dict[str, Any]) -> Parse
     tracking_number = _clean_optional_string(parsed.get("tracking_number"), max_chars=120)
     handoff_reason = _clean_optional_string(parsed.get("handoff_reason"), max_chars=240)
     recommended_agent_action = _clean_optional_string(parsed.get("recommended_agent_action"), max_chars=500)
+    tool_calls = _clean_tool_calls(parsed.get("tool_calls"))
+    evidence_used = _clean_dict_list(parsed.get("evidence_used"), max_items=20)
+    safety_notes = _clean_str_list(parsed.get("safety_notes"), max_items=20)
+    confidence = _clean_float(parsed.get("confidence"))
+    risk_level = _clean_optional_string(parsed.get("risk_level"), max_chars=20) or ("medium" if handoff_required else "low")
+    next_action = _clean_optional_string(parsed.get("next_action"), max_chars=80) or ("request_handoff" if handoff_required else "reply")
+    ai_decision = None
+    if is_decision:
+        ai_decision = {
+            "customer_reply": reply,
+            "intent": intent,
+            "confidence": confidence,
+            "risk_level": risk_level,
+            "next_action": next_action,
+            "handoff_required": handoff_required,
+            "handoff_reason": handoff_reason,
+            "tool_calls": tool_calls,
+            "evidence_used": evidence_used,
+            "safety_notes": safety_notes,
+        }
 
     return ParsedFastReply(
         reply=reply,
@@ -319,24 +435,30 @@ def parse_openclaw_fast_reply_from_strict_json(payload: dict[str, Any]) -> Parse
         handoff_required=handoff_required,
         handoff_reason=handoff_reason,
         recommended_agent_action=recommended_agent_action,
+        confidence=confidence,
+        risk_level=risk_level,
+        next_action=next_action,
+        tool_calls=tool_calls,
+        evidence_used=evidence_used,
+        safety_notes=safety_notes,
+        ai_decision=ai_decision,
     )
 
 
 def parse_openclaw_fast_reply(payload: Any) -> ParsedFastReply:
     """Parse and validate WebChat Fast Lane AI output.
 
-    The boundary is intentionally strict: OpenClaw must produce only customer-safe
-    JSON text. Tool calls, markdown fences, surrounding prose, unsafe operational
-    promises, and internal implementation terms are rejected. A direct strict
-    dict is accepted only for internal already-parsed final payloads and still
-    passes the same customer-visible validation.
+    The boundary is intentionally strict. Provider-native tool calls, markdown
+    fences, surrounding prose, unsafe operational promises, and internal
+    implementation terms are rejected. AI decision runtime tool proposals are
+    accepted only as safe JSON fields and are still subject to Policy Gate.
     """
 
     if isinstance(payload, dict):
-        if _declares_tool_or_function_call(payload):
-            raise UnexpectedToolCallError("OpenClaw returned a tool/function call in webchat fast reply output")
-        if _REQUIRED_KEYS.issubset(payload.keys()):
+        if _looks_like_decision_json(payload):
             return parse_openclaw_fast_reply_from_strict_json(payload)
+        if _declares_provider_tool_or_function_call(payload):
+            raise UnexpectedToolCallError("OpenClaw returned a provider-native tool/function call in webchat fast reply output")
 
     text = _extract_response_text(payload)
     parsed = _parse_pure_json_text(text)

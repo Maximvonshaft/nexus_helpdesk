@@ -20,12 +20,20 @@ class PersonaIgnoredAdapter(ProviderAdapter):
             provider=self.name,
             elapsed_ms=25,
             structured_output={
-                "reply": "Hello! How can I help you today?",
-                "intent": "greeting",
+                "customer_reply": "Hello! How can I help you today?",
+                "language": "en",
+                "intent": "general_support",
+                "confidence": 0.8,
+                "risk_level": "low",
+                "next_action": "reply",
                 "tracking_number": None,
                 "handoff_required": False,
                 "handoff_reason": None,
                 "recommended_agent_action": None,
+                "ticket_should_create": False,
+                "tool_calls": [],
+                "evidence_used": [],
+                "safety_notes": [],
             },
             raw_payload_safe_summary={"bridge_status": 200},
         )
@@ -137,7 +145,7 @@ def test_output_contract_rejects_unsafe_persona_prefix():
 
 
 @pytest.mark.asyncio
-async def test_router_applies_backend_persona_prefix_after_provider_output(monkeypatch):
+async def test_router_accepts_webchat_ai_decision_output_and_preserves_security(monkeypatch):
     import app.services.provider_runtime as provider_runtime_module
 
     monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
@@ -178,7 +186,9 @@ async def test_router_applies_backend_persona_prefix_after_provider_output(monke
 
     assert result.ok is True
     assert result.provider == "codex_app_server"
-    assert result.structured_output["customer_reply"] == "SPEEDY_PERSONA_OK Hello! How can I help you today?"
+    assert result.structured_output["customer_reply"] == "Hello! How can I help you today?"
+    assert result.structured_output["next_action"] == "reply"
+    assert result.structured_output["tool_calls"] == []
 
 
 def test_identity_question_uses_persona_brand_name():

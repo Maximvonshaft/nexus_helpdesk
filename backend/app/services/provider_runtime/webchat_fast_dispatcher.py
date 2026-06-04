@@ -7,7 +7,12 @@ from app.settings import get_settings
 
 from ..ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
 from ..ai_runtime_context import build_webchat_runtime_context
-from ..knowledge_grounding_service import enforce_grounded_answer, select_approved_direct_answer_override
+from ..knowledge_grounding_service import (
+    enforce_grounded_answer,
+    is_explicit_handoff_or_business_action,
+    select_approved_direct_answer_override,
+    select_trusted_direct_answer_evidence,
+)
 from ..knowledge_prompt_service import summarize_rag_trace
 from .output_contracts import OutputContracts
 from .router import ProviderRuntimeRouter
@@ -92,8 +97,92 @@ def _ai_grounded_summary(output: dict, knowledge_context: dict) -> dict:
 
 
 def _ai_grounded_validation_failed(output: dict, knowledge_context: dict) -> bool:
+    # Explicit handoff/business-action decisions are allowed to say that a
+    # human teammate will review the request; they are not customer-visible
+    # fact answers and therefore must not be rejected for not paraphrasing a
+    # locked direct_answer. This mirrors OutputContracts.check_security_rules,
+    # where locked fact validation applies only to non-handoff replies.
+    intent = str(output.get("intent") or "").strip().lower()
+    next_action = str(output.get("next_action") or "").strip().lower()
+    if output.get("handoff_required") is True or intent in {"handoff", "handoff_request", "refusal_request", "address_change", "complaint"} or next_action in {"handoff", "request_handoff"}:
+        return False
     reply = output.get("customer_reply") or output.get("reply")
     return OutputContracts.locked_fact_validation(reply, knowledge_context)["status"] == "fail"
+
+
+def _ai_decision_summary_from_output(output: dict) -> dict | None:
+    if not isinstance(output, dict):
+        return None
+    reply = output.get("customer_reply") or output.get("reply")
+    if not isinstance(reply, str) or not reply.strip():
+        return None
+    handoff_required = bool(output.get("handoff_required", False))
+    return {
+        "customer_reply": reply,
+        "intent": output.get("intent") or "other",
+        "confidence": output.get("confidence", 0.7),
+        "risk_level": output.get("risk_level") or ("medium" if handoff_required else "low"),
+        "next_action": output.get("next_action") or ("request_handoff" if handoff_required else "reply"),
+        "handoff_required": handoff_required,
+        "handoff_reason": output.get("handoff_reason"),
+        "tool_calls": output.get("tool_calls") if isinstance(output.get("tool_calls"), list) else [],
+        "evidence_used": output.get("evidence_used") if isinstance(output.get("evidence_used"), list) else [],
+        "safety_notes": output.get("safety_notes") if isinstance(output.get("safety_notes"), list) else [],
+    }
+
+
+def _output_requests_handoff_or_fallback(output: dict) -> bool:
+    reply = str(output.get("customer_reply") or output.get("reply") or "").strip().lower()
+    tool_calls = output.get("tool_calls") if isinstance(output.get("tool_calls"), list) else []
+    return bool(
+        output.get("handoff_required") is True
+        or str(output.get("intent") or "").strip().lower() in {"handoff", "handoff_request"}
+        or str(output.get("next_action") or "").strip().lower() in {"handoff", "request_handoff"}
+        or any(isinstance(call, dict) and call.get("tool_name") == "handoff.request.create" for call in tool_calls)
+        or "human teammate" in reply
+        or "assistant is temporarily unavailable" in reply
+        or "人工" in reply
+        or "暂时不可用" in reply
+    )
+
+
+def _repair_output_with_trusted_direct_answer(
+    *,
+    output: dict,
+    request: FastAIProviderRequest,
+    knowledge_context: dict,
+) -> tuple[dict, dict | None]:
+    if request.tracking_fact_evidence_present or is_explicit_handoff_or_business_action(request.body):
+        return output, None
+    if not _output_requests_handoff_or_fallback(output):
+        return output, None
+    decision = select_trusted_direct_answer_evidence(
+        knowledge_context,
+        tracking_fact_evidence_present=request.tracking_fact_evidence_present,
+    )
+    if not decision.applied or not decision.reply:
+        return output, None
+    repaired = {
+        **output,
+        "customer_reply": decision.reply,
+        "reply": decision.reply,
+        "intent": "other",
+        "tracking_number": None,
+        "handoff_required": False,
+        "handoff_reason": None,
+        "recommended_agent_action": None,
+        "ticket_should_create": False,
+        "tool_calls": [],
+        "next_action": "reply",
+    }
+    repair_trace = {
+        "repair_applied": True,
+        "repair_reason": "trusted_kb_direct_answer_policy_repair",
+        "grounding_reason": "trusted_kb_direct_answer_policy_repair",
+        "grounding_applied": True,
+        "grounding_source": decision.source,
+    }
+    return repaired, repair_trace
 
 
 def _pre_provider_direct_answer_result(
@@ -124,6 +213,18 @@ def _pre_provider_direct_answer_result(
         "grounding_source": grounding_decision.source,
         "provider_bypassed": True,
         "provider_bypass_reason": "approved_direct_answer_pre_provider",
+        "ai_decision": {
+            "customer_reply": grounding_decision.reply,
+            "intent": "general_support",
+            "confidence": 1.0,
+            "risk_level": "low",
+            "next_action": "reply",
+            "handoff_required": False,
+            "handoff_reason": None,
+            "tool_calls": [],
+            "evidence_used": [{"source": "hybrid_rag_v2", "evidence_type": "locked_fact", "fact_evidence_present": True}],
+            "safety_notes": ["provider bypassed by approved deterministic locked fact"],
+        },
     }
     return FastAIProviderResult(
         ok=True,
@@ -178,6 +279,14 @@ async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> Fast
         safe_summary["provider_runtime"] = True
         safe_summary["rag_trace"] = summarize_rag_trace(runtime_context)
         knowledge_context = _knowledge_context(runtime_context)
+        output, repair_trace = _repair_output_with_trusted_direct_answer(
+            output=output,
+            request=request,
+            knowledge_context=knowledge_context,
+        )
+        if repair_trace:
+            safe_summary.update(repair_trace)
+        grounding_decision = None
         if _knowledge_reply_mode() == "deterministic_direct_answer":
             grounding_decision = select_approved_direct_answer_override(
                 query=request.body,
@@ -206,6 +315,8 @@ async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> Fast
                     "handoff_reason": None,
                     "recommended_agent_action": None,
                     "ticket_should_create": False,
+                    "tool_calls": [],
+                    "next_action": "reply",
                 }
         else:
             if _ai_grounded_validation_failed(output, knowledge_context):
@@ -216,13 +327,26 @@ async def dispatch_webchat_fast_reply(*, request: FastAIProviderRequest) -> Fast
                 )
             safe_summary["provider_bypassed"] = False
             safe_summary.update(_ai_grounded_summary(output, knowledge_context))
+        ai_decision = _ai_decision_summary_from_output(output)
+        if ai_decision is not None:
+            safe_summary["ai_decision"] = ai_decision
+        if safe_summary.get("repair_applied"):
+            safe_summary["ai_decision_trace"] = {
+                "schema_version": "webchat_ai_decision_v1",
+                "mode": "trusted_kb_direct_answer_policy_repair",
+                "reply_source": res.provider,
+                "repair_applied": True,
+                "repair_reason": "trusted_kb_direct_answer_policy_repair",
+                "policy_gate": {"ok": True, "violations": [], "warnings": ["trusted KB direct_answer repaired provider fallback/handoff path"], "checked_tools": []},
+                "raw_tracking_number_exposed": False,
+            }
         reply = output.get("customer_reply") or output.get("reply")
 
         return FastAIProviderResult(
             ok=True,
             ai_generated=True,
             reply_source=res.provider if _knowledge_reply_mode() != "deterministic_direct_answer" else (
-                f"{res.provider}:grounded_knowledge" if grounding_decision.applied else res.provider
+                f"{res.provider}:grounded_knowledge" if grounding_decision and grounding_decision.applied else res.provider
             ),
             raw_provider=res.provider,
             raw_payload_safe_summary=safe_summary,

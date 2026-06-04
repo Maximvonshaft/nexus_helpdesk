@@ -4,6 +4,7 @@ import hashlib
 import time
 from typing import Any
 
+from ..webchat_ai_decision_runtime.prompt_builder import build_ai_decision_instructions
 from ..webchat_fast_output_parser import (
     FastReplyParseError,
     ParsedFastReply,
@@ -49,34 +50,7 @@ def _context_block(recent_context: list[dict[str, str]]) -> str:
 
 
 def build_fast_reply_instructions() -> str:
-    return (
-        "You are Speedy, Speedaf's public WebChat AI assistant.\n\n"
-        "Hard rules:\n"
-        "- Reply in the customer's language.\n"
-        "- The customer-visible reply must be short, helpful, and natural.\n"
-        "- Do not invent parcel status, delivery result, customs result, refund, compensation, or SLA.\n"
-        "- If a Trusted tracking fact block is provided, use only that block for parcel status.\n"
-        "- If the Trusted tracking fact says No Info, no trace, or no tracking updates, say the official system currently has no tracking updates.\n"
-        "- If no Trusted tracking fact block is provided, do not claim any live parcel status; ask for the tracking number or say support will check.\n"
-        "- If sanitized Knowledge context directly answers the customer's FAQ or policy question, answer from Knowledge context and do not say cannot confirm.\n"
-        "- Knowledge context is FAQ/SOP/policy/business facts only; never use it as live parcel tracking evidence.\n"
-        "- If a tracking number is missing, ask for it naturally.\n"
-        "- If manual support is needed, say so naturally.\n"
-        "- Return valid JSON only.\n"
-        "- No markdown.\n"
-        "- No hidden reasoning.\n"
-        "- No internal tool names.\n"
-        "- No OpenClaw, MCP, gateway, Bridge, prompt, token, localhost, port, or system details.\n\n"
-        "JSON schema:\n"
-        "{\n"
-        '  "reply": "customer visible AI reply",\n'
-        '  "intent": "greeting|tracking|tracking_missing_number|tracking_unresolved|complaint|address_change|handoff|other",\n'
-        '  "tracking_number": null,\n'
-        '  "handoff_required": false,\n'
-        '  "handoff_reason": null,\n'
-        '  "recommended_agent_action": null\n'
-        "}\n"
-    )
+    return build_ai_decision_instructions()
 
 
 def _trusted_fact_block(*, tracking_fact_summary: str | None, tracking_fact_evidence_present: bool) -> str:
@@ -102,7 +76,7 @@ def build_fast_reply_input_text(
         tracking_fact_evidence_present=tracking_fact_evidence_present,
     )
     text = (
-        "Recent context:\n"
+        "Recent conversation:\n"
         f"{_context_block(recent_context)}\n\n"
         f"{fact_block}"
         f"{build_knowledge_prompt_block(knowledge_context) + chr(10) + chr(10) if knowledge_context else ''}"
@@ -122,6 +96,21 @@ def build_fast_reply_session_key(*, tenant_key: str, session_id: str) -> str:
 
 def _success_from_parsed(parsed: ParsedFastReply, *, elapsed_ms: int, tracking_fact_metadata: dict[str, Any] | None = None) -> FastAIProviderResult:
     safe_summary: dict[str, Any] = {"parsed": True}
+    if parsed.ai_decision:
+        safe_summary["ai_decision"] = parsed.ai_decision
+    else:
+        safe_summary["ai_decision"] = {
+            "customer_reply": parsed.reply,
+            "intent": parsed.intent,
+            "confidence": parsed.confidence,
+            "risk_level": parsed.risk_level,
+            "next_action": parsed.next_action,
+            "handoff_required": parsed.handoff_required,
+            "handoff_reason": parsed.handoff_reason,
+            "tool_calls": parsed.tool_calls,
+            "evidence_used": parsed.evidence_used,
+            "safety_notes": parsed.safety_notes,
+        }
     if tracking_fact_metadata:
         safe_summary["tracking_fact"] = tracking_fact_metadata
     return FastAIProviderResult(

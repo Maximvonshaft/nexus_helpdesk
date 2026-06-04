@@ -37,6 +37,7 @@ LIVE_TRACKING_MARKERS = (
 )
 TRACKING_NUMBER_RE = re.compile(r"\b(?=[A-Z0-9]{8,30}\b)(?=[A-Z0-9]*\d)[A-Z0-9]+\b", re.I)
 NUMBER_RE = re.compile(r"(?<![A-Z0-9])\d+(?:\.\d+)?(?![A-Z0-9])", re.I)
+IDENTIFIER_RE = re.compile(r"[a-z][a-z0-9]+(?:[_.-][a-z0-9]+)+|[a-z0-9]{8,}|\\d{6,}", re.I)
 UNSAFE_MARKERS = (
     "compensation", "refund", "claim", "complaint", "complain", "legal", "lawsuit", "account risk", "driver phone",
     "courier phone", "api", "token", "secret", "password", "internal system", "赔偿", "理赔",
@@ -44,6 +45,13 @@ UNSAFE_MARKERS = (
 )
 PROMISE_MARKERS = (
     "guarantee", "guaranteed", "promise", "will deliver", "will refund", "一定", "保证", "承诺会",
+)
+EXPLICIT_HANDOFF_OR_BUSINESS_ACTION_MARKERS = (
+    "human", "agent", "representative", "manual review", "handoff", "hand off", "transfer",
+    "escalate", "escalation", "complaint", "complain", "cancel", "cancellation", "refuse",
+    "refusal", "return", "address change", "change address", "modify address", "refund", "claim",
+    "compensation", "人工", "真人", "人工客服", "转人工", "客服接入", "升级", "投诉", "取消",
+    "拒收", "拒签", "退回", "退货", "改地址", "地址变更", "更改地址", "修改地址", "退款", "赔偿", "理赔",
 )
 
 
@@ -57,6 +65,85 @@ class GroundingDecision:
     def as_trace(self) -> dict[str, Any]:
         return asdict(self)
 
+
+def is_explicit_handoff_or_business_action(query: str | None) -> bool:
+    text = _unsafe_match_text(query)
+    return bool(text and any(marker in text for marker in EXPLICIT_HANDOFF_OR_BUSINESS_ACTION_MARKERS))
+
+
+def select_trusted_direct_answer_evidence(
+    knowledge_context: dict[str, Any] | None,
+    *,
+    query: str | None = None,
+    tracking_fact_evidence_present: bool = False,
+) -> GroundingDecision:
+    if tracking_fact_evidence_present:
+        return GroundingDecision(applied=False, reason="tracking_fact_evidence_present")
+    if not isinstance(knowledge_context, dict):
+        return GroundingDecision(applied=False, reason="knowledge_context_missing")
+    if knowledge_context.get("grounding_would_apply") is not True:
+        return GroundingDecision(applied=False, reason="grounding_context_not_applicable")
+
+    hits = knowledge_context.get("hits")
+    if not isinstance(hits, list) or not hits:
+        return GroundingDecision(applied=False, reason="knowledge_hits_missing")
+
+    entity_terms = _query_entity_terms(knowledge_context)
+    query_text = _query_local_text(query=query, knowledge_context=knowledge_context)
+    grounding_source = knowledge_context.get("grounding_source") if isinstance(knowledge_context.get("grounding_source"), dict) else {}
+    source_item_key = str(grounding_source.get("item_key") or "")
+
+    def has_citation_or_source_metadata(data: dict[str, Any], metadata: dict[str, Any], source: dict[str, Any]) -> bool:
+        source_metadata = data.get("source_metadata") if isinstance(data.get("source_metadata"), dict) else {}
+        if source_metadata:
+            return True
+        if isinstance(metadata.get("citation"), dict) and metadata.get("citation"):
+            return True
+        if isinstance(source.get("source_metadata"), dict) and source.get("source_metadata"):
+            return True
+        if isinstance(source.get("citation"), dict) and source.get("citation"):
+            return True
+        return False
+
+    candidates: list[tuple[float, int, dict[str, Any]]] = []
+    for index, hit in enumerate(hits):
+        data = _hit_dict(hit)
+        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        candidate = select_grounding_candidate(
+            query="",
+            hits=[data],
+            tracking_fact_evidence_present=False,
+            required_entity_terms=entity_terms,
+        )
+        if not candidate:
+            continue
+        if not has_citation_or_source_metadata(data, metadata, candidate.get("source") or {}):
+            continue
+
+        source = dict(candidate.get("source") or {})
+        item_key = str(source.get("item_key") or data.get("item_key") or "")
+        if source_item_key and item_key == source_item_key:
+            source = {**source, **{key: value for key, value in grounding_source.items() if value not in (None, "", [], {})}}
+
+        scored = {**candidate, "source": source}
+        candidates.append((
+            _query_local_direct_answer_score(
+                query_text=query_text,
+                data=data,
+                candidate=scored,
+                source_item_key=source_item_key,
+            ),
+            -index,
+            scored,
+        ))
+
+    if not candidates:
+        return GroundingDecision(applied=False, reason="no_trusted_direct_answer")
+
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    best_score, _index, best = candidates[0]
+    reason = "trusted_query_local_direct_answer_evidence" if query_text and best_score >= 100 else "trusted_direct_answer_evidence"
+    return GroundingDecision(applied=True, reply=best["answer"], reason=reason, source=best.get("source"))
 
 def enforce_grounded_answer(
     *,
@@ -224,6 +311,69 @@ def _query_entity_terms(knowledge_context: dict[str, Any]) -> list[str]:
     if not isinstance(raw_terms, list):
         return []
     return [str(term).strip() for term in raw_terms if str(term).strip()]
+
+
+
+def _query_local_text(*, query: str | None, knowledge_context: dict[str, Any]) -> str:
+    parts: list[str] = []
+    if query:
+        parts.append(str(query))
+    query_analysis = knowledge_context.get("query_analysis")
+    if isinstance(query_analysis, dict):
+        for key in ("normalized_query", "query", "original_query"):
+            value = query_analysis.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value)
+        for key in ("entity_terms", "high_value_terms", "terms"):
+            value = query_analysis.get(key)
+            if isinstance(value, list):
+                parts.extend(str(item) for item in value if str(item).strip())
+    return " ".join(parts)
+
+
+def _query_local_direct_answer_score(*, query_text: str, data: dict[str, Any], candidate: dict[str, Any], source_item_key: str | None) -> float:
+    answer = str(candidate.get("answer") or "")
+    metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+    source = candidate.get("source") if isinstance(candidate.get("source"), dict) else {}
+    target_text = _candidate_entity_text(data=data, answer=answer, metadata=metadata)
+    query_norm = _entity_match_text(query_text)
+    answer_norm = _entity_match_text(answer)
+    target_norm = _entity_match_text(target_text)
+    score = _float(source.get("score") or data.get("score"))
+
+    if query_norm and answer_norm:
+        if answer_norm in query_norm:
+            score += 10000
+        if len(query_norm) >= 8 and query_norm in answer_norm:
+            score += 8000
+    if query_norm and target_norm and len(query_norm) >= 8 and query_norm in target_norm:
+        score += 5000
+
+    query_ids = _identifier_terms(query_text)
+    target_ids = _identifier_terms(" ".join([target_text, answer]))
+    score += 700 * len(query_ids & target_ids)
+    if query_ids and query_ids.issubset(target_ids):
+        score += 1500
+
+    query_numbers = _number_terms(query_text)
+    target_numbers = _number_terms(" ".join([target_text, answer]))
+    score += 90 * len(query_numbers & target_numbers)
+    long_query_numbers = {term for term in query_numbers if len(term.replace(".", "")) >= 4}
+    if long_query_numbers and long_query_numbers.issubset(target_numbers):
+        score += 800
+
+    if source_item_key and str(source.get("item_key") or data.get("item_key") or "") == source_item_key:
+        score += 25
+    return score
+
+
+def _identifier_terms(value: str | None) -> set[str]:
+    normalized = unicodedata.normalize("NFKC", value or "").lower()
+    terms = {match.group(0).strip("._-") for match in IDENTIFIER_RE.finditer(normalized)}
+    expanded: set[str] = set(terms)
+    for term in terms:
+        expanded.update(piece for piece in re.split(r"[._-]+", term) if len(piece) >= 4)
+    return {term for term in expanded if term}
 
 
 def _candidate_entity_text(*, data: dict[str, Any], answer: str, metadata: dict[str, Any]) -> str:

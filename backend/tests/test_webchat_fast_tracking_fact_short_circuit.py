@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from app.api.webchat_fast import _tracking_fact_forced_reply_payload
+import json
+
+from app.api.webchat_fast import _public_tracking_reference, _tracking_fact_evidence_trace, _tracking_fact_public_payload
 from app.services.tracking_fact_schema import TrackingFactResult
 
 
-def test_tracking_fact_forced_reply_payload_returns_grounded_status():
+def test_tracking_fact_trace_returns_grounded_redacted_status_metadata():
     result = TrackingFactResult(
         ok=True,
         tracking_number="CH020000008030",
@@ -17,54 +19,48 @@ def test_tracking_fact_forced_reply_payload_returns_grounded_status():
         tool_name="speedaf.order.query",
     )
 
-    payload = _tracking_fact_forced_reply_payload(
+    public_payload = _tracking_fact_public_payload(result)
+    trace = _tracking_fact_evidence_trace(result, tracking_number="CH020000008030")
+    public_ref = _public_tracking_reference("CH020000008030")
+
+    assert public_payload is not None
+    assert public_payload["fact_evidence_present"] is True
+    assert public_payload["tool_status"] == "success"
+    assert public_payload["status"] == "730"
+    assert public_payload["status_label"] == "return delivered"
+    assert public_payload["truth_trace"]["source"] == "speedaf_trusted_tracking_fact"
+    assert public_payload["truth_trace"]["raw_tracking_number_exposed"] is False
+    assert trace["retrieval"] == "trusted_tracking_fact"
+    assert trace["source"] == "speedaf_trusted_tracking_fact"
+    assert trace["fact_evidence_present"] is True
+    assert trace["raw_tracking_number_exposed"] is False
+    assert public_ref["tracking_number"] is None
+    assert public_ref["tracking_number_suffix"] == "008030"
+    assert public_ref["tracking_number_hash"]
+    assert "CH020000008030" not in json.dumps({"payload": public_payload, "trace": trace, "ref": public_ref}, ensure_ascii=False)
+
+
+def test_tracking_fact_trace_requires_evidence_and_redaction_for_fact_present():
+    unredacted = TrackingFactResult(
+        ok=True,
         tracking_number="CH020000008030",
-        result=result,
+        status="730",
+        status_label="return delivered",
+        tool_status="success",
+        pii_redacted=False,
+        fact_evidence_present=True,
+    )
+    missing_evidence = TrackingFactResult(
+        ok=True,
+        tracking_number="CH020000008030",
+        status="730",
+        status_label="return delivered",
+        tool_status="success",
+        pii_redacted=True,
+        fact_evidence_present=False,
     )
 
-    assert payload is not None
-    assert payload["ok"] is True
-    assert payload["ai_generated"] is False
-    assert payload["reply_source"] == "server_tracking_fact"
-    assert payload["intent"] == "tracking"
-    assert payload["tracking_number"] is None
-    assert payload["tracking_number_suffix"] == "008030"
-    assert payload["tracking_number_hash"]
-    assert payload["evidence_trace"]["retrieval"] == "trusted_tracking_fact"
-    assert payload["evidence_trace"]["source"] == "speedaf_trusted_tracking_fact"
-    assert payload["evidence_trace"]["fact_evidence_present"] is True
-    assert payload["evidence_trace"]["raw_tracking_number_exposed"] is False
-    assert payload["handoff_required"] is False
-    assert payload["ticket_creation_queued"] is False
-    assert "730" in payload["reply"]
-    assert "return delivered" in payload["reply"]
-    assert "provide" not in payload["reply"].lower()
-    assert "cannot verify" not in payload["reply"].lower()
-
-
-def test_tracking_fact_forced_reply_payload_requires_evidence_and_redaction():
-    assert _tracking_fact_forced_reply_payload(
-        tracking_number="CH020000008030",
-        result=TrackingFactResult(
-            ok=True,
-            tracking_number="CH020000008030",
-            status="730",
-            status_label="return delivered",
-            tool_status="success",
-            pii_redacted=False,
-            fact_evidence_present=True,
-        ),
-    ) is None
-
-    assert _tracking_fact_forced_reply_payload(
-        tracking_number="CH020000008030",
-        result=TrackingFactResult(
-            ok=True,
-            tracking_number="CH020000008030",
-            status="730",
-            status_label="return delivered",
-            tool_status="success",
-            pii_redacted=True,
-            fact_evidence_present=False,
-        ),
-    ) is None
+    assert _tracking_fact_evidence_trace(unredacted, tracking_number="CH020000008030")["fact_evidence_present"] is False
+    assert _tracking_fact_evidence_trace(missing_evidence, tracking_number="CH020000008030")["fact_evidence_present"] is False
+    assert _tracking_fact_public_payload(unredacted)["truth_trace"]["raw_tracking_number_exposed"] is False
+    assert _tracking_fact_public_payload(missing_evidence)["truth_trace"]["raw_tracking_number_exposed"] is False
