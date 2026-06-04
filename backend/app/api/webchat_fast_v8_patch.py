@@ -72,8 +72,10 @@ def _trusted_kb_direct_answer_final_api_guard_payload(
     tracking_number: str | None,
     tracking_fact_evidence_present: bool,
 ) -> dict[str, Any] | None:
-    if result_payload.get("reply_source") != "server_safe_fallback" and result_payload.get("handoff_required") is not True:
-        return None
+    # Authoritative final API guard: if trusted KB direct_answer evidence exists,
+    # it wins over provider fallback, provider handoff, or an incorrect provider
+    # reply. Only explicit human/business actions and live tracking evidence keep
+    # their controlled tool/handoff paths.
     if tracking_number or tracking_fact_evidence_present:
         return None
     if _blocked_by_explicit_handoff_or_business_action(body):
