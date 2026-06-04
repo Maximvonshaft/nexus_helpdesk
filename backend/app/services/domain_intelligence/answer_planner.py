@@ -19,6 +19,19 @@ def plan_answer(understanding: DomainQueryUnderstandingResult, *, selected_candi
             safe_to_answer_from_kb=False,
         )
 
+    if boundary == ActionBoundary.HUMAN_REQUIRED:
+        plan_type = AnswerPlanType.WORK_ORDER_CREATE if AnswerPlanType.WORK_ORDER_CREATE in understanding.allowed_plan_types else AnswerPlanType.HANDOFF
+        return AnswerPlan(
+            plan_type=plan_type,
+            reason="human_review_required",
+            requires_handoff=True,
+            requires_tool=plan_type == AnswerPlanType.WORK_ORDER_CREATE,
+            allowed_tools=_candidate_tools(selected_candidate),
+            evidence_class=evidence_class,
+            action_boundary=boundary,
+            safe_to_answer_from_kb=False,
+        )
+
     if understanding.requires_verification:
         return AnswerPlan(
             plan_type=AnswerPlanType.TOOL_PREPARE if understanding.requires_tool_boundary else AnswerPlanType.CLARIFY,
