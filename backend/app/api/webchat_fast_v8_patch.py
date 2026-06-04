@@ -206,7 +206,14 @@ async def _process_fast_reply_v8(
         conversation_id = conversation.id
         routing_context = _wf.resolve_fast_routing_context(db, country_code=payload.country_code, market_code=payload.market_code, channel_account_key=payload.channel_account_key)
 
-    tracking_number = _wf._tracking_candidate(body=payload.body, context=merged_context, tracking_number=business_state.tracking_number)
+    if _literal_answer_request(payload.body):
+        # Exact-phrase KB audit prompts may contain timestamp-like or UUID-like
+        # tokens. They must not be interpreted as waybill/tracking numbers, or
+        # policy_gate will correctly block the raw token before the trusted KB
+        # final guard can return the approved direct_answer.
+        tracking_number = None
+    else:
+        tracking_number = _wf._tracking_candidate(body=payload.body, context=merged_context, tracking_number=business_state.tracking_number)
     tracking_fact = _wf._lookup_fast_tracking_fact(
         tracking_number=tracking_number,
         conversation_id=conversation_id,
