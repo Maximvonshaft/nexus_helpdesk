@@ -15,6 +15,7 @@ from .ai_runtime.openclaw_responses_provider import (
 from .ai_runtime.provider_router import generate_fast_reply
 from .ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
 from .ai_runtime_context import build_webchat_runtime_context
+from .domain_intelligence.webchat_shadow_bridge import build_webchat_domain_shadow_trace
 from .knowledge_grounding_service import enforce_grounded_answer, is_explicit_handoff_or_business_action, select_approved_direct_answer_override, select_trusted_direct_answer_evidence
 from .knowledge_prompt_service import summarize_rag_trace
 from .provider_runtime.webchat_fast_dispatcher import dispatch_webchat_fast_reply
@@ -224,7 +225,7 @@ def _runtime_context_for_request(
 ) -> dict[str, Any] | None:
     db = SessionLocal()
     try:
-        return build_webchat_runtime_context(
+        runtime_context = build_webchat_runtime_context(
             db,
             tenant_key=tenant_key,
             channel_key=channel_key,
@@ -232,10 +233,44 @@ def _runtime_context_for_request(
             market_id=market_id,
             language=language,
         )
+        return _attach_domain_shadow_trace(
+            runtime_context,
+            body=body,
+            tenant_key=tenant_key,
+            channel_key=channel_key,
+            market_id=market_id,
+            language=language,
+        )
     except Exception:
         return None
     finally:
         db.close()
+
+
+def _attach_domain_shadow_trace(
+    runtime_context: dict[str, Any] | None,
+    *,
+    body: str,
+    tenant_key: str,
+    channel_key: str,
+    market_id: int | None,
+    language: str | None,
+) -> dict[str, Any] | None:
+    if not isinstance(runtime_context, dict):
+        return runtime_context
+    try:
+        trace = build_webchat_domain_shadow_trace(
+            body=body,
+            tenant_key=tenant_key,
+            channel_key=channel_key,
+            market_id=market_id,
+            language=language,
+        )
+    except Exception:
+        trace = None
+    if not trace:
+        return runtime_context
+    return {**runtime_context, "domain_intelligence_trace": trace}
 
 
 def _provider_result_with_summary(provider_result: FastAIProviderResult, safe_summary: dict[str, Any]) -> FastAIProviderResult:
@@ -254,7 +289,6 @@ def _deterministic_direct_answer_enabled() -> bool:
 def _knowledge_context(runtime_context: dict[str, Any] | None) -> dict[str, Any]:
     knowledge = runtime_context.get("knowledge_context") if isinstance(runtime_context, dict) else None
     return knowledge if isinstance(knowledge, dict) else {}
-
 
 
 
