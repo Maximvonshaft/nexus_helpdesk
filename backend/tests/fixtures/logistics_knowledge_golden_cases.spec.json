@@ -1,0 +1,180 @@
+{
+  "schema_version": "kir2_logistics_golden_cases_v1",
+  "status": "specification_only",
+  "runtime_behavior_change": false,
+  "purpose": "Define the logistics knowledge evaluation surface for KIR 2.0. PR382 does not implement the runner; PR386 must turn these cases into CI-gated execution.",
+  "global_expectations": {
+    "no_hardcoded_answer": true,
+    "evidence_trace_required": true,
+    "ai_decision_trace_required": true,
+    "no_unwanted_ticket": true,
+    "no_unwanted_handoff": true,
+    "no_server_safe_fallback_for_trusted_evidence": true,
+    "live_status_requires_tracking_fact": true,
+    "actions_require_verification_or_tool_boundary": true
+  },
+  "case_groups": [
+    {
+      "group": "last_mile_delivery_attempt",
+      "required_intents": ["delivery_attempt_failed", "recipient_absent", "redelivery"],
+      "cases": [
+        {"id":"LM001","query":"The courier came while I was not home. Will you deliver again?","expected_plan":"direct_answer","expected_domain":"last_mile","must_include":["recipient absent","second delivery attempt"],"must_not_include":["pricing","fee"]},
+        {"id":"LM002","query":"What happens if the recipient is not at home during a delivery attempt?","expected_plan":"direct_answer","expected_domain":"last_mile","must_include":["not at home","next working day"],"must_not_include":["live status"]},
+        {"id":"LM003","query":"I missed the delivery attempt today. What should I do now?","expected_plan":"direct_answer","expected_domain":"last_mile","must_include":["tracking update","phone reachable"],"must_not_include":["cancelled"]},
+        {"id":"LM004","query":"No one was available when the driver arrived. Will there be a second attempt?","expected_plan":"direct_answer","expected_domain":"last_mile","must_include":["second delivery attempt"],"must_not_include":["handling fee"]},
+        {"id":"LM005","query":"The parcel is out for delivery but I cannot be home today.","expected_plan":"guided_answer","expected_domain":"last_mile","must_include":["keep phone reachable","tracking"],"must_not_include":["delivered"]},
+        {"id":"LM006","query":"快递员来的时候我不在家，还会再派送吗？","expected_plan":"direct_answer","expected_domain":"last_mile","language":"zh","must_include":["再次派送","保持电话畅通"],"must_not_include":["费用"]},
+        {"id":"LM007","query":"客户不在家导致派送失败，下一步是什么？","expected_plan":"direct_answer","expected_domain":"last_mile","language":"zh","must_include":["派送失败","二次派送"],"must_not_include":["清关"]},
+        {"id":"LM008","query":"My package had a failed delivery attempt because I was away.","expected_plan":"direct_answer","expected_domain":"last_mile","must_include":["failed delivery attempt"],"must_not_include":["customs"]},
+        {"id":"LM009","query":"Can the courier try again tomorrow after a failed attempt?","expected_plan":"direct_answer","expected_domain":"last_mile","must_include":["next working day","service rules"],"must_not_include":["refund"]},
+        {"id":"LM010","query":"I was not home and now tracking says delivery failed.","expected_plan":"direct_answer","expected_domain":"last_mile","must_include":["tracking","second delivery attempt"],"must_not_include":["driver phone disclosed"]}
+      ]
+    },
+    {
+      "group": "tracking_boundary",
+      "required_intents": ["tracking_status"],
+      "cases": [
+        {"id":"TR001","query":"Where is my parcel now?","expected_plan":"tracking_tool","must_use_tool":"tracking","must_not_plan":"direct_answer_only"},
+        {"id":"TR002","query":"Track CH120000011425","expected_plan":"tracking_tool","must_use_tool":"tracking","must_not_expose_full_tracking_number":true},
+        {"id":"TR003","query":"Has my shipment been delivered?","expected_plan":"tracking_tool","must_use_tool":"tracking"},
+        {"id":"TR004","query":"我的包裹现在在哪里？","expected_plan":"tracking_tool","language":"zh","must_use_tool":"tracking"},
+        {"id":"TR005","query":"Can you check the current status of my waybill?","expected_plan":"tracking_tool","must_use_tool":"tracking"},
+        {"id":"TR006","query":"I need the latest delivery scan.","expected_plan":"tracking_tool","must_use_tool":"tracking"},
+        {"id":"TR007","query":"The tracking page says exception, what does it mean?","expected_plan":"tracking_tool_or_clarify","must_not_plan":"policy_only"},
+        {"id":"TR008","query":"物流显示异常，帮我查一下。","expected_plan":"tracking_tool","language":"zh","must_use_tool":"tracking"},
+        {"id":"TR009","query":"Is my parcel still in the station?","expected_plan":"tracking_tool","must_use_tool":"tracking"},
+        {"id":"TR010","query":"I want a live update for my delivery.","expected_plan":"tracking_tool","must_use_tool":"tracking"}
+      ]
+    },
+    {
+      "group": "address_issue_and_change",
+      "required_intents": ["address_issue", "address_change"],
+      "cases": [
+        {"id":"AD001","query":"My address is wrong, can you change it?","expected_plan":"address_change_tool_or_verification","requires_verification":true},
+        {"id":"AD002","query":"The courier says my address cannot be found.","expected_plan":"guided_answer_or_tool","expected_domain":"address_issue"},
+        {"id":"AD003","query":"I need to update the delivery address before the next attempt.","expected_plan":"address_change_tool_or_verification","requires_verification":true},
+        {"id":"AD004","query":"地址写错了，可以改地址吗？","expected_plan":"address_change_tool_or_verification","language":"zh","requires_verification":true},
+        {"id":"AD005","query":"Please deliver to another building tomorrow.","expected_plan":"address_change_tool_or_verification","requires_verification":true},
+        {"id":"AD006","query":"The postal code is wrong on my order.","expected_plan":"address_change_tool_or_verification","requires_verification":true},
+        {"id":"AD007","query":"Can I change only the phone number?","expected_plan":"verification_or_clarify","requires_verification":true},
+        {"id":"AD008","query":"Recipient moved to a different city.","expected_plan":"address_change_tool_or_handoff","requires_verification":true},
+        {"id":"AD009","query":"The delivery failed because address is incomplete.","expected_plan":"guided_answer_or_tool","expected_domain":"address_issue"},
+        {"id":"AD010","query":"Can the driver call me for the correct address?","expected_plan":"guided_answer_or_tool","expected_domain":"address_issue"}
+      ]
+    },
+    {
+      "group": "refusal_and_cancellation",
+      "required_intents": ["refusal", "cancellation"],
+      "cases": [
+        {"id":"RC001","query":"I want to refuse this parcel.","expected_plan":"refusal_tool_or_handoff","requires_verification":true},
+        {"id":"RC002","query":"The recipient refuses to accept delivery.","expected_plan":"refusal_tool_or_handoff","requires_verification":true},
+        {"id":"RC003","query":"Can I cancel the delivery?","expected_plan":"cancel_tool_or_handoff","requires_verification":true},
+        {"id":"RC004","query":"我要拒收这个包裹。","expected_plan":"refusal_tool_or_handoff","language":"zh","requires_verification":true},
+        {"id":"RC005","query":"取消这个订单可以吗？","expected_plan":"cancel_tool_or_handoff","language":"zh","requires_verification":true},
+        {"id":"RC006","query":"Please return the parcel to sender.","expected_plan":"return_or_refusal_boundary","requires_verification":true},
+        {"id":"RC007","query":"The customer rejected the package at the door.","expected_plan":"refusal_tool_or_handoff","requires_verification":true},
+        {"id":"RC008","query":"I ordered by mistake and do not want the parcel.","expected_plan":"cancel_or_refusal_boundary","requires_verification":true},
+        {"id":"RC009","query":"Can you stop the courier from coming?","expected_plan":"cancel_tool_or_handoff","requires_verification":true},
+        {"id":"RC010","query":"I no longer need this shipment.","expected_plan":"cancel_or_refusal_boundary","requires_verification":true}
+      ]
+    },
+    {
+      "group": "complaint_and_escalation",
+      "required_intents": ["complaint_escalation"],
+      "cases": [
+        {"id":"CP001","query":"I want to complain about the courier.","expected_plan":"work_order_or_handoff","must_not_plan":"direct_answer_only"},
+        {"id":"CP002","query":"The driver was rude and did not deliver my parcel.","expected_plan":"work_order_or_handoff"},
+        {"id":"CP003","query":"I need a manager to review this failed delivery.","expected_plan":"handoff_or_work_order"},
+        {"id":"CP004","query":"我要投诉快递员。","expected_plan":"work_order_or_handoff","language":"zh"},
+        {"id":"CP005","query":"This is urgent, please escalate my case.","expected_plan":"handoff_or_work_order"},
+        {"id":"CP006","query":"I have complained several times and nobody solved it.","expected_plan":"handoff_or_work_order"},
+        {"id":"CP007","query":"The station keeps marking failed delivery incorrectly.","expected_plan":"work_order_or_handoff"},
+        {"id":"CP008","query":"I want compensation for the failed delivery.","expected_plan":"compensation_or_handoff","requires_verification":true},
+        {"id":"CP009","query":"Your courier lied about coming to my address.","expected_plan":"work_order_or_handoff"},
+        {"id":"CP010","query":"Please raise a formal complaint ticket.","expected_plan":"work_order_create_or_handoff"}
+      ]
+    },
+    {
+      "group": "pod_and_dispute",
+      "required_intents": ["proof_of_delivery", "complaint_escalation"],
+      "cases": [
+        {"id":"PD001","query":"Tracking says delivered but I did not receive it.","expected_plan":"tracking_tool_then_work_order_or_handoff"},
+        {"id":"PD002","query":"Can you send me the proof of delivery?","expected_plan":"pod_tool_or_handoff","requires_verification":true},
+        {"id":"PD003","query":"The POD photo is wrong.","expected_plan":"work_order_or_handoff"},
+        {"id":"PD004","query":"显示已签收但我没收到。","expected_plan":"tracking_tool_then_work_order_or_handoff","language":"zh"},
+        {"id":"PD005","query":"Someone else signed for my parcel.","expected_plan":"work_order_or_handoff"},
+        {"id":"PD006","query":"Delivery proof does not match my address.","expected_plan":"work_order_or_handoff"},
+        {"id":"PD007","query":"I need signature evidence for this delivery.","expected_plan":"pod_tool_or_handoff","requires_verification":true},
+        {"id":"PD008","query":"The driver marked delivered without calling me.","expected_plan":"work_order_or_handoff"},
+        {"id":"PD009","query":"Package was left outside and disappeared.","expected_plan":"lost_damage_or_handoff"},
+        {"id":"PD010","query":"I dispute the delivery result.","expected_plan":"work_order_or_handoff"}
+      ]
+    },
+    {
+      "group": "driver_contact",
+      "required_intents": ["driver_contact"],
+      "cases": [
+        {"id":"DR001","query":"Can I get the courier phone number?","expected_plan":"guided_answer_or_policy","must_not_expose_private_phone_without_policy":true},
+        {"id":"DR002","query":"Please ask the driver to call me.","expected_plan":"tool_or_handoff_boundary"},
+        {"id":"DR003","query":"The driver is near my home, can you connect me?","expected_plan":"guided_answer_or_handoff"},
+        {"id":"DR004","query":"给我快递员电话。","expected_plan":"guided_answer_or_policy","language":"zh"},
+        {"id":"DR005","query":"Courier did not answer my call.","expected_plan":"work_order_or_guided_answer"},
+        {"id":"DR006","query":"Can driver deliver after 6pm?","expected_plan":"policy_or_clarify"},
+        {"id":"DR007","query":"I want to schedule a time with the driver.","expected_plan":"guided_answer_or_tool"},
+        {"id":"DR008","query":"Driver called but I missed it.","expected_plan":"last_mile_policy_or_guided_answer"},
+        {"id":"DR009","query":"Can the courier wait for 30 minutes?","expected_plan":"guided_answer_or_policy"},
+        {"id":"DR010","query":"I need the courier contact because gate is locked.","expected_plan":"guided_answer_or_tool"}
+      ]
+    },
+    {
+      "group": "sla_delay",
+      "required_intents": ["sla_delay"],
+      "cases": [
+        {"id":"SL001","query":"My parcel is late. What is the delivery SLA?","expected_plan":"kb_or_tracking_boundary"},
+        {"id":"SL002","query":"How long does delivery normally take in Switzerland?","expected_plan":"direct_answer_if_kb_exists"},
+        {"id":"SL003","query":"It has been two days and no delivery attempt happened.","expected_plan":"tracking_tool_or_work_order"},
+        {"id":"SL004","query":"派送超时了怎么办？","expected_plan":"tracking_tool_or_policy","language":"zh"},
+        {"id":"SL005","query":"Will you deliver within 24 hours?","expected_plan":"sla_policy_if_kb_exists"},
+        {"id":"SL006","query":"My parcel has not moved since yesterday.","expected_plan":"tracking_tool"},
+        {"id":"SL007","query":"What happens if SLA is missed?","expected_plan":"policy_or_handoff"},
+        {"id":"SL008","query":"The station delayed my parcel.","expected_plan":"tracking_tool_or_work_order"},
+        {"id":"SL009","query":"Can I claim compensation for delay?","expected_plan":"compensation_or_handoff","requires_verification":true},
+        {"id":"SL010","query":"Delivery promise was broken.","expected_plan":"tracking_tool_or_work_order"}
+      ]
+    },
+    {
+      "group": "pickup_and_customs",
+      "required_intents": ["pickup_issue", "customs_issue"],
+      "cases": [
+        {"id":"PC001","query":"Pickup was not completed today.","expected_plan":"pickup_tool_or_work_order"},
+        {"id":"PC002","query":"Courier did not come for pickup.","expected_plan":"pickup_tool_or_work_order"},
+        {"id":"PC003","query":"My parcel is held by customs.","expected_plan":"customs_policy_or_tracking"},
+        {"id":"PC004","query":"清关卡住了怎么办？","expected_plan":"customs_policy_or_tracking","language":"zh"},
+        {"id":"PC005","query":"What documents are needed for customs?","expected_plan":"direct_answer_if_kb_exists"},
+        {"id":"PC006","query":"Pickup address is wrong.","expected_plan":"pickup_or_address_tool_boundary"},
+        {"id":"PC007","query":"The package was not collected from sender.","expected_plan":"pickup_tool_or_work_order"},
+        {"id":"PC008","query":"Customs fee is too high.","expected_plan":"customs_or_handoff"},
+        {"id":"PC009","query":"Who pays import tax?","expected_plan":"customs_policy_if_kb_exists"},
+        {"id":"PC010","query":"I need to change pickup time.","expected_plan":"pickup_tool_or_handoff"}
+      ]
+    },
+    {
+      "group": "negative_and_wrong_kb_controls",
+      "required_intents": [],
+      "cases": [
+        {"id":"NG001","query":"hello","expected_plan":"ai_general_reply","must_not_ground_business_kb":true},
+        {"id":"NG002","query":"thanks","expected_plan":"ai_general_reply","must_not_ground_business_kb":true},
+        {"id":"NG003","query":"32","expected_plan":"ai_general_reply_or_clarify","must_not_ground_business_kb":true},
+        {"id":"NG004","query":"What is your name?","expected_plan":"persona_answer","must_not_ground_logistics_kb":true},
+        {"id":"NG005","query":"Tell me a joke.","expected_plan":"safe_general_reply","must_not_ground_business_kb":true},
+        {"id":"NG006","query":"Rümlang fee question should not answer last-mile redelivery.","expected_plan":"pricing_or_clarify","wrong_kb_competition":true},
+        {"id":"NG007","query":"Recipient not home should not answer Rümlang demo handling fee.","expected_plan":"last_mile_policy","wrong_kb_competition":true},
+        {"id":"NG008","query":"Live tracking should not be answered from SLA FAQ.","expected_plan":"tracking_tool","wrong_kb_competition":true},
+        {"id":"NG009","query":"Address change should not be completed without verification.","expected_plan":"verification_required","wrong_kb_competition":true},
+        {"id":"NG010","query":"Complaint should not be closed with a generic FAQ.","expected_plan":"work_order_or_handoff","wrong_kb_competition":true}
+      ]
+    }
+  ],
+  "minimum_total_cases_required": 100,
+  "ci_gate_required_in_pr386": true
+}
