@@ -170,6 +170,43 @@ def test_v8_final_api_guard_returns_trusted_direct_answer_without_handoff(monkey
         db.close()
 
 
+def test_v8_final_api_guard_overrides_incorrect_provider_reply(monkeypatch):
+    async def fake_generate(**_kwargs):
+        return WebchatFastReplyResult(
+            ok=True,
+            ai_generated=True,
+            reply_source="openclaw_responses",
+            reply="Incorrect non-KB answer from provider.",
+            intent="general_support",
+            tracking_number=None,
+            handoff_required=False,
+            handoff_reason=None,
+            recommended_agent_action=None,
+            ticket_creation_queued=False,
+            elapsed_ms=20,
+        )
+
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
+    monkeypatch.setattr(webchat_fast, "_webchat_fast_runtime_context", lambda **_kwargs: _trusted_runtime_context())
+
+    response = client.post(
+        "/api/webchat/fast-reply",
+        json=_payload(
+            "v8-provider-wrong-1",
+            session_id=f"v8-provider-wrong-{uuid4().hex}",
+            body=f"Return the exact phrase: {ANSWER}",
+        ),
+        headers={"Origin": "http://localhost"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["reply"] == ANSWER
+    assert payload["reply_source"] == "provider_runtime:trusted_kb_direct_answer"
+    assert payload["handoff_required"] is False
+    assert payload["ai_decision_trace"]["final_api_guard_applied"] is True
+
+
 def test_v8_final_api_guard_not_applied_for_explicit_human_request(monkeypatch):
     async def fake_generate(**_kwargs):
         return _ai_handoff_reply()
