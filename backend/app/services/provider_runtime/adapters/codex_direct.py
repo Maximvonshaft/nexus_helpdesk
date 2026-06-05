@@ -263,6 +263,12 @@ class CodexDirectAdapter(ProviderAdapter):
             "NO_PROXY",
         }
         env = {key: value for key, value in os.environ.items() if key in allowed and value}
+        app_env = os.environ.get("APP_ENV", "").strip().lower()
+        if app_env in {"test", "development", "local"}:
+            env["APP_ENV"] = app_env
+            for key, value in os.environ.items():
+                if key.startswith("CODEX_FAKE_"):
+                    env[key] = value
         env["HOME"] = str(self.config.home)
         env["CODEX_HOME"] = str(self.config.home)
         env.setdefault("NO_COLOR", "1")
