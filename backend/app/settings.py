@@ -123,6 +123,15 @@ class Settings:
         self.admin_action_rate_limit_batch_max = int(os.getenv("ADMIN_ACTION_RATE_LIMIT_BATCH_MAX", "3"))
         self.admin_action_rate_limit_consume_once_max = int(os.getenv("ADMIN_ACTION_RATE_LIMIT_CONSUME_ONCE_MAX", "5"))
         self.webchat_ai_auto_reply_mode = os.getenv("WEBCHAT_AI_AUTO_REPLY_MODE", "safe_ack" if self.app_env == "production" else "safe_ai").strip().lower() or "safe_ack"
+        self.provider_runtime_primary_provider = os.getenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "").strip().lower()
+        self.provider_runtime_fallback_providers = self._parse_csv(os.getenv("PROVIDER_RUNTIME_FALLBACK_PROVIDERS", ""))
+        self.codex_direct_enabled = _env_bool("CODEX_DIRECT_ENABLED", False)
+        self.codex_direct_command = os.getenv("CODEX_DIRECT_COMMAND", "/usr/local/bin/codex").strip() or "/usr/local/bin/codex"
+        self.codex_direct_home = os.getenv("CODEX_DIRECT_HOME", "/app").strip() or "/app"
+        self.codex_direct_model = os.getenv("CODEX_DIRECT_MODEL", "gpt-5.3-codex-spark").strip() or "gpt-5.3-codex-spark"
+        self.codex_direct_timeout_seconds = int(os.getenv("CODEX_DIRECT_TIMEOUT_SECONDS", "25"))
+        self.codex_direct_max_prompt_chars = int(os.getenv("CODEX_DIRECT_MAX_PROMPT_CHARS", "12000"))
+        self.codex_direct_require_json = _env_bool("CODEX_DIRECT_REQUIRE_JSON", True)
         self.webchat_ai_reconciler_enabled = _env_bool("WEBCHAT_AI_RECONCILER_ENABLED", True)
         try:
             self.webchat_ai_reconciler_interval_seconds = max(
@@ -199,6 +208,12 @@ class Settings:
             raise RuntimeError("ADMIN_ACTION_RATE_LIMIT_CONSUME_ONCE_MAX must be between 1 and 1000")
         if self.webchat_ai_auto_reply_mode not in {"off", "safe_ack", "safe_ai"}:
             raise RuntimeError("WEBCHAT_AI_AUTO_REPLY_MODE must be off, safe_ack, or safe_ai")
+        if self.provider_runtime_primary_provider and self.provider_runtime_primary_provider not in {"codex_app_server", "codex_direct", "openclaw_responses", "openai_responses", "rule_engine"}:
+            raise RuntimeError("PROVIDER_RUNTIME_PRIMARY_PROVIDER must be a registered provider runtime name")
+        if self.codex_direct_timeout_seconds < 1 or self.codex_direct_timeout_seconds > 120:
+            raise RuntimeError("CODEX_DIRECT_TIMEOUT_SECONDS must be between 1 and 120")
+        if self.codex_direct_max_prompt_chars < 1000 or self.codex_direct_max_prompt_chars > 200000:
+            raise RuntimeError("CODEX_DIRECT_MAX_PROMPT_CHARS must be between 1000 and 200000")
         if self.webchat_static_quick_replies_mode not in {"off", "legacy"}:
             raise RuntimeError("WEBCHAT_STATIC_QUICK_REPLIES_MODE must be off or legacy")
         if self.webchat_knowledge_reply_mode not in {"ai_grounded", "deterministic_direct_answer"}:

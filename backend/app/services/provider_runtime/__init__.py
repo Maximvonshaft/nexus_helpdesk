@@ -15,6 +15,7 @@ def bootstrap_provider_runtime() -> None:
         return
 
     from .adapters.codex_app_server import CodexAppServerAdapter
+    from .adapters.codex_direct import CodexDirectAdapter
     from .adapters.openai_responses import OpenAIResponsesAdapter
     from .adapters.openclaw_responses import OpenClawResponsesAdapter
 
@@ -27,6 +28,7 @@ def bootstrap_provider_runtime() -> None:
         return OpenAIResponsesAdapter(api_key)
 
     ProviderRegistry.register("codex_app_server", codex_factory)
+    ProviderRegistry.register("codex_direct", lambda db: CodexDirectAdapter())
     ProviderRegistry.register("openai_responses", openai_factory)
     ProviderRegistry.register("openclaw_responses", lambda db: OpenClawResponsesAdapter())
 

@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.settings import get_settings
+
 from .output_contracts import OutputContracts
 from .registry import ProviderRegistry
 from .schemas import ProviderRequest, ProviderResult
@@ -80,6 +82,15 @@ class ProviderRuntimeRouter:
             kill_switch = rule["kill_switch"]
             canary_percent = rule["canary_percent"] or 0
 
+        settings = get_settings()
+        if settings.provider_runtime_primary_provider:
+            primary_provider = settings.provider_runtime_primary_provider
+            configured_fallbacks = list(settings.provider_runtime_fallback_providers)
+            if configured_fallbacks:
+                fallbacks = configured_fallbacks
+            elif primary_provider == "codex_direct":
+                fallbacks = ["rule_engine"]
+
         if kill_switch and primary_provider == "codex_app_server":
             self._write_audit(request, "generate", "skipped", primary_provider, 0, {"kill_switch": True}, "kill_switch_active")
             if fallbacks:
@@ -102,6 +113,7 @@ class ProviderRuntimeRouter:
         providers_to_try = [primary_provider] + list(fallbacks)
         seen: set[str] = set()
         providers_to_try = [name for name in providers_to_try if name and not (name in seen or seen.add(name))]
+        primary_failure: ProviderResult | None = None
 
         for provider_name in providers_to_try:
             adapter = ProviderRegistry.get(provider_name, self.db)
@@ -112,6 +124,8 @@ class ProviderRuntimeRouter:
             result = await adapter.generate(self.db, request)
             if not result.ok:
                 self._write_audit(request, "generate", "failed", provider_name, result.elapsed_ms, result.raw_payload_safe_summary, result.error_code)
+                if provider_name == primary_provider:
+                    primary_failure = result
                 if not result.fallback_allowed:
                     return result
                 continue
@@ -134,6 +148,8 @@ class ProviderRuntimeRouter:
                 self._write_audit(request, "parse_reject", "failed", provider_name, result.elapsed_ms, {"parse_error": str(exc)[:500]}, "parse_reject")
                 continue
 
+        if primary_provider == "codex_direct" and primary_failure is not None:
+            return primary_failure
         self._write_audit(request, "generate", "failed", "router", 0, {}, "all_providers_failed")
         return ProviderResult.unavailable("router", "all_providers_failed", 0)
 

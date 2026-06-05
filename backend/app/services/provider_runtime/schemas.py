@@ -31,6 +31,8 @@ class ProviderRequest(BaseModel):
 class ProviderResult(BaseModel):
     ok: bool
     provider: str
+    raw_provider: Optional[str] = None
+    reply_source: Optional[str] = None
     model: Optional[str] = None
     elapsed_ms: int
     raw_payload_safe_summary: Optional[dict] = None

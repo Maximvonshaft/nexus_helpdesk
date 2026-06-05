@@ -16,6 +16,7 @@ from ..services.provider_runtime.codex_device_auth_service import CodexDeviceAut
 from ..services.provider_runtime.codex_oauth_config import CodexOAuthConfig, resolve_provider_tenant_id
 from ..services.provider_runtime.codex_smoke_chat import CodexSmokeChatError, CodexSmokeChatRequest, CodexSmokeChatService
 from ..services.provider_runtime.credential_crypto import CredentialCryptoService
+from ..services.provider_runtime.adapters.codex_direct import codex_direct_ready_status
 from .deps import get_current_user
 
 
@@ -97,6 +98,12 @@ async def codex_smoke_chat(payload: CodexSmokeChatRequestBody, db: Session = Dep
                 "request_id": exc.request_id,
             },
         ) from exc
+
+
+@router.post("/codex/direct-smoke")
+def codex_direct_smoke(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    _ensure_admin_manage(current_user, db)
+    return codex_direct_ready_status().to_public_dict()
 
 
 @router.post("/codex/authorize")
