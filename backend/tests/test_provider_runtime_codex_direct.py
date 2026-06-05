@@ -261,6 +261,7 @@ async def test_router_selects_codex_direct_from_env(monkeypatch):
         return mock_rule
 
     mock_db.execute.side_effect = mock_db_execute
+    bootstrap_provider_runtime()
     ProviderRegistry.register(
         "codex_direct",
         lambda db: _SuccessAdapter(),
