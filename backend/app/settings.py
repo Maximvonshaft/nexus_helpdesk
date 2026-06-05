@@ -164,6 +164,21 @@ class Settings:
         self.webchat_ws_max_connections = int(os.getenv("WEBCHAT_WS_MAX_CONNECTIONS", "1000"))
         self.webchat_ws_max_connections_per_user = int(os.getenv("WEBCHAT_WS_MAX_CONNECTIONS_PER_USER", "10"))
 
+        self.provider_runtime_primary_provider = os.getenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "codex_app_server").strip() or "codex_app_server"
+        self.provider_runtime_fallback_providers = self._parse_csv(os.getenv("PROVIDER_RUNTIME_FALLBACK_PROVIDERS", ""))
+        self.provider_runtime_output_contract = os.getenv("PROVIDER_RUNTIME_OUTPUT_CONTRACT", "speedaf_webchat_fast_reply_v1").strip() or "speedaf_webchat_fast_reply_v1"
+        self.provider_runtime_timeout_ms = int(os.getenv("PROVIDER_RUNTIME_TIMEOUT_MS", "10000"))
+        self.provider_runtime_canary_percent = int(os.getenv("PROVIDER_RUNTIME_CANARY_PERCENT", "100"))
+        self.provider_runtime_kill_switch = _env_bool("PROVIDER_RUNTIME_KILL_SWITCH", False)
+        self.codex_direct_enabled = _env_bool("CODEX_DIRECT_ENABLED", False)
+        self.codex_direct_command = os.getenv("CODEX_DIRECT_COMMAND", "/usr/local/bin/codex").strip() or "/usr/local/bin/codex"
+        self.codex_direct_home = os.getenv("CODEX_DIRECT_HOME", "/app").strip() or "/app"
+        self.codex_direct_model = os.getenv("CODEX_DIRECT_MODEL", "gpt-5.3-codex-spark").strip() or "gpt-5.3-codex-spark"
+        self.codex_direct_timeout_seconds = int(os.getenv("CODEX_DIRECT_TIMEOUT_SECONDS", "25"))
+        self.codex_direct_max_prompt_chars = int(os.getenv("CODEX_DIRECT_MAX_PROMPT_CHARS", "12000"))
+        self.codex_direct_require_json = _env_bool("CODEX_DIRECT_REQUIRE_JSON", True)
+        self.codex_direct_exec_args_template = os.getenv("CODEX_DIRECT_EXEC_ARGS_TEMPLATE", "exec --model {model} --skip-git-repo-check -").strip() or "exec --model {model} --skip-git-repo-check -"
+
         self.request_id_header = os.getenv("REQUEST_ID_HEADER", "X-Request-Id")
         self.log_json = os.getenv("LOG_JSON", "true").strip().lower() == "true"
         self.metrics_enabled = os.getenv("METRICS_ENABLED", "false").strip().lower() == "true"
@@ -245,6 +260,20 @@ class Settings:
             raise RuntimeError("EMAIL_MAILBOX_SYNC_BATCH_SIZE must be between 1 and 100")
         if self.webchat_tracking_fact_lookup_enabled and not self.webchat_tracking_fact_redaction_enabled:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED must be true when tracking lookup is enabled")
+        if self.provider_runtime_primary_provider not in {"codex_app_server", "codex_direct", "openclaw_responses", "openai_responses", "rule_engine"}:
+            raise RuntimeError("PROVIDER_RUNTIME_PRIMARY_PROVIDER must be a registered provider")
+        if self.provider_runtime_timeout_ms < 500 or self.provider_runtime_timeout_ms > 120000:
+            raise RuntimeError("PROVIDER_RUNTIME_TIMEOUT_MS must be between 500 and 120000")
+        if self.provider_runtime_canary_percent < 0 or self.provider_runtime_canary_percent > 100:
+            raise RuntimeError("PROVIDER_RUNTIME_CANARY_PERCENT must be between 0 and 100")
+        if self.codex_direct_timeout_seconds < 1 or self.codex_direct_timeout_seconds > 120:
+            raise RuntimeError("CODEX_DIRECT_TIMEOUT_SECONDS must be between 1 and 120")
+        if self.codex_direct_max_prompt_chars < 1000 or self.codex_direct_max_prompt_chars > 50000:
+            raise RuntimeError("CODEX_DIRECT_MAX_PROMPT_CHARS must be between 1000 and 50000")
+        if not self.codex_direct_command:
+            raise RuntimeError("CODEX_DIRECT_COMMAND must be set")
+        if not self.codex_direct_home:
+            raise RuntimeError("CODEX_DIRECT_HOME must be set")
         if self.app_env == "production":
             if not self.jwt_secret_key:
                 raise RuntimeError("SECRET_KEY must be set in production")
