@@ -31,6 +31,8 @@ class ProviderRequest(BaseModel):
 class ProviderResult(BaseModel):
     ok: bool
     provider: str
+    raw_provider: Optional[str] = None
+    reply_source: Optional[str] = None
     model: Optional[str] = None
     elapsed_ms: int
     raw_payload_safe_summary: Optional[dict] = None
@@ -44,6 +46,8 @@ class ProviderResult(BaseModel):
         return cls(
             ok=False,
             provider=provider,
+            raw_provider=provider,
+            reply_source=provider,
             elapsed_ms=elapsed_ms,
             error_code=error_code,
             retryable=False,

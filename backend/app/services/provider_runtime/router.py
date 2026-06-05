@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -14,6 +15,8 @@ from .registry import ProviderRegistry
 from .schemas import ProviderRequest, ProviderResult
 
 logger = logging.getLogger(__name__)
+
+_DIRECT_ENV_PROVIDERS = {"codex_app_server", "codex_direct", "openclaw_responses", "openai_responses", "rule_engine"}
 
 
 class ProviderRuntimeRouter:
@@ -114,7 +117,16 @@ class ProviderRuntimeRouter:
             kill_switch = rule["kill_switch"]
             canary_percent = rule["canary_percent"] or 0
 
-        if kill_switch and primary_provider == "codex_app_server":
+        primary_provider, fallbacks, output_contract, timeout_ms, kill_switch, canary_percent = _apply_env_overrides(
+            primary_provider,
+            fallbacks,
+            output_contract,
+            timeout_ms,
+            kill_switch,
+            canary_percent,
+        )
+
+        if kill_switch:
             self._write_audit(request, "generate", "skipped", primary_provider, 0, {"kill_switch": True}, "kill_switch_active")
             if fallbacks:
                 primary_provider = fallbacks[0]
@@ -136,6 +148,7 @@ class ProviderRuntimeRouter:
         providers_to_try = [primary_provider] + list(fallbacks)
         seen: set[str] = set()
         providers_to_try = [name for name in providers_to_try if name and not (name in seen or seen.add(name))]
+        primary_failure: ProviderResult | None = None
 
         for provider_name in providers_to_try:
             adapter = ProviderRegistry.get(provider_name, self.db)
@@ -146,6 +159,8 @@ class ProviderRuntimeRouter:
             result = await adapter.generate(self.db, request)
             if not result.ok:
                 self._write_audit(request, "generate", "failed", provider_name, result.elapsed_ms, result.raw_payload_safe_summary, result.error_code)
+                if provider_name == primary_provider:
+                    primary_failure = result
                 if not result.fallback_allowed:
                     return result
                 continue
@@ -169,10 +184,42 @@ class ProviderRuntimeRouter:
                 return result
             except Exception as exc:
                 self._write_audit(request, "parse_reject", "failed", provider_name, result.elapsed_ms, {"parse_error": str(exc)[:500]}, "parse_reject")
+                if provider_name == primary_provider:
+                    primary_failure = ProviderResult.unavailable(provider_name, "parse_reject", result.elapsed_ms)
                 continue
 
+        if primary_provider == "codex_direct" and primary_failure is not None:
+            return primary_failure
         self._write_audit(request, "generate", "failed", "router", 0, {}, "all_providers_failed")
         return ProviderResult.unavailable("router", "all_providers_failed", 0)
+
+
+def _apply_env_overrides(
+    primary_provider: str,
+    fallbacks: list[str],
+    output_contract: str,
+    timeout_ms: int,
+    kill_switch: bool,
+    canary_percent: int,
+) -> tuple[str, list[str], str, int, bool, int]:
+    env_primary = os.getenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "").strip()
+    if env_primary:
+        if env_primary not in _DIRECT_ENV_PROVIDERS:
+            raise RuntimeError("PROVIDER_RUNTIME_PRIMARY_PROVIDER must be a registered provider")
+        primary_provider = env_primary
+        env_fallbacks = os.getenv("PROVIDER_RUNTIME_FALLBACK_PROVIDERS", "")
+        if env_fallbacks:
+            fallbacks = _coerce_fallbacks(env_fallbacks)
+        elif primary_provider == "codex_direct":
+            fallbacks = _coerce_fallbacks(os.getenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "rule_engine"))
+    env_contract = os.getenv("PROVIDER_RUNTIME_OUTPUT_CONTRACT", "").strip()
+    if env_contract:
+        output_contract = env_contract
+    timeout_ms = _int_env("PROVIDER_RUNTIME_TIMEOUT_MS", timeout_ms, minimum=500, maximum=120000)
+    canary_percent = _int_env("PROVIDER_RUNTIME_CANARY_PERCENT", canary_percent, minimum=0, maximum=100)
+    if os.getenv("PROVIDER_RUNTIME_KILL_SWITCH") is not None:
+        kill_switch = _env_bool("PROVIDER_RUNTIME_KILL_SWITCH", kill_switch)
+    return primary_provider, fallbacks, output_contract, timeout_ms, kill_switch, canary_percent
 
 
 def _coerce_fallbacks(value) -> list[str]:
@@ -184,7 +231,22 @@ def _coerce_fallbacks(value) -> list[str]:
         try:
             parsed = json.loads(value)
         except json.JSONDecodeError:
-            return [value]
+            return [item.strip() for item in value.split(",") if item.strip()]
         if isinstance(parsed, list):
             return [str(item) for item in parsed if item]
     return []
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(value, maximum))
