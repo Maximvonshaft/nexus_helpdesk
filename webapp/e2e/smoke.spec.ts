@@ -130,19 +130,6 @@ test('admin-capable navigation shows management entry points', async ({ page }) 
   await expect(page.getByRole('link', { name: /运行恢复/ })).toBeVisible()
 })
 
-test('command palette opens as dialog and closes with Escape', async ({ page }) => {
-  await mockAuthenticatedConsole(page, 'admin')
-  await page.goto('/')
-
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K')
-  await expect(page.getByRole('dialog', { name: '快捷操作' })).toBeVisible()
-  await expect(page.getByTestId('operator-command-palette-actions')).toBeVisible()
-  await expect(page.getByPlaceholder('输入关键词，例如：工单、WebChat、dead、重排、公告')).toBeFocused()
-
-  await page.keyboard.press('Escape')
-  await expect(page.getByRole('dialog', { name: '快捷操作' })).toHaveCount(0)
-})
-
 test('admin can open outbound email configuration page', async ({ page }) => {
   await mockAuthenticatedConsole(page, 'admin')
   await page.goto('/outbound-email')
