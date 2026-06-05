@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from app.services.provider_runtime import bootstrap_provider_runtime
-from app.services.provider_runtime.adapters.codex_direct import CodexDirectAdapter
+from app.services.provider_runtime.adapters.codex_direct import CodexDirectAdapter, _runtime_timeout_seconds
 from app.services.provider_runtime.registry import ProviderAdapter, ProviderRegistry
 from app.services.provider_runtime.router import ProviderRuntimeRouter
 from app.services.provider_runtime.schemas import ProviderRequest, ProviderResult
@@ -122,25 +122,27 @@ def _enable_direct(monkeypatch, *, fake_codex: Path, home: Path, timeout: int = 
     monkeypatch.setenv("CODEX_DIRECT_FALLBACK_ALLOWED", "true" if fallback_allowed else "false")
 
 
-def _request() -> ProviderRequest:
-    return ProviderRequest(
-        request_id="req-1",
-        tenant_id="default",
-        tenant_key="default",
-        channel_key="website",
-        session_id="sess-1",
-        scenario="webchat_fast_reply",
-        body="Please help me track my parcel.",
-        recent_context=[],
-        tracking_fact_summary=None,
-        tracking_fact_evidence_present=False,
-        output_contract="speedaf_webchat_fast_reply_v1",
-        timeout_ms=5000,
-        metadata={
+def _request(**overrides) -> ProviderRequest:
+    data = {
+        "request_id": "req-1",
+        "tenant_id": "default",
+        "tenant_key": "default",
+        "channel_key": "website",
+        "session_id": "sess-1",
+        "scenario": "webchat_fast_reply",
+        "body": "Please help me track my parcel.",
+        "recent_context": [],
+        "tracking_fact_summary": None,
+        "tracking_fact_evidence_present": False,
+        "output_contract": "speedaf_webchat_fast_reply_v1",
+        "timeout_ms": 5000,
+        "metadata": {
             "context_version": "nexus_webchat_runtime_context_v2",
             "knowledge_context": {"hits": [], "locked_facts": [], "evidence_pack": []},
         },
-    )
+    }
+    data.update(overrides)
+    return ProviderRequest(**data)
 
 
 @pytest.mark.asyncio
@@ -248,16 +250,23 @@ async def test_codex_direct_success_normalizes_json_and_tool_allowlist(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_codex_direct_subprocess_env_is_scrubbed(monkeypatch, fake_codex, codex_home):
+async def test_codex_direct_subprocess_env_is_scrubbed_and_codex_home_points_to_config_dir(monkeypatch, fake_codex, codex_home):
     _enable_direct(monkeypatch, fake_codex=fake_codex, home=codex_home)
     monkeypatch.setenv("DATABASE_URL", "postgresql://sensitive-db")
     monkeypatch.setenv("INTERNAL_SERVICE_PASSWORD", "sensitive-password")
     adapter = CodexDirectAdapter()
     env = adapter._subprocess_env()
     assert env["HOME"] == str(codex_home)
-    assert env["CODEX_HOME"] == str(codex_home)
+    assert env["CODEX_HOME"] == str(codex_home / ".codex")
     assert "DATABASE_URL" not in env
     assert "INTERNAL_SERVICE_PASSWORD" not in env
+
+
+def test_codex_direct_runtime_timeout_preserves_subsecond_budget():
+    assert _runtime_timeout_seconds(500, 25) == 0.5
+    assert _runtime_timeout_seconds(10000, 25) == 10.0
+    assert _runtime_timeout_seconds(None, 25) == 25.0
+    assert _runtime_timeout_seconds(30000, 25) == 25.0
 
 
 @pytest.mark.asyncio
@@ -267,6 +276,7 @@ async def test_codex_direct_smoke_ready(monkeypatch, fake_codex, codex_home):
     assert smoke["ready"] is True
     assert smoke["error_code"] is None
     assert "auth.json" in smoke["checks"]["auth_path"]
+    assert smoke["checks"]["codex_home"] == str(codex_home / ".codex")
 
 
 def test_provider_registry_resolves_codex_direct(monkeypatch, fake_codex, codex_home):
