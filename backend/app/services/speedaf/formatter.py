@@ -36,15 +36,14 @@ def order_fact_from_payload(payload: dict[str, Any], *, checked_at: str | None =
 
 
 def tracking_fact_from_order_fact(fact: SpeedafOrderFact) -> TrackingFactResult:
-    description_parts: list[str] = []
-    if fact.status_label or fact.status:
-        description_parts.append(fact.status_label or fact.status or "")
-    if fact.order_class_label:
-        description_parts.append(f"class: {fact.order_class_label}")
+    # Keep current parcel status separate from order class. orderClass=2 is a
+    # return-shipment classification, not a customer-visible explanation for an
+    # unknown live status code such as status=4.
+    description = fact.status_label or fact.status or None
     latest = TrackingFactEvent(
         event_time=fact.estimated_delivery_time,
         location=fact.current_branch,
-        description=" | ".join(part for part in description_parts if part) or None,
+        description=description,
     )
     return TrackingFactResult(
         ok=True,
