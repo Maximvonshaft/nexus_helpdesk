@@ -42,10 +42,10 @@ _INTENT_ALIASES = {
     "tracking_lookup": "tracking",
     "parcel_tracking": "tracking",
     "track": "tracking",
-    "handoff_request": "handoff_request",
     "human_handoff": "handoff_request",
     "handoff_create": "handoff_request",
 }
+_NOT_LOGGED_IN_MARKERS = ("not logged in", "logged out", "login required", "not authenticated")
 
 
 @dataclass(frozen=True)
@@ -132,7 +132,8 @@ class CodexDirectAdapter(ProviderAdapter):
             return CodexDirectReadiness(False, "codex_direct_binary_missing", summary)
 
         combined = f"{status.stdout or ''}\n{status.stderr or ''}"
-        logged_in = status.returncode == 0 and "logged in" in combined.lower()
+        lowered = combined.lower()
+        logged_in = status.returncode == 0 and "logged in" in lowered and not any(marker in lowered for marker in _NOT_LOGGED_IN_MARKERS)
         summary.update(
             {
                 "login_status_checked": True,
@@ -528,12 +529,8 @@ def _coerce_payload_to_dict(payload: Any) -> dict[str, Any] | None:
 
 def _try_json_object(text: str) -> dict[str, Any] | None:
     cleaned = text.strip()
-    if not cleaned:
+    if not cleaned or cleaned.startswith("```") or cleaned.endswith("```"):
         return None
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`").strip()
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
     try:
         parsed = json.loads(cleaned)
     except json.JSONDecodeError:
