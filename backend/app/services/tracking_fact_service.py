@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 from ..settings import get_settings
 from ..utils.time import utc_now
-from .speedaf.tracking_fact_source import lookup_speedaf_tracking_fact
+from .speedaf.tracking_fact_source import lookup_speedaf_track_history_fact, lookup_speedaf_tracking_fact
 from .tracking_fact_redactor import normalize_tracking_fact
 from .tracking_fact_schema import TrackingFactResult
 from .tool_governance import record_tool_call
@@ -51,6 +51,14 @@ def _current_tracking_fact_source() -> str:
     return (getattr(settings, "webchat_tracking_fact_source", "openclaw_bridge") or "openclaw_bridge").strip().lower()
 
 
+def _tracking_tool_identity(source: str) -> tuple[str, str]:
+    if source == "speedaf_api":
+        return "speedaf.order.query", "speedaf_mcp"
+    if source == "speedaf_track_query":
+        return "speedaf.express.track.query", "speedaf_track_query"
+    return "openclaw_bridge.speedaf_lookup", "openclaw_bridge"
+
+
 def _audit_tracking_lookup(
     *,
     tracking_number: str | None,
@@ -67,8 +75,7 @@ def _audit_tracking_lookup(
     safe_ticket_id = int(ticket_id) if isinstance(ticket_id, int) or (isinstance(ticket_id, str) and ticket_id.isdigit()) else None
     safe_webchat_conversation_id = int(conversation_id) if isinstance(conversation_id, int) or (isinstance(conversation_id, str) and conversation_id.isdigit()) else None
     source = _current_tracking_fact_source()
-    tool_name = "speedaf.order.query" if source == "speedaf_api" else "openclaw_bridge.speedaf_lookup"
-    provider = "speedaf_mcp" if source == "speedaf_api" else "openclaw_bridge"
+    tool_name, provider = _tracking_tool_identity(source)
     record_tool_call(
         tool_name=tool_name,
         provider=provider,
@@ -107,7 +114,7 @@ def lookup_tracking_fact(
     timeout_seconds = max(1, min(int(getattr(settings, "webchat_tracking_fact_timeout_seconds", 8) or 8), 30))
     timeout_ms = timeout_seconds * 1000
     source = _current_tracking_fact_source()
-    if not tracking_number and source != "speedaf_api":
+    if not tracking_number and source not in {"speedaf_api", "speedaf_track_query"}:
         result = TrackingFactResult(ok=False, tool_status="skipped", pii_redacted=True, failure_reason="missing_tracking_number")
         _audit_tracking_lookup(
             tracking_number=tracking_number,
@@ -144,6 +151,13 @@ def lookup_tracking_fact(
         if country_code is not None:
             kwargs["country_code"] = country_code
         return lookup_speedaf_tracking_fact(**kwargs)
+    if source == "speedaf_track_query":
+        return lookup_speedaf_track_history_fact(
+            tracking_number=tracking_number,
+            conversation_id=conversation_id,
+            ticket_id=ticket_id,
+            request_id=request_id,
+        )
     if source != "openclaw_bridge":
         result = TrackingFactResult(ok=False, tracking_number=tracking_number, tool_status="unsupported_source", pii_redacted=True, failure_reason="unsupported_tracking_fact_source")
         _audit_tracking_lookup(

@@ -6,6 +6,7 @@ from typing import Any
 from ..tracking_fact_schema import TrackingFactResult, safe_tracking_candidate
 from ..tool_governance import record_tool_call
 from .adapter import SpeedafCoreAdapter, safe_query_summary
+from .track_query import SpeedafTrackQueryClient, SpeedafTrackQueryError
 
 
 def _safe_int(value: int | str | None) -> int | None:
@@ -43,6 +44,130 @@ def _record_waybill_lookup(
         ticket_id=_safe_int(ticket_id),
         request_id=request_id,
     )
+
+
+def lookup_speedaf_track_history_fact(
+    *,
+    tracking_number: str | None,
+    conversation_id: int | str | None = None,
+    ticket_id: int | str | None = None,
+    request_id: str | None = None,
+    client: SpeedafTrackQueryClient | None = None,
+) -> TrackingFactResult:
+    """Resolve a Speedaf tracking fact from /open-api/express/track/query.
+
+    This is a read-only full-track-history source. It is intentionally separate
+    from the MCP order/query lookup and is enabled only when the caller selects
+    WEBCHAT_TRACKING_FACT_SOURCE=speedaf_track_query.
+    """
+
+    started = time.monotonic()
+    tracking = (tracking_number or "").strip().upper()
+    safe_ticket_id = _safe_int(ticket_id)
+    safe_webchat_conversation_id = _safe_int(conversation_id)
+    resolved_client = client or SpeedafTrackQueryClient()
+
+    if not tracking:
+        result = TrackingFactResult(
+            ok=False,
+            tool_status="skipped",
+            source="speedaf_api.express_track_query",
+            tool_name="speedaf.express.track.query",
+            pii_redacted=True,
+            fact_evidence_present=False,
+            failure_reason="missing_tracking_number",
+        )
+        record_tool_call(
+            tool_name="speedaf.express.track.query",
+            provider="speedaf_track_query",
+            tool_type="read_only",
+            input_payload={},
+            output_payload=result.metadata_payload(),
+            status="skipped",
+            error_code=result.failure_reason,
+            error_message=result.failure_reason,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            conversation_id=str(conversation_id) if conversation_id is not None else None,
+            webchat_conversation_id=safe_webchat_conversation_id,
+            ticket_id=safe_ticket_id,
+            request_id=request_id,
+        )
+        return result
+
+    try:
+        history = resolved_client.query_history(tracking)
+        result = history.to_tracking_fact()
+    except SpeedafTrackQueryError as exc:
+        result = TrackingFactResult(
+            ok=False,
+            tracking_number=tracking,
+            tool_status="error",
+            source="speedaf_api.express_track_query",
+            tool_name="speedaf.express.track.query",
+            pii_redacted=True,
+            fact_evidence_present=False,
+            failure_reason=exc.error.code,
+        )
+        record_tool_call(
+            tool_name="speedaf.express.track.query",
+            provider="speedaf_track_query",
+            tool_type="read_only",
+            input_payload=safe_query_summary(waybill_code=tracking),
+            output_payload={"failure_reason": exc.error.code, **result.metadata_payload()},
+            status="failed",
+            error_code=exc.error.code,
+            error_message=exc.error.message,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            conversation_id=str(conversation_id) if conversation_id is not None else None,
+            webchat_conversation_id=safe_webchat_conversation_id,
+            ticket_id=safe_ticket_id,
+            request_id=request_id,
+        )
+        return result
+    except Exception as exc:
+        result = TrackingFactResult(
+            ok=False,
+            tracking_number=tracking,
+            tool_status="error",
+            source="speedaf_api.express_track_query",
+            tool_name="speedaf.express.track.query",
+            pii_redacted=True,
+            fact_evidence_present=False,
+            failure_reason=type(exc).__name__,
+        )
+        record_tool_call(
+            tool_name="speedaf.express.track.query",
+            provider="speedaf_track_query",
+            tool_type="read_only",
+            input_payload=safe_query_summary(waybill_code=tracking),
+            output_payload={"failure_reason": type(exc).__name__, **result.metadata_payload()},
+            status="failed",
+            error_code=type(exc).__name__,
+            error_message=str(exc),
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            conversation_id=str(conversation_id) if conversation_id is not None else None,
+            webchat_conversation_id=safe_webchat_conversation_id,
+            ticket_id=safe_ticket_id,
+            request_id=request_id,
+        )
+        return result
+
+    record_tool_call(
+        tool_name="speedaf.express.track.query",
+        provider="speedaf_track_query",
+        tool_type="read_only",
+        input_payload=safe_query_summary(waybill_code=tracking),
+        output_payload=result.metadata_payload(),
+        status="success" if result.ok and result.fact_evidence_present else "failed",
+        error_code=None if result.ok else result.failure_reason,
+        error_message=result.failure_reason,
+        elapsed_ms=int((time.monotonic() - started) * 1000),
+        conversation_id=str(conversation_id) if conversation_id is not None else None,
+        webchat_conversation_id=safe_webchat_conversation_id,
+        ticket_id=safe_ticket_id,
+        request_id=request_id,
+    )
+    return result
 
 
 def lookup_speedaf_tracking_fact(
