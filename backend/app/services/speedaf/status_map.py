@@ -66,7 +66,7 @@ def safe_order_status_label(status: str | None) -> str | None:
     item = ORDER_STATUS_LABELS.get(cleaned)
     if item:
         return item.customer_label
-    return f"status:{cleaned}"
+    return f"Speedaf status code {cleaned}"
 
 
 def safe_order_class_label(order_class: str | None) -> str | None:

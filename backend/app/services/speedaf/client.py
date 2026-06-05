@@ -32,6 +32,7 @@ class SpeedafMcpResponse:
 
 _ALLOWED_CONTENT_TYPES = {"text/plain", "application/json"}
 _ALLOWED_DATA_MODES = {"string", "object"}
+_SUCCESS_CODES = {None, "", "0", 0, "SUCCESS", "success"}
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -48,6 +49,48 @@ def _env_int(name: str, default: int, *, minimum: int = 1, maximum: int = 30) ->
     except (TypeError, ValueError):
         value = default
     return max(minimum, min(value, maximum))
+
+
+def _first_non_empty(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _nested_error_fields(payload: dict[str, Any]) -> tuple[Any, Any]:
+    """Extract Speedaf business errors without degrading HTTP 200 failures.
+
+    UAT responses may look like:
+    {"success": false, "error": {"code": "1140003", "message": "Waybill ..."}}
+    The HTTP layer is still 200, but the actionable business error is the
+    nested code/message. Returning http_200 hides the real diagnosis.
+    """
+
+    nested = payload.get("error")
+    if isinstance(nested, dict):
+        return (
+            _first_non_empty(
+                payload.get("code"),
+                payload.get("errorCode"),
+                payload.get("error_code"),
+                nested.get("code"),
+                nested.get("errorCode"),
+                nested.get("error_code"),
+            ),
+            _first_non_empty(
+                payload.get("message"),
+                payload.get("msg"),
+                payload.get("errorMessage"),
+                nested.get("message"),
+                nested.get("msg"),
+                nested.get("errorMessage"),
+            ),
+        )
+    return (
+        _first_non_empty(payload.get("code"), payload.get("errorCode"), payload.get("error_code")),
+        _first_non_empty(payload.get("message"), payload.get("msg"), payload.get("errorMessage"), payload.get("error")),
+    )
 
 
 def load_speedaf_mcp_config() -> SpeedafMcpConfig:
@@ -140,15 +183,14 @@ class SpeedafMcpClient:
         payload = raw if isinstance(raw, dict) else {"result": raw}
         success_value = payload.get("success")
         ok_value = payload.get("ok")
-        code_value = payload.get("code") or payload.get("errorCode") or payload.get("error_code")
-        message_value = payload.get("message") or payload.get("msg") or payload.get("errorMessage") or payload.get("error")
+        code_value, message_value = _nested_error_fields(payload)
         http_ok = 200 <= status_code < 300
         api_ok = True
         if isinstance(success_value, bool):
             api_ok = success_value
         elif isinstance(ok_value, bool):
             api_ok = ok_value
-        elif code_value not in (None, "", "0", 0, "SUCCESS", "success"):
+        elif code_value not in _SUCCESS_CODES:
             api_ok = False
         ok = http_ok and api_ok
         data = payload.get("data") if "data" in payload else payload.get("result", payload)

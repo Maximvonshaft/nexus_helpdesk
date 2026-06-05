@@ -9,7 +9,7 @@ from app.services.speedaf.status_map import (
 
 
 def test_unknown_order_status_stays_conservative():
-    assert safe_order_status_label("10") == "status:10"
+    assert safe_order_status_label("10") == "Speedaf status code 10"
     assert safe_order_status_label(None) is None
 
 
