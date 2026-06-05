@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -100,12 +101,18 @@ class ProviderRuntimeRouter:
         }).mappings().first()
 
         if not rule:
-            primary_provider = "codex_app_server"
-            fallbacks = ["openclaw_responses", "rule_engine"]
-            output_contract = "speedaf_webchat_fast_reply_v1"
-            timeout_ms = 10000
-            kill_switch = False
-            canary_percent = 100
+            primary_provider = os.getenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "codex_app_server").strip() or "codex_app_server"
+            env_fallbacks = os.getenv("PROVIDER_RUNTIME_FALLBACK_PROVIDERS", "")
+            if env_fallbacks:
+                fallbacks = _coerce_fallbacks(env_fallbacks)
+            elif primary_provider == "codex_direct":
+                fallbacks = _coerce_fallbacks(os.getenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "rule_engine"))
+            else:
+                fallbacks = ["openclaw_responses", "rule_engine"]
+            output_contract = os.getenv("PROVIDER_RUNTIME_OUTPUT_CONTRACT", "speedaf_webchat_fast_reply_v1").strip() or "speedaf_webchat_fast_reply_v1"
+            timeout_ms = _int_env("PROVIDER_RUNTIME_TIMEOUT_MS", 10000, minimum=500, maximum=120000)
+            kill_switch = _env_bool("PROVIDER_RUNTIME_KILL_SWITCH", False)
+            canary_percent = _int_env("PROVIDER_RUNTIME_CANARY_PERCENT", 100, minimum=0, maximum=100)
         else:
             primary_provider = rule["primary_provider"]
             fallbacks = _coerce_fallbacks(rule["fallback_providers"])
@@ -184,7 +191,22 @@ def _coerce_fallbacks(value) -> list[str]:
         try:
             parsed = json.loads(value)
         except json.JSONDecodeError:
-            return [value]
+            return [item.strip() for item in value.split(",") if item.strip()]
         if isinstance(parsed, list):
             return [str(item) for item in parsed if item]
     return []
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(value, maximum))
