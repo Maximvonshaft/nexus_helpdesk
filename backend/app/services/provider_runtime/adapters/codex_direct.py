@@ -127,7 +127,7 @@ class CodexDirectAdapter(ProviderAdapter):
 
         prompt = self._build_prompt(request)
         argv = self._generate_argv()
-        timeout_seconds = min(self.config.timeout_seconds, max(1, int((request.timeout_ms or 0) / 1000) or self.config.timeout_seconds))
+        timeout_seconds = _runtime_timeout_seconds(request.timeout_ms, self.config.timeout_seconds)
         try:
             completed = await asyncio.to_thread(
                 self._run_sync,
@@ -150,6 +150,7 @@ class CodexDirectAdapter(ProviderAdapter):
             "argv_name": self._safe_argv_name(argv),
             "env_mode": "scrubbed",
             "subprocess_mode": "to_thread_shell_false_stdin",
+            "timeout_seconds": timeout_seconds,
         }
         if completed.returncode != 0:
             return self._failure("codex_direct_nonzero_exit", started, safe_summary, retryable=True)
@@ -193,6 +194,7 @@ class CodexDirectAdapter(ProviderAdapter):
             "command_configured": bool(self.config.command),
             "binary_name": Path(shlex.split(self.config.command)[0]).name if self.config.command else None,
             "home": str(self.config.home),
+            "codex_home": str(self.auth_path.parent),
             "model_configured": bool(self.config.model),
             "sandbox_acknowledged": self.config.sandbox_acknowledged,
             "env_mode": "scrubbed",
@@ -215,7 +217,7 @@ class CodexDirectAdapter(ProviderAdapter):
             return CodexDirectReadiness(False, "codex_direct_auth_missing", summary)
 
         try:
-            status = self._run_sync(command_tokens + ["login", "status"], None, min(5, self.config.timeout_seconds))
+            status = self._run_sync(command_tokens + ["login", "status"], None, min(5.0, float(self.config.timeout_seconds)))
         except subprocess.TimeoutExpired:
             summary["login_status_checked"] = False
             return CodexDirectReadiness(False, "codex_direct_timeout", summary)
@@ -277,11 +279,11 @@ class CodexDirectAdapter(ProviderAdapter):
                 if key.startswith("CODEX_FAKE_"):
                     env[key] = value
         env["HOME"] = str(self.config.home)
-        env["CODEX_HOME"] = str(self.config.home)
+        env["CODEX_HOME"] = str(self.auth_path.parent)
         env.setdefault("NO_COLOR", "1")
         return env
 
-    def _run_sync(self, argv: list[str], input_text: str | None, timeout_seconds: int) -> subprocess.CompletedProcess[str]:
+    def _run_sync(self, argv: list[str], input_text: str | None, timeout_seconds: float) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             argv,
             input=input_text,
@@ -396,6 +398,12 @@ def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
     except ValueError:
         value = default
     return max(minimum, min(value, maximum))
+
+
+def _runtime_timeout_seconds(timeout_ms: int | None, provider_timeout_seconds: int) -> float:
+    if timeout_ms is None or timeout_ms <= 0:
+        return float(provider_timeout_seconds)
+    return max(0.1, min(float(provider_timeout_seconds), float(timeout_ms) / 1000.0))
 
 
 def _elapsed_ms(started: float) -> int:
