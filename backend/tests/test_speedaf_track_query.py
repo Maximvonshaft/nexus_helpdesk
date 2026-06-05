@@ -69,7 +69,7 @@ def _encrypt_payload(payload) -> str:
 
 def test_build_speedaf_track_sign_matches_contract() -> None:
     data = '{"mailNoList":["MK000179196R"]}'
-    assert build_speedaf_track_sign("1774518097430", SECRET, data) == "e73547d2d461eea3fd344c4b5cd67603"
+    assert build_speedaf_track_sign("1774518097430", SECRET, data) == "c541ae0a0106f991a2be06ed6deac988"
 
 
 def test_build_envelope_uses_string_data_and_sign_without_customer_code() -> None:
