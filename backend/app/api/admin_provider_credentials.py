@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..enums import UserRole
 from ..services.permissions import ensure_can_manage_runtime
+from ..services.provider_runtime.adapters.codex_direct import CodexDirectAdapter
 from ..services.provider_runtime.codex_credential_broker import CodexCredentialBroker
 from ..services.provider_runtime.codex_device_auth_service import CodexDeviceAuthService
 from ..services.provider_runtime.codex_oauth_config import CodexOAuthConfig, resolve_provider_tenant_id
@@ -71,6 +72,15 @@ def _ensure_admin_manage(current_user, db: Session) -> None:
 def codex_credentials_status(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     _ensure_manage(current_user, db)
     return _broker(db).list_credentials(tenant_id=_tenant_id(current_user))
+
+
+@router.post("/codex/direct-smoke")
+async def codex_direct_smoke(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    _ensure_admin_manage(current_user, db)
+    # Readiness-only smoke. It never reads or returns Codex auth material; it
+    # checks binary presence, HOME/.codex/auth.json presence, login status, and
+    # production sandbox acknowledgement.
+    return await CodexDirectAdapter().smoke_check()
 
 
 @router.post("/codex/smoke-chat")
