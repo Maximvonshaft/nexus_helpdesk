@@ -49,6 +49,17 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
         allowed_auto_execution_mode="policy_gated",
         description="Read trusted Speedaf tracking fact for one waybill.",
     ),
+    "speedaf.express.track.query": ToolContract(
+        name="speedaf.express.track.query",
+        classification="read",
+        required_permissions=("speedaf:tracking:read",),
+        idempotency_key_strategy="sha256(tenant,session,tracking_number_hash,request_id)",
+        risk_level="medium",
+        redaction_requirements=("hash_waybill", "suffix_only", "no_recipient_pii", "no_raw_track_payload", "no_raw_tool_payload"),
+        confirmation_required=False,
+        allowed_auto_execution_mode="policy_gated",
+        description="Read trusted Speedaf full tracking history for one waybill via express track query.",
+    ),
     "speedaf.order.waybillCode.query": ToolContract(
         name="speedaf.order.waybillCode.query",
         classification="read",
