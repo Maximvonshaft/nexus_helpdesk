@@ -105,6 +105,7 @@ def clean_codex_env(monkeypatch):
         }
     ):
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("APP_ENV", "test")
 
 
 def _enable_direct(monkeypatch, *, fake_codex: Path, home: Path, timeout: int = 5):
@@ -191,7 +192,10 @@ async def test_codex_direct_nonzero_exit(monkeypatch, fake_codex, codex_home):
     res = await CodexDirectAdapter().generate(Mock(), _request())
     assert not res.ok
     assert res.error_code == "codex_direct_nonzero_exit"
-    assert "test" not in json.dumps(res.raw_payload_safe_summary).lower()
+    safe_blob = json.dumps(res.raw_payload_safe_summary).lower()
+    assert "auth.json" not in safe_blob
+    assert "bearer" not in safe_blob
+    assert "secret" not in safe_blob
 
 
 @pytest.mark.asyncio
