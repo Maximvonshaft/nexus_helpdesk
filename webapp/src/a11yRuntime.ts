@@ -50,18 +50,6 @@ function repairWebchatConversationLists(root: ParentNode = document) {
   })
 }
 
-function repairWebcallQueueFilters(root: ParentNode = document) {
-  root.querySelectorAll('[role="tablist"][aria-label="WebCall Operational Queue tabs"]').forEach((group) => {
-    setAttr(group, 'role', 'group')
-    setAttr(group, 'aria-label', 'WebCall Operational Queue filters')
-
-    group.querySelectorAll('button').forEach((button) => {
-      const isActive = button.classList.contains('primary') || button.getAttribute('data-active') === 'true'
-      setAttr(button, 'aria-pressed', isActive ? 'true' : 'false')
-    })
-  })
-}
-
 function drawerConfirmationFor(button: HTMLButtonElement): DangerousDrawerConfirmation | null {
   const label = normalizeText(button.textContent)
   return DANGEROUS_DRAWER_CONFIRMATIONS.find((item) => label.includes(item.label)) ?? null
@@ -161,7 +149,6 @@ function interceptDangerousDrawerActions(event: MouseEvent) {
 
 export function repairA11ySemantics(root: ParentNode = document) {
   repairWebchatConversationLists(root)
-  repairWebcallQueueFilters(root)
 }
 
 function scheduleRepair() {
