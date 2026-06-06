@@ -103,6 +103,7 @@ jobs:
               backend/app/services/webcall_ai/**) return 0 ;;
               backend/app/services/webcall_ai_production/**) return 0 ;;
               backend/app/services/webchat_*.py) return 0 ;;
+              backend/app/services/webchat_ai_decision_runtime/service.py) return 0 ;;
               backend/app/services/webchat_ai_decision_runtime/**) return 0 ;;
               backend/app/services/speedaf/**) return 0 ;;
               backend/app/webcall_ai_schemas.py) return 0 ;;
@@ -128,6 +129,7 @@ jobs:
               backend/tests/test_spa_fallback_hardening.py) return 0 ;;
               backend/tests/test_speedaf*.py) return 0 ;;
               backend/tests/test_webcall*.py) return 0 ;;
+              backend/tests/test_webchat_tracking_reply_polish.py) return 0 ;;
               backend/tests/test_webchat*.py) return 0 ;;
               backend/tests/test_webchat_domain_shadow_trace.py) return 0 ;;
               backend/tests/fixtures/knowledge_eval_cases.json) return 0 ;;
