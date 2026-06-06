@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { WebCallQueueFilters } from '@/components/webcall/WebCallQueueFilters'
 import { Field, Input, Textarea } from '@/components/ui/Field'
 import { useSession } from '@/hooks/useAuth'
 import {
@@ -437,13 +438,11 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
         {!currentSession && canViewQueue ? (
           <div className="stack compact" data-testid="webcall-operational-queue">
             <strong>WebCall Operational Queue</strong>
-            <div className="inline-actions" role="tablist" aria-label="WebCall Operational Queue tabs">
-              {QUEUE_TABS.map((tab) => (
-                <Button key={tab.key} variant={queueTab === tab.key ? 'primary' : 'secondary'} onClick={() => setQueueTab(tab.key)}>
-                  {tab.label}
-                </Button>
-              ))}
-            </div>
+            <WebCallQueueFilters
+              tabs={QUEUE_TABS}
+              activeKey={queueTab}
+              onSelect={setQueueTab}
+            />
             {operationalQueue.isLoading ? <div className="section-subtitle">Loading WebCall queue...</div> : null}
             {operationalQueue.isError ? <div className="section-subtitle">Unable to load WebCall queue.</div> : null}
             {!operationalQueue.isLoading && !operationalQueue.isError && !(operationalQueue.data?.items ?? []).length ? <EmptyState text="No WebCall sessions in this queue." /> : null}
@@ -656,13 +655,11 @@ export function AgentWebCallPanel({ ticketId, conversationId, ticketNo, visitorL
 
             {canViewQueue ? <div className="stack compact" data-testid="webcall-operational-queue">
               <strong>WebCall Operational Queue</strong>
-              <div className="inline-actions" role="tablist" aria-label="WebCall Operational Queue tabs">
-                {QUEUE_TABS.map((tab) => (
-                  <Button key={tab.key} variant={queueTab === tab.key ? 'primary' : 'secondary'} onClick={() => setQueueTab(tab.key)}>
-                    {tab.label}
-                  </Button>
-                ))}
-              </div>
+              <WebCallQueueFilters
+                tabs={QUEUE_TABS}
+                activeKey={queueTab}
+                onSelect={setQueueTab}
+              />
               {operationalQueue.isLoading ? <div className="section-subtitle">Loading WebCall queue...</div> : null}
               {operationalQueue.isError ? <div className="section-subtitle">Unable to load WebCall queue.</div> : null}
               {!operationalQueue.isLoading && !operationalQueue.isError && !(operationalQueue.data?.items ?? []).length ? <EmptyState text="No WebCall sessions in this queue." /> : null}
