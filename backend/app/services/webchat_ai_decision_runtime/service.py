@@ -42,6 +42,25 @@ def _tracking_suffix(tracking_number: str | None) -> str | None:
     return cleaned[-6:] if cleaned else None
 
 
+def _polish_tracking_reference(reply: str, *, suffix: str) -> str:
+    suffix_pattern = re.escape(suffix)
+    polished = reply
+    replacements = [
+        (rf"\b[Yy]our\s+tracking\s+number\s+tracking\s+number\s+ending\s+({suffix_pattern})\b", rf"Your parcel ending \1"),
+        (rf"\btracking\s+number\s+tracking\s+number\s+ending\s+({suffix_pattern})\b", rf"parcel ending \1"),
+        (rf"\b[Yy]our\s+tracking\s+number\s+ending\s+({suffix_pattern})\b", rf"Your parcel ending \1"),
+        (rf"\btracking\s+number\s+ending\s+({suffix_pattern})\b", rf"parcel ending \1"),
+        (rf"\b[Yy]our\s+tracking\s+number\s+parcel\s+ending\s+({suffix_pattern})\b", rf"Your parcel ending \1"),
+        (rf"\btracking\s+number\s+parcel\s+ending\s+({suffix_pattern})\b", rf"parcel ending \1"),
+        (rf"\b[Yy]our\s+tracking\s+number\s+tracking_number_ending_({suffix_pattern})\b", rf"Your parcel ending \1"),
+        (rf"\btracking\s+number\s+tracking_number_ending_({suffix_pattern})\b", rf"parcel ending \1"),
+        (rf"\btracking_number_ending_({suffix_pattern})\b", rf"parcel ending \1"),
+    ]
+    for pattern, replacement in replacements:
+        polished = re.sub(pattern, replacement, polished, flags=re.IGNORECASE)
+    return " ".join(polished.split())
+
+
 def _sanitize_reply_for_trusted_tracking(reply: Any, *, tracking_number: str | None, tracking_fact_metadata: dict[str, Any] | None) -> Any:
     if not isinstance(reply, str) or not _trusted_tracking_fact_present(tracking_fact_metadata):
         return reply
@@ -51,8 +70,9 @@ def _sanitize_reply_for_trusted_tracking(reply: Any, *, tracking_number: str | N
     suffix = _tracking_suffix(raw)
     if not suffix:
         return reply
-    replacement = f"tracking number ending {suffix}"
-    return re.sub(re.escape(raw), replacement, reply, flags=re.IGNORECASE)
+    replacement = f"parcel ending {suffix}"
+    cleaned = re.sub(re.escape(raw), replacement, reply, flags=re.IGNORECASE)
+    return _polish_tracking_reference(cleaned, suffix=suffix)
 
 
 def _provider_evidence_items(value: Any) -> list[dict[str, Any]]:
@@ -161,7 +181,6 @@ def _default_tool_calls(*, intent: str, handoff_required: bool, tracking_number:
             )
         )
     return calls
-
 
 
 def _decision_knowledge_context(runtime_context: dict[str, Any] | None) -> dict[str, Any]:
