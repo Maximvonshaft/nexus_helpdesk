@@ -3,10 +3,12 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ..tracking_fact_schema import TrackingFactResult, safe_tracking_candidate
+from ..tracking_fact_schema import TrackingFactEvent, TrackingFactResult, safe_tracking_candidate
 from ..tool_governance import record_tool_call
 from .adapter import SpeedafCoreAdapter, safe_query_summary
 from .track_query import SpeedafTrackQueryClient, SpeedafTrackQueryError
+
+HYBRID_TRACKING_SOURCE = "speedaf_api.hybrid_order_query_plus_track_query"
 
 
 def _safe_int(value: int | str | None) -> int | None:
@@ -43,6 +45,63 @@ def _record_waybill_lookup(
         webchat_conversation_id=_safe_int(conversation_id),
         ticket_id=_safe_int(ticket_id),
         request_id=request_id,
+    )
+
+
+def _event_key(event: TrackingFactEvent) -> tuple[str, str, str]:
+    return (
+        (event.description or "").strip(),
+        (event.location or "").strip(),
+        (event.event_time or "").strip(),
+    )
+
+
+def merge_speedaf_hybrid_tracking_fact(
+    *,
+    primary: TrackingFactResult,
+    history: TrackingFactResult,
+) -> TrackingFactResult:
+    """Merge current-status and full-history facts without letting history replace truth.
+
+    `/mcp/order/query` remains the primary source for current status. The
+    express track query contributes only event history. If either side is not
+    trustworthy, the primary fact is returned unchanged.
+    """
+
+    if not (primary.ok and primary.fact_evidence_present):
+        return primary
+    if not (history.ok and history.fact_evidence_present):
+        return primary
+
+    merged_events: list[TrackingFactEvent] = []
+    seen: set[tuple[str, str, str]] = set()
+    for event in [*(history.events_summary or []), *(([history.latest_event] if history.latest_event else [])), *(([primary.latest_event] if primary.latest_event else [])), *(primary.events_summary or [])]:
+        if event is None or not event.is_present():
+            continue
+        key = _event_key(event)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged_events.append(event)
+        if len(merged_events) >= 5:
+            break
+
+    latest_event = history.latest_event if history.latest_event and history.latest_event.is_present() else primary.latest_event
+    tracking_number = primary.tracking_number or history.tracking_number
+
+    return TrackingFactResult(
+        ok=True,
+        tracking_number=tracking_number,
+        status=primary.status,
+        status_label=primary.status_label or primary.status,
+        latest_event=latest_event,
+        events_summary=merged_events or primary.events_summary,
+        checked_at=primary.checked_at or history.checked_at,
+        source=HYBRID_TRACKING_SOURCE,
+        tool_name=primary.tool_name,
+        tool_status="success",
+        pii_redacted=primary.pii_redacted and history.pii_redacted,
+        fact_evidence_present=True,
     )
 
 
@@ -168,6 +227,55 @@ def lookup_speedaf_track_history_fact(
         request_id=request_id,
     )
     return result
+
+
+def lookup_speedaf_hybrid_tracking_fact(
+    *,
+    tracking_number: str | None,
+    caller_id: str | None = None,
+    country_code: str | None = None,
+    conversation_id: int | str | None = None,
+    ticket_id: int | str | None = None,
+    request_id: str | None = None,
+    adapter: SpeedafCoreAdapter | None = None,
+    track_client: SpeedafTrackQueryClient | None = None,
+) -> TrackingFactResult:
+    """Resolve current status from order/query and optionally enrich with history.
+
+    This is the production-safe hybrid mode:
+    - current status comes from `/open-api/mcp/order/query`;
+    - track history comes from `/open-api/express/track/query` when configured;
+    - history failures are non-fatal and fall back to the primary fact.
+    """
+
+    primary = lookup_speedaf_tracking_fact(
+        tracking_number=tracking_number,
+        caller_id=caller_id,
+        country_code=country_code,
+        conversation_id=conversation_id,
+        ticket_id=ticket_id,
+        request_id=request_id,
+        adapter=adapter,
+    )
+    if not (primary.ok and primary.fact_evidence_present):
+        return primary
+
+    resolved_tracking = (primary.tracking_number or tracking_number or "").strip().upper()
+    if not resolved_tracking:
+        return primary
+
+    resolved_client = track_client or SpeedafTrackQueryClient()
+    if not resolved_client.config.configured:
+        return primary
+
+    history = lookup_speedaf_track_history_fact(
+        tracking_number=resolved_tracking,
+        conversation_id=conversation_id,
+        ticket_id=ticket_id,
+        request_id=request_id,
+        client=resolved_client,
+    )
+    return merge_speedaf_hybrid_tracking_fact(primary=primary, history=history)
 
 
 def lookup_speedaf_tracking_fact(
