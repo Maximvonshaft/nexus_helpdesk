@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.services.speedaf.client import SpeedafMcpClient
 from app.services.speedaf.formatter import order_fact_from_payload, tracking_fact_from_order_fact
 from app.services.speedaf.schemas import SpeedafMcpConfig
-from app.services.speedaf.status_map import safe_order_status_label
+from app.services.speedaf.status_map import safe_order_class_label, safe_order_status_label
 
 
 def _client() -> SpeedafMcpClient:
@@ -28,7 +28,7 @@ def test_speedaf_nested_business_error_is_not_flattened_to_http_200() -> None:
             "success": False,
             "error": {
                 "code": "1140003",
-                "message": "Waybill: CH0200000008030 does not exist",
+                "message": "Waybill does not exist",
             },
             "data": None,
         },
@@ -39,12 +39,13 @@ def test_speedaf_nested_business_error_is_not_flattened_to_http_200() -> None:
     assert response.ok is False
     assert response.error is not None
     assert response.error.code == "1140003"
-    assert response.error.message == "Waybill: CH0200000008030 does not exist"
+    assert response.error.message == "Waybill does not exist"
     assert response.error.http_status == 200
 
 
-def test_unknown_status_code_is_exposed_as_safe_code_not_invented_meaning() -> None:
-    assert safe_order_status_label("4") == "Speedaf status code 4"
+def test_official_status_code_is_used_without_order_class_confusion() -> None:
+    assert safe_order_status_label("4") == "out for delivery"
+    assert safe_order_class_label("2") == "international shipment"
 
     fact = order_fact_from_payload(
         {
@@ -60,6 +61,7 @@ def test_unknown_status_code_is_exposed_as_safe_code_not_invented_meaning() -> N
     assert tracking.ok is True
     assert tracking.fact_evidence_present is True
     assert tracking.status == "4"
-    assert tracking.status_label == "Speedaf status code 4"
-    assert "Speedaf status code 4" in summary
-    assert "return shipment" not in summary
+    assert tracking.status_label == "out for delivery"
+    assert "out for delivery" in summary
+    assert "return" not in summary.lower()
+    assert "international" not in summary.lower()
