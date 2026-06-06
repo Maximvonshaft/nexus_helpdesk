@@ -10,18 +10,27 @@ class CodeLabel:
     customer_label: str
 
 
-# Conservative labels. Unknown values must be surfaced as safe codes rather than
-# invented operational meanings. Only terminal cancel-protection statuses are mapped.
+# Speedaf AI customer-service MCP spec, attachment 1: status codes.
+# Unknown values must still be surfaced as safe codes rather than invented
+# operational meanings.
 ORDER_STATUS_LABELS: dict[str, CodeLabel] = {
+    "10": CodeLabel("10", "pending_pickup", "pending pickup"),
+    "3750": CodeLabel("3750", "in_transit_to_destination_country", "in transit to destination country"),
+    "3751": CodeLabel("3751", "received_in_destination_country", "received in destination country"),
+    "1": CodeLabel("1", "picked_up", "picked up"),
+    "2": CodeLabel("2", "in_transit", "in transit"),
+    "11": CodeLabel("11", "pending_delivery", "pending delivery"),
+    "18": CodeLabel("18", "ready_for_pickup", "ready for pickup"),
+    "4": CodeLabel("4", "out_for_delivery", "out for delivery"),
     "5": CodeLabel("5", "delivered", "delivered"),
     "730": CodeLabel("730", "return_delivered", "return delivered"),
     "-2": CodeLabel("-2", "exception_signed", "exception signed"),
 }
 
+# Speedaf AI customer-service MCP spec, attachment 2: orderClass.
 ORDER_CLASS_LABELS: dict[str, CodeLabel] = {
-    "1": CodeLabel("1", "standard", "standard shipment"),
-    "2": CodeLabel("2", "return", "return shipment"),
-    "3": CodeLabel("3", "pickup", "pickup shipment"),
+    "1": CodeLabel("1", "local", "local shipment"),
+    "2": CodeLabel("2", "international", "international shipment"),
 }
 
 WORK_ORDER_TYPE_LABELS: dict[str, CodeLabel] = {
