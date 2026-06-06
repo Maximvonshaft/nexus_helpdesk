@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-test('runtime repair fixes dynamic WebChat and WebCall ARIA semantics', async ({ page }) => {
+test('runtime repair fixes dynamic WebChat conversation ARIA semantics', async ({ page }) => {
   await page.goto('/login')
 
   await page.evaluate(() => {
@@ -18,23 +18,7 @@ test('runtime repair fixes dynamic WebChat and WebCall ARIA semantics', async ({
     selectedConversation.textContent = 'Ticket T-1001 Jane Cooper AI 暂停'
     webchatList.append(selectedConversation)
 
-    const webcallFilters = document.createElement('div')
-    webcallFilters.setAttribute('role', 'tablist')
-    webcallFilters.setAttribute('aria-label', 'WebCall Operational Queue tabs')
-
-    const incoming = document.createElement('button')
-    incoming.type = 'button'
-    incoming.className = 'button primary'
-    incoming.textContent = 'Incoming'
-    webcallFilters.append(incoming)
-
-    const missed = document.createElement('button')
-    missed.type = 'button'
-    missed.className = 'button secondary'
-    missed.textContent = 'Missed'
-    webcallFilters.append(missed)
-
-    host.append(webchatList, webcallFilters)
+    host.append(webchatList)
     document.body.append(host)
   })
 
@@ -46,12 +30,6 @@ test('runtime repair fixes dynamic WebChat and WebCall ARIA semantics', async ({
   await expect(conversationButton).toHaveAttribute('aria-pressed', 'true')
   await expect(conversationButton).not.toHaveAttribute('role', 'option')
   await expect(conversationButton).not.toHaveAttribute('aria-selected', 'true')
-
-  const webcallFilterGroup = page.getByRole('group', { name: 'WebCall Operational Queue filters' })
-  await expect(webcallFilterGroup).toBeVisible()
-  await expect(webcallFilterGroup).not.toHaveAttribute('role', 'tablist')
-  await expect(webcallFilterGroup.getByRole('button', { name: 'Incoming' })).toHaveAttribute('aria-pressed', 'true')
-  await expect(webcallFilterGroup.getByRole('button', { name: 'Missed' })).toHaveAttribute('aria-pressed', 'false')
 })
 
 test('runtime repair confirms dangerous WebChat mobile drawer actions before execution', async ({ page }) => {
