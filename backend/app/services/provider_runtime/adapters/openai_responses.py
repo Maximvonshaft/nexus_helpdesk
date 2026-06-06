@@ -131,7 +131,7 @@ class OpenAIResponsesAdapter(ProviderAdapter):
         if not isinstance(parsed, dict):
             return self._failure("openai_responses_bad_json", started, safe_summary, retryable=True)
 
-        normalized = _normalize_output(parsed)
+        normalized = _normalize_output(parsed, request=request)
         if not normalized.get("customer_reply"):
             return self._failure("openai_responses_empty_reply", started, safe_summary, retryable=True)
 
@@ -324,17 +324,21 @@ def _extract_response_text(payload: Any) -> str:
     return ""
 
 
-def _normalize_output(parsed: dict[str, Any]) -> dict[str, Any]:
+def _normalize_output(parsed: dict[str, Any], *, request: ProviderRequest | None = None) -> dict[str, Any]:
     reply = _clean_string(parsed.get("customer_reply") or parsed.get("reply"), 1200)
     if not reply:
         return {}
     handoff_required = bool(parsed.get("handoff_required", False))
+    tracking_number = _clean_string(parsed.get("tracking_number"), 80)
+    intent = _normalize_intent(parsed.get("intent"))
+    if intent == "tracking" and not tracking_number:
+        intent = "tracking_unresolved" if request and request.tracking_fact_evidence_present else "tracking_missing_number"
     return {
         "customer_reply": reply,
         "reply": reply,
         "language": _clean_string(parsed.get("language"), 32) or "unknown",
-        "intent": _normalize_intent(parsed.get("intent")),
-        "tracking_number": _clean_string(parsed.get("tracking_number"), 80),
+        "intent": intent,
+        "tracking_number": tracking_number,
         "handoff_required": handoff_required,
         "handoff_reason": _clean_string(parsed.get("handoff_reason"), 240),
         "recommended_agent_action": _clean_string(parsed.get("recommended_agent_action"), 500),
