@@ -25,12 +25,10 @@ test('a11y runtime downgrades incomplete WebChat listbox semantics to button-lis
   assert.match(runtime, /打开 WebChat 会话/)
 })
 
-test('a11y runtime repairs WebCall queue filters without pretending they are tabs', () => {
-  assert.match(runtime, /repairWebcallQueueFilters/)
-  assert.match(runtime, /\[role="tablist"\]\[aria-label="WebCall Operational Queue tabs"\]/)
-  assert.match(runtime, /setAttr\(group, 'role', 'group'\)/)
-  assert.match(runtime, /WebCall Operational Queue filters/)
-  assert.match(runtime, /aria-pressed/)
+test('WebCall queue filter semantics are no longer repaired by runtime', () => {
+  assert.doesNotMatch(runtime, /repairWebcallQueueFilters/)
+  assert.doesNotMatch(runtime, /WebCall Operational Queue tabs/)
+  assert.doesNotMatch(runtime, /WebCall Operational Queue filters/)
 })
 
 test('a11y runtime intercepts dangerous mobile drawer actions before execution', () => {
