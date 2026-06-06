@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from .health import ProviderRuntimeHealth
 from .output_contracts import OutputContracts
 from .registry import ProviderRegistry
 from .schemas import ProviderRequest, ProviderResult
@@ -151,6 +152,21 @@ class ProviderRuntimeRouter:
         primary_failure: ProviderResult | None = None
 
         for provider_name in providers_to_try:
+            health_decision = ProviderRuntimeHealth.should_skip(provider_name)
+            if health_decision.skip:
+                self._write_audit(
+                    request,
+                    "generate",
+                    "skipped",
+                    provider_name,
+                    0,
+                    {"provider_health": health_decision.safe_summary()},
+                    health_decision.reason or "provider_health_skip",
+                )
+                if provider_name == primary_provider:
+                    primary_failure = ProviderResult.unavailable(provider_name, health_decision.reason or "provider_health_skip", 0)
+                continue
+
             adapter = ProviderRegistry.get(provider_name, self.db)
             if not adapter:
                 self._write_audit(request, "generate", "failed", provider_name, 0, {}, "adapter_not_registered")
@@ -158,7 +174,12 @@ class ProviderRuntimeRouter:
 
             result = await adapter.generate(self.db, request)
             if not result.ok:
-                self._write_audit(request, "generate", "failed", provider_name, result.elapsed_ms, result.raw_payload_safe_summary, result.error_code)
+                safe_summary = dict(result.raw_payload_safe_summary or {})
+                health_event = ProviderRuntimeHealth.record_failure(provider_name, result.error_code)
+                if health_event:
+                    safe_summary["provider_health"] = health_event
+                    result.raw_payload_safe_summary = safe_summary
+                self._write_audit(request, "generate", "failed", provider_name, result.elapsed_ms, safe_summary, result.error_code)
                 if provider_name == primary_provider:
                     primary_failure = result
                 if not result.fallback_allowed:
@@ -180,10 +201,19 @@ class ProviderRuntimeRouter:
                         (request.metadata or {}).get("knowledge_context"),
                     )
                 result.structured_output = parsed
-                self._write_audit(request, "generate", "ok", provider_name, result.elapsed_ms, result.raw_payload_safe_summary)
+                safe_summary = dict(result.raw_payload_safe_summary or {})
+                health_event = ProviderRuntimeHealth.record_success(provider_name)
+                if health_event:
+                    safe_summary["provider_health"] = health_event
+                    result.raw_payload_safe_summary = safe_summary
+                self._write_audit(request, "generate", "ok", provider_name, result.elapsed_ms, safe_summary)
                 return result
             except Exception as exc:
-                self._write_audit(request, "parse_reject", "failed", provider_name, result.elapsed_ms, {"parse_error": str(exc)[:500]}, "parse_reject")
+                safe_summary = {"parse_error": str(exc)[:500]}
+                health_event = ProviderRuntimeHealth.record_failure(provider_name, "parse_reject")
+                if health_event:
+                    safe_summary["provider_health"] = health_event
+                self._write_audit(request, "parse_reject", "failed", provider_name, result.elapsed_ms, safe_summary, "parse_reject")
                 if provider_name == primary_provider:
                     primary_failure = ProviderResult.unavailable(provider_name, "parse_reject", result.elapsed_ms)
                 continue
@@ -211,7 +241,7 @@ def _apply_env_overrides(
         if env_fallbacks:
             fallbacks = _coerce_fallbacks(env_fallbacks)
         elif primary_provider == "codex_direct":
-            fallbacks = _coerce_fallbacks(os.getenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "rule_engine"))
+            fallbacks = _coerce_fallbacks(os.getenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "openai_responses,rule_engine"))
     env_contract = os.getenv("PROVIDER_RUNTIME_OUTPUT_CONTRACT", "").strip()
     if env_contract:
         output_contract = env_contract
