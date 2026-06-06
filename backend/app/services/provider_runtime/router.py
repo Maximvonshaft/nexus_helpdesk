@@ -216,10 +216,31 @@ def _apply_env_overrides(
     if env_contract:
         output_contract = env_contract
     timeout_ms = _int_env("PROVIDER_RUNTIME_TIMEOUT_MS", timeout_ms, minimum=500, maximum=120000)
+    timeout_ms = _harmonize_provider_timeout_ms(primary_provider=primary_provider, timeout_ms=timeout_ms)
     canary_percent = _int_env("PROVIDER_RUNTIME_CANARY_PERCENT", canary_percent, minimum=0, maximum=100)
     if os.getenv("PROVIDER_RUNTIME_KILL_SWITCH") is not None:
         kill_switch = _env_bool("PROVIDER_RUNTIME_KILL_SWITCH", kill_switch)
     return primary_provider, fallbacks, output_contract, timeout_ms, kill_switch, canary_percent
+
+
+def _harmonize_provider_timeout_ms(*, primary_provider: str, timeout_ms: int) -> int:
+    """Prevent outer provider_runtime timeout from undercutting provider-owned timeout.
+
+    Codex Direct runs a CLI subprocess and owns its hard timeout through
+    CODEX_DIRECT_TIMEOUT_SECONDS. If provider_runtime is lower than that, the
+    adapter is forced to kill Codex before its configured budget is reached.
+    That caused production 10s timeouts while Codex Direct was configured for
+    25s. Keep this harmonization specific to codex_direct; other providers keep
+    their existing timeout behavior.
+    """
+
+    if primary_provider != "codex_direct":
+        return timeout_ms
+    if _env_bool("CODEX_DIRECT_ALLOW_OUTER_TIMEOUT_CAP", False):
+        return timeout_ms
+    codex_timeout_ms = _int_env("CODEX_DIRECT_TIMEOUT_SECONDS", 25, minimum=1, maximum=120) * 1000
+    buffer_ms = _int_env("CODEX_DIRECT_TIMEOUT_BUDGET_BUFFER_MS", 1000, minimum=0, maximum=10000)
+    return min(120000, max(timeout_ms, codex_timeout_ms + buffer_ms))
 
 
 def _coerce_fallbacks(value) -> list[str]:
