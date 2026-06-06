@@ -20,6 +20,7 @@ _ALLOWED_PRIMARY_PROVIDERS = {"codex_app_server", "codex_direct", "openclaw_resp
 _ALLOWED_FALLBACK_PROVIDERS = {"openclaw_responses", "rule_engine", "openai_responses"}
 _WEBCHAT_FAST_SCENARIO = "webchat_fast_reply"
 _WEBCHAT_FAST_OUTPUT_CONTRACT = "speedaf_webchat_fast_reply_v1"
+_CODEX_DIRECT_DEFAULT_FALLBACKS = ["openai_responses", "rule_engine"]
 
 
 class WebchatFastRoutingUpdate(BaseModel):
@@ -36,7 +37,7 @@ class WebchatFastRoutingUpdate(BaseModel):
         if self.primary_provider not in _ALLOWED_PRIMARY_PROVIDERS:
             raise ValueError("primary_provider_not_allowed")
         if self.primary_provider == "codex_direct" and self.fallback_providers == ["openclaw_responses", "rule_engine"]:
-            self.fallback_providers = ["rule_engine"]
+            self.fallback_providers = list(_CODEX_DIRECT_DEFAULT_FALLBACKS)
         forbidden = [provider for provider in self.fallback_providers if provider not in _ALLOWED_FALLBACK_PROVIDERS]
         if forbidden:
             raise ValueError("fallback_provider_not_allowed")
