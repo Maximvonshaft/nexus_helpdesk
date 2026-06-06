@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -65,7 +66,7 @@ class OpenAIResponsesAdapter(ProviderAdapter):
         payload = self._build_payload(prompt)
         try:
             response_payload = await asyncio.to_thread(self._post_json, payload)
-        except TimeoutError:
+        except (TimeoutError, socket.timeout):
             return self._failure(
                 "openai_responses_timeout",
                 started,
@@ -95,6 +96,13 @@ class OpenAIResponsesAdapter(ProviderAdapter):
         except OSError as exc:
             return self._failure(
                 "openai_responses_network_error",
+                started,
+                {"provider": self.name, "model": self.model, "prompt_chars": len(prompt), "reason": exc.__class__.__name__},
+                retryable=True,
+            )
+        except ValueError as exc:
+            return self._failure(
+                "openai_responses_bad_response",
                 started,
                 {"provider": self.name, "model": self.model, "prompt_chars": len(prompt), "reason": exc.__class__.__name__},
                 retryable=True,
@@ -170,7 +178,9 @@ class OpenAIResponsesAdapter(ProviderAdapter):
         with urllib.request.urlopen(request, timeout=float(self.timeout_seconds)) as response:
             raw = response.read().decode("utf-8", errors="replace")
         decoded = json.loads(raw)
-        return decoded if isinstance(decoded, dict) else {"raw": decoded}
+        if not isinstance(decoded, dict):
+            raise ValueError("responses_api_payload_not_object")
+        return decoded
 
     def _build_payload(self, prompt: str) -> dict[str, Any]:
         return {
@@ -183,7 +193,6 @@ class OpenAIResponsesAdapter(ProviderAdapter):
             "input": prompt,
             "store": False,
             "max_output_tokens": self.max_output_tokens,
-            "tool_choice": "none",
             "text": {"format": {"type": "json_schema", "name": "speedaf_webchat_fast_reply_v1", "strict": True, "schema": _response_schema()}},
         }
 
