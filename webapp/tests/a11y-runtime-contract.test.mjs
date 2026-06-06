@@ -8,6 +8,7 @@ const read = (path) => readFileSync(resolve(root, path), 'utf8')
 
 const runtime = read('src/a11yRuntime.ts')
 const main = read('src/main.tsx')
+const a11yCss = read('src/a11y.css')
 
 test('a11y runtime repair is initialized from the React entrypoint', () => {
   assert.match(main, /import \{ initA11yRuntimeRepair \} from '@\/a11yRuntime'/)
@@ -32,9 +33,34 @@ test('a11y runtime repairs WebCall queue filters without pretending they are tab
   assert.match(runtime, /aria-pressed/)
 })
 
+test('a11y runtime intercepts dangerous mobile drawer actions before execution', () => {
+  assert.match(runtime, /DANGEROUS_DRAWER_CONFIRMATIONS/)
+  assert.match(runtime, /label: '释放回队列'/)
+  assert.match(runtime, /label: '恢复 AI'/)
+  assert.match(runtime, /interceptDangerousDrawerActions/)
+  assert.match(runtime, /closest\('\.v5-context-drawer'\)/)
+  assert.match(runtime, /event\.preventDefault\(\)/)
+  assert.match(runtime, /event\.stopImmediatePropagation\(\)/)
+  assert.match(runtime, /showDangerousActionConfirm/)
+  assert.match(runtime, /confirmedDangerousButtons/)
+  assert.doesNotMatch(runtime, /window\.confirm/)
+})
+
+test('dangerous drawer confirmation uses an accessible custom dialog surface', () => {
+  assert.match(runtime, /role', 'dialog'/)
+  assert.match(runtime, /aria-modal', 'true'/)
+  assert.match(runtime, /aria-labelledby/)
+  assert.match(runtime, /aria-describedby/)
+  assert.match(runtime, /确认释放回队列/)
+  assert.match(runtime, /确认恢复 AI/)
+  assert.match(a11yCss, /\.a11y-danger-confirm-overlay/)
+  assert.match(a11yCss, /\.a11y-danger-confirm-dialog/)
+  assert.match(a11yCss, /\.a11y-danger-confirm-actions/)
+})
+
 test('a11y runtime repairs dynamic route content without adding blocking dependencies', () => {
   assert.match(runtime, /MutationObserver/)
   assert.match(runtime, /requestAnimationFrame/)
+  assert.match(runtime, /document\.addEventListener\('click', interceptDangerousDrawerActions, true\)/)
   assert.match(runtime, /attributeFilter: \['class', 'role', 'aria-label', 'aria-selected', 'data-active'\]/)
-  assert.doesNotMatch(runtime, /window\.confirm/)
 })
