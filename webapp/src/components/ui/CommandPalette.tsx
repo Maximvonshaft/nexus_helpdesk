@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { Button } from '@/components/ui/Button'
@@ -43,48 +44,53 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     return `${item.label} ${item.keywords || ''}`.toLowerCase().includes(normalizedQuery)
   }), [visibleActions, normalizedQuery])
 
-  if (!open) return null
+  async function runAction(item: (typeof actions)[number]) {
+    if (item.action === 'refresh') {
+      await queryClient.invalidateQueries()
+      onClose()
+      return
+    }
+    if (item.action === 'runtime-refresh') {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['runtimeHealth'] }),
+        queryClient.invalidateQueries({ queryKey: ['queueSummary'] }),
+        queryClient.invalidateQueries({ queryKey: ['jobs'] }),
+        queryClient.invalidateQueries({ queryKey: ['openclawConnectivity'] }),
+      ])
+      navigate({ to: '/runtime' })
+      onClose()
+      return
+    }
+    if (item.to) navigate({ to: item.to })
+    onClose()
+  }
 
   return (
-    <div className="command-backdrop" onClick={onClose}>
-      <div className="command-card" onClick={(e) => e.stopPropagation()}>
-        <div className="command-head">快捷操作</div>
-        <Input autoFocus placeholder="输入关键词，例如：工单、WebChat、dead、重排、公告" value={query} onChange={(e) => setQuery(e.target.value)} />
-        <div className="command-list" data-testid="operator-command-palette-actions">
-          {filtered.map((item) => (
-            <button
-              key={item.id}
-              className="command-item"
-              onClick={async () => {
-                if (item.action === 'refresh') {
-                  await queryClient.invalidateQueries()
-                  onClose()
-                  return
-                }
-                if (item.action === 'runtime-refresh') {
-                  await Promise.all([
-                    queryClient.invalidateQueries({ queryKey: ['runtimeHealth'] }),
-                    queryClient.invalidateQueries({ queryKey: ['queueSummary'] }),
-                    queryClient.invalidateQueries({ queryKey: ['jobs'] }),
-                    queryClient.invalidateQueries({ queryKey: ['openclawConnectivity'] }),
-                  ])
-                  navigate({ to: '/runtime' })
-                  onClose()
-                  return
-                }
-                if (item.to) navigate({ to: item.to })
-                onClose()
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
-          {!filtered.length ? <div className="empty">没有匹配的操作。</div> : null}
-        </div>
-        <div className="command-foot">
-          <Button onClick={onClose}>关闭</Button>
-        </div>
-      </div>
-    </div>
+    <Dialog.Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose() }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="command-backdrop" />
+        <Dialog.Content className="command-card" aria-describedby="command-palette-description">
+          <Dialog.Title className="command-head">快捷操作</Dialog.Title>
+          <p id="command-palette-description" className="sr-only">搜索并执行客服后台常用操作。按 Escape 可以关闭。</p>
+          <Input autoFocus placeholder="输入关键词，例如：工单、WebChat、dead、重排、公告" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <div className="command-list" data-testid="operator-command-palette-actions">
+            {filtered.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="command-item"
+                onClick={() => { void runAction(item) }}
+              >
+                {item.label}
+              </button>
+            ))}
+            {!filtered.length ? <div className="empty">没有匹配的操作。</div> : null}
+          </div>
+          <div className="command-foot">
+            <Dialog.Close asChild><Button>关闭</Button></Dialog.Close>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }

@@ -1,0 +1,53 @@
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  white-space: nowrap;
+  border: 0;
+}
+
+button:focus-visible,
+a[href]:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[role="button"]:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.72);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.16);
+}
+
+.command-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(15, 23, 42, .38);
+}
+
+.command-card {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 51;
+  width: min(680px, calc(100vw - 32px));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button,
+  .queue-card,
+  .command-item,
+  .v5-inbox-item {
+    transition-duration: 0.01ms !important;
+  }
+
+  .button:hover,
+  .queue-card:hover,
+  .command-item:hover,
+  .v5-inbox-item:hover {
+    transform: none !important;
+  }
+}
