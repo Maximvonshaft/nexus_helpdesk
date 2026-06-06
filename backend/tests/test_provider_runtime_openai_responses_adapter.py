@@ -101,7 +101,8 @@ async def test_openai_responses_success_normalizes_structured_output(monkeypatch
     assert result.provider == "openai_responses"
     assert result.structured_output["customer_reply"] == "Your parcel is currently in transit."
     assert result.structured_output["reply"] == "Your parcel is currently in transit."
-    assert result.structured_output["intent"] == "tracking"
+    assert result.structured_output["intent"] == "tracking_unresolved"
+    assert result.structured_output["tracking_number"] is None
     assert result.raw_payload_safe_summary["response_id"] == "resp_123"
     assert result.raw_payload_safe_summary["usage"] == {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150}
     assert captured_payload["model"] == "gpt-4o-mini"
@@ -109,6 +110,36 @@ async def test_openai_responses_success_normalizes_structured_output(monkeypatch
     assert captured_payload["text"]["format"]["type"] == "json_schema"
     prompt_blob = json.dumps(captured_payload, ensure_ascii=False)
     assert "must-not-leak" not in prompt_blob
+
+
+@pytest.mark.asyncio
+async def test_openai_responses_tracking_without_evidence_becomes_missing_number(monkeypatch):
+    adapter = OpenAIResponsesAdapter("sk-test")
+    monkeypatch.setattr(adapter, "_post_json", lambda payload: {"output_text": json.dumps(_strict_reply())})
+
+    result = await adapter.generate(
+        Mock(),
+        _request(
+            tracking_fact_summary=None,
+            tracking_fact_evidence_present=False,
+        ),
+    )
+
+    assert result.ok is True
+    assert result.structured_output["intent"] == "tracking_missing_number"
+    assert result.structured_output["tracking_number"] is None
+
+
+@pytest.mark.asyncio
+async def test_openai_responses_keeps_tracking_intent_when_tracking_number_present(monkeypatch):
+    adapter = OpenAIResponsesAdapter("sk-test")
+    monkeypatch.setattr(adapter, "_post_json", lambda payload: {"output_text": json.dumps(_strict_reply(tracking_number="SF123456789"))})
+
+    result = await adapter.generate(Mock(), _request())
+
+    assert result.ok is True
+    assert result.structured_output["intent"] == "tracking"
+    assert result.structured_output["tracking_number"] == "SF123456789"
 
 
 @pytest.mark.asyncio
