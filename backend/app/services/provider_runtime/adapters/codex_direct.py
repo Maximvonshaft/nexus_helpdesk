@@ -116,18 +116,31 @@ class CodexDirectAdapter(ProviderAdapter):
 
     async def generate(self, db: Session, request: ProviderRequest) -> ProviderResult:
         started = time.monotonic()
+        timings: dict[str, int] = {}
+
+        readiness_started = time.monotonic()
         readiness = await self.readiness_check()
+        timings["readiness_ms"] = _elapsed_ms(readiness_started)
         if not readiness.ready:
+            summary = dict(readiness.safe_summary)
+            summary["latency"] = _latency_summary(started, timings)
             return self._failure(
                 readiness.error_code or "codex_direct_unavailable",
                 started,
-                readiness.safe_summary,
+                summary,
                 retryable=readiness.error_code in {"codex_direct_timeout", "codex_direct_not_logged_in"},
             )
 
+        prompt_started = time.monotonic()
         prompt = self._build_prompt(request)
+        timings["prompt_build_ms"] = _elapsed_ms(prompt_started)
+
+        argv_started = time.monotonic()
         argv = self._generate_argv()
         timeout_seconds = _runtime_timeout_seconds(request.timeout_ms, self.config.timeout_seconds)
+        timings["argv_build_ms"] = _elapsed_ms(argv_started)
+
+        subprocess_started = time.monotonic()
         try:
             completed = await asyncio.to_thread(
                 self._run_sync,
@@ -135,10 +148,32 @@ class CodexDirectAdapter(ProviderAdapter):
                 prompt,
                 timeout_seconds,
             )
+            timings["subprocess_ms"] = _elapsed_ms(subprocess_started)
         except subprocess.TimeoutExpired:
-            return self._failure("codex_direct_timeout", started, {"prompt_chars": len(prompt), "argv_name": self._safe_argv_name(argv)}, retryable=True)
+            timings["subprocess_ms"] = _elapsed_ms(subprocess_started)
+            return self._failure(
+                "codex_direct_timeout",
+                started,
+                {
+                    "prompt_chars": len(prompt),
+                    "argv_name": self._safe_argv_name(argv),
+                    "timeout_seconds": timeout_seconds,
+                    "timeout_source": "codex_direct_subprocess",
+                    "latency": _latency_summary(started, timings),
+                },
+                retryable=True,
+            )
         except OSError:
-            return self._failure("codex_direct_binary_missing", started, {"prompt_chars": len(prompt), "argv_name": self._safe_argv_name(argv)})
+            timings["subprocess_ms"] = _elapsed_ms(subprocess_started)
+            return self._failure(
+                "codex_direct_binary_missing",
+                started,
+                {
+                    "prompt_chars": len(prompt),
+                    "argv_name": self._safe_argv_name(argv),
+                    "latency": _latency_summary(started, timings),
+                },
+            )
 
         safe_summary = {
             "provider": self.name,
@@ -151,6 +186,7 @@ class CodexDirectAdapter(ProviderAdapter):
             "env_mode": "scrubbed",
             "subprocess_mode": "to_thread_shell_false_stdin",
             "timeout_seconds": timeout_seconds,
+            "latency": _latency_summary(started, timings),
         }
         if completed.returncode != 0:
             return self._failure("codex_direct_nonzero_exit", started, safe_summary, retryable=True)
@@ -159,16 +195,23 @@ class CodexDirectAdapter(ProviderAdapter):
         if not output_text:
             return self._failure("codex_direct_empty_reply", started, safe_summary)
 
+        parse_started = time.monotonic()
         try:
             parsed = self._parse_model_output(output_text)
             normalized = self._normalize_output(parsed)
+            timings["parse_ms"] = _elapsed_ms(parse_started)
+            safe_summary["latency"] = _latency_summary(started, timings)
         except ValueError as exc:
+            timings["parse_ms"] = _elapsed_ms(parse_started)
+            safe_summary["latency"] = _latency_summary(started, timings)
             safe_summary["parse_error"] = str(exc)[:240]
             return self._failure("codex_direct_bad_json", started, safe_summary)
 
         if not str(normalized.get("customer_reply") or "").strip():
+            safe_summary["latency"] = _latency_summary(started, timings)
             return self._failure("codex_direct_empty_reply", started, safe_summary)
 
+        safe_summary["latency"] = _latency_summary(started, timings)
         return ProviderResult(
             ok=True,
             provider=self.name,
@@ -216,12 +259,16 @@ class CodexDirectAdapter(ProviderAdapter):
         if not self.auth_path.exists():
             return CodexDirectReadiness(False, "codex_direct_auth_missing", summary)
 
+        login_started = time.monotonic()
         try:
             status = self._run_sync(command_tokens + ["login", "status"], None, min(5.0, float(self.config.timeout_seconds)))
+            summary["login_status_ms"] = _elapsed_ms(login_started)
         except subprocess.TimeoutExpired:
+            summary["login_status_ms"] = _elapsed_ms(login_started)
             summary["login_status_checked"] = False
             return CodexDirectReadiness(False, "codex_direct_timeout", summary)
         except OSError:
+            summary["login_status_ms"] = _elapsed_ms(login_started)
             return CodexDirectReadiness(False, "codex_direct_binary_missing", summary)
 
         combined = f"{status.stdout or ''}\n{status.stderr or ''}"
@@ -408,6 +455,12 @@ def _runtime_timeout_seconds(timeout_ms: int | None, provider_timeout_seconds: i
 
 def _elapsed_ms(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
+
+
+def _latency_summary(started: float, timings: dict[str, int] | None = None) -> dict[str, int]:
+    summary = {key: int(value) for key, value in (timings or {}).items() if isinstance(value, int) and value >= 0}
+    summary["total_ms"] = _elapsed_ms(started)
+    return summary
 
 
 def _clean_string(value: Any, limit: int) -> str | None:
