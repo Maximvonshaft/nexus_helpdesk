@@ -222,6 +222,8 @@ def _runtime_context_for_request(
     body: str,
     market_id: int | None,
     language: str | None,
+    tracking_number: str | None = None,
+    tracking_fact_evidence_present: bool | None = None,
 ) -> dict[str, Any] | None:
     db = SessionLocal()
     try:
@@ -232,6 +234,8 @@ def _runtime_context_for_request(
             body=body,
             market_id=market_id,
             language=language,
+            tracking_number=tracking_number,
+            tracking_fact_evidence_present=tracking_fact_evidence_present,
         )
         return _attach_domain_shadow_trace(
             runtime_context,
@@ -544,6 +548,8 @@ async def generate_webchat_fast_reply(
         body=body,
         market_id=market_id,
         language=language,
+        tracking_number=tracking_fact_metadata.get("tracking_number") if isinstance(tracking_fact_metadata, dict) else None,
+        tracking_fact_evidence_present=evidence_present,
     )
     pre_provider_direct_answer = _pre_provider_locked_fact_direct_answer_result(
         body=body,

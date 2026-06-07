@@ -389,6 +389,8 @@ def _webchat_fast_runtime_context(
     body: str,
     market_id: int | None,
     language: str | None = None,
+    tracking_number: str | None = None,
+    tracking_fact_evidence_present: bool | None = None,
 ) -> dict[str, Any] | None:
     with db_context() as db:
         try:
@@ -399,6 +401,8 @@ def _webchat_fast_runtime_context(
                 body=body,
                 market_id=market_id,
                 language=language,
+                tracking_number=tracking_number,
+                tracking_fact_evidence_present=tracking_fact_evidence_present,
             )
         except Exception:
             LOGGER.warning("webchat_fast_runtime_context_failed", exc_info=True)
@@ -553,6 +557,125 @@ def _trusted_kb_direct_answer_final_guard_payload(
     }
 
 
+def _answer_from_knowledge_hit(hit: dict[str, Any]) -> str | None:
+    direct = str(hit.get("direct_answer") or "").strip()
+    if direct:
+        return direct
+    text = str(hit.get("text") or "")
+    for line in text.splitlines():
+        if line.strip().lower().startswith("answer:"):
+            return line.split(":", 1)[1].strip()
+    match = re.search(r"\bAnswer:\s*(.+)$", text, flags=re.I | re.S)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def _trusted_kb_guided_tracking_no_evidence_payload(
+    *,
+    body: str,
+    runtime_context: dict[str, Any] | None,
+    result_payload: dict[str, Any],
+    tracking_number: str | None,
+    tracking_fact: TrackingFactResult | None,
+) -> dict[str, Any] | None:
+    if not tracking_number:
+        return None
+    if tracking_fact is not None and tracking_fact.fact_evidence_present:
+        return None
+    if result_payload.get("reply_source") != "server_safe_fallback" and result_payload.get("handoff_required") is not True:
+        return None
+    knowledge_context = runtime_context.get("knowledge_context") if isinstance(runtime_context, dict) else None
+    hits = knowledge_context.get("hits") if isinstance(knowledge_context, dict) else []
+    if not isinstance(hits, list):
+        return None
+
+    selected: dict[str, Any] | None = None
+    selected_answer: str | None = None
+    for hit in hits:
+        if not isinstance(hit, dict):
+            continue
+        metadata = hit.get("metadata") if isinstance(hit.get("metadata"), dict) else {}
+        if metadata.get("knowledge_kind") not in {"business_fact", "faq", "sop", "policy"}:
+            continue
+        if metadata.get("fact_status") not in {None, "approved"}:
+            continue
+        answer = _answer_from_knowledge_hit(hit)
+        if not answer:
+            continue
+        selected = hit
+        selected_answer = answer
+        break
+    if not selected or not selected_answer:
+        return None
+
+    zh = any("\u4e00" <= ch <= "\u9fff" for ch in body + selected_answer)
+    reply = (
+        f"我暂时没有查到这个运单的可信物流记录。{selected_answer}"
+        if zh else
+        f"I do not have a trusted live tracking record for this number yet. {selected_answer}"
+    )
+    source = {
+        "item_key": selected.get("item_key"),
+        "title": selected.get("title"),
+        "score": selected.get("score"),
+        "chunk_index": selected.get("chunk_index"),
+        "source_metadata": selected.get("source_metadata") or {},
+    }
+    trace = _fallback_runtime_trace(runtime_context, tracking_number=tracking_number)
+    return {
+        **result_payload,
+        "ok": True,
+        "ai_generated": True,
+        "reply_source": "provider_runtime:grounded_knowledge",
+        "reply": reply,
+        "intent": "tracking_unresolved",
+        "tracking_number": None,
+        "handoff_required": False,
+        "handoff_reason": None,
+        "ticket_creation_queued": False,
+        "evidence_trace": trace,
+        "grounding_applied": True,
+        "grounding_source": source,
+        "grounding_reason": "tracking_no_evidence_guided_kb_repair",
+        "fallback_mode": None,
+        "ai_decision_trace": {
+            "schema_version": "webchat_ai_decision_v1",
+            "mode": "tracking_no_evidence_guided_kb_repair",
+            "reply_source": "provider_runtime:grounded_knowledge",
+            "repair_applied": True,
+            "repair_reason": "tracking_no_evidence_guided_kb_repair",
+            "decision": {
+                "intent": "tracking_unresolved",
+                "risk_level": "low",
+                "next_action": "reply",
+                "handoff_required": False,
+                "handoff_reason": None,
+                "tool_calls": [],
+                "evidence_used": [
+                    {
+                        "source": "speedaf_tracking_fact_unavailable",
+                        "evidence_type": "trusted_tracking_fact",
+                        "fact_evidence_present": False,
+                        "raw_tracking_number_exposed": False,
+                    },
+                    {
+                        "source": "hybrid_rag_v2",
+                        "evidence_type": "knowledge_context",
+                        "evidence_id": str(source.get("item_key") or "guided_kb")[:240],
+                        "fact_evidence_present": True,
+                        "raw_tracking_number_exposed": False,
+                    },
+                ],
+                "safety_notes": ["no live parcel status claimed without trusted tracking evidence"],
+            },
+            "policy_gate": {"ok": True, "violations": [], "warnings": [], "checked_tools": ["speedaf.order.query"]},
+            "tool_execution": {"ok": False, "records": []},
+            "raw_tracking_number_exposed": False,
+        },
+    }
+
+
 def _decision_for_execution(
     *,
     result: WebchatFastReplyResult,
@@ -678,6 +801,8 @@ async def _process_fast_reply(
         body=payload.body,
         market_id=routing_context.market_id,
         language=None,
+        tracking_number=tracking_number,
+        tracking_fact_evidence_present=tracking_fact_evidence_present,
     )
 
     result = await generate_webchat_fast_reply(
@@ -700,6 +825,16 @@ async def _process_fast_reply(
         result_payload["evidence_trace"] = _tracking_fact_evidence_trace(tracking_fact, tracking_number=tracking_number)
     else:
         result_payload.setdefault("evidence_trace", _fallback_runtime_trace(runtime_context, tracking_number=tracking_number))
+
+    guided_tracking_payload = _trusted_kb_guided_tracking_no_evidence_payload(
+        body=payload.body,
+        runtime_context=runtime_context,
+        result_payload=result_payload,
+        tracking_number=tracking_number,
+        tracking_fact=tracking_fact,
+    )
+    if guided_tracking_payload is not None:
+        result_payload = guided_tracking_payload
 
     guarded_payload = _trusted_kb_direct_answer_final_guard_payload(
         body=payload.body,

@@ -18,6 +18,19 @@ MAX_CONTEXT_HITS = 5
 MAX_LOCKED_FACTS = 3
 MAX_IDENTITY_FIELD_CHARS = 500
 MAX_IDENTITY_LIST_ITEMS = 12
+TRACKING_NUMBER_RE = re.compile(r"\b(?=[A-Z0-9]{8,30}\b)(?=[A-Z0-9]*\d)[A-Z0-9]+\b", re.I)
+TRACKING_NO_EVIDENCE_EXPANSION_TERMS = [
+    "tracking lookup failed",
+    "waybill not found",
+    "wrong tracking number",
+    "tracking number format",
+    "waybill format",
+    "客户输入运单号查不到",
+    "订单号多输少输",
+    "运单号格式",
+    "核对单号",
+    "CH tracking number format",
+]
 
 _SECRET_PATTERNS = [
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.I),
@@ -61,6 +74,8 @@ def build_webchat_runtime_context(
     market_id: int | None = None,
     language: str | None = None,
     audience_scope: str = "customer",
+    tracking_number: str | None = None,
+    tracking_fact_evidence_present: bool | None = None,
 ) -> dict[str, Any]:
     profile, match_rank = persona_service.resolve_preview(
         db,
@@ -68,9 +83,14 @@ def build_webchat_runtime_context(
         channel=channel_key,
         language=language,
     )
+    retrieval_query, expansion_terms = _runtime_retrieval_query(
+        body=body,
+        tracking_number=tracking_number,
+        tracking_fact_evidence_present=tracking_fact_evidence_present,
+    )
     retrieval = retrieve_published_chunks(
         db,
-        q=body,
+        q=retrieval_query,
         market_id=market_id,
         channel=channel_key,
         audience_scope=audience_scope,
@@ -87,7 +107,7 @@ def build_webchat_runtime_context(
             "audience_scope": audience_scope,
         },
         "persona_context": _persona_context(profile, match_rank),
-        "knowledge_context": _knowledge_context(retrieval, query=body),
+        "knowledge_context": _knowledge_context(retrieval, query=retrieval_query, original_query=body, query_expansion_terms=expansion_terms),
         "rag_trace": retrieval.as_trace(),
         "safety_policy": {
             "knowledge_scope": "policy_sop_faq_only",
@@ -100,6 +120,17 @@ def build_webchat_runtime_context(
             ],
         },
     })
+
+
+def _runtime_retrieval_query(*, body: str, tracking_number: str | None, tracking_fact_evidence_present: bool | None) -> tuple[str, list[str]]:
+    if tracking_fact_evidence_present is True:
+        return body, []
+    has_tracking_identifier = bool((tracking_number or "").strip() or TRACKING_NUMBER_RE.search(body or ""))
+    has_tracking_language = any(term in (body or "").lower() for term in ("tracking", "track", "waybill", "parcel", "shipment", "物流", "运单", "单号", "查件", "包裹"))
+    if not has_tracking_identifier and not has_tracking_language:
+        return body, []
+    terms = TRACKING_NO_EVIDENCE_EXPANSION_TERMS
+    return " ".join(part for part in [body, tracking_number, *terms] if part), terms
 
 
 def sanitize_runtime_context(value: Any) -> Any:
@@ -187,7 +218,7 @@ def _identity_list(value: Any) -> list[str]:
     return items
 
 
-def _knowledge_context(retrieval, *, query: str) -> dict[str, Any]:
+def _knowledge_context(retrieval, *, query: str, original_query: str | None = None, query_expansion_terms: list[str] | None = None) -> dict[str, Any]:
     hits: list[KnowledgeChunkHit] = retrieval.hits
     serialized_hits = [
         {
@@ -224,6 +255,9 @@ def _knowledge_context(retrieval, *, query: str) -> dict[str, Any]:
         "total_matches": retrieval.total,
         "candidate_count": retrieval.candidate_count,
         "query_analysis": retrieval.query_analysis.as_trace(),
+        "original_query": original_query or query,
+        "retrieval_query": query,
+        "query_expansion_terms": query_expansion_terms or [],
         "top_hits": retrieval.top_hits,
         "retrieval_methods": getattr(retrieval, "retrieval_methods", []),
         "no_answer_reason": getattr(retrieval, "no_answer_reason", None),

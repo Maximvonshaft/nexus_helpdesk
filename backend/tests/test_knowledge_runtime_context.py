@@ -17,6 +17,7 @@ from app import models  # noqa: F401,E402
 from app import models_control_plane  # noqa: F401,E402
 from app.enums import UserRole  # noqa: E402
 from app.models import User  # noqa: E402
+from app.api.webchat_fast import _answer_from_knowledge_hit  # noqa: E402
 from app.schemas_control_plane import KnowledgeItemCreate, KnowledgePublishRequest, PersonaProfileCreate, PersonaPublishRequest  # noqa: E402
 from app.services import knowledge_service, persona_service  # noqa: E402
 from app.services.ai_runtime_context import build_webchat_runtime_context  # noqa: E402
@@ -70,6 +71,14 @@ def _knowledge_payload(**overrides) -> KnowledgeItemCreate:
     return KnowledgeItemCreate(**data)
 
 
+def test_guided_tracking_fallback_extracts_answer_from_single_line_structured_chunk():
+    answer = _answer_from_knowledge_hit({
+        "text": "Question: 客户输入瑞士 Speedaf 运单号查不到怎么办？ Alias: CH运单号格式 Answer: 请客户核对 CH 开头后接 12 位数字的完整运单号。",
+    })
+
+    assert answer == "请客户核对 CH 开头后接 12 位数字的完整运单号。"
+
+
 def test_upload_text_document_sets_parse_fields_and_draft(monkeypatch, db_session):
     admin = _user(db_session)
     item = knowledge_service.create_item(db_session, _knowledge_payload(item_key="upload.policy", draft_body=None), admin)
@@ -94,6 +103,39 @@ def test_upload_text_document_sets_parse_fields_and_draft(monkeypatch, db_sessio
     assert updated.parsing_error is None
     assert updated.draft_body == "Customers may change address before dispatch."
     assert updated.draft_normalized_text == "Customers may change address before dispatch."
+
+
+def test_upload_document_extracts_business_fact_draft(monkeypatch, db_session):
+    admin = _user(db_session)
+    item = knowledge_service.create_item(db_session, _knowledge_payload(item_key="upload.ch-waybill", title="ch-waybill.txt", draft_body=None), admin)
+
+    monkeypatch.setattr(
+        knowledge_service.file_service,
+        "save_upload",
+        lambda file: SimpleNamespace(
+            stored_name=file.filename,
+            storage_key="stored-ch-waybill.txt",
+            file_size=128,
+            mime_type="text/plain",
+        ),
+    )
+
+    body = "\n".join([
+        "标题：瑞士 Speedaf 运单号格式与输错提醒",
+        "问题：客户输入瑞士 Speedaf 运单号查不到怎么办？",
+        "答案：请客户核对 CH 开头后接 12 位数字的完整运单号，不得在无可信查单结果时判断物流状态。",
+        "关键词：CH运单号格式，订单号输错，waybill not found",
+    ])
+    uploaded = UploadFile(filename="ch-waybill.txt", file=BytesIO(body.encode("utf-8")), headers=Headers({"content-type": "text/plain"}))
+    updated = knowledge_service.upload_document(db_session, item, uploaded, admin)
+
+    assert updated.knowledge_kind == "business_fact"
+    assert updated.fact_status == "draft"
+    assert updated.answer_mode == "guided_answer"
+    assert updated.fact_question == "客户输入瑞士 Speedaf 运单号查不到怎么办？"
+    assert "CH 开头后接 12 位数字" in updated.fact_answer
+    assert "waybill not found" in updated.fact_aliases_json
+    assert updated.citation_metadata_json["document_extraction"]["requires_human_review"] is True
 
 
 def test_publish_indexes_chunks_and_retrieval_respects_metadata_filters(db_session):
@@ -161,6 +203,45 @@ def test_runtime_context_includes_published_persona_and_safe_knowledge(db_sessio
     assert context["knowledge_context"]["hits"][0]["item_key"] == "runtime.address"
     assert context["safety_policy"]["knowledge_scope"] == "policy_sop_faq_only"
     assert "tracking_fact_evidence_present=true" in context["safety_policy"]["tracking_truth_boundary"]
+
+
+def test_runtime_context_expands_tracking_no_evidence_query_to_waybill_rules(db_session):
+    admin = _user(db_session)
+    item = knowledge_service.create_item(
+        db_session,
+        _knowledge_payload(
+            item_key="ch.waybill.format",
+            title="瑞士 Speedaf 运单号格式与输错提醒",
+            channel="website",
+            language="zh",
+            knowledge_kind="business_fact",
+            fact_question="客户输入瑞士 Speedaf 运单号查不到怎么办？",
+            fact_answer="请客户核对运单号是否完整；瑞士 Speedaf 运单号通常为 CH 开头，后接 12 位数字。在没有可信查单结果时，不得判断或编造物流状态。",
+            fact_aliases_json=["CH运单号格式", "运单号查不到", "waybill not found", "wrong tracking number"],
+            fact_status="approved",
+            answer_mode="guided_answer",
+            draft_body="瑞士 Speedaf 运单号通常为 CH 开头，后接 12 位数字。查不到时请客户核对单号，不得判断物流状态。",
+            draft_normalized_text="瑞士 Speedaf 运单号 CH 12 位数字 运单号查不到 核对单号",
+        ),
+        admin,
+    )
+    knowledge_service.publish_item(db_session, item, admin, notes="publish")
+
+    context = build_webchat_runtime_context(
+        db_session,
+        tenant_key="default",
+        channel_key="website",
+        language="zh",
+        body="CH1200000011425",
+        tracking_number="CH1200000011425",
+        tracking_fact_evidence_present=False,
+    )
+
+    knowledge = context["knowledge_context"]
+    assert "运单号格式" in knowledge["retrieval_query"]
+    assert knowledge["query_expansion_terms"]
+    assert knowledge["hits"][0]["item_key"] == "ch.waybill.format"
+    assert knowledge["hits"][0]["metadata"]["knowledge_kind"] == "business_fact"
 
 
 def test_runtime_context_includes_persona_identity_context_without_description(db_session):
