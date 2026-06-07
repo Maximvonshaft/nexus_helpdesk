@@ -281,6 +281,138 @@ def _provider_result_with_summary(provider_result: FastAIProviderResult, safe_su
     return FastAIProviderResult(**{**provider_result.__dict__, "raw_payload_safe_summary": safe_summary})
 
 
+_REPAIRABLE_PRIVACY_POLICY_CODES = {"raw_tracking_exposed", "raw_caller_or_secret_exposed"}
+_TRACKING_LIKE_TOKEN_RE = re.compile(r"\b(?=[A-Z0-9._-]{8,48}\b)(?=[A-Z0-9._-]*\d)[A-Z0-9][A-Z0-9._-]+\b", re.I)
+_LONG_NUMERIC_RE = re.compile(r"(?<!\d)\d{8,}(?!\d)")
+
+
+def _policy_violation_codes(result: WebchatFastReplyResult) -> set[str]:
+    trace = result.ai_decision_trace if isinstance(result.ai_decision_trace, dict) else {}
+    policy = trace.get("policy_gate") if isinstance(trace.get("policy_gate"), dict) else {}
+    violations = policy.get("violations") if isinstance(policy.get("violations"), list) else []
+    return {
+        str(item.get("code") or "").strip()
+        for item in violations
+        if isinstance(item, dict) and str(item.get("code") or "").strip()
+    }
+
+
+def _policy_blocked_only_by_repairable_privacy(result: WebchatFastReplyResult) -> bool:
+    if result.ok or result.error_code != "ai_decision_policy_blocked":
+        return False
+    codes = _policy_violation_codes(result)
+    return bool(codes) and codes.issubset(_REPAIRABLE_PRIVACY_POLICY_CODES)
+
+
+def _tracking_reference_candidates(*, body: str | None, tracking_number: str | None, reply: str | None) -> list[str]:
+    candidates: list[str] = []
+    for value in (tracking_number, body, reply):
+        text = str(value or "")
+        if not text:
+            continue
+        if value == tracking_number and text.strip():
+            candidates.append(text.strip())
+        candidates.extend(match.group(0) for match in _TRACKING_LIKE_TOKEN_RE.finditer(text))
+        candidates.extend(match.group(0) for match in _LONG_NUMERIC_RE.finditer(text))
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in candidates:
+        cleaned = item.strip()
+        key = re.sub(r"[^A-Z0-9]", "", cleaned.upper())
+        if len(key) < 8 or key in seen:
+            continue
+        seen.add(key)
+        ordered.append(cleaned)
+    return ordered
+
+
+def _identifier_suffix(value: str | None) -> str | None:
+    cleaned = re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+    return cleaned[-6:] if len(cleaned) >= 6 else None
+
+
+def _redact_reply_for_repair_context(reply: str | None, *, body: str | None, tracking_number: str | None) -> str | None:
+    cleaned = str(reply or "").strip()
+    if not cleaned:
+        return None
+    for candidate in _tracking_reference_candidates(body=body, tracking_number=tracking_number, reply=reply):
+        suffix = _identifier_suffix(candidate)
+        replacement = f"the waybill number ending {suffix}" if suffix else "the waybill number you provided"
+        cleaned = re.sub(re.escape(candidate), replacement, cleaned, flags=re.IGNORECASE)
+        digits_only = re.sub(r"\D", "", candidate)
+        if len(digits_only) >= 8:
+            cleaned = re.sub(re.escape(digits_only), replacement, cleaned, flags=re.IGNORECASE)
+    cleaned = _LONG_NUMERIC_RE.sub("the waybill number you provided", cleaned)
+    return cleaned[:600]
+
+
+def _reply_repair_context(
+    *,
+    blocked_result: WebchatFastReplyResult,
+    provider_result: FastAIProviderResult,
+    body: str | None,
+    tracking_number: str | None,
+) -> dict[str, Any]:
+    return {
+        "mode": "customer_reply_privacy_repair",
+        "violation_codes": sorted(_policy_violation_codes(blocked_result)),
+        "previous_intent": blocked_result.intent or provider_result.intent,
+        "previous_reply_redacted": _redact_reply_for_repair_context(provider_result.reply, body=body, tracking_number=tracking_number),
+        "requirements": [
+            "Preserve the customer-service meaning of the previous reply.",
+            "Remove raw tracking, waybill, phone-like, or secret-like identifiers from customer_reply.",
+            "Use 'the waybill number you provided' or suffix-only references such as 'ending 011425'.",
+            "Do not claim live parcel status unless tracking_fact_evidence_present=true.",
+            "For no-evidence tracking, keep intent=tracking_unresolved and tracking_number=null.",
+        ],
+    }
+
+
+def _runtime_context_with_reply_repair(
+    runtime_context: dict[str, Any] | None,
+    *,
+    blocked_result: WebchatFastReplyResult,
+    provider_result: FastAIProviderResult,
+    body: str | None,
+    tracking_number: str | None,
+) -> dict[str, Any] | None:
+    base = dict(runtime_context or {})
+    base["reply_repair"] = _reply_repair_context(
+        blocked_result=blocked_result,
+        provider_result=provider_result,
+        body=body,
+        tracking_number=tracking_number,
+    )
+    return base
+
+
+def _tracking_number_for_policy(*, body: str | None, tracking_fact_metadata: dict[str, Any] | None, provider_result: FastAIProviderResult | None = None) -> str | None:
+    if isinstance(tracking_fact_metadata, dict):
+        raw = tracking_fact_metadata.get("tracking_number")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    if provider_result and provider_result.tracking_number:
+        return provider_result.tracking_number
+    candidates = _tracking_reference_candidates(body=body, tracking_number=None, reply=None)
+    return candidates[0] if candidates else None
+
+
+def _mark_privacy_repaired_result(result: WebchatFastReplyResult) -> WebchatFastReplyResult:
+    reply_source = result.reply_source or "provider_runtime"
+    repaired_source = reply_source if reply_source.endswith(":repaired") else f"{reply_source}:repaired"
+    trace = dict(result.ai_decision_trace or {})
+    trace["reply_source"] = repaired_source
+    trace["repair_applied"] = True
+    trace["repair_reason"] = "customer_reply_privacy_policy_repair"
+    return WebchatFastReplyResult(
+        **{
+            **asdict(result),
+            "reply_source": repaired_source,
+            "ai_decision_trace": trace,
+        }
+    )
+
+
 def _is_already_grounded_provider_result(provider_result: FastAIProviderResult) -> bool:
     safe_summary = provider_result.raw_payload_safe_summary or {}
     return bool(safe_summary.get("grounding_applied")) or str(provider_result.reply_source or "").endswith(":grounded_knowledge")
@@ -542,13 +674,17 @@ async def generate_webchat_fast_reply(
         return result
 
     evidence_present = bool(tracking_fact_evidence_present and tracking_fact_summary)
+    tracking_number_for_policy = _tracking_number_for_policy(
+        body=body,
+        tracking_fact_metadata=tracking_fact_metadata,
+    )
     runtime_context = _runtime_context_for_request(
         tenant_key=tenant_key,
         channel_key=channel_key,
         body=body,
         market_id=market_id,
         language=language,
-        tracking_number=tracking_fact_metadata.get("tracking_number") if isinstance(tracking_fact_metadata, dict) else None,
+        tracking_number=tracking_number_for_policy,
         tracking_fact_evidence_present=evidence_present,
     )
     pre_provider_direct_answer = _pre_provider_locked_fact_direct_answer_result(
@@ -626,7 +762,11 @@ async def generate_webchat_fast_reply(
     result = _result_from_provider(
         provider_result,
         tracking_fact_metadata=tracking_fact_metadata if evidence_present else None,
-        tracking_number=tracking_fact_metadata.get("tracking_number") if isinstance(tracking_fact_metadata, dict) else provider_result.tracking_number,
+        tracking_number=_tracking_number_for_policy(
+            body=body,
+            tracking_fact_metadata=tracking_fact_metadata,
+            provider_result=provider_result,
+        ),
         runtime_context=runtime_context,
         tenant_key=tenant_key,
         channel_key=channel_key,
@@ -634,6 +774,63 @@ async def generate_webchat_fast_reply(
         request_id=request_id,
         body=body,
     )
+    if _policy_blocked_only_by_repairable_privacy(result):
+        repair_runtime_context = _runtime_context_with_reply_repair(
+            runtime_context,
+            blocked_result=result,
+            provider_result=provider_result,
+            body=body,
+            tracking_number=_tracking_number_for_policy(
+                body=body,
+                tracking_fact_metadata=tracking_fact_metadata,
+                provider_result=provider_result,
+            ),
+        )
+        repair_request = FastAIProviderRequest(
+            tenant_key=tenant_key,
+            channel_key=channel_key,
+            session_id=session_id,
+            body=body,
+            recent_context=recent_context,
+            request_id=request_id,
+            tracking_fact_summary=tracking_fact_summary if evidence_present else None,
+            tracking_fact_metadata=tracking_fact_metadata,
+            tracking_fact_evidence_present=evidence_present,
+            market_id=market_id,
+            language=language,
+            metadata=repair_runtime_context,
+        )
+        if getattr(settings, "provider", None) == "provider_runtime":
+            repair_provider_result = await dispatch_webchat_fast_reply(request=repair_request)
+        else:
+            repair_provider_result = await generate_fast_reply(
+                request=repair_request,
+                settings=settings,
+            )
+        if repair_provider_result.ok:
+            repair_provider_result = _apply_grounding(
+                provider_result=repair_provider_result,
+                body=body,
+                runtime_context=repair_runtime_context,
+                tracking_fact_evidence_present=evidence_present,
+            )
+        repaired_result = _result_from_provider(
+            repair_provider_result,
+            tracking_fact_metadata=tracking_fact_metadata if evidence_present else None,
+            tracking_number=_tracking_number_for_policy(
+                body=body,
+                tracking_fact_metadata=tracking_fact_metadata,
+                provider_result=repair_provider_result,
+            ),
+            runtime_context=repair_runtime_context,
+            tenant_key=tenant_key,
+            channel_key=channel_key,
+            session_id=session_id,
+            request_id=request_id,
+            body=body,
+        )
+        if repaired_result.ok:
+            result = _mark_privacy_repaired_result(repaired_result)
     status = "ok" if result.ok else (result.error_code or provider_result.error_code or "ai_unavailable")
     record_fast_reply_metric(
         status=status,
