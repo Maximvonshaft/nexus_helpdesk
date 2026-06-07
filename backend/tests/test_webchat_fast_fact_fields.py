@@ -87,7 +87,7 @@ def test_fast_service_forwards_fact_fields(monkeypatch):
     assert result.ok is True
 
 
-def test_fast_service_drops_fact_fields_without_evidence(monkeypatch):
+def test_fast_service_preserves_failure_metadata_without_evidence(monkeypatch):
     captured = {}
 
     class Settings:
@@ -127,7 +127,7 @@ def test_fast_service_drops_fact_fields_without_evidence(monkeypatch):
             recent_context=[],
             request_id="r1",
             tracking_fact_summary="Trusted tracking fact:\n- Current status: Status A",
-            tracking_fact_metadata={"fact_evidence_present": False},
+            tracking_fact_metadata={"fact_evidence_present": False, "tracking_fact_failure_reason": "1140003"},
             tracking_fact_evidence_present=False,
         )
     )
@@ -135,7 +135,7 @@ def test_fast_service_drops_fact_fields_without_evidence(monkeypatch):
     request = captured["request"]
     assert request.tracking_fact_evidence_present is False
     assert request.tracking_fact_summary is None
-    assert request.tracking_fact_metadata is None
+    assert request.tracking_fact_metadata == {"fact_evidence_present": False, "tracking_fact_failure_reason": "1140003"}
     assert result.ok is True
     get_settings.cache_clear()
 

@@ -17,7 +17,6 @@ from app import models  # noqa: F401,E402
 from app import models_control_plane  # noqa: F401,E402
 from app.enums import UserRole  # noqa: E402
 from app.models import User  # noqa: E402
-from app.api.webchat_fast import _answer_from_knowledge_hit  # noqa: E402
 from app.schemas_control_plane import KnowledgeItemCreate, KnowledgePublishRequest, PersonaProfileCreate, PersonaPublishRequest  # noqa: E402
 from app.services import knowledge_service, persona_service  # noqa: E402
 from app.services.ai_runtime_context import build_webchat_runtime_context  # noqa: E402
@@ -69,14 +68,6 @@ def _knowledge_payload(**overrides) -> KnowledgeItemCreate:
     }
     data.update(overrides)
     return KnowledgeItemCreate(**data)
-
-
-def test_guided_tracking_fallback_extracts_answer_from_single_line_structured_chunk():
-    answer = _answer_from_knowledge_hit({
-        "text": "Question: 客户输入瑞士 Speedaf 运单号查不到怎么办？ Alias: CH运单号格式 Answer: 请客户核对 CH 开头后接 12 位数字的完整运单号。",
-    })
-
-    assert answer == "请客户核对 CH 开头后接 12 位数字的完整运单号。"
 
 
 def test_upload_text_document_sets_parse_fields_and_draft(monkeypatch, db_session):

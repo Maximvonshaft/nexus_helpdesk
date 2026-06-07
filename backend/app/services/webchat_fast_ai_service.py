@@ -585,7 +585,7 @@ async def generate_webchat_fast_reply(
         recent_context=recent_context,
         request_id=request_id,
         tracking_fact_summary=tracking_fact_summary if evidence_present else None,
-        tracking_fact_metadata=tracking_fact_metadata if evidence_present else None,
+        tracking_fact_metadata=tracking_fact_metadata,
         tracking_fact_evidence_present=evidence_present,
         market_id=market_id,
         language=language,

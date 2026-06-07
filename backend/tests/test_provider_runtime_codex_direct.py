@@ -269,6 +269,44 @@ def test_codex_direct_runtime_timeout_preserves_subsecond_budget():
     assert _runtime_timeout_seconds(30000, 25) == 25.0
 
 
+def test_codex_direct_prompt_supports_tracking_no_evidence_kb_guidance():
+    adapter = CodexDirectAdapter()
+    prompt = adapter._build_prompt(_request(
+        body="CH1200000011425",
+        tracking_fact_evidence_present=False,
+        metadata={
+            "context_version": "nexus_webchat_runtime_context_v2",
+            "tracking_fact_metadata": {
+                "fact_evidence_present": False,
+                "tool_status": "failed",
+                "tracking_fact_failure_reason": "1140003",
+                "tracking_number_hash": "sha256:test",
+            },
+            "knowledge_context": {
+                "retrieval_query": "CH1200000011425 运单号格式 wrong tracking number",
+                "query_expansion_terms": ["运单号格式", "wrong tracking number"],
+                "hits": [
+                    {
+                        "item_key": "ch.waybill.format",
+                        "title": "瑞士 Speedaf 运单号格式与输错提醒",
+                        "text": "Question: 客户输入瑞士 Speedaf 运单号查不到怎么办？ Answer: 请客户核对 CH 开头后接 12 位数字的完整运单号。",
+                        "metadata": {"knowledge_kind": "business_fact", "fact_status": "approved", "answer_mode": "guided_answer"},
+                    }
+                ],
+                "locked_facts": [],
+                "evidence_pack": [{"item_key": "ch.waybill.format", "published_version": 1}],
+            },
+        },
+    ))
+
+    assert "dynamically explain" in prompt
+    assert "do not use canned wording" in prompt
+    assert "tracking_fact_metadata" in prompt
+    assert "tracking_fact_failure_reason" in prompt
+    assert "ch.waybill.format" in prompt
+    assert "CH1200000011425" in prompt
+
+
 @pytest.mark.asyncio
 async def test_codex_direct_smoke_ready(monkeypatch, fake_codex, codex_home):
     _enable_direct(monkeypatch, fake_codex=fake_codex, home=codex_home)

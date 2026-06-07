@@ -183,10 +183,10 @@ function KnowledgeStudioPage() {
                     </div>
                     <div className="button-row">
                       <Button variant="primary" disabled={!uploadFile || uploadKnowledge.isPending} onClick={() => uploadFile && uploadKnowledge.mutate(uploadFile)}>{uploadKnowledge.isPending ? '解析中' : '解析并保存草稿'}</Button>
-                      <Button variant="secondary" disabled={!uploadedItem || publishUploaded.isPending} onClick={() => publishUploaded.mutate()}>{publishUploaded.isPending ? '发布中' : '确认发布并索引'}</Button>
+                      <Button variant="secondary" disabled={!uploadedItem || publishUploaded.isPending} onClick={() => publishUploaded.mutate()}>{publishUploaded.isPending ? '发布中' : '审核通过并发布索引'}</Button>
                     </div>
                     {uploadKnowledge.isError ? <ErrorSummary title="文档解析失败" errors={[uploadKnowledge.error instanceof Error ? uploadKnowledge.error.message : '请检查文件格式和权限']} /> : null}
-                    {publishUploaded.isError ? <ErrorSummary title="发布失败" errors={[publishUploaded.error instanceof Error ? publishUploaded.error.message : '请检查草稿内容和权限']} /> : null}
+                    {publishUploaded.isError ? <ErrorSummary title="审核发布失败" errors={[publishUploaded.error instanceof Error ? publishUploaded.error.message : '请检查草稿内容和权限']} /> : null}
                   </div>
 
                   <div className="stack" data-testid="knowledge-studio-upload-preview">
