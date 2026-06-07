@@ -108,15 +108,53 @@ def tracking_candidates(body: str) -> list[str]:
     return out
 
 
-def contains_raw_identifier(value: Any, identifiers: Sequence[str]) -> bool:
-    rendered = json.dumps(value, ensure_ascii=False, default=str)
+def raw_identifier_leak_paths(value: Any, identifiers: Sequence[str], *, root: str = "$") -> list[str]:
+    exact_identifiers = _exact_identifier_needles(identifiers)
+    paths: list[str] = []
+
+    def visit(item: Any, path: str) -> None:
+        if isinstance(item, Mapping):
+            for key, child in item.items():
+                visit(child, f"{path}.{_safe_path_key(key)}")
+            return
+        if isinstance(item, list):
+            for index, child in enumerate(item):
+                visit(child, f"{path}[{index}]")
+            return
+        if isinstance(item, str) and _string_contains_any_identifier(item, exact_identifiers):
+            paths.append(path)
+
+    visit(value, root)
+    return sorted(set(paths))
+
+
+def _exact_identifier_needles(identifiers: Sequence[str]) -> list[str]:
+    needles: list[str] = []
+    seen: set[str] = set()
     for identifier in identifiers:
-        if identifier and re.search(re.escape(identifier), rendered, flags=re.IGNORECASE):
-            return True
-        digits = re.sub(r"\D", "", identifier)
-        if len(digits) >= 8 and digits in rendered:
+        raw = str(identifier or "").strip()
+        digits = re.sub(r"\D", "", raw)
+        candidates = [raw]
+        if len(digits) >= 8:
+            candidates.append(digits)
+        for candidate in candidates:
+            key = candidate.upper()
+            if len(candidate) >= 8 and key not in seen:
+                seen.add(key)
+                needles.append(candidate)
+    return needles
+
+
+def _string_contains_any_identifier(value: str, identifiers: Sequence[str]) -> bool:
+    for identifier in identifiers:
+        if re.search(re.escape(identifier), value, flags=re.IGNORECASE):
             return True
     return False
+
+
+def _safe_path_key(key: Any) -> str:
+    text = re.sub(r"[^A-Za-z0-9_:-]", "_", str(key))[:80]
+    return text or "field"
 
 
 def contains_any(text: str | None, terms: Sequence[str]) -> bool:
@@ -134,11 +172,17 @@ def latest_codex_audit(audit_rows: Sequence[Mapping[str, Any]]) -> dict[str, Any
 def extract_codex_fields(audit_row: Mapping[str, Any]) -> dict[str, Any]:
     safe_summary = parse_json_dict(audit_row.get("safe_summary"))
     latency = parse_json_dict(safe_summary.get("latency"))
+    codex_total_ms = as_int(latency.get("total_ms"))
+    subprocess_ms = as_int(latency.get("subprocess_ms"))
+    prompt_chars = as_int(safe_summary.get("prompt_chars"))
     return {
         "codex_elapsed_ms": as_int(audit_row.get("elapsed_ms")),
-        "codex_latency_total_ms": as_int(latency.get("total_ms")),
-        "codex_latency_subprocess_ms": as_int(latency.get("subprocess_ms")),
-        "codex_prompt_chars": as_int(safe_summary.get("prompt_chars")),
+        "codex_latency_total_ms": codex_total_ms,
+        "codex_latency_subprocess_ms": subprocess_ms,
+        "codex_prompt_chars": prompt_chars,
+        "codex_total_ms": codex_total_ms,
+        "subprocess_ms": subprocess_ms,
+        "prompt_chars": prompt_chars,
         "stdout_chars": as_int(safe_summary.get("stdout_chars")),
         "stderr_chars": as_int(safe_summary.get("stderr_chars")),
         "readiness_cache_hit": safe_summary.get("readiness_cache_hit"),
@@ -228,18 +272,26 @@ def audit_records(args: argparse.Namespace) -> list[dict[str, Any]]:
                 "mode": "audit",
                 "label": args.label,
                 "sample_index": index,
+                "session_id": audit_row.get("session_id"),
+                "client_message_id": None,
                 "http_status": None,
                 "elapsed_ms": as_int(audit_row.get("elapsed_ms")),
+                "reply": "",
                 "reply_source": "codex_direct",
                 "intent": None,
                 "server_safe_fallback": False,
                 "temporarily_unavailable_leaked": False,
+                "reply_raw_identifier_leaked": False,
+                "payload_raw_identifier_leaked": False,
+                "raw_identifier_leak_paths": [],
                 "raw_identifier_leaked": False,
                 "live_status_claim_leaked": False,
                 "tracking_fact_evidence_present": None,
                 "policy_gate_ok": None,
                 "policy_gate_violations": [],
                 "provider_audit_rows": [audit_row],
+                "provider_audit_available": True,
+                "provider_audit_count": 1,
                 "repair_applied": None,
                 "codex_timeout": audit_row.get("error_code") == "codex_direct_timeout",
                 "timeout": audit_row.get("error_code") == "codex_direct_timeout",
@@ -258,15 +310,18 @@ def audit_records(args: argparse.Namespace) -> list[dict[str, Any]]:
 
 def smoke_once(args: argparse.Namespace, index: int) -> dict[str, Any]:
     session_id = f"codex-latency-{safe_label(args.label)}-{uuid.uuid4().hex[:10]}"
+    client_message_id = f"bench-{index}-{uuid.uuid4().hex[:8]}"
     payload = {
         "tenant_key": args.tenant_key,
         "channel_key": args.channel_key,
         "session_id": session_id,
-        "client_message_id": f"bench-{index}-{uuid.uuid4().hex[:8]}",
+        "client_message_id": client_message_id,
         "body": args.body,
         "recent_context": [],
         "country_code": args.country_code,
     }
+    if getattr(args, "require_provider_audit", False) and not args.database_url:
+        raise SystemExit("--require-provider-audit requires --database-url or DATABASE_URL")
     identifiers = tracking_candidates(args.body)
     request = urllib.request.Request(
         args.endpoint_url,
@@ -291,51 +346,75 @@ def smoke_once(args: argparse.Namespace, index: int) -> dict[str, Any]:
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
     audit_rows = query_provider_audit_rows(database_url=args.database_url, session_id=session_id, limit=10)
+    provider_audit_available = bool(audit_rows)
+    if getattr(args, "require_provider_audit", False) and not provider_audit_available:
+        raise SystemExit(f"--require-provider-audit found no provider_runtime_audit_logs rows for session_id={session_id}")
     codex_row = latest_codex_audit(audit_rows)
     codex = extract_codex_fields(codex_row) if codex_row else {
         "codex_elapsed_ms": None,
         "codex_latency_total_ms": None,
         "codex_latency_subprocess_ms": None,
         "codex_prompt_chars": None,
+        "codex_total_ms": None,
+        "subprocess_ms": None,
+        "prompt_chars": None,
         "stdout_chars": None,
         "stderr_chars": None,
+        "readiness_cache_hit": None,
+        "readiness_cache_ttl_seconds": None,
+        "auth_mtime_present": None,
+        "readiness_ms": None,
     }
     trace = response_payload.get("ai_decision_trace") if isinstance(response_payload.get("ai_decision_trace"), dict) else {}
     policy = trace.get("policy_gate") if isinstance(trace.get("policy_gate"), dict) else {}
     tracking_fact = response_payload.get("tracking_fact") if isinstance(response_payload.get("tracking_fact"), dict) else {}
     reply = response_payload.get("reply") if isinstance(response_payload.get("reply"), str) else ""
     temporarily_unavailable = contains_any(reply, TEMPORARILY_UNAVAILABLE_TERMS)
-    raw_identifier_leaked = contains_raw_identifier(response_payload, identifiers)
+    reply_leak_paths = raw_identifier_leak_paths(reply, identifiers, root="$.reply")
+    payload_leak_paths = raw_identifier_leak_paths(response_payload, identifiers)
+    reply_raw_identifier_leaked = bool(reply_leak_paths)
+    payload_raw_identifier_leaked = bool(payload_leak_paths)
     live_status_claim_leaked = contains_any(reply, LIVE_STATUS_TERMS)
     codex_timeout = error_code == "codex_direct_timeout" or any(row.get("error_code") == "codex_direct_timeout" for row in audit_rows)
     phase_timings = extract_phase_timings(response_payload)
     server_safe_fallback = response_payload.get("reply_source") == "server_safe_fallback"
     http_success = http_status == 200 and not error_code
+    policy_gate_ok = policy.get("ok")
     effective_success = bool(
         http_success
+        and bool(reply.strip())
         and not server_safe_fallback
         and not temporarily_unavailable
-        and not raw_identifier_leaked
         and not live_status_claim_leaked
+        and not reply_raw_identifier_leaked
         and not codex_timeout
+        and policy_gate_ok is not False
     )
     return {
         "timestamp": utc_now(),
         "mode": "smoke",
         "label": args.label,
         "sample_index": index,
+        "session_id": session_id,
+        "client_message_id": client_message_id,
         "http_status": http_status,
         "elapsed_ms": elapsed_ms,
+        "reply": reply,
         "reply_source": response_payload.get("reply_source"),
         "intent": response_payload.get("intent"),
         "server_safe_fallback": server_safe_fallback,
         "temporarily_unavailable_leaked": temporarily_unavailable,
-        "raw_identifier_leaked": raw_identifier_leaked,
+        "reply_raw_identifier_leaked": reply_raw_identifier_leaked,
+        "payload_raw_identifier_leaked": payload_raw_identifier_leaked,
+        "raw_identifier_leak_paths": payload_leak_paths,
+        "raw_identifier_leaked": reply_raw_identifier_leaked,
         "live_status_claim_leaked": live_status_claim_leaked,
         "tracking_fact_evidence_present": tracking_fact.get("fact_evidence_present"),
-        "policy_gate_ok": policy.get("ok"),
+        "policy_gate_ok": policy_gate_ok,
         "policy_gate_violations": policy.get("violations") if isinstance(policy.get("violations"), list) else [],
         "provider_audit_rows": audit_rows,
+        "provider_audit_available": provider_audit_available,
+        "provider_audit_count": len(audit_rows),
         "repair_applied": bool(trace.get("repair_applied") or response_payload.get("repair_applied")),
         "codex_timeout": codex_timeout,
         "timeout": error_code in {"TimeoutError", "timeout", "codex_direct_timeout"} or codex_timeout,
@@ -353,6 +432,8 @@ def summarize(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     effective_success_count = sum(1 for record in records if record.get("effective_success"))
     temporarily_unavailable_count = sum(1 for record in records if record.get("temporarily_unavailable_leaked"))
     codex_timeout_count = sum(1 for record in records if record.get("codex_timeout"))
+    provider_audit_missing_count = sum(1 for record in records if not record.get("provider_audit_available"))
+    provider_audit_available_count = total - provider_audit_missing_count
     summary = {
         "generated_at": utc_now(),
         "label": records[0].get("label") if records else None,
@@ -367,15 +448,21 @@ def summarize(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "server_safe_fallback_count": fallback_count,
         "server_safe_fallback_rate": round(fallback_count / total, 6) if total else None,
         "temporarily_unavailable_count": temporarily_unavailable_count,
-        "raw_identifier_leak_count": sum(1 for record in records if record.get("raw_identifier_leaked")),
+        "provider_audit_available": provider_audit_missing_count == 0 if total else None,
+        "provider_audit_available_count": provider_audit_available_count,
+        "provider_audit_missing_count": provider_audit_missing_count,
+        "reply_raw_identifier_leak_count": sum(1 for record in records if record.get("reply_raw_identifier_leaked")),
+        "payload_raw_identifier_leak_count": sum(1 for record in records if record.get("payload_raw_identifier_leaked")),
+        "raw_identifier_leak_count": sum(1 for record in records if record.get("reply_raw_identifier_leaked")),
         "live_status_claim_count": sum(1 for record in records if record.get("live_status_claim_leaked")),
-        "prompt_chars": metric(record.get("codex_prompt_chars") for record in records),
+        "prompt_chars": metric(record.get("prompt_chars") or record.get("codex_prompt_chars") for record in records),
         "tracking_fact_ms": metric(record.get("tracking_fact_ms") for record in records),
         "runtime_context_ms": metric(record.get("runtime_context_ms") for record in records),
         "provider_ms": metric(record.get("provider_ms") for record in records),
         "policy_gate_ms": metric(record.get("policy_gate_ms") for record in records),
-        "codex_total_ms": metric(record.get("codex_latency_total_ms") or record.get("codex_elapsed_ms") for record in records),
-        "subprocess_ms": metric(record.get("codex_latency_subprocess_ms") for record in records),
+        "codex_total_ms": metric(record.get("codex_total_ms") or record.get("codex_latency_total_ms") or record.get("codex_elapsed_ms") for record in records),
+        "subprocess_ms": metric(record.get("subprocess_ms") or record.get("codex_latency_subprocess_ms") for record in records),
+        "readiness_ms": metric(record.get("readiness_ms") for record in records),
         "end_to_end_ms": metric(record.get("total_elapsed_ms") or record.get("elapsed_ms") for record in records),
     }
     return summary
@@ -397,7 +484,9 @@ def render_markdown(summary: Mapping[str, Any], records: Sequence[Mapping[str, A
         f"- Server safe fallback count: `{summary.get('server_safe_fallback_count')}`",
         f"- Server safe fallback rate: `{summary.get('server_safe_fallback_rate')}`",
         f"- Temporarily unavailable count: `{summary.get('temporarily_unavailable_count')}`",
+        f"- Provider audit missing count: `{summary.get('provider_audit_missing_count')}`",
         f"- Raw identifier leaks: `{summary.get('raw_identifier_leak_count')}`",
+        f"- Payload raw identifier leaks: `{summary.get('payload_raw_identifier_leak_count')}`",
         f"- Live status claim leaks: `{summary.get('live_status_claim_count')}`",
         "",
         "## Metrics",
@@ -405,7 +494,7 @@ def render_markdown(summary: Mapping[str, Any], records: Sequence[Mapping[str, A
         "| Metric | p50 | p95 | max |",
         "|---|---:|---:|---:|",
     ]
-    for key in ("prompt_chars", "tracking_fact_ms", "runtime_context_ms", "provider_ms", "policy_gate_ms", "codex_total_ms", "subprocess_ms", "end_to_end_ms"):
+    for key in ("prompt_chars", "tracking_fact_ms", "runtime_context_ms", "provider_ms", "policy_gate_ms", "codex_total_ms", "subprocess_ms", "readiness_ms", "end_to_end_ms"):
         data = summary.get(key) if isinstance(summary.get(key), Mapping) else {}
         lines.append(f"| {key} | {data.get('p50')} | {data.get('p95')} | {data.get('max')} |")
     lines.extend(
@@ -413,27 +502,30 @@ def render_markdown(summary: Mapping[str, Any], records: Sequence[Mapping[str, A
             "",
             "## Samples",
             "",
-            "| index | http | effective | source | intent | fallback | temp_unavail | raw_leak | live_claim | tracking_ms | provider_ms | prompt_chars | codex_ms | subprocess_ms | e2e_ms |",
-            "|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+            "| index | session | http | effective | source | intent | fallback | temp_unavail | reply_leak | payload_leak | live_claim | audit | tracking_ms | provider_ms | prompt_chars | codex_ms | subprocess_ms | e2e_ms |",
+            "|---:|---|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for record in records[:50]:
         lines.append(
-            "| {index} | {http} | {effective} | {source} | {intent} | {fallback} | {temp} | {raw} | {live} | {tracking} | {provider} | {prompt} | {codex} | {subprocess} | {e2e} |".format(
+            "| {index} | {session} | {http} | {effective} | {source} | {intent} | {fallback} | {temp} | {reply_leak} | {payload_leak} | {live} | {audit} | {tracking} | {provider} | {prompt} | {codex} | {subprocess} | {e2e} |".format(
                 index=record.get("sample_index"),
+                session=record.get("session_id"),
                 http=record.get("http_status"),
                 effective=record.get("effective_success"),
                 source=record.get("reply_source"),
                 intent=record.get("intent"),
                 fallback=record.get("server_safe_fallback"),
                 temp=record.get("temporarily_unavailable_leaked"),
-                raw=record.get("raw_identifier_leaked"),
+                reply_leak=record.get("reply_raw_identifier_leaked"),
+                payload_leak=record.get("payload_raw_identifier_leaked"),
                 live=record.get("live_status_claim_leaked"),
+                audit=record.get("provider_audit_available"),
                 tracking=record.get("tracking_fact_ms"),
                 provider=record.get("provider_ms"),
-                prompt=record.get("codex_prompt_chars"),
-                codex=record.get("codex_latency_total_ms") or record.get("codex_elapsed_ms"),
-                subprocess=record.get("codex_latency_subprocess_ms"),
+                prompt=record.get("prompt_chars") or record.get("codex_prompt_chars"),
+                codex=record.get("codex_total_ms") or record.get("codex_latency_total_ms") or record.get("codex_elapsed_ms"),
+                subprocess=record.get("subprocess_ms") or record.get("codex_latency_subprocess_ms"),
                 e2e=record.get("total_elapsed_ms") or record.get("elapsed_ms"),
             )
         )
@@ -481,6 +573,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--channel-key", default="website")
     parser.add_argument("--database-url", default=None)
     parser.add_argument("--since-minutes", type=int, default=None)
+    parser.add_argument("--require-provider-audit", action="store_true")
     return parser
 
 
