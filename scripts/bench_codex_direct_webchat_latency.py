@@ -141,7 +141,32 @@ def extract_codex_fields(audit_row: Mapping[str, Any]) -> dict[str, Any]:
         "codex_prompt_chars": as_int(safe_summary.get("prompt_chars")),
         "stdout_chars": as_int(safe_summary.get("stdout_chars")),
         "stderr_chars": as_int(safe_summary.get("stderr_chars")),
+        "readiness_cache_hit": safe_summary.get("readiness_cache_hit"),
+        "readiness_cache_ttl_seconds": as_int(safe_summary.get("readiness_cache_ttl_seconds")),
+        "auth_mtime_present": safe_summary.get("auth_mtime_present"),
+        "readiness_ms": as_int(safe_summary.get("readiness_ms") or latency.get("readiness_ms")),
     }
+
+
+def extract_phase_timings(payload: Mapping[str, Any]) -> dict[str, Any]:
+    trace = payload.get("ai_decision_trace") if isinstance(payload.get("ai_decision_trace"), Mapping) else {}
+    timings = trace.get("phase_timings") if isinstance(trace.get("phase_timings"), Mapping) else payload.get("latency_trace")
+    timings = timings if isinstance(timings, Mapping) else {}
+    return {
+        "tracking_fact_ms": as_int(timings.get("tracking_fact_elapsed_ms")),
+        "runtime_context_ms": as_int(timings.get("runtime_context_elapsed_ms")),
+        "provider_ms": as_int(timings.get("provider_elapsed_ms") or timings.get("provider_wall_elapsed_ms")),
+        "provider_wall_ms": as_int(timings.get("provider_wall_elapsed_ms")),
+        "policy_gate_ms": as_int(timings.get("policy_gate_elapsed_ms")),
+        "total_elapsed_ms": as_int(timings.get("total_elapsed_ms")),
+    }
+
+
+def build_smoke_headers(origin: str | None) -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if origin and origin.strip():
+        headers["Origin"] = origin.strip()
+    return headers
 
 
 def query_provider_audit_rows(*, database_url: str | None, session_id: str | None, limit: int) -> list[dict[str, Any]]:
@@ -196,7 +221,7 @@ def audit_records(args: argparse.Namespace) -> list[dict[str, Any]]:
     for index, row in enumerate(rows):
         audit_row = dict(row)
         codex = extract_codex_fields(audit_row)
-        status = str(audit_row.get("status") or "")
+        status = str(audit_row.get("status") or "").strip().lower()
         records.append(
             {
                 "timestamp": str(audit_row.get("created_at") or utc_now()),
@@ -216,7 +241,15 @@ def audit_records(args: argparse.Namespace) -> list[dict[str, Any]]:
                 "policy_gate_violations": [],
                 "provider_audit_rows": [audit_row],
                 "repair_applied": None,
+                "codex_timeout": audit_row.get("error_code") == "codex_direct_timeout",
                 "timeout": audit_row.get("error_code") == "codex_direct_timeout",
+                "effective_success": status == "ok" and audit_row.get("error_code") is None,
+                "tracking_fact_ms": None,
+                "runtime_context_ms": None,
+                "provider_ms": as_int(audit_row.get("elapsed_ms")),
+                "provider_wall_ms": None,
+                "policy_gate_ms": None,
+                "total_elapsed_ms": None,
                 **codex,
             }
         )
@@ -238,7 +271,7 @@ def smoke_once(args: argparse.Namespace, index: int) -> dict[str, Any]:
     request = urllib.request.Request(
         args.endpoint_url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Origin": args.origin},
+        headers=build_smoke_headers(args.origin),
         method="POST",
     )
     started = time.monotonic()
@@ -271,6 +304,21 @@ def smoke_once(args: argparse.Namespace, index: int) -> dict[str, Any]:
     policy = trace.get("policy_gate") if isinstance(trace.get("policy_gate"), dict) else {}
     tracking_fact = response_payload.get("tracking_fact") if isinstance(response_payload.get("tracking_fact"), dict) else {}
     reply = response_payload.get("reply") if isinstance(response_payload.get("reply"), str) else ""
+    temporarily_unavailable = contains_any(reply, TEMPORARILY_UNAVAILABLE_TERMS)
+    raw_identifier_leaked = contains_raw_identifier(response_payload, identifiers)
+    live_status_claim_leaked = contains_any(reply, LIVE_STATUS_TERMS)
+    codex_timeout = error_code == "codex_direct_timeout" or any(row.get("error_code") == "codex_direct_timeout" for row in audit_rows)
+    phase_timings = extract_phase_timings(response_payload)
+    server_safe_fallback = response_payload.get("reply_source") == "server_safe_fallback"
+    http_success = http_status == 200 and not error_code
+    effective_success = bool(
+        http_success
+        and not server_safe_fallback
+        and not temporarily_unavailable
+        and not raw_identifier_leaked
+        and not live_status_claim_leaked
+        and not codex_timeout
+    )
     return {
         "timestamp": utc_now(),
         "mode": "smoke",
@@ -280,17 +328,20 @@ def smoke_once(args: argparse.Namespace, index: int) -> dict[str, Any]:
         "elapsed_ms": elapsed_ms,
         "reply_source": response_payload.get("reply_source"),
         "intent": response_payload.get("intent"),
-        "server_safe_fallback": response_payload.get("reply_source") == "server_safe_fallback",
-        "temporarily_unavailable_leaked": contains_any(reply, TEMPORARILY_UNAVAILABLE_TERMS),
-        "raw_identifier_leaked": contains_raw_identifier(response_payload, identifiers),
-        "live_status_claim_leaked": contains_any(reply, LIVE_STATUS_TERMS),
+        "server_safe_fallback": server_safe_fallback,
+        "temporarily_unavailable_leaked": temporarily_unavailable,
+        "raw_identifier_leaked": raw_identifier_leaked,
+        "live_status_claim_leaked": live_status_claim_leaked,
         "tracking_fact_evidence_present": tracking_fact.get("fact_evidence_present"),
         "policy_gate_ok": policy.get("ok"),
         "policy_gate_violations": policy.get("violations") if isinstance(policy.get("violations"), list) else [],
         "provider_audit_rows": audit_rows,
         "repair_applied": bool(trace.get("repair_applied") or response_payload.get("repair_applied")),
-        "timeout": error_code in {"TimeoutError", "timeout", "codex_direct_timeout"},
+        "codex_timeout": codex_timeout,
+        "timeout": error_code in {"TimeoutError", "timeout", "codex_direct_timeout"} or codex_timeout,
+        "effective_success": effective_success,
         "error_code": error_code or response_payload.get("error_code"),
+        **phase_timings,
         **codex,
     }
 
@@ -299,20 +350,33 @@ def summarize(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     total = len(records)
     success = [record for record in records if not record.get("error_code") and (record.get("http_status") in {None, 200} or record.get("mode") == "audit")]
     fallback_count = sum(1 for record in records if record.get("server_safe_fallback"))
+    effective_success_count = sum(1 for record in records if record.get("effective_success"))
+    temporarily_unavailable_count = sum(1 for record in records if record.get("temporarily_unavailable_leaked"))
+    codex_timeout_count = sum(1 for record in records if record.get("codex_timeout"))
     summary = {
         "generated_at": utc_now(),
         "label": records[0].get("label") if records else None,
         "sample_count": total,
         "success_count": len(success),
         "failure_count": total - len(success),
+        "effective_success_count": effective_success_count,
+        "effective_failure_count": total - effective_success_count,
+        "effective_success_rate": round(effective_success_count / total, 6) if total else None,
         "timeout_count": sum(1 for record in records if record.get("timeout")),
+        "codex_timeout_count": codex_timeout_count,
+        "server_safe_fallback_count": fallback_count,
         "server_safe_fallback_rate": round(fallback_count / total, 6) if total else None,
+        "temporarily_unavailable_count": temporarily_unavailable_count,
         "raw_identifier_leak_count": sum(1 for record in records if record.get("raw_identifier_leaked")),
         "live_status_claim_count": sum(1 for record in records if record.get("live_status_claim_leaked")),
         "prompt_chars": metric(record.get("codex_prompt_chars") for record in records),
+        "tracking_fact_ms": metric(record.get("tracking_fact_ms") for record in records),
+        "runtime_context_ms": metric(record.get("runtime_context_ms") for record in records),
+        "provider_ms": metric(record.get("provider_ms") for record in records),
+        "policy_gate_ms": metric(record.get("policy_gate_ms") for record in records),
         "codex_total_ms": metric(record.get("codex_latency_total_ms") or record.get("codex_elapsed_ms") for record in records),
         "subprocess_ms": metric(record.get("codex_latency_subprocess_ms") for record in records),
-        "end_to_end_ms": metric(record.get("elapsed_ms") for record in records),
+        "end_to_end_ms": metric(record.get("total_elapsed_ms") or record.get("elapsed_ms") for record in records),
     }
     return summary
 
@@ -325,8 +389,14 @@ def render_markdown(summary: Mapping[str, Any], records: Sequence[Mapping[str, A
         f"- Samples: `{summary.get('sample_count')}`",
         f"- Successes: `{summary.get('success_count')}`",
         f"- Failures: `{summary.get('failure_count')}`",
+        f"- Effective successes: `{summary.get('effective_success_count')}`",
+        f"- Effective failures: `{summary.get('effective_failure_count')}`",
+        f"- Effective success rate: `{summary.get('effective_success_rate')}`",
         f"- Timeouts: `{summary.get('timeout_count')}`",
+        f"- Codex timeouts: `{summary.get('codex_timeout_count')}`",
+        f"- Server safe fallback count: `{summary.get('server_safe_fallback_count')}`",
         f"- Server safe fallback rate: `{summary.get('server_safe_fallback_rate')}`",
+        f"- Temporarily unavailable count: `{summary.get('temporarily_unavailable_count')}`",
         f"- Raw identifier leaks: `{summary.get('raw_identifier_leak_count')}`",
         f"- Live status claim leaks: `{summary.get('live_status_claim_count')}`",
         "",
@@ -335,7 +405,7 @@ def render_markdown(summary: Mapping[str, Any], records: Sequence[Mapping[str, A
         "| Metric | p50 | p95 | max |",
         "|---|---:|---:|---:|",
     ]
-    for key in ("prompt_chars", "codex_total_ms", "subprocess_ms", "end_to_end_ms"):
+    for key in ("prompt_chars", "tracking_fact_ms", "runtime_context_ms", "provider_ms", "policy_gate_ms", "codex_total_ms", "subprocess_ms", "end_to_end_ms"):
         data = summary.get(key) if isinstance(summary.get(key), Mapping) else {}
         lines.append(f"| {key} | {data.get('p50')} | {data.get('p95')} | {data.get('max')} |")
     lines.extend(
@@ -343,24 +413,28 @@ def render_markdown(summary: Mapping[str, Any], records: Sequence[Mapping[str, A
             "",
             "## Samples",
             "",
-            "| index | http | source | intent | fallback | raw_leak | live_claim | prompt_chars | codex_ms | subprocess_ms | e2e_ms |",
-            "|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|",
+            "| index | http | effective | source | intent | fallback | temp_unavail | raw_leak | live_claim | tracking_ms | provider_ms | prompt_chars | codex_ms | subprocess_ms | e2e_ms |",
+            "|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for record in records[:50]:
         lines.append(
-            "| {index} | {http} | {source} | {intent} | {fallback} | {raw} | {live} | {prompt} | {codex} | {subprocess} | {e2e} |".format(
+            "| {index} | {http} | {effective} | {source} | {intent} | {fallback} | {temp} | {raw} | {live} | {tracking} | {provider} | {prompt} | {codex} | {subprocess} | {e2e} |".format(
                 index=record.get("sample_index"),
                 http=record.get("http_status"),
+                effective=record.get("effective_success"),
                 source=record.get("reply_source"),
                 intent=record.get("intent"),
                 fallback=record.get("server_safe_fallback"),
+                temp=record.get("temporarily_unavailable_leaked"),
                 raw=record.get("raw_identifier_leaked"),
                 live=record.get("live_status_claim_leaked"),
+                tracking=record.get("tracking_fact_ms"),
+                provider=record.get("provider_ms"),
                 prompt=record.get("codex_prompt_chars"),
                 codex=record.get("codex_latency_total_ms") or record.get("codex_elapsed_ms"),
                 subprocess=record.get("codex_latency_subprocess_ms"),
-                e2e=record.get("elapsed_ms"),
+                e2e=record.get("total_elapsed_ms") or record.get("elapsed_ms"),
             )
         )
     lines.extend(
@@ -401,7 +475,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", default="artifacts/codex_direct_latency")
     parser.add_argument("--label", default=datetime.now(timezone.utc).strftime("codex_direct_webchat_%Y%m%d_%H%M%S"))
     parser.add_argument("--endpoint-url", default=DEFAULT_URL)
-    parser.add_argument("--origin", default="http://localhost")
+    parser.add_argument("--origin", default=None)
     parser.add_argument("--timeout-seconds", type=float, default=60.0)
     parser.add_argument("--tenant-key", default="default")
     parser.add_argument("--channel-key", default="website")

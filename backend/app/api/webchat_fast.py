@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any, AsyncIterator
 from urllib.parse import urlparse
 
@@ -640,12 +641,27 @@ def _merge_ai_decision_trace(
     result_payload["ai_decision_trace"] = trace
 
 
+def _elapsed_ms(started: float) -> int:
+    return int((time.monotonic() - started) * 1000)
+
+
+def _attach_phase_timings(result_payload: dict[str, Any], timings: dict[str, int]) -> None:
+    safe_timings = {key: int(value) for key, value in timings.items() if isinstance(value, int) and value >= 0}
+    result_payload["latency_trace"] = safe_timings
+    trace = dict(result_payload.get("ai_decision_trace") or {})
+    trace.setdefault("schema_version", "webchat_ai_decision_v1")
+    trace["phase_timings"] = safe_timings
+    result_payload["ai_decision_trace"] = trace
+
+
 async def _process_fast_reply(
     *,
     row_id: int,
     payload: WebchatFastReplyRequest,
     request: Request | None,
 ) -> dict[str, Any]:
+    total_started = time.monotonic()
+    phase_timings: dict[str, int] = {}
     frontend_context = _context_payload(payload.recent_context)
     caller_id = _caller_id(payload.visitor)
     request_id = getattr(request.state, "request_id", None) if request is not None else None
@@ -667,6 +683,7 @@ async def _process_fast_reply(
         routing_context = resolve_fast_routing_context(db, country_code=payload.country_code, market_code=payload.market_code, channel_account_key=payload.channel_account_key)
 
     tracking_number = _tracking_candidate(body=payload.body, context=merged_context, tracking_number=business_state.tracking_number)
+    tracking_fact_started = time.monotonic()
     tracking_fact = _lookup_fast_tracking_fact(
         tracking_number=tracking_number,
         conversation_id=conversation_id,
@@ -675,7 +692,9 @@ async def _process_fast_reply(
         caller_id=caller_id if _should_attempt_fact_first_lookup(body=payload.body, tracking_number=tracking_number, caller_id=caller_id) else None,
         country_code=payload.country_code or routing_context.country_code,
     )
+    phase_timings["tracking_fact_elapsed_ms"] = _elapsed_ms(tracking_fact_started)
     tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _tracking_fact_provider_fields(tracking_fact)
+    runtime_context_started = time.monotonic()
     runtime_context = _webchat_fast_runtime_context(
         tenant_key=payload.tenant_key,
         channel_key=payload.channel_key,
@@ -685,7 +704,9 @@ async def _process_fast_reply(
         tracking_number=tracking_number,
         tracking_fact_evidence_present=tracking_fact_evidence_present,
     )
+    phase_timings["runtime_context_elapsed_ms"] = _elapsed_ms(runtime_context_started)
 
+    provider_started = time.monotonic()
     result = await generate_webchat_fast_reply(
         tenant_key=payload.tenant_key,
         channel_key=payload.channel_key,
@@ -698,6 +719,8 @@ async def _process_fast_reply(
         tracking_fact_evidence_present=tracking_fact_evidence_present,
         market_id=routing_context.market_id,
     )
+    phase_timings["provider_wall_elapsed_ms"] = _elapsed_ms(provider_started)
+    phase_timings["provider_elapsed_ms"] = int(result.elapsed_ms or 0)
     result_payload = result.to_response() if result.ok else _provider_safe_fallback_payload(error_code=result.error_code, body=payload.body)
     result_payload.update(_public_tracking_reference(result.tracking_number or tracking_number))
     if tracking_fact is not None:
@@ -734,7 +757,9 @@ async def _process_fast_reply(
                 missing_fields=business_state.missing_fields,
             )
         decision = _decision_for_execution(result=result if result.ok else WebchatFastReplyResult(**{**result.__dict__, "reply": result_payload.get("reply"), "handoff_required": bool(result_payload.get("handoff_required")), "handoff_reason": result_payload.get("handoff_reason"), "intent": result_payload.get("intent")}), tracking_number=tracking_number, tracking_fact=tracking_fact, runtime_context=runtime_context)
+        policy_started = time.monotonic()
         policy = validate_ai_decision(decision, tracking_fact_metadata=tracking_fact_metadata if tracking_fact_evidence_present else None, tracking_number=tracking_number)
+        phase_timings["policy_gate_elapsed_ms"] = _elapsed_ms(policy_started)
         execution = execute_decision_tools(
             db,
             decision=decision,
@@ -764,6 +789,8 @@ async def _process_fast_reply(
             runtime_context=runtime_context,
             tracking_number=tracking_number,
         )
+        phase_timings["total_elapsed_ms"] = _elapsed_ms(total_started)
+        _attach_phase_timings(result_payload, phase_timings)
         metadata = {
             "handoff_required": bool(result_payload.get("handoff_required")),
             "reply_source": result_payload.get("reply_source"),

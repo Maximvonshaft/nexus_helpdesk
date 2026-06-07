@@ -251,6 +251,10 @@ async def test_codex_direct_success_normalizes_json_and_tool_allowlist(monkeypat
     ]
     assert res.structured_output["evidence_used"][0]["source"] == "knowledge_base"
     assert res.raw_payload_safe_summary["subprocess_mode"] == "to_thread_shell_false_stdin"
+    assert res.raw_payload_safe_summary["readiness_cache_hit"] is False
+    assert res.raw_payload_safe_summary["readiness_cache_ttl_seconds"] == 30
+    assert res.raw_payload_safe_summary["auth_mtime_present"] is True
+    assert isinstance(res.raw_payload_safe_summary["readiness_ms"], int)
 
 
 @pytest.mark.asyncio

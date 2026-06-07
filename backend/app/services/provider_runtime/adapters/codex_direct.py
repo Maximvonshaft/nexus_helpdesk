@@ -192,6 +192,10 @@ class CodexDirectAdapter(ProviderAdapter):
             "env_mode": "scrubbed",
             "subprocess_mode": "to_thread_shell_false_stdin",
             "timeout_seconds": timeout_seconds,
+            "readiness_cache_hit": bool(readiness.safe_summary.get("readiness_cache_hit")),
+            "readiness_cache_ttl_seconds": readiness.safe_summary.get("readiness_cache_ttl_seconds"),
+            "auth_mtime_present": bool(readiness.safe_summary.get("auth_mtime_present")),
+            "readiness_ms": timings.get("readiness_ms"),
             "latency": _latency_summary(started, timings),
         }
         if completed.returncode != 0:
