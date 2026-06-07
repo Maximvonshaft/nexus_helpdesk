@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..models_control_plane import KnowledgeItem, KnowledgeItemVersion
 from ..utils.time import utc_now
 from . import file_service
-from .knowledge_document_service import parse_document_bytes, read_upload_bytes
+from .knowledge_document_service import extract_knowledge_candidate, parse_document_bytes, read_upload_bytes
 from .knowledge_retrieval_service import index_published_item
 
 VALID_STATUSES = {"draft", "active", "archived"}
@@ -289,6 +289,7 @@ def upload_document(db: Session, row: KnowledgeItem, file: UploadFile, actor) ->
     row.file_size = stored.file_size
     row.draft_body = parsed_body
     row.draft_normalized_text = normalized_text
+    _apply_document_extraction(row, parsed_body=parsed_body, normalized_text=normalized_text, filename=file.filename)
     if not row.summary:
         row.summary = _suggest_summary(normalized_text)
     if not row.language:
@@ -299,6 +300,53 @@ def upload_document(db: Session, row: KnowledgeItem, file: UploadFile, actor) ->
     row.updated_by = getattr(actor, "id", None)
     db.flush()
     return row
+
+
+def _apply_document_extraction(row: KnowledgeItem, *, parsed_body: str, normalized_text: str, filename: str | None) -> None:
+    extraction = extract_knowledge_candidate(text=parsed_body, normalized_text=normalized_text, filename=filename)
+    if extraction.confidence < 0.7 or extraction.knowledge_kind != "business_fact":
+        metadata = dict(row.citation_metadata_json or {})
+        metadata.setdefault("document_extraction", {
+            "extractor": extraction.extractor,
+            "confidence": round(float(extraction.confidence or 0), 3),
+            "knowledge_kind": "document",
+        })
+        row.citation_metadata_json = metadata
+        return
+
+    if extraction.title and (not row.title or row.title == (filename or row.title)):
+        row.title = extraction.title[:200]
+    if extraction.summary and not row.summary:
+        row.summary = extraction.summary[:4000]
+    row.knowledge_kind = "business_fact"
+    row.fact_question = row.fact_question or extraction.fact_question
+    row.fact_answer = row.fact_answer or extraction.fact_answer
+    row.fact_aliases_json = _merge_aliases(row.fact_aliases_json or [], extraction.fact_aliases)
+    row.fact_status = "draft"
+    row.answer_mode = extraction.answer_mode or "guided_answer"
+    metadata = dict(row.citation_metadata_json or {})
+    metadata["document_extraction"] = {
+        "extractor": extraction.extractor,
+        "confidence": round(float(extraction.confidence or 0), 3),
+        "risk_flags": extraction.risk_flags,
+        "requires_human_review": True,
+    }
+    row.citation_metadata_json = metadata
+
+
+def _merge_aliases(existing: list[str], suggested: list[str]) -> list[str]:
+    seen: set[str] = set()
+    merged: list[str] = []
+    for value in [*existing, *suggested]:
+        cleaned = str(value or "").strip()
+        key = cleaned.lower()
+        if not cleaned or key in seen:
+            continue
+        seen.add(key)
+        merged.append(cleaned)
+        if len(merged) >= 50:
+            break
+    return merged
 
 
 def update_item(db: Session, row: KnowledgeItem, payload, actor) -> KnowledgeItem:

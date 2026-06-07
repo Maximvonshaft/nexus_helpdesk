@@ -81,7 +81,7 @@ class CountingSuccessAdapter(ProviderAdapter):
                 "reply": "Your parcel is currently in transit.",
                 "language": "en",
                 "intent": "tracking",
-                "tracking_number": None,
+                "tracking_number": "CH120000001142",
                 "handoff_required": False,
                 "handoff_reason": None,
                 "recommended_agent_action": None,

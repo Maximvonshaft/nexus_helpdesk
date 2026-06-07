@@ -252,6 +252,32 @@ def test_provider_runtime_dispatcher_builds_webchat_fast_request():
     assert runtime_req.metadata == {}
 
 
+def test_provider_runtime_dispatcher_preserves_no_evidence_tracking_metadata():
+    req = FastAIProviderRequest(
+        tenant_key="default",
+        channel_key="website",
+        session_id="sess-build",
+        body="CH1200000011425",
+        recent_context=[],
+        request_id="req-no-evidence",
+        tracking_fact_summary=None,
+        tracking_fact_metadata={
+            "fact_evidence_present": False,
+            "tool_status": "failed",
+            "tracking_fact_failure_reason": "1140003",
+            "tracking_number_hash": "sha256:test",
+        },
+        tracking_fact_evidence_present=False,
+    )
+
+    runtime_req = build_webchat_fast_provider_request(req)
+
+    assert runtime_req.tracking_fact_evidence_present is False
+    assert runtime_req.tracking_fact_summary is None
+    assert runtime_req.metadata["tracking_fact_metadata"]["tracking_fact_failure_reason"] == "1140003"
+    assert runtime_req.metadata["tracking_fact_metadata"]["tracking_number_hash"] == "sha256:test"
+
+
 def test_provider_runtime_status_credential_summary_has_no_raw_tokens(monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "provider_runtime")

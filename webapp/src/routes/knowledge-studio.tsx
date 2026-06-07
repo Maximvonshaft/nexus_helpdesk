@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ChangeEvent, type DragEvent } from 'react'
 import { createRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
@@ -18,7 +18,7 @@ import { MetricCard } from '@/components/ui/MetricCard'
 import { RequireCapability } from '@/components/security/RequireCapability'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { formatDateTime, labelize, sanitizeDisplayText } from '@/lib/format'
-import type { BadgeTone, KnowledgeChunkHit, KnowledgeStudioConflict } from '@/lib/types'
+import type { BadgeTone, KnowledgeChunkHit, KnowledgeItem, KnowledgeStudioConflict } from '@/lib/types'
 
 function safeTone(value: string | null | undefined): BadgeTone {
   return value === 'danger' || value === 'warning' || value === 'success' ? value : 'default'
@@ -48,6 +48,10 @@ function KnowledgeStudioPage() {
   const [goldenExpectedAnswer, setGoldenExpectedAnswer] = useState('proof of delivery')
   const [goldenForbiddenTerms, setGoldenForbiddenTerms] = useState('manual verification')
   const [goldenMinScore, setGoldenMinScore] = useState(12)
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploadTitle, setUploadTitle] = useState('')
+  const [uploadChannel, setUploadChannel] = useState('website')
+  const [uploadedItem, setUploadedItem] = useState<KnowledgeItem | null>(null)
   const studio = useQuery({
     queryKey: ['knowledgeStudio'],
     queryFn: api.knowledgeStudio,
@@ -70,6 +74,33 @@ function KnowledgeStudioPage() {
       forbidden_answer_terms: goldenForbiddenTerms.split(',').map((item) => item.trim()).filter(Boolean),
       min_score: Number.isFinite(goldenMinScore) ? goldenMinScore : 12,
     }),
+  })
+  const uploadKnowledge = useMutation({
+    mutationFn: (file: File) => api.createKnowledgeItemFromUpload(file, {
+      title: uploadTitle.trim() || file.name.replace(/\.[^.]+$/, ''),
+      channel: uploadChannel.trim() || 'website',
+      audience_scope: 'customer',
+    }),
+    onSuccess: (item) => {
+      setUploadedItem(item)
+      setRetrievalQuery(item.fact_question || item.title || retrievalQuery)
+      void refresh()
+    },
+  })
+  const publishUploaded = useMutation({
+    mutationFn: async () => {
+      if (!uploadedItem) throw new Error('没有可发布的解析草稿')
+      let item = uploadedItem
+      if (item.knowledge_kind === 'business_fact' && item.fact_status !== 'approved') {
+        item = await api.updateKnowledgeItem(item.id, { fact_status: 'approved' })
+      }
+      const version = await api.publishKnowledgeItem(item.id, 'Knowledge Studio upload publish')
+      return { item, version }
+    },
+    onSuccess: ({ item }) => {
+      setUploadedItem({ ...item, status: 'active', published_version: Math.max(item.published_version || 0, 1), fact_status: item.knowledge_kind === 'business_fact' ? 'approved' : item.fact_status })
+      void refresh()
+    },
   })
 
   const goTarget = (href: string) => {
@@ -94,6 +125,19 @@ function KnowledgeStudioPage() {
       .slice(0, 3)
   }, [studio.data?.items])
   const displayedConflicts: KnowledgeStudioConflict[] = conflictCheck.data?.conflicts ?? studio.data?.conflicts ?? []
+  const selectUploadFile = (file: File | null | undefined) => {
+    if (!file) return
+    setUploadFile(file)
+    setUploadTitle((current) => current || file.name.replace(/\.[^.]+$/, ''))
+    setUploadedItem(null)
+  }
+  const onDropUpload = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    selectUploadFile(event.dataTransfer.files?.[0])
+  }
+  const onPickUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    selectUploadFile(event.target.files?.[0])
+  }
 
   return (
     <AppShell>
@@ -117,6 +161,65 @@ function KnowledgeStudioPage() {
                 </div>
               ))}
             </div>
+
+            <Card className="soft" data-testid="knowledge-studio-drag-drop-upload">
+              <CardHeader title="Word Upload / 解析发布" subtitle="上传 DOCX/PDF/TXT/XLSX 后生成可审核草稿；business_fact 默认 draft，确认后才发布并索引。" />
+              <CardBody>
+                <div className="page-grid split-grid-wide">
+                  <div className="stack">
+                    <div
+                      className="list-item"
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={onDropUpload}
+                      style={{ borderStyle: 'dashed', minHeight: 150, justifyContent: 'center' }}
+                    >
+                      <strong>{uploadFile ? sanitizeDisplayText(uploadFile.name) : '拖拽 Word / PDF / TXT / XLSX 到这里'}</strong>
+                      <div className="section-subtitle">{uploadFile ? `${Math.ceil(uploadFile.size / 1024)} KB · ${sanitizeDisplayText(uploadFile.type || 'unknown type')}` : '支持客服维护订单号规则、SOP、FAQ 和政策文档。'}</div>
+                      <Field label="选择文件"><Input type="file" accept=".docx,.pdf,.txt,.md,.markdown,.csv,.html,.htm,.xlsx" onChange={onPickUpload} /></Field>
+                    </div>
+                    <div className="form-grid">
+                      <Field label="标题"><Input value={uploadTitle} onChange={(event) => setUploadTitle(event.target.value)} placeholder="瑞士运单号规则" /></Field>
+                      <Field label="渠道"><Input value={uploadChannel} onChange={(event) => setUploadChannel(event.target.value)} placeholder="website" /></Field>
+                    </div>
+                    <div className="button-row">
+                      <Button variant="primary" disabled={!uploadFile || uploadKnowledge.isPending} onClick={() => uploadFile && uploadKnowledge.mutate(uploadFile)}>{uploadKnowledge.isPending ? '解析中' : '解析并保存草稿'}</Button>
+                      <Button variant="secondary" disabled={!uploadedItem || publishUploaded.isPending} onClick={() => publishUploaded.mutate()}>{publishUploaded.isPending ? '发布中' : '审核通过并发布索引'}</Button>
+                    </div>
+                    {uploadKnowledge.isError ? <ErrorSummary title="文档解析失败" errors={[uploadKnowledge.error instanceof Error ? uploadKnowledge.error.message : '请检查文件格式和权限']} /> : null}
+                    {publishUploaded.isError ? <ErrorSummary title="审核发布失败" errors={[publishUploaded.error instanceof Error ? publishUploaded.error.message : '请检查草稿内容和权限']} /> : null}
+                  </div>
+
+                  <div className="stack" data-testid="knowledge-studio-upload-preview">
+                    {uploadedItem ? (
+                      <>
+                        <div className="badges">
+                          <Badge tone={uploadedItem.parsing_status === 'parsed' ? 'success' : 'warning'}>{sanitizeDisplayText(uploadedItem.parsing_status || 'unparsed')}</Badge>
+                          <Badge tone={uploadedItem.knowledge_kind === 'business_fact' ? 'success' : 'default'}>{sanitizeDisplayText(uploadedItem.knowledge_kind)}</Badge>
+                          <Badge tone={uploadedItem.fact_status === 'approved' ? 'success' : 'warning'}>{sanitizeDisplayText(uploadedItem.fact_status || 'draft')}</Badge>
+                          <Badge>v{uploadedItem.published_version}</Badge>
+                        </div>
+                        <div className="list-item">
+                          <strong>{sanitizeDisplayText(uploadedItem.title)}</strong>
+                          <div className="section-subtitle">{sanitizeDisplayText(uploadedItem.item_key)} · {sanitizeDisplayText(uploadedItem.channel || 'global')} · {sanitizeDisplayText(uploadedItem.audience_scope)}</div>
+                          {uploadedItem.summary ? <div className="message" data-role="assistant">{sanitizeDisplayText(uploadedItem.summary)}</div> : null}
+                        </div>
+                        {uploadedItem.fact_question || uploadedItem.fact_answer ? (
+                          <div className="list-item">
+                            <div className="section-subtitle">Structured fact draft</div>
+                            {uploadedItem.fact_question ? <strong>{sanitizeDisplayText(uploadedItem.fact_question)}</strong> : null}
+                            {uploadedItem.fact_answer ? <div className="message" data-role="agent">{sanitizeDisplayText(uploadedItem.fact_answer)}</div> : null}
+                            {uploadedItem.fact_aliases_json?.length ? <div className="badges">{uploadedItem.fact_aliases_json.slice(0, 8).map((alias) => <Badge key={alias}>{sanitizeDisplayText(alias)}</Badge>)}</div> : null}
+                          </div>
+                        ) : null}
+                        <div className="message" data-role="assistant">{sanitizeDisplayText((uploadedItem.draft_body || '').slice(0, 900))}</div>
+                      </>
+                    ) : (
+                      <EmptyState title="等待上传解析" description="解析结果会显示草稿正文、结构化事实、别名和发布状态。" reason="发布前可以先确认系统是否把 Word 识别成正确的 business_fact。" />
+                    )}
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
 
             <Card className="soft" data-testid="knowledge-studio-asset-library">
               <CardHeader title="Asset Library / Release Readiness" subtitle="读取真实 KnowledgeItem，不使用前端 fixture；冲突和发布状态由后端 read-model 派生。" />

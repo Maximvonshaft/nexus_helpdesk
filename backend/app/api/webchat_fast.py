@@ -389,6 +389,8 @@ def _webchat_fast_runtime_context(
     body: str,
     market_id: int | None,
     language: str | None = None,
+    tracking_number: str | None = None,
+    tracking_fact_evidence_present: bool | None = None,
 ) -> dict[str, Any] | None:
     with db_context() as db:
         try:
@@ -399,6 +401,8 @@ def _webchat_fast_runtime_context(
                 body=body,
                 market_id=market_id,
                 language=language,
+                tracking_number=tracking_number,
+                tracking_fact_evidence_present=tracking_fact_evidence_present,
             )
         except Exception:
             LOGGER.warning("webchat_fast_runtime_context_failed", exc_info=True)
@@ -678,6 +682,8 @@ async def _process_fast_reply(
         body=payload.body,
         market_id=routing_context.market_id,
         language=None,
+        tracking_number=tracking_number,
+        tracking_fact_evidence_present=tracking_fact_evidence_present,
     )
 
     result = await generate_webchat_fast_reply(

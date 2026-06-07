@@ -45,7 +45,7 @@ def build_webchat_fast_provider_request(request: FastAIProviderRequest, *, metad
     safe_metadata = dict(metadata or {})
     if request.metadata:
         safe_metadata.update(request.metadata)
-    if request.tracking_fact_evidence_present and request.tracking_fact_metadata:
+    if request.tracking_fact_metadata:
         safe_metadata["tracking_fact_metadata"] = request.tracking_fact_metadata
     return ProviderRequest(
         request_id=request.request_id or "req_unknown",
