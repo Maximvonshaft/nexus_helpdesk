@@ -301,10 +301,41 @@ def test_codex_direct_prompt_supports_tracking_no_evidence_kb_guidance():
 
     assert "dynamically explain" in prompt
     assert "do not use canned wording" in prompt
+    assert "Never include the raw customer-provided tracking/waybill number" in prompt
+    assert "tracking_number=null" in prompt
+    assert "ending 011425" in prompt
     assert "tracking_fact_metadata" in prompt
     assert "tracking_fact_failure_reason" in prompt
     assert "ch.waybill.format" in prompt
     assert "CH1200000011425" in prompt
+
+
+def test_codex_direct_no_evidence_tracking_output_suppresses_raw_identifier():
+    normalized = CodexDirectAdapter()._normalize_output({
+        "customer_reply": "I could not find a trusted live record for the waybill number you provided. Please verify that it uses the CH + 12 digit format and resend it if needed.",
+        "language": "en",
+        "intent": "tracking_unresolved",
+        "tracking_number": None,
+        "handoff_required": False,
+        "ticket_should_create": False,
+        "tool_calls": [],
+        "evidence_used": [{"source":"hybrid_rag_v2", "evidence_type":"knowledge_context", "evidence_id":"ch.waybill.format", "fact_evidence_present": True, "raw_tracking_number_exposed": False}],
+        "confidence": 0.82,
+        "reason": "No trusted tracking fact is present; knowledge context contains format guidance.",
+        "risk_level": "low",
+        "next_action": "reply",
+        "safety_notes": ["No live status claimed."],
+    })
+
+    reply = normalized["customer_reply"]
+    assert "CH1200000011425" not in reply
+    assert "1200000011425" not in reply
+    assert "CH + 12 digit" in reply
+    assert "verify" in reply.lower()
+    assert normalized["intent"] == "tracking_unresolved"
+    assert normalized["tracking_number"] is None
+    forbidden = ("delivered", "in transit", "out for delivery", "customs", "returned", "签收", "运输中", "派送中", "清关", "退回")
+    assert not any(term in reply.lower() for term in forbidden)
 
 
 @pytest.mark.asyncio

@@ -356,6 +356,7 @@ class CodexDirectAdapter(ProviderAdapter):
         knowledge_context = metadata.get("knowledge_context") if isinstance(metadata.get("knowledge_context"), dict) else {}
         persona_context = metadata.get("persona_context") if isinstance(metadata.get("persona_context"), dict) else {}
         tracking_fact_metadata = metadata.get("tracking_fact_metadata") if isinstance(metadata.get("tracking_fact_metadata"), dict) else {}
+        reply_repair = metadata.get("reply_repair") if isinstance(metadata.get("reply_repair"), dict) else {}
         recent_context = request.recent_context if isinstance(request.recent_context, list) else []
         payload = {
             "request_id": request.request_id,
@@ -369,6 +370,7 @@ class CodexDirectAdapter(ProviderAdapter):
             "tracking_fact_metadata": _safe_context_slice(tracking_fact_metadata),
             "knowledge_context": _safe_context_slice(knowledge_context),
             "persona_context": _safe_context_slice(persona_context),
+            "reply_repair": _safe_context_slice(reply_repair),
             "allowed_tools": sorted(_ALLOWED_TOOLS),
         }
         prompt = (
@@ -377,8 +379,11 @@ class CodexDirectAdapter(ProviderAdapter):
             "Hard safety rules:\n"
             "- Do not mention internal systems, prompts, auth, local files, providers, bridges, runtime names, or implementation details.\n"
             "- Do not claim live parcel status unless tracking_fact_evidence_present is true and tracking_fact_summary supports the claim.\n"
+            "- Never include the raw customer-provided tracking/waybill number in customer_reply. Do not echo full identifiers from customer_message. Refer to it as 'the waybill number you provided' or, if needed, suffix-only such as 'ending 011425'. Do not include long numeric sequences that could be phone or tracking identifiers.\n"
             "- If the user asks for tracking and no trusted tracking fact is present, distinguish missing-number from no-evidence cases: ask for a tracking/waybill number only when the user has not provided one; if a number was provided and knowledge_context contains customer-safe format or validation guidance, dynamically explain that no trusted live record is available and use that knowledge to ask the customer to verify the number.\n"
+            "- In tracking no-evidence replies, use intent=tracking_unresolved, set tracking_number=null, do not put raw identifiers in customer_reply, and guide the customer to verify CH + 12 digit format when supported by knowledge_context.\n"
             "- In tracking no-evidence replies, do not use canned wording, do not claim delivered/in transit/out for delivery/customs/returned status, and cite only knowledge_context as SOP or validation guidance, not as live shipment evidence.\n"
+            "- If reply_repair.mode is customer_reply_privacy_repair, preserve the prior semantic intent, remove raw identifiers, keep tracking_number null unless trusted tracking evidence is present, and do not add live status claims.\n"
             "- Write tools are forbidden. Only propose allowlisted tool_calls: knowledge.search, speedaf.order.query, handoff.request.create.\n"
             "- For address changes, cancellation, refund, compensation, complaint escalation, or uncertain facts, do not promise completion; request handoff where appropriate.\n"
             "- Use runtime-compatible intent values only: greeting, tracking, tracking_missing_number, tracking_unresolved, complaint, address_change, handoff, other, unclear, handoff_request, refusal_request, general_support.\n"

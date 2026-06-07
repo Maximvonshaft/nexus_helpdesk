@@ -21,6 +21,7 @@ from app.models import Customer, Ticket, User, WebchatRateLimitBucket
 from app.models_control_plane import KnowledgeChunk, KnowledgeItem, KnowledgeItemVersion
 from app.schemas_control_plane import KnowledgeItemCreate
 from app.services import knowledge_service
+from app.services.ai_runtime.schemas import FastAIProviderRequest, FastAIProviderResult
 from app.services.tracking_fact_schema import TrackingFactResult
 from app.services.webchat_fast_ai_service import WebchatFastReplyResult
 from app.services.webchat_fast_config import get_webchat_fast_settings
@@ -332,6 +333,105 @@ def test_unsupported_tracking_status_claim_is_blocked(monkeypatch):
     assert payload["ai_decision_trace"]["policy_gate"]["ok"] is False
     assert payload["ai_decision_trace"]["policy_gate"]["violations"][0]["code"] in {"tracking_status_without_trusted_fact", "unsafe_customer_reply"}
     assert "CH020000006856" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_no_evidence_tracking_raw_identifier_policy_repair_avoids_server_safe_fallback(monkeypatch):
+    monkeypatch.setenv("WEBCHAT_FAST_AI_ENABLED", "true")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "provider_runtime")
+    get_webchat_fast_settings.cache_clear()
+    calls: list[FastAIProviderRequest] = []
+
+    runtime_context = {
+        "context_version": "nexus_webchat_runtime_context_v2",
+        "knowledge_context": {
+            "retrieval_query": "CH1200000011425 运单号格式 wrong tracking number",
+            "query_expansion_terms": ["运单号格式", "wrong tracking number"],
+            "hits": [
+                {
+                    "item_key": "ch.waybill.format",
+                    "title": "瑞士 Speedaf 运单号格式与输错提醒",
+                    "text": "CH waybills should use CH followed by 12 digits.",
+                    "metadata": {"knowledge_kind": "business_fact", "fact_status": "approved", "answer_mode": "guided_answer"},
+                }
+            ],
+            "locked_facts": [],
+            "evidence_pack": [{"item_key": "ch.waybill.format", "published_version": 1}],
+            "total_matches": 1,
+            "candidate_count": 1,
+        },
+    }
+
+    def fake_lookup_fast_tracking_fact(**kwargs):
+        assert kwargs["tracking_number"] == "CH1200000011425"
+        return TrackingFactResult(
+            ok=False,
+            tracking_number=kwargs["tracking_number"],
+            tool_status="failed",
+            pii_redacted=True,
+            fact_evidence_present=False,
+            failure_reason="1140003",
+        )
+
+    async def fake_dispatch(*, request: FastAIProviderRequest):
+        calls.append(request)
+        if len(calls) == 1:
+            return FastAIProviderResult(
+                ok=True,
+                ai_generated=True,
+                reply_source="codex_direct",
+                raw_provider="codex_direct",
+                raw_payload_safe_summary={"provider": "codex_direct"},
+                reply="I could not find a trusted live record for CH1200000011425. Please verify CH1200000011425 follows the CH + 12 digit format.",
+                intent="tracking_unresolved",
+                tracking_number=None,
+                handoff_required=False,
+                handoff_reason=None,
+                recommended_agent_action=None,
+                elapsed_ms=4304,
+            )
+        assert request.metadata["reply_repair"]["mode"] == "customer_reply_privacy_repair"
+        return FastAIProviderResult(
+            ok=True,
+            ai_generated=True,
+            reply_source="codex_direct",
+            raw_provider="codex_direct",
+            raw_payload_safe_summary={"provider": "codex_direct"},
+            reply="I could not find a trusted live record for the waybill number you provided. Please verify it follows the CH + 12 digit format and resend it if needed.",
+            intent="tracking_unresolved",
+            tracking_number=None,
+            handoff_required=False,
+            handoff_reason=None,
+            recommended_agent_action=None,
+            elapsed_ms=5100,
+        )
+
+    monkeypatch.setattr(webchat_fast, "_lookup_fast_tracking_fact", fake_lookup_fast_tracking_fact)
+    monkeypatch.setattr(webchat_fast, "_webchat_fast_runtime_context", lambda **_kwargs: runtime_context)
+    monkeypatch.setattr("app.services.webchat_fast_ai_service._runtime_context_for_request", lambda **_kwargs: runtime_context)
+    monkeypatch.setattr("app.services.webchat_fast_ai_service.dispatch_webchat_fast_reply", fake_dispatch)
+
+    response = client.post(
+        "/api/webchat/fast-reply",
+        json=_payload("tracking-no-evidence-repair", session_id="tracking-no-evidence-repair-session", body="CH1200000011425"),
+        headers={"Origin": "http://localhost"},
+    )
+
+    get_webchat_fast_settings.cache_clear()
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(calls) == 2
+    assert payload["ok"] is True
+    assert payload["reply_source"] == "codex_direct:repaired"
+    assert payload["reply_source"] != "server_safe_fallback"
+    assert payload["intent"] == "tracking_unresolved"
+    assert payload["tracking_fact"]["fact_evidence_present"] is False
+    assert payload["ai_decision_trace"]["policy_gate"]["ok"] is True
+    assert payload["ai_decision_trace"]["repair_applied"] is True
+    assert "CH1200000011425" not in json.dumps(payload, ensure_ascii=False)
+    assert "1200000011425" not in payload["reply"]
+    forbidden = ("delivered", "in transit", "out for delivery", "customs", "returned", "签收", "运输中", "派送中", "清关", "退回")
+    assert not any(term in payload["reply"].lower() for term in forbidden)
 
 
 def test_provider_failure_falls_back_safely_without_500(monkeypatch):
