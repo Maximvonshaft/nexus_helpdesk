@@ -29,18 +29,42 @@ def _is_invalid_ch_waybill_format(value: str | None) -> bool:
     return bool(_CH_WAYBILL_CANDIDATE_RE.fullmatch(normalized) and not _CH_WAYBILL_FULL_RE.fullmatch(normalized))
 
 
-def _negative_cache_ttl_seconds() -> int:
-    raw = os.getenv("WEBCHAT_FAST_TRACKING_NEGATIVE_CACHE_SECONDS", "60")
+def _bounded_int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name, str(default))
     try:
         value = int(raw)
     except (TypeError, ValueError):
-        value = 60
-    return max(0, min(value, 300))
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+def _negative_cache_ttl_seconds() -> int:
+    return _bounded_int_env("WEBCHAT_FAST_TRACKING_NEGATIVE_CACHE_SECONDS", 60, minimum=0, maximum=300)
+
+
+def _negative_cache_max_entries() -> int:
+    return _bounded_int_env("WEBCHAT_FAST_TRACKING_NEGATIVE_CACHE_MAX_ENTRIES", 2048, minimum=32, maximum=20000)
 
 
 def _negative_cache_key(tracking_number: str | None) -> str | None:
     normalized = _normalize_tracking_number(tracking_number)
     return _wf.hash_tracking_number(normalized) if normalized else None
+
+
+def _prune_negative_cache(now: float) -> None:
+    expired = [key for key, (expires_at, _reason, _status) in _NEGATIVE_CACHE.items() if expires_at <= now]
+    for key in expired:
+        _NEGATIVE_CACHE.pop(key, None)
+    max_entries = _negative_cache_max_entries()
+    overflow = len(_NEGATIVE_CACHE) - max_entries
+    if overflow > 0:
+        for key in list(_NEGATIVE_CACHE.keys())[:overflow]:
+            _NEGATIVE_CACHE.pop(key, None)
+
+
+def _store_negative_cache(cache_key: str, *, expires_at: float, failure_reason: str | None, tool_status: str | None) -> None:
+    _NEGATIVE_CACHE[cache_key] = (expires_at, failure_reason, tool_status)
+    _prune_negative_cache(time.monotonic())
 
 
 def _tracking_no_evidence_result(*, tracking_number: str | None, failure_reason: str, tool_status: str) -> _wf.TrackingFactResult:
@@ -130,10 +154,11 @@ def _lookup_fast_tracking_fact_guarded(
         country_code=country_code,
     )
     if cache_key and ttl > 0 and _cacheable_negative_result(result):
-        _NEGATIVE_CACHE[cache_key] = (
-            now + ttl,
-            result.failure_reason,
-            result.tool_status,
+        _store_negative_cache(
+            cache_key,
+            expires_at=now + ttl,
+            failure_reason=result.failure_reason,
+            tool_status=result.tool_status,
         )
     return result
 
