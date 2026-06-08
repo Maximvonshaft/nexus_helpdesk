@@ -5,3 +5,8 @@ from __future__ import annotations
 # the WebChat Fast router, so trusted KB direct_answer evidence can bypass the
 # final server fallback / handoff side-effect path deterministically.
 from . import webchat_fast_v8_patch as _webchat_fast_v8_patch  # noqa: F401
+
+# Import-time hardening for browser-visible WebChat Fast payloads. This keeps
+# raw waybill/tracking identifiers out of public traces and short-circuits
+# obviously invalid CH-format waybills before external lookup.
+from . import webchat_fast_public_trace_patch as _webchat_fast_public_trace_patch  # noqa: F401
