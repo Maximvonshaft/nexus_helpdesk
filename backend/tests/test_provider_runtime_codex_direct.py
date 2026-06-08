@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -93,6 +95,7 @@ def clean_env(monkeypatch):
         "CODEX_DIRECT_SANDBOX_ACKNOWLEDGED",
         "CODEX_DIRECT_ALLOW_NETWORK_ENV",
         "CODEX_DIRECT_FALLBACK_ALLOWED",
+        "CODEX_DIRECT_READINESS_CACHE_SECONDS",
         "CODEX_FAKE_LOGIN_STATUS",
         "CODEX_FAKE_LOGIN_EXIT",
         "CODEX_FAKE_SLEEP",
@@ -110,11 +113,12 @@ def clean_env(monkeypatch):
     for key in keys:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("APP_ENV", "test")
+    CodexDirectAdapter._readiness_cache.clear()
 
 
 def _enable_direct(monkeypatch, *, fake_codex: Path, home: Path, timeout: int = 5, fallback_allowed: bool = True):
     monkeypatch.setenv("CODEX_DIRECT_ENABLED", "true")
-    monkeypatch.setenv("CODEX_DIRECT_COMMAND", str(fake_codex))
+    monkeypatch.setenv("CODEX_DIRECT_COMMAND", f'"{sys.executable}" "{fake_codex}"')
     monkeypatch.setenv("CODEX_DIRECT_HOME", str(home))
     monkeypatch.setenv("CODEX_DIRECT_MODEL", "test-codex-model")
     monkeypatch.setenv("CODEX_DIRECT_TIMEOUT_SECONDS", str(timeout))
@@ -247,6 +251,10 @@ async def test_codex_direct_success_normalizes_json_and_tool_allowlist(monkeypat
     ]
     assert res.structured_output["evidence_used"][0]["source"] == "knowledge_base"
     assert res.raw_payload_safe_summary["subprocess_mode"] == "to_thread_shell_false_stdin"
+    assert res.raw_payload_safe_summary["readiness_cache_hit"] is False
+    assert res.raw_payload_safe_summary["readiness_cache_ttl_seconds"] == 30
+    assert res.raw_payload_safe_summary["auth_mtime_present"] is True
+    assert isinstance(res.raw_payload_safe_summary["readiness_ms"], int)
 
 
 @pytest.mark.asyncio
@@ -286,15 +294,26 @@ def test_codex_direct_prompt_supports_tracking_no_evidence_kb_guidance():
                 "retrieval_query": "CH1200000011425 运单号格式 wrong tracking number",
                 "query_expansion_terms": ["运单号格式", "wrong tracking number"],
                 "hits": [
-                    {
-                        "item_key": "ch.waybill.format",
-                        "title": "瑞士 Speedaf 运单号格式与输错提醒",
-                        "text": "Question: 客户输入瑞士 Speedaf 运单号查不到怎么办？ Answer: 请客户核对 CH 开头后接 12 位数字的完整运单号。",
-                        "metadata": {"knowledge_kind": "business_fact", "fact_status": "approved", "answer_mode": "guided_answer"},
+                {
+                    "item_key": "ch.waybill.format",
+                    "title": "瑞士 Speedaf 运单号格式与输错提醒",
+                    "score_breakdown": {"semantic": 100, "keyword": 42},
+                    "matched_terms": ["CH1200000011425", "运单号格式", "wrong", "tracking", "number"] * 20,
+                    "text": "Question: 客户输入瑞士 Speedaf 运单号查不到怎么办？ Answer: 请客户核对 CH 开头后接 12 位数字的完整运单号。",
+                    "metadata": {"knowledge_kind": "business_fact", "fact_status": "approved", "answer_mode": "guided_answer"},
+                    "source_metadata": {
+                        "knowledge_kind": "business_fact",
+                        "fact_status": "approved",
+                        "answer_mode": "guided_answer",
+                        "published_version": 7,
+                        "large_internal_blob": "x" * 2000,
+                    },
                     }
                 ],
                 "locked_facts": [],
-                "evidence_pack": [{"item_key": "ch.waybill.format", "published_version": 1}],
+                "evidence_pack": [{"item_key": "ch.waybill.format", "published_version": 1, "duplicate": "x" * 1000}],
+                "injected_knowledge": [{"item_key": "ch.waybill.format", "duplicate": "x" * 1000}],
+                "fallback_ngrams": ["x" * 50] * 50,
             },
         },
     ))
@@ -308,6 +327,13 @@ def test_codex_direct_prompt_supports_tracking_no_evidence_kb_guidance():
     assert "tracking_fact_failure_reason" in prompt
     assert "ch.waybill.format" in prompt
     assert "CH1200000011425" in prompt
+    assert "score_breakdown" not in prompt
+    assert "fallback_ngrams" not in prompt
+    assert "matched_terms" not in prompt
+    assert "evidence_pack" not in prompt
+    assert "injected_knowledge" not in prompt
+    assert "large_internal_blob" not in prompt
+    assert len(prompt) < 5500
 
 
 def test_codex_direct_no_evidence_tracking_output_suppresses_raw_identifier():
@@ -346,6 +372,93 @@ async def test_codex_direct_smoke_ready(monkeypatch, fake_codex, codex_home):
     assert smoke["error_code"] is None
     assert "auth.json" in smoke["checks"]["auth_path"]
     assert smoke["checks"]["codex_home"] == str(codex_home / ".codex")
+
+
+@pytest.mark.asyncio
+async def test_codex_direct_readiness_cache_reuses_success(monkeypatch, fake_codex, codex_home):
+    _enable_direct(monkeypatch, fake_codex=fake_codex, home=codex_home)
+    adapter = CodexDirectAdapter()
+    calls = []
+
+    def fake_run(argv, input_text, timeout_seconds):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="Logged in using ChatGPT", stderr="")
+
+    monkeypatch.setattr(adapter, "_run_sync", fake_run)
+    first = await adapter.readiness_check()
+    second = await adapter.readiness_check()
+
+    assert first.ready is True
+    assert second.ready is True
+    assert first.safe_summary["readiness_cache_hit"] is False
+    assert second.safe_summary["readiness_cache_hit"] is True
+    assert second.safe_summary["readiness_cache_ttl_seconds"] == 30
+    assert second.safe_summary["auth_mtime_present"] is True
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_codex_direct_readiness_cache_invalidates_on_auth_metadata_change(monkeypatch, fake_codex, codex_home):
+    _enable_direct(monkeypatch, fake_codex=fake_codex, home=codex_home)
+    adapter = CodexDirectAdapter()
+    calls = []
+
+    def fake_run(argv, input_text, timeout_seconds):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="Logged in using ChatGPT", stderr="")
+
+    monkeypatch.setattr(adapter, "_run_sync", fake_run)
+    assert (await adapter.readiness_check()).ready is True
+    (codex_home / ".codex" / "auth.json").write_text('{"status":"changed","extra":true}', encoding="utf-8")
+    second = await adapter.readiness_check()
+
+    assert second.ready is True
+    assert second.safe_summary["readiness_cache_hit"] is False
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_codex_direct_failed_readiness_is_not_cached(monkeypatch, fake_codex, codex_home):
+    _enable_direct(monkeypatch, fake_codex=fake_codex, home=codex_home)
+    adapter = CodexDirectAdapter()
+    calls = []
+
+    def fake_run(argv, input_text, timeout_seconds):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 1, stdout="Not logged in", stderr="")
+
+    monkeypatch.setattr(adapter, "_run_sync", fake_run)
+    first = await adapter.readiness_check()
+    second = await adapter.readiness_check()
+
+    assert first.ready is False
+    assert second.ready is False
+    assert first.error_code == "codex_direct_not_logged_in"
+    assert second.error_code == "codex_direct_not_logged_in"
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_codex_direct_readiness_cache_can_be_disabled(monkeypatch, fake_codex, codex_home):
+    _enable_direct(monkeypatch, fake_codex=fake_codex, home=codex_home)
+    monkeypatch.setenv("CODEX_DIRECT_READINESS_CACHE_SECONDS", "0")
+    adapter = CodexDirectAdapter()
+    calls = []
+
+    def fake_run(argv, input_text, timeout_seconds):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="Logged in using ChatGPT", stderr="")
+
+    monkeypatch.setattr(adapter, "_run_sync", fake_run)
+    first = await adapter.readiness_check()
+    second = await adapter.readiness_check()
+
+    assert first.ready is True
+    assert second.ready is True
+    assert first.safe_summary["readiness_cache_hit"] is False
+    assert second.safe_summary["readiness_cache_hit"] is False
+    assert second.safe_summary["readiness_cache_ttl_seconds"] == 0
+    assert len(calls) == 2
 
 
 def test_provider_registry_resolves_codex_direct(monkeypatch, fake_codex, codex_home):

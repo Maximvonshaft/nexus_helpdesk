@@ -6,6 +6,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +48,7 @@ _INTENT_ALIASES = {
     "handoff_create": "handoff_request",
 }
 _NOT_LOGGED_IN_MARKERS = ("not logged in", "logged out", "login required", "not authenticated")
+_AUTH_ERROR_MARKERS = _NOT_LOGGED_IN_MARKERS + ("auth error", "authentication failed", "invalid token", "expired token")
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,7 @@ class CodexDirectConfig:
     sandbox_acknowledged: bool
     allow_network_env: bool
     fallback_allowed: bool
+    readiness_cache_seconds: int
 
     @classmethod
     def from_env(cls) -> "CodexDirectConfig":
@@ -77,6 +80,7 @@ class CodexDirectConfig:
             sandbox_acknowledged=_env_bool("CODEX_DIRECT_SANDBOX_ACKNOWLEDGED", False),
             allow_network_env=_env_bool("CODEX_DIRECT_ALLOW_NETWORK_ENV", False),
             fallback_allowed=_env_bool("CODEX_DIRECT_FALLBACK_ALLOWED", True),
+            readiness_cache_seconds=_int_env("CODEX_DIRECT_READINESS_CACHE_SECONDS", 30, minimum=0, maximum=300),
         )
 
 
@@ -96,6 +100,8 @@ class CodexDirectAdapter(ProviderAdapter):
         supports_tracking_context=True,
         safety_level="reply_only_sandbox_required",
     )
+    _readiness_cache_lock = threading.RLock()
+    _readiness_cache: dict[tuple[Any, ...], tuple[float, CodexDirectReadiness]] = {}
 
     def __init__(self, config: CodexDirectConfig | None = None):
         self.config = config or CodexDirectConfig.from_env()
@@ -186,9 +192,15 @@ class CodexDirectAdapter(ProviderAdapter):
             "env_mode": "scrubbed",
             "subprocess_mode": "to_thread_shell_false_stdin",
             "timeout_seconds": timeout_seconds,
+            "readiness_cache_hit": bool(readiness.safe_summary.get("readiness_cache_hit")),
+            "readiness_cache_ttl_seconds": readiness.safe_summary.get("readiness_cache_ttl_seconds"),
+            "auth_mtime_present": bool(readiness.safe_summary.get("auth_mtime_present")),
+            "readiness_ms": timings.get("readiness_ms"),
             "latency": _latency_summary(started, timings),
         }
         if completed.returncode != 0:
+            if _completed_has_auth_error(completed):
+                self._clear_readiness_cache()
             return self._failure("codex_direct_nonzero_exit", started, safe_summary, retryable=True)
 
         output_text = (completed.stdout or "").strip()
@@ -231,6 +243,7 @@ class CodexDirectAdapter(ProviderAdapter):
         return self.config.home / ".codex" / "auth.json"
 
     def _readiness_check_sync(self) -> CodexDirectReadiness:
+        auth_meta = self._auth_metadata()
         summary: dict[str, Any] = {
             "provider": self.name,
             "enabled": self.config.enabled,
@@ -242,6 +255,9 @@ class CodexDirectAdapter(ProviderAdapter):
             "sandbox_acknowledged": self.config.sandbox_acknowledged,
             "env_mode": "scrubbed",
             "subprocess_mode": "shell_false_stdin",
+            "readiness_cache_hit": False,
+            "readiness_cache_ttl_seconds": self.config.readiness_cache_seconds,
+            "auth_mtime_present": auth_meta["mtime_ns"] is not None,
         }
         if not self.config.enabled:
             return CodexDirectReadiness(False, "codex_direct_disabled", summary)
@@ -258,6 +274,19 @@ class CodexDirectAdapter(ProviderAdapter):
         summary["auth_path"] = str(self.auth_path.parent / "auth.json")
         if not self.auth_path.exists():
             return CodexDirectReadiness(False, "codex_direct_auth_missing", summary)
+
+        cache_key = self._readiness_cache_key(auth_meta)
+        cached = self._cached_readiness(cache_key)
+        if cached is not None:
+            cached_summary = dict(cached.safe_summary)
+            cached_summary.update(
+                {
+                    "readiness_cache_hit": True,
+                    "readiness_cache_ttl_seconds": self.config.readiness_cache_seconds,
+                    "auth_mtime_present": auth_meta["mtime_ns"] is not None,
+                }
+            )
+            return CodexDirectReadiness(True, None, cached_summary)
 
         login_started = time.monotonic()
         try:
@@ -285,7 +314,51 @@ class CodexDirectAdapter(ProviderAdapter):
         )
         if not logged_in:
             return CodexDirectReadiness(False, "codex_direct_not_logged_in", summary)
-        return CodexDirectReadiness(True, None, summary)
+        readiness = CodexDirectReadiness(True, None, summary)
+        self._store_readiness_cache(cache_key, readiness)
+        return readiness
+
+    def _auth_metadata(self) -> dict[str, int | None]:
+        try:
+            stat = self.auth_path.stat()
+        except OSError:
+            return {"mtime_ns": None, "size": None}
+        return {"mtime_ns": int(stat.st_mtime_ns), "size": int(stat.st_size)}
+
+    def _readiness_cache_key(self, auth_meta: dict[str, int | None]) -> tuple[Any, ...]:
+        return (
+            self.config.command,
+            str(self.config.home),
+            str(self.auth_path),
+            self.config.model,
+            self.config.sandbox_acknowledged,
+            auth_meta.get("mtime_ns"),
+            auth_meta.get("size"),
+        )
+
+    def _cached_readiness(self, cache_key: tuple[Any, ...]) -> CodexDirectReadiness | None:
+        if self.config.readiness_cache_seconds <= 0:
+            return None
+        now = time.monotonic()
+        with self._readiness_cache_lock:
+            cached = self._readiness_cache.get(cache_key)
+            if not cached:
+                return None
+            expires_at, readiness = cached
+            if expires_at <= now:
+                self._readiness_cache.pop(cache_key, None)
+                return None
+            return readiness if readiness.ready else None
+
+    def _store_readiness_cache(self, cache_key: tuple[Any, ...], readiness: CodexDirectReadiness) -> None:
+        if self.config.readiness_cache_seconds <= 0 or not readiness.ready:
+            return
+        with self._readiness_cache_lock:
+            self._readiness_cache[cache_key] = (time.monotonic() + self.config.readiness_cache_seconds, readiness)
+
+    def _clear_readiness_cache(self) -> None:
+        with self._readiness_cache_lock:
+            self._readiness_cache.clear()
 
     def _failure(self, error_code: str, started: float, summary: dict[str, Any] | None = None, *, retryable: bool = False) -> ProviderResult:
         return ProviderResult(
@@ -358,21 +431,33 @@ class CodexDirectAdapter(ProviderAdapter):
         tracking_fact_metadata = metadata.get("tracking_fact_metadata") if isinstance(metadata.get("tracking_fact_metadata"), dict) else {}
         reply_repair = metadata.get("reply_repair") if isinstance(metadata.get("reply_repair"), dict) else {}
         recent_context = request.recent_context if isinstance(request.recent_context, list) else []
+        compact_no_evidence = _should_compact_no_evidence_prompt(
+            request=request,
+            knowledge_context=knowledge_context,
+            tracking_fact_metadata=tracking_fact_metadata,
+        )
         payload = {
             "request_id": request.request_id,
             "tenant_key": request.tenant_key,
             "channel_key": request.channel_key,
             "scenario": request.scenario,
             "customer_message": request.body,
-            "recent_context": recent_context[-12:],
+            "recent_context": _compact_recent_context(recent_context) if compact_no_evidence else recent_context[-12:],
             "tracking_fact_summary": request.tracking_fact_summary,
             "tracking_fact_evidence_present": request.tracking_fact_evidence_present,
-            "tracking_fact_metadata": _safe_context_slice(tracking_fact_metadata),
-            "knowledge_context": _safe_context_slice(knowledge_context),
-            "persona_context": _safe_context_slice(persona_context),
+            "tracking_fact_metadata": _compact_tracking_fact_metadata(tracking_fact_metadata) if compact_no_evidence else _safe_context_slice(tracking_fact_metadata),
+            "knowledge_context": _compact_knowledge_context(knowledge_context) if compact_no_evidence else _safe_context_slice(knowledge_context),
+            "persona_context": _compact_persona_context(persona_context) if compact_no_evidence else _safe_context_slice(persona_context),
             "reply_repair": _safe_context_slice(reply_repair),
             "allowed_tools": sorted(_ALLOWED_TOOLS),
         }
+        if compact_no_evidence:
+            payload["context_budget"] = {
+                "mode": "tracking_no_evidence_compact",
+                "knowledge_hits_limit": 2,
+                "recent_context_turn_limit": 2,
+                "removed_internal_retrieval_diagnostics": True,
+            }
         prompt = (
             "You are NexusDesk WebChat Fast reply runtime. Produce exactly one customer-safe JSON object and no markdown.\n"
             "Operational boundary: this runtime is reply-only. Do not inspect files, environment, system state, network, source code, or credentials.\n"
@@ -387,6 +472,12 @@ class CodexDirectAdapter(ProviderAdapter):
             "- Write tools are forbidden. Only propose allowlisted tool_calls: knowledge.search, speedaf.order.query, handoff.request.create.\n"
             "- For address changes, cancellation, refund, compensation, complaint escalation, or uncertain facts, do not promise completion; request handoff where appropriate.\n"
             "- Use runtime-compatible intent values only: greeting, tracking, tracking_missing_number, tracking_unresolved, complaint, address_change, handoff, other, unclear, handoff_request, refusal_request, general_support.\n"
+            "Output brevity rules:\n"
+            "- customer_reply should normally be 1-2 sentences.\n"
+            "- reason must be short and internal-safe; safety_notes max 2 short items.\n"
+            "- evidence_used max 2 relevant evidence records.\n"
+            "- tool_calls must be [] unless a real allowlisted tool proposal is needed.\n"
+            "- Do not add verbose explanation when no trusted tracking fact exists.\n"
             "Required JSON shape:\n"
             "{\"customer_reply\":str,\"language\":str,\"intent\":str,\"tracking_number\":str|null,\"handoff_required\":bool,\"handoff_reason\":str|null,\"recommended_agent_action\":str|null,\"ticket_should_create\":bool,\"tool_calls\":list,\"evidence_used\":list,\"confidence\":number,\"reason\":str,\"risk_level\":str,\"next_action\":str,\"safety_notes\":list}\n"
             "Runtime input JSON:\n"
@@ -436,7 +527,7 @@ class CodexDirectAdapter(ProviderAdapter):
             "reason": _clean_string(parsed.get("reason"), 500) or "codex_direct_decision",
             "risk_level": _clean_string(parsed.get("risk_level"), 32) or ("medium" if handoff_required else "low"),
             "next_action": _clean_string(parsed.get("next_action"), 80) or ("request_handoff" if handoff_required else "reply"),
-            "safety_notes": _normalize_string_list(parsed.get("safety_notes"), max_items=12, max_chars=240),
+            "safety_notes": _normalize_string_list(parsed.get("safety_notes"), max_items=2, max_chars=160),
         }
 
 
@@ -524,7 +615,7 @@ def _normalize_evidence(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     out: list[dict[str, Any]] = []
-    for item in value[:12]:
+    for item in value[:2]:
         if not isinstance(item, dict):
             continue
         out.append(
@@ -548,6 +639,124 @@ def _normalize_string_list(value: Any, *, max_items: int, max_chars: int) -> lis
         if cleaned:
             out.append(cleaned)
     return out
+
+
+def _should_compact_no_evidence_prompt(
+    *,
+    request: ProviderRequest,
+    knowledge_context: dict[str, Any],
+    tracking_fact_metadata: dict[str, Any],
+) -> bool:
+    if request.scenario != "webchat_fast_reply" or request.tracking_fact_evidence_present:
+        return False
+    if bool(tracking_fact_metadata.get("fact_evidence_present")):
+        return False
+    tool_status = str(tracking_fact_metadata.get("tool_status") or "").strip().lower()
+    if tool_status and tool_status not in {"error", "failed", "failure", "timeout", "not_found"}:
+        return False
+    return bool(_compact_knowledge_hits(knowledge_context, limit=1))
+
+
+def _compact_recent_context(recent_context: list[Any]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for item in recent_context[-4:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        if role in {"customer", "visitor", "user"}:
+            normalized_role = "customer"
+        elif role in {"assistant", "agent", "ai", "bot"}:
+            normalized_role = "assistant"
+        else:
+            continue
+        text = _clean_string(item.get("text") or item.get("body") or item.get("content"), 240)
+        if text:
+            out.append({"role": normalized_role, "text": text})
+    return out
+
+
+def _compact_tracking_fact_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "fact_evidence_present",
+        "tool_status",
+        "failure_reason",
+        "tracking_fact_failure_reason",
+        "tracking_number_hash",
+        "tracking_number_suffix",
+        "waybill_suffix",
+        "pii_redacted",
+    }
+    compact = {key: _safe_context_slice(value) for key, value in metadata.items() if key in allowed}
+    if "failure_reason" not in compact and metadata.get("tracking_fact_failure_reason"):
+        compact["failure_reason"] = _clean_string(metadata.get("tracking_fact_failure_reason"), 160)
+    return compact
+
+
+def _compact_persona_context(persona_context: dict[str, Any]) -> dict[str, Any]:
+    allowed = {"profile_key", "name", "tone", "language", "locale", "brand_voice", "reply_style"}
+    return {key: _safe_context_slice(value) for key, value in persona_context.items() if key in allowed}
+
+
+def _compact_knowledge_context(knowledge_context: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "retrieval": knowledge_context.get("retrieval") or "hybrid_rag_v2",
+        "total_matches": knowledge_context.get("total_matches"),
+        "hits": _compact_knowledge_hits(knowledge_context, limit=2),
+    }
+
+
+def _compact_knowledge_hits(knowledge_context: dict[str, Any], *, limit: int) -> list[dict[str, Any]]:
+    raw_hits = knowledge_context.get("hits")
+    hits = raw_hits if isinstance(raw_hits, list) else []
+    compact: list[dict[str, Any]] = []
+    for item in hits:
+        if not isinstance(item, dict) or not _is_tracking_guidance_hit(item):
+            continue
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        source_metadata = item.get("source_metadata") if isinstance(item.get("source_metadata"), dict) else {}
+        answer_text = (
+            item.get("fact_answer")
+            or item.get("direct_answer")
+            or item.get("answer")
+            or item.get("summary")
+            or item.get("text")
+        )
+        compact_item = {
+            "item_key": _clean_string(item.get("item_key") or metadata.get("item_key") or source_metadata.get("item_key"), 160),
+            "title": _clean_string(item.get("title"), 160),
+            "answer_mode": _clean_string(item.get("answer_mode") or metadata.get("answer_mode") or source_metadata.get("answer_mode"), 80),
+            "knowledge_kind": _clean_string(item.get("knowledge_kind") or metadata.get("knowledge_kind") or source_metadata.get("knowledge_kind"), 80),
+            "fact_status": _clean_string(item.get("fact_status") or metadata.get("fact_status") or source_metadata.get("fact_status"), 80),
+            "answer": _clean_string(answer_text, 500),
+            "source_version": item.get("source_version") or metadata.get("source_version") or source_metadata.get("source_version"),
+            "published_version": item.get("published_version") or metadata.get("published_version") or source_metadata.get("published_version"),
+        }
+        compact.append({key: value for key, value in compact_item.items() if value is not None})
+        if len(compact) >= limit:
+            break
+    return compact
+
+
+def _is_tracking_guidance_hit(item: dict[str, Any]) -> bool:
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    source_metadata = item.get("source_metadata") if isinstance(item.get("source_metadata"), dict) else {}
+    knowledge_kind = str(item.get("knowledge_kind") or metadata.get("knowledge_kind") or source_metadata.get("knowledge_kind") or "").lower()
+    answer_mode = str(item.get("answer_mode") or metadata.get("answer_mode") or source_metadata.get("answer_mode") or "").lower()
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            item.get("item_key"),
+            item.get("title"),
+            item.get("summary"),
+            item.get("text"),
+            item.get("fact_answer"),
+            item.get("direct_answer"),
+            item.get("answer"),
+        )
+    ).lower()
+    business_or_guided = knowledge_kind == "business_fact" or answer_mode in {"guided_answer", "direct_answer"}
+    tracking_related = any(term in haystack for term in ("waybill", "tracking", "运单", "单号", "ch + 12", "ch followed by 12", "12 位"))
+    return business_or_guided and tracking_related
 
 
 def _safe_context_slice(value: Any) -> Any:
@@ -613,3 +822,8 @@ def _try_json_object(text: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _completed_has_auth_error(completed: subprocess.CompletedProcess[str]) -> bool:
+    combined = f"{completed.stdout or ''}\n{completed.stderr or ''}".lower()
+    return any(marker in combined for marker in _AUTH_ERROR_MARKERS)

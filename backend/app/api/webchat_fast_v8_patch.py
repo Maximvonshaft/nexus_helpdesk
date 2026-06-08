@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from . import webchat_fast as _wf
@@ -186,6 +187,8 @@ async def _process_fast_reply_v8(
     payload: _wf.WebchatFastReplyRequest,
     request: _wf.Request | None,
 ) -> dict[str, Any]:
+    total_started = time.monotonic()
+    phase_timings: dict[str, int] = {}
     frontend_context = _wf._context_payload(payload.recent_context)
     caller_id = _wf._caller_id(payload.visitor)
     request_id = getattr(request.state, "request_id", None) if request is not None else None
@@ -214,6 +217,7 @@ async def _process_fast_reply_v8(
         tracking_number = None
     else:
         tracking_number = _wf._tracking_candidate(body=payload.body, context=merged_context, tracking_number=business_state.tracking_number)
+    tracking_fact_started = time.monotonic()
     tracking_fact = _wf._lookup_fast_tracking_fact(
         tracking_number=tracking_number,
         conversation_id=conversation_id,
@@ -222,7 +226,9 @@ async def _process_fast_reply_v8(
         caller_id=caller_id if _wf._should_attempt_fact_first_lookup(body=payload.body, tracking_number=tracking_number, caller_id=caller_id) else None,
         country_code=payload.country_code or routing_context.country_code,
     )
+    phase_timings["tracking_fact_elapsed_ms"] = _wf._elapsed_ms(tracking_fact_started)
     tracking_fact_summary, tracking_fact_metadata, tracking_fact_evidence_present = _wf._tracking_fact_provider_fields(tracking_fact)
+    runtime_context_started = time.monotonic()
     runtime_context = _wf._webchat_fast_runtime_context(
         tenant_key=payload.tenant_key,
         channel_key=payload.channel_key,
@@ -230,7 +236,9 @@ async def _process_fast_reply_v8(
         market_id=routing_context.market_id,
         language=None,
     )
+    phase_timings["runtime_context_elapsed_ms"] = _wf._elapsed_ms(runtime_context_started)
 
+    provider_started = time.monotonic()
     result = await _wf.generate_webchat_fast_reply(
         tenant_key=payload.tenant_key,
         channel_key=payload.channel_key,
@@ -243,6 +251,8 @@ async def _process_fast_reply_v8(
         tracking_fact_evidence_present=tracking_fact_evidence_present,
         market_id=routing_context.market_id,
     )
+    phase_timings["provider_wall_elapsed_ms"] = _wf._elapsed_ms(provider_started)
+    phase_timings["provider_elapsed_ms"] = int(result.elapsed_ms or 0)
     result_payload = result.to_response() if result.ok else _wf._provider_safe_fallback_payload(error_code=result.error_code, body=payload.body)
     result_payload.update(_wf._public_tracking_reference(result.tracking_number or tracking_number))
     if tracking_fact is not None:
@@ -261,6 +271,9 @@ async def _process_fast_reply_v8(
     )
     if guarded_payload is not None:
         result_payload = guarded_payload
+        phase_timings.setdefault("policy_gate_elapsed_ms", 0)
+        phase_timings["total_elapsed_ms"] = _wf._elapsed_ms(total_started)
+        _wf._attach_phase_timings(result_payload, phase_timings)
         with _wf.db_context() as db:
             conversation = _wf.get_or_create_fast_conversation(
                 db,
@@ -305,7 +318,9 @@ async def _process_fast_reply_v8(
             }
         )
         decision = _wf._decision_for_execution(result=execution_result, tracking_number=tracking_number, tracking_fact=tracking_fact, runtime_context=runtime_context)
+        policy_started = time.monotonic()
         policy = _wf.validate_ai_decision(decision, tracking_fact_metadata=tracking_fact_metadata if tracking_fact_evidence_present else None, tracking_number=tracking_number)
+        phase_timings["policy_gate_elapsed_ms"] = _wf._elapsed_ms(policy_started)
         execution = _wf.execute_decision_tools(
             db,
             decision=decision,
@@ -335,6 +350,8 @@ async def _process_fast_reply_v8(
             runtime_context=runtime_context,
             tracking_number=tracking_number,
         )
+        phase_timings["total_elapsed_ms"] = _wf._elapsed_ms(total_started)
+        _wf._attach_phase_timings(result_payload, phase_timings)
         metadata = _metadata_for_ai_message(result=result, result_payload=result_payload, tracking_fact_metadata=tracking_fact_metadata)
         if result_payload.get("reply"):
             _wf.append_fast_ai_message(db, conversation=conversation, reply=result_payload.get("reply"), client_message_id=payload.client_message_id, metadata=metadata)

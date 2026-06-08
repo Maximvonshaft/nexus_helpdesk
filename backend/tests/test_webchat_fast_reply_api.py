@@ -299,6 +299,13 @@ def test_tracking_request_uses_trusted_fact_and_ai_final_reply(monkeypatch):
     trace = payload["ai_decision_trace"]
     assert trace["decision"]["tool_calls"][0]["tool_name"] == "speedaf.order.query"
     assert trace["tool_execution"]["records"][0]["status"] == "already_resolved_by_context"
+    timings = trace["phase_timings"]
+    assert isinstance(timings["tracking_fact_elapsed_ms"], int)
+    assert isinstance(timings["runtime_context_elapsed_ms"], int)
+    assert timings["provider_elapsed_ms"] == 20
+    assert isinstance(timings["policy_gate_elapsed_ms"], int)
+    assert isinstance(timings["total_elapsed_ms"], int)
+    assert payload["latency_trace"] == timings
     assert "CH020000006856" not in json.dumps(payload, ensure_ascii=False)
     assert calls == {"tracking": 1, "ai": 1}
 
