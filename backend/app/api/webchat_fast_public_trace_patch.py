@@ -16,6 +16,17 @@ _CH_WAYBILL_CANDIDATE_RE = re.compile(r"^CH\d+$", re.IGNORECASE)
 _CH_RAW_TOKEN_RE = re.compile(r"\bCH[\s_-]*\d(?:[\s_-]*\d){8,20}\b", re.IGNORECASE)
 _LONG_NUMERIC_RE = re.compile(r"(?<!\d)\d{8,20}(?!\d)")
 _REDACTION = "tracking_number_redacted"
+_TRACE_KEYS = {
+    "ai_decision_trace",
+    "evidence_trace",
+    "rag_trace",
+    "runtime_context_trace",
+    "query_analysis",
+    "top_hits",
+    "evidence_pack",
+    "injected_knowledge",
+    "grounding_source",
+}
 _NEGATIVE_CACHE: dict[str, tuple[float, str | None, str | None]] = {}
 _NON_CACHEABLE_FAILURES = {"timeout", "network_error", "connection_error", "temporary_error"}
 
@@ -99,12 +110,20 @@ def _sanitize_public_string(value: str, *, key: str = "") -> str:
     return redacted
 
 
-def _sanitize_public_payload(value: Any, *, key: str = "") -> Any:
+def _sanitize_public_payload(value: Any, *, key: str = "", in_trace: bool = False) -> Any:
+    trace_scope = in_trace or key in _TRACE_KEYS
     if isinstance(value, dict):
-        return {str(item_key): _sanitize_public_payload(item_value, key=str(item_key)) for item_key, item_value in value.items()}
+        return {
+            str(item_key): _sanitize_public_payload(
+                item_value,
+                key=str(item_key),
+                in_trace=trace_scope,
+            )
+            for item_key, item_value in value.items()
+        }
     if isinstance(value, list):
-        return [_sanitize_public_payload(item, key=key) for item in value]
-    if isinstance(value, str):
+        return [_sanitize_public_payload(item, key=key, in_trace=trace_scope) for item in value]
+    if isinstance(value, str) and trace_scope:
         return _sanitize_public_string(value, key=key)
     return value
 
@@ -168,7 +187,8 @@ def _mark_webchat_fast_done_redacted(db, row, *, response_json: dict[str, Any]) 
 
 
 def _with_fast_public_session_redacted(db, conversation, payload: dict[str, Any]) -> dict[str, Any]:
-    return _sanitize_public_payload(_ORIGINAL_WITH_FAST_PUBLIC_SESSION(db, conversation, _sanitize_public_payload(payload)))
+    sanitized_payload = _sanitize_public_payload(payload)
+    return _sanitize_public_payload(_ORIGINAL_WITH_FAST_PUBLIC_SESSION(db, conversation, sanitized_payload))
 
 
 if not getattr(_wf, "_public_trace_redaction_precheck_patch_applied", False):
