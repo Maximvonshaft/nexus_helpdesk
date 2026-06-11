@@ -121,6 +121,7 @@ jobs:
               backend/tests/test_knowledge*.py) return 0 ;;
               backend/tests/test_oauth_refresh_concurrency.py) return 0 ;;
               backend/tests/test_operator_queue_concurrency.py) return 0 ;;
+              backend/tests/test_outbound*.py) return 0 ;;
               backend/tests/test_persona*.py) return 0 ;;
               backend/tests/test_production_settings_contract.py) return 0 ;;
               backend/tests/test_provider_runtime*.py) return 0 ;;
