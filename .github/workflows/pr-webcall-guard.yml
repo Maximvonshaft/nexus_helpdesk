@@ -68,6 +68,8 @@ jobs:
               backend/alembic/versions/*webchat*.py) return 0 ;;
               backend/app/api/admin_provider_credentials.py) return 0 ;;
               backend/app/api/admin_provider_runtime.py) return 0 ;;
+              backend/app/api/admin.py) return 0 ;;
+              backend/app/api/admin_outbound_semantics.py) return 0 ;;
               backend/app/api/admin_webcall_ai.py) return 0 ;;
               backend/app/api/__init__.py) return 0 ;;
               backend/app/api/knowledge_items.py) return 0 ;;
@@ -77,6 +79,7 @@ jobs:
               backend/app/api/webchat*.py) return 0 ;;
               backend/app/main.py) return 0 ;;
               backend/app/models_control_plane.py) return 0 ;;
+              backend/app/schemas.py) return 0 ;;
               backend/app/schemas_control_plane.py) return 0 ;;
               backend/app/settings.py) return 0 ;;
               backend/app/static/webchat/**) return 0 ;;
@@ -118,9 +121,11 @@ jobs:
               backend/tests/test_domain_query_understanding.py) return 0 ;;
               backend/tests/test_knowledge*.py) return 0 ;;
               backend/tests/test_oauth_refresh_concurrency.py) return 0 ;;
+              backend/tests/test_openclaw_local_ops.py) return 0 ;;
               backend/tests/test_operator_queue_concurrency.py) return 0 ;;
               backend/tests/test_persona*.py) return 0 ;;
               backend/tests/test_production_settings_contract.py) return 0 ;;
+              backend/tests/test_admin_provider_runtime_routing_api.py) return 0 ;;
               backend/tests/test_provider_runtime*.py) return 0 ;;
               backend/tests/test_rbac_capability_contracts.py) return 0 ;;
               backend/tests/test_release_metadata.py) return 0 ;;
@@ -142,6 +147,7 @@ jobs:
               docs/runbooks/**) return 0 ;;
               docs/security/**) return 0 ;;
               docs/speedaf-mcp-uat-github-workflow.md) return 0 ;;
+              outputs/provider_runtime_governance_*.md) return 0 ;;
               scripts/**) return 0 ;;
               tools/nexus-codex-runtime/**) return 0 ;;
               webapp/package-lock.json) return 0 ;;
