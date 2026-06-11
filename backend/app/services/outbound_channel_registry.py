@@ -247,6 +247,16 @@ def get_outbound_channel_capability(
             missing.append("enable_outbound_dispatch")
         if settings.outbound_provider != "openclaw":
             missing.append("outbound_provider_openclaw")
+        if channel_value == SourceChannel.whatsapp.value:
+            if settings.whatsapp_dispatch_mode == "native_sidecar":
+                if not bool(settings.whatsapp_native_enabled):
+                    missing.append("whatsapp_native_enabled")
+                if not settings.whatsapp_sidecar_token:
+                    missing.append("whatsapp_sidecar_token")
+            elif settings.whatsapp_dispatch_mode == "cloud_api_future":
+                missing.append("whatsapp_cloud_api_not_implemented")
+            elif settings.whatsapp_dispatch_mode != "openclaw_bridge":
+                missing.append("valid_whatsapp_dispatch_mode")
         if not account_configured:
             missing.append(f"{channel_value}_channel_account")
         if not target_configured:

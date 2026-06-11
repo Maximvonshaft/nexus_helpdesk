@@ -200,3 +200,39 @@ def test_process_whatsapp_message_success_sets_sent_and_waiting_customer(db_sess
     assert processed.provider_status == "sent_via_fake_whatsapp_bridge"
     assert processed.sent_at is not None
     assert ticket.conversation_state.value == "waiting_customer"
+
+
+def test_process_whatsapp_openclaw_mode_keeps_existing_bridge_path(db_session, monkeypatch):
+    ticket = _ticket(db_session, contact="+15550123456")
+    message = _message(db_session, ticket, body="resolved update")
+
+    monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "openclaw")
+    monkeypatch.setattr(message_dispatch.settings, "whatsapp_dispatch_mode", "openclaw_bridge")
+    monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
+    called = {"openclaw": False, "native": False}
+
+    def fake_openclaw(db, *, message, ticket, idempotency_key):
+        called["openclaw"] = True
+        return MessageStatus.sent, "sent_via_fake_whatsapp_bridge", utc_now(), {
+            "channel": "whatsapp",
+            "target": "+15550123456",
+            "account_id": "wa-main",
+            "session_key": None,
+            "thread_id": None,
+            "idempotency_key": idempotency_key,
+            "adapter": "whatsapp_openclaw_bridge",
+        }
+
+    def fake_native(*args, **kwargs):
+        called["native"] = True
+        raise AssertionError("native sidecar must not run in openclaw_bridge mode")
+
+    monkeypatch.setattr(message_dispatch, "dispatch_whatsapp_outbound", fake_openclaw)
+    monkeypatch.setattr(message_dispatch, "dispatch_whatsapp_native_outbound", fake_native)
+
+    processed = message_dispatch.process_outbound_message(db_session, message)
+
+    assert processed.status == MessageStatus.sent
+    assert called == {"openclaw": True, "native": False}

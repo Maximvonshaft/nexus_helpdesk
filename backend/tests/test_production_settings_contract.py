@@ -88,6 +88,7 @@ def test_production_settings_accept_hardened_contract(monkeypatch):
         ('KNOWLEDGE_EMBEDDINGS_ENABLED', 'false', 'KNOWLEDGE_EMBEDDINGS_ENABLED'),
         ('KNOWLEDGE_EMBEDDING_PROVIDER', 'deterministic_hash', 'real embedding provider'),
         ('WEBCHAT_WS_BROKER', 'memory', 'WEBCHAT_WS_BROKER=memory'),
+        ('WHATSAPP_DISPATCH_MODE', 'bad-mode', 'WHATSAPP_DISPATCH_MODE'),
     ],
 )
 def test_production_settings_reject_unsafe_contract(key: str, value: str, expected_message: str):
@@ -105,3 +106,36 @@ def test_production_settings_reject_unsafe_contract(key: str, value: str, expect
             with pytest.raises(RuntimeError) as exc:
                 Settings()
     assert expected_message in str(exc.value)
+
+
+def test_native_whatsapp_dispatch_mode_requires_explicit_enable_and_token(monkeypatch):
+    real_exists = Path.exists
+
+    def fake_exists(path):
+        if path.name == 'index.html' and path.parent.name == 'frontend_dist':
+            return True
+        return real_exists(path)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, 'exists', fake_exists)
+        with patched_env(production_env(WHATSAPP_DISPATCH_MODE='native_sidecar')):
+            with pytest.raises(RuntimeError, match='WHATSAPP_NATIVE_ENABLED=true'):
+                Settings()
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, 'exists', fake_exists)
+        with patched_env(production_env(WHATSAPP_DISPATCH_MODE='native_sidecar', WHATSAPP_NATIVE_ENABLED='true')):
+            with pytest.raises(RuntimeError, match='WHATSAPP_SIDECAR_TOKEN'):
+                Settings()
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, 'exists', fake_exists)
+        with patched_env(production_env(
+            WHATSAPP_DISPATCH_MODE='native_sidecar',
+            WHATSAPP_NATIVE_ENABLED='true',
+            WHATSAPP_SIDECAR_TOKEN='sidecar-token',
+            WHATSAPP_SIDECAR_URL='http://whatsapp-sidecar:18793',
+        )):
+            settings = Settings()
+    assert settings.whatsapp_dispatch_mode == 'native_sidecar'
+    assert settings.whatsapp_native_enabled is True
