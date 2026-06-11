@@ -112,7 +112,11 @@ async def test_provider_runtime_default_route_uses_codex_primary_and_writes_audi
     class OpenClawSuccessAdapter(SuccessAdapter):
         name = "openclaw_responses"
 
+    class CodexDirectSuccessAdapter(SuccessAdapter):
+        name = "codex_direct"
+
     ProviderRegistry.register("codex_app_server", lambda db: SuccessAdapter())
+    ProviderRegistry.register("codex_direct", lambda db: CodexDirectSuccessAdapter())
     ProviderRegistry.register("openclaw_responses", lambda db: OpenClawSuccessAdapter())
 
     req = ProviderRequest(
@@ -130,7 +134,7 @@ async def test_provider_runtime_default_route_uses_codex_primary_and_writes_audi
     result = await ProviderRuntimeRouter(mock_db).route(req)
 
     assert result.ok is True
-    assert result.provider == "codex_app_server"
+    assert result.provider == "codex_direct"
     assert result.structured_output["customer_reply"] == "I can help with that."
     assert mock_db.commit.called
 

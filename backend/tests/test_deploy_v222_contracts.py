@@ -4,18 +4,21 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = ROOT / 'deploy' / 'docker-compose.server.yml'
+OPENCLAW_OVERRIDE = ROOT / 'deploy' / 'docker-compose.openclaw.override.yml'
 NGINX = ROOT / 'deploy' / 'nginx' / 'default.conf'
 
 
 def test_compose_has_isolated_worker_services_and_profiles():
     text = COMPOSE.read_text(encoding='utf-8')
+    openclaw_text = OPENCLAW_OVERRIDE.read_text(encoding='utf-8')
     assert 'worker-outbound:' in text
     assert 'worker-background:' in text
     assert 'worker-handoff-snapshot:' in text
     assert 'worker-webchat-ai:' in text
-    assert 'worker-openclaw-inbound:' in text
-    assert 'profiles:' in text
-    assert '- openclaw-inbound' in text
+    assert 'worker-openclaw-inbound:' not in text
+    assert 'worker-openclaw-inbound:' in openclaw_text
+    assert 'profiles:' in openclaw_text
+    assert '- openclaw-inbound' in openclaw_text
     assert 'legacy-worker:' in text
     assert '- legacy-worker' in text
     assert 'app:' in text
@@ -23,11 +26,13 @@ def test_compose_has_isolated_worker_services_and_profiles():
 
 def test_compose_worker_queue_commands_are_exact():
     text = COMPOSE.read_text(encoding='utf-8')
+    openclaw_text = OPENCLAW_OVERRIDE.read_text(encoding='utf-8')
     assert '--queue outbound' in text
     assert '--queue background' in text
     assert '--queue handoff-snapshot' in text
     assert '--queue webchat-ai' in text
-    assert '--queue openclaw-inbound' in text
+    assert '--queue openclaw-inbound' not in text
+    assert '--queue openclaw-inbound' in openclaw_text
     assert '--queue all' in text
 
 

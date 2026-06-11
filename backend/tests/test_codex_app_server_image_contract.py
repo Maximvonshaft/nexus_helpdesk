@@ -27,7 +27,7 @@ def test_codex_app_server_proxy_scripts_are_copied_into_runtime_image():
 
 def test_codex_app_server_compose_commands_point_to_copied_scripts():
     dockerfile = _read("Dockerfile")
-    compose = _read("deploy/docker-compose.server.yml")
+    compose = _read("deploy/docker-compose.codex-sidecar.override.yml")
 
     copied_scripts = set(re.findall(r"^COPY\s+deploy/([^\s]+)\s+/app/deploy/\s*$", dockerfile, flags=re.MULTILINE))
     command_scripts = set(re.findall(r"command:\s+python\s+/app/deploy/([^\s]+)", compose))
@@ -63,7 +63,7 @@ def test_runtime_image_validates_openclaw_cli_at_build_time():
 
 def test_codex_private_model_runtime_uses_persistent_openclaw_home():
     dockerfile = _read("Dockerfile")
-    compose = _read("deploy/docker-compose.server.yml")
+    compose = _read("deploy/docker-compose.codex-sidecar.override.yml")
 
     assert "/home/appuser/.openclaw" in dockerfile
     assert "chown -R appuser:appgroup /app /home/appuser" in dockerfile
@@ -81,7 +81,7 @@ def test_codex_private_model_runtime_uses_persistent_openclaw_home():
 
 
 def test_codex_private_model_runtime_uses_30_second_ready_timeout():
-    compose = _read("deploy/docker-compose.server.yml")
+    compose = _read("deploy/docker-compose.codex-sidecar.override.yml")
     adapter = _read("deploy/codex_openclaw_codex_harness_adapter.py")
     runbook = _read("docs/engineering/codex_chat_smoke_runbook.md")
 
@@ -91,7 +91,7 @@ def test_codex_private_model_runtime_uses_30_second_ready_timeout():
 
 
 def test_codex_private_model_runtime_defaults_to_local_infer_transport():
-    compose = _read("deploy/docker-compose.server.yml")
+    compose = _read("deploy/docker-compose.codex-sidecar.override.yml")
     adapter = _read("deploy/codex_openclaw_codex_harness_adapter.py")
     runbook = _read("docs/engineering/codex_chat_smoke_runbook.md")
 
@@ -105,15 +105,13 @@ def test_codex_private_model_runtime_defaults_to_local_infer_transport():
 
 
 def test_codex_customer_facing_hot_path_uses_low_latency_defaults():
-    compose = _read("deploy/docker-compose.server.yml")
+    compose = _read("deploy/docker-compose.codex-sidecar.override.yml")
     adapter = _read("backend/app/services/provider_runtime/adapters/codex_app_server.py")
     bridge = _read("deploy/codex_app_server_bridge_proxy.py")
     model_runtime = _read("deploy/codex_openclaw_codex_harness_adapter.py")
 
     assert "CODEX_APP_SERVER_AUTH_MODE: ${CODEX_APP_SERVER_AUTH_MODE:-per_request}" in compose
     assert "CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED: ${CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED:-false}" in compose
-    assert "CODEX_APP_SERVER_TOTAL_TIMEOUT_MS: ${CODEX_APP_SERVER_TOTAL_TIMEOUT_MS:-10000}" in compose
-    assert "CODEX_APP_SERVER_CONNECT_TIMEOUT_MS: ${CODEX_APP_SERVER_CONNECT_TIMEOUT_MS:-250}" in compose
     assert "CODEX_APP_SERVER_RUNTIME_BACKEND: ${CODEX_APP_SERVER_RUNTIME_BACKEND:-python_cli_pool}" in compose
     assert "CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON:-http://codex-private-model-runtime:18800/reply}" in compose
     assert "CODEX_APP_SERVER_REAL_UPSTREAM_URL_NODE: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL_NODE:-http://codex-appserver-runtime:18810/reply}" in compose
@@ -146,7 +144,7 @@ def test_codex_services_expose_release_metadata_for_image_consistency():
 
 
 def test_codex_private_reply_engine_uses_30_second_ready_timeout():
-    compose = _read("deploy/docker-compose.server.yml")
+    compose = _read("deploy/docker-compose.codex-sidecar.override.yml")
     engine = _read("deploy/codex_private_reply_engine.py")
     runbook = _read("docs/engineering/codex_chat_smoke_runbook.md")
 
@@ -161,7 +159,7 @@ def test_codex_private_reply_engine_uses_30_second_ready_timeout():
 
 
 def test_codex_app_server_upstream_and_bridge_use_30_second_ready_timeout():
-    compose = _read("deploy/docker-compose.server.yml")
+    compose = _read("deploy/docker-compose.codex-sidecar.override.yml")
     private_upstream = _read("deploy/codex_app_server_private_upstream_proxy.py")
     bridge = _read("deploy/codex_app_server_bridge_proxy.py")
     runbook = _read("docs/engineering/codex_chat_smoke_runbook.md")

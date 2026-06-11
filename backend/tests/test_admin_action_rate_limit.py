@@ -46,6 +46,7 @@ def tighten_limits(monkeypatch):
     monkeypatch.setattr(rate_limit_service.settings, "admin_action_rate_limit_consume_once_max", 1)
     monkeypatch.setattr(admin_api.settings, "admin_action_rate_limit_single_max", 1)
     monkeypatch.setattr(admin_api.settings, "admin_action_rate_limit_consume_once_max", 1)
+    monkeypatch.setattr(admin_api.settings, "openclaw_integration_enabled", True)
     monkeypatch.setattr(admin_queue_api.settings, "admin_action_rate_limit_single_max", 1)
     monkeypatch.setattr(admin_queue_api.settings, "admin_action_rate_limit_batch_max", 1)
 

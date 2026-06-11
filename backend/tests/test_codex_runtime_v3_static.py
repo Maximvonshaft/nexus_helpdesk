@@ -42,7 +42,7 @@ def test_no_private_openclaw_imports_or_infer_cli():
 
 
 def test_compose_adds_node_runtime_and_keeps_python_rollback():
-    compose = _read("deploy/docker-compose.server.yml")
+    compose = _read("deploy/docker-compose.codex-sidecar.override.yml")
 
     assert "codex-appserver-runtime:" in compose
     assert "CODEX_APPSERVER_PORT: \"18810\"" in compose
@@ -70,7 +70,7 @@ def test_bridge_has_runtime_backend_switch():
 def test_node_runtime_defaults_match_validated_server_profile():
     env = _read("tools/nexus-codex-runtime/src/env.ts")
     dockerfile = _read("Dockerfile")
-    compose = _read("deploy/docker-compose.server.yml")
+    compose = _read("deploy/docker-compose.codex-sidecar.override.yml")
 
     assert 'const DEFAULT_MODEL = "gpt-5.3-codex-spark"' in env
     assert "const DEFAULT_MAX_CONCURRENCY = 4" in env

@@ -569,8 +569,8 @@ async def test_router_codex_direct_kill_switch_uses_fallback(monkeypatch):
     assert res.provider == "success_provider"
 
 
-def test_admin_routing_codex_direct_defaults_to_rule_engine(monkeypatch):
+def test_admin_routing_codex_direct_defaults_to_no_fallback(monkeypatch):
     from app.api.admin_provider_runtime import WebchatFastRoutingUpdate
     payload = WebchatFastRoutingUpdate(primary_provider="codex_direct")
     payload.validate_allowed()
-    assert payload.fallback_providers == ["rule_engine"]
+    assert payload.fallback_providers == []
