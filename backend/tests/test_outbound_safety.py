@@ -86,6 +86,34 @@ def test_public_webchat_ai_logistics_claim_without_evidence_requires_review():
     assert decision.requires_human_review is True
 
 
+def test_whatsapp_ai_low_risk_general_reply_allows():
+    decision = evaluate_outbound_safety(DummyTicket(), 'Thanks. Our team will check your request shortly.', 'whatsapp_ai')
+    assert decision.level == 'allow'
+    assert decision.allowed is True
+
+
+def test_whatsapp_ai_logistics_claim_without_evidence_requires_review():
+    decision = evaluate_outbound_safety(DummyTicket(), 'Your parcel will arrive today.', 'whatsapp_ai_delivered')
+    assert decision.level == 'review'
+    assert decision.requires_human_review is True
+
+
+def test_whatsapp_ai_refund_or_compensation_claim_requires_review():
+    decision = evaluate_outbound_safety(DummyTicket(), 'Your refund and compensation have been approved.', 'codex_direct_whatsapp_ai')
+    assert decision.level == 'review'
+    assert decision.requires_human_review is True
+
+
+def test_whatsapp_ai_internal_or_secret_disclosure_blocks():
+    decision = evaluate_outbound_safety(
+        DummyTicket(),
+        'OpenClaw internal stack trace includes access token abc123.',
+        'whatsapp_ai_safe_fallback',
+    )
+    assert decision.level == 'block'
+    assert decision.allowed is False
+
+
 def test_safe_manual_reply_allows():
     decision = evaluate_outbound_safety(DummyTicket(), 'We have received your request and will check it shortly.', 'manual')
     assert decision.level == 'allow'

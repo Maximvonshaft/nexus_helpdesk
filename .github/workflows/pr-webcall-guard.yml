@@ -91,7 +91,9 @@ jobs:
               backend/app/services/knowledge_runtime_v2/**) return 0 ;;
               backend/app/services/lite_service.py) return 0 ;;
               backend/app/services/observability.py) return 0 ;;
+              backend/app/services/openclaw*.py) return 0 ;;
               backend/app/services/operator_queue.py) return 0 ;;
+              backend/app/services/outbound_safety.py) return 0 ;;
               backend/app/services/permissions.py) return 0 ;;
               backend/app/services/provider_runtime/**) return 0 ;;
               backend/app/services/realtime_broker.py) return 0 ;;
@@ -130,6 +132,7 @@ jobs:
               backend/tests/test_webcall*.py) return 0 ;;
               backend/tests/test_webchat*.py) return 0 ;;
               backend/tests/test_webchat_domain_shadow_trace.py) return 0 ;;
+              backend/tests/test_whatsapp*.py) return 0 ;;
               backend/tests/fixtures/knowledge_eval_cases.json) return 0 ;;
               backend/tests/fixtures/domain_intent_cases.json) return 0 ;;
               deploy/**) return 0 ;;
@@ -212,7 +215,7 @@ jobs:
           done < /tmp/changed_files.txt
 
           if [ "$fail" -ne 0 ]; then
-            echo "Scope guard failed. This PR includes files outside the approved WebCall/Codex runtime scope."
+            echo "Scope guard failed. This PR includes files outside the approved Runtime Channel/Codex scope."
             exit 1
           fi
 

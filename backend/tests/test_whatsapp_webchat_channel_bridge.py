@@ -18,9 +18,11 @@ from app import models, operator_models, webchat_models  # noqa: F401,E402
 from app.db import Base  # noqa: E402
 from app.enums import ConversationState, MessageStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.models import ChannelAccount, OpenClawConversationLink, Ticket, TicketOutboundMessage, User  # noqa: E402
-from app.services import openclaw_bridge  # noqa: E402
+from app.services import message_dispatch, openclaw_bridge  # noqa: E402
+from app.services.outbound_adapters import whatsapp as whatsapp_adapter  # noqa: E402
 from app.services.background_jobs import WEBCHAT_AI_REPLY_JOB  # noqa: E402
 from app.services.webchat_service import admin_reply  # noqa: E402
+from app.utils.time import utc_now  # noqa: E402
 from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatHandoffRequest, WebchatMessage  # noqa: E402
 
 
@@ -167,3 +169,67 @@ def test_admin_reply_on_whatsapp_unified_conversation_queues_whatsapp_outbound(d
     assert outbound.status == MessageStatus.pending
     assert outbound.provider_status == "whatsapp_agent_reply"
     assert outbound.body == "Hello, I will check this for you."
+
+
+def test_admin_reply_whatsapp_outbox_worker_claims_and_dispatches_sent(db_session, monkeypatch):
+    admin = _admin(db_session)
+    ticket = _ticket(db_session)
+    account = _account(db_session)
+    link = OpenClawConversationLink(
+        ticket_id=ticket.id,
+        session_key="sess-wa-worker",
+        channel="whatsapp",
+        recipient="+15550001111",
+        account_id=account.account_id,
+        channel_account_id=account.id,
+    )
+    db_session.add(link)
+    conversation = WebchatConversation(
+        public_id="wa_worker_reply",
+        visitor_token_hash="hash-worker",
+        tenant_key="openclaw",
+        channel_key="whatsapp",
+        ticket_id=ticket.id,
+        visitor_name="WhatsApp Customer",
+        visitor_phone="+15550001111",
+        visitor_ref="sess-wa-worker",
+        origin="openclaw-whatsapp",
+        status="open",
+    )
+    db_session.add(conversation)
+    db_session.flush()
+
+    monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "openclaw")
+    bridge_calls = []
+
+    def fake_openclaw_bridge_dispatch(**kwargs):
+        bridge_calls.append(kwargs)
+        return MessageStatus.sent, "sent_via_worker_smoke", utc_now()
+
+    monkeypatch.setattr(whatsapp_adapter, "dispatch_via_openclaw_bridge", fake_openclaw_bridge_dispatch)
+
+    result = admin_reply(db_session, ticket.id, admin, body="Hello, I will check this for you.")
+    outbound = db_session.query(TicketOutboundMessage).filter_by(ticket_id=ticket.id, channel=SourceChannel.whatsapp).one()
+    assert result["ok"] is True
+    assert outbound.status == MessageStatus.pending
+
+    db_session.commit()
+    claimed = message_dispatch.claim_pending_messages(db_session, worker_id="worker-whatsapp-smoke")
+    assert [row.id for row in claimed] == [outbound.id]
+
+    processed = message_dispatch.process_outbound_message(db_session, claimed[0])
+    db_session.commit()
+
+    assert processed.status == MessageStatus.sent
+    assert processed.provider_status == "sent_via_worker_smoke"
+    assert processed.sent_at is not None
+    assert ticket.conversation_state == ConversationState.waiting_customer
+    assert bridge_calls == [{
+        "channel": "whatsapp",
+        "target": "+15550001111",
+        "body": "Hello, I will check this for you.",
+        "account_id": "wa-main",
+        "thread_id": None,
+        "session_key": "sess-wa-worker",
+    }]
