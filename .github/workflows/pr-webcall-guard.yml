@@ -115,9 +115,11 @@ jobs:
               backend/requirements.txt) return 0 ;;
               backend/scripts/*knowledge*.py) return 0 ;;
               backend/scripts/*speedaf*.py) return 0 ;;
+              backend/tests/test_admin_action_rate_limit.py) return 0 ;;
               backend/tests/test_background_job_transaction_boundary.py) return 0 ;;
               backend/tests/test_channel_workbench_backend_contracts.py) return 0 ;;
               backend/tests/test_codex*.py) return 0 ;;
+              backend/tests/test_deploy_v222_contracts.py) return 0 ;;
               backend/tests/test_domain_query_understanding.py) return 0 ;;
               backend/tests/test_knowledge*.py) return 0 ;;
               backend/tests/test_oauth_refresh_concurrency.py) return 0 ;;
