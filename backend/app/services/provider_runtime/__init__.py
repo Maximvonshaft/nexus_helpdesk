@@ -15,6 +15,7 @@ def bootstrap_provider_runtime() -> None:
         return
 
     from .adapters.codex_app_server import CodexAppServerAdapter
+    from .adapters import codex_direct_prompt_budget_patch as _codex_direct_prompt_budget_patch  # noqa: F401
     from .adapters.codex_direct import CodexDirectAdapter
     from .adapters.openai_responses import OpenAIResponsesAdapter
     from .adapters.openclaw_responses import OpenClawResponsesAdapter
