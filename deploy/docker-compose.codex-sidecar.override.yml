@@ -1,0 +1,218 @@
+# Optional Codex sidecar runtime. Use only with deploy/.env.codex-sidecar.example
+# and the codex-app-server profile; default production uses codex_direct.
+
+x-app-image: &app_image
+  image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
+  env_file:
+    - path: .env.prod
+      required: false
+  logging:
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "5"
+  restart: unless-stopped
+
+services:
+  app:
+    environment:
+      CODEX_SIDECAR_INTEGRATION_ENABLED: "true"
+      PROVIDER_RUNTIME_PRIMARY_PROVIDER: codex_app_server
+      PROVIDER_RUNTIME_FALLBACK_PROVIDERS: "[]"
+      CODEX_DIRECT_ENABLED: "false"
+      CODEX_APP_SERVER_PROVIDER_ENABLED: "true"
+      WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED: "true"
+      CODEX_APP_SERVER_BRIDGE_URL: http://codex-app-server-bridge:18794/reply
+      CODEX_APP_SERVER_LOGIN_URL: http://codex-app-server-bridge:18794/login
+      CODEX_APP_SERVER_TOKEN_FILE: /run/nexus/codex_app_server_bridge_token
+      CODEX_APP_SERVER_BRIDGE_MODE: real
+      CODEX_APP_SERVER_REAL_UPSTREAM_URL: http://codex-app-server-upstream:18795/reply
+      CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: codex_app_server
+      CODEX_APP_SERVER_CANARY_PERCENT: "100"
+      CODEX_APP_SERVER_KILL_SWITCH: "false"
+    volumes:
+      - /opt/nexus_helpdesk/deploy/runtime_secrets/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
+
+  worker-webchat-ai:
+    environment:
+      CODEX_SIDECAR_INTEGRATION_ENABLED: "true"
+      PROVIDER_RUNTIME_PRIMARY_PROVIDER: codex_app_server
+      PROVIDER_RUNTIME_FALLBACK_PROVIDERS: "[]"
+      CODEX_DIRECT_ENABLED: "false"
+      CODEX_APP_SERVER_PROVIDER_ENABLED: "true"
+      WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED: "true"
+      CODEX_APP_SERVER_BRIDGE_URL: http://codex-app-server-bridge:18794/reply
+      CODEX_APP_SERVER_LOGIN_URL: http://codex-app-server-bridge:18794/login
+      CODEX_APP_SERVER_TOKEN_FILE: /run/nexus/codex_app_server_bridge_token
+      CODEX_APP_SERVER_BRIDGE_MODE: real
+      CODEX_APP_SERVER_REAL_UPSTREAM_URL: http://codex-app-server-upstream:18795/reply
+      CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: codex_app_server
+      CODEX_APP_SERVER_CANARY_PERCENT: "100"
+      CODEX_APP_SERVER_KILL_SWITCH: "false"
+    volumes:
+      - /opt/nexus_helpdesk/deploy/runtime_secrets/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
+
+  codex-app-server-bridge:
+    <<: *app_image
+    profiles:
+      - codex-app-server
+    environment:
+      APP_ENV: production
+      BIND_HOST: 0.0.0.0
+      PORT: "18794"
+      CODEX_APP_SERVER_TOKEN_FILE: /run/nexus/codex_app_server_bridge_token
+      CODEX_APP_SERVER_AUTH_MODE: ${CODEX_APP_SERVER_AUTH_MODE:-per_request}
+      CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED: ${CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED:-false}
+      CODEX_APP_SERVER_BRIDGE_MODE: ${CODEX_APP_SERVER_BRIDGE_MODE:-real}
+      CODEX_APP_SERVER_RUNTIME_BACKEND: ${CODEX_APP_SERVER_RUNTIME_BACKEND:-python_cli_pool}
+      CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON:-http://codex-private-model-runtime:18800/reply}
+      CODEX_APP_SERVER_REAL_UPSTREAM_URL_NODE: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL_NODE:-http://codex-appserver-runtime:18810/reply}
+      CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: ${CODEX_APP_SERVER_REPLY_GENERATION_BACKEND:-}
+      CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS:-9}
+      CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS:-30}
+    volumes:
+      - /opt/nexus_helpdesk/deploy/runtime_secrets/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
+    ports:
+      - "127.0.0.1:18794:18794"
+    command: python /app/deploy/codex_app_server_bridge_proxy.py
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18794/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  codex-appserver-runtime:
+    <<: *app_image
+    profiles:
+      - codex-app-server
+    environment:
+      APP_ENV: production
+      HOME: /home/appuser
+      BIND_HOST: 0.0.0.0
+      GIT_SHA: ${GIT_SHA:-unknown}
+      IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
+      APP_VERSION: ${APP_VERSION:-server}
+      BUILD_TIME: ${BUILD_TIME:-unknown}
+      CODEX_APPSERVER_RUNTIME_ENABLED: ${CODEX_APPSERVER_RUNTIME_ENABLED:-true}
+      CODEX_APPSERVER_HOST: 0.0.0.0
+      CODEX_APPSERVER_PORT: "18810"
+      CODEX_APPSERVER_PERFORMANCE_PROFILE: ${CODEX_APPSERVER_PERFORMANCE_PROFILE:-webchat_fast}
+      CODEX_APPSERVER_MODEL: ${CODEX_APPSERVER_MODEL:-gpt-5.3-codex-spark}
+      CODEX_APPSERVER_REASONING_EFFORT: ${CODEX_APPSERVER_REASONING_EFFORT:-low}
+      CODEX_APPSERVER_SERVICE_TIER: ${CODEX_APPSERVER_SERVICE_TIER:-priority}
+      CODEX_APPSERVER_THREAD_MODE: ${CODEX_APPSERVER_THREAD_MODE:-ephemeral}
+      CODEX_APPSERVER_CLIENT_CACHE_TTL_SECONDS: ${CODEX_APPSERVER_CLIENT_CACHE_TTL_SECONDS:-1800}
+      CODEX_APPSERVER_MAX_CONCURRENCY: ${CODEX_APPSERVER_MAX_CONCURRENCY:-4}
+      CODEX_APPSERVER_QUEUE_TIMEOUT_MS: ${CODEX_APPSERVER_QUEUE_TIMEOUT_MS:-750}
+      CODEX_APPSERVER_REPLY_TIMEOUT_MS: ${CODEX_APPSERVER_REPLY_TIMEOUT_MS:-8000}
+      CODEX_APPSERVER_STATE_DIR: /tmp/nexus-codex-runtime
+      CODEX_APPSERVER_WORK_DIR: /tmp/nexus-codex-runtime/webchat-workdir
+    expose:
+      - "18810"
+    command: ["node", "/app/tools/nexus-codex-runtime/dist/src/server.js"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18810/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  codex-app-server-upstream:
+    <<: *app_image
+    profiles:
+      - codex-app-server
+    environment:
+      APP_ENV: production
+      BIND_HOST: 0.0.0.0
+      PORT: "18795"
+      CODEX_APP_SERVER_PRIVATE_REPLY_URL: ${CODEX_APP_SERVER_PRIVATE_REPLY_URL:-}
+      CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: ${CODEX_APP_SERVER_REPLY_GENERATION_BACKEND:-unconfigured}
+      CODEX_APP_SERVER_PRIVATE_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_PRIVATE_TIMEOUT_SECONDS:-30}
+      CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS:-30}
+    ports:
+      - "127.0.0.1:18795:18795"
+    command: python /app/deploy/codex_app_server_private_upstream_proxy.py
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18795/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  codex-private-reply-engine:
+    <<: *app_image
+    profiles:
+      - codex-app-server
+    environment:
+      APP_ENV: production
+      BIND_HOST: 0.0.0.0
+      PORT: "18796"
+      CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL: ${CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL:-}
+      CODEX_PRIVATE_REPLY_ENGINE_MODEL_TIMEOUT_SECONDS: ${CODEX_PRIVATE_REPLY_ENGINE_MODEL_TIMEOUT_SECONDS:-30}
+      CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS: ${CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS:-30}
+      CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: ${CODEX_APP_SERVER_REPLY_GENERATION_BACKEND:-unconfigured}
+    expose:
+      - "18796"
+    command: python /app/deploy/codex_private_reply_engine.py
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18796/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  codex-openclaw-home-permissions:
+    <<: *app_image
+    profiles:
+      - codex-app-server
+    user: "0:0"
+    restart: "no"
+    volumes:
+      - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_codex_home:/home/appuser/.openclaw:rw
+    command: sh -c "mkdir -p /home/appuser/.openclaw && chown -R appuser:appgroup /home/appuser/.openclaw && chmod 700 /home/appuser/.openclaw"
+
+  codex-private-model-runtime:
+    <<: *app_image
+    profiles:
+      - codex-app-server
+    environment:
+      APP_ENV: production
+      HOME: /home/appuser
+      OPENCLAW_HOME: /home/appuser/.openclaw
+      XDG_CONFIG_HOME: /home/appuser/.openclaw
+      BIND_HOST: 0.0.0.0
+      PORT: "18800"
+      OPENCLAW_CODEX_RUNTIME_ENABLED: ${OPENCLAW_CODEX_RUNTIME_ENABLED:-false}
+      OPENCLAW_CODEX_CLI: ${OPENCLAW_CODEX_CLI:-openclaw}
+      OPENCLAW_CODEX_AUTH_PROVIDER: ${OPENCLAW_CODEX_AUTH_PROVIDER:-openai-codex}
+      OPENCLAW_CODEX_PLUGIN_PACKAGE: ${OPENCLAW_CODEX_PLUGIN_PACKAGE:-@openclaw/codex}
+      OPENCLAW_CODEX_REQUIRE_PLUGIN: ${OPENCLAW_CODEX_REQUIRE_PLUGIN:-true}
+      OPENCLAW_CODEX_MODEL: ${OPENCLAW_CODEX_MODEL:-}
+      OPENCLAW_CODEX_INFER_TRANSPORT: ${OPENCLAW_CODEX_INFER_TRANSPORT:-local}
+      OPENCLAW_CODEX_AGENT: ${OPENCLAW_CODEX_AGENT:-}
+      OPENCLAW_CODEX_READY_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_READY_TIMEOUT_SECONDS:-30}
+      OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS:-30}
+      OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS: ${OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS:-60}
+      OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS:-7.5}
+      OPENCLAW_CODEX_EXECUTION_MODE: ${OPENCLAW_CODEX_EXECUTION_MODE:-warm_pool}
+      OPENCLAW_CODEX_WORKER_POOL_SIZE: ${OPENCLAW_CODEX_WORKER_POOL_SIZE:-1}
+      OPENCLAW_CODEX_QUEUE_TIMEOUT_MS: ${OPENCLAW_CODEX_QUEUE_TIMEOUT_MS:-250}
+      OPENCLAW_CODEX_GATEWAY_URL: ${OPENCLAW_CODEX_GATEWAY_URL:-ws://127.0.0.1:18789}
+    volumes:
+      - /run/secrets:/run/secrets:ro
+      - /opt/nexus_helpdesk/deploy/runtime_secrets/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
+      - ../data/uploads:/app/backend/uploads
+      - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_codex_home:/home/appuser/.openclaw:rw
+    depends_on:
+      codex-openclaw-home-permissions:
+        condition: service_completed_successfully
+    expose:
+      - "18800"
+    command: python /app/deploy/codex_openclaw_codex_harness_adapter.py
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18800/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

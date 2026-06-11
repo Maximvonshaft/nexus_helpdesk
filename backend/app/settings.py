@@ -59,6 +59,8 @@ class Settings:
         self.max_upload_bytes = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
 
         self.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY")
+        self.openclaw_integration_enabled = _env_bool("OPENCLAW_INTEGRATION_ENABLED", False)
+        self.codex_sidecar_integration_enabled = _env_bool("CODEX_SIDECAR_INTEGRATION_ENABLED", False)
         self.openclaw_bin = os.getenv("OPENCLAW_BIN")
         self.openclaw_transport = os.getenv("OPENCLAW_TRANSPORT", "mcp").strip().lower() or "mcp"
         self.openclaw_deployment_mode = os.getenv("OPENCLAW_DEPLOYMENT_MODE", "local_gateway").strip().lower() or "local_gateway"
@@ -87,7 +89,7 @@ class Settings:
         self.job_lock_seconds = int(os.getenv("JOB_LOCK_SECONDS", "300"))
         self.job_max_retries = int(os.getenv("JOB_MAX_RETRIES", "3"))
         self.worker_poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", "2"))
-        self.openclaw_sync_enabled = os.getenv("OPENCLAW_SYNC_ENABLED", "true").strip().lower() == "true"
+        self.openclaw_sync_enabled = os.getenv("OPENCLAW_SYNC_ENABLED", "false").strip().lower() == "true"
         self.openclaw_sync_batch_size = int(os.getenv("OPENCLAW_SYNC_BATCH_SIZE", "50"))
         self.openclaw_sync_stale_seconds = int(os.getenv("OPENCLAW_SYNC_STALE_SECONDS", "120"))
         self.openclaw_sync_transcript_limit = int(os.getenv("OPENCLAW_SYNC_TRANSCRIPT_LIMIT", "100"))
@@ -98,7 +100,7 @@ class Settings:
         self.openclaw_inbound_sync_include_groups = os.getenv("OPENCLAW_INBOUND_SYNC_INCLUDE_GROUPS", "false").strip().lower() == "true"
         self.openclaw_inbound_auto_sync_interval_seconds = int(os.getenv("OPENCLAW_INBOUND_AUTO_SYNC_INTERVAL_SECONDS", "30"))
         self.openclaw_session_dm_scope = os.getenv("OPENCLAW_SESSION_DM_SCOPE", "per-account-channel-peer").strip()
-        self.openclaw_event_driver_enabled = os.getenv("OPENCLAW_EVENT_DRIVER_ENABLED", "true").strip().lower() == "true"
+        self.openclaw_event_driver_enabled = os.getenv("OPENCLAW_EVENT_DRIVER_ENABLED", "false").strip().lower() == "true"
         self.openclaw_sync_daemon_stale_seconds = int(os.getenv("OPENCLAW_SYNC_DAEMON_STALE_SECONDS", "90"))
         self.require_prometheus_client_in_production = os.getenv("REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION", "false").strip().lower() == "true"
 

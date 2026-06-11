@@ -104,8 +104,8 @@ class ProviderRuntimeRouter:
         }).mappings().first()
 
         if not rule:
-            primary_provider = "codex_app_server"
-            fallbacks = ["openclaw_responses", "rule_engine"]
+            primary_provider = "codex_direct"
+            fallbacks = []
             output_contract = "speedaf_webchat_fast_reply_v1"
             timeout_ms = 10000
             kill_switch = False
@@ -237,8 +237,8 @@ def _apply_env_overrides(
         if env_primary not in _DIRECT_ENV_PROVIDERS:
             raise RuntimeError("PROVIDER_RUNTIME_PRIMARY_PROVIDER must be a registered provider")
         primary_provider = env_primary
-        env_fallbacks = os.getenv("PROVIDER_RUNTIME_FALLBACK_PROVIDERS", "")
-        if env_fallbacks:
+        env_fallbacks = os.getenv("PROVIDER_RUNTIME_FALLBACK_PROVIDERS")
+        if env_fallbacks is not None:
             fallbacks = _coerce_fallbacks(env_fallbacks)
         elif primary_provider == "codex_direct":
             fallbacks = _coerce_fallbacks(os.getenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "openai_responses,rule_engine"))
@@ -279,6 +279,8 @@ def _coerce_fallbacks(value) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if item]
     if isinstance(value, str):
+        if value.strip().lower() in {"none", "null"}:
+            return []
         try:
             parsed = json.loads(value)
         except json.JSONDecodeError:

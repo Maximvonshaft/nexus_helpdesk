@@ -19,6 +19,8 @@ import { useSession } from '@/hooks/useAuth'
 import { canManageChannels, canViewOps } from '@/lib/access'
 import type { BadgeTone, TodayWorkbenchCommand, TodayWorkbenchTask } from '@/lib/types'
 
+const OPENCLAW_INTEGRATION_UI_ENABLED = import.meta.env.VITE_OPENCLAW_INTEGRATION_ENABLED === 'true'
+
 function safeTone(value: string | null | undefined): BadgeTone {
   return value === 'danger' || value === 'warning' || value === 'success' ? value : 'default'
 }
@@ -49,7 +51,7 @@ function OverviewPage() {
   const [queue, runtime, readiness, signoff] = useQueries({
     queries: [
       { queryKey: ['queueSummary'], queryFn: api.queueSummary, refetchInterval: autoRefresh.enabled ? 15000 : false, enabled: canSeeOps },
-      { queryKey: ['runtimeHealth'], queryFn: api.runtimeHealth, refetchInterval: autoRefresh.enabled ? 15000 : false, enabled: canSeeOps },
+      { queryKey: ['runtimeHealth'], queryFn: api.runtimeHealth, refetchInterval: autoRefresh.enabled ? 15000 : false, enabled: canSeeOps && OPENCLAW_INTEGRATION_UI_ENABLED },
       { queryKey: ['readiness'], queryFn: api.readiness, refetchInterval: autoRefresh.enabled ? 30000 : false, enabled: canSeeOps },
       { queryKey: ['signoff'], queryFn: api.signoff, refetchInterval: autoRefresh.enabled ? 30000 : false, enabled: canSeeOps },
     ],
@@ -63,7 +65,7 @@ function OverviewPage() {
   const rt = runtime.data
   const rd = readiness.data
   const so = signoff.data
-  const runtimeRecoveryCount = (q?.dead_jobs ?? 0) + (q?.dead_outbound ?? 0) + (rt?.dead_sync_jobs ?? 0) + (rt?.dead_attachment_jobs ?? 0)
+  const runtimeRecoveryCount = (q?.dead_jobs ?? 0) + (q?.dead_outbound ?? 0) + (OPENCLAW_INTEGRATION_UI_ENABLED ? (rt?.dead_sync_jobs ?? 0) + (rt?.dead_attachment_jobs ?? 0) : 0)
   const needsRuntimeRecovery = canSeeOps && runtimeRecoveryCount > 0
   const goWorkbenchTarget = (target: string) => {
     if (target === 'webchat') navigate({ to: '/webchat' })
@@ -167,7 +169,7 @@ function OverviewPage() {
             {canSeeOps ? (
               <div className="guide-item">
                 <strong>{needsRuntimeRecovery ? `运行恢复待处理 ${runtimeRecoveryCount}` : '运行恢复'}</strong>
-                <span>{needsRuntimeRecovery ? '当前存在 dead/requeue 类异常，建议主管优先处理。' : '检查同步、队列、OpenClaw 连接与恢复动作。'}</span>
+                <span>{needsRuntimeRecovery ? '当前存在 dead/requeue 类异常，建议主管优先处理。' : '检查队列、任务与恢复动作。'}</span>
                 <Button variant={needsRuntimeRecovery ? 'primary' : 'secondary'} onClick={() => navigate({ to: '/runtime' })}>打开运行恢复</Button>
               </div>
             ) : (
@@ -185,9 +187,9 @@ function OverviewPage() {
           <>
             <MetricCard label="待处理任务" value={q?.pending_jobs ?? '—'} hint="后台待执行任务" />
             <MetricCard label="异常任务" value={q?.dead_jobs ?? '—'} hint="需要人工排查" />
-            <MetricCard label="已关联客户会话" value={q?.openclaw_links ?? '—'} hint="工单和客户来信已对上" />
-            <MetricCard label="待补同步" value={rt?.stale_link_count ?? '—'} hint="需要补抓的客户消息" />
-            <MetricCard label="待处理附件" value={rt?.pending_attachment_jobs ?? '—'} hint="证据或附件待落库" />
+            {OPENCLAW_INTEGRATION_UI_ENABLED ? <MetricCard label="已关联客户会话" value={q?.openclaw_links ?? '—'} hint="工单和客户来信已对上" /> : null}
+            {OPENCLAW_INTEGRATION_UI_ENABLED ? <MetricCard label="待补同步" value={rt?.stale_link_count ?? '—'} hint="需要补抓的客户消息" /> : null}
+            {OPENCLAW_INTEGRATION_UI_ENABLED ? <MetricCard label="待处理附件" value={rt?.pending_attachment_jobs ?? '—'} hint="证据或附件待落库" /> : null}
             <MetricCard label="提醒项" value={((rd?.warnings?.length ?? 0) + (rt?.warnings?.length ?? 0) + (so?.warnings?.length ?? 0)) || '0'} hint="建议先处理提醒项" />
           </>
         ) : (
@@ -208,14 +210,14 @@ function OverviewPage() {
             <CardHeader title="运营准备情况" subtitle="上线前的配置状态与准备情况。" />
             <CardBody>
               <div className="button-row" style={{ marginBottom: 12 }}>
-                <Button variant="secondary" onClick={async () => { const res = await api.consumeOpenClawEventsOnce(); setToast({ message: `已执行一次消息同步，处理 ${res.processed} 批`, tone: 'success' }); await client.invalidateQueries({ queryKey: ['runtimeHealth'] }); }}>执行一次消息同步</Button>
+                {OPENCLAW_INTEGRATION_UI_ENABLED ? <Button variant="secondary" onClick={async () => { const res = await api.consumeOpenClawEventsOnce(); setToast({ message: `已执行一次消息同步，处理 ${res.processed} 批`, tone: 'success' }); await client.invalidateQueries({ queryKey: ['runtimeHealth'] }); }}>执行一次消息同步</Button> : null}
                 {needsRuntimeRecovery ? <Button variant="primary" onClick={() => navigate({ to: '/runtime' })}>处理运行异常</Button> : null}
               </div>
               <div className="kv-grid">
                 <div className="kv"><label>环境</label><div>{sanitizeDisplayText(rd?.app_env)}</div></div>
                 <div className="kv"><label>数据库</label><div>{sanitizeDisplayText(rd?.database_url_scheme)}</div></div>
                 <div className="kv"><label>附件存储</label><div>{sanitizeDisplayText(rd?.storage_backend)}</div></div>
-                <div className="kv"><label>消息方式</label><div>{sanitizeDisplayText(rd?.openclaw_transport)}</div></div>
+                <div className="kv"><label>OpenClaw 可选集成</label><div>{rd?.openclaw_integration_enabled ? '已启用' : '未启用'}</div></div>
               </div>
               <div className="stack" style={{ marginTop: 12 }}>
                 {(rd?.warnings ?? []).map((warning) => <div key={warning} className="message" data-role="agent">{sanitizeDisplayText(warning)}</div>)}
@@ -223,7 +225,7 @@ function OverviewPage() {
               </div>
             </CardBody>
           </Card>
-          <Card>
+          {OPENCLAW_INTEGRATION_UI_ENABLED ? <Card>
             <CardHeader title="消息同步状态" subtitle="会话同步、补拉和附件处理的健康度。" />
             <CardBody>
               <div className="kv-grid">
@@ -237,7 +239,7 @@ function OverviewPage() {
                 {!(rt?.warnings?.length) ? <div className="empty">消息同步状态正常。</div> : null}
               </div>
             </CardBody>
-          </Card>
+          </Card> : null}
         </div>
       ) : (
         <Card>

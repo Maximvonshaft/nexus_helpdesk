@@ -1,0 +1,92 @@
+# Optional OpenClaw legacy integration. Default production does not need this.
+# This override carries token mounts and workers only when explicitly included.
+
+x-openclaw-token-volumes: &openclaw_token_volumes
+  - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_responses_token:/run/openclaw_responses_token:ro
+  - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_native_responses_token:/run/openclaw_native_responses_token:ro
+
+x-app-image: &app_image
+  image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
+  env_file:
+    - path: .env.prod
+      required: false
+  logging:
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "5"
+  restart: unless-stopped
+
+x-worker-healthcheck: &worker_healthcheck
+  test:
+    - CMD-SHELL
+    - "python -c \"from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'scripts/run_worker.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('worker-ok')\""
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 20s
+
+services:
+  app:
+    environment:
+      OPENCLAW_INTEGRATION_ENABLED: "true"
+      OPENCLAW_DEPLOYMENT_MODE: remote_gateway
+      OPENCLAW_TRANSPORT: mcp
+      OPENCLAW_CLI_FALLBACK_ENABLED: "false"
+    volumes: *openclaw_token_volumes
+
+  worker-webchat-ai:
+    environment:
+      OPENCLAW_INTEGRATION_ENABLED: "true"
+      OPENCLAW_DEPLOYMENT_MODE: remote_gateway
+      OPENCLAW_TRANSPORT: mcp
+      OPENCLAW_CLI_FALLBACK_ENABLED: "false"
+    volumes: *openclaw_token_volumes
+
+  worker-openclaw-inbound:
+    <<: *app_image
+    profiles:
+      - openclaw-inbound
+    command: python scripts/run_worker.py --worker-id worker-openclaw-inbound --queue openclaw-inbound
+    healthcheck: *worker_healthcheck
+    depends_on:
+      app:
+        condition: service_healthy
+
+  sync-daemon:
+    <<: *app_image
+    profiles:
+      - openclaw
+    command: python scripts/run_openclaw_sync_daemon.py --worker-id worker-openclaw-sync
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'scripts/run_openclaw_sync_daemon.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('openclaw-sync-daemon-ok')"
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+
+  event-daemon:
+    <<: *app_image
+    profiles:
+      - openclaw
+    environment:
+      OPENCLAW_EVENT_DRIVER_ENABLED: ${OPENCLAW_EVENT_DRIVER_ENABLED:-false}
+    command: python scripts/run_openclaw_event_daemon.py
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'scripts/run_openclaw_event_daemon.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('openclaw-event-daemon-ok')"
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3

@@ -1,14 +1,12 @@
 x-app-image: &app_image
   image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
   env_file:
-    - .env.prod
+    - path: .env.prod
+      required: false
   environment: &app_env
     APP_ENV: production
     AUTO_INIT_DB: "false"
     SEED_DEMO_DATA: "false"
-    OPENCLAW_DEPLOYMENT_MODE: remote_gateway
-    OPENCLAW_TRANSPORT: mcp
-    OPENCLAW_CLI_FALLBACK_ENABLED: "false"
     WEBCHAT_RATE_LIMIT_BACKEND: ${WEBCHAT_RATE_LIMIT_BACKEND:-database}
     WEBCHAT_WS_ENABLED: ${WEBCHAT_WS_ENABLED:-false}
     WEBCHAT_WS_ADMIN_ENABLED: ${WEBCHAT_WS_ADMIN_ENABLED:-false}
@@ -22,10 +20,6 @@ x-app-image: &app_image
     WEBCHAT_WS_MAX_CONNECTIONS_PER_USER: ${WEBCHAT_WS_MAX_CONNECTIONS_PER_USER:-10}
     REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
     DB_SLOW_QUERY_MS: ${DB_SLOW_QUERY_MS:-500}
-    CODEX_APP_SERVER_AUTH_MODE: ${CODEX_APP_SERVER_AUTH_MODE:-per_request}
-    CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED: ${CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED:-false}
-    CODEX_APP_SERVER_TOTAL_TIMEOUT_MS: ${CODEX_APP_SERVER_TOTAL_TIMEOUT_MS:-10000}
-    CODEX_APP_SERVER_CONNECT_TIMEOUT_MS: ${CODEX_APP_SERVER_CONNECT_TIMEOUT_MS:-250}
     GIT_SHA: ${GIT_SHA:-unknown}
     BUILD_TIME: ${BUILD_TIME:-unknown}
     IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
@@ -33,9 +27,6 @@ x-app-image: &app_image
     FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
   volumes: &app_volumes
     - /run/secrets:/run/secrets:ro
-    - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_responses_token:/run/openclaw_responses_token:ro
-    - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_native_responses_token:/run/openclaw_native_responses_token:ro
-    - /opt/nexus_helpdesk/deploy/runtime_secrets/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
     - ../data/uploads:/app/backend/uploads
   logging: &json_logging
     driver: json-file
@@ -58,7 +49,8 @@ services:
     logging: *json_logging
     image: postgres:16-alpine
     env_file:
-      - .env.prod
+      - path: .env.prod
+        required: false
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -81,7 +73,8 @@ services:
         FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
     image: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
     env_file:
-      - .env.prod
+      - path: .env.prod
+        required: false
     environment:
       <<: *app_env
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
@@ -159,183 +152,6 @@ services:
       app:
         condition: service_healthy
 
-  codex-app-server-bridge:
-    <<: *app_image
-    profiles:
-      - codex-app-server
-    environment:
-      APP_ENV: production
-      BIND_HOST: 0.0.0.0
-      PORT: "18794"
-      CODEX_APP_SERVER_TOKEN_FILE: /run/nexus/codex_app_server_bridge_token
-      CODEX_APP_SERVER_AUTH_MODE: ${CODEX_APP_SERVER_AUTH_MODE:-per_request}
-      CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED: ${CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED:-false}
-      CODEX_APP_SERVER_BRIDGE_MODE: ${CODEX_APP_SERVER_BRIDGE_MODE:-real}
-      CODEX_APP_SERVER_RUNTIME_BACKEND: ${CODEX_APP_SERVER_RUNTIME_BACKEND:-python_cli_pool}
-      CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON:-http://codex-private-model-runtime:18800/reply}
-      CODEX_APP_SERVER_REAL_UPSTREAM_URL_NODE: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL_NODE:-http://codex-appserver-runtime:18810/reply}
-      CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: ${CODEX_APP_SERVER_REPLY_GENERATION_BACKEND:-}
-      CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS:-9}
-      CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS:-30}
-    volumes:
-      - /opt/nexus_helpdesk/deploy/runtime_secrets/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
-    ports:
-      - "172.18.0.1:18794:18794"
-    command: python /app/deploy/codex_app_server_bridge_proxy.py
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18794/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  codex-appserver-runtime:
-    <<: *app_image
-    profiles:
-      - codex-app-server
-    environment:
-      APP_ENV: production
-      HOME: /home/appuser
-      BIND_HOST: 0.0.0.0
-      GIT_SHA: ${GIT_SHA:-unknown}
-      IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
-      APP_VERSION: ${APP_VERSION:-server}
-      BUILD_TIME: ${BUILD_TIME:-unknown}
-      CODEX_APPSERVER_RUNTIME_ENABLED: ${CODEX_APPSERVER_RUNTIME_ENABLED:-true}
-      CODEX_APPSERVER_HOST: 0.0.0.0
-      CODEX_APPSERVER_PORT: "18810"
-      CODEX_APPSERVER_PERFORMANCE_PROFILE: ${CODEX_APPSERVER_PERFORMANCE_PROFILE:-webchat_fast}
-      CODEX_APPSERVER_MODEL: ${CODEX_APPSERVER_MODEL:-gpt-5.3-codex-spark}
-      CODEX_APPSERVER_REASONING_EFFORT: ${CODEX_APPSERVER_REASONING_EFFORT:-low}
-      CODEX_APPSERVER_SERVICE_TIER: ${CODEX_APPSERVER_SERVICE_TIER:-priority}
-      CODEX_APPSERVER_THREAD_MODE: ${CODEX_APPSERVER_THREAD_MODE:-ephemeral}
-      CODEX_APPSERVER_CLIENT_CACHE_TTL_SECONDS: ${CODEX_APPSERVER_CLIENT_CACHE_TTL_SECONDS:-1800}
-      CODEX_APPSERVER_MAX_CONCURRENCY: ${CODEX_APPSERVER_MAX_CONCURRENCY:-4}
-      CODEX_APPSERVER_QUEUE_TIMEOUT_MS: ${CODEX_APPSERVER_QUEUE_TIMEOUT_MS:-750}
-      CODEX_APPSERVER_REPLY_TIMEOUT_MS: ${CODEX_APPSERVER_REPLY_TIMEOUT_MS:-8000}
-      CODEX_APPSERVER_STATE_DIR: /tmp/nexus-codex-runtime
-      CODEX_APPSERVER_WORK_DIR: /tmp/nexus-codex-runtime/webchat-workdir
-    expose:
-      - "18810"
-    command: ["node", "/app/tools/nexus-codex-runtime/dist/src/server.js"]
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18810/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  codex-app-server-upstream:
-    <<: *app_image
-    profiles:
-      - codex-app-server
-    environment:
-      APP_ENV: production
-      BIND_HOST: 0.0.0.0
-      PORT: "18795"
-      CODEX_APP_SERVER_PRIVATE_REPLY_URL: ${CODEX_APP_SERVER_PRIVATE_REPLY_URL:-}
-      CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: ${CODEX_APP_SERVER_REPLY_GENERATION_BACKEND:-unconfigured}
-      CODEX_APP_SERVER_PRIVATE_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_PRIVATE_TIMEOUT_SECONDS:-30}
-      CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS:-30}
-    ports:
-      - "172.18.0.1:18795:18795"
-    command: python /app/deploy/codex_app_server_private_upstream_proxy.py
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18795/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  codex-private-reply-engine:
-    <<: *app_image
-    profiles:
-      - codex-app-server
-    environment:
-      APP_ENV: production
-      BIND_HOST: 0.0.0.0
-      PORT: "18796"
-      CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL: ${CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL:-}
-      CODEX_PRIVATE_REPLY_ENGINE_MODEL_TIMEOUT_SECONDS: ${CODEX_PRIVATE_REPLY_ENGINE_MODEL_TIMEOUT_SECONDS:-30}
-      CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS: ${CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS:-30}
-      CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: ${CODEX_APP_SERVER_REPLY_GENERATION_BACKEND:-unconfigured}
-    expose:
-      - "18796"
-    command: python /app/deploy/codex_private_reply_engine.py
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18796/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  codex-openclaw-home-permissions:
-    <<: *app_image
-    profiles:
-      - codex-app-server
-    user: "0:0"
-    restart: "no"
-    volumes:
-      - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_codex_home:/home/appuser/.openclaw:rw
-    command: sh -c "mkdir -p /home/appuser/.openclaw && chown -R appuser:appgroup /home/appuser/.openclaw && chmod 700 /home/appuser/.openclaw"
-
-  codex-private-model-runtime:
-    <<: *app_image
-    profiles:
-      - codex-app-server
-    environment:
-      APP_ENV: production
-      HOME: /home/appuser
-      OPENCLAW_HOME: /home/appuser/.openclaw
-      XDG_CONFIG_HOME: /home/appuser/.openclaw
-      BIND_HOST: 0.0.0.0
-      PORT: "18800"
-      OPENCLAW_CODEX_RUNTIME_ENABLED: ${OPENCLAW_CODEX_RUNTIME_ENABLED:-false}
-      OPENCLAW_CODEX_CLI: ${OPENCLAW_CODEX_CLI:-openclaw}
-      OPENCLAW_CODEX_AUTH_PROVIDER: ${OPENCLAW_CODEX_AUTH_PROVIDER:-openai-codex}
-      OPENCLAW_CODEX_PLUGIN_PACKAGE: ${OPENCLAW_CODEX_PLUGIN_PACKAGE:-@openclaw/codex}
-      OPENCLAW_CODEX_REQUIRE_PLUGIN: ${OPENCLAW_CODEX_REQUIRE_PLUGIN:-true}
-      OPENCLAW_CODEX_MODEL: ${OPENCLAW_CODEX_MODEL:-}
-      OPENCLAW_CODEX_INFER_TRANSPORT: ${OPENCLAW_CODEX_INFER_TRANSPORT:-local}
-      OPENCLAW_CODEX_AGENT: ${OPENCLAW_CODEX_AGENT:-}
-      OPENCLAW_CODEX_READY_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_READY_TIMEOUT_SECONDS:-30}
-      OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS:-30}
-      OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS: ${OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS:-60}
-      OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS:-7.5}
-      OPENCLAW_CODEX_EXECUTION_MODE: ${OPENCLAW_CODEX_EXECUTION_MODE:-warm_pool}
-      OPENCLAW_CODEX_WORKER_POOL_SIZE: ${OPENCLAW_CODEX_WORKER_POOL_SIZE:-1}
-      OPENCLAW_CODEX_QUEUE_TIMEOUT_MS: ${OPENCLAW_CODEX_QUEUE_TIMEOUT_MS:-250}
-      OPENCLAW_CODEX_GATEWAY_URL: ${OPENCLAW_CODEX_GATEWAY_URL:-ws://127.0.0.1:18789}
-    volumes:
-      - /run/secrets:/run/secrets:ro
-      - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_responses_token:/run/openclaw_responses_token:ro
-      - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_native_responses_token:/run/openclaw_native_responses_token:ro
-      - /opt/nexus_helpdesk/deploy/runtime_secrets/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
-      - ../data/uploads:/app/backend/uploads
-      - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_codex_home:/home/appuser/.openclaw:rw
-    depends_on:
-      codex-openclaw-home-permissions:
-        condition: service_completed_successfully
-    expose:
-      - "18800"
-    command: python /app/deploy/codex_openclaw_codex_harness_adapter.py
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18800/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  worker-openclaw-inbound:
-    <<: *app_image
-    profiles:
-      - openclaw-inbound
-    command: python scripts/run_worker.py --worker-id worker-openclaw-inbound --queue openclaw-inbound
-    healthcheck: *worker_healthcheck
-    depends_on:
-      app:
-        condition: service_healthy
-
   legacy-worker:
     <<: *app_image
     profiles:
@@ -345,45 +161,6 @@ services:
     depends_on:
       app:
         condition: service_healthy
-
-  sync-daemon:
-    <<: *app_image
-    profiles:
-      - openclaw
-    command: python scripts/run_openclaw_sync_daemon.py --worker-id worker-openclaw-sync
-    depends_on:
-      app:
-        condition: service_healthy
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          python -c "from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'scripts/run_openclaw_sync_daemon.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('openclaw-sync-daemon-ok')"
-      interval: 30s
-      timeout: 10s
-      start_period: 20s
-      retries: 3
-
-  event-daemon:
-    <<: *app_image
-    profiles:
-      - openclaw
-    environment:
-      <<: *app_env
-      OPENCLAW_EVENT_DRIVER_ENABLED: "true"
-    command: python scripts/run_openclaw_event_daemon.py
-    depends_on:
-      app:
-        condition: service_healthy
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          python -c "from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'scripts/run_openclaw_event_daemon.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('openclaw-event-daemon-ok')"
-      interval: 30s
-      timeout: 10s
-      start_period: 20s
-      retries: 3
 
   nginx:
     image: nginx:1.27-alpine

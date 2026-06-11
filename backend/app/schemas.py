@@ -1011,6 +1011,8 @@ class ProductionReadinessRead(APIModel):
     database_url_scheme: str
     is_postgres: bool
     storage_backend: str
+    openclaw_integration_enabled: bool = False
+    codex_sidecar_integration_enabled: bool = False
     openclaw_transport: str
     metrics_enabled: bool
     openclaw_sync_enabled: bool

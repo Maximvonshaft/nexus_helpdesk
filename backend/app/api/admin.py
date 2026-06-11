@@ -45,6 +45,11 @@ settings = get_settings()
 router = APIRouter(prefix='/api/admin', tags=['admin'])
 router.include_router(outbound_email_router)
 
+
+def ensure_openclaw_integration_enabled() -> None:
+    if not settings.openclaw_integration_enabled:
+        raise HTTPException(status_code=404, detail='OpenClaw legacy integration is disabled')
+
 def _normalize_username(value: str) -> str:
     return value.strip()
 
@@ -369,6 +374,7 @@ def assign_team_market(team_id: int, payload: TeamMarketAssignRequest, db: Sessi
 
 @router.post('/openclaw/link', response_model=OpenClawConversationRead)
 def link_openclaw_ticket(payload: OpenClawLinkRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_openclaw_integration_enabled()
     ensure_can_manage_runtime(current_user, db)
     with managed_session(db):
         row = link_ticket_to_openclaw_session(
@@ -387,6 +393,7 @@ def link_openclaw_ticket(payload: OpenClawLinkRequest, db: Session = Depends(get
 
 @router.post('/openclaw/tickets/{ticket_id}/sync', response_model=OpenClawSyncResult)
 def sync_openclaw_ticket(ticket_id: int, session_key: str, limit: int = 50, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_openclaw_integration_enabled()
     ensure_can_manage_runtime(current_user, db)
     with managed_session(db):
         result = sync_openclaw_conversation(db, ticket_id=ticket_id, session_key=session_key, limit=limit)
@@ -395,6 +402,7 @@ def sync_openclaw_ticket(ticket_id: int, session_key: str, limit: int = 50, db: 
 
 @router.get('/openclaw/links', response_model=list[OpenClawConversationRead])
 def list_openclaw_links(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_openclaw_integration_enabled()
     ensure_can_manage_runtime(current_user, db)
     rows = db.query(OpenClawConversationLink).order_by(OpenClawConversationLink.updated_at.desc()).all()
     return [OpenClawConversationRead.model_validate(x) for x in rows]
@@ -402,6 +410,7 @@ def list_openclaw_links(db: Session = Depends(get_db), current_user=Depends(get_
 
 @router.post('/openclaw/sync/enqueue', response_model=BackgroundJobRead)
 def enqueue_openclaw_sync(payload: OpenClawSyncEnqueueRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_openclaw_integration_enabled()
     ensure_can_manage_runtime(current_user, db)
     with managed_session(db):
         job = enqueue_openclaw_sync_job(
@@ -418,6 +427,7 @@ def enqueue_openclaw_sync(payload: OpenClawSyncEnqueueRequest, db: Session = Dep
 
 @router.post('/openclaw/sync/enqueue-stale', response_model=list[BackgroundJobRead])
 def enqueue_stale_openclaw_sync(limit: int = 25, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_openclaw_integration_enabled()
     ensure_can_manage_runtime(current_user, db)
     with managed_session(db):
         rows = enqueue_stale_openclaw_sync_jobs(db, limit=limit)
@@ -458,14 +468,14 @@ def production_readiness(db: Session = Depends(get_db), current_user=Depends(get
         warnings.append('DATABASE_URL is not PostgreSQL; stage/prod cutover is still pending')
     if settings.storage_backend == 'local':
         warnings.append('STORAGE_BACKEND=local; object storage cutover is still pending')
-    if settings.openclaw_transport != 'mcp':
-        warnings.append('OpenClaw transport is not MCP-first')
+    if settings.openclaw_integration_enabled and settings.openclaw_transport != 'mcp':
+        warnings.append('OpenClaw legacy integration is enabled but transport is not MCP-first')
     if not settings.metrics_enabled:
         warnings.append('Metrics are disabled')
     if db.bind and not db.bind.dialect.name.startswith('postgresql'):
         warnings.append('Current runtime DB dialect is not PostgreSQL')
-    if settings.openclaw_sync_enabled and not settings.openclaw_inbound_auto_sync_enabled and not settings.openclaw_event_driver_enabled:
-        warnings.append('OpenClaw sync is enabled but no inbound auto-sync/event driver/manual job producer is active')
+    if settings.openclaw_integration_enabled and settings.openclaw_sync_enabled and not settings.openclaw_inbound_auto_sync_enabled and not settings.openclaw_event_driver_enabled:
+        warnings.append('OpenClaw legacy sync is enabled but no inbound auto-sync/event driver/manual job producer is active')
     outbound_email_active_accounts = db.query(OutboundEmailAccount).filter(OutboundEmailAccount.is_active.is_(True)).count()
     outbound_email_successful_test_send_accounts = count_active_successful_tested_accounts(
         db,
@@ -480,6 +490,8 @@ def production_readiness(db: Session = Depends(get_db), current_user=Depends(get
         database_url_scheme=settings.database_url.split(':', 1)[0],
         is_postgres=settings.is_postgres,
         storage_backend=settings.storage_backend,
+        openclaw_integration_enabled=settings.openclaw_integration_enabled,
+        codex_sidecar_integration_enabled=settings.codex_sidecar_integration_enabled,
         openclaw_transport=settings.openclaw_transport,
         metrics_enabled=settings.metrics_enabled,
         openclaw_sync_enabled=settings.openclaw_sync_enabled,
@@ -509,9 +521,9 @@ def signoff_checklist(db: Session = Depends(get_db), current_user=Depends(get_cu
     if not checks['storage_not_local']:
         warnings.append('STORAGE_BACKEND is local')
 
-    checks['openclaw_transport_mcp'] = settings.openclaw_transport == 'mcp'
-    if not checks['openclaw_transport_mcp']:
-        warnings.append('OPENCLAW_TRANSPORT is not mcp')
+    checks['openclaw_optional_disabled_or_mcp'] = (not settings.openclaw_integration_enabled) or settings.openclaw_transport == 'mcp'
+    if not checks['openclaw_optional_disabled_or_mcp']:
+        warnings.append('OPENCLAW_INTEGRATION_ENABLED=true but OPENCLAW_TRANSPORT is not mcp')
 
     checks['metrics_enabled'] = settings.metrics_enabled
     if not checks['metrics_enabled']:
@@ -525,7 +537,7 @@ def signoff_checklist(db: Session = Depends(get_db), current_user=Depends(get_cu
         checks['database_connected'] = False
         warnings.append('Database connectivity check failed')
 
-    if settings.openclaw_event_driver_enabled is False:
+    if settings.openclaw_integration_enabled and settings.openclaw_event_driver_enabled is False:
         warnings.append('OPENCLAW_EVENT_DRIVER_ENABLED is false')
 
     outbound_email_successful_test_send_accounts = count_active_successful_tested_accounts(
@@ -610,6 +622,7 @@ def update_channel_account(account_id: int, payload: ChannelAccountUpdate, db: S
 
 
 def openclaw_runtime_health(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_openclaw_integration_enabled()
     ensure_can_manage_runtime(current_user, db)
     cursor = db.query(OpenClawSyncCursor).filter(OpenClawSyncCursor.source == 'default').first()
     heartbeat = db.query(ServiceHeartbeat).filter(ServiceHeartbeat.service_name == 'openclaw_event_daemon').first()
@@ -653,12 +666,14 @@ def openclaw_runtime_health(db: Session = Depends(get_db), current_user=Depends(
 
 @router.get('/openclaw/connectivity-check', response_model=OpenClawConnectivityProbeRead)
 def openclaw_connectivity_check(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_openclaw_integration_enabled()
     ensure_can_manage_runtime(current_user, db)
     return probe_openclaw_connectivity()
 
 
 @router.post('/openclaw/events/consume-once')
 def consume_openclaw_events(request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_openclaw_integration_enabled()
     ensure_can_manage_runtime(current_user, db)
     enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='openclaw.events.consume_once', max_requests=settings.admin_action_rate_limit_consume_once_max, request_id=getattr(request.state, 'request_id', None))
     with managed_session(db):
@@ -925,12 +940,14 @@ def reset_user_password(user_id: int, payload: PasswordResetRequest, db: Session
 
 @router.get('/openclaw/unresolved-events', response_model=list[OpenClawUnresolvedEventRead])
 def list_unresolved_events(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_openclaw_integration_enabled()
     ensure_can_manage_runtime(current_user, db)
     rows = db.query(OpenClawUnresolvedEvent).order_by(OpenClawUnresolvedEvent.created_at.desc()).all()
     return [OpenClawUnresolvedEventRead.model_validate(x) for x in rows]
 
 @router.post('/openclaw/unresolved-events/{event_id}/replay')
 def replay_unresolved_event(event_id: int, request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_openclaw_integration_enabled()
     ensure_can_manage_runtime(current_user, db)
     enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='unresolved_event.replay', max_requests=settings.admin_action_rate_limit_single_max, request_id=getattr(request.state, 'request_id', None))
     row = db.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == event_id).first()
@@ -944,6 +961,7 @@ def replay_unresolved_event(event_id: int, request: Request, db: Session = Depen
 
 @router.post('/openclaw/unresolved-events/{event_id}/drop')
 def drop_unresolved_event(event_id: int, request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_openclaw_integration_enabled()
     ensure_can_manage_runtime(current_user, db)
     enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='unresolved_event.drop', max_requests=settings.admin_action_rate_limit_single_max, request_id=getattr(request.state, 'request_id', None))
     row = db.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == event_id).first()

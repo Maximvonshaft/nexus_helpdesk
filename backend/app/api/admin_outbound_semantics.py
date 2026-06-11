@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -15,6 +15,11 @@ from .deps import get_current_user
 
 settings = get_settings()
 router = APIRouter(prefix='/api/admin', tags=['admin-outbound-semantics'])
+
+
+def ensure_openclaw_integration_enabled() -> None:
+    if not settings.openclaw_integration_enabled:
+        raise HTTPException(status_code=404, detail='OpenClaw legacy integration is disabled')
 
 
 def _outbound_counts(db: Session) -> dict[str, int]:
@@ -53,6 +58,7 @@ def get_semantic_queue_summary(db: Session = Depends(get_db), current_user=Depen
 
 @router.get('/openclaw/runtime-health')
 def openclaw_runtime_health_with_outbound_semantics(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    ensure_openclaw_integration_enabled()
     ensure_can_manage_runtime(current_user, db)
     cursor = db.query(OpenClawSyncCursor).filter(OpenClawSyncCursor.source == 'default').first()
     heartbeat = db.query(ServiceHeartbeat).filter(ServiceHeartbeat.service_name == 'openclaw_event_daemon').first()

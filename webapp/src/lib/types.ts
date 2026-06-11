@@ -1077,6 +1077,8 @@ export interface ProductionReadiness {
   database_url_scheme: string
   is_postgres: boolean
   storage_backend: string
+  openclaw_integration_enabled?: boolean
+  codex_sidecar_integration_enabled?: boolean
   openclaw_transport: string
   metrics_enabled: boolean
   openclaw_sync_enabled: boolean
