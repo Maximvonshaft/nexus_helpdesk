@@ -81,6 +81,7 @@ def test_admin_connectivity_check_requires_supervisor(db_session, monkeypatch):
     team = make_team(db_session)
     admin = make_user(db_session, 'admin-connect', UserRole.admin, team)
     lead = make_user(db_session, 'lead-connect', UserRole.lead, team)
+    monkeypatch.setattr(admin_api.settings, 'openclaw_integration_enabled', True)
 
     monkeypatch.setattr(admin_api, 'probe_openclaw_connectivity', lambda: type('Probe', (), {'model_dump': lambda self: {}})())
 
