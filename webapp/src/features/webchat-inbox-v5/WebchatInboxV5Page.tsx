@@ -52,6 +52,8 @@ type InboxRow = {
   visitorLabel?: string | null
   status?: string | null
   origin?: string | null
+  replyChannel?: string | null
+  channelKey?: string | null
   updatedAt?: string | null
   lastMessage?: string | null
   lastMessageType?: string | null
@@ -67,6 +69,13 @@ type InboxRow = {
   source: 'handoff' | 'conversation'
   rawHandoff?: WebchatHandoffRequest
   rawConversation?: WebchatConversation
+}
+
+function channelLabel(value?: string | null) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'whatsapp') return 'WhatsApp'
+  if (normalized === 'web_chat' || normalized === 'webchat') return 'WebChat'
+  return normalized ? sanitizeDisplayText(normalized) : 'WebChat'
 }
 
 const VIEW_LABELS: Record<InboxView, string> = {
@@ -198,6 +207,8 @@ function rowFromHandoff(item: WebchatHandoffRequest): InboxRow {
     visitorLabel: item.visitor_name || item.visitor_email || item.visitor_phone || 'Anonymous visitor',
     status: item.status,
     origin: item.origin,
+    replyChannel: item.reply_channel || item.preferred_reply_channel || item.source_channel || item.channel_key,
+    channelKey: item.channel_key,
     updatedAt: item.accepted_at || item.requested_at || undefined,
     lastMessage: item.last_message?.body_text || item.reason_text || item.reason_code || item.trigger_type,
     lastMessageType: item.last_message?.message_type || null,
@@ -224,6 +235,8 @@ function rowFromConversation(item: WebchatConversation): InboxRow {
     visitorLabel: item.visitor_name || item.visitor_email || item.visitor_phone || 'Anonymous visitor',
     status: item.status,
     origin: item.origin,
+    replyChannel: item.reply_channel || item.preferred_reply_channel || item.source_channel || item.channel_key,
+    channelKey: item.channel_key,
     updatedAt: item.updated_at,
     lastMessage: item.last_handoff_reason || item.last_message_type || item.page_url || item.origin || null,
     lastMessageType: item.last_message_type || null,
@@ -415,6 +428,7 @@ function UnifiedInbox({
                 </div>
               </div>
               <div className="v5-inbox-meta">
+                <Badge>{channelLabel(row.replyChannel)}</Badge>
                 <PrimaryStatus row={row} />
                 {incomingVoiceByTicket.get(row.ticketId) ? <Badge tone="warning">Incoming WebCall</Badge> : null}
                 {(row.unreadCount || row.markedUnread) ? <Badge tone="warning">未读 {row.unreadCount || 1}</Badge> : null}
@@ -484,6 +498,7 @@ function ConversationWorkspace({
   thread,
   allowDebug,
   reply,
+  replyChannelLabel,
   setReply,
   hasFactEvidence,
   setHasFactEvidence,
@@ -509,6 +524,7 @@ function ConversationWorkspace({
   thread?: WebchatThread
   allowDebug: boolean
   reply: string
+  replyChannelLabel: string
   setReply: (value: string) => void
   hasFactEvidence: boolean
   setHasFactEvidence: (value: boolean) => void
@@ -530,14 +546,14 @@ function ConversationWorkspace({
   readStatePending: boolean
   onOpenContext: () => void
 }) {
-  if (!selectedRow) return <Card className="v5-panel v5-workspace"><CardBody><EmptyState text="请选择一个 WebChat 会话。" /></CardBody></Card>
+  if (!selectedRow) return <Card className="v5-panel v5-workspace"><CardBody><EmptyState text="请选择一个会话。" /></CardBody></Card>
   return (
     <Card className="v5-panel v5-workspace">
       <div className="v5-conversation-head">
         <div className="v5-avatar large">{shortText(selectedRow.visitorLabel).slice(0, 2).toUpperCase()}</div>
         <div>
           <h2>{shortText(selectedRow.visitorLabel)}</h2>
-          <div className="v5-head-meta">工单 {shortText(selectedRow.ticketNo || `#${selectedRow.ticketId}`)} · WebChat · {shortText(selectedRow.origin || 'unknown origin')}</div>
+          <div className="v5-head-meta">工单 {shortText(selectedRow.ticketNo || `#${selectedRow.ticketId}`)} · {replyChannelLabel} · {shortText(selectedRow.origin || 'unknown origin')}</div>
         </div>
         <div className="v5-head-actions">
           <PrimaryStatus row={selectedRow} />
@@ -545,7 +561,7 @@ function ConversationWorkspace({
           <Button variant="secondary" className="v5-context-toggle" onClick={onOpenContext}>上下文</Button>
         </div>
       </div>
-      <div className="v5-state-banner">当前会话使用真实 WebChat 线程。接管、回复、WebCall 操作均以 API 返回为准。</div>
+      <div className="v5-state-banner">当前会话使用真实 {replyChannelLabel} 线程。接管、回复、WebCall 操作均以 API 返回为准。</div>
       <div className="v5-message-list" aria-live="polite">
         {(thread?.messages ?? []).map((msg) => <MessageBubble key={msg.id} msg={msg} allowDebug={allowDebug} />)}
         {thread && !(thread.messages ?? []).length ? <EmptyState text="该会话暂无消息。" /> : null}
@@ -598,7 +614,7 @@ function ConversationWorkspace({
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
-            <Button variant="primary" disabled={!canSend || sendPending} onClick={onSend}>{sendPending ? '发送中…' : '发送 WebChat 回复'}</Button>
+            <Button variant="primary" disabled={!canSend || sendPending} onClick={onSend}>{sendPending ? '发送中…' : `发送 ${replyChannelLabel} 回复`}</Button>
           </div>
         </div>
       </div>
@@ -805,6 +821,7 @@ function ContextPanel({
         <Section title="客户上下文">
           <div className="v5-kv"><span>客户</span><strong>{shortText(row.visitorLabel)}</strong></div>
           <div className="v5-kv"><span>工单</span><strong>{shortText(row.ticketNo || `#${row.ticketId}`)}</strong></div>
+          <div className="v5-kv"><span>渠道</span><strong>{channelLabel(thread?.reply_channel || row.replyChannel)}</strong></div>
           <div className="v5-kv"><span>来源</span><strong>{shortText(row.origin || thread?.origin || 'unknown')}</strong></div>
           <div className="v5-kv"><span>页面</span><strong>{shortText(thread?.page_url || row.rawConversation?.page_url || '待客户侧上报')}</strong></div>
         </Section>
@@ -1027,8 +1044,10 @@ export function WebchatInboxV5Page() {
   const selectedRow = useMemo(() => rows.find((row) => row.ticketId === selectedTicketId) ?? conversationRows.find((row) => row.ticketId === selectedTicketId) ?? null, [conversationRows, rows, selectedTicketId])
   const threadData = thread.data
   const selectedHandoff = threadData?.handoff || selectedRow?.rawHandoff || null
-  const webchatReplyChannel = useMemo(() => findReplyChannelCapability(outboundCapabilities.data?.channels, 'web_chat'), [outboundCapabilities.data])
-  const webchatReplyEnabled = isCustomerSendableReplyChannel(webchatReplyChannel)
+  const selectedReplyChannel = threadData?.reply_channel || selectedRow?.replyChannel || 'web_chat'
+  const selectedReplyChannelLabel = channelLabel(selectedReplyChannel)
+  const replyChannelCapability = useMemo(() => findReplyChannelCapability(outboundCapabilities.data?.channels, selectedReplyChannel), [outboundCapabilities.data, selectedReplyChannel])
+  const replyChannelEnabled = isCustomerSendableReplyChannel(replyChannelCapability)
   const aiActiveWithoutOwnership = Boolean(
     !selectedHandoff &&
     selectedRow &&
@@ -1040,12 +1059,12 @@ export function WebchatInboxV5Page() {
       ? !(selectedHandoff.status === 'accepted' && selectedHandoff.active_agent_id === session.data?.id)
       : aiActiveWithoutOwnership,
   )
-  const sendDisabledReason = !webchatReplyEnabled
-    ? outboundCapabilities.isError ? '回复通道能力接口不可用。' : webchatReplyChannel ? outboundChannelMissingText(webchatReplyChannel) : 'WebChat 回复通道缺失。'
+  const sendDisabledReason = !replyChannelEnabled
+    ? outboundCapabilities.isError ? '回复通道能力接口不可用。' : replyChannelCapability ? outboundChannelMissingText(replyChannelCapability) : `${selectedReplyChannelLabel} 回复通道缺失。`
     : handoffReplyBlocked
       ? aiActiveWithoutOwnership ? 'AI 正在处理该会话；请先强制接管后再回复。' : '该会话需要先由当前客服接管后才能回复。'
       : null
-  const canSend = Boolean(selectedTicketId && reply.trim() && webchatReplyEnabled && !handoffReplyBlocked)
+  const canSend = Boolean(selectedTicketId && reply.trim() && replyChannelEnabled && !handoffReplyBlocked)
 
   const acceptMutation = useMutation({
     mutationFn: (requestId: number) => api.webchatAcceptHandoff(requestId),
@@ -1078,7 +1097,7 @@ export function WebchatInboxV5Page() {
       const body = reply.trim()
       return api.webchatReply(selectedTicketId, { body, has_fact_evidence: hasFactEvidence, confirm_review: input?.confirmReview === true })
     },
-    onSuccess: async () => { setReply(''); setHasFactEvidence(false); setSafetyReview(null); setToast({ message: 'WebChat 回复已发送并写入工单时间线。', tone: 'success' }); await refreshWebchatState() },
+    onSuccess: async () => { setReply(''); setHasFactEvidence(false); setSafetyReview(null); setToast({ message: `${selectedReplyChannelLabel} 回复已提交并写入时间线。`, tone: 'success' }); await refreshWebchatState() },
     onError: (err) => {
       const failedBody = reply.trim()
       const review = safetyReviewFromError(err, failedBody)
@@ -1194,9 +1213,9 @@ export function WebchatInboxV5Page() {
   return (
     <AppShell>
       <PageHeader
-        eyebrow="WebChat"
-        title="人工 WebChat 收件箱"
-        description="统一队列、接管控制、实时会话、工单证据和 WebCall 呼入处理，全部接入当前生产 API。"
+        eyebrow="Unified Chat"
+        title="人工会话收件箱"
+        description="统一处理 WebChat 与 WhatsApp 的 AI 接待、人工接管、实时会话和客户回复。"
         actions={<div className="button-row"><Button variant="secondary" onClick={() => void refreshWebchatState()}>刷新</Button>{realtimeLabel}</div>}
       />
       <div className="v5-shell">
@@ -1218,6 +1237,7 @@ export function WebchatInboxV5Page() {
           thread={threadData}
           allowDebug={allowDebug}
           reply={reply}
+          replyChannelLabel={selectedReplyChannelLabel}
           setReply={setReply}
           hasFactEvidence={hasFactEvidence}
           setHasFactEvidence={setHasFactEvidence}

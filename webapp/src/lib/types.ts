@@ -1534,6 +1534,10 @@ export interface WebchatHandoffRequest extends WebchatAIRuntimeSnapshot {
   ticket_id: number
   ticket_no?: string | null
   title?: string | null
+  source_channel?: string | null
+  preferred_reply_channel?: string | null
+  reply_channel?: string | null
+  channel_key?: string | null
   status: string
   source: string
   trigger_type: string
@@ -1585,6 +1589,10 @@ export interface WebchatConversation extends WebchatAIRuntimeSnapshot {
   ticket_no: string
   title: string
   status: string
+  source_channel?: string | null
+  preferred_reply_channel?: string | null
+  reply_channel?: string | null
+  channel_key?: string | null
   visitor_name?: string | null
   visitor_email?: string | null
   visitor_phone?: string | null
@@ -1660,6 +1668,10 @@ export interface WebchatThread extends WebchatAIRuntimeSnapshot {
   ticket_no: string
   origin?: string | null
   page_url?: string | null
+  source_channel?: string | null
+  preferred_reply_channel?: string | null
+  reply_channel?: string | null
+  channel_key?: string | null
   status?: string | null
   conversation_state?: string | null
   required_action?: string | null

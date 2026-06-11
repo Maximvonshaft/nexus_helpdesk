@@ -24,6 +24,7 @@ from .sla_service import update_first_response, evaluate_sla
 from .ticket_service import generate_ticket_no, get_ticket_or_404
 from .background_jobs import enqueue_webchat_ai_reply_job
 from .webchat_card_factory import build_handoff_card, build_quick_replies_card
+from .webchat_channel_delivery import create_customer_reply_outbound, is_external_reply_channel, reply_channel_for_conversation
 from .webchat_handoff_service import ensure_can_reply_in_handoff, request_webchat_handoff, serialize_handoff_request
 from .webchat_ai_turn_service import is_ai_suspended_for_handoff, safe_write_webchat_event
 from .webchat_inbox_read_state import webchat_read_state_payload
@@ -740,6 +741,10 @@ def admin_list_conversations(db: Session, current_user: User, *, limit: int = 50
             "ticket_no": ticket.ticket_no,
             "title": ticket.title,
             "status": ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status),
+            "source_channel": ticket.source_channel.value if hasattr(ticket.source_channel, "value") else str(ticket.source_channel),
+            "preferred_reply_channel": ticket.preferred_reply_channel,
+            "reply_channel": reply_channel_for_conversation(ticket, row).value,
+            "channel_key": row.channel_key,
             "visitor_name": row.visitor_name,
             "visitor_email": row.visitor_email,
             "visitor_phone": row.visitor_phone,
@@ -784,6 +789,10 @@ def admin_get_thread(db: Session, ticket_id: int, current_user: User) -> dict[st
         "ticket_no": ticket.ticket_no,
         "origin": conversation.origin,
         "page_url": conversation.page_url,
+        "source_channel": ticket.source_channel.value if hasattr(ticket.source_channel, "value") else str(ticket.source_channel),
+        "preferred_reply_channel": ticket.preferred_reply_channel,
+        "reply_channel": reply_channel_for_conversation(ticket, conversation).value,
+        "channel_key": conversation.channel_key,
         "status": ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status),
         "conversation_state": ticket.conversation_state.value if hasattr(ticket.conversation_state, "value") else str(ticket.conversation_state),
         "required_action": ticket.required_action,
@@ -827,6 +836,8 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
     if decision.requires_human_review and not confirm_review:
         raise HTTPException(status_code=409, detail={"message": "Outbound reply requires human review confirmation", "safety": decision_payload})
 
+    reply_channel = reply_channel_for_conversation(ticket, conversation)
+    external_send = is_external_reply_channel(reply_channel)
     message = WebchatMessage(
         conversation_id=conversation.id,
         ticket_id=ticket.id,
@@ -834,8 +845,8 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
         body=decision.normalized_body,
         body_text=decision.normalized_body,
         message_type="text",
-        delivery_status="sent",
-        metadata_json=_metadata(generated_by="human_agent", safety_level=decision.level, fact_evidence_present=has_fact_evidence),
+        delivery_status="queued" if external_send else "sent",
+        metadata_json=_metadata(generated_by="human_agent", safety_level=decision.level, fact_evidence_present=has_fact_evidence, external_send=external_send, reply_channel=reply_channel.value),
         author_label=current_user.display_name,
         author_user_id=current_user.id,
         safety_level=decision.level,
@@ -843,16 +854,17 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
     )
     db.add(message)
     db.add(TicketComment(ticket_id=ticket.id, author_id=current_user.id, body=decision.normalized_body, visibility=NoteVisibility.external))
-    db.add(TicketOutboundMessage(
-        ticket_id=ticket.id,
-        channel=SourceChannel.web_chat,
-        status=MessageStatus.sent,
+    db.flush()
+    outbound = create_customer_reply_outbound(
+        db,
+        ticket=ticket,
+        conversation=conversation,
         body=decision.normalized_body,
-        provider_status="webchat_delivered",
         created_by=current_user.id,
-        sent_at=utc_now(),
-        max_retries=0,
-    ))
+        local_provider_status="webchat_delivered",
+        external_provider_status=f"{reply_channel.value}_agent_reply",
+        metadata={"webchat_message_id": message.id, "reply_channel": reply_channel.value},
+    )
     update_first_response(ticket)
     ticket.status = TicketStatus.waiting_customer
     ticket.conversation_state = ConversationState.waiting_customer
@@ -862,15 +874,17 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
     db.add(TicketEvent(
         ticket_id=ticket.id,
         actor_id=current_user.id,
-        event_type=EventType.outbound_sent,
-        note="Webchat agent reply sent",
+        event_type=EventType.outbound_queued if external_send else EventType.outbound_sent,
+        note="WhatsApp agent reply queued" if external_send else "Webchat agent reply sent",
         payload_json=json.dumps({
             "public_conversation_id": conversation.public_id,
             "safety_level": decision.level,
             "safety_reasons": decision.reasons,
             "safety_reason_text": format_safety_reasons(decision),
-            "external_send": False,
-            "provider_status": "webchat_delivered",
+            "external_send": external_send,
+            "provider_status": outbound.provider_status,
+            "reply_channel": reply_channel.value,
+            "outbound_message_id": outbound.id,
         }, ensure_ascii=False),
     ))
     db.flush()
@@ -879,7 +893,7 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
         conversation_id=conversation.id,
         ticket_id=ticket.id,
         event_type="message.created",
-        payload={"message_id": message.id, "direction": "agent", "author_user_id": current_user.id},
+        payload={"message_id": message.id, "direction": "agent", "author_user_id": current_user.id, "outbound_message_id": outbound.id, "reply_channel": reply_channel.value},
     )
     if getattr(conversation, "current_handoff_request_id", None):
         safe_write_webchat_event(
@@ -891,6 +905,6 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
         )
     evaluate_sla(ticket, db)
     db.flush()
-    WEBCHAT_LOGGER.info("webchat_message_sent", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "message_id": message.id, "external_send": False}})
+    WEBCHAT_LOGGER.info("webchat_message_sent", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "message_id": message.id, "external_send": external_send, "reply_channel": reply_channel.value, "outbound_message_id": outbound.id}})
     db.refresh(message)
     return {"ok": True, "safety": decision_payload, "message": _message_read(message)}

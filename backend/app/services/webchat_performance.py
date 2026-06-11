@@ -14,6 +14,7 @@ from ..models import Ticket, User
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
 from .permissions import CAP_TICKET_READ, resolve_capabilities
+from .webchat_channel_delivery import reply_channel_for_conversation
 from .webchat_inbox_read_state import webchat_read_state_payloads
 
 DEFAULT_POLL_LIMIT = 50
@@ -184,6 +185,10 @@ def admin_list_conversations_optimized(db: Session, current_user: User, *, limit
             "ticket_no": ticket.ticket_no,
             "title": ticket.title,
             "status": status_value,
+            "source_channel": ticket.source_channel.value if hasattr(ticket.source_channel, "value") else str(ticket.source_channel),
+            "preferred_reply_channel": ticket.preferred_reply_channel,
+            "reply_channel": reply_channel_for_conversation(ticket, conversation).value,
+            "channel_key": conversation.channel_key,
             "visitor_name": conversation.visitor_name,
             "visitor_email": conversation.visitor_email,
             "visitor_phone": conversation.visitor_phone,

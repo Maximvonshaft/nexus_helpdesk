@@ -8,8 +8,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketStatus
-from ..models import Ticket, TicketComment, TicketEvent, TicketOutboundMessage
+from ..enums import ConversationState, EventType, NoteVisibility, TicketStatus
+from ..models import Ticket, TicketComment, TicketEvent
 from ..settings import get_settings
 from ..utils.time import utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
@@ -26,6 +26,7 @@ from .webchat_ai_turn_service import (
     mark_ai_turn_processing,
     suppress_stale_reply_if_needed,
 )
+from .webchat_channel_delivery import create_customer_reply_outbound, is_external_reply_channel, reply_channel_for_conversation
 from .webchat_fact_gate import evaluate_webchat_fact_gate
 
 settings = get_settings()
@@ -84,8 +85,8 @@ def _sanitize_public_reply(text: str) -> str:
     return cleaned[:1200]
 
 
-def _message_metadata(*, generated_by: str, reason: str, decision_level: str, fact_gate_reason: str | None = None, ai_turn_id: int | None = None) -> str:
-    return json.dumps({
+def _message_metadata(*, generated_by: str, reason: str, decision_level: str, fact_gate_reason: str | None = None, ai_turn_id: int | None = None, **extra: Any) -> str:
+    payload = {
         "generated_by": generated_by,
         "intent": None,
         "confidence": None,
@@ -96,7 +97,9 @@ def _message_metadata(*, generated_by: str, reason: str, decision_level: str, fa
         "external_send": False,
         "reply_source": reason,
         "ai_turn_id": ai_turn_id,
-    }, ensure_ascii=False)
+    }
+    payload.update({key: value for key, value in extra.items() if value is not None})
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _load_context(db: Session, *, conversation_id: int, ticket_id: int, visitor_message_id: int) -> tuple[WebchatConversation, Ticket, WebchatMessage]:
@@ -162,6 +165,8 @@ def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, t
     final_body = decision.normalized_body
     safety_payload = asdict(decision)
     provider_status = _provider_status_for_reason(reason)
+    reply_channel = reply_channel_for_conversation(ticket, conversation)
+    external_send = is_external_reply_channel(reply_channel)
     message = WebchatMessage(
         conversation_id=conversation.id,
         ticket_id=ticket.id,
@@ -170,13 +175,15 @@ def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, t
         body_text=final_body,
         message_type="text",
         ai_turn_id=turn.id if turn else None,
-        delivery_status="sent",
+        delivery_status="queued" if external_send else "sent",
         metadata_json=_message_metadata(
             generated_by="webchat_ai_safe_fallback" if provider_status == "webchat_ai_safe_fallback" else "webchat_safe_ack",
             reason=reason,
             decision_level=decision.level,
             fact_gate_reason=fact_gate_reason,
             ai_turn_id=turn.id if turn else None,
+            external_send=external_send,
+            reply_channel=reply_channel.value,
         ),
         author_label=AI_AUTHOR_LABEL,
         safety_level=decision.level,
@@ -185,19 +192,19 @@ def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, t
     db.add(message)
     db.flush()
     db.add(TicketComment(ticket_id=ticket.id, author_id=None, body=final_body, visibility=NoteVisibility.external))
-    db.add(TicketOutboundMessage(
-        ticket_id=ticket.id,
-        channel=SourceChannel.web_chat,
-        status=MessageStatus.sent,
+    outbound = create_customer_reply_outbound(
+        db,
+        ticket=ticket,
+        conversation=conversation,
         body=final_body,
-        provider_status=provider_status,
-        error_message=reason,
         created_by=None,
-        sent_at=utc_now(),
-        max_retries=0,
+        local_provider_status=provider_status,
+        external_provider_status=f"{reply_channel.value}_safe_ack" if provider_status != "webchat_ai_safe_fallback" else f"{reply_channel.value}_ai_safe_fallback",
+        error_message=reason,
         failure_code="safety_review_required" if provider_status == "webchat_ai_safe_fallback" else None,
-        failure_reason="AI safe fallback delivered locally; no external provider send occurred" if provider_status == "webchat_ai_safe_fallback" else None,
-    ))
+        failure_reason="AI safe fallback delivered locally; no external provider send occurred" if provider_status == "webchat_ai_safe_fallback" and not external_send else None,
+        metadata={"webchat_message_id": message.id, "ai_turn_id": turn.id if turn else None, "reply_channel": reply_channel.value},
+    )
     update_first_response(ticket)
     ticket.status = TicketStatus.waiting_customer
     ticket.conversation_state = ConversationState.waiting_customer
@@ -208,8 +215,8 @@ def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, t
     db.add(TicketEvent(
         ticket_id=ticket.id,
         actor_id=None,
-        event_type=EventType.outbound_sent,
-        note="Webchat safe acknowledgement sent",
+        event_type=EventType.outbound_queued if external_send else EventType.outbound_sent,
+        note="WhatsApp safe acknowledgement queued" if external_send else "Webchat safe acknowledgement sent",
         payload_json=json.dumps({
             "public_conversation_id": conversation.public_id,
             "conversation_id": conversation.id,
@@ -217,8 +224,10 @@ def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, t
             "webchat_message_id": message.id,
             "ai_turn_id": turn.id if turn else None,
             "reply_source": reason,
-            "provider_status": provider_status,
-            "external_send": False,
+            "provider_status": outbound.provider_status,
+            "external_send": external_send,
+            "reply_channel": reply_channel.value,
+            "outbound_message_id": outbound.id,
             "fact_gate_reason": fact_gate_reason,
             "safety": safety_payload,
         }, ensure_ascii=False),

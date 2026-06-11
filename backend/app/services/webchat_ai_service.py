@@ -12,8 +12,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketStatus
-from ..models import Ticket, TicketComment, TicketEvent, TicketOutboundMessage
+from ..enums import ConversationState, EventType, NoteVisibility, TicketStatus
+from ..models import Ticket, TicketComment, TicketEvent
 from ..settings import get_settings
 from ..utils.time import ensure_utc, utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
@@ -23,6 +23,7 @@ from .sla_service import evaluate_sla, update_first_response
 from .tracking_fact_schema import TrackingFactResult
 from .tracking_fact_service import extract_tracking_number, lookup_tracking_fact
 from .webchat_ai_turn_service import is_ai_suspended_for_handoff, suppress_stale_reply_if_needed
+from .webchat_channel_delivery import create_customer_reply_outbound, is_external_reply_channel, reply_channel_for_conversation
 from .webchat_fact_gate import evaluate_webchat_fact_gate
 from .ai_runtime_context import build_webchat_runtime_context
 from .knowledge_grounding_service import enforce_grounded_answer
@@ -265,6 +266,8 @@ def process_webchat_ai_reply_job(
         )
         return {"status": "superseded", "reason": "newer_message_before_reply_commit", "reply_source": "suppressed"}
 
+    reply_channel = reply_channel_for_conversation(ticket, conversation)
+    external_send = is_external_reply_channel(reply_channel)
     message = WebchatMessage(
         conversation_id=conversation.id,
         ticket_id=ticket.id,
@@ -273,13 +276,15 @@ def process_webchat_ai_reply_job(
         body_text=final_body,
         message_type="text",
         ai_turn_id=ai_turn_id,
-        delivery_status="sent",
+        delivery_status="queued" if external_send else "sent",
         metadata_json=_message_metadata(
             generated_by="webchat_ai_safe_fallback" if fallback_reason else "webchat_ai",
             decision_level=decision.level,
             fallback_reason=fallback_reason,
             reply_source=reply_source,
             fact_evidence_present=fact_evidence_present,
+            external_send=external_send,
+            reply_channel=reply_channel.value,
             openclaw_session_key=session_policy['session_key'],
             openclaw_session_generation=session_policy['generation'],
             openclaw_session_rotation_reason=session_policy['rotation_reason'],
@@ -304,19 +309,19 @@ def process_webchat_ai_reply_job(
 
     provider_status = "webchat_ai_delivered" if not fallback_reason else "webchat_ai_safe_fallback"
     db.add(TicketComment(ticket_id=ticket.id, author_id=None, body=final_body, visibility=NoteVisibility.external))
-    db.add(TicketOutboundMessage(
-        ticket_id=ticket.id,
-        channel=SourceChannel.web_chat,
-        status=MessageStatus.sent,
+    outbound = create_customer_reply_outbound(
+        db,
+        ticket=ticket,
+        conversation=conversation,
         body=final_body,
-        provider_status=provider_status,
-        error_message=None if not fallback_reason else fallback_reason,
         created_by=None,
-        sent_at=utc_now(),
-        max_retries=0,
+        local_provider_status=provider_status,
+        external_provider_status=f"{reply_channel.value}_ai_delivered" if not fallback_reason else f"{reply_channel.value}_ai_safe_fallback",
+        error_message=None if not fallback_reason else fallback_reason,
         failure_code=None if not fallback_reason else "safety_review_required",
         failure_reason=None if not fallback_reason else fallback_reason,
-    ))
+        metadata={"webchat_message_id": message.id, "ai_turn_id": ai_turn_id, "reply_channel": reply_channel.value},
+    )
 
     update_first_response(ticket)
     ticket.status = TicketStatus.waiting_customer
@@ -339,8 +344,10 @@ def process_webchat_ai_reply_job(
         "fact_evidence_present": fact_evidence_present,
         "tracking_fact": tracking_fact_metadata or None,
         "reply_source": reply_source,
-        "provider_status": provider_status,
-        "external_send": False,
+        "provider_status": outbound.provider_status,
+        "external_send": external_send,
+        "reply_channel": reply_channel.value,
+        "outbound_message_id": outbound.id,
         "openclaw_session_key": session_policy['session_key'],
         "openclaw_session_generation": session_policy['generation'],
         "openclaw_session_rotation_reason": session_policy['rotation_reason'],
@@ -356,8 +363,8 @@ def process_webchat_ai_reply_job(
     db.add(TicketEvent(
         ticket_id=ticket.id,
         actor_id=None,
-        event_type=EventType.outbound_sent,
-        note="Webchat AI reply sent",
+        event_type=EventType.outbound_queued if external_send else EventType.outbound_sent,
+        note="WhatsApp AI reply queued" if external_send else "Webchat AI reply sent",
         payload_json=json.dumps(event_payload, ensure_ascii=False),
     ))
     if tracking_fact:
@@ -375,7 +382,9 @@ def process_webchat_ai_reply_job(
                 "fact_evidence_present": fact_evidence_present,
                 "pii_redacted": tracking_fact.pii_redacted,
                 "checked_at": tracking_fact.checked_at,
-                "external_send": False,
+                "external_send": external_send,
+                "reply_channel": reply_channel.value,
+                "outbound_message_id": outbound.id,
                 "tracking_number_hash": tracking_fact_metadata.get("tracking_number_hash"),
                 "failure_reason": tracking_fact.failure_reason,
             }, ensure_ascii=False),
@@ -394,8 +403,10 @@ def process_webchat_ai_reply_job(
             "fact_gate_reason": fact_gate_reason,
             "fact_evidence_present": fact_evidence_present,
             "tracking_fact_tool_status": tracking_fact.tool_status if tracking_fact else None,
-            "provider_status": provider_status,
-            "external_send": False,
+            "provider_status": outbound.provider_status,
+            "external_send": external_send,
+            "reply_channel": reply_channel.value,
+            "outbound_message_id": outbound.id,
             "openclaw_session_key": session_policy['session_key'],
             "openclaw_session_generation": session_policy['generation'],
             "openclaw_session_rotation_reason": session_policy['rotation_reason'],

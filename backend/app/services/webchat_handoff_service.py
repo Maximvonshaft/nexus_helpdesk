@@ -49,6 +49,17 @@ def _status_value(value: Any) -> str:
     return value.value if hasattr(value, "value") else str(value)
 
 
+def _reply_channel_value(ticket: Ticket | None, conversation: WebchatConversation | None) -> str:
+    if ticket is not None:
+        for value in (ticket.preferred_reply_channel, getattr(ticket, "source_channel", None)):
+            cleaned = _status_value(value).strip().lower() if value is not None else ""
+            if cleaned and cleaned != "none":
+                return cleaned
+    if conversation is not None and conversation.channel_key:
+        return conversation.channel_key
+    return "web_chat"
+
+
 def _elapsed_seconds_since(start: Any) -> int:
     if not start:
         return 0
@@ -296,6 +307,10 @@ def serialize_handoff_request(
         "ticket_id": request_row.ticket_id,
         "ticket_no": ticket.ticket_no if ticket else None,
         "title": ticket.title if ticket else None,
+        "source_channel": _status_value(ticket.source_channel) if ticket else None,
+        "preferred_reply_channel": ticket.preferred_reply_channel if ticket else None,
+        "reply_channel": _reply_channel_value(ticket, conversation),
+        "channel_key": conversation.channel_key if conversation else None,
         "status": request_row.status,
         "source": request_row.source,
         "trigger_type": request_row.trigger_type,
@@ -492,6 +507,10 @@ def list_handoff_queue(
                 "ticket_id": ticket.id,
                 "ticket_no": ticket.ticket_no,
                 "title": ticket.title,
+                "source_channel": _status_value(ticket.source_channel),
+                "preferred_reply_channel": ticket.preferred_reply_channel,
+                "reply_channel": _reply_channel_value(ticket, conversation),
+                "channel_key": conversation.channel_key,
                 "status": "ai_active",
                 "source": "ai_active",
                 "trigger_type": "monitor_ai",

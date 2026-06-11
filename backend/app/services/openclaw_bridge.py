@@ -1291,6 +1291,17 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
 
     if synced_rows:
         link.last_message_id = synced_rows[-1].message_id
+    webchat_projection = None
+    projected_channel = (link.channel or ticket.preferred_reply_channel or (ticket.source_channel.value if hasattr(ticket.source_channel, 'value') else ticket.source_channel) or '').strip().lower()
+    if projected_channel == SourceChannel.whatsapp.value:
+        from .openclaw_webchat_bridge import project_openclaw_whatsapp_to_webchat
+
+        webchat_projection = project_openclaw_whatsapp_to_webchat(
+            db,
+            link=link,
+            ticket=ticket,
+            transcript_rows=synced_rows,
+        )
     link.last_synced_at = utc_now()
     log_event(
         db,
@@ -1298,7 +1309,7 @@ def sync_openclaw_conversation(db: Session, *, ticket_id: int, session_key: str,
         actor_id=ticket.created_by,
         event_type=EventType.openclaw_synced,
         note='OpenClaw conversation synchronized',
-        payload={'session_key': session_key, 'messages_synced': len(synced_rows)},
+        payload={'session_key': session_key, 'messages_synced': len(synced_rows), 'webchat_projection': webchat_projection},
     )
     db.flush()
     db.refresh(link)

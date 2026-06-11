@@ -46,12 +46,16 @@ HIGH_RISK_LOGISTICS_FACT_KEYWORDS = {
 
 AI_SOURCE_MARKERS = {'ai', 'auto_reply', 'ai_auto_reply', 'llm', 'assistant'}
 
-# Only public webchat AI is allowed to send low-risk general replies without manual review.
+# Public channel AI is allowed to send low-risk general replies without manual review.
 # All logistics/refund/customs/delivery factual claims still require evidence/review rules.
 PUBLIC_WEBCHAT_AI_SOURCES = {
     'webchat_ai',
     'webchat_ai_public',
     'public_webchat_ai',
+    'whatsapp_ai',
+    'whatsapp_ai_delivered',
+    'whatsapp_ai_safe_fallback',
+    'codex_direct_whatsapp_ai',
 }
 
 MAX_ALLOWED_BODY_CHARS = 4000
