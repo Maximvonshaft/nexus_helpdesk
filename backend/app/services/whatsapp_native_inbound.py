@@ -27,6 +27,11 @@ class WhatsAppNativeInboundError(ValueError):
     pass
 
 
+SELF_ECHO_TEST_SOURCE = "self_echo_test"
+DEFAULT_SELF_ECHO_TEST_PREFIX = "NEXUS_SELF_INBOUND_TEST"
+VALID_PROJECTION_MODES = {"visitor", "store_only", "test_visitor"}
+
+
 @dataclass(frozen=True)
 class WhatsAppNativeInboundResult:
     ok: bool
@@ -106,6 +111,29 @@ def _token_hash(account_id: str, chat_jid: str) -> str:
 
 def _metadata(**values: Any) -> str:
     return json.dumps(values, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _projection_mode(payload: dict[str, Any], *, from_me: bool, body_text: str) -> str:
+    raw_mode = _clip(payload.get("projection_mode"), 40) or "visitor"
+    mode = raw_mode.lower()
+    if mode not in VALID_PROJECTION_MODES:
+        raise WhatsAppNativeInboundError("invalid_whatsapp_projection_mode")
+    if not from_me:
+        return "visitor"
+    if mode == "store_only":
+        return "store_only"
+    if mode != "test_visitor":
+        return "store_only"
+    prefix = _clip(payload.get("self_echo_test_prefix"), 120) or DEFAULT_SELF_ECHO_TEST_PREFIX
+    if not body_text.startswith(prefix):
+        return "store_only"
+    return "test_visitor"
 
 
 def _active_whatsapp_account(db: Session, account_id: str) -> ChannelAccount:
@@ -265,6 +293,8 @@ def ingest_whatsapp_native_inbound(db: Session, payload: dict[str, Any]) -> What
         )
 
     sender_phone = _clip(payload.get("sender_phone"), 80)
+    from_me = _truthy(payload.get("from_me"))
+    projection_mode = _projection_mode(payload, from_me=from_me, body_text=body_text)
     received_at_text = _clip(payload.get("received_at"), 80)
     try:
         received_at = datetime.fromisoformat((received_at_text or "").replace("Z", "+00:00")) if received_at_text else utc_now()
@@ -282,12 +312,26 @@ def ingest_whatsapp_native_inbound(db: Session, payload: dict[str, Any]) -> What
         sender_phone=sender_phone,
         message_type=_clip(payload.get("message_type"), 80) or "text",
         body_text=body_text,
-        raw_payload_json=payload.get("raw_payload") if isinstance(payload.get("raw_payload"), dict) else payload,
+        raw_payload_json=payload,
         received_at=received_at,
         created_at=utc_now(),
     )
     db.add(inbound)
     db.flush()
+
+    if from_me and projection_mode == "store_only":
+        inbound.processed_at = utc_now()
+        db.flush()
+        return WhatsAppNativeInboundResult(
+            ok=True,
+            idempotent=False,
+            inbound_message_id=inbound.id,
+            ticket_id=None,
+            conversation_id=None,
+            webchat_message_id=None,
+            ai_turn_id=None,
+            ai_status=None,
+        )
 
     ticket, conversation, _ = _conversation_for_message(db, account=account, chat_jid=chat_jid, sender_phone=sender_phone, body=body_text)
     message = WebchatMessage(
@@ -301,6 +345,9 @@ def ingest_whatsapp_native_inbound(db: Session, payload: dict[str, Any]) -> What
         delivery_status="sent",
         metadata_json=_metadata(
             generated_by="whatsapp_native_inbound",
+            source=SELF_ECHO_TEST_SOURCE if from_me and projection_mode == "test_visitor" else "whatsapp_native",
+            from_me=from_me,
+            projection_mode=projection_mode,
             account_id=account.account_id,
             channel_account_id=account.id,
             external_message_id=external_message_id,

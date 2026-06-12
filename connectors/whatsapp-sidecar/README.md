@@ -18,6 +18,17 @@ Default mode is `mock` so CI can validate the HTTP contract without a real Whats
 - `WA_SIDECAR_CONNECTOR_MODE`, `mock` or `baileys`
 - `NEXUS_CALLBACK_TIMEOUT_MS`, default `8000`
 
+## Self-echo smoke mode
+
+Production default ignores Baileys `fromMe` messages so agent replies sent by this account do not loop back as customer inbound.
+For single-account UAT only, a controlled self-echo mode can be enabled:
+
+- `WA_SIDECAR_ALLOW_FROM_ME_INBOUND`, default `false`
+- `WA_SIDECAR_FROM_ME_MODE`, `ignore`, `store_only`, or `test_visitor`, default `ignore`
+- `WA_SIDECAR_FROM_ME_TEST_PREFIX`, default `NEXUS_SELF_INBOUND_TEST`
+
+`store_only` sends signed raw inbound to NexusDesk without projecting it into Unified Inbox. `test_visitor` projects only `fromMe` messages whose text starts with the configured prefix. This is a smoke-test aid, not proof of an external customer inbound path.
+
 ## API
 
 - `GET /healthz`

@@ -8,7 +8,7 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import { normalizeBaileysInbound } from "./inboundMapper.js";
 import { qrDataUrl } from "./qrManager.js";
-import type { AccountSnapshot, NormalizedInboundMessage, SendRequest, SendResult, WhatsAppConnector } from "./types.js";
+import type { AccountSnapshot, NormalizedInboundMessage, SendRequest, SendResult, SidecarConfig, WhatsAppConnector } from "./types.js";
 import { SessionStore } from "./sessionStore.js";
 
 type InboundHandler = (message: NormalizedInboundMessage) => Promise<void>;
@@ -37,7 +37,8 @@ export class BaileysConnector implements WhatsAppConnector {
     private readonly sessions: SessionStore,
     private readonly logger: Logger,
     private readonly onInbound: InboundHandler,
-    private readonly onStatus: StatusHandler
+    private readonly onStatus: StatusHandler,
+    private readonly config: Pick<SidecarConfig, "allowFromMeInbound" | "fromMeMode" | "fromMeTestPrefix">
   ) {}
 
   async start(accountId: string): Promise<AccountSnapshot> {
@@ -106,7 +107,11 @@ export class BaileysConnector implements WhatsAppConnector {
     });
     socket.ev.on("messages.upsert", async ({ messages }) => {
       for (const raw of messages || []) {
-        const normalized = normalizeBaileysInbound(accountId, raw);
+        const normalized = normalizeBaileysInbound(accountId, raw, {
+          allowFromMeInbound: this.config.allowFromMeInbound,
+          fromMeMode: this.config.fromMeMode,
+          fromMeTestPrefix: this.config.fromMeTestPrefix
+        });
         if (normalized) {
           await this.onInbound(normalized);
         }
