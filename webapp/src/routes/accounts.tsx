@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
-import type { ChannelAccount } from '@/lib/types'
+import type { ChannelAccount, WhatsAppNativeAccountStatus } from '@/lib/types'
 import { formatDateTime, healthTone, labelize, sanitizeDisplayText } from '@/lib/format'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -63,6 +63,7 @@ function AccountsPage() {
 
   const filteredAccounts = useMemo(() => (accounts.data ?? []).filter((item) => (provider === 'all' || item.provider === provider) && (health === 'all' || item.health_status === health)), [accounts.data, provider, health])
   const selected = useMemo(() => filteredAccounts.find((item) => item.id === selectedId) ?? (accounts.data ?? []).find((item) => item.id === selectedId) ?? null, [filteredAccounts, accounts.data, selectedId])
+  const selectedWhatsappAccountId = selected?.provider === 'whatsapp' ? selected.account_id : null
   const marketMap = useMemo(() => new Map((markets.data ?? []).map((market) => [market.id, `${market.code} · ${market.name}`])), [markets.data])
   const fallbackOptions = useMemo(() => (accounts.data ?? []).filter((item) => {
     if (selected && item.id === selected.id) return false
@@ -128,6 +129,44 @@ function AccountsPage() {
     },
     onError: (err: Error) => setToast({ message: err.message || '保存发送线路失败', tone: 'danger' }),
   })
+
+  const whatsappStatus = useQuery({
+    queryKey: ['whatsappNativeStatus', selectedWhatsappAccountId],
+    queryFn: () => api.whatsappNativeStatus(selectedWhatsappAccountId || ''),
+    enabled: permitted && Boolean(selectedWhatsappAccountId),
+    refetchInterval: autoRefresh.enabled ? 10000 : false,
+    retry: false,
+  })
+
+  const applyWhatsAppStatus = async (status: WhatsAppNativeAccountStatus, message: string) => {
+    client.setQueryData(['whatsappNativeStatus', status.account_id], status)
+    setToast({ message, tone: 'success' })
+    await client.invalidateQueries({ queryKey: ['channelAccounts'] })
+  }
+
+  const whatsappStartMutation = useMutation({
+    mutationFn: () => api.whatsappNativeStartLogin(selectedWhatsappAccountId || ''),
+    onSuccess: (status) => applyWhatsAppStatus(status, 'WhatsApp 扫码登录已启动'),
+    onError: (err: Error) => setToast({ message: err.message || '启动 WhatsApp 扫码失败', tone: 'danger' }),
+  })
+  const whatsappQrMutation = useMutation({
+    mutationFn: () => api.whatsappNativeQr(selectedWhatsappAccountId || ''),
+    onSuccess: (status) => applyWhatsAppStatus(status, 'WhatsApp 二维码已刷新'),
+    onError: (err: Error) => setToast({ message: err.message || '刷新 WhatsApp 二维码失败', tone: 'danger' }),
+  })
+  const whatsappRestartMutation = useMutation({
+    mutationFn: () => api.whatsappNativeRestart(selectedWhatsappAccountId || ''),
+    onSuccess: (status) => applyWhatsAppStatus(status, 'WhatsApp 连接已重启'),
+    onError: (err: Error) => setToast({ message: err.message || '重启 WhatsApp 连接失败', tone: 'danger' }),
+  })
+  const whatsappLogoutMutation = useMutation({
+    mutationFn: () => api.whatsappNativeLogout(selectedWhatsappAccountId || ''),
+    onSuccess: (status) => applyWhatsAppStatus(status, 'WhatsApp 账号已退出登录'),
+    onError: (err: Error) => setToast({ message: err.message || '退出 WhatsApp 登录失败', tone: 'danger' }),
+  })
+
+  const nativeStatus = whatsappStatus.data
+  const nativeBusy = whatsappStartMutation.isPending || whatsappQrMutation.isPending || whatsappRestartMutation.isPending || whatsappLogoutMutation.isPending
 
   return (
     <AppShell>
@@ -200,6 +239,42 @@ function AccountsPage() {
                   </div>
                   {selectedId ? <label className="toggle-row"><input type="checkbox" checked={Boolean(form.is_active)} onChange={(e) => patchForm({ is_active: e.target.checked })} /> 当前账号启用</label> : null}
                   <div className="button-row"><Button variant="primary" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>{saveMutation.isPending ? '保存中…' : selectedId ? '保存修改' : '创建线路'}</Button><Button onClick={() => dirty ? setConfirmReset(true) : resetForm()}>重置</Button></div>
+                  {selectedWhatsappAccountId ? (
+                    <div className="stack" data-testid="whatsapp-native-admin-panel">
+                      <div className="section-title">WhatsApp Native 连接</div>
+                      <div className="section-subtitle">扫码绑定、连接状态和会话健康由 NexusDesk sidecar 管理。</div>
+                      {whatsappStatus.isError ? <ErrorSummary errors={[whatsappStatus.error?.message || '读取 WhatsApp 连接状态失败，请检查 sidecar 配置。']} /> : null}
+                      <div className="metrics-grid">
+                        <MetricCard label="连接状态" value={nativeStatus?.status ? labelize(nativeStatus.status) : whatsappStatus.isFetching ? '读取中' : '未知'} />
+                        <MetricCard label="二维码" value={nativeStatus?.qr_status ? labelize(nativeStatus.qr_status) : '未知'} />
+                        <MetricCard label="手机号" value={nativeStatus?.phone_number || '未绑定'} />
+                        <MetricCard label="重连次数" value={nativeStatus?.reconnect_count ?? 0} />
+                      </div>
+                      <div className="button-row">
+                        <Button variant="primary" onClick={() => whatsappStartMutation.mutate()} disabled={nativeBusy}>开始扫码</Button>
+                        <Button variant="secondary" onClick={() => whatsappQrMutation.mutate()} disabled={nativeBusy}>刷新二维码</Button>
+                        <Button variant="secondary" onClick={() => whatsappRestartMutation.mutate()} disabled={nativeBusy}>重启连接</Button>
+                        <Button variant="ghost" onClick={() => whatsappLogoutMutation.mutate()} disabled={nativeBusy}>退出登录</Button>
+                      </div>
+                      {nativeStatus?.qr_data_url ? (
+                        <div className="message" data-role="agent">
+                          <img src={nativeStatus.qr_data_url} alt="WhatsApp linked device QR code" style={{ width: 220, height: 220, maxWidth: '100%', display: 'block', marginBottom: 12 }} />
+                          <div>二维码生成时间：{formatDateTime(nativeStatus.last_qr_generated_at)}</div>
+                        </div>
+                      ) : nativeStatus?.qr ? (
+                        <div className="message" data-role="agent">
+                          <strong>QR 字符串</strong>
+                          <div style={{ overflowWrap: 'anywhere' }}>{sanitizeDisplayText(nativeStatus.qr)}</div>
+                        </div>
+                      ) : null}
+                      <div className="kv-grid">
+                        <div className="kv"><label>JID</label><div>{sanitizeDisplayText(nativeStatus?.jid || '未绑定')}</div></div>
+                        <div className="kv"><label>最后在线</label><div>{formatDateTime(nativeStatus?.last_connected_at)}</div></div>
+                        <div className="kv"><label>最后离线</label><div>{formatDateTime(nativeStatus?.last_disconnected_at)}</div></div>
+                        <div className="kv"><label>最后错误</label><div>{sanitizeDisplayText(nativeStatus?.last_error_message || nativeStatus?.last_error_code || '无')}</div></div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </CardBody>
             </Card>
