@@ -678,6 +678,24 @@ export interface ChannelAccount {
   updated_at: string
 }
 
+export interface WhatsAppNativeAccountStatus {
+  account_id: string
+  status: string
+  qr_status: string
+  qr?: string | null
+  qr_data_url?: string | null
+  phone_number?: string | null
+  jid?: string | null
+  last_qr_generated_at?: string | null
+  last_connected_at?: string | null
+  last_disconnected_at?: string | null
+  last_error_code?: string | null
+  last_error_message?: string | null
+  reconnect_count: number
+  channel_account_id: number
+  channel_health_status: string
+}
+
 export type OutboundEmailSecurityMode = 'starttls' | 'ssl' | 'plain'
 
 export interface OutboundEmailAccount {

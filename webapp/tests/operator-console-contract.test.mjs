@@ -9,6 +9,7 @@ const types = readFileSync(resolve(root, 'src/lib/types.ts'), 'utf8')
 const appShell = readFileSync(resolve(root, 'src/layouts/AppShell.tsx'), 'utf8')
 const commandPalette = readFileSync(resolve(root, 'src/components/ui/CommandPalette.tsx'), 'utf8')
 const overviewRoute = readFileSync(resolve(root, 'src/routes/index.tsx'), 'utf8')
+const accountsRoute = readFileSync(resolve(root, 'src/routes/accounts.tsx'), 'utf8')
 const workspaceRoute = readFileSync(resolve(root, 'src/routes/workspace.tsx'), 'utf8')
 const runtimeRoute = readFileSync(resolve(root, 'src/routes/runtime.tsx'), 'utf8')
 const controlTowerRoute = readFileSync(resolve(root, 'src/routes/control-tower.tsx'), 'utf8')
@@ -370,6 +371,7 @@ test('overview page uses the v1.7.8 today workbench backend contract', () => {
 
 test('admin operator surfaces do not bypass unified api client with raw fetch', () => {
   const checkedFiles = [
+    ['src/routes/accounts.tsx', accountsRoute],
     ['src/routes/workspace.tsx', workspaceRoute],
     ['src/routes/runtime.tsx', runtimeRoute],
     ['src/routes/control-tower.tsx', controlTowerRoute],
@@ -390,6 +392,23 @@ test('admin operator surfaces do not bypass unified api client with raw fetch', 
     .filter(([, text]) => /\bfetch\s*\(/.test(text))
     .map(([name]) => name)
   assert.deepEqual(offenders, [])
+})
+
+test('channel accounts page exposes native WhatsApp sidecar controls through unified api client', () => {
+  assert.match(types, /export interface WhatsAppNativeAccountStatus \{/)
+  assert.match(apiClient, /whatsappNativeStartLogin: \(accountId: string\) => request<WhatsAppNativeAccountStatus>/)
+  assert.match(apiClient, /\/api\/admin\/whatsapp\/accounts\/\$\{encodeURIComponent\(accountId\)\}\/login\/start/)
+  assert.match(apiClient, /whatsappNativeQr: \(accountId: string\) => request<WhatsAppNativeAccountStatus>/)
+  assert.match(apiClient, /whatsappNativeStatus: \(accountId: string\) => request<WhatsAppNativeAccountStatus>/)
+  assert.match(apiClient, /whatsappNativeLogout: \(accountId: string\) => request<WhatsAppNativeAccountStatus>/)
+  assert.match(apiClient, /whatsappNativeRestart: \(accountId: string\) => request<WhatsAppNativeAccountStatus>/)
+  assert.match(accountsRoute, /data-testid="whatsapp-native-admin-panel"/)
+  assert.match(accountsRoute, /api\.whatsappNativeStartLogin/)
+  assert.match(accountsRoute, /api\.whatsappNativeQr/)
+  assert.match(accountsRoute, /api\.whatsappNativeStatus/)
+  assert.match(accountsRoute, /api\.whatsappNativeLogout/)
+  assert.match(accountsRoute, /api\.whatsappNativeRestart/)
+  assert.doesNotMatch(accountsRoute, /\bfetch\s*\(/)
 })
 
 

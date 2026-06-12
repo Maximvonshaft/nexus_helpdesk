@@ -69,6 +69,7 @@ jobs:
               backend/app/api/admin_provider_credentials.py) return 0 ;;
               backend/app/api/admin_provider_runtime.py) return 0 ;;
               backend/app/api/admin_webcall_ai.py) return 0 ;;
+              backend/app/api/admin_whatsapp*.py) return 0 ;;
               backend/app/api/__init__.py) return 0 ;;
               backend/app/api/knowledge_items.py) return 0 ;;
               backend/app/api/speedaf_actions.py) return 0 ;;
@@ -107,6 +108,7 @@ jobs:
               backend/app/services/webcall_ai_production/**) return 0 ;;
               backend/app/services/webchat_*.py) return 0 ;;
               backend/app/services/webchat_ai_decision_runtime/**) return 0 ;;
+              backend/app/services/whatsapp_native*.py) return 0 ;;
               backend/app/services/speedaf/**) return 0 ;;
               backend/app/webcall_ai_schemas.py) return 0 ;;
               backend/app/webchat_models.py) return 0 ;;
@@ -115,6 +117,7 @@ jobs:
               backend/requirements.txt) return 0 ;;
               backend/scripts/*knowledge*.py) return 0 ;;
               backend/scripts/*speedaf*.py) return 0 ;;
+              backend/tests/test_admin_whatsapp*.py) return 0 ;;
               backend/tests/test_background_job_transaction_boundary.py) return 0 ;;
               backend/tests/test_channel_workbench_backend_contracts.py) return 0 ;;
               backend/tests/test_codex*.py) return 0 ;;
