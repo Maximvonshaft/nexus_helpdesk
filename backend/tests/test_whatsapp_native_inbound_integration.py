@@ -32,6 +32,8 @@ from app.services.whatsapp_native_inbound import (  # noqa: E402
 from app.utils.time import utc_now  # noqa: E402
 from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage  # noqa: E402
 
+TEST_CHAT_HANDLE = "wa-test-contact"
+
 
 @pytest.fixture()
 def db_session(tmp_path):
@@ -73,9 +75,9 @@ def _payload(**overrides):
     data = {
         "account_id": "wa-main",
         "external_message_id": f"wamid.{_uid()}",
-        "chat_jid": "41790000000@s.whatsapp.net",
-        "sender_jid": "41790000000@s.whatsapp.net",
-        "sender_phone": "+41790000000",
+        "chat_jid": TEST_CHAT_HANDLE,
+        "sender_jid": TEST_CHAT_HANDLE,
+        "sender_phone": None,
         "message_type": "conversation",
         "body_text": "Hello, where is my package?",
         "raw_payload": {"key": {"id": "msg-1"}},
@@ -140,6 +142,94 @@ def test_inbound_creates_ticket_webchat_projection_and_ai_turn(db_session):
     assert job.queue_name == "webchat_ai_reply"
     assert result.ai_turn_id == turn.id
     assert result.ai_status == "queued"
+
+
+def test_from_me_store_only_persists_raw_without_projection_or_ai(db_session):
+    account = _account(db_session)
+
+    result = ingest_whatsapp_native_inbound(
+        db_session,
+        _payload(
+            account_id=account.account_id,
+            external_message_id="wamid.self.store",
+            from_me=True,
+            projection_mode="store_only",
+            body_text="operator self echo",
+        ),
+    )
+    db_session.commit()
+
+    inbound = db_session.query(WhatsAppInboundMessage).one()
+    assert result.ok is True
+    assert result.ticket_id is None
+    assert result.conversation_id is None
+    assert result.webchat_message_id is None
+    assert result.ai_turn_id is None
+    assert inbound.processed_at is not None
+    assert inbound.ticket_id is None
+    assert inbound.conversation_id is None
+    assert inbound.webchat_message_id is None
+    assert inbound.raw_payload_json["from_me"] is True
+    assert inbound.raw_payload_json["projection_mode"] == "store_only"
+    assert db_session.query(Ticket).count() == 0
+    assert db_session.query(WebchatConversation).count() == 0
+    assert db_session.query(WebchatMessage).count() == 0
+    assert db_session.query(WebchatAITurn).count() == 0
+
+
+def test_from_me_test_visitor_with_prefix_projects_and_marks_metadata(db_session):
+    account = _account(db_session)
+
+    result = ingest_whatsapp_native_inbound(
+        db_session,
+        _payload(
+            account_id=account.account_id,
+            external_message_id="wamid.self.visitor",
+            from_me=True,
+            projection_mode="test_visitor",
+            self_echo_test_prefix="SELF_TEST",
+            body_text="SELF_TEST hello from self smoke",
+        ),
+    )
+    db_session.commit()
+
+    inbound = db_session.query(WhatsAppInboundMessage).one()
+    message = db_session.query(WebchatMessage).filter(WebchatMessage.direction == "visitor").one()
+    metadata = json.loads(message.metadata_json)
+    assert result.ticket_id is not None
+    assert result.conversation_id is not None
+    assert result.webchat_message_id == message.id
+    assert inbound.ticket_id is not None
+    assert inbound.conversation_id is not None
+    assert inbound.webchat_message_id == message.id
+    assert metadata["source"] == "self_echo_test"
+    assert metadata["from_me"] is True
+    assert metadata["projection_mode"] == "test_visitor"
+    assert db_session.query(WebchatAITurn).count() == 1
+
+
+def test_from_me_test_visitor_without_prefix_store_only(db_session):
+    _account(db_session)
+
+    result = ingest_whatsapp_native_inbound(
+        db_session,
+        _payload(
+            external_message_id="wamid.self.no-prefix",
+            from_me=True,
+            projection_mode="test_visitor",
+            self_echo_test_prefix="SELF_TEST",
+            body_text="hello without prefix",
+        ),
+    )
+    db_session.commit()
+
+    inbound = db_session.query(WhatsAppInboundMessage).one()
+    assert result.ticket_id is None
+    assert inbound.processed_at is not None
+    assert inbound.ticket_id is None
+    assert db_session.query(Ticket).count() == 0
+    assert db_session.query(WebchatConversation).count() == 0
+    assert db_session.query(WebchatMessage).count() == 0
 
 
 def test_duplicate_inbound_is_idempotent_and_does_not_duplicate_projection(db_session):
