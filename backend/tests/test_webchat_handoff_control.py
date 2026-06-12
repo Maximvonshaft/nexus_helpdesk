@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 from pathlib import Path
 
 import pytest
@@ -19,8 +20,9 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app import models, operator_models, webchat_fast_models, webchat_models  # noqa: F401,E402
 from app.db import Base  # noqa: E402
-from app.enums import ConversationState, JobStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
-from app.models import BackgroundJob, Customer, Ticket, User  # noqa: E402
+from app.enums import ConversationState, EventType, JobStatus, MessageStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
+from app.models import BackgroundJob, ChannelAccount, Customer, Ticket, TicketEvent, TicketOutboundMessage, User  # noqa: E402
+from app.services import message_dispatch  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
 from app.services.permissions import CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER, resolve_capabilities  # noqa: E402
 from app.services.webchat_ai_turn_service import schedule_webchat_ai_turn  # noqa: E402
@@ -102,6 +104,58 @@ def make_webchat(db) -> tuple[Ticket, WebchatConversation, WebchatMessage]:
     return ticket, conversation, message
 
 
+def make_whatsapp_webchat(db) -> tuple[Ticket, WebchatConversation, WebchatMessage, ChannelAccount]:
+    whatsapp_handle = "wa-test-contact"
+    customer = Customer(name="WhatsApp Visitor", external_ref="whatsapp-visitor", phone=None)
+    db.add(customer)
+    db.flush()
+    account = ChannelAccount(provider="whatsapp", account_id="wa-main", display_name="WhatsApp Main", is_active=True, priority=10)
+    db.add(account)
+    db.flush()
+    ticket = Ticket(
+        ticket_no=f"WA-{customer.id}",
+        title="WhatsApp inbox reply test",
+        description="native whatsapp synthetic inbound",
+        customer_id=customer.id,
+        source=TicketSource.user_message,
+        source_channel=SourceChannel.whatsapp,
+        priority=TicketPriority.medium,
+        status=TicketStatus.pending_assignment,
+        conversation_state=ConversationState.human_review_required,
+        channel_account_id=account.id,
+        source_chat_id=whatsapp_handle,
+        preferred_reply_channel=SourceChannel.whatsapp.value,
+        preferred_reply_contact=whatsapp_handle,
+    )
+    db.add(ticket)
+    db.flush()
+    conversation = WebchatConversation(
+        public_id=f"wa_native_{ticket.id}",
+        visitor_token_hash="token-hash",
+        tenant_key="pytest",
+        channel_key="whatsapp",
+        origin="whatsapp-native",
+        ticket_id=ticket.id,
+        visitor_name="WhatsApp Visitor",
+        visitor_phone=None,
+        visitor_ref=whatsapp_handle,
+        status="open",
+    )
+    db.add(conversation)
+    db.flush()
+    message = WebchatMessage(
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        direction="visitor",
+        body="hello from whatsapp",
+        body_text="hello from whatsapp",
+        author_label="WhatsApp Visitor",
+    )
+    db.add(message)
+    db.flush()
+    return ticket, conversation, message, account
+
+
 def attach_open_ai_turn(db, conversation: WebchatConversation, ticket: Ticket, message: WebchatMessage) -> tuple[WebchatAITurn, BackgroundJob]:
     job = BackgroundJob(
         queue_name="webchat_ai_reply",
@@ -128,6 +182,104 @@ def attach_open_ai_turn(db, conversation: WebchatConversation, ticket: Ticket, m
     conversation.active_ai_for_message_id = message.id
     db.flush()
     return turn, job
+
+
+def _accept_handoff(db, *, conversation: WebchatConversation, ticket: Ticket, message: WebchatMessage, agent: User) -> None:
+    request = request_webchat_handoff(
+        db,
+        conversation=conversation,
+        ticket=ticket,
+        source="customer_action",
+        trigger_type="card_action",
+        reason_code="customer_requested_human_support",
+        trigger_message_id=message.id,
+    )
+    accept_handoff_request(db, request_id=request.id, current_user=agent, note="taking over")
+
+
+def test_admin_reply_to_whatsapp_inbox_queues_native_outbound(db_session):
+    agent = make_user(db_session, "whatsapp_agent", UserRole.manager)
+    ticket, conversation, message, _account = make_whatsapp_webchat(db_session)
+    _accept_handoff(db_session, conversation=conversation, ticket=ticket, message=message, agent=agent)
+
+    reply = admin_reply(db_session, ticket.id, agent, body="你好", has_fact_evidence=False)
+
+    assert reply["ok"] is True
+    agent_message = db_session.query(WebchatMessage).filter(WebchatMessage.id == reply["message"]["id"]).one()
+    assert agent_message.delivery_status == "queued"
+
+    outbound = db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).one()
+    assert outbound.channel == SourceChannel.whatsapp
+    assert outbound.status == MessageStatus.pending
+    assert outbound.body == "你好"
+    assert outbound.provider_status == "whatsapp_agent_reply_queued"
+    assert outbound.created_by == agent.id
+    assert outbound.max_retries == message_dispatch.settings.outbox_max_retries
+    assert outbound.provider_message_id == f"nexusdesk-outbound-{outbound.id}"
+
+    event = db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_queued).one()
+    payload = json.loads(event.payload_json)
+    assert payload["external_send"] is True
+    assert payload["reply_channel"] == SourceChannel.whatsapp.value
+    assert payload["outbound_message_id"] == outbound.id
+    assert payload["webchat_message_id"] == agent_message.id
+
+
+def test_admin_reply_to_webchat_keeps_local_sent_ack(db_session):
+    agent = make_user(db_session, "webchat_ack_agent", UserRole.manager)
+    ticket, conversation, message = make_webchat(db_session)
+    _accept_handoff(db_session, conversation=conversation, ticket=ticket, message=message, agent=agent)
+
+    reply = admin_reply(db_session, ticket.id, agent, body="Hello from webchat.", has_fact_evidence=False)
+
+    assert reply["ok"] is True
+    agent_message = db_session.query(WebchatMessage).filter(WebchatMessage.id == reply["message"]["id"]).one()
+    assert agent_message.delivery_status == "sent"
+
+    outbound = db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).one()
+    assert outbound.channel == SourceChannel.web_chat
+    assert outbound.status == MessageStatus.sent
+    assert outbound.provider_status == "webchat_delivered"
+    assert outbound.max_retries == 0
+    assert outbound.sent_at is not None
+
+    event = db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_sent).one()
+    payload = json.loads(event.payload_json)
+    assert payload["external_send"] is False
+    assert payload["reply_channel"] == SourceChannel.web_chat.value
+    assert payload["outbound_message_id"] == outbound.id
+    assert payload["webchat_message_id"] == agent_message.id
+
+
+def test_worker_processes_whatsapp_admin_reply_pending_row_with_native_sidecar(db_session, monkeypatch):
+    agent = make_user(db_session, "whatsapp_worker_agent", UserRole.manager)
+    ticket, conversation, message, _account = make_whatsapp_webchat(db_session)
+    _accept_handoff(db_session, conversation=conversation, ticket=ticket, message=message, agent=agent)
+    admin_reply(db_session, ticket.id, agent, body="你好", has_fact_evidence=False)
+    outbound = db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).one()
+
+    monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "openclaw")
+    monkeypatch.setattr(message_dispatch.settings, "whatsapp_dispatch_mode", "native_sidecar")
+    monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
+
+    def fake_native(db, *, message, ticket, idempotency_key):
+        assert message.id == outbound.id
+        assert message.channel == SourceChannel.whatsapp
+        assert idempotency_key == f"nexusdesk-outbound-{outbound.id}"
+        return MessageStatus.sent, "whatsapp_native_sent", None, {
+            "adapter": "whatsapp_native_sidecar",
+            "channel": SourceChannel.whatsapp.value,
+            "idempotency_key": idempotency_key,
+        }
+
+    monkeypatch.setattr(message_dispatch, "dispatch_whatsapp_native_outbound", fake_native)
+
+    processed = message_dispatch.process_outbound_message(db_session, outbound)
+
+    assert processed.status == MessageStatus.sent
+    assert processed.provider_status == "whatsapp_native_sent"
 
 
 def test_request_handoff_creates_traceable_queue_and_suspends_ai(db_session):
