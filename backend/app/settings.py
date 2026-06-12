@@ -79,6 +79,9 @@ class Settings:
         self.whatsapp_sidecar_url = os.getenv("WHATSAPP_SIDECAR_URL", "http://127.0.0.1:18793").strip().rstrip("/")
         self.whatsapp_sidecar_token = os.getenv("WHATSAPP_SIDECAR_TOKEN", "").strip() or None
         self.whatsapp_sidecar_timeout_seconds = int(os.getenv("WHATSAPP_SIDECAR_TIMEOUT_SECONDS", "8"))
+        self.whatsapp_connector_key = os.getenv("WHATSAPP_CONNECTOR_KEY", "").strip() or None
+        self.whatsapp_connector_hmac_secret = os.getenv("WHATSAPP_CONNECTOR_HMAC_SECRET", "").strip() or None
+        self.whatsapp_connector_timestamp_tolerance_seconds = int(os.getenv("WHATSAPP_CONNECTOR_TIMESTAMP_TOLERANCE_SECONDS", "300"))
         self.outbound_email_production_pilot_enabled = _env_bool("OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED", False)
         self.outbound_email_test_send_max_age_hours = int(os.getenv("OUTBOUND_EMAIL_TEST_SEND_MAX_AGE_HOURS", "24"))
         self.outbox_batch_size = int(os.getenv("OUTBOX_BATCH_SIZE", "50"))
@@ -248,6 +251,8 @@ class Settings:
             raise RuntimeError("WHATSAPP_DISPATCH_MODE must be openclaw_bridge, native_sidecar, or cloud_api_future")
         if self.whatsapp_sidecar_timeout_seconds < 1 or self.whatsapp_sidecar_timeout_seconds > 60:
             raise RuntimeError("WHATSAPP_SIDECAR_TIMEOUT_SECONDS must be between 1 and 60")
+        if self.whatsapp_connector_timestamp_tolerance_seconds < 30 or self.whatsapp_connector_timestamp_tolerance_seconds > 3600:
+            raise RuntimeError("WHATSAPP_CONNECTOR_TIMESTAMP_TOLERANCE_SECONDS must be between 30 and 3600")
         if self.email_mailbox_sync_interval_seconds < 5 or self.email_mailbox_sync_interval_seconds > 3600:
             raise RuntimeError("EMAIL_MAILBOX_SYNC_INTERVAL_SECONDS must be between 5 and 3600")
         if self.email_mailbox_sync_batch_size < 1 or self.email_mailbox_sync_batch_size > 100:
@@ -297,6 +302,10 @@ class Settings:
                     raise RuntimeError("WHATSAPP_SIDECAR_URL must be an http(s) URL")
                 if not self.whatsapp_sidecar_token:
                     raise RuntimeError("WHATSAPP_SIDECAR_TOKEN is required when WHATSAPP_DISPATCH_MODE=native_sidecar")
+                if not self.whatsapp_connector_key:
+                    raise RuntimeError("WHATSAPP_CONNECTOR_KEY is required when WHATSAPP_DISPATCH_MODE=native_sidecar")
+                if not self.whatsapp_connector_hmac_secret:
+                    raise RuntimeError("WHATSAPP_CONNECTOR_HMAC_SECRET is required when WHATSAPP_DISPATCH_MODE=native_sidecar")
             if not self.frontend_dist_available:
                 raise RuntimeError("frontend_dist/index.html must exist in production; refusing legacy frontend fallback")
             if self.knowledge_runtime_version == "v2":

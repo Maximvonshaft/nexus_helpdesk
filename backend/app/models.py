@@ -167,6 +167,34 @@ class ChannelAccount(Base):
     market: Mapped[Optional["Market"]] = relationship(back_populates="channel_accounts")
 
 
+class WhatsAppInboundMessage(Base):
+    __tablename__ = "whatsapp_inbound_messages"
+    __table_args__ = (
+        UniqueConstraint("channel_account_id", "external_message_id", name="uq_whatsapp_inbound_channel_external"),
+        Index("ix_whatsapp_inbound_chat", "channel_account_id", "chat_jid"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    channel_account_id: Mapped[int] = mapped_column(ForeignKey("channel_accounts.id"), index=True)
+    account_id: Mapped[str] = mapped_column(String(160), index=True)
+    external_message_id: Mapped[str] = mapped_column(String(180), index=True)
+    chat_jid: Mapped[str] = mapped_column(String(180), index=True)
+    sender_jid: Mapped[str] = mapped_column(String(180), index=True)
+    sender_phone: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    message_type: Mapped[str] = mapped_column(String(80), default="text", index=True)
+    body_text: Mapped[str] = mapped_column(Text)
+    raw_payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    received_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
+    processed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
+    ticket_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tickets.id"), nullable=True, index=True)
+    conversation_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    webchat_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
+
+    channel_account: Mapped["ChannelAccount"] = relationship()
+    ticket: Mapped[Optional["Ticket"]] = relationship()
+
+
 class OutboundEmailAccount(Base):
     __tablename__ = "outbound_email_accounts"
     __table_args__ = (

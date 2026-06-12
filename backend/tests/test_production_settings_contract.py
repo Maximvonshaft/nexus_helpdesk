@@ -136,6 +136,31 @@ def test_native_whatsapp_dispatch_mode_requires_explicit_enable_and_token(monkey
             WHATSAPP_SIDECAR_TOKEN='sidecar-token',
             WHATSAPP_SIDECAR_URL='http://whatsapp-sidecar:18793',
         )):
+            with pytest.raises(RuntimeError, match='WHATSAPP_CONNECTOR_KEY'):
+                Settings()
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, 'exists', fake_exists)
+        with patched_env(production_env(
+            WHATSAPP_DISPATCH_MODE='native_sidecar',
+            WHATSAPP_NATIVE_ENABLED='true',
+            WHATSAPP_SIDECAR_TOKEN='sidecar-token',
+            WHATSAPP_CONNECTOR_KEY='connector-key',
+            WHATSAPP_SIDECAR_URL='http://whatsapp-sidecar:18793',
+        )):
+            with pytest.raises(RuntimeError, match='WHATSAPP_CONNECTOR_HMAC_SECRET'):
+                Settings()
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, 'exists', fake_exists)
+        with patched_env(production_env(
+            WHATSAPP_DISPATCH_MODE='native_sidecar',
+            WHATSAPP_NATIVE_ENABLED='true',
+            WHATSAPP_SIDECAR_TOKEN='sidecar-token',
+            WHATSAPP_CONNECTOR_KEY='connector-key',
+            WHATSAPP_CONNECTOR_HMAC_SECRET='connector-hmac-secret',
+            WHATSAPP_SIDECAR_URL='http://whatsapp-sidecar:18793',
+        )):
             settings = Settings()
     assert settings.whatsapp_dispatch_mode == 'native_sidecar'
     assert settings.whatsapp_native_enabled is True
