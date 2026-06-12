@@ -90,8 +90,11 @@ jobs:
               backend/app/services/knowledge_*.py) return 0 ;;
               backend/app/services/knowledge_runtime_v2/**) return 0 ;;
               backend/app/services/lite_service.py) return 0 ;;
+              backend/app/services/message_dispatch.py) return 0 ;;
               backend/app/services/observability.py) return 0 ;;
               backend/app/services/operator_queue.py) return 0 ;;
+              backend/app/services/outbound_adapters/**) return 0 ;;
+              backend/app/services/outbound_channel_registry.py) return 0 ;;
               backend/app/services/permissions.py) return 0 ;;
               backend/app/services/provider_runtime/**) return 0 ;;
               backend/app/services/realtime_broker.py) return 0 ;;
@@ -119,6 +122,7 @@ jobs:
               backend/tests/test_knowledge*.py) return 0 ;;
               backend/tests/test_oauth_refresh_concurrency.py) return 0 ;;
               backend/tests/test_operator_queue_concurrency.py) return 0 ;;
+              backend/tests/test_outbound*.py) return 0 ;;
               backend/tests/test_persona*.py) return 0 ;;
               backend/tests/test_production_settings_contract.py) return 0 ;;
               backend/tests/test_provider_runtime*.py) return 0 ;;
@@ -127,6 +131,7 @@ jobs:
               backend/tests/test_round*.py) return 0 ;;
               backend/tests/test_spa_fallback_hardening.py) return 0 ;;
               backend/tests/test_speedaf*.py) return 0 ;;
+              backend/tests/test_whatsapp*.py) return 0 ;;
               backend/tests/test_webcall*.py) return 0 ;;
               backend/tests/test_webchat*.py) return 0 ;;
               backend/tests/test_webchat_domain_shadow_trace.py) return 0 ;;

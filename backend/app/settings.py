@@ -74,6 +74,11 @@ class Settings:
         self.openclaw_bridge_timeout_seconds = int(os.getenv("OPENCLAW_BRIDGE_TIMEOUT_SECONDS", "20"))
         self.enable_outbound_dispatch = os.getenv("ENABLE_OUTBOUND_DISPATCH", "false").strip().lower() == "true"
         self.outbound_provider = os.getenv("OUTBOUND_PROVIDER", "disabled").strip().lower() or "disabled"
+        self.whatsapp_native_enabled = _env_bool("WHATSAPP_NATIVE_ENABLED", False)
+        self.whatsapp_dispatch_mode = os.getenv("WHATSAPP_DISPATCH_MODE", "openclaw_bridge").strip().lower() or "openclaw_bridge"
+        self.whatsapp_sidecar_url = os.getenv("WHATSAPP_SIDECAR_URL", "http://127.0.0.1:18793").strip().rstrip("/")
+        self.whatsapp_sidecar_token = os.getenv("WHATSAPP_SIDECAR_TOKEN", "").strip() or None
+        self.whatsapp_sidecar_timeout_seconds = int(os.getenv("WHATSAPP_SIDECAR_TIMEOUT_SECONDS", "8"))
         self.outbound_email_production_pilot_enabled = _env_bool("OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED", False)
         self.outbound_email_test_send_max_age_hours = int(os.getenv("OUTBOUND_EMAIL_TEST_SEND_MAX_AGE_HOURS", "24"))
         self.outbox_batch_size = int(os.getenv("OUTBOX_BATCH_SIZE", "50"))
@@ -239,6 +244,10 @@ class Settings:
             raise RuntimeError("WEBCHAT_WS_MAX_CONNECTIONS_PER_USER must be between 1 and 1000")
         if self.outbound_email_test_send_max_age_hours < 1 or self.outbound_email_test_send_max_age_hours > 168:
             raise RuntimeError("OUTBOUND_EMAIL_TEST_SEND_MAX_AGE_HOURS must be between 1 and 168")
+        if self.whatsapp_dispatch_mode not in {"openclaw_bridge", "native_sidecar", "cloud_api_future"}:
+            raise RuntimeError("WHATSAPP_DISPATCH_MODE must be openclaw_bridge, native_sidecar, or cloud_api_future")
+        if self.whatsapp_sidecar_timeout_seconds < 1 or self.whatsapp_sidecar_timeout_seconds > 60:
+            raise RuntimeError("WHATSAPP_SIDECAR_TIMEOUT_SECONDS must be between 1 and 60")
         if self.email_mailbox_sync_interval_seconds < 5 or self.email_mailbox_sync_interval_seconds > 3600:
             raise RuntimeError("EMAIL_MAILBOX_SYNC_INTERVAL_SECONDS must be between 5 and 3600")
         if self.email_mailbox_sync_batch_size < 1 or self.email_mailbox_sync_batch_size > 100:
@@ -281,6 +290,13 @@ class Settings:
                 raise RuntimeError("WEBCHAT_WS_BROKER=memory is not allowed in production when WEBCHAT_WS_ENABLED=true")
             if self.openclaw_attachment_url_fetch_enabled and not self.openclaw_attachment_allowed_hosts:
                 raise RuntimeError("OPENCLAW_ATTACHMENT_ALLOWED_HOSTS must be set when OPENCLAW_ATTACHMENT_URL_FETCH_ENABLED=true in production")
+            if self.whatsapp_dispatch_mode == "native_sidecar":
+                if not self.whatsapp_native_enabled:
+                    raise RuntimeError("WHATSAPP_NATIVE_ENABLED=true is required when WHATSAPP_DISPATCH_MODE=native_sidecar")
+                if not self.whatsapp_sidecar_url.startswith(("http://", "https://")):
+                    raise RuntimeError("WHATSAPP_SIDECAR_URL must be an http(s) URL")
+                if not self.whatsapp_sidecar_token:
+                    raise RuntimeError("WHATSAPP_SIDECAR_TOKEN is required when WHATSAPP_DISPATCH_MODE=native_sidecar")
             if not self.frontend_dist_available:
                 raise RuntimeError("frontend_dist/index.html must exist in production; refusing legacy frontend fallback")
             if self.knowledge_runtime_version == "v2":

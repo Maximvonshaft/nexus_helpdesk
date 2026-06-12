@@ -18,6 +18,7 @@ from .observability import LOGGER
 from .openclaw_bridge import dispatch_via_openclaw_bridge, dispatch_via_openclaw_cli, dispatch_via_openclaw_mcp, resolve_channel_account
 from .outbound_adapters.email import dispatch_email_outbound
 from .outbound_adapters.whatsapp import dispatch_whatsapp_outbound
+from .outbound_adapters.whatsapp_native import dispatch_whatsapp_native_outbound
 from .outbound_semantics import external_channel_values, is_external_outbound_message
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 
@@ -279,6 +280,26 @@ def _enforce_outbound_safety(db: Session, message: TicketOutboundMessage, ticket
 
 def _dispatch_whatsapp_message(db: Session, message: TicketOutboundMessage, ticket: Ticket | None, idempotency_key: str) -> tuple[MessageStatus, str | None, object | None, dict[str, Any]]:
     try:
+        if settings.whatsapp_dispatch_mode == 'native_sidecar':
+            return dispatch_whatsapp_native_outbound(db, message=message, ticket=ticket, idempotency_key=idempotency_key)
+        if settings.whatsapp_dispatch_mode == 'cloud_api_future':
+            return MessageStatus.failed, 'whatsapp_cloud_api_not_implemented', None, {
+                'channel': SourceChannel.whatsapp.value,
+                'adapter': 'whatsapp_cloud_api_future',
+                'idempotency_key': idempotency_key,
+                'failure_code': 'whatsapp_cloud_api_not_implemented',
+                'error': 'WhatsApp Cloud API dispatch mode is reserved but not implemented',
+                'retryable': False,
+            }
+        if settings.whatsapp_dispatch_mode != 'openclaw_bridge':
+            return MessageStatus.failed, 'unsupported_whatsapp_dispatch_mode', None, {
+                'channel': SourceChannel.whatsapp.value,
+                'adapter': 'unsupported_whatsapp_dispatch_mode',
+                'idempotency_key': idempotency_key,
+                'failure_code': 'unsupported_whatsapp_dispatch_mode',
+                'error': f'Unsupported WHATSAPP_DISPATCH_MODE: {settings.whatsapp_dispatch_mode}',
+                'retryable': False,
+            }
         return dispatch_whatsapp_outbound(db, message=message, ticket=ticket, idempotency_key=idempotency_key)
     except ValueError as exc:
         error_code = str(exc)
@@ -329,6 +350,10 @@ def _handle_dispatch_result(
     route_error = route_context.get('error')
     reason = route_error if isinstance(route_error, str) and route_error else (provider_status or 'Dispatch failed')
     route_failure_code = route_context.get('failure_code')
+    if route_context.get('retryable') is False:
+        _mark_dead(message, reason, failure_code=route_failure_code if isinstance(route_failure_code, str) else 'non_retryable_dispatch_error')
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Queued outbound message failed dispatch with non-retryable error', payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count, 'route': route_context})
+        return message
     _mark_retry(message, reason, failure_code=route_failure_code if isinstance(route_failure_code, str) else None)
     event_type = EventType.outbound_dead if message.status == MessageStatus.dead else EventType.outbound_retry_scheduled
     log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=event_type, note='Queued outbound message failed dispatch', payload={'message_id': message.id, 'error': message.failure_reason, 'retry_count': message.retry_count, 'route': route_context})
@@ -355,7 +380,7 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
 
     if message.channel == SourceChannel.whatsapp:
         status_value, provider_status, sent_at, route_context = _dispatch_whatsapp_message(db, message, ticket, idempotency_key)
-        if status_value == MessageStatus.failed and settings.openclaw_cli_fallback_enabled and route_context.get('target'):
+        if status_value == MessageStatus.failed and settings.whatsapp_dispatch_mode == 'openclaw_bridge' and settings.openclaw_cli_fallback_enabled and route_context.get('target'):
             LOGGER.warning('openclaw_bridge_dispatch_failed_falling_back_to_cli', extra={'event_payload': {'message_id': message.id, 'ticket_id': message.ticket_id, 'provider_status': provider_status, 'route': route_context}})
             status_value, provider_status, sent_at = dispatch_via_openclaw_cli(
                 channel=route_context.get('channel') or SourceChannel.whatsapp.value,
