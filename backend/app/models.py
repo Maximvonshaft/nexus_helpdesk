@@ -187,8 +187,8 @@ class WhatsAppInboundMessage(Base):
     received_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
     processed_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
     ticket_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tickets.id"), nullable=True, index=True)
-    conversation_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_conversations.id"), nullable=True, index=True)
-    webchat_message_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_messages.id"), nullable=True, index=True)
+    conversation_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    webchat_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
 
     channel_account: Mapped["ChannelAccount"] = relationship()

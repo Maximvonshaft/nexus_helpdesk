@@ -30,8 +30,8 @@ def upgrade() -> None:
         sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("processed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("ticket_id", sa.Integer(), sa.ForeignKey("tickets.id"), nullable=True),
-        sa.Column("conversation_id", sa.Integer(), sa.ForeignKey("webchat_conversations.id"), nullable=True),
-        sa.Column("webchat_message_id", sa.Integer(), sa.ForeignKey("webchat_messages.id"), nullable=True),
+        sa.Column("conversation_id", sa.Integer(), nullable=True),
+        sa.Column("webchat_message_id", sa.Integer(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint("channel_account_id", "external_message_id", name="uq_whatsapp_inbound_channel_external"),
     )
