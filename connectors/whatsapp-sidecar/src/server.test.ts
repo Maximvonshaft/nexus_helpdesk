@@ -16,7 +16,10 @@ function config(): SidecarConfig {
     connectorKey: "connector-key",
     connectorHmacSecret: "connector-secret",
     callbackTimeoutMs: 100,
-    logLevel: "silent"
+    logLevel: "silent",
+    allowFromMeInbound: false,
+    fromMeMode: "ignore",
+    fromMeTestPrefix: "NEXUS_SELF_INBOUND_TEST"
   };
 }
 
@@ -65,7 +68,7 @@ test("start, status, qr, and send expose stable sidecar contract", async () => {
       headers: { ...headers, "content-type": "application/json" },
       body: JSON.stringify({
         idempotency_key: "nexusdesk-outbound-1",
-        target: "+41790000000",
+        target: "wa-contact",
         body: "hello"
       })
     });
@@ -78,7 +81,7 @@ test("start, status, qr, and send expose stable sidecar contract", async () => {
       headers: { ...headers, "content-type": "application/json" },
       body: JSON.stringify({
         idempotency_key: "nexusdesk-outbound-1",
-        target: "+41790000000",
+        target: "wa-contact",
         body: "hello"
       })
     });

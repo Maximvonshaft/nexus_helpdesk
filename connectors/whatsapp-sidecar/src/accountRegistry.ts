@@ -19,7 +19,8 @@ export class AccountRegistry {
             new SessionStore(config.sessionRoot),
             logger,
             async (message) => this.backend.postInbound(message),
-            async (accountId, snapshot) => this.backend.postStatus(accountId, snapshot)
+            async (accountId, snapshot) => this.backend.postStatus(accountId, snapshot),
+            config
           )
         : new MockConnector();
   }

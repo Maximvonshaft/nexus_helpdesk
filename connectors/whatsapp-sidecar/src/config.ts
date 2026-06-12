@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ConnectorMode, SidecarConfig } from "./types.js";
+import type { ConnectorMode, FromMeInboundMode, SidecarConfig } from "./types.js";
 
 function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -20,10 +20,26 @@ function intEnv(name: string, fallback: number): number {
   return parsed;
 }
 
+function boolEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (!raw) return fallback;
+  if (["1", "true", "yes", "on"].includes(raw)) return true;
+  if (["0", "false", "no", "off"].includes(raw)) return false;
+  throw new Error(`${name} must be a boolean`);
+}
+
 function modeEnv(): ConnectorMode {
   const mode = (process.env.WA_SIDECAR_CONNECTOR_MODE || "mock").trim().toLowerCase();
   if (mode !== "mock" && mode !== "baileys") {
     throw new Error("WA_SIDECAR_CONNECTOR_MODE must be mock or baileys");
+  }
+  return mode;
+}
+
+function fromMeModeEnv(): FromMeInboundMode {
+  const mode = (process.env.WA_SIDECAR_FROM_ME_MODE || "ignore").trim().toLowerCase();
+  if (mode !== "ignore" && mode !== "store_only" && mode !== "test_visitor") {
+    throw new Error("WA_SIDECAR_FROM_ME_MODE must be ignore, store_only, or test_visitor");
   }
   return mode;
 }
@@ -40,6 +56,9 @@ export function loadConfig(): SidecarConfig {
     connectorKey: requireEnv("NEXUS_CONNECTOR_KEY"),
     connectorHmacSecret: requireEnv("NEXUS_CONNECTOR_HMAC_SECRET"),
     callbackTimeoutMs: intEnv("NEXUS_CALLBACK_TIMEOUT_MS", 8000),
-    logLevel: process.env.LOG_LEVEL || "info"
+    logLevel: process.env.LOG_LEVEL || "info",
+    allowFromMeInbound: boolEnv("WA_SIDECAR_ALLOW_FROM_ME_INBOUND", false),
+    fromMeMode: fromMeModeEnv(),
+    fromMeTestPrefix: process.env.WA_SIDECAR_FROM_ME_TEST_PREFIX?.trim() || "NEXUS_SELF_INBOUND_TEST"
   };
 }

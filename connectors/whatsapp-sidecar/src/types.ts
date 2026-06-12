@@ -1,4 +1,5 @@
 export type ConnectorMode = "mock" | "baileys";
+export type FromMeInboundMode = "ignore" | "store_only" | "test_visitor";
 
 export type AccountStatus =
   | "idle"
@@ -21,6 +22,9 @@ export interface SidecarConfig {
   connectorHmacSecret: string;
   callbackTimeoutMs: number;
   logLevel: string;
+  allowFromMeInbound: boolean;
+  fromMeMode: FromMeInboundMode;
+  fromMeTestPrefix: string;
 }
 
 export interface AccountSnapshot {
@@ -49,6 +53,9 @@ export interface NormalizedInboundMessage {
   body_text: string;
   raw_payload: unknown;
   received_at: string;
+  from_me?: boolean;
+  projection_mode?: "visitor" | "store_only" | "test_visitor";
+  self_echo_test_prefix?: string;
 }
 
 export interface SendRequest {
