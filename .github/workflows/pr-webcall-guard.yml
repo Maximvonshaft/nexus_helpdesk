@@ -65,6 +65,7 @@ jobs:
               backend/.env.example) return 0 ;;
               backend/alembic/env.py) return 0 ;;
               backend/alembic/versions/*knowledge*.py) return 0 ;;
+              backend/alembic/versions/*whatsapp*.py) return 0 ;;
               backend/alembic/versions/*webchat*.py) return 0 ;;
               backend/app/api/admin_provider_credentials.py) return 0 ;;
               backend/app/api/admin_provider_runtime.py) return 0 ;;
@@ -76,7 +77,9 @@ jobs:
               backend/app/api/speedaf_cancel.py) return 0 ;;
               backend/app/api/webcall_ai.py) return 0 ;;
               backend/app/api/webchat*.py) return 0 ;;
+              backend/app/api/whatsapp_native*.py) return 0 ;;
               backend/app/main.py) return 0 ;;
+              backend/app/models.py) return 0 ;;
               backend/app/models_control_plane.py) return 0 ;;
               backend/app/schemas_control_plane.py) return 0 ;;
               backend/app/settings.py) return 0 ;;

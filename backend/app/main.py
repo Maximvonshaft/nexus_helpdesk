@@ -43,6 +43,7 @@ from .api.webchat_events import router as webchat_events_router
 from .api.webchat_ws import router as webchat_ws_router
 from .api.webchat_voice import router as webchat_voice_router
 from .api.webcall_ai import router as webcall_ai_router
+from .api.whatsapp_native_integration import router as whatsapp_native_integration_router
 from .db import engine, reset_current_request_id, set_current_request_id
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
 from .services.password_policy import MIN_PASSWORD_LENGTH, PasswordPolicyError, validate_admin_password_policy
@@ -267,6 +268,7 @@ app.include_router(webchat_events_router)
 app.include_router(webchat_ws_router)
 app.include_router(webcall_ai_router)
 app.include_router(webchat_voice_router)
+app.include_router(whatsapp_native_integration_router)
 app.include_router(webchat_router)
 
 

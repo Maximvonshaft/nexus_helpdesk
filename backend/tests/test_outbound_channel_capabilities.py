@@ -94,6 +94,8 @@ def _reset_settings(monkeypatch, *, dispatch=False, provider="disabled") -> None
     monkeypatch.delenv("WHATSAPP_DISPATCH_MODE", raising=False)
     monkeypatch.delenv("WHATSAPP_NATIVE_ENABLED", raising=False)
     monkeypatch.delenv("WHATSAPP_SIDECAR_TOKEN", raising=False)
+    monkeypatch.delenv("WHATSAPP_CONNECTOR_KEY", raising=False)
+    monkeypatch.delenv("WHATSAPP_CONNECTOR_HMAC_SECRET", raising=False)
     get_settings.cache_clear()
 
 
