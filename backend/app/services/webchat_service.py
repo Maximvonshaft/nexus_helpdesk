@@ -22,6 +22,7 @@ from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .permissions import ensure_ticket_visible
 from .sla_service import update_first_response, evaluate_sla
 from .ticket_service import generate_ticket_no, get_ticket_or_404
+from .message_dispatch import queue_outbound_message
 from .background_jobs import enqueue_webchat_ai_reply_job
 from .webchat_card_factory import build_handoff_card, build_quick_replies_card
 from .webchat_handoff_service import ensure_can_reply_in_handoff, request_webchat_handoff, serialize_handoff_request
@@ -78,6 +79,27 @@ def _new_token() -> str:
 
 def _new_token_expiry():
     return utc_now() + timedelta(days=WEBCHAT_VISITOR_TOKEN_TTL_DAYS)
+
+
+def _reply_channel_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "value"):
+        value = value.value
+    cleaned = str(value).strip().lower()
+    return cleaned or None
+
+
+def _resolve_admin_reply_channel(ticket: Ticket, conversation: WebchatConversation) -> SourceChannel:
+    candidates = (
+        getattr(ticket, "preferred_reply_channel", None),
+        getattr(ticket, "source_channel", None),
+        getattr(conversation, "channel_key", None),
+    )
+    normalized = {_reply_channel_value(value) for value in candidates}
+    if SourceChannel.whatsapp.value in normalized or "whatsapp" in normalized:
+        return SourceChannel.whatsapp
+    return SourceChannel.web_chat
 
 
 def _ensure_aware_utc(value):
@@ -827,6 +849,10 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
     if decision.requires_human_review and not confirm_review:
         raise HTTPException(status_code=409, detail={"message": "Outbound reply requires human review confirmation", "safety": decision_payload})
 
+    reply_channel = _resolve_admin_reply_channel(ticket, conversation)
+    is_external_reply = reply_channel == SourceChannel.whatsapp
+    delivery_status = "queued" if is_external_reply else "sent"
+    provider_status = "whatsapp_agent_reply_queued" if is_external_reply else "webchat_delivered"
     message = WebchatMessage(
         conversation_id=conversation.id,
         ticket_id=ticket.id,
@@ -834,7 +860,7 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
         body=decision.normalized_body,
         body_text=decision.normalized_body,
         message_type="text",
-        delivery_status="sent",
+        delivery_status=delivery_status,
         metadata_json=_metadata(generated_by="human_agent", safety_level=decision.level, fact_evidence_present=has_fact_evidence),
         author_label=current_user.display_name,
         author_user_id=current_user.id,
@@ -843,16 +869,33 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
     )
     db.add(message)
     db.add(TicketComment(ticket_id=ticket.id, author_id=current_user.id, body=decision.normalized_body, visibility=NoteVisibility.external))
-    db.add(TicketOutboundMessage(
-        ticket_id=ticket.id,
-        channel=SourceChannel.web_chat,
-        status=MessageStatus.sent,
-        body=decision.normalized_body,
-        provider_status="webchat_delivered",
-        created_by=current_user.id,
-        sent_at=utc_now(),
-        max_retries=0,
-    ))
+    db.flush()
+    if is_external_reply:
+        outbound_message = queue_outbound_message(
+            db,
+            ticket_id=ticket.id,
+            channel=SourceChannel.whatsapp,
+            body=decision.normalized_body,
+            created_by=current_user.id,
+            provider_status=provider_status,
+        )
+        outbound_event_type = EventType.outbound_queued
+        outbound_event_note = "WhatsApp agent reply queued"
+    else:
+        outbound_message = TicketOutboundMessage(
+            ticket_id=ticket.id,
+            channel=SourceChannel.web_chat,
+            status=MessageStatus.sent,
+            body=decision.normalized_body,
+            provider_status=provider_status,
+            created_by=current_user.id,
+            sent_at=utc_now(),
+            max_retries=0,
+        )
+        db.add(outbound_message)
+        db.flush()
+        outbound_event_type = EventType.outbound_sent
+        outbound_event_note = "Webchat agent reply sent"
     update_first_response(ticket)
     ticket.status = TicketStatus.waiting_customer
     ticket.conversation_state = ConversationState.waiting_customer
@@ -862,15 +905,18 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
     db.add(TicketEvent(
         ticket_id=ticket.id,
         actor_id=current_user.id,
-        event_type=EventType.outbound_sent,
-        note="Webchat agent reply sent",
+        event_type=outbound_event_type,
+        note=outbound_event_note,
         payload_json=json.dumps({
             "public_conversation_id": conversation.public_id,
             "safety_level": decision.level,
             "safety_reasons": decision.reasons,
             "safety_reason_text": format_safety_reasons(decision),
-            "external_send": False,
-            "provider_status": "webchat_delivered",
+            "external_send": is_external_reply,
+            "reply_channel": reply_channel.value,
+            "outbound_message_id": outbound_message.id,
+            "webchat_message_id": message.id,
+            "provider_status": provider_status,
         }, ensure_ascii=False),
     ))
     db.flush()
@@ -891,6 +937,6 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
         )
     evaluate_sla(ticket, db)
     db.flush()
-    WEBCHAT_LOGGER.info("webchat_message_sent", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "message_id": message.id, "external_send": False}})
+    WEBCHAT_LOGGER.info("webchat_message_sent", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "message_id": message.id, "external_send": is_external_reply, "reply_channel": reply_channel.value}})
     db.refresh(message)
     return {"ok": True, "safety": decision_payload, "message": _message_read(message)}
