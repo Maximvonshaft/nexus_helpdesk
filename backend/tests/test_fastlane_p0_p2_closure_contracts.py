@@ -33,14 +33,16 @@ def test_stream_parser_emits_safe_content_delta_instead_of_only_inspecting():
     assert "self.inspect_text(event.text)" not in content_delta_block
 
 
-def test_stream_service_success_order_is_final_before_delta():
+def test_stream_service_retired_provider_fails_closed_without_partial_delta():
     source = _read("app/services/webchat_fast_stream_service.py")
-    success_path = source.split("async for event in", 1)[1].split("except StreamingReplyAbort", 1)[0]
+    live_path = source.split('if begin.row_id is None:', 1)[1]
 
-    assert "yield sse_event(\"reply_delta\"" in success_path
-    assert "yield sse_event(\"final\"" in success_path
-    assert success_path.index("yield sse_event(\"final\"") < success_path.index("yield sse_event(\"reply_delta\"")
-    assert "yield sse_event(\"final\", final)\n        if parsed.reply" in source
+    assert 'yield sse_event("meta", {"replayed": False, "stream_version": "provider_runtime_compat"})' in live_path
+    assert '_mark_failed(begin.row_id, "stream_provider_retired")' in live_path
+    assert 'record_fast_reply_metric(status="stream_provider_retired", elapsed_ms=0)' in live_path
+    assert 'yield sse_event("error", {"error_code": "stream_provider_retired", "retry_after_ms": 1500})' in live_path
+    assert 'yield sse_event("reply_delta"' not in live_path
+    assert "async for event in" not in source
 
 
 def test_stream_replay_order_is_replay_then_final_then_delta():
