@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-BASE_URL="${BASE_URL:-http://127.0.0.1:8080}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/_lib.sh"
+parse_common_args "$@"
+
+BASE_URL="${BASE_URL:-$API_URL}"
 ORIGIN="${ORIGIN:-http://localhost}"
+
+if [ "$DRY_RUN" = "1" ]; then
+  info "dry-run: would create a WebChat conversation, send one visitor message, and verify AI pending/idempotency semantics"
+  pass "webchat ai runtime smoke dry-run"
+  exit 0
+fi
 
 need_jq() {
   command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 2; }
