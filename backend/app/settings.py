@@ -60,9 +60,9 @@ class Settings:
 
         self.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY")
         self.openclaw_bin = os.getenv("OPENCLAW_BIN")
-        self.openclaw_transport = os.getenv("OPENCLAW_TRANSPORT", "mcp").strip().lower() or "mcp"
-        self.openclaw_deployment_mode = os.getenv("OPENCLAW_DEPLOYMENT_MODE", "local_gateway").strip().lower() or "local_gateway"
-        self.openclaw_mcp_command = os.getenv("OPENCLAW_MCP_COMMAND", self.openclaw_bin or "openclaw").strip()
+        self.openclaw_transport = os.getenv("OPENCLAW_TRANSPORT", "disabled").strip().lower() or "disabled"
+        self.openclaw_deployment_mode = os.getenv("OPENCLAW_DEPLOYMENT_MODE", "disabled").strip().lower() or "disabled"
+        self.openclaw_mcp_command = os.getenv("OPENCLAW_MCP_COMMAND", self.openclaw_bin or "").strip()
         self.openclaw_extra_paths = self._parse_paths(os.getenv("OPENCLAW_EXTRA_PATHS", ""))
         self.openclaw_mcp_url = os.getenv("OPENCLAW_MCP_URL")
         self.openclaw_mcp_token_file = os.getenv("OPENCLAW_MCP_TOKEN_FILE")
@@ -75,7 +75,7 @@ class Settings:
         self.enable_outbound_dispatch = os.getenv("ENABLE_OUTBOUND_DISPATCH", "false").strip().lower() == "true"
         self.outbound_provider = os.getenv("OUTBOUND_PROVIDER", "disabled").strip().lower() or "disabled"
         self.whatsapp_native_enabled = _env_bool("WHATSAPP_NATIVE_ENABLED", False)
-        self.whatsapp_dispatch_mode = os.getenv("WHATSAPP_DISPATCH_MODE", "openclaw_bridge").strip().lower() or "openclaw_bridge"
+        self.whatsapp_dispatch_mode = os.getenv("WHATSAPP_DISPATCH_MODE", "disabled").strip().lower() or "disabled"
         self.whatsapp_sidecar_url = os.getenv("WHATSAPP_SIDECAR_URL", "http://127.0.0.1:18793").strip().rstrip("/")
         self.whatsapp_sidecar_token = os.getenv("WHATSAPP_SIDECAR_TOKEN", "").strip() or None
         self.whatsapp_sidecar_timeout_seconds = int(os.getenv("WHATSAPP_SIDECAR_TIMEOUT_SECONDS", "8"))
@@ -95,7 +95,7 @@ class Settings:
         self.job_lock_seconds = int(os.getenv("JOB_LOCK_SECONDS", "300"))
         self.job_max_retries = int(os.getenv("JOB_MAX_RETRIES", "3"))
         self.worker_poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", "2"))
-        self.openclaw_sync_enabled = os.getenv("OPENCLAW_SYNC_ENABLED", "true").strip().lower() == "true"
+        self.openclaw_sync_enabled = os.getenv("OPENCLAW_SYNC_ENABLED", "false").strip().lower() == "true"
         self.openclaw_sync_batch_size = int(os.getenv("OPENCLAW_SYNC_BATCH_SIZE", "50"))
         self.openclaw_sync_stale_seconds = int(os.getenv("OPENCLAW_SYNC_STALE_SECONDS", "120"))
         self.openclaw_sync_transcript_limit = int(os.getenv("OPENCLAW_SYNC_TRANSCRIPT_LIMIT", "100"))
@@ -106,7 +106,7 @@ class Settings:
         self.openclaw_inbound_sync_include_groups = os.getenv("OPENCLAW_INBOUND_SYNC_INCLUDE_GROUPS", "false").strip().lower() == "true"
         self.openclaw_inbound_auto_sync_interval_seconds = int(os.getenv("OPENCLAW_INBOUND_AUTO_SYNC_INTERVAL_SECONDS", "30"))
         self.openclaw_session_dm_scope = os.getenv("OPENCLAW_SESSION_DM_SCOPE", "per-account-channel-peer").strip()
-        self.openclaw_event_driver_enabled = os.getenv("OPENCLAW_EVENT_DRIVER_ENABLED", "true").strip().lower() == "true"
+        self.openclaw_event_driver_enabled = os.getenv("OPENCLAW_EVENT_DRIVER_ENABLED", "false").strip().lower() == "true"
         self.openclaw_sync_daemon_stale_seconds = int(os.getenv("OPENCLAW_SYNC_DAEMON_STALE_SECONDS", "90"))
         self.require_prometheus_client_in_production = os.getenv("REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION", "false").strip().lower() == "true"
 
@@ -154,7 +154,7 @@ class Settings:
         self.knowledge_embedding_api_key = os.getenv("KNOWLEDGE_EMBEDDING_API_KEY", "").strip() or None
         self.knowledge_embedding_api_key_file = os.getenv("KNOWLEDGE_EMBEDDING_API_KEY_FILE", "").strip() or None
         self.webchat_tracking_fact_lookup_enabled = os.getenv("WEBCHAT_TRACKING_FACT_LOOKUP_ENABLED", "false").strip().lower() == "true"
-        self.webchat_tracking_fact_source = os.getenv("WEBCHAT_TRACKING_FACT_SOURCE", "openclaw_bridge").strip().lower() or "openclaw_bridge"
+        self.webchat_tracking_fact_source = os.getenv("WEBCHAT_TRACKING_FACT_SOURCE", "speedaf_api").strip().lower() or "speedaf_api"
         self.webchat_tracking_fact_timeout_seconds = int(os.getenv("WEBCHAT_TRACKING_FACT_TIMEOUT_SECONDS", "8"))
         self.webchat_tracking_fact_redaction_enabled = os.getenv("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED", "true").strip().lower() == "true"
         self.webchat_tracking_fact_card_enabled = os.getenv("WEBCHAT_TRACKING_FACT_CARD_ENABLED", "false").strip().lower() == "true"
@@ -221,8 +221,8 @@ class Settings:
             raise RuntimeError("KNOWLEDGE_EMBEDDING_TIMEOUT_SECONDS must be between 1 and 120")
         if self.knowledge_embedding_provider not in {"deterministic_hash", "hash", "test", "openai_compatible"}:
             raise RuntimeError("KNOWLEDGE_EMBEDDING_PROVIDER must be deterministic_hash, hash, test, or openai_compatible")
-        if self.webchat_tracking_fact_source not in {"openclaw_bridge", "speedaf_api"}:
-            raise RuntimeError("WEBCHAT_TRACKING_FACT_SOURCE must be openclaw_bridge or speedaf_api")
+        if self.webchat_tracking_fact_source not in {"speedaf_api", "speedaf_track_query", "speedaf_hybrid"}:
+            raise RuntimeError("WEBCHAT_TRACKING_FACT_SOURCE must be speedaf_api, speedaf_track_query, or speedaf_hybrid")
         if self.webchat_tracking_fact_timeout_seconds < 1 or self.webchat_tracking_fact_timeout_seconds > 30:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_TIMEOUT_SECONDS must be between 1 and 30")
         if self.webchat_ai_session_ttl_hours < 1 or self.webchat_ai_session_ttl_hours > 168:
@@ -247,8 +247,8 @@ class Settings:
             raise RuntimeError("WEBCHAT_WS_MAX_CONNECTIONS_PER_USER must be between 1 and 1000")
         if self.outbound_email_test_send_max_age_hours < 1 or self.outbound_email_test_send_max_age_hours > 168:
             raise RuntimeError("OUTBOUND_EMAIL_TEST_SEND_MAX_AGE_HOURS must be between 1 and 168")
-        if self.whatsapp_dispatch_mode not in {"openclaw_bridge", "native_sidecar", "cloud_api_future"}:
-            raise RuntimeError("WHATSAPP_DISPATCH_MODE must be openclaw_bridge, native_sidecar, or cloud_api_future")
+        if self.whatsapp_dispatch_mode not in {"disabled", "native_sidecar", "cloud_api_future"}:
+            raise RuntimeError("WHATSAPP_DISPATCH_MODE must be disabled, native_sidecar, or cloud_api_future")
         if self.whatsapp_sidecar_timeout_seconds < 1 or self.whatsapp_sidecar_timeout_seconds > 60:
             raise RuntimeError("WHATSAPP_SIDECAR_TIMEOUT_SECONDS must be between 1 and 60")
         if self.whatsapp_connector_timestamp_tolerance_seconds < 30 or self.whatsapp_connector_timestamp_tolerance_seconds > 3600:
@@ -259,6 +259,20 @@ class Settings:
             raise RuntimeError("EMAIL_MAILBOX_SYNC_BATCH_SIZE must be between 1 and 100")
         if self.webchat_tracking_fact_lookup_enabled and not self.webchat_tracking_fact_redaction_enabled:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED must be true when tracking lookup is enabled")
+        if self.openclaw_transport != "disabled":
+            raise RuntimeError("OPENCLAW_TRANSPORT has been retired; set OPENCLAW_TRANSPORT=disabled")
+        if self.openclaw_deployment_mode != "disabled":
+            raise RuntimeError("OPENCLAW_DEPLOYMENT_MODE has been retired; set OPENCLAW_DEPLOYMENT_MODE=disabled")
+        if self.openclaw_cli_fallback_enabled:
+            raise RuntimeError("OPENCLAW_CLI_FALLBACK_ENABLED has been retired; set OPENCLAW_CLI_FALLBACK_ENABLED=false")
+        if self.openclaw_bridge_enabled:
+            raise RuntimeError("OPENCLAW_BRIDGE_ENABLED has been retired; set OPENCLAW_BRIDGE_ENABLED=false")
+        if self.openclaw_sync_enabled:
+            raise RuntimeError("OPENCLAW_SYNC_ENABLED has been retired; set OPENCLAW_SYNC_ENABLED=false")
+        if self.openclaw_inbound_auto_sync_enabled:
+            raise RuntimeError("OPENCLAW_INBOUND_AUTO_SYNC_ENABLED has been retired; set OPENCLAW_INBOUND_AUTO_SYNC_ENABLED=false")
+        if self.openclaw_event_driver_enabled:
+            raise RuntimeError("OPENCLAW_EVENT_DRIVER_ENABLED has been retired; set OPENCLAW_EVENT_DRIVER_ENABLED=false")
         if self.app_env == "production":
             if not self.jwt_secret_key:
                 raise RuntimeError("SECRET_KEY must be set in production")
@@ -274,17 +288,11 @@ class Settings:
                 raise RuntimeError("ALLOW_DEV_AUTH must be disabled in production")
             if self.allow_legacy_integration_api_key:
                 raise RuntimeError("ALLOW_LEGACY_INTEGRATION_API_KEY must be disabled in production")
-            if self.openclaw_cli_fallback_enabled:
-                raise RuntimeError("OPENCLAW_CLI_FALLBACK_ENABLED must be false in production")
             localhost_origins = {"http://localhost", "http://127.0.0.1"}
             if set(self.allowed_origins) & localhost_origins:
                 raise RuntimeError("Production ALLOWED_ORIGINS must not include localhost defaults")
             if self.storage_backend not in {"local", "s3"}:
                 raise RuntimeError("STORAGE_BACKEND must be local or s3")
-            if self.openclaw_transport not in {"mcp", "cli"}:
-                raise RuntimeError("OPENCLAW_TRANSPORT must be mcp or cli")
-            if self.openclaw_deployment_mode not in {"local_gateway", "remote_gateway", "disabled"}:
-                raise RuntimeError("OPENCLAW_DEPLOYMENT_MODE must be local_gateway, remote_gateway, or disabled")
             if self.openclaw_session_dm_scope not in {"per-account-channel-peer", "per-channel-peer", "per-peer"}:
                 raise RuntimeError("OPENCLAW_SESSION_DM_SCOPE must be a supported session dm scope")
             if self.metrics_enabled and not self.metrics_token:

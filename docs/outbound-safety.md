@@ -27,12 +27,12 @@ They must not count as WhatsApp, Telegram, SMS, or email provider sends.
 A row can enter provider dispatch only when all conditions are true:
 
 1. `ENABLE_OUTBOUND_DISPATCH=true`
-2. `OUTBOUND_PROVIDER=openclaw`
+2. `OUTBOUND_PROVIDER=native` for external messaging, or `OUTBOUND_PROVIDER=email` / `smtp` for email-only pilots
 3. channel is one of `whatsapp`, `telegram`, `sms`, `email`
 4. outbound safety gate passes
 5. a target or same-route session key is available
 
-`backend/app/services/message_dispatch.py` contains a provider-level kill switch so disabled or unsupported providers cannot reach OpenClaw bridge/MCP/CLI send paths.
+`backend/app/services/message_dispatch.py` contains a provider-level kill switch so disabled or unsupported providers cannot reach native sidecar or SMTP send paths. Legacy OpenClaw bridge/MCP/CLI aliases are retained only as retired compatibility stubs.
 
 ## Required verification
 

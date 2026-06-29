@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from ..models import AIConfigResource
 from ..models_control_plane import KnowledgeItem, PersonaProfile
-from .openclaw_client_factory import OpenClawBridgeHTTPClient, OpenClawBridgeHTTPError
 
 
 SUPPORT_CHANNELS = {"whatsapp", "email", "all", "support", "customer"}
@@ -104,9 +103,14 @@ def _runtime_legacy_sources() -> list[dict[str, Any]]:
     ]
 
 
-def _fetch_runtime_cards(bridge_client: OpenClawBridgeHTTPClient | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    own_client = bridge_client is None
-    client = bridge_client or OpenClawBridgeHTTPClient()
+def _fetch_runtime_cards(bridge_client: Any | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if bridge_client is None:
+        return [], {
+            "ok": False,
+            "status": "retired",
+            "message": "Legacy runtime bridge has been retired; use Nexus config resources.",
+        }
+    client = bridge_client
     try:
         data = client.support_knowledge_config({"operation": "card-list"})
         cards = data.get("cards") if isinstance(data, dict) else None
@@ -117,20 +121,22 @@ def _fetch_runtime_cards(bridge_client: OpenClawBridgeHTTPClient | None = None) 
             "status": "connected",
             "count": len(cards),
         }
-    except (OpenClawBridgeHTTPError, OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError) as exc:
         return [], {
             "ok": False,
             "status": "degraded",
             "message": str(exc)[:240],
         }
-    finally:
-        if own_client:
-            client.close()
 
 
-def _fetch_status_dictionary(bridge_client: OpenClawBridgeHTTPClient | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    own_client = bridge_client is None
-    client = bridge_client or OpenClawBridgeHTTPClient()
+def _fetch_status_dictionary(bridge_client: Any | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if bridge_client is None:
+        return [], {
+            "ok": False,
+            "status": "retired",
+            "message": "Legacy runtime status dictionary bridge has been retired.",
+        }
+    client = bridge_client
     try:
         data = client.support_knowledge_config({"operation": "status-dictionary-list"})
         entries = data.get("entries") if isinstance(data, dict) else None
@@ -144,15 +150,12 @@ def _fetch_status_dictionary(bridge_client: OpenClawBridgeHTTPClient | None = No
             "published_at": data.get("published_at"),
             "updated_at": data.get("updated_at"),
         }
-    except (OpenClawBridgeHTTPError, OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError) as exc:
         return [], {
             "ok": False,
             "status": "degraded",
             "message": str(exc)[:240],
         }
-    finally:
-        if own_client:
-            client.close()
 
 
 def _status_dictionary_entry_out(entry: dict[str, Any]) -> dict[str, Any]:
@@ -262,7 +265,7 @@ def _ai_config_out(row: AIConfigResource) -> dict[str, Any]:
 def build_support_intelligence_config(
     db: Session,
     *,
-    bridge_client: OpenClawBridgeHTTPClient | None = None,
+    bridge_client: Any | None = None,
 ) -> dict[str, Any]:
     runtime_cards_raw, bridge_status = _fetch_runtime_cards(bridge_client)
     runtime_cards = [_runtime_card_out(card) for card in runtime_cards_raw]

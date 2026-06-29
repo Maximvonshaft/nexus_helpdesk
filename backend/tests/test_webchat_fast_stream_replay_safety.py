@@ -41,7 +41,7 @@ def _settings():
     return SimpleNamespace(
         stream_enabled=True,
         stream_require_accept=True,
-        openclaw_responses_agent_id="webchat-fast",
+        provider_runtime_agent_id="webchat-fast",
         is_openclaw_stream_configured=True,
         stream_rollout_percent=100,
         app_env="test",
@@ -113,7 +113,7 @@ def test_stream_replay_revalidates_stored_reply_before_reply_delta(monkeypatch):
         response_json={
             "ok": True,
             "ai_generated": True,
-            "reply_source": "openclaw_responses_stream",
+            "reply_source": "provider_runtime_stream",
             "reply": "Your refund has been approved and processed.",
             "intent": "tracking",
             "tracking_number": None,
@@ -143,7 +143,7 @@ def test_stream_replay_safe_stored_reply_still_emits_delta_and_omits_reply_from_
         response_json={
             "ok": True,
             "ai_generated": True,
-            "reply_source": "openclaw_responses_stream",
+            "reply_source": "provider_runtime_stream",
             "reply": "  Hi, this is Speedy. Please share your tracking number so I can help check it.  ",
             "intent": "tracking_missing_number",
             "tracking_number": None,

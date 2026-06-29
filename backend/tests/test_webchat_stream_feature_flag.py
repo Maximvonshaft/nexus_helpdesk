@@ -57,7 +57,7 @@ def _settings(*, enabled: bool = True, require_accept: bool = True):
     return SimpleNamespace(
         stream_enabled=enabled,
         stream_require_accept=require_accept,
-        openclaw_responses_agent_id="webchat-fast",
+        provider_runtime_agent_id="webchat-fast",
         is_openclaw_stream_configured=True,
     )
 
@@ -83,7 +83,7 @@ def _ok_reply(text: str = "Hello") -> WebchatFastReplyResult:
     return WebchatFastReplyResult(
         ok=True,
         ai_generated=True,
-        reply_source="openclaw_responses",
+        reply_source="provider_runtime",
         reply=text,
         intent="general_support",
         tracking_number=None,
@@ -140,7 +140,7 @@ def test_stream_enabled_env_allows_decision_runtime_path(monkeypatch):
     assert response.status_code == 200
     assert "text/event-stream" in response.headers["content-type"]
     assert [event for event, _payload in events] == ["meta", "final", "reply_delta"]
-    assert final["reply_source"] == "openclaw_responses"
+    assert final["reply_source"] == "provider_runtime"
     assert final["ai_decision_trace"]["policy_gate"]["ok"] is True
     assert [payload for event, payload in events if event == "reply_delta"][0]["text"] == "Hello from stream"
 

@@ -24,7 +24,7 @@ def _ai_support_hours_reply() -> WebchatFastReplyResult:
     return WebchatFastReplyResult(
         ok=True,
         ai_generated=True,
-        reply_source="openclaw_responses",
+        reply_source="provider_runtime",
         reply="AI parcel support is available 24/7. Human support hours can be confirmed by the support team if needed.",
         intent="general_support",
         tracking_number=None,
@@ -49,7 +49,7 @@ def test_support_hours_json_uses_ai_decision_runtime_pipeline(monkeypatch):
     assert first.status_code == 200
     assert first.headers["access-control-allow-origin"] == "http://localhost"
     data = first.json()
-    assert data["reply_source"] == "openclaw_responses"
+    assert data["reply_source"] == "provider_runtime"
     assert data["ai_generated"] is True
     assert data["handoff_required"] is False
     assert data["ai_decision_trace"]["schema_version"] == "webchat_ai_decision_v1"
@@ -62,7 +62,7 @@ def test_support_hours_json_uses_ai_decision_runtime_pipeline(monkeypatch):
         assert db.execute(select(func.count(WebchatRateLimitBucket.id))).scalar_one() == 1
         idem = db.execute(select(WebchatFastIdempotency)).scalar_one()
         assert idem.status == "done"
-        assert idem.response_json["reply_source"] == "openclaw_responses"
+        assert idem.response_json["reply_source"] == "provider_runtime"
         assert idem.response_json["ai_decision_trace"]["schema_version"] == "webchat_ai_decision_v1"
         conversation = db.execute(select(WebchatConversation)).scalar_one()
         messages = db.execute(
@@ -94,7 +94,7 @@ def test_support_hours_stream_matches_json_decision_runtime_and_persists(monkeyp
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost"
     text = response.text
-    assert "openclaw_responses" in text
+    assert "provider_runtime" in text
     assert '"ai_decision_trace":' in text
     assert '"policy_gate":{"ok":true' in text
     assert "event: reply_delta" in text
@@ -104,7 +104,7 @@ def test_support_hours_stream_matches_json_decision_runtime_and_persists(monkeyp
     try:
         idem = db.execute(select(WebchatFastIdempotency)).scalar_one()
         assert idem.status == "done"
-        assert idem.response_json["reply_source"] == "openclaw_responses"
+        assert idem.response_json["reply_source"] == "provider_runtime"
         assert idem.response_json["ai_decision_trace"]["schema_version"] == "webchat_ai_decision_v1"
         conversation = db.execute(select(WebchatConversation)).scalar_one()
         messages = db.execute(

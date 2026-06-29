@@ -20,14 +20,14 @@ WebChat browser
 ## Available providers
 
 - `provider_runtime`: required for production WebChat Fast Reply.
-- `openclaw_responses`: legacy direct provider retained for development/test compatibility only.
 - `codex_auth`: deprecated legacy direct provider retained for development/test compatibility only.
 - `codex_app_server`: deprecated legacy direct provider retained for development/test compatibility only.
 - `openai_responses`: legacy direct provider retained for development/test compatibility only.
+- `rule_engine`: deterministic non-AI fallback inside Provider Runtime.
 
 ## Why this exists
 
-The immediate goal is not to delete legacy code. The goal is to prevent production WebChat Fast Reply from bypassing Provider Runtime routing, auditing, canary, and credential controls.
+The immediate goal is to prevent production WebChat Fast Reply from bypassing Provider Runtime routing, auditing, canary, and credential controls while retiring the old OpenClaw direct provider path.
 
 ## Tool execution boundary
 

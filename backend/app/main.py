@@ -52,7 +52,6 @@ from .services.password_policy import MIN_PASSWORD_LENGTH, PasswordPolicyError, 
 from .services.release_metadata import runtime_identity_status
 from .services.spa_fallback_hardening import should_block_spa_fallback
 from .services.storage_readiness import check_storage_readiness
-from .services.webchat_openclaw_responses_client import close_openclaw_clients
 from .settings import get_settings
 from .webchat_voice_config import is_webchat_voice_path, load_webchat_voice_runtime_config, webchat_voice_connect_sources
 
@@ -85,10 +84,6 @@ def _custom_openapi() -> dict:
 admin_api._validate_password_length = _validate_admin_password_or_http
 app.openapi = _custom_openapi
 
-
-@app.on_event('shutdown')
-async def shutdown_openclaw_clients() -> None:
-    await close_openclaw_clients()
 
 app.add_middleware(
     CORSMiddleware,

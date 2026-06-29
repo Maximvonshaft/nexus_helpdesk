@@ -116,7 +116,7 @@ def test_registry_classifies_all_declared_channels(db_session, monkeypatch):
 
 
 def test_internal_is_not_customer_sendable_and_email_is_not_runtime_ready(db_session, monkeypatch):
-    _reset_settings(monkeypatch, dispatch=True, provider="openclaw")
+    _reset_settings(monkeypatch, dispatch=True, provider="native")
     ticket = _ticket(db_session)
 
     with pytest.raises(HTTPException) as internal_exc:
@@ -132,7 +132,7 @@ def test_internal_is_not_customer_sendable_and_email_is_not_runtime_ready(db_ses
 
 
 def test_email_capability_uses_account_registry_and_target_validation(db_session, monkeypatch):
-    _reset_settings(monkeypatch, dispatch=True, provider="openclaw")
+    _reset_settings(monkeypatch, dispatch=True, provider="native")
     ticket = _ticket(db_session, channel=SourceChannel.email, contact="alice@nexusdesk-mail.com")
 
     missing_account = get_outbound_channel_capability(SourceChannel.email, db=db_session, ticket=ticket)
@@ -177,12 +177,16 @@ def test_whatsapp_requires_runtime_account_and_target(db_session, monkeypatch):
     assert cap.status == "configurable"
     assert cap.supports_send is False
     assert "enable_outbound_dispatch" in cap.missing
-    assert "outbound_provider_openclaw" in cap.missing
+    assert "outbound_provider_native" in cap.missing
     assert "whatsapp_channel_account" in cap.missing
 
 
 def test_whatsapp_is_ready_when_runtime_account_and_target_are_closed(db_session, monkeypatch):
-    _reset_settings(monkeypatch, dispatch=True, provider="openclaw")
+    _reset_settings(monkeypatch, dispatch=True, provider="native")
+    monkeypatch.setenv("WHATSAPP_DISPATCH_MODE", "native_sidecar")
+    monkeypatch.setenv("WHATSAPP_NATIVE_ENABLED", "true")
+    monkeypatch.setenv("WHATSAPP_SIDECAR_TOKEN", "sidecar-token")
+    get_settings.cache_clear()
     ticket = _ticket(db_session, channel=SourceChannel.whatsapp, contact="+15550123456")
     db_session.add(ChannelAccount(provider="whatsapp", account_id=f"wa-{_uid()}", is_active=True, priority=10))
     db_session.flush()
@@ -196,7 +200,7 @@ def test_whatsapp_is_ready_when_runtime_account_and_target_are_closed(db_session
 
 
 def test_whatsapp_native_mode_requires_sidecar_gates(db_session, monkeypatch):
-    _reset_settings(monkeypatch, dispatch=True, provider="openclaw")
+    _reset_settings(monkeypatch, dispatch=True, provider="native")
     monkeypatch.setenv("WHATSAPP_DISPATCH_MODE", "native_sidecar")
     monkeypatch.setenv("WHATSAPP_NATIVE_ENABLED", "true")
     get_settings.cache_clear()
@@ -217,7 +221,7 @@ def test_whatsapp_native_mode_requires_sidecar_gates(db_session, monkeypatch):
 
 
 def test_sms_requires_e164_target_even_when_runtime_and_account_are_ready(db_session, monkeypatch):
-    _reset_settings(monkeypatch, dispatch=True, provider="openclaw")
+    _reset_settings(monkeypatch, dispatch=True, provider="native")
     ticket = _ticket(db_session, channel=SourceChannel.sms, contact="0791234567")
     db_session.add(ChannelAccount(provider="sms", account_id=f"sms-{_uid()}", is_active=True, priority=10))
     db_session.flush()
@@ -230,7 +234,11 @@ def test_sms_requires_e164_target_even_when_runtime_and_account_are_ready(db_ses
 
 
 def test_ticket_outbound_capabilities_endpoint_is_ticket_scoped(db_session, monkeypatch):
-    _reset_settings(monkeypatch, dispatch=True, provider="openclaw")
+    _reset_settings(monkeypatch, dispatch=True, provider="native")
+    monkeypatch.setenv("WHATSAPP_DISPATCH_MODE", "native_sidecar")
+    monkeypatch.setenv("WHATSAPP_NATIVE_ENABLED", "true")
+    monkeypatch.setenv("WHATSAPP_SIDECAR_TOKEN", "sidecar-token")
+    get_settings.cache_clear()
     admin = _admin(db_session)
     ticket = _ticket(db_session, channel=SourceChannel.whatsapp, contact="+15550123456")
     db_session.add(ChannelAccount(provider="whatsapp", account_id=f"wa-{_uid()}", is_active=True, priority=10))

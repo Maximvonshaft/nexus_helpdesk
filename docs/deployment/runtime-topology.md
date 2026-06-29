@@ -1,11 +1,11 @@
 # NexusDesk Production Runtime Topology
 
-This document is the deployment contract for the server-side NexusDesk runtime. It exists to prevent drift between the GitHub repository, the server compose file, the frontend API base, Tailscale access, OpenClaw bridge integration, and persistent data.
+This document is the deployment contract for the server-side NexusDesk runtime. It exists to prevent drift between the GitHub repository, the server compose file, the frontend API base, Tailscale access, provider runtime integration, and persistent data.
 
 ## Standard controlled-pilot topology
 
 ```text
-Browser / local webapp / OpenClaw-side tools
+Browser / local webapp / provider-side tools
         |
         | HTTP API base: http://<tailscale-or-host>:18081
         v
@@ -16,8 +16,6 @@ app container :8080
         |
         +-- postgres container :5432
         +-- worker
-        +-- sync-daemon
-        +-- event-daemon
         +-- ../data/uploads mounted to /app/backend/uploads
 ```
 
@@ -29,9 +27,7 @@ The optional `nginx` service is behind the `edge-nginx` compose profile. It is n
 |---|---|---|
 | `postgres` | Primary database | Internal compose service by default. Use external DB only with an explicit override and documented `DATABASE_URL`. |
 | `app` | FastAPI + built SPA + WebChat static assets | Binds `127.0.0.1:18081:8080`. |
-| `worker` | Background jobs and optional external outbound dispatch | Dispatch is fail-closed unless `ENABLE_OUTBOUND_DISPATCH=true` and `OUTBOUND_PROVIDER=openclaw`. |
-| `sync-daemon` | OpenClaw transcript sync daemon | Keeps linked conversations current. |
-| `event-daemon` | OpenClaw event-driven ingestion | Must have heartbeat visible in runtime health. |
+| `worker` | Background jobs and optional external outbound dispatch | Dispatch is fail-closed unless `ENABLE_OUTBOUND_DISPATCH=true` and `OUTBOUND_PROVIDER=native` for external messaging, or `OUTBOUND_PROVIDER=email/smtp` for email-only pilots. |
 | `nginx` | Optional edge reverse proxy | Enabled only with `--profile edge-nginx`. |
 
 ## Frontend API base contract
@@ -68,7 +64,7 @@ FRONTEND_BUILD_SHA
 
 Strict production should use S3-compatible object storage. Controlled pilots may use local storage only if:
 
-1. `../data/uploads` is mounted to `/app/backend/uploads` for app, worker, sync-daemon, and event-daemon.
+1. `../data/uploads` is mounted to `/app/backend/uploads` for app and worker.
 2. Daily server backup includes `data/uploads`.
 3. A restore drill has been performed before accepting customer POD/attachment evidence as production-critical.
 

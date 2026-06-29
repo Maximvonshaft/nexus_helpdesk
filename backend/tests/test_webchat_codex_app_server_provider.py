@@ -207,7 +207,6 @@ def test_codex_app_server_production_token_file_is_compatible_with_provider_runt
     monkeypatch.setenv("CODEX_APP_SERVER_CANARY_PERCENT", "100")
     monkeypatch.setenv("CODEX_APP_SERVER_KILL_SWITCH", "false")
     monkeypatch.delenv("CODEX_APP_SERVER_TOKEN", raising=False)
-    monkeypatch.delenv("OPENCLAW_RESPONSES_TOKEN_FILE", raising=False)
     _clear_settings()
 
     settings = get_webchat_fast_settings()

@@ -4,7 +4,7 @@ Use this mode for controlled single-server or VM pilot deployments.
 
 Required files:
 
-- deploy/docker-compose.server.local-postgres.yml
+- deploy/docker-compose.server.yml
 - deploy/.env.prod.local-postgres.example
 
 Operational rules:
@@ -19,7 +19,7 @@ Operational rules:
 Required checks:
 
 - bash scripts/deploy/check_deploy_contract.sh
-- docker compose config with the local-postgres compose file
+- docker compose --env-file deploy/.env.prod.local-postgres.example -f deploy/docker-compose.server.yml config
 - backend Alembic upgrade head
 - backend pytest
 - healthz and readyz after deployment

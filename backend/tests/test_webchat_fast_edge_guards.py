@@ -58,7 +58,7 @@ def _ok_reply(text: str = "Hi, this is Speedy.") -> WebchatFastReplyResult:
     return WebchatFastReplyResult(
         ok=True,
         ai_generated=True,
-        reply_source="openclaw_responses",
+        reply_source="provider_runtime",
         reply=text,
         intent="greeting",
         tracking_number=None,

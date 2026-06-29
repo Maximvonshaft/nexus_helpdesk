@@ -13,7 +13,7 @@ This branch converts the production-only drift into source-controlled code, temp
 Implemented here:
 
 - Feature-gated `webchat/demo` live voice entry mode using same-origin `/webchat/live/ws`.
-- Backend hotfixes for support intelligence, WhatsApp Lite session dedupe, conversation transcript evidence, OpenClaw support knowledge bridge, login normalization, and WhatsApp broadcast-target filtering.
+- Backend hotfixes for support intelligence, WhatsApp Lite session compatibility, conversation transcript evidence, login normalization, and WhatsApp broadcast-target filtering.
 - Release metadata completeness fields in `/healthz` and `/readyz`.
 - Secret-free nginx and compose templates.
 - Candidate smoke script and controlled cutover/rollback runbook.
@@ -22,10 +22,10 @@ Implemented here:
 
 | Area | Classification | Action |
 | --- | --- | --- |
-| Support intelligence API and service | Keep | Added `/api/support-intelligence/*`, backed by config DB plus OpenClaw support knowledge bridge. |
-| WhatsApp Lite console API | Keep | Added `/api/whatsapp-lite/*`, direct-session dedupe, turn-session merging, outbox mirror, and tests. |
-| OpenClaw support knowledge bridge endpoint | Keep | Added `/support-knowledge-config` with operation allowlist and module validation. |
-| OpenClaw local media thumbnail extraction | Keep | Added safe `.openclaw/media`-scoped image extraction only; no arbitrary file read. |
+| Support intelligence API and service | Keep | Added `/api/support-intelligence/*`, backed by config DB and operation allowlist. |
+| WhatsApp Lite console API | Rewrite | Keep parsing helpers and outbox mirror compatibility, but default live source is retired until a native sidecar conversation API exists. |
+| Legacy support knowledge bridge endpoint | Drop | Do not retain OpenClaw-specific support knowledge transport as a runtime dependency. |
+| Legacy local media thumbnail extraction | Drop | Do not read `.openclaw/media`; media evidence should come from Nexus storage or a native provider adapter. |
 | Ticket conversation transcript | Keep | Added read-only `/api/tickets/{ticket_id}/conversation-transcript`. |
 | Login username normalization | Keep | Kept case-insensitive lookup and normalized throttle key. |
 | WhatsApp outbound target cleanup | Keep | Dropped `status@broadcast`/`broadcast` targets before dispatch. |
@@ -50,7 +50,7 @@ flowchart LR
   demo --> voice_entry["/webchat/voice-entry.js"]
   chat_ui --> fast_reply["POST /api/webchat/fast-reply"]
   fast_reply --> fast_router["webchat_fast_router"]
-  fast_router --> routing["provider routing: codex_app_server -> openclaw_responses -> rule_engine"]
+  fast_router --> routing["provider_runtime: codex_app_server -> openai_responses -> rule_engine"]
   routing --> reply["AI/text reply"]
   reply --> chat_ui
   voice_entry --> mode{"data-live-voice-mode?"}
@@ -85,8 +85,6 @@ flowchart TD
   edge --> live_voice["Live voice upstream via /webchat/live/ws"]
   edge --> support_console["Support console upstream via /api/support/*"]
   app --> postgres["Postgres"]
-  app --> openclaw_bridge["OpenClaw bridge"]
-  openclaw_bridge --> openclaw_gateway["OpenClaw gateway/runtime"]
   app --> whatsapp_sidecar["WhatsApp sidecar"]
   whatsapp_sidecar --> whatsapp_web["WhatsApp Web session storage"]
   app --> frontend_dist["frontend_dist static SPA"]

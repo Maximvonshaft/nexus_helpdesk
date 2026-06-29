@@ -8,5 +8,5 @@ Safe sequence:
 2. Extract user routes.
 3. Extract market/channel routes.
 4. Extract AI config routes.
-5. Extract OpenClaw runtime routes.
+5. Extract legacy session compatibility routes.
 6. Keep `admin.py` as aggregate compatibility router.

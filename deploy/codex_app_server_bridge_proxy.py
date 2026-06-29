@@ -48,7 +48,7 @@ SAFE_UPSTREAM_ERROR_CODES = {
 def resolve_real_upstream_url() -> str:
     if RUNTIME_BACKEND == "node_appserver":
         return REAL_UPSTREAM_URL_NODE or "http://codex-appserver-runtime:18810/reply"
-    return REAL_UPSTREAM_URL_PYTHON or LEGACY_REAL_UPSTREAM_URL or "http://codex-private-model-runtime:18800/reply"
+    return REAL_UPSTREAM_URL_PYTHON or LEGACY_REAL_UPSTREAM_URL or "http://codex-private-reply-engine:18796/reply"
 
 
 def resolve_reply_generation_backend() -> str:

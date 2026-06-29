@@ -38,7 +38,7 @@ def setup_function():
 
 
 def _settings():
-    return SimpleNamespace(stream_enabled=True, stream_require_accept=True, openclaw_responses_agent_id="webchat-fast", is_openclaw_stream_configured=True)
+    return SimpleNamespace(stream_enabled=True, stream_require_accept=True, provider_runtime_agent_id="webchat-fast", is_openclaw_stream_configured=True)
 
 
 def _payload() -> dict:
@@ -57,7 +57,7 @@ def test_reply_delta_is_not_observable_before_final(monkeypatch):
         return WebchatFastReplyResult(
             ok=True,
             ai_generated=True,
-            reply_source="openclaw_responses",
+            reply_source="provider_runtime",
             reply="Hello world",
             intent="general_support",
             tracking_number=None,

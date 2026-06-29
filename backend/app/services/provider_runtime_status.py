@@ -222,22 +222,6 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
 
     providers = [
         _provider_entry(
-            name="openclaw_responses",
-            selected=settings.provider == "openclaw_responses",
-            feature_enabled=True,
-            configured=settings.is_openclaw_configured,
-            runtime="private_responses_proxy",
-            capabilities=_provider_capabilities(webchat_fast_reply=settings.is_openclaw_configured),
-            diagnostics={
-                "url_configured": bool(settings.openclaw_responses_url),
-                "token_file_configured": bool(settings.openclaw_responses_token_file),
-                "token_configured": bool(settings.token),
-                "connect_timeout_ms": settings.openclaw_connect_timeout_ms,
-                "read_timeout_ms": settings.openclaw_read_timeout_ms,
-                "total_timeout_ms": settings.openclaw_total_timeout_ms,
-            },
-        ),
-        _provider_entry(
             name="codex_app_server",
             selected=settings.provider in {"codex_app_server", "provider_runtime"},
             feature_enabled=settings.codex_app_server_enabled or settings.provider == "provider_runtime",
@@ -314,11 +298,9 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
         if bridge_readiness["bridge_mode"] == "stub":
             warnings.append("codex_app_server bridge is in stub mode")
         if settings.codex_app_server_kill_switch:
-            warnings.append("codex_app_server kill switch is active; traffic routes to openclaw_responses")
-        if settings.codex_app_server_canary_percent < 100 and settings.fallback_provider != "openclaw_responses":
-            warnings.append("codex_app_server canary below 100 requires openclaw_responses fallback for skipped traffic")
-        if settings.fallback_provider == "openclaw_responses" and not settings.is_openclaw_configured:
-            warnings.append("openclaw_responses fallback is selected but not configured")
+            warnings.append(f"codex_app_server kill switch is active; traffic routes to {settings.fallback_provider}")
+        if settings.codex_app_server_canary_percent < 100 and settings.fallback_provider == "none":
+            warnings.append("codex_app_server canary below 100 requires a fallback provider for skipped traffic")
     if settings.provider == "provider_runtime":
         codex = next(item for item in providers if item["name"] == "codex_app_server")
         if not codex["diagnostics"]["active_credential_exists"]:

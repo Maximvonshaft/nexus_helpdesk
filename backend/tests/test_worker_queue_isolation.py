@@ -26,7 +26,6 @@ def test_worker_queue_isolation(monkeypatch):
     monkeypatch.setattr(run_worker, 'record_worker_poll', lambda worker_id: None)
     monkeypatch.setattr(run_worker, 'log_event', lambda *a, **k: None)
     monkeypatch.setattr(run_worker, '_run_outbound', lambda worker_id: calls.append('outbound') or 1)
-    monkeypatch.setattr(run_worker, '_run_openclaw_inbound', lambda worker_id: calls.append('openclaw-inbound') or 1)
     monkeypatch.setattr(run_worker, '_run_background', lambda worker_id: calls.append('background') or 1)
     monkeypatch.setattr(run_worker, '_run_handoff_snapshot', lambda worker_id: calls.append('handoff-snapshot') or 1)
     monkeypatch.setattr(run_worker, '_run_webchat_ai', lambda worker_id: calls.append('webchat-ai') or 1)
@@ -35,9 +34,8 @@ def test_worker_queue_isolation(monkeypatch):
         'handoff-snapshot': ['handoff-snapshot'],
         'outbound': ['outbound'],
         'background': ['background'],
-        'openclaw-inbound': ['openclaw-inbound'],
         'webchat-ai': ['webchat-ai'],
-        'all': ['outbound', 'openclaw-inbound', 'background', 'handoff-snapshot'],
+        'all': ['outbound', 'background', 'handoff-snapshot'],
     }
 
     for queue, expected in expectations.items():

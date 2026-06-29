@@ -14,7 +14,7 @@ Validated scope:
 
 Out of scope:
 
-- Real OpenClaw account binding
+- Real native/provider account binding
 - Real customer channel delivery
 - Outbound dispatch behavior changes
 - PR #6 merge or cherry-pick
@@ -40,7 +40,7 @@ Out of scope:
 | Knowledge | Open `/control-plane` with `ai_config.manage` | Knowledge table loads or shows empty state |
 | Channel tasks | Open `/control-plane` with `channel_account.manage` | Channel task table loads or shows empty state |
 | Boundary | Open `/control-plane` as unauthorized user | User is redirected to `/` |
-| Safety | Click/refresh page | No OpenClaw dispatch, outbound send, or real customer channel operation is triggered |
+| Safety | Click/refresh page | No native/provider dispatch, outbound send, or real customer channel operation is triggered |
 | CI | Run backend/frontend workflows | `backend-ci`, `postgres-migration`, `webapp-build`, `round-a-smoke`, `integration-contracts` pass |
 
 ## Manual API probes

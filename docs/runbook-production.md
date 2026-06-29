@@ -21,8 +21,7 @@ npm run typecheck
 npm run build
 npm run lint
 cd ..
-docker compose --env-file deploy/.env.prod.local-postgres.example -f deploy/docker-compose.server.local-postgres.yml config
-docker compose --env-file deploy/.env.prod.external-postgres.example -f deploy/docker-compose.server.external-postgres.yml config
+docker compose --env-file deploy/.env.prod.example -f deploy/docker-compose.server.yml config
 ```
 
 ## Safety defaults
@@ -33,6 +32,12 @@ These defaults must remain false or disabled unless a dedicated outbound rollout
 ENABLE_OUTBOUND_DISPATCH=false
 OUTBOUND_PROVIDER=disabled
 OPENCLAW_CLI_FALLBACK_ENABLED=false
+OPENCLAW_TRANSPORT=disabled
+OPENCLAW_DEPLOYMENT_MODE=disabled
+OPENCLAW_SYNC_ENABLED=false
+OPENCLAW_INBOUND_AUTO_SYNC_ENABLED=false
+OPENCLAW_EVENT_DRIVER_ENABLED=false
+OPENCLAW_BRIDGE_ENABLED=false
 WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT=false
 ```
 
@@ -52,6 +57,6 @@ WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT=false
 3. Restore database only if the migration is not forward-compatible and a backup exists.
 4. Recheck `/healthz` and `/readyz`.
 
-## OpenClaw note
+## Legacy OpenClaw Note
 
-OpenClaw inbound auto-sync is independent from outbound dispatch. Do not enable write bridge or outbound dispatch as part of this production audit closure.
+OpenClaw runtime paths are retired. Do not enable bridge, MCP, CLI fallback, inbound auto-sync, sync daemon, or event driver settings. Existing `openclaw_*` tables and API names are compatibility surfaces only.

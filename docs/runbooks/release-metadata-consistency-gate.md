@@ -66,4 +66,4 @@ This gate must not modify:
 - Database schema
 - Frontend UI behavior
 - Docker Compose service topology
-- `sync-daemon` state
+- Worker service state (`worker-outbound`, `worker-background`, `worker-webchat-ai`, `worker-handoff-snapshot`)

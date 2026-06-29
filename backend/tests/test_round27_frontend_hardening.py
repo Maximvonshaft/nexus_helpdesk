@@ -5,8 +5,9 @@ PROJECT = ROOT.parent
 
 
 def test_compose_image_tags_are_aligned_to_current_release():
-    compose = (PROJECT / 'deploy' / 'docker-compose.cloud.yml').read_text()
-    assert compose.count('nexusdesk/helpdesk:round20b') == 4 or compose.count('nexusdesk/helpdesk:round27') == 4
+    compose = (PROJECT / 'deploy' / 'docker-compose.server.yml').read_text()
+    assert '${IMAGE_TAG:-nexusdesk/helpdesk:server}' in compose
+    assert 'docker-compose.cloud.yml' not in compose
     assert 'round26' not in compose
 
 
@@ -90,13 +91,17 @@ def test_ci_readiness_checks_are_blocking():
 
 
 def test_deployment_templates_prevent_server_drift():
-    server_compose = (PROJECT / 'deploy' / 'docker-compose.server.example.yml').read_text()
+    server_compose = (PROJECT / 'deploy' / 'docker-compose.server.yml').read_text()
     env_template = (PROJECT / 'deploy' / '.env.prod.example').read_text()
     readme = (PROJECT / 'README.md').read_text()
 
-    assert 'sync-daemon' in server_compose
-    assert 'event-daemon' in server_compose
-    assert 'WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT: "false"' in server_compose
+    assert 'worker-outbound' in server_compose
+    assert 'worker-background' in server_compose
+    assert 'worker-webchat-ai' in server_compose
+    assert 'worker-handoff-snapshot' in server_compose
+    assert 'sync-daemon' not in server_compose
+    assert 'event-daemon' not in server_compose
+    assert 'OPENCLAW_TRANSPORT: disabled' in server_compose
     assert 'WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT=false' in env_template
     assert 'Server deployment drift prevention' in readme
     assert 'git reset --hard' in readme

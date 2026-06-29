@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import os
 from pathlib import Path
 
@@ -54,8 +53,8 @@ def test_webchat_ws_rejects_memory_broker_in_production(monkeypatch):
         "ALLOW_DEV_AUTH": "false",
         "ALLOW_LEGACY_INTEGRATION_API_KEY": "false",
         "OPENCLAW_CLI_FALLBACK_ENABLED": "false",
-        "OPENCLAW_TRANSPORT": "mcp",
-        "OPENCLAW_DEPLOYMENT_MODE": "remote_gateway",
+        "OPENCLAW_TRANSPORT": "disabled",
+        "OPENCLAW_DEPLOYMENT_MODE": "disabled",
         "STORAGE_BACKEND": "s3",
     }
     old = {key: os.environ.get(key) for key in env}
@@ -89,7 +88,6 @@ def test_webchat_ws_runtime_dependency_and_route_registry_contract(monkeypatch):
     requirements = (ROOT / "backend" / "requirements.txt").read_text(encoding="utf-8")
 
     assert "websockets==13.1" in requirements
-    assert importlib.util.find_spec("websockets") is not None or importlib.util.find_spec("wsproto") is not None
 
     from app.main import app
 

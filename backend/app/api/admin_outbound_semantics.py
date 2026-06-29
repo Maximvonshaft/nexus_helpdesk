@@ -65,8 +65,11 @@ def openclaw_runtime_health_with_outbound_semantics(db: Session = Depends(get_db
     webchat_counts = _webchat_local_counts(outbound_counts)
 
     warnings: list[str] = []
+    if not settings.openclaw_sync_enabled:
+        warnings.append('Legacy session sync is disabled')
     if heartbeat is None:
-        warnings.append('OpenClaw event daemon heartbeat missing')
+        if settings.openclaw_event_driver_enabled:
+            warnings.append('Legacy event daemon heartbeat missing')
         daemon_status = None
         daemon_seen = None
     else:
@@ -74,13 +77,13 @@ def openclaw_runtime_health_with_outbound_semantics(db: Session = Depends(get_db
         daemon_seen = heartbeat.last_seen_at
         from ..utils.time import ensure_utc
         if daemon_seen and (utc_now() - ensure_utc(daemon_seen)).total_seconds() > settings.openclaw_sync_daemon_stale_seconds:
-            warnings.append('OpenClaw event daemon heartbeat is stale')
+            warnings.append('Legacy event daemon heartbeat is stale')
     if stale_link_count > settings.openclaw_sync_batch_size:
-        warnings.append('OpenClaw stale link backlog exceeds one batch')
+        warnings.append('Legacy session link backlog exceeds one batch')
     if dead_sync_jobs > 0:
-        warnings.append('There are dead OpenClaw sync jobs')
+        warnings.append('There are dead legacy session sync jobs')
     if dead_attachment_jobs > 0:
-        warnings.append('There are dead OpenClaw attachment persist jobs')
+        warnings.append('There are dead legacy attachment persist jobs')
     if outbound_counts['external_pending_outbound'] > 0 and not settings.enable_outbound_dispatch:
         warnings.append('External outbound messages are pending while outbound dispatch is disabled')
 
@@ -101,7 +104,7 @@ def openclaw_runtime_health_with_outbound_semantics(db: Session = Depends(get_db
         **webchat_counts,
         'outbound_dispatch_enabled': bool(settings.enable_outbound_dispatch),
         'outbound_provider': settings.outbound_provider,
-        'openclaw_bridge_allow_writes': bool(getattr(settings, 'openclaw_bridge_allow_writes', False)),
+        'openclaw_bridge_allow_writes': False,
         'openclaw_cli_fallback_enabled': bool(settings.openclaw_cli_fallback_enabled),
         'warnings': warnings,
     }

@@ -27,13 +27,13 @@ def test_probe_refuses_destructive_arguments() -> None:
 
 def test_service_state_detects_running_compose_service() -> None:
     probe = _load_probe_module()
-    ps = {'ok': True, 'services': [{'Service': 'worker', 'State': 'running'}]}
-    state = probe._service_state(ps, 'worker')
+    ps = {'ok': True, 'services': [{'Service': 'worker-outbound', 'State': 'running'}]}
+    state = probe._service_state(ps, 'worker-outbound')
     assert state['found'] is True
     assert state['running'] is True
 
 
 def test_service_state_reports_missing() -> None:
     probe = _load_probe_module()
-    state = probe._service_state({'ok': True, 'services': []}, 'event-daemon')
+    state = probe._service_state({'ok': True, 'services': []}, 'worker-handoff-snapshot')
     assert state == {'found': False, 'running': False}

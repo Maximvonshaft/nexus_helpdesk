@@ -6,8 +6,10 @@ x-app-image: &app_image
     APP_ENV: production
     AUTO_INIT_DB: "false"
     SEED_DEMO_DATA: "false"
-    OPENCLAW_DEPLOYMENT_MODE: remote_gateway
-    OPENCLAW_TRANSPORT: mcp
+    OPENCLAW_DEPLOYMENT_MODE: disabled
+    OPENCLAW_TRANSPORT: disabled
+    OPENCLAW_SYNC_ENABLED: "false"
+    OPENCLAW_EVENT_DRIVER_ENABLED: "false"
     OPENCLAW_CLI_FALLBACK_ENABLED: "false"
     WEBCHAT_RATE_LIMIT_BACKEND: ${WEBCHAT_RATE_LIMIT_BACKEND:-database}
     WEBCHAT_WS_ENABLED: ${WEBCHAT_WS_ENABLED:-false}
@@ -33,8 +35,6 @@ x-app-image: &app_image
     FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
   volumes: &app_volumes
     - /run/secrets:/run/secrets:ro
-    - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_responses_token:/run/openclaw_responses_token:ro
-    - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_native_responses_token:/run/openclaw_native_responses_token:ro
     - /opt/nexus_helpdesk/deploy/runtime_secrets/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
     - ../data/uploads:/app/backend/uploads
   logging: &json_logging
@@ -172,7 +172,7 @@ services:
       CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED: ${CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED:-false}
       CODEX_APP_SERVER_BRIDGE_MODE: ${CODEX_APP_SERVER_BRIDGE_MODE:-real}
       CODEX_APP_SERVER_RUNTIME_BACKEND: ${CODEX_APP_SERVER_RUNTIME_BACKEND:-python_cli_pool}
-      CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON:-http://codex-private-model-runtime:18800/reply}
+      CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON:-http://codex-private-reply-engine:18796/reply}
       CODEX_APP_SERVER_REAL_UPSTREAM_URL_NODE: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL_NODE:-http://codex-appserver-runtime:18810/reply}
       CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: ${CODEX_APP_SERVER_REPLY_GENERATION_BACKEND:-}
       CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS:-9}
@@ -269,73 +269,6 @@ services:
       retries: 5
       start_period: 10s
 
-  codex-openclaw-home-permissions:
-    <<: *app_image
-    profiles:
-      - codex-app-server
-    user: "0:0"
-    restart: "no"
-    volumes:
-      - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_codex_home:/home/appuser/.openclaw:rw
-    command: sh -c "mkdir -p /home/appuser/.openclaw && chown -R appuser:appgroup /home/appuser/.openclaw && chmod 700 /home/appuser/.openclaw"
-
-  codex-private-model-runtime:
-    <<: *app_image
-    profiles:
-      - codex-app-server
-    environment:
-      APP_ENV: production
-      HOME: /home/appuser
-      OPENCLAW_HOME: /home/appuser/.openclaw
-      XDG_CONFIG_HOME: /home/appuser/.openclaw
-      BIND_HOST: 0.0.0.0
-      PORT: "18800"
-      OPENCLAW_CODEX_RUNTIME_ENABLED: ${OPENCLAW_CODEX_RUNTIME_ENABLED:-false}
-      OPENCLAW_CODEX_CLI: ${OPENCLAW_CODEX_CLI:-openclaw}
-      OPENCLAW_CODEX_AUTH_PROVIDER: ${OPENCLAW_CODEX_AUTH_PROVIDER:-openai-codex}
-      OPENCLAW_CODEX_PLUGIN_PACKAGE: ${OPENCLAW_CODEX_PLUGIN_PACKAGE:-@openclaw/codex}
-      OPENCLAW_CODEX_REQUIRE_PLUGIN: ${OPENCLAW_CODEX_REQUIRE_PLUGIN:-true}
-      OPENCLAW_CODEX_MODEL: ${OPENCLAW_CODEX_MODEL:-}
-      OPENCLAW_CODEX_INFER_TRANSPORT: ${OPENCLAW_CODEX_INFER_TRANSPORT:-local}
-      OPENCLAW_CODEX_AGENT: ${OPENCLAW_CODEX_AGENT:-}
-      OPENCLAW_CODEX_READY_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_READY_TIMEOUT_SECONDS:-30}
-      OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_READY_SMOKE_TIMEOUT_SECONDS:-30}
-      OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS: ${OPENCLAW_CODEX_READY_SMOKE_TTL_SECONDS:-60}
-      OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS: ${OPENCLAW_CODEX_REPLY_TIMEOUT_SECONDS:-7.5}
-      OPENCLAW_CODEX_EXECUTION_MODE: ${OPENCLAW_CODEX_EXECUTION_MODE:-warm_pool}
-      OPENCLAW_CODEX_WORKER_POOL_SIZE: ${OPENCLAW_CODEX_WORKER_POOL_SIZE:-1}
-      OPENCLAW_CODEX_QUEUE_TIMEOUT_MS: ${OPENCLAW_CODEX_QUEUE_TIMEOUT_MS:-250}
-      OPENCLAW_CODEX_GATEWAY_URL: ${OPENCLAW_CODEX_GATEWAY_URL:-ws://127.0.0.1:18789}
-    volumes:
-      - /run/secrets:/run/secrets:ro
-      - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_responses_token:/run/openclaw_responses_token:ro
-      - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_native_responses_token:/run/openclaw_native_responses_token:ro
-      - /opt/nexus_helpdesk/deploy/runtime_secrets/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
-      - ../data/uploads:/app/backend/uploads
-      - /opt/nexus_helpdesk/deploy/runtime_secrets/openclaw_codex_home:/home/appuser/.openclaw:rw
-    depends_on:
-      codex-openclaw-home-permissions:
-        condition: service_completed_successfully
-    expose:
-      - "18800"
-    command: python /app/deploy/codex_openclaw_codex_harness_adapter.py
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18800/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  worker-openclaw-inbound:
-    <<: *app_image
-    profiles:
-      - openclaw-inbound
-    command: python scripts/run_worker.py --worker-id worker-openclaw-inbound --queue openclaw-inbound
-    healthcheck: *worker_healthcheck
-    depends_on:
-      app:
-        condition: service_healthy
-
   legacy-worker:
     <<: *app_image
     profiles:
@@ -345,45 +278,6 @@ services:
     depends_on:
       app:
         condition: service_healthy
-
-  sync-daemon:
-    <<: *app_image
-    profiles:
-      - openclaw
-    command: python scripts/run_openclaw_sync_daemon.py --worker-id worker-openclaw-sync
-    depends_on:
-      app:
-        condition: service_healthy
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          python -c "from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'scripts/run_openclaw_sync_daemon.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('openclaw-sync-daemon-ok')"
-      interval: 30s
-      timeout: 10s
-      start_period: 20s
-      retries: 3
-
-  event-daemon:
-    <<: *app_image
-    profiles:
-      - openclaw
-    environment:
-      <<: *app_env
-      OPENCLAW_EVENT_DRIVER_ENABLED: "true"
-    command: python scripts/run_openclaw_event_daemon.py
-    depends_on:
-      app:
-        condition: service_healthy
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          python -c "from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'scripts/run_openclaw_event_daemon.py' in cmd, cmd; from sqlalchemy import text; from app.db import SessionLocal; db=SessionLocal(); db.execute(text('select 1')); db.close(); print('openclaw-event-daemon-ok')"
-      interval: 30s
-      timeout: 10s
-      start_period: 20s
-      retries: 3
 
   nginx:
     image: nginx:1.27-alpine

@@ -27,7 +27,7 @@ You need:
 - an explicit Codex auth source file for future real mode;
 - the Nexus repository checkout.
 
-For real OpenClaw/Codex integration, use only an explicit local auth source and a private app-server endpoint. Do not scrape browser cookies or ChatGPT sessions.
+For real Codex integration, use only an explicit local auth source and a private app-server endpoint. Do not scrape browser cookies or ChatGPT sessions.
 
 Do not paste credentials into shell history. Prefer files under `/run/nexus/` with root-only permissions.
 
@@ -48,7 +48,7 @@ PYTHONPATH=backend pytest -q \
 
 ## Login payload boundary
 
-OpenClaw's Codex app-server auth bridge sends `account/login/start` with one of these payload shapes:
+The Codex app-server auth bridge sends `account/login/start` with one of these payload shapes:
 
 ```json
 { "type": "chatgptAuthTokens", "accessToken": "...", "chatgptAccountId": "...", "chatgptPlanType": "..." }
@@ -115,7 +115,7 @@ POST /account/login/start
 
 It validates the `account/login/start` payload shape and returns a sanitized success response. It does not implement reply generation, model calls, shell execution, browser access, session scraping, or tool execution.
 
-Use it to prove the non-dry-run HTTP path before connecting to any real OpenClaw/Codex endpoint.
+Use it to prove the non-dry-run HTTP path before connecting to any real Codex endpoint.
 
 ## Synthetic transport dry-run validation
 
@@ -380,12 +380,12 @@ export CODEX_APP_SERVER_KILL_SWITCH='true'
 
 When `WEBCHAT_FAST_AI_PROVIDER=codex_app_server`, router behavior is:
 
-- kill switch true -> `openclaw_responses`
-- canary 0 -> `openclaw_responses`
+- kill switch true -> configured Provider Runtime fallback
+- canary 0 -> configured Provider Runtime fallback
 - canary 1..99 -> stable hash by tenant/session/request
 - canary 100 -> `codex_app_server`
 
-Production note: if kill switch is true or canary percent is below 100, OpenClaw route config is required because some or all traffic can route there.
+Production note: keep WebChat Fast on `WEBCHAT_FAST_AI_PROVIDER=provider_runtime`; configure fallbacks through Provider Runtime routing rules or `PROVIDER_RUNTIME_FALLBACK_PROVIDERS`.
 
 ## Current real Codex app-server mode
 
@@ -422,7 +422,7 @@ The probe, sidecar, backend provider, router controls, upstream adapter skeleton
 - HTTP probe URLs are allowed only for loopback hosts such as `127.0.0.1` and `localhost`.
 - Remote probe URLs must use HTTPS.
 - URL userinfo is rejected.
-- The response must pass `parse_openclaw_fast_reply`.
+- The response must pass `parse_fast_reply_provider_output`.
 - Tool/function-call shaped payloads are rejected by the existing parser.
 - Customer-visible internal terms are rejected by the existing parser.
 - Sidecar `/reply` returns only the six strict reply fields on success.
@@ -442,7 +442,7 @@ In production:
 - `CODEX_APP_SERVER_TOKEN_FILE` is required when provider is `codex_app_server`.
 - `CODEX_APP_SERVER_BRIDGE_URL` must point to private, loopback, link-local, or tailnet/CGNAT address space.
 - `CODEX_APP_SERVER_CANARY_PERCENT` must be 0..100.
-- If `CODEX_APP_SERVER_KILL_SWITCH=true` or `CODEX_APP_SERVER_CANARY_PERCENT<100`, OpenClaw route config is required.
+- If `CODEX_APP_SERVER_KILL_SWITCH=true` or `CODEX_APP_SERVER_CANARY_PERCENT<100`, Provider Runtime fallback configuration is required.
 - Production default provider remains unchanged unless explicitly configured.
 
 ## Release gate before real upstream reply integration
@@ -468,7 +468,7 @@ Preferred rollback order:
 
 1. Set `CODEX_APP_SERVER_KILL_SWITCH=true`.
 2. Or set `CODEX_APP_SERVER_CANARY_PERCENT=0`.
-3. Or set `WEBCHAT_FAST_AI_PROVIDER=openclaw_responses`.
+3. Or set Provider Runtime primary/fallback providers to `openai_responses,rule_engine`.
 4. Stop the sidecar/upstream/fixture processes if no longer needed.
 
 The default provider remains unchanged unless explicitly configured.

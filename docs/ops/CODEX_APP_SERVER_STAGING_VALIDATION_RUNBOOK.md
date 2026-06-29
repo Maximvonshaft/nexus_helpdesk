@@ -7,7 +7,7 @@ It follows issue #161 and assumes #160 has already been merged and deployed with
 ## Current production baseline
 
 ```text
-Production provider: openclaw_responses
+Production provider: provider_runtime
 WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED=false
 CODEX_APP_SERVER_CANARY_PERCENT=0
 Production image: nexusdesk/helpdesk:main-88c751e
@@ -25,7 +25,7 @@ It must not:
 - execute shell commands from model output;
 - mutate tickets, refunds, claims, addresses, shipment states, or customer-visible outbound messages;
 - expose customer text, tokens, cookies, authorization headers, or upstream raw payloads in logs;
-- bypass Nexus strict parser, provider router, feature flags, canary controls, or OpenClaw fallback.
+- bypass Nexus strict parser, Provider Runtime routing, feature flags, canary controls, or configured fallback.
 
 ## Required staging topology
 
@@ -48,7 +48,7 @@ The Codex endpoint must be reachable only through an explicitly allowed private 
 Start with Codex disabled even in staging:
 
 ```text
-WEBCHAT_FAST_AI_PROVIDER=openclaw_responses
+WEBCHAT_FAST_AI_PROVIDER=provider_runtime
 WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED=false
 CODEX_APP_SERVER_CANARY_PERCENT=0
 ```
@@ -56,10 +56,10 @@ CODEX_APP_SERVER_CANARY_PERCENT=0
 Expected result:
 
 ```text
-provider=openclaw_responses
+provider=provider_runtime
 codex_app_server_enabled=False
 codex_app_server_canary_percent=0
-OpenClaw reply path works
+Provider Runtime fallback path works
 ```
 
 ### Stage 1: private endpoint discovery only
@@ -150,7 +150,7 @@ No extra customer-visible action fields are accepted at this gate.
 
 ## Failure-path matrix
 
-All failure cases must fail closed and preserve OpenClaw fallback.
+All failure cases must fail closed and preserve configured Provider Runtime fallback.
 
 | Case | Required behavior |
 | --- | --- |
@@ -196,7 +196,7 @@ Production Codex canary is blocked unless all conditions are true:
 
 ```text
 CODEX_APP_SERVER_STAGING_GATE=PASS
-OpenClaw fallback verified
+Provider Runtime fallback verified
 No secret leak
 No customer PII leak
 Strict parser verified
@@ -209,7 +209,7 @@ Only then may a separate production canary PR or deployment plan be opened.
 Initial production canary must be conservative:
 
 ```text
-WEBCHAT_FAST_AI_PROVIDER=openclaw_responses
+WEBCHAT_FAST_AI_PROVIDER=provider_runtime
 WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED=true
 CODEX_APP_SERVER_CANARY_PERCENT=1
 ```
@@ -217,7 +217,7 @@ CODEX_APP_SERVER_CANARY_PERCENT=1
 If any canary issue appears, rollback target is:
 
 ```text
-WEBCHAT_FAST_AI_PROVIDER=openclaw_responses
+WEBCHAT_FAST_AI_PROVIDER=provider_runtime
 WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED=false
 CODEX_APP_SERVER_CANARY_PERCENT=0
 ```
@@ -230,7 +230,7 @@ CODEX_APP_SERVER_CANARY_PERCENT=0
 - [ ] Contract probe passed.
 - [ ] Failure matrix passed.
 - [ ] Logs sanitized and reviewed.
-- [ ] OpenClaw fallback verified.
+- [ ] Provider Runtime fallback verified.
 - [ ] Production config unchanged.
 - [ ] Issue #161 updated with evidence summary.
 - [ ] Explicit owner approval recorded before production canary.

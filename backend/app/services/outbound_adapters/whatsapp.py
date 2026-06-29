@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from ...enums import MessageStatus, SourceChannel
 from ...models import ChannelAccount, OpenClawConversationLink, Ticket, TicketOutboundMessage
 from ...utils.time import utc_now
-from ..openclaw_bridge import dispatch_via_openclaw_bridge
 
 DispatchFn = Callable[..., tuple[MessageStatus, str | None, object | None]]
 
@@ -25,7 +24,7 @@ class WhatsAppOutboundRoute:
     def to_context(self, *, idempotency_key: str) -> dict[str, Any]:
         payload = asdict(self)
         payload["idempotency_key"] = idempotency_key
-        payload["adapter"] = "whatsapp_openclaw_bridge"
+        payload["adapter"] = "legacy_whatsapp_bridge_retired"
         return payload
 
 
@@ -141,7 +140,19 @@ def dispatch_whatsapp_outbound(
     dispatch_fn: DispatchFn | None = None,
 ) -> tuple[MessageStatus, str | None, object | None, dict[str, Any]]:
     route = resolve_whatsapp_outbound_route(db, message=message, ticket=ticket)
-    active_dispatch = dispatch_fn or dispatch_via_openclaw_bridge
+    if dispatch_fn is None:
+        return (
+            MessageStatus.failed,
+            "legacy_openclaw_bridge_retired",
+            None,
+            {
+                **route.to_context(idempotency_key=idempotency_key),
+                "failure_code": "legacy_openclaw_bridge_retired",
+                "error": "OpenClaw bridge dispatch has been retired; use the native WhatsApp sidecar.",
+                "retryable": False,
+            },
+        )
+    active_dispatch = dispatch_fn
     status_value, provider_status, sent_at = active_dispatch(
         channel=route.channel,
         target=route.target,

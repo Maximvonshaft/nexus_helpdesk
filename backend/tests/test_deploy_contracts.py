@@ -30,11 +30,16 @@ def _db_host(env_values: dict[str, str]) -> str:
     return urlparse(env_values["DATABASE_URL"]).hostname or ""
 
 
-def test_local_postgres_env_and_compose_contract():
-    env = _env("deploy/.env.prod.local-postgres.example")
-    compose = _read("deploy/docker-compose.server.local-postgres.yml")
-    assert _db_host(env) == "postgres"
+def test_server_compose_includes_local_postgres_service():
+    compose = _read("deploy/docker-compose.server.yml")
     assert _has_postgres_service(compose)
+    assert "OPENCLAW_TRANSPORT: disabled" in compose
+    assert "OPENCLAW_DEPLOYMENT_MODE: disabled" in compose
+
+
+def test_local_postgres_env_contract():
+    env = _env("deploy/.env.prod.local-postgres.example")
+    assert _db_host(env) == "postgres"
     assert env["APP_ENV"] == "production"
     assert env["AUTO_INIT_DB"] == "false"
     assert env["SEED_DEMO_DATA"] == "false"
@@ -43,12 +48,9 @@ def test_local_postgres_env_and_compose_contract():
     assert env["OUTBOUND_EMAIL_ENCRYPTION_KEY_FILE"] == "/run/nexus/outbound_email_encryption_key"
 
 
-def test_external_postgres_env_and_compose_contract():
+def test_external_postgres_env_contract():
     env = _env("deploy/.env.prod.external-postgres.example")
-    compose = _read("deploy/docker-compose.server.external-postgres.yml")
     assert _db_host(env) != "postgres"
-    assert not _has_postgres_service(compose)
-    assert "expects DATABASE_URL to point to an external PostgreSQL instance" in compose
     assert env["APP_ENV"] == "production"
     assert env["AUTO_INIT_DB"] == "false"
     assert env["SEED_DEMO_DATA"] == "false"

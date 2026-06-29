@@ -7,7 +7,7 @@ from typing import Any
 from app.db import SessionLocal
 from app.settings import get_settings
 
-from .ai_runtime.openclaw_responses_provider import (
+from .ai_runtime.fast_reply_prompt import (
     build_fast_reply_input_text,
     build_fast_reply_instructions,
     build_fast_reply_session_key,

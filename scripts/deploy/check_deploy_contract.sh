@@ -13,18 +13,12 @@ from urllib.parse import urlparse
 
 root = Path(sys.argv[1])
 
-PAIRS = [
-    (
-        root / 'deploy/.env.prod.local-postgres.example',
-        root / 'deploy/docker-compose.server.local-postgres.yml',
-        True,
-    ),
-    (
-        root / 'deploy/.env.prod.external-postgres.example',
-        root / 'deploy/docker-compose.server.external-postgres.yml',
-        False,
-    ),
+ENV_TEMPLATES = [
+    root / 'deploy/.env.prod.example',
+    root / 'deploy/.env.prod.local-postgres.example',
+    root / 'deploy/.env.prod.external-postgres.example',
 ]
+COMPOSE_PATH = root / 'deploy/docker-compose.server.yml'
 
 PLACEHOLDER_PREFIXES = (
     'replace-with-',
@@ -78,20 +72,19 @@ def assert_no_real_secret(key: str, value: str) -> None:
         return
     if not value:
         return
-    if value.startswith(PLACEHOLDER_PREFIXES) or value in {'auto', '/run/secrets/openclaw_mcp_token'}:
+    if upper.endswith('_FILE') and value.startswith('/run/'):
+        return
+    if value.startswith(PLACEHOLDER_PREFIXES) or value == 'auto':
         return
     if value.startswith(('https://', 'http://', 'wss://', 'sqlite', 'postgresql')):
         return
     raise AssertionError(f'{key} in env example looks like a real secret; use a placeholder instead')
 
 
-def validate_pair(env_path: Path, compose_path: Path, expects_postgres: bool) -> None:
+def validate_env(env_path: Path) -> None:
     if not env_path.exists():
         raise AssertionError(f'Missing env template: {env_path}')
-    if not compose_path.exists():
-        raise AssertionError(f'Missing compose template: {compose_path}')
     env = parse_env(env_path)
-    compose_text = compose_path.read_text(encoding='utf-8')
 
     for key, expected in REQUIRED_VALUES.items():
         actual = env.get(key)
@@ -102,21 +95,20 @@ def validate_pair(env_path: Path, compose_path: Path, expects_postgres: bool) ->
         assert_no_real_secret(key, value)
 
     host = database_host(env.get('DATABASE_URL', ''))
-    has_postgres = compose_has_postgres_service(compose_text)
-    if host == 'postgres' and not has_postgres:
-        raise AssertionError(f'{env_path} uses DATABASE_URL host postgres but {compose_path} has no postgres service')
-    if not has_postgres and host == 'postgres':
-        raise AssertionError(f'{compose_path} has no postgres service but DATABASE_URL host is postgres')
-    if expects_postgres and not has_postgres:
-        raise AssertionError(f'{compose_path} must define postgres service')
-    if not expects_postgres and has_postgres:
-        raise AssertionError(f'{compose_path} must not define postgres service')
-    if not expects_postgres and host == 'postgres':
+    if env_path.name.endswith('external-postgres.example') and host == 'postgres':
         raise AssertionError(f'{env_path} is external-postgres but still uses host postgres')
 
 
-for pair in PAIRS:
-    validate_pair(*pair)
+if not COMPOSE_PATH.exists():
+    raise AssertionError(f'Missing compose template: {COMPOSE_PATH}')
+compose_text = COMPOSE_PATH.read_text(encoding='utf-8')
+if not compose_has_postgres_service(compose_text):
+    raise AssertionError(f'{COMPOSE_PATH} must define postgres service')
+if 'OPENCLAW_TRANSPORT: disabled' not in compose_text:
+    raise AssertionError(f'{COMPOSE_PATH} must keep legacy OpenClaw transport disabled')
+
+for env_path in ENV_TEMPLATES:
+    validate_env(env_path)
 
 print('deploy contract ok')
 PY

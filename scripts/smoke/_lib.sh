@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 SMOKE_PREFIX="${NEXUSDESK_SMOKE_PREFIX:-nxd-round-a-$(date +%Y%m%d%H%M%S)}"
 SMOKE_MODE="${NEXUSDESK_SMOKE_MODE:-mock}"
-OPENCLAW_MOCK_MODE="${OPENCLAW_MOCK_MODE:-1}"
+NEXUSDESK_EXTERNAL_SEND_MOCK_MODE="${NEXUSDESK_EXTERNAL_SEND_MOCK_MODE:-1}"
 API_URL="${NEXUSDESK_API_URL:-http://127.0.0.1:18081}"
 SKIP_EXIT_CODE="${SKIP_EXIT_CODE:-77}"
 DRY_RUN=0
@@ -24,7 +24,7 @@ Common environment:
   NEXUSDESK_INTEGRATION_CLIENT_KEY
   NEXUSDESK_SMOKE_MODE=mock|live
   NEXUSDESK_SMOKE_PREFIX
-  OPENCLAW_MOCK_MODE=1|0
+  NEXUSDESK_EXTERNAL_SEND_MOCK_MODE=1|0
 USAGE
 }
 
@@ -82,7 +82,7 @@ require_env() {
 }
 
 ensure_safe_mode() {
-  if [ "${NEXUSDESK_SMOKE_MODE:-mock}" = "live" ] && [ "${OPENCLAW_MOCK_MODE:-1}" != "1" ]; then
+  if [ "${NEXUSDESK_SMOKE_MODE:-mock}" = "live" ] && [ "${NEXUSDESK_EXTERNAL_SEND_MOCK_MODE:-1}" != "1" ]; then
     info "live mode requested; this script must not send to real customers unless explicitly designed for it"
   fi
 }

@@ -84,7 +84,7 @@ def _ai_reply(
     handoff: bool = False,
     handoff_reason: str | None = None,
     tracking: str | None = None,
-    reply_source: str = "openclaw_responses",
+    reply_source: str = "provider_runtime",
 ) -> WebchatFastReplyResult:
     return WebchatFastReplyResult(
         ok=True,
@@ -168,7 +168,7 @@ def test_low_signal_goes_to_ai_decision_without_handoff(monkeypatch):
         payload = response.json()
         assert payload["ok"] is True
         assert payload["ai_generated"] is True
-        assert payload["reply_source"] == "openclaw_responses"
+        assert payload["reply_source"] == "provider_runtime"
         assert payload["intent"] == "unclear"
         assert payload["handoff_required"] is False
         assert payload["ai_decision_trace"]["decision"]["next_action"] in {"reply", "ask_clarifying_question"}
@@ -203,7 +203,7 @@ def test_explicit_human_request_is_ai_decision_tool_gated_handoff(monkeypatch):
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["ok"] is True
-    assert payload["reply_source"] == "openclaw_responses"
+    assert payload["reply_source"] == "provider_runtime"
     assert payload["handoff_required"] is True
     assert payload["handoff_reason"] == "customer_requested_human_review"
     assert payload["ticket_id"]
@@ -290,7 +290,7 @@ def test_tracking_request_uses_trusted_fact_and_ai_final_reply(monkeypatch):
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["ok"] is True
-    assert payload["reply_source"] == "openclaw_responses"
+    assert payload["reply_source"] == "provider_runtime"
     assert payload["intent"] == "tracking"
     assert payload["tracking_number"] is None
     assert payload["tracking_number_suffix"] == "006856"

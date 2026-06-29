@@ -60,7 +60,7 @@ def _request(*, session_id: str = "sess1", request_id: str = "req1", channel_key
 def _rule(*, canary_percent: int, kill_switch: bool = False):
     return {
         "primary_provider": "codex_app_server",
-        "fallback_providers": ["openclaw_responses", "rule_engine"],
+        "fallback_providers": ["openai_responses", "rule_engine"],
         "output_contract": "speedaf_webchat_fast_reply_v1",
         "timeout_ms": 10000,
         "kill_switch": kill_switch,
@@ -87,18 +87,18 @@ def _session_above_bucket(min_bucket: int) -> str:
 
 
 @pytest.mark.asyncio
-async def test_canary_zero_routes_to_openclaw_without_codex(monkeypatch):
+async def test_canary_zero_routes_to_fallback_without_codex(monkeypatch):
     import app.services.provider_runtime as provider_runtime_module
 
     monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
     ProviderRegistry.register("codex_app_server", lambda db: SuccessAdapter("codex_app_server"))
-    ProviderRegistry.register("openclaw_responses", lambda db: SuccessAdapter("openclaw_responses"))
+    ProviderRegistry.register("openai_responses", lambda db: SuccessAdapter("openai_responses"))
     db = _db_for_rule(_rule(canary_percent=0))
 
     result = await ProviderRuntimeRouter(db).route(_request())
 
     assert result.ok is True
-    assert result.provider == "openclaw_responses"
+    assert result.provider == "openai_responses"
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,7 @@ async def test_canary_full_routes_to_codex(monkeypatch):
 
     monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
     ProviderRegistry.register("codex_app_server", lambda db: SuccessAdapter("codex_app_server"))
-    ProviderRegistry.register("openclaw_responses", lambda db: SuccessAdapter("openclaw_responses"))
+    ProviderRegistry.register("openai_responses", lambda db: SuccessAdapter("openai_responses"))
     db = _db_for_rule(_rule(canary_percent=100))
 
     result = await ProviderRuntimeRouter(db).route(_request())
@@ -117,21 +117,21 @@ async def test_canary_full_routes_to_codex(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_kill_switch_routes_to_openclaw(monkeypatch):
+async def test_kill_switch_routes_to_fallback(monkeypatch):
     import app.services.provider_runtime as provider_runtime_module
 
     monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
     ProviderRegistry.register("codex_app_server", lambda db: SuccessAdapter("codex_app_server"))
-    ProviderRegistry.register("openclaw_responses", lambda db: SuccessAdapter("openclaw_responses"))
+    ProviderRegistry.register("openai_responses", lambda db: SuccessAdapter("openai_responses"))
     db = _db_for_rule({
         **_rule(canary_percent=100, kill_switch=True),
-        "fallback_providers": '["openclaw_responses","rule_engine"]',
+        "fallback_providers": '["openai_responses","rule_engine"]',
     })
 
     result = await ProviderRuntimeRouter(db).route(_request())
 
     assert result.ok is True
-    assert result.provider == "openclaw_responses"
+    assert result.provider == "openai_responses"
 
 
 @pytest.mark.asyncio
@@ -140,7 +140,7 @@ async def test_canary_bucket_is_stable_across_request_ids(monkeypatch):
 
     monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
     ProviderRegistry.register("codex_app_server", lambda db: SuccessAdapter("codex_app_server"))
-    ProviderRegistry.register("openclaw_responses", lambda db: SuccessAdapter("openclaw_responses"))
+    ProviderRegistry.register("openai_responses", lambda db: SuccessAdapter("openai_responses"))
     session_id = _session_for_bucket(0)
 
     db_one = _db_for_rule(_rule(canary_percent=1))
@@ -165,7 +165,7 @@ async def test_canary_one_percent_routes_bucket_zero_to_codex(monkeypatch):
 
     monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
     ProviderRegistry.register("codex_app_server", lambda db: SuccessAdapter("codex_app_server"))
-    ProviderRegistry.register("openclaw_responses", lambda db: SuccessAdapter("openclaw_responses"))
+    ProviderRegistry.register("openai_responses", lambda db: SuccessAdapter("openai_responses"))
     session_id = _session_for_bucket(0)
     db = _db_for_rule(_rule(canary_percent=1))
 
@@ -181,11 +181,11 @@ async def test_canary_one_percent_routes_bucket_above_zero_to_fallback(monkeypat
 
     monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
     ProviderRegistry.register("codex_app_server", lambda db: SuccessAdapter("codex_app_server"))
-    ProviderRegistry.register("openclaw_responses", lambda db: SuccessAdapter("openclaw_responses"))
+    ProviderRegistry.register("openai_responses", lambda db: SuccessAdapter("openai_responses"))
     session_id = _session_above_bucket(1)
     db = _db_for_rule(_rule(canary_percent=1))
 
     result = await ProviderRuntimeRouter(db).route(_request(session_id=session_id))
 
     assert result.ok is True
-    assert result.provider == "openclaw_responses"
+    assert result.provider == "openai_responses"

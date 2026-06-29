@@ -1,78 +1,46 @@
-# WhatsApp Outbound Adapter Smoke Validation
+# WhatsApp Native Outbound Smoke Validation
 
 ## Purpose
 
-This runbook validates the P3 WhatsApp outbound adapter closure without enabling any new customer-facing channel by default.
+This runbook validates the current WhatsApp outbound path after the legacy OpenClaw bridge was retired.
 
-P3 scope:
+Current scope:
 
-- WhatsApp outbound uses a dedicated adapter boundary.
+- WhatsApp outbound uses the native sidecar adapter boundary.
 - The adapter validates channel, target, and active WhatsApp account before dispatch.
-- The adapter calls the existing OpenClaw bridge `/send-message` contract.
-- SMS, Telegram, Email remain unchanged by this phase.
 - Production remains fail-closed unless runtime flags explicitly enable dispatch.
+- Legacy OpenClaw bridge dispatch returns a non-retryable retired error and must not be used for smoke evidence.
 
-## Safety boundary
+## Safety Boundary
 
 Do not run real customer sends until all of the following are true:
 
 ```text
 ENABLE_OUTBOUND_DISPATCH=true
-OUTBOUND_PROVIDER=openclaw
-OPENCLAW_BRIDGE_ALLOW_WRITES=true
+OUTBOUND_PROVIDER=native
+WHATSAPP_DISPATCH_MODE=native_sidecar
+WHATSAPP_NATIVE_ENABLED=true
+WHATSAPP_SIDECAR_TOKEN=<mounted secret>
 ```
 
-For controlled smoke testing, use a known internal WhatsApp target and a dedicated test ChannelAccount.
+Use a known internal WhatsApp target and a dedicated test `ChannelAccount`.
 
-## Mock-only smoke
-
-Run the deterministic smoke script:
+## Test Command
 
 ```bash
 cd backend
-python scripts/smoke_whatsapp_outbound_adapter.py
+pytest -q tests/test_whatsapp_native_outbound_adapter.py tests/test_whatsapp_outbound_adapter.py tests/test_outbound_channel_capabilities.py tests/test_production_dispatch_gates.py
 ```
 
-Expected evidence payload:
-
-```json
-{
-  "ok": true,
-  "status": "sent",
-  "provider_status": "sent_via_fake_whatsapp_bridge",
-  "sent_at_present": true,
-  "conversation_state": "waiting_customer",
-  "dispatch_calls": [
-    {
-      "route": {
-        "adapter": "whatsapp_openclaw_bridge",
-        "channel": "whatsapp",
-        "target": "+15550123456",
-        "account_id": "wa-smoke-main"
-      }
-    }
-  ]
-}
-```
-
-## Test command
-
-```bash
-cd backend
-pytest tests/test_whatsapp_outbound_adapter.py tests/test_outbound_channel_capabilities.py tests/test_outbound_message_semantics.py tests/test_production_dispatch_gates.py
-```
-
-## Real bridge smoke checklist
-
-Use this only after P3 has merged and the bridge has a controlled test account.
+## Controlled Smoke Checklist
 
 1. Confirm fail-closed production config first:
 
 ```bash
-printenv ENABLE_OUTBOUND_DISPATCH OUTBOUND_PROVIDER OPENCLAW_BRIDGE_ALLOW_WRITES
+printenv ENABLE_OUTBOUND_DISPATCH OUTBOUND_PROVIDER WHATSAPP_DISPATCH_MODE WHATSAPP_NATIVE_ENABLED
 ```
 
-2. Configure a dedicated WhatsApp ChannelAccount in admin settings:
+2. Configure a dedicated WhatsApp ChannelAccount:
 
 ```text
 provider=whatsapp
@@ -90,13 +58,7 @@ preferred_reply_channel=whatsapp
 preferred_reply_contact=<internal test WhatsApp target>
 ```
 
-4. Enable controlled dispatch only in staging / internal smoke:
-
-```bash
-ENABLE_OUTBOUND_DISPATCH=true
-OUTBOUND_PROVIDER=openclaw
-OPENCLAW_BRIDGE_ALLOW_WRITES=true
-```
+4. Enable controlled dispatch only in staging or an internal smoke window.
 
 5. Send one low-risk test message.
 
@@ -107,25 +69,15 @@ cd backend
 python scripts/run_worker.py --queue outbound --once
 ```
 
-7. Capture evidence:
-
-```text
-outbound_channel_capabilities.json
-ticket_outbound_message.json
-worker_once.log
-bridge_send_result.json
-ticket_timeline.json
-rollback_command.txt
-```
+7. Capture `outbound_channel_capabilities.json`, `ticket_outbound_message.json`, `worker_once.log`, sidecar response metadata, ticket timeline, and rollback command.
 
 ## Rollback
-
-Immediate rollback remains configuration-only:
 
 ```bash
 ENABLE_OUTBOUND_DISPATCH=false
 OUTBOUND_PROVIDER=disabled
-OPENCLAW_BRIDGE_ALLOW_WRITES=false
+WHATSAPP_DISPATCH_MODE=disabled
+WHATSAPP_NATIVE_ENABLED=false
 ```
 
 After rollback, confirm that outbound worker processes zero messages and external dispatch is disabled.

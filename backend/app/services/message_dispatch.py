@@ -15,15 +15,14 @@ from ..utils.time import utc_now
 from .audit_service import log_event
 from .email_mailbox_identity import ensure_outbound_mailbox_identity
 from .observability import LOGGER
-from .openclaw_bridge import dispatch_via_openclaw_bridge, dispatch_via_openclaw_cli, dispatch_via_openclaw_mcp, resolve_channel_account
+from .openclaw_bridge import dispatch_via_openclaw_bridge, dispatch_via_openclaw_cli, dispatch_via_openclaw_mcp
 from .outbound_adapters.email import dispatch_email_outbound
-from .outbound_adapters.whatsapp import dispatch_whatsapp_outbound
 from .outbound_adapters.whatsapp_native import dispatch_whatsapp_native_outbound
 from .outbound_semantics import external_channel_values, is_external_outbound_message
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 
 settings = get_settings()
-ALLOWED_OUTBOUND_PROVIDERS = {'openclaw'}
+ALLOWED_OUTBOUND_PROVIDERS = {'native', 'smtp', 'email'}
 
 
 def _external_dispatch_block_reason() -> tuple[str, str] | None:
@@ -34,6 +33,30 @@ def _external_dispatch_block_reason() -> tuple[str, str] | None:
     if settings.outbound_provider not in ALLOWED_OUTBOUND_PROVIDERS:
         return 'unsupported_outbound_provider', f"Unsupported OUTBOUND_PROVIDER: {settings.outbound_provider}"
     return None
+
+
+def _resolve_channel_account(db: Session, *, market_id: int | None, account_id: str | None) -> ChannelAccount | None:
+    if account_id:
+        row = (
+            db.query(ChannelAccount)
+            .filter(
+                ChannelAccount.account_id == account_id,
+                ChannelAccount.provider.in_([SourceChannel.whatsapp.value, SourceChannel.telegram.value, SourceChannel.sms.value]),
+                ChannelAccount.is_active.is_(True),
+            )
+            .first()
+        )
+        if row is not None:
+            return row
+    query = db.query(ChannelAccount).filter(
+        ChannelAccount.provider.in_([SourceChannel.whatsapp.value, SourceChannel.telegram.value, SourceChannel.sms.value]),
+        ChannelAccount.is_active.is_(True),
+    )
+    if market_id is not None:
+        row = query.filter(ChannelAccount.market_id == market_id).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
+        if row is not None:
+            return row
+    return query.filter(ChannelAccount.market_id.is_(None)).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
 
 
 def ensure_external_dispatch_allowed() -> None:
@@ -66,7 +89,7 @@ def _resolve_first_send_channel_account(db: Session, ticket: Ticket | None, link
         if row:
             return row
     if ticket is not None:
-        return resolve_channel_account(db, market_id=ticket.market_id, account_id=None)
+        return _resolve_channel_account(db, market_id=ticket.market_id, account_id=None)
     return None
 
 
@@ -291,7 +314,16 @@ def _dispatch_whatsapp_message(db: Session, message: TicketOutboundMessage, tick
                 'error': 'WhatsApp Cloud API dispatch mode is reserved but not implemented',
                 'retryable': False,
             }
-        if settings.whatsapp_dispatch_mode != 'openclaw_bridge':
+        if settings.whatsapp_dispatch_mode == 'openclaw_bridge':
+            return MessageStatus.failed, 'legacy_openclaw_bridge_retired', None, {
+                'channel': SourceChannel.whatsapp.value,
+                'adapter': 'legacy_openclaw_bridge_retired',
+                'idempotency_key': idempotency_key,
+                'failure_code': 'legacy_openclaw_bridge_retired',
+                'error': 'OpenClaw bridge dispatch has been retired; use WHATSAPP_DISPATCH_MODE=native_sidecar',
+                'retryable': False,
+            }
+        if settings.whatsapp_dispatch_mode != 'disabled':
             return MessageStatus.failed, 'unsupported_whatsapp_dispatch_mode', None, {
                 'channel': SourceChannel.whatsapp.value,
                 'adapter': 'unsupported_whatsapp_dispatch_mode',
@@ -300,12 +332,19 @@ def _dispatch_whatsapp_message(db: Session, message: TicketOutboundMessage, tick
                 'error': f'Unsupported WHATSAPP_DISPATCH_MODE: {settings.whatsapp_dispatch_mode}',
                 'retryable': False,
             }
-        return dispatch_whatsapp_outbound(db, message=message, ticket=ticket, idempotency_key=idempotency_key)
+        return MessageStatus.failed, 'whatsapp_dispatch_disabled', None, {
+            'channel': SourceChannel.whatsapp.value,
+            'adapter': 'whatsapp_dispatch_disabled',
+            'idempotency_key': idempotency_key,
+            'failure_code': 'whatsapp_dispatch_disabled',
+            'error': 'WHATSAPP_DISPATCH_MODE=disabled blocks WhatsApp dispatch',
+            'retryable': False,
+        }
     except ValueError as exc:
         error_code = str(exc)
         return MessageStatus.failed, error_code, None, {
             'channel': SourceChannel.whatsapp.value,
-            'adapter': 'whatsapp_openclaw_bridge',
+            'adapter': 'whatsapp_route_resolution',
             'idempotency_key': idempotency_key,
             'error': error_code,
         }
@@ -343,7 +382,7 @@ def _handle_dispatch_result(
         if ticket is not None and getattr(ticket, 'conversation_state', None) is not None:
             ticket.conversation_state = ConversationState.waiting_customer
         if session_key:
-            log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.openclaw_reply_sent, note='OpenClaw same-route reply sent', payload={'message_id': message.id, 'session_key': session_key, 'provider_status': provider_status, 'idempotency_key': route_context.get('idempotency_key')})
+            log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.openclaw_reply_sent, note='Legacy same-route reply sent', payload={'message_id': message.id, 'session_key': session_key, 'provider_status': provider_status, 'idempotency_key': route_context.get('idempotency_key')})
         log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_sent, note='Queued outbound message sent', payload={'message_id': message.id, 'provider_status': provider_status, 'route': route_context})
         return message
 
@@ -380,15 +419,6 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
 
     if message.channel == SourceChannel.whatsapp:
         status_value, provider_status, sent_at, route_context = _dispatch_whatsapp_message(db, message, ticket, idempotency_key)
-        if status_value == MessageStatus.failed and settings.whatsapp_dispatch_mode == 'openclaw_bridge' and settings.openclaw_cli_fallback_enabled and route_context.get('target'):
-            LOGGER.warning('openclaw_bridge_dispatch_failed_falling_back_to_cli', extra={'event_payload': {'message_id': message.id, 'ticket_id': message.ticket_id, 'provider_status': provider_status, 'route': route_context}})
-            status_value, provider_status, sent_at = dispatch_via_openclaw_cli(
-                channel=route_context.get('channel') or SourceChannel.whatsapp.value,
-                target=route_context['target'],
-                body=message.body,
-                account_id=route_context.get('account_id'),
-                thread_id=route_context.get('thread_id'),
-            )
         return _handle_dispatch_result(db, message=message, ticket=ticket, status_value=status_value, provider_status=provider_status, sent_at=sent_at, route_context=route_context)
 
     if message.channel == SourceChannel.email:
@@ -424,19 +454,14 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
         'target': target,
         'idempotency_key': idempotency_key,
         'source': 'ticket_or_market_or_fallback',
-        'adapter': 'legacy_openclaw_bridge',
+        'adapter': 'unsupported_external_channel',
     }
-
-    if target:
-        status_value, provider_status, sent_at = dispatch_via_openclaw_bridge(channel=channel_value, target=target, body=message.body, account_id=account_id, thread_id=thread_id, session_key=session_key)
-        if status_value == MessageStatus.failed and settings.openclaw_cli_fallback_enabled:
-            LOGGER.warning('openclaw_bridge_dispatch_failed_falling_back_to_cli', extra={'event_payload': {'message_id': message.id, 'ticket_id': message.ticket_id, 'provider_status': provider_status, 'route': route_context}})
-            status_value, provider_status, sent_at = dispatch_via_openclaw_cli(channel=channel_value, target=target, body=message.body, account_id=account_id, thread_id=thread_id)
-    elif session_key:
-        status_value, provider_status, sent_at = dispatch_via_openclaw_mcp(session_key, message.body)
-    else:
-        status_value, provider_status, sent_at = MessageStatus.failed, 'No target address available', None
-
+    route_context.update({
+        'failure_code': 'unsupported_external_channel',
+        'error': f'No native dispatcher is configured for channel {channel_value}',
+        'retryable': False,
+    })
+    status_value, provider_status, sent_at = MessageStatus.failed, 'unsupported_external_channel', None
     return _handle_dispatch_result(db, message=message, ticket=ticket, status_value=status_value, provider_status=provider_status, sent_at=sent_at, route_context=route_context)
 
 

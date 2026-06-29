@@ -34,7 +34,6 @@ from app.models import (  # noqa: E402
     Market,
     OpenClawAttachmentReference,
     OpenClawConversationLink,
-    OpenClawSyncCursor,
     OpenClawTranscriptMessage,
     Team,
     Ticket,
@@ -347,210 +346,6 @@ def test_worker_skips_outbound_dispatch_when_disabled(monkeypatch):
     assert run_worker.run_once('worker-test') == 0
 
 
-def test_worker_runs_openclaw_inbound_auto_sync_when_enabled(monkeypatch):
-    calls = []
-
-    @contextmanager
-    def dummy_db_context():
-        yield SimpleNamespace()
-
-    monkeypatch.setattr(run_worker.settings, 'enable_outbound_dispatch', False)
-    monkeypatch.setattr(run_worker.settings, 'openclaw_sync_enabled', True)
-    monkeypatch.setattr(run_worker.settings, 'openclaw_inbound_auto_sync_enabled', True)
-    monkeypatch.setattr(run_worker, 'db_context', dummy_db_context)
-    monkeypatch.setattr(run_worker, 'dispatch_pending_messages', lambda *args, **kwargs: [])
-    monkeypatch.setattr(run_worker, 'dispatch_pending_background_jobs', lambda *args, **kwargs: [])
-    monkeypatch.setattr(run_worker, 'sync_openclaw_inbound_conversations_once', lambda *args, **kwargs: calls.append(kwargs.get('source')) or {'synced_conversations': 2, 'conversations_seen': 2, 'tickets_created': 1, 'messages_inserted': 3, 'unresolved_events': 0})
-    monkeypatch.setattr(run_worker, 'record_queue_snapshot', lambda *args, **kwargs: None)
-    monkeypatch.setattr(run_worker, 'record_worker_poll', lambda *args, **kwargs: None)
-    monkeypatch.setattr(run_worker, 'record_worker_result', lambda *args, **kwargs: None)
-    monkeypatch.setattr(run_worker, 'log_event', lambda *args, **kwargs: None)
-
-    assert run_worker.run_once('worker-test') == 2
-    assert calls == ['default']
-
-
-def test_sync_openclaw_conversation_reuses_single_mcp_client(db_session, monkeypatch):
-    team = make_team(db_session)
-    lead = make_user(db_session, 'lead7', UserRole.lead, team)
-    ticket = make_ticket(db_session, lead, team=team)
-
-    class FakeClient:
-        instances = 0
-
-        def __init__(self):
-            type(self).instances += 1
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def conversation_get(self, session_key):
-            return {'session_key': session_key, 'channel': 'whatsapp', 'recipient': '+15550003'}
-
-        def messages_read(self, session_key, limit=50):
-            return [{'id': 'msg-1', 'role': 'user', 'author': 'customer', 'text': 'hello'}]
-
-        def attachments_fetch(self, message_id):
-            return {'attachments': [{'id': 'att-1', 'contentType': 'image/png', 'filename': 'proof.png'}]}
-
-    monkeypatch.setattr(openclaw_bridge, 'OpenClawMCPClient', FakeClient)
-
-    result = openclaw_bridge.sync_openclaw_conversation(db_session, ticket_id=ticket.id, session_key='sess-1', limit=10)
-    db_session.commit()
-
-    assert result.linked_ticket_id == ticket.id
-    assert FakeClient.instances == 1
-    assert db_session.query(OpenClawAttachmentReference).count() == 1
-
-
-def test_sync_openclaw_conversation_generates_stable_synthetic_message_ids(db_session, monkeypatch):
-    team = make_team(db_session)
-    lead = make_user(db_session, 'lead-synth', UserRole.lead, team)
-    ticket = make_ticket(db_session, lead, team=team)
-
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_bridge_enabled', True)
-    monkeypatch.setattr(openclaw_bridge, 'read_openclaw_bridge_conversation', lambda *args, **kwargs: (
-        {'sessionKey': 'sess-synth', 'route': {'channel': 'telegram', 'recipient': 'telegram:customer-1'}},
-        [{'role': 'user', 'author': 'customer', 'text': 'hello from telegram', 'createdAt': '2026-05-01T09:00:00+00:00'}],
-    ))
-    monkeypatch.setattr(openclaw_bridge, 'fetch_openclaw_bridge_attachments', lambda *args, **kwargs: [])
-
-    openclaw_bridge.sync_openclaw_conversation(db_session, ticket_id=ticket.id, session_key='sess-synth', limit=10)
-    openclaw_bridge.sync_openclaw_conversation(db_session, ticket_id=ticket.id, session_key='sess-synth', limit=10)
-    db_session.commit()
-
-    rows = db_session.query(OpenClawTranscriptMessage).filter_by(session_key='sess-synth').all()
-    assert len(rows) == 1
-    assert rows[0].message_id.startswith('synth-')
-
-
-def test_sync_openclaw_inbound_conversations_auto_creates_ticket_and_records_unresolved(db_session, monkeypatch):
-    team = make_team(db_session)
-    make_user(db_session, 'lead-discovery', UserRole.lead, team)
-
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_sync_enabled', True)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_enabled', True)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_interval_seconds', 0)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_limit', 10)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_include_groups', False)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_message_limit', 20)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_bridge_enabled', True)
-    monkeypatch.setattr(openclaw_bridge, 'list_openclaw_conversations', lambda **kwargs: {
-        'conversations': [
-            {'sessionKey': 'sess-valid', 'route': {'channel': 'telegram', 'recipient': 'telegram:customer-42', 'accountId': 'default'}},
-            {'sessionKey': 'sess-group', 'route': {'channel': 'whatsapp', 'recipient': '120363@g.us', 'accountId': 'default'}},
-            {'sessionKey': 'sess-bad', 'route': {'channel': 'telegram', 'accountId': 'default'}},
-        ]
-    })
-
-    def fake_read(session_key, limit=50):
-        if session_key == 'sess-valid':
-            return (
-                {'sessionKey': 'sess-valid', 'route': {'channel': 'telegram', 'recipient': 'telegram:customer-42', 'accountId': 'default'}},
-                [{'id': 'msg-1', 'role': 'user', 'author': 'customer', 'text': 'Need help with parcel ETA'}],
-            )
-        if session_key == 'sess-group':
-            return (
-                {'sessionKey': 'sess-group', 'route': {'channel': 'whatsapp', 'recipient': '120363@g.us', 'accountId': 'default'}},
-                [{'id': 'msg-g', 'role': 'user', 'author': 'customer', 'text': 'group chat'}],
-            )
-        return ({'sessionKey': session_key, 'route': {'channel': 'telegram'}}, [])
-
-    monkeypatch.setattr(openclaw_bridge, 'read_openclaw_bridge_conversation', fake_read)
-    monkeypatch.setattr(openclaw_bridge, 'fetch_openclaw_bridge_attachments', lambda *args, **kwargs: [])
-
-    summary = openclaw_bridge.sync_openclaw_inbound_conversations_once(db_session, source='default', force=True)
-    db_session.commit()
-
-    assert summary['synced_conversations'] == 1
-    assert summary['conversations_seen'] == 3
-    assert summary['conversations_skipped'] == 2
-    assert summary['tickets_created'] == 1
-    assert summary['links_created'] == 1
-    assert summary['messages_inserted'] == 1
-    assert summary['unresolved_events'] == 1
-    ticket = db_session.query(Ticket).one()
-    assert ticket.source == TicketSource.user_message
-    assert ticket.source_channel == SourceChannel.telegram
-    assert ticket.source_chat_id == 'telegram:customer-42'
-    assert ticket.preferred_reply_channel == 'telegram'
-    assert ticket.preferred_reply_contact == 'telegram:customer-42'
-    assert ticket.last_customer_message == 'Need help with parcel ETA'
-    assert db_session.query(OpenClawConversationLink).filter_by(session_key='sess-valid').count() == 1
-    assert db_session.query(OpenClawTranscriptMessage).filter_by(session_key='sess-valid').count() == 1
-    assert db_session.query(OpenClawConversationLink).filter_by(session_key='sess-group').count() == 0
-    unresolved = db_session.query(openclaw_bridge.OpenClawUnresolvedEvent).filter_by(session_key='sess-bad').one()
-    assert unresolved.last_error == 'Missing recipient in conversations-list payload'
-
-
-def test_sync_openclaw_inbound_parses_session_key_variants_and_reuses_existing_ticket(db_session, monkeypatch):
-    team = make_team(db_session)
-    lead = make_user(db_session, 'lead-existing', UserRole.lead, team)
-    ticket = make_ticket(db_session, lead, team=team, contact='+15558889999')
-
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_sync_enabled', True)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_enabled', True)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_interval_seconds', 0)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_limit', 10)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_message_limit', 20)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_include_groups', False)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_bridge_enabled', True)
-    monkeypatch.setattr(openclaw_bridge, 'list_openclaw_conversations', lambda **kwargs: {
-        'conversations': [
-            {'session_key': 'sess-existing', 'route': {'channel': 'whatsapp', 'recipient': '+15558889999', 'accountId': 'default'}},
-        ]
-    })
-    monkeypatch.setattr(openclaw_bridge, 'read_openclaw_bridge_conversation', lambda session_key, limit=50: (
-        {'session_key': session_key, 'route': {'channel': 'whatsapp', 'recipient': '+15558889999', 'accountId': 'default'}},
-        [{'message_id': 'msg-existing', 'role': 'user', 'author': 'customer', 'text': 'Need update'}],
-    ))
-    monkeypatch.setattr(openclaw_bridge, 'fetch_openclaw_bridge_attachments', lambda *args, **kwargs: [])
-
-    summary = openclaw_bridge.sync_openclaw_inbound_conversations_once(db_session, source='default', force=True)
-    db_session.commit()
-
-    assert summary['tickets_created'] == 0
-    assert summary['links_created'] == 1
-    assert db_session.query(Ticket).count() == 1
-    link = db_session.query(OpenClawConversationLink).filter_by(session_key='sess-existing').one()
-    assert link.ticket_id == ticket.id
-    assert db_session.query(OpenClawTranscriptMessage).filter_by(session_key='sess-existing', message_id='msg-existing').count() == 1
-
-
-def test_inbound_sync_never_calls_send_message_paths(db_session, monkeypatch):
-    team = make_team(db_session)
-    make_user(db_session, 'lead-safe', UserRole.lead, team)
-
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_sync_enabled', True)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_enabled', True)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_auto_sync_interval_seconds', 0)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_limit', 10)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_inbound_sync_message_limit', 20)
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_bridge_enabled', True)
-    monkeypatch.setattr(openclaw_bridge, 'dispatch_via_openclaw_bridge', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('send-message should not be called')))
-    monkeypatch.setattr(openclaw_bridge, 'dispatch_via_openclaw_mcp', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('messages_send should not be called')))
-    monkeypatch.setattr(openclaw_bridge, 'dispatch_via_openclaw_cli', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('cli send should not be called')))
-    monkeypatch.setattr(openclaw_bridge, 'list_openclaw_conversations', lambda **kwargs: {
-        'conversations': [
-            {'sessionKey': 'sess-safe', 'route': {'channel': 'telegram', 'recipient': 'telegram:customer-safe', 'accountId': 'default'}},
-        ]
-    })
-    monkeypatch.setattr(openclaw_bridge, 'read_openclaw_bridge_conversation', lambda session_key, limit=50: (
-        {'sessionKey': session_key, 'route': {'channel': 'telegram', 'recipient': 'telegram:customer-safe', 'accountId': 'default'}},
-        [{'id': 'msg-safe', 'role': 'user', 'author': 'customer', 'text': 'hello safe path'}],
-    ))
-    monkeypatch.setattr(openclaw_bridge, 'fetch_openclaw_bridge_attachments', lambda *args, **kwargs: [])
-
-    summary = openclaw_bridge.sync_openclaw_inbound_conversations_once(db_session, source='default', force=True)
-    db_session.commit()
-
-    assert summary['synced_conversations'] == 1
-    assert db_session.query(BackgroundJob).filter(BackgroundJob.job_type == 'auto_reply.send_update').count() == 0
-
-
 def test_integration_task_missing_idempotency_is_audited_and_persists_last_used(db_session):
     team = make_team(db_session)
     make_user(db_session, 'lead8', UserRole.lead, team)
@@ -606,32 +401,6 @@ def test_integration_task_rate_limit_is_audited(db_session):
     logs = db_session.query(IntegrationRequestLog).filter_by(endpoint='integration.task').order_by(IntegrationRequestLog.id.asc()).all()
     assert [log.status_code for log in logs] == [200, 429]
     assert logs[-1].error_code == 'rate_limited'
-
-
-
-
-def test_openclaw_attachment_url_fetch_is_disabled_by_default(monkeypatch):
-    called = {'value': False}
-
-    def fake_urlopen(*args, **kwargs):
-        called['value'] = True
-        raise AssertionError('urlopen should not be called when remote fetch is disabled')
-
-    monkeypatch.setattr(openclaw_bridge.settings, 'openclaw_attachment_url_fetch_enabled', False)
-    monkeypatch.setattr(openclaw_bridge.urllib.request, 'urlopen', fake_urlopen)
-
-    payload, media_type, filename = openclaw_bridge._try_extract_attachment_bytes({
-        'downloadUrl': 'https://files.example.com/proof.png',
-        'contentType': 'image/png',
-        'filename': 'proof.png',
-    })
-
-    assert payload is None
-    assert media_type is None
-    assert filename is None
-    assert called['value'] is False
-
-
 def test_claim_pending_jobs_can_filter_job_types(db_session):
     sync_job = enqueue_background_job(db_session, queue_name='openclaw_sync', job_type=OPENCLAW_SYNC_JOB, payload={'ticket_id': 1, 'session_key': 's1'})
     attachment_job = enqueue_background_job(db_session, queue_name='openclaw_attachment', job_type=ATTACHMENT_PERSIST_JOB, payload={'attachment_ref_id': 1})
@@ -644,41 +413,6 @@ def test_claim_pending_jobs_can_filter_job_types(db_session):
     db_session.refresh(attachment_job)
     assert sync_job.status == JobStatus.processing
     assert attachment_job.status == JobStatus.pending
-
-
-def test_dispatch_pending_sync_jobs_only_processes_sync_queue(db_session, monkeypatch):
-    sync_calls = []
-    attachment_calls = []
-    sync_job = enqueue_background_job(db_session, queue_name='openclaw_sync', job_type=OPENCLAW_SYNC_JOB, payload={'ticket_id': 1, 'session_key': 'sess-1'})
-    enqueue_background_job(db_session, queue_name='openclaw_attachment', job_type=ATTACHMENT_PERSIST_JOB, payload={'attachment_ref_id': 9})
-    db_session.commit()
-
-    def fake_sync(*args, **kwargs):
-        sync_calls.append(kwargs.get('session_key'))
-        return SimpleNamespace(linked_ticket_id=1)
-
-    def fake_persist(*args, **kwargs):
-        attachment_calls.append(kwargs.get('attachment_ref'))
-        return None
-
-    class DummyClient:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return None
-
-    monkeypatch.setattr(background_jobs.openclaw_client_factory, 'get_openclaw_runtime_client', lambda: DummyClient())
-    monkeypatch.setattr(background_jobs.openclaw_bridge, 'sync_openclaw_conversation', fake_sync)
-    monkeypatch.setattr(background_jobs.openclaw_bridge, 'persist_openclaw_attachment_reference', fake_persist, raising=False)
-    monkeypatch.setattr(background_jobs.settings, 'openclaw_sync_enabled', True)
-
-    processed = dispatch_pending_sync_jobs(db_session, worker_id='sync-only')
-
-    assert len(processed) == 1
-    assert processed[0].id == sync_job.id
-    assert sync_calls == ['sess-1']
-    assert attachment_calls == []
 
 
 def test_dispatch_pending_background_jobs_excludes_sync_jobs(db_session, monkeypatch):
@@ -790,51 +524,6 @@ def test_metrics_endpoint_requires_matching_token(monkeypatch):
     ok = client.get('/metrics', headers={'X-Metrics-Token': 'metrics-secret'})
     assert ok.status_code == 200
     assert 'text/plain' in ok.headers['content-type']
-
-
-def test_consume_openclaw_events_reuses_single_mcp_client(db_session, monkeypatch):
-    team = make_team(db_session)
-    lead = make_user(db_session, 'lead10', UserRole.lead, team)
-    ticket = make_ticket(db_session, lead, team=team)
-    link = OpenClawConversationLink(ticket_id=ticket.id, session_key='sess-event', channel='whatsapp', recipient='+15550008')
-    db_session.add(link)
-    db_session.add(OpenClawSyncCursor(source='default', cursor_value='cursor-0'))
-    db_session.commit()
-
-    class FakeClient:
-        instances = 0
-
-        def __init__(self):
-            type(self).instances += 1
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def events_wait(self, cursor=None, timeout_seconds=None):
-            return {'cursor': 'cursor-1', 'events': [{'type': 'message', 'sessionKey': 'sess-event'}]}
-
-        def conversation_get(self, session_key):
-            return {'session_key': session_key, 'channel': 'whatsapp', 'recipient': '+15550008'}
-
-        def messages_read(self, session_key, limit=50):
-            return [{'id': 'msg-evt-1', 'role': 'user', 'author': 'customer', 'text': 'hello'}]
-
-        def attachments_fetch(self, message_id):
-            return {'attachments': []}
-
-    monkeypatch.setattr(openclaw_bridge, 'OpenClawMCPClient', FakeClient)
-
-    processed = openclaw_bridge.consume_openclaw_events_once(db_session, source='default', timeout_seconds=1)
-
-    assert processed == 1
-    assert FakeClient.instances == 1
-    db_session.expire_all()
-    assert db_session.query(OpenClawSyncCursor).filter_by(source='default').one().cursor_value == 'cursor-1'
-
-
 def test_alembic_upgrade_head_builds_expected_schema(tmp_path):
     db_file = tmp_path / 'alembic_round24.db'
     env = os.environ.copy()
@@ -880,6 +569,8 @@ def test_alembic_upgrade_head_builds_expected_schema(tmp_path):
 
 
 def test_build_source_release_creates_clean_reproducible_package(tmp_path):
+    if os.name == 'nt':
+        pytest.skip('source release packaging requires a POSIX shell environment')
     out = tmp_path / 'release.zip'
     result = subprocess.run(
         ['bash', str(ROOT / 'scripts' / 'build_source_release.sh'), str(out)],
@@ -895,7 +586,7 @@ def test_build_source_release_creates_clean_reproducible_package(tmp_path):
 
     assert 'helpdesk_suite_lite/backend/helpdesk.db' not in names
     assert 'helpdesk_suite_lite/backend/requirements.txt' in names
-    assert 'helpdesk_suite_lite/deploy/docker-compose.cloud.yml' in names
+    assert 'helpdesk_suite_lite/deploy/docker-compose.server.yml' in names
     assert 'helpdesk_suite_lite/webapp/package-lock.json' in names
     assert 'helpdesk_suite_lite/Dockerfile' in names
     assert all('__pycache__/' not in name for name in names)
@@ -908,8 +599,9 @@ def test_requirements_include_prometheus_client():
 
 
 def test_compose_image_tags_are_aligned_to_current_release():
-    compose = (ROOT.parent / 'deploy' / 'docker-compose.cloud.yml').read_text()
-    assert compose.count('nexusdesk/helpdesk:round20b') == 4 or compose.count('nexusdesk/helpdesk:round27') == 4
+    compose = (ROOT.parent / 'deploy' / 'docker-compose.server.yml').read_text()
+    assert '${IMAGE_TAG:-nexusdesk/helpdesk:server}' in compose
+    assert 'docker-compose.cloud.yml' not in compose
     assert 'round26' not in compose
 
 
@@ -1008,30 +700,3 @@ def test_dockerfile_uses_non_root_runtime_and_healthcheck():
     assert 'USER appuser' in dockerfile
     assert 'HEALTHCHECK' in dockerfile
     assert 'build-essential' not in dockerfile
-
-
-def test_openclaw_mcp_timeout_includes_recent_stderr():
-    from app.services.openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
-
-    class FakeStdin:
-        def write(self, data):
-            return None
-
-        def flush(self):
-            return None
-
-    class FakeProcess:
-        def __init__(self):
-            self.stdin = FakeStdin()
-
-        def poll(self):
-            return 9
-
-    client = OpenClawMCPClient()
-    client.process = FakeProcess()
-    client._stderr_tail.append('pairing required')
-
-    with pytest.raises(OpenClawMCPError) as exc:
-        client._request('initialize')
-
-    assert 'pairing required' in str(exc.value)

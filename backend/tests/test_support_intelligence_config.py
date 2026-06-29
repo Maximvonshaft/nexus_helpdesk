@@ -17,7 +17,6 @@ from app.db import Base  # noqa: E402
 from app.enums import UserRole  # noqa: E402
 from app.models import AIConfigResource  # noqa: E402
 from app.models_control_plane import KnowledgeItem, PersonaProfile  # noqa: E402
-from app.services.openclaw_client_factory import OpenClawBridgeHTTPError  # noqa: E402
 from app.services.support_intelligence_service import build_support_intelligence_config  # noqa: E402
 
 
@@ -61,7 +60,7 @@ class FakeBridge:
 
 class BrokenBridge:
     def support_knowledge_config(self, payload):
-        raise OpenClawBridgeHTTPError("bridge_http_503")
+        raise RuntimeError("runtime_config_source_unavailable")
 
 
 def _session():

@@ -1,5 +1,4 @@
 """NexusDesk WebChat AI provider runtime.
 
-Phase 1 introduces provider routing while preserving openclaw_responses as the
-default production provider.
+Provider routing defaults to provider_runtime and no longer requires OpenClaw.
 """

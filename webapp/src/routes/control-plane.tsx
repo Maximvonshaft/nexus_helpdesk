@@ -67,7 +67,7 @@ function ControlPlanePage() {
               <div className="guide-grid">
                 <div className="guide-item"><strong>Persona</strong><span>定义 AI 的语气、升级原则和市场差异。</span></div>
                 <div className="guide-item"><strong>Knowledge</strong><span>沉淀公告、FAQ、规则与可检索知识。</span></div>
-                <div className="guide-item"><strong>Channel-control</strong><span>记录渠道接入任务，不直接调用真实 OpenClaw 或客户通道。</span></div>
+                <div className="guide-item"><strong>Channel-control</strong><span>记录渠道接入任务，不直接调用真实外部账号或客户通道。</span></div>
               </div>
             </CardBody>
           </Card>
@@ -113,11 +113,11 @@ function ControlPlanePage() {
           </div>
 
           <Card>
-            <CardHeader title="Channel Onboarding Tasks" subtitle="渠道接入与 OpenClaw 账号绑定的任务台账。这里只展示治理状态，不做真实绑定。" />
+            <CardHeader title="Channel Onboarding Tasks" subtitle="渠道接入与外部账号绑定的任务台账。这里只展示治理状态，不做真实绑定。" />
             <CardBody>
               {canSeeChannels ? (
                 <DataTable
-                  columns={['Provider', '状态', '目标槽位', '显示名', 'OpenClaw账号', '更新时间']}
+                  columns={['Provider', '状态', '目标槽位', '显示名', '外部账号', '更新时间']}
                   rows={taskRows.slice(0, 16).map((item) => [
                     labelize(item.provider),
                     labelize(item.status),

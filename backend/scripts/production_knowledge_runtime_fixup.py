@@ -143,7 +143,7 @@ def run(*, reindex: bool = True) -> dict:
                 enabled = 1,
                 updated_at = CURRENT_TIMESTAMP
             """),
-            {"fallbacks": json.dumps(["openclaw_responses", "rule_engine"], separators=(",", ":"))},
+            {"fallbacks": json.dumps(["openai_responses", "rule_engine"], separators=(",", ":"))},
         )
 
         reindexed = 0

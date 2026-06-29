@@ -9,8 +9,6 @@ MAX_MS="${MAX_MS:-8000}"
 DIST_DIR="${DIST_DIR:-webapp/dist}"
 STATIC_DIR="${STATIC_DIR:-backend/app/static/webchat}"
 REPORT_DIR="${REPORT_DIR:-./outputs/webchat_fast_reply_release_gate}"
-OPENCLAW_RESPONSES_URL="${OPENCLAW_RESPONSES_URL:-}"
-SKIP_OPENCLAW_PROBE="${SKIP_OPENCLAW_PROBE:-false}"
 SKIP_CONCURRENCY_SMOKE="${SKIP_CONCURRENCY_SMOKE:-false}"
 SKIP_SECRET_SCAN="${SKIP_SECRET_SCAN:-false}"
 
@@ -100,7 +98,7 @@ with urllib.request.urlopen(req, timeout=10) as resp:
     if resp.status >= 400:
         raise SystemExit(f'fast-reply returned HTTP {resp.status}')
     if parsed.get('ok') is not True or parsed.get('ai_generated') is not True or not parsed.get('reply'):
-        raise SystemExit('fast-reply did not return an AI-generated reply; check OpenClaw runtime config')
+        raise SystemExit('fast-reply did not return an AI-generated reply; check provider runtime config')
 PY
 }
 
@@ -113,7 +111,6 @@ main() {
 
   require_file "scripts/smoke/webchat_fast_reply_concurrency_smoke.py"
   require_file "scripts/smoke/browser_bundle_secret_scan.py"
-  require_file "scripts/smoke/openclaw_gateway_private_exposure_probe.py"
 
   run_step health_readyz health_check
 
@@ -123,16 +120,6 @@ main() {
       --static "$STATIC_DIR"
   else
     log "STEP_SKIP browser_static_secret_scan"
-  fi
-
-  if [[ "$SKIP_OPENCLAW_PROBE" != "true" ]]; then
-    if [[ -z "$OPENCLAW_RESPONSES_URL" ]]; then
-      fail "OPENCLAW_RESPONSES_URL_required_for_private_probe"
-    fi
-    run_step openclaw_private_exposure_probe python scripts/smoke/openclaw_gateway_private_exposure_probe.py \
-      --responses-url "$OPENCLAW_RESPONSES_URL"
-  else
-    log "STEP_SKIP openclaw_private_exposure_probe"
   fi
 
   run_step fast_reply_api_contract_probe api_contract_probe

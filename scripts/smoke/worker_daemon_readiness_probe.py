@@ -91,7 +91,6 @@ def main(argv: list[str]) -> int:
     base_url = os.getenv('APP_URL', 'http://127.0.0.1:18081').rstrip('/')
     compose_file = os.getenv('COMPOSE_FILE', 'deploy/docker-compose.server.yml')
     token = os.getenv('ADMIN_BEARER_TOKEN')
-    expected_openclaw = os.getenv('EXPECT_OPENCLAW_DAEMONS', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
 
     results: list[ProbeResult] = []
 
@@ -103,23 +102,20 @@ def main(argv: list[str]) -> int:
     ps = _compose_ps(compose_file)
     results.append(ProbeResult('compose_ps', bool(ps.get('ok')), ps))
     if ps.get('ok'):
-        for service in ('app', 'worker'):
+        for service in ('app', 'worker-outbound', 'worker-background', 'worker-webchat-ai', 'worker-handoff-snapshot'):
             state = _service_state(ps, service)
             results.append(ProbeResult(f'{service}_running', bool(state.get('running')), state))
-        for service in ('sync-daemon', 'event-daemon'):
-            state = _service_state(ps, service)
-            results.append(ProbeResult(f'{service}_running', bool(state.get('running')) if expected_openclaw else True, state))
 
     if token:
         for name, path in (
             ('queue_summary', '/api/admin/queues/summary'),
-            ('openclaw_runtime_health', '/api/admin/openclaw/runtime-health'),
+            ('legacy_runtime_health', '/api/admin/openclaw/runtime-health'),
         ):
             ok, data = _http_json(f'{base_url}{path}', token=token)
             results.append(ProbeResult(name, ok, data))
     else:
         results.append(ProbeResult('queue_summary', True, {'skipped': 'ADMIN_BEARER_TOKEN not set'}))
-        results.append(ProbeResult('openclaw_runtime_health', True, {'skipped': 'ADMIN_BEARER_TOKEN not set'}))
+        results.append(ProbeResult('legacy_runtime_health', True, {'skipped': 'ADMIN_BEARER_TOKEN not set'}))
 
     payload = {'ok': all(item.ok for item in results), 'results': [item.__dict__ for item in results]}
     print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))

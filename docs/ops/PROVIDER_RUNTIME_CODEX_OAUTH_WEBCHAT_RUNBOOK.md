@@ -53,11 +53,12 @@ Check `provider_runtime_audit_logs` for `operation=generate` rows. The `safe_sum
 
 ## Rollback
 
-If the canary fails, switch only the WebChat fast provider:
+If the canary fails, keep WebChat Fast on Provider Runtime and route to a configured fallback:
 
 ```bash
-WEBCHAT_FAST_AI_PROVIDER=openclaw_responses
-WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED=false
+WEBCHAT_FAST_AI_PROVIDER=provider_runtime
+PROVIDER_RUNTIME_PRIMARY_PROVIDER=openai_responses
+PROVIDER_RUNTIME_FALLBACK_PROVIDERS=rule_engine
 CODEX_APP_SERVER_CANARY_PERCENT=0
 ```
 

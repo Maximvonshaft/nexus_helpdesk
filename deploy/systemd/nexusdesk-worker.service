@@ -1,12 +1,10 @@
 [Unit]
 Description=NexusDesk Worker
-After=network.target nexusdesk-openclaw-bridge.service
-Wants=nexusdesk-openclaw-bridge.service
+After=network.target
 
 [Service]
 WorkingDirectory=/opt/nexusdesk/backend
 EnvironmentFile=/opt/nexusdesk/backend/.env.production
-ExecStartPre=/opt/nexusdesk/venv/bin/python /opt/nexusdesk/backend/scripts/wait_for_openclaw_bridge.py --timeout 20
 ExecStart=/opt/nexusdesk/venv/bin/python scripts/run_worker.py --worker-id worker-main
 Restart=always
 RestartSec=3

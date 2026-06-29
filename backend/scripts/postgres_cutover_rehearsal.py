@@ -69,9 +69,9 @@ def main() -> int:
     if not settings.is_postgres:
         payload["warnings"].append("database_not_postgres")
 
-    payload["checks"]["mcp_preferred"] = settings.openclaw_transport == "mcp"
-    if settings.openclaw_transport != "mcp":
-        payload["warnings"].append("openclaw_transport_not_mcp")
+    payload["checks"]["legacy_openclaw_runtime_disabled"] = settings.openclaw_transport == "disabled"
+    if settings.openclaw_transport != "disabled":
+        payload["warnings"].append("openclaw_transport_not_disabled")
 
     payload["checks"]["object_storage_preferred"] = settings.storage_backend != "local"
     if settings.storage_backend == "local":

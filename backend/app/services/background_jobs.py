@@ -13,7 +13,7 @@ from ..enums import EventType, JobStatus, MessageStatus, SourceChannel
 from ..models import BackgroundJob, OpenClawConversationLink, OpenClawTranscriptMessage, TicketEvent, TicketOutboundMessage
 from ..settings import get_settings
 from ..utils.time import utc_now
-from . import openclaw_bridge, openclaw_client_factory
+from . import openclaw_bridge
 from .email_mailbox_identity import ensure_outbound_mailbox_identity
 from .speedaf.redactor import mask_phone, safe_caller_payload, safe_waybill_payload, sha256_prefix, suffix
 
@@ -158,7 +158,7 @@ def enqueue_auto_reply_job(db: Session, *, ticket_id: int, user_id: int) -> Back
 
 def enqueue_openclaw_sync_job(db: Session, *, ticket_id: int, session_key: str, transcript_limit: int | None = None, dedupe: bool = True) -> BackgroundJob:
     payload = {'ticket_id': ticket_id, 'session_key': session_key, 'transcript_limit': transcript_limit or settings.openclaw_sync_transcript_limit}
-    return enqueue_background_job(db, queue_name='openclaw_sync', job_type=OPENCLAW_SYNC_JOB, payload=payload, dedupe_key=f'openclaw-sync:{session_key}' if dedupe else None)
+    return enqueue_background_job(db, queue_name='legacy_session_sync', job_type=OPENCLAW_SYNC_JOB, payload=payload, dedupe_key=f'legacy-session-sync:{session_key}' if dedupe else None)
 
 
 def enqueue_attachment_persist_job(db: Session, *, attachment_ref_id: int, dedupe: bool = True) -> BackgroundJob:
@@ -207,18 +207,7 @@ def enqueue_speedaf_voice_callback_job(
 
 
 def enqueue_stale_openclaw_sync_jobs(db: Session, *, limit: int | None = None) -> list[BackgroundJob]:
-    if not settings.openclaw_sync_enabled:
-        return []
-    cutoff = utc_now() - timedelta(seconds=settings.openclaw_sync_stale_seconds)
-    rows = db.query(OpenClawConversationLink).join(OpenClawConversationLink.ticket).filter(OpenClawConversationLink.session_key.is_not(None)).filter((OpenClawConversationLink.last_synced_at.is_(None)) | (OpenClawConversationLink.last_synced_at < cutoff)).order_by(OpenClawConversationLink.last_synced_at.asc().nullsfirst(), OpenClawConversationLink.id.asc()).limit(limit or settings.openclaw_sync_batch_size).all()
-    jobs: list[BackgroundJob] = []
-    seen: set[str] = set()
-    for row in rows:
-        if not row.session_key or row.session_key in seen:
-            continue
-        seen.add(row.session_key)
-        jobs.append(enqueue_openclaw_sync_job(db, ticket_id=row.ticket_id, session_key=row.session_key, transcript_limit=settings.openclaw_sync_transcript_limit, dedupe=True))
-    return jobs
+    return []
 
 
 def claim_pending_jobs(db: Session, *, limit: int | None = None, worker_id: str | None = None, job_types: list[str] | tuple[str, ...] | set[str] | None = None) -> list[BackgroundJob]:
@@ -459,11 +448,7 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             _mark_done(job)
             return job
         if job.job_type == OPENCLAW_SYNC_JOB:
-            if not settings.openclaw_sync_enabled:
-                _mark_done(job)
-                return job
-            with openclaw_client_factory.get_openclaw_runtime_client() as client:
-                openclaw_bridge.sync_openclaw_conversation(db, ticket_id=int(payload['ticket_id']), session_key=str(payload['session_key']), limit=int(payload.get('transcript_limit') or settings.openclaw_sync_transcript_limit), client=client)
+            job.last_error = "legacy OpenClaw session sync is retired"
             _mark_done(job)
             return job
         raise RuntimeError(f'Unsupported job type: {job.job_type}')
@@ -473,9 +458,6 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
 
 
 def dispatch_pending_background_jobs(db: Session, *, limit: int | None = None, worker_id: str | None = None) -> list[BackgroundJob]:
-    if settings.openclaw_sync_enabled:
-        enqueue_stale_openclaw_sync_jobs(db, limit=settings.openclaw_sync_batch_size)
-        db.commit()
     if settings.email_mailbox_sync_enabled:
         from .email_mailbox_polling_service import enqueue_due_email_mailbox_sync_jobs
         enqueue_due_email_mailbox_sync_jobs(db, interval_seconds=settings.email_mailbox_sync_interval_seconds, limit=settings.email_mailbox_sync_batch_size)
@@ -490,9 +472,6 @@ def dispatch_pending_background_jobs(db: Session, *, limit: int | None = None, w
 
 
 def dispatch_pending_sync_jobs(db: Session, *, limit: int | None = None, worker_id: str | None = None) -> list[BackgroundJob]:
-    if settings.openclaw_sync_enabled:
-        enqueue_stale_openclaw_sync_jobs(db, limit=settings.openclaw_sync_batch_size)
-        db.commit()
     claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[OPENCLAW_SYNC_JOB])
     processed: list[BackgroundJob] = []
     for job in claimed:

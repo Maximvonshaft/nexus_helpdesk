@@ -311,11 +311,11 @@ def test_process_email_message_uses_smtp_adapter_and_marks_sent(db_session, monk
     message = _message(db_session, ticket)
 
     monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
-    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "openclaw")
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "email")
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
-    monkeypatch.setattr(message_dispatch, "dispatch_via_openclaw_bridge", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("OpenClaw bridge must not run for email")))
-    monkeypatch.setattr(message_dispatch, "dispatch_via_openclaw_cli", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("OpenClaw CLI must not run for email")))
+    monkeypatch.setattr(message_dispatch, "dispatch_via_openclaw_bridge", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("legacy bridge alias must not run for email")))
+    monkeypatch.setattr(message_dispatch, "dispatch_via_openclaw_cli", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("legacy CLI alias must not run for email")))
 
     def fake_email_dispatch(db, *, message, ticket, idempotency_key):
         return MessageStatus.sent, "smtp_sent", utc_now(), {
@@ -339,7 +339,7 @@ def test_process_email_failure_preserves_smtp_failure_code(db_session, monkeypat
     message = _message(db_session, ticket)
 
     monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
-    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "openclaw")
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "email")
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
 

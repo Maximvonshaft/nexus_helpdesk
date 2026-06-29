@@ -98,7 +98,7 @@ def build_handoff_snapshot_payload(
             compact_context.append({"role": role, "text": text})
     snapshot = {
         "snapshot_type": "webchat_ai_handoff_snapshot",
-        "source": "webchat_fast_openclaw_responses",
+        "source": "webchat_fast_provider_runtime",
         "tenant_key": _clip(tenant_key, 120) or "default",
         "channel_key": _clip(channel_key, 120) or "website",
         "session_id": _clip(session_id, 120),

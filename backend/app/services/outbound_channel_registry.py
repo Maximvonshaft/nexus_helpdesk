@@ -153,6 +153,13 @@ def _target_ready(ticket: Ticket | None, *, channel: str) -> bool:
     return True
 
 
+def _outbound_provider_ready(settings, *, channel: str) -> bool:
+    provider = str(getattr(settings, "outbound_provider", "disabled") or "disabled").strip().lower()
+    if channel == SourceChannel.email.value:
+        return provider in {"email", "smtp", "native"}
+    return provider == "native"
+
+
 def get_outbound_channel_capability(
     channel: SourceChannel | str,
     *,
@@ -213,8 +220,8 @@ def get_outbound_channel_capability(
         target_configured = _target_ready(ticket, channel=channel_value) if ticket is not None else True
         if not bool(settings.enable_outbound_dispatch):
             missing.append("enable_outbound_dispatch")
-        if settings.outbound_provider != "openclaw":
-            missing.append("outbound_provider_openclaw")
+        if not _outbound_provider_ready(settings, channel=channel_value):
+            missing.append("outbound_provider_email_or_smtp")
         if not account_configured:
             missing.append("email_account_registry")
         if not target_configured:
@@ -245,8 +252,8 @@ def get_outbound_channel_capability(
         target_configured = _target_ready(ticket, channel=channel_value) if ticket is not None else True
         if not bool(settings.enable_outbound_dispatch):
             missing.append("enable_outbound_dispatch")
-        if settings.outbound_provider != "openclaw":
-            missing.append("outbound_provider_openclaw")
+        if not _outbound_provider_ready(settings, channel=channel_value):
+            missing.append("outbound_provider_native")
         if channel_value == SourceChannel.whatsapp.value:
             if settings.whatsapp_dispatch_mode == "native_sidecar":
                 if not bool(settings.whatsapp_native_enabled):
@@ -255,8 +262,12 @@ def get_outbound_channel_capability(
                     missing.append("whatsapp_sidecar_token")
             elif settings.whatsapp_dispatch_mode == "cloud_api_future":
                 missing.append("whatsapp_cloud_api_not_implemented")
-            elif settings.whatsapp_dispatch_mode != "openclaw_bridge":
+            elif settings.whatsapp_dispatch_mode == "openclaw_bridge":
+                missing.append("legacy_openclaw_bridge_retired")
+            elif settings.whatsapp_dispatch_mode != "disabled":
                 missing.append("valid_whatsapp_dispatch_mode")
+            else:
+                missing.append("whatsapp_dispatch_mode")
         if not account_configured:
             missing.append(f"{channel_value}_channel_account")
         if not target_configured:

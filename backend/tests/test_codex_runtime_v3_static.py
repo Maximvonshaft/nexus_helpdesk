@@ -50,8 +50,9 @@ def test_compose_adds_node_runtime_and_keeps_python_rollback():
     assert "CODEX_APPSERVER_MODEL: ${CODEX_APPSERVER_MODEL:-gpt-5.3-codex-spark}" in compose
     assert "CODEX_APPSERVER_REASONING_EFFORT: ${CODEX_APPSERVER_REASONING_EFFORT:-low}" in compose
     assert "CODEX_APPSERVER_SERVICE_TIER: ${CODEX_APPSERVER_SERVICE_TIER:-priority}" in compose
-    assert "codex-private-model-runtime:" in compose
-    assert "PORT: \"18800\"" in compose
+    assert "codex-private-model-runtime:" not in compose
+    assert "codex-private-reply-engine:" in compose
+    assert "PORT: \"18796\"" in compose
     assert "CODEX_APP_SERVER_RUNTIME_BACKEND" in compose
     assert "CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON" in compose
     assert "CODEX_APP_SERVER_REAL_UPSTREAM_URL_NODE" in compose
@@ -63,7 +64,7 @@ def test_bridge_has_runtime_backend_switch():
     assert "CODEX_APP_SERVER_RUNTIME_BACKEND" in source
     assert "python_cli_pool" in source
     assert "node_appserver" in source
-    assert "codex-private-model-runtime:18800/reply" in source
+    assert "codex-private-reply-engine:18796/reply" in source
     assert "codex-appserver-runtime:18810/reply" in source
 
 
@@ -79,8 +80,8 @@ def test_node_runtime_defaults_match_validated_server_profile():
     assert 'const DEFAULT_SERVICE_TIER = "priority"' in env
     assert "CODEX_APPSERVER_MAX_CONCURRENCY: ${CODEX_APPSERVER_MAX_CONCURRENCY:-4}" in compose
     assert "CODEX_APPSERVER_QUEUE_TIMEOUT_MS: ${CODEX_APPSERVER_QUEUE_TIMEOUT_MS:-750}" in compose
-    assert "ln -sf /usr/local/lib/node_modules/@openclaw/codex/node_modules/.bin/codex /usr/local/bin/codex" in dockerfile
-    assert "codex --version" in dockerfile
+    assert "@openclaw/codex" not in dockerfile
+    assert "codex --version" not in dockerfile
 
 
 def test_runbook_documents_webchat_flag_and_db_canary_gate():

@@ -12,8 +12,8 @@ The goal is deliberately narrow: use a private bridge as a strict JSON customer-
 WebChat customer
 -> /api/webchat/fast-reply
 -> webchat_fast_ai_service
--> provider_router
--> codex_app_server provider or OpenClaw fallback route
+-> provider_runtime router
+-> codex_app_server provider or configured fallback route
 -> private local reply bridge
 -> Codex app-server adapter or stub/upstream sidecar
 -> strict JSON reply
@@ -62,11 +62,11 @@ CODEX_APP_SERVER_TOKEN_FILE=/run/nexus/codex_reply_bridge_shared_token
 CODEX_APP_SERVER_TIMEOUT_MS=15000
 ```
 
-Default production behavior remains unchanged:
+Default production behavior now routes through Provider Runtime:
 
 ```text
-WEBCHAT_FAST_AI_PROVIDER=openclaw_responses
-WEBCHAT_FAST_AI_FALLBACK_PROVIDER=none
+WEBCHAT_FAST_AI_PROVIDER=provider_runtime
+WEBCHAT_FAST_AI_FALLBACK_PROVIDER=rule_engine
 ```
 
 ### PR-4: Canary, kill switch, and observability
@@ -80,8 +80,8 @@ CODEX_APP_SERVER_KILL_SWITCH=true|false
 
 Routing behavior:
 
-- `CODEX_APP_SERVER_KILL_SWITCH=true` routes to `openclaw_responses` immediately.
-- `CODEX_APP_SERVER_CANARY_PERCENT=0` routes all traffic to `openclaw_responses`.
+- `CODEX_APP_SERVER_KILL_SWITCH=true` routes to the configured fallback immediately.
+- `CODEX_APP_SERVER_CANARY_PERCENT=0` routes all traffic to the configured fallback.
 - `CODEX_APP_SERVER_CANARY_PERCENT=1..99` uses stable hash bucket routing based on tenant/session/request.
 - `CODEX_APP_SERVER_CANARY_PERCENT=100` routes all eligible traffic to `codex_app_server`.
 
@@ -96,7 +96,7 @@ Metric payload includes:
 ```json
 {
   "status": "route|ok|error|fallback_ok|fallback_failed",
-  "route": "canary_full|canary_selected|canary_skipped_openclaw|kill_switch_openclaw|configured_provider",
+  "route": "canary_full|canary_selected|canary_skipped_fallback|kill_switch_fallback|configured_provider",
   "elapsed_ms": 0,
   "error_code": null
 }
@@ -130,11 +130,11 @@ The first implementation remains read-only and reply-only.
 - No direct Ticket, outbound message, Speedaf work-order, refund, address-change, or compensation action.
 - No raw upstream payload stored in customer-visible surfaces, tickets, or events.
 - All accepted outputs must pass the existing Nexus strict parser.
-- Any parse failure, timeout, unavailable bridge, or unsafe customer-visible text must fail closed and can fall back to `openclaw_responses` when fallback is configured.
+- Any parse failure, timeout, unavailable bridge, or unsafe customer-visible text must fail closed and can fall back to `openai_responses` or `rule_engine` when fallback is configured.
 
 ## Why a sidecar bridge
 
-OpenClaw's Codex support is app-server and harness oriented. The safe Nexus path is not to treat a Codex subscription credential as a normal model API key. The safe path is to isolate the app-server interaction behind a private service and keep Nexus in control of customer-visible output, policy, and audit.
+Codex app-server support is app-server and harness oriented. The safe Nexus path is not to treat a Codex subscription credential as a normal model API key. The safe path is to isolate the app-server interaction behind a private service and keep Nexus in control of customer-visible output, policy, and audit.
 
 ## Provider behavior
 
@@ -176,8 +176,8 @@ In production:
 - `CODEX_APP_SERVER_TOKEN_FILE` is required when provider is `codex_app_server`.
 - `CODEX_APP_SERVER_BRIDGE_URL` must point to private, loopback, link-local, or tailnet/CGNAT address space.
 - `CODEX_APP_SERVER_CANARY_PERCENT` must be between 0 and 100.
-- If `CODEX_APP_SERVER_KILL_SWITCH=true` or `CODEX_APP_SERVER_CANARY_PERCENT<100`, OpenClaw route configuration is required because traffic can be routed to `openclaw_responses`.
-- `openclaw_responses` fallback still requires its own production token file and private URL validation.
+- If `CODEX_APP_SERVER_KILL_SWITCH=true` or `CODEX_APP_SERVER_CANARY_PERCENT<100`, configure Provider Runtime fallbacks explicitly.
+- Legacy `openclaw_responses` fallback is retired and must not be used for production rollback.
 
 ## Later implementation phases
 
@@ -188,7 +188,7 @@ In production:
 
 ## Non-goals
 
-- Replacing OpenClaw Responses immediately.
+- Re-enabling OpenClaw Responses as a rollback path.
 - Sending all customer traffic to Codex without canary controls.
 - Enabling Codex-native coding tools.
 - Building full agent runtime, approval bridge, or tool governance in this PR.

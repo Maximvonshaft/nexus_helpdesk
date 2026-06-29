@@ -19,17 +19,6 @@ def record_fast_reply_metric(*, status: str, intent: str | None = None, handoff_
     )
 
 
-def record_openclaw_responses_metric(*, status: str, agent_id: str, elapsed_ms: int | None = None) -> None:
-    LOGGER.info(
-        "webchat_openclaw_responses_metric",
-        extra={"event_payload": {
-            "status": status,
-            "agent_id": agent_id,
-            "elapsed_ms": elapsed_ms,
-        }},
-    )
-
-
 def record_codex_app_server_metric(
     *,
     status: str,
