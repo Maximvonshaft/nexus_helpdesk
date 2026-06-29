@@ -1,0 +1,120 @@
+name: release-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_name:
+        description: "OCI image name. Defaults to ghcr.io/<owner>/<repo>/helpdesk."
+        required: false
+        type: string
+      app_version_prefix:
+        description: "Release metadata prefix, for example candidate or main."
+        required: true
+        default: candidate
+        type: string
+      push_image:
+        description: "Push the image to the registry."
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-release-image:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.release_meta.outputs.image_tag }}
+      git_sha: ${{ steps.release_meta.outputs.git_sha }}
+      build_time: ${{ steps.release_meta.outputs.build_time }}
+      app_version: ${{ steps.release_meta.outputs.app_version }}
+      frontend_build_sha: ${{ steps.release_meta.outputs.frontend_build_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute release metadata
+        id: release_meta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          repo_lc="$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          image_name="${{ inputs.image_name }}"
+          if [ -z "$image_name" ]; then
+            image_name="ghcr.io/${repo_lc}/helpdesk"
+          fi
+          image_name="$(printf '%s' "$image_name" | tr '[:upper:]' '[:lower:]')"
+
+          prefix="${{ inputs.app_version_prefix }}"
+          prefix="$(printf '%s' "$prefix" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^-+|-+$//g')"
+          if [ -z "$prefix" ]; then
+            prefix="candidate"
+          fi
+
+          git_sha="$(git rev-parse HEAD)"
+          short_sha="$(git rev-parse --short=12 HEAD)"
+          build_time="$(date -u +%Y%m%dT%H%M%SZ)"
+          app_version="${prefix}-${short_sha}"
+          image_tag="${image_name}:${app_version}-${build_time}"
+          frontend_build_sha="$git_sha"
+
+          {
+            printf 'git_sha=%s\n' "$git_sha"
+            printf 'build_time=%s\n' "$build_time"
+            printf 'app_version=%s\n' "$app_version"
+            printf 'image_tag=%s\n' "$image_tag"
+            printf 'frontend_build_sha=%s\n' "$frontend_build_sha"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            printf 'GIT_SHA=%s\n' "$git_sha"
+            printf 'COMMIT_SHA=%s\n' "$git_sha"
+            printf 'APP_GIT_SHA=%s\n' "$git_sha"
+            printf 'BUILD_TIME=%s\n' "$build_time"
+            printf 'APP_BUILD_TIME=%s\n' "$build_time"
+            printf 'APP_VERSION=%s\n' "$app_version"
+            printf 'IMAGE_TAG=%s\n' "$image_tag"
+            printf 'APP_IMAGE_TAG=%s\n' "$image_tag"
+            printf 'FRONTEND_BUILD_SHA=%s\n' "$frontend_build_sha"
+            printf 'APP_FRONTEND_BUILD_SHA=%s\n' "$frontend_build_sha"
+          } > release-metadata.env
+
+          cat release-metadata.env >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log in to GHCR
+        if: startsWith(steps.release_meta.outputs.image_tag, 'ghcr.io/')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build release image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: ${{ inputs.push_image }}
+          load: ${{ ! inputs.push_image }}
+          tags: ${{ steps.release_meta.outputs.image_tag }}
+          build-args: |
+            GIT_SHA=${{ steps.release_meta.outputs.git_sha }}
+            BUILD_TIME=${{ steps.release_meta.outputs.build_time }}
+            IMAGE_TAG=${{ steps.release_meta.outputs.image_tag }}
+            APP_VERSION=${{ steps.release_meta.outputs.app_version }}
+            FRONTEND_BUILD_SHA=${{ steps.release_meta.outputs.frontend_build_sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Upload release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata
+          path: release-metadata.env
+          if-no-files-found: error

@@ -17,6 +17,12 @@ const DEFAULT_GATEWAY_RUNTIME = path.join(
 );
 const SEND_PATH = '/send' + '-message';
 const SPEEDAF_LOOKUP_PATH = '/tools/speedaf_lookup';
+const DEFAULT_SUPPORT_KNOWLEDGE_MODULE = path.join(
+  DEFAULT_OPENCLAW_HOME,
+  'extensions',
+  'support-knowledge-publisher',
+  'memory-config.js',
+);
 
 function nowIso() {
   return new Date().toISOString();
@@ -100,6 +106,8 @@ function loadConfig() {
     trackingLookupEnabled: truthyEnv('OPENCLAW_BRIDGE_TRACKING_LOOKUP_ENABLED', false),
     trackingLookupMethod: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_METHOD || 'tools.call',
     trackingLookupToolName: process.env.OPENCLAW_BRIDGE_TRACKING_LOOKUP_TOOL_NAME || 'speedaf-support__speedaf_lookup',
+    supportKnowledgeModule:
+      process.env.OPENCLAW_BRIDGE_SUPPORT_KNOWLEDGE_MODULE || DEFAULT_SUPPORT_KNOWLEDGE_MODULE,
   };
 }
 
@@ -179,6 +187,62 @@ function extractTextFromMessage(message) {
 function getMessageId(msg) {
   if (!msg) return null;
   return msg.id || msg.messageId || msg.__openclaw?.id || msg.__openclaw?.seq || msg.timestamp || null;
+}
+
+function asArray(value) {
+  if (Array.isArray(value)) return value;
+  if (value === undefined || value === null || value === '') return [];
+  return [value];
+}
+
+function isSafeLocalMediaPath(value) {
+  if (typeof value !== 'string' || !value) return false;
+  const resolved = path.resolve(value);
+  const allowedRoot = path.resolve(DEFAULT_OPENCLAW_HOME, 'media');
+  return resolved === allowedRoot || resolved.startsWith(`${allowedRoot}${path.sep}`);
+}
+
+function attachmentFromLocalMedia(filePath, mediaType, caption) {
+  if (!isSafeLocalMediaPath(filePath)) return null;
+  let stat;
+  try {
+    stat = fs.statSync(filePath);
+  } catch {
+    return null;
+  }
+  if (!stat.isFile() || stat.size > 2 * 1024 * 1024) return null;
+  const mimeType = mediaType || 'application/octet-stream';
+  if (!String(mimeType).startsWith('image/')) return null;
+  const data = fs.readFileSync(filePath).toString('base64');
+  return {
+    type: 'image',
+    mime_type: mimeType,
+    mimeType,
+    caption: caption || null,
+    thumbnail_url: `data:${mimeType};base64,${data}`,
+    thumbnailUrl: `data:${mimeType};base64,${data}`,
+    download_url: null,
+    downloadUrl: null,
+    storage_status: 'openclaw_local_media',
+    storageStatus: 'openclaw_local_media',
+    filename: path.basename(filePath),
+    size_bytes: stat.size,
+    source: 'openclaw_media_path',
+  };
+}
+
+function extractMediaAttachments(message) {
+  const mediaPaths = asArray(message?.MediaPaths || message?.mediaPaths || message?.MediaPath || message?.mediaPath);
+  const mediaTypes = asArray(message?.MediaTypes || message?.mediaTypes || message?.MediaType || message?.mediaType);
+  const caption = typeof message?.content === 'string' && !/^\[[^\]]*media without caption\]$/i.test(message.content)
+    ? message.content
+    : null;
+  const attachments = [];
+  mediaPaths.forEach((filePath, index) => {
+    const attachment = attachmentFromLocalMedia(filePath, mediaTypes[index] || mediaTypes[0], caption);
+    if (attachment) attachments.push(attachment);
+  });
+  return attachments;
 }
 
 function toAgentScopedSessionKey(sessionKey, agentId) {
@@ -705,12 +769,15 @@ class BridgeRuntime {
         timeoutMs: this.config.requestTimeoutMs,
       });
       const messages = response.messages || [];
-      const message = messages.find((m) => m.id === messageId || m.messageId === messageId);
+      const message = messages.find((m) => String(getMessageId(m)) === messageId || m.id === messageId || m.messageId === messageId);
       if (!message) {
         log('info', 'bridge_attachments_message_not_found', { bridgeRequestId, sessionKey, messageId });
         return { bridgeRequestId, attachments: [], message: null, notFound: true };
       }
-      const attachments = (message.content || []).filter((c) => c && typeof c === 'object' && c.type !== 'text');
+      const contentAttachments = Array.isArray(message.content)
+        ? message.content.filter((c) => c && typeof c === 'object' && c.type !== 'text')
+        : [];
+      const attachments = [...contentAttachments, ...extractMediaAttachments(message)];
       return { bridgeRequestId, attachments, message };
     } finally {
       this.pendingRequests.delete(bridgeRequestId);
@@ -875,6 +942,53 @@ async function handleBridgeCall(res, fn) {
   }
 }
 
+function supportKnowledgeOperationAllowed(operation) {
+  return new Set([
+    'card-list',
+    'card-get',
+    'card-save-draft',
+    'card-publish',
+    'collections',
+    'files',
+    'file',
+    'similarity-check',
+    'search-validate',
+    'preview-diff',
+    'status-dictionary-list',
+    'status-dictionary-save-draft',
+    'status-dictionary-publish',
+  ]).has(operation);
+}
+
+async function handleSupportKnowledgeConfig(config, payload) {
+  const operation = String(payload?.operation || '').trim();
+  if (!operation) {
+    return { statusCode: 400, body: { ok: false, error: 'operation_required' } };
+  }
+  if (!supportKnowledgeOperationAllowed(operation)) {
+    return { statusCode: 403, body: { ok: false, error: 'operation_not_allowed' } };
+  }
+  const modulePath = config.supportKnowledgeModule;
+  if (!fs.existsSync(modulePath)) {
+    return { statusCode: 503, body: { ok: false, error: 'support_knowledge_module_missing' } };
+  }
+  const mod = await import(pathToFileURL(modulePath).href);
+  if (typeof mod.handleMemoryConfig !== 'function') {
+    return { statusCode: 503, body: { ok: false, error: 'support_knowledge_module_invalid' } };
+  }
+  const result = await mod.handleMemoryConfig(payload || {});
+  const statusCode = Number.isFinite(Number(result?.status)) ? Number(result.status) : 200;
+  const body = asObject(result?.body);
+  return {
+    statusCode,
+    body: {
+      ok: body.ok !== false,
+      operation,
+      ...body,
+    },
+  };
+}
+
 async function main() {
   const config = loadConfig();
   const GatewayClient = await loadGatewayClient(config.gatewayRuntimeModule);
@@ -944,6 +1058,12 @@ async function main() {
         const payload = await readJsonBody(req);
         if (!payload || !payload.sessionKey) return sendJson(res, 400, { ok: false, error: 'missing_required_fields', missing: ['sessionKey'] });
         await handleBridgeCall(res, () => bridge.readMessages(payload));
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === '/support-knowledge-config') {
+        const payload = await readJsonBody(req);
+        const response = await handleSupportKnowledgeConfig(config, payload);
+        sendJson(res, response.statusCode, response.body);
         return;
       }
 

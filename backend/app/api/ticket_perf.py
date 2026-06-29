@@ -26,6 +26,7 @@ from ..models import (
     TicketOutboundAttachment,
     TicketOutboundMessage,
     User,
+    WhatsAppInboundMessage,
 )
 from ..services.permissions import ensure_ticket_visible
 from ..utils.time import utc_now
@@ -45,6 +46,8 @@ SOURCE_ORDER = {
     "ticket_event": 5,
     "webchat_event": 6,
     "voice_call": 7,
+    "openclaw_transcript": 8,
+    "whatsapp_inbound": 9,
 }
 
 
@@ -66,6 +69,50 @@ def _dt(value: Any) -> str | None:
 
 def _safe_limit(limit: int | None) -> int:
     return max(1, min(int(limit or DEFAULT_TIMELINE_LIMIT), MAX_TIMELINE_LIMIT))
+
+
+def _image_thumbnail_data_url(value: Any, mime_type: str | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if value.startswith("data:"):
+            return value
+        encoded = value.strip()
+    elif isinstance(value, list):
+        try:
+            encoded = base64.b64encode(bytes(int(item) for item in value)).decode("ascii")
+        except (TypeError, ValueError):
+            return None
+    else:
+        return None
+    if not encoded:
+        return None
+    return f"data:{mime_type or 'image/jpeg'};base64,{encoded}"
+
+
+def _whatsapp_media_attachments(row: WhatsAppInboundMessage) -> list[dict[str, Any]]:
+    raw = row.raw_payload_json or {}
+    raw_payload = raw.get("raw_payload") if isinstance(raw, dict) else None
+    source = raw_payload if isinstance(raw_payload, dict) else raw
+    message = source.get("message") if isinstance(source, dict) else None
+    image = message.get("imageMessage") if isinstance(message, dict) else None
+    if not isinstance(image, dict):
+        return []
+    mime_type = image.get("mimetype") or "image/jpeg"
+    thumbnail_url = _image_thumbnail_data_url(image.get("jpegThumbnail"), mime_type)
+    return [
+        {
+            "type": "image",
+            "mime_type": mime_type,
+            "caption": image.get("caption") or row.body_text or None,
+            "width": image.get("width"),
+            "height": image.get("height"),
+            "thumbnail_url": thumbnail_url,
+            "download_url": None,
+            "storage_status": "thumbnail_only" if thumbnail_url else "referenced",
+            "source": "whatsapp_raw_payload",
+        }
+    ]
 
 
 def _customer_summary(row: Customer | None) -> dict[str, Any] | None:
@@ -220,6 +267,138 @@ def _openclaw_transcript_preview(db: Session, ticket_id: int, limit: int = 5) ->
         }
         for row in rows
     ]
+
+
+def _conversation_transcript_items(db: Session, ticket_id: int, limit: int) -> list[dict[str, Any]]:
+    safe_limit = _safe_limit(limit)
+    rows: list[dict[str, Any]] = []
+
+    whatsapp_rows = (
+        db.query(WhatsAppInboundMessage)
+        .filter(WhatsAppInboundMessage.ticket_id == ticket_id)
+        .order_by(WhatsAppInboundMessage.received_at.desc(), WhatsAppInboundMessage.id.desc())
+        .limit(safe_limit)
+        .all()
+    )
+    for row in whatsapp_rows:
+        attachments = _whatsapp_media_attachments(row)
+        body = row.body_text or (attachments[0].get("caption") if attachments else None) or ("image message" if attachments else "")
+        rows.append(
+            {
+                "id": f"whatsapp-{row.id}",
+                "source_type": "whatsapp_inbound",
+                "source_id": row.id,
+                "direction": "customer",
+                "author_label": row.sender_phone or row.sender_jid,
+                "body": body,
+                "body_text": body,
+                "message_type": row.message_type,
+                "message_id": row.external_message_id,
+                "chat_jid": row.chat_jid,
+                "sender_jid": row.sender_jid,
+                "webchat_message_id": row.webchat_message_id,
+                "attachments": attachments,
+                "created_at": _dt(row.created_at),
+                "received_at": _dt(row.received_at),
+            }
+        )
+
+    if whatsapp_rows:
+        outbound_rows = (
+            db.query(TicketOutboundMessage)
+            .filter(TicketOutboundMessage.ticket_id == ticket_id)
+            .order_by(TicketOutboundMessage.created_at.desc(), TicketOutboundMessage.id.desc())
+            .limit(safe_limit)
+            .all()
+        )
+        delivered_statuses = {"sent", "delivered", "read"}
+        for row in outbound_rows:
+            channel = _value(row.channel)
+            status_values = {
+                str(_value(row.status) or "").lower(),
+                str(row.provider_status or "").lower(),
+                str(row.delivery_status or "").lower(),
+            }
+            if channel != "whatsapp" or not (status_values & delivered_statuses):
+                continue
+            rows.append(
+                {
+                    "id": f"outbound-{row.id}",
+                    "source_type": "outbound_message",
+                    "source_id": row.id,
+                    "direction": "agent",
+                    "author_label": "NexusDesk outbound",
+                    "body": row.body,
+                    "body_text": row.body,
+                    "message_id": row.provider_message_id,
+                    "delivery_status": row.delivery_status,
+                    "provider_status": row.provider_status,
+                    "created_at": _dt(row.created_at),
+                    "received_at": _dt(row.sent_at or row.created_at),
+                }
+            )
+    else:
+        webchat_rows = (
+            db.query(WebchatMessage)
+            .filter(WebchatMessage.ticket_id == ticket_id)
+            .order_by(WebchatMessage.created_at.desc(), WebchatMessage.id.desc())
+            .limit(safe_limit)
+            .all()
+        )
+        for row in webchat_rows:
+            body = getattr(row, "body_text", None) or row.body
+            rows.append(
+                {
+                    "id": f"webchat-{row.id}",
+                    "source_type": "webchat_message",
+                    "source_id": row.id,
+                    "direction": row.direction,
+                    "author_label": row.author_label,
+                    "body": body,
+                    "body_text": body,
+                    "message_type": getattr(row, "message_type", None) or "text",
+                    "delivery_status": getattr(row, "delivery_status", None),
+                    "created_at": _dt(row.created_at),
+                    "received_at": _dt(row.created_at),
+                }
+            )
+
+        openclaw_rows = (
+            db.query(OpenClawTranscriptMessage)
+            .filter(OpenClawTranscriptMessage.ticket_id == ticket_id)
+            .order_by(
+                OpenClawTranscriptMessage.received_at.desc().nullslast(),
+                OpenClawTranscriptMessage.created_at.desc(),
+                OpenClawTranscriptMessage.id.desc(),
+            )
+            .limit(safe_limit)
+            .all()
+        )
+        for row in openclaw_rows:
+            rows.append(
+                {
+                    "id": f"openclaw-{row.id}",
+                    "source_type": "openclaw_transcript",
+                    "source_id": row.id,
+                    "direction": row.role,
+                    "author_label": row.author_name,
+                    "body": row.body_text,
+                    "body_text": row.body_text,
+                    "message_id": row.message_id,
+                    "session_key": row.session_key,
+                    "created_at": _dt(row.created_at),
+                    "received_at": _dt(row.received_at or row.created_at),
+                }
+            )
+
+    rows.sort(
+        key=lambda item: (
+            item.get("received_at") or item.get("created_at") or "",
+            SOURCE_ORDER.get(str(item.get("source_type")), 99),
+            str(item.get("source_id") or ""),
+        )
+    )
+    return rows[-safe_limit:]
 
 
 def _openclaw_attachment_preview(db: Session, ticket_id: int, limit: int = 3) -> list[dict[str, Any]]:
@@ -629,3 +808,25 @@ def get_ticket_timeline_page(
     visible = rows[:safe_limit]
     next_cursor = _encode_timeline_cursor(visible[-1]) if len(rows) > safe_limit and visible else None
     return {"items": visible, "next_cursor": next_cursor, "has_more": bool(next_cursor)}
+
+
+@router.get("/{ticket_id}/conversation-transcript")
+def get_ticket_conversation_transcript(
+    ticket_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+    limit: int = Query(DEFAULT_TIMELINE_LIMIT, ge=1),
+):
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if ticket is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    ensure_ticket_visible(current_user, ticket, db)
+    items = _conversation_transcript_items(db, ticket_id, _safe_limit(limit))
+    return {
+        "items": items,
+        "sources": {
+            "webchat": any(item.get("source_type") == "webchat_message" for item in items),
+            "openclaw": any(item.get("source_type") == "openclaw_transcript" for item in items),
+            "whatsapp": any(item.get("source_type") == "whatsapp_inbound" for item in items),
+        },
+    }

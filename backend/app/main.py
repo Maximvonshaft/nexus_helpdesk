@@ -35,6 +35,7 @@ from .api.persona_profiles import router as persona_profiles_router
 from .api.speedaf_actions import router as speedaf_actions_router
 from .api.speedaf_cancel import router as speedaf_cancel_router
 from .api.stats import router as stats_router
+from .api.support_intelligence import router as support_intelligence_router
 from .api.ticket_perf import router as ticket_perf_router
 from .api.tickets import router as tickets_router
 from .api.webchat_fast import router as webchat_fast_router
@@ -43,11 +44,12 @@ from .api.webchat_events import router as webchat_events_router
 from .api.webchat_ws import router as webchat_ws_router
 from .api.webchat_voice import router as webchat_voice_router
 from .api.webcall_ai import router as webcall_ai_router
+from .api.whatsapp_lite import router as whatsapp_lite_router
 from .api.whatsapp_native_integration import router as whatsapp_native_integration_router
 from .db import engine, reset_current_request_id, set_current_request_id
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
 from .services.password_policy import MIN_PASSWORD_LENGTH, PasswordPolicyError, validate_admin_password_policy
-from .services.release_metadata import runtime_identity
+from .services.release_metadata import runtime_identity_status
 from .services.spa_fallback_hardening import should_block_spa_fallback
 from .services.storage_readiness import check_storage_readiness
 from .services.webchat_openclaw_responses_client import close_openclaw_clients
@@ -102,8 +104,8 @@ VOICE_PERMISSIONS_POLICY = 'camera=(), microphone=(self), geolocation=()'
 DEFAULT_CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
 
-def _runtime_identity() -> dict[str, str]:
-    return runtime_identity(default_app_version=app.version)
+def _runtime_identity() -> dict[str, object]:
+    return runtime_identity_status(default_app_version=app.version)
 
 
 def _migration_revision(conn: Connection) -> str | None:
@@ -263,11 +265,13 @@ app.include_router(stats_router)
 app.include_router(tickets_router)
 app.include_router(speedaf_actions_router)
 app.include_router(speedaf_cancel_router)
+app.include_router(support_intelligence_router)
 app.include_router(webchat_fast_router)
 app.include_router(webchat_events_router)
 app.include_router(webchat_ws_router)
 app.include_router(webcall_ai_router)
 app.include_router(webchat_voice_router)
+app.include_router(whatsapp_lite_router)
 app.include_router(whatsapp_native_integration_router)
 app.include_router(webchat_router)
 

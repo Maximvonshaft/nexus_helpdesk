@@ -104,6 +104,17 @@ jobs:
           set -Eeuo pipefail
           timeout 180 pytest -q backend/tests/test_ticket_detail_summary.py
 
+      - name: Run production drift reconciliation tests
+        run: |
+          set -Eeuo pipefail
+          export PYTHONPATH=backend
+          timeout 300 pytest -q \
+            backend/tests/test_release_metadata.py \
+            backend/tests/test_release_metadata_consistency_gate.py \
+            backend/tests/test_webchat_voice_mock_ui_static.py \
+            backend/tests/test_support_intelligence_config.py \
+            backend/tests/test_whatsapp_lite_session_dedupe.py
+
       - name: Run operator queue tests
         run: |
           set -Eeuo pipefail

@@ -40,6 +40,22 @@ def test_showcase_loads_feature_gated_webcall_entry():
     assert "data-channel=\"website\"" in index_text
     assert "data-title=\"Speedaf WebCall\"" in index_text
     assert "data-voice-label=\"WebCall\"" in index_text
+    assert "data-live-voice-mode=\"edge-card\"" in index_text
+    assert "data-live-voice-ws-path=\"/webchat/live/ws\"" in index_text
+
+
+def test_public_voice_entry_contains_feature_gated_edge_card_without_runtime_secrets():
+    text = VOICE_ENTRY.read_text(encoding="utf-8")
+
+    assert "data-live-voice-mode" in text
+    assert "edge-card" in text
+    assert "/webchat/live/ws" in text
+    assert "createScriptProcessor" in text
+    assert "token=" not in text
+    assert "47.87.143.41" not in text
+    assert "__SPEEDAF" not in text
+    assert "console.log" not in text
+    assert "[Speedaf Voice]" not in text
 
 
 def test_agent_webcall_console_route_is_registered():
