@@ -40,7 +40,7 @@ git checkout "$release_sha"
 
 install -m 0600 /opt/nexus_helpdesk/deploy/.env.prod deploy/.env.candidate
 cat /tmp/nexus-release-metadata/release-metadata.env >> deploy/.env.candidate
-printf '\nCANDIDATE_APP_PORT=18082\nRELEASE_CANDIDATE=true\n' >> deploy/.env.candidate
+printf '\nCANDIDATE_APP_PORT=18082\nCANDIDATE_EXTERNAL_NETWORK=deploy_default\nRELEASE_CANDIDATE=true\n' >> deploy/.env.candidate
 
 set -a
 . /tmp/nexus-release-metadata/release-metadata.env
@@ -59,6 +59,9 @@ docker compose -p nexusdesk_candidate \
 ```
 
 Candidate should listen only on `127.0.0.1:18082`.
+On 178, the production database URL currently resolves through Docker DNS, so
+candidate also joins `CANDIDATE_EXTERNAL_NETWORK=deploy_default` while keeping a
+separate candidate project network. Do not expose the candidate port publicly.
 
 ## Smoke Candidate
 

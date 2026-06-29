@@ -28,6 +28,9 @@ services:
       - /opt/nexus_helpdesk/data/uploads:/app/backend/uploads:ro
     ports:
       - "127.0.0.1:${CANDIDATE_APP_PORT:-18082}:8080"
+    networks:
+      - candidate
+      - production_runtime
     command:
       - /bin/sh
       - -c
@@ -44,3 +47,9 @@ services:
       retries: 5
       start_period: 30s
     restart: unless-stopped
+
+networks:
+  candidate: {}
+  production_runtime:
+    name: ${CANDIDATE_EXTERNAL_NETWORK:-deploy_default}
+    external: true

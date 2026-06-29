@@ -133,6 +133,7 @@ jobs:
               backend/scripts/*speedaf*.py) return 0 ;;
               backend/tests/test_admin_whatsapp*.py) return 0 ;;
               backend/tests/test_background_job_transaction_boundary.py) return 0 ;;
+              backend/tests/test_candidate_compose_contract.py) return 0 ;;
               backend/tests/test_channel_workbench_backend_contracts.py) return 0 ;;
               backend/tests/test_codex*.py) return 0 ;;
               backend/tests/test_domain_query_understanding.py) return 0 ;;
