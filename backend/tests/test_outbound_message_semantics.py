@@ -173,7 +173,7 @@ def test_requeue_dead_outbound_rejects_local_webchat_ack(db_session):
     assert 'external outbound' in exc.value.detail
 
 
-def test_inbound_auto_sync_does_not_create_outbound_messages(db_session, monkeypatch):
+def test_retired_inbound_auto_sync_does_not_create_outbound_messages(db_session, monkeypatch):
     team = make_team(db_session)
     make_user(db_session, team)
     monkeypatch.setattr(openclaw_bridge_service.settings, 'openclaw_sync_enabled', True)
@@ -189,9 +189,11 @@ def test_inbound_auto_sync_does_not_create_outbound_messages(db_session, monkeyp
     monkeypatch.setattr(openclaw_bridge_service, 'list_openclaw_conversations', lambda **kwargs: {'conversations': [{'sessionKey': 'sess-inbound-no-outbox', 'route': {'channel': 'whatsapp', 'recipient': '+15550104', 'accountId': 'default'}}]})
     monkeypatch.setattr(openclaw_bridge_service, 'read_openclaw_bridge_conversation', lambda session_key, limit=50: ({'sessionKey': session_key, 'route': {'channel': 'whatsapp', 'recipient': '+15550104', 'accountId': 'default'}}, [{'id': 'msg-inbound-1', 'role': 'user', 'author': 'customer', 'text': 'hello inbound'}]))
     monkeypatch.setattr(openclaw_bridge_service, 'fetch_openclaw_bridge_attachments', lambda *args, **kwargs: [])
-    summary = openclaw_bridge_service.sync_openclaw_inbound_conversations_once(db_session, source='default', force=True)
+    summary = openclaw_bridge_service.sync_openclaw_inbound_conversations_once(db_session, source='default')
     db_session.commit()
-    assert summary['synced_conversations'] == 1
+    assert summary['status'] == 'disabled'
+    assert summary['reason'] == 'legacy_openclaw_inbound_retired'
+    assert summary['synced_conversations'] == 0
     assert db_session.query(TicketOutboundMessage).count() == 0
 
 

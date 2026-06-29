@@ -3,8 +3,12 @@ from __future__ import annotations
 import pytest
 
 from app.services.webchat_fast_output_parser import FastReplyParseError, UnexpectedToolCallError
-from app.services.webchat_fast_stream_parser import StreamingReplyAbort, StreamingReplyExtractor
-from app.services.webchat_openclaw_stream_adapter import ContentDelta, ToolCallDetected
+from app.services.webchat_fast_stream_parser import (
+    ContentDelta,
+    StreamingReplyAbort,
+    StreamingReplyExtractor,
+    ToolCallDetected,
+)
 
 pytestmark = pytest.mark.fast_lane_v2_2_2
 
@@ -129,7 +133,7 @@ def test_direct_strict_dict_with_tool_call_metadata_rejected():
         })
 
 
-def test_openclaw_envelope_final_parse_passes():
+def test_provider_envelope_final_parse_passes():
     extractor = StreamingReplyExtractor()
     parsed = extractor.final_parse({
         'response': {

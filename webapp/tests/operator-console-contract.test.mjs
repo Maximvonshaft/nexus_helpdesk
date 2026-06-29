@@ -148,7 +148,7 @@ test('runtime page exposes confirmed recovery actions and refreshes runtime view
   assert.match(runtimeRoute, /重排 dead outbound/)
   assert.match(runtimeRoute, /重排此任务/)
   assert.match(runtimeRoute, /不会删除任务，不会跳过权限，不会绕过后端审计/)
-  for (const key of ['runtimeHealth', 'readiness', 'signoff', 'jobs', 'queueSummary', 'openclawConnectivity']) {
+  for (const key of ['runtimeHealth', 'readiness', 'signoff', 'jobs', 'queueSummary', 'legacySessionConnectivity']) {
     assert.match(runtimeRoute, new RegExp(`invalidateQueries\\(\\{ queryKey: \\['${key}'\\] \\}\\)`))
   }
 })

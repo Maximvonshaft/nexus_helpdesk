@@ -5,16 +5,14 @@ on:
     paths:
       - 'backend/app/api/webchat_fast.py'
       - 'backend/app/services/webchat_fast_*.py'
-      - 'backend/app/services/webchat_openclaw_responses_client.py'
       - 'backend/app/services/webchat_handoff_policy.py'
       - 'backend/app/services/webchat_handoff_snapshot*.py'
+      - 'backend/app/services/provider_runtime/**'
       - 'backend/app/static/webchat/widget.js'
       - 'backend/app/static/webchat/demo/**'
       - 'backend/tests/test_webchat_fast*.py'
-      - 'backend/tests/test_webchat_openclaw_responses_client.py'
       - 'scripts/smoke/webchat_fast_reply_concurrency_smoke.py'
       - 'scripts/smoke/browser_bundle_secret_scan.py'
-      - 'scripts/smoke/openclaw_gateway_private_exposure_probe.py'
       - 'deploy/docker-compose.server.yml'
       - 'deploy/nginx/default.conf'
       - 'docs/webchat-*.md'
@@ -32,7 +30,6 @@ jobs:
       WEBCHAT_FAST_AI_ENABLED: 'false'
       WEBCHAT_ALLOWED_ORIGINS: http://localhost,https://example.test
       WEBCHAT_ALLOW_NO_ORIGIN: 'true'
-      OPENCLAW_RESPONSES_URL: http://openclaw-gateway-private:18789/v1/responses
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,14 +56,13 @@ jobs:
             backend/app/services/webchat_fast_output_parser.py \
             backend/app/services/webchat_fast_rate_limit.py \
             backend/app/services/webchat_fast_reply_metrics.py \
+            backend/app/services/webchat_fast_stream_parser.py \
             backend/app/services/webchat_fast_stream_service.py \
             backend/app/services/webchat_handoff_policy.py \
-            backend/app/services/webchat_openclaw_responses_client.py \
             backend/app/services/webchat_handoff_snapshot_service.py \
             backend/app/services/webchat_handoff_snapshot_worker.py \
             scripts/smoke/webchat_fast_reply_concurrency_smoke.py \
-            scripts/smoke/browser_bundle_secret_scan.py \
-            scripts/smoke/openclaw_gateway_private_exposure_probe.py
+            scripts/smoke/browser_bundle_secret_scan.py
 
       - name: Run targeted WebChat fast reply tests
         run: |
@@ -80,7 +76,7 @@ jobs:
             backend/tests/test_webchat_fast_handoff_policy.py \
             backend/tests/test_webchat_fast_ai_provider_router_phase1.py \
             backend/tests/test_webchat_fast_stream_safety.py \
-            backend/tests/test_webchat_openclaw_responses_client.py \
+            backend/tests/test_webchat_fast_reply_provider_runtime.py \
             backend/tests/test_webchat_widget_fast_mode_static.py \
             backend/tests/test_webchat_fast_runtime_config_static.py
 
@@ -88,8 +84,3 @@ jobs:
         run: |
           python scripts/smoke/browser_bundle_secret_scan.py \
             --static backend/app/static/webchat
-
-      - name: OpenClaw private URL classification probe
-        run: |
-          python scripts/smoke/openclaw_gateway_private_exposure_probe.py \
-            --responses-url "$OPENCLAW_RESPONSES_URL"

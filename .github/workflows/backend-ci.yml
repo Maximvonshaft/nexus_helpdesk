@@ -39,18 +39,19 @@ jobs:
             backend/tests/test_round24_hardening.py \
             backend/tests/test_production_settings_contract.py \
             backend/tests/test_next_phase_max_push.py \
-            backend/tests/test_openclaw_local_ops.py \
+            backend/tests/test_deploy_contracts.py \
+            backend/tests/test_deploy_v222_contracts.py \
             backend/tests/test_round20a_rectification.py \
             backend/tests/test_round20b_legacy_frontend.py \
             backend/tests/test_round27_frontend_hardening.py \
             backend/tests/test_tool_governance.py
 
-      - name: Run runtime OpenClaw and observability tests
+      - name: Run runtime retirement and observability tests
         run: |
           set -Eeuo pipefail
           timeout 600 pytest -q \
-            backend/tests/test_openclaw_bridge_resilience.py \
-            backend/tests/test_openclaw_unresolved_idempotency.py \
+            backend/tests/test_codex_app_server_image_contract.py \
+            backend/tests/test_provider_runtime_status.py \
             backend/tests/test_worker_daemon_readiness.py \
             backend/tests/test_db_query_timing.py \
             backend/tests/test_observability_metrics.py \
@@ -132,7 +133,8 @@ jobs:
           APP_ENV: development
           DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
           STORAGE_BACKEND: s3
-          OPENCLAW_TRANSPORT: mcp
+          OPENCLAW_TRANSPORT: disabled
+          OPENCLAW_DEPLOYMENT_MODE: disabled
           OPENCLAW_CLI_FALLBACK_ENABLED: "false"
           WEBCHAT_RATE_LIMIT_BACKEND: database
           WEBCHAT_AI_AUTO_REPLY_MODE: safe_ack

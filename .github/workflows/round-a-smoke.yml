@@ -14,7 +14,6 @@ jobs:
       DATABASE_URL: sqlite:///./round_a_ci.db
       APP_ENV: test
       SECRET_KEY: ci-secret-key-change-me-with-enough-length
-      OPENCLAW_MOCK_MODE: "1"
       NEXUSDESK_SMOKE_MODE: mock
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +43,8 @@ jobs:
           pytest -q \
             tests/test_outbound_safety.py \
             tests/test_next_phase_max_push.py \
-            tests/test_openclaw_local_ops.py \
+            tests/test_deploy_contracts.py \
+            tests/test_deploy_v222_contracts.py \
             tests/test_round20a_rectification.py \
             tests/test_round20b_legacy_frontend.py \
             tests/test_round27_frontend_hardening.py
@@ -63,14 +63,9 @@ jobs:
       - name: Smoke dry run
         run: bash scripts/smoke/smoke_all_round_a.sh --dry-run
 
-      - name: Mock-only smoke subset
+      - name: Smoke script syntax check
         run: |
-          bash scripts/smoke/smoke_e2e_outbound_safety.sh
-          bash scripts/smoke/smoke_e2e_openclaw_inbound_event.sh
-          bash scripts/smoke/smoke_e2e_transcript_sync.sh
-          bash scripts/smoke/smoke_e2e_same_route_reply.sh
-          bash scripts/smoke/smoke_e2e_unresolved_event_replay.sh
-          bash scripts/smoke/smoke_e2e_attachment_persist.sh
+          find scripts/smoke -name '*.sh' -print0 | xargs -0 -n1 bash -n
 
       - name: Secret leak sanity check
         run: |
