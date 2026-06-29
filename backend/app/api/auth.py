@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..auth_service import create_access_token, verify_password
@@ -14,21 +15,10 @@ from ..services.permissions import resolve_capabilities
 router = APIRouter(prefix='/api/auth', tags=['auth'])
 
 
-@router.post('/login', response_model=LoginResponse)
-def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
-    throttle_key = build_login_throttle_key(payload.username, get_client_ip(request))
-    enforce_login_allowed(db, throttle_key)
-    user = db.query(User).filter(User.username == payload.username, User.is_active.is_(True)).first()
-    if not user or not verify_password(payload.password, user.password_hash):
-        with managed_session(db):
-            record_login_failure(db, throttle_key)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid credentials')
-    with managed_session(db):
-        clear_login_failures(db, throttle_key)
-        db.flush()
+def _login_response_for_user(user: User, db: Session) -> LoginResponse:
     token = create_access_token(user.id)
     return LoginResponse(
-        access_token=token, 
+        access_token=token,
         user=AuthUserRead(
             id=user.id,
             username=user.username,
@@ -39,6 +29,22 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
             capabilities=sorted(resolve_capabilities(user, db))
         )
     )
+
+
+@router.post('/login', response_model=LoginResponse)
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    username = payload.username.strip()
+    throttle_key = build_login_throttle_key(username, get_client_ip(request))
+    enforce_login_allowed(db, throttle_key)
+    user = db.query(User).filter(func.lower(User.username) == username.lower(), User.is_active.is_(True)).first()
+    if not user or not verify_password(payload.password, user.password_hash):
+        with managed_session(db):
+            record_login_failure(db, throttle_key)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid credentials')
+    with managed_session(db):
+        clear_login_failures(db, throttle_key)
+        db.flush()
+    return _login_response_for_user(user, db)
 
 
 @router.get('/me', response_model=AuthUserRead)

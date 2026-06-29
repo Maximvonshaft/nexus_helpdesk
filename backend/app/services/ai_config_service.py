@@ -9,7 +9,17 @@ from sqlalchemy.orm import Session
 from ..models import AIConfigResource, AIConfigVersion
 
 
-VALID_CONFIG_TYPES = {"persona", "knowledge", "sop", "policy"}
+VALID_CONFIG_TYPES = {
+    "persona",
+    "knowledge",
+    "sop",
+    "policy",
+    "rule",
+    "rules",
+    "status_dictionary",
+    "channel_policy",
+    "support_runtime",
+}
 VALID_SCOPE_TYPES = {"global", "market", "team", "channel", "case_type"}
 
 

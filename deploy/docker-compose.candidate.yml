@@ -1,0 +1,46 @@
+# Standalone candidate compose for side-by-side smoke testing.
+#
+# Use a separate Compose project and a candidate env file:
+#   COMPOSE_PROJECT_NAME=nexusdesk_candidate docker compose \
+#     -f deploy/docker-compose.candidate.yml \
+#     --env-file deploy/.env.candidate up -d app-candidate
+#
+# Do not map this candidate to public nginx until the smoke and rollback runbook
+# gates pass.
+
+services:
+  app-candidate:
+    image: ${IMAGE_TAG:?set release IMAGE_TAG}
+    env_file:
+      - .env.candidate
+    environment:
+      APP_ENV: production
+      AUTO_INIT_DB: "false"
+      SEED_DEMO_DATA: "false"
+      RELEASE_CANDIDATE: "true"
+      GIT_SHA: ${GIT_SHA:?set release GIT_SHA}
+      BUILD_TIME: ${BUILD_TIME:?set release BUILD_TIME}
+      IMAGE_TAG: ${IMAGE_TAG:?set release IMAGE_TAG}
+      APP_VERSION: ${APP_VERSION:?set release APP_VERSION}
+      FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:?set release FRONTEND_BUILD_SHA}
+    volumes:
+      - /run/secrets:/run/secrets:ro
+      - /opt/nexus_helpdesk/data/uploads:/app/backend/uploads:ro
+    ports:
+      - "127.0.0.1:${CANDIDATE_APP_PORT:-18082}:8080"
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        exec gunicorn app.main:app
+        -k uvicorn.workers.UvicornWorker
+        --workers "$${WEB_CONCURRENCY:-2}"
+        --timeout "$${WEB_TIMEOUT:-30}"
+        --bind 0.0.0.0:8080
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped

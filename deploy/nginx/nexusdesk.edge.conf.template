@@ -1,0 +1,187 @@
+# Render with envsubst and store the rendered file outside the repo, for example:
+#   envsubst < deploy/nginx/nexusdesk.edge.conf.template > /etc/nginx/sites-enabled/nexusdesk
+#
+# Keep secrets out of this template. Token-bearing upstream URLs and Authorization
+# values must come from a runtime env file or secret manager during render.
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    server_name ${NEXUSDESK_SERVER_NAMES};
+
+    proxy_hide_header Permissions-Policy;
+    proxy_hide_header Feature-Policy;
+    add_header Permissions-Policy "microphone=(self), camera=(), geolocation=()" always;
+
+    client_max_body_size ${NEXUSDESK_CLIENT_MAX_BODY_SIZE};
+    proxy_read_timeout ${NEXUSDESK_PROXY_READ_TIMEOUT};
+    proxy_send_timeout ${NEXUSDESK_PROXY_SEND_TIMEOUT};
+    proxy_connect_timeout ${NEXUSDESK_PROXY_CONNECT_TIMEOUT};
+
+    location = /webchat/live/ws {
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host ${LIVE_VOICE_UPSTREAM_HOST};
+        proxy_read_timeout ${LIVE_VOICE_WS_READ_TIMEOUT};
+        proxy_send_timeout ${LIVE_VOICE_WS_SEND_TIMEOUT};
+        proxy_buffering off;
+        proxy_pass ${LIVE_VOICE_UPSTREAM_WS_URL};
+    }
+
+    location = /webchat/live/health {
+        proxy_http_version 1.1;
+        proxy_set_header Host ${LIVE_VOICE_UPSTREAM_HOST};
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_buffering off;
+        proxy_pass ${LIVE_VOICE_UPSTREAM_HEALTH_URL};
+    }
+
+    location /healthz {
+        proxy_pass ${NEXUSDESK_APP_UPSTREAM}/healthz;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /readyz {
+        proxy_pass ${NEXUSDESK_APP_UPSTREAM}/readyz;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/webchat/ws {
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_pass ${NEXUSDESK_APP_UPSTREAM}/api/webchat/ws;
+    }
+
+    location = /_nexusdesk_operator_auth {
+        internal;
+        proxy_pass ${NEXUSDESK_APP_UPSTREAM}/api/admin/openclaw/runtime-health;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Authorization "${NEXUSDESK_INTERNAL_AUTHORIZATION}";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /_nexusdesk_knowledge_auth {
+        internal;
+        proxy_pass ${NEXUSDESK_APP_UPSTREAM}/api/auth/me;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Authorization "${NEXUSDESK_INTERNAL_AUTHORIZATION}";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/support/knowledge/ {
+        auth_request /_nexusdesk_knowledge_auth;
+        proxy_pass ${SUPPORT_CONSOLE_UPSTREAM}/api/support/knowledge/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization "${SUPPORT_CONSOLE_AUTHORIZATION}";
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+    }
+
+    location /api/support/conversations {
+        auth_request /_nexusdesk_knowledge_auth;
+        proxy_pass ${SUPPORT_CONSOLE_UPSTREAM}/api/support/conversations;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization "${SUPPORT_CONSOLE_AUTHORIZATION}";
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+    }
+
+    location = /speedy-console {
+        return 301 /speedy-console/;
+    }
+
+    location /speedy-console/ {
+        alias ${SPEEDY_CONSOLE_STATIC_ROOT}/;
+        index index.html;
+        try_files $uri $uri/ /speedy-console/index.html;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy no-referrer always;
+        add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate" always;
+        expires -1;
+    }
+
+    location = /research {
+        return 404;
+    }
+
+    location /research/ {
+        return 404;
+    }
+
+    location = /dsp/research {
+        return 301 /dsp/research/;
+    }
+
+    location /dsp/research/ {
+        alias ${DSP_RESEARCH_STATIC_ROOT}/;
+        index index.html;
+        try_files $uri $uri/ /dsp/research/index.html;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy no-referrer always;
+    }
+
+    location = /dsp {
+        return 301 /dsp/;
+    }
+
+    location /dsp/ {
+        proxy_pass ${DSP_APP_UPSTREAM}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Prefix /dsp;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    location / {
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_pass ${NEXUSDESK_APP_UPSTREAM};
+    }
+}

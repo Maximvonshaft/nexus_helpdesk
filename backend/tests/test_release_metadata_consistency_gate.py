@@ -34,6 +34,43 @@ def test_release_metadata_gate_passes_consistent_payloads():
     }
 
 
+def test_release_metadata_gate_can_require_complete_metadata():
+    image = "nexusdesk/helpdesk:main-test-20260629T120000Z"
+    result = gate.evaluate_consistency(
+        docker_image=image,
+        healthz={"image_tag": image, "release_metadata_complete": True},
+        readyz={
+            "image_tag": image,
+            "database": "ok",
+            "migration_revision": "20260612_0017",
+            "release_metadata_complete": True,
+        },
+        require_complete_metadata=True,
+    )
+
+    assert result["ok"] is True
+    assert result["checks"]["healthz_release_metadata_complete"] is True
+    assert result["checks"]["readyz_release_metadata_complete"] is True
+
+
+def test_release_metadata_gate_fails_strict_mode_when_metadata_incomplete():
+    image = "nexusdesk/helpdesk:main-test-20260629T120000Z"
+    result = gate.evaluate_consistency(
+        docker_image=image,
+        healthz={"image_tag": image, "release_metadata_complete": False},
+        readyz={
+            "image_tag": image,
+            "database": "ok",
+            "migration_revision": "20260612_0017",
+            "release_metadata_complete": True,
+        },
+        require_complete_metadata=True,
+    )
+
+    assert result["ok"] is False
+    assert result["checks"]["healthz_release_metadata_complete"] is False
+
+
 @pytest.mark.parametrize(
     "docker_image, healthz, readyz",
     [

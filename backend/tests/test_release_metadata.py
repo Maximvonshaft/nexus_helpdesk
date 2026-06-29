@@ -4,7 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from app.services.release_metadata import runtime_identity
+from app.services.release_metadata import runtime_identity, runtime_identity_status
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,6 +37,39 @@ def test_runtime_identity_defaults_without_env_values() -> None:
         "build_time": "unknown",
         "frontend_build_sha": "unknown",
     }
+
+
+def test_runtime_identity_status_marks_missing_metadata() -> None:
+    assert runtime_identity_status(env={}, default_app_version="server") == {
+        "app_version": "server",
+        "git_sha": "unknown",
+        "image_tag": "unknown",
+        "build_time": "unknown",
+        "frontend_build_sha": "unknown",
+        "release_metadata_source": "environment",
+        "release_metadata_complete": False,
+        "release_metadata_missing": [
+            "git_sha",
+            "image_tag",
+            "build_time",
+            "frontend_build_sha",
+        ],
+    }
+
+
+def test_runtime_identity_status_marks_complete_metadata() -> None:
+    data = runtime_identity_status(
+        env={
+            "GIT_SHA": "abc123",
+            "BUILD_TIME": "20260629T120000Z",
+            "IMAGE_TAG": "nexusdesk/helpdesk:main-abc123-20260629T120000Z",
+            "FRONTEND_BUILD_SHA": "abc123",
+        },
+        default_app_version="server",
+    )
+
+    assert data["release_metadata_complete"] is True
+    assert data["release_metadata_missing"] == []
 
 
 def test_export_release_metadata_stdout_is_non_secret() -> None:

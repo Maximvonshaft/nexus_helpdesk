@@ -79,6 +79,7 @@ def evaluate_consistency(
     docker_image: str,
     healthz: dict[str, Any],
     readyz: dict[str, Any],
+    require_complete_metadata: bool = False,
 ) -> dict[str, Any]:
     healthz_image = healthz.get("image_tag")
     readyz_image = readyz.get("image_tag")
@@ -91,6 +92,9 @@ def evaluate_consistency(
         "readyz_database_ok": readyz_database == "ok",
         "readyz_migration_revision_non_empty": bool(migration_revision),
     }
+    if require_complete_metadata:
+        checks["healthz_release_metadata_complete"] = healthz.get("release_metadata_complete") is True
+        checks["readyz_release_metadata_complete"] = readyz.get("release_metadata_complete") is True
 
     result = {
         "ok": all(checks.values()),
@@ -100,6 +104,10 @@ def evaluate_consistency(
         "readyz_image_tag": readyz_image,
         "readyz_database": readyz_database,
         "readyz_migration_revision": migration_revision,
+        "healthz_release_metadata_complete": healthz.get("release_metadata_complete"),
+        "readyz_release_metadata_complete": readyz.get("release_metadata_complete"),
+        "healthz_release_metadata_missing": healthz.get("release_metadata_missing"),
+        "readyz_release_metadata_missing": readyz.get("release_metadata_missing"),
     }
 
     return result
@@ -118,6 +126,7 @@ def main() -> int:
     parser.add_argument("--docker-image")
     parser.add_argument("--evidence-dir", default="")
     parser.add_argument("--timeout-seconds", type=float, default=8.0)
+    parser.add_argument("--require-complete-metadata", action="store_true")
 
     args = parser.parse_args()
 
@@ -159,6 +168,7 @@ def main() -> int:
             docker_image=docker_image,
             healthz=healthz,
             readyz=readyz,
+            require_complete_metadata=args.require_complete_metadata,
         )
 
         _write_json(evidence_dir / "final_assertion_result.json", result)
@@ -170,6 +180,8 @@ def main() -> int:
             f"readyz_image_tag={result['readyz_image_tag']}",
             f"readyz_database={result['readyz_database']}",
             f"readyz_migration_revision={result['readyz_migration_revision']}",
+            f"healthz_release_metadata_complete={result['healthz_release_metadata_complete']}",
+            f"readyz_release_metadata_complete={result['readyz_release_metadata_complete']}",
             f"evidence_dir={evidence_dir}",
         ]
         (evidence_dir / "final_assertion_result.txt").write_text("\n".join(final_text) + "\n", encoding="utf-8")

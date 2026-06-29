@@ -34,6 +34,15 @@ def _clean(value: Any) -> str | None:
     return text or None
 
 
+def _clean_whatsapp_target(value: Any) -> str | None:
+    text = _clean(value)
+    if text is None:
+        return None
+    if text.lower() in {"status@broadcast", "broadcast"}:
+        return None
+    return text
+
+
 def _active_account_by_id(db: Session, account_id: str | None) -> ChannelAccount | None:
     cleaned = _clean(account_id)
     if not cleaned:
@@ -97,14 +106,14 @@ def resolve_whatsapp_outbound_route(db: Session, *, message: TicketOutboundMessa
 
     if link is not None:
         session_key = _clean(link.session_key)
-        target = _clean(link.recipient)
+        target = _clean_whatsapp_target(link.recipient)
         thread_id = _clean(link.thread_id)
         source = "openclaw_link"
 
     if target is None and ticket is not None:
-        target = _clean(ticket.source_chat_id) or _clean(ticket.preferred_reply_contact)
+        target = _clean_whatsapp_target(ticket.source_chat_id) or _clean_whatsapp_target(ticket.preferred_reply_contact)
         if target is None and ticket.customer is not None:
-            target = _clean(ticket.customer.phone)
+            target = _clean_whatsapp_target(ticket.customer.phone)
 
     if target is None:
         raise ValueError("missing_whatsapp_target")

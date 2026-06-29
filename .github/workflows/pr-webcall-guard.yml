@@ -54,6 +54,7 @@ jobs:
           is_webcall_relevant_file() {
             case "$1" in
               .github/workflows/pr-webcall-guard.yml) return 0 ;;
+              .github/workflows/backend-ci.yml) return 0 ;;
               .github/workflows/domain-runtime-eval.yml) return 0 ;;
               .github/workflows/knowledge-runtime-*.yml) return 0 ;;
               .github/workflows/postgres-migration.yml) return 0 ;;
@@ -71,12 +72,16 @@ jobs:
               backend/app/api/admin_provider_runtime.py) return 0 ;;
               backend/app/api/admin_webcall_ai.py) return 0 ;;
               backend/app/api/admin_whatsapp*.py) return 0 ;;
+              backend/app/api/auth.py) return 0 ;;
               backend/app/api/__init__.py) return 0 ;;
               backend/app/api/knowledge_items.py) return 0 ;;
               backend/app/api/speedaf_actions.py) return 0 ;;
               backend/app/api/speedaf_cancel.py) return 0 ;;
+              backend/app/api/support_intelligence.py) return 0 ;;
+              backend/app/api/ticket_perf.py) return 0 ;;
               backend/app/api/webcall_ai.py) return 0 ;;
               backend/app/api/webchat*.py) return 0 ;;
+              backend/app/api/whatsapp_lite.py) return 0 ;;
               backend/app/api/whatsapp_native*.py) return 0 ;;
               backend/app/main.py) return 0 ;;
               backend/app/models.py) return 0 ;;
@@ -86,6 +91,7 @@ jobs:
               backend/app/static/webchat/**) return 0 ;;
               backend/app/services/ai_runtime/**) return 0 ;;
               backend/app/services/ai_runtime_context.py) return 0 ;;
+              backend/app/services/ai_config_service.py) return 0 ;;
               backend/app/services/background_jobs.py) return 0 ;;
               backend/app/services/background_job_transaction_boundary.py) return 0 ;;
               backend/app/services/control_tower_service.py) return 0 ;;
@@ -96,14 +102,17 @@ jobs:
               backend/app/services/lite_service.py) return 0 ;;
               backend/app/services/message_dispatch.py) return 0 ;;
               backend/app/services/observability.py) return 0 ;;
+              backend/app/services/openclaw_client_factory.py) return 0 ;;
               backend/app/services/operator_queue.py) return 0 ;;
               backend/app/services/outbound_adapters/**) return 0 ;;
               backend/app/services/outbound_channel_registry.py) return 0 ;;
               backend/app/services/permissions.py) return 0 ;;
               backend/app/services/provider_runtime/**) return 0 ;;
               backend/app/services/realtime_broker.py) return 0 ;;
+              backend/app/services/release_metadata.py) return 0 ;;
               backend/app/services/spa_fallback_hardening.py) return 0 ;;
               backend/app/services/storage.py) return 0 ;;
+              backend/app/services/support_intelligence_service.py) return 0 ;;
               backend/app/services/text_decoding.py) return 0 ;;
               backend/app/services/timeline_service.py) return 0 ;;
               backend/app/services/tracking_fact_service.py) return 0 ;;
@@ -118,6 +127,7 @@ jobs:
               backend/app/webchat_voice_config.py) return 0 ;;
               backend/app/voice_schemas.py) return 0 ;;
               backend/requirements.txt) return 0 ;;
+              backend/scripts/openclaw_bridge_server.js) return 0 ;;
               backend/scripts/*knowledge*.py) return 0 ;;
               backend/scripts/*speedaf*.py) return 0 ;;
               backend/tests/test_admin_whatsapp*.py) return 0 ;;
@@ -134,9 +144,11 @@ jobs:
               backend/tests/test_provider_runtime*.py) return 0 ;;
               backend/tests/test_rbac_capability_contracts.py) return 0 ;;
               backend/tests/test_release_metadata.py) return 0 ;;
+              backend/tests/test_release_metadata_consistency_gate.py) return 0 ;;
               backend/tests/test_round*.py) return 0 ;;
               backend/tests/test_spa_fallback_hardening.py) return 0 ;;
               backend/tests/test_speedaf*.py) return 0 ;;
+              backend/tests/test_support_intelligence_config.py) return 0 ;;
               backend/tests/test_whatsapp*.py) return 0 ;;
               backend/tests/test_webcall*.py) return 0 ;;
               backend/tests/test_webchat*.py) return 0 ;;

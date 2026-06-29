@@ -170,6 +170,9 @@ class OpenClawBridgeHTTPClient:
         messages = data.get('messages')
         return [item for item in messages if isinstance(item, dict)] if isinstance(messages, list) else []
 
+    def support_knowledge_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post('/support-knowledge-config', payload)
+
     def attachments_fetch(self, message_id: str, *, session_key: str | None = None) -> list[dict[str, Any]]:
         # sync_openclaw_conversation already tries the bridge-native /attachments-fetch
         # path with sessionKey. This MCP-compatible fallback signature does not receive

@@ -84,5 +84,7 @@ probe_reports/
 deploy/secrets/
 deploy/*.broken.*
 deploy/.release.env
+deploy/.env.*
+!deploy/.env.*.example
 
 .venv/
