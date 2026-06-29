@@ -107,6 +107,7 @@ jobs:
       - name: Run production drift reconciliation tests
         run: |
           set -Eeuo pipefail
+          export PYTHONPATH=backend
           timeout 300 pytest -q \
             backend/tests/test_release_metadata.py \
             backend/tests/test_release_metadata_consistency_gate.py \
