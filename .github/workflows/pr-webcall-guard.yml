@@ -59,6 +59,7 @@ jobs:
               .github/workflows/knowledge-runtime-*.yml) return 0 ;;
               .github/workflows/postgres-migration.yml) return 0 ;;
               .github/workflows/production-readiness.yml) return 0 ;;
+              .github/workflows/release-image.yml) return 0 ;;
               .github/workflows/speedaf-*.yml) return 0 ;;
               .github/workflows/webcall-*.yml) return 0 ;;
               .gitignore) return 0 ;;

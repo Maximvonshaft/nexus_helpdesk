@@ -10,12 +10,43 @@ This runbook is for a controlled switch after the reconciliation PR is merged an
 - nginx runtime values are rendered from `deploy/nginx/nexusdesk.edge.conf.template`; tokens are injected outside the repo.
 - Current production config is backed up before any reload.
 
+## Build Release Image In GitHub Actions
+
+Do not build the release image on 178. Trigger the manual image workflow from the intended release commit and use its `release-metadata` artifact as the source of truth:
+
+```bash
+gh workflow run release-image.yml \
+  --ref <release-branch-or-sha> \
+  -f app_version_prefix=candidate \
+  -f push_image=true
+
+gh run watch
+gh run download <run-id> -n release-metadata -D /tmp/nexus-release-metadata
+cat /tmp/nexus-release-metadata/release-metadata.env
+```
+
+The default image target is `ghcr.io/<owner>/<repo>/helpdesk:<app_version>-<build_time>`. If GHCR package visibility is private, log in on 178 with a least-privileged read token before `docker pull`, or make the package public after review.
+
 ## Start Candidate
 
 ```bash
-cd /opt/nexus_helpdesk
-git fetch origin main
-git checkout <merged-release-sha>
+release_sha="<merged-release-sha>"
+candidate_root="/opt/nexus_candidate/${release_sha}"
+
+install -d -m 0755 /opt/nexus_candidate
+git clone https://github.com/Maximvonshaft/nexus_helpdesk.git "$candidate_root"
+cd "$candidate_root"
+git checkout "$release_sha"
+
+install -m 0600 /opt/nexus_helpdesk/deploy/.env.prod deploy/.env.candidate
+cat /tmp/nexus-release-metadata/release-metadata.env >> deploy/.env.candidate
+printf '\nCANDIDATE_APP_PORT=18082\nRELEASE_CANDIDATE=true\n' >> deploy/.env.candidate
+
+set -a
+. /tmp/nexus-release-metadata/release-metadata.env
+set +a
+
+docker pull "$IMAGE_TAG"
 
 COMPOSE_PROJECT_NAME=nexusdesk_candidate docker compose \
   -f deploy/docker-compose.candidate.yml \
@@ -32,7 +63,7 @@ Candidate should listen only on `127.0.0.1:18082`.
 ## Smoke Candidate
 
 ```bash
-cd /opt/nexus_helpdesk
+cd "$candidate_root"
 
 BASE_URL=http://127.0.0.1:18082 \
 EXPECTED_IMAGE_TAG="$IMAGE_TAG" \
@@ -61,11 +92,11 @@ Required pass conditions:
 ## Prepare Nginx Candidate Config
 
 ```bash
-cd /opt/nexus_helpdesk
+cd "$candidate_root"
 cp /etc/nginx/sites-enabled/nexusdesk "/etc/nginx/sites-enabled/nexusdesk.backup.$(date -u +%Y%m%dT%H%M%SZ)"
 
 set -a
-. /opt/nexus_helpdesk/deploy/nginx/nexusdesk.edge.runtime.env
+. deploy/nginx/nexusdesk.edge.runtime.env
 set +a
 
 envsubst < deploy/nginx/nexusdesk.edge.conf.template > /tmp/nexusdesk.candidate.conf
