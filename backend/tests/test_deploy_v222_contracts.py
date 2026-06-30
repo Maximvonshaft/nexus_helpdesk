@@ -17,8 +17,8 @@ def test_compose_has_isolated_worker_services_and_profiles():
     assert 'legacy-worker:' in text
     assert '- legacy-worker' in text
     assert 'app:' in text
-    assert 'worker-openclaw-inbound:' not in text
-    assert '- openclaw-inbound' not in text
+    assert 'worker-external_channel-inbound:' not in text
+    assert '- external_channel-inbound' not in text
 
 
 def test_compose_worker_queue_commands_are_exact():
@@ -28,7 +28,7 @@ def test_compose_worker_queue_commands_are_exact():
     assert '--queue handoff-snapshot' in text
     assert '--queue webchat-ai' in text
     assert '--queue all' in text
-    assert '--queue openclaw-inbound' not in text
+    assert '--queue external_channel-inbound' not in text
 
 
 def test_nginx_stream_contract_has_exact_stream_route_and_timeouts():

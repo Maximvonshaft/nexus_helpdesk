@@ -1,7 +1,7 @@
 # Multi-Provider Runtime Architecture
 
 NexusDesk has transitioned its WebChat Fast Lane to a Multi-Provider Runtime.
-The backend acts as the control plane. All external AI models (OpenAI, Codex, Anthropic, OpenClaw) act as candidate "generators".
+The backend acts as the control plane. All external AI models (OpenAI, Codex, Anthropic, ExternalChannel) act as candidate "generators".
 The final output is aggressively parsed and verified by NexusDesk `StrictOutputParser` and `OutputContracts`.
 
 ## Flow

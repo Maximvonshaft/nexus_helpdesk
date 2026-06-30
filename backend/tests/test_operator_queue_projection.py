@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app.db import Base  # noqa: E402
 from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, UserRole  # noqa: E402
-from app.models import OpenClawUnresolvedEvent, Ticket, User  # noqa: E402
+from app.models import ExternalChannelUnresolvedEvent, Ticket, User  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
 from app.services.operator_queue import project_operator_queue, transition_operator_task  # noqa: E402
 from app.webchat_models import WebchatConversation  # noqa: E402
@@ -81,7 +81,7 @@ def make_webchat(db, ticket):
 
 
 def make_unresolved(db):
-    row = OpenClawUnresolvedEvent(
+    row = ExternalChannelUnresolvedEvent(
         source="default",
         session_key="sess-secret",
         event_type="message",
@@ -98,7 +98,7 @@ def make_unresolved(db):
     return row
 
 
-def test_project_is_idempotent_for_openclaw_and_webchat(db_session):
+def test_project_is_idempotent_for_external_channel_and_webchat(db_session):
     admin = make_user(db_session)
     ticket = make_ticket(db_session)
     conversation = make_webchat(db_session, ticket)
@@ -124,10 +124,10 @@ def test_source_closure_prevents_reprojection(db_session):
 
     project_operator_queue(db_session, actor_id=admin.id)
     webchat_task = db_session.query(OperatorTask).filter_by(webchat_conversation_id=conversation.id).one()
-    openclaw_task = db_session.query(OperatorTask).filter_by(unresolved_event_id=event.id).one()
+    external_channel_task = db_session.query(OperatorTask).filter_by(unresolved_event_id=event.id).one()
 
     transition_operator_task(db_session, task_id=webchat_task.id, action="resolve", actor_id=admin.id, note="done")
-    transition_operator_task(db_session, task_id=openclaw_task.id, action="drop", actor_id=admin.id, note="done")
+    transition_operator_task(db_session, task_id=external_channel_task.id, action="drop", actor_id=admin.id, note="done")
     db_session.commit()
 
     again = project_operator_queue(db_session, actor_id=admin.id)

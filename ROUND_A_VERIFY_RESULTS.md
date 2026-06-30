@@ -2,7 +2,7 @@
 
 ## 1. 执行环境
 
-This report records planned and CI-backed verification for branch `fix/round-a-openclaw-e2e-smoke`. The actual GitHub Actions result must be checked after PR creation.
+This report records planned and CI-backed verification for branch `fix/round-a-external_channel-e2e-smoke`. The actual GitHub Actions result must be checked after PR creation.
 
 ## 2. 执行命令
 
@@ -14,7 +14,7 @@ cd backend && pytest -q && alembic upgrade head
 cd webapp && npm ci && npm run typecheck && npm run build
 bash scripts/smoke/smoke_all_round_a.sh --dry-run
 bash scripts/smoke/smoke_e2e_outbound_safety.sh
-bash scripts/smoke/smoke_e2e_openclaw_inbound_event.sh
+bash scripts/smoke/smoke_e2e_external_channel_inbound_event.sh
 bash scripts/smoke/smoke_e2e_transcript_sync.sh
 bash scripts/smoke/smoke_e2e_same_route_reply.sh
 bash scripts/smoke/smoke_e2e_unresolved_event_replay.sh
@@ -41,16 +41,16 @@ Not yet known until GitHub Actions runs on the PR.
 The following are intentionally skipped unless live/staging credentials are provided:
 
 - real integration task creation against a live NexusDesk API
-- DB-level OpenClaw inbound processing
+- DB-level ExternalChannel inbound processing
 - DB-level transcript sync
 - DB-level unresolved replay/drop
 - DB/storage attachment persistence
-- real OpenClaw Gateway/MCP delivery
+- real ExternalChannel Gateway/MCP delivery
 - real WhatsApp/Telegram/WebChat channel delivery
 
 ## 6. 未验证项
 
-- Live OpenClaw `messages_send` delivery receipt.
+- Live ExternalChannel `messages_send` delivery receipt.
 - Real Gateway session route lookup.
 - Real MCP stdio lifecycle.
 - Customer-channel receipt in original thread.

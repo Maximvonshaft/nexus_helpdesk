@@ -129,7 +129,7 @@ def test_sidecar_normalizer_rejects_internal_reply():
     with pytest.raises(Exception):
         sidecar._normalize_strict_reply(
             {
-                "reply": "OpenClaw gateway on localhost is available.",
+                "reply": "ExternalChannel gateway on localhost is available.",
                 "intent": "other",
                 "tracking_number": None,
                 "handoff_required": False,

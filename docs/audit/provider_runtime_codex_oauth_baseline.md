@@ -2,8 +2,8 @@
 
 ## 1. Context
 - **Date:** 2026-06-29
-- **Target Branch:** de-OpenClaw candidate branch
-- **Scope:** Provider Runtime and Codex OAuth baseline after retiring the OpenClaw runtime path.
+- **Target Branch:** de-ExternalChannel candidate branch
+- **Scope:** Provider Runtime and Codex OAuth baseline after retiring the ExternalChannel runtime path.
 
 ## 2. File Evidence
 - `backend/app/services/ai_runtime/provider_router.py`: Implements the WebChat fast reply router for `provider_runtime`, `codex_app_server`, `codex_auth`, and `openai_responses`.

@@ -55,20 +55,20 @@ def upgrade() -> None:
     if "channel_accounts" in tables:
         _create_index_if_missing(bind, "ix_channel_accounts_provider", "channel_accounts", ["provider"], unique=False)
 
-    if "openclaw_conversation_links" in tables:
-        _create_index_if_missing(bind, "ix_openclaw_conversation_links_ticket_id", "openclaw_conversation_links", ["ticket_id"], unique=False)
-        _create_index_if_missing(bind, "ix_openclaw_conversation_links_created_at", "openclaw_conversation_links", ["created_at"], unique=False)
+    if "external_channel_conversation_links" in tables:
+        _create_index_if_missing(bind, "ix_external_channel_conversation_links_ticket_id", "external_channel_conversation_links", ["ticket_id"], unique=False)
+        _create_index_if_missing(bind, "ix_external_channel_conversation_links_created_at", "external_channel_conversation_links", ["created_at"], unique=False)
 
-    if "openclaw_transcript_messages" in tables:
-        _create_index_if_missing(bind, "ix_openclaw_transcript_messages_conversation_id", "openclaw_transcript_messages", ["conversation_id"], unique=False)
-        _create_index_if_missing(bind, "ix_openclaw_transcript_messages_created_at", "openclaw_transcript_messages", ["created_at"], unique=False)
-        _create_index_if_missing(bind, "ix_openclaw_transcript_messages_ticket_id", "openclaw_transcript_messages", ["ticket_id"], unique=False)
+    if "external_channel_transcript_messages" in tables:
+        _create_index_if_missing(bind, "ix_external_channel_transcript_messages_conversation_id", "external_channel_transcript_messages", ["conversation_id"], unique=False)
+        _create_index_if_missing(bind, "ix_external_channel_transcript_messages_created_at", "external_channel_transcript_messages", ["created_at"], unique=False)
+        _create_index_if_missing(bind, "ix_external_channel_transcript_messages_ticket_id", "external_channel_transcript_messages", ["ticket_id"], unique=False)
 
-    if "openclaw_attachment_references" in tables:
-        _create_index_if_missing(bind, "ix_openclaw_attachment_references_ticket_id", "openclaw_attachment_references", ["ticket_id"], unique=False)
-        _create_index_if_missing(bind, "ix_openclaw_attachment_references_conversation_id", "openclaw_attachment_references", ["conversation_id"], unique=False)
-        _create_index_if_missing(bind, "ix_openclaw_attachment_references_transcript_message_id", "openclaw_attachment_references", ["transcript_message_id"], unique=False)
-        _create_index_if_missing(bind, "ix_openclaw_attachment_references_remote_attachment_id", "openclaw_attachment_references", ["remote_attachment_id"], unique=False)
+    if "external_channel_attachment_references" in tables:
+        _create_index_if_missing(bind, "ix_external_channel_attachment_references_ticket_id", "external_channel_attachment_references", ["ticket_id"], unique=False)
+        _create_index_if_missing(bind, "ix_external_channel_attachment_references_conversation_id", "external_channel_attachment_references", ["conversation_id"], unique=False)
+        _create_index_if_missing(bind, "ix_external_channel_attachment_references_transcript_message_id", "external_channel_attachment_references", ["transcript_message_id"], unique=False)
+        _create_index_if_missing(bind, "ix_external_channel_attachment_references_remote_attachment_id", "external_channel_attachment_references", ["remote_attachment_id"], unique=False)
 
     if "market_bulletins" in tables:
         _create_index_if_missing(bind, "ix_market_bulletins_category", "market_bulletins", ["category"], unique=False)

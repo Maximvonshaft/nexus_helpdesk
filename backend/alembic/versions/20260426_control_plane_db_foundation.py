@@ -161,7 +161,7 @@ def upgrade() -> None:
         sa.Column("target_slot", sa.String(length=120), nullable=True),
         sa.Column("desired_display_name", sa.String(length=160), nullable=True),
         sa.Column("desired_channel_account_binding", sa.String(length=160), nullable=True),
-        sa.Column("openclaw_account_id", sa.String(length=160), nullable=True),
+        sa.Column("external_channel_account_id", sa.String(length=160), nullable=True),
         sa.Column("last_error", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
@@ -174,7 +174,7 @@ def upgrade() -> None:
         ("ix_channel_onboarding_tasks_requested_by", ["requested_by"]),
         ("ix_channel_onboarding_tasks_market_id", ["market_id"]),
         ("ix_channel_onboarding_tasks_target_slot", ["target_slot"]),
-        ("ix_channel_onboarding_tasks_openclaw_account_id", ["openclaw_account_id"]),
+        ("ix_channel_onboarding_tasks_external_channel_account_id", ["external_channel_account_id"]),
         ("ix_channel_onboarding_tasks_created_at", ["created_at"]),
     ]:
         op.create_index(name, "channel_onboarding_tasks", columns)
@@ -185,7 +185,7 @@ def downgrade() -> None:
         "channel_onboarding_tasks",
         [
             "ix_channel_onboarding_tasks_created_at",
-            "ix_channel_onboarding_tasks_openclaw_account_id",
+            "ix_channel_onboarding_tasks_external_channel_account_id",
             "ix_channel_onboarding_tasks_target_slot",
             "ix_channel_onboarding_tasks_market_id",
             "ix_channel_onboarding_tasks_requested_by",

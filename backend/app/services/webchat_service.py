@@ -334,7 +334,7 @@ def _maybe_create_webchat_auto_ack(db: Session, *, conversation: WebchatConversa
     This is acknowledgement-only. It must not claim parcel status, delivery result,
     refund status, or any fact not backed by tools.
     """
-    if get_settings().openclaw_bridge_enabled:
+    if get_settings().external_channel_bridge_enabled:
         return None
 
     existing_agent = (

@@ -44,7 +44,7 @@ _INTERNAL_WORDS = {
     "codex bridge",
     "bridge token",
     "system prompt",
-    "openclaw",
+    "external_channel",
     "localhost",
     "127.0.0.1",
 }

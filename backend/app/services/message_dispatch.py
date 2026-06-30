@@ -9,13 +9,13 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from ..enums import ConversationState, EventType, MessageStatus, SourceChannel
-from ..models import ChannelAccount, OpenClawConversationLink, Ticket, TicketOutboundAttachment, TicketOutboundMessage
+from ..models import ChannelAccount, ExternalChannelConversationLink, Ticket, TicketOutboundAttachment, TicketOutboundMessage
 from ..settings import get_settings
 from ..utils.time import utc_now
 from .audit_service import log_event
 from .email_mailbox_identity import ensure_outbound_mailbox_identity
 from .observability import LOGGER
-from .openclaw_bridge import dispatch_via_openclaw_bridge, dispatch_via_openclaw_cli, dispatch_via_openclaw_mcp
+from .external_channel_bridge import dispatch_via_external_channel_bridge, dispatch_via_external_channel_cli, dispatch_via_external_channel_mcp
 from .outbound_adapters.email import dispatch_email_outbound
 from .outbound_adapters.whatsapp_native import dispatch_whatsapp_native_outbound
 from .outbound_semantics import external_channel_values, is_external_outbound_message
@@ -81,7 +81,7 @@ def _ensure_provider_idempotency_key(message: TicketOutboundMessage) -> str:
     return key
 
 
-def _resolve_first_send_channel_account(db: Session, ticket: Ticket | None, link: OpenClawConversationLink | None) -> ChannelAccount | None:
+def _resolve_first_send_channel_account(db: Session, ticket: Ticket | None, link: ExternalChannelConversationLink | None) -> ChannelAccount | None:
     if link is not None and getattr(link, 'channel_account_id', None):
         return db.query(ChannelAccount).filter(ChannelAccount.id == link.channel_account_id, ChannelAccount.is_active.is_(True)).first()
     if ticket is not None and getattr(ticket, 'channel_account_id', None):
@@ -255,7 +255,7 @@ def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: 
         db.query(TicketOutboundMessage)
         .options(
             joinedload(TicketOutboundMessage.ticket).joinedload(Ticket.customer),
-            joinedload(TicketOutboundMessage.ticket).joinedload(Ticket.openclaw_link),
+            joinedload(TicketOutboundMessage.ticket).joinedload(Ticket.external_channel_link),
             joinedload(TicketOutboundMessage.attachment_links).joinedload(TicketOutboundAttachment.attachment),
         )
         .filter(TicketOutboundMessage.id.in_(claimed_ids))
@@ -314,13 +314,13 @@ def _dispatch_whatsapp_message(db: Session, message: TicketOutboundMessage, tick
                 'error': 'WhatsApp Cloud API dispatch mode is reserved but not implemented',
                 'retryable': False,
             }
-        if settings.whatsapp_dispatch_mode == 'openclaw_bridge':
-            return MessageStatus.failed, 'legacy_openclaw_bridge_retired', None, {
+        if settings.whatsapp_dispatch_mode == 'external_channel_bridge':
+            return MessageStatus.failed, 'legacy_external_channel_bridge_retired', None, {
                 'channel': SourceChannel.whatsapp.value,
-                'adapter': 'legacy_openclaw_bridge_retired',
+                'adapter': 'legacy_external_channel_bridge_retired',
                 'idempotency_key': idempotency_key,
-                'failure_code': 'legacy_openclaw_bridge_retired',
-                'error': 'OpenClaw bridge dispatch has been retired; use WHATSAPP_DISPATCH_MODE=native_sidecar',
+                'failure_code': 'legacy_external_channel_bridge_retired',
+                'error': 'ExternalChannel bridge dispatch has been retired; use WHATSAPP_DISPATCH_MODE=native_sidecar',
                 'retryable': False,
             }
         if settings.whatsapp_dispatch_mode != 'disabled':
@@ -382,7 +382,7 @@ def _handle_dispatch_result(
         if ticket is not None and getattr(ticket, 'conversation_state', None) is not None:
             ticket.conversation_state = ConversationState.waiting_customer
         if session_key:
-            log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.openclaw_reply_sent, note='Legacy same-route reply sent', payload={'message_id': message.id, 'session_key': session_key, 'provider_status': provider_status, 'idempotency_key': route_context.get('idempotency_key')})
+            log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.external_channel_reply_sent, note='Legacy same-route reply sent', payload={'message_id': message.id, 'session_key': session_key, 'provider_status': provider_status, 'idempotency_key': route_context.get('idempotency_key')})
         log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_sent, note='Queued outbound message sent', payload={'message_id': message.id, 'provider_status': provider_status, 'route': route_context})
         return message
 
@@ -430,8 +430,8 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
     link = None
     if ticket is not None:
         target = ticket.source_chat_id or ticket.preferred_reply_contact or (ticket.customer.phone if ticket.customer else None)
-        if ticket.openclaw_link is not None:
-            link = ticket.openclaw_link
+        if ticket.external_channel_link is not None:
+            link = ticket.external_channel_link
             session_key = link.session_key
             target = link.recipient or target
 

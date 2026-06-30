@@ -10,17 +10,17 @@ from sqlalchemy.orm import Session
 from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketPriority, TicketSource
 from ..models import (
     ChannelAccount,
-    OpenClawAttachmentReference,
-    OpenClawConversationLink,
-    OpenClawSyncCursor,
-    OpenClawTranscriptMessage,
-    OpenClawUnresolvedEvent,
+    ExternalChannelAttachmentReference,
+    ExternalChannelConversationLink,
+    ExternalChannelSyncCursor,
+    ExternalChannelTranscriptMessage,
+    ExternalChannelUnresolvedEvent,
     Team,
     Ticket,
     TicketAttachment,
     User,
 )
-from ..schemas import OpenClawConversationRead, OpenClawSyncResult, OpenClawTranscriptRead
+from ..schemas import ExternalChannelConversationRead, ExternalChannelSyncResult, ExternalChannelTranscriptRead
 from ..settings import get_settings
 from ..utils.time import utc_now
 from .audit_service import log_event
@@ -31,12 +31,12 @@ from .storage import get_storage_backend
 settings = get_settings()
 
 ALLOWED_CHANNEL_ACCOUNT_PROVIDERS = {"whatsapp", "telegram", "sms"}
-_RETIRED_STATUS = "legacy_openclaw_runtime_retired"
+_RETIRED_STATUS = "legacy_external_channel_runtime_retired"
 
 
 def _retired_dispatch_result(action: str) -> tuple[MessageStatus, str, None]:
     LOGGER.warning(
-        "legacy_openclaw_runtime_retired",
+        "legacy_external_channel_runtime_retired",
         extra={"event_payload": {"action": action, "runtime": "provider_runtime/native_channels"}},
     )
     return MessageStatus.failed, _RETIRED_STATUS, None
@@ -73,7 +73,7 @@ def _try_extract_attachment_bytes(metadata: dict | None) -> tuple[bytes | None, 
     return None, None, None
 
 
-def persist_openclaw_attachment_reference(db: Session, *, attachment_ref: OpenClawAttachmentReference) -> Ticket | None:
+def persist_external_channel_attachment_reference(db: Session, *, attachment_ref: ExternalChannelAttachmentReference) -> Ticket | None:
     ticket = db.query(Ticket).filter(Ticket.id == attachment_ref.ticket_id).first()
     if ticket is None:
         attachment_ref.storage_status = "ticket_missing"
@@ -87,7 +87,7 @@ def persist_openclaw_attachment_reference(db: Session, *, attachment_ref: OpenCl
                 "content_type": attachment_ref.content_type,
                 "filename": attachment_ref.filename,
                 "metadata": attachment_ref.metadata_json,
-                "legacy_source": "openclaw_attachment_reference",
+                "legacy_source": "external_channel_attachment_reference",
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -117,7 +117,7 @@ def persist_openclaw_attachment_reference(db: Session, *, attachment_ref: OpenCl
         db,
         ticket_id=ticket.id,
         actor_id=None,
-        event_type=EventType.openclaw_attachment_persisted,
+        event_type=EventType.external_channel_attachment_persisted,
         note="Legacy inbound attachment reference persisted",
         payload={"attachment_ref_id": attachment_ref.id, "storage_key": stored.storage_key},
     )
@@ -174,16 +174,16 @@ def _extract_event_route(event: dict[str, Any]) -> dict[str, Any]:
     return route
 
 
-def persist_unresolved_openclaw_event(
+def persist_unresolved_external_channel_event(
     db: Session,
     *,
     event: dict[str, Any],
     source: str = "legacy",
     session_key: str | None = None,
     error: str | None = None,
-) -> OpenClawUnresolvedEvent:
+) -> ExternalChannelUnresolvedEvent:
     route = _extract_event_route(event)
-    row = OpenClawUnresolvedEvent(
+    row = ExternalChannelUnresolvedEvent(
         source=source,
         session_key=session_key or _extract_event_session_key(event),
         event_type=_clean(event.get("type") or event.get("event_type"), limit=80),
@@ -200,26 +200,26 @@ def persist_unresolved_openclaw_event(
     return row
 
 
-def process_openclaw_inbound_event(
+def process_external_channel_inbound_event(
     db: Session,
     *,
     event: dict[str, Any],
     source: str = "legacy",
     client: Any | None = None,
 ) -> bool:
-    persist_unresolved_openclaw_event(
+    persist_unresolved_external_channel_event(
         db,
         event=event,
         source=source,
-        error="legacy_openclaw_ingest_retired",
+        error="legacy_external_channel_ingest_retired",
     )
     return False
 
 
-def replay_unresolved_openclaw_event(db: Session, *, row: OpenClawUnresolvedEvent) -> bool:
+def replay_unresolved_external_channel_event(db: Session, *, row: ExternalChannelUnresolvedEvent) -> bool:
     row.replay_count += 1
     row.status = "failed"
-    row.last_error = "legacy_openclaw_replay_retired"
+    row.last_error = "legacy_external_channel_replay_retired"
     row.updated_at = utc_now()
     db.flush()
     return False
@@ -239,10 +239,10 @@ def set_conversation_state(db: Session, *, ticket: Ticket, new_state, actor_id: 
     )
 
 
-def upsert_openclaw_sync_cursor(db: Session, *, source: str, cursor_value: str | None) -> OpenClawSyncCursor:
-    row = db.query(OpenClawSyncCursor).filter(OpenClawSyncCursor.source == source).first()
+def upsert_external_channel_sync_cursor(db: Session, *, source: str, cursor_value: str | None) -> ExternalChannelSyncCursor:
+    row = db.query(ExternalChannelSyncCursor).filter(ExternalChannelSyncCursor.source == source).first()
     if row is None:
-        row = OpenClawSyncCursor(source=source, cursor_value=cursor_value)
+        row = ExternalChannelSyncCursor(source=source, cursor_value=cursor_value)
         db.add(row)
     else:
         row.cursor_value = cursor_value
@@ -260,11 +260,11 @@ def pick_team_for_market(db: Session, *, market_id: int | None = None, country_c
     return query.filter(Team.market_id.is_(None)).order_by(Team.id.asc()).first()
 
 
-def _get_openclaw_ticket_actor(db: Session) -> User | None:
+def _get_external_channel_ticket_actor(db: Session) -> User | None:
     return db.query(User).filter(User.username == "system").first() or db.query(User).order_by(User.id.asc()).first()
 
 
-def ensure_openclaw_conversation_link(
+def ensure_external_channel_conversation_link(
     db: Session,
     *,
     ticket: Ticket,
@@ -274,10 +274,10 @@ def ensure_openclaw_conversation_link(
     account_id: str | None = None,
     thread_id: str | None = None,
     route: dict[str, Any] | None = None,
-) -> OpenClawConversationLink:
-    row = db.query(OpenClawConversationLink).filter(OpenClawConversationLink.session_key == session_key).first()
+) -> ExternalChannelConversationLink:
+    row = db.query(ExternalChannelConversationLink).filter(ExternalChannelConversationLink.session_key == session_key).first()
     if row is None:
-        row = OpenClawConversationLink(ticket_id=ticket.id, session_key=session_key)
+        row = ExternalChannelConversationLink(ticket_id=ticket.id, session_key=session_key)
         db.add(row)
     row.ticket_id = ticket.id
     row.channel = _clean(channel or _as_dict(route).get("channel"), limit=80)
@@ -292,7 +292,7 @@ def ensure_openclaw_conversation_link(
     return row
 
 
-def link_ticket_to_openclaw_session(
+def link_ticket_to_external_channel_session(
     db: Session,
     *,
     ticket_id: int,
@@ -302,11 +302,11 @@ def link_ticket_to_openclaw_session(
     account_id: str | None = None,
     thread_id: str | None = None,
     route: dict[str, Any] | None = None,
-) -> OpenClawConversationLink:
+) -> ExternalChannelConversationLink:
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if ticket is None:
         raise ValueError("ticket_not_found")
-    return ensure_openclaw_conversation_link(
+    return ensure_external_channel_conversation_link(
         db,
         ticket=ticket,
         session_key=session_key,
@@ -318,79 +318,79 @@ def link_ticket_to_openclaw_session(
     )
 
 
-def _sync_result_for_link(db: Session, link: OpenClawConversationLink) -> OpenClawSyncResult:
+def _sync_result_for_link(db: Session, link: ExternalChannelConversationLink) -> ExternalChannelSyncResult:
     messages = (
-        db.query(OpenClawTranscriptMessage)
-        .filter(OpenClawTranscriptMessage.conversation_id == link.id)
-        .order_by(OpenClawTranscriptMessage.received_at.asc(), OpenClawTranscriptMessage.id.asc())
+        db.query(ExternalChannelTranscriptMessage)
+        .filter(ExternalChannelTranscriptMessage.conversation_id == link.id)
+        .order_by(ExternalChannelTranscriptMessage.received_at.asc(), ExternalChannelTranscriptMessage.id.asc())
         .all()
     )
-    return OpenClawSyncResult(
-        conversation=OpenClawConversationRead.model_validate(link),
-        messages=[OpenClawTranscriptRead.model_validate(row) for row in messages],
+    return ExternalChannelSyncResult(
+        conversation=ExternalChannelConversationRead.model_validate(link),
+        messages=[ExternalChannelTranscriptRead.model_validate(row) for row in messages],
         linked_ticket_id=link.ticket_id,
     )
 
 
-def sync_openclaw_conversation(
+def sync_external_channel_conversation(
     db: Session,
     *,
     ticket_id: int,
     session_key: str,
     limit: int = 50,
     client: Any | None = None,
-) -> OpenClawSyncResult:
-    link = link_ticket_to_openclaw_session(db, ticket_id=ticket_id, session_key=session_key)
+) -> ExternalChannelSyncResult:
+    link = link_ticket_to_external_channel_session(db, ticket_id=ticket_id, session_key=session_key)
     link.last_synced_at = utc_now()
     link.updated_at = utc_now()
     db.flush()
     return _sync_result_for_link(db, link)
 
 
-def count_stale_openclaw_links(db: Session) -> int:
-    if not settings.openclaw_sync_enabled:
+def count_stale_external_channel_links(db: Session) -> int:
+    if not settings.external_channel_sync_enabled:
         return 0
-    cutoff = utc_now() - timedelta(seconds=settings.openclaw_sync_stale_seconds)
+    cutoff = utc_now() - timedelta(seconds=settings.external_channel_sync_stale_seconds)
     return (
-        db.query(OpenClawConversationLink)
+        db.query(ExternalChannelConversationLink)
         .filter(
-            OpenClawConversationLink.session_key.is_not(None),
-            (OpenClawConversationLink.last_synced_at.is_(None)) | (OpenClawConversationLink.last_synced_at < cutoff),
+            ExternalChannelConversationLink.session_key.is_not(None),
+            (ExternalChannelConversationLink.last_synced_at.is_(None)) | (ExternalChannelConversationLink.last_synced_at < cutoff),
         )
         .count()
     )
 
 
-def list_stale_openclaw_links(db: Session, *, limit: int | None = None) -> list[OpenClawConversationLink]:
-    if not settings.openclaw_sync_enabled:
+def list_stale_external_channel_links(db: Session, *, limit: int | None = None) -> list[ExternalChannelConversationLink]:
+    if not settings.external_channel_sync_enabled:
         return []
-    cutoff = utc_now() - timedelta(seconds=settings.openclaw_sync_stale_seconds)
+    cutoff = utc_now() - timedelta(seconds=settings.external_channel_sync_stale_seconds)
     query = (
-        db.query(OpenClawConversationLink)
+        db.query(ExternalChannelConversationLink)
         .filter(
-            OpenClawConversationLink.session_key.is_not(None),
-            (OpenClawConversationLink.last_synced_at.is_(None)) | (OpenClawConversationLink.last_synced_at < cutoff),
+            ExternalChannelConversationLink.session_key.is_not(None),
+            (ExternalChannelConversationLink.last_synced_at.is_(None)) | (ExternalChannelConversationLink.last_synced_at < cutoff),
         )
-        .order_by(OpenClawConversationLink.last_synced_at.asc().nullsfirst(), OpenClawConversationLink.id.asc())
+        .order_by(ExternalChannelConversationLink.last_synced_at.asc().nullsfirst(), ExternalChannelConversationLink.id.asc())
     )
     if limit is not None:
         query = query.limit(limit)
     return query.all()
 
 
-def serialize_openclaw_link(link: OpenClawConversationLink) -> OpenClawConversationRead:
-    return OpenClawConversationRead.model_validate(link)
+def serialize_external_channel_link(link: ExternalChannelConversationLink) -> ExternalChannelConversationRead:
+    return ExternalChannelConversationRead.model_validate(link)
 
 
-def list_openclaw_bridge_conversations(*, limit: int = 50, channel: str | None = None) -> dict[str, Any]:
-    return {"conversations": [], "degraded": True, "degraded_reason": "legacy_openclaw_bridge_retired"}
+def list_external_channel_bridge_conversations(*, limit: int = 50, channel: str | None = None) -> dict[str, Any]:
+    return {"conversations": [], "degraded": True, "degraded_reason": "legacy_external_channel_bridge_retired"}
 
 
-def list_openclaw_conversations(*, limit: int = 50, channel: str | None = None, client: Any | None = None) -> dict[str, Any]:
-    return list_openclaw_bridge_conversations(limit=limit, channel=channel)
+def list_external_channel_conversations(*, limit: int = 50, channel: str | None = None, client: Any | None = None) -> dict[str, Any]:
+    return list_external_channel_bridge_conversations(limit=limit, channel=channel)
 
 
-def sync_openclaw_inbound_conversations_once(
+def sync_external_channel_inbound_conversations_once(
     db: Session,
     *,
     source: str = "default",
@@ -399,7 +399,7 @@ def sync_openclaw_inbound_conversations_once(
 ) -> dict[str, int | str]:
     return {
         "status": "disabled",
-        "reason": "legacy_openclaw_inbound_retired",
+        "reason": "legacy_external_channel_inbound_retired",
         "conversations_seen": 0,
         "synced_conversations": 0,
         "tickets_created": 0,
@@ -408,15 +408,15 @@ def sync_openclaw_inbound_conversations_once(
     }
 
 
-def read_openclaw_bridge_conversation(session_key: str, limit: int = 50) -> tuple[dict[str, Any] | None, list[dict[str, Any]] | None]:
+def read_external_channel_bridge_conversation(session_key: str, limit: int = 50) -> tuple[dict[str, Any] | None, list[dict[str, Any]] | None]:
     return None, None
 
 
-def fetch_openclaw_bridge_attachments(session_key: str, message_id: str) -> list[dict[str, Any]] | None:
+def fetch_external_channel_bridge_attachments(session_key: str, message_id: str) -> list[dict[str, Any]] | None:
     return []
 
 
-def dispatch_via_openclaw_bridge(
+def dispatch_via_external_channel_bridge(
     *,
     channel: str,
     target: str,
@@ -428,11 +428,11 @@ def dispatch_via_openclaw_bridge(
     return _retired_dispatch_result("dispatch_bridge")
 
 
-def dispatch_via_openclaw_mcp(session_key: str, body: str) -> tuple[MessageStatus, str | None, object | None]:
+def dispatch_via_external_channel_mcp(session_key: str, body: str) -> tuple[MessageStatus, str | None, object | None]:
     return _retired_dispatch_result("dispatch_mcp")
 
 
-def dispatch_via_openclaw_cli(
+def dispatch_via_external_channel_cli(
     *,
     channel: str,
     target: str,
@@ -443,29 +443,29 @@ def dispatch_via_openclaw_cli(
     return _retired_dispatch_result("dispatch_cli")
 
 
-def sync_openclaw_session_once(
+def sync_external_channel_session_once(
     db: Session,
     *,
-    link: OpenClawConversationLink,
+    link: ExternalChannelConversationLink,
     limit: int | None = None,
     client: Any | None = None,
-) -> OpenClawSyncResult:
-    return sync_openclaw_conversation(
+) -> ExternalChannelSyncResult:
+    return sync_external_channel_conversation(
         db,
         ticket_id=link.ticket_id,
         session_key=link.session_key,
-        limit=limit or settings.openclaw_sync_transcript_limit,
+        limit=limit or settings.external_channel_sync_transcript_limit,
         client=client,
     )
 
 
-def wait_openclaw_bridge_events(after_cursor: int, session_key: str | None = None, timeout_seconds: int = 30) -> dict[str, Any] | None:
+def wait_external_channel_bridge_events(after_cursor: int, session_key: str | None = None, timeout_seconds: int = 30) -> dict[str, Any] | None:
     return None
 
 
-def poll_openclaw_bridge_events(after_cursor: int, session_key: str | None = None) -> dict[str, Any] | None:
+def poll_external_channel_bridge_events(after_cursor: int, session_key: str | None = None) -> dict[str, Any] | None:
     return None
 
 
-def consume_openclaw_events_once(db: Session, *, source: str = "default", timeout_seconds: int | None = None) -> int:
+def consume_external_channel_events_once(db: Session, *, source: str = "default", timeout_seconds: int | None = None) -> int:
     return 0

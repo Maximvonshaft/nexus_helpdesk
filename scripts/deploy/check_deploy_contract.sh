@@ -104,8 +104,8 @@ if not COMPOSE_PATH.exists():
 compose_text = COMPOSE_PATH.read_text(encoding='utf-8')
 if not compose_has_postgres_service(compose_text):
     raise AssertionError(f'{COMPOSE_PATH} must define postgres service')
-if 'OPENCLAW_TRANSPORT: disabled' not in compose_text:
-    raise AssertionError(f'{COMPOSE_PATH} must keep legacy OpenClaw transport disabled')
+if 'EXTERNAL_CHANNEL_TRANSPORT: disabled' not in compose_text:
+    raise AssertionError(f'{COMPOSE_PATH} must keep legacy ExternalChannel transport disabled')
 
 for env_path in ENV_TEMPLATES:
     validate_env(env_path)

@@ -10,7 +10,7 @@ Current default mode is **fast AI**:
 visitor message -> POST /api/webchat/fast-reply -> AI reply returned directly
 ```
 
-The browser only talks to NexusDesk. It never talks directly to OpenClaw Gateway and never receives OpenClaw URL, token, MCP credential, bridge credential, or internal API secret.
+The browser only talks to NexusDesk. It never talks directly to ExternalChannel Gateway and never receives ExternalChannel URL, token, MCP credential, bridge credential, or internal API secret.
 
 ## Basic embed
 
@@ -146,8 +146,8 @@ Use legacy mode only for rollback, old demos, and historical conversation compat
 
 - Browser may call only NexusDesk public WebChat endpoints.
 - Browser must never call `/v1/responses`.
-- Browser bundle must not contain OpenClaw Gateway URL or bearer token.
-- `data-api-base` must point to NexusDesk, not OpenClaw Gateway.
+- Browser bundle must not contain ExternalChannel Gateway URL or bearer token.
+- `data-api-base` must point to NexusDesk, not ExternalChannel Gateway.
 - Card/action rendering in legacy mode uses DOM text APIs and does not execute arbitrary HTML.
 
 ## Demo

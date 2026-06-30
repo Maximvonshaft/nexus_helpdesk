@@ -19,10 +19,10 @@ Scope: source-overlay patch package for the current `main` branch layout. No `.g
 | `.github/workflows/postgres-migration.yml` | CI | P0-4 | Adds PostgreSQL Alembic migration gate. |
 | `docs/deployment-runbook.md` | docs | P0-5, P1-5 | Documents service roles, update, rollback, and protected files. |
 | `docs/migration-troubleshooting.md` | docs | P0-1, P0-5 | Documents Alembic revision length issue and remediation. |
-| `backend/app/settings.py` | backend code | P1-1 | Adds `OPENCLAW_EXTRA_PATHS` parsing for MCP command lookup. |
-| `backend/app/services/openclaw_mcp_client.py` | backend code | P1-1 | Removes hardcoded `/home/vboxuser/.local/bin`; uses configured command/path. |
-| `backend/app/services/openclaw_runtime_service.py` | backend code | P1-1 | Surfaces extra path configuration as connectivity warning context. |
-| `backend/scripts/run_openclaw_event_daemon.py` | backend script | P1-7 | Updates heartbeat to `error` on event daemon iteration failures. |
+| `backend/app/settings.py` | backend code | P1-1 | Adds `EXTERNAL_CHANNEL_EXTRA_PATHS` parsing for MCP command lookup. |
+| `backend/app/services/external_channel_mcp_client.py` | backend code | P1-1 | Removes hardcoded `/home/vboxuser/.local/bin`; uses configured command/path. |
+| `backend/app/services/external_channel_runtime_service.py` | backend code | P1-1 | Surfaces extra path configuration as connectivity warning context. |
+| `backend/scripts/run_external_channel_event_daemon.py` | backend script | P1-7 | Updates heartbeat to `error` on event daemon iteration failures. |
 | `backend/app/services/observability.py` | backend code | P1-4 | Replaces queue snapshot Counter with Gauge and normalizes HTTP metric paths. |
 | `backend/app/main.py` | backend code | P1-4 | Uses updated observability implementation and version label. |
 | `deploy/.env.prod.example` | deploy config template | P1-5 | Adds production env template without real secrets. |

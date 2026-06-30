@@ -217,7 +217,7 @@ The handoff includes:
 - validation commands
 - recommended first branch and commit
 
-This is suitable for OpenClaw or a human engineer.
+This is suitable for ExternalChannel or a human engineer.
 
 ## 12. Acceptance criteria verifiability
 
@@ -237,7 +237,7 @@ The API contract map covers:
 - WebChat Admin API
 - AI Config API
 - Channel / Accounts API
-- Runtime / OpenClaw API
+- Runtime / ExternalChannel API
 - future realtime API
 
 This is sufficient to prevent accidental frontend contract drift during refactor.

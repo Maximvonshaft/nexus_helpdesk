@@ -107,7 +107,7 @@ jobs:
               backend/app/services/lite_service.py) return 0 ;;
               backend/app/services/message_dispatch.py) return 0 ;;
               backend/app/services/observability.py) return 0 ;;
-              backend/app/services/openclaw_client_factory.py) return 0 ;;
+              backend/app/services/external_channel_client_factory.py) return 0 ;;
               backend/app/services/operator_queue.py) return 0 ;;
               backend/app/services/outbound_adapters/**) return 0 ;;
               backend/app/services/outbound_channel_registry.py) return 0 ;;
@@ -132,7 +132,7 @@ jobs:
               backend/app/webchat_voice_config.py) return 0 ;;
               backend/app/voice_schemas.py) return 0 ;;
               backend/requirements.txt) return 0 ;;
-              backend/scripts/openclaw_bridge_server.js) return 0 ;;
+              backend/scripts/external_channel_bridge_server.js) return 0 ;;
               backend/scripts/*knowledge*.py) return 0 ;;
               backend/scripts/*speedaf*.py) return 0 ;;
               backend/tests/test_admin_whatsapp*.py) return 0 ;;

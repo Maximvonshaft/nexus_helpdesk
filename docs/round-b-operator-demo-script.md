@@ -62,4 +62,4 @@ Expected result: customer sees agent reply.
 - “Every visitor message becomes a trackable NexusDesk ticket.”
 - “Support agents work in one queue, not in scattered browser tabs.”
 - “Outbound replies are safety-gated before the customer sees them.”
-- “Round C can let OpenClaw draft suggested replies, but human approval remains the control point.”
+- “Round C can let ExternalChannel draft suggested replies, but human approval remains the control point.”

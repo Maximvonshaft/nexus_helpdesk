@@ -31,13 +31,13 @@ These defaults must remain false or disabled unless a dedicated outbound rollout
 ```text
 ENABLE_OUTBOUND_DISPATCH=false
 OUTBOUND_PROVIDER=disabled
-OPENCLAW_CLI_FALLBACK_ENABLED=false
-OPENCLAW_TRANSPORT=disabled
-OPENCLAW_DEPLOYMENT_MODE=disabled
-OPENCLAW_SYNC_ENABLED=false
-OPENCLAW_INBOUND_AUTO_SYNC_ENABLED=false
-OPENCLAW_EVENT_DRIVER_ENABLED=false
-OPENCLAW_BRIDGE_ENABLED=false
+EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED=false
+EXTERNAL_CHANNEL_TRANSPORT=disabled
+EXTERNAL_CHANNEL_DEPLOYMENT_MODE=disabled
+EXTERNAL_CHANNEL_SYNC_ENABLED=false
+EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED=false
+EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED=false
+EXTERNAL_CHANNEL_BRIDGE_ENABLED=false
 WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT=false
 ```
 
@@ -57,6 +57,6 @@ WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT=false
 3. Restore database only if the migration is not forward-compatible and a backup exists.
 4. Recheck `/healthz` and `/readyz`.
 
-## Legacy OpenClaw Note
+## Legacy ExternalChannel Note
 
-OpenClaw runtime paths are retired. Do not enable bridge, MCP, CLI fallback, inbound auto-sync, sync daemon, or event driver settings. Existing `openclaw_*` tables and API names are compatibility surfaces only.
+ExternalChannel runtime paths are retired. Do not enable bridge, MCP, CLI fallback, inbound auto-sync, sync daemon, or event driver settings. Existing `external_channel_*` tables and API names are compatibility surfaces only.

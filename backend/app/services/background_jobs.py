@@ -10,17 +10,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..enums import EventType, JobStatus, MessageStatus, SourceChannel
-from ..models import BackgroundJob, OpenClawConversationLink, OpenClawTranscriptMessage, TicketEvent, TicketOutboundMessage
+from ..models import BackgroundJob, ExternalChannelConversationLink, ExternalChannelTranscriptMessage, TicketEvent, TicketOutboundMessage
 from ..settings import get_settings
 from ..utils.time import utc_now
-from . import openclaw_bridge
+from . import external_channel_bridge
 from .email_mailbox_identity import ensure_outbound_mailbox_identity
 from .speedaf.redactor import mask_phone, safe_caller_payload, safe_waybill_payload, sha256_prefix, suffix
 
 settings = get_settings()
 AUTO_REPLY_JOB = 'auto_reply.send_update'
-OPENCLAW_SYNC_JOB = 'openclaw.sync_session'
-ATTACHMENT_PERSIST_JOB = 'openclaw.persist_attachment'
+EXTERNAL_CHANNEL_SYNC_JOB = 'external_channel.sync_session'
+ATTACHMENT_PERSIST_JOB = 'external_channel.persist_attachment'
 WEBCHAT_AI_REPLY_JOB = 'webchat.ai_reply'
 WEBCHAT_HANDOFF_SNAPSHOT_JOB = 'webchat.handoff_snapshot'
 SPEEDAF_WORK_ORDER_CREATE_JOB = 'speedaf.work_order.create'
@@ -156,13 +156,13 @@ def enqueue_auto_reply_job(db: Session, *, ticket_id: int, user_id: int) -> Back
     return enqueue_background_job(db, queue_name='auto_reply', job_type=AUTO_REPLY_JOB, payload={'ticket_id': ticket_id, 'user_id': user_id}, dedupe_key=f'auto-reply:{ticket_id}')
 
 
-def enqueue_openclaw_sync_job(db: Session, *, ticket_id: int, session_key: str, transcript_limit: int | None = None, dedupe: bool = True) -> BackgroundJob:
-    payload = {'ticket_id': ticket_id, 'session_key': session_key, 'transcript_limit': transcript_limit or settings.openclaw_sync_transcript_limit}
-    return enqueue_background_job(db, queue_name='legacy_session_sync', job_type=OPENCLAW_SYNC_JOB, payload=payload, dedupe_key=f'legacy-session-sync:{session_key}' if dedupe else None)
+def enqueue_external_channel_sync_job(db: Session, *, ticket_id: int, session_key: str, transcript_limit: int | None = None, dedupe: bool = True) -> BackgroundJob:
+    payload = {'ticket_id': ticket_id, 'session_key': session_key, 'transcript_limit': transcript_limit or settings.external_channel_sync_transcript_limit}
+    return enqueue_background_job(db, queue_name='legacy_session_sync', job_type=EXTERNAL_CHANNEL_SYNC_JOB, payload=payload, dedupe_key=f'legacy-session-sync:{session_key}' if dedupe else None)
 
 
 def enqueue_attachment_persist_job(db: Session, *, attachment_ref_id: int, dedupe: bool = True) -> BackgroundJob:
-    return enqueue_background_job(db, queue_name='openclaw_attachment', job_type=ATTACHMENT_PERSIST_JOB, payload={'attachment_ref_id': attachment_ref_id}, dedupe_key=f'openclaw-attachment:{attachment_ref_id}' if dedupe else None)
+    return enqueue_background_job(db, queue_name='external_channel_attachment', job_type=ATTACHMENT_PERSIST_JOB, payload={'attachment_ref_id': attachment_ref_id}, dedupe_key=f'external_channel-attachment:{attachment_ref_id}' if dedupe else None)
 
 
 def enqueue_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id: int, visitor_message_id: int) -> BackgroundJob:
@@ -206,7 +206,7 @@ def enqueue_speedaf_voice_callback_job(
     return enqueue_background_job(db, queue_name='speedaf_voice_callback', job_type=SPEEDAF_VOICE_CALLBACK_JOB, payload=payload, dedupe_key=dedupe_key)
 
 
-def enqueue_stale_openclaw_sync_jobs(db: Session, *, limit: int | None = None) -> list[BackgroundJob]:
+def enqueue_stale_external_channel_sync_jobs(db: Session, *, limit: int | None = None) -> list[BackgroundJob]:
     return []
 
 
@@ -387,14 +387,14 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             from .bulletin_service import build_bulletin_context
             ticket = get_ticket_or_404(db, int(payload['ticket_id']))
             user = get_user_or_404(db, int(payload['user_id']))
-            if not ticket.preferred_reply_contact and ticket.openclaw_link is None:
+            if not ticket.preferred_reply_contact and ticket.external_channel_link is None:
                 _mark_done(job)
                 return job
             human_note = ticket.customer_update or ticket.resolution_summary or ticket.last_human_update
             if not human_note:
                 _mark_done(job)
                 return job
-            transcript_rows = db.query(OpenClawTranscriptMessage).filter(OpenClawTranscriptMessage.ticket_id == ticket.id).order_by(OpenClawTranscriptMessage.created_at.desc()).limit(5).all()
+            transcript_rows = db.query(ExternalChannelTranscriptMessage).filter(ExternalChannelTranscriptMessage.ticket_id == ticket.id).order_by(ExternalChannelTranscriptMessage.created_at.desc()).limit(5).all()
             transcript_context = '\n'.join(reversed([row.body_text for row in transcript_rows if row.body_text]))
             customer_request = transcript_context or ticket.customer_request or ticket.description or ''
             bulletin_context = build_bulletin_context(db, ticket=ticket)
@@ -408,12 +408,12 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             _mark_done(job)
             return job
         if job.job_type == ATTACHMENT_PERSIST_JOB:
-            from ..models import OpenClawAttachmentReference
-            row = db.query(OpenClawAttachmentReference).filter(OpenClawAttachmentReference.id == int(payload['attachment_ref_id'])).first()
+            from ..models import ExternalChannelAttachmentReference
+            row = db.query(ExternalChannelAttachmentReference).filter(ExternalChannelAttachmentReference.id == int(payload['attachment_ref_id'])).first()
             if row is None:
                 _mark_done(job)
                 return job
-            openclaw_bridge.persist_openclaw_attachment_reference(db, attachment_ref=row)
+            external_channel_bridge.persist_external_channel_attachment_reference(db, attachment_ref=row)
             row.updated_at = utc_now()
             _mark_done(job)
             return job
@@ -447,8 +447,8 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             process_email_mailbox_sync_job(db, account_id=int(payload['account_id']))
             _mark_done(job)
             return job
-        if job.job_type == OPENCLAW_SYNC_JOB:
-            job.last_error = "legacy OpenClaw session sync is retired"
+        if job.job_type == EXTERNAL_CHANNEL_SYNC_JOB:
+            job.last_error = "legacy ExternalChannel session sync is retired"
             _mark_done(job)
             return job
         raise RuntimeError(f'Unsupported job type: {job.job_type}')
@@ -472,10 +472,10 @@ def dispatch_pending_background_jobs(db: Session, *, limit: int | None = None, w
 
 
 def dispatch_pending_sync_jobs(db: Session, *, limit: int | None = None, worker_id: str | None = None) -> list[BackgroundJob]:
-    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[OPENCLAW_SYNC_JOB])
+    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[EXTERNAL_CHANNEL_SYNC_JOB])
     processed: list[BackgroundJob] = []
     for job in claimed:
-        if job.job_type != OPENCLAW_SYNC_JOB:
+        if job.job_type != EXTERNAL_CHANNEL_SYNC_JOB:
             continue
         process_background_job(db, job)
         processed.append(job)

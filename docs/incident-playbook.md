@@ -13,7 +13,7 @@ Immediate actions:
 Verification:
 
 - provider-level dispatch gate tests pass
-- no OpenClaw send path is called when provider is disabled
+- no ExternalChannel send path is called when provider is disabled
 
 ## P1: migration failure
 
@@ -46,12 +46,12 @@ Recovery:
 - expired visitor tokens should trigger a new init path
 - widget should clear local state and recover a new session
 
-## P2: OpenClaw inbound sync degradation
+## P2: ExternalChannel inbound sync degradation
 
 Immediate actions:
 
 1. Confirm healthz and readyz.
-2. Inspect OpenClaw runtime health.
+2. Inspect ExternalChannel runtime health.
 3. Check unresolved events.
 4. Confirm the inbound sync daemon or scheduled sync path is alive.
 

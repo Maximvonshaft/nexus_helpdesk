@@ -9,7 +9,7 @@ Required default environment values:
 ```text
 ENABLE_OUTBOUND_DISPATCH=false
 OUTBOUND_PROVIDER=disabled
-OPENCLAW_CLI_FALLBACK_ENABLED=false
+EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED=false
 ```
 
 ## Local WebChat ACK is not external send
@@ -32,7 +32,7 @@ A row can enter provider dispatch only when all conditions are true:
 4. outbound safety gate passes
 5. a target or same-route session key is available
 
-`backend/app/services/message_dispatch.py` contains a provider-level kill switch so disabled or unsupported providers cannot reach native sidecar or SMTP send paths. Legacy OpenClaw bridge/MCP/CLI aliases are retained only as retired compatibility stubs.
+`backend/app/services/message_dispatch.py` contains a provider-level kill switch so disabled or unsupported providers cannot reach native sidecar or SMTP send paths. Legacy ExternalChannel bridge/MCP/CLI aliases are retained only as retired compatibility stubs.
 
 ## Required verification
 

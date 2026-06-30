@@ -18,11 +18,11 @@ Failure reasons:
 - Start command shape: `['C:\\Users\\Maxim\\AppData\\Roaming\\npm\\codex.cmd', 'app-server', '--listen', 'stdio://']`
 - Isolated CODEX_HOME: `C:\Users\Maxim\Documents\nexus\probe_reports\codex_appserver_runtime_v3_discovery\isolated_codex_home`
 - Isolated HOME: `C:\Users\Maxim\Documents\nexus\probe_reports\codex_appserver_runtime_v3_discovery\isolated_home`
-- Cleared auth env vars: `['CODEX_API_KEY', 'OPENAI_API_KEY', 'OPENAI_ACCESS_TOKEN', 'CODEX_ACCESS_TOKEN', 'OPENCLAW_HOME']`
+- Cleared auth env vars: `['CODEX_API_KEY', 'OPENAI_API_KEY', 'OPENAI_ACCESS_TOKEN', 'CODEX_ACCESS_TOKEN', 'EXTERNAL_CHANNEL_HOME']`
 
-## OpenClaw Reference Notes
+## ExternalChannel Reference Notes
 
-- Reference repo: `https://github.com/openclaw/openclaw`
+- Reference repo: `https://github.com/external_channel/external_channel`
 - Current main inspected: `4a45098a866949f8cbb790840fd7ee1533855450`
 - Reference pack pinned commit: `732cf542404f06c5e978ec37936a179d8c339d5e`
 - `package.json` does not expose `extensions/codex/src/app-server/*` as stable public package exports.

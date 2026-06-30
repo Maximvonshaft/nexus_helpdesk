@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 from app.services.webchat_fast_output_parser import (
     FastReplyParseError,
     UnexpectedToolCallError,
-    parse_openclaw_fast_reply,
+    parse_external_channel_fast_reply,
 )
 
 SECRET_PATTERNS = [
@@ -42,7 +42,7 @@ SENSITIVE_FIELD_NAMES = {
 }
 
 INTERNAL_OUTPUT_TERMS = [
-    "OpenClaw",
+    "ExternalChannel",
     "Codex",
     "gateway",
     "localhost",
@@ -184,7 +184,7 @@ def decode_response_body(body_text: str) -> Any:
 
 def validate_fast_reply(payload: Any) -> tuple[bool, dict[str, Any] | None, str | None]:
     try:
-        parsed = parse_openclaw_fast_reply(payload)
+        parsed = parse_external_channel_fast_reply(payload)
     except UnexpectedToolCallError as exc:
         return False, None, getattr(exc, "error_code", "ai_unexpected_tool_call")
     except FastReplyParseError as exc:

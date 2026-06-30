@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app.db import Base  # noqa: E402
 from app.enums import UserRole  # noqa: E402
-from app.models import AdminAuditLog, OpenClawUnresolvedEvent, User  # noqa: E402
+from app.models import AdminAuditLog, ExternalChannelUnresolvedEvent, User  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
 from app.services.operator_queue import OperatorQueueError, project_operator_queue, replay_operator_task, transition_operator_task  # noqa: E402
 
@@ -47,7 +47,7 @@ def make_user(db):
 
 
 def make_unresolved(db):
-    row = OpenClawUnresolvedEvent(
+    row = ExternalChannelUnresolvedEvent(
         source="default",
         session_key="sess-secret",
         event_type="message",
@@ -71,11 +71,11 @@ def test_assign_resolve_drop_and_replay_write_admin_audit(db_session):
     event = make_unresolved(db_session)
     db_session.commit()
     project_operator_queue(db_session, actor_id=admin.id, note="project audit")
-    openclaw_task = db_session.query(OperatorTask).filter_by(unresolved_event_id=event.id).one()
+    external_channel_task = db_session.query(OperatorTask).filter_by(unresolved_event_id=event.id).one()
 
     transition_operator_task(db_session, task_id=row.id, action="assign", actor_id=admin.id, note="assign audit")
     transition_operator_task(db_session, task_id=row.id, action="resolve", actor_id=admin.id, note="resolve audit")
-    replay_operator_task(db_session, task_id=openclaw_task.id, actor_id=admin.id, note="replay audit", replay_func=lambda db, *, row: True)
+    replay_operator_task(db_session, task_id=external_channel_task.id, actor_id=admin.id, note="replay audit", replay_func=lambda db, *, row: True)
 
     event2 = make_unresolved(db_session)
     db_session.commit()
@@ -96,7 +96,7 @@ def test_replay_failed_writes_admin_audit(db_session):
     make_unresolved(db_session)
     db_session.commit()
     project_operator_queue(db_session, actor_id=admin.id)
-    task = db_session.query(OperatorTask).filter_by(source_type="openclaw").one()
+    task = db_session.query(OperatorTask).filter_by(source_type="external_channel").one()
 
     with pytest.raises(OperatorQueueError):
         replay_operator_task(db_session, task_id=task.id, actor_id=admin.id, note="failure audit", replay_func=lambda db, *, row: False)

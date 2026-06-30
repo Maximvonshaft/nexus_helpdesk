@@ -2,14 +2,14 @@
 
 ## Purpose
 
-This runbook validates the current WhatsApp outbound path after the legacy OpenClaw bridge was retired.
+This runbook validates the current WhatsApp outbound path after the legacy ExternalChannel bridge was retired.
 
 Current scope:
 
 - WhatsApp outbound uses the native sidecar adapter boundary.
 - The adapter validates channel, target, and active WhatsApp account before dispatch.
 - Production remains fail-closed unless runtime flags explicitly enable dispatch.
-- Legacy OpenClaw bridge dispatch returns a non-retryable retired error and must not be used for smoke evidence.
+- Legacy ExternalChannel bridge dispatch returns a non-retryable retired error and must not be used for smoke evidence.
 
 ## Safety Boundary
 

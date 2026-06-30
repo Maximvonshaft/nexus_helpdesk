@@ -35,7 +35,7 @@ Chosen path:
 
 Reason:
 - the smoke only required a working local API surface and admin auth path
-- this was the smallest, lowest-risk path that avoided unrelated OpenClaw/Postgres/runtime variables
+- this was the smallest, lowest-risk path that avoided unrelated ExternalChannel/Postgres/runtime variables
 
 ## Validation summary
 

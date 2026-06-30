@@ -17,7 +17,7 @@ Public visitor browser
 Authenticated admin user
   → authenticated admin API
 
-OpenClaw / Bridge / MCP
+ExternalChannel / Bridge / MCP
   → integration API and governed internal services
 
 AI runtime
@@ -32,7 +32,7 @@ AI runtime
 - customer messages
 - attachments and POD evidence
 - AI policy and system instructions
-- OpenClaw integration status and event payloads
+- ExternalChannel integration status and event payloads
 - channel account configuration
 - runtime logs
 - environment secrets

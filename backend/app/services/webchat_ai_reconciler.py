@@ -37,7 +37,7 @@ def _timeout_seconds_for_status(turn: WebchatAITurn) -> int | None:
     if status == "fallback_generating":
         return int(getattr(settings, "webchat_ai_fallback_timeout_seconds", DEFAULT_FALLBACK_TIMEOUT_SECONDS) or DEFAULT_FALLBACK_TIMEOUT_SECONDS)
     if status == "bridge_calling":
-        bridge_timeout = int(getattr(settings, "openclaw_bridge_timeout_seconds", 20) or 20)
+        bridge_timeout = int(getattr(settings, "external_channel_bridge_timeout_seconds", 20) or 20)
         grace = int(getattr(settings, "webchat_ai_bridge_timeout_grace_seconds", DEFAULT_BRIDGE_GRACE_SECONDS) or DEFAULT_BRIDGE_GRACE_SECONDS)
         return bridge_timeout + grace
     return None

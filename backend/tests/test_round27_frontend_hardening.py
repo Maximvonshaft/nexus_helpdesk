@@ -101,7 +101,7 @@ def test_deployment_templates_prevent_server_drift():
     assert 'worker-handoff-snapshot' in server_compose
     assert 'sync-daemon' not in server_compose
     assert 'event-daemon' not in server_compose
-    assert 'OPENCLAW_TRANSPORT: disabled' in server_compose
+    assert 'EXTERNAL_CHANNEL_TRANSPORT: disabled' in server_compose
     assert 'WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT=false' in env_template
     assert 'Server deployment drift prevention' in readme
     assert 'git reset --hard' in readme

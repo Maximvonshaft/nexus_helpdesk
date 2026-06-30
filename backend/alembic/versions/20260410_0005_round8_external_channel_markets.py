@@ -1,4 +1,4 @@
-"""round8 openclaw + markets
+"""round8 external_channel + markets
 
 Revision ID: 20260410_0005
 Revises: 20260410_0004
@@ -83,9 +83,9 @@ def upgrade() -> None:
         op.create_index('ix_tickets_country_code', 'tickets', ['country_code'])
 
     tables = _tables(inspector)
-    if 'openclaw_conversation_links' not in tables:
+    if 'external_channel_conversation_links' not in tables:
         op.create_table(
-            'openclaw_conversation_links',
+            'external_channel_conversation_links',
             sa.Column('id', sa.Integer(), primary_key=True),
             sa.Column('ticket_id', sa.Integer(), nullable=False),
             sa.Column('session_key', sa.String(length=255), nullable=False),
@@ -100,22 +100,22 @@ def upgrade() -> None:
             sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
             sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
             sa.ForeignKeyConstraint(['ticket_id'], ['tickets.id']),
-            sa.UniqueConstraint('session_key', name='uq_openclaw_session_key'),
-            sa.UniqueConstraint('ticket_id', name='uq_openclaw_ticket_link'),
+            sa.UniqueConstraint('session_key', name='uq_external_channel_session_key'),
+            sa.UniqueConstraint('ticket_id', name='uq_external_channel_ticket_link'),
         )
         inspector = sa.inspect(bind)
-    if 'ix_openclaw_conversation_links_session_key' not in _indexes(inspector, 'openclaw_conversation_links'):
-        op.create_index('ix_openclaw_conversation_links_session_key', 'openclaw_conversation_links', ['session_key'])
-    if 'ix_openclaw_conversation_links_channel' not in _indexes(inspector, 'openclaw_conversation_links'):
-        op.create_index('ix_openclaw_conversation_links_channel', 'openclaw_conversation_links', ['channel'])
-    if 'ix_openclaw_conversation_links_recipient' not in _indexes(inspector, 'openclaw_conversation_links'):
-        op.create_index('ix_openclaw_conversation_links_recipient', 'openclaw_conversation_links', ['recipient'])
-    if 'ix_openclaw_conversation_links_last_synced_at' not in _indexes(inspector, 'openclaw_conversation_links'):
-        op.create_index('ix_openclaw_conversation_links_last_synced_at', 'openclaw_conversation_links', ['last_synced_at'])
+    if 'ix_external_channel_conversation_links_session_key' not in _indexes(inspector, 'external_channel_conversation_links'):
+        op.create_index('ix_external_channel_conversation_links_session_key', 'external_channel_conversation_links', ['session_key'])
+    if 'ix_external_channel_conversation_links_channel' not in _indexes(inspector, 'external_channel_conversation_links'):
+        op.create_index('ix_external_channel_conversation_links_channel', 'external_channel_conversation_links', ['channel'])
+    if 'ix_external_channel_conversation_links_recipient' not in _indexes(inspector, 'external_channel_conversation_links'):
+        op.create_index('ix_external_channel_conversation_links_recipient', 'external_channel_conversation_links', ['recipient'])
+    if 'ix_external_channel_conversation_links_last_synced_at' not in _indexes(inspector, 'external_channel_conversation_links'):
+        op.create_index('ix_external_channel_conversation_links_last_synced_at', 'external_channel_conversation_links', ['last_synced_at'])
 
-    if 'openclaw_transcript_messages' not in tables:
+    if 'external_channel_transcript_messages' not in tables:
         op.create_table(
-            'openclaw_transcript_messages',
+            'external_channel_transcript_messages',
             sa.Column('id', sa.Integer(), primary_key=True),
             sa.Column('conversation_id', sa.Integer(), nullable=False),
             sa.Column('ticket_id', sa.Integer(), nullable=False),
@@ -127,31 +127,31 @@ def upgrade() -> None:
             sa.Column('content_json', sa.JSON(), nullable=True),
             sa.Column('received_at', sa.DateTime(timezone=True), nullable=True),
             sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-            sa.ForeignKeyConstraint(['conversation_id'], ['openclaw_conversation_links.id']),
+            sa.ForeignKeyConstraint(['conversation_id'], ['external_channel_conversation_links.id']),
             sa.ForeignKeyConstraint(['ticket_id'], ['tickets.id']),
-            sa.UniqueConstraint('conversation_id', 'message_id', name='uq_openclaw_conversation_message'),
+            sa.UniqueConstraint('conversation_id', 'message_id', name='uq_external_channel_conversation_message'),
         )
         inspector = sa.inspect(bind)
-    if 'ix_openclaw_transcript_messages_session_key' not in _indexes(inspector, 'openclaw_transcript_messages'):
-        op.create_index('ix_openclaw_transcript_messages_session_key', 'openclaw_transcript_messages', ['session_key'])
-    if 'ix_openclaw_transcript_messages_message_id' not in _indexes(inspector, 'openclaw_transcript_messages'):
-        op.create_index('ix_openclaw_transcript_messages_message_id', 'openclaw_transcript_messages', ['message_id'])
-    if 'ix_openclaw_transcript_messages_role' not in _indexes(inspector, 'openclaw_transcript_messages'):
-        op.create_index('ix_openclaw_transcript_messages_role', 'openclaw_transcript_messages', ['role'])
-    if 'ix_openclaw_transcript_messages_received_at' not in _indexes(inspector, 'openclaw_transcript_messages'):
-        op.create_index('ix_openclaw_transcript_messages_received_at', 'openclaw_transcript_messages', ['received_at'])
+    if 'ix_external_channel_transcript_messages_session_key' not in _indexes(inspector, 'external_channel_transcript_messages'):
+        op.create_index('ix_external_channel_transcript_messages_session_key', 'external_channel_transcript_messages', ['session_key'])
+    if 'ix_external_channel_transcript_messages_message_id' not in _indexes(inspector, 'external_channel_transcript_messages'):
+        op.create_index('ix_external_channel_transcript_messages_message_id', 'external_channel_transcript_messages', ['message_id'])
+    if 'ix_external_channel_transcript_messages_role' not in _indexes(inspector, 'external_channel_transcript_messages'):
+        op.create_index('ix_external_channel_transcript_messages_role', 'external_channel_transcript_messages', ['role'])
+    if 'ix_external_channel_transcript_messages_received_at' not in _indexes(inspector, 'external_channel_transcript_messages'):
+        op.create_index('ix_external_channel_transcript_messages_received_at', 'external_channel_transcript_messages', ['received_at'])
 
 
 def downgrade() -> None:
     for name, table in [
-        ('ix_openclaw_transcript_messages_received_at', 'openclaw_transcript_messages'),
-        ('ix_openclaw_transcript_messages_role', 'openclaw_transcript_messages'),
-        ('ix_openclaw_transcript_messages_message_id', 'openclaw_transcript_messages'),
-        ('ix_openclaw_transcript_messages_session_key', 'openclaw_transcript_messages'),
-        ('ix_openclaw_conversation_links_last_synced_at', 'openclaw_conversation_links'),
-        ('ix_openclaw_conversation_links_recipient', 'openclaw_conversation_links'),
-        ('ix_openclaw_conversation_links_channel', 'openclaw_conversation_links'),
-        ('ix_openclaw_conversation_links_session_key', 'openclaw_conversation_links'),
+        ('ix_external_channel_transcript_messages_received_at', 'external_channel_transcript_messages'),
+        ('ix_external_channel_transcript_messages_role', 'external_channel_transcript_messages'),
+        ('ix_external_channel_transcript_messages_message_id', 'external_channel_transcript_messages'),
+        ('ix_external_channel_transcript_messages_session_key', 'external_channel_transcript_messages'),
+        ('ix_external_channel_conversation_links_last_synced_at', 'external_channel_conversation_links'),
+        ('ix_external_channel_conversation_links_recipient', 'external_channel_conversation_links'),
+        ('ix_external_channel_conversation_links_channel', 'external_channel_conversation_links'),
+        ('ix_external_channel_conversation_links_session_key', 'external_channel_conversation_links'),
         ('ix_tickets_country_code', 'tickets'),
         ('ix_tickets_market_id', 'tickets'),
         ('ix_teams_market_id', 'teams'),
@@ -163,7 +163,7 @@ def downgrade() -> None:
             op.drop_index(name, table_name=table)
         except Exception:
             pass
-    for table_name in ['openclaw_transcript_messages', 'openclaw_conversation_links', 'markets']:
+    for table_name in ['external_channel_transcript_messages', 'external_channel_conversation_links', 'markets']:
         try:
             op.drop_table(table_name)
         except Exception:

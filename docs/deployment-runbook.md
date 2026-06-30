@@ -15,7 +15,7 @@
 ## Runtime modes
 
 - WebChat Fast Reply uses `WEBCHAT_FAST_AI_PROVIDER=provider_runtime`.
-- Legacy OpenClaw runtime settings must remain disabled.
+- Legacy ExternalChannel runtime settings must remain disabled.
 - External customer sends are fail-closed unless `ENABLE_OUTBOUND_DISPATCH=true` and a native/email provider is explicitly enabled.
 
 ## Safe update flow

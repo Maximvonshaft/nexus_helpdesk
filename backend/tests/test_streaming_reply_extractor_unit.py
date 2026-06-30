@@ -68,7 +68,7 @@ def test_split_internal_term_open_plus_claw_aborts_without_leak():
         extractor.feed_text('{"reply":"Open')
         extractor.feed_text('Claw internal","intent":"other","tracking_number":null,"handoff_required":false,"handoff_reason":null,"recommended_agent_action":null}')
     assert exc.value.error_code == 'ai_safety_abort'
-    assert 'OpenClaw' not in extractor.emitted_text
+    assert 'ExternalChannel' not in extractor.emitted_text
 
 
 def test_markdown_fenced_json_rejected():

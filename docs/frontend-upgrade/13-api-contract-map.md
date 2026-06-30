@@ -102,9 +102,9 @@ Expected detail domains:
 - assignment fields
 - market/channel fields
 - conversation state
-- OpenClaw conversation
-- OpenClaw transcript
-- OpenClaw attachment references
+- ExternalChannel conversation
+- ExternalChannel transcript
+- ExternalChannel attachment references
 - active market bulletins
 - system attachments
 
@@ -370,9 +370,9 @@ Frontend constraints:
 - no secrets should be displayed back into UI unless explicitly designed as masked/rotatable fields
 - channel configuration and WebChat channel configuration should remain conceptually separated until unified by a reviewed data model
 
-## Runtime / OpenClaw API
+## Runtime / ExternalChannel API
 
-### GET `/api/admin/openclaw/runtime-health`
+### GET `/api/admin/external_channel/runtime-health`
 
 Used by:
 
@@ -384,7 +384,7 @@ Expected behavior:
 - requires permission
 - returns health/warning state
 
-### GET `/api/admin/openclaw/connectivity-check`
+### GET `/api/admin/external_channel/connectivity-check`
 
 Used by:
 
@@ -408,25 +408,25 @@ Used by:
 
 - runtime job view
 
-### POST `/api/admin/openclaw/events/consume-once`
+### POST `/api/admin/external_channel/events/consume-once`
 
 Used by:
 
 - manual consume/check action
 
-### GET `/api/admin/openclaw/unresolved-events`
+### GET `/api/admin/external_channel/unresolved-events`
 
 Used by:
 
 - unresolved event management
 
-### POST `/api/admin/openclaw/unresolved-events/{event_id}/replay`
+### POST `/api/admin/external_channel/unresolved-events/{event_id}/replay`
 
 Used by:
 
 - replay unresolved event
 
-### POST `/api/admin/openclaw/unresolved-events/{event_id}/drop`
+### POST `/api/admin/external_channel/unresolved-events/{event_id}/drop`
 
 Used by:
 
@@ -467,7 +467,7 @@ Frontend constraints:
 [ ] Existing WebChat visitor endpoints preserved
 [ ] Existing WebChat admin endpoints preserved
 [ ] Existing AI config endpoints preserved
-[ ] Runtime/OpenClaw endpoints preserved
+[ ] Runtime/ExternalChannel endpoints preserved
 [ ] Public/admin boundaries preserved
 [ ] 401 behavior preserved
 [ ] Visitor token behavior preserved

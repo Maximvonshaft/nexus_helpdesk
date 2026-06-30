@@ -59,7 +59,7 @@ def test_dispatch_pending_background_jobs_recovers_one_failed_attempt_and_contin
     db = _FakeDB([first, second])
     processed_ids: list[int] = []
 
-    monkeypatch.setattr(background_jobs.settings, 'openclaw_sync_enabled', False)
+    monkeypatch.setattr(background_jobs.settings, 'external_channel_sync_enabled', False)
     monkeypatch.setattr(background_jobs.settings, 'email_mailbox_sync_enabled', False)
     monkeypatch.setattr(background_jobs, 'claim_pending_jobs', lambda db, limit=None, worker_id=None, job_types=None: [first, second])
 
@@ -98,7 +98,7 @@ def test_dispatch_pending_background_jobs_marks_dead_when_recovered_attempt_exha
     db = _FakeDB([row])
     db.current_recovery_row = row
 
-    monkeypatch.setattr(background_jobs.settings, 'openclaw_sync_enabled', False)
+    monkeypatch.setattr(background_jobs.settings, 'external_channel_sync_enabled', False)
     monkeypatch.setattr(background_jobs.settings, 'email_mailbox_sync_enabled', False)
     monkeypatch.setattr(background_jobs, 'claim_pending_jobs', lambda db, limit=None, worker_id=None, job_types=None: [row])
     monkeypatch.setattr(background_jobs, 'process_background_job', lambda db, job: (_ for _ in ()).throw(RuntimeError('last retry failed')))
@@ -116,10 +116,10 @@ def test_dispatch_pending_background_jobs_marks_dead_when_recovered_attempt_exha
 def test_dispatch_pending_sync_jobs_uses_same_attempt_boundary(monkeypatch):
     apply_background_job_transaction_boundary_patch()
 
-    row = _job(9, job_type=background_jobs.OPENCLAW_SYNC_JOB)
+    row = _job(9, job_type=background_jobs.EXTERNAL_CHANNEL_SYNC_JOB)
     db = _FakeDB([row])
 
-    monkeypatch.setattr(background_jobs.settings, 'openclaw_sync_enabled', False)
+    monkeypatch.setattr(background_jobs.settings, 'external_channel_sync_enabled', False)
     monkeypatch.setattr(background_jobs.settings, 'email_mailbox_sync_enabled', False)
     monkeypatch.setattr(background_jobs, 'claim_pending_jobs', lambda db, limit=None, worker_id=None, job_types=None: [row])
 

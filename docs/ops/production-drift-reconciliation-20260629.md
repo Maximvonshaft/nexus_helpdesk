@@ -24,8 +24,8 @@ Implemented here:
 | --- | --- | --- |
 | Support intelligence API and service | Keep | Added `/api/support-intelligence/*`, backed by config DB and operation allowlist. |
 | WhatsApp Lite console API | Rewrite | Keep parsing helpers and outbox mirror compatibility, but default live source is retired until a native sidecar conversation API exists. |
-| Legacy support knowledge bridge endpoint | Drop | Do not retain OpenClaw-specific support knowledge transport as a runtime dependency. |
-| Legacy local media thumbnail extraction | Drop | Do not read `.openclaw/media`; media evidence should come from Nexus storage or a native provider adapter. |
+| Legacy support knowledge bridge endpoint | Drop | Do not retain ExternalChannel-specific support knowledge transport as a runtime dependency. |
+| Legacy local media thumbnail extraction | Drop | Do not read `.external_channel/media`; media evidence should come from Nexus storage or a native provider adapter. |
 | Ticket conversation transcript | Keep | Added read-only `/api/tickets/{ticket_id}/conversation-transcript`. |
 | Login username normalization | Keep | Kept case-insensitive lookup and normalized throttle key. |
 | WhatsApp outbound target cleanup | Keep | Dropped `status@broadcast`/`broadcast` targets before dispatch. |

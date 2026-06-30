@@ -17,7 +17,7 @@ depends_on = None
 def upgrade() -> None:
     op.execute("""
         UPDATE provider_routing_rules
-        SET fallback_providers = '["openclaw_responses","rule_engine"]',
+        SET fallback_providers = '["external_channel_responses","rule_engine"]',
             canary_percent = 0,
             kill_switch = false,
             enabled = true,

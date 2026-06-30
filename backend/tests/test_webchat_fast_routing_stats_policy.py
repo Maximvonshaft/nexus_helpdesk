@@ -48,7 +48,7 @@ def test_fast_handoff_ticket_persists_resolved_market_and_channel_account() -> N
         db.add(market)
         db.flush()
         account = ChannelAccount(
-            provider="openclaw",
+            provider="external_channel",
             account_id="speedaf-ch-webchat",
             display_name="Speedaf CH WebChat",
             market_id=market.id,

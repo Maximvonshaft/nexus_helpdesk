@@ -43,12 +43,12 @@ function deliveryLabel(capability?: OutboundChannelCapability) {
 
 function replyTarget(activeCase: CaseDetail, channel: string) {
   if (channel === 'email') return emailRecipient(activeCase)
-  return activeCase.preferred_reply_contact || activeCase.openclaw_conversation?.recipient || activeCase.customer?.phone || activeCase.customer?.email || ''
+  return activeCase.preferred_reply_contact || activeCase.external_channel_conversation?.recipient || activeCase.customer?.phone || activeCase.customer?.email || ''
 }
 
 export function CustomerReplyPanel({ activeCase, onToast }: { activeCase: CaseDetail; onToast: (toast: { message: string; tone?: 'default' | 'danger' | 'success' }) => void }) {
   const client = useQueryClient()
-  const [channel, setChannel] = useState(activeCase.preferred_reply_channel || activeCase.openclaw_conversation?.channel || 'web_chat')
+  const [channel, setChannel] = useState(activeCase.preferred_reply_channel || activeCase.external_channel_conversation?.channel || 'web_chat')
   const [subject, setSubject] = useState(defaultEmailSubject(activeCase))
   const [body, setBody] = useState(defaultReply(activeCase))
   const [confirmExternal, setConfirmExternal] = useState(false)
@@ -60,7 +60,7 @@ export function CustomerReplyPanel({ activeCase, onToast }: { activeCase: CaseDe
   })
 
   useEffect(() => {
-    setChannel(activeCase.preferred_reply_channel || activeCase.openclaw_conversation?.channel || 'web_chat')
+    setChannel(activeCase.preferred_reply_channel || activeCase.external_channel_conversation?.channel || 'web_chat')
     setSubject(defaultEmailSubject(activeCase))
     setBody(defaultReply(activeCase))
     setConfirmExternal(false)

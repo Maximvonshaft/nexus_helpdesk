@@ -123,7 +123,7 @@ function ControlPlanePage() {
                     labelize(item.status),
                     sanitizeDisplayText(item.target_slot),
                     sanitizeDisplayText(item.desired_display_name),
-                    sanitizeDisplayText(item.openclaw_account_id),
+                    sanitizeDisplayText(item.external_channel_account_id),
                     formatDateTime(item.updated_at),
                   ])}
                 />

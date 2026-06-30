@@ -10,7 +10,7 @@ Expected baseline from production handoff:
 
 - Branch: `main`
 - Commit: `c1672d5`
-- Commit message: `test: add Round A OpenClaw E2E smoke harness (#7)`
+- Commit message: `test: add Round A ExternalChannel E2E smoke harness (#7)`
 - Allowed server-local difference: `M Dockerfile`
 
 The patch package itself is an overlay and is intentionally not a git commit.
@@ -19,8 +19,8 @@ The patch package itself is an overlay and is intentionally not a git commit.
 
 - `backend/app/main.py`: FastAPI application entrypoint, CORS, request middleware, health/readiness, router registration, SPA static serving.
 - `backend/app/api/`: authenticated admin/ticket/lite/integration routes.
-- `backend/app/models.py`: SQLAlchemy ORM for customers, tickets, comments, outbound messages, OpenClaw records, queue/runtime entities.
-- `backend/app/services/`: ticket, SLA, message dispatch, safety, integration, OpenClaw runtime services.
+- `backend/app/models.py`: SQLAlchemy ORM for customers, tickets, comments, outbound messages, ExternalChannel records, queue/runtime entities.
+- `backend/app/services/`: ticket, SLA, message dispatch, safety, integration, ExternalChannel runtime services.
 - `backend/alembic/versions/`: database migrations.
 - `webapp/src/`: React + Vite + TanStack Router admin UI.
 - `scripts/smoke/`: Round A smoke harness and new Round B smoke entrypoint.
@@ -54,7 +54,7 @@ Existing reusable models:
 - `TicketOutboundMessage`: suitable for recording outbound Webchat reply delivery state.
 - `Customer`: suitable for anonymous or identified webchat visitor profile.
 - `ChannelAccount`: exists but is not required for Round B minimal public widget closure.
-- `OpenClawTranscriptMessage`: OpenClaw-specific; intentionally not used as Round B source of truth.
+- `ExternalChannelTranscriptMessage`: ExternalChannel-specific; intentionally not used as Round B source of truth.
 - `outbound_safety`: existing decision function returns `SafetyDecision.reasons`, not `reason`.
 
 Round B adds dedicated Webchat persistence:

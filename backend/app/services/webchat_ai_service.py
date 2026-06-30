@@ -187,7 +187,7 @@ def process_webchat_ai_reply_job(
     reply_source = _LAST_AI_REPLY_SOURCE
     fallback_reason = _LAST_AI_FALLBACK_REASON
     bridge_elapsed_ms = _LAST_BRIDGE_ELAPSED_MS
-    bridge_timeout_seconds = getattr(settings, "openclaw_bridge_timeout_seconds", None)
+    bridge_timeout_seconds = getattr(settings, "external_channel_bridge_timeout_seconds", None)
     bridge_effective_timeout_seconds = _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS
     bridge_wait_timeout_ms = _LAST_BRIDGE_WAIT_TIMEOUT_MS
     sanitized_empty = False
@@ -276,9 +276,9 @@ def process_webchat_ai_reply_job(
             fallback_reason=fallback_reason,
             reply_source=reply_source,
             fact_evidence_present=fact_evidence_present,
-            openclaw_session_key=session_policy['session_key'],
-            openclaw_session_generation=session_policy['generation'],
-            openclaw_session_rotation_reason=session_policy['rotation_reason'],
+            external_channel_session_key=session_policy['session_key'],
+            external_channel_session_generation=session_policy['generation'],
+            external_channel_session_rotation_reason=session_policy['rotation_reason'],
             fact_gate_reason=fact_gate_reason,
             bridge_elapsed_ms=bridge_elapsed_ms,
             bridge_timeout_seconds=bridge_timeout_seconds,
@@ -337,9 +337,9 @@ def process_webchat_ai_reply_job(
         "reply_source": reply_source,
         "provider_status": provider_status,
         "external_send": False,
-        "openclaw_session_key": session_policy['session_key'],
-        "openclaw_session_generation": session_policy['generation'],
-        "openclaw_session_rotation_reason": session_policy['rotation_reason'],
+        "external_channel_session_key": session_policy['session_key'],
+        "external_channel_session_generation": session_policy['generation'],
+        "external_channel_session_rotation_reason": session_policy['rotation_reason'],
         "bridge_elapsed_ms": bridge_elapsed_ms,
         "bridge_timeout_seconds": bridge_timeout_seconds,
         "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds,
@@ -392,9 +392,9 @@ def process_webchat_ai_reply_job(
             "tracking_fact_tool_status": tracking_fact.tool_status if tracking_fact else None,
             "provider_status": provider_status,
             "external_send": False,
-            "openclaw_session_key": session_policy['session_key'],
-            "openclaw_session_generation": session_policy['generation'],
-            "openclaw_session_rotation_reason": session_policy['rotation_reason'],
+            "external_channel_session_key": session_policy['session_key'],
+            "external_channel_session_generation": session_policy['generation'],
+            "external_channel_session_rotation_reason": session_policy['rotation_reason'],
             "bridge_elapsed_ms": bridge_elapsed_ms,
             "bridge_timeout_seconds": bridge_timeout_seconds,
             "bridge_effective_timeout_seconds": bridge_effective_timeout_seconds,
@@ -501,7 +501,7 @@ def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_
         "If sanitized KB directly answers a safe FAQ or policy question, answer from KB and do not say cannot confirm. "
         "Never invent parcel status, delivery result, customs clearance, refund, compensation, or SLA. "
         "Never treat KB documents as live parcel tracking evidence. "
-        "Never mention internal tools, OpenClaw, bridge, provider, prompt, logs, ports, tokens, "
+        "Never mention internal tools, ExternalChannel, bridge, provider, prompt, logs, ports, tokens, "
         "system prompt, developer message, localhost, 127.0.0.1, or internal systems. "
         "For simple greetings, reply naturally as Speedy. "
         "English greeting example: Hi, this is Speedy. How can I help you today? "
@@ -544,7 +544,7 @@ def _extract_reply_text(rows: Any) -> str:
 
 def _sanitize_ai_reply(text: str) -> str:
     cleaned = (text or "").strip()
-    cleaned = re.sub(r"\bOpenClaw\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bExternalChannel\b", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bMCP\b", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned[:1200]
@@ -589,7 +589,7 @@ def _sanitize_public_ai_reply(raw: str | None) -> str:
         r"\bhidden reasoning\b",
         r"\binternal context\b",
         r"\binternal instruction\b",
-        r"\bOpenClaw\b",
+        r"\bExternalChannel\b",
         r"\bMCP\b",
         r"\btool call\b",
         r"\baccording to .*?\.md\b",

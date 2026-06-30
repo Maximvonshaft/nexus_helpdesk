@@ -12,7 +12,7 @@ LEGACY_INDEX = ROOT / 'frontend' / 'index.html'
 LEGACY_APP = ROOT / 'frontend' / 'app.js'
 
 FORBIDDEN_PUBLIC_TERMS = [
-    'OpenClaw',
+    'ExternalChannel',
     'MCP',
     ' final console',
     'Issue and customer context',

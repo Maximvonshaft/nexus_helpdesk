@@ -147,7 +147,7 @@ Verify in the candidate backend:
 - WhatsApp native inbound callback succeeds.
 - A WebChat projection or ticket is created as expected.
 - AI fast reply remains routed through Nexus provider runtime.
-- No OpenClaw bridge or OpenClaw gateway is required for this path.
+- No retired vendor runtime bridge or retired vendor runtime gateway is required for this path.
 
 Use application logs and tool-governance logs to confirm the path:
 

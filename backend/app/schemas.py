@@ -73,7 +73,7 @@ class UserUpdate(BaseModel):
 class PasswordResetRequest(BaseModel):
     password: str = Field(min_length=6)
 
-class OpenClawUnresolvedEventRead(APIModel):
+class ExternalChannelUnresolvedEventRead(APIModel):
     id: int
     source: str
     session_key: Optional[str] = None
@@ -549,9 +549,9 @@ class TicketRead(APIModel):
     attachments: list[AttachmentRead] = Field(default_factory=list)
     outbound_messages: list[OutboundMessageRead] = Field(default_factory=list)
     ai_intakes: list[AIIntakeRead] = Field(default_factory=list)
-    openclaw_conversation: Optional[OpenClawConversationRead] = None
-    openclaw_transcript: list[OpenClawTranscriptRead] = Field(default_factory=list)
-    openclaw_attachment_references: list["OpenClawAttachmentReferenceRead"] = Field(default_factory=list)
+    external_channel_conversation: Optional[ExternalChannelConversationRead] = None
+    external_channel_transcript: list[ExternalChannelTranscriptRead] = Field(default_factory=list)
+    external_channel_attachment_references: list["ExternalChannelAttachmentReferenceRead"] = Field(default_factory=list)
     active_market_bulletins: list["MarketBulletinRead"] = Field(default_factory=list)
 
 
@@ -930,7 +930,7 @@ class TeamMarketAssignRequest(BaseModel):
     market_id: Optional[int] = None
 
 
-class OpenClawLinkRequest(BaseModel):
+class ExternalChannelLinkRequest(BaseModel):
     ticket_id: int
     session_key: str
     channel: Optional[str] = None
@@ -940,7 +940,7 @@ class OpenClawLinkRequest(BaseModel):
     route: Optional[dict[str, Any]] = None
 
 
-class OpenClawConversationRead(APIModel):
+class ExternalChannelConversationRead(APIModel):
     id: int
     ticket_id: int
     session_key: str
@@ -955,7 +955,7 @@ class OpenClawConversationRead(APIModel):
     updated_at: datetime
 
 
-class OpenClawTranscriptRead(APIModel):
+class ExternalChannelTranscriptRead(APIModel):
     id: int
     conversation_id: int
     ticket_id: int
@@ -968,9 +968,9 @@ class OpenClawTranscriptRead(APIModel):
     created_at: datetime
 
 
-class OpenClawSyncResult(APIModel):
-    conversation: OpenClawConversationRead
-    messages: list[OpenClawTranscriptRead]
+class ExternalChannelSyncResult(APIModel):
+    conversation: ExternalChannelConversationRead
+    messages: list[ExternalChannelTranscriptRead]
     linked_ticket_id: int
 
 class BackgroundJobRead(APIModel):
@@ -989,7 +989,7 @@ class BackgroundJobRead(APIModel):
     updated_at: datetime
 
 
-class OpenClawSyncEnqueueRequest(BaseModel):
+class ExternalChannelSyncEnqueueRequest(BaseModel):
     ticket_id: int
     session_key: str
     transcript_limit: Optional[int] = None
@@ -1001,9 +1001,9 @@ class QueueSummaryRead(APIModel):
     dead_outbound: int
     pending_jobs: int
     dead_jobs: int
-    openclaw_links: int
-    openclaw_transcript_messages: int = 0
-    openclaw_unresolved_events: int = 0
+    external_channel_links: int
+    external_channel_transcript_messages: int = 0
+    external_channel_unresolved_events: int = 0
 
 
 class ProductionReadinessRead(APIModel):
@@ -1011,13 +1011,13 @@ class ProductionReadinessRead(APIModel):
     database_url_scheme: str
     is_postgres: bool
     storage_backend: str
-    openclaw_transport: str
+    external_channel_transport: str
     metrics_enabled: bool
-    openclaw_sync_enabled: bool
-    openclaw_inbound_auto_sync_enabled: bool
-    openclaw_links_count: int = 0
-    openclaw_transcript_messages_count: int = 0
-    openclaw_unresolved_events_count: int = 0
+    external_channel_sync_enabled: bool
+    external_channel_inbound_auto_sync_enabled: bool
+    external_channel_links_count: int = 0
+    external_channel_transcript_messages_count: int = 0
+    external_channel_unresolved_events_count: int = 0
     outbound_email_production_pilot_enabled: bool = False
     outbound_email_active_accounts: int = 0
     outbound_email_successful_test_send_accounts: int = 0
@@ -1026,7 +1026,7 @@ class ProductionReadinessRead(APIModel):
 
 
 
-class OpenClawAttachmentReferenceRead(APIModel):
+class ExternalChannelAttachmentReferenceRead(APIModel):
     id: int
     ticket_id: int
     transcript_message_id: int
@@ -1255,12 +1255,12 @@ class EmailMailboxSyncEnqueueResponse(APIModel):
     job_ids: list[int] = Field(default_factory=list)
 
 
-class OpenClawRuntimeHealthRead(APIModel):
+class ExternalChannelRuntimeHealthRead(APIModel):
     sync_cursor: Optional[str] = None
     sync_daemon_last_seen_at: Optional[datetime] = None
     sync_daemon_status: Optional[str] = None
     stale_link_count: int
-    openclaw_links_count: int = 0
+    external_channel_links_count: int = 0
     transcript_messages_count: int = 0
     unresolved_events_count: int = 0
     pending_sync_jobs: int
@@ -1270,7 +1270,7 @@ class OpenClawRuntimeHealthRead(APIModel):
     warnings: list[str]
 
 
-class OpenClawConnectivityProbeRead(APIModel):
+class ExternalChannelConnectivityProbeRead(APIModel):
     deployment_mode: str
     transport: str
     command: Optional[str] = None

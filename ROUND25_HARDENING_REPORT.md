@@ -16,7 +16,7 @@ This round is based directly on the original `helpdesk_suite_lite_round24_harden
 - Replaced deprecated `json_encoders` usage in `APIModel` with a `field_serializer`-based datetime serializer.
 - This removes noisy runtime/test warnings and aligns the codebase with Pydantic v2+ best practice.
 
-### 3. Improved OpenClaw MCP observability
+### 3. Improved ExternalChannel MCP observability
 - Replaced `stderr=subprocess.DEVNULL` with a managed stderr pipe.
 - Added stderr tail capture and structured warning logs through `observability.log_event()`.
 - Timeout / early-exit errors now include recent stderr context, which materially improves production debugging.

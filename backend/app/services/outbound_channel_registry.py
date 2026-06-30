@@ -262,8 +262,8 @@ def get_outbound_channel_capability(
                     missing.append("whatsapp_sidecar_token")
             elif settings.whatsapp_dispatch_mode == "cloud_api_future":
                 missing.append("whatsapp_cloud_api_not_implemented")
-            elif settings.whatsapp_dispatch_mode == "openclaw_bridge":
-                missing.append("legacy_openclaw_bridge_retired")
+            elif settings.whatsapp_dispatch_mode == "external_channel_bridge":
+                missing.append("legacy_external_channel_bridge_retired")
             elif settings.whatsapp_dispatch_mode != "disabled":
                 missing.append("valid_whatsapp_dispatch_mode")
             else:

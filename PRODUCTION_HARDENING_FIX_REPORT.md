@@ -1,11 +1,11 @@
 # NexusDesk Production Hardening Fix Report
 
-Branch: `fix/production-hardening-webchat-openclaw-outbound`
+Branch: `fix/production-hardening-webchat-external_channel-outbound`
 Base: `main` at `99ecd42537e914df5200ce82f11f8812173c6fc4`
 
 ## Current status
 
-This branch contains a staged production-hardening patch. It is ahead of `main` and focuses on Webchat public-entry hardening, manager capability reduction, OpenClaw CLI fallback safety, outbound dispatch recovery semantics, admin requeue endpoints, storage `persist_bytes` validation, CI production readiness, and lightweight regression tests.
+This branch contains a staged production-hardening patch. It is ahead of `main` and focuses on Webchat public-entry hardening, manager capability reduction, ExternalChannel CLI fallback safety, outbound dispatch recovery semantics, admin requeue endpoints, storage `persist_bytes` validation, CI production readiness, and lightweight regression tests.
 
 ## Completed fixes
 
@@ -72,9 +72,9 @@ Implemented:
   - `market.manage`
 - Admin still has full capability catalog.
 - Capability overrides remain available for explicit exception grants.
-- Tests cover manager capability removal, admin full capability, and OpenClaw CLI fallback setting behavior.
+- Tests cover manager capability removal, admin full capability, and ExternalChannel CLI fallback setting behavior.
 
-### P0-5 OpenClaw CLI fallback disabled by default
+### P0-5 ExternalChannel CLI fallback disabled by default
 
 Files changed:
 - `backend/app/settings.py`
@@ -82,7 +82,7 @@ Files changed:
 - `backend/tests/test_production_hardening_permissions.py`
 
 Implemented:
-- `OPENCLAW_CLI_FALLBACK_ENABLED` defaults to `false`.
+- `EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED` defaults to `false`.
 - Production startup fails if fallback is enabled.
 - Production readiness reports fallback-enabled environments as unsafe.
 
@@ -101,7 +101,7 @@ Implemented:
 - Added helper for dead outbound requeue.
 
 Known follow-up:
-- OpenClaw bridge/CLI/MCP provider-native idempotency still needs upstream provider contract support.
+- ExternalChannel bridge/CLI/MCP provider-native idempotency still needs upstream provider contract support.
 
 ### P1-4 CI production readiness gate
 
@@ -143,16 +143,16 @@ Implemented:
 - Local and S3-compatible backends validate size, MIME type, and extension before persistence.
 
 Still pending:
-- `openclaw_bridge.persist_openclaw_attachment_reference()` must be wired to pass the OpenClaw attachment constraints into `persist_bytes()`.
+- `external_channel_bridge.persist_external_channel_attachment_reference()` must be wired to pass the ExternalChannel attachment constraints into `persist_bytes()`.
 
 ## Partially completed / deferred items
 
-### P1-1 OpenClaw auto-link account/market hardening
+### P1-1 ExternalChannel auto-link account/market hardening
 
 Status: deferred.
 
 Reason:
-- Requires careful edits to `openclaw_bridge.py`, route-aware matching tests, and local execution.
+- Requires careful edits to `external_channel_bridge.py`, route-aware matching tests, and local execution.
 - Broad blind edits to this high-risk file were avoided without test execution.
 
 Next PR should:
@@ -206,8 +206,8 @@ Added:
 Covered:
 - Manager no longer has high-risk system capabilities by default.
 - Admin still has all capabilities.
-- OpenClaw CLI fallback default is false.
-- Production rejects OpenClaw CLI fallback enabled.
+- ExternalChannel CLI fallback default is false.
+- Production rejects ExternalChannel CLI fallback enabled.
 - Widget does not actively emit unsafe visitor-token query transport.
 - Widget contains secure Webchat visitor-token header transport.
 
@@ -230,7 +230,7 @@ Production must configure:
 - `WEBCHAT_ALLOWED_ORIGINS=https://your-customer-site.example`
 - `WEBCHAT_RATE_LIMIT_BACKEND=database`
 - `WEBCHAT_AI_AUTO_REPLY_MODE=safe_ack` or `off`
-- `OPENCLAW_CLI_FALLBACK_ENABLED=false`
+- `EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED=false`
 - `TRUSTED_PROXY_IPS` if using `X-Forwarded-For`
 - `ALLOWED_ORIGINS` without localhost
 - PostgreSQL `DATABASE_URL`
@@ -246,7 +246,7 @@ Do not deploy directly to production yet.
 Recommended path:
 1. Run the full validation commands above.
 2. Fix any Alembic head or import error if found.
-3. Open PR from `fix/production-hardening-webchat-openclaw-outbound` into `main`.
+3. Open PR from `fix/production-hardening-webchat-external_channel-outbound` into `main`.
 4. Let GitHub Actions run.
 5. Merge only after CI is green and a staging smoke test passes.
-6. Create a follow-up PR for OpenClaw auto-link/replay and full Webchat AI safe mode wiring.
+6. Create a follow-up PR for ExternalChannel auto-link/replay and full Webchat AI safe mode wiring.

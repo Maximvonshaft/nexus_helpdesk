@@ -13,8 +13,8 @@ from ..db import get_db
 from ..models import (
     Customer,
     MarketBulletin,
-    OpenClawAttachmentReference,
-    OpenClawTranscriptMessage,
+    ExternalChannelAttachmentReference,
+    ExternalChannelTranscriptMessage,
     Team,
     Ticket,
     TicketAIIntake,
@@ -46,7 +46,7 @@ SOURCE_ORDER = {
     "ticket_event": 5,
     "webchat_event": 6,
     "voice_call": 7,
-    "openclaw_transcript": 8,
+    "external_channel_transcript": 8,
     "whatsapp_inbound": 9,
 }
 
@@ -193,8 +193,8 @@ def _counts(db: Session, ticket_id: int) -> dict[str, int]:
             select(func.count(TicketComment.id)).where(TicketComment.ticket_id == ticket_id).scalar_subquery().label("comments_count"),
             select(func.count(TicketInternalNote.id)).where(TicketInternalNote.ticket_id == ticket_id).scalar_subquery().label("internal_notes_count"),
             select(func.count(TicketAttachment.id)).where(TicketAttachment.ticket_id == ticket_id).scalar_subquery().label("attachments_count"),
-            select(func.count(OpenClawTranscriptMessage.id)).where(OpenClawTranscriptMessage.ticket_id == ticket_id).scalar_subquery().label("openclaw_transcript_count"),
-            select(func.count(OpenClawAttachmentReference.id)).where(OpenClawAttachmentReference.ticket_id == ticket_id).scalar_subquery().label("openclaw_attachment_references_count"),
+            select(func.count(ExternalChannelTranscriptMessage.id)).where(ExternalChannelTranscriptMessage.ticket_id == ticket_id).scalar_subquery().label("external_channel_transcript_count"),
+            select(func.count(ExternalChannelAttachmentReference.id)).where(ExternalChannelAttachmentReference.ticket_id == ticket_id).scalar_subquery().label("external_channel_attachment_references_count"),
             select(func.count(TicketOutboundMessage.id)).where(TicketOutboundMessage.ticket_id == ticket_id).scalar_subquery().label("outbound_messages_count"),
             select(func.count(TicketAIIntake.id)).where(TicketAIIntake.ticket_id == ticket_id).scalar_subquery().label("ai_intakes_count"),
             select(func.count(TicketEvent.id)).where(TicketEvent.ticket_id == ticket_id).scalar_subquery().label("events_count"),
@@ -248,11 +248,11 @@ def _attachment_timeline_payload(row: TicketAttachment) -> dict[str, Any]:
     }
 
 
-def _openclaw_transcript_preview(db: Session, ticket_id: int, limit: int = 5) -> list[dict[str, Any]]:
+def _external_channel_transcript_preview(db: Session, ticket_id: int, limit: int = 5) -> list[dict[str, Any]]:
     rows = (
-        db.query(OpenClawTranscriptMessage)
-        .filter(OpenClawTranscriptMessage.ticket_id == ticket_id)
-        .order_by(OpenClawTranscriptMessage.created_at.desc(), OpenClawTranscriptMessage.id.desc())
+        db.query(ExternalChannelTranscriptMessage)
+        .filter(ExternalChannelTranscriptMessage.ticket_id == ticket_id)
+        .order_by(ExternalChannelTranscriptMessage.created_at.desc(), ExternalChannelTranscriptMessage.id.desc())
         .limit(limit)
         .all()
     )
@@ -363,22 +363,22 @@ def _conversation_transcript_items(db: Session, ticket_id: int, limit: int) -> l
                 }
             )
 
-        openclaw_rows = (
-            db.query(OpenClawTranscriptMessage)
-            .filter(OpenClawTranscriptMessage.ticket_id == ticket_id)
+        external_channel_rows = (
+            db.query(ExternalChannelTranscriptMessage)
+            .filter(ExternalChannelTranscriptMessage.ticket_id == ticket_id)
             .order_by(
-                OpenClawTranscriptMessage.received_at.desc().nullslast(),
-                OpenClawTranscriptMessage.created_at.desc(),
-                OpenClawTranscriptMessage.id.desc(),
+                ExternalChannelTranscriptMessage.received_at.desc().nullslast(),
+                ExternalChannelTranscriptMessage.created_at.desc(),
+                ExternalChannelTranscriptMessage.id.desc(),
             )
             .limit(safe_limit)
             .all()
         )
-        for row in openclaw_rows:
+        for row in external_channel_rows:
             rows.append(
                 {
-                    "id": f"openclaw-{row.id}",
-                    "source_type": "openclaw_transcript",
+                    "id": f"external_channel-{row.id}",
+                    "source_type": "external_channel_transcript",
                     "source_id": row.id,
                     "direction": row.role,
                     "author_label": row.author_name,
@@ -401,11 +401,11 @@ def _conversation_transcript_items(db: Session, ticket_id: int, limit: int) -> l
     return rows[-safe_limit:]
 
 
-def _openclaw_attachment_preview(db: Session, ticket_id: int, limit: int = 3) -> list[dict[str, Any]]:
+def _external_channel_attachment_preview(db: Session, ticket_id: int, limit: int = 3) -> list[dict[str, Any]]:
     rows = (
-        db.query(OpenClawAttachmentReference)
-        .filter(OpenClawAttachmentReference.ticket_id == ticket_id)
-        .order_by(OpenClawAttachmentReference.created_at.desc(), OpenClawAttachmentReference.id.desc())
+        db.query(ExternalChannelAttachmentReference)
+        .filter(ExternalChannelAttachmentReference.ticket_id == ticket_id)
+        .order_by(ExternalChannelAttachmentReference.created_at.desc(), ExternalChannelAttachmentReference.id.desc())
         .limit(limit)
         .all()
     )
@@ -488,8 +488,8 @@ def get_ticket_summary(ticket_id: int, db: Session = Depends(get_db), current_us
 
     counts = _counts(db, ticket_id)
     attachments = _attachment_preview(db, ticket_id)
-    openclaw_transcript = _openclaw_transcript_preview(db, ticket_id)
-    openclaw_attachment_references = _openclaw_attachment_preview(db, ticket_id)
+    external_channel_transcript = _external_channel_transcript_preview(db, ticket_id)
+    external_channel_attachment_references = _external_channel_attachment_preview(db, ticket_id)
     active_market_bulletins = _active_market_bulletins(db, ticket)
     active_market_bulletins_count = _effective_bulletin_query(db, ticket).count()
     latest_ai = (
@@ -554,8 +554,8 @@ def get_ticket_summary(ticket_id: int, db: Session = Depends(get_db), current_us
             "loaded": True,
             "preview_limit": 5,
             "attachments_count": counts["attachments_count"],
-            "openclaw_transcript_count": counts["openclaw_transcript_count"],
-            "openclaw_attachment_references_count": counts["openclaw_attachment_references_count"],
+            "external_channel_transcript_count": counts["external_channel_transcript_count"],
+            "external_channel_attachment_references_count": counts["external_channel_attachment_references_count"],
             "active_market_bulletins_count": active_market_bulletins_count,
         },
         "latest_ai_summary": latest_ai.summary if latest_ai else ticket.ai_summary,
@@ -574,9 +574,9 @@ def get_ticket_summary(ticket_id: int, db: Session = Depends(get_db), current_us
         "ai_classification": ticket.ai_classification,
         "preferred_reply_channel": ticket.preferred_reply_channel,
         "preferred_reply_contact": ticket.preferred_reply_contact,
-        "openclaw_transcript": openclaw_transcript,
+        "external_channel_transcript": external_channel_transcript,
         "attachments": attachments,
-        "openclaw_attachment_references": openclaw_attachment_references,
+        "external_channel_attachment_references": external_channel_attachment_references,
         "active_market_bulletins": active_market_bulletins,
     }
     payload.update(counts)
@@ -826,7 +826,7 @@ def get_ticket_conversation_transcript(
         "items": items,
         "sources": {
             "webchat": any(item.get("source_type") == "webchat_message" for item in items),
-            "openclaw": any(item.get("source_type") == "openclaw_transcript" for item in items),
+            "external_channel": any(item.get("source_type") == "external_channel_transcript" for item in items),
             "whatsapp": any(item.get("source_type") == "whatsapp_inbound" for item in items),
         },
     }

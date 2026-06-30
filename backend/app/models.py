@@ -39,7 +39,7 @@ def _payload_hash_from_json_text(payload_json: str | None) -> str:
     return hashlib.sha256(_canonical_payload_json(payload).encode("utf-8")).hexdigest()
 
 
-def _openclaw_payload_hash_default(context) -> str:
+def _external_channel_payload_hash_default(context) -> str:
     return _payload_hash_from_json_text(context.get_current_parameters().get("payload_json"))
 
 
@@ -379,11 +379,11 @@ class AdminActionRateLimitBucket(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
 
-class OpenClawUnresolvedEvent(Base):
-    __tablename__ = "openclaw_unresolved_events"
+class ExternalChannelUnresolvedEvent(Base):
+    __tablename__ = "external_channel_unresolved_events"
     __table_args__ = (
         Index(
-            "uq_openclaw_unresolved_active_payload_hash",
+            "uq_external_channel_unresolved_active_payload_hash",
             "source",
             text("COALESCE(session_key, '')"),
             "payload_hash",
@@ -401,7 +401,7 @@ class OpenClawUnresolvedEvent(Base):
     source_chat_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     preferred_reply_contact: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
     payload_json: Mapped[str] = mapped_column(Text)
-    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True, default=_openclaw_payload_hash_default)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True, default=_external_channel_payload_hash_default)
     status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
     replay_count: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -533,8 +533,8 @@ class Ticket(Base):
     outbound_messages: Mapped[list["TicketOutboundMessage"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
     inbound_email_messages: Mapped[list["TicketInboundEmailMessage"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
     ai_intakes: Mapped[list["TicketAIIntake"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
-    openclaw_link: Mapped[Optional["OpenClawConversationLink"]] = relationship(back_populates="ticket", uselist=False, cascade="all, delete-orphan")
-    openclaw_attachment_references: Mapped[list["OpenClawAttachmentReference"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
+    external_channel_link: Mapped[Optional["ExternalChannelConversationLink"]] = relationship(back_populates="ticket", uselist=False, cascade="all, delete-orphan")
+    external_channel_attachment_references: Mapped[list["ExternalChannelAttachmentReference"]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
 
 
 class TicketComment(Base):
@@ -768,11 +768,11 @@ class BackgroundJob(Base):
 
 
 
-class OpenClawConversationLink(Base):
-    __tablename__ = "openclaw_conversation_links"
+class ExternalChannelConversationLink(Base):
+    __tablename__ = "external_channel_conversation_links"
     __table_args__ = (
-        UniqueConstraint("session_key", name="uq_openclaw_session_key"),
-        UniqueConstraint("ticket_id", name="uq_openclaw_ticket_link"),
+        UniqueConstraint("session_key", name="uq_external_channel_session_key"),
+        UniqueConstraint("ticket_id", name="uq_external_channel_ticket_link"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -790,17 +790,17 @@ class OpenClawConversationLink(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
 
-    ticket: Mapped["Ticket"] = relationship(back_populates="openclaw_link")
+    ticket: Mapped["Ticket"] = relationship(back_populates="external_channel_link")
     channel_account: Mapped[Optional["ChannelAccount"]] = relationship()
-    transcript_messages: Mapped[list["OpenClawTranscriptMessage"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
+    transcript_messages: Mapped[list["ExternalChannelTranscriptMessage"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
 
 
-class OpenClawTranscriptMessage(Base):
-    __tablename__ = "openclaw_transcript_messages"
-    __table_args__ = (UniqueConstraint("conversation_id", "message_id", name="uq_openclaw_conversation_message"),)
+class ExternalChannelTranscriptMessage(Base):
+    __tablename__ = "external_channel_transcript_messages"
+    __table_args__ = (UniqueConstraint("conversation_id", "message_id", name="uq_external_channel_conversation_message"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    conversation_id: Mapped[int] = mapped_column(ForeignKey("openclaw_conversation_links.id"), index=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("external_channel_conversation_links.id"), index=True)
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
     session_key: Mapped[str] = mapped_column(String(255), index=True)
     message_id: Mapped[str] = mapped_column(String(255), index=True)
@@ -811,17 +811,17 @@ class OpenClawTranscriptMessage(Base):
     received_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
 
-    conversation: Mapped["OpenClawConversationLink"] = relationship(back_populates="transcript_messages")
+    conversation: Mapped["ExternalChannelConversationLink"] = relationship(back_populates="transcript_messages")
     ticket: Mapped["Ticket"] = relationship()
 
 
-class OpenClawAttachmentReference(Base):
-    __tablename__ = "openclaw_attachment_references"
+class ExternalChannelAttachmentReference(Base):
+    __tablename__ = "external_channel_attachment_references"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
-    conversation_id: Mapped[int] = mapped_column(ForeignKey("openclaw_conversation_links.id"), index=True)
-    transcript_message_id: Mapped[int] = mapped_column(ForeignKey("openclaw_transcript_messages.id"), index=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("external_channel_conversation_links.id"), index=True)
+    transcript_message_id: Mapped[int] = mapped_column(ForeignKey("external_channel_transcript_messages.id"), index=True)
     remote_attachment_id: Mapped[str] = mapped_column(String(160), index=True)
     content_type: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -831,13 +831,13 @@ class OpenClawAttachmentReference(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
 
-    ticket: Mapped["Ticket"] = relationship(back_populates="openclaw_attachment_references")
-    conversation: Mapped["OpenClawConversationLink"] = relationship()
-    transcript_message: Mapped["OpenClawTranscriptMessage"] = relationship()
+    ticket: Mapped["Ticket"] = relationship(back_populates="external_channel_attachment_references")
+    conversation: Mapped["ExternalChannelConversationLink"] = relationship()
+    transcript_message: Mapped["ExternalChannelTranscriptMessage"] = relationship()
 
 
-class OpenClawSyncCursor(Base):
-    __tablename__ = "openclaw_sync_cursors"
+class ExternalChannelSyncCursor(Base):
+    __tablename__ = "external_channel_sync_cursors"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source: Mapped[str] = mapped_column(String(80), unique=True, index=True)

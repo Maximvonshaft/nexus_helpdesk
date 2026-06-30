@@ -100,7 +100,7 @@ def test_tracking_lookup_disabled_does_not_call_provider(monkeypatch):
 
 def test_legacy_bridge_tracking_source_is_unsupported(monkeypatch):
     monkeypatch.setattr(tracking_fact_service.settings, "webchat_tracking_fact_lookup_enabled", True)
-    monkeypatch.setattr(tracking_fact_service.settings, "webchat_tracking_fact_source", "openclaw_bridge")
+    monkeypatch.setattr(tracking_fact_service.settings, "webchat_tracking_fact_source", "external_channel_bridge")
     monkeypatch.setattr(tracking_fact_service.settings, "webchat_tracking_fact_timeout_seconds", 8)
 
     result = tracking_fact_service.lookup_tracking_fact(
@@ -160,5 +160,5 @@ def test_tracking_fact_prompt_does_not_name_legacy_bridge():
     )
 
     prompt = fact.prompt_summary()
-    assert "OpenClaw" not in prompt
+    assert "ExternalChannel" not in prompt
     assert "Bridge" not in prompt

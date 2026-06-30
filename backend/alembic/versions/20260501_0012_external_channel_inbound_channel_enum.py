@@ -1,4 +1,4 @@
-"""extend sourcechannel for openclaw inbound discovery
+"""extend sourcechannel for external_channel inbound discovery
 
 Revision ID: 20260501_0012
 Revises: 20260425_round_b_webchat

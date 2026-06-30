@@ -82,10 +82,10 @@ class EventType(str, Enum):
     sla_breached = "sla_breached"
     field_updated = "field_updated"
     integration_request_received = "integration_request_received"
-    openclaw_synced = "openclaw_synced"
-    openclaw_reply_sent = "openclaw_reply_sent"
-    openclaw_attachment_synced = "openclaw_attachment_synced"
-    openclaw_attachment_persisted = "openclaw_attachment_persisted"
+    external_channel_synced = "external_channel_synced"
+    external_channel_reply_sent = "external_channel_reply_sent"
+    external_channel_attachment_synced = "external_channel_attachment_synced"
+    external_channel_attachment_persisted = "external_channel_attachment_persisted"
     conversation_state_changed = "conversation_state_changed"
 
 

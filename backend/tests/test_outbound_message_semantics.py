@@ -25,7 +25,7 @@ from app.models import Team, Ticket, TicketOutboundMessage, User  # noqa: E402
 from app.services.message_dispatch import claim_pending_messages, process_outbound_message, requeue_dead_outbound_message  # noqa: E402
 from app.services.outbound_semantics import count_outbound_semantics, outbound_ui_label  # noqa: E402
 from app.services.timeline_service import serialize_outbound  # noqa: E402
-from app.services import openclaw_bridge as openclaw_bridge_service  # noqa: E402
+from app.services import external_channel_bridge as external_channel_bridge_service  # noqa: E402
 
 
 @pytest.fixture()
@@ -155,9 +155,9 @@ def test_non_external_outbound_never_calls_provider_dispatch(db_session, monkeyp
     ticket = make_ticket(db_session, channel=SourceChannel.web_chat, contact='wc-send-block')
     row = add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.pending, provider_status='queued')
     db_session.commit()
-    monkeypatch.setattr('app.services.message_dispatch.dispatch_via_openclaw_bridge', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('provider path must not run for web_chat')))
-    monkeypatch.setattr('app.services.message_dispatch.dispatch_via_openclaw_mcp', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('mcp path must not run for web_chat')))
-    monkeypatch.setattr('app.services.message_dispatch.dispatch_via_openclaw_cli', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('cli path must not run for web_chat')))
+    monkeypatch.setattr('app.services.message_dispatch.dispatch_via_external_channel_bridge', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('provider path must not run for web_chat')))
+    monkeypatch.setattr('app.services.message_dispatch.dispatch_via_external_channel_mcp', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('mcp path must not run for web_chat')))
+    monkeypatch.setattr('app.services.message_dispatch.dispatch_via_external_channel_cli', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('cli path must not run for web_chat')))
     processed = process_outbound_message(db_session, row)
     assert processed.status == MessageStatus.dead
     assert processed.failure_code == 'non_external_outbound_not_dispatchable'
@@ -176,23 +176,23 @@ def test_requeue_dead_outbound_rejects_local_webchat_ack(db_session):
 def test_retired_inbound_auto_sync_does_not_create_outbound_messages(db_session, monkeypatch):
     team = make_team(db_session)
     make_user(db_session, team)
-    monkeypatch.setattr(openclaw_bridge_service.settings, 'openclaw_sync_enabled', True)
-    monkeypatch.setattr(openclaw_bridge_service.settings, 'openclaw_inbound_auto_sync_enabled', True)
-    monkeypatch.setattr(openclaw_bridge_service.settings, 'openclaw_inbound_auto_sync_interval_seconds', 0)
-    monkeypatch.setattr(openclaw_bridge_service.settings, 'openclaw_inbound_sync_limit', 10)
-    monkeypatch.setattr(openclaw_bridge_service.settings, 'openclaw_inbound_sync_message_limit', 20)
-    monkeypatch.setattr(openclaw_bridge_service.settings, 'openclaw_inbound_sync_include_groups', False)
-    monkeypatch.setattr(openclaw_bridge_service.settings, 'openclaw_bridge_enabled', True)
-    monkeypatch.setattr(openclaw_bridge_service, 'dispatch_via_openclaw_bridge', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('provider dispatch should not run')))
-    monkeypatch.setattr(openclaw_bridge_service, 'dispatch_via_openclaw_mcp', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('mcp dispatch should not run')))
-    monkeypatch.setattr(openclaw_bridge_service, 'dispatch_via_openclaw_cli', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('cli dispatch should not run')))
-    monkeypatch.setattr(openclaw_bridge_service, 'list_openclaw_conversations', lambda **kwargs: {'conversations': [{'sessionKey': 'sess-inbound-no-outbox', 'route': {'channel': 'whatsapp', 'recipient': '+15550104', 'accountId': 'default'}}]})
-    monkeypatch.setattr(openclaw_bridge_service, 'read_openclaw_bridge_conversation', lambda session_key, limit=50: ({'sessionKey': session_key, 'route': {'channel': 'whatsapp', 'recipient': '+15550104', 'accountId': 'default'}}, [{'id': 'msg-inbound-1', 'role': 'user', 'author': 'customer', 'text': 'hello inbound'}]))
-    monkeypatch.setattr(openclaw_bridge_service, 'fetch_openclaw_bridge_attachments', lambda *args, **kwargs: [])
-    summary = openclaw_bridge_service.sync_openclaw_inbound_conversations_once(db_session, source='default')
+    monkeypatch.setattr(external_channel_bridge_service.settings, 'external_channel_sync_enabled', True)
+    monkeypatch.setattr(external_channel_bridge_service.settings, 'external_channel_inbound_auto_sync_enabled', True)
+    monkeypatch.setattr(external_channel_bridge_service.settings, 'external_channel_inbound_auto_sync_interval_seconds', 0)
+    monkeypatch.setattr(external_channel_bridge_service.settings, 'external_channel_inbound_sync_limit', 10)
+    monkeypatch.setattr(external_channel_bridge_service.settings, 'external_channel_inbound_sync_message_limit', 20)
+    monkeypatch.setattr(external_channel_bridge_service.settings, 'external_channel_inbound_sync_include_groups', False)
+    monkeypatch.setattr(external_channel_bridge_service.settings, 'external_channel_bridge_enabled', True)
+    monkeypatch.setattr(external_channel_bridge_service, 'dispatch_via_external_channel_bridge', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('provider dispatch should not run')))
+    monkeypatch.setattr(external_channel_bridge_service, 'dispatch_via_external_channel_mcp', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('mcp dispatch should not run')))
+    monkeypatch.setattr(external_channel_bridge_service, 'dispatch_via_external_channel_cli', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('cli dispatch should not run')))
+    monkeypatch.setattr(external_channel_bridge_service, 'list_external_channel_conversations', lambda **kwargs: {'conversations': [{'sessionKey': 'sess-inbound-no-outbox', 'route': {'channel': 'whatsapp', 'recipient': '+15550104', 'accountId': 'default'}}]})
+    monkeypatch.setattr(external_channel_bridge_service, 'read_external_channel_bridge_conversation', lambda session_key, limit=50: ({'sessionKey': session_key, 'route': {'channel': 'whatsapp', 'recipient': '+15550104', 'accountId': 'default'}}, [{'id': 'msg-inbound-1', 'role': 'user', 'author': 'customer', 'text': 'hello inbound'}]))
+    monkeypatch.setattr(external_channel_bridge_service, 'fetch_external_channel_bridge_attachments', lambda *args, **kwargs: [])
+    summary = external_channel_bridge_service.sync_external_channel_inbound_conversations_once(db_session, source='default')
     db_session.commit()
     assert summary['status'] == 'disabled'
-    assert summary['reason'] == 'legacy_openclaw_inbound_retired'
+    assert summary['reason'] == 'legacy_external_channel_inbound_retired'
     assert summary['synced_conversations'] == 0
     assert db_session.query(TicketOutboundMessage).count() == 0
 
@@ -203,8 +203,8 @@ def test_worker_disabled_outbound_still_never_claims_or_dispatches(monkeypatch):
     def dummy_db_context():
         yield SimpleNamespace()
     monkeypatch.setattr(run_worker.settings, 'enable_outbound_dispatch', False)
-    monkeypatch.setattr(run_worker.settings, 'openclaw_sync_enabled', False)
-    monkeypatch.setattr(run_worker.settings, 'openclaw_inbound_auto_sync_enabled', False)
+    monkeypatch.setattr(run_worker.settings, 'external_channel_sync_enabled', False)
+    monkeypatch.setattr(run_worker.settings, 'external_channel_inbound_auto_sync_enabled', False)
     monkeypatch.setattr(run_worker, 'db_context', dummy_db_context)
     monkeypatch.setattr(run_worker, 'dispatch_pending_messages', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('outbound dispatch should not run')))
     monkeypatch.setattr(run_worker, 'dispatch_pending_background_jobs', lambda *args, **kwargs: [])

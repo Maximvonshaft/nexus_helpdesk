@@ -71,12 +71,12 @@ The smoke proves:
 - This package is an overlay patch generated from the available repository context and must be applied to the real repository before full build validation.
 - Public CORS is intentionally widget-friendly in Round B. Round C should persist channel origin allowlists.
 - Polling is intentionally chosen over WebSocket in Round B.
-- OpenClaw suggested replies are not enabled in Round B.
+- ExternalChannel suggested replies are not enabled in Round B.
 
 ## Round C proposal
 
 1. Add Webchat channel configuration table with domain allowlists and brand settings.
-2. Add OpenClaw suggested reply generation, but keep human approval by default.
+2. Add ExternalChannel suggested reply generation, but keep human approval by default.
 3. Add SSE/WebSocket push for visitor messages.
 4. Add widget analytics: open rate, first response time, abandonment.
 5. Add per-tenant branding and per-market routing rules.

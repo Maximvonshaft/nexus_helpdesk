@@ -109,7 +109,7 @@ def main(argv: list[str]) -> int:
     if token:
         for name, path in (
             ('queue_summary', '/api/admin/queues/summary'),
-            ('legacy_runtime_health', '/api/admin/openclaw/runtime-health'),
+            ('legacy_runtime_health', '/api/admin/external_channel/runtime-health'),
         ):
             ok, data = _http_json(f'{base_url}{path}', token=token)
             results.append(ProbeResult(name, ok, data))

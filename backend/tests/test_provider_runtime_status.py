@@ -41,7 +41,7 @@ def test_provider_runtime_status_default_provider_runtime_not_configured(monkeyp
     assert status["status"] == "warning"
     assert status["configured_provider"] == "provider_runtime"
     assert "selected provider codex_app_server is not configured" in status["warnings"]
-    assert all(item["name"] != "openclaw_responses" for item in status["providers"])
+    assert all(item["name"] != "external_channel_responses" for item in status["providers"])
     assert status["boundary"] == {
         "secret_values_exposed": False,
         "external_network_call": False,

@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db, engine
 from ..enums import JobStatus, MessageStatus, UserRole
-from ..models import AIConfigResource, AdminAuditLog, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, OpenClawAttachmentReference, OpenClawConversationLink, OpenClawSyncCursor, OpenClawTranscriptMessage, OpenClawUnresolvedEvent, OutboundEmailAccount, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
-from ..schemas import UserUpdate, PasswordResetRequest, OpenClawUnresolvedEventRead, AdminAuditLogRead, AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinImpactPreviewRead, MarketBulletinImpactPreviewRequest, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, OpenClawConnectivityProbeRead, OpenClawConversationRead, OpenClawLinkRequest, OpenClawRuntimeHealthRead, OpenClawSyncEnqueueRequest, OpenClawSyncResult, ProductionReadinessRead, QueueSummaryRead, SecurityAuditRead, SecurityAuditSummaryRead, SecurityCapabilityUserRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead, UserCreate
+from ..models import AIConfigResource, AdminAuditLog, BackgroundJob, ChannelAccount, IntegrationClient, Market, MarketBulletin, ExternalChannelAttachmentReference, ExternalChannelConversationLink, ExternalChannelSyncCursor, ExternalChannelTranscriptMessage, ExternalChannelUnresolvedEvent, OutboundEmailAccount, ServiceHeartbeat, Team, TicketOutboundMessage, User, UserCapabilityOverride
+from ..schemas import UserUpdate, PasswordResetRequest, ExternalChannelUnresolvedEventRead, AdminAuditLogRead, AIConfigPublishRequest, AIConfigResourceCreate, AIConfigResourceRead, AIConfigResourceUpdate, AIConfigVersionRead, BackgroundJobRead, CapabilityOverrideRead, CapabilityOverrideUpsertRequest, ChannelAccountCreate, ChannelAccountRead, ChannelAccountUpdate, IntegrationClientRead, MarketBulletinCreate, MarketBulletinImpactPreviewRead, MarketBulletinImpactPreviewRequest, MarketBulletinRead, MarketBulletinUpdate, MarketCreate, MarketRead, ExternalChannelConnectivityProbeRead, ExternalChannelConversationRead, ExternalChannelLinkRequest, ExternalChannelRuntimeHealthRead, ExternalChannelSyncEnqueueRequest, ExternalChannelSyncResult, ProductionReadinessRead, QueueSummaryRead, SecurityAuditRead, SecurityAuditSummaryRead, SecurityCapabilityUserRead, TeamMarketAssignRequest, TeamRead, UserCapabilityMatrixRead, UserRead, UserCreate
 from ..settings import get_settings
 from ..auth_service import hash_password
 from ..utils.time import utc_now
@@ -31,11 +31,11 @@ from ..services.permissions import (
 from ..services.audit_service import log_admin_audit
 from ..services.admin_action_rate_limit import enforce_admin_action_rate_limit
 from ..services.ai_config_service import create_resource as create_ai_config_resource, list_admin_resources, list_versions as list_ai_config_versions, publish_resource, rollback_resource, update_resource as update_ai_config_resource
-from ..services.background_jobs import enqueue_openclaw_sync_job, enqueue_stale_openclaw_sync_jobs
+from ..services.background_jobs import enqueue_external_channel_sync_job, enqueue_stale_external_channel_sync_jobs
 from ..services.bulletin_service import bulletin_audit_snapshot, build_bulletin_impact_preview, normalize_bulletin_country_code
 from ..unit_of_work import managed_session
-from ..services.openclaw_bridge import ALLOWED_CHANNEL_ACCOUNT_PROVIDERS, consume_openclaw_events_once, count_stale_openclaw_links, link_ticket_to_openclaw_session, list_stale_openclaw_links, replay_unresolved_openclaw_event as replay_unresolved_openclaw_event_payload, sync_openclaw_conversation
-from ..services.openclaw_runtime_service import probe_openclaw_connectivity
+from ..services.external_channel_bridge import ALLOWED_CHANNEL_ACCOUNT_PROVIDERS, consume_external_channel_events_once, count_stale_external_channel_links, link_ticket_to_external_channel_session, list_stale_external_channel_links, replay_unresolved_external_channel_event as replay_unresolved_external_channel_event_payload, sync_external_channel_conversation
+from ..services.external_channel_runtime_service import probe_external_channel_connectivity
 from ..services.outbound_email_account_service import count_active_successful_tested_accounts
 from .deps import get_current_user
 from .admin_outbound_email import router as outbound_email_router
@@ -367,11 +367,11 @@ def assign_team_market(team_id: int, payload: TeamMarketAssignRequest, db: Sessi
     return TeamRead.model_validate(team)
 
 
-@router.post('/openclaw/link', response_model=OpenClawConversationRead)
-def link_openclaw_ticket(payload: OpenClawLinkRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.post('/external_channel/link', response_model=ExternalChannelConversationRead)
+def link_external_channel_ticket(payload: ExternalChannelLinkRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
     with managed_session(db):
-        row = link_ticket_to_openclaw_session(
+        row = link_ticket_to_external_channel_session(
             db,
             ticket_id=payload.ticket_id,
             session_key=payload.session_key,
@@ -382,29 +382,29 @@ def link_openclaw_ticket(payload: OpenClawLinkRequest, db: Session = Depends(get
             route=payload.route,
         )
     db.refresh(row)
-    return OpenClawConversationRead.model_validate(row)
+    return ExternalChannelConversationRead.model_validate(row)
 
 
-@router.post('/openclaw/tickets/{ticket_id}/sync', response_model=OpenClawSyncResult)
-def sync_openclaw_ticket(ticket_id: int, session_key: str, limit: int = 50, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.post('/external_channel/tickets/{ticket_id}/sync', response_model=ExternalChannelSyncResult)
+def sync_external_channel_ticket(ticket_id: int, session_key: str, limit: int = 50, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
     with managed_session(db):
-        result = sync_openclaw_conversation(db, ticket_id=ticket_id, session_key=session_key, limit=limit)
+        result = sync_external_channel_conversation(db, ticket_id=ticket_id, session_key=session_key, limit=limit)
     return result
 
 
-@router.get('/openclaw/links', response_model=list[OpenClawConversationRead])
-def list_openclaw_links(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.get('/external_channel/links', response_model=list[ExternalChannelConversationRead])
+def list_external_channel_links(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
-    rows = db.query(OpenClawConversationLink).order_by(OpenClawConversationLink.updated_at.desc()).all()
-    return [OpenClawConversationRead.model_validate(x) for x in rows]
+    rows = db.query(ExternalChannelConversationLink).order_by(ExternalChannelConversationLink.updated_at.desc()).all()
+    return [ExternalChannelConversationRead.model_validate(x) for x in rows]
 
 
-@router.post('/openclaw/sync/enqueue', response_model=BackgroundJobRead)
-def enqueue_openclaw_sync(payload: OpenClawSyncEnqueueRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.post('/external_channel/sync/enqueue', response_model=BackgroundJobRead)
+def enqueue_external_channel_sync(payload: ExternalChannelSyncEnqueueRequest, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
     with managed_session(db):
-        job = enqueue_openclaw_sync_job(
+        job = enqueue_external_channel_sync_job(
             db,
             ticket_id=payload.ticket_id,
             session_key=payload.session_key,
@@ -416,11 +416,11 @@ def enqueue_openclaw_sync(payload: OpenClawSyncEnqueueRequest, db: Session = Dep
     return BackgroundJobRead.model_validate(job)
 
 
-@router.post('/openclaw/sync/enqueue-stale', response_model=list[BackgroundJobRead])
-def enqueue_stale_openclaw_sync(limit: int = 25, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.post('/external_channel/sync/enqueue-stale', response_model=list[BackgroundJobRead])
+def enqueue_stale_external_channel_sync(limit: int = 25, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
     with managed_session(db):
-        rows = enqueue_stale_openclaw_sync_jobs(db, limit=limit)
+        rows = enqueue_stale_external_channel_sync_jobs(db, limit=limit)
         db.flush()
     for row in rows:
         db.refresh(row)
@@ -434,9 +434,9 @@ def get_queue_summary(db: Session = Depends(get_db), current_user=Depends(get_cu
         dead_outbound=db.query(TicketOutboundMessage).filter(TicketOutboundMessage.status == MessageStatus.dead).count(),
         pending_jobs=db.query(BackgroundJob).filter(BackgroundJob.status == JobStatus.pending).count(),
         dead_jobs=db.query(BackgroundJob).filter(BackgroundJob.status == JobStatus.dead).count(),
-        openclaw_links=db.query(OpenClawConversationLink).count(),
-        openclaw_transcript_messages=db.query(OpenClawTranscriptMessage).count(),
-        openclaw_unresolved_events=db.query(OpenClawUnresolvedEvent).count(),
+        external_channel_links=db.query(ExternalChannelConversationLink).count(),
+        external_channel_transcript_messages=db.query(ExternalChannelTranscriptMessage).count(),
+        external_channel_unresolved_events=db.query(ExternalChannelUnresolvedEvent).count(),
     )
 
 
@@ -458,14 +458,14 @@ def production_readiness(db: Session = Depends(get_db), current_user=Depends(get
         warnings.append('DATABASE_URL is not PostgreSQL; stage/prod cutover is still pending')
     if settings.storage_backend == 'local':
         warnings.append('STORAGE_BACKEND=local; object storage cutover is still pending')
-    if settings.openclaw_deployment_mode != 'disabled' or settings.openclaw_transport != 'disabled':
-        warnings.append('Legacy OpenClaw runtime env vars are still enabled')
+    if settings.external_channel_deployment_mode != 'disabled' or settings.external_channel_transport != 'disabled':
+        warnings.append('Legacy ExternalChannel runtime env vars are still enabled')
     if not settings.metrics_enabled:
         warnings.append('Metrics are disabled')
     if db.bind and not db.bind.dialect.name.startswith('postgresql'):
         warnings.append('Current runtime DB dialect is not PostgreSQL')
-    if settings.openclaw_sync_enabled and not settings.openclaw_inbound_auto_sync_enabled and not settings.openclaw_event_driver_enabled:
-        warnings.append('OpenClaw sync is enabled but no inbound auto-sync/event driver/manual job producer is active')
+    if settings.external_channel_sync_enabled and not settings.external_channel_inbound_auto_sync_enabled and not settings.external_channel_event_driver_enabled:
+        warnings.append('ExternalChannel sync is enabled but no inbound auto-sync/event driver/manual job producer is active')
     outbound_email_active_accounts = db.query(OutboundEmailAccount).filter(OutboundEmailAccount.is_active.is_(True)).count()
     outbound_email_successful_test_send_accounts = count_active_successful_tested_accounts(
         db,
@@ -480,13 +480,13 @@ def production_readiness(db: Session = Depends(get_db), current_user=Depends(get
         database_url_scheme=settings.database_url.split(':', 1)[0],
         is_postgres=settings.is_postgres,
         storage_backend=settings.storage_backend,
-        openclaw_transport=settings.openclaw_transport,
+        external_channel_transport=settings.external_channel_transport,
         metrics_enabled=settings.metrics_enabled,
-        openclaw_sync_enabled=settings.openclaw_sync_enabled,
-        openclaw_inbound_auto_sync_enabled=settings.openclaw_inbound_auto_sync_enabled,
-        openclaw_links_count=db.query(OpenClawConversationLink).count(),
-        openclaw_transcript_messages_count=db.query(OpenClawTranscriptMessage).count(),
-        openclaw_unresolved_events_count=db.query(OpenClawUnresolvedEvent).count(),
+        external_channel_sync_enabled=settings.external_channel_sync_enabled,
+        external_channel_inbound_auto_sync_enabled=settings.external_channel_inbound_auto_sync_enabled,
+        external_channel_links_count=db.query(ExternalChannelConversationLink).count(),
+        external_channel_transcript_messages_count=db.query(ExternalChannelTranscriptMessage).count(),
+        external_channel_unresolved_events_count=db.query(ExternalChannelUnresolvedEvent).count(),
         outbound_email_production_pilot_enabled=settings.outbound_email_production_pilot_enabled,
         outbound_email_active_accounts=outbound_email_active_accounts,
         outbound_email_successful_test_send_accounts=outbound_email_successful_test_send_accounts,
@@ -509,9 +509,9 @@ def signoff_checklist(db: Session = Depends(get_db), current_user=Depends(get_cu
     if not checks['storage_not_local']:
         warnings.append('STORAGE_BACKEND is local')
 
-    checks['legacy_openclaw_disabled'] = settings.openclaw_deployment_mode == 'disabled' and settings.openclaw_transport == 'disabled'
-    if not checks['legacy_openclaw_disabled']:
-        warnings.append('Legacy OpenClaw runtime is still enabled')
+    checks['legacy_external_channel_disabled'] = settings.external_channel_deployment_mode == 'disabled' and settings.external_channel_transport == 'disabled'
+    if not checks['legacy_external_channel_disabled']:
+        warnings.append('Legacy ExternalChannel runtime is still enabled')
 
     checks['metrics_enabled'] = settings.metrics_enabled
     if not checks['metrics_enabled']:
@@ -525,8 +525,8 @@ def signoff_checklist(db: Session = Depends(get_db), current_user=Depends(get_cu
         checks['database_connected'] = False
         warnings.append('Database connectivity check failed')
 
-    if settings.openclaw_event_driver_enabled:
-        warnings.append('Legacy OpenClaw event driver is still enabled')
+    if settings.external_channel_event_driver_enabled:
+        warnings.append('Legacy ExternalChannel event driver is still enabled')
 
     outbound_email_successful_test_send_accounts = count_active_successful_tested_accounts(
         db,
@@ -609,43 +609,43 @@ def update_channel_account(account_id: int, payload: ChannelAccountUpdate, db: S
     return ChannelAccountRead.model_validate(row)
 
 
-def openclaw_runtime_health(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def external_channel_runtime_health(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
-    cursor = db.query(OpenClawSyncCursor).filter(OpenClawSyncCursor.source == 'default').first()
-    heartbeat = db.query(ServiceHeartbeat).filter(ServiceHeartbeat.service_name == 'openclaw_event_daemon').first()
-    stale_link_count = count_stale_openclaw_links(db)
-    pending_sync_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'openclaw.sync_session', BackgroundJob.status == JobStatus.pending).count()
-    dead_sync_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'openclaw.sync_session', BackgroundJob.status == JobStatus.dead).count()
-    pending_attachment_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'openclaw.persist_attachment', BackgroundJob.status == JobStatus.pending).count()
-    dead_attachment_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'openclaw.persist_attachment', BackgroundJob.status == JobStatus.dead).count()
+    cursor = db.query(ExternalChannelSyncCursor).filter(ExternalChannelSyncCursor.source == 'default').first()
+    heartbeat = db.query(ServiceHeartbeat).filter(ServiceHeartbeat.service_name == 'external_channel_event_daemon').first()
+    stale_link_count = count_stale_external_channel_links(db)
+    pending_sync_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'external_channel.sync_session', BackgroundJob.status == JobStatus.pending).count()
+    dead_sync_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'external_channel.sync_session', BackgroundJob.status == JobStatus.dead).count()
+    pending_attachment_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'external_channel.persist_attachment', BackgroundJob.status == JobStatus.pending).count()
+    dead_attachment_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'external_channel.persist_attachment', BackgroundJob.status == JobStatus.dead).count()
     warnings: list[str] = []
-    if not settings.openclaw_sync_enabled:
-        warnings.append('Legacy OpenClaw session sync is disabled')
+    if not settings.external_channel_sync_enabled:
+        warnings.append('Legacy ExternalChannel session sync is disabled')
     if heartbeat is None:
-        if settings.openclaw_event_driver_enabled:
-            warnings.append('Legacy OpenClaw event daemon heartbeat missing')
+        if settings.external_channel_event_driver_enabled:
+            warnings.append('Legacy ExternalChannel event daemon heartbeat missing')
         daemon_status = None
         daemon_seen = None
     else:
         daemon_status = heartbeat.status
         daemon_seen = heartbeat.last_seen_at
         from ..utils.time import ensure_utc
-        if daemon_seen and (utc_now() - ensure_utc(daemon_seen)).total_seconds() > settings.openclaw_sync_daemon_stale_seconds:
-            warnings.append('Legacy OpenClaw event daemon heartbeat is stale')
-    if stale_link_count > settings.openclaw_sync_batch_size:
+        if daemon_seen and (utc_now() - ensure_utc(daemon_seen)).total_seconds() > settings.external_channel_sync_daemon_stale_seconds:
+            warnings.append('Legacy ExternalChannel event daemon heartbeat is stale')
+    if stale_link_count > settings.external_channel_sync_batch_size:
         warnings.append('Legacy session link backlog exceeds one batch')
     if dead_sync_jobs > 0:
         warnings.append('There are dead legacy session sync jobs')
     if dead_attachment_jobs > 0:
         warnings.append('There are dead legacy attachment persist jobs')
-    return OpenClawRuntimeHealthRead(
+    return ExternalChannelRuntimeHealthRead(
         sync_cursor=cursor.cursor_value if cursor else None,
         sync_daemon_last_seen_at=daemon_seen,
         sync_daemon_status=daemon_status,
         stale_link_count=stale_link_count,
-        openclaw_links_count=db.query(OpenClawConversationLink).count(),
-        transcript_messages_count=db.query(OpenClawTranscriptMessage).count(),
-        unresolved_events_count=db.query(OpenClawUnresolvedEvent).count(),
+        external_channel_links_count=db.query(ExternalChannelConversationLink).count(),
+        transcript_messages_count=db.query(ExternalChannelTranscriptMessage).count(),
+        unresolved_events_count=db.query(ExternalChannelUnresolvedEvent).count(),
         pending_sync_jobs=pending_sync_jobs,
         dead_sync_jobs=dead_sync_jobs,
         pending_attachment_jobs=pending_attachment_jobs,
@@ -654,20 +654,20 @@ def openclaw_runtime_health(db: Session = Depends(get_db), current_user=Depends(
     )
 
 
-@router.get('/openclaw/connectivity-check', response_model=OpenClawConnectivityProbeRead)
-def openclaw_connectivity_check(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.get('/external_channel/connectivity-check', response_model=ExternalChannelConnectivityProbeRead)
+def external_channel_connectivity_check(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
-    return probe_openclaw_connectivity()
+    return probe_external_channel_connectivity()
 
 
-@router.post('/openclaw/events/consume-once')
-def consume_openclaw_events(request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+@router.post('/external_channel/events/consume-once')
+def consume_external_channel_events(request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
-    enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='openclaw.events.consume_once', max_requests=settings.admin_action_rate_limit_consume_once_max, request_id=getattr(request.state, 'request_id', None))
-    if not settings.openclaw_event_driver_enabled:
+    enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='external_channel.events.consume_once', max_requests=settings.admin_action_rate_limit_consume_once_max, request_id=getattr(request.state, 'request_id', None))
+    if not settings.external_channel_event_driver_enabled:
         return {'processed': 0}
     with managed_session(db):
-        processed = consume_openclaw_events_once(db)
+        processed = consume_external_channel_events_once(db)
         db.flush()
     return {'processed': processed}
 
@@ -928,30 +928,30 @@ def reset_user_password(user_id: int, payload: PasswordResetRequest, db: Session
         log_admin_audit(db, actor_id=current_user.id, action='user.reset_password', target_type='user', target_id=row.id, old_value={}, new_value={})
     return {"ok": True}
 
-@router.get('/openclaw/unresolved-events', response_model=list[OpenClawUnresolvedEventRead])
+@router.get('/external_channel/unresolved-events', response_model=list[ExternalChannelUnresolvedEventRead])
 def list_unresolved_events(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
-    rows = db.query(OpenClawUnresolvedEvent).order_by(OpenClawUnresolvedEvent.created_at.desc()).all()
-    return [OpenClawUnresolvedEventRead.model_validate(x) for x in rows]
+    rows = db.query(ExternalChannelUnresolvedEvent).order_by(ExternalChannelUnresolvedEvent.created_at.desc()).all()
+    return [ExternalChannelUnresolvedEventRead.model_validate(x) for x in rows]
 
-@router.post('/openclaw/unresolved-events/{event_id}/replay')
+@router.post('/external_channel/unresolved-events/{event_id}/replay')
 def replay_unresolved_event(event_id: int, request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
     enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='unresolved_event.replay', max_requests=settings.admin_action_rate_limit_single_max, request_id=getattr(request.state, 'request_id', None))
-    row = db.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == event_id).first()
+    row = db.query(ExternalChannelUnresolvedEvent).filter(ExternalChannelUnresolvedEvent.id == event_id).first()
     if not row: raise HTTPException(404, "Event not found")
     with managed_session(db):
         before = {'status': row.status, 'replay_count': row.replay_count, 'last_error': row.last_error}
-        processed = replay_unresolved_openclaw_event_payload(db, row=row)
+        processed = replay_unresolved_external_channel_event_payload(db, row=row)
         db.flush()
         log_admin_audit(db, actor_id=current_user.id, action='unresolved_event.replay', target_type='unresolved_event', target_id=row.id, old_value=before, new_value={'status': row.status, 'replay_count': row.replay_count, 'last_error': row.last_error})
     return {"ok": processed, 'status': row.status, 'replay_count': row.replay_count, 'last_error': row.last_error}
 
-@router.post('/openclaw/unresolved-events/{event_id}/drop')
+@router.post('/external_channel/unresolved-events/{event_id}/drop')
 def drop_unresolved_event(event_id: int, request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
     enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='unresolved_event.drop', max_requests=settings.admin_action_rate_limit_single_max, request_id=getattr(request.state, 'request_id', None))
-    row = db.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == event_id).first()
+    row = db.query(ExternalChannelUnresolvedEvent).filter(ExternalChannelUnresolvedEvent.id == event_id).first()
     if not row: raise HTTPException(404, "Event not found")
     with managed_session(db):
         before = {'status': row.status, 'replay_count': row.replay_count, 'last_error': row.last_error}

@@ -18,7 +18,7 @@ from .schemas import ProviderRequest, ProviderResult
 logger = logging.getLogger(__name__)
 
 _DIRECT_ENV_PROVIDERS = {"codex_app_server", "codex_direct", "openai_responses", "rule_engine"}
-_REMOVED_PROVIDERS = {"openclaw_responses"}
+_REMOVED_PROVIDERS = {"external_channel_responses"}
 
 
 class ProviderRuntimeRouter:

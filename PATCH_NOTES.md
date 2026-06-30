@@ -84,7 +84,7 @@ This patch hardens governance boundaries on `main` without broad product rewrite
 
 - `deploy/.env.prod.example`
   - Expanded production environment template.
-  - Documents PostgreSQL, S3, OpenClaw, Webchat, metrics, and attachment-fetch safety settings.
+  - Documents PostgreSQL, S3, ExternalChannel, Webchat, metrics, and attachment-fetch safety settings.
   - Explicitly sets `WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT=false`.
 
 - `README.md`
@@ -123,13 +123,13 @@ python -m compileall backend/app backend/scripts
 pytest -q \
   backend/tests/test_outbound_safety.py \
   backend/tests/test_next_phase_max_push.py \
-  backend/tests/test_openclaw_local_ops.py \
+  backend/tests/test_external_channel_local_ops.py \
   backend/tests/test_round20a_rectification.py \
   backend/tests/test_round20b_legacy_frontend.py \
   backend/tests/test_round27_frontend_hardening.py
 cd webapp && npm ci && npm run typecheck && npm run build
 cd backend && alembic upgrade head
-cd backend && APP_ENV=development DATABASE_URL=postgresql+psycopg://helpdesk:helpdesk@127.0.0.1:5432/helpdesk STORAGE_BACKEND=s3 OPENCLAW_TRANSPORT=mcp OPENCLAW_CLI_FALLBACK_ENABLED=false WEBCHAT_RATE_LIMIT_BACKEND=database WEBCHAT_AI_AUTO_REPLY_MODE=safe_ack WEBCHAT_ALLOWED_ORIGINS=https://example.test python scripts/validate_production_readiness.py
+cd backend && APP_ENV=development DATABASE_URL=postgresql+psycopg://helpdesk:helpdesk@127.0.0.1:5432/helpdesk STORAGE_BACKEND=s3 EXTERNAL_CHANNEL_TRANSPORT=mcp EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED=false WEBCHAT_RATE_LIMIT_BACKEND=database WEBCHAT_AI_AUTO_REPLY_MODE=safe_ack WEBCHAT_ALLOWED_ORIGINS=https://example.test python scripts/validate_production_readiness.py
 ```
 
 ## Rollback guidance

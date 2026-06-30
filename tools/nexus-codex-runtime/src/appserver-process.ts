@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { RpcClient } from "./rpc-client.js";
 import type { RuntimeConfig } from "./env.js";
 
-const CLEARED_ENV = ["CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_ACCESS_TOKEN", "CODEX_ACCESS_TOKEN", "OPENCLAW_HOME"];
+const CLEARED_ENV = ["CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_ACCESS_TOKEN", "CODEX_ACCESS_TOKEN", "EXTERNAL_CHANNEL_HOME"];
 
 export type StartedAppServer = {
   client: RpcClient;

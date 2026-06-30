@@ -34,7 +34,7 @@ These commands require the real repository checkout, Node dependencies, Alembic 
 cd backend && alembic upgrade head
 cd webapp && npm ci && npm run typecheck && npm run build
 docker compose -f deploy/docker-compose.cloud.yml config
-python scripts/check_openclaw_connectivity.py
+python scripts/check_external_channel_connectivity.py
 python scripts/run_worker.py --once
 ```
 

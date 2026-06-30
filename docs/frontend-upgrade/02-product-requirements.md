@@ -12,7 +12,7 @@ This is not a cosmetic redesign. The product goal is to make the system clearly 
 - AI operations owners
 - channel administrators
 - customer websites embedding WebChat
-- technical operators maintaining OpenClaw / integration runtime
+- technical operators maintaining ExternalChannel / integration runtime
 
 ## Product position
 
@@ -81,7 +81,7 @@ Needs:
 
 - see queue health
 - see runtime health
-- see unresolved OpenClaw events
+- see unresolved ExternalChannel events
 - understand outbound status and safety gate blocks
 - understand where process failures occur
 
@@ -186,7 +186,7 @@ Must provide:
 
 - API health
 - worker/job health
-- OpenClaw bridge status
+- ExternalChannel bridge status
 - unresolved event visibility
 - safety gate block visibility
 - outbound status distinction between WebChat local ACK and external provider dispatch
@@ -246,4 +246,4 @@ These are explicitly out of scope for the execution-readiness phase:
 
 ## Product acceptance principle
 
-A phase is accepted only when it improves the operator experience without breaking existing authenticated console flows, WebChat embed behavior, or OpenClaw/cloud connectivity assumptions.
+A phase is accepted only when it improves the operator experience without breaking existing authenticated console flows, WebChat embed behavior, or ExternalChannel/cloud connectivity assumptions.

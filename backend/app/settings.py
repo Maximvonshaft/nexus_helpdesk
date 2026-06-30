@@ -59,19 +59,19 @@ class Settings:
         self.max_upload_bytes = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
 
         self.dashscope_api_key = os.getenv("DASHSCOPE_API_KEY")
-        self.openclaw_bin = os.getenv("OPENCLAW_BIN")
-        self.openclaw_transport = os.getenv("OPENCLAW_TRANSPORT", "disabled").strip().lower() or "disabled"
-        self.openclaw_deployment_mode = os.getenv("OPENCLAW_DEPLOYMENT_MODE", "disabled").strip().lower() or "disabled"
-        self.openclaw_mcp_command = os.getenv("OPENCLAW_MCP_COMMAND", self.openclaw_bin or "").strip()
-        self.openclaw_extra_paths = self._parse_paths(os.getenv("OPENCLAW_EXTRA_PATHS", ""))
-        self.openclaw_mcp_url = os.getenv("OPENCLAW_MCP_URL")
-        self.openclaw_mcp_token_file = os.getenv("OPENCLAW_MCP_TOKEN_FILE")
-        self.openclaw_mcp_password_file = os.getenv("OPENCLAW_MCP_PASSWORD_FILE")
-        self.openclaw_mcp_claude_channel_mode = os.getenv("OPENCLAW_MCP_CLAUDE_CHANNEL_MODE", "off").strip().lower() or "off"
-        self.openclaw_cli_fallback_enabled = os.getenv("OPENCLAW_CLI_FALLBACK_ENABLED", "false").strip().lower() == "true"
-        self.openclaw_bridge_enabled = os.getenv("OPENCLAW_BRIDGE_ENABLED", "false").strip().lower() == "true"
-        self.openclaw_bridge_url = (os.getenv("OPENCLAW_BRIDGE_URL", "http://127.0.0.1:18792").strip() or "http://127.0.0.1:18792").rstrip("/")
-        self.openclaw_bridge_timeout_seconds = int(os.getenv("OPENCLAW_BRIDGE_TIMEOUT_SECONDS", "20"))
+        self.external_channel_bin = os.getenv("EXTERNAL_CHANNEL_BIN")
+        self.external_channel_transport = os.getenv("EXTERNAL_CHANNEL_TRANSPORT", "disabled").strip().lower() or "disabled"
+        self.external_channel_deployment_mode = os.getenv("EXTERNAL_CHANNEL_DEPLOYMENT_MODE", "disabled").strip().lower() or "disabled"
+        self.external_channel_mcp_command = os.getenv("EXTERNAL_CHANNEL_MCP_COMMAND", self.external_channel_bin or "").strip()
+        self.external_channel_extra_paths = self._parse_paths(os.getenv("EXTERNAL_CHANNEL_EXTRA_PATHS", ""))
+        self.external_channel_mcp_url = os.getenv("EXTERNAL_CHANNEL_MCP_URL")
+        self.external_channel_mcp_token_file = os.getenv("EXTERNAL_CHANNEL_MCP_TOKEN_FILE")
+        self.external_channel_mcp_password_file = os.getenv("EXTERNAL_CHANNEL_MCP_PASSWORD_FILE")
+        self.external_channel_mcp_claude_channel_mode = os.getenv("EXTERNAL_CHANNEL_MCP_CLAUDE_CHANNEL_MODE", "off").strip().lower() or "off"
+        self.external_channel_cli_fallback_enabled = os.getenv("EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED", "false").strip().lower() == "true"
+        self.external_channel_bridge_enabled = os.getenv("EXTERNAL_CHANNEL_BRIDGE_ENABLED", "false").strip().lower() == "true"
+        self.external_channel_bridge_url = (os.getenv("EXTERNAL_CHANNEL_BRIDGE_URL", "http://127.0.0.1:18792").strip() or "http://127.0.0.1:18792").rstrip("/")
+        self.external_channel_bridge_timeout_seconds = int(os.getenv("EXTERNAL_CHANNEL_BRIDGE_TIMEOUT_SECONDS", "20"))
         self.enable_outbound_dispatch = os.getenv("ENABLE_OUTBOUND_DISPATCH", "false").strip().lower() == "true"
         self.outbound_provider = os.getenv("OUTBOUND_PROVIDER", "disabled").strip().lower() or "disabled"
         self.whatsapp_native_enabled = _env_bool("WHATSAPP_NATIVE_ENABLED", False)
@@ -95,19 +95,19 @@ class Settings:
         self.job_lock_seconds = int(os.getenv("JOB_LOCK_SECONDS", "300"))
         self.job_max_retries = int(os.getenv("JOB_MAX_RETRIES", "3"))
         self.worker_poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", "2"))
-        self.openclaw_sync_enabled = os.getenv("OPENCLAW_SYNC_ENABLED", "false").strip().lower() == "true"
-        self.openclaw_sync_batch_size = int(os.getenv("OPENCLAW_SYNC_BATCH_SIZE", "50"))
-        self.openclaw_sync_stale_seconds = int(os.getenv("OPENCLAW_SYNC_STALE_SECONDS", "120"))
-        self.openclaw_sync_transcript_limit = int(os.getenv("OPENCLAW_SYNC_TRANSCRIPT_LIMIT", "100"))
-        self.openclaw_sync_poll_timeout_seconds = int(os.getenv("OPENCLAW_SYNC_POLL_TIMEOUT_SECONDS", "10"))
-        self.openclaw_inbound_auto_sync_enabled = os.getenv("OPENCLAW_INBOUND_AUTO_SYNC_ENABLED", "false").strip().lower() == "true"
-        self.openclaw_inbound_sync_limit = int(os.getenv("OPENCLAW_INBOUND_SYNC_LIMIT", "10"))
-        self.openclaw_inbound_sync_message_limit = int(os.getenv("OPENCLAW_INBOUND_SYNC_MESSAGE_LIMIT", str(self.openclaw_sync_transcript_limit)))
-        self.openclaw_inbound_sync_include_groups = os.getenv("OPENCLAW_INBOUND_SYNC_INCLUDE_GROUPS", "false").strip().lower() == "true"
-        self.openclaw_inbound_auto_sync_interval_seconds = int(os.getenv("OPENCLAW_INBOUND_AUTO_SYNC_INTERVAL_SECONDS", "30"))
-        self.openclaw_session_dm_scope = os.getenv("OPENCLAW_SESSION_DM_SCOPE", "per-account-channel-peer").strip()
-        self.openclaw_event_driver_enabled = os.getenv("OPENCLAW_EVENT_DRIVER_ENABLED", "false").strip().lower() == "true"
-        self.openclaw_sync_daemon_stale_seconds = int(os.getenv("OPENCLAW_SYNC_DAEMON_STALE_SECONDS", "90"))
+        self.external_channel_sync_enabled = os.getenv("EXTERNAL_CHANNEL_SYNC_ENABLED", "false").strip().lower() == "true"
+        self.external_channel_sync_batch_size = int(os.getenv("EXTERNAL_CHANNEL_SYNC_BATCH_SIZE", "50"))
+        self.external_channel_sync_stale_seconds = int(os.getenv("EXTERNAL_CHANNEL_SYNC_STALE_SECONDS", "120"))
+        self.external_channel_sync_transcript_limit = int(os.getenv("EXTERNAL_CHANNEL_SYNC_TRANSCRIPT_LIMIT", "100"))
+        self.external_channel_sync_poll_timeout_seconds = int(os.getenv("EXTERNAL_CHANNEL_SYNC_POLL_TIMEOUT_SECONDS", "10"))
+        self.external_channel_inbound_auto_sync_enabled = os.getenv("EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED", "false").strip().lower() == "true"
+        self.external_channel_inbound_sync_limit = int(os.getenv("EXTERNAL_CHANNEL_INBOUND_SYNC_LIMIT", "10"))
+        self.external_channel_inbound_sync_message_limit = int(os.getenv("EXTERNAL_CHANNEL_INBOUND_SYNC_MESSAGE_LIMIT", str(self.external_channel_sync_transcript_limit)))
+        self.external_channel_inbound_sync_include_groups = os.getenv("EXTERNAL_CHANNEL_INBOUND_SYNC_INCLUDE_GROUPS", "false").strip().lower() == "true"
+        self.external_channel_inbound_auto_sync_interval_seconds = int(os.getenv("EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS", "30"))
+        self.external_channel_session_dm_scope = os.getenv("EXTERNAL_CHANNEL_SESSION_DM_SCOPE", "per-account-channel-peer").strip()
+        self.external_channel_event_driver_enabled = os.getenv("EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED", "false").strip().lower() == "true"
+        self.external_channel_sync_daemon_stale_seconds = int(os.getenv("EXTERNAL_CHANNEL_SYNC_DAEMON_STALE_SECONDS", "90"))
         self.require_prometheus_client_in_production = os.getenv("REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION", "false").strip().lower() == "true"
 
         self.login_max_failures = int(os.getenv("LOGIN_MAX_FAILURES", "5"))
@@ -177,11 +177,11 @@ class Settings:
         self.metrics_enabled = os.getenv("METRICS_ENABLED", "false").strip().lower() == "true"
         self.metrics_token = os.getenv("METRICS_TOKEN")
 
-        self.openclaw_attachment_url_fetch_enabled = os.getenv("OPENCLAW_ATTACHMENT_URL_FETCH_ENABLED", "false").strip().lower() == "true"
-        self.openclaw_attachment_allowed_hosts = [host.lower() for host in self._parse_csv(os.getenv("OPENCLAW_ATTACHMENT_ALLOWED_HOSTS", ""))]
-        self.openclaw_attachment_fetch_timeout_seconds = int(os.getenv("OPENCLAW_ATTACHMENT_FETCH_TIMEOUT_SECONDS", "10"))
-        self.openclaw_attachment_max_download_bytes = int(os.getenv("OPENCLAW_ATTACHMENT_MAX_DOWNLOAD_BYTES", str(self.max_upload_bytes)))
-        self.openclaw_attachment_allowed_mime_types = set(self._parse_csv(os.getenv("OPENCLAW_ATTACHMENT_ALLOWED_MIME_TYPES", ",".join(self.allowed_upload_mime_types + ["application/octet-stream"]))))
+        self.external_channel_attachment_url_fetch_enabled = os.getenv("EXTERNAL_CHANNEL_ATTACHMENT_URL_FETCH_ENABLED", "false").strip().lower() == "true"
+        self.external_channel_attachment_allowed_hosts = [host.lower() for host in self._parse_csv(os.getenv("EXTERNAL_CHANNEL_ATTACHMENT_ALLOWED_HOSTS", ""))]
+        self.external_channel_attachment_fetch_timeout_seconds = int(os.getenv("EXTERNAL_CHANNEL_ATTACHMENT_FETCH_TIMEOUT_SECONDS", "10"))
+        self.external_channel_attachment_max_download_bytes = int(os.getenv("EXTERNAL_CHANNEL_ATTACHMENT_MAX_DOWNLOAD_BYTES", str(self.max_upload_bytes)))
+        self.external_channel_attachment_allowed_mime_types = set(self._parse_csv(os.getenv("EXTERNAL_CHANNEL_ATTACHMENT_ALLOWED_MIME_TYPES", ",".join(self.allowed_upload_mime_types + ["application/octet-stream"]))))
 
         self._normalize()
 
@@ -259,20 +259,20 @@ class Settings:
             raise RuntimeError("EMAIL_MAILBOX_SYNC_BATCH_SIZE must be between 1 and 100")
         if self.webchat_tracking_fact_lookup_enabled and not self.webchat_tracking_fact_redaction_enabled:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED must be true when tracking lookup is enabled")
-        if self.openclaw_transport != "disabled":
-            raise RuntimeError("OPENCLAW_TRANSPORT has been retired; set OPENCLAW_TRANSPORT=disabled")
-        if self.openclaw_deployment_mode != "disabled":
-            raise RuntimeError("OPENCLAW_DEPLOYMENT_MODE has been retired; set OPENCLAW_DEPLOYMENT_MODE=disabled")
-        if self.openclaw_cli_fallback_enabled:
-            raise RuntimeError("OPENCLAW_CLI_FALLBACK_ENABLED has been retired; set OPENCLAW_CLI_FALLBACK_ENABLED=false")
-        if self.openclaw_bridge_enabled:
-            raise RuntimeError("OPENCLAW_BRIDGE_ENABLED has been retired; set OPENCLAW_BRIDGE_ENABLED=false")
-        if self.openclaw_sync_enabled:
-            raise RuntimeError("OPENCLAW_SYNC_ENABLED has been retired; set OPENCLAW_SYNC_ENABLED=false")
-        if self.openclaw_inbound_auto_sync_enabled:
-            raise RuntimeError("OPENCLAW_INBOUND_AUTO_SYNC_ENABLED has been retired; set OPENCLAW_INBOUND_AUTO_SYNC_ENABLED=false")
-        if self.openclaw_event_driver_enabled:
-            raise RuntimeError("OPENCLAW_EVENT_DRIVER_ENABLED has been retired; set OPENCLAW_EVENT_DRIVER_ENABLED=false")
+        if self.external_channel_transport != "disabled":
+            raise RuntimeError("EXTERNAL_CHANNEL_TRANSPORT has been retired; set EXTERNAL_CHANNEL_TRANSPORT=disabled")
+        if self.external_channel_deployment_mode != "disabled":
+            raise RuntimeError("EXTERNAL_CHANNEL_DEPLOYMENT_MODE has been retired; set EXTERNAL_CHANNEL_DEPLOYMENT_MODE=disabled")
+        if self.external_channel_cli_fallback_enabled:
+            raise RuntimeError("EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED has been retired; set EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED=false")
+        if self.external_channel_bridge_enabled:
+            raise RuntimeError("EXTERNAL_CHANNEL_BRIDGE_ENABLED has been retired; set EXTERNAL_CHANNEL_BRIDGE_ENABLED=false")
+        if self.external_channel_sync_enabled:
+            raise RuntimeError("EXTERNAL_CHANNEL_SYNC_ENABLED has been retired; set EXTERNAL_CHANNEL_SYNC_ENABLED=false")
+        if self.external_channel_inbound_auto_sync_enabled:
+            raise RuntimeError("EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED has been retired; set EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED=false")
+        if self.external_channel_event_driver_enabled:
+            raise RuntimeError("EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED has been retired; set EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED=false")
         if self.app_env == "production":
             if not self.jwt_secret_key:
                 raise RuntimeError("SECRET_KEY must be set in production")
@@ -293,16 +293,16 @@ class Settings:
                 raise RuntimeError("Production ALLOWED_ORIGINS must not include localhost defaults")
             if self.storage_backend not in {"local", "s3"}:
                 raise RuntimeError("STORAGE_BACKEND must be local or s3")
-            if self.openclaw_session_dm_scope not in {"per-account-channel-peer", "per-channel-peer", "per-peer"}:
-                raise RuntimeError("OPENCLAW_SESSION_DM_SCOPE must be a supported session dm scope")
+            if self.external_channel_session_dm_scope not in {"per-account-channel-peer", "per-channel-peer", "per-peer"}:
+                raise RuntimeError("EXTERNAL_CHANNEL_SESSION_DM_SCOPE must be a supported session dm scope")
             if self.metrics_enabled and not self.metrics_token:
                 raise RuntimeError("METRICS_TOKEN must be set in production when METRICS_ENABLED=true")
             if self.webchat_allow_legacy_token_transport:
                 raise RuntimeError("WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must be false in production")
             if self.webchat_ws_enabled and self.webchat_ws_broker == "memory":
                 raise RuntimeError("WEBCHAT_WS_BROKER=memory is not allowed in production when WEBCHAT_WS_ENABLED=true")
-            if self.openclaw_attachment_url_fetch_enabled and not self.openclaw_attachment_allowed_hosts:
-                raise RuntimeError("OPENCLAW_ATTACHMENT_ALLOWED_HOSTS must be set when OPENCLAW_ATTACHMENT_URL_FETCH_ENABLED=true in production")
+            if self.external_channel_attachment_url_fetch_enabled and not self.external_channel_attachment_allowed_hosts:
+                raise RuntimeError("EXTERNAL_CHANNEL_ATTACHMENT_ALLOWED_HOSTS must be set when EXTERNAL_CHANNEL_ATTACHMENT_URL_FETCH_ENABLED=true in production")
             if self.whatsapp_dispatch_mode == "native_sidecar":
                 if not self.whatsapp_native_enabled:
                     raise RuntimeError("WHATSAPP_NATIVE_ENABLED=true is required when WHATSAPP_DISPATCH_MODE=native_sidecar")

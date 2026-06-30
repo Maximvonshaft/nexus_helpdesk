@@ -232,7 +232,7 @@ def resolve_fast_routing_context(
 
     Public WebChat payloads should not need to know database ids. This resolver
     accepts stable business keys and falls back conservatively:
-    explicit channel account -> matching market -> global OpenClaw account.
+    explicit channel account -> matching market -> global ExternalChannel account.
     """
 
     normalized_country = _upper(country_code, 8)
@@ -264,7 +264,7 @@ def resolve_fast_routing_context(
         account = db.execute(
             select(ChannelAccount)
             .where(
-                ChannelAccount.provider == "openclaw",
+                ChannelAccount.provider == "external_channel",
                 ChannelAccount.market_id == market.id,
                 ChannelAccount.is_active.is_(True),
             )
@@ -276,7 +276,7 @@ def resolve_fast_routing_context(
         account = db.execute(
             select(ChannelAccount)
             .where(
-                ChannelAccount.provider == "openclaw",
+                ChannelAccount.provider == "external_channel",
                 ChannelAccount.market_id.is_(None),
                 ChannelAccount.is_active.is_(True),
             )

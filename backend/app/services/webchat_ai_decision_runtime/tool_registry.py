@@ -181,9 +181,26 @@ TOOL_CONTRACTS: dict[str, ToolContract] = {
     ),
 }
 
+TOOL_NAME_ALIASES: dict[str, str] = {
+    "support_knowledge_retrieve": "knowledge.search",
+    "speedaf_lookup": "speedaf.order.query",
+    "speedaf_query_waybills": "speedaf.order.waybillCode.query",
+    "speedaf_create_work_order": "speedaf.workOrder.create",
+    "speedaf.work_order.create": "speedaf.workOrder.create",
+    "speedaf_cancel_order": "speedaf.order.cancel.request",
+    "speedaf.order.cancel": "speedaf.order.cancel.request",
+    "speedaf_update_address": "speedaf.order.updateAddress.request",
+    "speedaf.order.update_address": "speedaf.order.updateAddress.request",
+}
+
+
+def canonical_tool_name(name: str | None) -> str:
+    cleaned = " ".join(str(name or "").strip().split())
+    return TOOL_NAME_ALIASES.get(cleaned, cleaned)
+
 
 def get_tool_contract(name: str | None) -> ToolContract | None:
-    return TOOL_CONTRACTS.get(str(name or "").strip())
+    return TOOL_CONTRACTS.get(canonical_tool_name(name))
 
 
 def require_tool_contract(name: str) -> ToolContract:

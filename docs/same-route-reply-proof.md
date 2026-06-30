@@ -17,7 +17,7 @@ For customer messaging, guessing a fallback recipient is not acceptable.
 1. Use the ticket's explicit outbound route fields when available.
 2. Use a channel-native sidecar or provider adapter that can prove the exact account and thread.
 3. Fall back to draft/human review when route provenance is incomplete.
-4. Do not use the retired OpenClaw bridge, MCP, Gateway, or CLI path for production sends.
+4. Do not use the retired ExternalChannel bridge, MCP, Gateway, or CLI path for production sends.
 
 ## Route Proof Log
 
@@ -43,7 +43,7 @@ The system must not send when:
 - multiple open tickets match the same recipient and no ticket link exists.
 - the outbound safety gate returns `block`.
 - AI output requires review and has not been approved.
-- the selected adapter is the retired OpenClaw bridge.
+- the selected adapter is the retired ExternalChannel bridge.
 
 ## Proof Scope
 

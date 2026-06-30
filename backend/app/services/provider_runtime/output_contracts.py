@@ -12,7 +12,7 @@ _SECRET_PATTERNS = [
     re.compile(("ey" + "J") + r"[A-Za-z0-9_\-]{12,}"),
     re.compile(("Bear" + "er") + r"\s+[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
 ]
-_INTERNAL_PATTERNS = ["localhost", "127.0.0.1", "::1", "bridge", "codex_app_server", "openclaw", "provider_runtime"]
+_INTERNAL_PATTERNS = ["localhost", "127.0.0.1", "::1", "bridge", "codex_app_server", "external_channel", "provider_runtime"]
 _STATUS_WORDS = [
     "delivered", "in transit", "out for delivery", "customs", "returned", "failed delivery",
     "派送", "已签收", "运输中", "清关", "退回",

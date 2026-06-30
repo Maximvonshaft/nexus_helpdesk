@@ -158,7 +158,7 @@ Upgrade the static WebChat widget into a TypeScript-based embeddable runtime whi
 
 ### Objective
 
-Introduce an event runtime that can power live WebChat, ticket, OpenClaw, and runtime status updates.
+Introduce an event runtime that can power live WebChat, ticket, ExternalChannel, and runtime status updates.
 
 ### Scope
 
@@ -226,12 +226,12 @@ Upgrade AI Control from JSON-heavy admin page into a governed AI configuration s
 
 ### Objective
 
-Upgrade runtime/control pages into an operations control tower for health, OpenClaw, jobs, safety, and event activity.
+Upgrade runtime/control pages into an operations control tower for health, ExternalChannel, jobs, safety, and event activity.
 
 ### Scope
 
 - Runtime health cards.
-- OpenClaw bridge status.
+- ExternalChannel bridge status.
 - Unresolved event visibility.
 - Job and queue status.
 - Safety gate block visibility.
