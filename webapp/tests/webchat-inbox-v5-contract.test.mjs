@@ -42,6 +42,22 @@ test('webchat inbox V5 is wired to real APIs, realtime, fallback polling, eviden
   }
 })
 
+test('webchat inbox V5 exposes the Unified Agent Inbox foundation without faking non-WebChat traffic', () => {
+  assert.match(inbox, /title="Unified Agent Inbox"/)
+  assert.match(inbox, /data-testid="unified-agent-inbox-shell"/)
+  assert.match(inbox, /data-testid="unified-agent-inbox-channel-map"/)
+  assert.match(inbox, /data-testid="unified-agent-inbox-state-model"/)
+  assert.match(inbox, /CHANNEL_ORDER: AgentInboxChannel\[\] = \['webchat', 'whatsapp', 'webcall', 'email'\]/)
+  assert.match(inbox, /status: '生产接入'/)
+  assert.match(inbox, /status: '接入中'/)
+  assert.match(inbox, /channel: 'webchat'/)
+  for (const state of ['claim', 'release', 'resolve', 'reply_sent']) {
+    assert.match(inbox, new RegExp(`key: '${state}'`))
+  }
+  assert.doesNotMatch(inbox, /api\.whatsappLiteConversations/)
+  assert.doesNotMatch(inbox, /whatsappNativeQr\(.*\)\.then/)
+})
+
 test('webchat inbox V5 has no visible backend-placeholder copy for designed controls', () => {
   for (const forbidden of ['待接口', '后续接', '生产占位', 'agent_to_visitor', '附件发送仍待后端能力', '当前 main 尚未提供']) {
     assert.doesNotMatch(inbox, new RegExp(forbidden))

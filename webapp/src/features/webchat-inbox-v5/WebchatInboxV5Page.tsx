@@ -10,7 +10,7 @@ import { AppShell } from '@/layouts/AppShell'
 import { ApiError, api } from '@/lib/api'
 import { formatDateTime, sanitizeDisplayText, statusTone } from '@/lib/format'
 import { findReplyChannelCapability, isCustomerSendableReplyChannel, outboundChannelMissingText } from '@/lib/outboundChannels'
-import type { CaseDetail, Team, WebchatActionAudit, WebchatConversation, WebchatHandoffQueue, WebchatHandoffRequest, WebchatMessage, WebchatThread } from '@/lib/types'
+import type { BadgeTone, CaseDetail, Team, WebchatActionAudit, WebchatConversation, WebchatHandoffQueue, WebchatHandoffRequest, WebchatMessage, WebchatThread } from '@/lib/types'
 import { useWebchatRealtime, type WebchatRealtimeEvent } from '@/lib/webchatRealtime'
 import { AgentWebCallPanel } from '@/components/webcall/AgentWebCallPanel'
 import { Badge } from '@/components/ui/Badge'
@@ -26,6 +26,7 @@ import { canEscalateTickets, canForceWebchatHandoff, canUploadAttachment, canVie
 
 type InboxView = 'requested' | 'mine' | 'ai_active' | 'all' | 'closed'
 type FilterKey = 'needs_human' | 'timeout' | 'ai_suspended' | 'unread'
+type AgentInboxChannel = 'webchat' | 'whatsapp' | 'webcall' | 'email'
 type HandoffQueueView = Exclude<InboxView, 'all'>
 type RealtimeHandoffView = 'requested' | 'ai_active' | 'mine'
 type ToastState = { message: string; tone?: 'default' | 'danger' | 'success'; action?: { label: string; onClick: () => void } }
@@ -64,6 +65,7 @@ type InboxRow = {
   activeAgentId?: number | null
   unreadCount?: number
   markedUnread?: boolean
+  channel: AgentInboxChannel
   source: 'handoff' | 'conversation'
   rawHandoff?: WebchatHandoffRequest
   rawConversation?: WebchatConversation
@@ -90,6 +92,39 @@ const QUICK_REPLIES = [
   '请提供运单号或订单号，方便我们继续查询。',
   '该事项需要人工核实，我会继续为您跟进。',
 ]
+const CHANNEL_ORDER: AgentInboxChannel[] = ['webchat', 'whatsapp', 'webcall', 'email']
+const CHANNEL_META: Record<AgentInboxChannel, { label: string; status: string; detail: string; tone: BadgeTone }> = {
+  webchat: {
+    label: 'WebChat',
+    status: '生产接入',
+    detail: '当前页面真实承载队列、接管、回复、WebSocket 和审计。',
+    tone: 'success',
+  },
+  whatsapp: {
+    label: 'WhatsApp',
+    status: '接入中',
+    detail: '复用 native sidecar、账号绑定和同一套 Agent 状态模型。',
+    tone: 'warning',
+  },
+  webcall: {
+    label: 'WebCall',
+    status: '证据联动',
+    detail: '呼入、接听和通话证据已经挂入当前工单上下文。',
+    tone: 'default',
+  },
+  email: {
+    label: 'Email',
+    status: '后续归并',
+    detail: '将沿用同一套客户身份、工单证据和审计模型。',
+    tone: 'default',
+  },
+}
+const UNIFIED_STATE_MODEL = [
+  { key: 'claim', label: '接管', detail: '客服取得回复权，AI 自动让位并写入审计。' },
+  { key: 'release', label: '释放', detail: '会话回到队列，其他客服可以继续处理。' },
+  { key: 'resolve', label: '完结', detail: '工单进入关闭或已解决状态，后续只保留追溯证据。' },
+  { key: 'reply_sent', label: '回复已发送', detail: '所有对客通道统一记录正文、操作者和发送结果。' },
+] as const
 const EMOJIS = ['🙂', '👍', '🙏', '✅', '📦', '🚚', '⏳', '📍']
 const AI_ACTIVE_STATUSES = new Set(['queued', 'processing', 'bridge_calling', 'fallback_generating'])
 const TERMINAL_TICKET_STATUSES = new Set(['closed', 'resolved', 'canceled', 'cancelled'])
@@ -210,6 +245,7 @@ function rowFromHandoff(item: WebchatHandoffRequest): InboxRow {
     activeAgentId: item.active_agent_id,
     unreadCount: item.unread_count,
     markedUnread: item.marked_unread,
+    channel: 'webchat',
     source: 'handoff',
     rawHandoff: item,
   }
@@ -236,6 +272,7 @@ function rowFromConversation(item: WebchatConversation): InboxRow {
     activeAgentId: item.active_agent_id,
     unreadCount: item.unread_count,
     markedUnread: item.marked_unread,
+    channel: 'webchat',
     source: 'conversation',
     rawConversation: item,
   }
@@ -252,6 +289,61 @@ function PrimaryStatus({ row }: { row: InboxRow }) {
 
 function RealtimePill({ connected, status }: { connected: boolean; status: string }) {
   return connected ? <Badge tone="success">WebSocket 实时</Badge> : <Badge tone="warning">轮询兜底 · {sanitizeDisplayText(status)}</Badge>
+}
+
+function ChannelBadge({ channel }: { channel: AgentInboxChannel }) {
+  const meta = CHANNEL_META[channel]
+  return <Badge tone={meta.tone}>{meta.label}</Badge>
+}
+
+function UnifiedInboxFoundation() {
+  return (
+    <section className="v5-unified-foundation" data-testid="unified-agent-inbox-shell" aria-label="Unified Agent Inbox foundation">
+      <div className="v5-unified-card" data-testid="unified-agent-inbox-channel-map">
+        <div className="v5-unified-card-head">
+          <div>
+            <h3>Channel Map</h3>
+            <p>先把已验证的 WebChat 稳住，再把 WhatsApp、WebCall、Email 收敛到同一张 Agent Inbox。</p>
+          </div>
+          <Badge tone="success">WebChat live</Badge>
+        </div>
+        <div className="v5-channel-grid">
+          {CHANNEL_ORDER.map((channel) => {
+            const meta = CHANNEL_META[channel]
+            return (
+              <div className="v5-channel-tile" key={channel} data-channel={channel}>
+                <div className="v5-channel-title">
+                  <strong>{meta.label}</strong>
+                  <Badge tone={meta.tone}>{meta.status}</Badge>
+                </div>
+                <p>{meta.detail}</p>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+      <div className="v5-unified-card" data-testid="unified-agent-inbox-state-model">
+        <div className="v5-unified-card-head">
+          <div>
+            <h3>State Model</h3>
+            <p>把渠道差异收进适配层，前台只暴露客服真正需要处理的状态动作。</p>
+          </div>
+          <Badge>Agent contract</Badge>
+        </div>
+        <div className="v5-state-model-list">
+          {UNIFIED_STATE_MODEL.map((state) => (
+            <div className="v5-state-model-item" key={state.key}>
+              <code>{state.key}</code>
+              <div>
+                <strong>{state.label}</strong>
+                <span>{state.detail}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
 }
 
 function ConfirmDialog({ state, onClose }: { state: ConfirmState | null; onClose: () => void }) {
@@ -341,7 +433,7 @@ function InboxHeader({
 }) {
   return (
     <Tabs.Root value={view} onValueChange={(next) => setView(next as InboxView)}>
-      <Tabs.List className="v5-tabs-list" aria-label="WebChat Inbox views">
+      <Tabs.List className="v5-tabs-list" aria-label="Unified Agent Inbox views">
         {(['requested', 'mine', 'ai_active', 'all', 'closed'] as InboxView[]).map((item) => (
           <Tabs.Trigger className="v5-tab" key={item} value={item}>
             {VIEW_LABELS[item]} <span>{typeof counts[item] === 'number' ? counts[item] : '—'}</span>
@@ -379,7 +471,7 @@ function UnifiedInbox({
 }) {
   return (
     <Card className="v5-panel v5-inbox-panel">
-      <CardHeader title="统一 Inbox" subtitle="按处理优先级收敛待接入、我的会话和 AI 监控。" />
+      <CardHeader title="会话队列" subtitle="WebChat 已上线；后续渠道沿用同一套优先级和接管模型。" />
       <CardBody>
         <InboxHeader view={view} setView={setView} counts={counts} />
         <div className="v5-search-row">
@@ -396,7 +488,7 @@ function UnifiedInbox({
             <button type="button" key={key} className="v5-filter-chip" data-active={activeFilters.has(key)} onClick={() => toggleFilter(key)}>{FILTER_LABELS[key]}</button>
           ))}
         </div>
-        <div className="v5-inbox-list" role="listbox" aria-label="WebChat conversations">
+        <div className="v5-inbox-list" role="listbox" aria-label="Unified Agent Inbox conversations">
           {rows.map((row) => (
             <button
               type="button"
@@ -416,6 +508,7 @@ function UnifiedInbox({
               </div>
               <div className="v5-inbox-meta">
                 <PrimaryStatus row={row} />
+                <ChannelBadge channel={row.channel} />
                 {incomingVoiceByTicket.get(row.ticketId) ? <Badge tone="warning">Incoming WebCall</Badge> : null}
                 {(row.unreadCount || row.markedUnread) ? <Badge tone="warning">未读 {row.unreadCount || 1}</Badge> : null}
                 {row.aiStatus ? <Badge tone={aiTone(row.aiStatus, row.aiPending)}>AI {shortText(row.aiStatus)}</Badge> : null}
@@ -805,6 +898,7 @@ function ContextPanel({
         <Section title="客户上下文">
           <div className="v5-kv"><span>客户</span><strong>{shortText(row.visitorLabel)}</strong></div>
           <div className="v5-kv"><span>工单</span><strong>{shortText(row.ticketNo || `#${row.ticketId}`)}</strong></div>
+          <div className="v5-kv"><span>通道</span><strong>{CHANNEL_META[row.channel].label}</strong></div>
           <div className="v5-kv"><span>来源</span><strong>{shortText(row.origin || thread?.origin || 'unknown')}</strong></div>
           <div className="v5-kv"><span>页面</span><strong>{shortText(thread?.page_url || row.rawConversation?.page_url || '待客户侧上报')}</strong></div>
         </Section>
@@ -1194,11 +1288,12 @@ export function WebchatInboxV5Page() {
   return (
     <AppShell>
       <PageHeader
-        eyebrow="WebChat"
-        title="人工 WebChat 收件箱"
-        description="统一队列、接管控制、实时会话、工单证据和 WebCall 呼入处理，全部接入当前生产 API。"
+        eyebrow="Agent Operations"
+        title="Unified Agent Inbox"
+        description="WebChat 已接入生产 API；WhatsApp、WebCall、Email 将复用同一套接管、释放、回复和审计状态模型。"
         actions={<div className="button-row"><Button variant="secondary" onClick={() => void refreshWebchatState()}>刷新</Button>{realtimeLabel}</div>}
       />
+      <UnifiedInboxFoundation />
       <div className="v5-shell">
         <UnifiedInbox
           rows={rows}
