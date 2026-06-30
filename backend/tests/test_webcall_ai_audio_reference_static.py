@@ -214,7 +214,7 @@ def test_audio_reference_resolver_has_no_runtime_or_network_imports():
         "websocket",
         "websockets",
         "speedaf",
-        "openclaw",
+        "external_channel",
         "openai",
         "codex",
         "provider_runtime",

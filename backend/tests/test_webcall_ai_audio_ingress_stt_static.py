@@ -25,7 +25,7 @@ def test_audio_ingress_stt_runtime_has_no_forbidden_provider_or_tool_imports():
 
     for forbidden in [
         "speedaf",
-        "openclaw",
+        "external_channel",
         "openai",
         "codex",
         "provider_runtime",

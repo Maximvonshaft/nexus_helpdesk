@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 
 FORBIDDEN = [
-    'OpenClaw',
+    'ExternalChannel',
     'gateway',
     'prompt',
     'system prompt',

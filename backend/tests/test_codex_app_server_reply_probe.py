@@ -63,7 +63,7 @@ def test_probe_validates_nexus_fast_reply_schema():
 def test_probe_rejects_internal_terms_through_existing_parser():
     ok, parsed, error = probe.validate_fast_reply(
         {
-            "reply": "The OpenClaw gateway on localhost is ready.",
+            "reply": "The ExternalChannel gateway on localhost is ready.",
             "intent": "other",
             "tracking_number": None,
             "handoff_required": False,

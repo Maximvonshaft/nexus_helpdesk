@@ -32,13 +32,13 @@ def test_node_runtime_package_contains_required_modules():
         assert (base / name).exists(), name
 
 
-def test_no_private_openclaw_imports_or_infer_cli():
+def test_no_private_external_channel_imports_or_infer_cli():
     runtime = "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "tools" / "nexus-codex-runtime").rglob("*.ts"))
 
     assert "extensions/codex/src/app-server" not in runtime
-    assert "openclaw infer model run" not in runtime
-    assert "from \"openclaw" not in runtime
-    assert "from 'openclaw" not in runtime
+    assert "external_channel infer model run" not in runtime
+    assert "from \"external_channel" not in runtime
+    assert "from 'external_channel" not in runtime
 
 
 def test_compose_adds_node_runtime_and_keeps_python_rollback():
@@ -80,7 +80,7 @@ def test_node_runtime_defaults_match_validated_server_profile():
     assert 'const DEFAULT_SERVICE_TIER = "priority"' in env
     assert "CODEX_APPSERVER_MAX_CONCURRENCY: ${CODEX_APPSERVER_MAX_CONCURRENCY:-4}" in compose
     assert "CODEX_APPSERVER_QUEUE_TIMEOUT_MS: ${CODEX_APPSERVER_QUEUE_TIMEOUT_MS:-750}" in compose
-    assert "@openclaw/codex" not in dockerfile
+    assert "@external-channel/codex" not in dockerfile
     assert "codex --version" not in dockerfile
 
 

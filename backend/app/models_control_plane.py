@@ -203,7 +203,7 @@ class ChannelOnboardingTask(Base):
     target_slot: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     desired_display_name: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
     desired_channel_account_binding: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
-    openclaw_account_id: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
+    external_channel_account_id: Mapped[Optional[str]] = mapped_column(String(160), nullable=True, index=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, index=True)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)

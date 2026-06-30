@@ -956,8 +956,8 @@ export interface EvidenceSummary {
   loaded: boolean
   preview_limit: number
   attachments_count: number
-  openclaw_transcript_count: number
-  openclaw_attachment_references_count: number
+  external_channel_transcript_count: number
+  external_channel_attachment_references_count: number
   active_market_bulletins_count: number
 }
 
@@ -989,10 +989,10 @@ export interface CaseDetail {
   resolution_summary?: string | null
   evidence_summary?: EvidenceSummary
   attachments_count?: number
-  openclaw_transcript_count?: number
-  openclaw_attachment_references_count?: number
+  external_channel_transcript_count?: number
+  external_channel_attachment_references_count?: number
   active_market_bulletins_count?: number
-  openclaw_conversation?: {
+  external_channel_conversation?: {
     session_key: string
     channel?: string | null
     recipient?: string | null
@@ -1000,9 +1000,9 @@ export interface CaseDetail {
     thread_id?: string | null
     last_synced_at?: string | null
   } | null
-  openclaw_transcript?: TranscriptMessage[]
+  external_channel_transcript?: TranscriptMessage[]
   attachments?: SystemAttachment[]
-  openclaw_attachment_references?: AttachmentReference[]
+  external_channel_attachment_references?: AttachmentReference[]
   active_market_bulletins?: Bulletin[]
   customer?: {
     name?: string | null
@@ -1023,7 +1023,7 @@ export interface QueueSummary {
   webchat_handoff_ack_sent?: number
   pending_jobs: number
   dead_jobs: number
-  openclaw_links: number
+  external_channel_links: number
 }
 
 export interface RuntimeHealth {
@@ -1031,7 +1031,7 @@ export interface RuntimeHealth {
   sync_daemon_last_seen_at?: string | null
   sync_daemon_status?: string | null
   stale_link_count: number
-  openclaw_links_count?: number
+  external_channel_links_count?: number
   transcript_messages_count?: number
   unresolved_events_count?: number
   pending_sync_jobs: number
@@ -1047,8 +1047,8 @@ export interface RuntimeHealth {
   webchat_handoff_ack_sent?: number
   outbound_dispatch_enabled?: boolean
   outbound_provider?: string
-  openclaw_bridge_allow_writes?: boolean
-  openclaw_cli_fallback_enabled?: boolean
+  external_channel_bridge_allow_writes?: boolean
+  external_channel_cli_fallback_enabled?: boolean
   warnings: string[]
 }
 
@@ -1076,7 +1076,7 @@ export interface OutboundChannelCapabilitiesResponse {
   channels: OutboundChannelCapability[]
 }
 
-export interface OpenClawConnectivityProbe {
+export interface ExternalChannelConnectivityProbe {
   deployment_mode: string
   transport: string
   command?: string | null
@@ -1095,9 +1095,9 @@ export interface ProductionReadiness {
   database_url_scheme: string
   is_postgres: boolean
   storage_backend: string
-  openclaw_transport: string
+  external_channel_transport: string
   metrics_enabled: boolean
-  openclaw_sync_enabled: boolean
+  external_channel_sync_enabled: boolean
   outbound_email_production_pilot_enabled?: boolean
   outbound_email_active_accounts?: number
   outbound_email_successful_test_send_accounts?: number
@@ -1375,7 +1375,7 @@ export interface ChannelOnboardingTask {
   target_slot?: string | null
   desired_display_name?: string | null
   desired_channel_account_binding?: string | null
-  openclaw_account_id?: string | null
+  external_channel_account_id?: string | null
   last_error?: string | null
   created_at: string
   updated_at: string
@@ -1388,7 +1388,7 @@ export interface ChannelOnboardingTaskList {
   total: number
 }
 
-export interface OpenClawUnresolvedEvent {
+export interface ExternalChannelUnresolvedEvent {
   id: number
   source: string
   session_key?: string | null

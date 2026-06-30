@@ -69,10 +69,10 @@ jobs:
           STORAGE_BACKEND: s3
           S3_BUCKET: ci-dummy-bucket
           S3_REGION: us-east-1
-          OPENCLAW_TRANSPORT: disabled
-          OPENCLAW_DEPLOYMENT_MODE: disabled
-          OPENCLAW_BRIDGE_ENABLED: "false"
-          OPENCLAW_CLI_FALLBACK_ENABLED: "false"
+          EXTERNAL_CHANNEL_TRANSPORT: disabled
+          EXTERNAL_CHANNEL_DEPLOYMENT_MODE: disabled
+          EXTERNAL_CHANNEL_BRIDGE_ENABLED: "false"
+          EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED: "false"
           OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED: "false"
           OUTBOUND_EMAIL_TEST_SEND_MAX_AGE_HOURS: "24"
           METRICS_ENABLED: "true"

@@ -6,7 +6,7 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from ...enums import MessageStatus, SourceChannel
-from ...models import ChannelAccount, OpenClawConversationLink, Ticket, TicketOutboundMessage
+from ...models import ChannelAccount, ExternalChannelConversationLink, Ticket, TicketOutboundMessage
 from ...utils.time import utc_now
 
 DispatchFn = Callable[..., tuple[MessageStatus, str | None, object | None]]
@@ -75,14 +75,14 @@ def _active_account_for_market(db: Session, market_id: int | None) -> ChannelAcc
     return query.filter(ChannelAccount.market_id.is_(None)).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
 
 
-def _resolve_whatsapp_account(db: Session, *, ticket: Ticket | None, link: OpenClawConversationLink | None) -> tuple[ChannelAccount | None, str]:
+def _resolve_whatsapp_account(db: Session, *, ticket: Ticket | None, link: ExternalChannelConversationLink | None) -> tuple[ChannelAccount | None, str]:
     if link is not None:
         row = _active_account_by_pk(db, getattr(link, "channel_account_id", None))
         if row is not None:
-            return row, "openclaw_link.channel_account_id"
+            return row, "external_channel_link.channel_account_id"
         row = _active_account_by_id(db, getattr(link, "account_id", None))
         if row is not None:
-            return row, "openclaw_link.account_id"
+            return row, "external_channel_link.account_id"
     if ticket is not None:
         row = _active_account_by_pk(db, getattr(ticket, "channel_account_id", None))
         if row is not None:
@@ -97,7 +97,7 @@ def resolve_whatsapp_outbound_route(db: Session, *, message: TicketOutboundMessa
     if message.channel != SourceChannel.whatsapp:
         raise ValueError("whatsapp_adapter_channel_mismatch")
 
-    link = ticket.openclaw_link if ticket is not None else None
+    link = ticket.external_channel_link if ticket is not None else None
     target = None
     session_key = None
     thread_id = None
@@ -107,7 +107,7 @@ def resolve_whatsapp_outbound_route(db: Session, *, message: TicketOutboundMessa
         session_key = _clean(link.session_key)
         target = _clean_whatsapp_target(link.recipient)
         thread_id = _clean(link.thread_id)
-        source = "openclaw_link"
+        source = "external_channel_link"
 
     if target is None and ticket is not None:
         target = _clean_whatsapp_target(ticket.source_chat_id) or _clean_whatsapp_target(ticket.preferred_reply_contact)
@@ -143,12 +143,12 @@ def dispatch_whatsapp_outbound(
     if dispatch_fn is None:
         return (
             MessageStatus.failed,
-            "legacy_openclaw_bridge_retired",
+            "legacy_external_channel_bridge_retired",
             None,
             {
                 **route.to_context(idempotency_key=idempotency_key),
-                "failure_code": "legacy_openclaw_bridge_retired",
-                "error": "OpenClaw bridge dispatch has been retired; use the native WhatsApp sidecar.",
+                "failure_code": "legacy_external_channel_bridge_retired",
+                "error": "ExternalChannel bridge dispatch has been retired; use the native WhatsApp sidecar.",
                 "retryable": False,
             },
         )

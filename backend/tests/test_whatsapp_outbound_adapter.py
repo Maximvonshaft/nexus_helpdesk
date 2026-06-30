@@ -193,25 +193,25 @@ def test_process_whatsapp_message_native_success_sets_sent_and_waiting_customer(
     assert ticket.conversation_state.value == "waiting_customer"
 
 
-def test_process_whatsapp_openclaw_mode_is_retired_non_retryable(db_session, monkeypatch):
+def test_process_whatsapp_external_channel_mode_is_retired_non_retryable(db_session, monkeypatch):
     ticket = _ticket(db_session, contact="+15550123456")
     message = _message(db_session, ticket, body="resolved update")
 
     monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
     monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "native")
-    monkeypatch.setattr(message_dispatch.settings, "whatsapp_dispatch_mode", "openclaw_bridge")
+    monkeypatch.setattr(message_dispatch.settings, "whatsapp_dispatch_mode", "external_channel_bridge")
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
     called = {"native": False}
 
     def fake_native(*args, **kwargs):
         called["native"] = True
-        raise AssertionError("native sidecar must not run in retired openclaw_bridge mode")
+        raise AssertionError("native sidecar must not run in retired external_channel_bridge mode")
 
     monkeypatch.setattr(message_dispatch, "dispatch_whatsapp_native_outbound", fake_native)
 
     processed = message_dispatch.process_outbound_message(db_session, message)
 
     assert processed.status == MessageStatus.dead
-    assert processed.failure_code == "legacy_openclaw_bridge_retired"
+    assert processed.failure_code == "legacy_external_channel_bridge_retired"
     assert called == {"native": False}

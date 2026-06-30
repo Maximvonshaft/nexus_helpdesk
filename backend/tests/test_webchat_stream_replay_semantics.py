@@ -47,7 +47,7 @@ def _settings(enabled: bool = True):
         stream_enabled=enabled,
         stream_require_accept=True,
         provider_runtime_agent_id="webchat-fast",
-        is_openclaw_stream_configured=True,
+        is_external_channel_stream_configured=True,
     )
 
 

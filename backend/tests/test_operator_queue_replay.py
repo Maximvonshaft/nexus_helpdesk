@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app.db import Base  # noqa: E402
 from app.enums import UserRole  # noqa: E402
-from app.models import AdminAuditLog, OpenClawUnresolvedEvent, User  # noqa: E402
+from app.models import AdminAuditLog, ExternalChannelUnresolvedEvent, User  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
 from app.services.operator_queue import OperatorQueueError, project_operator_queue, replay_operator_task  # noqa: E402
 
@@ -47,7 +47,7 @@ def make_user(db):
 
 
 def make_unresolved(db):
-    row = OpenClawUnresolvedEvent(
+    row = ExternalChannelUnresolvedEvent(
         source="default",
         session_key="sess-secret",
         event_type="message",
@@ -105,7 +105,7 @@ def test_replay_failure_is_409_and_not_fake_success(db_session):
 
 def test_replay_missing_unresolved_event_returns_404(db_session):
     admin = make_user(db_session)
-    task = OperatorTask(source_type="openclaw", source_id="missing", unresolved_event_id=999, task_type="bridge_unresolved", status="pending", priority=50)
+    task = OperatorTask(source_type="external_channel", source_id="missing", unresolved_event_id=999, task_type="bridge_unresolved", status="pending", priority=50)
     db_session.add(task)
     db_session.commit()
 

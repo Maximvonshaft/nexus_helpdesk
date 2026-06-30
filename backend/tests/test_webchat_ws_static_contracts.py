@@ -52,9 +52,9 @@ def test_webchat_ws_rejects_memory_broker_in_production(monkeypatch):
         "SEED_DEMO_DATA": "false",
         "ALLOW_DEV_AUTH": "false",
         "ALLOW_LEGACY_INTEGRATION_API_KEY": "false",
-        "OPENCLAW_CLI_FALLBACK_ENABLED": "false",
-        "OPENCLAW_TRANSPORT": "disabled",
-        "OPENCLAW_DEPLOYMENT_MODE": "disabled",
+        "EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED": "false",
+        "EXTERNAL_CHANNEL_TRANSPORT": "disabled",
+        "EXTERNAL_CHANNEL_DEPLOYMENT_MODE": "disabled",
         "STORAGE_BACKEND": "s3",
     }
     old = {key: os.environ.get(key) for key in env}

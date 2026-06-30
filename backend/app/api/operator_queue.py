@@ -10,7 +10,7 @@ from ..operator_schemas import (
     OperatorTaskTransitionRequest,
     OperatorTaskTransitionResponse,
 )
-from ..services.openclaw_bridge import replay_unresolved_openclaw_event
+from ..services.external_channel_bridge import replay_unresolved_external_channel_event
 from ..services.operator_queue import (
     OperatorQueueError,
     list_operator_tasks,
@@ -136,7 +136,7 @@ def replay_operator_task_endpoint(
                 task_id=task_id,
                 actor_id=current_user.id,
                 note=payload.note if payload else None,
-                replay_func=replay_unresolved_openclaw_event,
+                replay_func=replay_unresolved_external_channel_event,
             )
         return {"task": serialize_operator_task(row), "replay_result": replay_result}
     except OperatorQueueError as exc:

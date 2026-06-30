@@ -71,7 +71,7 @@ def test_sanitize_operator_payload_redacts_sensitive_fields():
 def test_create_operator_task_stores_redacted_payload(db_session):
     row, created = create_operator_task(
         db_session,
-        source_type="openclaw",
+        source_type="external_channel",
         task_type="bridge_unresolved",
         source_id="src-1",
         unresolved_event_id=1,

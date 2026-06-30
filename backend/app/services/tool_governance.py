@@ -34,19 +34,26 @@ READ_TOOLS = {
     "attachments_fetch",
     "events_poll",
     "events_wait",
-    "openclaw_bridge.speedaf_lookup",
+    "external_channel_bridge.speedaf_lookup",
+    "support_knowledge_retrieve",
+    "speedaf_lookup",
+    "speedaf_query_waybills",
     "tracking_fact_lookup",
     "speedaf.order.query",
+    "speedaf.order.waybillCode.query",
     "speedaf.order.waybill_code.query",
 }
 WRITE_TOOLS = {
     "messages_send",
+    "speedaf_create_work_order",
+    "speedaf_cancel_order",
+    "speedaf_update_address",
     "speedaf.work_order.create",
     "speedaf.order.cancel",
     "speedaf.order.update_address",
 }
-EXTERNAL_SEND_TOOLS = {"messages_send", "openclaw_bridge.messages_send"}
-SYSTEM_TOOLS = {"openclaw_bridge.ai_reply", "speedaf.voice.callback"}
+EXTERNAL_SEND_TOOLS = {"messages_send", "external_channel_bridge.messages_send"}
+SYSTEM_TOOLS = {"external_channel_bridge.ai_reply", "speedaf.voice.callback"}
 VALID_ENFORCEMENT_MODES = {"off", "audit_only", "enforce"}
 
 
@@ -94,7 +101,7 @@ def classify_tool_type(tool_name: str) -> str:
         return "write_action"
     if normalized in SYSTEM_TOOLS or normalized.endswith(".ai_reply"):
         return "system"
-    if normalized in READ_TOOLS or normalized.startswith("openclaw_bridge.speedaf_lookup"):
+    if normalized in READ_TOOLS or normalized.startswith("external_channel_bridge.speedaf_lookup"):
         return "read_only"
     return "read_only"
 
@@ -235,7 +242,7 @@ def get_or_create_tool_registry_entry(
     db: Session,
     *,
     tool_name: str,
-    provider: str = "openclaw",
+    provider: str = "external_channel",
     tool_type: str | None = None,
     default_timeout_ms: int | None = None,
     max_timeout_ms: int | None = None,
@@ -247,7 +254,7 @@ def get_or_create_tool_registry_entry(
     if row is None:
         row = ToolRegistry(
             tool_name=tool_name,
-            provider=(provider or "openclaw")[:80],
+            provider=(provider or "external_channel")[:80],
             tool_type=resolved_type,
             default_timeout_ms=default_timeout_ms,
             max_timeout_ms=max_timeout_ms,
@@ -327,7 +334,7 @@ def _insert_tool_call_audit(
     resolved_error_code = _error_code_for(safe_status, error_code, error_message)
     row = ToolCallLog(
         tool_name=(tool_name or "unknown_tool")[:160],
-        provider=(provider or "openclaw")[:80],
+        provider=(provider or "external_channel")[:80],
         tool_type=resolved_type,
         conversation_id=conversation_id[:160] if conversation_id else None,
         webchat_conversation_id=webchat_conversation_id,
@@ -356,7 +363,7 @@ def _insert_tool_call_audit(
 def record_tool_call(
     *,
     tool_name: str,
-    provider: str = "openclaw",
+    provider: str = "external_channel",
     tool_type: str | None = None,
     input_payload: Any = None,
     output_payload: Any = None,
@@ -379,7 +386,7 @@ def record_tool_call(
     """Record a safe audit-only tool call.
 
     This function is intentionally best-effort. It must never break customer
-    replies, OpenClaw sync, or outbound operations if the audit schema has not
+    replies, ExternalChannel sync, or outbound operations if the audit schema has not
     been migrated yet or the audit insert fails.
     """
     resolved_type = tool_type or classify_tool_type(tool_name)

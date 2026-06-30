@@ -24,9 +24,9 @@ class ChannelOnboardingTaskCreate(BaseModel):
     target_slot: Optional[str] = Field(default=None, max_length=120)
     desired_display_name: Optional[str] = Field(default=None, max_length=160)
     desired_channel_account_binding: Optional[str] = Field(default=None, max_length=160)
-    openclaw_account_id: Optional[str] = Field(default=None, max_length=160)
+    external_channel_account_id: Optional[str] = Field(default=None, max_length=160)
 
-    @field_validator("provider", "target_slot", "desired_display_name", "desired_channel_account_binding", "openclaw_account_id", mode="before")
+    @field_validator("provider", "target_slot", "desired_display_name", "desired_channel_account_binding", "external_channel_account_id", mode="before")
     @classmethod
     def strip_strings(cls, value):
         if isinstance(value, str):
@@ -40,9 +40,9 @@ class ChannelOnboardingTaskUpdate(BaseModel):
     target_slot: Optional[str] = Field(default=None, max_length=120)
     desired_display_name: Optional[str] = Field(default=None, max_length=160)
     desired_channel_account_binding: Optional[str] = Field(default=None, max_length=160)
-    openclaw_account_id: Optional[str] = Field(default=None, max_length=160)
+    external_channel_account_id: Optional[str] = Field(default=None, max_length=160)
 
-    @field_validator("target_slot", "desired_display_name", "desired_channel_account_binding", "openclaw_account_id", mode="before")
+    @field_validator("target_slot", "desired_display_name", "desired_channel_account_binding", "external_channel_account_id", mode="before")
     @classmethod
     def strip_strings(cls, value):
         if isinstance(value, str):
@@ -64,10 +64,10 @@ class ChannelOnboardingTaskFailRequest(BaseModel):
 
 
 class ChannelOnboardingTaskCompleteRequest(BaseModel):
-    openclaw_account_id: Optional[str] = Field(default=None, max_length=160)
+    external_channel_account_id: Optional[str] = Field(default=None, max_length=160)
     desired_channel_account_binding: Optional[str] = Field(default=None, max_length=160)
 
-    @field_validator("openclaw_account_id", "desired_channel_account_binding", mode="before")
+    @field_validator("external_channel_account_id", "desired_channel_account_binding", mode="before")
     @classmethod
     def strip_strings(cls, value):
         if isinstance(value, str):
@@ -85,7 +85,7 @@ class ChannelOnboardingTaskOut(ChannelControlModel):
     target_slot: Optional[str] = None
     desired_display_name: Optional[str] = None
     desired_channel_account_binding: Optional[str] = None
-    openclaw_account_id: Optional[str] = None
+    external_channel_account_id: Optional[str] = None
     last_error: Optional[str] = None
     created_at: datetime
     updated_at: datetime

@@ -29,7 +29,7 @@ def test_final_closure_runtime_has_no_forbidden_network_or_provider_calls():
         "aiohttp",
         "websocket",
         "websockets",
-        "openclaw",
+        "external_channel",
         "openai",
         "codex",
         "provider_runtime",

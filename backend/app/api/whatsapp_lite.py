@@ -37,25 +37,25 @@ EXCLUDED_TEST_RECIPIENTS = {
 }
 
 OUTBOX_MIRROR_FILENAME = "whatsapp-lite-outbox.jsonl"
-LEGACY_OUTBOX_MIRROR_FILENAME = "openclaw-whatsapp-lite-outbox.jsonl"
+LEGACY_OUTBOX_MIRROR_FILENAME = "external_channel-whatsapp-lite-outbox.jsonl"
 OUTBOX_MIRROR_DIRNAME = ".whatsapp-lite-state"
 OUTBOX_MIRROR_MAX_BYTES = 5 * 1024 * 1024
 
 
-def list_openclaw_conversations(*, limit: int = 100, channel: str | None = None) -> dict[str, Any]:
+def list_external_channel_conversations(*, limit: int = 100, channel: str | None = None) -> dict[str, Any]:
     """Compatibility hook for historical tests; the live legacy source is retired."""
     return {"conversations": [], "source": "legacy_whatsapp_lite_retired", "limit": limit, "channel": channel}
 
 
-def read_openclaw_bridge_conversation(session_key: str, limit: int = 50) -> tuple[dict[str, Any] | None, list[dict[str, Any]] | None]:
+def read_external_channel_bridge_conversation(session_key: str, limit: int = 50) -> tuple[dict[str, Any] | None, list[dict[str, Any]] | None]:
     return None, None
 
 
-def fetch_openclaw_bridge_attachments(session_key: str, message_id: str) -> list[dict[str, Any]]:
+def fetch_external_channel_bridge_attachments(session_key: str, message_id: str) -> list[dict[str, Any]]:
     return []
 
 
-def dispatch_via_openclaw_bridge(**kwargs) -> tuple[MessageStatus, str | None, object | None]:
+def dispatch_via_external_channel_bridge(**kwargs) -> tuple[MessageStatus, str | None, object | None]:
     return MessageStatus.failed, "legacy_whatsapp_lite_source_retired", None
 
 
@@ -416,7 +416,7 @@ def _related_whatsapp_direct_rows(session_key: str, *, limit: int = 200) -> list
     if not canonical_key:
         return []
     try:
-        payload = list_openclaw_conversations(limit=limit, channel="whatsapp")
+        payload = list_external_channel_conversations(limit=limit, channel="whatsapp")
     except Exception:
         return []
     rows = [
@@ -514,17 +514,17 @@ def _visible_text(message: Any) -> str:
 
 
 def _message_id(message: dict[str, Any], index: int) -> str:
-    openclaw = message.get("__openclaw")
-    if isinstance(openclaw, dict):
+    external_channel = message.get("__external_channel")
+    if isinstance(external_channel, dict):
         for key in ("id", "seq"):
-            value = _str(openclaw.get(key))
+            value = _str(external_channel.get(key))
             if value:
                 return value
     for key in ("id", "messageId", "idempotencyKey", "timestamp"):
         value = _str(message.get(key))
         if value:
             return value
-    return f"openclaw-{index}"
+    return f"external_channel-{index}"
 
 
 def _is_media_placeholder(text: str) -> bool:
@@ -554,7 +554,7 @@ def _raw_media_attachments(message: dict[str, Any]) -> list[dict[str, Any]]:
                 "caption": None,
                 "thumbnail_url": None,
                 "download_url": None,
-                "storage_status": "openclaw_media_referenced",
+                "storage_status": "external_channel_media_referenced",
                 "filename": str(path).rsplit("/", 1)[-1] if path else None,
             }
         )
@@ -598,7 +598,7 @@ def _normalize_attachments(raw_attachments: list[Any], fallback_caption: str | N
 
 def _message_attachments(session_key: str, message_id: str, raw: dict[str, Any], text: str) -> list[WhatsAppLiteAttachment]:
     fallback_caption = None if _is_media_placeholder(text) else (text or None)
-    fetched = fetch_openclaw_bridge_attachments(session_key, message_id) or []
+    fetched = fetch_external_channel_bridge_attachments(session_key, message_id) or []
     raw_refs = [] if fetched else _raw_media_attachments(raw)
     return _normalize_attachments([*fetched, *raw_refs], fallback_caption=fallback_caption)
 
@@ -625,7 +625,7 @@ def _customer_visible_messages(session_key: str, raw_messages: list[Any]) -> lis
             )
             provider = _str(raw.get("provider"))
             model = _str(raw.get("model"))
-            if not has_tool_content and (provider == "openclaw" or model == "delivery-mirror"):
+            if not has_tool_content and (provider == "external_channel" or model == "delivery-mirror"):
                 author = "speedy"
         if author is None:
             continue
@@ -652,7 +652,7 @@ def list_whatsapp_lite_conversations(
     ensure_capability(current_user, CAP_TICKET_READ, db, message="WhatsApp console access denied")
     offset = _offset_from_cursor(cursor)
     upstream_limit = min(500, max(200, (offset + limit) * 4))
-    payload = list_openclaw_conversations(limit=upstream_limit, channel="whatsapp")
+    payload = list_external_channel_conversations(limit=upstream_limit, channel="whatsapp")
     conversations = []
     for row in _dedupe_whatsapp_direct_rows(_items(payload)):
         conversation = _conversation_from_row(row)
@@ -676,7 +676,7 @@ def get_whatsapp_lite_conversation(
     current_user=Depends(get_current_user),
 ):
     ensure_capability(current_user, CAP_TICKET_READ, db, message="WhatsApp console access denied")
-    conversation_payload, messages_payload = read_openclaw_bridge_conversation(session_key, limit=limit)
+    conversation_payload, messages_payload = read_external_channel_bridge_conversation(session_key, limit=limit)
     if conversation_payload is None or messages_payload is None:
         raise HTTPException(status_code=status.HTTP_410_GONE, detail="Legacy WhatsApp Lite source is retired")
     row = conversation_payload if isinstance(conversation_payload, dict) else {"sessionKey": session_key}
@@ -694,7 +694,7 @@ def get_whatsapp_lite_conversation(
     for related_key in related_keys:
         if related_key == session_key:
             continue
-        _, related_messages_payload = read_openclaw_bridge_conversation(related_key, limit=min(limit, 50))
+        _, related_messages_payload = read_external_channel_bridge_conversation(related_key, limit=min(limit, 50))
         if related_messages_payload is None:
             continue
         message_groups.append(_customer_visible_messages(related_key, _items(related_messages_payload)))
@@ -717,7 +717,7 @@ def send_whatsapp_lite_message(
     account_id = _str(payload.account_id)
     thread_id = _str(payload.thread_id)
     if not target:
-        conversation_payload, _ = read_openclaw_bridge_conversation(payload.session_key, limit=1)
+        conversation_payload, _ = read_external_channel_bridge_conversation(payload.session_key, limit=1)
         if isinstance(conversation_payload, dict):
             conversation = _conversation_from_row(conversation_payload)
             target = conversation.recipient if conversation else None
@@ -725,7 +725,7 @@ def send_whatsapp_lite_message(
             thread_id = thread_id or (conversation.thread_id if conversation else None)
     if not target:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="WhatsApp recipient is missing")
-    status_value, provider_status, sent_at = dispatch_via_openclaw_bridge(
+    status_value, provider_status, sent_at = dispatch_via_external_channel_bridge(
         channel="whatsapp",
         target=target,
         body=payload.body.strip(),

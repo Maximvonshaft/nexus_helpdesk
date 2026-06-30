@@ -29,18 +29,18 @@ def test_admin_still_has_all_capabilities():
     assert resolve_capabilities(user) == set(ALL_CAPABILITIES)
 
 
-def test_openclaw_cli_fallback_default_false(monkeypatch):
+def test_external_channel_cli_fallback_default_false(monkeypatch):
     from app.settings import get_settings
 
     get_settings.cache_clear()
-    monkeypatch.delenv("OPENCLAW_CLI_FALLBACK_ENABLED", raising=False)
+    monkeypatch.delenv("EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED", raising=False)
     monkeypatch.setenv("APP_ENV", "development")
     settings = get_settings()
-    assert settings.openclaw_cli_fallback_enabled is False
+    assert settings.external_channel_cli_fallback_enabled is False
     get_settings.cache_clear()
 
 
-def test_production_rejects_openclaw_cli_fallback(monkeypatch):
+def test_production_rejects_external_channel_cli_fallback(monkeypatch):
     from app.settings import get_settings
 
     get_settings.cache_clear()
@@ -48,7 +48,7 @@ def test_production_rejects_openclaw_cli_fallback(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/helpdesk")
     monkeypatch.setenv("SECRET_KEY", "strong-production-secret-value-for-test-only")
     monkeypatch.setenv("ALLOWED_ORIGINS", "https://console.example.com")
-    monkeypatch.setenv("OPENCLAW_CLI_FALLBACK_ENABLED", "true")
-    with pytest.raises(RuntimeError, match="OPENCLAW_CLI_FALLBACK_ENABLED"):
+    monkeypatch.setenv("EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED", "true")
+    with pytest.raises(RuntimeError, match="EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED"):
         get_settings()
     get_settings.cache_clear()

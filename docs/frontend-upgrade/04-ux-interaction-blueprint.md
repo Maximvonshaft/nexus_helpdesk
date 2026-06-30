@@ -52,7 +52,7 @@ Channels
 
 Control
   Runtime
-  OpenClaw Bridge
+  ExternalChannel Bridge
   Safety Gate
   Jobs
   Audit Logs
@@ -133,7 +133,7 @@ Must provide:
 Must provide:
 
 - system attachments
-- OpenClaw attachment references
+- ExternalChannel attachment references
 - POD / proof references in later phase
 - missing-evidence warnings for factual claims
 
@@ -227,7 +227,7 @@ UX requirements:
 
 ```text
 Operator opens Runtime
-→ sees API / worker / OpenClaw / job / safety gate health
+→ sees API / worker / ExternalChannel / job / safety gate health
 → sees event dock
 → investigates unresolved events
 → triggers safe replay/drop where permitted

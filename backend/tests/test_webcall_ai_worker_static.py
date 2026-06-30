@@ -30,7 +30,7 @@ def test_worker_script_has_no_forbidden_runtime_integrations():
     for forbidden in [
         "livekit",
         "speedaf",
-        "openclaw",
+        "external_channel",
         "provider_runtime",
         "llm",
         "openai",

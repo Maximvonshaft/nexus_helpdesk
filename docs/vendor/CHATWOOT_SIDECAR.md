@@ -19,7 +19,7 @@ Chatwoot is useful for NexusDesk as a reference or optional sidecar for:
 - API channel and webhook integration patterns
 - Help center and saved reply workflows
 
-It is not the NexusDesk core business runtime. NexusDesk should keep logistics objects and AI/agent orchestration in its own domain model, including parcels, tracking snapshots, delivery attempts, POD evidence, exception cases, SLA policy, AI tool calls, audit logs, Speedaf integrations, OpenClaw/MCP bridges, and WebCall runtime.
+It is not the NexusDesk core business runtime. NexusDesk should keep logistics objects and AI/agent orchestration in its own domain model, including parcels, tracking snapshots, delivery attempts, POD evidence, exception cases, SLA policy, AI tool calls, audit logs, Speedaf integrations, ExternalChannel/MCP bridges, and WebCall runtime.
 
 ## Local checkout
 
@@ -73,7 +73,7 @@ Do not embed Nexus logistics domain rules directly into Chatwoot until a formal 
 1. Read-only UX audit: compare Chatwoot inbox/conversation UI with Nexus agent console.
 2. Webhook bridge PoC: map Chatwoot conversation events into Nexus `Conversation`, `Message`, and `Ticket Event` records.
 3. API-channel PoC: create a Nexus-owned channel adapter that can ingest/send messages while keeping Nexus as the source of truth.
-4. Agent-assist PoC: use Nexus AI/OpenClaw runtime to draft replies, not Chatwoot Enterprise AI as a hard dependency.
+4. Agent-assist PoC: use Nexus AI/ExternalChannel runtime to draft replies, not Chatwoot Enterprise AI as a hard dependency.
 
 ## Safety boundary
 

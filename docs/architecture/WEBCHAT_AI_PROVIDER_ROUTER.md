@@ -27,7 +27,7 @@ WebChat browser
 
 ## Why this exists
 
-The immediate goal is to prevent production WebChat Fast Reply from bypassing Provider Runtime routing, auditing, canary, and credential controls while retiring the old OpenClaw direct provider path.
+The immediate goal is to prevent production WebChat Fast Reply from bypassing Provider Runtime routing, auditing, canary, and credential controls while retiring the old ExternalChannel direct provider path.
 
 ## Tool execution boundary
 

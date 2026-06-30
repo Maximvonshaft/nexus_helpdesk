@@ -160,7 +160,7 @@ def test_fast_stream_conflict_does_not_mutate_conversation(monkeypatch):
         lambda: SimpleNamespace(
             stream_enabled=True,
             stream_require_accept=True,
-            is_openclaw_stream_configured=True,
+            is_external_channel_stream_configured=True,
             stream_rollout_percent=100,
             app_env="test",
         ),
@@ -193,7 +193,7 @@ def test_fast_stream_replay_does_not_create_new_messages_or_tickets(monkeypatch)
         lambda: SimpleNamespace(
             stream_enabled=True,
             stream_require_accept=True,
-            is_openclaw_stream_configured=True,
+            is_external_channel_stream_configured=True,
             stream_rollout_percent=100,
             app_env="test",
         ),

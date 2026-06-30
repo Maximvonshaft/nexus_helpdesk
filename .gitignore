@@ -50,12 +50,12 @@ backend/event_error.txt
 .env.test.local
 .env.production.local
 .env.local-manual
-.env.local-openclaw
+.env.local-external_channel
 backend/.env
 backend/.env.local-manual
-backend/.env.local-openclaw
+backend/.env.local-external_channel
 !backend/.env.example
-!backend/.env.local-openclaw.example
+!backend/.env.local-external_channel.example
 
 # IDE & OS
 .vscode/

@@ -11,7 +11,7 @@ import httpx
 
 from ..ai_runtime.fast_reply_prompt import build_fast_reply_instructions
 from ..ai_runtime.safety_contract import redact_secret_text, safe_endpoint_summary, safe_exception_message
-from ..webchat_fast_output_parser import FastReplyParseError, parse_openclaw_fast_reply
+from ..webchat_fast_output_parser import FastReplyParseError, parse_external_channel_fast_reply
 from .endpoint_guard import validate_probe_endpoint
 from .schemas import CodexTokenProbeResult
 
@@ -195,7 +195,7 @@ async def run_codex_token_probe() -> CodexTokenProbeResult:
         )
 
     try:
-        parse_openclaw_fast_reply(payload)
+        parse_external_channel_fast_reply(payload)
     except FastReplyParseError as exc:
         return CodexTokenProbeResult(
             ok=False,

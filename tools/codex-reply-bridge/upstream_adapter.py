@@ -12,7 +12,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app.services.webchat_fast_output_parser import FastReplyParseError, parse_openclaw_fast_reply
+from app.services.webchat_fast_output_parser import FastReplyParseError, parse_external_channel_fast_reply
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -175,7 +175,7 @@ def _fixture_reply(request: ReplyRequest) -> dict[str, Any]:
 
 
 def _normalize_strict_reply(payload: Any) -> dict[str, Any]:
-    parsed = parse_openclaw_fast_reply(payload)
+    parsed = parse_external_channel_fast_reply(payload)
     return {
         "reply": parsed.reply,
         "intent": parsed.intent,

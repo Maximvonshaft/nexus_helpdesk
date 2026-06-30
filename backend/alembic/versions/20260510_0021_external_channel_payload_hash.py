@@ -1,4 +1,4 @@
-"""openclaw unresolved payload hash
+"""external_channel unresolved payload hash
 
 Revision ID: 20260510_0021
 Revises: 20260507_0020
@@ -19,8 +19,8 @@ down_revision = "20260507_0020"
 branch_labels = None
 depends_on = None
 
-INDEX_NAME = "ix_openclaw_unresolved_payload_hash_status"
-TABLE_NAME = "openclaw_unresolved_events"
+INDEX_NAME = "ix_external_channel_unresolved_payload_hash_status"
+TABLE_NAME = "external_channel_unresolved_events"
 
 
 def _canonical_payload_hash(payload_json: str | None) -> str:
@@ -45,10 +45,10 @@ def upgrade() -> None:
     if not _has_column(bind, "payload_hash"):
         op.add_column(TABLE_NAME, sa.Column("payload_hash", sa.String(length=64), nullable=True))
 
-    rows = bind.execute(sa.text("SELECT id, payload_json FROM openclaw_unresolved_events WHERE payload_hash IS NULL")).fetchall()
+    rows = bind.execute(sa.text("SELECT id, payload_json FROM external_channel_unresolved_events WHERE payload_hash IS NULL")).fetchall()
     for row in rows:
         bind.execute(
-            sa.text("UPDATE openclaw_unresolved_events SET payload_hash = :payload_hash WHERE id = :id"),
+            sa.text("UPDATE external_channel_unresolved_events SET payload_hash = :payload_hash WHERE id = :id"),
             {"payload_hash": _canonical_payload_hash(row.payload_json), "id": row.id},
         )
 

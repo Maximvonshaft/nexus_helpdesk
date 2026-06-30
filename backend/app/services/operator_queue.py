@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState
-from ..models import OpenClawUnresolvedEvent, Ticket
+from ..models import ExternalChannelUnresolvedEvent, Ticket
 from ..operator_models import OperatorTask
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation
@@ -178,7 +178,7 @@ def _ticket_snapshot(ticket: Ticket | None) -> dict[str, Any] | None:
     }
 
 
-def _unresolved_snapshot(row: OpenClawUnresolvedEvent | None) -> dict[str, Any] | None:
+def _unresolved_snapshot(row: ExternalChannelUnresolvedEvent | None) -> dict[str, Any] | None:
     if row is None:
         return None
     return {
@@ -410,11 +410,11 @@ def _log_operator_audit(
     )
 
 
-def project_openclaw_unresolved_events(db: Session, *, limit: int = 100, actor_id: int | None = None, note: str | None = None) -> ProjectResult:
+def project_external_channel_unresolved_events(db: Session, *, limit: int = 100, actor_id: int | None = None, note: str | None = None) -> ProjectResult:
     rows = (
-        db.query(OpenClawUnresolvedEvent)
-        .filter(OpenClawUnresolvedEvent.status == "pending")
-        .order_by(OpenClawUnresolvedEvent.id.asc())
+        db.query(ExternalChannelUnresolvedEvent)
+        .filter(ExternalChannelUnresolvedEvent.status == "pending")
+        .order_by(ExternalChannelUnresolvedEvent.id.asc())
         .limit(max(1, min(limit, 500)))
         .all()
     )
@@ -422,11 +422,11 @@ def project_openclaw_unresolved_events(db: Session, *, limit: int = 100, actor_i
     for event in rows:
         _, created = create_operator_task(
             db,
-            source_type="openclaw",
+            source_type="external_channel",
             source_id=str(event.id),
             unresolved_event_id=event.id,
             task_type="bridge_unresolved",
-            reason_code=event.event_type or "openclaw_unresolved",
+            reason_code=event.event_type or "external_channel_unresolved",
             priority=50,
             payload={
                 "source": event.source,
@@ -448,7 +448,7 @@ def project_openclaw_unresolved_events(db: Session, *, limit: int = 100, actor_i
             actor_id=actor_id,
             action="project",
             old_value=None,
-            new_value={"source_type": "openclaw", "created": result.created, "skipped_existing": result.skipped_existing},
+            new_value={"source_type": "external_channel", "created": result.created, "skipped_existing": result.skipped_existing},
             note=note,
         )
     return result
@@ -505,13 +505,13 @@ def project_webchat_handoff_tasks(db: Session, *, limit: int = 100, actor_id: in
 
 
 def project_operator_queue(db: Session, *, actor_id: int | None = None, note: str | None = None) -> dict[str, int]:
-    openclaw = project_openclaw_unresolved_events(db, actor_id=actor_id, note=note)
+    external_channel = project_external_channel_unresolved_events(db, actor_id=actor_id, note=note)
     webchat = project_webchat_handoff_tasks(db, actor_id=actor_id, note=note)
     return {
-        "projected_openclaw_unresolved": openclaw.created,
+        "projected_external_channel_unresolved": external_channel.created,
         "projected_webchat_handoff": webchat.created,
-        "created_total": openclaw.created + webchat.created,
-        "skipped_existing": openclaw.skipped_existing + webchat.skipped_existing,
+        "created_total": external_channel.created + webchat.created,
+        "skipped_existing": external_channel.skipped_existing + webchat.skipped_existing,
     }
 
 
@@ -593,10 +593,10 @@ def _close_webchat_source(db: Session, row: OperatorTask, *, action: str, actor_
     return {"old": old, "new": new}
 
 
-def _close_openclaw_source(db: Session, row: OperatorTask, *, status: str) -> dict[str, Any]:
+def _close_external_channel_source(db: Session, row: OperatorTask, *, status: str) -> dict[str, Any]:
     if not row.unresolved_event_id:
         return {}
-    event_row = db.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == row.unresolved_event_id).first()
+    event_row = db.query(ExternalChannelUnresolvedEvent).filter(ExternalChannelUnresolvedEvent.id == row.unresolved_event_id).first()
     old = _unresolved_snapshot(event_row)
     if event_row is None:
         return {"old": old, "new": None}
@@ -632,8 +632,8 @@ def transition_operator_task(
         row.resolved_at = now
         if row.source_type == "webchat":
             source_transition = _close_webchat_source(db, row, action="resolved" if action == "resolve" else "dropped", actor_id=actor_id, note=note)
-        elif row.source_type == "openclaw":
-            source_transition = _close_openclaw_source(db, row, status=row.status)
+        elif row.source_type == "external_channel":
+            source_transition = _close_external_channel_source(db, row, status=row.status)
     row.updated_at = now
     db.flush()
     _log_operator_audit(
@@ -660,7 +660,7 @@ def replay_operator_task(
     _ensure_task_mutable(row)
     if not row.unresolved_event_id:
         raise OperatorQueueError(404, "unresolved_event_missing", "unresolved event missing")
-    event_row = db.query(OpenClawUnresolvedEvent).filter(OpenClawUnresolvedEvent.id == row.unresolved_event_id).first()
+    event_row = db.query(ExternalChannelUnresolvedEvent).filter(ExternalChannelUnresolvedEvent.id == row.unresolved_event_id).first()
     if event_row is None:
         raise OperatorQueueError(404, "unresolved_event_missing", "unresolved event missing")
 

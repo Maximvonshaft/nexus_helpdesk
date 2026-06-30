@@ -108,7 +108,7 @@ Runtime Control Tower is successful when an operations manager can:
 
 - see API health
 - see worker/job health
-- see OpenClaw status
+- see ExternalChannel status
 - see unresolved events
 - see safety-gate blocks
 - distinguish healthy, degraded, and failing states

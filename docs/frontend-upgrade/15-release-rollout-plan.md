@@ -198,7 +198,7 @@ After production release, observe:
 - auth expiration behavior
 - WebChat init/send errors
 - worker/runtime warnings
-- OpenClaw unresolved event volume
+- ExternalChannel unresolved event volume
 - support operator feedback
 
 Minimum observation window:

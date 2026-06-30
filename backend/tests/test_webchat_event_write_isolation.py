@@ -14,7 +14,7 @@ os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webchat_event_isolation_tests.db")
 os.environ.setdefault("WEBCHAT_RATE_LIMIT_BACKEND", "memory")
 os.environ.setdefault("WEBCHAT_ALLOW_NO_ORIGIN", "true")
-os.environ.setdefault("OPENCLAW_BRIDGE_ENABLED", "false")
+os.environ.setdefault("EXTERNAL_CHANNEL_BRIDGE_ENABLED", "false")
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -125,8 +125,8 @@ def test_operator_assign_survives_safe_event_writer_failure(db_session, monkeypa
 
 def test_operator_resolve_and_drop_main_state_still_success_without_event_dependency(db_session):
     admin = make_admin(db_session)
-    resolve_task, _ = create_operator_task(db_session, source_type="openclaw", source_id="u1", unresolved_event_id=1, task_type="bridge_unresolved")
-    drop_task, _ = create_operator_task(db_session, source_type="openclaw", source_id="u2", unresolved_event_id=2, task_type="bridge_unresolved")
+    resolve_task, _ = create_operator_task(db_session, source_type="external_channel", source_id="u1", unresolved_event_id=1, task_type="bridge_unresolved")
+    drop_task, _ = create_operator_task(db_session, source_type="external_channel", source_id="u2", unresolved_event_id=2, task_type="bridge_unresolved")
     db_session.commit()
 
     resolved = transition_operator_task(db_session, task_id=resolve_task.id, action="resolve", actor_id=admin.id)

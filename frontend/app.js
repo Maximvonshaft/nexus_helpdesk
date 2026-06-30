@@ -176,7 +176,7 @@ const UI_LABELS = { admin: '管理员', manager: '主管', lead: '组长', agent
 function sanitizeDisplayText(value) {
   if (value === undefined || value === null || value === '') return '-';
   return String(value)
-    .replace(/OpenClaw/gi, '会话服务')
+    .replace(/ExternalChannel/gi, '会话服务')
     .replace(/MCP/gi, '消息桥接')
     .replace(/CLI/gi, '备用通道')
     .replace(/NexusDesk/gi, '客服工作台')
@@ -703,11 +703,11 @@ function renderBulletinsInline(targetId, bulletins, emptyText = '当前没有生
 
 function renderEvidence(ticket) {
   const systemAttachments = ticket?.attachments || [];
-  const openclawRefs = ticket?.openclaw_attachment_references || [];
-  $('detail-attachments-count').textContent = String(systemAttachments.length + openclawRefs.length);
+  const external_channelRefs = ticket?.external_channel_attachment_references || [];
+  $('detail-attachments-count').textContent = String(systemAttachments.length + external_channelRefs.length);
   const el = $('detail-evidence');
   if (!el) return;
-  if (!systemAttachments.length && !openclawRefs.length) {
+  if (!systemAttachments.length && !external_channelRefs.length) {
     replaceNodeChildren(el, createEmptyState('当前还没有附件或聊天证据。'));
     return;
   }
@@ -717,7 +717,7 @@ function renderEvidence(ticket) {
     meta: `系统附件 · ${item.visibility || 'internal'}`,
     body: item.mime_type || '文件',
   }));
-  openclawRefs.forEach((item) => rows.push({
+  external_channelRefs.forEach((item) => rows.push({
     title: item.filename || item.remote_attachment_id,
     meta: `会话服务 evidence · ${item.storage_status}`,
     body: item.content_type || 'unknown type',
@@ -763,14 +763,14 @@ function renderCaseDetail() {
 
   syncCaseEditorFromSelected(c, t);
 
-  renderInfoList('detail-openclaw-route', [
-    { label: '来源状态', value: t?.openclaw_conversation ? '已绑定来信来源' : '未绑定' },
-    { label: '渠道', value: t?.openclaw_conversation?.channel || c.channel || '-' },
-    { label: '联系对象', value: t?.openclaw_conversation?.recipient || c.customer_contact || '-' },
-    { label: '发送线路', value: t?.openclaw_conversation?.account_id || '-' },
-    { label: '最近同步', value: formatDateTime(t?.openclaw_conversation?.last_synced_at) },
+  renderInfoList('detail-external_channel-route', [
+    { label: '来源状态', value: t?.external_channel_conversation ? '已绑定来信来源' : '未绑定' },
+    { label: '渠道', value: t?.external_channel_conversation?.channel || c.channel || '-' },
+    { label: '联系对象', value: t?.external_channel_conversation?.recipient || c.customer_contact || '-' },
+    { label: '发送线路', value: t?.external_channel_conversation?.account_id || '-' },
+    { label: '最近同步', value: formatDateTime(t?.external_channel_conversation?.last_synced_at) },
   ]);
-  renderTranscript(t?.openclaw_transcript || []);
+  renderTranscript(t?.external_channel_transcript || []);
   renderBulletinsInline('detail-bulletins', t?.active_market_bulletins || []);
   renderEvidence(t);
 }
@@ -779,7 +779,7 @@ async function loadOpsData() {
   const supervisor = canViewOps();
   const [queueSummary, runtimeHealth, signoff, readiness, bulletins, channelAccounts, jobs] = await Promise.all([
     supervisor ? optionalApi('/admin/queues/summary') : null,
-    supervisor ? optionalApi('/admin/openclaw/runtime-health') : null,
+    supervisor ? optionalApi('/admin/external_channel/runtime-health') : null,
     supervisor ? optionalApi('/admin/signoff-checklist') : null,
     supervisor ? optionalApi('/admin/production-readiness') : null,
     api('/lookups/bulletins'),
@@ -805,7 +805,7 @@ function renderOpsPanels() {
     { label: '待发送消息', value: queueSummary.pending_outbound },
     { label: '待处理任务', value: queueSummary.pending_jobs },
     { label: '异常任务', value: queueSummary.dead_jobs },
-    { label: '已绑定会话', value: queueSummary.openclaw_links },
+    { label: '已绑定会话', value: queueSummary.external_channel_links },
   ] : [], supervisor ? '当前账号暂时无法读取任务汇总。' : '当前账号无需查看任务汇总。');
 
   renderInfoList('ops-runtime-health', runtimeHealth ? [
@@ -855,14 +855,14 @@ function renderOverview() {
     ? ['待发送消息', '待处理任务', '异常任务', '已绑定会话', '待补同步', '待执行同步任务', '附件任务', '渠道设置']
     : ['当前工单', '处理中', '待客户回复', '高优先级', '生效公告', '已分配工单', '待分配工单', '已解决'];
   const metricValues = supervisor
-    ? [q.pending_outbound ?? 0, q.pending_jobs ?? 0, q.dead_jobs ?? 0, q.openclaw_links ?? 0, r.stale_link_count ?? 0, r.pending_sync_jobs ?? 0, r.pending_attachment_jobs ?? 0, (state.ops.channelAccounts || []).length]
+    ? [q.pending_outbound ?? 0, q.pending_jobs ?? 0, q.dead_jobs ?? 0, q.external_channel_links ?? 0, r.stale_link_count ?? 0, r.pending_sync_jobs ?? 0, r.pending_attachment_jobs ?? 0, (state.ops.channelAccounts || []).length]
     : [caseStats.total, caseStats.inProgress, caseStats.waitingCustomer, caseStats.highPriority, caseStats.activeBulletins, caseStats.assigned, caseStats.unassigned, caseStats.resolved];
 
   [
     'overview-pending-outbound',
     'overview-pending-jobs',
     'overview-dead-jobs',
-    'overview-openclaw-links',
+    'overview-external_channel-links',
     'overview-stale-links',
     'overview-pending-sync',
     'overview-pending-attachments',

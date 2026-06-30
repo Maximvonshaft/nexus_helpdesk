@@ -38,7 +38,7 @@ HIGH_RISK_TERMS = (
 )
 TRACKING_HINT_RE = re.compile(r"\b([A-Z0-9]{8,30})\b", re.IGNORECASE)
 BANNED_PUBLIC_TERMS = (
-    "OpenClaw", "MCP", "internal", "prompt", "system prompt", "developer message", "tool", "debug", "stack trace",
+    "ExternalChannel", "MCP", "internal", "prompt", "system prompt", "developer message", "tool", "debug", "stack trace",
 )
 
 

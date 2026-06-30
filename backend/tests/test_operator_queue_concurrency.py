@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app.db import Base  # noqa: E402
 from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, UserRole  # noqa: E402
-from app.models import OpenClawUnresolvedEvent, Ticket, User  # noqa: E402
+from app.models import ExternalChannelUnresolvedEvent, Ticket, User  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
 from app.services import operator_queue  # noqa: E402
 from app.services.operator_queue import create_operator_task, project_operator_queue  # noqa: E402
@@ -50,7 +50,7 @@ def make_admin(db):
 
 
 def make_unresolved(db):
-    row = OpenClawUnresolvedEvent(
+    row = ExternalChannelUnresolvedEvent(
         source="default",
         session_key="session-key",
         event_type="message",
@@ -99,7 +99,7 @@ def make_conversation(db, ticket: Ticket) -> WebchatConversation:
 def test_integrity_error_for_same_unresolved_event_returns_existing_not_500(db_session, monkeypatch):
     event = make_unresolved(db_session)
     existing = OperatorTask(
-        source_type="openclaw",
+        source_type="external_channel",
         source_id=str(event.id),
         unresolved_event_id=event.id,
         task_type="bridge_unresolved",
@@ -124,7 +124,7 @@ def test_integrity_error_for_same_unresolved_event_returns_existing_not_500(db_s
 
     row, created = create_operator_task(
         db_session,
-        source_type="openclaw",
+        source_type="external_channel",
         source_id=str(event.id),
         unresolved_event_id=event.id,
         task_type="bridge_unresolved",
@@ -216,7 +216,7 @@ def test_project_operator_queue_skipped_existing_counts_are_correct(db_session):
     ticket = make_ticket(db_session)
     conversation = make_conversation(db_session, ticket)
     db_session.add(OperatorTask(
-        source_type="openclaw",
+        source_type="external_channel",
         source_id=str(event.id),
         unresolved_event_id=event.id,
         task_type="bridge_unresolved",
@@ -237,7 +237,7 @@ def test_project_operator_queue_skipped_existing_counts_are_correct(db_session):
     summary = project_operator_queue(db_session, actor_id=admin.id)
 
     assert summary["created_total"] == 0
-    assert summary["projected_openclaw_unresolved"] == 0
+    assert summary["projected_external_channel_unresolved"] == 0
     assert summary["projected_webchat_handoff"] == 0
     assert summary["skipped_existing"] == 2
     assert db_session.query(OperatorTask).count() == 2

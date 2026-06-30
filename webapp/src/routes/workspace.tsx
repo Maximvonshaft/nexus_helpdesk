@@ -437,10 +437,10 @@ function WorkspacePage() {
                     <CardHeader title="来信来源信息" subtitle="展示客户当前来信来源与最近同步时间。" />
                     <CardBody>
                       <div className="kv-grid">
-                        <div className="kv"><label>来源状态</label><div>{activeCase.openclaw_conversation ? '已绑定来信来源' : '未绑定'}</div></div>
-                        <div className="kv"><label>渠道</label><div>{sanitizeDisplayText(activeCase.openclaw_conversation?.channel)}</div></div>
-                        <div className="kv"><label>联系对象</label><div>{sanitizeDisplayText(activeCase.openclaw_conversation?.recipient)}</div></div>
-                        <div className="kv"><label>最近同步</label><div>{formatDateTime(activeCase.openclaw_conversation?.last_synced_at)}</div></div>
+                        <div className="kv"><label>来源状态</label><div>{activeCase.external_channel_conversation ? '已绑定来信来源' : '未绑定'}</div></div>
+                        <div className="kv"><label>渠道</label><div>{sanitizeDisplayText(activeCase.external_channel_conversation?.channel)}</div></div>
+                        <div className="kv"><label>联系对象</label><div>{sanitizeDisplayText(activeCase.external_channel_conversation?.recipient)}</div></div>
+                        <div className="kv"><label>最近同步</label><div>{formatDateTime(activeCase.external_channel_conversation?.last_synced_at)}</div></div>
                       </div>
                     </CardBody>
                   </Card>
@@ -506,13 +506,13 @@ function WorkspacePage() {
                         <div>
                           <div className="section-title">聊天证据</div>
                           <div className="list compact">
-                            {(activeCase.openclaw_attachment_references ?? []).map((item) => (
+                            {(activeCase.external_channel_attachment_references ?? []).map((item) => (
                               <div className="list-item" key={item.id}>
                                 <div><strong>{sanitizeDisplayText(item.filename || item.remote_attachment_id)}</strong></div>
                                 <div className="section-subtitle">{sanitizeDisplayText(item.content_type || '未知类型')} · {sanitizeDisplayText(item.storage_status)}</div>
                               </div>
                             ))}
-                            {!(activeCase.openclaw_attachment_references?.length) ? <EmptyState title="没有聊天证据" description="外部聊天侧暂未同步附件或图片。" reason="如客户已发送，请刷新或检查来信来源同步状态。" /> : null}
+                            {!(activeCase.external_channel_attachment_references?.length) ? <EmptyState title="没有聊天证据" description="外部聊天侧暂未同步附件或图片。" reason="如客户已发送，请刷新或检查来信来源同步状态。" /> : null}
                           </div>
                         </div>
                       </div>

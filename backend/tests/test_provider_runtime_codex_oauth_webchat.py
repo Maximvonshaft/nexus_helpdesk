@@ -554,7 +554,7 @@ async def test_adapter_hot_path_sends_per_request_login_without_readyz_or_legacy
                 status_code = 200
                 headers = {
                     "X-Nexus-Codex-Elapsed-Ms": "123",
-                    "X-Nexus-Codex-Backend": "openclaw_codex_local_warm_pool",
+                    "X-Nexus-Codex-Backend": "external_channel_codex_local_warm_pool",
                 }
 
                 def raise_for_status(self):

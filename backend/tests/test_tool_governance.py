@@ -23,7 +23,7 @@ def test_classify_tool_type_read_write_and_system():
     assert tool_governance.classify_tool_type("conversations_list") == "read_only"
     assert tool_governance.classify_tool_type("messages_read") == "read_only"
     assert tool_governance.classify_tool_type("messages_send") == "external_send"
-    assert tool_governance.classify_tool_type("openclaw_bridge.ai_reply") == "system"
+    assert tool_governance.classify_tool_type("external_channel_bridge.ai_reply") == "system"
     assert tool_governance.classify_tool_type("external_provider.send") == "external_send"
     assert tool_governance.classify_tool_type("unknown_future_tool") == "read_only"
 

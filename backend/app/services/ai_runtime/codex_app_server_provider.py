@@ -9,7 +9,7 @@ from ..webchat_fast_output_parser import (
     FastReplyParseError,
     ParsedFastReply,
     UnexpectedToolCallError,
-    parse_openclaw_fast_reply,
+    parse_external_channel_fast_reply,
 )
 from .provider_base import BaseFastAIProvider
 from .schemas import FastAIProviderRequest, FastAIProviderResult
@@ -117,7 +117,7 @@ class CodexAppServerProvider(BaseFastAIProvider):
         status_code: int | None = None
         try:
             status_code, payload = await self._call_bridge(request)
-            parsed = parse_openclaw_fast_reply(payload)
+            parsed = parse_external_channel_fast_reply(payload)
             elapsed_ms = int((time.monotonic() - started) * 1000)
             return _success_from_parsed(parsed, elapsed_ms=elapsed_ms, status_code=status_code)
         except UnexpectedToolCallError:

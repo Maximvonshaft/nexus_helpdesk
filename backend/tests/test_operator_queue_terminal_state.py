@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app.db import Base  # noqa: E402
 from app.enums import UserRole  # noqa: E402
-from app.models import AdminAuditLog, OpenClawUnresolvedEvent, User  # noqa: E402
+from app.models import AdminAuditLog, ExternalChannelUnresolvedEvent, User  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
 from app.services.operator_queue import (  # noqa: E402
     OperatorQueueError,
@@ -51,8 +51,8 @@ def make_admin(db):
     return row
 
 
-def make_unresolved(db, status: str = "pending") -> OpenClawUnresolvedEvent:
-    row = OpenClawUnresolvedEvent(
+def make_unresolved(db, status: str = "pending") -> ExternalChannelUnresolvedEvent:
+    row = ExternalChannelUnresolvedEvent(
         source="default",
         session_key="session-key",
         event_type="message",
@@ -69,12 +69,12 @@ def make_unresolved(db, status: str = "pending") -> OpenClawUnresolvedEvent:
     return row
 
 
-def make_task(db, *, status: str = "pending", unresolved_event_id: int | None = None, source_type: str = "openclaw") -> OperatorTask:
+def make_task(db, *, status: str = "pending", unresolved_event_id: int | None = None, source_type: str = "external_channel") -> OperatorTask:
     row = OperatorTask(
         source_type=source_type,
         source_id=str(unresolved_event_id or status),
         unresolved_event_id=unresolved_event_id,
-        task_type="bridge_unresolved" if source_type == "openclaw" else "handoff",
+        task_type="bridge_unresolved" if source_type == "external_channel" else "handoff",
         status=status,
         priority=50,
     )

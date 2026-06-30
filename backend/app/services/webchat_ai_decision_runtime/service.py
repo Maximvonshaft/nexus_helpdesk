@@ -13,6 +13,7 @@ from app.services.webchat_fast_output_parser import FastReplyParseError, assert_
 from .audit import log_ai_decision_audit
 from .policy_gate import PolicyGateResult, validate_ai_decision
 from .schemas import AI_DECISION_SCHEMA_VERSION, AIDecision, AIDecisionEvidence, AIDecisionToolCall, normalize_intent, normalize_next_action, normalize_risk_level
+from .tool_registry import canonical_tool_name
 
 
 _HANDOFF_INTENTS = {"handoff_request", "refusal_request", "address_change", "complaint"}
@@ -102,7 +103,8 @@ def _normalized_provider_tool_calls(value: Any, *, intent: str, tracking_number:
         if not isinstance(item, dict):
             continue
         data = dict(item)
-        tool_name = data.get("tool_name") or data.get("name") or data.get("tool")
+        tool_name = canonical_tool_name(data.get("tool_name") or data.get("name") or data.get("tool"))
+        data["tool_name"] = tool_name
         if tool_name == "speedaf.order.query":
             has_speedaf_query = True
             args = data.get("arguments") if isinstance(data.get("arguments"), dict) else {}

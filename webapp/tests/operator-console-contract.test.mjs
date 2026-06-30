@@ -48,18 +48,18 @@ test('workspace frontend DTO names match stable backend case list fields', () =>
 test('ticket summary evidence contract exposes counts and preview fields', () => {
   assert.match(types, /export interface EvidenceSummary \{/)
   assert.match(types, /attachments_count: number/)
-  assert.match(types, /openclaw_transcript_count: number/)
-  assert.match(types, /openclaw_attachment_references_count: number/)
+  assert.match(types, /external_channel_transcript_count: number/)
+  assert.match(types, /external_channel_attachment_references_count: number/)
   assert.match(types, /active_market_bulletins_count: number/)
   assert.match(types, /evidence_summary\?: EvidenceSummary/)
   assert.match(types, /attachments\?: SystemAttachment\[\]/)
-  assert.match(types, /openclaw_attachment_references\?: AttachmentReference\[\]/)
+  assert.match(types, /external_channel_attachment_references\?: AttachmentReference\[\]/)
   assert.match(types, /active_market_bulletins\?: Bulletin\[\]/)
 })
 
 test('workspace still renders evidence panels from summary previews', () => {
   assert.match(workspaceRoute, /activeCase\.attachments/)
-  assert.match(workspaceRoute, /activeCase\.openclaw_attachment_references/)
+  assert.match(workspaceRoute, /activeCase\.external_channel_attachment_references/)
   assert.match(workspaceRoute, /activeCase\.active_market_bulletins/)
   assert.match(apiClient, /caseDetail: \(ticketId: number\) => request<CaseDetail>\(`\/api\/tickets\/\$\{ticketId\}\/summary`\)/)
 })

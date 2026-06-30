@@ -50,7 +50,7 @@ def upgrade() -> None:
     op.create_index("ix_operator_tasks_assignee_id", "operator_tasks", ["assignee_id"])
     op.create_index("ix_operator_tasks_reason_code", "operator_tasks", ["reason_code"])
     op.create_index(
-        "uq_operator_tasks_active_openclaw_unresolved",
+        "uq_operator_tasks_active_external_channel_unresolved",
         "operator_tasks",
         ["unresolved_event_id"],
         unique=True,
@@ -78,7 +78,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("uq_operator_tasks_active_source", table_name="operator_tasks")
     op.drop_index("uq_operator_tasks_active_webchat_handoff", table_name="operator_tasks")
-    op.drop_index("uq_operator_tasks_active_openclaw_unresolved", table_name="operator_tasks")
+    op.drop_index("uq_operator_tasks_active_external_channel_unresolved", table_name="operator_tasks")
     op.drop_index("ix_operator_tasks_reason_code", table_name="operator_tasks")
     op.drop_index("ix_operator_tasks_assignee_id", table_name="operator_tasks")
     op.drop_index("ix_operator_tasks_unresolved_event_id", table_name="operator_tasks")

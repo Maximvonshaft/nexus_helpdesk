@@ -31,7 +31,7 @@ def test_pr9_runtime_files_do_not_import_livekit_media_or_network_clients():
         "websocket",
         "websockets",
         "speedaf",
-        "openclaw",
+        "external_channel",
         "openai",
         "codex",
         "provider_runtime",

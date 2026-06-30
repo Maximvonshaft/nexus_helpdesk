@@ -1,6 +1,6 @@
 # NexusDesk Runtime Performance Budgets
 
-This document defines the release gate for PR 3 runtime, OpenClaw bridge, infrastructure, observability, and frontend performance closure.
+This document defines the release gate for PR 3 runtime, ExternalChannel bridge, infrastructure, observability, and frontend performance closure.
 
 ## API budgets
 
@@ -15,7 +15,7 @@ This document defines the release gate for PR 3 runtime, OpenClaw bridge, infras
 - WebChat events polling must use bounded `wait_ms`, stable `after_id`, `limit + 1`, and `has_more` semantics.
 - Event write paths that are not the source of truth should be best-effort and must not break primary ticket/conversation state transitions.
 
-## OpenClaw bridge budgets
+## ExternalChannel bridge budgets
 
 - Remote bridge calls use a pooled HTTP client.
 - Bridge timeout and connection limits are explicit and environment-tunable.
@@ -23,7 +23,7 @@ This document defines the release gate for PR 3 runtime, OpenClaw bridge, infras
 - Bridge logs must scrub token, secret, password, and API-key-like values.
 - Remote-gateway mode with CLI fallback disabled must not silently start a local subprocess fallback.
 
-## OpenClaw unresolved event idempotency
+## ExternalChannel unresolved event idempotency
 
 - Active unresolved-event dedupe uses canonical `payload_hash`, not `payload_json` text equality.
 - `payload_json` remains stored for replay/debug and is not removed.
@@ -32,7 +32,7 @@ This document defines the release gate for PR 3 runtime, OpenClaw bridge, infras
 
 ## Worker / daemon budgets
 
-- Worker and OpenClaw daemon readiness probes are read-only.
+- Worker and ExternalChannel daemon readiness probes are read-only.
 - Probe scripts must reject destructive arguments such as restart, down, rm, kill, prune, delete, truncate, or drop.
 - Worker metrics track job duration, wait time, retry count, and oldest pending age with low-cardinality labels.
 
@@ -52,7 +52,7 @@ Default CI budgets:
 3. Run `bash -n scripts/smoke/runtime_performance_baseline.sh`.
 4. Run `python scripts/smoke/worker_daemon_readiness_probe.py --help`.
 5. Deploy to staging only after all CI workflows are green.
-6. Verify `/healthz`, `/readyz`, `/metrics`, worker container health, and OpenClaw daemon health in staging.
+6. Verify `/healthz`, `/readyz`, `/metrics`, worker container health, and ExternalChannel daemon health in staging.
 
 ## Rollback plan
 

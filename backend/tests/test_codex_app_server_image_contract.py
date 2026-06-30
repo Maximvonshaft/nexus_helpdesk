@@ -37,45 +37,45 @@ def test_codex_app_server_compose_commands_point_to_copied_scripts():
     assert command_scripts <= copied_scripts
 
 
-def test_runtime_image_does_not_install_openclaw_cli():
+def test_runtime_image_does_not_install_external_channel_cli():
     dockerfile = _read("Dockerfile")
 
     assert "FROM docker.io/library/node:22-bookworm-slim AS node-runtime" in dockerfile
-    assert "npm install -g openclaw" not in dockerfile
-    assert "@openclaw/codex" not in dockerfile
+    assert "npm install -g external_channel" not in dockerfile
+    assert "@external-channel/codex" not in dockerfile
     assert "COPY --from=node-runtime /usr/local/ /usr/local/" in dockerfile
-    assert "COPY --from=webapp-builder /usr/local/bin/openclaw /usr/local/bin/openclaw" not in dockerfile
+    assert "COPY --from=webapp-builder /usr/local/bin/external_channel /usr/local/bin/external_channel" not in dockerfile
     assert "COPY --from=webapp-builder /usr/local/bin/npm /usr/local/bin/npm" not in dockerfile
     assert "COPY --from=webapp-builder /usr/local/lib/node_modules /usr/local/lib/node_modules" not in dockerfile
 
 
-def test_runtime_image_validates_node_without_openclaw_at_build_time():
+def test_runtime_image_validates_node_without_external_channel_at_build_time():
     dockerfile = _read("Dockerfile")
 
     assert "node --version" in dockerfile
     assert "npm --version" in dockerfile
-    assert "openclaw --version" not in dockerfile
-    assert "npm list -g --depth=0 openclaw" not in dockerfile
+    assert "external_channel --version" not in dockerfile
+    assert "npm list -g --depth=0 external_channel" not in dockerfile
 
 
-def test_codex_private_model_runtime_no_longer_uses_openclaw_home():
+def test_codex_private_model_runtime_no_longer_uses_external_channel_home():
     dockerfile = _read("Dockerfile")
     compose = _read("deploy/docker-compose.server.yml")
 
-    assert "/home/appuser/.openclaw" not in dockerfile
-    assert "codex-openclaw-home-permissions:" not in compose
-    assert "openclaw_codex_home" not in compose
-    assert "OPENCLAW_HOME" not in compose
-    assert "XDG_CONFIG_HOME: /home/appuser/.openclaw" not in compose
+    assert "/home/appuser/.external_channel" not in dockerfile
+    assert "codex-external_channel-home-permissions:" not in compose
+    assert "external_channel_codex_home" not in compose
+    assert "EXTERNAL_CHANNEL_HOME" not in compose
+    assert "XDG_CONFIG_HOME: /home/appuser/.external_channel" not in compose
 
 
-def test_removed_openclaw_codex_harness_is_not_referenced():
+def test_removed_external_channel_codex_harness_is_not_referenced():
     compose = _read("deploy/docker-compose.server.yml")
     runbook = _read("docs/engineering/codex_chat_smoke_runbook.md")
 
-    assert "codex_openclaw_codex_harness_adapter.py" not in compose
-    assert "OPENCLAW_CODEX_READY_TIMEOUT_SECONDS" not in compose
-    assert "OPENCLAW_CODEX_READY_TIMEOUT_SECONDS=30" not in runbook
+    assert "codex_external_channel_codex_harness_adapter.py" not in compose
+    assert "EXTERNAL_CHANNEL_CODEX_READY_TIMEOUT_SECONDS" not in compose
+    assert "EXTERNAL_CHANNEL_CODEX_READY_TIMEOUT_SECONDS=30" not in runbook
 
 
 def test_codex_private_model_runtime_defaults_to_private_reply_engine():
@@ -86,7 +86,7 @@ def test_codex_private_model_runtime_defaults_to_private_reply_engine():
     assert "codex-private-model-runtime:" not in compose
     assert "http://codex-private-reply-engine:18796/reply" in compose
     assert "http://codex-private-reply-engine:18796/reply" in bridge
-    assert "openclaw infer model run --local" not in runbook
+    assert "external_channel infer model run --local" not in runbook
 
 
 def test_codex_customer_facing_hot_path_uses_low_latency_defaults():

@@ -52,8 +52,8 @@ python -m app.services.ai_runtime_probe.codex_token_probe
 - `error_code=production_plaintext_token_forbidden`: production attempted to use
   a plaintext `CODEX_AUTH_TOKEN` env var.
 
-## Confirming no Tailscale/OpenClaw path was used
+## Confirming no Tailscale/ExternalChannel path was used
 
-Do not set `OPENCLAW_RESPONSES_URL` for this probe. The probe only uses
+Do not set `EXTERNAL_CHANNEL_RESPONSES_URL` for this probe. The probe only uses
 `CODEX_AUTH_PROBE_URL` if explicitly configured and reports the safe endpoint
 host/path in `raw_payload_safe_summary`.
