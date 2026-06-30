@@ -17,11 +17,11 @@ async def test_provider_runtime_router_fallback_and_audit():
     mock_rule = Mock()
     mock_rule.mappings.return_value.first.return_value = {
         'primary_provider': 'failing_provider',
-        'fallback_providers': ['success_provider'],
-        'output_contract': 'speedaf_webchat_fast_reply_v1',
-        'timeout_ms': 3000,
-        'kill_switch': False,
-        'canary_percent': 0
+            'fallback_providers': ['success_provider'],
+            'output_contract': 'speedaf_webchat_fast_reply_v1',
+            'timeout_ms': 3000,
+            'kill_switch': False,
+            'canary_percent': 100
     }
     
     # We need to distinguish between SELECT rules and INSERT audit logs.

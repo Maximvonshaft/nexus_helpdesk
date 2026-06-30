@@ -7,7 +7,7 @@ def test_provider_runtime_token_leakage():
     # Because there are no token fields!
     res = ProviderResult(ok=True, provider="codex", elapsed_ms=10, structured_output={"a": 1})
     
-    dump = json.dumps(res.dict())
+    dump = json.dumps(res.model_dump())
     assert "token" not in dump.lower()
     
     # Check that Fingerprint masks token
