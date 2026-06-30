@@ -1,4 +1,4 @@
-import type { AccountSnapshot, SendRequest, SendResult, WhatsAppConnector } from "./types.js";
+import type { AccountSnapshot, PairingCodeRequest, PairingCodeResult, SendRequest, SendResult, WhatsAppConnector } from "./types.js";
 
 function snapshot(accountId: string, status: AccountSnapshot["status"]): AccountSnapshot {
   return {
@@ -40,6 +40,17 @@ export class MockConnector implements WhatsAppConnector {
 
   async status(accountId: string): Promise<AccountSnapshot> {
     return this.accounts.get(accountId) || snapshot(accountId, "idle");
+  }
+
+  async requestPairingCode(accountId: string, request: PairingCodeRequest): Promise<PairingCodeResult> {
+    const digits = request.phone_number.replace(/\D/g, "");
+    this.accounts.set(accountId, snapshot(accountId, "connecting"));
+    return {
+      ok: true,
+      account_id: accountId,
+      pairing_code: "12345678",
+      phone_number_suffix: digits.slice(-4) || null
+    };
   }
 
   async send(accountId: string, request: SendRequest): Promise<SendResult> {

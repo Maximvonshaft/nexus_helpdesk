@@ -22,6 +22,7 @@ export interface SidecarConfig {
   connectorHmacSecret: string;
   callbackTimeoutMs: number;
   logLevel: string;
+  browserName: string;
   allowFromMeInbound: boolean;
   fromMeMode: FromMeInboundMode;
   fromMeTestPrefix: string;
@@ -67,6 +68,19 @@ export interface SendRequest {
   metadata?: Record<string, unknown>;
 }
 
+export interface PairingCodeRequest {
+  phone_number: string;
+}
+
+export interface PairingCodeResult {
+  ok: boolean;
+  account_id: string;
+  pairing_code?: string | null;
+  phone_number_suffix?: string | null;
+  error_code?: string | null;
+  retryable?: boolean;
+}
+
 export interface SendResult {
   ok: boolean;
   status: "sent" | "failed";
@@ -82,5 +96,6 @@ export interface WhatsAppConnector {
   logout(accountId: string): Promise<AccountSnapshot>;
   restart(accountId: string): Promise<AccountSnapshot>;
   status(accountId: string): Promise<AccountSnapshot>;
+  requestPairingCode(accountId: string, request: PairingCodeRequest): Promise<PairingCodeResult>;
   send(accountId: string, request: SendRequest): Promise<SendResult>;
 }
