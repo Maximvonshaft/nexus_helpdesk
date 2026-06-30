@@ -3,7 +3,7 @@ import { BackendClient } from "./backendClient.js";
 import { BaileysConnector } from "./baileysClient.js";
 import { MockConnector } from "./mockConnector.js";
 import { SessionStore } from "./sessionStore.js";
-import type { AccountSnapshot, SendRequest, SendResult, SidecarConfig, WhatsAppConnector } from "./types.js";
+import type { AccountSnapshot, PairingCodeRequest, PairingCodeResult, SendRequest, SendResult, SidecarConfig, WhatsAppConnector } from "./types.js";
 
 export class AccountRegistry {
   readonly connector: WhatsAppConnector;
@@ -48,6 +48,10 @@ export class AccountRegistry {
       qr: state.qr_status === "pending" ? state.qr || null : null,
       qr_data_url: state.qr_status === "pending" ? state.qr_data_url || null : null
     };
+  }
+
+  requestPairingCode(accountId: string, request: PairingCodeRequest): Promise<PairingCodeResult> {
+    return this.connector.requestPairingCode(accountId, request);
   }
 
   async send(accountId: string, request: SendRequest): Promise<SendResult> {

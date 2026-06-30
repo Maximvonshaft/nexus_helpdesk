@@ -57,6 +57,7 @@ export function loadConfig(): SidecarConfig {
     connectorHmacSecret: requireEnv("NEXUS_CONNECTOR_HMAC_SECRET"),
     callbackTimeoutMs: intEnv("NEXUS_CALLBACK_TIMEOUT_MS", 8000),
     logLevel: process.env.LOG_LEVEL || "info",
+    browserName: process.env.WA_SIDECAR_BROWSER_NAME?.trim() || "NexusDesk",
     allowFromMeInbound: boolEnv("WA_SIDECAR_ALLOW_FROM_ME_INBOUND", false),
     fromMeMode: fromMeModeEnv(),
     fromMeTestPrefix: process.env.WA_SIDECAR_FROM_ME_TEST_PREFIX?.trim() || "NEXUS_SELF_INBOUND_TEST"
