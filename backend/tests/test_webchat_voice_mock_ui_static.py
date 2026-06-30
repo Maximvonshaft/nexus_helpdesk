@@ -52,6 +52,7 @@ def test_showcase_support_chat_auto_opens_on_page_load():
     assert 'id="floatingChat"' in index_text
     assert 'id="chatPanel"' in index_text
     assert 'class="chat-panel is-closed"' in index_text
+    assert "js/app.js?v=nexus-auto-open-chat-20260630" in index_text
     assert "openChat();\n\n  function openChat()" in app_text
 
 
