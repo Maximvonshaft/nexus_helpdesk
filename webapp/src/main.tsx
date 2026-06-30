@@ -6,6 +6,8 @@ import { router } from '@/router'
 import { queryClient } from '@/lib/queryClient'
 import { initWebVitals } from '@/lib/webVitals'
 import { initA11yRuntimeRepair } from '@/a11yRuntime'
+import '@/styles/tokens.css'
+import '@/styles/components.css'
 import '@/styles.css'
 import '@/a11y.css'
 
