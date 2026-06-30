@@ -21,6 +21,16 @@ _ENV_KEYS = [
     "CODEX_APP_SERVER_KILL_SWITCH",
     "OPENAI_API_KEY",
     "OPENAI_API_KEY_FILE",
+    "PROVIDER_RUNTIME_PRIMARY_PROVIDER",
+    "PRIVATE_AI_RUNTIME_ENABLED",
+    "PRIVATE_AI_RUNTIME_BASE_URL",
+    "PRIVATE_AI_RUNTIME_TOKEN",
+    "PRIVATE_AI_RUNTIME_TOKEN_FILE",
+    "PRIVATE_AI_RUNTIME_CHAT_MODE",
+    "PRIVATE_AI_RUNTIME_REQUEST_SHAPE",
+    "PRIVATE_AI_RUNTIME_DIRECT_MODEL",
+    "PRIVATE_AI_RUNTIME_RAG_MODEL",
+    "PRIVATE_AI_RUNTIME_TIMEOUT_SECONDS",
 ]
 
 
@@ -118,3 +128,24 @@ def test_provider_runtime_status_reports_misconfiguration_without_throwing(monke
     assert "WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED" in status["config_error"]
     assert status["providers"] == []
     assert status["boundary"]["secret_values_exposed"] is False
+
+
+def test_provider_runtime_status_private_ai_runtime_ready_without_codex_warning(monkeypatch):
+    _clear_env(monkeypatch)
+    secret = "private-ai-runtime-secret"
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "provider_runtime")
+    monkeypatch.setenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "private_ai_runtime")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN", secret)
+    get_webchat_fast_settings.cache_clear()
+
+    status = get_provider_runtime_status()
+
+    assert status["ok"] is True
+    private_ai = next(item for item in status["providers"] if item["name"] == "private_ai_runtime")
+    assert private_ai["selected"] is True
+    assert private_ai["configured"] is True
+    assert "provider_runtime codex_app_server active credential is missing" not in status["warnings"]
+    assert secret not in str(status)

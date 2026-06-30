@@ -18,6 +18,7 @@ def bootstrap_provider_runtime() -> None:
     from .adapters import codex_direct_prompt_budget_patch as _codex_direct_prompt_budget_patch  # noqa: F401
     from .adapters.codex_direct import CodexDirectAdapter
     from .adapters.openai_responses import OpenAIResponsesAdapter
+    from .adapters.private_ai_runtime import PrivateAIRuntimeAdapter
 
     def codex_factory(db):
         bridge_url = os.environ.get("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18794/reply")
@@ -30,6 +31,7 @@ def bootstrap_provider_runtime() -> None:
     ProviderRegistry.register("codex_app_server", codex_factory)
     ProviderRegistry.register("codex_direct", lambda db: CodexDirectAdapter())
     ProviderRegistry.register("openai_responses", openai_factory)
+    ProviderRegistry.register("private_ai_runtime", lambda db: PrivateAIRuntimeAdapter())
 
     class SkeletonAdapter(ProviderAdapter):
         capabilities = ProviderCapabilities()

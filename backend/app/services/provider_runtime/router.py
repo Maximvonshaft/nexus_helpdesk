@@ -17,7 +17,7 @@ from .schemas import ProviderRequest, ProviderResult
 
 logger = logging.getLogger(__name__)
 
-_DIRECT_ENV_PROVIDERS = {"codex_app_server", "codex_direct", "openai_responses", "rule_engine"}
+_DIRECT_ENV_PROVIDERS = {"codex_app_server", "codex_direct", "openai_responses", "private_ai_runtime", "rule_engine"}
 _REMOVED_PROVIDERS = {"external_channel_responses"}
 
 
@@ -137,14 +137,16 @@ class ProviderRuntimeRouter:
             else:
                 return ProviderResult.unavailable("router", "kill_switch_active", 0)
 
-        if primary_provider == "codex_app_server" and canary_percent <= 0 and fallbacks:
+        if _should_route_primary_to_fallback(
+            primary_provider=primary_provider,
+            fallbacks=fallbacks,
+            canary_percent=canary_percent,
+            tenant_id=request.tenant_id,
+            channel_key=request.channel_key,
+            session_id=request.session_id,
+        ):
             primary_provider = fallbacks[0]
             fallbacks = fallbacks[1:]
-        elif primary_provider == "codex_app_server" and 0 < canary_percent < 100 and fallbacks:
-            bucket = self._stable_percent_bucket(request.tenant_id, request.channel_key, request.session_id)
-            if bucket >= canary_percent:
-                primary_provider = fallbacks[0]
-                fallbacks = fallbacks[1:]
 
         request.output_contract = output_contract
         request.timeout_ms = timeout_ms
@@ -262,6 +264,25 @@ def _remove_retired_providers(primary_provider: str, fallbacks: list[str]) -> tu
             return cleaned_fallbacks[0], cleaned_fallbacks[1:]
         return "rule_engine", []
     return primary_provider, cleaned_fallbacks
+
+
+def _should_route_primary_to_fallback(
+    *,
+    primary_provider: str,
+    fallbacks: list[str],
+    canary_percent: int,
+    tenant_id: str,
+    channel_key: str,
+    session_id: str,
+) -> bool:
+    if not primary_provider or not fallbacks:
+        return False
+    if canary_percent <= 0:
+        return True
+    if canary_percent >= 100:
+        return False
+    bucket = ProviderRuntimeRouter._stable_percent_bucket(tenant_id, channel_key, session_id)
+    return bucket >= canary_percent
 
 
 def _harmonize_provider_timeout_ms(*, primary_provider: str, timeout_ms: int) -> int:
