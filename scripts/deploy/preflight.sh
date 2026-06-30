@@ -18,13 +18,14 @@ if s.app_env == "production":
         for key in ["S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY", "S3_SECRET_KEY"]:
             if not getattr(s, key.lower()):
                 missing.append(key)
-    if s.openclaw_transport != "mcp":
-        missing.append("OPENCLAW_TRANSPORT=mcp")
-    if s.openclaw_deployment_mode == "remote_gateway":
-        if not s.openclaw_mcp_url:
-            missing.append("OPENCLAW_MCP_URL")
-        if not s.openclaw_mcp_token_file and not s.openclaw_mcp_password_file:
-            missing.append("OPENCLAW_MCP_TOKEN_FILE or OPENCLAW_MCP_PASSWORD_FILE")
+    if s.openclaw_transport != "disabled":
+        missing.append("OPENCLAW_TRANSPORT=disabled")
+    if s.openclaw_deployment_mode != "disabled":
+        missing.append("OPENCLAW_DEPLOYMENT_MODE=disabled")
+    if s.openclaw_sync_enabled:
+        missing.append("OPENCLAW_SYNC_ENABLED=false")
+    if s.openclaw_event_driver_enabled:
+        missing.append("OPENCLAW_EVENT_DRIVER_ENABLED=false")
 if missing:
     raise SystemExit("Preflight failed. Missing/invalid: " + ", ".join(missing))
 print("Preflight OK")

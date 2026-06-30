@@ -45,23 +45,18 @@ def main() -> int:
         warnings.append("DATABASE_URL is not PostgreSQL")
     if settings.storage_backend == "local":
         warnings.append("STORAGE_BACKEND is local")
-    if settings.openclaw_transport != "mcp":
-        warnings.append("OPENCLAW_TRANSPORT is not mcp")
+    if settings.openclaw_transport != "disabled":
+        warnings.append("OPENCLAW_TRANSPORT must remain disabled; legacy OpenClaw runtime is retired")
+    if settings.openclaw_deployment_mode != "disabled":
+        warnings.append("OPENCLAW_DEPLOYMENT_MODE must remain disabled; legacy OpenClaw runtime is retired")
+    if settings.openclaw_bridge_enabled:
+        warnings.append("OPENCLAW_BRIDGE_ENABLED must remain false; legacy OpenClaw bridge is retired")
     if settings.openclaw_cli_fallback_enabled:
         warnings.append("OPENCLAW_CLI_FALLBACK_ENABLED must be false for production")
-    if (
-        settings.app_env == "production"
-        and settings.openclaw_deployment_mode == "remote_gateway"
-        and settings.openclaw_bridge_enabled
-        and settings.openclaw_cli_fallback_enabled
-    ):
-        warnings.append("remote_gateway must not use local OpenClaw MCP CLI fallback")
-    if (
-        settings.app_env == "production"
-        and settings.openclaw_deployment_mode == "remote_gateway"
-        and not settings.openclaw_bridge_enabled
-    ):
-        warnings.append("remote_gateway requires OPENCLAW_BRIDGE_ENABLED=true")
+    if settings.openclaw_sync_enabled:
+        warnings.append("OPENCLAW_SYNC_ENABLED must remain false; legacy OpenClaw sync is retired")
+    if settings.openclaw_event_driver_enabled:
+        warnings.append("OPENCLAW_EVENT_DRIVER_ENABLED must remain false; legacy OpenClaw event driver is retired")
     if settings.metrics_enabled and not settings.metrics_token:
         warnings.append("METRICS_ENABLED=true but METRICS_TOKEN is missing")
     if settings.openclaw_attachment_url_fetch_enabled and not settings.openclaw_attachment_allowed_hosts:
@@ -118,6 +113,7 @@ def main() -> int:
         "metrics_enabled": settings.metrics_enabled,
         "metrics_token_configured": bool(settings.metrics_token),
         "openclaw_sync_enabled": settings.openclaw_sync_enabled,
+        "openclaw_event_driver_enabled": settings.openclaw_event_driver_enabled,
         "openclaw_attachment_url_fetch_enabled": settings.openclaw_attachment_url_fetch_enabled,
         "openclaw_attachment_allowed_hosts": settings.openclaw_attachment_allowed_hosts,
         "webchat_allowed_origins_configured": bool(settings.webchat_allowed_origins),

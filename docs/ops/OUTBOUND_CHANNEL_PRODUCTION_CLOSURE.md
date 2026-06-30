@@ -11,7 +11,7 @@ The objective is not to expose every enum value as a sendable customer channel. 
 2. No fake channels: a channel that is not ready must not appear as a customer-sendable option in the reply UI.
 3. No account, no send: external channels require an active ChannelAccount.
 4. No target, no send: external channels require a channel-valid target.
-5. No provider, no send: external dispatch requires `ENABLE_OUTBOUND_DISPATCH=true` and `OUTBOUND_PROVIDER=openclaw`.
+5. No provider, no send: external dispatch requires `ENABLE_OUTBOUND_DISPATCH=true` and `OUTBOUND_PROVIDER=native` for external messaging, or `OUTBOUND_PROVIDER=email/smtp` for email-only pilots.
 6. WebChat is local delivery, not external provider dispatch.
 7. Internal is not a customer-sendable outbound channel.
 8. Email remains experimental until account governance, email-specific schema, and provider adapter closure are implemented.
@@ -21,10 +21,10 @@ The objective is not to expose every enum value as a sendable customer channel. 
 | Channel | Dispatch type | Initial status | Customer-sendable | Production meaning |
 | --- | --- | --- | --- | --- |
 | `web_chat` | local | `local_ready` when linked conversation exists | Yes, only for WebChat tickets | Insert local WebChat reply / timeline record. Never external dispatch. |
-| `whatsapp` | external | `ready` only when runtime, account, and target are closed | Yes when ready | Send via OpenClaw outbound provider. |
-| `sms` | external | `ready` only when runtime, account, and E.164 target are closed | Yes when ready | Send via SMS-capable OpenClaw/provider path. |
-| `telegram` | external | `ready` only when runtime, account, and target are closed | Yes when ready | Send via Telegram-capable OpenClaw/provider path. |
-| `email` | external | `experimental_not_ready` | No | Blocked until email schema/account/adapter exists. |
+| `whatsapp` | external | `ready` only when runtime, account, sidecar, and target gates are closed | Yes when ready | Send via native WhatsApp sidecar. |
+| `sms` | external | `configurable` until a native/provider adapter is implemented | No by default | No production send path yet. |
+| `telegram` | external | `configurable` until a native/provider adapter is implemented | No by default | No production send path yet. |
+| `email` | external | `ready` only when runtime, SMTP account, and valid email target gates are closed | Yes when ready | Send via SMTP adapter during controlled email pilot. |
 | `internal` | internal | `not_customer_sendable` | No | Use internal notes or system events instead. |
 
 ## Runtime gates
@@ -33,7 +33,8 @@ External outbound dispatch requires all of the following:
 
 ```text
 ENABLE_OUTBOUND_DISPATCH=true
-OUTBOUND_PROVIDER=openclaw
+OUTBOUND_PROVIDER=native
+WHATSAPP_DISPATCH_MODE=native_sidecar
 ```
 
 The production templates intentionally default to:
@@ -44,7 +45,7 @@ OUTBOUND_PROVIDER=disabled
 OPENCLAW_BRIDGE_ALLOW_WRITES=false
 ```
 
-This default must remain fail-closed until the channel smoke test is complete.
+This default must remain fail-closed until the channel smoke test is complete. Legacy OpenClaw write flags are retained only as disabled compatibility settings.
 
 ## API contract
 
@@ -89,7 +90,7 @@ This branch implements the production closure foundation:
 4. Tests that lock the production boundary.
 5. Runbook for safe rollout.
 
-This phase intentionally does **not** implement the WhatsApp provider adapter refactor, delivery attempts, receipts, or UI changes. Those are Phase 2/3 items.
+The legacy OpenClaw provider path is retired; new external send adapters must use native sidecars or explicit provider adapters.
 
 ## Phase 2 acceptance criteria
 
@@ -98,7 +99,7 @@ WhatsApp external closure is ready only when all checks pass:
 1. Active WhatsApp ChannelAccount exists.
 2. Ticket has valid target/session/contact.
 3. Runtime gates are enabled in staging.
-4. OpenClaw bridge `/send-message` succeeds.
+4. Native WhatsApp sidecar send succeeds.
 5. Provider message id or stable idempotency key is persisted.
 6. Success appears in ticket timeline.
 7. Failure path schedules retry.

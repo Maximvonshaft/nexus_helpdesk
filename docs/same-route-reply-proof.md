@@ -4,51 +4,47 @@
 
 A reply is same-route only when it is sent back through the original customer conversation route:
 
-- `session_key`
 - `channel`
 - `recipient`
-- `accountId`
-- `threadId`
+- `account_id`
+- `thread_id`
+- adapter/provider identity
 
 For customer messaging, guessing a fallback recipient is not acceptable.
 
-## Preferred order
+## Preferred Order
 
-1. Use an existing `OpenClawConversationLink.session_key` with route metadata.
-2. Use MCP/Gateway same-route send where route can be resolved from the session.
-3. Use bridge dispatch only when the full target route is explicit and logged.
-4. Use CLI fallback only as a recovery path with strict route proof.
+1. Use the ticket's explicit outbound route fields when available.
+2. Use a channel-native sidecar or provider adapter that can prove the exact account and thread.
+3. Fall back to draft/human review when route provenance is incomplete.
+4. Do not use the retired OpenClaw bridge, MCP, Gateway, or CLI path for production sends.
 
-## Route proof log
+## Route Proof Log
 
 A valid proof must show non-secret fields only:
 
 ```json
 {
-  "session_key": "mock-session-001",
   "channel": "whatsapp",
   "recipient": "+41000000001",
-  "account_id": "mock-wa-account",
-  "thread_id": "mock-thread-001",
-  "provider": "openclaw_mcp"
+  "account_id": "wa-business-01",
+  "thread_id": "customer-thread-001",
+  "provider": "native_sidecar",
+  "route_provenance": "ticket_link"
 }
 ```
 
-## Must not send
+## Must Not Send
 
 The system must not send when:
 
-- `session_key` is missing and no explicit target route exists.
 - `channel` or `recipient` is missing.
 - route provenance is ambiguous.
 - multiple open tickets match the same recipient and no ticket link exists.
 - the outbound safety gate returns `block`.
 - AI output requires review and has not been approved.
+- the selected adapter is the retired OpenClaw bridge.
 
-## Round A proof
+## Proof Scope
 
-`smoke_e2e_same_route_reply.sh` starts the deterministic OpenClaw mock server and verifies that `messages_send` preserves `channel`, `recipient`, `accountId`, and `threadId`. It also asserts that missing route fields are rejected.
-
-## Remaining live validation
-
-Mock proof does not replace live OpenClaw Gateway/MCP validation. Before customer production enablement, run same-route reply tests on a staging OpenClaw account and verify the customer receives the message in the original channel/thread only.
+Mock smoke tests prove route preservation and safety gates. They do not replace live staging validation against the specific native provider or sidecar that will carry customer traffic.

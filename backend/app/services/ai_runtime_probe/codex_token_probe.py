@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from ..ai_runtime.openclaw_responses_provider import build_fast_reply_instructions
+from ..ai_runtime.fast_reply_prompt import build_fast_reply_instructions
 from ..ai_runtime.safety_contract import redact_secret_text, safe_endpoint_summary, safe_exception_message
 from ..webchat_fast_output_parser import FastReplyParseError, parse_openclaw_fast_reply
 from .endpoint_guard import validate_probe_endpoint

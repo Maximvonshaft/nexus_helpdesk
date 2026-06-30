@@ -3,9 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import time
-import urllib.error
-import urllib.request
 from dataclasses import asdict
 from datetime import timedelta
 from typing import Any
@@ -17,7 +14,6 @@ from ..models import Ticket, TicketComment, TicketEvent, TicketOutboundMessage
 from ..settings import get_settings
 from ..utils.time import ensure_utc, utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
-from .openclaw_mcp_client import OpenClawMCPClient, OpenClawMCPError
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .sla_service import evaluate_sla, update_first_response
 from .tracking_fact_schema import TrackingFactResult
@@ -471,116 +467,9 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
     _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = None
     _LAST_BRIDGE_WAIT_TIMEOUT_MS = None
 
-    prompt = _build_prompt(ticket=ticket, conversation=conversation, visitor_message=visitor_message, history_rows=history_rows, tracking_fact=tracking_fact, session_policy=session_policy, runtime_context=runtime_context)
-
-    if settings.openclaw_bridge_enabled:
-        started = time.monotonic()
-        try:
-            text = _generate_ai_reply_via_bridge(prompt=prompt, conversation=conversation, visitor_message=visitor_message, session_policy=session_policy)
-            _LAST_BRIDGE_ELAPSED_MS = int((time.monotonic() - started) * 1000)
-            text = (text or "").strip()
-
-            if text:
-                _LAST_AI_REPLY_SOURCE = "bridge"
-                _LAST_AI_FALLBACK_REASON = None
-                return text
-
-            _LAST_AI_REPLY_SOURCE = "fallback"
-            _LAST_AI_FALLBACK_REASON = "bridge_empty"
-            LOGGER.warning(
-                "webchat_ai_bridge_runtime_failed",
-                extra={"event_payload": {
-                    "conversation_id": conversation.id,
-                    "ticket_id": ticket.id,
-                    "visitor_message_id": visitor_message.id,
-                    "reply_source": _LAST_AI_REPLY_SOURCE,
-                    "fallback_reason": _LAST_AI_FALLBACK_REASON,
-                    "bridge_elapsed_ms": _LAST_BRIDGE_ELAPSED_MS,
-                    "bridge_timeout_seconds": settings.openclaw_bridge_timeout_seconds,
-                    "bridge_effective_timeout_seconds": _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS,
-                    "bridge_wait_timeout_ms": _LAST_BRIDGE_WAIT_TIMEOUT_MS,
-                }},
-            )
-            return _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
-
-        except Exception as exc:
-            _LAST_BRIDGE_ELAPSED_MS = int((time.monotonic() - started) * 1000)
-            error_text = f"{type(exc).__name__}: {exc}".lower()
-
-            if "timed out" in error_text or "timeout" in error_text:
-                reason = "bridge_timeout"
-            elif "rejected" in error_text:
-                reason = "bridge_rejected"
-            elif "empty" in error_text:
-                reason = "bridge_empty"
-            else:
-                reason = "bridge_exception"
-
-            _LAST_AI_REPLY_SOURCE = "fallback"
-            _LAST_AI_FALLBACK_REASON = reason
-
-            LOGGER.warning(
-                "webchat_ai_bridge_runtime_failed",
-                extra={"event_payload": {
-                    "conversation_id": conversation.id,
-                    "ticket_id": ticket.id,
-                    "visitor_message_id": visitor_message.id,
-                    "reply_source": _LAST_AI_REPLY_SOURCE,
-                    "fallback_reason": _LAST_AI_FALLBACK_REASON,
-                    "bridge_elapsed_ms": _LAST_BRIDGE_ELAPSED_MS,
-                    "bridge_timeout_seconds": settings.openclaw_bridge_timeout_seconds,
-                    "bridge_effective_timeout_seconds": _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS,
-                    "bridge_wait_timeout_ms": _LAST_BRIDGE_WAIT_TIMEOUT_MS,
-                    "error_type": type(exc).__name__,
-                }},
-            )
-            return _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
-
     _LAST_AI_REPLY_SOURCE = "fallback"
-    _LAST_AI_FALLBACK_REASON = "bridge_disabled"
+    _LAST_AI_FALLBACK_REASON = "provider_runtime_not_configured_for_legacy_webchat_job"
     return _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
-
-
-def _generate_ai_reply_via_bridge(*, prompt: str, conversation: WebchatConversation, visitor_message: WebchatMessage, session_policy: dict[str, Any] | None = None) -> str:
-    global _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS, _LAST_BRIDGE_WAIT_TIMEOUT_MS
-
-    bridge_url = settings.openclaw_bridge_url.rstrip('/')
-    session_key = (session_policy or {}).get('session_key') or f"webchat:{conversation.tenant_key}:{conversation.channel_key}:{conversation.public_id}"
-    configured_timeout_seconds = int(getattr(settings, "openclaw_bridge_timeout_seconds", 20) or 20)
-    effective_timeout_seconds = max(configured_timeout_seconds, 5)
-    wait_timeout_ms = effective_timeout_seconds * 1000
-    _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = effective_timeout_seconds
-    _LAST_BRIDGE_WAIT_TIMEOUT_MS = wait_timeout_ms
-
-    payload = {
-        "sessionKey": session_key,
-        "prompt": prompt,
-        "limit": 6,
-        "waitTimeoutMs": wait_timeout_ms,
-    }
-    ai_req = urllib.request.Request(
-        f"{bridge_url}/ai-reply",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(ai_req, timeout=effective_timeout_seconds + 5) as resp:
-            parsed = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
-        raise RuntimeError(f"bridge ai-reply http {exc.code}: {body[:300]}") from exc
-
-    if not isinstance(parsed, dict) or not parsed.get("ok"):
-        raise RuntimeError(f"bridge ai-reply rejected: {parsed}")
-
-    text = parsed.get("replyText")
-    if not text:
-        text = _extract_reply_text(parsed.get("messages") or [])
-    if not text:
-        raise RuntimeError("bridge returned empty reply")
-
-    return str(text)
 
 
 def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage], tracking_fact: TrackingFactResult | None = None, session_policy: dict[str, Any] | None = None, runtime_context: dict[str, Any] | None = None) -> str:

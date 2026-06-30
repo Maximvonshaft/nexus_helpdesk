@@ -109,11 +109,7 @@ async def test_provider_runtime_default_route_uses_codex_primary_and_writes_audi
         return select_result
 
     mock_db.execute.side_effect = db_execute
-    class OpenClawSuccessAdapter(SuccessAdapter):
-        name = "openclaw_responses"
-
     ProviderRegistry.register("codex_app_server", lambda db: SuccessAdapter())
-    ProviderRegistry.register("openclaw_responses", lambda db: OpenClawSuccessAdapter())
 
     req = ProviderRequest(
         request_id="req1",
@@ -209,7 +205,7 @@ async def test_fast_provider_runtime_all_failed_preserves_error_code_without_typ
                 ok=False,
                 provider="provider_runtime",
                 elapsed_ms=42,
-                error_code="openclaw_responses_unavailable",
+                error_code="openai_responses_unavailable",
                 structured_output=None,
                 raw_payload_safe_summary={"safe": True},
             )
@@ -219,7 +215,7 @@ async def test_fast_provider_runtime_all_failed_preserves_error_code_without_typ
 
     assert result.ok is False
     assert result.raw_provider == "provider_runtime"
-    assert result.error_code == "openclaw_responses_unavailable"
+    assert result.error_code == "openai_responses_unavailable"
     assert result.elapsed_ms == 42
 
 

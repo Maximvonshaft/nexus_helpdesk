@@ -21,7 +21,7 @@ def test_admin_provider_runtime_routing_api_inserts_safe_default(monkeypatch):
     assert response["ok"] is True
     rule = response["routing_rule"]
     assert rule["primary_provider"] == "codex_app_server"
-    assert rule["fallback_providers"] == ["openclaw_responses", "rule_engine"]
+    assert rule["fallback_providers"] == ["openai_responses", "rule_engine"]
     assert rule["canary_percent"] == 1
     assert rule["kill_switch"] is False
     assert db.commit.called

@@ -112,7 +112,7 @@ def test_resolve_whatsapp_route_rejects_missing_target(db_session):
         resolve_whatsapp_outbound_route(db_session, message=message, ticket=ticket)
 
 
-def test_dispatch_whatsapp_outbound_builds_bridge_payload(db_session):
+def test_dispatch_whatsapp_outbound_builds_legacy_route_payload_with_injected_dispatch(db_session):
     ticket = _ticket(db_session, contact="+15550123456")
     _add_whatsapp_account(db_session, account_id="wa-main")
     message = _message(db_session, ticket, body="hello customer")
@@ -120,7 +120,7 @@ def test_dispatch_whatsapp_outbound_builds_bridge_payload(db_session):
 
     def fake_dispatch(**kwargs):
         calls.append(kwargs)
-        return MessageStatus.sent, "sent_via_fake_whatsapp_bridge", utc_now()
+        return MessageStatus.sent, "sent_via_fake_whatsapp_adapter", utc_now()
 
     status_value, provider_status, sent_at, route = dispatch_whatsapp_outbound(
         db_session,
@@ -131,7 +131,7 @@ def test_dispatch_whatsapp_outbound_builds_bridge_payload(db_session):
     )
 
     assert status_value == MessageStatus.sent
-    assert provider_status == "sent_via_fake_whatsapp_bridge"
+    assert provider_status == "sent_via_fake_whatsapp_adapter"
     assert sent_at is not None
     assert calls == [{
         "channel": "whatsapp",
@@ -141,98 +141,77 @@ def test_dispatch_whatsapp_outbound_builds_bridge_payload(db_session):
         "thread_id": None,
         "session_key": None,
     }]
-    assert route["adapter"] == "whatsapp_openclaw_bridge"
+    assert route["adapter"] == "legacy_whatsapp_bridge_retired"
     assert route["account_id"] == "wa-main"
     assert route["target"] == "+15550123456"
     assert route["idempotency_key"] == "idem-1"
 
 
-def test_process_whatsapp_message_missing_account_never_calls_provider(db_session, monkeypatch):
+def test_process_whatsapp_message_missing_account_schedules_retry_without_sidecar_send(db_session, monkeypatch):
     ticket = _ticket(db_session, contact="+15550123456")
     message = _message(db_session, ticket)
-    called = {"provider": False}
 
     monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
-    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "openclaw")
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "native")
+    monkeypatch.setattr(message_dispatch.settings, "whatsapp_dispatch_mode", "native_sidecar")
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
-    monkeypatch.setattr(message_dispatch, "dispatch_via_openclaw_cli", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("cli fallback must not run")))
-
-    def fake_whatsapp_dispatch(*args, **kwargs):
-        called["provider"] = True
-        raise ValueError("missing_whatsapp_channel_account")
-
-    monkeypatch.setattr(message_dispatch, "dispatch_whatsapp_outbound", fake_whatsapp_dispatch)
 
     processed = message_dispatch.process_outbound_message(db_session, message)
 
-    assert called["provider"] is True
     assert processed.status == MessageStatus.pending
-    assert processed.failure_code == "retryable_dispatch_error"
-    assert processed.failure_reason == "missing_whatsapp_channel_account"
+    assert processed.failure_code == "missing_whatsapp_channel_account"
+    assert processed.failure_reason == "No active WhatsApp channel account is configured"
 
 
-def test_process_whatsapp_message_success_sets_sent_and_waiting_customer(db_session, monkeypatch):
+def test_process_whatsapp_message_native_success_sets_sent_and_waiting_customer(db_session, monkeypatch):
     ticket = _ticket(db_session, contact="+15550123456")
     message = _message(db_session, ticket, body="resolved update")
 
     monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
-    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "openclaw")
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "native")
+    monkeypatch.setattr(message_dispatch.settings, "whatsapp_dispatch_mode", "native_sidecar")
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
 
-    def fake_whatsapp_dispatch(db, *, message, ticket, idempotency_key):
-        return MessageStatus.sent, "sent_via_fake_whatsapp_bridge", utc_now(), {
+    def fake_whatsapp_native_dispatch(db, *, message, ticket, idempotency_key):
+        return MessageStatus.sent, "whatsapp_native_sent", utc_now(), {
             "channel": "whatsapp",
             "target": "+15550123456",
             "account_id": "wa-main",
-            "session_key": None,
-            "thread_id": None,
             "idempotency_key": idempotency_key,
-            "adapter": "whatsapp_openclaw_bridge",
+            "adapter": "whatsapp_native_sidecar",
         }
 
-    monkeypatch.setattr(message_dispatch, "dispatch_whatsapp_outbound", fake_whatsapp_dispatch)
+    monkeypatch.setattr(message_dispatch, "dispatch_whatsapp_native_outbound", fake_whatsapp_native_dispatch)
 
     processed = message_dispatch.process_outbound_message(db_session, message)
 
     assert processed.status == MessageStatus.sent
-    assert processed.provider_status == "sent_via_fake_whatsapp_bridge"
+    assert processed.provider_status == "whatsapp_native_sent"
     assert processed.sent_at is not None
     assert ticket.conversation_state.value == "waiting_customer"
 
 
-def test_process_whatsapp_openclaw_mode_keeps_existing_bridge_path(db_session, monkeypatch):
+def test_process_whatsapp_openclaw_mode_is_retired_non_retryable(db_session, monkeypatch):
     ticket = _ticket(db_session, contact="+15550123456")
     message = _message(db_session, ticket, body="resolved update")
 
     monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
-    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "openclaw")
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "native")
     monkeypatch.setattr(message_dispatch.settings, "whatsapp_dispatch_mode", "openclaw_bridge")
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
-    called = {"openclaw": False, "native": False}
-
-    def fake_openclaw(db, *, message, ticket, idempotency_key):
-        called["openclaw"] = True
-        return MessageStatus.sent, "sent_via_fake_whatsapp_bridge", utc_now(), {
-            "channel": "whatsapp",
-            "target": "+15550123456",
-            "account_id": "wa-main",
-            "session_key": None,
-            "thread_id": None,
-            "idempotency_key": idempotency_key,
-            "adapter": "whatsapp_openclaw_bridge",
-        }
+    called = {"native": False}
 
     def fake_native(*args, **kwargs):
         called["native"] = True
-        raise AssertionError("native sidecar must not run in openclaw_bridge mode")
+        raise AssertionError("native sidecar must not run in retired openclaw_bridge mode")
 
-    monkeypatch.setattr(message_dispatch, "dispatch_whatsapp_outbound", fake_openclaw)
     monkeypatch.setattr(message_dispatch, "dispatch_whatsapp_native_outbound", fake_native)
 
     processed = message_dispatch.process_outbound_message(db_session, message)
 
-    assert processed.status == MessageStatus.sent
-    assert called == {"openclaw": True, "native": False}
+    assert processed.status == MessageStatus.dead
+    assert processed.failure_code == "legacy_openclaw_bridge_retired"
+    assert called == {"native": False}

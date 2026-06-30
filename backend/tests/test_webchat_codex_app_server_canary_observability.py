@@ -63,14 +63,14 @@ def test_effective_provider_non_codex_stays_configured():
 
     provider, route = _effective_provider_name(
         request=_request(),
-        settings=Settings(provider="openclaw_responses"),  # type: ignore[arg-type]
+        settings=Settings(provider="openai_responses"),  # type: ignore[arg-type]
     )
 
-    assert provider == "openclaw_responses"
+    assert provider == "openai_responses"
     assert route == "configured_provider"
 
 
-def test_codex_kill_switch_routes_to_openclaw():
+def test_codex_kill_switch_routes_to_configured_fallback():
     from app.services.ai_runtime.provider_router import _effective_provider_name
 
     provider, route = _effective_provider_name(
@@ -78,11 +78,11 @@ def test_codex_kill_switch_routes_to_openclaw():
         settings=Settings(codex_app_server_kill_switch=True),  # type: ignore[arg-type]
     )
 
-    assert provider == "openclaw_responses"
-    assert route == "kill_switch_openclaw"
+    assert provider == "rule_engine"
+    assert route == "kill_switch_fallback"
 
 
-def test_codex_canary_zero_routes_to_openclaw():
+def test_codex_canary_zero_routes_to_configured_fallback():
     from app.services.ai_runtime.provider_router import _effective_provider_name
 
     provider, route = _effective_provider_name(
@@ -90,8 +90,8 @@ def test_codex_canary_zero_routes_to_openclaw():
         settings=Settings(codex_app_server_canary_percent=0),  # type: ignore[arg-type]
     )
 
-    assert provider == "openclaw_responses"
-    assert route == "canary_skipped_openclaw"
+    assert provider == "rule_engine"
+    assert route == "canary_skipped_fallback"
 
 
 def test_codex_canary_full_routes_to_codex():
@@ -129,7 +129,7 @@ def test_generate_fast_reply_records_codex_route_and_success(monkeypatch):
     assert events[1]["route"] == "canary_full"
 
 
-def test_generate_fast_reply_kill_switch_uses_openclaw_without_codex_success_metric(monkeypatch):
+def test_generate_fast_reply_kill_switch_uses_fallback_without_codex_success_metric(monkeypatch):
     from app.services.ai_runtime import provider_router
 
     events: list[dict[str, object]] = []
@@ -151,8 +151,8 @@ def test_generate_fast_reply_kill_switch_uses_openclaw_without_codex_success_met
     )
 
     assert result.ok is True
-    assert result.reply_source == "openclaw_responses"
-    assert events == [{"status": "route", "route": "kill_switch_openclaw"}]
+    assert result.reply_source == "rule_engine"
+    assert events == [{"status": "route", "route": "kill_switch_fallback"}]
 
 
 def test_generate_fast_reply_codex_failure_fallback_ok_records_metric(monkeypatch):
@@ -174,12 +174,12 @@ def test_generate_fast_reply_codex_failure_fallback_ok_records_metric(monkeypatc
     result = asyncio.run(
         provider_router.generate_fast_reply(
             request=_request(),
-            settings=Settings(fallback_provider="openclaw_responses"),  # type: ignore[arg-type]
+            settings=Settings(fallback_provider="openai_responses"),  # type: ignore[arg-type]
         )
     )
 
     assert result.ok is True
-    assert result.reply_source == "openclaw_responses"
+    assert result.reply_source == "openai_responses"
     assert events[0] == {"status": "route", "route": "canary_full"}
     assert events[1]["status"] == "fallback_ok"
     assert events[1]["error_code"] == "codex_app_server_unavailable"
@@ -225,7 +225,6 @@ def test_production_codex_canary_direct_provider_is_guarded(monkeypatch, tmp_pat
     monkeypatch.setenv("CODEX_APP_SERVER_TOKEN_FILE", str(codex_token_file))
     monkeypatch.setenv("CODEX_APP_SERVER_CANARY_PERCENT", "1")
     monkeypatch.setenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "none")
-    monkeypatch.delenv("OPENCLAW_RESPONSES_TOKEN_FILE", raising=False)
     _clear_settings()
 
     with pytest.raises(RuntimeError, match="WEBCHAT_FAST_AI_PROVIDER=provider_runtime"):
@@ -244,7 +243,6 @@ def test_production_codex_kill_switch_direct_provider_is_guarded(monkeypatch, tm
     monkeypatch.setenv("CODEX_APP_SERVER_KILL_SWITCH", "true")
     monkeypatch.setenv("CODEX_APP_SERVER_CANARY_PERCENT", "100")
     monkeypatch.setenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "none")
-    monkeypatch.delenv("OPENCLAW_RESPONSES_TOKEN_FILE", raising=False)
     _clear_settings()
 
     with pytest.raises(RuntimeError, match="WEBCHAT_FAST_AI_PROVIDER=provider_runtime"):

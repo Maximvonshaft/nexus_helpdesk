@@ -41,7 +41,7 @@ Every merge or server rollout should record:
 8. Compose services and image tag.
 9. Explicit outbound mode:
    - `queued-only`: `ENABLE_OUTBOUND_DISPATCH=false` or `OUTBOUND_PROVIDER=disabled`.
-   - `external-send`: `ENABLE_OUTBOUND_DISPATCH=true` and `OUTBOUND_PROVIDER=openclaw`.
+   - `external-send`: `ENABLE_OUTBOUND_DISPATCH=true` and `OUTBOUND_PROVIDER=native` for WhatsApp/SMS/Telegram, or `OUTBOUND_PROVIDER=email/smtp` for email-only pilots.
 10. Rollback backup path.
 
 ## Outbound release gate
@@ -82,7 +82,7 @@ export APP_VERSION="${GIT_SHA:0:12}"
 export FRONTEND_BUILD_SHA="$GIT_SHA"
 
 docker compose -f deploy/docker-compose.server.yml build app
-docker compose -f deploy/docker-compose.server.yml up -d postgres app worker sync-daemon event-daemon
+docker compose -f deploy/docker-compose.server.yml up -d postgres app worker
 bash scripts/probe_nexus_runtime.sh
 ```
 

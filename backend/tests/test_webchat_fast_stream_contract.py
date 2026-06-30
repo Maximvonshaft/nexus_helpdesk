@@ -52,7 +52,7 @@ def _settings(enabled: bool = True):
     return SimpleNamespace(
         stream_enabled=enabled,
         stream_require_accept=True,
-        openclaw_responses_agent_id="webchat-fast",
+        provider_runtime_agent_id="webchat-fast",
         is_openclaw_stream_configured=True,
     )
 
@@ -85,7 +85,7 @@ def _ai_reply(
     return WebchatFastReplyResult(
         ok=True,
         ai_generated=True,
-        reply_source="openclaw_responses",
+        reply_source="provider_runtime",
         reply=text,
         intent=intent,
         tracking_number=tracking,
@@ -131,7 +131,7 @@ def test_successful_stream_contract_uses_ai_decision_runtime(monkeypatch):
     final = [payload for event, payload in events if event == "final"][0]
     assert final["ok"] is True
     assert final["ai_generated"] is True
-    assert final["reply_source"] == "openclaw_responses"
+    assert final["reply_source"] == "provider_runtime"
     assert final["handoff_required"] is False
     assert final["ai_decision_trace"]["schema_version"] == "webchat_ai_decision_v1"
     assert final["ai_decision_trace"]["policy_gate"]["ok"] is True
@@ -195,7 +195,7 @@ def test_stream_no_evidence_low_signal_still_calls_ai_decision(monkeypatch):
 
     assert response.status_code == 200
     text = response.text
-    assert '"reply_source":"openclaw_responses"' in text
+    assert '"reply_source":"provider_runtime"' in text
     assert '"ai_generated":true' in text
     assert '"handoff_required":false' in text
     assert '"ai_decision_trace":' in text
@@ -286,7 +286,7 @@ def test_stream_idempotent_replay_not_polluted_by_fallback(monkeypatch):
     try:
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == "client-stream-idempotent")).scalar_one()
         assert row.status == "done"
-        assert row.response_json["reply_source"] == "openclaw_responses"
+        assert row.response_json["reply_source"] == "provider_runtime"
         assert row.response_json["ai_decision_trace"]["policy_gate"]["ok"] is True
     finally:
         db.close()

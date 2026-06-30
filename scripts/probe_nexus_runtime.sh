@@ -124,9 +124,10 @@ fi
 
 section "10. Recent logs"
 docker compose -f "$COMPOSE_FILE" logs --tail=120 app || check_warn "app logs unavailable"
-docker compose -f "$COMPOSE_FILE" logs --tail=120 worker || check_warn "worker logs unavailable"
-docker compose -f "$COMPOSE_FILE" logs --tail=120 sync-daemon || check_warn "sync-daemon logs unavailable"
-docker compose -f "$COMPOSE_FILE" logs --tail=120 event-daemon || check_warn "event-daemon logs unavailable"
+docker compose -f "$COMPOSE_FILE" logs --tail=120 worker-outbound || check_warn "worker-outbound logs unavailable"
+docker compose -f "$COMPOSE_FILE" logs --tail=120 worker-background || check_warn "worker-background logs unavailable"
+docker compose -f "$COMPOSE_FILE" logs --tail=120 worker-webchat-ai || check_warn "worker-webchat-ai logs unavailable"
+docker compose -f "$COMPOSE_FILE" logs --tail=120 worker-handoff-snapshot || check_warn "worker-handoff-snapshot logs unavailable"
 
 section "11. Summary"
 if [ "$status" -ne 0 ]; then

@@ -55,7 +55,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         queryClient.invalidateQueries({ queryKey: ['runtimeHealth'] }),
         queryClient.invalidateQueries({ queryKey: ['queueSummary'] }),
         queryClient.invalidateQueries({ queryKey: ['jobs'] }),
-        queryClient.invalidateQueries({ queryKey: ['openclawConnectivity'] }),
+        queryClient.invalidateQueries({ queryKey: ['legacySessionConnectivity'] }),
       ])
       navigate({ to: '/runtime' })
       onClose()

@@ -46,7 +46,6 @@ read -r NEXUS_CODEX_ACCESS_TOKEN < /run/nexus/owner-provided-valid-token
 export NEXUS_CODEX_ACCESS_TOKEN
 export CODEX_APP_SERVER_BRIDGE_URL=http://172.18.0.1:18794/reply
 export CODEX_APPSERVER_SLA_READYZ_URL=http://172.18.0.1:18794/readyz
-bash scripts/probe_codex_appserver_discovery.sh
 bash scripts/probe_codex_appserver_runtime_v3_sla.sh
 ```
 
@@ -82,7 +81,7 @@ Default controlled-probe profile for this engineering candidate:
 The performance hardening changes are intentional:
 
 - Use an isolated empty workdir instead of the application repo so Codex does not spend turn budget on irrelevant workspace context.
-- Send `effort=low` for modern Codex models; OpenClaw maps `minimal` to `low` because modern models reject or retry on `minimal`.
+- Send `effort=low` for modern Codex models because some model profiles reject or retry on `minimal`.
 - Send `serviceTier=priority` when supported for customer-facing latency.
 - Use hard backpressure at concurrency 4 until c5 or c6 proves zero `codex_turn_timeout`.
 - Keep queue timeout classified as `codex_queue_timeout` so 12-parallel overload does not become a false success or generic upstream error.
@@ -119,7 +118,7 @@ Validated PR image:
 
 - Image: `nexusdesk/helpdesk:pr233-codex-v3-20260525T103424Z`
 - SHA: `8ded81f5b63ccb6214b25d1cec21da939710ae9c`
-- Runtime command profile: `CODEX_APPSERVER_COMMAND=/usr/local/lib/node_modules/@openclaw/codex/node_modules/.bin/codex`
+- Runtime command profile: `CODEX_APPSERVER_COMMAND=codex`
 - Runtime model: `CODEX_APPSERVER_MODEL=gpt-5.5`
 
 Observed results:

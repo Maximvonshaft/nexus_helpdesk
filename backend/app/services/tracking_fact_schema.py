@@ -4,8 +4,8 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
-TRACKING_FACT_SOURCE = "openclaw_bridge.speedaf_lookup"
-TRACKING_FACT_TOOL_NAME = "speedaf_lookup"
+TRACKING_FACT_SOURCE = "speedaf_api.tracking_lookup"
+TRACKING_FACT_TOOL_NAME = "speedaf.order.query"
 
 
 def hash_tracking_number(tracking_number: str | None) -> str | None:
@@ -114,7 +114,7 @@ class TrackingFactResult:
         lines.extend([
             "Rules:",
             "Use only the trusted tracking fact above for parcel status.",
-            "Do not mention internal tools, Bridge, OpenClaw, or raw tool output.",
+            "Do not mention internal tools, provider names, or raw tool output.",
             "Do not reveal recipient names, POD signer names, phone numbers, emails, or detailed addresses.",
         ])
         return "\n".join(lines)

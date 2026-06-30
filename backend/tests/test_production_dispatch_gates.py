@@ -42,7 +42,7 @@ def _provider_must_not_run(*args, **kwargs):
 
 def test_ensure_external_dispatch_allowed_fails_when_dispatch_disabled(monkeypatch):
     monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", False)
-    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "openclaw")
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "native")
     with pytest.raises(RuntimeError, match="ENABLE_OUTBOUND_DISPATCH=false"):
         message_dispatch.ensure_external_dispatch_allowed()
 
@@ -78,7 +78,7 @@ def test_process_external_message_provider_disabled_never_calls_provider(monkeyp
 
 def test_process_webchat_pending_row_never_calls_provider(monkeypatch):
     monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
-    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "openclaw")
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "native")
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(message_dispatch, "dispatch_via_openclaw_bridge", _provider_must_not_run)
     monkeypatch.setattr(message_dispatch, "dispatch_via_openclaw_mcp", _provider_must_not_run)

@@ -259,7 +259,7 @@ def test_worker_processes_whatsapp_admin_reply_pending_row_with_native_sidecar(d
     outbound = db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).one()
 
     monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
-    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "openclaw")
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "native")
     monkeypatch.setattr(message_dispatch.settings, "whatsapp_dispatch_mode", "native_sidecar")
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)

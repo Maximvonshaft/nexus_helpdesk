@@ -15,7 +15,6 @@ from ..services.permissions import (
     resolve_capabilities,
 )
 from ..services.support_intelligence_service import build_support_intelligence_config
-from ..services.openclaw_client_factory import OpenClawBridgeHTTPClient, OpenClawBridgeHTTPError
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/support-intelligence", tags=["support-intelligence"])
@@ -90,16 +89,10 @@ def _redact_operator_response(config: dict) -> dict:
 
 
 def _bridge_status_dictionary(payload: dict) -> dict:
-    client = OpenClawBridgeHTTPClient()
-    try:
-        data = client.support_knowledge_config(payload)
-        if not isinstance(data, dict):
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="status_dictionary_invalid_payload")
-        return data
-    except OpenClawBridgeHTTPError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)[:240]) from exc
-    finally:
-        client.close()
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="legacy_status_dictionary_runtime_bridge_retired",
+    )
 
 
 def _status_write_payload(request: StatusDictionaryWriteRequest, current_user) -> dict:

@@ -22,13 +22,7 @@ _FAST_REPLY_ENV = (
     "CODEX_REPLY_BRIDGE_TOKEN_FILE",
     "OPENAI_API_KEY",
     "OPENAI_API_KEY_FILE",
-    "OPENCLAW_RESPONSES_URL",
-    "OPENCLAW_RESPONSES_TOKEN",
-    "OPENCLAW_RESPONSES_TOKEN_FILE",
     "WEBCHAT_FAST_STREAM_ENABLED",
-    "OPENCLAW_RESPONSES_STREAM_URL",
-    "OPENCLAW_RESPONSES_STREAM_TOKEN",
-    "OPENCLAW_RESPONSES_STREAM_TOKEN_FILE",
 )
 
 
@@ -59,7 +53,7 @@ def test_production_provider_runtime_is_allowed(monkeypatch):
 
 @pytest.mark.parametrize(
     "provider",
-    ["codex_auth", "codex_app_server", "openclaw_responses", "openai_responses"],
+    ["codex_auth", "codex_app_server", "openai_responses"],
 )
 def test_production_forbids_legacy_direct_fast_reply_providers(monkeypatch, provider):
     _clear_settings(monkeypatch)
@@ -78,7 +72,7 @@ def test_production_forbids_legacy_direct_fast_reply_providers(monkeypatch, prov
 @pytest.mark.parametrize("app_env", ["development", "test"])
 @pytest.mark.parametrize(
     "provider",
-    ["codex_auth", "codex_app_server", "openclaw_responses", "openai_responses"],
+    ["codex_auth", "codex_app_server", "openai_responses"],
 )
 def test_non_production_keeps_legacy_provider_compatibility(monkeypatch, app_env, provider):
     _clear_settings(monkeypatch)

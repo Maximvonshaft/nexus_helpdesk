@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import json
-import time
 from dataclasses import asdict, dataclass
 from typing import Any, AsyncIterator
 
 from sqlalchemy import select
 
 from ..db import db_context
-from . import webchat_openclaw_responses_client as openclaw_client
-from .webchat_fast_ai_service import _clean_context, _input_text, _instructions, _session_key
+from .webchat_fast_ai_service import _clean_context
 from .webchat_fast_idempotency_db import (
     WebchatFastIdempotency,
     begin_webchat_fast_idempotency,
@@ -19,7 +17,7 @@ from .webchat_fast_idempotency_db import (
     mark_webchat_fast_failed,
 )
 from .webchat_fast_output_parser import FastReplyParseError, ParsedFastReply, assert_customer_visible_reply_is_safe
-from .webchat_fast_reply_metrics import record_fast_reply_metric, record_openclaw_responses_metric
+from .webchat_fast_reply_metrics import record_fast_reply_metric
 from .webchat_fast_session_service import (
     FastRoutingContext,
     append_fast_ai_message,
@@ -30,9 +28,6 @@ from .webchat_fast_session_service import (
     get_or_create_fast_ticket,
 )
 from .webchat_handoff_service import request_webchat_handoff
-from .webchat_fast_stream_parser import StreamingReplyAbort, StreamingReplyExtractor
-from .webchat_openclaw_responses_client import OpenClawResponsesError
-from .webchat_openclaw_stream_adapter import Completed
 from .knowledge_prompt_service import summarize_rag_trace
 
 
@@ -60,7 +55,7 @@ def public_final_from_parsed(
     final = {
         "ok": True,
         "ai_generated": True,
-        "reply_source": "openclaw_responses_stream",
+        "reply_source": "provider_runtime_stream",
         "intent": parsed.intent,
         "tracking_number": parsed.tracking_number,
         "handoff_required": parsed.handoff_required,
@@ -178,7 +173,7 @@ def _persist_stream_result(
 ) -> dict[str, Any]:
     with db_context() as db:
         conversation = get_or_create_fast_conversation(db, tenant_key=tenant_key, channel_key=channel_key, session_id=session_id)
-        metadata = {"handoff_required": parsed.handoff_required, "reply_source": "openclaw_responses_stream"}
+        metadata = {"handoff_required": parsed.handoff_required, "reply_source": "provider_runtime_stream"}
         if tracking_fact_metadata:
             metadata["tracking_fact"] = tracking_fact_metadata
         if evidence_trace:
@@ -259,83 +254,7 @@ async def stream_webchat_fast_reply_events(
         yield sse_event("error", {"error_code": begin.error_code or "idempotency_error", "retry_after_ms": 1500})
         return
 
-    started = time.monotonic()
-    extractor = StreamingReplyExtractor()
-    last_completed: Completed | None = None
-    try:
-        yield sse_event("meta", {"replayed": False, "stream_version": "V2.2.2"})
-        context = _context_payload(recent_context or [])
-        knowledge_context = runtime_context.get("knowledge_context") if isinstance(runtime_context, dict) else None
-        evidence_trace = _stream_evidence_trace(runtime_context)
-        async for event in openclaw_client.call_openclaw_responses_stream(
-            session_key=_session_key(tenant_key=tenant_key, session_id=session_id),
-            instructions=_instructions(),
-            input_text=_input_text(
-                body=body,
-                recent_context=context,
-                tracking_fact_summary=tracking_fact_summary,
-                tracking_fact_evidence_present=tracking_fact_evidence_present,
-                knowledge_context=knowledge_context if isinstance(knowledge_context, dict) else None,
-            ),
-            request_id=request_id,
-            settings=settings,
-        ):
-            if isinstance(event, Completed):
-                last_completed = event
-                continue
-            extractor.feed_event(event)
-
-        final_input: dict[str, Any] | str | None = None
-        if last_completed is not None:
-            final_input = last_completed.full_text or last_completed.full_payload
-        parsed = extractor.final_parse(final_input)
-        try:
-            public_session = _persist_stream_result(
-                tenant_key=tenant_key,
-                channel_key=channel_key,
-                session_id=session_id,
-                client_message_id=client_message_id,
-                body=body,
-                parsed=parsed,
-                recent_context=recent_context,
-                routing_context=routing_context,
-                tracking_fact_metadata=tracking_fact_metadata,
-                evidence_trace=evidence_trace,
-            )
-            public_session = public_session or {}
-        except Exception:
-            if parsed.handoff_required:
-                _mark_failed(begin.row_id, "handoff_enqueue_failed")
-                record_fast_reply_metric(status="handoff_enqueue_failed", elapsed_ms=int((time.monotonic() - started) * 1000))
-                yield sse_event("error", {"error_code": "handoff_enqueue_failed", "retry_after_ms": 1500})
-                return
-            raise
-        stored_final = public_final_from_parsed(parsed, ticket_creation_queued=False, replayed=False, evidence_trace=evidence_trace)
-        if public_session.get("ticket_id") is not None:
-            stored_final["ticket_id"] = public_session["ticket_id"]
-        final = dict(stored_final)
-        final.update(public_session)
-        final["webchat_session"] = {key: public_session[key] for key in ("conversation_id", "visitor_token", "last_message_id", "last_event_id") if key in public_session}
-        elapsed_ms = int((time.monotonic() - started) * 1000)
-        final["elapsed_ms"] = elapsed_ms
-        _mark_done(begin.row_id, {**stored_final, "elapsed_ms": elapsed_ms, "reply": parsed.reply})
-        record_fast_reply_metric(status="ok", intent=parsed.intent, handoff_required=parsed.handoff_required, elapsed_ms=elapsed_ms)
-        yield sse_event("final", final)
-        if parsed.reply:
-            yield sse_event("reply_delta", {"text": parsed.reply})
-    except StreamingReplyAbort as exc:
-        _mark_failed(begin.row_id, exc.error_code)
-        record_fast_reply_metric(status=exc.error_code, elapsed_ms=int((time.monotonic() - started) * 1000))
-        yield sse_event("error", {"error_code": exc.error_code, "retry_after_ms": 1500})
-    except FastReplyParseError:
-        _mark_failed(begin.row_id, "ai_invalid_output")
-        record_fast_reply_metric(status="ai_invalid_output", elapsed_ms=int((time.monotonic() - started) * 1000))
-        yield sse_event("error", {"error_code": "ai_invalid_output", "retry_after_ms": 1500})
-    except OpenClawResponsesError:
-        _mark_failed(begin.row_id, "ai_unavailable")
-        record_openclaw_responses_metric(status="unavailable", agent_id=settings.openclaw_responses_agent_id, elapsed_ms=int((time.monotonic() - started) * 1000))
-        yield sse_event("error", {"error_code": "ai_unavailable", "retry_after_ms": 1500})
-    except Exception:
-        _mark_failed(begin.row_id, "stream_internal_error")
-        record_fast_reply_metric(status="stream_internal_error", elapsed_ms=int((time.monotonic() - started) * 1000))
-        yield sse_event("error", {"error_code": "stream_internal_error", "retry_after_ms": 1500})
+    yield sse_event("meta", {"replayed": False, "stream_version": "provider_runtime_compat"})
+    _mark_failed(begin.row_id, "stream_provider_retired")
+    record_fast_reply_metric(status="stream_provider_retired", elapsed_ms=0)
+    yield sse_event("error", {"error_code": "stream_provider_retired", "retry_after_ms": 1500})

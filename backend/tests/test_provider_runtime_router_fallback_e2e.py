@@ -114,7 +114,7 @@ def _db(rule: dict):
 def _rule(*, canary_percent: int = 100, kill_switch: bool = False) -> dict:
     return {
         "primary_provider": "codex_app_server",
-        "fallback_providers": ["openclaw_responses", "rule_engine"],
+        "fallback_providers": ["openai_responses", "rule_engine"],
         "output_contract": "speedaf_webchat_fast_reply_v1",
         "timeout_ms": 10000,
         "kill_switch": kill_switch,
@@ -128,52 +128,52 @@ async def test_codex_success_path_e2e(monkeypatch):
 
     monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
     codex = E2EAdapter("codex_app_server", _success("codex_app_server"))
-    openclaw = E2EAdapter("openclaw_responses", _success("openclaw_responses"))
+    openai = E2EAdapter("openai_responses", _success("openai_responses"))
     ProviderRegistry.register("codex_app_server", lambda db: codex)
-    ProviderRegistry.register("openclaw_responses", lambda db: openclaw)
+    ProviderRegistry.register("openai_responses", lambda db: openai)
 
     result = await ProviderRuntimeRouter(_db(_rule(canary_percent=100))).route(_request())
 
     assert result.ok is True
     assert result.provider == "codex_app_server"
     assert codex.calls == 1
-    assert openclaw.calls == 0
+    assert openai.calls == 0
 
 
 @pytest.mark.asyncio
-async def test_codex_failure_falls_back_to_openclaw_e2e(monkeypatch):
+async def test_codex_failure_falls_back_to_openai_e2e(monkeypatch):
     import app.services.provider_runtime as provider_runtime_module
 
     monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
     codex = E2EAdapter("codex_app_server", ProviderResult.unavailable("codex_app_server", "bridge_not_ready", 9))
-    openclaw = E2EAdapter("openclaw_responses", _success("openclaw_responses"))
+    openai = E2EAdapter("openai_responses", _success("openai_responses"))
     ProviderRegistry.register("codex_app_server", lambda db: codex)
-    ProviderRegistry.register("openclaw_responses", lambda db: openclaw)
+    ProviderRegistry.register("openai_responses", lambda db: openai)
 
     result = await ProviderRuntimeRouter(_db(_rule(canary_percent=100))).route(_request())
 
     assert result.ok is True
-    assert result.provider == "openclaw_responses"
+    assert result.provider == "openai_responses"
     assert codex.calls == 1
-    assert openclaw.calls == 1
+    assert openai.calls == 1
 
 
 @pytest.mark.asyncio
-async def test_codex_upstream_timeout_falls_back_to_openclaw_e2e(monkeypatch):
+async def test_codex_upstream_timeout_falls_back_to_openai_e2e(monkeypatch):
     import app.services.provider_runtime as provider_runtime_module
 
     monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
     codex = E2EAdapter("codex_app_server", ProviderResult.unavailable("codex_app_server", "bridge_timeout", 15000))
-    openclaw = E2EAdapter("openclaw_responses", _success("openclaw_responses"))
+    openai = E2EAdapter("openai_responses", _success("openai_responses"))
     ProviderRegistry.register("codex_app_server", lambda db: codex)
-    ProviderRegistry.register("openclaw_responses", lambda db: openclaw)
+    ProviderRegistry.register("openai_responses", lambda db: openai)
 
     result = await ProviderRuntimeRouter(_db(_rule(canary_percent=100))).route(_request())
 
     assert result.ok is True
-    assert result.provider == "openclaw_responses"
+    assert result.provider == "openai_responses"
     assert codex.calls == 1
-    assert openclaw.calls == 1
+    assert openai.calls == 1
 
 
 @pytest.mark.asyncio
@@ -182,16 +182,16 @@ async def test_kill_switch_bypasses_codex_e2e(monkeypatch):
 
     monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
     codex = E2EAdapter("codex_app_server", _success("codex_app_server"))
-    openclaw = E2EAdapter("openclaw_responses", _success("openclaw_responses"))
+    openai = E2EAdapter("openai_responses", _success("openai_responses"))
     ProviderRegistry.register("codex_app_server", lambda db: codex)
-    ProviderRegistry.register("openclaw_responses", lambda db: openclaw)
+    ProviderRegistry.register("openai_responses", lambda db: openai)
 
     result = await ProviderRuntimeRouter(_db(_rule(canary_percent=100, kill_switch=True))).route(_request())
 
     assert result.ok is True
-    assert result.provider == "openclaw_responses"
+    assert result.provider == "openai_responses"
     assert codex.calls == 0
-    assert openclaw.calls == 1
+    assert openai.calls == 1
 
 
 @pytest.mark.asyncio
@@ -200,16 +200,16 @@ async def test_canary_zero_bypasses_codex_e2e(monkeypatch):
 
     monkeypatch.setattr(provider_runtime_module, "bootstrap_provider_runtime", lambda: None)
     codex = E2EAdapter("codex_app_server", _success("codex_app_server"))
-    openclaw = E2EAdapter("openclaw_responses", _success("openclaw_responses"))
+    openai = E2EAdapter("openai_responses", _success("openai_responses"))
     ProviderRegistry.register("codex_app_server", lambda db: codex)
-    ProviderRegistry.register("openclaw_responses", lambda db: openclaw)
+    ProviderRegistry.register("openai_responses", lambda db: openai)
 
     result = await ProviderRuntimeRouter(_db(_rule(canary_percent=0))).route(_request())
 
     assert result.ok is True
-    assert result.provider == "openclaw_responses"
+    assert result.provider == "openai_responses"
     assert codex.calls == 0
-    assert openclaw.calls == 1
+    assert openai.calls == 1
 
 
 @pytest.mark.asyncio
@@ -225,9 +225,9 @@ async def test_audit_and_result_do_not_expose_raw_oauth_tokens_e2e(monkeypatch):
             9,
         ),
     )
-    openclaw = E2EAdapter("openclaw_responses", _success("openclaw_responses"))
+    openai = E2EAdapter("openai_responses", _success("openai_responses"))
     ProviderRegistry.register("codex_app_server", lambda db: codex)
-    ProviderRegistry.register("openclaw_responses", lambda db: openclaw)
+    ProviderRegistry.register("openai_responses", lambda db: openai)
     db = _db(_rule(canary_percent=100))
 
     result = await ProviderRuntimeRouter(db).route(_request())

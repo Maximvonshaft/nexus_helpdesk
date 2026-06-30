@@ -648,7 +648,7 @@ function CaseEvidencePanel({
     <div className="v5-evidence">
       <div className="v5-evidence-metrics">
         <div><strong>{summary?.attachments_count ?? detail.attachments_count ?? attachments.length}</strong><span>附件</span></div>
-        <div><strong>{summary?.openclaw_transcript_count ?? detail.openclaw_transcript_count ?? transcript.length}</strong><span>OpenClaw 消息</span></div>
+        <div><strong>{summary?.openclaw_transcript_count ?? detail.openclaw_transcript_count ?? transcript.length}</strong><span>历史来源消息</span></div>
         <div><strong>{summary?.openclaw_attachment_references_count ?? detail.openclaw_attachment_references_count ?? refs.length}</strong><span>远端附件</span></div>
         <div><strong>{summary?.active_market_bulletins_count ?? detail.active_market_bulletins_count ?? bulletins.length}</strong><span>公告口径</span></div>
       </div>

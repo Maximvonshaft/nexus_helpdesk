@@ -1,4 +1,0 @@
-services:
-  app:
-    volumes:
-      - ./runtime_secrets/openclaw_responses_token:/run/openclaw_responses_token:ro

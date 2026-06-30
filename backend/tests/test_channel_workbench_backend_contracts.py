@@ -37,7 +37,7 @@ from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent,
 @pytest.fixture()
 def db_session(tmp_path, monkeypatch):
     monkeypatch.setenv("ENABLE_OUTBOUND_DISPATCH", "true")
-    monkeypatch.setenv("OUTBOUND_PROVIDER", "openclaw")
+    monkeypatch.setenv("OUTBOUND_PROVIDER", "native")
     monkeypatch.setenv("WEBCHAT_VOICE_ENABLED", "true")
     monkeypatch.setenv("WEBCHAT_VOICE_PROVIDER", "mock")
     get_settings.cache_clear()

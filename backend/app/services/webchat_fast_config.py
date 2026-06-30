@@ -9,10 +9,10 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
-_ALLOWED_FAST_AI_PROVIDERS = {"openclaw_responses", "codex_auth", "codex_app_server", "openai_responses", "provider_runtime"}
+_ALLOWED_FAST_AI_PROVIDERS = {"codex_auth", "codex_app_server", "openai_responses", "provider_runtime"}
 _PRODUCTION_FAST_AI_PROVIDER = "provider_runtime"
-_PRODUCTION_FORBIDDEN_DIRECT_PROVIDERS = {"codex_auth", "codex_app_server", "openclaw_responses", "openai_responses"}
-_ALLOWED_FAST_AI_FALLBACK_PROVIDERS = {"openclaw_responses", "rule_engine", "none"}
+_PRODUCTION_FORBIDDEN_DIRECT_PROVIDERS = {"codex_auth", "codex_app_server", "openai_responses"}
+_ALLOWED_FAST_AI_FALLBACK_PROVIDERS = {"openai_responses", "rule_engine", "none"}
 _ALLOWED_TRACKING_DEDUPE_SCOPES = {"legacy", "tenant_channel", "tenant_channel_customer"}
 
 
@@ -80,23 +80,7 @@ class WebchatFastSettings:
     stream_require_accept: bool
     trusted_proxy_cidrs: tuple[str, ...]
     rate_limit_trust_x_forwarded_for: bool
-    openclaw_responses_url: str
-    openclaw_responses_agent_id: str
-    openclaw_responses_token_file: str | None
-    openclaw_responses_token: str | None
-    openclaw_connect_timeout_ms: int
-    openclaw_read_timeout_ms: int
-    openclaw_total_timeout_ms: int
-    openclaw_pool_max_connections: int
-    openclaw_pool_max_keepalive: int
     app_env: str
-
-    openclaw_responses_stream_url: str | None
-    openclaw_responses_stream_token_file: str | None
-    openclaw_responses_stream_token: str | None
-    openclaw_stream_connect_timeout_ms: int
-    openclaw_stream_read_timeout_ms: int
-    openclaw_stream_total_timeout_ms: int
 
     codex_auth_token_file: str | None
     codex_auth_token: str | None
@@ -109,32 +93,6 @@ class WebchatFastSettings:
     openai_api_key_file: str | None
     openai_api_key: str | None
     tracking_dedupe_scope: str = "tenant_channel_customer"
-
-    @property
-    def stream_token(self) -> str | None:
-        file_token = _read_secret_file(self.openclaw_responses_stream_token_file)
-        if file_token:
-            return file_token
-        if self.app_env in {"development", "test", "local"}:
-            return _normalize_secret_value(self.openclaw_responses_stream_token)
-        return None
-
-    @property
-    def is_openclaw_stream_configured(self) -> bool:
-        return bool(self.openclaw_responses_stream_url and self.stream_token)
-
-    @property
-    def token(self) -> str | None:
-        file_token = _read_secret_file(self.openclaw_responses_token_file)
-        if file_token:
-            return file_token
-        if self.app_env in {"development", "test", "local"}:
-            return _normalize_secret_value(self.openclaw_responses_token)
-        return None
-
-    @property
-    def is_openclaw_configured(self) -> bool:
-        return bool(self.openclaw_responses_url and self.token)
 
     @property
     def codex_token(self) -> str | None:
@@ -182,7 +140,7 @@ class WebchatFastSettings:
                 + ", ".join(sorted(_ALLOWED_FAST_AI_PROVIDERS))
             )
         if self.fallback_provider not in _ALLOWED_FAST_AI_FALLBACK_PROVIDERS:
-            raise RuntimeError("WEBCHAT_FAST_AI_FALLBACK_PROVIDER must be openclaw_responses, rule_engine, or none")
+            raise RuntimeError("WEBCHAT_FAST_AI_FALLBACK_PROVIDER must be openai_responses, rule_engine, or none")
         if self.tracking_dedupe_scope not in _ALLOWED_TRACKING_DEDUPE_SCOPES:
             raise RuntimeError(
                 "WEBCHAT_FAST_TRACKING_DEDUPE_SCOPE must be one of: "
@@ -238,30 +196,6 @@ class WebchatFastSettings:
             if self.provider == "openai_responses" and not self.openai_api_key_file:
                 raise RuntimeError("OPENAI_API_KEY_FILE is required in production when provider=openai_responses")
 
-            openclaw_route_required = (
-                self.provider == "openclaw_responses"
-                or self.fallback_provider == "openclaw_responses"
-                or (
-                    self.provider == "codex_app_server"
-                    and (self.codex_app_server_kill_switch or self.codex_app_server_canary_percent < 100)
-                )
-            )
-            if openclaw_route_required:
-                if self.openclaw_responses_token:
-                    raise RuntimeError("OPENCLAW_RESPONSES_TOKEN is forbidden in production; use OPENCLAW_RESPONSES_TOKEN_FILE")
-                if not self.openclaw_responses_token_file:
-                    raise RuntimeError("OPENCLAW_RESPONSES_TOKEN_FILE is required in production")
-                _validate_private_runtime_url(self.openclaw_responses_url, setting_name="OPENCLAW_RESPONSES_URL")
-
-            if self.stream_enabled:
-                if not self.openclaw_responses_stream_url:
-                    raise RuntimeError("OPENCLAW_RESPONSES_STREAM_URL is required in production when stream is enabled")
-                if self.openclaw_responses_stream_token:
-                    raise RuntimeError("OPENCLAW_RESPONSES_STREAM_TOKEN is forbidden in production; use OPENCLAW_RESPONSES_STREAM_TOKEN_FILE")
-                if not self.openclaw_responses_stream_token_file:
-                    raise RuntimeError("OPENCLAW_RESPONSES_STREAM_TOKEN_FILE is required in production when stream is enabled")
-                _validate_private_runtime_url(self.openclaw_responses_stream_url, setting_name="OPENCLAW_RESPONSES_STREAM_URL")
-
 
 def _validate_private_runtime_url(value: str, *, setting_name: str) -> None:
     parsed = urlparse(value or "")
@@ -298,8 +232,8 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
     max_timeout_ms = _env_int("WEBCHAT_FAST_AI_MAX_TIMEOUT_MS", 30000, minimum=500, maximum=30000)
     settings = WebchatFastSettings(
         enabled=_env_bool("WEBCHAT_FAST_AI_ENABLED", True),
-        provider=os.getenv("WEBCHAT_FAST_AI_PROVIDER", "openclaw_responses").strip().lower() or "openclaw_responses",
-        fallback_provider=os.getenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "none").strip().lower() or "none",
+        provider=os.getenv("WEBCHAT_FAST_AI_PROVIDER", "provider_runtime").strip().lower() or "provider_runtime",
+        fallback_provider=os.getenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "rule_engine").strip().lower() or "rule_engine",
         codex_enabled=_env_bool("WEBCHAT_FAST_AI_CODEX_ENABLED", False),
         codex_app_server_enabled=_env_bool("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", False),
         openai_enabled=_env_bool("WEBCHAT_FAST_AI_OPENAI_ENABLED", False),
@@ -316,22 +250,7 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         stream_require_accept=_env_bool("WEBCHAT_FAST_STREAM_REQUIRE_ACCEPT", True),
         trusted_proxy_cidrs=_csv("TRUSTED_PROXY_CIDRS", "127.0.0.1/32,172.16.0.0/12"),
         rate_limit_trust_x_forwarded_for=_env_bool("WEBCHAT_RATE_LIMIT_TRUST_X_FORWARDED_FOR", True),
-        openclaw_responses_url=os.getenv("OPENCLAW_RESPONSES_URL", "").strip(),
-        openclaw_responses_agent_id=os.getenv("OPENCLAW_RESPONSES_AGENT_ID", "webchat-fast").strip() or "webchat-fast",
-        openclaw_responses_token_file=os.getenv("OPENCLAW_RESPONSES_TOKEN_FILE"),
-        openclaw_responses_token=os.getenv("OPENCLAW_RESPONSES_TOKEN"),
-        openclaw_connect_timeout_ms=_env_int("OPENCLAW_RESPONSES_CONNECT_TIMEOUT_MS", 500, minimum=100, maximum=3000),
-        openclaw_read_timeout_ms=_env_int("OPENCLAW_RESPONSES_READ_TIMEOUT_MS", 3000, minimum=500, maximum=max_timeout_ms),
-        openclaw_total_timeout_ms=_env_int("OPENCLAW_RESPONSES_TOTAL_TIMEOUT_MS", 30000, minimum=1000, maximum=30000),
-        openclaw_pool_max_connections=_env_int("OPENCLAW_RESPONSES_POOL_MAX_CONNECTIONS", 10, minimum=1, maximum=50),
-        openclaw_pool_max_keepalive=_env_int("OPENCLAW_RESPONSES_POOL_MAX_KEEPALIVE", 5, minimum=0, maximum=25),
         app_env=os.getenv("APP_ENV", "development").strip().lower() or "development",
-        openclaw_responses_stream_url=os.getenv("OPENCLAW_RESPONSES_STREAM_URL", "").strip() or None,
-        openclaw_responses_stream_token_file=os.getenv("OPENCLAW_RESPONSES_STREAM_TOKEN_FILE", "").strip() or None,
-        openclaw_responses_stream_token=os.getenv("OPENCLAW_RESPONSES_STREAM_TOKEN", "").strip() or None,
-        openclaw_stream_connect_timeout_ms=_env_int("OPENCLAW_RESPONSES_STREAM_CONNECT_TIMEOUT_MS", 500, minimum=100, maximum=3000),
-        openclaw_stream_read_timeout_ms=_env_int("OPENCLAW_RESPONSES_STREAM_READ_TIMEOUT_MS", 15000, minimum=500, maximum=30000),
-        openclaw_stream_total_timeout_ms=_env_int("OPENCLAW_RESPONSES_STREAM_TOTAL_TIMEOUT_MS", 30000, minimum=1000, maximum=60000),
         codex_auth_token_file=os.getenv("CODEX_AUTH_TOKEN_FILE", "").strip() or None,
         codex_auth_token=os.getenv("CODEX_AUTH_TOKEN", "").strip() or None,
         codex_app_server_bridge_url=os.getenv("CODEX_APP_SERVER_BRIDGE_URL", "").strip() or None,

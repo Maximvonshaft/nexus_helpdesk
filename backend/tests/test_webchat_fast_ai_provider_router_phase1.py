@@ -19,7 +19,7 @@ def _clear_settings() -> None:
     get_webchat_fast_settings.cache_clear()
 
 
-def test_provider_router_default_remains_openclaw_responses(monkeypatch):
+def test_provider_router_default_uses_provider_runtime_without_openclaw(monkeypatch):
     monkeypatch.delenv("WEBCHAT_FAST_AI_PROVIDER", raising=False)
     monkeypatch.delenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", raising=False)
     monkeypatch.setenv("APP_ENV", "development")
@@ -27,8 +27,8 @@ def test_provider_router_default_remains_openclaw_responses(monkeypatch):
 
     settings = get_webchat_fast_settings()
 
-    assert settings.provider == "openclaw_responses"
-    assert settings.fallback_provider == "none"
+    assert settings.provider == "provider_runtime"
+    assert settings.fallback_provider == "rule_engine"
 
 
 def test_codex_provider_requires_feature_flag(monkeypatch):
@@ -124,10 +124,10 @@ def test_probe_endpoint_guard_domain_allowlist(monkeypatch):
     assert validate_probe_endpoint("https://other.example/responses") == (False, "probe_endpoint_domain_not_allowed")
 
 
-def test_router_can_fallback_to_openclaw_provider(monkeypatch):
+def test_router_can_fallback_to_configured_non_openclaw_provider(monkeypatch):
     class Settings:
         provider = "codex_auth"
-        fallback_provider = "openclaw_responses"
+        fallback_provider = "openai_responses"
 
     class FailingProvider:
         def __init__(self, settings):
@@ -144,8 +144,8 @@ def test_router_can_fallback_to_openclaw_provider(monkeypatch):
             return FastAIProviderResult(
                 ok=True,
                 ai_generated=True,
-                reply_source="openclaw_responses",
-                raw_provider="openclaw_responses",
+                reply_source="openai_responses",
+                raw_provider="openai_responses",
                 raw_payload_safe_summary={"test": True},
                 reply="Hi",
                 intent="greeting",
@@ -179,7 +179,7 @@ def test_router_can_fallback_to_openclaw_provider(monkeypatch):
     )
 
     assert result.ok is True
-    assert result.reply_source == "openclaw_responses"
+    assert result.reply_source == "openai_responses"
 
 
 def test_webchat_fast_service_provider_runtime_uses_dispatcher(monkeypatch):
@@ -238,7 +238,7 @@ def test_webchat_fast_service_provider_runtime_uses_dispatcher(monkeypatch):
 def test_legacy_provider_router_no_longer_dispatches_provider_runtime():
     class Settings:
         provider = "provider_runtime"
-        fallback_provider = "openclaw_responses"
+        fallback_provider = "rule_engine"
 
     result = asyncio.run(
         generate_fast_reply(

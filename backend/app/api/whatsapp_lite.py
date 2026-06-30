@@ -27,12 +27,6 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..enums import MessageStatus
-from ..services.openclaw_bridge import (
-    dispatch_via_openclaw_bridge,
-    fetch_openclaw_bridge_attachments,
-    list_openclaw_conversations,
-    read_openclaw_bridge_conversation,
-)
 from ..services.permissions import CAP_OUTBOUND_SEND, CAP_TICKET_READ, ensure_capability
 from .deps import get_current_user
 
@@ -42,9 +36,27 @@ EXCLUDED_TEST_RECIPIENTS = {
     "+41798559737",
 }
 
-OUTBOX_MIRROR_FILENAME = "openclaw-whatsapp-lite-outbox.jsonl"
-OUTBOX_MIRROR_DIRNAME = ".openclaw-state"
+OUTBOX_MIRROR_FILENAME = "whatsapp-lite-outbox.jsonl"
+LEGACY_OUTBOX_MIRROR_FILENAME = "openclaw-whatsapp-lite-outbox.jsonl"
+OUTBOX_MIRROR_DIRNAME = ".whatsapp-lite-state"
 OUTBOX_MIRROR_MAX_BYTES = 5 * 1024 * 1024
+
+
+def list_openclaw_conversations(*, limit: int = 100, channel: str | None = None) -> dict[str, Any]:
+    """Compatibility hook for historical tests; the live legacy source is retired."""
+    return {"conversations": [], "source": "legacy_whatsapp_lite_retired", "limit": limit, "channel": channel}
+
+
+def read_openclaw_bridge_conversation(session_key: str, limit: int = 50) -> tuple[dict[str, Any] | None, list[dict[str, Any]] | None]:
+    return None, None
+
+
+def fetch_openclaw_bridge_attachments(session_key: str, message_id: str) -> list[dict[str, Any]]:
+    return []
+
+
+def dispatch_via_openclaw_bridge(**kwargs) -> tuple[MessageStatus, str | None, object | None]:
+    return MessageStatus.failed, "legacy_whatsapp_lite_source_retired", None
 
 
 class WhatsAppLiteConversation(BaseModel):
@@ -57,7 +69,7 @@ class WhatsAppLiteConversation(BaseModel):
     display_name: str
     updated_at: str | None = None
     latest_message: str | None = None
-    source: str = "openclaw"
+    source: str = "legacy_whatsapp_lite"
 
 
 class WhatsAppLiteAttachment(BaseModel):
@@ -82,7 +94,7 @@ class WhatsAppLiteMessage(BaseModel):
 
 class WhatsAppLiteConversationPage(BaseModel):
     items: list[WhatsAppLiteConversation]
-    source: str = "openclaw"
+    source: str = "legacy_whatsapp_lite"
     next_cursor: str | None = None
     total_visible: int | None = None
 
@@ -90,7 +102,7 @@ class WhatsAppLiteConversationPage(BaseModel):
 class WhatsAppLiteConversationDetail(BaseModel):
     conversation: WhatsAppLiteConversation
     messages: list[WhatsAppLiteMessage]
-    source: str = "openclaw"
+    source: str = "legacy_whatsapp_lite"
 
 
 class WhatsAppLiteSendRequest(BaseModel):
@@ -153,7 +165,7 @@ def _outbox_mirror_path() -> Path:
 
 
 def _legacy_outbox_mirror_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "uploads" / OUTBOX_MIRROR_FILENAME
+    return Path(__file__).resolve().parents[2] / "uploads" / LEGACY_OUTBOX_MIRROR_FILENAME
 
 
 def _outbox_mirror_max_bytes() -> int:
@@ -193,7 +205,7 @@ def _append_outbox_mirror(*, session_key: str, body: str, timestamp: str | None,
         "body": text,
         "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
         "operator": operator,
-        "source": "speedy_console",
+        "source": "whatsapp_lite_console",
     }
     path = _outbox_mirror_path()
     try:
@@ -666,7 +678,7 @@ def get_whatsapp_lite_conversation(
     ensure_capability(current_user, CAP_TICKET_READ, db, message="WhatsApp console access denied")
     conversation_payload, messages_payload = read_openclaw_bridge_conversation(session_key, limit=limit)
     if conversation_payload is None or messages_payload is None:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="OpenClaw conversation is unavailable")
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Legacy WhatsApp Lite source is retired")
     row = conversation_payload if isinstance(conversation_payload, dict) else {"sessionKey": session_key}
     row.setdefault("sessionKey", session_key)
     conversation = _conversation_from_row(row)

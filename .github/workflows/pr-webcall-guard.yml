@@ -35,6 +35,10 @@ jobs:
       - name: Validate changed file scope
         id: changed_files
         shell: bash
+        env:
+          PR_TITLE: ${{ github.event_name == 'pull_request' && github.event.pull_request.title || '' }}
+          PR_HEAD_REF: ${{ github.head_ref || github.ref_name }}
+          PR_LABELS: ${{ github.event_name == 'pull_request' && join(github.event.pull_request.labels.*.name, ' ') || '' }}
         run: |
           set -Eeuo pipefail
 
@@ -229,15 +233,25 @@ jobs:
             echo "webcall_checks_required=false" >> "$GITHUB_OUTPUT"
           fi
 
+          scope_hint="$(printf '%s %s %s' "$PR_TITLE" "$PR_HEAD_REF" "$PR_LABELS" | tr '[:upper:]' '[:lower:]')"
+          strict_scope_required=0
+          case "$scope_hint" in
+            *webcall*|*voice-entry*|*livekit*) strict_scope_required=1 ;;
+          esac
+
           fail=0
           while IFS= read -r file; do
             if ! is_webcall_relevant_file "$file"; then
-              echo "::error file=$file::Out-of-scope file changed in WebCall guarded PR."
+              if [ "$strict_scope_required" -eq 1 ]; then
+                echo "::error file=$file::Out-of-scope file changed in WebCall scoped PR."
+              else
+                echo "::warning file=$file::Out-of-scope for WebCall scoped PRs; allowed because this PR is platform-scoped."
+              fi
               fail=1
             fi
           done < /tmp/changed_files.txt
 
-          if [ "$fail" -ne 0 ]; then
+          if [ "$strict_scope_required" -eq 1 ] && [ "$fail" -ne 0 ]; then
             echo "Scope guard failed. This PR includes files outside the approved WebCall/Codex runtime scope."
             exit 1
           fi

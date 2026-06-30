@@ -9,7 +9,7 @@ fi
 
 BACKUP_SQL_GZ="${1:-}"
 OLD_IMAGE_TAG="${OLD_IMAGE_TAG:-}"
-COMPOSE_FILE="${COMPOSE_FILE:-deploy/docker-compose.cloud.yml}"
+COMPOSE_FILE="${COMPOSE_FILE:-deploy/docker-compose.server.yml}"
 
 echo "== NexusDesk rollback helper =="
 echo "compose_file=$COMPOSE_FILE"
@@ -18,7 +18,7 @@ echo "backup_sql_gz=${BACKUP_SQL_GZ:-[not set]}"
 
 if [ -n "$OLD_IMAGE_TAG" ]; then
   echo "Set your compose image tag back to: $OLD_IMAGE_TAG"
-  echo "Then run: docker compose -f $COMPOSE_FILE up -d app worker sync-daemon event-daemon"
+  echo "Then run: docker compose -f $COMPOSE_FILE up -d app worker-outbound worker-background worker-webchat-ai worker-handoff-snapshot"
 fi
 
 if [ -n "$BACKUP_SQL_GZ" ]; then

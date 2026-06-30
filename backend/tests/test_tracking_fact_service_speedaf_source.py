@@ -14,7 +14,6 @@ def test_tracking_fact_service_routes_to_speedaf_source(monkeypatch):
             webchat_tracking_fact_source="speedaf_api",
             webchat_tracking_fact_lookup_enabled=True,
             webchat_tracking_fact_timeout_seconds=8,
-            openclaw_bridge_url="http://127.0.0.1:18792",
         ),
     )
     calls = []
@@ -62,7 +61,6 @@ def test_tracking_fact_service_rejects_unknown_source(monkeypatch):
             webchat_tracking_fact_source="unknown_source",
             webchat_tracking_fact_lookup_enabled=True,
             webchat_tracking_fact_timeout_seconds=8,
-            openclaw_bridge_url="http://127.0.0.1:18792",
         ),
     )
     audit_calls = []
@@ -73,4 +71,4 @@ def test_tracking_fact_service_rejects_unknown_source(monkeypatch):
     assert result.ok is False
     assert result.failure_reason == "unsupported_tracking_fact_source"
     assert audit_calls
-    assert audit_calls[0]["provider"] == "openclaw_bridge"
+    assert audit_calls[0]["provider"] == "unsupported_tracking_source"

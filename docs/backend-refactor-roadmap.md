@@ -8,7 +8,7 @@ Target files:
 - `admin_markets.py`
 - `admin_channel_accounts.py`
 - `admin_ai_configs.py`
-- `admin_openclaw.py`
+- `admin_legacy_sessions.py`
 - `admin_runtime.py`
 
 Keep API paths unchanged.
@@ -19,7 +19,7 @@ Target packages:
 
 - `models/user.py`
 - `models/ticket.py`
-- `models/openclaw.py`
+- `models/legacy_sessions.py`
 - `models/integration.py`
 - `models/ai_config.py`
 - `models/ops.py`

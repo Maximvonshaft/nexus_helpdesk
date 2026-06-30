@@ -20,11 +20,11 @@ python -m app.services.ai_runtime_probe.codex_token_probe
 
 ## Confirm current production behavior
 
-Unless explicitly changed, the WebChat provider remains `openclaw_responses`. The new provider skeletons do not send traffic by default.
+Production WebChat Fast Reply remains on `WEBCHAT_FAST_AI_PROVIDER=provider_runtime`. Direct provider skeletons do not send production traffic by default.
 
 ## Rollback
 
-Return provider settings to the default OpenClaw route and keep experimental providers disabled.
+Keep `WEBCHAT_FAST_AI_PROVIDER=provider_runtime` and route to `openai_responses` or `rule_engine` through Provider Runtime fallback settings. Keep experimental direct providers disabled.
 
 ## Troubleshooting
 

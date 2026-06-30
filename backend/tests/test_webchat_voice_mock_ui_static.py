@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 VOICE_ENTRY = ROOT / "backend" / "app" / "static" / "webchat" / "voice-entry.js"
 DEMO_HTML = ROOT / "backend" / "app" / "static" / "webchat" / "demo.html"
 DEMO_INDEX = ROOT / "backend" / "app" / "static" / "webchat" / "demo" / "index.html"
+DEMO_APP_JS = ROOT / "backend" / "app" / "static" / "webchat" / "demo" / "js" / "app.js"
 ADMIN_ROUTE = ROOT / "webapp" / "src" / "routes" / "webchat-voice.tsx"
 OPERATOR_ROUTE = ROOT / "webapp" / "src" / "routes" / "webcall-operator.tsx"
 AGENT_PANEL = ROOT / "webapp" / "src" / "components" / "webcall" / "AgentWebCallPanel.tsx"
@@ -42,6 +43,17 @@ def test_showcase_loads_feature_gated_webcall_entry():
     assert "data-voice-label=\"WebCall\"" in index_text
     assert "data-live-voice-mode=\"edge-card\"" in index_text
     assert "data-live-voice-ws-path=\"/webchat/live/ws\"" in index_text
+
+
+def test_showcase_support_chat_auto_opens_on_page_load():
+    index_text = DEMO_INDEX.read_text(encoding="utf-8")
+    app_text = DEMO_APP_JS.read_text(encoding="utf-8")
+
+    assert 'id="floatingChat"' in index_text
+    assert 'id="chatPanel"' in index_text
+    assert 'class="chat-panel is-closed"' in index_text
+    assert "js/app.js?v=nexus-auto-open-chat-20260630" in index_text
+    assert "openChat();\n\n  function openChat()" in app_text
 
 
 def test_public_voice_entry_contains_feature_gated_edge_card_without_runtime_secrets():

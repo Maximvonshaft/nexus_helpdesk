@@ -92,7 +92,7 @@ def test_retryable_ai_failure_does_not_poison_non_stream_fallback(monkeypatch):
         return WebchatFastReplyResult(
             ok=True,
             ai_generated=True,
-            reply_source="openclaw_responses",
+            reply_source="provider_runtime",
             reply="Hi, this is Speedy.",
             intent="greeting",
             tracking_number=None,

@@ -10,7 +10,7 @@ This patch introduces a deterministic `outbound_safety.py` gate. It blocks empty
 2. Fact Gate: requires tool evidence for parcel status, SLA, customs, compensation, delivery promises.
 3. Truth Gate: reviews generated text for unsupported claims.
 4. Unified Outbound Dispatcher: single egress path for WhatsApp/email/web chat.
-5. Tool Permission Boundary: OpenClaw tools scoped by tenant/channel/account/peer.
+5. Tool Permission Boundary: native/provider tools scoped by tenant/channel/account/peer.
 
 ## Rule
 

@@ -107,24 +107,24 @@ function ProviderCredentialsPage() {
       setManual(data)
       setManualResponse('')
       setSessionStatus({ status: 'pending', session_id: data.session_id, expires_at: data.expires_at, scope: data.scope })
-      setToast({ message: '已生成 OpenClaw 授权链接，请在浏览器完成登录后粘贴 redirect URL 或 code。', tone: 'success' })
+      setToast({ message: '已生成 Codex 授权链接，请在浏览器完成登录后粘贴 redirect URL 或 code。', tone: 'success' })
       window.open(data.authorization_url, '_blank', 'noopener,noreferrer')
     },
-    onError: (err: Error) => setToast({ message: err.message || '生成 OpenClaw 授权链接失败', tone: 'danger' }),
+    onError: (err: Error) => setToast({ message: err.message || '生成 Codex 授权链接失败', tone: 'danger' }),
   })
 
   const completeManual = useMutation({
     mutationFn: async () => {
-      if (!manual?.session_id) throw new Error('没有待完成的 OpenClaw 授权会话')
+      if (!manual?.session_id) throw new Error('没有待完成的 Codex 授权会话')
       return api.completeCodexManualAuthorization(manual.session_id, manualResponse)
     },
     onSuccess: async (data) => {
       setSessionStatus({ status: data.status, session_id: manual?.session_id, credential_id: data.credential_id })
-      setToast({ message: 'OpenClaw-style ChatGPT 授权成功，Token 已加密保存。', tone: 'success' })
+      setToast({ message: 'Codex ChatGPT 授权成功，Token 已加密保存。', tone: 'success' })
       setManualResponse('')
       await refreshStatus()
     },
-    onError: (err: Error) => setToast({ message: err.message || '完成 OpenClaw 授权失败', tone: 'danger' }),
+    onError: (err: Error) => setToast({ message: err.message || '完成 Codex 授权失败', tone: 'danger' }),
   })
 
   const pollDevice = useMutation({
@@ -202,13 +202,13 @@ function ProviderCredentialsPage() {
         </CardBody>
       </Card>
       <Card className="soft">
-        <CardHeader title="OpenClaw-style ChatGPT 订阅授权" subtitle="适用于云端、远程或 localhost callback 无法自动返回 Nexus 的场景。" />
+        <CardHeader title="Codex ChatGPT 订阅授权" subtitle="适用于云端、远程或 localhost callback 无法自动返回 Nexus 的场景。" />
         <CardBody>
           <div className="message">
             如果浏览器跳转到 localhost 页面失败，请复制地址栏里的完整 URL 粘贴回来。
           </div>
           <div className="button-row" style={{ marginTop: 12 }}>
-            <Button onClick={() => startManual.mutate()} disabled={pending}>生成 OpenClaw 授权链接</Button>
+            <Button onClick={() => startManual.mutate()} disabled={pending}>生成 Codex 授权链接</Button>
             {manual?.authorization_url ? <Button variant="secondary" onClick={() => window.open(manual.authorization_url, '_blank', 'noopener,noreferrer')} disabled={pending}>打开授权链接</Button> : null}
           </div>
           {manual ? <TechnicalDetails title="手动授权技术详情" summary="复制回调 URL 或 code 时查看"><div className="message" style={{ marginTop: 12 }}>

@@ -110,6 +110,8 @@
     });
   }
 
+  openChat();
+
   function openChat() {
     if (!panel) return;
     panel.classList.remove('is-closed');

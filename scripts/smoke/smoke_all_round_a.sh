@@ -6,13 +6,10 @@ parse_common_args "$@"
 
 SCRIPTS=(
   smoke_e2e_outbound_safety.sh
-  smoke_e2e_openclaw_inbound_event.sh
-  smoke_e2e_transcript_sync.sh
-  smoke_e2e_same_route_reply.sh
-  smoke_e2e_unresolved_event_replay.sh
-  smoke_e2e_attachment_persist.sh
   smoke_e2e_runtime_health.sh
   smoke_e2e_integration_task.sh
+  smoke_webchat_ai_runtime.sh
+  smoke_webchat_cards.sh
 )
 
 FAILURES=0

@@ -13,6 +13,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_REAL_UPSTREAM_URL = "http://codex-private-reply-engine:18796/reply"
 
 
 def _load_bridge_module(
@@ -135,7 +136,7 @@ def test_bridge_readyz_reports_real_upstream_status(bridge_server):
     assert payload["ok"] is False
     assert payload["reason"] == "codex_app_server_real_upstream_unreachable"
     assert payload["real_upstream_configured"] is True
-    assert payload["real_upstream_url"] == "http://codex-private-model-runtime:18800/reply"
+    assert payload["real_upstream_url"] == DEFAULT_REAL_UPSTREAM_URL
     assert "bridge-token" not in json.dumps(payload)
 
 
@@ -272,7 +273,7 @@ def test_bridge_readyz_fails_closed_without_real_upstream(monkeypatch, tmp_path)
     assert payload["ok"] is False
     assert payload["reason"] == "codex_app_server_real_upstream_unreachable"
     assert payload["real_upstream_configured"] is True
-    assert payload["real_upstream_url"] == "http://codex-private-model-runtime:18800/reply"
+    assert payload["real_upstream_url"] == DEFAULT_REAL_UPSTREAM_URL
 
 
 def test_bridge_allows_container_compatible_bind_host(monkeypatch, tmp_path):
@@ -489,7 +490,7 @@ def test_bridge_routes_to_python_cli_pool_rollback(monkeypatch, tmp_path):
     bridge = _load_bridge_module(monkeypatch, tmp_path, upstream_url="", backend_label=None)
 
     assert bridge.RUNTIME_BACKEND == "python_cli_pool"
-    assert bridge.REAL_UPSTREAM_URL == "http://codex-private-model-runtime:18800/reply"
+    assert bridge.REAL_UPSTREAM_URL == DEFAULT_REAL_UPSTREAM_URL
     assert bridge.EFFECTIVE_REPLY_GENERATION_BACKEND == "python_cli_pool"
 
 

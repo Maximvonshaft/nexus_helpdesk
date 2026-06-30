@@ -458,8 +458,8 @@ def production_readiness(db: Session = Depends(get_db), current_user=Depends(get
         warnings.append('DATABASE_URL is not PostgreSQL; stage/prod cutover is still pending')
     if settings.storage_backend == 'local':
         warnings.append('STORAGE_BACKEND=local; object storage cutover is still pending')
-    if settings.openclaw_transport != 'mcp':
-        warnings.append('OpenClaw transport is not MCP-first')
+    if settings.openclaw_deployment_mode != 'disabled' or settings.openclaw_transport != 'disabled':
+        warnings.append('Legacy OpenClaw runtime env vars are still enabled')
     if not settings.metrics_enabled:
         warnings.append('Metrics are disabled')
     if db.bind and not db.bind.dialect.name.startswith('postgresql'):
@@ -509,9 +509,9 @@ def signoff_checklist(db: Session = Depends(get_db), current_user=Depends(get_cu
     if not checks['storage_not_local']:
         warnings.append('STORAGE_BACKEND is local')
 
-    checks['openclaw_transport_mcp'] = settings.openclaw_transport == 'mcp'
-    if not checks['openclaw_transport_mcp']:
-        warnings.append('OPENCLAW_TRANSPORT is not mcp')
+    checks['legacy_openclaw_disabled'] = settings.openclaw_deployment_mode == 'disabled' and settings.openclaw_transport == 'disabled'
+    if not checks['legacy_openclaw_disabled']:
+        warnings.append('Legacy OpenClaw runtime is still enabled')
 
     checks['metrics_enabled'] = settings.metrics_enabled
     if not checks['metrics_enabled']:
@@ -525,8 +525,8 @@ def signoff_checklist(db: Session = Depends(get_db), current_user=Depends(get_cu
         checks['database_connected'] = False
         warnings.append('Database connectivity check failed')
 
-    if settings.openclaw_event_driver_enabled is False:
-        warnings.append('OPENCLAW_EVENT_DRIVER_ENABLED is false')
+    if settings.openclaw_event_driver_enabled:
+        warnings.append('Legacy OpenClaw event driver is still enabled')
 
     outbound_email_successful_test_send_accounts = count_active_successful_tested_accounts(
         db,
@@ -619,8 +619,11 @@ def openclaw_runtime_health(db: Session = Depends(get_db), current_user=Depends(
     pending_attachment_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'openclaw.persist_attachment', BackgroundJob.status == JobStatus.pending).count()
     dead_attachment_jobs = db.query(BackgroundJob).filter(BackgroundJob.job_type == 'openclaw.persist_attachment', BackgroundJob.status == JobStatus.dead).count()
     warnings: list[str] = []
+    if not settings.openclaw_sync_enabled:
+        warnings.append('Legacy OpenClaw session sync is disabled')
     if heartbeat is None:
-        warnings.append('OpenClaw event daemon heartbeat missing')
+        if settings.openclaw_event_driver_enabled:
+            warnings.append('Legacy OpenClaw event daemon heartbeat missing')
         daemon_status = None
         daemon_seen = None
     else:
@@ -628,13 +631,13 @@ def openclaw_runtime_health(db: Session = Depends(get_db), current_user=Depends(
         daemon_seen = heartbeat.last_seen_at
         from ..utils.time import ensure_utc
         if daemon_seen and (utc_now() - ensure_utc(daemon_seen)).total_seconds() > settings.openclaw_sync_daemon_stale_seconds:
-            warnings.append('OpenClaw event daemon heartbeat is stale')
+            warnings.append('Legacy OpenClaw event daemon heartbeat is stale')
     if stale_link_count > settings.openclaw_sync_batch_size:
-        warnings.append('OpenClaw stale link backlog exceeds one batch')
+        warnings.append('Legacy session link backlog exceeds one batch')
     if dead_sync_jobs > 0:
-        warnings.append('There are dead OpenClaw sync jobs')
+        warnings.append('There are dead legacy session sync jobs')
     if dead_attachment_jobs > 0:
-        warnings.append('There are dead OpenClaw attachment persist jobs')
+        warnings.append('There are dead legacy attachment persist jobs')
     return OpenClawRuntimeHealthRead(
         sync_cursor=cursor.cursor_value if cursor else None,
         sync_daemon_last_seen_at=daemon_seen,
@@ -661,6 +664,8 @@ def openclaw_connectivity_check(db: Session = Depends(get_db), current_user=Depe
 def consume_openclaw_events(request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
     enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key='openclaw.events.consume_once', max_requests=settings.admin_action_rate_limit_consume_once_max, request_id=getattr(request.state, 'request_id', None))
+    if not settings.openclaw_event_driver_enabled:
+        return {'processed': 0}
     with managed_session(db):
         processed = consume_openclaw_events_once(db)
         db.flush()

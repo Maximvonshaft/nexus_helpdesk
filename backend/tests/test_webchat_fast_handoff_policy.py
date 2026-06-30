@@ -57,7 +57,7 @@ def _stream_settings():
         stream_require_accept=True,
         is_openclaw_stream_configured=True,
         stream_rollout_percent=100,
-        openclaw_responses_agent_id="webchat-fast",
+        provider_runtime_agent_id="webchat-fast",
     )
 
 
@@ -82,7 +82,7 @@ def _ai_handoff_reply(*, intent: str, reason: str) -> WebchatFastReplyResult:
     return WebchatFastReplyResult(
         ok=True,
         ai_generated=True,
-        reply_source="openclaw_responses",
+        reply_source="provider_runtime",
         reply="I’ll ask a human teammate to review this request before any controlled action is taken.",
         intent=intent,
         tracking_number=None,
@@ -129,7 +129,7 @@ def test_non_stream_handoff_terms_call_ai_and_create_tool_gated_ticket(monkeypat
     data = response.json()
     assert data["ok"] is True
     assert data["ai_generated"] is True
-    assert data["reply_source"] == "openclaw_responses"
+    assert data["reply_source"] == "provider_runtime"
     assert data["handoff_required"] is True
     assert data["handoff_reason"] == "address_change_requires_human_review"
     assert data["ticket_creation_queued"] is False
@@ -143,7 +143,7 @@ def test_non_stream_handoff_terms_call_ai_and_create_tool_gated_ticket(monkeypat
     try:
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == "ai-policy-non-stream")).scalar_one()
         assert row.status == "done"
-        assert row.response_json["reply_source"] == "openclaw_responses"
+        assert row.response_json["reply_source"] == "provider_runtime"
         assert row.response_json["ai_decision_trace"]["policy_gate"]["ok"] is True
         assert db.execute(select(func.count(Ticket.id))).scalar_one() == 1
         assert db.execute(select(func.count(WebchatHandoffRequest.id))).scalar_one() == 1
@@ -176,7 +176,7 @@ def test_stream_handoff_terms_use_same_ai_decision_contract(monkeypatch):
     final = finals[0]
     assert final["ok"] is True
     assert final["ai_generated"] is True
-    assert final["reply_source"] == "openclaw_responses"
+    assert final["reply_source"] == "provider_runtime"
     assert final["handoff_required"] is True
     assert final["handoff_reason"] == "refund_or_compensation_requires_human_review"
     assert final["ticket_creation_queued"] is False
@@ -190,7 +190,7 @@ def test_stream_handoff_terms_use_same_ai_decision_contract(monkeypatch):
     try:
         row = db.execute(select(WebchatFastIdempotency).where(WebchatFastIdempotency.client_message_id == "ai-policy-stream")).scalar_one()
         assert row.status == "done"
-        assert row.response_json["reply_source"] == "openclaw_responses"
+        assert row.response_json["reply_source"] == "provider_runtime"
     finally:
         db.close()
 
@@ -220,7 +220,7 @@ def test_address_change_with_waybill_no_longer_skips_ai(monkeypatch):
     data = response.json()
     assert data["ok"] is True
     assert data["ai_generated"] is True
-    assert data["reply_source"] == "openclaw_responses"
+    assert data["reply_source"] == "provider_runtime"
     assert data["handoff_required"] is True
     assert data["handoff_reason"] == "address_change_requires_human_review"
     assert data["tracking_number"] is None

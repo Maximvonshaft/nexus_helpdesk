@@ -9,4 +9,3 @@ set +a
 python3 scripts/validate_production_readiness.py || true
 python3 "$ROOT_DIR/.pydeps/bin/alembic" upgrade head
 python3 scripts/init_dev_db.py
-python3 scripts/check_openclaw_connectivity.py || true

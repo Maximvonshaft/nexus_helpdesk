@@ -6,7 +6,6 @@ from ..webchat_fast_reply_metrics import record_codex_app_server_metric
 from .codex_app_server_provider import CodexAppServerProvider
 from .codex_auth_provider import CodexAuthProvider
 from .openai_responses_provider import OpenAIResponsesProvider
-from .openclaw_responses_provider import OpenClawResponsesProvider
 from .provider_base import BaseFastAIProvider
 from .schemas import FastAIProviderRequest, FastAIProviderResult
 
@@ -14,15 +13,25 @@ from .schemas import FastAIProviderRequest, FastAIProviderResult
 # dispatch lives in app.services.provider_runtime.webchat_fast_dispatcher.
 
 
+class RuleEngineUnavailableProvider(BaseFastAIProvider):
+    name = "rule_engine"
+
+    def is_configured(self) -> bool:
+        return False
+
+    async def generate(self, request: FastAIProviderRequest) -> FastAIProviderResult:
+        return FastAIProviderResult.unavailable(provider=self.name, error_code="rule_engine_unavailable", elapsed_ms=0)
+
+
 def _provider_for(name: str, settings: WebchatFastSettings) -> BaseFastAIProvider:
-    if name == "openclaw_responses":
-        return OpenClawResponsesProvider(settings)
     if name == "codex_auth":
         return CodexAuthProvider(settings)
     if name == "codex_app_server":
         return CodexAppServerProvider(settings)
     if name == "openai_responses":
         return OpenAIResponsesProvider(settings)
+    if name == "rule_engine":
+        return RuleEngineUnavailableProvider(settings)
     raise ValueError(f"Unsupported WEBCHAT_FAST_AI_PROVIDER: {name}")
 
 def _stable_percent_bucket(*, tenant_key: str, session_id: str, request_id: str | None) -> int:
@@ -33,8 +42,9 @@ def _stable_percent_bucket(*, tenant_key: str, session_id: str, request_id: str 
 def _effective_provider_name(*, request: FastAIProviderRequest, settings: WebchatFastSettings) -> tuple[str, str]:
     if settings.provider != "codex_app_server":
         return settings.provider, "configured_provider"
+    fallback_provider = settings.fallback_provider if settings.fallback_provider != "none" else "rule_engine"
     if settings.codex_app_server_kill_switch:
-        return "openclaw_responses", "kill_switch_openclaw"
+        return fallback_provider, "kill_switch_fallback"
     percent = settings.codex_app_server_canary_percent
     if percent >= 100:
         return "codex_app_server", "canary_full"
@@ -45,7 +55,7 @@ def _effective_provider_name(*, request: FastAIProviderRequest, settings: Webcha
     )
     if bucket < percent:
         return "codex_app_server", "canary_selected"
-    return "openclaw_responses", "canary_skipped_openclaw"
+    return fallback_provider, "canary_skipped_fallback"
 
 async def generate_fast_reply(
     *,

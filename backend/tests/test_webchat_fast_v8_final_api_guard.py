@@ -98,7 +98,7 @@ def _ai_handoff_reply() -> WebchatFastReplyResult:
     return WebchatFastReplyResult(
         ok=True,
         ai_generated=True,
-        reply_source="openclaw_responses",
+        reply_source="provider_runtime",
         reply="I’ll ask a human teammate to review this conversation.",
         intent="handoff_request",
         tracking_number=None,
@@ -175,7 +175,7 @@ def test_v8_final_api_guard_overrides_incorrect_provider_reply(monkeypatch):
         return WebchatFastReplyResult(
             ok=True,
             ai_generated=True,
-            reply_source="openclaw_responses",
+            reply_source="provider_runtime",
             reply="Incorrect non-KB answer from provider.",
             intent="general_support",
             tracking_number=None,
@@ -226,7 +226,7 @@ def test_v8_final_api_guard_not_applied_for_explicit_human_request(monkeypatch):
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["reply_source"] == "openclaw_responses"
+    assert payload["reply_source"] == "provider_runtime"
     assert payload["handoff_required"] is True
     assert payload["handoff_reason"] == "customer_requested_human_review"
     assert payload["ticket_id"]
@@ -259,7 +259,7 @@ def test_v8_final_api_guard_not_applied_for_tracking_fact(monkeypatch):
         return WebchatFastReplyResult(
             ok=True,
             ai_generated=True,
-            reply_source="openclaw_responses",
+            reply_source="provider_runtime",
             reply="Your parcel ending 006856 is currently In transit.",
             intent="tracking",
             tracking_number="CH020000006856",
@@ -286,7 +286,7 @@ def test_v8_final_api_guard_not_applied_for_tracking_fact(monkeypatch):
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["reply_source"] == "openclaw_responses"
+    assert payload["reply_source"] == "provider_runtime"
     assert payload["intent"] == "tracking"
     assert payload["tracking_fact"]["fact_evidence_present"] is True
     assert payload["evidence_trace"]["source"] == "speedaf_trusted_tracking_fact"

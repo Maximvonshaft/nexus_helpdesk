@@ -16,8 +16,8 @@ from .deps import get_current_user
 
 router = APIRouter(prefix="/api/admin/provider-runtime", tags=["admin-provider-runtime"])
 
-_ALLOWED_PRIMARY_PROVIDERS = {"codex_app_server", "codex_direct", "openclaw_responses", "openai_responses"}
-_ALLOWED_FALLBACK_PROVIDERS = {"openclaw_responses", "rule_engine", "openai_responses"}
+_ALLOWED_PRIMARY_PROVIDERS = {"codex_app_server", "codex_direct", "openai_responses"}
+_ALLOWED_FALLBACK_PROVIDERS = {"rule_engine", "openai_responses"}
 _WEBCHAT_FAST_SCENARIO = "webchat_fast_reply"
 _WEBCHAT_FAST_OUTPUT_CONTRACT = "speedaf_webchat_fast_reply_v1"
 
@@ -26,7 +26,7 @@ class WebchatFastRoutingUpdate(BaseModel):
     tenant_id: str = Field(default="default", min_length=1, max_length=36)
     channel_key: str = Field(default="website", min_length=1, max_length=100)
     primary_provider: str = Field(default="codex_app_server", min_length=1, max_length=100)
-    fallback_providers: list[str] = Field(default_factory=lambda: ["openclaw_responses", "rule_engine"], max_length=5)
+    fallback_providers: list[str] = Field(default_factory=lambda: ["openai_responses", "rule_engine"], max_length=5)
     canary_percent: int = Field(default=0, ge=0, le=100)
     kill_switch: bool = False
     enabled: bool = True
@@ -35,13 +35,9 @@ class WebchatFastRoutingUpdate(BaseModel):
     def validate_allowed(self) -> None:
         if self.primary_provider not in _ALLOWED_PRIMARY_PROVIDERS:
             raise ValueError("primary_provider_not_allowed")
-        if self.primary_provider == "codex_direct" and self.fallback_providers == ["openclaw_responses", "rule_engine"]:
-            self.fallback_providers = ["rule_engine"]
         forbidden = [provider for provider in self.fallback_providers if provider not in _ALLOWED_FALLBACK_PROVIDERS]
         if forbidden:
             raise ValueError("fallback_provider_not_allowed")
-        if self.primary_provider == "codex_app_server" and "openclaw_responses" not in self.fallback_providers:
-            raise ValueError("codex_requires_openclaw_fallback")
 
 
 @router.get("/status")

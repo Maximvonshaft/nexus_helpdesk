@@ -46,7 +46,7 @@ def _settings(enabled: bool = True):
     return SimpleNamespace(
         stream_enabled=enabled,
         stream_require_accept=True,
-        openclaw_responses_agent_id="webchat-fast",
+        provider_runtime_agent_id="webchat-fast",
         is_openclaw_stream_configured=True,
     )
 
@@ -66,7 +66,7 @@ def _ok_reply() -> WebchatFastReplyResult:
     return WebchatFastReplyResult(
         ok=True,
         ai_generated=True,
-        reply_source="openclaw_responses",
+        reply_source="provider_runtime",
         reply="Hello",
         intent="general_support",
         tracking_number=None,

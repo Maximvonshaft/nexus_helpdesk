@@ -167,7 +167,7 @@ function OverviewPage() {
             {canSeeOps ? (
               <div className="guide-item">
                 <strong>{needsRuntimeRecovery ? `运行恢复待处理 ${runtimeRecoveryCount}` : '运行恢复'}</strong>
-                <span>{needsRuntimeRecovery ? '当前存在 dead/requeue 类异常，建议主管优先处理。' : '检查同步、队列、OpenClaw 连接与恢复动作。'}</span>
+                <span>{needsRuntimeRecovery ? '当前存在 dead/requeue 类异常，建议主管优先处理。' : '检查同步、队列、旧会话兼容状态与恢复动作。'}</span>
                 <Button variant={needsRuntimeRecovery ? 'primary' : 'secondary'} onClick={() => navigate({ to: '/runtime' })}>打开运行恢复</Button>
               </div>
             ) : (
@@ -208,7 +208,7 @@ function OverviewPage() {
             <CardHeader title="运营准备情况" subtitle="上线前的配置状态与准备情况。" />
             <CardBody>
               <div className="button-row" style={{ marginBottom: 12 }}>
-                <Button variant="secondary" onClick={async () => { const res = await api.consumeOpenClawEventsOnce(); setToast({ message: `已执行一次消息同步，处理 ${res.processed} 批`, tone: 'success' }); await client.invalidateQueries({ queryKey: ['runtimeHealth'] }); }}>执行一次消息同步</Button>
+                <Button variant="secondary" onClick={async () => { const res = await api.consumeOpenClawEventsOnce(); setToast({ message: `已执行一次旧会话兼容检查，处理 ${res.processed} 批`, tone: 'success' }); await client.invalidateQueries({ queryKey: ['runtimeHealth'] }); }}>执行一次兼容检查</Button>
                 {needsRuntimeRecovery ? <Button variant="primary" onClick={() => navigate({ to: '/runtime' })}>处理运行异常</Button> : null}
               </div>
               <div className="kv-grid">

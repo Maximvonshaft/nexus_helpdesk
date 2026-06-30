@@ -33,7 +33,7 @@ The current outbound runtime still uses the shared external dispatch kill switch
 
 ```bash
 ENABLE_OUTBOUND_DISPATCH=true
-OUTBOUND_PROVIDER=openclaw
+OUTBOUND_PROVIDER=email
 OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=true
 ```
 
@@ -102,7 +102,7 @@ To stop real Email dispatch immediately:
 ENABLE_OUTBOUND_DISPATCH=false
 OUTBOUND_PROVIDER=disabled
 OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=false
-docker compose -f deploy/docker-compose.cloud.yml up -d app worker
+docker compose -f deploy/docker-compose.server.yml up -d app worker
 ```
 
 Then disable the SMTP account in `/outbound-email`. Existing pending Email outbox rows will not be dispatched while the kill switch is off.

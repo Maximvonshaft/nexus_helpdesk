@@ -8,7 +8,7 @@ from typing import Any
 
 
 class FastReplyParseError(ValueError):
-    """Raised when OpenClaw output cannot be accepted as customer reply JSON."""
+    """Raised when AI provider output cannot be accepted as customer reply JSON."""
 
     error_code = "ai_invalid_output"
 
@@ -152,7 +152,7 @@ def _content_text_from_block(block: Any) -> str | None:
         return None
     block_type = str(block.get("type") or "").lower()
     if "function" in block_type or "tool" in block_type:
-        raise UnexpectedToolCallError("OpenClaw returned a provider-native tool/function call in webchat fast reply output")
+        raise UnexpectedToolCallError("AI provider returned a provider-native tool/function call in webchat fast reply output")
     for key in ("text", "output_text", "content"):
         value = block.get(key)
         if isinstance(value, str) and value.strip():
@@ -203,7 +203,7 @@ def _extract_response_text(payload: Any) -> str:
     if isinstance(payload, str):
         return payload
     if not isinstance(payload, dict):
-        raise FastReplyParseError("OpenClaw response must be a JSON object or text body")
+        raise FastReplyParseError("AI provider response must be a JSON object or text body")
 
     for direct_key in ("output_text", "replyText", "text"):
         value = payload.get(direct_key)
@@ -225,7 +225,7 @@ def _extract_response_text(payload: Any) -> str:
                 continue
             item_type = str(item.get("type") or "").lower()
             if "function" in item_type or "tool" in item_type:
-                raise UnexpectedToolCallError("OpenClaw returned a provider-native tool/function call in webchat fast reply output")
+                raise UnexpectedToolCallError("AI provider returned a provider-native tool/function call in webchat fast reply output")
             content = item.get("content")
             if isinstance(content, list):
                 for block in content:
@@ -249,14 +249,14 @@ def _extract_response_text(payload: Any) -> str:
             if isinstance(message, dict):
                 tool_calls = message.get("tool_calls")
                 if tool_calls:
-                    raise UnexpectedToolCallError("OpenClaw returned provider-native tool calls in webchat fast reply output")
+                    raise UnexpectedToolCallError("AI provider returned provider-native tool calls in webchat fast reply output")
                 content = message.get("content")
                 if isinstance(content, str) and content.strip():
                     texts.append(content)
         if texts:
             return "\n".join(texts).strip()
 
-    raise FastReplyParseError("OpenClaw response did not contain a text output")
+    raise FastReplyParseError("AI provider response did not contain a text output")
 
 
 def _parse_pure_json_text(text: str) -> dict[str, Any]:
@@ -368,7 +368,7 @@ def _clean_str_list(value: Any, *, max_items: int) -> list[str]:
     return out
 
 
-def parse_openclaw_fast_reply_from_strict_json(payload: dict[str, Any]) -> ParsedFastReply:
+def parse_fast_reply_from_strict_json(payload: dict[str, Any]) -> ParsedFastReply:
     """Validate strict WebChat Fast JSON output.
 
     Accepted shapes:
@@ -379,7 +379,7 @@ def parse_openclaw_fast_reply_from_strict_json(payload: dict[str, Any]) -> Parse
 
     parsed = dict(payload)
     if _declares_provider_tool_or_function_call(parsed):
-        raise UnexpectedToolCallError("OpenClaw returned a provider-native tool/function call in webchat fast reply output")
+        raise UnexpectedToolCallError("AI provider returned a provider-native tool/function call in webchat fast reply output")
 
     is_decision = "customer_reply" in parsed or "next_action" in parsed or "risk_level" in parsed
     if is_decision:
@@ -445,7 +445,7 @@ def parse_openclaw_fast_reply_from_strict_json(payload: dict[str, Any]) -> Parse
     )
 
 
-def parse_openclaw_fast_reply(payload: Any) -> ParsedFastReply:
+def parse_fast_reply_provider_output(payload: Any) -> ParsedFastReply:
     """Parse and validate WebChat Fast Lane AI output.
 
     The boundary is intentionally strict. Provider-native tool calls, markdown
@@ -456,10 +456,16 @@ def parse_openclaw_fast_reply(payload: Any) -> ParsedFastReply:
 
     if isinstance(payload, dict):
         if _looks_like_decision_json(payload):
-            return parse_openclaw_fast_reply_from_strict_json(payload)
+            return parse_fast_reply_from_strict_json(payload)
         if _declares_provider_tool_or_function_call(payload):
-            raise UnexpectedToolCallError("OpenClaw returned a provider-native tool/function call in webchat fast reply output")
+            raise UnexpectedToolCallError("AI provider returned a provider-native tool/function call in webchat fast reply output")
 
     text = _extract_response_text(payload)
     parsed = _parse_pure_json_text(text)
-    return parse_openclaw_fast_reply_from_strict_json(parsed)
+    return parse_fast_reply_from_strict_json(parsed)
+
+
+# Backward-compatible aliases for older tests and integrations that imported
+# the OpenClaw-named parser boundary. The implementation is provider-neutral.
+parse_openclaw_fast_reply_from_strict_json = parse_fast_reply_from_strict_json
+parse_openclaw_fast_reply = parse_fast_reply_provider_output

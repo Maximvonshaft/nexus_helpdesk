@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-BASE_URL="${BASE_URL:-http://127.0.0.1:8080}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/_lib.sh"
+parse_common_args "$@"
+
+BASE_URL="${BASE_URL:-$API_URL}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-}"
 ORIGIN="${ORIGIN:-http://localhost}"
 MODE="${MODE:-full}"
+
+if [ "$DRY_RUN" = "1" ]; then
+  info "dry-run: would initialize WebChat, verify structured card actions, and optionally validate admin thread evidence"
+  pass "webchat cards smoke dry-run"
+  exit 0
+fi
 
 if [ "$MODE" != "full" ] && [ "$MODE" != "visitor-only" ]; then
   echo "MODE must be full or visitor-only" >&2

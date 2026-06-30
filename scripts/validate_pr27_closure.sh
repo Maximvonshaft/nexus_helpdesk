@@ -33,8 +33,7 @@ fi
 cd "$ROOT_DIR"
 echo "===== Deploy gate ====="
 bash scripts/deploy/check_deploy_contract.sh
-docker compose --env-file deploy/.env.prod.local-postgres.example -f deploy/docker-compose.server.local-postgres.yml config
-docker compose --env-file deploy/.env.prod.external-postgres.example -f deploy/docker-compose.server.external-postgres.yml config
-docker compose --env-file deploy/.env.prod.external-postgres.example -f deploy/docker-compose.server.external-postgres.yml build app worker
+docker compose --env-file deploy/.env.prod.example -f deploy/docker-compose.server.yml config
+docker compose --env-file deploy/.env.prod.example -f deploy/docker-compose.server.yml build app
 
 echo "===== PR27 closure validation passed ====="

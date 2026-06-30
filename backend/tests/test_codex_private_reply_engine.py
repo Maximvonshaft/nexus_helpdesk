@@ -501,8 +501,8 @@ def test_private_reply_engine_does_not_mutate_canary_configuration():
 def test_codex_chat_smoke_runbook_documents_real_private_model_gate():
     runbook = (ROOT / "docs" / "engineering" / "codex_chat_smoke_runbook.md").read_text(encoding="utf-8")
 
-    assert "CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL=http://codex-private-model-runtime:18800/reply" in runbook
-    assert "GET http://codex-private-model-runtime:18800/readyz" in runbook
+    assert "CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL=http://codex-private-reply-engine:18796/reply" in runbook
+    assert "GET http://codex-private-reply-engine:18796/readyz" in runbook
     assert "18796 /readyz" in runbook or "http://127.0.0.1:18796/readyz" in runbook
     assert "18795/readyz" in runbook
     assert "18794/readyz" in runbook
@@ -510,6 +510,5 @@ def test_codex_chat_smoke_runbook_documents_real_private_model_gate():
     assert "nonce_echoed=True" in runbook
     assert "VERDICT=CODEX_AUTH_AND_CHAT_MODEL_CALL_CONNECTED" in runbook
     assert "canary_percent=0" in runbook
-    assert "OpenClaw fallback remains configured" in runbook
-    assert "fixture responses" in runbook
-    assert "hardcoded nonce echo" in runbook
+    assert "provider_runtime fallback remains configured" in runbook
+    assert "rule_engine fallback" in runbook

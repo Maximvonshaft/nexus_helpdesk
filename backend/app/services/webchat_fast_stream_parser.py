@@ -9,9 +9,8 @@ from .webchat_fast_output_parser import (
     FastReplyParseError,
     ParsedFastReply,
     assert_customer_visible_reply_is_safe,
-    parse_openclaw_fast_reply,
+    parse_fast_reply_provider_output,
 )
-from .webchat_openclaw_stream_adapter import ContentDelta, Completed, ToolCallDetected, StreamError
 
 FORBIDDEN_PHRASES = [
     "OpenClaw",
@@ -42,6 +41,27 @@ class StreamingReplyAbort(RuntimeError):
 @dataclass(frozen=True)
 class ReplyDelta:
     text: str
+
+
+@dataclass(frozen=True)
+class ContentDelta:
+    text: str
+
+
+@dataclass(frozen=True)
+class Completed:
+    full_text: str | None = None
+    full_payload: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ToolCallDetected:
+    name: str | None = None
+
+
+@dataclass(frozen=True)
+class StreamError:
+    error_code: str
 
 
 _FORBIDDEN_PATTERNS = [
@@ -232,7 +252,7 @@ class StreamingReplyExtractor:
                 raise FastReplyParseError("stream final payload is empty")
             if candidate.lstrip().startswith("```"):
                 raise FastReplyParseError("markdown fenced JSON is not allowed")
-        parsed = parse_openclaw_fast_reply(candidate)
+        parsed = parse_fast_reply_provider_output(candidate)
         if not parsed.reply or not parsed.reply.strip():
             raise FastReplyParseError("reply is required")
         assert_customer_visible_reply_is_safe(parsed.reply)

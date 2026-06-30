@@ -17,7 +17,8 @@ from .schemas import ProviderRequest, ProviderResult
 
 logger = logging.getLogger(__name__)
 
-_DIRECT_ENV_PROVIDERS = {"codex_app_server", "codex_direct", "openclaw_responses", "openai_responses", "rule_engine"}
+_DIRECT_ENV_PROVIDERS = {"codex_app_server", "codex_direct", "openai_responses", "rule_engine"}
+_REMOVED_PROVIDERS = {"openclaw_responses"}
 
 
 class ProviderRuntimeRouter:
@@ -65,9 +66,9 @@ class ProviderRuntimeRouter:
         unsupported live tracking status claims before customer visibility.
         """
 
-        from app.services.webchat_fast_output_parser import parse_openclaw_fast_reply
+        from app.services.webchat_fast_output_parser import parse_fast_reply_provider_output
 
-        parsed_reply = parse_openclaw_fast_reply(result.structured_output)
+        parsed_reply = parse_fast_reply_provider_output(result.structured_output)
         parsed = dict(result.structured_output or {})
         parsed.setdefault("customer_reply", parsed_reply.reply)
         parsed.setdefault("reply", parsed_reply.reply)
@@ -105,7 +106,7 @@ class ProviderRuntimeRouter:
 
         if not rule:
             primary_provider = "codex_app_server"
-            fallbacks = ["openclaw_responses", "rule_engine"]
+            fallbacks = ["openai_responses", "rule_engine"]
             output_contract = "speedaf_webchat_fast_reply_v1"
             timeout_ms = 10000
             kill_switch = False
@@ -126,6 +127,7 @@ class ProviderRuntimeRouter:
             kill_switch,
             canary_percent,
         )
+        primary_provider, fallbacks = _remove_retired_providers(primary_provider, fallbacks)
 
         if kill_switch:
             self._write_audit(request, "generate", "skipped", primary_provider, 0, {"kill_switch": True}, "kill_switch_active")
@@ -251,6 +253,15 @@ def _apply_env_overrides(
     if os.getenv("PROVIDER_RUNTIME_KILL_SWITCH") is not None:
         kill_switch = _env_bool("PROVIDER_RUNTIME_KILL_SWITCH", kill_switch)
     return primary_provider, fallbacks, output_contract, timeout_ms, kill_switch, canary_percent
+
+
+def _remove_retired_providers(primary_provider: str, fallbacks: list[str]) -> tuple[str, list[str]]:
+    cleaned_fallbacks = [provider for provider in fallbacks if provider not in _REMOVED_PROVIDERS]
+    if primary_provider in _REMOVED_PROVIDERS:
+        if cleaned_fallbacks:
+            return cleaned_fallbacks[0], cleaned_fallbacks[1:]
+        return "rule_engine", []
+    return primary_provider, cleaned_fallbacks
 
 
 def _harmonize_provider_timeout_ms(*, primary_provider: str, timeout_ms: int) -> int:

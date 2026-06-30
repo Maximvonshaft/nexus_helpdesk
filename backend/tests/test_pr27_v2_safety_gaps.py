@@ -7,8 +7,7 @@ def read(path: str) -> str:
 
 def test_deploy_contract_files_exist():
     for path in [
-        "deploy/docker-compose.server.local-postgres.yml",
-        "deploy/docker-compose.server.external-postgres.yml",
+        "deploy/docker-compose.server.yml",
         "deploy/.env.prod.local-postgres.example",
         "deploy/.env.prod.external-postgres.example",
         "scripts/deploy/check_deploy_contract.sh",
