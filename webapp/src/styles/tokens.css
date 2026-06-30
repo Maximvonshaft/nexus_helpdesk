@@ -1,8 +1,9 @@
 /*
  * NexusDesk semantic design tokens.
  *
- * This file is intentionally not imported yet. Active styling remains in
- * webapp/src/styles.css until a later reviewed design-system migration PR.
+ * These tokens are imported before the legacy stylesheet so new shared
+ * primitives can use stable semantic values while existing pages keep their
+ * current visual contract.
  */
 
 :root {
@@ -28,10 +29,10 @@
   --nd-color-info-bg: #eff8ff;
   --nd-color-ai-bg: #f5f3ff;
 
-  --nd-radius-sm: 8px;
-  --nd-radius-md: 12px;
-  --nd-radius-lg: 16px;
-  --nd-radius-xl: 22px;
+  --nd-radius-sm: 6px;
+  --nd-radius-md: 8px;
+  --nd-radius-lg: 12px;
+  --nd-radius-xl: 16px;
 
   --nd-space-1: 4px;
   --nd-space-2: 8px;

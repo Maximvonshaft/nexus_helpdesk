@@ -1,8 +1,8 @@
 /*
  * NexusDesk component style foundation.
  *
- * This file is intentionally not imported yet. It documents the class contract
- * for new shared UI primitives while avoiding visual changes in active pages.
+ * This file is imported before the legacy stylesheet. It activates the class
+ * contract for shared UI primitives without replacing existing route classes.
  */
 
 .nd-button {
