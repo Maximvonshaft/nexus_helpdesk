@@ -16,8 +16,9 @@ The main admin console is implemented under `webapp/`.
 
 Observed stack from `webapp/package.json`:
 
-- React `^19.2.0`
-- React DOM `^19.2.0`
+- React `18.3.1`
+- React DOM `18.3.1`
+- `@types/react` `^19.2.0`
 - Vite `^7.1.0`
 - TypeScript `^5.8.3`
 - TanStack Router `^1.130.0`
@@ -50,14 +51,28 @@ This means the console is currently a Vite-built React SPA that is emitted into 
 `webapp/src/router.tsx` currently registers:
 
 - `/login`
+- `/admin`
 - `/`
 - `/workspace`
 - `/webchat`
+- `/email`
+- `/webchat-voice`
+- `/webcall-operator`
+- `/webcall`
+- `/webcall-ai`
+- `/webcall-ai-demo`
+- `/provider-credentials`
 - `/bulletins`
 - `/ai-control`
+- `/knowledge-studio`
+- `/persona-builder`
+- `/control-tower`
+- `/qa-training`
 - `/control-plane`
 - `/accounts`
+- `/outbound-email`
 - `/users`
+- `/security`
 - `/runtime`
 
 Router configuration uses:

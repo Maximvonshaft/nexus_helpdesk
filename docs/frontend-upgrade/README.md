@@ -37,6 +37,7 @@ Implementation may start only after these documents are reviewed and accepted:
 15. `15-release-rollout-plan.md`
 16. `16-rollback-plan.md`
 17. `17-pr26-professional-review-report.md`
+18. `21-speedy-console-inspired-redesign-rfc.md`
 
 ## Non-goals for this planning branch
 
@@ -85,3 +86,7 @@ refactor: establish frontend runtime foundation
 ```
 
 The first implementation phase must be structure/foundation only and must not change product behavior.
+
+## 2026-06-30 Speedy Console redesign delta
+
+`21-speedy-console-inspired-redesign-rfc.md` adds the current redesign target after the read-only Speedy Console and NexusDesk audit. It folds WhatsApp channel admin, customer memory, QMD, ontology/status dictionary, and runtime observability into the existing frontend upgrade plan without reintroducing the legacy Speedy runtime path.
