@@ -140,15 +140,93 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
             )
 
         empty_reply_retry_count = 0
+        bad_json_retry_count = 0
         try:
             normalized = _normalize_runtime_output(response_payload, request=request, max_output_chars=self.max_output_chars)
         except ValueError as exc:
-            return self._failure(
-                "private_ai_runtime_bad_json",
-                started,
-                {"endpoint_path": _safe_url_path(endpoint), "model": model, "reason": str(exc)[:120]},
-                retryable=True,
-            )
+            bad_json_retry_count = 1
+            retry_prompt = _bad_json_retry_prompt(prompt, max_chars=self.max_prompt_chars)
+            retry_payload = self._build_payload(request, prompt=retry_prompt, model=model)
+            try:
+                response_payload = await asyncio.to_thread(self._post_json, endpoint, retry_payload, token)
+            except (TimeoutError, socket.timeout):
+                return self._failure(
+                    "private_ai_runtime_timeout",
+                    started,
+                    {
+                        "endpoint_path": _safe_url_path(endpoint),
+                        "model": model,
+                        "request_shape": self.request_shape,
+                        "prompt_chars": len(retry_prompt),
+                        "timeout_seconds": self.timeout_seconds,
+                        "bad_json_retry_count": bad_json_retry_count,
+                    },
+                    retryable=True,
+                )
+            except urllib.error.HTTPError as http_exc:
+                return self._failure(
+                    f"private_ai_runtime_http_{http_exc.code}",
+                    started,
+                    {
+                        "endpoint_path": _safe_url_path(endpoint),
+                        "model": model,
+                        "http_status": http_exc.code,
+                        "retryable_http": http_exc.code in _RETRYABLE_HTTP,
+                        "bad_json_retry_count": bad_json_retry_count,
+                    },
+                    retryable=http_exc.code in _RETRYABLE_HTTP,
+                )
+            except urllib.error.URLError as url_exc:
+                return self._failure(
+                    "private_ai_runtime_url_error",
+                    started,
+                    {
+                        "endpoint_path": _safe_url_path(endpoint),
+                        "model": model,
+                        "reason": str(url_exc.reason)[:160],
+                        "bad_json_retry_count": bad_json_retry_count,
+                    },
+                    retryable=True,
+                )
+            except OSError as os_exc:
+                return self._failure(
+                    "private_ai_runtime_network_error",
+                    started,
+                    {
+                        "endpoint_path": _safe_url_path(endpoint),
+                        "model": model,
+                        "reason": os_exc.__class__.__name__,
+                        "bad_json_retry_count": bad_json_retry_count,
+                    },
+                    retryable=True,
+                )
+            except ValueError as value_exc:
+                return self._failure(
+                    "private_ai_runtime_bad_response",
+                    started,
+                    {
+                        "endpoint_path": _safe_url_path(endpoint),
+                        "model": model,
+                        "reason": str(value_exc)[:120],
+                        "bad_json_retry_count": bad_json_retry_count,
+                    },
+                    retryable=True,
+                )
+            prompt = retry_prompt
+            try:
+                normalized = _normalize_runtime_output(response_payload, request=request, max_output_chars=self.max_output_chars)
+            except ValueError as retry_exc:
+                return self._failure(
+                    "private_ai_runtime_bad_json",
+                    started,
+                    {
+                        "endpoint_path": _safe_url_path(endpoint),
+                        "model": model,
+                        "reason": str(retry_exc)[:120],
+                        "bad_json_retry_count": bad_json_retry_count,
+                    },
+                    retryable=True,
+                )
         if not normalized.get("customer_reply"):
             empty_reply_retry_count = 1
             retry_prompt = _empty_reply_retry_prompt(prompt, max_chars=self.max_prompt_chars)
@@ -166,6 +244,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                         "prompt_chars": len(retry_prompt),
                         "timeout_seconds": self.timeout_seconds,
                         "empty_reply_retry_count": empty_reply_retry_count,
+                        "bad_json_retry_count": bad_json_retry_count,
                     },
                     retryable=True,
                 )
@@ -179,6 +258,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                         "http_status": exc.code,
                         "retryable_http": exc.code in _RETRYABLE_HTTP,
                         "empty_reply_retry_count": empty_reply_retry_count,
+                        "bad_json_retry_count": bad_json_retry_count,
                     },
                     retryable=exc.code in _RETRYABLE_HTTP,
                 )
@@ -191,6 +271,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                         "model": model,
                         "reason": str(exc.reason)[:160],
                         "empty_reply_retry_count": empty_reply_retry_count,
+                        "bad_json_retry_count": bad_json_retry_count,
                     },
                     retryable=True,
                 )
@@ -203,6 +284,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                         "model": model,
                         "reason": exc.__class__.__name__,
                         "empty_reply_retry_count": empty_reply_retry_count,
+                        "bad_json_retry_count": bad_json_retry_count,
                     },
                     retryable=True,
                 )
@@ -215,6 +297,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                         "model": model,
                         "reason": str(exc)[:120],
                         "empty_reply_retry_count": empty_reply_retry_count,
+                        "bad_json_retry_count": bad_json_retry_count,
                     },
                     retryable=True,
                 )
@@ -230,6 +313,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                         "model": model,
                         "reason": str(exc)[:120],
                         "empty_reply_retry_count": empty_reply_retry_count,
+                        "bad_json_retry_count": bad_json_retry_count,
                     },
                     retryable=True,
                 )
@@ -241,6 +325,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                     "endpoint_path": _safe_url_path(endpoint),
                     "model": model,
                     "empty_reply_retry_count": empty_reply_retry_count,
+                    "bad_json_retry_count": bad_json_retry_count,
                 },
                 retryable=True,
             )
@@ -262,6 +347,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                 "timeout_seconds": self.timeout_seconds,
                 "elapsed_ms": _elapsed_ms(started),
                 "empty_reply_retry_count": empty_reply_retry_count,
+                "bad_json_retry_count": bad_json_retry_count,
                 "usage": _safe_usage(response_payload.get("usage") if isinstance(response_payload, dict) else None),
                 "token_file_configured": bool(self.token_file),
             },
@@ -522,6 +608,17 @@ def _missing_tracking_number_reply(body: str) -> str:
 
 def _empty_reply_retry_prompt(prompt: str, *, max_chars: int) -> str:
     suffix = "\nThe previous runtime response was empty. Return only strict JSON with a non-empty customer_reply."
+    if len(prompt) + len(suffix) <= max_chars:
+        return prompt + suffix
+    return prompt[: max(0, max_chars - len(suffix))] + suffix
+
+
+def _bad_json_retry_prompt(prompt: str, *, max_chars: int) -> str:
+    suffix = (
+        "\nThe previous runtime response was not valid JSON. "
+        "Return only one strict JSON object with customer_reply, language, intent, "
+        "tracking_number, handoff_required, and ticket_should_create. No markdown. No prose outside JSON."
+    )
     if len(prompt) + len(suffix) <= max_chars:
         return prompt + suffix
     return prompt[: max(0, max_chars - len(suffix))] + suffix

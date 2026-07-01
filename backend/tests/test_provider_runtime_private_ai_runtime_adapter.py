@@ -234,6 +234,47 @@ async def test_private_ai_runtime_retries_once_after_empty_reply(monkeypatch, tm
 
 
 @pytest.mark.asyncio
+async def test_private_ai_runtime_retries_once_after_bad_json(monkeypatch, tmp_path):
+    token_file = tmp_path / "ai-runtime-token"
+    token_file.write_text("test-token", encoding="utf-8")
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_REQUEST_SHAPE", "question")
+    adapter = PrivateAIRuntimeAdapter()
+    calls: list[dict[str, object]] = []
+
+    def fake_post_json(endpoint, payload, token):
+        calls.append(payload)
+        if len(calls) == 1:
+            return {"status": "ok", "answer": '{"customer_reply": "Please provide your waybill number",'}
+        return {
+            "status": "ok",
+            "answer": json.dumps(
+                {
+                    "customer_reply": "Please send the waybill number from your parcel label so I can check it.",
+                    "language": "en",
+                    "intent": "tracking_missing_number",
+                    "handoff_required": False,
+                    "ticket_should_create": False,
+                }
+            ),
+        }
+
+    monkeypatch.setattr(adapter, "_post_json", fake_post_json)
+
+    result = await adapter.generate(Mock(), _request(body="Can you help track my parcel?"))
+
+    assert result.ok is True
+    assert len(calls) == 2
+    assert "previous runtime response was not valid json" in str(calls[1]["question"]).lower()
+    assert result.structured_output["customer_reply"] == "Please send the waybill number from your parcel label so I can check it."
+    assert result.raw_payload_safe_summary["bad_json_retry_count"] == 1
+    assert result.raw_payload_safe_summary["empty_reply_retry_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_private_ai_runtime_production_rejects_inline_token(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
