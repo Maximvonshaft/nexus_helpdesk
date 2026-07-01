@@ -126,3 +126,58 @@ jobs:
               raise SystemExit(f'FORBIDDEN_MANUAL_STAGING_SMOKE_CONTENT={found}')
           print('manual_staging_smoke_workflow_contracts_ok')
           PY
+
+      - name: Public production smoke workflow contract check
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/public-production-smoke.yml')
+          script = Path('scripts/smoke/public_webchat_smoke.py')
+          if not workflow.exists():
+              raise SystemExit('public_production_smoke_workflow_missing')
+          if not script.exists():
+              raise SystemExit('public_webchat_smoke_script_missing')
+
+          workflow_text = workflow.read_text(encoding='utf-8')
+          script_text = script.read_text(encoding='utf-8')
+          required_workflow = [
+              'workflow_dispatch:',
+              'base_url:',
+              'expected_git_sha:',
+              'expected_image_tag:',
+              'require_ai_reply:',
+              'max_latency_ms:',
+              'scripts/smoke/public_webchat_smoke.py',
+              'actions/upload-artifact@v4',
+          ]
+          missing_workflow = [item for item in required_workflow if item not in workflow_text]
+          if missing_workflow:
+              raise SystemExit(f'MISSING_PUBLIC_PRODUCTION_SMOKE_WORKFLOW_CONTRACTS={missing_workflow}')
+
+          required_script = [
+              '/healthz',
+              '/readyz',
+              '/webchat/demo/',
+              '/api/webchat/fast-reply',
+              'release_metadata_complete',
+              'reply_starts_json',
+              'PUBLIC_WEBCHAT_SMOKE_PASS=true',
+          ]
+          missing_script = [item for item in required_script if item not in script_text]
+          if missing_script:
+              raise SystemExit(f'MISSING_PUBLIC_WEBCHAT_SMOKE_SCRIPT_CONTRACTS={missing_script}')
+
+          forbidden_script = [
+              'Authorization',
+              'Bearer ',
+              'OPENAI_API_KEY',
+              'AI_RUNTIME_TOKEN',
+          ]
+          found_forbidden = [item for item in forbidden_script if item in script_text]
+          if found_forbidden:
+              raise SystemExit(f'FORBIDDEN_PUBLIC_WEBCHAT_SMOKE_SECRET_USAGE={found_forbidden}')
+
+          print('public_production_smoke_contracts_ok')
+          PY

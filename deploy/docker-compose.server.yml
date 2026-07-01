@@ -35,9 +35,9 @@ x-app-image: &app_image
     FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:-unknown}
   volumes: &app_volumes
     - /run/secrets:/run/secrets:ro
-    - /opt/nexus_helpdesk/deploy/runtime_secrets/ai_runtime_token:/run/nexus/ai_runtime_token:ro
-    - /opt/nexus_helpdesk/deploy/runtime_secrets/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
-    - ../data/uploads:/app/backend/uploads
+    - ${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/ai_runtime_token:/run/nexus/ai_runtime_token:ro
+    - ${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
+    - ${NEXUSDESK_UPLOADS_DIR:-/opt/nexus_helpdesk/data/uploads}:/app/backend/uploads
   logging: &json_logging
     driver: json-file
     options:
@@ -89,7 +89,7 @@ services:
       WEB_TIMEOUT: ${WEB_TIMEOUT:-30}
     volumes: *app_volumes
     ports:
-      - "127.0.0.1:18081:8080"
+      - "127.0.0.1:${APP_HOST_PORT:-18081}:8080"
     command:
       - /bin/sh
       - -c
@@ -179,7 +179,7 @@ services:
       CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS:-9}
       CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS:-30}
     volumes:
-      - /opt/nexus_helpdesk/deploy/runtime_secrets/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
+      - ${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
     ports:
       - "172.18.0.1:18794:18794"
     command: python /app/deploy/codex_app_server_bridge_proxy.py

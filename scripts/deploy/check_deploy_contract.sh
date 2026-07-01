@@ -58,6 +58,8 @@ def assert_no_real_secret(key: str, value: str) -> None:
     safe_non_secret_keys = {
         # Numeric/session-duration config; contains TOKEN in the key name but is not a credential.
         "ACCESS_TOKEN_EXPIRE_HOURS",
+        # Server path to secret files; the value is a directory, not credential material.
+        "NEXUSDESK_RUNTIME_SECRETS_DIR",
     }
     if key in safe_non_secret_keys:
         return
