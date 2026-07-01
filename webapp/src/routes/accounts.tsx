@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Route as RootRoute } from './root'
 import { AppShell } from '@/layouts/AppShell'
 import { api, getToken } from '@/lib/api'
-import type { ChannelAccount, WhatsAppNativeAccountStatus } from '@/lib/types'
+import type { ChannelAccount, WhatsAppNativeAccountStatus, WhatsAppNativePairingCodeResponse } from '@/lib/types'
 import { formatDateTime, healthTone, labelize, sanitizeDisplayText } from '@/lib/format'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -56,6 +56,8 @@ function AccountsPage() {
   const [toast, setToast] = useState<{ message: string; tone?: 'default' | 'danger' | 'success' } | null>(null)
   const [dirty, setDirty] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [pairingPhone, setPairingPhone] = useState('')
+  const [pairingResult, setPairingResult] = useState<WhatsAppNativePairingCodeResponse | null>(null)
 
   useEffect(() => {
     if (session.data && !permitted) navigate({ to: '/' })
@@ -88,6 +90,8 @@ function AccountsPage() {
       setForm(emptyForm())
       setDirty(false)
     }
+    setPairingPhone('')
+    setPairingResult(null)
   }, [selected])
 
   const patchForm = (patch: Partial<ChannelAccount>) => {
@@ -154,6 +158,14 @@ function AccountsPage() {
     onSuccess: (status) => applyWhatsAppStatus(status, 'WhatsApp 二维码已刷新'),
     onError: (err: Error) => setToast({ message: err.message || '刷新 WhatsApp 二维码失败', tone: 'danger' }),
   })
+  const whatsappPairingMutation = useMutation({
+    mutationFn: () => api.whatsappNativePairingCode(selectedWhatsappAccountId || '', pairingPhone),
+    onSuccess: (result) => {
+      setPairingResult(result)
+      setToast({ message: result.ok ? 'WhatsApp 配对码已生成' : `WhatsApp 配对码生成失败：${result.error_code || 'unknown'}`, tone: result.ok ? 'success' : 'danger' })
+    },
+    onError: (err: Error) => setToast({ message: err.message || '生成 WhatsApp 配对码失败', tone: 'danger' }),
+  })
   const whatsappRestartMutation = useMutation({
     mutationFn: () => api.whatsappNativeRestart(selectedWhatsappAccountId || ''),
     onSuccess: (status) => applyWhatsAppStatus(status, 'WhatsApp 连接已重启'),
@@ -166,7 +178,8 @@ function AccountsPage() {
   })
 
   const nativeStatus = whatsappStatus.data
-  const nativeBusy = whatsappStartMutation.isPending || whatsappQrMutation.isPending || whatsappRestartMutation.isPending || whatsappLogoutMutation.isPending
+  const nativeBusy = whatsappStartMutation.isPending || whatsappQrMutation.isPending || whatsappPairingMutation.isPending || whatsappRestartMutation.isPending || whatsappLogoutMutation.isPending
+  const canRequestPairingCode = pairingPhone.replace(/\D/g, '').length >= 8 && !nativeBusy
 
   return (
     <AppShell>
@@ -249,6 +262,7 @@ function AccountsPage() {
                         <MetricCard label="二维码" value={nativeStatus?.qr_status ? labelize(nativeStatus.qr_status) : '未知'} />
                         <MetricCard label="手机号" value={nativeStatus?.phone_number || '未绑定'} />
                         <MetricCard label="重连次数" value={nativeStatus?.reconnect_count ?? 0} />
+                        <MetricCard label="会话状态" value={nativeStatus?.session_state ? labelize(nativeStatus.session_state) : '未知'} />
                       </div>
                       <div className="button-row">
                         <Button variant="primary" onClick={() => whatsappStartMutation.mutate()} disabled={nativeBusy}>开始扫码</Button>
@@ -256,10 +270,22 @@ function AccountsPage() {
                         <Button variant="secondary" onClick={() => whatsappRestartMutation.mutate()} disabled={nativeBusy}>重启连接</Button>
                         <Button variant="ghost" onClick={() => whatsappLogoutMutation.mutate()} disabled={nativeBusy}>退出登录</Button>
                       </div>
+                      <div className="form-grid">
+                        <Field label="配对手机号" description="用于 WhatsApp Linked Devices 的配对码绑定；结果只显示尾号。">
+                          <Input value={pairingPhone} onChange={(event) => { setPairingPhone(event.target.value); setPairingResult(null) }} placeholder="+41 79 855 97 37" />
+                        </Field>
+                        <Field label="配对码">
+                          <div className="button-row">
+                            <Button variant="secondary" onClick={() => whatsappPairingMutation.mutate()} disabled={!canRequestPairingCode}>{whatsappPairingMutation.isPending ? '生成中…' : '生成配对码'}</Button>
+                            <span className="workspace-toolbar-meta">{pairingResult?.ok ? `尾号 ${pairingResult.phone_number_suffix || '—'} · ${pairingResult.pairing_code || '—'}` : pairingResult?.error_code ? `失败：${pairingResult.error_code}` : '未生成'}</span>
+                          </div>
+                        </Field>
+                      </div>
                       {nativeStatus?.qr_data_url ? (
                         <div className="message" data-role="agent">
                           <img src={nativeStatus.qr_data_url} alt="WhatsApp linked device QR code" style={{ width: 220, height: 220, maxWidth: '100%', display: 'block', marginBottom: 12 }} />
                           <div>二维码生成时间：{formatDateTime(nativeStatus.last_qr_generated_at)}</div>
+                          <div>二维码过期时间：{formatDateTime(nativeStatus.last_qr_expires_at)}</div>
                         </div>
                       ) : nativeStatus?.qr ? (
                         <div className="message" data-role="agent">
@@ -271,6 +297,8 @@ function AccountsPage() {
                         <div className="kv"><label>JID</label><div>{sanitizeDisplayText(nativeStatus?.jid || '未绑定')}</div></div>
                         <div className="kv"><label>最后在线</label><div>{formatDateTime(nativeStatus?.last_connected_at)}</div></div>
                         <div className="kv"><label>最后离线</label><div>{formatDateTime(nativeStatus?.last_disconnected_at)}</div></div>
+                        <div className="kv"><label>最后通信</label><div>{formatDateTime(nativeStatus?.last_transport_at)}</div></div>
+                        <div className="kv"><label>浏览器指纹</label><div>{sanitizeDisplayText(nativeStatus?.browser?.join(' / ') || '未知')}</div></div>
                         <div className="kv"><label>最后错误</label><div>{sanitizeDisplayText(nativeStatus?.last_error_message || nativeStatus?.last_error_code || '无')}</div></div>
                       </div>
                     </div>

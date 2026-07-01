@@ -77,6 +77,8 @@ backend/uploads/
 *.tsbuildinfo
 
 # Local artifacts
+/artifacts/
+/.tmp-release-metadata/
 backend/artifacts/
 deploy/runtime_secrets/*
 !deploy/runtime_secrets/.gitkeep

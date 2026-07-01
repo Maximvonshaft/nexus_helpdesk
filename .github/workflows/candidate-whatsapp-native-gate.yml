@@ -95,6 +95,10 @@ jobs:
           grep -q "whatsapp-sidecar-candidate" <<<"$rendered"
           grep -q "worker-outbound-candidate" <<<"$rendered"
           grep -q "http://app-candidate:8080" <<<"$rendered"
+          grep -q "WA_SIDECAR_AUTO_START_ACCOUNTS" <<<"$rendered"
+          grep -q "WA_SIDECAR_BROWSER_PLATFORM" <<<"$rendered"
+          grep -q "WA_SIDECAR_OPERATION_TIMEOUT_MS" <<<"$rendered"
+          grep -q "WA_SIDECAR_RECONNECT_MAX_ATTEMPTS" <<<"$rendered"
           if grep -q "NEXUS_BACKEND_URL: http://app:8080" <<<"$rendered"; then
             echo "candidate sidecar still points at legacy app:8080" >&2
             exit 2

@@ -14,6 +14,10 @@ function snapshot(accountId: string, status: AccountSnapshot["status"]): Account
     last_disconnected_at: null,
     last_error_code: null,
     last_error_message: null,
+    last_transport_at: null,
+    last_qr_expires_at: status === "qr_pending" ? new Date(Date.now() + 120_000).toISOString() : null,
+    session_state: status === "connected" ? "linked" : "empty",
+    browser: ["mock", "NexusDesk", "0.1.0"],
     reconnect_count: 0
   };
 }

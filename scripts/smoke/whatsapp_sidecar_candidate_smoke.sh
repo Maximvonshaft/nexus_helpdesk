@@ -84,7 +84,31 @@ if status == "connected":
 if status == "qr_pending" and qr_status == "pending" and has_qr:
     print("qr_pending")
     raise SystemExit(0)
-raise SystemExit(f"expected qr_pending with QR data or connected, got status={status} qr_status={qr_status} has_qr={has_qr}")
+raise SystemExit(
+    "expected qr_pending with QR data or connected, "
+    f"got status={status} qr_status={qr_status} has_qr={has_qr} "
+    f"session_state={payload.get('session_state')} error={payload.get('last_error_code')}"
+)
+PY
+}
+
+assert_account_metadata() {
+  python3 - "$1" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+session_state = payload.get("session_state")
+browser = payload.get("browser")
+valid_session_states = {"empty", "partial", "linked", "corrupt"}
+errors = []
+if session_state not in valid_session_states:
+    errors.append(f"session_state={session_state!r}")
+if not isinstance(browser, list) or len(browser) != 3 or not all(isinstance(item, str) and item for item in browser):
+    errors.append(f"browser={browser!r}")
+if errors:
+    raise SystemExit("missing hardened account metadata: " + ", ".join(errors))
 PY
 }
 
@@ -119,6 +143,7 @@ while IFS= read -r -d '' item; do
 done < <(auth_args)
 
 curl_json GET "/accounts/${ACCOUNT_ID}/status" "$OUT_DIR/status.json" "${AUTH[@]}"
+assert_account_metadata "$OUT_DIR/status.json"
 
 if [[ -n "$EXPECT_ACCOUNT_STATUS" ]]; then
   actual_status="$(json_value "$OUT_DIR/status.json" status)"
@@ -130,7 +155,9 @@ fi
 
 if is_true "$START_LOGIN"; then
   curl_json POST "/accounts/${ACCOUNT_ID}/start" "$OUT_DIR/start.json" "${AUTH[@]}"
+  assert_account_metadata "$OUT_DIR/start.json"
   curl_json GET "/accounts/${ACCOUNT_ID}/qr" "$OUT_DIR/qr.json" "${AUTH[@]}"
+  assert_account_metadata "$OUT_DIR/qr.json"
 fi
 
 if is_true "$EXPECT_QR_OR_CONNECTED"; then
@@ -138,7 +165,9 @@ if is_true "$EXPECT_QR_OR_CONNECTED"; then
   last_error=""
   while (( SECONDS <= deadline )); do
     curl_json GET "/accounts/${ACCOUNT_ID}/status" "$OUT_DIR/status.json" "${AUTH[@]}"
+    assert_account_metadata "$OUT_DIR/status.json"
     curl_json GET "/accounts/${ACCOUNT_ID}/qr" "$OUT_DIR/qr.json" "${AUTH[@]}"
+    assert_account_metadata "$OUT_DIR/qr.json"
     if state="$(assert_qr_or_connected "$OUT_DIR/qr.json" 2>"$OUT_DIR/qr-wait-error.txt")"; then
       echo "WA_SIDECAR_QR_STATE=$state"
       break

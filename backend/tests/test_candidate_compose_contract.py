@@ -41,8 +41,16 @@ def test_candidate_compose_includes_native_whatsapp_sidecar_path() -> None:
     assert 'NEXUS_BACKEND_URL: "${CANDIDATE_NEXUS_BACKEND_URL:-http://app-candidate:8080}"' in compose
     assert 'WHATSAPP_SESSION_ROOT: "/data/whatsapp-sessions"' in compose
     assert "CANDIDATE_WHATSAPP_SESSION_ROOT" in compose
+    assert "WA_SIDECAR_AUTO_START_ACCOUNTS" in compose
+    assert "WA_SIDECAR_BROWSER_PLATFORM" in compose
+    assert "WA_SIDECAR_OPERATION_TIMEOUT_MS" in compose
+    assert "WA_SIDECAR_RECONNECT_MAX_ATTEMPTS" in compose
     assert "http://app:8080" not in compose
     assert 'NEXUS_BACKEND_URL: "${NEXUS_BACKEND_URL:?set NEXUS_BACKEND_URL to the intended Nexus backend service}"' in sidecar_overlay
+    assert "WA_SIDECAR_AUTO_START_ACCOUNTS" in sidecar_overlay
+    assert "WA_SIDECAR_BROWSER_PLATFORM" in sidecar_overlay
+    assert "WA_SIDECAR_OPERATION_TIMEOUT_MS" in sidecar_overlay
+    assert "WA_SIDECAR_RECONNECT_MAX_ATTEMPTS" in sidecar_overlay
 
 
 def test_candidate_env_example_documents_external_network() -> None:
@@ -60,6 +68,10 @@ def test_candidate_env_example_documents_external_network() -> None:
     assert "WHATSAPP_NATIVE_ENABLED=true" in env_example
     assert "WHATSAPP_DISPATCH_MODE=native_sidecar" in env_example
     assert "WHATSAPP_SIDECAR_URL=http://whatsapp-sidecar-candidate:18793" in env_example
+    assert "WA_SIDECAR_AUTO_START_ACCOUNTS=wa-main" in env_example
+    assert "WA_SIDECAR_BROWSER_PLATFORM=Ubuntu" in env_example
+    assert "WA_SIDECAR_OPERATION_TIMEOUT_MS=60000" in env_example
+    assert "WA_SIDECAR_RECONNECT_MAX_ATTEMPTS=20" in env_example
     assert "SPEEDAF_MCP_ENABLED=false" in env_example
     assert "SPEEDAF_CANCEL_ENABLED=false" in env_example
 
@@ -73,6 +85,10 @@ def test_candidate_whatsapp_native_gate_workflow_covers_compose_sidecar_and_back
     assert "worker-outbound-candidate" in workflow
     assert "http://app-candidate:8080" in workflow
     assert "NEXUS_BACKEND_URL: http://app:8080" in workflow
+    assert "WA_SIDECAR_AUTO_START_ACCOUNTS" in workflow
+    assert "WA_SIDECAR_BROWSER_PLATFORM" in workflow
+    assert "WA_SIDECAR_OPERATION_TIMEOUT_MS" in workflow
+    assert "WA_SIDECAR_RECONNECT_MAX_ATTEMPTS" in workflow
     assert "WA_SIDECAR_CONNECTOR_MODE: mock" in workflow
     assert "whatsapp_sidecar_candidate_smoke.sh" in workflow
     assert "test_admin_whatsapp_native_api.py" in workflow

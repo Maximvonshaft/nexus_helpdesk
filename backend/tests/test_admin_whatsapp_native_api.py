@@ -23,6 +23,8 @@ from app.api import admin_whatsapp_native  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.enums import UserRole  # noqa: E402
 from app.models import ChannelAccount, User  # noqa: E402
+from app.services import whatsapp_native_admin as whatsapp_native_admin_service  # noqa: E402
+from app.settings import get_settings  # noqa: E402
 
 
 @pytest.fixture()
@@ -79,6 +81,10 @@ def _snapshot(**overrides):
         "last_disconnected_at": None,
         "last_error_code": None,
         "last_error_message": None,
+        "last_transport_at": "2026-06-12T09:00:01Z",
+        "last_qr_expires_at": None,
+        "session_state": "linked",
+        "browser": ["Ubuntu", "NexusDesk", "22.04.4"],
         "reconnect_count": 0,
     }
     data.update(overrides)
@@ -119,6 +125,96 @@ def test_admin_can_fetch_whatsapp_native_status(db_session, monkeypatch):
     assert result.status == "connected"
     assert result.channel_health_status == "healthy"
     assert result.phone_number == "+41790000000"
+    assert result.session_state == "linked"
+    assert result.browser == ["Ubuntu", "NexusDesk", "22.04.4"]
+    assert result.last_transport_at == "2026-06-12T09:00:01Z"
+
+
+def test_admin_can_request_pairing_code_without_leaking_full_phone(db_session, monkeypatch):
+    admin = _user(db_session, UserRole.admin, "admin-pairing")
+    _account(db_session)
+    calls = []
+
+    class Result:
+        def as_dict(self):
+            return {
+                "ok": True,
+                "account_id": "wa-main",
+                "pairing_code": "12A44SCH",
+                "phone_number_suffix": "9737",
+                "error_code": None,
+                "retryable": None,
+            }
+
+    def fake_pairing(account_id, phone_number):
+        calls.append((account_id, phone_number))
+        return Result()
+
+    monkeypatch.setattr(admin_whatsapp_native, "request_whatsapp_sidecar_pairing_code", fake_pairing)
+
+    result = admin_whatsapp_native.request_whatsapp_native_pairing_code(
+        "wa-main",
+        admin_whatsapp_native.WhatsAppNativePairingCodeRequest(phone_number="+41 79 855 97 37"),
+        db=db_session,
+        current_user=admin,
+    )
+
+    assert calls == [("wa-main", "+41 79 855 97 37")]
+    assert result.ok is True
+    assert result.pairing_code == "12A44SCH"
+    assert result.phone_number_suffix == "9737"
+    assert "+41798559737" not in result.model_dump_json()
+
+
+def test_pairing_code_service_sanitizes_phone_before_calling_sidecar(monkeypatch):
+    monkeypatch.setenv("WHATSAPP_NATIVE_ENABLED", "true")
+    monkeypatch.setenv("WHATSAPP_SIDECAR_URL", "http://sidecar.test")
+    monkeypatch.setenv("WHATSAPP_SIDECAR_TOKEN", "unit-token")
+    monkeypatch.setenv("WHATSAPP_SIDECAR_TIMEOUT_SECONDS", "9")
+    get_settings.cache_clear()
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "ok": True,
+                "account_id": "wa-main",
+                "pairing_code": "12A44SCH",
+                "phone_number_suffix": "9737",
+            }
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def post(self, url, *, headers, timeout, json=None):
+            self.calls.append((url, headers, timeout, json))
+            return Response()
+
+    client = Client()
+    try:
+        result = whatsapp_native_admin_service.request_whatsapp_sidecar_pairing_code(
+            "wa-main",
+            "+41 79 855 97 37",
+            client=client,
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert client.calls == [
+        (
+            "http://sidecar.test/accounts/wa-main/pairing-code",
+            {"Authorization": "Bearer unit-token"},
+            9.0,
+            {"phone_number": "41798559737"},
+        )
+    ]
+    assert result.ok is True
+    assert result.phone_number_suffix == "9737"
+    assert result.pairing_code == "12A44SCH"
+    assert "41798559737" not in str(result.as_dict())
 
 
 def test_non_whatsapp_account_is_not_accepted(db_session, monkeypatch):

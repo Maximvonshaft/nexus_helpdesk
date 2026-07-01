@@ -66,6 +66,7 @@ import type {
   WebchatThread,
   WebchatReplyResult,
   WhatsAppNativeAccountStatus,
+  WhatsAppNativePairingCodeResponse,
   ProviderCredentialStatusResponse,
   SecurityAudit,
   CodexAuthorizationStart,
@@ -614,6 +615,10 @@ export const api = {
   }),
   whatsappNativeStartLogin: (accountId: string) => request<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/login/start`, { method: 'POST' }),
   whatsappNativeQr: (accountId: string) => request<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/login/qr`),
+  whatsappNativePairingCode: (accountId: string, phoneNumber: string) => request<WhatsAppNativePairingCodeResponse>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/login/pairing-code`, {
+    method: 'POST',
+    body: JSON.stringify({ phone_number: phoneNumber }),
+  }),
   whatsappNativeStatus: (accountId: string) => request<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/status`),
   whatsappNativeLogout: (accountId: string) => request<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/logout`, { method: 'POST' }),
   whatsappNativeRestart: (accountId: string) => request<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/restart`, { method: 'POST' }),

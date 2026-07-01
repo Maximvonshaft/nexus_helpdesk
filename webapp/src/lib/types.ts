@@ -691,9 +691,22 @@ export interface WhatsAppNativeAccountStatus {
   last_disconnected_at?: string | null
   last_error_code?: string | null
   last_error_message?: string | null
+  last_transport_at?: string | null
+  last_qr_expires_at?: string | null
+  session_state?: 'empty' | 'partial' | 'linked' | 'corrupt' | string | null
+  browser?: string[] | null
   reconnect_count: number
   channel_account_id: number
   channel_health_status: string
+}
+
+export interface WhatsAppNativePairingCodeResponse {
+  ok: boolean
+  account_id: string
+  pairing_code?: string | null
+  phone_number_suffix?: string | null
+  error_code?: string | null
+  retryable?: boolean | null
 }
 
 export type OutboundEmailSecurityMode = 'starttls' | 'ssl' | 'plain'

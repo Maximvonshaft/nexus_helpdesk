@@ -9,7 +9,11 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import ChannelAccount
 from ..services.permissions import ensure_can_manage_channel_accounts
-from ..services.whatsapp_native_admin import call_whatsapp_sidecar_account_action, whatsapp_health_from_native_status
+from ..services.whatsapp_native_admin import (
+    call_whatsapp_sidecar_account_action,
+    request_whatsapp_sidecar_pairing_code,
+    whatsapp_health_from_native_status,
+)
 from ..unit_of_work import managed_session
 from ..utils.time import utc_now
 from .deps import get_current_user
@@ -32,9 +36,30 @@ class WhatsAppNativeAccountStatus(BaseModel):
     last_disconnected_at: str | None = None
     last_error_code: str | None = None
     last_error_message: str | None = None
+    last_transport_at: str | None = None
+    last_qr_expires_at: str | None = None
+    session_state: str | None = None
+    browser: list[str] | None = None
     reconnect_count: int = 0
     channel_account_id: int
     channel_health_status: str
+
+
+class WhatsAppNativePairingCodeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    phone_number: str
+
+
+class WhatsAppNativePairingCodeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    account_id: str
+    pairing_code: str | None = None
+    phone_number_suffix: str | None = None
+    error_code: str | None = None
+    retryable: bool | None = None
 
 
 def _whatsapp_account_or_404(db: Session, account_id: str) -> ChannelAccount:
@@ -92,6 +117,22 @@ def start_whatsapp_native_login(account_id: str, db: Session = Depends(get_db), 
 @router.get("/{account_id}/login/qr", response_model=WhatsAppNativeAccountStatus)
 def get_whatsapp_native_qr(account_id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     return _call("qr", account_id, method="GET", db=db, current_user=current_user)
+
+
+@router.post("/{account_id}/login/pairing-code", response_model=WhatsAppNativePairingCodeResponse)
+def request_whatsapp_native_pairing_code(
+    account_id: str,
+    payload: WhatsAppNativePairingCodeRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    ensure_can_manage_channel_accounts(current_user, db)
+    account = _whatsapp_account_or_404(db, account_id)
+    try:
+        result = request_whatsapp_sidecar_pairing_code(account.account_id, payload.phone_number)
+    except Exception as exc:
+        raise _sidecar_error(exc) from exc
+    return WhatsAppNativePairingCodeResponse.model_validate(result.as_dict())
 
 
 @router.get("/{account_id}/status", response_model=WhatsAppNativeAccountStatus)

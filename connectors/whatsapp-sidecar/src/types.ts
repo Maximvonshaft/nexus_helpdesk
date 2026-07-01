@@ -11,18 +11,30 @@ export type AccountStatus =
   | "error";
 
 export type QrStatus = "none" | "pending" | "consumed" | "expired";
+export type SessionState = "empty" | "partial" | "linked" | "corrupt";
 
 export interface SidecarConfig {
   port: number;
   mode: ConnectorMode;
   sessionRoot: string;
+  autoStartAccounts: string[];
   internalToken: string;
   backendUrl: string;
   connectorKey: string;
   connectorHmacSecret: string;
   callbackTimeoutMs: number;
   logLevel: string;
+  browserPlatform: string;
   browserName: string;
+  browserVersion: string;
+  keepAliveIntervalMs: number;
+  connectTimeoutMs: number;
+  defaultQueryTimeoutMs: number;
+  operationTimeoutMs: number;
+  qrTtlMs: number;
+  reconnectBaseDelayMs: number;
+  reconnectMaxDelayMs: number;
+  reconnectMaxAttempts: number;
   allowFromMeInbound: boolean;
   fromMeMode: FromMeInboundMode;
   fromMeTestPrefix: string;
@@ -41,6 +53,10 @@ export interface AccountSnapshot {
   last_disconnected_at?: string | null;
   last_error_code?: string | null;
   last_error_message?: string | null;
+  last_transport_at?: string | null;
+  last_qr_expires_at?: string | null;
+  session_state?: SessionState;
+  browser?: [string, string, string];
   reconnect_count: number;
 }
 
