@@ -630,6 +630,17 @@ def test_demo_payload_does_not_force_empty_context():
     assert "recentContext.slice" in source
 
 
+def test_demo_does_not_boot_with_static_bot_reply_or_stale_handoff_session():
+    html = (BACKEND_ROOT / "app/static/webchat/demo/index.html").read_text(encoding="utf-8")
+    js = (BACKEND_ROOT / "app/static/webchat/demo/js/app.js").read_text(encoding="utf-8")
+
+    assert "Hi, I'm Speedy" not in html
+    assert "PUBLIC_SESSION_KEY = CONFIG.sessionKey + ':public-session:v2'" in js
+    assert "PUBLIC_SESSION_SCHEMA_VERSION = 2" in js
+    assert "server_safe_fallback" in js
+    assert "codex_direct_binary_missing" in js
+
+
 def test_widget_persists_recent_context():
     source = (BACKEND_ROOT / "app/static/webchat/widget.js").read_text(encoding="utf-8")
     assert "contextKey" in source

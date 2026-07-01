@@ -50,6 +50,7 @@ def clean_env(monkeypatch):
         "PRIVATE_AI_RUNTIME_TIMEOUT_SECONDS",
         "PRIVATE_AI_RUNTIME_MAX_PROMPT_CHARS",
         "PRIVATE_AI_RUNTIME_MAX_OUTPUT_CHARS",
+        "PRIVATE_AI_RUNTIME_TRACKING_MISSING_FAST_PATH_ENABLED",
     ]:
         monkeypatch.delenv(key, raising=False)
 
@@ -193,6 +194,46 @@ async def test_private_ai_runtime_parses_json_embedded_in_answer(monkeypatch, tm
 
 
 @pytest.mark.asyncio
+async def test_private_ai_runtime_retries_once_after_empty_reply(monkeypatch, tmp_path):
+    token_file = tmp_path / "ai-runtime-token"
+    token_file.write_text("test-token", encoding="utf-8")
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_REQUEST_SHAPE", "question")
+    adapter = PrivateAIRuntimeAdapter()
+    calls: list[dict[str, object]] = []
+
+    def fake_post_json(endpoint, payload, token):
+        calls.append(payload)
+        if len(calls) == 1:
+            return {"status": "ok", "answer": ""}
+        return {
+            "status": "ok",
+            "answer": json.dumps(
+                {
+                    "customer_reply": "I can help check that once you share the waybill number.",
+                    "language": "en",
+                    "intent": "tracking_missing_number",
+                    "handoff_required": False,
+                    "ticket_should_create": False,
+                }
+            ),
+        }
+
+    monkeypatch.setattr(adapter, "_post_json", fake_post_json)
+
+    result = await adapter.generate(Mock(), _request(body="Can you help with my parcel?"))
+
+    assert result.ok is True
+    assert len(calls) == 2
+    assert "previous runtime response was empty" in str(calls[1]["question"]).lower()
+    assert result.structured_output["customer_reply"] == "I can help check that once you share the waybill number."
+    assert result.raw_payload_safe_summary["empty_reply_retry_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_private_ai_runtime_production_rejects_inline_token(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
@@ -230,7 +271,7 @@ async def test_private_ai_runtime_http_429_is_retryable(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_private_ai_runtime_missing_tracking_number_fast_path_skips_remote_call(monkeypatch, tmp_path):
+async def test_private_ai_runtime_missing_tracking_number_calls_remote_by_default(monkeypatch, tmp_path):
     token_file = tmp_path / "ai-runtime-token"
     token_file.write_text("test-token", encoding="utf-8")
     monkeypatch.setenv("APP_ENV", "production")
@@ -238,9 +279,45 @@ async def test_private_ai_runtime_missing_tracking_number_fast_path_skips_remote
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", str(token_file))
     adapter = PrivateAIRuntimeAdapter()
+    calls = 0
+
+    def fake_post_json(endpoint, payload, token):
+        nonlocal calls
+        calls += 1
+        return {
+            "customer_reply": "I can help with that. Please send the waybill number from your parcel label.",
+            "language": "en",
+            "intent": "tracking_missing_number",
+            "tracking_number": None,
+            "handoff_required": False,
+            "ticket_should_create": False,
+        }
+
+    monkeypatch.setattr(adapter, "_post_json", fake_post_json)
+
+    result = await adapter.generate(Mock(), _request(body="Please help me track my parcel. I will provide the tracking number."))
+
+    assert result.ok is True
+    assert calls == 1
+    assert result.raw_payload_safe_summary["endpoint_path"] == "/chat/direct"
+    assert "fast_path" not in result.raw_payload_safe_summary
+    assert result.raw_payload_safe_summary.get("provider_bypassed") is not True
+    assert result.structured_output["customer_reply"] == "I can help with that. Please send the waybill number from your parcel label."
+
+
+@pytest.mark.asyncio
+async def test_private_ai_runtime_missing_tracking_number_fast_path_requires_explicit_opt_in(monkeypatch, tmp_path):
+    token_file = tmp_path / "ai-runtime-token"
+    token_file.write_text("test-token", encoding="utf-8")
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TRACKING_MISSING_FAST_PATH_ENABLED", "true")
+    adapter = PrivateAIRuntimeAdapter()
 
     def forbidden_post_json(endpoint, payload, token):
-        raise AssertionError("missing-tracking-number fast path must not call remote AI runtime")
+        raise AssertionError("opted-in missing-tracking-number fast path must not call remote AI runtime")
 
     monkeypatch.setattr(adapter, "_post_json", forbidden_post_json)
 

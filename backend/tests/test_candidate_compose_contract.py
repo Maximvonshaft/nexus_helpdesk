@@ -81,6 +81,7 @@ def test_candidate_env_example_documents_external_network() -> None:
     assert "PRIVATE_AI_RUNTIME_TOKEN_FILE=/run/nexus/ai_runtime_token" in env_example
     assert "PRIVATE_AI_RUNTIME_REQUEST_SHAPE=question" in env_example
     assert "PRIVATE_AI_RUNTIME_MAX_PROMPT_CHARS=1200" in env_example
+    assert "PRIVATE_AI_RUNTIME_TRACKING_MISSING_FAST_PATH_ENABLED=false" in env_example
     assert "PROVIDER_RUNTIME_TIMEOUT_MS=30000" in env_example
     assert "PROVIDER_RUNTIME_PRIMARY_PROVIDER=private_ai_runtime" in env_example
     assert "WHATSAPP_NATIVE_ENABLED=true" in env_example

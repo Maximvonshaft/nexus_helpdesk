@@ -79,6 +79,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
         self.timeout_seconds = _int_env("PRIVATE_AI_RUNTIME_TIMEOUT_SECONDS", 8, minimum=1, maximum=60)
         self.max_prompt_chars = _int_env("PRIVATE_AI_RUNTIME_MAX_PROMPT_CHARS", 6000, minimum=1000, maximum=20000)
         self.max_output_chars = _int_env("PRIVATE_AI_RUNTIME_MAX_OUTPUT_CHARS", 1200, minimum=200, maximum=4000)
+        self.tracking_missing_fast_path_enabled = _env_bool("PRIVATE_AI_RUNTIME_TRACKING_MISSING_FAST_PATH_ENABLED", False)
 
     async def generate(self, db: Session, request: ProviderRequest) -> ProviderResult:
         started = time.monotonic()
@@ -138,6 +139,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                 retryable=True,
             )
 
+        empty_reply_retry_count = 0
         try:
             normalized = _normalize_runtime_output(response_payload, request=request, max_output_chars=self.max_output_chars)
         except ValueError as exc:
@@ -148,7 +150,100 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                 retryable=True,
             )
         if not normalized.get("customer_reply"):
-            return self._failure("private_ai_runtime_empty_reply", started, {"endpoint_path": _safe_url_path(endpoint), "model": model}, retryable=True)
+            empty_reply_retry_count = 1
+            retry_prompt = _empty_reply_retry_prompt(prompt, max_chars=self.max_prompt_chars)
+            retry_payload = self._build_payload(request, prompt=retry_prompt, model=model)
+            try:
+                response_payload = await asyncio.to_thread(self._post_json, endpoint, retry_payload, token)
+            except (TimeoutError, socket.timeout):
+                return self._failure(
+                    "private_ai_runtime_timeout",
+                    started,
+                    {
+                        "endpoint_path": _safe_url_path(endpoint),
+                        "model": model,
+                        "request_shape": self.request_shape,
+                        "prompt_chars": len(retry_prompt),
+                        "timeout_seconds": self.timeout_seconds,
+                        "empty_reply_retry_count": empty_reply_retry_count,
+                    },
+                    retryable=True,
+                )
+            except urllib.error.HTTPError as exc:
+                return self._failure(
+                    f"private_ai_runtime_http_{exc.code}",
+                    started,
+                    {
+                        "endpoint_path": _safe_url_path(endpoint),
+                        "model": model,
+                        "http_status": exc.code,
+                        "retryable_http": exc.code in _RETRYABLE_HTTP,
+                        "empty_reply_retry_count": empty_reply_retry_count,
+                    },
+                    retryable=exc.code in _RETRYABLE_HTTP,
+                )
+            except urllib.error.URLError as exc:
+                return self._failure(
+                    "private_ai_runtime_url_error",
+                    started,
+                    {
+                        "endpoint_path": _safe_url_path(endpoint),
+                        "model": model,
+                        "reason": str(exc.reason)[:160],
+                        "empty_reply_retry_count": empty_reply_retry_count,
+                    },
+                    retryable=True,
+                )
+            except OSError as exc:
+                return self._failure(
+                    "private_ai_runtime_network_error",
+                    started,
+                    {
+                        "endpoint_path": _safe_url_path(endpoint),
+                        "model": model,
+                        "reason": exc.__class__.__name__,
+                        "empty_reply_retry_count": empty_reply_retry_count,
+                    },
+                    retryable=True,
+                )
+            except ValueError as exc:
+                return self._failure(
+                    "private_ai_runtime_bad_response",
+                    started,
+                    {
+                        "endpoint_path": _safe_url_path(endpoint),
+                        "model": model,
+                        "reason": str(exc)[:120],
+                        "empty_reply_retry_count": empty_reply_retry_count,
+                    },
+                    retryable=True,
+                )
+            prompt = retry_prompt
+            try:
+                normalized = _normalize_runtime_output(response_payload, request=request, max_output_chars=self.max_output_chars)
+            except ValueError as exc:
+                return self._failure(
+                    "private_ai_runtime_bad_json",
+                    started,
+                    {
+                        "endpoint_path": _safe_url_path(endpoint),
+                        "model": model,
+                        "reason": str(exc)[:120],
+                        "empty_reply_retry_count": empty_reply_retry_count,
+                    },
+                    retryable=True,
+                )
+        if not normalized.get("customer_reply"):
+            return self._failure(
+                "private_ai_runtime_empty_reply",
+                started,
+                {
+                    "endpoint_path": _safe_url_path(endpoint),
+                    "model": model,
+                    "empty_reply_retry_count": empty_reply_retry_count,
+                },
+                retryable=True,
+            )
 
         return ProviderResult(
             ok=True,
@@ -166,6 +261,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                 "prompt_chars": len(prompt),
                 "timeout_seconds": self.timeout_seconds,
                 "elapsed_ms": _elapsed_ms(started),
+                "empty_reply_retry_count": empty_reply_retry_count,
                 "usage": _safe_usage(response_payload.get("usage") if isinstance(response_payload, dict) else None),
                 "token_file_configured": bool(self.token_file),
             },
@@ -321,6 +417,8 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
         )
 
     def _tracking_missing_number_fast_path(self, request: ProviderRequest, *, started: float) -> ProviderResult | None:
+        if not self.tracking_missing_fast_path_enabled:
+            return None
         if not _is_missing_tracking_number_request(request):
             return None
         reply = _missing_tracking_number_reply(str(request.body or ""))
@@ -420,6 +518,13 @@ def _missing_tracking_number_reply(body: str) -> str:
     if _contains_cjk(body):
         return "请提供您的运单号，我才能查询包裹状态。"
     return "Please provide your tracking number so I can check the parcel status."
+
+
+def _empty_reply_retry_prompt(prompt: str, *, max_chars: int) -> str:
+    suffix = "\nThe previous runtime response was empty. Return only strict JSON with a non-empty customer_reply."
+    if len(prompt) + len(suffix) <= max_chars:
+        return prompt + suffix
+    return prompt[: max(0, max_chars - len(suffix))] + suffix
 
 
 def _normalize_runtime_output(payload: Any, *, request: ProviderRequest, max_output_chars: int) -> dict[str, Any]:

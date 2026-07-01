@@ -12,7 +12,9 @@
   });
 
   // NEXUSDESK_DEMO_PUBLIC_HANDOFF_CLIENT_BEGIN
-  const PUBLIC_SESSION_KEY = CONFIG.sessionKey + ':public-session';
+  const PUBLIC_SESSION_KEY = CONFIG.sessionKey + ':public-session:v2';
+  const PUBLIC_SESSION_SCHEMA_VERSION = 2;
+  const PUBLIC_SESSION_ORIGIN = 'explicit_handoff';
   const PUBLIC_POLL_MS = 4000;
   const QUICK_ACTION_MESSAGES = Object.freeze({
     track: 'Please help me track my parcel. I will provide the tracking number.',
@@ -348,7 +350,10 @@
     try {
       const parsed = JSON.parse(sessionStorage.getItem(PUBLIC_SESSION_KEY) || '{}');
       if (!parsed || !parsed.conversationId || !parsed.visitorToken || parsed.handoffRequested !== true) return null;
+      if (parsed.schemaVersion !== PUBLIC_SESSION_SCHEMA_VERSION || parsed.origin !== PUBLIC_SESSION_ORIGIN) return null;
       return {
+        schemaVersion: PUBLIC_SESSION_SCHEMA_VERSION,
+        origin: PUBLIC_SESSION_ORIGIN,
         conversationId: String(parsed.conversationId || ''),
         visitorToken: String(parsed.visitorToken || ''),
         lastMessageId: Number(parsed.lastMessageId || 0),
@@ -377,9 +382,14 @@
   function rememberPublicSession(data) {
     const session = data && (data.webchat_session || data);
     const isHandoff = Boolean(data && (data.handoff_required === true || data.handoff_request_id));
+    const reason = String((data && (data.handoff_reason || data.error_code || data.reply_source)) || '').toLowerCase();
     if (!isHandoff || !session || !session.conversation_id || !session.visitor_token) return;
+    if (data && data.reply_source === 'server_safe_fallback') return;
+    if (reason.indexOf('provider') !== -1 || reason.indexOf('runtime') !== -1 || reason.indexOf('unavailable') !== -1 || reason.indexOf('codex_direct_binary_missing') !== -1) return;
     const previous = publicSession || {};
     publicSession = {
+      schemaVersion: PUBLIC_SESSION_SCHEMA_VERSION,
+      origin: PUBLIC_SESSION_ORIGIN,
       conversationId: String(session.conversation_id || ''),
       visitorToken: String(session.visitor_token || ''),
       lastMessageId: Math.max(Number(previous.lastMessageId || 0), Number(session.last_message_id || session.webchat_last_message_id || 0)),
