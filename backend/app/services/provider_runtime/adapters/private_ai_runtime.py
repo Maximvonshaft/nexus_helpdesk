@@ -79,7 +79,12 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
         try:
             response_payload = await asyncio.to_thread(self._post_json, endpoint, payload, token)
         except (TimeoutError, socket.timeout):
-            return self._failure("private_ai_runtime_timeout", started, {"endpoint_path": _safe_url_path(endpoint), "model": model}, retryable=True)
+            return self._failure(
+                "private_ai_runtime_timeout",
+                started,
+                {"endpoint_path": _safe_url_path(endpoint), "model": model, "request_shape": self.request_shape, "prompt_chars": len(prompt), "timeout_seconds": self.timeout_seconds},
+                retryable=True,
+            )
         except urllib.error.HTTPError as exc:
             return self._failure(
                 f"private_ai_runtime_http_{exc.code}",
@@ -339,19 +344,19 @@ def _normalize_runtime_output(payload: Any, *, request: ProviderRequest, max_out
 def _coerce_payload_to_dict(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("payload_not_object")
+    text = _extract_text(payload)
+    if text:
+        embedded = _parse_json_object_text(text)
+        if embedded is not None:
+            return embedded
+        stripped = text.strip()
+        if stripped.startswith("{") or "customer_reply" in stripped[:240]:
+            raise ValueError("payload_text_json_invalid")
     if _looks_like_reply_object(payload):
         return payload
-    text = _extract_text(payload)
     if not text:
         raise ValueError("payload_text_missing")
     stripped = text.strip()
-    if stripped.startswith("{") and stripped.endswith("}"):
-        try:
-            parsed = json.loads(stripped)
-        except json.JSONDecodeError as exc:
-            raise ValueError("payload_text_json_invalid") from exc
-        if isinstance(parsed, dict):
-            return parsed
     return {"customer_reply": stripped, "intent": "other", "handoff_required": False}
 
 
@@ -401,6 +406,29 @@ def _extract_text(payload: dict[str, Any]) -> str | None:
                 texts.append(item.strip())
         if texts:
             return "\n".join(texts).strip()
+    return None
+
+
+def _parse_json_object_text(text: str) -> dict[str, Any] | None:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.strip("`").strip()
+        if stripped.lower().startswith("json"):
+            stripped = stripped[4:].strip()
+    candidates = [stripped]
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(stripped[start : end + 1])
+    for candidate in candidates:
+        if not candidate.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
     return None
 
 
