@@ -25,7 +25,8 @@ x-candidate-app: &candidate_app
   volumes: &candidate_app_volumes
     - /run/secrets:/run/secrets:ro
     - /opt/nexus_helpdesk/deploy/runtime_secrets/ai_runtime_token:/run/nexus/ai_runtime_token:ro
-    - /opt/nexus_helpdesk/data/uploads:/app/backend/uploads:ro
+    - /opt/nexus_helpdesk/data/uploads:/app/backend/uploads:rw
+    - /var/backups/nexusdesk/uploads:/var/backups/nexusdesk/uploads:ro
   networks:
     - candidate
     - production_runtime

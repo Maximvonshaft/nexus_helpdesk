@@ -92,13 +92,27 @@ def check_storage_readiness(settings: Settings | None = None) -> StorageReadines
         )
         return StorageReadinessResult(status="error", backend=backend, upload_root=str(upload_root), errors=tuple(errors))
 
-    warnings.append(
-        StorageReadinessIssue(
-            code="local_storage_backend_active",
-            message="Local attachment storage is active. This is acceptable for pilot operations only when uploads are covered by host-level backup or migration runbook.",
-            details={"upload_root": str(upload_root)},
+    backup_acknowledged = _env_bool("LOCAL_STORAGE_BACKUP_ACKNOWLEDGED", False)
+    backup_verified = False
+
+    if not upload_root.exists() or not upload_root.is_dir():
+        errors.append(
+            StorageReadinessIssue(
+                code="local_storage_upload_root_missing",
+                severity="error",
+                message="UPLOAD_ROOT must exist and be a directory when STORAGE_BACKEND=local.",
+                details={"upload_root": str(upload_root)},
+            )
         )
-    )
+    elif not os.access(upload_root, os.W_OK):
+        errors.append(
+            StorageReadinessIssue(
+                code="local_storage_upload_root_not_writable",
+                severity="error",
+                message="UPLOAD_ROOT is not writable by the application process.",
+                details={"upload_root": str(upload_root)},
+            )
+        )
 
     if _env_bool("REQUIRE_REMOTE_STORAGE_IN_PRODUCTION", False) and active_settings.app_env == "production":
         errors.append(
@@ -142,6 +156,8 @@ def check_storage_readiness(settings: Settings | None = None) -> StorageReadines
                                 details=details,
                             )
                         )
+                    else:
+                        backup_verified = True
                 except OSError:
                     pass
         if marker_path:
@@ -154,6 +170,18 @@ def check_storage_readiness(settings: Settings | None = None) -> StorageReadines
                         details=details,
                     )
                 )
+            else:
+                backup_verified = True
+
+    if not (backup_acknowledged and backup_verified):
+        warnings.insert(
+            0,
+            StorageReadinessIssue(
+                code="local_storage_backend_active",
+                message="Local attachment storage is active. This is acceptable for pilot operations only when uploads are covered by host-level backup or migration runbook.",
+                details={"upload_root": str(upload_root), "backup_acknowledged": backup_acknowledged, "backup_verified": backup_verified},
+            ),
+        )
 
     status = "error" if errors else ("warning" if warnings else "ok")
     return StorageReadinessResult(status=status, backend=backend, upload_root=str(upload_root), warnings=tuple(warnings), errors=tuple(errors))

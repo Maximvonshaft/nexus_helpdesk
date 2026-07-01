@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import socket
 import time
 import urllib.error
@@ -34,6 +35,24 @@ _ALLOWED_INTENTS = {
 }
 _SECRET_KEYS = {"raw_payload", "auth", "token", "access_token", "refresh_token", "secret", "password", "authorization", "api_key"}
 _RETRYABLE_HTTP = {408, 409, 425, 429, 500, 502, 503, 504}
+_TRACKING_MARKERS = (
+    "track",
+    "tracking",
+    "parcel",
+    "package",
+    "shipment",
+    "waybill",
+    "where is",
+    "delivery status",
+    "查件",
+    "查询",
+    "物流",
+    "包裹",
+    "快递",
+    "单号",
+    "运单",
+)
+_TRACKING_IDENTIFIER_RE = re.compile(r"\b(?=[A-Z0-9._-]{8,48}\b)(?=[A-Z0-9._-]*\d)[A-Z0-9][A-Z0-9._-]+\b", re.I)
 
 
 class PrivateAIRuntimeAdapter(ProviderAdapter):
@@ -67,14 +86,19 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
         if config_error:
             return self._failure(config_error, started, retryable=False)
 
+        token = _read_token(self.token_file, self.inline_token)
+        if not token:
+            return self._failure("private_ai_runtime_token_missing", started, {"token_file_configured": bool(self.token_file)}, retryable=False)
+
+        fast_path = self._tracking_missing_number_fast_path(request, started=started)
+        if fast_path is not None:
+            return fast_path
+
         mode = self._select_mode(request)
         model = self.rag_model if mode == "rag" else self.direct_model
         endpoint = self._endpoint_for_mode(mode)
         prompt = self._build_prompt(request, model=model, mode=mode)
         payload = self._build_payload(request, prompt=prompt, model=model)
-        token = _read_token(self.token_file, self.inline_token)
-        if not token:
-            return self._failure("private_ai_runtime_token_missing", started, {"token_file_configured": bool(self.token_file)}, retryable=False)
 
         try:
             response_payload = await asyncio.to_thread(self._post_json, endpoint, payload, token)
@@ -296,6 +320,54 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
             fallback_allowed=True,
         )
 
+    def _tracking_missing_number_fast_path(self, request: ProviderRequest, *, started: float) -> ProviderResult | None:
+        if not _is_missing_tracking_number_request(request):
+            return None
+        reply = _missing_tracking_number_reply(str(request.body or ""))
+        output = {
+            "customer_reply": reply,
+            "reply": reply,
+            "language": "zh" if _contains_cjk(str(request.body or "")) else "en",
+            "intent": "tracking_missing_number",
+            "tracking_number": None,
+            "handoff_required": False,
+            "handoff_reason": None,
+            "recommended_agent_action": "Ask the customer for a tracking or waybill number, then run trusted tracking lookup.",
+            "ticket_should_create": False,
+            "tool_calls": [],
+            "evidence_used": [],
+            "confidence": 1.0,
+            "reason": "deterministic_missing_tracking_number_fast_path",
+            "risk_level": "low",
+            "next_action": "reply",
+            "safety_notes": ["No trusted tracking evidence is present; the reply asks for the missing waybill number only."],
+        }
+        return ProviderResult(
+            ok=True,
+            provider=self.name,
+            raw_provider=self.name,
+            reply_source=self.name,
+            model=self.direct_model,
+            elapsed_ms=_elapsed_ms(started),
+            raw_payload_safe_summary={
+                "provider": self.name,
+                "fast_path": "tracking_missing_number_no_evidence",
+                "provider_bypassed": True,
+                "endpoint_path": None,
+                "chat_mode": "deterministic_fast_path",
+                "request_shape": self.request_shape,
+                "model": self.direct_model,
+                "prompt_chars": 0,
+                "timeout_seconds": self.timeout_seconds,
+                "elapsed_ms": _elapsed_ms(started),
+                "token_file_configured": bool(self.token_file),
+            },
+            structured_output=output,
+            error_code=None,
+            retryable=False,
+            fallback_allowed=True,
+        )
+
 
 def _system_prompt() -> str:
     return (
@@ -304,6 +376,50 @@ def _system_prompt() -> str:
         "Do not invent shipment status. Live parcel status is allowed only when trusted tracking evidence is present. "
         "For refunds, address changes, cancellation, compensation, complaints, legal/privacy issues, or unclear facts, request human handoff."
     )
+
+
+def _is_missing_tracking_number_request(request: ProviderRequest) -> bool:
+    if request.scenario != "webchat_fast_reply":
+        return False
+    if request.tracking_fact_evidence_present or request.tracking_fact_summary:
+        return False
+    body = str(request.body or "").strip()
+    if not body:
+        return False
+    if not _contains_tracking_marker(body):
+        return False
+    return not _contains_tracking_identifier(_request_text_with_context(request))
+
+
+def _request_text_with_context(request: ProviderRequest) -> str:
+    parts = [str(request.body or "")]
+    if isinstance(request.recent_context, list):
+        for item in request.recent_context[-4:]:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text") or item.get("body") or item.get("content")
+            if text:
+                parts.append(str(text))
+    return "\n".join(parts)
+
+
+def _contains_tracking_marker(value: str) -> bool:
+    text = value.lower()
+    return any(marker in text for marker in _TRACKING_MARKERS)
+
+
+def _contains_tracking_identifier(value: str) -> bool:
+    return bool(_TRACKING_IDENTIFIER_RE.search(value or ""))
+
+
+def _contains_cjk(value: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in value or "")
+
+
+def _missing_tracking_number_reply(body: str) -> str:
+    if _contains_cjk(body):
+        return "请提供您的运单号，我才能查询包裹状态。"
+    return "Please provide your tracking number so I can check the parcel status."
 
 
 def _normalize_runtime_output(payload: Any, *, request: ProviderRequest, max_output_chars: int) -> dict[str, Any]:
