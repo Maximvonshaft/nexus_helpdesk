@@ -24,6 +24,7 @@ export interface SidecarConfig {
   connectorHmacSecret: string;
   callbackTimeoutMs: number;
   logLevel: string;
+  baileysLogLevel: string;
   browserPlatform: string;
   browserName: string;
   browserVersion: string;

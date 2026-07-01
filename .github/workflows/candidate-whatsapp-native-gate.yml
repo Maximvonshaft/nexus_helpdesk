@@ -99,6 +99,7 @@ jobs:
           grep -q "WA_SIDECAR_BROWSER_PLATFORM" <<<"$rendered"
           grep -q "WA_SIDECAR_OPERATION_TIMEOUT_MS" <<<"$rendered"
           grep -q "WA_SIDECAR_RECONNECT_MAX_ATTEMPTS" <<<"$rendered"
+          grep -q "WA_SIDECAR_BAILEYS_LOG_LEVEL" <<<"$rendered"
           if grep -q "NEXUS_BACKEND_URL: http://app:8080" <<<"$rendered"; then
             echo "candidate sidecar still points at legacy app:8080" >&2
             exit 2
@@ -133,6 +134,7 @@ jobs:
           NEXUS_BACKEND_URL: http://127.0.0.1:18082
           NEXUS_CONNECTOR_KEY: ci-connector-key
           NEXUS_CONNECTOR_HMAC_SECRET: ci-connector-hmac-secret
+          WA_SIDECAR_BAILEYS_LOG_LEVEL: silent
           WA_SIDECAR_SMOKE_START_LOGIN: "true"
           WA_SIDECAR_EXPECT_QR_OR_CONNECTED: "true"
         run: |

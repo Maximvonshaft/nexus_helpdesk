@@ -26,6 +26,7 @@ environment.
   - `WA_SIDECAR_OPERATION_TIMEOUT_MS`
   - `WA_SIDECAR_QR_TTL_MS`
   - `WA_SIDECAR_RECONNECT_*`
+  - `WA_SIDECAR_BAILEYS_LOG_LEVEL=silent`
 - Speedaf write flags remain disabled until a separate controlled-action UAT:
   - `SPEEDAF_WORK_ORDER_CREATE_ENABLED=false`
   - `SPEEDAF_UPDATE_ADDRESS_ENABLED=false`
@@ -78,9 +79,11 @@ COMPOSE_PROJECT_NAME=nexusdesk_candidate docker compose \
   ps
 ```
 
-`WA_SIDECAR_AUTO_START_ACCOUNTS=wa-main` should be present in the rendered
-sidecar environment. This lets a restarted candidate sidecar re-open the known
-WhatsApp account without waiting for an operator to press “start login”.
+`WA_SIDECAR_AUTO_START_ACCOUNTS` should be present in the rendered sidecar
+environment and must match an existing `channel_accounts` row where
+`provider=whatsapp`. This lets a restarted candidate sidecar re-open the known
+WhatsApp account without waiting for an operator to press “start login”, and it
+keeps status/inbound callbacks routable inside Nexus.
 
 ## 3. Candidate App Smoke
 
@@ -106,7 +109,7 @@ Use the same token configured in `deploy/.env.candidate`; do not print it.
 ```bash
 WA_SIDECAR_BASE_URL=http://127.0.0.1:18795 \
 WA_SIDECAR_INTERNAL_TOKEN="$WA_SIDECAR_INTERNAL_TOKEN" \
-WA_ACCOUNT_ID=wa-main \
+WA_ACCOUNT_ID='<existing-whatsapp-channel-account-id>' \
 WA_SIDECAR_EXPECT_MODE=baileys \
 WA_SIDECAR_SMOKE_START_LOGIN=true \
 WA_SIDECAR_EXPECT_QR_OR_CONNECTED=true \
@@ -134,7 +137,7 @@ After scanning, verify the connected state:
 ```bash
 WA_SIDECAR_BASE_URL=http://127.0.0.1:18795 \
 WA_SIDECAR_INTERNAL_TOKEN="$WA_SIDECAR_INTERNAL_TOKEN" \
-WA_ACCOUNT_ID=wa-main \
+WA_ACCOUNT_ID='<existing-whatsapp-channel-account-id>' \
 WA_SIDECAR_EXPECT_MODE=baileys \
 WA_SIDECAR_EXPECT_ACCOUNT_STATUS=connected \
 bash scripts/smoke/whatsapp_sidecar_candidate_smoke.sh
@@ -160,7 +163,7 @@ message.
 ```bash
 WA_SIDECAR_BASE_URL=http://127.0.0.1:18795 \
 WA_SIDECAR_INTERNAL_TOKEN="$WA_SIDECAR_INTERNAL_TOKEN" \
-WA_ACCOUNT_ID=wa-main \
+WA_ACCOUNT_ID='<existing-whatsapp-channel-account-id>' \
 WA_SIDECAR_EXPECT_MODE=baileys \
 WA_SIDECAR_SMOKE_SEND=true \
 WA_SIDECAR_ALLOW_LIVE_SEND=true \

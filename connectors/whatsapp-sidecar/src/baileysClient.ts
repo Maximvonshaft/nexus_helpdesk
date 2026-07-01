@@ -115,6 +115,7 @@ export class BaileysConnector implements WhatsAppConnector {
       | "allowFromMeInbound"
       | "fromMeMode"
       | "fromMeTestPrefix"
+      | "baileysLogLevel"
     >
   ) {}
 
@@ -152,6 +153,7 @@ export class BaileysConnector implements WhatsAppConnector {
     const { state, saveCreds } = await useMultiFileAuthState(this.sessions.accountPath(accountId));
     const { version } = await fetchLatestBaileysVersion();
     const socketLogger = this.logger.child({ account_id: accountId, subsystem: "baileys" }) as any;
+    socketLogger.level = this.config.baileysLogLevel;
     const socket = makeWASocket({
       version,
       auth: {
@@ -533,6 +535,17 @@ export class BaileysConnector implements WhatsAppConnector {
   }
 
   private async emitStatus(account: RuntimeAccount): Promise<void> {
-    await this.onStatus(account.accountId, account.status);
+    try {
+      await this.onStatus(account.accountId, account.status);
+    } catch (error) {
+      this.logger.warn(
+        {
+          account_id: account.accountId,
+          error_code: errorCode(error, "backend_status_callback_failed"),
+          status_code: errorStatusCode(error)
+        },
+        "whatsapp_status_callback_failed"
+      );
+    }
   }
 }

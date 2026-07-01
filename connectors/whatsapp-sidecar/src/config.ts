@@ -10,12 +10,22 @@ function requireEnv(name: string): string {
   return value;
 }
 
-function intEnv(name: string, fallback: number): number {
-  const raw = process.env[name]?.trim();
+function intEnv(name: string | string[], fallback: number): number {
+  const names = Array.isArray(name) ? name : [name];
+  let selectedName = names[0];
+  let raw = "";
+  for (const candidate of names) {
+    const value = process.env[candidate]?.trim();
+    if (value) {
+      selectedName = candidate;
+      raw = value;
+      break;
+    }
+  }
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive integer`);
+    throw new Error(`${selectedName} must be a positive integer`);
   }
   return parsed;
 }
@@ -65,10 +75,11 @@ export function loadConfig(): SidecarConfig {
     connectorHmacSecret: requireEnv("NEXUS_CONNECTOR_HMAC_SECRET"),
     callbackTimeoutMs: intEnv("NEXUS_CALLBACK_TIMEOUT_MS", 8000),
     logLevel: process.env.LOG_LEVEL || "info",
+    baileysLogLevel: process.env.WA_SIDECAR_BAILEYS_LOG_LEVEL?.trim() || "silent",
     browserPlatform: process.env.WA_SIDECAR_BROWSER_PLATFORM?.trim() || "Ubuntu",
     browserName: process.env.WA_SIDECAR_BROWSER_NAME?.trim() || "NexusDesk",
     browserVersion: process.env.WA_SIDECAR_BROWSER_VERSION?.trim() || "22.04.4",
-    keepAliveIntervalMs: intEnv("WA_SIDECAR_KEEPALIVE_INTERVAL_MS", 25_000),
+    keepAliveIntervalMs: intEnv(["WA_SIDECAR_KEEP_ALIVE_INTERVAL_MS", "WA_SIDECAR_KEEPALIVE_INTERVAL_MS"], 25_000),
     connectTimeoutMs: intEnv("WA_SIDECAR_CONNECT_TIMEOUT_MS", 60_000),
     defaultQueryTimeoutMs: intEnv("WA_SIDECAR_DEFAULT_QUERY_TIMEOUT_MS", 60_000),
     operationTimeoutMs: intEnv("WA_SIDECAR_OPERATION_TIMEOUT_MS", 60_000),

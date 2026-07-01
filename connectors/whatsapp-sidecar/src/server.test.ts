@@ -18,6 +18,7 @@ function config(): SidecarConfig {
     connectorHmacSecret: "connector-secret",
     callbackTimeoutMs: 100,
     logLevel: "silent",
+    baileysLogLevel: "silent",
     browserPlatform: "mock",
     browserName: "NexusDesk Test",
     browserVersion: "0.1.0",
