@@ -130,7 +130,8 @@ def resolve_whatsapp_native_route(db: Session, *, message: TicketOutboundMessage
     if message.channel != SourceChannel.whatsapp:
         raise WhatsAppNativeOutboundError(WHATSAPP_NATIVE_CONFIGURATION_MISSING, "Native WhatsApp adapter received a non-WhatsApp message", retryable=False)
 
-    link = ticket.external_channel_link if ticket is not None else None
+    settings = get_settings()
+    link = ticket.external_channel_link if ticket is not None and getattr(settings, "external_channel_sync_enabled", False) else None
     target, chat_jid, target_source = _ticket_target(ticket, link)
     if target is None:
         raise WhatsAppNativeOutboundError(WHATSAPP_NATIVE_MISSING_TARGET, "No WhatsApp target address is available", retryable=False)

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("APP_ENV", "development")
@@ -147,6 +148,24 @@ def test_whatsapp_native_route_resolution_uses_active_account_and_ticket_target(
     assert route.account_id == "wa-main"
     assert route.target == "+15550123456"
     assert route.chat_jid is None
+
+
+def test_whatsapp_native_route_resolution_does_not_require_legacy_link_table(db_session, monkeypatch):
+    ticket = _ticket(db_session, contact="41798559737@s.whatsapp.net")
+    _account(db_session, account_id="wa-main")
+    message = _message(db_session, ticket)
+    db_session.execute(text("DROP TABLE external_channel_conversation_links"))
+    monkeypatch.setattr(
+        "app.services.outbound_adapters.whatsapp_native.get_settings",
+        lambda: _settings(external_channel_sync_enabled=False),
+    )
+
+    route = resolve_whatsapp_native_route(db_session, message=message, ticket=ticket)
+
+    assert route.account_id == "wa-main"
+    assert route.target == "41798559737@s.whatsapp.net"
+    assert route.chat_jid == "41798559737@s.whatsapp.net"
+    assert route.source == "ticket.source_chat_id:market_or_global_whatsapp_account"
 
 
 def test_whatsapp_native_send_payload_calls_sidecar(db_session, monkeypatch):
