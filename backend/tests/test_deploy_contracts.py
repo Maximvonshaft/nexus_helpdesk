@@ -35,6 +35,7 @@ def test_server_compose_includes_local_postgres_service():
     assert _has_postgres_service(compose)
     assert "EXTERNAL_CHANNEL_TRANSPORT: disabled" in compose
     assert "EXTERNAL_CHANNEL_DEPLOYMENT_MODE: disabled" in compose
+    assert "/opt/nexus_helpdesk/deploy/runtime_secrets/ai_runtime_token:/run/nexus/ai_runtime_token:ro" in compose
 
 
 def test_local_postgres_env_contract():
@@ -65,3 +66,21 @@ def test_default_env_template_keeps_outbound_disabled():
     assert env["ENABLE_OUTBOUND_DISPATCH"] == "false"
     assert env["OUTBOUND_EMAIL_ENCRYPTION_KEY_FILE"] == "/run/nexus/outbound_email_encryption_key"
     assert env["EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED"] == "false"
+
+
+def test_private_ai_runtime_uses_app_readable_runtime_secret_mount():
+    env = _env("deploy/.env.prod.example")
+    server_compose = _read("deploy/docker-compose.server.yml")
+    candidate_compose = _read("deploy/docker-compose.candidate.yml")
+    expected_mount = "/opt/nexus_helpdesk/deploy/runtime_secrets/ai_runtime_token:/run/nexus/ai_runtime_token:ro"
+
+    assert env["PRIVATE_AI_RUNTIME_TOKEN_FILE"] == "/run/nexus/ai_runtime_token"
+    assert env["STT_API_KEY_FILE"] == "/run/nexus/ai_runtime_token"
+    assert env["LLM_API_KEY_FILE"] == "/run/nexus/ai_runtime_token"
+    assert env["TTS_API_KEY_FILE"] == "/run/nexus/ai_runtime_token"
+    assert env["KNOWLEDGE_EMBEDDING_API_KEY_FILE"] == "/run/nexus/ai_runtime_token"
+    assert env["PRIVATE_AI_RUNTIME_TIMEOUT_SECONDS"] == "20"
+    assert env["PRIVATE_AI_RUNTIME_MAX_PROMPT_CHARS"] == "1200"
+    assert env["PROVIDER_RUNTIME_TIMEOUT_MS"] == "30000"
+    assert expected_mount in server_compose
+    assert expected_mount in candidate_compose

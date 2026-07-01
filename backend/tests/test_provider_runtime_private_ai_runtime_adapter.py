@@ -157,6 +157,42 @@ async def test_private_ai_runtime_question_shape_matches_runtime_contract(monkey
 
 
 @pytest.mark.asyncio
+async def test_private_ai_runtime_parses_json_embedded_in_answer(monkeypatch, tmp_path):
+    token_file = tmp_path / "ai-runtime-token"
+    token_file.write_text("test-token", encoding="utf-8")
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_REQUEST_SHAPE", "question")
+    adapter = PrivateAIRuntimeAdapter()
+
+    def fake_post_json(endpoint, payload, token):
+        return {
+            "status": "ok",
+            "answer": json.dumps(
+                {
+                    "customer_reply": "Our support team is available Monday to Friday, 8 AM to 6 PM.",
+                    "language": "en",
+                    "intent": "general_support",
+                    "handoff_required": False,
+                    "ticket_should_create": False,
+                }
+            ),
+        }
+
+    monkeypatch.setattr(adapter, "_post_json", fake_post_json)
+
+    result = await adapter.generate(Mock(), _request(body="What are your support hours?"))
+
+    assert result.ok is True
+    assert result.structured_output["customer_reply"] == "Our support team is available Monday to Friday, 8 AM to 6 PM."
+    assert result.structured_output["reply"] == "Our support team is available Monday to Friday, 8 AM to 6 PM."
+    assert result.structured_output["intent"] == "general_support"
+    assert "customer_reply" not in result.structured_output["reply"]
+
+
+@pytest.mark.asyncio
 async def test_private_ai_runtime_production_rejects_inline_token(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")

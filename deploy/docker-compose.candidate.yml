@@ -24,6 +24,7 @@ x-candidate-app: &candidate_app
     FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:?set release FRONTEND_BUILD_SHA}
   volumes: &candidate_app_volumes
     - /run/secrets:/run/secrets:ro
+    - /opt/nexus_helpdesk/deploy/runtime_secrets/ai_runtime_token:/run/nexus/ai_runtime_token:ro
     - /opt/nexus_helpdesk/data/uploads:/app/backend/uploads:ro
   networks:
     - candidate
