@@ -107,6 +107,7 @@ def test_whatsapp_sidecar_candidate_smoke_script_defaults_to_no_live_send() -> N
     assert 'CHECK_SEND="${WA_SIDECAR_SMOKE_SEND:-false}"' in script
     assert 'ALLOW_LIVE_SEND="${WA_SIDECAR_ALLOW_LIVE_SEND:-false}"' in script
     assert 'WAIT_SECONDS="${WA_SIDECAR_WAIT_SECONDS:-90}"' in script
+    assert 'DEFAULT_ACCOUNT_LIST="${WA_SIDECAR_AUTO_START_ACCOUNTS:-}"' in script
     assert "WA_SIDECAR_QR_STATE=" in script
     assert "live WhatsApp send requires WA_SIDECAR_ALLOW_LIVE_SEND=true" in script
     assert "WA_SIDECAR_SMOKE_SEND_TARGET is required" in script
