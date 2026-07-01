@@ -84,6 +84,7 @@ def test_private_ai_runtime_uses_app_readable_runtime_secret_mount():
     assert env["PRIVATE_AI_RUNTIME_MAX_PROMPT_CHARS"] == "1200"
     assert env["PRIVATE_AI_RUNTIME_TRACKING_MISSING_FAST_PATH_ENABLED"] == "false"
     assert env["WEBCHAT_FAST_AI_FALLBACK_PROVIDER"] == "none"
+    assert env["WEBCHAT_FAST_CUSTOMER_VISIBLE_FALLBACK_ENABLED"] == "false"
     assert env["PROVIDER_RUNTIME_FALLBACK_PROVIDERS"] == "[]"
     assert env["PROVIDER_RUNTIME_TIMEOUT_MS"] == "60000"
     assert env["NEXUSDESK_RUNTIME_SECRETS_DIR"] == "/opt/nexus_helpdesk/deploy/runtime_secrets"

@@ -184,7 +184,9 @@
       .catch(function (error) {
         hideTyping();
         reportDemoError('webchat_demo_api_error', error, error && error.debug_context);
-        appendMessage('bot', userVisibleErrorMessage(error));
+        if (!shouldSuppressBotError(error)) {
+          appendMessage('bot', userVisibleErrorMessage(error));
+        }
       })
       .finally(function () {
         busy = false;
@@ -237,6 +239,12 @@
     if (code === 'api_error_code') return 'The assistant is temporarily unavailable. Please retry.';
     if (code === 'render_error') return 'The reply was received but could not be displayed. Please refresh and try again.';
     return 'Connection issue. Please try again.';
+  }
+
+  function shouldSuppressBotError(error) {
+    const code = error && (error.error_code || (error.debug_context && error.debug_context.error_code));
+    const backendCode = error && error.debug_context && error.debug_context.backend_error_code;
+    return code === 'api_error_code' || code === 'api_not_ok' || code === 'empty_reply' || backendCode === 'provider_unavailable';
   }
 
   function submitDebugPayload(data, debugContext) {

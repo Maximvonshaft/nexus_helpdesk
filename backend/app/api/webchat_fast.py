@@ -276,9 +276,32 @@ def _knowledge_no_evidence_payload(*, runtime_context: dict[str, Any] | None) ->
 
 
 def _provider_safe_fallback_payload(*, error_code: str | None, body: str | None) -> dict[str, Any]:
+    reason = error_code or "provider_unavailable"
+    if not get_webchat_fast_settings().customer_visible_fallback_enabled:
+        return {
+            "ok": False,
+            "ai_generated": False,
+            "reply_source": "provider_unavailable",
+            "reply": None,
+            "intent": "handoff",
+            "tracking_number": None,
+            "handoff_required": True,
+            "handoff_reason": reason,
+            "ticket_creation_queued": False,
+            "elapsed_ms": 0,
+            "error_code": reason,
+            "retry_after_ms": 1500,
+            "evidence_trace": _server_no_evidence_trace(source="provider_unavailable", no_answer_reason=reason),
+            "ai_decision_trace": {
+                "schema_version": "webchat_ai_decision_v1",
+                "mode": "provider_unavailable_no_customer_reply",
+                "reply_source": "provider_unavailable",
+                "policy_gate": {"ok": True, "violations": [], "warnings": ["provider unavailable; no customer-visible fallback reply emitted"], "checked_tools": []},
+                "raw_tracking_number_exposed": False,
+            },
+        }
     zh = any("\u4e00" <= ch <= "\u9fff" for ch in (body or ""))
     reply = "助手暂时不可用，人工同事可以继续帮你核实这个请求。" if zh else "The assistant is temporarily unavailable. A human teammate can review this request."
-    reason = error_code or "provider_unavailable"
     return {
         "ok": True,
         "ai_generated": False,

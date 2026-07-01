@@ -112,6 +112,8 @@ def test_demo_fast_reply_uses_differentiated_error_handling():
     assert "empty_reply" in source
     assert "render_error" in source
     assert "userVisibleErrorMessage" in source
+    assert "shouldSuppressBotError" in source
+    assert "if (!shouldSuppressBotError(error))" in source
     assert "classifiedError" in source
     assert "reportDemoError('webchat_demo_api_error'" in source
     assert "reportDemoError('webchat_demo_render_error'" in source

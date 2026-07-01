@@ -475,6 +475,48 @@ def test_provider_failure_falls_back_safely_without_500(monkeypatch):
     assert payload["ai_decision_trace"]["mode"] in {"emergency_fallback_only", "gated"}
 
 
+def test_provider_failure_can_suppress_customer_visible_fallback(monkeypatch):
+    monkeypatch.setenv("WEBCHAT_FAST_CUSTOMER_VISIBLE_FALLBACK_ENABLED", "false")
+    get_webchat_fast_settings.cache_clear()
+
+    async def fake_generate(**_kwargs):
+        return WebchatFastReplyResult(
+            ok=False,
+            ai_generated=False,
+            reply_source=None,
+            reply=None,
+            intent=None,
+            tracking_number=None,
+            handoff_required=False,
+            handoff_reason=None,
+            recommended_agent_action=None,
+            ticket_creation_queued=False,
+            elapsed_ms=42,
+            error_code="all_providers_failed",
+        )
+
+    monkeypatch.setattr(webchat_fast, "generate_webchat_fast_reply", fake_generate)
+
+    response = client.post(
+        "/api/webchat/fast-reply",
+        json=_payload("provider-failure-no-visible-fallback", session_id="provider-failure-no-visible-session", body="Tell me about your services"),
+        headers={"Origin": "http://localhost"},
+    )
+
+    get_webchat_fast_settings.cache_clear()
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["ai_generated"] is False
+    assert payload["reply_source"] == "provider_unavailable"
+    assert payload["reply"] is None
+    assert payload["error_code"] == "all_providers_failed"
+    assert payload["evidence_trace"]["source"] == "provider_unavailable"
+    assert payload["ai_decision_trace"]["mode"] == "provider_unavailable_no_customer_reply"
+    assert "server_safe_fallback" not in json.dumps(payload, ensure_ascii=False)
+
+
 def test_fast_reply_same_session_reuses_conversation_and_ai_context(monkeypatch):
     seen_contexts: list[list[dict]] = []
 

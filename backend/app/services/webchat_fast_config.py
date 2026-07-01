@@ -75,6 +75,7 @@ class WebchatFastSettings:
     rate_limit_window_seconds: int
     rate_limit_max_requests: int
     hard_fail_on_non_ai_reply: bool
+    customer_visible_fallback_enabled: bool
     stream_enabled: bool
     stream_rollout_percent: int
     stream_require_accept: bool
@@ -245,6 +246,7 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         rate_limit_max_requests=_env_int("WEBCHAT_FAST_RATE_LIMIT_MAX_REQUESTS", 30, minimum=1, maximum=300),
         tracking_dedupe_scope=os.getenv("WEBCHAT_FAST_TRACKING_DEDUPE_SCOPE", "tenant_channel_customer").strip().lower() or "tenant_channel_customer",
         hard_fail_on_non_ai_reply=_env_bool("WEBCHAT_FAST_HARD_FAIL_ON_NON_AI_REPLY", True),
+        customer_visible_fallback_enabled=_env_bool("WEBCHAT_FAST_CUSTOMER_VISIBLE_FALLBACK_ENABLED", True),
         stream_enabled=_env_bool("WEBCHAT_FAST_STREAM_ENABLED", False),
         stream_rollout_percent=_env_int("WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT", 0, minimum=0, maximum=100),
         stream_require_accept=_env_bool("WEBCHAT_FAST_STREAM_REQUIRE_ACCEPT", True),
