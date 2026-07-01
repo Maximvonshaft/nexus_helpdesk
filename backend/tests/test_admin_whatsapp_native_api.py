@@ -86,8 +86,14 @@ def _snapshot(**overrides):
         "session_state": "linked",
         "browser": ["Ubuntu", "NexusDesk", "22.04.4"],
         "reconnect_count": 0,
+        "recovery_action": None,
+        "recovery_reason": None,
     }
     data.update(overrides)
+    if "recovery_action" not in overrides and "recovery_reason" not in overrides:
+        action, reason = whatsapp_native_admin_service.whatsapp_recovery_guidance(SimpleNamespace(**data))
+        data["recovery_action"] = action
+        data["recovery_reason"] = reason
     return SimpleNamespace(as_dict=lambda: dict(data), **data)
 
 
@@ -128,6 +134,50 @@ def test_admin_can_fetch_whatsapp_native_status(db_session, monkeypatch):
     assert result.session_state == "linked"
     assert result.browser == ["Ubuntu", "NexusDesk", "22.04.4"]
     assert result.last_transport_at == "2026-06-12T09:00:01Z"
+    assert result.recovery_action is None
+    assert result.recovery_reason is None
+
+
+def test_admin_status_exposes_recovery_guidance_for_partial_session(db_session, monkeypatch):
+    admin = _user(db_session, UserRole.admin, "admin-partial")
+    _account(db_session)
+
+    monkeypatch.setattr(
+        admin_whatsapp_native,
+        "call_whatsapp_sidecar_account_action",
+        lambda account_id, action, *, method: _snapshot(
+            account_id=account_id,
+            status="disconnected",
+            qr_status="none",
+            session_state="partial",
+            last_error_code="disconnect_loggedOut",
+            last_error_message="Connection Failure",
+        ),
+    )
+
+    result = admin_whatsapp_native.get_whatsapp_native_status("wa-main", db=db_session, current_user=admin)
+
+    assert result.channel_health_status == "offline"
+    assert result.recovery_action == "reset_session"
+    assert result.recovery_reason == "partial_session_after_failed_link"
+
+
+def test_admin_can_reset_whatsapp_native_session_with_explicit_endpoint(db_session, monkeypatch):
+    admin = _user(db_session, UserRole.admin, "admin-reset")
+    account = _account(db_session)
+    calls = []
+
+    def fake_call(account_id, action, *, method):
+        calls.append((account_id, action, method))
+        return _snapshot(account_id=account_id, status="disconnected", qr_status="none", session_state="empty")
+
+    monkeypatch.setattr(admin_whatsapp_native, "call_whatsapp_sidecar_account_action", fake_call)
+
+    result = admin_whatsapp_native.reset_whatsapp_native_session(account.account_id, db=db_session, current_user=admin)
+
+    assert calls == [("wa-main", "logout", "POST")]
+    assert result.status == "disconnected"
+    assert result.session_state == "empty"
 
 
 def test_admin_can_request_pairing_code_without_leaking_full_phone(db_session, monkeypatch):

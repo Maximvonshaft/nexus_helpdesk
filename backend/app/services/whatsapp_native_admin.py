@@ -35,11 +35,13 @@ class WhatsAppNativeAccountSnapshot:
     session_state: str | None = None
     browser: list[str] | None = None
     reconnect_count: int = 0
+    recovery_action: str | None = None
+    recovery_reason: str | None = None
 
     @classmethod
     def from_payload(cls, account_id: str, payload: dict[str, Any]) -> "WhatsAppNativeAccountSnapshot":
         browser = payload.get("browser")
-        return cls(
+        snapshot = cls(
             account_id=str(payload.get("account_id") or account_id),
             status=str(payload.get("status") or "unknown"),
             qr_status=str(payload.get("qr_status") or "none"),
@@ -58,6 +60,11 @@ class WhatsAppNativeAccountSnapshot:
             browser=[str(item) for item in browser] if isinstance(browser, list) else None,
             reconnect_count=int(payload.get("reconnect_count") or 0),
         )
+        action, reason = whatsapp_recovery_guidance(snapshot)
+        data = snapshot.as_dict()
+        data["recovery_action"] = action
+        data["recovery_reason"] = reason
+        return cls(**data)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +85,8 @@ class WhatsAppNativeAccountSnapshot:
             "session_state": self.session_state,
             "browser": self.browser,
             "reconnect_count": self.reconnect_count,
+            "recovery_action": self.recovery_action,
+            "recovery_reason": self.recovery_reason,
         }
 
 
@@ -121,6 +130,38 @@ def whatsapp_health_from_native_status(status: str | None) -> str:
     if value in {"disconnected", "error"}:
         return "offline"
     return "unknown"
+
+
+def whatsapp_recovery_guidance(snapshot: WhatsAppNativeAccountSnapshot) -> tuple[str | None, str | None]:
+    status = (snapshot.status or "").strip().lower()
+    qr_status = (snapshot.qr_status or "").strip().lower()
+    session_state = (snapshot.session_state or "").strip().lower()
+    error_code = (snapshot.last_error_code or "").strip()
+
+    if status == "connected":
+        return None, None
+    if session_state == "corrupt":
+        return "reset_session", "corrupt_session"
+    if session_state == "partial":
+        return "reset_session", "partial_session_after_failed_link"
+    if error_code in {
+        "disconnect_loggedOut",
+        "disconnect_badSession",
+        "disconnect_multideviceMismatch",
+        "disconnect_connectionReplaced",
+    }:
+        return "reset_session", error_code
+    if error_code == "disconnect_forbidden":
+        return "review_linked_devices", error_code
+    if qr_status == "expired":
+        return "refresh_qr", "qr_expired"
+    if status in {"idle", "disconnected", "error"}:
+        return "start_login", "not_connected"
+    if status == "qr_pending":
+        return "link_device", "awaiting_operator_link"
+    if status in {"connecting", "reconnecting"}:
+        return "wait", status
+    return None, None
 
 
 def call_whatsapp_sidecar_account_action(

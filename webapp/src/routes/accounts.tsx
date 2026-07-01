@@ -28,6 +28,49 @@ const PROVIDERS = [
   { label: 'SMS', value: 'sms' },
 ]
 
+function whatsappRecoveryCopy(status?: WhatsAppNativeAccountStatus | null) {
+  if (!status?.recovery_action) return null
+  switch (status.recovery_action) {
+    case 'reset_session':
+      return {
+        title: '会话需要清理',
+        body: status.recovery_reason === 'partial_session_after_failed_link'
+          ? '检测到上次绑定只写入部分会话。清理会话后再重新生成二维码或配对码。'
+          : '当前会话不可继续复用。清理会话后再重新绑定。',
+      }
+    case 'review_linked_devices':
+      return {
+        title: '绑定被 WhatsApp 拒绝',
+        body: '请先在手机端检查 Linked Devices，再清理会话并重新绑定。',
+      }
+    case 'refresh_qr':
+      return {
+        title: '二维码已过期',
+        body: '生成新的二维码或配对码后再绑定。',
+      }
+    case 'start_login':
+      return {
+        title: '账号未连接',
+        body: '启动扫码或生成配对码后完成绑定。',
+      }
+    case 'link_device':
+      return {
+        title: '等待手机端绑定',
+        body: '当前二维码有效，等待手机端完成 Linked Devices 绑定。',
+      }
+    case 'wait':
+      return {
+        title: '连接进行中',
+        body: 'sidecar 正在连接或重连，等待状态刷新。',
+      }
+    default:
+      return {
+        title: '需要处理连接状态',
+        body: status.recovery_reason || status.recovery_action,
+      }
+  }
+}
+
 function emptyForm(): Partial<ChannelAccount> {
   return {
     provider: 'whatsapp',
@@ -176,10 +219,16 @@ function AccountsPage() {
     onSuccess: (status) => applyWhatsAppStatus(status, 'WhatsApp 账号已退出登录'),
     onError: (err: Error) => setToast({ message: err.message || '退出 WhatsApp 登录失败', tone: 'danger' }),
   })
+  const whatsappResetSessionMutation = useMutation({
+    mutationFn: () => api.whatsappNativeResetSession(selectedWhatsappAccountId || ''),
+    onSuccess: (status) => applyWhatsAppStatus(status, 'WhatsApp 会话已清理'),
+    onError: (err: Error) => setToast({ message: err.message || '清理 WhatsApp 会话失败', tone: 'danger' }),
+  })
 
   const nativeStatus = whatsappStatus.data
-  const nativeBusy = whatsappStartMutation.isPending || whatsappQrMutation.isPending || whatsappPairingMutation.isPending || whatsappRestartMutation.isPending || whatsappLogoutMutation.isPending
+  const nativeBusy = whatsappStartMutation.isPending || whatsappQrMutation.isPending || whatsappPairingMutation.isPending || whatsappRestartMutation.isPending || whatsappLogoutMutation.isPending || whatsappResetSessionMutation.isPending
   const canRequestPairingCode = pairingPhone.replace(/\D/g, '').length >= 8 && !nativeBusy
+  const recoveryCopy = whatsappRecoveryCopy(nativeStatus)
 
   return (
     <AppShell>
@@ -264,10 +313,17 @@ function AccountsPage() {
                         <MetricCard label="重连次数" value={nativeStatus?.reconnect_count ?? 0} />
                         <MetricCard label="会话状态" value={nativeStatus?.session_state ? labelize(nativeStatus.session_state) : '未知'} />
                       </div>
+                      {recoveryCopy ? (
+                        <div className="message" data-role="agent" data-testid="whatsapp-native-recovery-hint">
+                          <strong>{recoveryCopy.title}</strong>
+                          <div>{recoveryCopy.body}</div>
+                        </div>
+                      ) : null}
                       <div className="button-row">
                         <Button variant="primary" onClick={() => whatsappStartMutation.mutate()} disabled={nativeBusy}>开始扫码</Button>
                         <Button variant="secondary" onClick={() => whatsappQrMutation.mutate()} disabled={nativeBusy}>刷新二维码</Button>
                         <Button variant="secondary" onClick={() => whatsappRestartMutation.mutate()} disabled={nativeBusy}>重启连接</Button>
+                        {nativeStatus?.recovery_action === 'reset_session' || nativeStatus?.recovery_action === 'review_linked_devices' ? <Button variant="secondary" onClick={() => whatsappResetSessionMutation.mutate()} disabled={nativeBusy}>清理会话</Button> : null}
                         <Button variant="ghost" onClick={() => whatsappLogoutMutation.mutate()} disabled={nativeBusy}>退出登录</Button>
                       </div>
                       <div className="form-grid">
@@ -300,6 +356,7 @@ function AccountsPage() {
                         <div className="kv"><label>最后通信</label><div>{formatDateTime(nativeStatus?.last_transport_at)}</div></div>
                         <div className="kv"><label>浏览器指纹</label><div>{sanitizeDisplayText(nativeStatus?.browser?.join(' / ') || '未知')}</div></div>
                         <div className="kv"><label>最后错误</label><div>{sanitizeDisplayText(nativeStatus?.last_error_message || nativeStatus?.last_error_code || '无')}</div></div>
+                        <div className="kv"><label>恢复建议</label><div>{sanitizeDisplayText(nativeStatus?.recovery_reason || nativeStatus?.recovery_action || '无')}</div></div>
                       </div>
                     </div>
                   ) : null}

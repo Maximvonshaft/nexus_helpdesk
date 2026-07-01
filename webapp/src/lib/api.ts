@@ -621,6 +621,7 @@ export const api = {
   }),
   whatsappNativeStatus: (accountId: string) => request<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/status`),
   whatsappNativeLogout: (accountId: string) => request<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/logout`, { method: 'POST' }),
+  whatsappNativeResetSession: (accountId: string) => request<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/session/reset`, { method: 'POST' }),
   whatsappNativeRestart: (accountId: string) => request<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/restart`, { method: 'POST' }),
   outboundEmailAccounts: () => request<OutboundEmailAccount[]>('/api/admin/outbound-email/accounts'),
   outboundEmailAccount: (accountId: number) => request<OutboundEmailAccount>(`/api/admin/outbound-email/accounts/${accountId}`),

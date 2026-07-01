@@ -41,6 +41,8 @@ class WhatsAppNativeAccountStatus(BaseModel):
     session_state: str | None = None
     browser: list[str] | None = None
     reconnect_count: int = 0
+    recovery_action: str | None = None
+    recovery_reason: str | None = None
     channel_account_id: int
     channel_health_status: str
 
@@ -142,6 +144,11 @@ def get_whatsapp_native_status(account_id: str, db: Session = Depends(get_db), c
 
 @router.post("/{account_id}/logout", response_model=WhatsAppNativeAccountStatus)
 def logout_whatsapp_native(account_id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    return _call("logout", account_id, method="POST", db=db, current_user=current_user)
+
+
+@router.post("/{account_id}/session/reset", response_model=WhatsAppNativeAccountStatus)
+def reset_whatsapp_native_session(account_id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     return _call("logout", account_id, method="POST", db=db, current_user=current_user)
 
 

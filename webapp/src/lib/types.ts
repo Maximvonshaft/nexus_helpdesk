@@ -696,6 +696,8 @@ export interface WhatsAppNativeAccountStatus {
   session_state?: 'empty' | 'partial' | 'linked' | 'corrupt' | string | null
   browser?: string[] | null
   reconnect_count: number
+  recovery_action?: 'reset_session' | 'review_linked_devices' | 'refresh_qr' | 'start_login' | 'link_device' | 'wait' | string | null
+  recovery_reason?: string | null
   channel_account_id: number
   channel_health_status: string
 }
