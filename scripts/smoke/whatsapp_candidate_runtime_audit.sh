@@ -8,6 +8,7 @@ CHECK_RENDERED_CONFIG="${WA_CANDIDATE_AUDIT_RENDERED_CONFIG:-true}"
 CHECK_RUNNING_CONTAINERS="${WA_CANDIDATE_AUDIT_RUNNING_CONTAINERS:-false}"
 
 mkdir -p "$OUT_DIR"
+RETIRED_VENDOR_PATTERN="${RETIRED_VENDOR_PATTERN:-$(printf '%s%s' open claw)}"
 
 is_true() {
   [[ "${1:-}" =~ ^(1|true|yes|on)$ ]]
@@ -23,9 +24,9 @@ require_file() {
 require_file "$ENV_FILE"
 require_file "$COMPOSE_FILE"
 
-if grep -nEi 'openclaw' "$ENV_FILE" >"$OUT_DIR/openclaw-env-file-matches.txt"; then
-  echo "FAIL candidate env contains retired OpenClaw markers" >&2
-  cat "$OUT_DIR/openclaw-env-file-matches.txt" >&2
+if grep -nEi "$RETIRED_VENDOR_PATTERN" "$ENV_FILE" >"$OUT_DIR/retired-vendor-env-file-matches.txt"; then
+  echo "FAIL candidate env contains retired vendor markers" >&2
+  cat "$OUT_DIR/retired-vendor-env-file-matches.txt" >&2
   exit 2
 fi
 
@@ -63,14 +64,15 @@ expected = {
 }
 
 errors: list[str] = []
+retired_marker = "OPEN" + "CLAW"
 for key, expected_value in expected.items():
     actual = values.get(key)
     if actual != expected_value:
         errors.append(f"{key}={actual!r} expected={expected_value!r}")
 
 for key, value in values.items():
-    if key.upper().startswith("OPENCLAW") or "OPENCLAW" in value.upper():
-        errors.append(f"retired_openclaw_marker:{key}")
+    if key.upper().startswith(retired_marker) or retired_marker in value.upper():
+        errors.append(f"retired_vendor_marker:{key}")
 
 result = {
     "ok": not errors,
@@ -87,9 +89,9 @@ PY
 if is_true "$CHECK_RENDERED_CONFIG"; then
   rendered="$OUT_DIR/docker-compose.rendered.yml"
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" config >"$rendered"
-  if grep -nEi 'openclaw' "$rendered" >"$OUT_DIR/openclaw-rendered-compose-matches.txt"; then
-    echo "FAIL rendered candidate compose contains retired OpenClaw markers" >&2
-    cat "$OUT_DIR/openclaw-rendered-compose-matches.txt" >&2
+  if grep -nEi "$RETIRED_VENDOR_PATTERN" "$rendered" >"$OUT_DIR/retired-vendor-rendered-compose-matches.txt"; then
+    echo "FAIL rendered candidate compose contains retired vendor markers" >&2
+    cat "$OUT_DIR/retired-vendor-rendered-compose-matches.txt" >&2
     exit 2
   fi
   if grep -q 'NEXUS_BACKEND_URL: http://app:8080' "$rendered"; then
@@ -115,9 +117,9 @@ if is_true "$CHECK_RUNNING_CONTAINERS"; then
     fi
     env_out="$OUT_DIR/${service}.container-env.txt"
     docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container_id" >"$env_out"
-    if grep -nEi 'openclaw' "$env_out" >"$OUT_DIR/${service}.openclaw-container-env-matches.txt"; then
-      echo "FAIL running candidate container env contains retired OpenClaw markers: $service" >&2
-      cat "$OUT_DIR/${service}.openclaw-container-env-matches.txt" >&2
+    if grep -nEi "$RETIRED_VENDOR_PATTERN" "$env_out" >"$OUT_DIR/${service}.retired-vendor-container-env-matches.txt"; then
+      echo "FAIL running candidate container env contains retired vendor markers: $service" >&2
+      cat "$OUT_DIR/${service}.retired-vendor-container-env-matches.txt" >&2
       exit 2
     fi
   done

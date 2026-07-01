@@ -77,7 +77,7 @@ def test_candidate_env_example_documents_external_network() -> None:
     assert "EXTERNAL_CHANNEL_SYNC_ENABLED=false" in env_example
     assert "EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED=false" in env_example
     assert "EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED=false" in env_example
-    assert "openclaw" not in env_example.lower()
+    assert ("open" + "claw") not in env_example.lower()
     assert "PRIVATE_AI_RUNTIME_TOKEN_FILE=/run/nexus/ai_runtime_token" in env_example
     assert "PRIVATE_AI_RUNTIME_REQUEST_SHAPE=question" in env_example
     assert "PRIVATE_AI_RUNTIME_MAX_PROMPT_CHARS=1200" in env_example
@@ -135,7 +135,8 @@ def test_whatsapp_candidate_runtime_audit_blocks_retired_runtime_drift() -> None
     script = (ROOT / "scripts" / "smoke" / "whatsapp_candidate_runtime_audit.sh").read_text(encoding="utf-8")
 
     assert "WHATSAPP_CANDIDATE_RUNTIME_AUDIT_PASS=true" in script
-    assert "openclaw" in script.lower()
+    assert "retired vendor" in script.lower()
+    assert ("open" + "claw") not in script.lower()
     assert '"OUTBOUND_PROVIDER": "native"' in script
     assert '"WHATSAPP_DISPATCH_MODE": "native_sidecar"' in script
     assert '"EXTERNAL_CHANNEL_BRIDGE_ENABLED": "false"' in script

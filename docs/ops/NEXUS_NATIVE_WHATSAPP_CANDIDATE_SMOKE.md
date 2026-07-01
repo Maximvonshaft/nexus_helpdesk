@@ -25,7 +25,7 @@ environment.
   - `EXTERNAL_CHANNEL_SYNC_ENABLED=false`
   - `EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED=false`
   - `EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED=false`
-- No `OpenClaw` or `OPENCLAW_*` markers exist in the candidate env or running
+- No retired vendor/runtime markers exist in the candidate env or running
   candidate containers.
 - Sidecar hardening env is explicitly rendered by Compose:
   - `WA_SIDECAR_AUTO_START_ACCOUNTS`
@@ -85,7 +85,7 @@ WA_CANDIDATE_AUDIT_RUNNING_CONTAINERS=true \
 bash scripts/smoke/whatsapp_candidate_runtime_audit.sh
 ```
 
-This audit fails on retired OpenClaw markers, `OUTBOUND_PROVIDER=openclaw`,
+This audit fails on retired vendor markers, retired outbound providers,
 legacy `app:8080` callbacks, or enabled retired bridge/runtime flags.
 
 ## 2. Start Candidate Only
