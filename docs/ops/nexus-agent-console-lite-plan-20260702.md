@@ -8,7 +8,7 @@ Make the Nexus backend feel as lightweight as the current Speedy Console while k
 
 This plan is grounded in the current deployed candidate facts:
 
-- `www.leakle.com` is serving the Nexus candidate after the OpenClaw runtime removal from the app image.
+- `www.leakle.com` is serving the Nexus candidate after retired runtime removal from the app image.
 - 178 app and worker now both run `nexusdesk/helpdesk:manual-agent-console-demo-hygiene-20260701T231728Z`; the candidate WhatsApp sidecar was preserved.
 - WebChat Demo text flow is live through `provider_runtime -> private_ai_runtime`.
 - Visible canned WebChat fallback bubbles must stay removed. The 2026-07-02 live check found the deployed 178 HTML still had an old static welcome bubble; the demo static page is now part of the deployment patch set and smoke guardrails, and 178 has been redeployed with the fix.
@@ -84,7 +84,7 @@ Live 178 validation already observed:
 - Browser-level Playwright smoke proved desktop auto-open, text send, rendered bot reply, no relevant console warnings/errors, and mobile auto-open/input visibility.
 - Browser-level Playwright smoke also proved the retired static welcome bubble and forced/clipped `VOIP Call` edge-card entry are no longer visible while voice runtime-config is disabled/mock-backed.
 - Support-intelligence rollback smoke inside the 178 app container proved status dictionary draft/publish uses `source=nexus_ai_config_resources` and rolls back without persisting smoke data.
-- WhatsApp candidate runtime audit passed: running candidate container envs have no retired vendor markers, app OpenClaw env/file counts are zero, and sidecar read-only smoke passed.
+- WhatsApp candidate runtime audit passed: running candidate container envs have no retired vendor markers, app code retired-vendor env/file counts are zero, and sidecar read-only smoke passed.
 - 178 cleanup left only the current candidate app, worker, and WhatsApp sidecar containers. The only remaining helpdesk image is `manual-agent-console-demo-hygiene-20260701T231728Z`.
 
 ### P1: Lightweight Agent Surface
