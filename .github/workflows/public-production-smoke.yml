@@ -80,30 +80,33 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          {
-            echo '## Public production smoke'
-            echo ''
-            echo '- Target: `${{ inputs.base_url }}`'
-            echo '- Expected git SHA: `${{ inputs.expected_git_sha }}`'
-            echo '- Expected image tag: `${{ inputs.expected_image_tag }}`'
-            echo '- Require AI reply: `${{ inputs.require_ai_reply }}`'
-            echo '- Skip fast-reply: `${{ inputs.skip_fast_reply }}`'
-            echo '- Max latency ms: `${{ inputs.max_latency_ms }}`'
-            if [ -f artifacts/public-production-smoke/summary.json ]; then
-              echo ''
-              echo '```json'
-              python - <<'PY'
-              import json
-              from pathlib import Path
-              payload = json.loads(Path('artifacts/public-production-smoke/summary.json').read_text())
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          lines = [
+              "## Public production smoke",
+              "",
+              "- Target: `${{ inputs.base_url }}`",
+              "- Expected git SHA: `${{ inputs.expected_git_sha }}`",
+              "- Expected image tag: `${{ inputs.expected_image_tag }}`",
+              "- Require AI reply: `${{ inputs.require_ai_reply }}`",
+              "- Skip fast-reply: `${{ inputs.skip_fast_reply }}`",
+              "- Max latency ms: `${{ inputs.max_latency_ms }}`",
+          ]
+
+          summary_path = Path("artifacts/public-production-smoke/summary.json")
+          if summary_path.exists():
+              payload = json.loads(summary_path.read_text(encoding="utf-8"))
               compact = {
                   "public": payload.get("healthz"),
                   "readyz": payload.get("readyz"),
                   "fast_reply": payload.get("fast_reply"),
                   "errors": payload.get("errors"),
               }
-              print(json.dumps(compact, indent=2, ensure_ascii=False))
-              PY
-              echo '```'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+              lines.extend(["", "```json", json.dumps(compact, indent=2, ensure_ascii=False), "```"])
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write("\n".join(lines) + "\n")
+          PY
