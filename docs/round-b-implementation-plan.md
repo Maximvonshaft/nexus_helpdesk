@@ -74,7 +74,7 @@ Static vanilla JS widget:
 - Local storage conversation restoration
 - Polling for agent replies
 - No backend token exposure
-- No OpenClaw wording
+- No ExternalChannel wording
 
 ## Demo page
 

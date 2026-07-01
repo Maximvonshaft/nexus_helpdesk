@@ -78,14 +78,14 @@ def test_widget_keeps_legacy_rollback_path():
     assert "sendLegacyMessage" in source
 
 
-def test_widget_does_not_expose_openclaw_gateway_details():
+def test_widget_does_not_expose_external_channel_gateway_details():
     source = _widget_source().lower()
 
     forbidden = [
-        "openclaw_responses_url",
-        "openclaw_responses_token",
-        "openclaw_gateway_token",
-        "openclaw-gateway",
+        "external_channel_responses_url",
+        "external_channel_responses_token",
+        "external_channel_gateway_token",
+        "external_channel-gateway",
         "/v1/responses",
         "bearer ",
     ]

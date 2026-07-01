@@ -31,7 +31,7 @@ This PR makes backend full pytest green, but does not make NexusDesk production 
 
 Remaining gates:
 - staging smoke
-- OpenClaw Gateway gate
+- ExternalChannel Gateway gate
 - real-domain CORS validation
 - real bridge/MCP outbound validation
 - warning cleanup follow-up if needed

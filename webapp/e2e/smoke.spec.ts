@@ -31,8 +31,8 @@ async function fulfillApi(route: Route, kind: 'agent' | 'admin') {
   if (path === '/api/lookups/bulletins') return json([])
   if (path === '/api/lookups/markets') return json([{ id: 11, code: 'CH', name: 'Switzerland', country_code: 'CH', is_active: true }])
   if (path === '/api/lite/cases') return json({ items: [], next_cursor: null, has_more: false })
-  if (path === '/api/admin/queues/summary') return json({ pending_outbound: 0, dead_outbound: 0, pending_jobs: 0, dead_jobs: 0, openclaw_links: 0 })
-  if (path === '/api/admin/openclaw/runtime-health') {
+  if (path === '/api/admin/queues/summary') return json({ pending_outbound: 0, dead_outbound: 0, pending_jobs: 0, dead_jobs: 0, external_channel_links: 0 })
+  if (path === '/api/admin/external_channel/runtime-health') {
     return json({
       stale_link_count: 0,
       pending_sync_jobs: 0,
@@ -48,9 +48,9 @@ async function fulfillApi(route: Route, kind: 'agent' | 'admin') {
       database_url_scheme: 'sqlite',
       is_postgres: false,
       storage_backend: 'local',
-      openclaw_transport: 'disabled',
+      external_channel_transport: 'disabled',
       metrics_enabled: false,
-      openclaw_sync_enabled: false,
+      external_channel_sync_enabled: false,
       outbound_email_production_pilot_enabled: false,
       outbound_email_active_accounts: 1,
       outbound_email_successful_test_send_accounts: 1,

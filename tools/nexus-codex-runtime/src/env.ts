@@ -47,7 +47,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
   const startOptions = {
     command: codexCommand,
     args: codexArgs,
-    clearEnv: ["CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_ACCESS_TOKEN", "CODEX_ACCESS_TOKEN", "OPENCLAW_HOME"],
+    clearEnv: ["CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_ACCESS_TOKEN", "CODEX_ACCESS_TOKEN", "EXTERNAL_CHANNEL_HOME"],
   };
   return {
     enabled: parseBool(env.CODEX_APPSERVER_RUNTIME_ENABLED ?? "true"),

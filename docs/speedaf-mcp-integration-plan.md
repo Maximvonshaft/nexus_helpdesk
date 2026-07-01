@@ -123,7 +123,7 @@ Customer asks tracking question
 
 ### Existing Nexus Hook
 
-Current Fast Lane already calls tracking fact lookup before AI generation. The change should add `speedaf_api` as a second source next to `openclaw_bridge` and route through `WEBCHAT_TRACKING_FACT_SOURCE`.
+Current Fast Lane already calls tracking fact lookup before AI generation. The change should add `speedaf_api` as a second source next to `external_channel_bridge` and route through `WEBCHAT_TRACKING_FACT_SOURCE`.
 
 ### Redaction Rules
 
@@ -247,7 +247,7 @@ Required tests:
 Read-only rollback:
 
 ```bash
-WEBCHAT_TRACKING_FACT_SOURCE=openclaw_bridge
+WEBCHAT_TRACKING_FACT_SOURCE=external_channel_bridge
 # or
 WEBCHAT_TRACKING_FACT_LOOKUP_ENABLED=false
 ```

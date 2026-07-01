@@ -73,7 +73,7 @@ server {
 
     location = /_nexusdesk_operator_auth {
         internal;
-        proxy_pass ${NEXUSDESK_APP_UPSTREAM}/api/admin/openclaw/runtime-health;
+        proxy_pass ${NEXUSDESK_APP_UPSTREAM}/api/admin/external_channel/runtime-health;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         proxy_set_header Authorization "${NEXUSDESK_INTERNAL_AUTHORIZATION}";

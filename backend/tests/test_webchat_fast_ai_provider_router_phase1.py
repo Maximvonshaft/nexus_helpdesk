@@ -19,7 +19,7 @@ def _clear_settings() -> None:
     get_webchat_fast_settings.cache_clear()
 
 
-def test_provider_router_default_uses_provider_runtime_without_openclaw(monkeypatch):
+def test_provider_router_default_uses_provider_runtime_without_external_channel(monkeypatch):
     monkeypatch.delenv("WEBCHAT_FAST_AI_PROVIDER", raising=False)
     monkeypatch.delenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", raising=False)
     monkeypatch.setenv("APP_ENV", "development")
@@ -124,7 +124,7 @@ def test_probe_endpoint_guard_domain_allowlist(monkeypatch):
     assert validate_probe_endpoint("https://other.example/responses") == (False, "probe_endpoint_domain_not_allowed")
 
 
-def test_router_can_fallback_to_configured_non_openclaw_provider(monkeypatch):
+def test_router_can_fallback_to_configured_non_external_channel_provider(monkeypatch):
     class Settings:
         provider = "codex_auth"
         fallback_provider = "openai_responses"

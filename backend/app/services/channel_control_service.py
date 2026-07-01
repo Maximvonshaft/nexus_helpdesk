@@ -77,7 +77,7 @@ def create_task(db: Session, payload, actor) -> ChannelOnboardingTask:
         target_slot=payload.target_slot,
         desired_display_name=payload.desired_display_name,
         desired_channel_account_binding=payload.desired_channel_account_binding,
-        openclaw_account_id=payload.openclaw_account_id,
+        external_channel_account_id=payload.external_channel_account_id,
     )
     db.add(row)
     db.flush()
@@ -111,8 +111,8 @@ def complete_task(db: Session, row: ChannelOnboardingTask, payload) -> ChannelOn
     _ensure_mutable(row)
     if row.status not in {"pending", "in_progress", "failed"}:
         raise HTTPException(status_code=400, detail="Task cannot be completed from current status")
-    if payload.openclaw_account_id is not None:
-        row.openclaw_account_id = payload.openclaw_account_id
+    if payload.external_channel_account_id is not None:
+        row.external_channel_account_id = payload.external_channel_account_id
     if payload.desired_channel_account_binding is not None:
         row.desired_channel_account_binding = payload.desired_channel_account_binding
     row.status = "completed"

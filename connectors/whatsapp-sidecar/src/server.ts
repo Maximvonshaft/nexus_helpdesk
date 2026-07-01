@@ -3,7 +3,7 @@ import type { Logger } from "pino";
 import { AccountRegistry } from "./accountRegistry.js";
 import { isAuthorized } from "./security.js";
 import { assertSafeAccountId } from "./sessionStore.js";
-import type { SendRequest, SidecarConfig } from "./types.js";
+import type { PairingCodeRequest, SendRequest, SidecarConfig } from "./types.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -84,6 +84,16 @@ export function createSidecarServer(config: SidecarConfig, logger: Logger, regis
       }
       if (req.method === "GET" && route.action === "qr") {
         sendJson(res, 200, await registry.qr(accountId));
+        return;
+      }
+      if (req.method === "POST" && route.action === "pairing-code") {
+        const payload = await readJson(req) as PairingCodeRequest;
+        const digits = String(payload.phone_number || "").replace(/\D/g, "");
+        if (!/^\d{8,16}$/.test(digits)) {
+          sendJson(res, 400, { ok: false, error_code: "invalid_phone_number" });
+          return;
+        }
+        sendJson(res, 200, await registry.requestPairingCode(accountId, { phone_number: digits }));
         return;
       }
       if (req.method === "POST" && route.action === "send") {

@@ -1,5 +1,5 @@
 import sys
-with open('backend/scripts/openclaw_bridge_server.js', 'r') as f:
+with open('backend/scripts/external_channel_bridge_server.js', 'r') as f:
     c = f.read()
     sb = c.split('async sendMessage(payload) {')[1].split('async listConversations')[0]
     ab = c.split('async aiReply(payload) {')[1].split('async lookupSpeedaf')[0]

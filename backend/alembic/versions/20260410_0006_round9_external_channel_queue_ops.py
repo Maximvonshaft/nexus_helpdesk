@@ -1,4 +1,4 @@
-"""round9 openclaw queue ops
+"""round9 external_channel queue ops
 
 Revision ID: 20260410_0006
 Revises: 20260410_0005
@@ -24,16 +24,16 @@ def upgrade() -> None:
     existing_indexes = {idx["name"] for idx in inspector.get_indexes("background_jobs")}
     if "ix_background_jobs_dedupe_key" not in existing_indexes:
         op.create_index("ix_background_jobs_dedupe_key", "background_jobs", ["dedupe_key"], unique=False)
-    if "ix_openclaw_links_ticket_updated" not in {idx["name"] for idx in inspector.get_indexes("openclaw_conversation_links")}:
-        op.create_index("ix_openclaw_links_ticket_updated", "openclaw_conversation_links", ["ticket_id", "updated_at"], unique=False)
-    if "ix_openclaw_transcript_ticket_received" not in {idx["name"] for idx in inspector.get_indexes("openclaw_transcript_messages")}:
-        op.create_index("ix_openclaw_transcript_ticket_received", "openclaw_transcript_messages", ["ticket_id", "received_at"], unique=False)
+    if "ix_external_channel_links_ticket_updated" not in {idx["name"] for idx in inspector.get_indexes("external_channel_conversation_links")}:
+        op.create_index("ix_external_channel_links_ticket_updated", "external_channel_conversation_links", ["ticket_id", "updated_at"], unique=False)
+    if "ix_external_channel_transcript_ticket_received" not in {idx["name"] for idx in inspector.get_indexes("external_channel_transcript_messages")}:
+        op.create_index("ix_external_channel_transcript_ticket_received", "external_channel_transcript_messages", ["ticket_id", "received_at"], unique=False)
 
 
 def downgrade() -> None:
     for name, table in [
-        ("ix_openclaw_transcript_ticket_received", "openclaw_transcript_messages"),
-        ("ix_openclaw_links_ticket_updated", "openclaw_conversation_links"),
+        ("ix_external_channel_transcript_ticket_received", "external_channel_transcript_messages"),
+        ("ix_external_channel_links_ticket_updated", "external_channel_conversation_links"),
         ("ix_background_jobs_dedupe_key", "background_jobs"),
     ]:
         try:

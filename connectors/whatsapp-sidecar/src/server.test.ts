@@ -11,12 +11,24 @@ function config(): SidecarConfig {
     port: 0,
     mode: "mock",
     sessionRoot: "/tmp/nexus-wa-test",
+    autoStartAccounts: [],
     internalToken: "test-token",
     backendUrl: "http://backend.test",
     connectorKey: "connector-key",
     connectorHmacSecret: "connector-secret",
     callbackTimeoutMs: 100,
     logLevel: "silent",
+    browserPlatform: "mock",
+    browserName: "NexusDesk Test",
+    browserVersion: "0.1.0",
+    keepAliveIntervalMs: 25_000,
+    connectTimeoutMs: 60_000,
+    defaultQueryTimeoutMs: 60_000,
+    operationTimeoutMs: 60_000,
+    qrTtlMs: 120_000,
+    reconnectBaseDelayMs: 10,
+    reconnectMaxDelayMs: 100,
+    reconnectMaxAttempts: 3,
     allowFromMeInbound: false,
     fromMeMode: "ignore",
     fromMeTestPrefix: "NEXUS_SELF_INBOUND_TEST"
@@ -32,6 +44,7 @@ async function withServer(fn: (baseUrl: string, connector: MockConnector) => Pro
     restart: (accountId: string) => connector.restart(accountId),
     status: (accountId: string) => connector.status(accountId),
     qr: (accountId: string) => connector.status(accountId),
+    requestPairingCode: (accountId: string, request: any) => connector.requestPairingCode(accountId, request),
     send: (accountId: string, request: any) => connector.send(accountId, request)
   };
   const server = createSidecarServer(config(), createLogger("silent"), registry as any);
@@ -61,6 +74,18 @@ test("start, status, qr, and send expose stable sidecar contract", async () => {
     const started = await fetch(`${baseUrl}/accounts/wa-main/start`, { method: "POST", headers });
     assert.equal(started.status, 200);
     assert.equal((await started.json()).qr_status, "pending");
+
+    const paired = await fetch(`${baseUrl}/accounts/wa-main/pairing-code`, {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({ phone_number: "+1 (555) 123-4567" })
+    });
+    const pairingPayload = await paired.json();
+    assert.equal(paired.status, 200);
+    assert.equal(pairingPayload.ok, true);
+    assert.equal(pairingPayload.pairing_code, "12345678");
+    assert.equal(pairingPayload.phone_number_suffix, "4567");
+    assert.equal(JSON.stringify(pairingPayload).includes("15551234567"), false);
 
     connector.setConnected("wa-main");
     const sent = await fetch(`${baseUrl}/accounts/wa-main/send`, {

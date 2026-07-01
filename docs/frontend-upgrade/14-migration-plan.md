@@ -225,7 +225,7 @@ Make operational health and event state visible and actionable.
 ### Actions
 
 - Consolidate runtime health cards.
-- Show OpenClaw status.
+- Show ExternalChannel status.
 - Show unresolved events.
 - Show job health.
 - Show safety-gate block signals.

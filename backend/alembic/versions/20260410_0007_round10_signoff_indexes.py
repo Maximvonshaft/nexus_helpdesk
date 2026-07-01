@@ -23,15 +23,15 @@ def upgrade() -> None:
         existing = {idx["name"] for idx in inspector.get_indexes("tickets")}
         if "ix_tickets_market_country_status" not in existing:
             op.create_index("ix_tickets_market_country_status", "tickets", ["market_id", "country_code", "status"], unique=False)
-    if "openclaw_conversation_links" in tables:
-        existing = {idx["name"] for idx in inspector.get_indexes("openclaw_conversation_links")}
-        if "ix_openclaw_links_session_updated" not in existing:
-            op.create_index("ix_openclaw_links_session_updated", "openclaw_conversation_links", ["session_key", "updated_at"], unique=False)
+    if "external_channel_conversation_links" in tables:
+        existing = {idx["name"] for idx in inspector.get_indexes("external_channel_conversation_links")}
+        if "ix_external_channel_links_session_updated" not in existing:
+            op.create_index("ix_external_channel_links_session_updated", "external_channel_conversation_links", ["session_key", "updated_at"], unique=False)
 
 
 def downgrade() -> None:
     for name, table in [
-        ("ix_openclaw_links_session_updated", "openclaw_conversation_links"),
+        ("ix_external_channel_links_session_updated", "external_channel_conversation_links"),
         ("ix_tickets_market_country_status", "tickets"),
     ]:
         try:

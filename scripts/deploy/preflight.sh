@@ -18,14 +18,14 @@ if s.app_env == "production":
         for key in ["S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY", "S3_SECRET_KEY"]:
             if not getattr(s, key.lower()):
                 missing.append(key)
-    if s.openclaw_transport != "disabled":
-        missing.append("OPENCLAW_TRANSPORT=disabled")
-    if s.openclaw_deployment_mode != "disabled":
-        missing.append("OPENCLAW_DEPLOYMENT_MODE=disabled")
-    if s.openclaw_sync_enabled:
-        missing.append("OPENCLAW_SYNC_ENABLED=false")
-    if s.openclaw_event_driver_enabled:
-        missing.append("OPENCLAW_EVENT_DRIVER_ENABLED=false")
+    if s.external_channel_transport != "disabled":
+        missing.append("EXTERNAL_CHANNEL_TRANSPORT=disabled")
+    if s.external_channel_deployment_mode != "disabled":
+        missing.append("EXTERNAL_CHANNEL_DEPLOYMENT_MODE=disabled")
+    if s.external_channel_sync_enabled:
+        missing.append("EXTERNAL_CHANNEL_SYNC_ENABLED=false")
+    if s.external_channel_event_driver_enabled:
+        missing.append("EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED=false")
 if missing:
     raise SystemExit("Preflight failed. Missing/invalid: " + ", ".join(missing))
 print("Preflight OK")

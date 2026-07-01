@@ -22,7 +22,7 @@ def _source(path: Path) -> str:
 def test_orchestrator_has_no_llm_or_provider_runtime_imports():
     combined = "\n".join(_source(path) for path in RUNTIME_FILES)
 
-    for forbidden in ["openclaw", "openai", "codex", "provider_runtime", "llm"]:
+    for forbidden in ["external_channel", "openai", "codex", "provider_runtime", "llm"]:
         assert forbidden not in combined
 
 

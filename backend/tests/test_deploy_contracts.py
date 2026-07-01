@@ -33,8 +33,8 @@ def _db_host(env_values: dict[str, str]) -> str:
 def test_server_compose_includes_local_postgres_service():
     compose = _read("deploy/docker-compose.server.yml")
     assert _has_postgres_service(compose)
-    assert "OPENCLAW_TRANSPORT: disabled" in compose
-    assert "OPENCLAW_DEPLOYMENT_MODE: disabled" in compose
+    assert "EXTERNAL_CHANNEL_TRANSPORT: disabled" in compose
+    assert "EXTERNAL_CHANNEL_DEPLOYMENT_MODE: disabled" in compose
 
 
 def test_local_postgres_env_contract():
@@ -64,4 +64,4 @@ def test_default_env_template_keeps_outbound_disabled():
     assert env["OUTBOUND_PROVIDER"] == "disabled"
     assert env["ENABLE_OUTBOUND_DISPATCH"] == "false"
     assert env["OUTBOUND_EMAIL_ENCRYPTION_KEY_FILE"] == "/run/nexus/outbound_email_encryption_key"
-    assert env["OPENCLAW_CLI_FALLBACK_ENABLED"] == "false"
+    assert env["EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED"] == "false"

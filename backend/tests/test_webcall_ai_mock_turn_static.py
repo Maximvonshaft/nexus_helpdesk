@@ -29,7 +29,7 @@ def test_static_no_real_media_or_external_provider_imports():
         "import urllib",
         "from urllib",
         "provider_runtime",
-        "openclaw",
+        "external_channel",
         "openai",
         "codex",
         "llm",
@@ -67,4 +67,4 @@ def test_docs_state_pr3_and_pr4_are_deterministic_mock_only():
     assert "deterministic mock stt/tts boundaries" in docs
     assert "does not make webcall ai functional" in docs
     assert "does not read audio" in docs or "no audio" in docs
-    assert "no audio, stt, tts, llm, openclaw, or speedaf calls" in docs
+    assert "no audio, stt, tts, llm, external_channel, or speedaf calls" in docs

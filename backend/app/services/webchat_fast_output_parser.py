@@ -55,7 +55,7 @@ _DECISION_KEYS = {
     "safety_notes",
 }
 _INTERNAL_PATTERNS = [
-    r"\bOpenClaw\b",
+    r"\bExternalChannel\b",
     r"\bgateway\b",
     r"\bprompt\b",
     r"\bsystem prompt\b",
@@ -466,6 +466,6 @@ def parse_fast_reply_provider_output(payload: Any) -> ParsedFastReply:
 
 
 # Backward-compatible aliases for older tests and integrations that imported
-# the OpenClaw-named parser boundary. The implementation is provider-neutral.
-parse_openclaw_fast_reply_from_strict_json = parse_fast_reply_from_strict_json
-parse_openclaw_fast_reply = parse_fast_reply_provider_output
+# the ExternalChannel-named parser boundary. The implementation is provider-neutral.
+parse_external_channel_fast_reply_from_strict_json = parse_fast_reply_from_strict_json
+parse_external_channel_fast_reply = parse_fast_reply_provider_output

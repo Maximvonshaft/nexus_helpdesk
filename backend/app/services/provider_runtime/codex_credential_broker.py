@@ -15,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..audit_service import log_admin_audit
-from .codex_oauth_config import CODEX_PROVIDER, OPENCLAW_CODEX_CLIENT_ID, CodexOAuthConfig
+from .codex_oauth_config import CODEX_PROVIDER, EXTERNAL_CHANNEL_CODEX_CLIENT_ID, CodexOAuthConfig
 from .credential_crypto import CredentialCryptoService
 from .oauth_refresh_manager import OAuthRefreshManager
 
@@ -97,9 +97,9 @@ class CodexCredentialBroker:
             "provider": CODEX_PROVIDER,
         }
 
-    def start_openclaw_manual_paste_flow(self, *, tenant_id: str, user_id: str) -> dict[str, Any]:
-        scope = self.config.openclaw_manual_scope()
-        redirect_uri = self.config.openclaw_manual_redirect_uri()
+    def start_external_channel_manual_paste_flow(self, *, tenant_id: str, user_id: str) -> dict[str, Any]:
+        scope = self.config.external_channel_manual_scope()
+        redirect_uri = self.config.external_channel_manual_redirect_uri()
         state = secrets.token_urlsafe(32)
         code_verifier = secrets.token_urlsafe(64)
         code_challenge = _pkce_s256(code_verifier)
@@ -111,7 +111,7 @@ class CodexCredentialBroker:
             (id, tenant_id, provider, flow_type, state, code_verifier, redirect_uri, scope,
              expires_at, status, created_by)
             VALUES
-            (:id, :tenant_id, :provider, 'openclaw_manual_paste', :state, :code_verifier, :redirect_uri, :scope,
+            (:id, :tenant_id, :provider, 'external_channel_manual_paste', :state, :code_verifier, :redirect_uri, :scope,
              :expires_at, 'pending', :created_by)
         """), {
             "id": session_id,
@@ -134,7 +134,7 @@ class CodexCredentialBroker:
 
         params = {
             "response_type": "code",
-            "client_id": OPENCLAW_CODEX_CLIENT_ID,
+            "client_id": EXTERNAL_CHANNEL_CODEX_CLIENT_ID,
             "redirect_uri": redirect_uri,
             "scope": scope,
             "code_challenge": code_challenge,
@@ -142,9 +142,9 @@ class CodexCredentialBroker:
             "state": state,
             "id_token_add_organizations": "true",
             "codex_cli_simplified_flow": "true",
-            "originator": "openclaw",
+            "originator": "external_channel",
         }
-        authorization_url = f"{self.config.openclaw_manual_authorization_url()}?{urlencode(params)}"
+        authorization_url = f"{self.config.external_channel_manual_authorization_url()}?{urlencode(params)}"
         return {
             "session_id": session_id,
             "authorization_url": authorization_url,
@@ -155,7 +155,7 @@ class CodexCredentialBroker:
             "provider": CODEX_PROVIDER,
         }
 
-    async def complete_openclaw_manual_paste_flow(
+    async def complete_external_channel_manual_paste_flow(
         self,
         *,
         tenant_id: str,
@@ -209,8 +209,8 @@ class CodexCredentialBroker:
                 code=code,
                 code_verifier=str(session["code_verifier"]),
                 redirect_uri=str(session["redirect_uri"]),
-                token_url=self.config.openclaw_manual_token_url(),
-                client_id=OPENCLAW_CODEX_CLIENT_ID,
+                token_url=self.config.external_channel_manual_token_url(),
+                client_id=EXTERNAL_CHANNEL_CODEX_CLIENT_ID,
                 include_client_secret=False,
                 require_refresh_token=True,
             )
@@ -437,7 +437,7 @@ class CodexCredentialBroker:
                    expires_at, status, error_code, created_by
             FROM provider_auth_sessions
             WHERE tenant_id = :tenant_id AND id = :id AND provider = :provider
-              AND flow_type = 'openclaw_manual_paste'
+              AND flow_type = 'external_channel_manual_paste'
             LIMIT 1
         """), {"tenant_id": tenant_id, "id": session_id, "provider": CODEX_PROVIDER}).mappings().first()
 

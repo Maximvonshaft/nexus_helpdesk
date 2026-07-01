@@ -1,0 +1,176 @@
+name: candidate-whatsapp-native-gate
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/candidate-whatsapp-native-gate.yml"
+      - "backend/app/api/admin_whatsapp_native.py"
+      - "backend/app/api/whatsapp_native_integration.py"
+      - "backend/app/services/whatsapp_native_*.py"
+      - "backend/app/services/outbound_adapters/whatsapp*.py"
+      - "backend/app/services/webchat_ai_decision_runtime/**"
+      - "backend/app/services/tool_governance.py"
+      - "backend/tests/test_admin_whatsapp_native_api.py"
+      - "backend/tests/test_candidate_compose_contract.py"
+      - "backend/tests/test_tool_governance.py"
+      - "backend/tests/test_webchat_ai_decision_runtime.py"
+      - "backend/tests/test_whatsapp_native_inbound_integration.py"
+      - "backend/tests/test_whatsapp_native_outbound_adapter.py"
+      - "backend/tests/test_whatsapp_outbound_adapter.py"
+      - "connectors/whatsapp-sidecar/**"
+      - "deploy/.env.candidate.example"
+      - "deploy/docker-compose.candidate.yml"
+      - "deploy/docker-compose.whatsapp-sidecar.example.yml"
+      - "docs/ops/NEXUS_NATIVE_WHATSAPP_CANDIDATE_SMOKE.md"
+      - "scripts/smoke/whatsapp_sidecar_candidate_smoke.sh"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/candidate-whatsapp-native-gate.yml"
+      - "backend/app/api/admin_whatsapp_native.py"
+      - "backend/app/api/whatsapp_native_integration.py"
+      - "backend/app/services/whatsapp_native_*.py"
+      - "backend/app/services/outbound_adapters/whatsapp*.py"
+      - "backend/app/services/webchat_ai_decision_runtime/**"
+      - "backend/app/services/tool_governance.py"
+      - "backend/tests/test_admin_whatsapp_native_api.py"
+      - "backend/tests/test_candidate_compose_contract.py"
+      - "backend/tests/test_tool_governance.py"
+      - "backend/tests/test_webchat_ai_decision_runtime.py"
+      - "backend/tests/test_whatsapp_native_inbound_integration.py"
+      - "backend/tests/test_whatsapp_native_outbound_adapter.py"
+      - "backend/tests/test_whatsapp_outbound_adapter.py"
+      - "connectors/whatsapp-sidecar/**"
+      - "deploy/.env.candidate.example"
+      - "deploy/docker-compose.candidate.yml"
+      - "deploy/docker-compose.whatsapp-sidecar.example.yml"
+      - "docs/ops/NEXUS_NATIVE_WHATSAPP_CANDIDATE_SMOKE.md"
+      - "scripts/smoke/whatsapp_sidecar_candidate_smoke.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compose-config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render candidate env for compose config
+        run: |
+          set -Eeuo pipefail
+          cp deploy/.env.candidate.example deploy/.env.candidate
+          {
+            echo "IMAGE_TAG=ghcr.io/maximvonshaft/nexus_helpdesk:ci-${GITHUB_SHA::12}"
+            echo "GIT_SHA=${GITHUB_SHA}"
+            echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "APP_VERSION=ci-${GITHUB_SHA::12}"
+            echo "FRONTEND_BUILD_SHA=${GITHUB_SHA}"
+            echo "DATABASE_URL=postgresql+psycopg://helpdesk:helpdesk@postgres/helpdesk"
+            echo "SECRET_KEY=ci-candidate-secret-not-for-production"
+            echo "ALLOWED_ORIGINS=https://candidate.example.test"
+            echo "WEBCHAT_ALLOWED_ORIGINS=https://candidate.example.test"
+            echo "WHATSAPP_SIDECAR_TOKEN=ci-sidecar-token"
+            echo "WHATSAPP_CONNECTOR_KEY=ci-connector-key"
+            echo "WHATSAPP_CONNECTOR_HMAC_SECRET=ci-connector-hmac-secret"
+            echo "WA_SIDECAR_INTERNAL_TOKEN=ci-sidecar-token"
+            echo "NEXUS_CONNECTOR_KEY=ci-connector-key"
+            echo "NEXUS_CONNECTOR_HMAC_SECRET=ci-connector-hmac-secret"
+          } >> deploy/.env.candidate
+
+      - name: Docker Compose config validates candidate graph
+        run: |
+          set -Eeuo pipefail
+          docker compose \
+            -f deploy/docker-compose.candidate.yml \
+            --env-file deploy/.env.candidate \
+            config --quiet
+
+      - name: Candidate graph forbids legacy callback default
+        run: |
+          set -Eeuo pipefail
+          rendered="$(docker compose -f deploy/docker-compose.candidate.yml --env-file deploy/.env.candidate config)"
+          grep -q "whatsapp-sidecar-candidate" <<<"$rendered"
+          grep -q "worker-outbound-candidate" <<<"$rendered"
+          grep -q "http://app-candidate:8080" <<<"$rendered"
+          grep -q "WA_SIDECAR_AUTO_START_ACCOUNTS" <<<"$rendered"
+          grep -q "WA_SIDECAR_BROWSER_PLATFORM" <<<"$rendered"
+          grep -q "WA_SIDECAR_OPERATION_TIMEOUT_MS" <<<"$rendered"
+          grep -q "WA_SIDECAR_RECONNECT_MAX_ATTEMPTS" <<<"$rendered"
+          if grep -q "NEXUS_BACKEND_URL: http://app:8080" <<<"$rendered"; then
+            echo "candidate sidecar still points at legacy app:8080" >&2
+            exit 2
+          fi
+
+  sidecar-mock-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: connectors/whatsapp-sidecar/package-lock.json
+
+      - name: Install and build sidecar
+        working-directory: connectors/whatsapp-sidecar
+        run: |
+          npm ci
+          npm run build
+
+      - name: Start mock sidecar and run candidate smoke
+        env:
+          WA_SIDECAR_BASE_URL: http://127.0.0.1:18793
+          WA_SIDECAR_PORT: "18793"
+          WA_SIDECAR_CONNECTOR_MODE: mock
+          WA_SIDECAR_EXPECT_MODE: mock
+          WA_SIDECAR_INTERNAL_TOKEN: ci-sidecar-token
+          WHATSAPP_SESSION_ROOT: ${{ runner.temp }}/whatsapp-sessions
+          NEXUS_BACKEND_URL: http://127.0.0.1:18082
+          NEXUS_CONNECTOR_KEY: ci-connector-key
+          NEXUS_CONNECTOR_HMAC_SECRET: ci-connector-hmac-secret
+          WA_SIDECAR_SMOKE_START_LOGIN: "true"
+          WA_SIDECAR_EXPECT_QR_OR_CONNECTED: "true"
+        run: |
+          set -Eeuo pipefail
+          cd connectors/whatsapp-sidecar
+          npm run start >"${RUNNER_TEMP}/whatsapp-sidecar.log" 2>&1 &
+          sidecar_pid=$!
+          trap 'kill "$sidecar_pid" 2>/dev/null || true; cat "${RUNNER_TEMP}/whatsapp-sidecar.log" || true' EXIT
+          cd ../..
+          bash scripts/smoke/whatsapp_sidecar_candidate_smoke.sh
+
+  backend-native-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest
+
+      - name: Run focused native WhatsApp and Speedaf AI contracts
+        env:
+          PYTHONPATH: backend
+        run: |
+          set -Eeuo pipefail
+          timeout 600 pytest -q \
+            backend/tests/test_candidate_compose_contract.py \
+            backend/tests/test_production_settings_contract.py \
+            backend/tests/test_admin_whatsapp_native_api.py \
+            backend/tests/test_whatsapp_native_inbound_integration.py \
+            backend/tests/test_whatsapp_native_outbound_adapter.py \
+            backend/tests/test_whatsapp_outbound_adapter.py \
+            backend/tests/test_webchat_ai_decision_runtime.py \
+            backend/tests/test_tool_governance.py

@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .tool_registry import canonical_tool_name
+
 
 AI_DECISION_SCHEMA_VERSION = "webchat_ai_decision_v1"
 
@@ -107,7 +109,7 @@ class AIDecisionToolCall(BaseModel):
     @field_validator("tool_name")
     @classmethod
     def _clean_tool_name(cls, value: str) -> str:
-        cleaned = " ".join(str(value or "").strip().split())
+        cleaned = canonical_tool_name(value)
         if not cleaned:
             raise ValueError("tool_name is required")
         return cleaned

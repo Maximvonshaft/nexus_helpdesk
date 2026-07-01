@@ -23,9 +23,9 @@ from app.models import (  # noqa: E402
     Customer,
     Market,
     MarketBulletin,
-    OpenClawAttachmentReference,
-    OpenClawConversationLink,
-    OpenClawTranscriptMessage,
+    ExternalChannelAttachmentReference,
+    ExternalChannelConversationLink,
+    ExternalChannelTranscriptMessage,
     Team,
     Ticket,
     TicketAttachment,
@@ -88,10 +88,10 @@ def seed_summary_case(db):
         file_size=1234,
         visibility=NoteVisibility.external,
     )
-    conversation = OpenClawConversationLink(ticket_id=ticket.id, session_key="session-1", channel="webchat", recipient="visitor")
+    conversation = ExternalChannelConversationLink(ticket_id=ticket.id, session_key="session-1", channel="webchat", recipient="visitor")
     db.add_all([attachment, conversation])
     db.flush()
-    transcript = OpenClawTranscriptMessage(
+    transcript = ExternalChannelTranscriptMessage(
         conversation_id=conversation.id,
         ticket_id=ticket.id,
         session_key="session-1",
@@ -103,7 +103,7 @@ def seed_summary_case(db):
     )
     db.add(transcript)
     db.flush()
-    ref = OpenClawAttachmentReference(
+    ref = ExternalChannelAttachmentReference(
         ticket_id=ticket.id,
         conversation_id=conversation.id,
         transcript_message_id=transcript.id,
@@ -135,15 +135,15 @@ def test_ticket_summary_returns_truthful_evidence_previews(db_session):
     payload = get_ticket_summary(ticket.id, db=db_session, current_user=admin)
 
     assert payload["attachments_count"] == 1
-    assert payload["openclaw_transcript_count"] == 1
-    assert payload["openclaw_attachment_references_count"] == 1
+    assert payload["external_channel_transcript_count"] == 1
+    assert payload["external_channel_attachment_references_count"] == 1
     assert payload["active_market_bulletins_count"] == 1
     assert payload["evidence_summary"]["loaded"] is True
     assert payload["evidence_summary"]["attachments_count"] == 1
-    assert payload["evidence_summary"]["openclaw_transcript_count"] == 1
-    assert payload["evidence_summary"]["openclaw_attachment_references_count"] == 1
+    assert payload["evidence_summary"]["external_channel_transcript_count"] == 1
+    assert payload["evidence_summary"]["external_channel_attachment_references_count"] == 1
     assert payload["evidence_summary"]["active_market_bulletins_count"] == 1
     assert payload["attachments"][0]["file_name"] == "pod.jpg"
-    assert payload["openclaw_transcript"][0]["body_text"] == "Where is my parcel?"
-    assert payload["openclaw_attachment_references"][0]["filename"] == "chat-proof.jpg"
+    assert payload["external_channel_transcript"][0]["body_text"] == "Where is my parcel?"
+    assert payload["external_channel_attachment_references"][0]["filename"] == "chat-proof.jpg"
     assert payload["active_market_bulletins"][0]["title"] == "Zurich delay notice"

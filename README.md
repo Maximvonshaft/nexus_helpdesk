@@ -4,14 +4,14 @@ NexusDesk is a case-centric customer operations runtime for logistics support. I
 
 ## Current Status
 
-The default runtime is de-OpenClaw.
+The default runtime is de-ExternalChannel.
 
-- WebChat/demo does not require OpenClaw.
-- Docker images no longer install `@openclaw/codex`, the OpenClaw CLI, MCP client, bridge server, sync daemon, or event daemon.
-- OpenClaw transport, deployment, sync, inbound auto-sync, event driver, bridge, and CLI fallback settings must remain disabled.
-- Legacy `openclaw_*` database tables, schemas, and admin/API names are retained only for backward compatibility with existing data and UI contracts.
+- WebChat/demo does not require ExternalChannel.
+- Docker images no longer install `@external-channel/codex`, the ExternalChannel CLI, MCP client, bridge server, sync daemon, or event daemon.
+- ExternalChannel transport, deployment, sync, inbound auto-sync, event driver, bridge, and CLI fallback settings must remain disabled.
+- Legacy `external_channel_*` database tables, schemas, and admin/API names are retained only for backward compatibility with existing data and UI contracts.
 - New live reply generation routes through `provider_runtime`, `codex_app_server`, `openai_responses`, or `rule_engine` fallback.
-- WhatsApp delivery is expected to use native sidecar or future cloud API modes, not the retired OpenClaw bridge.
+- WhatsApp delivery is expected to use native sidecar or future cloud API modes, not the retired ExternalChannel bridge.
 
 ## Source Layout
 
@@ -61,21 +61,21 @@ The `legacy-worker` profile still exists for controlled compatibility runs with 
 6. The operator console shows the conversation, ticket, runtime state, and handoff controls.
 7. Outbound dispatch uses native/email/sidecar adapters, guarded by production dispatch gates.
 
-## OpenClaw Retirement Rules
+## ExternalChannel Retirement Rules
 
 These settings are intentionally disabled and should not be re-enabled:
 
 ```env
-OPENCLAW_TRANSPORT=disabled
-OPENCLAW_DEPLOYMENT_MODE=disabled
-OPENCLAW_SYNC_ENABLED=false
-OPENCLAW_INBOUND_AUTO_SYNC_ENABLED=false
-OPENCLAW_EVENT_DRIVER_ENABLED=false
-OPENCLAW_BRIDGE_ENABLED=false
-OPENCLAW_CLI_FALLBACK_ENABLED=false
+EXTERNAL_CHANNEL_TRANSPORT=disabled
+EXTERNAL_CHANNEL_DEPLOYMENT_MODE=disabled
+EXTERNAL_CHANNEL_SYNC_ENABLED=false
+EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED=false
+EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED=false
+EXTERNAL_CHANNEL_BRIDGE_ENABLED=false
+EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED=false
 ```
 
-The codebase keeps some `OpenClaw*` model/schema/API names because renaming persisted tables and frontend contracts is a separate migration. Those paths are compatibility surfaces only; they do not start or call an OpenClaw runtime.
+The codebase keeps some `ExternalChannel*` model/schema/API names because renaming persisted tables and frontend contracts is a separate migration. Those paths are compatibility surfaces only; they do not start or call an ExternalChannel runtime.
 
 ## Frontend Build Policy
 
@@ -98,7 +98,7 @@ Production settings require:
 - `AUTO_INIT_DB=false` and `SEED_DEMO_DATA=false`.
 - No dev auth or legacy token transport.
 - Explicit frontend build output.
-- Disabled legacy OpenClaw runtime settings.
+- Disabled legacy ExternalChannel runtime settings.
 - Provider runtime fallback rules for canary or kill-switch rollbacks.
 - Health/readiness checks through `/healthz` and `/readyz`.
 

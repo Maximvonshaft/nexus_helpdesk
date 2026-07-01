@@ -1,6 +1,6 @@
 # Codex Chat Smoke Runbook
 
-This runbook covers the current Nexus-owned Codex app-server bridge path. The retired OpenClaw Codex harness is not part of the runtime image, compose topology, or smoke gate.
+This runbook covers the current Nexus-owned Codex app-server bridge path. The retired ExternalChannel Codex harness is not part of the runtime image, compose topology, or smoke gate.
 
 ## Runtime Chain
 
@@ -61,4 +61,4 @@ Expected evidence:
 
 ## Rollback
 
-Set the provider runtime routing rule back to `rule_engine` or set the Codex app-server kill switch. Do not reintroduce the retired OpenClaw harness.
+Set the provider runtime routing rule back to `rule_engine` or set the Codex app-server kill switch. Do not reintroduce the retired ExternalChannel harness.

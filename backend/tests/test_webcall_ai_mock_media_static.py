@@ -31,7 +31,7 @@ def test_pr4_runtime_files_do_not_reference_real_media_or_provider_integrations(
         "httpx",
         "requests",
         "urllib",
-        "openclaw",
+        "external_channel",
         "openai",
         "codex",
         "provider_runtime",
@@ -65,7 +65,7 @@ def test_docs_state_pr4_is_mock_media_boundary_only():
     assert "does not join livekit media" in docs
     assert "does not connect real stt/tts" in docs
     assert "does not call llm/provider runtime" in docs
-    assert "does not call openclaw" in docs
+    assert "does not call external_channel" in docs
     assert "does not call speedaf" in docs
     assert "does not change frontend" in docs
     assert "future real providers must implement the provider interfaces" in docs

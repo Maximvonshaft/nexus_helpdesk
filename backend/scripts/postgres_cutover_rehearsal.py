@@ -16,8 +16,8 @@ REQUIRED_TABLES = [
     "tickets",
     "ticket_outbound_messages",
     "background_jobs",
-    "openclaw_conversation_links",
-    "openclaw_transcript_messages",
+    "external_channel_conversation_links",
+    "external_channel_transcript_messages",
     "integration_clients",
 ]
 
@@ -30,7 +30,7 @@ def main() -> int:
         "database_url_scheme": settings.database_url.split(":", 1)[0],
         "is_postgres": settings.is_postgres,
         "storage_backend": settings.storage_backend,
-        "openclaw_transport": settings.openclaw_transport,
+        "external_channel_transport": settings.external_channel_transport,
         "checks": {},
         "warnings": [],
     }
@@ -69,9 +69,9 @@ def main() -> int:
     if not settings.is_postgres:
         payload["warnings"].append("database_not_postgres")
 
-    payload["checks"]["legacy_openclaw_runtime_disabled"] = settings.openclaw_transport == "disabled"
-    if settings.openclaw_transport != "disabled":
-        payload["warnings"].append("openclaw_transport_not_disabled")
+    payload["checks"]["legacy_external_channel_runtime_disabled"] = settings.external_channel_transport == "disabled"
+    if settings.external_channel_transport != "disabled":
+        payload["warnings"].append("external_channel_transport_not_disabled")
 
     payload["checks"]["object_storage_preferred"] = settings.storage_backend != "local"
     if settings.storage_backend == "local":

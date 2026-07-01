@@ -6,10 +6,10 @@ from typing import Any, Literal
 SafetyLevel = Literal['allow', 'review', 'block']
 
 INTERNAL_DISCLOSURE_KEYWORDS = {
-    'secret_key', 'database_url', 'openclaw internal', 'stack trace', 'traceback',
+    'secret_key', 'database_url', 'external_channel internal', 'stack trace', 'traceback',
     'access token', 'api token', 'bearer ', 'password', 'passwd', 'private key',
     'jwt', 'x-client-key', 's3_secret_key', 'github token', 'ghp_',
-    'mcp', 'openclaw', 'system prompt', 'developer message',
+    'mcp', 'external_channel', 'system prompt', 'developer message',
     'tool call',
     'developer instruction',
     'internal instruction',

@@ -22,7 +22,7 @@ def test_tts_voice_egress_has_no_forbidden_runtime_imports_or_tools():
     combined = "\n".join(_source(path) for path in RUNTIME_FILES)
 
     for forbidden in [
-        "openclaw",
+        "external_channel",
         "openai",
         "codex",
         "provider_runtime",

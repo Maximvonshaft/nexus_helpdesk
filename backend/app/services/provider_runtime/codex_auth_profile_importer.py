@@ -11,7 +11,7 @@ class CodexAuthProfileImporter:
         self.crypto_service = crypto_service
 
     def import_profile(self, tenant_id: str, profile_data: Dict[str, Any], created_by: str) -> str:
-        # Expected OpenClaw format
+        # Expected ExternalChannel format
         # {"type": "oauth", "provider": "openai-codex", "access": "...", "refresh": "...", "expires": "ISO8601", "accountId": "...", "chatgptPlanType": "..."}
         
         provider = "openai-codex"

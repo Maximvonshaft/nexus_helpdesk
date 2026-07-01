@@ -177,7 +177,7 @@ In production:
 - `CODEX_APP_SERVER_BRIDGE_URL` must point to private, loopback, link-local, or tailnet/CGNAT address space.
 - `CODEX_APP_SERVER_CANARY_PERCENT` must be between 0 and 100.
 - If `CODEX_APP_SERVER_KILL_SWITCH=true` or `CODEX_APP_SERVER_CANARY_PERCENT<100`, configure Provider Runtime fallbacks explicitly.
-- Legacy `openclaw_responses` fallback is retired and must not be used for production rollback.
+- Legacy `external_channel_responses` fallback is retired and must not be used for production rollback.
 
 ## Later implementation phases
 
@@ -188,7 +188,7 @@ In production:
 
 ## Non-goals
 
-- Re-enabling OpenClaw Responses as a rollback path.
+- Re-enabling ExternalChannel Responses as a rollback path.
 - Sending all customer traffic to Codex without canary controls.
 - Enabling Codex-native coding tools.
 - Building full agent runtime, approval bridge, or tool governance in this PR.

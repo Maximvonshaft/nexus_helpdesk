@@ -8,10 +8,10 @@ import sys
 from pathlib import Path
 
 DEFAULT_PATTERNS = [
-    r"OPENCLAW_RESPONSES_URL",
-    r"OPENCLAW_RESPONSES_TOKEN",
-    r"openclaw_gateway_token",
-    r"openclaw-gateway",
+    r"EXTERNAL_CHANNEL_RESPONSES_URL",
+    r"EXTERNAL_CHANNEL_RESPONSES_TOKEN",
+    r"external_channel_gateway_token",
+    r"external_channel-gateway",
     r"/v1/responses",
     r"Bearer\s+[A-Za-z0-9_\-.]{12,}",
 ]
@@ -34,7 +34,7 @@ def _iter_files(paths: list[Path]):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Scan browser/static bundles for OpenClaw URLs or tokens")
+    parser = argparse.ArgumentParser(description="Scan browser/static bundles for ExternalChannel URLs or tokens")
     parser.add_argument("--dist", action="append", default=[])
     parser.add_argument("--static", action="append", default=[])
     parser.add_argument("--pattern", action="append", default=[])

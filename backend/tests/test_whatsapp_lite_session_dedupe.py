@@ -55,7 +55,7 @@ def test_conversation_list_collapses_turn_sessions_onto_base(monkeypatch) -> Non
         return rows
 
     monkeypatch.setattr(module, "ensure_capability", lambda *args, **kwargs: None)
-    monkeypatch.setattr(module, "list_openclaw_conversations", fake_list)
+    monkeypatch.setattr(module, "list_external_channel_conversations", fake_list)
 
     page = module.list_whatsapp_lite_conversations(limit=30, db=None, current_user=object())
 
@@ -80,7 +80,7 @@ def test_conversation_list_returns_one_row_per_whatsapp_peer(monkeypatch) -> Non
     monkeypatch.setattr(module, "ensure_capability", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         module,
-        "list_openclaw_conversations",
+        "list_external_channel_conversations",
         lambda *, limit, channel: rows,
     )
 
@@ -110,7 +110,7 @@ def test_conversation_list_supports_search_and_cursor(monkeypatch) -> None:
         return rows
 
     monkeypatch.setattr(module, "ensure_capability", lambda *args, **kwargs: None)
-    monkeypatch.setattr(module, "list_openclaw_conversations", fake_list)
+    monkeypatch.setattr(module, "list_external_channel_conversations", fake_list)
 
     first_page = module.list_whatsapp_lite_conversations(
         limit=1,
@@ -180,10 +180,10 @@ def test_conversation_detail_merges_base_turn_and_outbox_messages(monkeypatch) -
         ]
 
     monkeypatch.setattr(module, "ensure_capability", lambda *args, **kwargs: None)
-    monkeypatch.setattr(module, "list_openclaw_conversations", fake_list)
-    monkeypatch.setattr(module, "read_openclaw_bridge_conversation", fake_read)
+    monkeypatch.setattr(module, "list_external_channel_conversations", fake_list)
+    monkeypatch.setattr(module, "read_external_channel_bridge_conversation", fake_read)
     monkeypatch.setattr(module, "_read_outbox_mirror", fake_outbox)
-    monkeypatch.setattr(module, "fetch_openclaw_bridge_attachments", lambda *args, **kwargs: [])
+    monkeypatch.setattr(module, "fetch_external_channel_bridge_attachments", lambda *args, **kwargs: [])
 
     detail = module.get_whatsapp_lite_conversation(
         session_key=base_key,

@@ -44,7 +44,7 @@ def _process_claimed_jobs_with_attempt_boundary(db: Any, jobs: Iterable[Any], *,
 
     processed: list[Any] = []
     for job in jobs:
-        if sync_only and job.job_type != background_jobs.OPENCLAW_SYNC_JOB:
+        if sync_only and job.job_type != background_jobs.EXTERNAL_CHANNEL_SYNC_JOB:
             continue
         job_id = job.id
         try:
@@ -64,8 +64,8 @@ def _process_claimed_jobs_with_attempt_boundary(db: Any, jobs: Iterable[Any], *,
 def _dispatch_pending_background_jobs_with_attempt_boundary(db: Any, *, limit: int | None = None, worker_id: str | None = None) -> list[Any]:
     from . import background_jobs
 
-    if background_jobs.settings.openclaw_sync_enabled:
-        background_jobs.enqueue_stale_openclaw_sync_jobs(db, limit=background_jobs.settings.openclaw_sync_batch_size)
+    if background_jobs.settings.external_channel_sync_enabled:
+        background_jobs.enqueue_stale_external_channel_sync_jobs(db, limit=background_jobs.settings.external_channel_sync_batch_size)
         db.commit()
     if background_jobs.settings.email_mailbox_sync_enabled:
         from .email_mailbox_polling_service import enqueue_due_email_mailbox_sync_jobs
@@ -96,10 +96,10 @@ def _dispatch_pending_background_jobs_with_attempt_boundary(db: Any, *, limit: i
 def _dispatch_pending_sync_jobs_with_attempt_boundary(db: Any, *, limit: int | None = None, worker_id: str | None = None) -> list[Any]:
     from . import background_jobs
 
-    if background_jobs.settings.openclaw_sync_enabled:
-        background_jobs.enqueue_stale_openclaw_sync_jobs(db, limit=background_jobs.settings.openclaw_sync_batch_size)
+    if background_jobs.settings.external_channel_sync_enabled:
+        background_jobs.enqueue_stale_external_channel_sync_jobs(db, limit=background_jobs.settings.external_channel_sync_batch_size)
         db.commit()
-    claimed = background_jobs.claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[background_jobs.OPENCLAW_SYNC_JOB])
+    claimed = background_jobs.claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[background_jobs.EXTERNAL_CHANNEL_SYNC_JOB])
     return _process_claimed_jobs_with_attempt_boundary(db, claimed, sync_only=True)
 
 

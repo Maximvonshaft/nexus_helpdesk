@@ -39,7 +39,7 @@ def upgrade() -> None:
             'website',
             'webchat_fast_reply',
             'codex_app_server',
-            '["openclaw_responses","rule_engine"]',
+            '["external_channel_responses","rule_engine"]',
             'speedaf_webchat_fast_reply_v1',
             10000,
             0,

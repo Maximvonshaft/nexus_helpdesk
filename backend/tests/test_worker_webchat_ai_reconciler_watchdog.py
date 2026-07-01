@@ -79,7 +79,7 @@ def test_webchat_ai_reconciler_watchdog_only_worker_main_by_default(monkeypatch)
     monkeypatch.setattr(run_worker.settings, "webchat_ai_reconciler_enabled", True, raising=False)
 
     assert run_worker._should_run_webchat_ai_reconciler("worker-main") is True
-    assert run_worker._should_run_webchat_ai_reconciler("worker-openclaw-sync") is False
+    assert run_worker._should_run_webchat_ai_reconciler("worker-external_channel-sync") is False
     assert run_worker._should_run_webchat_ai_reconciler("worker-anything-else") is False
 
 

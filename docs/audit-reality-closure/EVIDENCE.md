@@ -105,7 +105,7 @@ Hardening added:
   - outbound requeue-dead
   - unresolved-event replay
   - unresolved-event drop
-  - OpenClaw `consume-once`
+  - ExternalChannel `consume-once`
 - 429 responses include `request_id`
 - rate-limit violations are logged/audited
 - counting is isolated by user and by action key
@@ -114,7 +114,7 @@ Reference snippets:
 
 ```text
 backend/app/api/admin.py
-- enforce_admin_action_rate_limit(... action_key='openclaw.events.consume_once' ...)
+- enforce_admin_action_rate_limit(... action_key='external_channel.events.consume_once' ...)
 - enforce_admin_action_rate_limit(... action_key='unresolved_event.replay' ...)
 - enforce_admin_action_rate_limit(... action_key='unresolved_event.drop' ...)
 
@@ -136,17 +136,17 @@ Validation:
   - responses include `request_id`
   - audit/log records exist
 
-### C. OpenClaw unresolved-event database-level active idempotency
+### C. ExternalChannel unresolved-event database-level active idempotency
 
 Problem confirmed:
 - unresolved events already used `payload_hash` at the application layer
 - a database-level active uniqueness guard was still missing for concurrent persist/replay races
 
 Hardening added:
-- partial unique index `uq_openclaw_unresolved_active_payload_hash`
+- partial unique index `uq_external_channel_unresolved_active_payload_hash`
 - key columns: `source`, `COALESCE(session_key, '')`, `payload_hash`
 - active statuses guarded: `pending`, `failed`, `replaying`
-- `persist_unresolved_openclaw_event_by_hash()` keeps the existing lookup, inserts inside `begin_nested()`, and on `IntegrityError` safely re-reads the existing active row
+- `persist_unresolved_external_channel_event_by_hash()` keeps the existing lookup, inserts inside `begin_nested()`, and on `IntegrityError` safely re-reads the existing active row
 - resolved rows do not block a new active row
 - `session_key=NULL` and `session_key=''` now intentionally collapse into the same active dedupe bucket so `NULL` can no longer bypass the DB uniqueness guard
 
@@ -154,22 +154,22 @@ Reference snippets:
 
 ```text
 backend/app/models.py
-- uq_openclaw_unresolved_active_payload_hash
+- uq_external_channel_unresolved_active_payload_hash
 - COALESCE(session_key, '')
 - payload_hash IS NOT NULL AND status IN ('pending', 'failed', 'replaying')
 
-backend/app/services/openclaw_unresolved_store.py
+backend/app/services/external_channel_unresolved_store.py
 - current_payload_hash = compute_payload_hash(payload)
 - with db.begin_nested():
 - except IntegrityError:
 
 backend/alembic/versions/20260520_0026_audit_reality_closure.py
-- uq_openclaw_unresolved_active_payload_hash
+- uq_external_channel_unresolved_active_payload_hash
 - PARTITION BY source, COALESCE(session_key, ''), payload_hash
 ```
 
 Validation:
-- `backend/tests/test_openclaw_unresolved_idempotency.py` passes
+- `backend/tests/test_external_channel_unresolved_idempotency.py` passes
 - coverage proves:
   - same semantic payload key-order changes hash identically
   - same active payload/hash produces one active row
@@ -215,7 +215,7 @@ New migration:
 Behavior:
 - creates `admin_action_rate_limits`
 - normalizes duplicate active `background_jobs` before adding the active partial unique index
-- normalizes duplicate active `openclaw_unresolved_events` before adding the active partial unique index
+- normalizes duplicate active `external_channel_unresolved_events` before adding the active partial unique index
 - downgrade removes the new indexes/table
 
 Validation:

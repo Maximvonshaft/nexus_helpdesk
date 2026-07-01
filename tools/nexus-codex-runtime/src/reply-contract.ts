@@ -196,7 +196,7 @@ export function sanitizeRuntimeText(value: string): string {
     .replace(/codex[_-]?app[_-]?server/gi, "[REDACTED_INTERNAL_TERM]")
     .replace(/\bcodex\s+app\s+server\b/gi, "[REDACTED_INTERNAL_TERM]")
     .replace(/\bsystem\s+prompt\b/gi, "[REDACTED_INTERNAL_TERM]")
-    .replace(/\bopenclaw\b/gi, "[REDACTED_INTERNAL_TERM]")
+    .replace(/\bexternal_channel\b/gi, "[REDACTED_INTERNAL_TERM]")
     .replace(/\bbridge\b/gi, "[REDACTED_INTERNAL_TERM]");
 }
 

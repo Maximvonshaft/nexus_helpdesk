@@ -6,7 +6,7 @@ from app.services.tracking_fact_schema import hash_tracking_number
 from app.services.webchat_ai_decision_runtime.policy_gate import validate_ai_decision
 from app.services.webchat_ai_decision_runtime.schemas import AIDecision, AIDecisionEvidence, AIDecisionToolCall
 from app.services.webchat_ai_decision_runtime.service import decision_from_provider_result
-from app.services.webchat_ai_decision_runtime.tool_registry import get_tool_contract, registered_tool_names, safe_registry_summary
+from app.services.webchat_ai_decision_runtime.tool_registry import canonical_tool_name, get_tool_contract, registered_tool_names, safe_registry_summary
 
 
 def test_tool_registry_contains_required_contract_fields():
@@ -38,6 +38,25 @@ def test_tool_registry_contains_required_contract_fields():
     assert {item["name"] for item in safe_registry_summary()} == set(registered_tool_names())
 
 
+def test_legacy_support_agent_tool_names_normalize_to_nexus_contracts():
+    aliases = {
+        "support_knowledge_retrieve": "knowledge.search",
+        "speedaf_lookup": "speedaf.order.query",
+        "speedaf_query_waybills": "speedaf.order.waybillCode.query",
+        "speedaf_create_work_order": "speedaf.workOrder.create",
+        "speedaf_cancel_order": "speedaf.order.cancel.request",
+        "speedaf_update_address": "speedaf.order.updateAddress.request",
+        "speedaf.work_order.create": "speedaf.workOrder.create",
+        "speedaf.order.cancel": "speedaf.order.cancel.request",
+        "speedaf.order.update_address": "speedaf.order.updateAddress.request",
+    }
+    for alias, canonical in aliases.items():
+        assert canonical_tool_name(alias) == canonical
+        contract = get_tool_contract(alias)
+        assert contract is not None
+        assert contract.name == canonical
+
+
 def test_unknown_tool_is_blocked():
     decision = AIDecision(
         customer_reply="I can help with that.",
@@ -55,6 +74,28 @@ def test_unknown_tool_is_blocked():
 
     assert result.ok is False
     assert result.violations[0].code == "unknown_tool_blocked"
+
+
+def test_legacy_write_tool_alias_keeps_confirmation_and_phase_one_block():
+    decision = AIDecision(
+        customer_reply="I can request address update after a human verifies it.",
+        intent="address_change",
+        confidence=0.8,
+        risk_level="high",
+        next_action="call_tool",
+        handoff_required=False,
+        tool_calls=[AIDecisionToolCall(tool_name="speedaf_update_address", arguments={"tracking_number_hash": "sha256:test"})],
+        evidence_used=[],
+        safety_notes=[],
+    )
+
+    assert decision.tool_calls[0].tool_name == "speedaf.order.updateAddress.request"
+    result = validate_ai_decision(decision)
+
+    assert result.ok is False
+    codes = {violation.code for violation in result.violations}
+    assert "write_tool_confirmation_required" in codes
+    assert "high_risk_write_tool_blocked" in codes
 
 
 def test_write_tool_requires_confirmation_and_is_blocked_in_phase_one():

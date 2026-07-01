@@ -2,7 +2,7 @@
 
 ## Purpose
 
-These smoke checks validate the current NexusDesk runtime without depending on the retired OpenClaw stack. They focus on WebChat, Provider Runtime, outbound safety, Speedaf contracts, worker readiness, and browser bundle hygiene.
+These smoke checks validate the current NexusDesk runtime without depending on the retired ExternalChannel stack. They focus on WebChat, Provider Runtime, outbound safety, Speedaf contracts, worker readiness, and browser bundle hygiene.
 
 ## Default Safety Model
 

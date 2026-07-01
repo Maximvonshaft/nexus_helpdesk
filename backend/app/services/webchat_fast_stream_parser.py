@@ -13,7 +13,7 @@ from .webchat_fast_output_parser import (
 )
 
 FORBIDDEN_PHRASES = [
-    "OpenClaw",
+    "ExternalChannel",
     "gateway",
     "prompt",
     "system prompt",

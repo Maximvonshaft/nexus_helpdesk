@@ -72,4 +72,4 @@ Do not globally relax `X-Frame-Options` or `frame-ancestors`. If iframe embed be
 
 ## Logging policy
 
-Structured logs must not include raw visitor tokens, secrets, prompts, bridge credentials, OpenClaw internal paths, stack traces, or full PII bodies. Use conversation/ticket/message IDs and safe reason codes.
+Structured logs must not include raw visitor tokens, secrets, prompts, bridge credentials, ExternalChannel internal paths, stack traces, or full PII bodies. Use conversation/ticket/message IDs and safe reason codes.

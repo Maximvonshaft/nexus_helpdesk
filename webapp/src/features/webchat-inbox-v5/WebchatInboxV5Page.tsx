@@ -641,15 +641,15 @@ function CaseEvidencePanel({
 
   const summary = detail.evidence_summary
   const attachments = detail.attachments ?? []
-  const refs = detail.openclaw_attachment_references ?? []
+  const refs = detail.external_channel_attachment_references ?? []
   const bulletins = detail.active_market_bulletins ?? []
-  const transcript = detail.openclaw_transcript ?? []
+  const transcript = detail.external_channel_transcript ?? []
   return (
     <div className="v5-evidence">
       <div className="v5-evidence-metrics">
         <div><strong>{summary?.attachments_count ?? detail.attachments_count ?? attachments.length}</strong><span>附件</span></div>
-        <div><strong>{summary?.openclaw_transcript_count ?? detail.openclaw_transcript_count ?? transcript.length}</strong><span>历史来源消息</span></div>
-        <div><strong>{summary?.openclaw_attachment_references_count ?? detail.openclaw_attachment_references_count ?? refs.length}</strong><span>远端附件</span></div>
+        <div><strong>{summary?.external_channel_transcript_count ?? detail.external_channel_transcript_count ?? transcript.length}</strong><span>历史来源消息</span></div>
+        <div><strong>{summary?.external_channel_attachment_references_count ?? detail.external_channel_attachment_references_count ?? refs.length}</strong><span>远端附件</span></div>
         <div><strong>{summary?.active_market_bulletins_count ?? detail.active_market_bulletins_count ?? bulletins.length}</strong><span>公告口径</span></div>
       </div>
       <div className="v5-evidence-list">

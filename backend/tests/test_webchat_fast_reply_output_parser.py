@@ -5,8 +5,8 @@ import pytest
 from app.services.webchat_fast_output_parser import (
     FastReplyParseError,
     UnexpectedToolCallError,
-    parse_openclaw_fast_reply,
-    parse_openclaw_fast_reply_from_strict_json,
+    parse_external_channel_fast_reply,
+    parse_external_channel_fast_reply_from_strict_json,
 )
 
 
@@ -26,7 +26,7 @@ def _valid_text(**overrides):
 
 
 def test_accepts_pure_json_output_text():
-    parsed = parse_openclaw_fast_reply({"output_text": _valid_text()})
+    parsed = parse_external_channel_fast_reply({"output_text": _valid_text()})
 
     assert parsed.reply.startswith("Hi")
     assert parsed.intent == "greeting"
@@ -34,7 +34,7 @@ def test_accepts_pure_json_output_text():
 
 
 def test_accepts_direct_strict_json_dict():
-    parsed = parse_openclaw_fast_reply_from_strict_json(
+    parsed = parse_external_channel_fast_reply_from_strict_json(
         {
             "reply": "Hello",
             "intent": "greeting",
@@ -52,29 +52,29 @@ def test_accepts_direct_strict_json_dict():
 
 def test_rejects_markdown_fenced_json():
     with pytest.raises(FastReplyParseError):
-        parse_openclaw_fast_reply({"output_text": "```json\n" + _valid_text() + "\n```"})
+        parse_external_channel_fast_reply({"output_text": "```json\n" + _valid_text() + "\n```"})
 
 
 def test_rejects_text_before_json():
     with pytest.raises(FastReplyParseError):
-        parse_openclaw_fast_reply({"output_text": "Sure. " + _valid_text()})
+        parse_external_channel_fast_reply({"output_text": "Sure. " + _valid_text()})
 
 
 def test_rejects_text_after_json():
     with pytest.raises(FastReplyParseError):
-        parse_openclaw_fast_reply({"output_text": _valid_text() + "\nThanks"})
+        parse_external_channel_fast_reply({"output_text": _valid_text() + "\nThanks"})
 
 
 def test_rejects_function_call_output():
     with pytest.raises(UnexpectedToolCallError):
-        parse_openclaw_fast_reply({"output": [{"type": "function_call", "name": "send_message"}]})
+        parse_external_channel_fast_reply({"output": [{"type": "function_call", "name": "send_message"}]})
 
 
 def test_rejects_missing_required_keys():
     with pytest.raises(FastReplyParseError):
-        parse_openclaw_fast_reply({"output_text": '{"reply":"hello"}'})
+        parse_external_channel_fast_reply({"output_text": '{"reply":"hello"}'})
 
 
 def test_rejects_internal_terms_in_reply():
     with pytest.raises(FastReplyParseError):
-        parse_openclaw_fast_reply({"output_text": _valid_text(reply="OpenClaw gateway says hello")})
+        parse_external_channel_fast_reply({"output_text": _valid_text(reply="ExternalChannel gateway says hello")})

@@ -45,22 +45,22 @@ def main() -> int:
         warnings.append("DATABASE_URL is not PostgreSQL")
     if settings.storage_backend == "local":
         warnings.append("STORAGE_BACKEND is local")
-    if settings.openclaw_transport != "disabled":
-        warnings.append("OPENCLAW_TRANSPORT must remain disabled; legacy OpenClaw runtime is retired")
-    if settings.openclaw_deployment_mode != "disabled":
-        warnings.append("OPENCLAW_DEPLOYMENT_MODE must remain disabled; legacy OpenClaw runtime is retired")
-    if settings.openclaw_bridge_enabled:
-        warnings.append("OPENCLAW_BRIDGE_ENABLED must remain false; legacy OpenClaw bridge is retired")
-    if settings.openclaw_cli_fallback_enabled:
-        warnings.append("OPENCLAW_CLI_FALLBACK_ENABLED must be false for production")
-    if settings.openclaw_sync_enabled:
-        warnings.append("OPENCLAW_SYNC_ENABLED must remain false; legacy OpenClaw sync is retired")
-    if settings.openclaw_event_driver_enabled:
-        warnings.append("OPENCLAW_EVENT_DRIVER_ENABLED must remain false; legacy OpenClaw event driver is retired")
+    if settings.external_channel_transport != "disabled":
+        warnings.append("EXTERNAL_CHANNEL_TRANSPORT must remain disabled; legacy ExternalChannel runtime is retired")
+    if settings.external_channel_deployment_mode != "disabled":
+        warnings.append("EXTERNAL_CHANNEL_DEPLOYMENT_MODE must remain disabled; legacy ExternalChannel runtime is retired")
+    if settings.external_channel_bridge_enabled:
+        warnings.append("EXTERNAL_CHANNEL_BRIDGE_ENABLED must remain false; legacy ExternalChannel bridge is retired")
+    if settings.external_channel_cli_fallback_enabled:
+        warnings.append("EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED must be false for production")
+    if settings.external_channel_sync_enabled:
+        warnings.append("EXTERNAL_CHANNEL_SYNC_ENABLED must remain false; legacy ExternalChannel sync is retired")
+    if settings.external_channel_event_driver_enabled:
+        warnings.append("EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED must remain false; legacy ExternalChannel event driver is retired")
     if settings.metrics_enabled and not settings.metrics_token:
         warnings.append("METRICS_ENABLED=true but METRICS_TOKEN is missing")
-    if settings.openclaw_attachment_url_fetch_enabled and not settings.openclaw_attachment_allowed_hosts:
-        warnings.append("OPENCLAW_ATTACHMENT_URL_FETCH_ENABLED=true but OPENCLAW_ATTACHMENT_ALLOWED_HOSTS is empty")
+    if settings.external_channel_attachment_url_fetch_enabled and not settings.external_channel_attachment_allowed_hosts:
+        warnings.append("EXTERNAL_CHANNEL_ATTACHMENT_URL_FETCH_ENABLED=true but EXTERNAL_CHANNEL_ATTACHMENT_ALLOWED_HOSTS is empty")
     if settings.app_env == "production" and not settings.webchat_allowed_origins:
         warnings.append("WEBCHAT_ALLOWED_ORIGINS is empty; public webchat will reject browser origins")
     if settings.app_env == "production" and settings.webchat_rate_limit_backend != "database":
@@ -105,17 +105,17 @@ def main() -> int:
         "database_url_scheme": settings.database_url.split(":", 1)[0],
         "is_postgres": settings.is_postgres,
         "storage_backend": settings.storage_backend,
-        "openclaw_transport": settings.openclaw_transport,
-        "openclaw_deployment_mode": settings.openclaw_deployment_mode,
-        "openclaw_bridge_enabled": settings.openclaw_bridge_enabled,
-        "openclaw_bridge_url_configured": bool(settings.openclaw_bridge_url),
-        "openclaw_cli_fallback_enabled": settings.openclaw_cli_fallback_enabled,
+        "external_channel_transport": settings.external_channel_transport,
+        "external_channel_deployment_mode": settings.external_channel_deployment_mode,
+        "external_channel_bridge_enabled": settings.external_channel_bridge_enabled,
+        "external_channel_bridge_url_configured": bool(settings.external_channel_bridge_url),
+        "external_channel_cli_fallback_enabled": settings.external_channel_cli_fallback_enabled,
         "metrics_enabled": settings.metrics_enabled,
         "metrics_token_configured": bool(settings.metrics_token),
-        "openclaw_sync_enabled": settings.openclaw_sync_enabled,
-        "openclaw_event_driver_enabled": settings.openclaw_event_driver_enabled,
-        "openclaw_attachment_url_fetch_enabled": settings.openclaw_attachment_url_fetch_enabled,
-        "openclaw_attachment_allowed_hosts": settings.openclaw_attachment_allowed_hosts,
+        "external_channel_sync_enabled": settings.external_channel_sync_enabled,
+        "external_channel_event_driver_enabled": settings.external_channel_event_driver_enabled,
+        "external_channel_attachment_url_fetch_enabled": settings.external_channel_attachment_url_fetch_enabled,
+        "external_channel_attachment_allowed_hosts": settings.external_channel_attachment_allowed_hosts,
         "webchat_allowed_origins_configured": bool(settings.webchat_allowed_origins),
         "webchat_allow_legacy_token_transport": settings.webchat_allow_legacy_token_transport,
         "webchat_rate_limit_backend": settings.webchat_rate_limit_backend,

@@ -16,7 +16,7 @@ depends_on = None
 
 
 BACKGROUND_JOB_ACTIVE_WHERE = "dedupe_key IS NOT NULL AND status IN ('pending', 'processing')"
-OPENCLAW_UNRESOLVED_ACTIVE_WHERE = "payload_hash IS NOT NULL AND status IN ('pending', 'failed', 'replaying')"
+EXTERNAL_CHANNEL_UNRESOLVED_ACTIVE_WHERE = "payload_hash IS NOT NULL AND status IN ('pending', 'failed', 'replaying')"
 
 
 def _dialect_name() -> str:
@@ -142,11 +142,11 @@ def _normalize_unresolved_duplicates() -> None:
                                PARTITION BY source, COALESCE(session_key, ''), payload_hash
                                ORDER BY id ASC
                            ) AS rn
-                    FROM openclaw_unresolved_events
+                    FROM external_channel_unresolved_events
                     WHERE payload_hash IS NOT NULL
                       AND status IN ('pending', 'failed', 'replaying')
                 )
-                UPDATE openclaw_unresolved_events AS e
+                UPDATE external_channel_unresolved_events AS e
                 SET status = 'dropped_duplicate',
                     last_error = :note,
                     updated_at = now()
@@ -166,11 +166,11 @@ def _normalize_unresolved_duplicates() -> None:
                                PARTITION BY source, COALESCE(session_key, ''), payload_hash
                                ORDER BY id ASC
                            ) AS rn
-                    FROM openclaw_unresolved_events
+                    FROM external_channel_unresolved_events
                     WHERE payload_hash IS NOT NULL
                       AND status IN ('pending', 'failed', 'replaying')
                 )
-                UPDATE openclaw_unresolved_events
+                UPDATE external_channel_unresolved_events
                 SET status = 'dropped_duplicate',
                     last_error = :note,
                     updated_at = CURRENT_TIMESTAMP
@@ -204,16 +204,16 @@ def upgrade() -> None:
         BACKGROUND_JOB_ACTIVE_WHERE,
     )
     _create_partial_unique_index_if_missing(
-        "uq_openclaw_unresolved_active_payload_hash",
-        "openclaw_unresolved_events",
+        "uq_external_channel_unresolved_active_payload_hash",
+        "external_channel_unresolved_events",
         ["source", sa.text("COALESCE(session_key, '')"), "payload_hash"],
-        OPENCLAW_UNRESOLVED_ACTIVE_WHERE,
+        EXTERNAL_CHANNEL_UNRESOLVED_ACTIVE_WHERE,
     )
 
 
 
 def downgrade() -> None:
-    _drop_index_if_exists("uq_openclaw_unresolved_active_payload_hash", "openclaw_unresolved_events")
+    _drop_index_if_exists("uq_external_channel_unresolved_active_payload_hash", "external_channel_unresolved_events")
     _drop_index_if_exists("uq_background_jobs_active_dedupe_key", "background_jobs")
     if _table_exists("admin_action_rate_limits"):
         _drop_index_if_exists("ix_admin_action_rate_limits_window_start", "admin_action_rate_limits")

@@ -125,7 +125,7 @@ def start_codex_authorization(payload: CodexScopeRequest, db: Session = Depends(
 @router.post("/codex/manual/start")
 def start_codex_manual_authorization(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     _ensure_manage(current_user, db)
-    return _broker(db).start_openclaw_manual_paste_flow(
+    return _broker(db).start_external_channel_manual_paste_flow(
         tenant_id=_tenant_id(current_user),
         user_id=str(current_user.id),
     )
@@ -139,7 +139,7 @@ async def complete_codex_manual_authorization(
 ):
     _ensure_manage(current_user, db)
     try:
-        return await _broker(db).complete_openclaw_manual_paste_flow(
+        return await _broker(db).complete_external_channel_manual_paste_flow(
             tenant_id=_tenant_id(current_user),
             session_id=payload.session_id,
             authorization_response=payload.authorization_response,

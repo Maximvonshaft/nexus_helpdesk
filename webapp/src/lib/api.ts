@@ -27,7 +27,7 @@ import type {
   QATrainingKnowledgeGapResult,
   QueueSummary,
   RuntimeHealth,
-  OpenClawConnectivityProbe,
+  ExternalChannelConnectivityProbe,
   OutboundChannelCapabilitiesResponse,
   OutboundEmailAccount,
   OutboundEmailAccountCreate,
@@ -48,7 +48,7 @@ import type {
   KnowledgeItemList,
   KnowledgeItemVersion,
   KnowledgeRetrievalTestResult,
-  OpenClawUnresolvedEvent,
+  ExternalChannelUnresolvedEvent,
   PersonaProfile,
   PersonaProfileDetail,
   PersonaProfileList,
@@ -66,6 +66,7 @@ import type {
   WebchatThread,
   WebchatReplyResult,
   WhatsAppNativeAccountStatus,
+  WhatsAppNativePairingCodeResponse,
   ProviderCredentialStatusResponse,
   SecurityAudit,
   CodexAuthorizationStart,
@@ -614,6 +615,10 @@ export const api = {
   }),
   whatsappNativeStartLogin: (accountId: string) => request<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/login/start`, { method: 'POST' }),
   whatsappNativeQr: (accountId: string) => request<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/login/qr`),
+  whatsappNativePairingCode: (accountId: string, phoneNumber: string) => request<WhatsAppNativePairingCodeResponse>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/login/pairing-code`, {
+    method: 'POST',
+    body: JSON.stringify({ phone_number: phoneNumber }),
+  }),
   whatsappNativeStatus: (accountId: string) => request<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/status`),
   whatsappNativeLogout: (accountId: string) => request<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/logout`, { method: 'POST' }),
   whatsappNativeRestart: (accountId: string) => request<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/restart`, { method: 'POST' }),
@@ -635,8 +640,8 @@ export const api = {
   }),
 
   queueSummary: () => request<QueueSummary>('/api/admin/queues/summary'),
-  runtimeHealth: () => request<RuntimeHealth>('/api/admin/openclaw/runtime-health'),
-  openclawConnectivityCheck: () => request<OpenClawConnectivityProbe>('/api/admin/openclaw/connectivity-check'),
+  runtimeHealth: () => request<RuntimeHealth>('/api/admin/external_channel/runtime-health'),
+  external_channelConnectivityCheck: () => request<ExternalChannelConnectivityProbe>('/api/admin/external_channel/connectivity-check'),
   readiness: () => request<ProductionReadiness>('/api/admin/production-readiness'),
   signoff: () => request<SignoffChecklist>('/api/admin/signoff-checklist'),
   jobs: () => request<BackgroundJob[]>('/api/admin/jobs?limit=50'),
@@ -650,7 +655,7 @@ export const api = {
     const search = buildRecoverySearch(params)
     return request<RuntimeRecoveryResult>(`/api/admin/outbound/requeue-dead${search ? `?${search}` : ''}`, { method: 'POST' })
   },
-  consumeOpenClawEventsOnce: () => request<{processed: number}>('/api/admin/openclaw/events/consume-once', { method: 'POST' }),
+  consumeExternalChannelEventsOnce: () => request<{processed: number}>('/api/admin/external_channel/events/consume-once', { method: 'POST' }),
 
   webcallAIDemoStatus: () => request<WebCallAIDemoStatus>('/api/admin/webcall-ai-demo/status'),
   webcallAIDemoCreateSession: (payload: { locale?: string; display_name?: string; scenario?: string; initial_text?: string }) => request<{ ok: boolean; session: WebCallAIDemoSession; events: WebCallAIDemoEvent[] }>('/api/admin/webcall-ai-demo/sessions', {
@@ -761,11 +766,11 @@ export const api = {
     body: JSON.stringify({ body: payload.body, source: payload.source || null }),
   }),
 
-  unresolvedEvents: () => request<OpenClawUnresolvedEvent[]>('/api/admin/openclaw/unresolved-events'),
-  replayUnresolvedEvent: (eventId: number) => request<{ ok: boolean; linked_ticket_id?: number | null }>(`/api/admin/openclaw/unresolved-events/${eventId}/replay`, {
+  unresolvedEvents: () => request<ExternalChannelUnresolvedEvent[]>('/api/admin/external_channel/unresolved-events'),
+  replayUnresolvedEvent: (eventId: number) => request<{ ok: boolean; linked_ticket_id?: number | null }>(`/api/admin/external_channel/unresolved-events/${eventId}/replay`, {
     method: 'POST',
   }),
-  dropUnresolvedEvent: (eventId: number) => request<{ ok: boolean }>(`/api/admin/openclaw/unresolved-events/${eventId}/drop`, {
+  dropUnresolvedEvent: (eventId: number) => request<{ ok: boolean }>(`/api/admin/external_channel/unresolved-events/${eventId}/drop`, {
     method: 'POST',
   }),
 }

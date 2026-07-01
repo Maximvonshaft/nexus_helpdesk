@@ -8,7 +8,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from ...enums import MessageStatus, SourceChannel
-from ...models import ChannelAccount, OpenClawConversationLink, Ticket, TicketOutboundMessage
+from ...models import ChannelAccount, ExternalChannelConversationLink, Ticket, TicketOutboundMessage
 from ...settings import get_settings
 from ...utils.time import utc_now
 
@@ -88,7 +88,7 @@ def _active_account_for_market(db: Session, market_id: int | None) -> ChannelAcc
     return query.filter(ChannelAccount.market_id.is_(None)).order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc()).first()
 
 
-def _resolve_account(db: Session, *, ticket: Ticket | None, link: OpenClawConversationLink | None) -> tuple[ChannelAccount | None, str]:
+def _resolve_account(db: Session, *, ticket: Ticket | None, link: ExternalChannelConversationLink | None) -> tuple[ChannelAccount | None, str]:
     if ticket is not None:
         row = _active_account_by_pk(db, getattr(ticket, "channel_account_id", None))
         if row is not None:
@@ -96,10 +96,10 @@ def _resolve_account(db: Session, *, ticket: Ticket | None, link: OpenClawConver
     if link is not None:
         row = _active_account_by_pk(db, getattr(link, "channel_account_id", None))
         if row is not None:
-            return row, "openclaw_link.channel_account_id"
+            return row, "external_channel_link.channel_account_id"
         row = _active_account_by_id(db, getattr(link, "account_id", None))
         if row is not None:
-            return row, "openclaw_link.account_id"
+            return row, "external_channel_link.account_id"
     if ticket is not None:
         row = _active_account_for_market(db, getattr(ticket, "market_id", None))
         if row is not None:
@@ -107,11 +107,11 @@ def _resolve_account(db: Session, *, ticket: Ticket | None, link: OpenClawConver
     return None, WHATSAPP_NATIVE_MISSING_ACCOUNT
 
 
-def _ticket_target(ticket: Ticket | None, link: OpenClawConversationLink | None) -> tuple[str | None, str | None, str]:
+def _ticket_target(ticket: Ticket | None, link: ExternalChannelConversationLink | None) -> tuple[str | None, str | None, str]:
     if link is not None:
         recipient = _clean(getattr(link, "recipient", None))
         if recipient:
-            return recipient, None, "openclaw_link.recipient"
+            return recipient, None, "external_channel_link.recipient"
     if ticket is not None:
         customer = getattr(ticket, "customer", None)
         for source, value in (
@@ -130,7 +130,7 @@ def resolve_whatsapp_native_route(db: Session, *, message: TicketOutboundMessage
     if message.channel != SourceChannel.whatsapp:
         raise WhatsAppNativeOutboundError(WHATSAPP_NATIVE_CONFIGURATION_MISSING, "Native WhatsApp adapter received a non-WhatsApp message", retryable=False)
 
-    link = ticket.openclaw_link if ticket is not None else None
+    link = ticket.external_channel_link if ticket is not None else None
     target, chat_jid, target_source = _ticket_target(ticket, link)
     if target is None:
         raise WhatsAppNativeOutboundError(WHATSAPP_NATIVE_MISSING_TARGET, "No WhatsApp target address is available", retryable=False)

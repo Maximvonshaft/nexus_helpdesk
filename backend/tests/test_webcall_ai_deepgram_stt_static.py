@@ -48,7 +48,7 @@ def test_pr6_runtime_files_do_not_import_forbidden_sdks_or_media_stacks():
         "websocket",
         "websockets",
         "livekit",
-        "openclaw",
+        "external_channel",
         "openai",
         "codex",
         "provider_runtime",

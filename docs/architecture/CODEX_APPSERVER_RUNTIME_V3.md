@@ -1,6 +1,6 @@
 # Codex App-Server Runtime v3
 
-Nexus Codex Runtime v3 introduces a Nexus-owned Node sidecar between the 18794 bridge and Codex app-server JSON-RPC. It replaces long-term dependence on per-request `openclaw infer model run` while preserving the existing Python 18800 runtime as rollback.
+Nexus Codex Runtime v3 introduces a Nexus-owned Node sidecar between the 18794 bridge and Codex app-server JSON-RPC. It replaces long-term dependence on per-request `external_channel infer model run` while preserving the existing Python 18800 runtime as rollback.
 
 Flow:
 
@@ -21,9 +21,9 @@ Bridge switch:
 - `CODEX_APP_SERVER_RUNTIME_BACKEND=python_cli_pool` routes to `http://codex-private-model-runtime:18800/reply`.
 - `CODEX_APP_SERVER_RUNTIME_BACKEND=node_appserver` routes to `http://codex-appserver-runtime:18810/reply`.
 
-OpenClaw extraction:
+ExternalChannel extraction:
 
-This implementation references OpenClaw app-server protocol practice but does not import private OpenClaw package paths. The relevant upstream main inspected for this candidate was `4a45098a866949f8cbb790840fd7ee1533855450`.
+This implementation references ExternalChannel app-server protocol practice but does not import private ExternalChannel package paths. The relevant upstream main inspected for this candidate was `4a45098a866949f8cbb790840fd7ee1533855450`.
 
 Client cache key:
 

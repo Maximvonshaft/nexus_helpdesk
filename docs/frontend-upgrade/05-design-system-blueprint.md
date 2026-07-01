@@ -139,7 +139,7 @@ Required business components:
 - RuntimeHealthBadge
 - ConversationBubble
 - CustomerIdentityCard
-- OpenClawStatusCard
+- ExternalChannelStatusCard
 - WebChatSnippetBlock
 
 ## Accessibility requirements

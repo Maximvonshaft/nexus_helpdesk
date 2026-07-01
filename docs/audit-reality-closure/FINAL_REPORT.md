@@ -16,11 +16,11 @@
 - `backend/app/models.py`
 - `backend/app/services/admin_action_rate_limit.py`
 - `backend/app/services/background_jobs.py`
-- `backend/app/services/openclaw_unresolved_store.py`
+- `backend/app/services/external_channel_unresolved_store.py`
 - `backend/app/settings.py`
 - `backend/tests/test_admin_action_rate_limit.py`
 - `backend/tests/test_background_job_dedupe_idempotency.py`
-- `backend/tests/test_openclaw_unresolved_idempotency.py`
+- `backend/tests/test_external_channel_unresolved_idempotency.py`
 
 ### Frontend / docs
 - `webapp/package.json`
@@ -52,7 +52,7 @@
   - The first implementation also left a select-then-update race window in the bucket table.
 - Closure status: **已修复**
 
-### 3.3 OpenClaw unresolved event idempotency gap
+### 3.3 ExternalChannel unresolved event idempotency gap
 - Judgment: **部分准确**
 - Why:
   - Payload-hash application-layer idempotency already existed.
@@ -100,7 +100,7 @@ Implemented:
   - dead-outbound batch requeue
   - unresolved-event replay
   - unresolved-event drop
-  - OpenClaw `consume-once`
+  - ExternalChannel `consume-once`
 - 429 responses include `request_id`
 - audit/log trail exists
 - counters are isolated by user and by action key
@@ -110,14 +110,14 @@ Rollback:
 - downgrade migration to drop `admin_action_rate_limits`
 - revert endpoint wiring and service import/use
 
-### 4.3 OpenClaw unresolved event DB-level idempotency
+### 4.3 ExternalChannel unresolved event DB-level idempotency
 
 Implemented:
-- partial unique index: `uq_openclaw_unresolved_active_payload_hash`
+- partial unique index: `uq_external_channel_unresolved_active_payload_hash`
 - guarded keys: `source`, `COALESCE(session_key, '')`, `payload_hash`
 - guarded statuses: `pending`, `failed`, `replaying`
 - duplicate-active-row normalization before index creation
-- `persist_unresolved_openclaw_event_by_hash()` now uses savepoint recovery and returns the surviving active row on `IntegrityError`
+- `persist_unresolved_external_channel_event_by_hash()` now uses savepoint recovery and returns the surviving active row on `IntegrityError`
 - resolved rows remain able to admit a new active row
 - `session_key=NULL` and `session_key=''` are now intentionally unified into the same active dedupe bucket
 
@@ -149,7 +149,7 @@ Rollback:
 ## 5. Validation summary
 
 ## Backend targeted validation
-- `pytest -q backend/tests/test_openclaw_unresolved_idempotency.py backend/tests/test_background_job_dedupe_idempotency.py backend/tests/test_admin_action_rate_limit.py`
+- `pytest -q backend/tests/test_external_channel_unresolved_idempotency.py backend/tests/test_background_job_dedupe_idempotency.py backend/tests/test_admin_action_rate_limit.py`
 - Result after follow-up blocking-fix pass: **18 passed**
 
 ## Required backend commands
@@ -211,7 +211,7 @@ Conclusion:
 
 Required gates still outstanding before any production-ready claim:
 - staging smoke
-- OpenClaw Gateway gate
+- ExternalChannel Gateway gate
 - real-domain CORS validation
 - real bridge/MCP outbound validation
 

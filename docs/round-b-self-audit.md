@@ -43,7 +43,7 @@ No absolute production path is hard-coded in application code. The apply script 
 
 ## Round C readiness
 
-The service layer separates public visitor actions and admin replies, leaving a clean future insertion point for OpenClaw suggested replies with human approval.
+The service layer separates public visitor actions and admin replies, leaving a clean future insertion point for ExternalChannel suggested replies with human approval.
 
 ## XSS/CORS/token review
 

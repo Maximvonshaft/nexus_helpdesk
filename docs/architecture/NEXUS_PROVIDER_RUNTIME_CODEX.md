@@ -4,7 +4,7 @@
 
 This branch moves the Codex work from a probe-only experiment toward a standard NexusDesk Provider Runtime integration.
 
-The target is not to let Codex directly operate NexusDesk. The target is to let NexusDesk treat Codex as a controlled, observable, switchable provider in the same provider-router layer as OpenClaw and other future runtimes.
+The target is not to let Codex directly operate NexusDesk. The target is to let NexusDesk treat Codex as a controlled, observable, switchable provider in the same provider-router layer as ExternalChannel and other future runtimes.
 
 ## Provider runtime target shape
 
@@ -191,7 +191,7 @@ contract_fixture
 
 ## Non-goals
 
-- Replacing OpenClaw immediately.
+- Replacing ExternalChannel immediately.
 - Sending all customer traffic to Codex by default.
 - Enabling Codex-native tools.
 - Building a full agent approval runtime.

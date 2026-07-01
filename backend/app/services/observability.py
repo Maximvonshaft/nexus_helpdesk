@@ -45,7 +45,7 @@ _WEBCHAT_AI_TURNS = Counter('nexusdesk_webchat_ai_turn_total', 'WebChat AI turn 
 _WEBCHAT_AI_TURN_DURATION = Histogram('nexusdesk_webchat_ai_turn_duration_ms', 'WebChat AI turn duration in milliseconds', ['status'], registry=_PROM_REGISTRY, buckets=(50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 120000)) if Histogram else None
 _WEBCHAT_AI_STALE_SUPPRESSED = Counter('nexusdesk_webchat_ai_stale_suppressed_total', 'Stale WebChat AI replies suppressed before public delivery', ['reason'], registry=_PROM_REGISTRY) if Counter else None
 _WEBCHAT_AI_TIMEOUTS = Counter('nexusdesk_webchat_ai_timeout_total', 'WebChat AI turn watchdog timeouts', ['reason'], registry=_PROM_REGISTRY) if Counter else None
-_OPENCLAW_BRIDGE_DURATION = Histogram('nexusdesk_openclaw_bridge_elapsed_ms', 'OpenClaw bridge call duration in milliseconds', ['operation', 'status'], registry=_PROM_REGISTRY, buckets=(50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000)) if Histogram else None
+_EXTERNAL_CHANNEL_BRIDGE_DURATION = Histogram('nexusdesk_external_channel_bridge_elapsed_ms', 'ExternalChannel bridge call duration in milliseconds', ['operation', 'status'], registry=_PROM_REGISTRY, buckets=(50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000)) if Histogram else None
 _TOOL_CALLS = Counter('nexusdesk_tool_call_total', 'Tool governance audit call count', ['tool_name', 'tool_type', 'status'], registry=_PROM_REGISTRY) if Counter else None
 _TOOL_CALL_DURATION = Histogram('nexusdesk_tool_call_elapsed_ms', 'Tool governance audit call duration in milliseconds', ['tool_name', 'tool_type', 'status'], registry=_PROM_REGISTRY, buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000)) if Histogram else None
 _BACKGROUND_JOB_WAIT = Histogram('nexusdesk_background_job_wait_ms', 'Background job wait time before processing in milliseconds', ['job_type'], registry=_PROM_REGISTRY, buckets=(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 300000)) if Histogram else None
@@ -213,9 +213,9 @@ def record_webchat_websocket_active_connections(*, agents: int = 0, visitors: in
         _WEBCHAT_WS_ACTIVE_CONNECTIONS.labels(client_type='all').set(max(int(agents or 0), 0) + max(int(visitors or 0), 0))
 
 
-def record_openclaw_bridge_metric(operation: str, status: str, elapsed_ms: int | float | None = None) -> None:
-    if elapsed_ms is not None and _OPENCLAW_BRIDGE_DURATION:
-        _OPENCLAW_BRIDGE_DURATION.labels(operation=_label(operation), status=_label(status)).observe(max(float(elapsed_ms), 0.0))
+def record_external_channel_bridge_metric(operation: str, status: str, elapsed_ms: int | float | None = None) -> None:
+    if elapsed_ms is not None and _EXTERNAL_CHANNEL_BRIDGE_DURATION:
+        _EXTERNAL_CHANNEL_BRIDGE_DURATION.labels(operation=_label(operation), status=_label(status)).observe(max(float(elapsed_ms), 0.0))
 
 
 def record_tool_call_metric(tool_name: str, tool_type: str, status: str, elapsed_ms: int | float | None = None) -> None:

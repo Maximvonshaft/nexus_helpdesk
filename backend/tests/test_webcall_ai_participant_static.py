@@ -32,7 +32,7 @@ def test_pr8_runtime_files_do_not_import_media_network_or_provider_sdks():
         "websocket",
         "websockets",
         "speedaf",
-        "openclaw",
+        "external_channel",
         "openai",
         "codex",
         "provider_runtime",

@@ -99,7 +99,7 @@ Assessment:
 - customer context
 - customer messages
 - active bulletins
-- attachments and OpenClaw attachment references
+- attachments and ExternalChannel attachment references
 - internal notes
 - auto-refresh and countdown sync
 
@@ -220,8 +220,8 @@ Assessment:
 - polling is used instead of WebSocket/SSE
 - tenant origin allowlist is not yet persisted
 - replies are delivered into the widget itself
-- no external WhatsApp/Email/OpenClaw dispatch in Round B
-- next phase should add configured widget channels, origin allowlists, OpenClaw suggested replies, and real-time push
+- no external WhatsApp/Email/ExternalChannel dispatch in Round B
+- next phase should add configured widget channels, origin allowlists, ExternalChannel suggested replies, and real-time push
 
 Assessment:
 
@@ -232,7 +232,7 @@ Assessment:
 From the deployment memo and current operational context:
 
 - Cloud Nexus Helpdesk backend runs behind Nginx and app container.
-- Local OpenClaw / local control plane can connect to cloud backend through Tailscale.
+- Local ExternalChannel / local control plane can connect to cloud backend through Tailscale.
 - Frontend API base is environment-configured through `VITE_API_BASE_URL`.
 - Bridge/MCP direction uses `NEXUSDESK_API_URL` as the primary variable.
 

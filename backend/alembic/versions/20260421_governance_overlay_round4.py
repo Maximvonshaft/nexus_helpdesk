@@ -31,7 +31,7 @@ def upgrade() -> None:
     op.create_index('ix_admin_audit_logs_created_at', 'admin_audit_logs', ['created_at'])
 
     op.create_table(
-        'openclaw_unresolved_events',
+        'external_channel_unresolved_events',
         sa.Column('id', sa.Integer(), primary_key=True),
         sa.Column('source', sa.String(length=80), nullable=False),
         sa.Column('session_key', sa.String(length=255), nullable=True),
@@ -46,20 +46,20 @@ def upgrade() -> None:
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     )
-    op.create_index('ix_openclaw_unresolved_events_status', 'openclaw_unresolved_events', ['status'])
-    op.create_index('ix_openclaw_unresolved_events_session_key', 'openclaw_unresolved_events', ['session_key'])
-    op.create_index('ix_openclaw_unresolved_events_recipient', 'openclaw_unresolved_events', ['recipient'])
-    op.create_index('ix_openclaw_unresolved_events_source_chat_id', 'openclaw_unresolved_events', ['source_chat_id'])
-    op.create_index('ix_openclaw_unresolved_events_created_at', 'openclaw_unresolved_events', ['created_at'])
+    op.create_index('ix_external_channel_unresolved_events_status', 'external_channel_unresolved_events', ['status'])
+    op.create_index('ix_external_channel_unresolved_events_session_key', 'external_channel_unresolved_events', ['session_key'])
+    op.create_index('ix_external_channel_unresolved_events_recipient', 'external_channel_unresolved_events', ['recipient'])
+    op.create_index('ix_external_channel_unresolved_events_source_chat_id', 'external_channel_unresolved_events', ['source_chat_id'])
+    op.create_index('ix_external_channel_unresolved_events_created_at', 'external_channel_unresolved_events', ['created_at'])
 
 
 def downgrade() -> None:
-    op.drop_index('ix_openclaw_unresolved_events_created_at', table_name='openclaw_unresolved_events')
-    op.drop_index('ix_openclaw_unresolved_events_source_chat_id', table_name='openclaw_unresolved_events')
-    op.drop_index('ix_openclaw_unresolved_events_recipient', table_name='openclaw_unresolved_events')
-    op.drop_index('ix_openclaw_unresolved_events_session_key', table_name='openclaw_unresolved_events')
-    op.drop_index('ix_openclaw_unresolved_events_status', table_name='openclaw_unresolved_events')
-    op.drop_table('openclaw_unresolved_events')
+    op.drop_index('ix_external_channel_unresolved_events_created_at', table_name='external_channel_unresolved_events')
+    op.drop_index('ix_external_channel_unresolved_events_source_chat_id', table_name='external_channel_unresolved_events')
+    op.drop_index('ix_external_channel_unresolved_events_recipient', table_name='external_channel_unresolved_events')
+    op.drop_index('ix_external_channel_unresolved_events_session_key', table_name='external_channel_unresolved_events')
+    op.drop_index('ix_external_channel_unresolved_events_status', table_name='external_channel_unresolved_events')
+    op.drop_table('external_channel_unresolved_events')
     op.drop_index('ix_admin_audit_logs_created_at', table_name='admin_audit_logs')
     op.drop_index('ix_admin_audit_logs_target_type', table_name='admin_audit_logs')
     op.drop_index('ix_admin_audit_logs_action', table_name='admin_audit_logs')

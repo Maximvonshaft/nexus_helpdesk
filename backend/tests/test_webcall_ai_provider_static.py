@@ -35,7 +35,7 @@ def test_pr5_runtime_files_do_not_import_real_media_network_or_provider_sdks():
         "aiohttp",
         "websocket",
         "websockets",
-        "openclaw",
+        "external_channel",
         "openai",
         "codex",
         "provider_runtime",

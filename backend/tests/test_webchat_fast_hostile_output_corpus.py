@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from app.services.webchat_fast_output_parser import FastReplyParseError, parse_openclaw_fast_reply
+from app.services.webchat_fast_output_parser import FastReplyParseError, parse_external_channel_fast_reply
 from app.services.webchat_fast_stream_parser import StreamingReplyAbort, StreamingReplyExtractor
 
 pytestmark = pytest.mark.fast_lane_v2_2_2
@@ -35,7 +35,7 @@ def _strict_json(reply: str, **overrides) -> str:
 )
 def test_parser_rejects_prompt_leak_and_internal_security_terms(reply):
     with pytest.raises(FastReplyParseError):
-        parse_openclaw_fast_reply({"output_text": _strict_json(reply)})
+        parse_external_channel_fast_reply({"output_text": _strict_json(reply)})
 
 
 @pytest.mark.parametrize(
@@ -50,7 +50,7 @@ def test_parser_rejects_prompt_leak_and_internal_security_terms(reply):
 )
 def test_parser_rejects_unicode_confusable_internal_security_terms(reply):
     with pytest.raises(FastReplyParseError):
-        parse_openclaw_fast_reply({"output_text": _strict_json(reply)})
+        parse_external_channel_fast_reply({"output_text": _strict_json(reply)})
 
 
 @pytest.mark.parametrize(
@@ -70,7 +70,7 @@ def test_parser_rejects_unicode_confusable_internal_security_terms(reply):
 )
 def test_parser_rejects_unsafe_business_promises(reply):
     with pytest.raises(FastReplyParseError):
-        parse_openclaw_fast_reply({"output_text": _strict_json(reply)})
+        parse_external_channel_fast_reply({"output_text": _strict_json(reply)})
 
 
 @pytest.mark.parametrize(
@@ -83,11 +83,11 @@ def test_parser_rejects_unsafe_business_promises(reply):
 )
 def test_parser_rejects_unicode_confusable_business_promises(reply):
     with pytest.raises(FastReplyParseError):
-        parse_openclaw_fast_reply({"output_text": _strict_json(reply)})
+        parse_external_channel_fast_reply({"output_text": _strict_json(reply)})
 
 
 def test_parser_still_allows_safe_handoff_wording_without_operational_promise():
-    parsed = parse_openclaw_fast_reply(
+    parsed = parse_external_channel_fast_reply(
         {
             "output_text": _strict_json(
                 "A human teammate will review this request.",

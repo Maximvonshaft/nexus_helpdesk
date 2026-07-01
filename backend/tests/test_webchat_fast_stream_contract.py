@@ -53,7 +53,7 @@ def _settings(enabled: bool = True):
         stream_enabled=enabled,
         stream_require_accept=True,
         provider_runtime_agent_id="webchat-fast",
-        is_openclaw_stream_configured=True,
+        is_external_channel_stream_configured=True,
     )
 
 
@@ -173,7 +173,7 @@ def test_stream_provider_failure_returns_safe_final_without_500(monkeypatch):
     assert final["ai_generated"] is False
     assert final["handoff_required"] is True
     assert final["ai_decision_trace"]["mode"] in {"emergency_fallback_only", "gated"}
-    assert "OpenClaw" not in response.text
+    assert "ExternalChannel" not in response.text
 
 
 def test_stream_no_evidence_low_signal_still_calls_ai_decision(monkeypatch):

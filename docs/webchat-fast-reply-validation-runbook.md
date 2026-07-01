@@ -1,6 +1,6 @@
 # WebChat Fast Reply Validation Runbook
 
-This runbook validates the current WebChat Fast Reply chain after retiring the legacy OpenClaw direct provider.
+This runbook validates the current WebChat Fast Reply chain after retiring the legacy ExternalChannel direct provider.
 
 ## Scope
 
@@ -8,7 +8,7 @@ These checks are local/staging/prod-like safe. They validate:
 
 - `/healthz` and `/readyz` are reachable.
 - `/api/webchat/fast-reply` returns an AI-generated reply through Provider Runtime.
-- Browser/static bundles do not expose provider URLs, bearer tokens, API keys, or retired OpenClaw gateway credentials.
+- Browser/static bundles do not expose provider URLs, bearer tokens, API keys, or retired ExternalChannel gateway credentials.
 - `/api/webchat/fast-reply` sustains the configured concurrency target.
 
 ## One-Command Release Gate

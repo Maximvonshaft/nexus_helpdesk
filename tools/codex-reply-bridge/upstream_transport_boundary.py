@@ -78,7 +78,7 @@ def _safe_summary(
 ) -> dict[str, Any]:
     response_keys = sorted(response_json.keys()) if isinstance(response_json, dict) else []
     return {
-        "transport": "openclaw_codex_app_server",
+        "transport": "external_channel_codex_app_server",
         "endpoint_path": endpoint_path,
         "ok": ok,
         "status_code": status_code,
