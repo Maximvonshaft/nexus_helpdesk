@@ -46,7 +46,7 @@ PRIVATE_AI_RUNTIME_TOKEN_FILE=/run/secrets/ai_runtime_token
 PRIVATE_AI_RUNTIME_DIRECT_PATH=/chat/direct
 PRIVATE_AI_RUNTIME_RAG_PATH=/chat/rag
 PRIVATE_AI_RUNTIME_CHAT_MODE=direct
-PRIVATE_AI_RUNTIME_REQUEST_SHAPE=system_input
+PRIVATE_AI_RUNTIME_REQUEST_SHAPE=question
 PRIVATE_AI_RUNTIME_DIRECT_MODEL=qwen2.5:3b
 PRIVATE_AI_RUNTIME_RAG_MODEL=qwen3:4b
 
@@ -74,6 +74,7 @@ TTS_ENDPOINT=http://47.87.143.41:18081/voice/tts
 STT_API_KEY_FILE=/run/secrets/ai_runtime_token
 LLM_API_KEY_FILE=/run/secrets/ai_runtime_token
 TTS_API_KEY_FILE=/run/secrets/ai_runtime_token
+TTS_VOICE=af_heart
 ```
 
 For Knowledge Runtime, only enable OpenAI-compatible embeddings after confirming the runtime exposes `/v1/embeddings` and the vector dimension:
@@ -99,6 +100,7 @@ Run the upstream smoke from the app image or backend workspace:
 python backend/scripts/smoke_private_ai_runtime.py \
   --base-url http://47.87.143.41:18081 \
   --token-file /run/secrets/ai_runtime_token \
+  --request-shape question \
   --include-rag \
   --include-live-health \
   --include-tts

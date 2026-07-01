@@ -156,7 +156,7 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
             return "private_ai_runtime_base_url_invalid"
         if self.chat_mode not in {"direct", "rag", "auto"}:
             return "private_ai_runtime_chat_mode_invalid"
-        if self.request_shape not in {"system_input", "messages", "ollama_chat"}:
+        if self.request_shape not in {"system_input", "messages", "ollama_chat", "question"}:
             return "private_ai_runtime_request_shape_invalid"
         if (os.getenv("APP_ENV") or "").strip().lower() == "production" and self.inline_token:
             return "private_ai_runtime_inline_token_forbidden"
@@ -224,6 +224,11 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
                 "stream": False,
                 "format": "json",
                 "options": {"temperature": 0.2},
+            }
+        if self.request_shape == "question":
+            return {
+                "model": model,
+                "question": prompt,
             }
         return {
             "model": model,

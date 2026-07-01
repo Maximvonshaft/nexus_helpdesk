@@ -20,6 +20,13 @@ def main() -> int:
     parser.add_argument("--tts-path", default="/voice/tts")
     parser.add_argument("--direct-model", default="qwen2.5:3b")
     parser.add_argument("--rag-model", default="qwen3:4b")
+    parser.add_argument(
+        "--request-shape",
+        choices=["question", "system_input", "messages", "ollama_chat"],
+        default="question",
+    )
+    parser.add_argument("--tts-language", default="en")
+    parser.add_argument("--tts-voice", default="af_heart")
     parser.add_argument("--timeout", type=float, default=8.0)
     parser.add_argument("--include-rag", action="store_true")
     parser.add_argument("--include-live-health", action="store_true")
@@ -28,13 +35,42 @@ def main() -> int:
 
     token = _read_token(args.token_file)
     checks: list[dict[str, Any]] = []
-    checks.append(_post_chat(args.base_url, args.direct_path, token, args.direct_model, args.timeout, name="chat_direct"))
+    checks.append(
+        _post_chat(
+            args.base_url,
+            args.direct_path,
+            token,
+            args.direct_model,
+            args.timeout,
+            name="chat_direct",
+            request_shape=args.request_shape,
+        )
+    )
     if args.include_rag:
-        checks.append(_post_chat(args.base_url, args.rag_path, token, args.rag_model, args.timeout, name="chat_rag"))
+        checks.append(
+            _post_chat(
+                args.base_url,
+                args.rag_path,
+                token,
+                args.rag_model,
+                args.timeout,
+                name="chat_rag",
+                request_shape=args.request_shape,
+            )
+        )
     if args.include_live_health:
         checks.append(_get_json(args.base_url, args.live_health_path, args.timeout, name="live_health"))
     if args.include_tts:
-        checks.append(_post_tts(args.base_url, args.tts_path, token, args.timeout))
+        checks.append(
+            _post_tts(
+                args.base_url,
+                args.tts_path,
+                token,
+                args.timeout,
+                language=args.tts_language,
+                voice=args.tts_voice,
+            )
+        )
 
     ok = all(item.get("ok") is True for item in checks)
     print(json.dumps({"ok": ok, "checks": checks}, ensure_ascii=False, sort_keys=True, indent=2))
@@ -50,18 +86,22 @@ def _read_token(path: str) -> str:
     return value
 
 
-def _post_chat(base_url: str, path: str, token: str, model: str, timeout: float, *, name: str) -> dict[str, Any]:
-    payload = {
-        "model": model,
-        "system": (
-            "You are a logistics customer support smoke-test runtime. Return JSON only with "
-            "customer_reply, language, intent, handoff_required, and ticket_should_create."
-        ),
-        "input": "Smoke test only. Reply with a short safe greeting and do not mention internal systems.",
-        "language": "en",
-        "response_format": "json",
-        "metadata": {"smoke": True},
-    }
+def _post_chat(
+    base_url: str,
+    path: str,
+    token: str,
+    model: str,
+    timeout: float,
+    *,
+    name: str,
+    request_shape: str,
+) -> dict[str, Any]:
+    system = (
+        "You are a logistics customer support smoke-test runtime. Return JSON only with "
+        "customer_reply, language, intent, handoff_required, and ticket_should_create."
+    )
+    prompt = "Smoke test only. Reply with a short safe greeting and do not mention internal systems."
+    payload = _chat_payload(model=model, system=system, prompt=prompt, request_shape=request_shape)
     try:
         response = _request_json(base_url, path, timeout, token=token, payload=payload)
     except Exception as exc:
@@ -71,13 +111,57 @@ def _post_chat(base_url: str, path: str, token: str, model: str, timeout: float,
         "name": name,
         "ok": bool(reply_text),
         "model": model,
+        "request_shape": request_shape,
         "reply_chars": len(reply_text or ""),
         "response_keys": sorted(response.keys())[:12] if isinstance(response, dict) else [],
     }
 
 
-def _post_tts(base_url: str, path: str, token: str, timeout: float) -> dict[str, Any]:
-    payload = {"text": "Hello, this is a NexusDesk smoke test.", "language": "en", "voice": "support", "format": "wav"}
+def _chat_payload(*, model: str, system: str, prompt: str, request_shape: str) -> dict[str, Any]:
+    if request_shape == "question":
+        return {"model": model, "question": f"{system}\n{prompt}"}
+    if request_shape == "messages":
+        return {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            "stream": False,
+            "response_format": "json",
+            "metadata": {"smoke": True},
+        }
+    if request_shape == "ollama_chat":
+        return {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.2},
+        }
+    return {
+        "model": model,
+        "system": system,
+        "input": prompt,
+        "language": "en",
+        "response_format": "json",
+        "metadata": {"smoke": True},
+    }
+
+
+def _post_tts(
+    base_url: str,
+    path: str,
+    token: str,
+    timeout: float,
+    *,
+    language: str,
+    voice: str,
+) -> dict[str, Any]:
+    payload = {"text": "Hello, this is a NexusDesk smoke test.", "lang": language, "voice": voice, "format": "wav"}
     try:
         body, content_type = _request_bytes(base_url, path, timeout, token=token, payload=payload)
     except Exception as exc:
