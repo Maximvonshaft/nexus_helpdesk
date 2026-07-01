@@ -38,6 +38,12 @@ def test_candidate_compose_includes_native_whatsapp_sidecar_path() -> None:
     assert "worker-outbound-candidate:" in compose
     assert "whatsapp-sidecar-candidate:" in compose
     assert "python scripts/run_worker.py --worker-id worker-outbound-candidate --queue outbound" in compose
+    assert "ENABLE_OUTBOUND_DISPATCH: ${ENABLE_OUTBOUND_DISPATCH:-false}" in compose
+    assert "OUTBOUND_PROVIDER: ${OUTBOUND_PROVIDER:-native}" in compose
+    assert "WHATSAPP_NATIVE_ENABLED: ${WHATSAPP_NATIVE_ENABLED:-true}" in compose
+    assert "WHATSAPP_DISPATCH_MODE: ${WHATSAPP_DISPATCH_MODE:-native_sidecar}" in compose
+    assert "EXTERNAL_CHANNEL_BRIDGE_ENABLED: ${EXTERNAL_CHANNEL_BRIDGE_ENABLED:-false}" in compose
+    assert "EXTERNAL_CHANNEL_TRANSPORT: ${EXTERNAL_CHANNEL_TRANSPORT:-disabled}" in compose
     assert 'NEXUS_BACKEND_URL: "${CANDIDATE_NEXUS_BACKEND_URL:-http://app-candidate:8080}"' in compose
     assert 'WHATSAPP_SESSION_ROOT: "/data/whatsapp-sessions"' in compose
     assert "CANDIDATE_WHATSAPP_SESSION_ROOT" in compose
@@ -62,6 +68,16 @@ def test_candidate_env_example_documents_external_network() -> None:
     assert "CANDIDATE_EXTERNAL_NETWORK=deploy_default" in env_example
     assert "CANDIDATE_WA_SIDECAR_PORT=18795" in env_example
     assert "CANDIDATE_NEXUS_BACKEND_URL=http://app-candidate:8080" in env_example
+    assert "ENABLE_OUTBOUND_DISPATCH=false" in env_example
+    assert "OUTBOUND_PROVIDER=native" in env_example
+    assert "EXTERNAL_CHANNEL_BRIDGE_ENABLED=false" in env_example
+    assert "EXTERNAL_CHANNEL_TRANSPORT=disabled" in env_example
+    assert "EXTERNAL_CHANNEL_DEPLOYMENT_MODE=disabled" in env_example
+    assert "EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED=false" in env_example
+    assert "EXTERNAL_CHANNEL_SYNC_ENABLED=false" in env_example
+    assert "EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED=false" in env_example
+    assert "EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED=false" in env_example
+    assert "openclaw" not in env_example.lower()
     assert "PRIVATE_AI_RUNTIME_TOKEN_FILE=/run/nexus/ai_runtime_token" in env_example
     assert "PRIVATE_AI_RUNTIME_REQUEST_SHAPE=question" in env_example
     assert "PRIVATE_AI_RUNTIME_MAX_PROMPT_CHARS=1200" in env_example
@@ -94,6 +110,7 @@ def test_candidate_whatsapp_native_gate_workflow_covers_compose_sidecar_and_back
     assert "WA_SIDECAR_RECONNECT_MAX_ATTEMPTS" in workflow
     assert "WA_SIDECAR_BAILEYS_LOG_LEVEL" in workflow
     assert "WA_SIDECAR_CONNECTOR_MODE: mock" in workflow
+    assert "whatsapp_candidate_runtime_audit.sh" in workflow
     assert "whatsapp_sidecar_candidate_smoke.sh" in workflow
     assert "test_admin_whatsapp_native_api.py" in workflow
     assert "test_whatsapp_native_inbound_integration.py" in workflow
@@ -114,11 +131,26 @@ def test_whatsapp_sidecar_candidate_smoke_script_defaults_to_no_live_send() -> N
     assert "WHATSAPP_SIDECAR_CANDIDATE_SMOKE_PASS=true" in script
 
 
+def test_whatsapp_candidate_runtime_audit_blocks_retired_runtime_drift() -> None:
+    script = (ROOT / "scripts" / "smoke" / "whatsapp_candidate_runtime_audit.sh").read_text(encoding="utf-8")
+
+    assert "WHATSAPP_CANDIDATE_RUNTIME_AUDIT_PASS=true" in script
+    assert "openclaw" in script.lower()
+    assert '"OUTBOUND_PROVIDER": "native"' in script
+    assert '"WHATSAPP_DISPATCH_MODE": "native_sidecar"' in script
+    assert '"EXTERNAL_CHANNEL_BRIDGE_ENABLED": "false"' in script
+    assert "NEXUS_BACKEND_URL: http://app:8080" in script
+    assert "WA_CANDIDATE_AUDIT_RUNNING_CONTAINERS" in script
+
+
 def test_native_whatsapp_candidate_smoke_runbook_keeps_nginx_and_writes_safe() -> None:
     runbook = (ROOT / "docs" / "ops" / "NEXUS_NATIVE_WHATSAPP_CANDIDATE_SMOKE.md").read_text(encoding="utf-8")
 
     assert "public nginx routing" in runbook
     assert "WHATSAPP_DISPATCH_MODE=native_sidecar" in runbook
+    assert "OUTBOUND_PROVIDER=native" in runbook
+    assert "ENABLE_OUTBOUND_DISPATCH=false" in runbook
+    assert "whatsapp_candidate_runtime_audit.sh" in runbook
     assert "CANDIDATE_NEXUS_BACKEND_URL=http://app-candidate:8080" in runbook
     assert "SPEEDAF_CANCEL_ENABLED=false" in runbook
     assert "WA_SIDECAR_SMOKE_START_LOGIN=true" in runbook

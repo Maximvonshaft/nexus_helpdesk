@@ -15,6 +15,18 @@ environment.
 - `WHATSAPP_DISPATCH_MODE=native_sidecar`.
 - `WHATSAPP_SIDECAR_URL=http://whatsapp-sidecar-candidate:18793`.
 - `CANDIDATE_NEXUS_BACKEND_URL=http://app-candidate:8080`.
+- `OUTBOUND_PROVIDER=native`.
+- `ENABLE_OUTBOUND_DISPATCH=false` until a controlled live outbound window.
+- Retired bridge/runtime flags remain disabled:
+  - `EXTERNAL_CHANNEL_TRANSPORT=disabled`
+  - `EXTERNAL_CHANNEL_DEPLOYMENT_MODE=disabled`
+  - `EXTERNAL_CHANNEL_BRIDGE_ENABLED=false`
+  - `EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED=false`
+  - `EXTERNAL_CHANNEL_SYNC_ENABLED=false`
+  - `EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED=false`
+  - `EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED=false`
+- No `OpenClaw` or `OPENCLAW_*` markers exist in the candidate env or running
+  candidate containers.
 - Sidecar hardening env is explicitly rendered by Compose:
   - `WA_SIDECAR_AUTO_START_ACCOUNTS`
   - `WA_SIDECAR_BROWSER_PLATFORM`
@@ -58,6 +70,23 @@ Fail the rollout if the rendered config contains:
 ```text
 NEXUS_BACKEND_URL: http://app:8080
 ```
+
+Run the runtime drift audit before starting or after editing the env file:
+
+```bash
+bash scripts/smoke/whatsapp_candidate_runtime_audit.sh
+```
+
+On a running candidate, also inspect the live container environments:
+
+```bash
+COMPOSE_PROJECT_NAME=nexusdesk_candidate \
+WA_CANDIDATE_AUDIT_RUNNING_CONTAINERS=true \
+bash scripts/smoke/whatsapp_candidate_runtime_audit.sh
+```
+
+This audit fails on retired OpenClaw markers, `OUTBOUND_PROVIDER=openclaw`,
+legacy `app:8080` callbacks, or enabled retired bridge/runtime flags.
 
 ## 2. Start Candidate Only
 
@@ -158,7 +187,9 @@ as distinct outcomes:
 ## 6. Optional Live Send Smoke
 
 Run this only with a controlled test recipient. This sends a real WhatsApp
-message.
+message. Keep `ENABLE_OUTBOUND_DISPATCH=false` for normal candidate observation;
+turn it on only for a bounded backend outbound-worker smoke, then turn it back
+off unless the promotion owner explicitly approves live dispatch.
 
 ```bash
 WA_SIDECAR_BASE_URL=http://127.0.0.1:18795 \

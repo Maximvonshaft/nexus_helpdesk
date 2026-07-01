@@ -22,6 +22,7 @@ on:
       - "deploy/docker-compose.candidate.yml"
       - "deploy/docker-compose.whatsapp-sidecar.example.yml"
       - "docs/ops/NEXUS_NATIVE_WHATSAPP_CANDIDATE_SMOKE.md"
+      - "scripts/smoke/whatsapp_candidate_runtime_audit.sh"
       - "scripts/smoke/whatsapp_sidecar_candidate_smoke.sh"
   push:
     branches: [main]
@@ -45,6 +46,7 @@ on:
       - "deploy/docker-compose.candidate.yml"
       - "deploy/docker-compose.whatsapp-sidecar.example.yml"
       - "docs/ops/NEXUS_NATIVE_WHATSAPP_CANDIDATE_SMOKE.md"
+      - "scripts/smoke/whatsapp_candidate_runtime_audit.sh"
       - "scripts/smoke/whatsapp_sidecar_candidate_smoke.sh"
   workflow_dispatch:
 
@@ -104,6 +106,11 @@ jobs:
             echo "candidate sidecar still points at legacy app:8080" >&2
             exit 2
           fi
+
+      - name: Candidate runtime drift audit
+        run: |
+          set -Eeuo pipefail
+          bash scripts/smoke/whatsapp_candidate_runtime_audit.sh
 
   sidecar-mock-smoke:
     runs-on: ubuntu-latest
