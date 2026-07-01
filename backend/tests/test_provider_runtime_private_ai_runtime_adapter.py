@@ -77,7 +77,7 @@ async def test_private_ai_runtime_success_normalizes_response_text(monkeypatch, 
 
     monkeypatch.setattr(adapter, "_post_json", fake_post_json)
 
-    result = await adapter.generate(Mock(), _request())
+    result = await adapter.generate(Mock(), _request(body="Hello support team"))
 
     assert result.ok is True
     assert result.provider == "private_ai_runtime"
@@ -145,7 +145,7 @@ async def test_private_ai_runtime_question_shape_matches_runtime_contract(monkey
 
     monkeypatch.setattr(adapter, "_post_json", fake_post_json)
 
-    result = await adapter.generate(Mock(), _request())
+    result = await adapter.generate(Mock(), _request(body="Hello support team"))
 
     assert result.ok is True
     assert captured_payload["model"] == "qwen2.5:3b"
@@ -221,9 +221,71 @@ async def test_private_ai_runtime_http_429_is_retryable(monkeypatch, tmp_path):
 
     monkeypatch.setattr(adapter, "_post_json", fake_post_json)
 
-    result = await adapter.generate(Mock(), _request())
+    result = await adapter.generate(Mock(), _request(body="Can you explain shipping services?"))
 
     assert result.ok is False
     assert result.error_code == "private_ai_runtime_http_429"
     assert result.retryable is True
     assert result.raw_payload_safe_summary["retryable_http"] is True
+
+
+@pytest.mark.asyncio
+async def test_private_ai_runtime_missing_tracking_number_fast_path_skips_remote_call(monkeypatch, tmp_path):
+    token_file = tmp_path / "ai-runtime-token"
+    token_file.write_text("test-token", encoding="utf-8")
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", str(token_file))
+    adapter = PrivateAIRuntimeAdapter()
+
+    def forbidden_post_json(endpoint, payload, token):
+        raise AssertionError("missing-tracking-number fast path must not call remote AI runtime")
+
+    monkeypatch.setattr(adapter, "_post_json", forbidden_post_json)
+
+    result = await adapter.generate(Mock(), _request(body="Please help me track my parcel. I will provide the tracking number."))
+
+    assert result.ok is True
+    assert result.provider == "private_ai_runtime"
+    assert result.reply_source == "private_ai_runtime"
+    assert result.structured_output["intent"] == "tracking_missing_number"
+    assert result.structured_output["tracking_number"] is None
+    assert result.structured_output["handoff_required"] is False
+    assert "tracking number" in result.structured_output["customer_reply"].lower()
+    assert result.raw_payload_safe_summary["fast_path"] == "tracking_missing_number_no_evidence"
+    assert result.raw_payload_safe_summary["provider_bypassed"] is True
+    assert result.raw_payload_safe_summary["endpoint_path"] is None
+
+
+@pytest.mark.asyncio
+async def test_private_ai_runtime_fast_path_does_not_hide_tracking_identifier(monkeypatch, tmp_path):
+    token_file = tmp_path / "ai-runtime-token"
+    token_file.write_text("test-token", encoding="utf-8")
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", str(token_file))
+    adapter = PrivateAIRuntimeAdapter()
+    calls = 0
+
+    def fake_post_json(endpoint, payload, token):
+        nonlocal calls
+        calls += 1
+        return {
+            "customer_reply": "I do not have trusted live tracking evidence for that waybill yet.",
+            "language": "en",
+            "intent": "tracking_unresolved",
+            "tracking_number": None,
+            "handoff_required": False,
+            "ticket_should_create": False,
+        }
+
+    monkeypatch.setattr(adapter, "_post_json", fake_post_json)
+
+    result = await adapter.generate(Mock(), _request(body="Where is my parcel CH1200000011425?"))
+
+    assert result.ok is True
+    assert calls == 1
+    assert result.raw_payload_safe_summary["endpoint_path"] == "/chat/direct"
+    assert "fast_path" not in result.raw_payload_safe_summary

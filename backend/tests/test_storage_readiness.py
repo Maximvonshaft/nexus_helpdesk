@@ -59,6 +59,23 @@ def test_local_storage_readiness_allows_existing_backup_path_with_warning(tmp_pa
     assert not result.errors
 
 
+def test_local_storage_readiness_is_ok_when_backup_is_verified_and_acknowledged(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup"
+    backup_path.mkdir()
+    monkeypatch.delenv("REQUIRE_REMOTE_STORAGE_IN_PRODUCTION", raising=False)
+    monkeypatch.setenv("LOCAL_STORAGE_BACKUP_REQUIRED", "true")
+    monkeypatch.setenv("LOCAL_STORAGE_BACKUP_PATH", str(backup_path))
+    monkeypatch.setenv("LOCAL_STORAGE_BACKUP_ACKNOWLEDGED", "true")
+    monkeypatch.delenv("LOCAL_STORAGE_BACKUP_MARKER_PATH", raising=False)
+
+    result = check_storage_readiness(_settings(tmp_path, backend="local"))
+
+    assert result.ok is True
+    assert result.status == "ok"
+    assert not result.warnings
+    assert not result.errors
+
+
 def test_local_storage_readiness_warns_when_backup_path_is_upload_root(tmp_path, monkeypatch):
     settings = _settings(tmp_path, backend="local")
     monkeypatch.delenv("REQUIRE_REMOTE_STORAGE_IN_PRODUCTION", raising=False)
