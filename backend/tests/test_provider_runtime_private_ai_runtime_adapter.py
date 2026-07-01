@@ -122,6 +122,41 @@ async def test_private_ai_runtime_rag_mode_uses_rag_model(monkeypatch, tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_private_ai_runtime_question_shape_matches_runtime_contract(monkeypatch, tmp_path):
+    token_file = tmp_path / "ai-runtime-token"
+    token_file.write_text("test-token", encoding="utf-8")
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_REQUEST_SHAPE", "question")
+    adapter = PrivateAIRuntimeAdapter()
+    captured_payload = {}
+
+    def fake_post_json(endpoint, payload, token):
+        captured_payload.update(payload)
+        assert endpoint == "http://ai-runtime.internal:18081/chat/direct"
+        assert token == "test-token"
+        return {
+            "status": "ok",
+            "answer": "Please share your tracking number so I can check this safely.",
+            "raw_content": "Please share your tracking number so I can check this safely.",
+        }
+
+    monkeypatch.setattr(adapter, "_post_json", fake_post_json)
+
+    result = await adapter.generate(Mock(), _request())
+
+    assert result.ok is True
+    assert captured_payload["model"] == "qwen2.5:3b"
+    assert "question" in captured_payload
+    assert "input" not in captured_payload
+    assert "messages" not in captured_payload
+    assert result.raw_payload_safe_summary["request_shape"] == "question"
+    assert result.structured_output["customer_reply"] == "Please share your tracking number so I can check this safely."
+
+
+@pytest.mark.asyncio
 async def test_private_ai_runtime_production_rejects_inline_token(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
