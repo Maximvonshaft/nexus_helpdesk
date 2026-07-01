@@ -277,7 +277,8 @@ def _knowledge_no_evidence_payload(*, runtime_context: dict[str, Any] | None) ->
 
 def _provider_safe_fallback_payload(*, error_code: str | None, body: str | None) -> dict[str, Any]:
     reason = error_code or "provider_unavailable"
-    if not get_webchat_fast_settings().customer_visible_fallback_enabled:
+    customer_visible_fallback_enabled = getattr(get_webchat_fast_settings(), "customer_visible_fallback_enabled", True)
+    if not customer_visible_fallback_enabled:
         return {
             "ok": False,
             "ai_generated": False,
