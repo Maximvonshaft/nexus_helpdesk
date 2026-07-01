@@ -125,6 +125,30 @@ def _bridge_readiness_from_env() -> dict[str, Any]:
     }
 
 
+def _private_ai_runtime_status_from_env() -> dict[str, Any]:
+    primary_provider = os.environ.get("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "").strip() or "codex_app_server"
+    enabled = os.environ.get("PRIVATE_AI_RUNTIME_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+    base_url = os.environ.get("PRIVATE_AI_RUNTIME_BASE_URL", "").strip()
+    token_file = os.environ.get("PRIVATE_AI_RUNTIME_TOKEN_FILE", "").strip()
+    inline_token = os.environ.get("PRIVATE_AI_RUNTIME_TOKEN", "").strip()
+    app_env = (os.environ.get("APP_ENV") or "development").strip().lower()
+    inline_token_allowed = app_env in {"development", "test", "local"}
+    configured = bool(enabled and base_url and (token_file or (inline_token and inline_token_allowed)))
+    return {
+        "primary_provider": primary_provider,
+        "enabled": enabled,
+        "base_url_configured": bool(base_url),
+        "token_file_configured": bool(token_file),
+        "inline_token_configured": bool(inline_token),
+        "configured": configured,
+        "chat_mode": os.environ.get("PRIVATE_AI_RUNTIME_CHAT_MODE", "direct").strip().lower() or "direct",
+        "request_shape": os.environ.get("PRIVATE_AI_RUNTIME_REQUEST_SHAPE", "system_input").strip().lower() or "system_input",
+        "direct_model": os.environ.get("PRIVATE_AI_RUNTIME_DIRECT_MODEL", "qwen2.5:3b").strip() or "qwen2.5:3b",
+        "rag_model": os.environ.get("PRIVATE_AI_RUNTIME_RAG_MODEL", "qwen3:4b").strip() or "qwen3:4b",
+        "timeout_seconds": os.environ.get("PRIVATE_AI_RUNTIME_TIMEOUT_SECONDS", "8").strip() or "8",
+    }
+
+
 def _human_webcall_count(db: Session | None, statuses: set[str], *, stale: bool = False) -> int:
     if db is None:
         return 0
@@ -219,11 +243,12 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
     credential_diagnostics = _credential_status(db, provider_runtime_tenant_id)
     route_rule_exists = _route_rule_exists(db, provider_runtime_tenant_id)
     bridge_readiness = _bridge_readiness_from_env()
+    private_ai_runtime = _private_ai_runtime_status_from_env()
 
     providers = [
         _provider_entry(
             name="codex_app_server",
-            selected=settings.provider in {"codex_app_server", "provider_runtime"},
+            selected=settings.provider == "codex_app_server" or (settings.provider == "provider_runtime" and private_ai_runtime["primary_provider"] == "codex_app_server"),
             feature_enabled=settings.codex_app_server_enabled or settings.provider == "provider_runtime",
             configured=(
                 settings.is_codex_app_server_configured and bridge_readiness["bridge_mode"] != "stub"
@@ -265,8 +290,26 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
             },
         ),
         _provider_entry(
+            name="private_ai_runtime",
+            selected=settings.provider == "provider_runtime" and private_ai_runtime["primary_provider"] == "private_ai_runtime",
+            feature_enabled=private_ai_runtime["enabled"],
+            configured=private_ai_runtime["configured"],
+            runtime="server_side_ai_runtime",
+            capabilities=_provider_capabilities(webchat_fast_reply=private_ai_runtime["configured"]),
+            diagnostics={
+                "base_url_configured": private_ai_runtime["base_url_configured"],
+                "token_file_configured": private_ai_runtime["token_file_configured"],
+                "inline_token_configured": private_ai_runtime["inline_token_configured"],
+                "chat_mode": private_ai_runtime["chat_mode"],
+                "request_shape": private_ai_runtime["request_shape"],
+                "direct_model": private_ai_runtime["direct_model"],
+                "rag_model": private_ai_runtime["rag_model"],
+                "timeout_seconds": private_ai_runtime["timeout_seconds"],
+            },
+        ),
+        _provider_entry(
             name="openai_responses",
-            selected=settings.provider == "openai_responses",
+            selected=settings.provider == "openai_responses" or (settings.provider == "provider_runtime" and private_ai_runtime["primary_provider"] == "openai_responses"),
             feature_enabled=settings.openai_enabled,
             configured=settings.is_openai_configured,
             runtime="openai_responses_api",
@@ -301,7 +344,7 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
             warnings.append(f"codex_app_server kill switch is active; traffic routes to {settings.fallback_provider}")
         if settings.codex_app_server_canary_percent < 100 and settings.fallback_provider == "none":
             warnings.append("codex_app_server canary below 100 requires a fallback provider for skipped traffic")
-    if settings.provider == "provider_runtime":
+    if settings.provider == "provider_runtime" and private_ai_runtime["primary_provider"] == "codex_app_server":
         codex = next(item for item in providers if item["name"] == "codex_app_server")
         if not codex["diagnostics"]["active_credential_exists"]:
             warnings.append("provider_runtime codex_app_server active credential is missing")
@@ -313,6 +356,16 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
             warnings.append("provider_runtime codex_app_server real upstream is not configured")
         if not route_rule_exists:
             warnings.append("provider_runtime webchat_fast_reply route rule is missing")
+    if settings.provider == "provider_runtime" and private_ai_runtime["primary_provider"] == "private_ai_runtime":
+        private_ai = next(item for item in providers if item["name"] == "private_ai_runtime")
+        if not private_ai["feature_enabled"]:
+            warnings.append("provider_runtime private_ai_runtime is disabled")
+        if not private_ai["diagnostics"]["base_url_configured"]:
+            warnings.append("provider_runtime private_ai_runtime base URL is missing")
+        if not private_ai["diagnostics"]["token_file_configured"] and settings.app_env == "production":
+            warnings.append("provider_runtime private_ai_runtime token file is missing")
+        if settings.app_env == "production" and private_ai["diagnostics"]["inline_token_configured"]:
+            warnings.append("provider_runtime private_ai_runtime inline token is forbidden in production")
 
     return {
         "ok": not warnings,

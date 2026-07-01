@@ -1,0 +1,139 @@
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
+from urllib.parse import urljoin
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Secret-safe smoke probe for the private AI Runtime.")
+    parser.add_argument("--base-url", required=True)
+    parser.add_argument("--token-file", required=True)
+    parser.add_argument("--direct-path", default="/chat/direct")
+    parser.add_argument("--rag-path", default="/chat/rag")
+    parser.add_argument("--live-health-path", default="/live/health")
+    parser.add_argument("--tts-path", default="/voice/tts")
+    parser.add_argument("--direct-model", default="qwen2.5:3b")
+    parser.add_argument("--rag-model", default="qwen3:4b")
+    parser.add_argument("--timeout", type=float, default=8.0)
+    parser.add_argument("--include-rag", action="store_true")
+    parser.add_argument("--include-live-health", action="store_true")
+    parser.add_argument("--include-tts", action="store_true")
+    args = parser.parse_args()
+
+    token = _read_token(args.token_file)
+    checks: list[dict[str, Any]] = []
+    checks.append(_post_chat(args.base_url, args.direct_path, token, args.direct_model, args.timeout, name="chat_direct"))
+    if args.include_rag:
+        checks.append(_post_chat(args.base_url, args.rag_path, token, args.rag_model, args.timeout, name="chat_rag"))
+    if args.include_live_health:
+        checks.append(_get_json(args.base_url, args.live_health_path, args.timeout, name="live_health"))
+    if args.include_tts:
+        checks.append(_post_tts(args.base_url, args.tts_path, token, args.timeout))
+
+    ok = all(item.get("ok") is True for item in checks)
+    print(json.dumps({"ok": ok, "checks": checks}, ensure_ascii=False, sort_keys=True, indent=2))
+    return 0 if ok else 1
+
+
+def _read_token(path: str) -> str:
+    value = Path(path).read_text(encoding="utf-8").strip()
+    if value.lower().startswith("bearer "):
+        value = value.split(None, 1)[1].strip()
+    if not value:
+        raise SystemExit("token file is empty")
+    return value
+
+
+def _post_chat(base_url: str, path: str, token: str, model: str, timeout: float, *, name: str) -> dict[str, Any]:
+    payload = {
+        "model": model,
+        "system": (
+            "You are a logistics customer support smoke-test runtime. Return JSON only with "
+            "customer_reply, language, intent, handoff_required, and ticket_should_create."
+        ),
+        "input": "Smoke test only. Reply with a short safe greeting and do not mention internal systems.",
+        "language": "en",
+        "response_format": "json",
+        "metadata": {"smoke": True},
+    }
+    try:
+        response = _request_json(base_url, path, timeout, token=token, payload=payload)
+    except Exception as exc:
+        return {"name": name, "ok": False, "error": _safe_error(exc)}
+    reply_text = _extract_reply_text(response)
+    return {
+        "name": name,
+        "ok": bool(reply_text),
+        "model": model,
+        "reply_chars": len(reply_text or ""),
+        "response_keys": sorted(response.keys())[:12] if isinstance(response, dict) else [],
+    }
+
+
+def _post_tts(base_url: str, path: str, token: str, timeout: float) -> dict[str, Any]:
+    payload = {"text": "Hello, this is a NexusDesk smoke test.", "language": "en", "voice": "support", "format": "wav"}
+    try:
+        body, content_type = _request_bytes(base_url, path, timeout, token=token, payload=payload)
+    except Exception as exc:
+        return {"name": "tts", "ok": False, "error": _safe_error(exc)}
+    return {"name": "tts", "ok": bool(body), "bytes": len(body), "content_type": content_type.split(";")[0]}
+
+
+def _get_json(base_url: str, path: str, timeout: float, *, name: str) -> dict[str, Any]:
+    try:
+        response = _request_json(base_url, path, timeout, token=None, payload=None)
+    except Exception as exc:
+        return {"name": name, "ok": False, "error": _safe_error(exc)}
+    return {"name": name, "ok": isinstance(response, dict), "response_keys": sorted(response.keys())[:12] if isinstance(response, dict) else []}
+
+
+def _request_json(base_url: str, path: str, timeout: float, *, token: str | None, payload: dict[str, Any] | None) -> dict[str, Any]:
+    body, _content_type = _request_bytes(base_url, path, timeout, token=token, payload=payload)
+    decoded = json.loads(body.decode("utf-8", errors="replace"))
+    if not isinstance(decoded, dict):
+        raise ValueError("response_not_object")
+    return decoded
+
+
+def _request_bytes(base_url: str, path: str, timeout: float, *, token: str | None, payload: dict[str, Any] | None) -> tuple[bytes, str]:
+    data = None if payload is None else json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(
+        urljoin(f"{base_url.rstrip('/')}/", path.lstrip("/")),
+        data=data,
+        headers=headers,
+        method="GET" if payload is None else "POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read(), response.headers.get("content-type", "")
+
+
+def _extract_reply_text(payload: dict[str, Any]) -> str:
+    for key in ("customer_reply", "reply", "response_text", "text", "answer", "output_text"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    message = payload.get("message")
+    if isinstance(message, dict) and isinstance(message.get("content"), str):
+        return message["content"].strip()
+    return ""
+
+
+def _safe_error(exc: Exception) -> str:
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"http_{exc.code}"
+    if isinstance(exc, urllib.error.URLError):
+        return "url_error"
+    return exc.__class__.__name__
+
+
+if __name__ == "__main__":
+    sys.exit(main())
