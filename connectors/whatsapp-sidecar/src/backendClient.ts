@@ -2,6 +2,23 @@ import type { Logger } from "pino";
 import { connectorHeaders } from "./security.js";
 import type { NormalizedInboundMessage, SidecarConfig } from "./types.js";
 
+function callbackErrorInfo(error: unknown): { error_code: string; error_message: string; status_code?: number } {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const statusMatch = /^backend_callback_failed:(\d{3})$/.exec(errorMessage);
+  if (statusMatch) {
+    return {
+      error_code: "backend_callback_http_error",
+      error_message: errorMessage,
+      status_code: Number.parseInt(statusMatch[1], 10)
+    };
+  }
+  const errorName = error instanceof Error ? error.name : "";
+  return {
+    error_code: errorName === "AbortError" ? "backend_callback_timeout" : "backend_callback_transport_error",
+    error_message: errorMessage
+  };
+}
+
 export class BackendClient {
   constructor(
     private readonly config: SidecarConfig,
@@ -40,7 +57,15 @@ export class BackendClient {
         throw new Error(`backend_callback_failed:${response.status}`);
       }
     } catch (error) {
-      this.logger.warn({ account_id: accountId, error }, "backend_callback_failed");
+      this.logger.warn(
+        {
+          account_id: accountId,
+          path,
+          ...callbackErrorInfo(error),
+          error
+        },
+        "backend_callback_failed"
+      );
       throw error;
     } finally {
       clearTimeout(timeout);
