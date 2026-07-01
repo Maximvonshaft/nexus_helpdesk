@@ -20,7 +20,7 @@ environment.
   - `WA_SIDECAR_BROWSER_PLATFORM`
   - `WA_SIDECAR_BROWSER_NAME`
   - `WA_SIDECAR_BROWSER_VERSION`
-  - `WA_SIDECAR_KEEPALIVE_INTERVAL_MS`
+  - `WA_SIDECAR_KEEP_ALIVE_INTERVAL_MS`
   - `WA_SIDECAR_CONNECT_TIMEOUT_MS`
   - `WA_SIDECAR_DEFAULT_QUERY_TIMEOUT_MS`
   - `WA_SIDECAR_OPERATION_TIMEOUT_MS`
@@ -177,7 +177,7 @@ Verify in the candidate backend:
 - WhatsApp native inbound callback succeeds.
 - A WebChat projection or ticket is created as expected.
 - AI fast reply remains routed through Nexus provider runtime.
-- No OpenClaw bridge or OpenClaw gateway is required for this path.
+- No retired bridge or gateway is required for this path.
 
 Use application logs and tool-governance logs to confirm the path:
 
