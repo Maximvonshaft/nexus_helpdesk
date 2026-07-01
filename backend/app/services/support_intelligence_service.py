@@ -8,9 +8,12 @@ from sqlalchemy.orm import Session
 
 from ..models import AIConfigResource
 from ..models_control_plane import KnowledgeItem, PersonaProfile
+from .ai_config_service import publish_resource
 
 
 SUPPORT_CHANNELS = {"whatsapp", "email", "all", "support", "customer"}
+STATUS_DICTIONARY_RESOURCE_KEY = "support.status.dictionary"
+STATUS_DICTIONARY_SCHEMA_VERSION = 1
 
 
 def _iso(value: Any) -> str | None:
@@ -19,6 +22,10 @@ def _iso(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _generated_at() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _channel_in_scope(value: str | None) -> bool:
@@ -93,12 +100,12 @@ def _runtime_legacy_sources() -> list[dict[str, Any]]:
             key="runtime.status.dictionary",
             category="status_dictionary",
             title="状态码客户展示字典",
-            source_kind="config_dictionary",
-            source_label="状态词典",
+            source_kind="nexus_config",
+            source_label="AIConfigResource",
             source_path=None,
             editable=True,
             effective=True,
-            notes="物流状态码到客户可见名称、解释和下一步提示已接入前端配置；发布后用于后续客户回复。",
+            notes="物流状态码到客户可见名称、解释和下一步提示由 Nexus DB 配置；发布后用于后续客户回复。",
         ),
     ]
 
@@ -129,33 +136,227 @@ def _fetch_runtime_cards(bridge_client: Any | None = None) -> tuple[list[dict[st
         }
 
 
-def _fetch_status_dictionary(bridge_client: Any | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    if bridge_client is None:
-        return [], {
-            "ok": False,
-            "status": "retired",
-            "message": "Legacy runtime status dictionary bridge has been retired.",
-        }
-    client = bridge_client
-    try:
-        data = client.support_knowledge_config({"operation": "status-dictionary-list"})
-        entries = data.get("entries") if isinstance(data, dict) else None
-        if not isinstance(entries, list):
-            return [], {"ok": False, "status": "invalid_payload", "message": "状态词典返回格式异常"}
-        return [entry for entry in entries if isinstance(entry, dict)], {
-            "ok": True,
-            "status": "connected",
-            "count": len(entries),
-            "published_version": data.get("published_version"),
-            "published_at": data.get("published_at"),
-            "updated_at": data.get("updated_at"),
-        }
-    except (OSError, RuntimeError) as exc:
-        return [], {
-            "ok": False,
-            "status": "degraded",
-            "message": str(exc)[:240],
-        }
+def _actor_id(actor: Any | None) -> int | None:
+    value = getattr(actor, "id", None)
+    return value if isinstance(value, int) else None
+
+
+def _actor_label(actor: Any | None) -> str:
+    return str(getattr(actor, "username", None) or getattr(actor, "id", None) or "system")
+
+
+def _get_status_dictionary_resource(db: Session) -> AIConfigResource | None:
+    return (
+        db.query(AIConfigResource)
+        .filter(
+            AIConfigResource.resource_key == STATUS_DICTIONARY_RESOURCE_KEY,
+            AIConfigResource.config_type == "status_dictionary",
+        )
+        .first()
+    )
+
+
+def _ensure_status_dictionary_resource(db: Session, actor: Any | None) -> AIConfigResource:
+    row = _get_status_dictionary_resource(db)
+    if row is not None:
+        return row
+    row = AIConfigResource(
+        resource_key=STATUS_DICTIONARY_RESOURCE_KEY,
+        config_type="status_dictionary",
+        name="Support status dictionary",
+        description="Customer-visible logistics status labels, explanations, and next actions.",
+        scope_type="global",
+        scope_value="support",
+        is_active=True,
+        draft_summary="0 status dictionary entries",
+        draft_content_json={
+            "schema_version": STATUS_DICTIONARY_SCHEMA_VERSION,
+            "entries": [],
+            "updated_at": _generated_at(),
+            "updated_by": _actor_label(actor),
+        },
+        created_by=_actor_id(actor),
+        updated_by=_actor_id(actor),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _string_value(value: Any, *, max_length: int | None = None) -> str:
+    text = str(value or "").strip()
+    if max_length is not None:
+        return text[:max_length]
+    return text
+
+
+def _language_labels(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    labels: dict[str, str] = {}
+    for key, label in list(value.items())[:20]:
+        clean_key = _string_value(key, max_length=16).lower()
+        clean_label = _string_value(label, max_length=240)
+        if clean_key and clean_label:
+            labels[clean_key] = clean_label
+    return labels
+
+
+def _normalize_status_dictionary_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    code = _string_value(entry.get("code"), max_length=32)
+    if not code:
+        raise ValueError("status_dictionary_entry_code_required")
+    return {
+        "code": code,
+        "label": _string_value(entry.get("label"), max_length=240),
+        "desc": _string_value(entry.get("desc"), max_length=1000),
+        "action": _string_value(entry.get("action"), max_length=1000),
+        "language_labels": _language_labels(entry.get("language_labels")),
+        "needs_human": bool(entry.get("needs_human")),
+        "promise_eta": bool(entry.get("promise_eta")),
+        "editable": bool(entry.get("editable", True)),
+    }
+
+
+def _entries_from_content(content: Any) -> list[dict[str, Any]]:
+    if not isinstance(content, dict):
+        return []
+    entries = content.get("entries")
+    if not isinstance(entries, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            normalized.append(_normalize_status_dictionary_entry(entry))
+        except ValueError:
+            continue
+    return normalized
+
+
+def _entry_map(entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {str(entry["code"]): entry for entry in entries if entry.get("code")}
+
+
+def _merge_entries(existing: list[dict[str, Any]], updates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged = _entry_map(existing)
+    for entry in updates:
+        merged[entry["code"]] = entry
+    return sorted(merged.values(), key=lambda item: item["code"])
+
+
+def _status_dictionary_content(entries: list[dict[str, Any]], actor: Any | None) -> dict[str, Any]:
+    return {
+        "schema_version": STATUS_DICTIONARY_SCHEMA_VERSION,
+        "entries": entries,
+        "updated_at": _generated_at(),
+        "updated_by": _actor_label(actor),
+    }
+
+
+def _status_dictionary_summary(entries: list[dict[str, Any]]) -> str:
+    count = len(entries)
+    return f"{count} status dictionary entr{'y' if count == 1 else 'ies'}"
+
+
+def _status_dictionary_entry_with_lifecycle(
+    *,
+    draft: dict[str, Any] | None,
+    published: dict[str, Any] | None,
+    resource: AIConfigResource | None,
+) -> dict[str, Any]:
+    base = draft or published or {}
+    published_at = _iso(getattr(resource, "published_at", None))
+    updated_at = _iso(getattr(resource, "updated_at", None))
+    lifecycle = "default"
+    if draft and published:
+        lifecycle = "published" if draft == published else "changed"
+    elif draft:
+        lifecycle = "draft"
+    elif published:
+        lifecycle = "published"
+    return _status_dictionary_entry_out({
+        **base,
+        "default_label": published.get("label", "") if published else "",
+        "default_desc": published.get("desc", "") if published else "",
+        "default_action": published.get("action", "") if published else "",
+        "published_label": published.get("label", "") if published else "",
+        "published_desc": published.get("desc", "") if published else "",
+        "published_action": published.get("action", "") if published else "",
+        "draft_label": draft.get("label", "") if draft else "",
+        "draft_desc": draft.get("desc", "") if draft else "",
+        "draft_action": draft.get("action", "") if draft else "",
+        "status": lifecycle,
+        "editable": base.get("editable", True),
+        "published_at": published_at,
+        "updated_at": updated_at,
+    })
+
+
+def get_status_dictionary_bundle(db: Session) -> dict[str, Any]:
+    row = _get_status_dictionary_resource(db)
+    draft_entries = _entries_from_content(row.draft_content_json if row else None)
+    published_entries = _entries_from_content(row.published_content_json if row else None)
+    draft_by_code = _entry_map(draft_entries)
+    published_by_code = _entry_map(published_entries)
+    all_codes = sorted(set(draft_by_code) | set(published_by_code))
+    entries = [
+        _status_dictionary_entry_with_lifecycle(
+            draft=draft_by_code.get(code),
+            published=published_by_code.get(code),
+            resource=row,
+        )
+        for code in all_codes
+    ]
+    status_value = "empty"
+    if published_entries:
+        status_value = "ready"
+    elif draft_entries:
+        status_value = "draft"
+    return {
+        "ok": True,
+        "status": status_value,
+        "source": "nexus_ai_config_resources",
+        "resource_key": STATUS_DICTIONARY_RESOURCE_KEY,
+        "resource_id": row.id if row else None,
+        "entries": entries,
+        "count": len(entries),
+        "draft_count": len(draft_entries),
+        "published_count": len(published_entries),
+        "published_version": row.published_version if row else 0,
+        "published_at": _iso(row.published_at) if row else None,
+        "updated_at": _iso(row.updated_at) if row else None,
+        "message": "Status dictionary is stored in Nexus DB; legacy runtime bridge is not used.",
+    }
+
+
+def save_status_dictionary_draft(db: Session, entries: list[dict[str, Any]], actor: Any | None) -> dict[str, Any]:
+    normalized = [_normalize_status_dictionary_entry(entry) for entry in entries]
+    if not normalized:
+        raise ValueError("status_dictionary_entry_required")
+    row = _ensure_status_dictionary_resource(db, actor)
+    current_entries = _entries_from_content(row.draft_content_json)
+    merged = _merge_entries(current_entries, normalized)
+    row.draft_content_json = _status_dictionary_content(merged, actor)
+    row.draft_summary = _status_dictionary_summary(merged)
+    row.updated_by = _actor_id(actor)
+    db.flush()
+    return get_status_dictionary_bundle(db)
+
+
+def publish_status_dictionary(db: Session, entries: list[dict[str, Any]] | None, actor: Any | None) -> dict[str, Any]:
+    if entries:
+        save_status_dictionary_draft(db, entries, actor)
+    row = _ensure_status_dictionary_resource(db, actor)
+    draft_entries = _entries_from_content(row.draft_content_json)
+    if not draft_entries:
+        raise ValueError("status_dictionary_entry_required")
+    row.draft_content_json = _status_dictionary_content(draft_entries, actor)
+    row.draft_summary = _status_dictionary_summary(draft_entries)
+    publish_resource(db, row, actor, notes="Publish support status dictionary")
+    db.flush()
+    return get_status_dictionary_bundle(db)
 
 
 def _status_dictionary_entry_out(entry: dict[str, Any]) -> dict[str, Any]:
@@ -269,8 +470,13 @@ def build_support_intelligence_config(
 ) -> dict[str, Any]:
     runtime_cards_raw, bridge_status = _fetch_runtime_cards(bridge_client)
     runtime_cards = [_runtime_card_out(card) for card in runtime_cards_raw]
-    status_entries_raw, status_dictionary_status = _fetch_status_dictionary(bridge_client)
-    status_dictionary_entries = [_status_dictionary_entry_out(entry) for entry in status_entries_raw]
+    status_dictionary_bundle = get_status_dictionary_bundle(db)
+    status_dictionary_entries = status_dictionary_bundle["entries"]
+    status_dictionary_status = {
+        key: value
+        for key, value in status_dictionary_bundle.items()
+        if key != "entries"
+    }
 
     persona_rows = (
         db.query(PersonaProfile)
@@ -330,8 +536,8 @@ def build_support_intelligence_config(
             "title": "状态码 / 术语字典",
             "description": "接口状态码、客户可见名称、多语言解释和下一步提示。",
             "configurable_count": len(status_dictionary_entries) or ai_type_counts.get("status_dictionary", 0),
-            "runtime_effective_count": len(status_dictionary_entries),
-            "state": "ready" if status_dictionary_entries else "degraded",
+            "runtime_effective_count": int(status_dictionary_status.get("published_count") or 0),
+            "state": status_dictionary_status.get("status") or "empty",
         },
         {
             "key": "channel_policy",
@@ -343,7 +549,7 @@ def build_support_intelligence_config(
         },
     ]
 
-    generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    generated_at = _generated_at()
     bundle = {
         "key": "support.runtime.config",
         "version_label": f"preview-{generated_at.replace(':', '').replace('-', '')[:15]}",
@@ -360,7 +566,7 @@ def build_support_intelligence_config(
     if not support_personas:
         gaps.append("配置库还没有 support 渠道的人格配置；当前仍由运行文件提供人格。")
     if not status_dictionary_entries:
-        gaps.append("状态词典暂时不可读取；请稍后刷新或检查配置服务。")
+        gaps.append("状态词典还没有 Nexus DB 配置；请先保存草稿并发布。")
     if not ai_type_counts.get("rule") and not ai_type_counts.get("rules"):
         gaps.append("SOP 行为规则还没有结构化配置；当前仍由运行文件提供。")
 

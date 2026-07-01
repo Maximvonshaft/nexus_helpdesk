@@ -153,13 +153,12 @@ sequenceDiagram
 
 ## 7. Voice Entry 链路
 
-Demo 页面使用显式 edge-card 模式：
+Demo 页面使用 runtime-gated voice entry。当前 `/api/webchat/voice/runtime-config` 为 disabled/mock 时，不应在公开 Demo 中展示 voice 控件：
 
 ```html
 <script
-  src="/webchat/voice-entry.js?v=nexus-live-voice-card-20260629"
-  data-live-voice-mode="edge-card"
-  data-live-voice-ws-path="/webchat/live/ws"
+  src="/webchat/voice-entry.js?v=nexus-runtime-gated-voice-20260702"
+  data-live-voice-mode="off"
   defer>
 </script>
 ```
@@ -169,16 +168,15 @@ Demo 页面使用显式 edge-card 模式：
 ```mermaid
 flowchart LR
   demo["/webchat/demo/"] --> voice_entry["voice-entry.js"]
-  voice_entry --> mode["data-live-voice-mode=edge-card"]
-  mode --> ws["wss://www.leakle.com/webchat/live/ws"]
-  ws --> nginx["nginx location = /webchat/live/ws"]
-  nginx --> upstream["Server-side live voice upstream"]
+  voice_entry --> config["GET /api/webchat/voice/runtime-config"]
+  config -->|"enabled=false/provider=mock"| hidden["No public voice button"]
+  config -->|"enabled=true"| webcall["Backend-managed WebCall entry"]
 ```
 
 约束：
 
-- 浏览器只知道同源 `/webchat/live/ws`。
-- 上游 host、token、Authorization 只在 nginx runtime env 或 secret 中。
+- 公开 Demo 不强制 edge-card voice；未启用 runtime 时不要露出半成品入口。
+- 上游 host、token、Authorization 只在 runtime env 或 secret 中。
 - 麦克风必须在 HTTPS、安全上下文、正确 Permissions-Policy 下使用。
 - 页面加载不应自动请求麦克风；用户点击 voice 控件后才触发。
 
@@ -196,7 +194,7 @@ flowchart LR
 | --- | --- |
 | `Microphone is not available in this browser` | 是否 HTTPS、浏览器是否授权麦克风、nginx/应用是否返回 `Permissions-Policy: microphone=(self)`、是否被 iframe sandbox 阻断。 |
 | `Voice disconnected` | `/webchat/live/ws` nginx upstream、Upgrade/Connection header、上游健康、CSP `connect-src`。 |
-| demo voice 按钮无反应 | `voice-entry.js` 是否加载、`data-live-voice-mode` 是否为 `edge-card`、浏览器 console 是否有静态资源 404。 |
+| demo voice 按钮不可见 | `/api/webchat/voice/runtime-config` 是否 `enabled=true`，以及 `voice-entry.js` 是否加载。 |
 
 ## 8. Provider Runtime
 
@@ -519,7 +517,7 @@ PYTHONPATH=backend python3 scripts/release_metadata_consistency_gate.py \
 - `/readyz.status == ready`
 - release metadata complete
 - `image_tag` 和 `git_sha` 匹配预期
-- demo 包含 `data-live-voice-mode="edge-card"`
+- demo 包含 `data-live-voice-mode="off"` 且不包含 retired 静态欢迎泡泡
 - `voice-entry.js` 不含生产-only 上游地址、debug marker 或 token
 - CORS 允许批准 origin，拒绝 blocked origin
 

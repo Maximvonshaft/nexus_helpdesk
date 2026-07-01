@@ -42,18 +42,13 @@ test('webchat inbox V5 is wired to real APIs, realtime, fallback polling, eviden
   }
 })
 
-test('webchat inbox V5 exposes the Unified Agent Inbox foundation without faking non-WebChat traffic', () => {
-  assert.match(inbox, /title="Unified Agent Inbox"/)
-  assert.match(inbox, /data-testid="unified-agent-inbox-shell"/)
-  assert.match(inbox, /data-testid="unified-agent-inbox-channel-map"/)
-  assert.match(inbox, /data-testid="unified-agent-inbox-state-model"/)
-  assert.match(inbox, /CHANNEL_ORDER: AgentInboxChannel\[\] = \['webchat', 'whatsapp', 'webcall', 'email'\]/)
-  assert.match(inbox, /status: '生产接入'/)
-  assert.match(inbox, /status: '接入中'/)
+test('webchat inbox V5 opens on a lightweight agent console without faking non-WebChat traffic', () => {
+  assert.match(inbox, /title="客户会话台"/)
+  assert.match(inbox, /data-testid="agent-console-strip"/)
+  assert.match(inbox, /aria-label="客服会话实时工作条"/)
+  assert.match(inbox, /visibleCount=\{rows\.length\}/)
+  assert.match(inbox, /realtimeConnected=\{realtime\.connected\}/)
   assert.match(inbox, /channel: 'webchat'/)
-  for (const state of ['claim', 'release', 'resolve', 'reply_sent']) {
-    assert.match(inbox, new RegExp(`key: '${state}'`))
-  }
   assert.doesNotMatch(inbox, /api\.whatsappLiteConversations/)
   assert.doesNotMatch(inbox, /whatsappNativeQr\(.*\)\.then/)
 })

@@ -68,6 +68,7 @@ Thumbs.db
 # Build Artifacts
 frontend_dist/
 webapp/dist/
+webapp/test-results/
 backend/uploads/
 
 # Backup & Temp

@@ -92,39 +92,24 @@ const QUICK_REPLIES = [
   '请提供运单号或订单号，方便我们继续查询。',
   '该事项需要人工核实，我会继续为您跟进。',
 ]
-const CHANNEL_ORDER: AgentInboxChannel[] = ['webchat', 'whatsapp', 'webcall', 'email']
-const CHANNEL_META: Record<AgentInboxChannel, { label: string; status: string; detail: string; tone: BadgeTone }> = {
+const CHANNEL_META: Record<AgentInboxChannel, { label: string; tone: BadgeTone }> = {
   webchat: {
     label: 'WebChat',
-    status: '生产接入',
-    detail: '当前页面真实承载队列、接管、回复、WebSocket 和审计。',
     tone: 'success',
   },
   whatsapp: {
     label: 'WhatsApp',
-    status: '接入中',
-    detail: '复用 native sidecar、账号绑定和同一套 Agent 状态模型。',
     tone: 'warning',
   },
   webcall: {
     label: 'WebCall',
-    status: '证据联动',
-    detail: '呼入、接听和通话证据已经挂入当前工单上下文。',
     tone: 'default',
   },
   email: {
     label: 'Email',
-    status: '后续归并',
-    detail: '将沿用同一套客户身份、工单证据和审计模型。',
     tone: 'default',
   },
 }
-const UNIFIED_STATE_MODEL = [
-  { key: 'claim', label: '接管', detail: '客服取得回复权，AI 自动让位并写入审计。' },
-  { key: 'release', label: '释放', detail: '会话回到队列，其他客服可以继续处理。' },
-  { key: 'resolve', label: '完结', detail: '工单进入关闭或已解决状态，后续只保留追溯证据。' },
-  { key: 'reply_sent', label: '回复已发送', detail: '所有对客通道统一记录正文、操作者和发送结果。' },
-] as const
 const EMOJIS = ['🙂', '👍', '🙏', '✅', '📦', '🚚', '⏳', '📍']
 const AI_ACTIVE_STATUSES = new Set(['queued', 'processing', 'bridge_calling', 'fallback_generating'])
 const TERMINAL_TICKET_STATUSES = new Set(['closed', 'resolved', 'canceled', 'cancelled'])
@@ -296,51 +281,48 @@ function ChannelBadge({ channel }: { channel: AgentInboxChannel }) {
   return <Badge tone={meta.tone}>{meta.label}</Badge>
 }
 
-function UnifiedInboxFoundation() {
+function AgentConsoleStrip({
+  view,
+  visibleCount,
+  totalCount,
+  closedCount,
+  realtimeConnected,
+  selectedRow,
+}: {
+  view: InboxView
+  visibleCount: number
+  totalCount: number
+  closedCount: number
+  realtimeConnected: boolean
+  selectedRow: InboxRow | null
+}) {
+  const selectedTicket = selectedRow ? shortText(selectedRow.ticketNo || `#${selectedRow.ticketId}`) : '未选择'
   return (
-    <section className="v5-unified-foundation" data-testid="unified-agent-inbox-shell" aria-label="Unified Agent Inbox foundation">
-      <div className="v5-unified-card" data-testid="unified-agent-inbox-channel-map">
-        <div className="v5-unified-card-head">
-          <div>
-            <h3>Channel Map</h3>
-            <p>先把已验证的 WebChat 稳住，再把 WhatsApp、WebCall、Email 收敛到同一张 Agent Inbox。</p>
-          </div>
-          <Badge tone="success">WebChat live</Badge>
+    <section className="v5-agent-strip" data-testid="agent-console-strip" aria-label="客服会话实时工作条">
+      <div className="v5-agent-strip-head">
+        <div>
+          <span>客服会话</span>
+          <strong>{VIEW_LABELS[view]}</strong>
         </div>
-        <div className="v5-channel-grid">
-          {CHANNEL_ORDER.map((channel) => {
-            const meta = CHANNEL_META[channel]
-            return (
-              <div className="v5-channel-tile" key={channel} data-channel={channel}>
-                <div className="v5-channel-title">
-                  <strong>{meta.label}</strong>
-                  <Badge tone={meta.tone}>{meta.status}</Badge>
-                </div>
-                <p>{meta.detail}</p>
-              </div>
-            )
-          })}
+        <Badge tone={realtimeConnected ? 'success' : 'warning'}>{realtimeConnected ? '实时连接' : '轮询兜底'}</Badge>
+      </div>
+      <div className="v5-agent-strip-metrics" aria-label="当前 WebChat 队列指标">
+        <div>
+          <span>当前队列</span>
+          <strong>{visibleCount}</strong>
+        </div>
+        <div>
+          <span>全部会话</span>
+          <strong>{totalCount}</strong>
+        </div>
+        <div>
+          <span>已关闭</span>
+          <strong>{closedCount}</strong>
         </div>
       </div>
-      <div className="v5-unified-card" data-testid="unified-agent-inbox-state-model">
-        <div className="v5-unified-card-head">
-          <div>
-            <h3>State Model</h3>
-            <p>把渠道差异收进适配层，前台只暴露客服真正需要处理的状态动作。</p>
-          </div>
-          <Badge>Agent contract</Badge>
-        </div>
-        <div className="v5-state-model-list">
-          {UNIFIED_STATE_MODEL.map((state) => (
-            <div className="v5-state-model-item" key={state.key}>
-              <code>{state.key}</code>
-              <div>
-                <strong>{state.label}</strong>
-                <span>{state.detail}</span>
-              </div>
-            </div>
-          ))}
-        </div>
+      <div className="v5-agent-strip-focus">
+        <span>当前处理</span>
+        <strong>{selectedRow ? `${shortText(selectedRow.visitorLabel)} · ${selectedTicket}` : selectedTicket}</strong>
       </div>
     </section>
   )
@@ -433,7 +415,7 @@ function InboxHeader({
 }) {
   return (
     <Tabs.Root value={view} onValueChange={(next) => setView(next as InboxView)}>
-      <Tabs.List className="v5-tabs-list" aria-label="Unified Agent Inbox views">
+      <Tabs.List className="v5-tabs-list" aria-label="客户会话视图">
         {(['requested', 'mine', 'ai_active', 'all', 'closed'] as InboxView[]).map((item) => (
           <Tabs.Trigger className="v5-tab" key={item} value={item}>
             {VIEW_LABELS[item]} <span>{typeof counts[item] === 'number' ? counts[item] : '—'}</span>
@@ -471,14 +453,14 @@ function UnifiedInbox({
 }) {
   return (
     <Card className="v5-panel v5-inbox-panel">
-      <CardHeader title="会话队列" subtitle="WebChat 已上线；后续渠道沿用同一套优先级和接管模型。" />
+      <CardHeader title="会话队列" subtitle="按待接入、我的会话和 AI 监控处理当前 WebChat 客户。" />
       <CardBody>
         <InboxHeader view={view} setView={setView} counts={counts} />
         <div className="v5-search-row">
-          <input className="v5-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索客户 / 工单号 / 消息" />
+          <input className="v5-search" aria-label="搜索客户、工单号或消息" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索客户、工单号或消息..." />
           <Tooltip.Provider delayDuration={150}>
             <Tooltip.Root>
-              <Tooltip.Trigger asChild><button type="button" className="v5-icon-button">⌕</button></Tooltip.Trigger>
+              <Tooltip.Trigger asChild><button type="button" className="v5-icon-button" aria-label="查看搜索范围">⌕</button></Tooltip.Trigger>
               <Tooltip.Portal><Tooltip.Content className="v5-tooltip">当前视图会在本页按客户、工单号和最近消息筛选。</Tooltip.Content></Tooltip.Portal>
             </Tooltip.Root>
           </Tooltip.Provider>
@@ -488,7 +470,7 @@ function UnifiedInbox({
             <button type="button" key={key} className="v5-filter-chip" data-active={activeFilters.has(key)} onClick={() => toggleFilter(key)}>{FILTER_LABELS[key]}</button>
           ))}
         </div>
-        <div className="v5-inbox-list" role="listbox" aria-label="Unified Agent Inbox conversations">
+        <div className="v5-inbox-list" role="listbox" aria-label="客户会话列表">
           {rows.map((row) => (
             <button
               type="button"
@@ -1289,11 +1271,18 @@ export function WebchatInboxV5Page() {
     <AppShell>
       <PageHeader
         eyebrow="Agent Operations"
-        title="Unified Agent Inbox"
-        description="WebChat 已接入生产 API；WhatsApp、WebCall、Email 将复用同一套接管、释放、回复和审计状态模型。"
+        title="客户会话台"
+        description="处理 WebChat Demo 客户来信、人工接管、证据核对和安全回复。"
         actions={<div className="button-row"><Button variant="secondary" onClick={() => void refreshWebchatState()}>刷新</Button>{realtimeLabel}</div>}
       />
-      <UnifiedInboxFoundation />
+      <AgentConsoleStrip
+        view={view}
+        visibleCount={rows.length}
+        totalCount={counts.all ?? 0}
+        closedCount={counts.closed ?? 0}
+        realtimeConnected={realtime.connected}
+        selectedRow={selectedRow}
+      />
       <div className="v5-shell">
         <UnifiedInbox
           rows={rows}

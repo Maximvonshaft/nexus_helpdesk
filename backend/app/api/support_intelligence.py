@@ -14,7 +14,13 @@ from ..services.permissions import (
     CAP_TICKET_READ,
     resolve_capabilities,
 )
-from ..services.support_intelligence_service import build_support_intelligence_config
+from ..services.support_intelligence_service import (
+    build_support_intelligence_config,
+    get_status_dictionary_bundle,
+    publish_status_dictionary as publish_status_dictionary_bundle,
+    save_status_dictionary_draft as save_status_dictionary_draft_bundle,
+)
+from ..unit_of_work import managed_session
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/support-intelligence", tags=["support-intelligence"])
@@ -88,25 +94,21 @@ def _redact_operator_response(config: dict) -> dict:
     return config
 
 
-def _bridge_status_dictionary(payload: dict) -> dict:
-    raise HTTPException(
-        status_code=status.HTTP_410_GONE,
-        detail="legacy_status_dictionary_runtime_bridge_retired",
-    )
-
-
-def _status_write_payload(request: StatusDictionaryWriteRequest, current_user) -> dict:
+def _status_entries_from_request(request: StatusDictionaryWriteRequest, *, require_entries: bool) -> list[dict] | None:
     entries = []
     if request.entry is not None:
         entries.append(request.entry.model_dump())
     if request.entries:
         entries.extend(entry.model_dump() for entry in request.entries)
     if not entries:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="status_dictionary_entry_required")
-    return {
-        "entries": entries,
-        "operator_id": getattr(current_user, "username", None) or str(getattr(current_user, "id", "")),
-    }
+        if require_entries:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="status_dictionary_entry_required")
+        return None
+    return entries
+
+
+def _status_dictionary_error(exc: ValueError) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 @router.get("/config")
@@ -124,7 +126,7 @@ def get_status_dictionary(
     current_user=Depends(get_current_user),
 ):
     _ensure_can_read_support_intelligence(current_user, db)
-    return _bridge_status_dictionary({"operation": "status-dictionary-list"})
+    return get_status_dictionary_bundle(db)
 
 
 @router.post("/status-dictionary/draft")
@@ -134,10 +136,12 @@ def save_status_dictionary_draft(
     current_user=Depends(get_current_user),
 ):
     _ensure_can_manage_support_intelligence(current_user, db)
-    return _bridge_status_dictionary({
-        "operation": "status-dictionary-save-draft",
-        **_status_write_payload(request, current_user),
-    })
+    entries = _status_entries_from_request(request, require_entries=True)
+    try:
+        with managed_session(db):
+            return save_status_dictionary_draft_bundle(db, entries or [], current_user)
+    except ValueError as exc:
+        raise _status_dictionary_error(exc) from exc
 
 
 @router.post("/status-dictionary/publish")
@@ -147,7 +151,9 @@ def publish_status_dictionary(
     current_user=Depends(get_current_user),
 ):
     _ensure_can_publish_support_intelligence(current_user, db)
-    return _bridge_status_dictionary({
-        "operation": "status-dictionary-publish",
-        **_status_write_payload(request, current_user),
-    })
+    entries = _status_entries_from_request(request, require_entries=False)
+    try:
+        with managed_session(db):
+            return publish_status_dictionary_bundle(db, entries, current_user)
+    except ValueError as exc:
+        raise _status_dictionary_error(exc) from exc

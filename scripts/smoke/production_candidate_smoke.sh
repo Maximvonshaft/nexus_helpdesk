@@ -65,9 +65,17 @@ if errors:
     raise SystemExit("\n".join(errors))
 PY
 
-grep -q 'data-live-voice-mode="edge-card"' "$OUT_DIR/webchat_demo.html"
-grep -q 'data-live-voice-ws-path="/webchat/live/ws"' "$OUT_DIR/webchat_demo.html"
+grep -q 'data-live-voice-mode="off"' "$OUT_DIR/webchat_demo.html"
+if grep -q 'data-live-voice-mode="edge-card"' "$OUT_DIR/webchat_demo.html"; then
+  echo "webchat demo should not force edge-card voice while runtime-config is disabled" >&2
+  exit 2
+fi
+if grep -q "Hi, I'm Speedy" "$OUT_DIR/webchat_demo.html"; then
+  echo "webchat demo contains retired static welcome bubble" >&2
+  exit 2
+fi
 grep -q 'data-live-voice-mode' "$OUT_DIR/voice-entry.js"
+grep -q '/api/webchat/voice/runtime-config' "$OUT_DIR/voice-entry.js"
 grep -q '/webchat/live/ws' "$OUT_DIR/voice-entry.js"
 if grep -Eq '47\.87\.143\.41|console\.log|\[Speedaf Voice\]' "$OUT_DIR/voice-entry.js"; then
   echo "voice-entry contains production-only or debug markers" >&2

@@ -127,7 +127,7 @@ Required pass conditions:
 - `/readyz.status == ready`.
 - `/healthz` and `/readyz` expose complete release metadata.
 - `image_tag` and `git_sha` match the intended release.
-- Demo page contains `data-live-voice-mode="edge-card"`.
+- Demo page contains `data-live-voice-mode="off"` and does not expose the retired static welcome bubble.
 - `voice-entry.js` does not contain production-only upstream/debug markers.
 - CORS allows approved origins and rejects a blocked origin.
 

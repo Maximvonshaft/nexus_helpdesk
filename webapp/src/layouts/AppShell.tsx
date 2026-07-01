@@ -64,12 +64,11 @@ const nav: NavItem[] = [
 ]
 
 const navGroups: NavGroup[] = [
-  { label: 'Operations', items: ['/', '/workspace', '/webchat', '/email', '/webcall', '/control-tower', '/qa-training'] },
-  { label: 'Channels', items: ['/accounts', '/outbound-email', '/provider-credentials'] },
-  { label: 'Knowledge', items: ['/knowledge-studio', '/bulletins'] },
-  { label: 'AI Governance', items: ['/ai-control', '/persona-builder'] },
-  { label: 'Runtime', items: ['/runtime', '/control-plane', '/webcall-ai-demo'] },
-  { label: 'Admin', items: ['/users', '/security'] },
+  { label: '客服处理', items: ['/', '/webchat', '/workspace', '/webcall', '/email'] },
+  { label: '知识与质检', items: ['/bulletins', '/knowledge-studio', '/qa-training'] },
+  { label: '渠道管理', items: ['/accounts', '/outbound-email', '/provider-credentials'] },
+  { label: '运营治理', items: ['/control-tower', '/ai-control', '/persona-builder'] },
+  { label: '系统运维', items: ['/runtime', '/control-plane', '/webcall-ai-demo', '/users', '/security'] },
 ]
 
 const legacyNavigationAliases = ['今日总览', '日常处理', '渠道与授权', '治理与运维', '处理工单', 'WebChat 收件箱', 'WebCall 工作台', '客户 / 运单查询']
@@ -90,15 +89,15 @@ function routeRequirementForPath(pathname: string): AccessRequirement | undefine
 function workflowContextForPath(pathname: string, runtimeNeedsAttention: boolean, runtimeAttentionCount: number): WorkflowContext {
   if (pathname.startsWith('/webchat')) {
     return {
-      eyebrow: 'Unified Agent Inbox',
-      title: 'WebChat / WhatsApp 会话模型',
-      description: '围绕接管、释放、AI 监控、未读和安全门组织对客会话。',
+      eyebrow: 'Agent Console',
+      title: '客户会话台',
+      description: '围绕 WebChat 客户来信、人工接管、事实证据和安全回复组织当班处理。',
       signals: [
-        { label: '队列', value: 'requested / mine / AI active', tone: 'default' },
-        { label: '证据', value: 'thread + action audit', tone: 'success' },
-        { label: '安全', value: 'reply safety gate', tone: 'warning' },
+        { label: '队列', value: '待接入 / 我的 / AI 监控', tone: 'default' },
+        { label: '证据', value: '线程 + 操作审计', tone: 'success' },
+        { label: '安全', value: '回复复核门', tone: 'warning' },
       ],
-      nextAction: '下一阶段把 WhatsApp conversation state 接入同一收件箱模型。',
+      nextAction: '先处理等待人工的客户，再回复已核对事实的会话。',
     }
   }
   if (pathname.startsWith('/workspace')) {
@@ -111,7 +110,7 @@ function workflowContextForPath(pathname: string, runtimeNeedsAttention: boolean
         { label: '记忆', value: 'customer context target', tone: 'default' },
         { label: '动作', value: 'safe next action', tone: 'default' },
       ],
-      nextAction: '后续把客户记忆面板和 AI 建议面板收敛到右侧上下文区。',
+      nextAction: '先核对工单和运单证据，再记录对客回复或内部备注。',
     }
   }
   if (pathname.startsWith('/knowledge-studio')) {
@@ -124,7 +123,7 @@ function workflowContextForPath(pathname: string, runtimeNeedsAttention: boolean
         { label: 'Ontology', value: 'Ontology / Status Dictionary', tone: 'default' },
         { label: '质量', value: 'conflict + golden test', tone: 'warning' },
       ],
-      nextAction: '后续新增 scope、index、shadow 结果的显式诊断视图。',
+      nextAction: '先用检索测试和 golden test 确认发布内容不会污染客服回复。',
     }
   }
   if (pathname.startsWith('/persona-builder') || pathname.startsWith('/ai-control')) {
@@ -137,7 +136,7 @@ function workflowContextForPath(pathname: string, runtimeNeedsAttention: boolean
         { label: '验证', value: 'runtime evidence', tone: 'default' },
         { label: '发布', value: 'review / publish / rollback', tone: 'default' },
       ],
-      nextAction: '后续把 JSON 高级模式继续保留，但默认展示业务表单和测试证据。',
+      nextAction: '默认使用业务表单和测试证据，只有高级配置才进入 JSON 模式。',
     }
   }
   if (pathname.startsWith('/accounts') || pathname.startsWith('/outbound-email') || pathname.startsWith('/provider-credentials')) {
@@ -150,7 +149,7 @@ function workflowContextForPath(pathname: string, runtimeNeedsAttention: boolean
         { label: 'Email', value: 'SMTP readiness', tone: 'default' },
         { label: '授权', value: 'provider credentials', tone: 'warning' },
       ],
-      nextAction: '后续把 WhatsApp QR 绑定状态和 smoke 结果纳入同一个渠道面板。',
+      nextAction: '先确认渠道账号 readiness，再开放给客服处理入口。',
     }
   }
   if (pathname.startsWith('/runtime') || pathname.startsWith('/control-plane')) {
@@ -163,7 +162,7 @@ function workflowContextForPath(pathname: string, runtimeNeedsAttention: boolean
         { label: '恢复', value: 'requeue audited', tone: 'default' },
         { label: '发布', value: 'healthz / readyz target', tone: 'warning' },
       ],
-      nextAction: '后续把 candidate smoke 和 last known-good release 放进运维观察页。',
+      nextAction: '先处理 dead job 和 release readiness，再执行发布或回滚动作。',
     }
   }
   return {
@@ -175,7 +174,7 @@ function workflowContextForPath(pathname: string, runtimeNeedsAttention: boolean
       { label: 'Govern', value: 'AI + knowledge + ontology', tone: 'default' },
       { label: 'Observe', value: 'runtime + release', tone: runtimeNeedsAttention ? 'danger' : 'success' },
     ],
-    nextAction: '优先从 Unified Agent Inbox 和 Case Workspace 继续落地。',
+    nextAction: '优先处理客户会话和当班工单，主管治理入口保持分组收起。',
   }
 }
 
@@ -203,7 +202,7 @@ function Sidebar({
       <div className="brand">
         <div className="brand-kicker">客服协同中心</div>
         <h1>客服工作台</h1>
-        <div className="subtle">按真实客服工作流组织：先处理渠道，再跟进工单，再查询客户与运单。</div>
+        <div className="subtle">先处理客户会话，再核对工单与运单，主管配置保持分组收起。</div>
       </div>
       <nav className="nav" data-testid="operator-primary-navigation" aria-label="客服运营后台主导航">
         {navGroups.map((group) => {

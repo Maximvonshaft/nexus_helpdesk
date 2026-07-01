@@ -50,18 +50,17 @@ The showcase page must not display local tracking answers, local bot answers, fa
 
 ## Voice entry
 
-The showcase loads the customer-visible voice entry script in explicit edge-card mode:
+The showcase loads the customer-visible voice entry script in runtime-gated mode:
 
 ```text
-/webchat/voice-entry.js?v=nexus-live-voice-card-20260629
-data-live-voice-mode="edge-card"
-data-live-voice-ws-path="/webchat/live/ws"
+/webchat/voice-entry.js?v=nexus-runtime-gated-voice-20260702
+data-live-voice-mode="off"
 ```
 
-Default embeds still use backend-managed WebCall and remain controlled by the backend runtime config endpoint:
+The browser should only show a voice entry when the backend runtime config enables it:
 
 ```text
 GET /api/webchat/voice/runtime-config
 ```
 
-For the demo page, edge-card mode is a same-origin WebSocket client for `/webchat/live/ws`. The browser never receives upstream tokens or external upstream hosts; those belong in the nginx edge template and runtime secrets.
+The retired edge-card mode remains in `voice-entry.js` as gated code, but the demo page must not force it while `/api/webchat/voice/runtime-config` is disabled or mock-backed. The browser never receives upstream tokens or external upstream hosts; those belong in runtime secrets.
