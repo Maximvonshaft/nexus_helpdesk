@@ -164,6 +164,16 @@
           schedulePublicPoll(true);
           return;
         }
+        if (data && data.__no_customer_visible_reply) {
+          rememberPublicSession(data);
+          if (data.handoff_required) {
+            handoffRequested = true;
+            setQuickButtonsDisabled(true);
+            if (input) input.placeholder = 'Human review requested. You can continue typing here.';
+            schedulePublicPoll(true);
+          }
+          return;
+        }
         const reply = data && data.reply ? String(data.reply).trim() : '';
         const debugContext = data && data.__debug_context ? data.__debug_context : makeDebugContext({ error_code: 'render_error' });
         try {
@@ -244,6 +254,20 @@
     return code === 'api_error_code' || code === 'api_not_ok' || code === 'empty_reply' || backendCode === 'provider_unavailable';
   }
 
+  function isNoCustomerVisibleReply(data, backendCode) {
+    if (!data || typeof data !== 'object') return false;
+    const reply = data.reply ? String(data.reply).trim() : '';
+    if (reply) return false;
+    const source = String(data.reply_source || '').toLowerCase();
+    const fallbackMode = String(data.fallback_mode || '').toLowerCase();
+    const code = String(backendCode || data.error_code || '').toLowerCase();
+    return fallbackMode === 'no_customer_visible_reply'
+      || source === 'provider_unavailable'
+      || source === 'server_knowledge_no_evidence'
+      || code === 'knowledge_no_evidence'
+      || code === 'provider_unavailable';
+  }
+
   function submitDebugPayload(data, debugContext) {
     if (data && typeof data === 'object') {
       data.__debug_context = debugContext;
@@ -286,10 +310,16 @@
           const httpCode = res.status === 403 ? 'origin_forbidden' : 'http_error';
           throw classifiedError(httpCode, 'http_' + res.status, debugContext);
         }
+        if (isNoCustomerVisibleReply(data, apiCode)) {
+          return submitDebugPayload(Object.assign({}, data, { __no_customer_visible_reply: true }), debugContext);
+        }
         if (!data || data.ok !== true) {
           throw classifiedError(apiCode ? 'api_error_code' : 'api_not_ok', apiCode || 'api_not_ok', debugContext);
         }
         const reply = data.reply ? String(data.reply).trim() : '';
+        if (!reply && isNoCustomerVisibleReply(data, apiCode)) {
+          return submitDebugPayload(Object.assign({}, data, { __no_customer_visible_reply: true }), debugContext);
+        }
         if (!reply) throw classifiedError('empty_reply', 'empty_reply', debugContext);
         return submitDebugPayload(data, debugContext);
       });

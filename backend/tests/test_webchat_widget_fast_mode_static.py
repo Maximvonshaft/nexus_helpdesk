@@ -114,6 +114,10 @@ def test_demo_fast_reply_uses_differentiated_error_handling():
     assert "render_error" in source
     assert "userVisibleErrorMessage" in source
     assert "shouldSuppressBotError" in source
+    assert "isNoCustomerVisibleReply" in source
+    assert "__no_customer_visible_reply" in source
+    assert "source === 'provider_unavailable'" in source
+    assert "fallbackMode === 'no_customer_visible_reply'" in source
     assert "if (!shouldSuppressBotError(error))" not in source
     assert "appendMessage('bot', userVisibleErrorMessage(error))" not in source
     assert "classifiedError" in source
