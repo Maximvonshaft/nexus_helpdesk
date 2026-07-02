@@ -76,7 +76,7 @@ TICKET_ID=$(printf '%s' "$ADMIN_LIST" | python3 -c "import json,sys; cid='$CONVE
 echo "PASS ticket ${TICKET_ID}"
 
 echo "== 5) admin force takeover before replying =="
-TAKEOVER_CODE=$(curl -sS -o /tmp/roundb_takeover.json -w '%{http_code}' -X POST "${BASE_URL}/api/webchat/admin/tickets/${TICKET_ID}/force-takeover" "${AUTH_HEADERS[@]}" -H 'Content-Type: application/json' --data '{"reason":"round_b_smoke_takeover"}')
+TAKEOVER_CODE=$(curl -sS -o /tmp/roundb_takeover.json -w '%{http_code}' -X POST "${BASE_URL}/api/webchat/admin/tickets/${TICKET_ID}/force-takeover" "${AUTH_HEADERS[@]}" -H 'Content-Type: application/json' --data '{"reason_code":"round_b_smoke_takeover"}')
 [[ "$TAKEOVER_CODE" == "200" ]]
 echo "PASS force takeover"
 
