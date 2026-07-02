@@ -75,17 +75,22 @@ ADMIN_LIST=$(curl -fsS "${BASE_URL}/api/webchat/admin/conversations" "${AUTH_HEA
 TICKET_ID=$(printf '%s' "$ADMIN_LIST" | python3 -c "import json,sys; cid='$CONVERSATION_ID'; rows=json.load(sys.stdin); print(next(x['ticket_id'] for x in rows if x['conversation_id']==cid))")
 echo "PASS ticket ${TICKET_ID}"
 
-echo "== 5) safety gate blocks secret-like reply =="
+echo "== 5) admin force takeover before replying =="
+TAKEOVER_CODE=$(curl -sS -o /tmp/roundb_takeover.json -w '%{http_code}' -X POST "${BASE_URL}/api/webchat/admin/tickets/${TICKET_ID}/force-takeover" "${AUTH_HEADERS[@]}" -H 'Content-Type: application/json' --data '{"reason":"round_b_smoke_takeover"}')
+[[ "$TAKEOVER_CODE" == "200" ]]
+echo "PASS force takeover"
+
+echo "== 6) safety gate blocks secret-like reply =="
 BLOCK_CODE=$(curl -sS -o /tmp/roundb_block.json -w '%{http_code}' -X POST "${BASE_URL}/api/webchat/admin/tickets/${TICKET_ID}/reply" "${AUTH_HEADERS[@]}" -H 'Content-Type: application/json' --data '{"body":"SECRET_KEY leaked in stack trace token password"}')
 [[ "$BLOCK_CODE" == "400" ]]
 echo "PASS safety block"
 
-echo "== 6) admin sends safe reply =="
+echo "== 7) admin sends safe reply =="
 REPLY_BODY='{"body":"We have received your request and will check it shortly."}'
 curl -fsS -X POST "${BASE_URL}/api/webchat/admin/tickets/${TICKET_ID}/reply" "${AUTH_HEADERS[@]}" -H 'Content-Type: application/json' --data "$REPLY_BODY" >/dev/null
 echo "PASS admin reply"
 
-echo "== 7) visitor sees agent reply =="
+echo "== 8) visitor sees agent reply =="
 POLL_AFTER=$(curl -fsS "${BASE_URL}/api/webchat/conversations/${CONVERSATION_ID}/messages" "${VISITOR_HEADERS[@]}")
 printf '%s' "$POLL_AFTER" | grep -q "We have received your request"
 echo "PASS visitor sees reply"
