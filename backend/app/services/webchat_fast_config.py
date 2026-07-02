@@ -231,6 +231,7 @@ def _validate_private_runtime_url(value: str, *, setting_name: str) -> None:
 @lru_cache(maxsize=1)
 def get_webchat_fast_settings() -> WebchatFastSettings:
     max_timeout_ms = _env_int("WEBCHAT_FAST_AI_MAX_TIMEOUT_MS", 30000, minimum=500, maximum=30000)
+    app_env = os.getenv("APP_ENV", "development").strip().lower() or "development"
     settings = WebchatFastSettings(
         enabled=_env_bool("WEBCHAT_FAST_AI_ENABLED", True),
         provider=os.getenv("WEBCHAT_FAST_AI_PROVIDER", "provider_runtime").strip().lower() or "provider_runtime",
@@ -246,13 +247,16 @@ def get_webchat_fast_settings() -> WebchatFastSettings:
         rate_limit_max_requests=_env_int("WEBCHAT_FAST_RATE_LIMIT_MAX_REQUESTS", 30, minimum=1, maximum=300),
         tracking_dedupe_scope=os.getenv("WEBCHAT_FAST_TRACKING_DEDUPE_SCOPE", "tenant_channel_customer").strip().lower() or "tenant_channel_customer",
         hard_fail_on_non_ai_reply=_env_bool("WEBCHAT_FAST_HARD_FAIL_ON_NON_AI_REPLY", True),
-        customer_visible_fallback_enabled=_env_bool("WEBCHAT_FAST_CUSTOMER_VISIBLE_FALLBACK_ENABLED", True),
+        customer_visible_fallback_enabled=_env_bool(
+            "WEBCHAT_FAST_CUSTOMER_VISIBLE_FALLBACK_ENABLED",
+            False if app_env == "production" else True,
+        ),
         stream_enabled=_env_bool("WEBCHAT_FAST_STREAM_ENABLED", False),
         stream_rollout_percent=_env_int("WEBCHAT_FAST_STREAM_ROLLOUT_PERCENT", 0, minimum=0, maximum=100),
         stream_require_accept=_env_bool("WEBCHAT_FAST_STREAM_REQUIRE_ACCEPT", True),
         trusted_proxy_cidrs=_csv("TRUSTED_PROXY_CIDRS", "127.0.0.1/32,172.16.0.0/12"),
         rate_limit_trust_x_forwarded_for=_env_bool("WEBCHAT_RATE_LIMIT_TRUST_X_FORWARDED_FOR", True),
-        app_env=os.getenv("APP_ENV", "development").strip().lower() or "development",
+        app_env=app_env,
         codex_auth_token_file=os.getenv("CODEX_AUTH_TOKEN_FILE", "").strip() or None,
         codex_auth_token=os.getenv("CODEX_AUTH_TOKEN", "").strip() or None,
         codex_app_server_bridge_url=os.getenv("CODEX_APP_SERVER_BRIDGE_URL", "").strip() or None,

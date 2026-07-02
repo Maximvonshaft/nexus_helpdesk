@@ -55,7 +55,8 @@ def test_widget_tracks_stream_bubble_states_and_partial_failure_copy():
     assert "setBubbleState(aiBubble, 'complete')" in source
     assert "setBubbleState(aiBubble, 'failed_incomplete')" in source
     assert "setBubbleState(aiBubble, 'replayed_complete')" in source
-    assert "This reply was interrupted. Please retry." in source
+    assert "This reply was interrupted. Please retry." not in source
+    assert "aiText ? aiText + '\\n\\n" not in source
     assert "reply_delta" in source
     assert "replay" in source
     assert "final" in source
@@ -113,7 +114,8 @@ def test_demo_fast_reply_uses_differentiated_error_handling():
     assert "render_error" in source
     assert "userVisibleErrorMessage" in source
     assert "shouldSuppressBotError" in source
-    assert "if (!shouldSuppressBotError(error))" in source
+    assert "if (!shouldSuppressBotError(error))" not in source
+    assert "appendMessage('bot', userVisibleErrorMessage(error))" not in source
     assert "classifiedError" in source
     assert "reportDemoError('webchat_demo_api_error'" in source
     assert "reportDemoError('webchat_demo_render_error'" in source

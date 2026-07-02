@@ -260,18 +260,27 @@ def _knowledge_no_evidence_payload(*, runtime_context: dict[str, Any] | None) ->
         "injected_knowledge": [],
     }
     return {
-        "ok": True,
+        "ok": False,
         "ai_generated": False,
         "reply_source": "server_knowledge_no_evidence",
-        "reply": "I do not have verified knowledge for this request yet. A human teammate can review it and help you further.",
+        "reply": None,
         "intent": "handoff",
         "tracking_number": None,
         "handoff_required": True,
         "handoff_reason": trace.get("no_answer_reason") or "knowledge_no_evidence",
         "ticket_creation_queued": False,
         "elapsed_ms": 0,
+        "error_code": "knowledge_no_evidence",
+        "retry_after_ms": 1500,
         "evidence_trace": trace,
-        "fallback_mode": "emergency_compatibility_only",
+        "fallback_mode": "no_customer_visible_reply",
+        "ai_decision_trace": {
+            "schema_version": "webchat_ai_decision_v1",
+            "mode": "knowledge_no_evidence_no_customer_reply",
+            "reply_source": "server_knowledge_no_evidence",
+            "policy_gate": {"ok": True, "violations": [], "warnings": ["knowledge evidence missing; no customer-visible fallback reply emitted"], "checked_tools": []},
+            "raw_tracking_number_exposed": False,
+        },
     }
 
 
@@ -632,7 +641,7 @@ def _decision_for_execution(
         )
     )
     return AIDecision(
-        customer_reply=result.reply or "A human teammate can review this request.",
+        customer_reply=result.reply or "__NO_CUSTOMER_VISIBLE_REPLY__",
         intent=result.intent or ("handoff_request" if result.handoff_required else "other"),
         confidence=0.7 if result.ai_generated else 0.0,
         risk_level="medium" if result.handoff_required or tracking_number else "low",

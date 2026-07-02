@@ -453,12 +453,12 @@
     function markReplyInterrupted() {
       hideTyping();
       updateMessage(bubble, body, 'visitor');
-      aiBubble = ensureAIBubble();
-      aiText = aiText ? aiText + '\n\nThis reply was interrupted. Please retry.' : 'This reply was interrupted. Please retry.';
-      updateMessage(aiBubble, aiText, 'agent', 'failed');
-      setBubbleState(aiBubble, 'failed_incomplete');
+      if (aiBubble && aiText) {
+        updateMessage(aiBubble, aiText, 'agent', 'failed');
+        setBubbleState(aiBubble, 'failed_incomplete');
+      }
       setStatus('Connection issue. Please try again.');
-      appendRetry(aiBubble, body, function (retryBody) { sendFastMessage(retryBody, bubble, cmid); });
+      appendRetry(aiBubble || bubble, body, function (retryBody) { sendFastMessage(retryBody, bubble, cmid); });
     }
 
     function fallbackToNonStream() {

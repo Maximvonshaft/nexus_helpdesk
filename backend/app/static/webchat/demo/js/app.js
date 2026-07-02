@@ -184,9 +184,6 @@
       .catch(function (error) {
         hideTyping();
         reportDemoError('webchat_demo_api_error', error, error && error.debug_context);
-        if (!shouldSuppressBotError(error)) {
-          appendMessage('bot', userVisibleErrorMessage(error));
-        }
       })
       .finally(function () {
         busy = false;
