@@ -1,6 +1,17 @@
 from __future__ import annotations
 
+import os
 from datetime import timedelta
+from pathlib import Path
+from tempfile import gettempdir
+
+if "DATABASE_URL" not in os.environ:
+    _db_path = Path(gettempdir()) / f"webchat_ai_turn_runtime_tests_{os.getpid()}.db"
+    try:
+        _db_path.unlink()
+    except FileNotFoundError:
+        pass
+    os.environ["DATABASE_URL"] = f"sqlite:///{_db_path.as_posix()}"
 
 from fastapi.testclient import TestClient
 
@@ -10,7 +21,7 @@ from app.main import app
 from app.models import BackgroundJob, User
 from app.services.background_jobs import WEBCHAT_AI_REPLY_JOB, dispatch_pending_background_jobs
 from app.utils.time import utc_now
-from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatMessage  # noqa: F401
+from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatHandoffRequest, WebchatMessage  # noqa: F401
 
 
 def _ensure_schema_and_user() -> None:
@@ -45,6 +56,46 @@ def _send(client: TestClient, conversation_id: str, visitor_token: str, body: st
     )
     assert res.status_code == 200, res.text
     return res.json()
+
+
+def _run_turn_job(ai_turn_id: int) -> None:
+    db = SessionLocal()
+    try:
+        job = db.query(BackgroundJob).filter(BackgroundJob.dedupe_key == f'webchat-ai-turn:{ai_turn_id}').first()
+        assert job is not None
+        job.next_run_at = None
+        db.commit()
+        processed = dispatch_pending_background_jobs(db, worker_id='turn-runtime-worker')
+        assert any(item.job_type == WEBCHAT_AI_REPLY_JOB for item in processed)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _assert_handoff_without_agent_reply(client: TestClient, conversation_id: str, visitor_token: str, ai_turn_id: int, reason_code: str) -> None:
+    polled = client.get(
+        f'/api/webchat/conversations/{conversation_id}/messages',
+        headers={'X-Webchat-Visitor-Token': visitor_token},
+    )
+    assert polled.status_code == 200, polled.text
+    payload = polled.json()
+    assert payload['ai_pending'] is False
+    assert payload['ai_suspended'] is True
+    assert payload['handoff_status'] == 'requested'
+    agent_messages = [msg for msg in payload['messages'] if msg['author_label'] == 'AI Assistant']
+    assert agent_messages == []
+
+    db = SessionLocal()
+    try:
+        turn = db.query(WebchatAITurn).filter(WebchatAITurn.id == ai_turn_id).first()
+        assert turn is not None
+        assert turn.status == 'cancelled'
+        assert turn.reply_message_id is None
+        assert db.query(WebchatMessage).filter(WebchatMessage.ai_turn_id == ai_turn_id, WebchatMessage.direction == 'agent').count() == 0
+        handoff = db.query(WebchatHandoffRequest).filter(WebchatHandoffRequest.conversation_id == turn.conversation_id).one()
+        assert handoff.reason_code == reason_code
+    finally:
+        db.close()
 
 
 def test_webchat_ai_turn_is_created_and_public_poll_reports_pending():
@@ -210,7 +261,7 @@ def test_stale_turn_is_superseded_and_does_not_write_agent_reply(monkeypatch):
         db.close()
 
 
-def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
+def test_safe_ack_mode_requests_handoff_without_customer_visible_canned_reply(monkeypatch):
     _ensure_schema_and_user()
     client = TestClient(app)
     conversation_id, visitor_token = _init_conversation(client)
@@ -221,38 +272,44 @@ def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
     from app.services import webchat_ai_safe_service
     monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ack')
 
-    db = SessionLocal()
-    try:
-        job = db.query(BackgroundJob).filter(BackgroundJob.dedupe_key == f'webchat-ai-turn:{ai_turn_id}').first()
-        assert job is not None
-        job.next_run_at = None
-        db.commit()
-        processed = dispatch_pending_background_jobs(db, worker_id='turn-runtime-worker')
-        assert any(item.job_type == WEBCHAT_AI_REPLY_JOB for item in processed)
-        db.commit()
-    finally:
-        db.close()
+    _run_turn_job(ai_turn_id)
+    _assert_handoff_without_agent_reply(client, conversation_id, visitor_token, ai_turn_id, 'webchat_safe_ack_suppressed')
 
-    polled = client.get(
-        f'/api/webchat/conversations/{conversation_id}/messages',
-        headers={'X-Webchat-Visitor-Token': visitor_token},
+
+def test_safe_ai_high_risk_requests_handoff_without_customer_visible_canned_reply(monkeypatch):
+    _ensure_schema_and_user()
+    client = TestClient(app)
+    conversation_id, visitor_token = _init_conversation(client)
+
+    sent = _send(client, conversation_id, visitor_token, 'I have a tax question about my shipment', 'turn-runtime-high-risk-1')
+    ai_turn_id = sent['ai_turn_id']
+
+    from app.services import webchat_ai_safe_service
+    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
+
+    _run_turn_job(ai_turn_id)
+    _assert_handoff_without_agent_reply(client, conversation_id, visitor_token, ai_turn_id, 'webchat_safe_ai_high_risk_suppressed')
+
+
+def test_legacy_provider_missing_requests_handoff_without_customer_visible_canned_reply(monkeypatch):
+    _ensure_schema_and_user()
+    client = TestClient(app)
+    conversation_id, visitor_token = _init_conversation(client)
+
+    sent = _send(client, conversation_id, visitor_token, 'Hello, can you help me?', 'turn-runtime-legacy-provider-1')
+    ai_turn_id = sent['ai_turn_id']
+
+    from app.services import webchat_ai_safe_service
+    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
+
+    _run_turn_job(ai_turn_id)
+    _assert_handoff_without_agent_reply(
+        client,
+        conversation_id,
+        visitor_token,
+        ai_turn_id,
+        'provider_runtime_not_configured_for_legacy_webchat_job',
     )
-    assert polled.status_code == 200, polled.text
-    payload = polled.json()
-    assert payload['ai_pending'] is False
-    agent_messages = [msg for msg in payload['messages'] if msg['author_label'] == 'AI Assistant']
-    assert agent_messages
-    assert agent_messages[0].get('ai_turn_id') == ai_turn_id
-
-    db = SessionLocal()
-    try:
-        turn = db.query(WebchatAITurn).filter(WebchatAITurn.id == ai_turn_id).first()
-        assert turn is not None
-        assert turn.status == 'completed'
-        assert turn.reply_message_id is not None
-        assert db.query(WebchatMessage).filter(WebchatMessage.ai_turn_id == ai_turn_id, WebchatMessage.direction == 'agent').count() == 1
-    finally:
-        db.close()
 
 
 def test_reconciler_times_out_stale_bridge_calling_turn():

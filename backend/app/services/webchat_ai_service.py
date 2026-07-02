@@ -34,19 +34,6 @@ _LAST_BRIDGE_WAIT_TIMEOUT_MS = None
 
 AI_AUTHOR_LABEL = "AI Assistant"
 MAX_HISTORY_MESSAGES = 12
-TRACKING_HINT_RE = re.compile(r"\b([A-Z0-9]{8,30})\b", re.IGNORECASE)
-
-SAFE_REVIEW_FALLBACK = (
-    "Thanks for your message. To avoid giving you inaccurate information, I need a support agent to review this request. "
-    "Please share your tracking number if you have it, and our team will follow up here."
-)
-SAFE_TRACKING_REQUIRED_FALLBACK = (
-    "Thanks for your message. To help check your shipment, please send your tracking number here. "
-    "Once we have it, our support team can review the case and reply in this chat."
-)
-SAFE_GENERAL_FALLBACK = (
-    "Thanks for your message. Our support team is reviewing your request and will reply here as soon as possible."
-)
 
 
 def _webchat_session_policy(conversation: WebchatConversation, history_rows: list[WebchatMessage], total_messages: int) -> dict[str, Any]:
@@ -100,6 +87,46 @@ def _message_metadata(*, generated_by: str, decision_level: str, fallback_reason
     }
     payload.update({key: value for key, value in extra.items() if value is not None})
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _request_handoff_without_public_reply(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    ticket: Ticket,
+    visitor_message: WebchatMessage,
+    ai_turn_id: int | None,
+    reason: str,
+    recommended_agent_action: str,
+) -> dict[str, Any]:
+    from .webchat_handoff_service import request_webchat_handoff
+
+    request_row = request_webchat_handoff(
+        db,
+        conversation=conversation,
+        ticket=ticket,
+        source="ai_auto",
+        trigger_type="no_customer_visible_ai_reply",
+        reason_code=reason,
+        reason_text="AI reply suppressed because customer-visible canned replies are disabled.",
+        recommended_agent_action=recommended_agent_action,
+        trigger_message_id=visitor_message.id,
+        ai_turn_id=ai_turn_id,
+        requested_by_actor_type="system",
+        note="No canned customer-visible reply was emitted.",
+    )
+    LOGGER.info(
+        "webchat_legacy_ai_reply_suppressed_handoff_requested",
+        extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "visitor_message_id": visitor_message.id, "ai_turn_id": ai_turn_id, "reason": reason}},
+    )
+    return {
+        "status": "handoff_requested",
+        "reason": reason,
+        "reply_source": "suppressed",
+        "fallback": False,
+        "fallback_reason": reason,
+        "handoff_request_id": request_row.id,
+    }
 
 
 def process_webchat_ai_reply_job(
@@ -183,6 +210,12 @@ def process_webchat_ai_reply_job(
         visitor_message=visitor_message,
     )
     rag_trace = summarize_rag_trace(runtime_context)
+    global _LAST_AI_REPLY_SOURCE, _LAST_AI_FALLBACK_REASON, _LAST_BRIDGE_ELAPSED_MS, _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS, _LAST_BRIDGE_WAIT_TIMEOUT_MS
+    _LAST_AI_REPLY_SOURCE = "webchat_ai"
+    _LAST_AI_FALLBACK_REASON = None
+    _LAST_BRIDGE_ELAPSED_MS = None
+    _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = None
+    _LAST_BRIDGE_WAIT_TIMEOUT_MS = None
     ai_reply = _generate_ai_reply(ticket=ticket, conversation=conversation, visitor_message=visitor_message, history_rows=history_rows, tracking_fact=tracking_fact, session_policy=session_policy, runtime_context=runtime_context)
     reply_source = _LAST_AI_REPLY_SOURCE
     fallback_reason = _LAST_AI_FALLBACK_REASON
@@ -192,10 +225,16 @@ def process_webchat_ai_reply_job(
     bridge_wait_timeout_ms = _LAST_BRIDGE_WAIT_TIMEOUT_MS
     sanitized_empty = False
     fact_gate_reason = None
-    if not ai_reply:
-        reply_source = "fallback"
-        fallback_reason = fallback_reason or "empty_ai_reply"
-        ai_reply = _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
+    if fallback_reason or not ai_reply:
+        return _request_handoff_without_public_reply(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            visitor_message=visitor_message,
+            ai_turn_id=ai_turn_id,
+            reason=fallback_reason or "empty_ai_reply",
+            recommended_agent_action="Review the customer message and reply from the WebChat thread.",
+        )
 
     ai_reply = _sanitize_public_ai_reply(ai_reply)
 
@@ -214,7 +253,15 @@ def process_webchat_ai_reply_job(
     if not ai_reply.strip():
         fallback_reason = fallback_reason or "sanitizer_empty"
         sanitized_empty = True
-        ai_reply = _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
+        return _request_handoff_without_public_reply(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            visitor_message=visitor_message,
+            ai_turn_id=ai_turn_id,
+            reason=fallback_reason,
+            recommended_agent_action="Review the customer message because the AI reply was removed by sanitizer.",
+        )
 
     decision = evaluate_outbound_safety(ticket, ai_reply, source="webchat_ai", has_fact_evidence=fact_evidence_present)
     final_body = decision.normalized_body
@@ -222,12 +269,15 @@ def process_webchat_ai_reply_job(
 
     if decision.level != "allow" or decision.requires_human_review:
         fallback_reason = fallback_reason or format_safety_reasons(decision)
-        final_body = _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
-        fallback_decision = evaluate_outbound_safety(ticket, final_body, source="webchat_safe_fallback", has_fact_evidence=False)
-        final_body = fallback_decision.normalized_body
-        safety_payload = asdict(fallback_decision)
-        decision = fallback_decision
-        fact_evidence_present = False
+        return _request_handoff_without_public_reply(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            visitor_message=visitor_message,
+            ai_turn_id=ai_turn_id,
+            reason=fallback_reason,
+            recommended_agent_action="Review the AI draft because outbound safety requires human review.",
+        )
 
     fact_decision = evaluate_webchat_fact_gate(
         final_body,
@@ -237,12 +287,6 @@ def process_webchat_ai_reply_job(
     if not fact_decision.allowed:
         fact_gate_reason = fact_decision.reason or "fact_gate_blocked"
         fallback_reason = fallback_reason or fact_gate_reason
-        final_body = _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
-        fallback_decision = evaluate_outbound_safety(ticket, final_body, source="webchat_fact_gate_fallback", has_fact_evidence=False)
-        final_body = fallback_decision.normalized_body
-        safety_payload = asdict(fallback_decision)
-        decision = fallback_decision
-        fact_evidence_present = False
         LOGGER.info(
             "webchat_fact_gate_blocked",
             extra={"event_payload": {
@@ -252,6 +296,15 @@ def process_webchat_ai_reply_job(
                 "ai_turn_id": ai_turn_id,
                 "reason": fact_gate_reason,
             }},
+        )
+        return _request_handoff_without_public_reply(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            visitor_message=visitor_message,
+            ai_turn_id=ai_turn_id,
+            reason=fallback_reason,
+            recommended_agent_action="Review the customer message because the AI draft failed the fact gate.",
         )
 
     if suppress_stale_reply_if_needed(db, conversation=conversation, turn=turn, reason="newer_message_before_reply_commit"):
@@ -469,7 +522,7 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
 
     _LAST_AI_REPLY_SOURCE = "fallback"
     _LAST_AI_FALLBACK_REASON = "provider_runtime_not_configured_for_legacy_webchat_job"
-    return _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
+    return ""
 
 
 def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage], tracking_fact: TrackingFactResult | None = None, session_policy: dict[str, Any] | None = None, runtime_context: dict[str, Any] | None = None) -> str:
@@ -550,24 +603,6 @@ def _sanitize_ai_reply(text: str) -> str:
     return cleaned[:1200]
 
 
-def _looks_like_tracking_request(body: str | None) -> bool:
-    text = (body or "").lower()
-    keywords = [
-        "tracking", "track", "parcel", "package", "shipment", "delivery", "where is", "order",
-        "单号", "运单", "物流", "包裹", "快递", "派送", "签收",
-    ]
-    return any(keyword in text for keyword in keywords)
-
-
-def _has_tracking_number(*, ticket: Ticket, visitor_message: WebchatMessage, history_rows: list[WebchatMessage]) -> bool:
-    if (ticket.tracking_number or "").strip():
-        return True
-    for row in [visitor_message, *history_rows]:
-        if TRACKING_HINT_RE.search(row.body or ""):
-            return True
-    return False
-
-
 def _sanitize_public_ai_reply(raw: str | None) -> str:
     """Clean LLM output before storing/sending public webchat replies."""
     text = (raw or "").strip()
@@ -608,35 +643,3 @@ def _sanitize_public_ai_reply(raw: str | None) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     return text
-
-
-def _is_probably_chinese_text(text: str | None) -> bool:
-    text = text or ""
-    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
-
-
-def _speedy_generic_fallback(body: str | None) -> str:
-    if _is_probably_chinese_text(body):
-        return "您好，我是 Speedy，已收到您的消息。客服专员会尽快查看并在这里回复您。"
-    return "Hi, this is Speedy. I’ve received your message. A support specialist will review it and reply here shortly."
-
-
-def _speedy_tracking_required_fallback(body: str | None) -> str:
-    if _is_probably_chinese_text(body):
-        return "您好，我是 Speedy。请提供您的运单号，客服专员会帮您核查并在这里回复您。"
-    return "Hi, this is Speedy. Please share your tracking number, and a support specialist will review it and reply here."
-
-
-def _speedy_review_fallback(body: str | None) -> str:
-    if _is_probably_chinese_text(body):
-        return "您好，我是 Speedy，已收到您的消息。客服专员会尽快核查并在这里回复您。"
-    return "Hi, this is Speedy. I’ve received your message. A support specialist will review it and reply here shortly."
-
-
-def _fallback_reply_for(*, ticket: Ticket, visitor_message: WebchatMessage) -> str:
-    body = getattr(visitor_message, "body", "") or ""
-    if _looks_like_tracking_request(body) and not _has_tracking_number(ticket=ticket, visitor_message=visitor_message, history_rows=[]):
-        return _speedy_tracking_required_fallback(body)
-    if _looks_like_tracking_request(body):
-        return _speedy_review_fallback(body)
-    return _speedy_generic_fallback(body)

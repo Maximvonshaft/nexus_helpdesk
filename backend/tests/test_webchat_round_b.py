@@ -84,7 +84,7 @@ def _create_webchat_message_flow(client: TestClient):
     assert polled.status_code == 200, polled.text
     messages_before = polled.json()['messages']
     assert any(item['direction'] == 'visitor' and 'Hello, what can you help me with?' in item['body'] for item in messages_before)
-    assert any(item['direction'] == 'agent' and 'received your message' in item['body'] for item in messages_before)
+    assert not any(item['direction'] == 'agent' and 'received your message' in item['body'].lower() for item in messages_before)
     return conversation_id, visitor_token
 
 

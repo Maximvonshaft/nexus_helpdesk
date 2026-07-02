@@ -309,67 +309,21 @@ def create_or_resume_conversation(db: Session, payload: Any, request: Request) -
     }
 
 
-def _webchat_auto_ack_text(visitor_body: str) -> str:
-    text = (visitor_body or "").strip().lower()
-    parcel_keywords = (
-        "tracking", "track", "parcel", "package", "shipment", "order", "delivery",
-        "where", "delay", "late",
-        "快递", "包裹", "物流", "单号", "运单", "派送", "延误", "签收",
-    )
-    if any(k in text for k in parcel_keywords):
-        return (
-            "Thanks, we have received your parcel inquiry. "
-            "Our support team will check the shipment details and reply here. "
-            "If you have a tracking number, please send it in this chat."
-        )
-    return (
-        "Thanks, we have received your message. "
-        "Our support team will reply here as soon as possible."
-    )
-
-
 def _maybe_create_webchat_auto_ack(db: Session, *, conversation: WebchatConversation, visitor_message: WebchatMessage) -> WebchatMessage | None:
-    """Create a safe first-response agent message for public webchat.
+    """Suppress legacy local ACK bubbles.
 
-    This is acknowledgement-only. It must not claim parcel status, delivery result,
-    refund status, or any fact not backed by tools.
+    Public WebChat must not emit canned customer-visible acknowledgements. A
+    later AI/provider reply or human agent reply can still create an agent
+    message through its own audited path.
     """
-    if get_settings().external_channel_bridge_enabled:
-        return None
-
-    existing_agent = (
-        db.query(WebchatMessage.id)
-        .filter(
-            WebchatMessage.conversation_id == conversation.id,
-            WebchatMessage.direction == "agent",
-        )
-        .first()
-    )
-    if existing_agent:
-        return None
-
-    body = _webchat_auto_ack_text(visitor_message.body)
-    row = WebchatMessage(
-        conversation_id=conversation.id,
-        ticket_id=conversation.ticket_id,
-        direction="agent",
-        body=body,
-        body_text=body,
-        message_type="text",
-        delivery_status="sent",
-        metadata_json=_metadata(generated_by="system", safety_level="ack_only", fallback_reason="local_safe_ack", fact_evidence_present=False),
-        author_label="Support Assistant",
-    )
-    db.add(row)
-    db.flush()
     safe_write_webchat_event(
         db,
         conversation_id=conversation.id,
         ticket_id=conversation.ticket_id,
-        event_type="message.created",
-        payload={"message_id": row.id, "direction": "agent", "generated_by": "local_safe_ack"},
+        event_type="webchat.local_auto_ack_suppressed",
+        payload={"visitor_message_id": visitor_message.id, "reason": "no_customer_visible_canned_reply"},
     )
-    return row
+    return None
 
 
 def _write_card_message(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, card: WebChatCardPayload, provider_status: str, intent_metadata: dict[str, Any]) -> WebchatMessage:
