@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from app.main import app
 from app.db import Base, engine, SessionLocal
@@ -9,6 +12,7 @@ from app.enums import UserRole
 from app.models import BackgroundJob, User
 from app.services import background_jobs
 from app.services.background_jobs import WEBCHAT_AI_REPLY_JOB
+from app.services.webchat_rate_limit import _bucket_key
 from app.webchat_models import WebchatConversation, WebchatMessage  # noqa: F401 - ensure metadata registration
 
 
@@ -20,6 +24,29 @@ def ensure_schema():
         if not db.query(User).filter(User.id == 9999).first():
             db.add(User(id=9999, username="roundb_admin", display_name="Round B Admin", password_hash="test", role=UserRole.admin, is_active=True))
             db.commit()
+    finally:
+        db.close()
+
+
+@pytest.fixture(autouse=True)
+def clean_webchat_round_b_rows():
+    db = SessionLocal()
+    try:
+        for table in [
+            "webchat_ai_turns",
+            "background_jobs",
+            "webchat_messages",
+            "webchat_card_actions",
+            "webchat_handoff_decisions",
+            "webchat_handoff_requests",
+            "webchat_conversations",
+            "webchat_rate_limits",
+            "ticket_events",
+            "tickets",
+            "customers",
+        ]:
+            db.execute(text(f"DELETE FROM {table}"))
+        db.commit()
     finally:
         db.close()
 
@@ -93,3 +120,15 @@ def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
     messages_after = polled_after.json()['messages']
     assert any(item['direction'] == 'agent' and item['author_label'] == 'AI Assistant' for item in messages_after)
     assert any('shipment' in item['body'].lower() or 'support' in item['body'].lower() for item in messages_after if item['direction'] == 'agent')
+
+
+def test_webchat_rate_limit_bucket_key_fits_production_column_for_long_public_ids():
+    request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.42"), headers={})
+    key = _bucket_key(
+        request=request,
+        tenant_key="tenant-" + ("x" * 120),
+        conversation_id="wc_" + ("y" * 80),
+    )
+
+    assert len(key) == 64
+    int(key, 16)

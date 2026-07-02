@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 from datetime import timedelta
 
@@ -26,7 +27,8 @@ def _client_ip(request: Request) -> str:
 
 def _bucket_key(*, request: Request, tenant_key: str, conversation_id: str | None) -> str:
     scope = conversation_id or "init"
-    return f"{tenant_key}:{scope}:{_client_ip(request)}"
+    raw_identity = f"{tenant_key}:{scope}:{_client_ip(request)}"
+    return hashlib.sha256(raw_identity.encode("utf-8")).hexdigest()
 
 
 def _enforce_memory(bucket_key: str) -> None:

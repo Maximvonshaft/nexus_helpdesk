@@ -5,6 +5,7 @@ BASE_URL="${BASE_URL:-${NEXUSDESK_API_URL:-http://127.0.0.1:18081}}"
 PREFIX="${NEXUSDESK_SMOKE_PREFIX:-round-b-$(date +%s)}"
 ADMIN_TOKEN="${NEXUSDESK_ADMIN_TOKEN:-}"
 DEV_USER_ID="${NEXUSDESK_DEV_USER_ID:-}"
+WEBCHAT_ORIGIN="${WEBCHAT_SMOKE_ORIGIN:-https://www.leakle.com}"
 
 if [[ "${1:-}" == "--help" ]]; then
   cat <<EOF
@@ -43,27 +44,29 @@ else
   echo "SKIP admin reply: set NEXUSDESK_ADMIN_TOKEN or NEXUSDESK_DEV_USER_ID for full closure smoke" >&2
   exit 77
 fi
+PUBLIC_HEADERS=(-H "Origin: ${WEBCHAT_ORIGIN}" -H "User-Agent: curl/8.0")
 
 echo "== 1) init conversation =="
 INIT_BODY=$(cat <<JSON
-{"tenant_key":"${PREFIX}","channel_key":"website","visitor_name":"Round B Smoke","origin":"https://smoke.example","page_url":"https://smoke.example/help"}
+{"tenant_key":"${PREFIX}","channel_key":"website","visitor_name":"Round B Smoke","origin":"${WEBCHAT_ORIGIN}","page_url":"${WEBCHAT_ORIGIN}/help"}
 JSON
 )
-INIT_RESP=$(curl_json POST "${BASE_URL}/api/webchat/init" --data "$INIT_BODY")
+INIT_RESP=$(curl_json POST "${BASE_URL}/api/webchat/init" "${PUBLIC_HEADERS[@]}" --data "$INIT_BODY")
 CONVERSATION_ID=$(printf '%s' "$INIT_RESP" | json_get conversation_id)
 VISITOR_TOKEN=$(printf '%s' "$INIT_RESP" | json_get visitor_token)
+VISITOR_HEADERS=("${PUBLIC_HEADERS[@]}" -H "X-Webchat-Visitor-Token: ${VISITOR_TOKEN}")
 echo "PASS init ${CONVERSATION_ID}"
 
 echo "== 2) visitor sends message =="
 SEND_BODY=$(cat <<JSON
-{"visitor_token":"${VISITOR_TOKEN}","body":"Round B smoke visitor message: where is my parcel?"}
+{"body":"Round B smoke visitor message: where is my parcel?"}
 JSON
 )
-curl_json POST "${BASE_URL}/api/webchat/conversations/${CONVERSATION_ID}/messages" --data "$SEND_BODY" >/dev/null
+curl_json POST "${BASE_URL}/api/webchat/conversations/${CONVERSATION_ID}/messages" "${VISITOR_HEADERS[@]}" --data "$SEND_BODY" >/dev/null
 echo "PASS visitor send"
 
 echo "== 3) visitor can poll own messages =="
-POLL_RESP=$(curl -fsS "${BASE_URL}/api/webchat/conversations/${CONVERSATION_ID}/messages?visitor_token=${VISITOR_TOKEN}")
+POLL_RESP=$(curl -fsS "${BASE_URL}/api/webchat/conversations/${CONVERSATION_ID}/messages" "${VISITOR_HEADERS[@]}")
 printf '%s' "$POLL_RESP" | grep -q "Round B smoke visitor message"
 echo "PASS visitor poll inbound"
 
@@ -83,7 +86,7 @@ curl -fsS -X POST "${BASE_URL}/api/webchat/admin/tickets/${TICKET_ID}/reply" "${
 echo "PASS admin reply"
 
 echo "== 7) visitor sees agent reply =="
-POLL_AFTER=$(curl -fsS "${BASE_URL}/api/webchat/conversations/${CONVERSATION_ID}/messages?visitor_token=${VISITOR_TOKEN}")
+POLL_AFTER=$(curl -fsS "${BASE_URL}/api/webchat/conversations/${CONVERSATION_ID}/messages" "${VISITOR_HEADERS[@]}")
 printf '%s' "$POLL_AFTER" | grep -q "We have received your request"
 echo "PASS visitor sees reply"
 
