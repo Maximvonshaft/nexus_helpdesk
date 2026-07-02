@@ -20,6 +20,7 @@ from app.services.provider_runtime.registry import ProviderAdapter, ProviderRegi
 from app.services.provider_runtime.schemas import ProviderResult
 from app.services.webcall_ai_production.config import get_webcall_ai_production_settings
 from app.services.webcall_ai_production.orchestrator import run_session_turn
+from app.services.webcall_ai_production.providers import provider_runtime_llm as provider_runtime_llm_module
 from app.services.webcall_ai_production.providers.provider_runtime_llm import ProviderRuntimeLLMProvider
 from app.services.webcall_ai_production.providers.router import get_llm_provider
 from app.utils.time import utc_now
@@ -133,6 +134,45 @@ def test_provider_runtime_llm_maps_codex_contract():
     assert adapter.requests[0].scenario == "webcall_ai_decision"
     assert adapter.requests[0].output_contract == "speedaf_webchat_fast_reply_v1"
     assert adapter.requests[0].body == "where is my parcel?"
+
+
+def test_provider_runtime_llm_injects_shared_runtime_context(monkeypatch):
+    captured = {}
+
+    def fake_runtime_context(db, **kwargs):
+        captured.update(kwargs)
+        return {
+            "context_version": "nexus_webchat_runtime_context_v2",
+            "metadata_filters": {"channel": kwargs["channel_key"], "audience_scope": kwargs["audience_scope"]},
+            "persona_context": {"profile_key": "voice-support"},
+            "knowledge_context": {
+                "retrieval": "hybrid_rag_v2",
+                "total_matches": 1,
+                "locked_facts": [{"item_key": "global.tracking", "answer": "Ask for a tracking number."}],
+                "hits": [{"item_key": "global.tracking", "title": "Tracking support"}],
+            },
+            "rag_trace": {"total": 1},
+            "safety_policy": {"knowledge_scope": "policy_sop_faq_only"},
+        }
+
+    monkeypatch.setattr(provider_runtime_llm_module, "build_webchat_runtime_context", fake_runtime_context)
+
+    db = SessionLocal()
+    try:
+        request = provider_runtime_llm_module._build_request(db, text="where is my parcel?", language="en")
+    finally:
+        db.close()
+
+    assert captured["tenant_key"] == "default"
+    assert captured["channel_key"] == "webcall_ai"
+    assert captured["body"] == "where is my parcel?"
+    assert captured["audience_scope"] == "customer"
+    assert request.metadata["runtime_context_available"] is True
+    assert request.metadata["persona_context"]["profile_key"] == "voice-support"
+    assert request.metadata["knowledge_context"]["retrieval"] == "hybrid_rag_v2"
+    assert request.metadata["knowledge_context"]["locked_facts"][0]["item_key"] == "global.tracking"
+    assert request.metadata["safety_policy"]["knowledge_scope"] == "policy_sop_faq_only"
+    assert request.metadata["runtime_context_trace"]["metadata_filters"]["channel"] == "webcall_ai"
 
 
 def test_session_turn_persists_provider_runtime_codex_evidence(db):

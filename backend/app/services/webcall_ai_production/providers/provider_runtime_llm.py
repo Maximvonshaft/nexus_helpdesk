@@ -8,6 +8,7 @@ import uuid
 from typing import Any, Coroutine
 
 from app.db import SessionLocal
+from app.services.ai_runtime_context import build_webchat_runtime_context
 from app.services.provider_runtime.output_contracts import OutputContracts
 from app.services.provider_runtime.registry import ProviderRegistry
 from app.services.provider_runtime.router import ProviderRuntimeRouter
@@ -27,9 +28,9 @@ class ProviderRuntimeLLMProvider(LLMProvider):
     provider_name = "provider_runtime"
 
     def respond(self, text: str, *, language: str | None = None) -> LLMResult:
-        request = _build_request(text=text, language=language)
         db = SessionLocal()
         try:
+            request = _build_request(db, text=text, language=language)
             result = _run_async(_route_request(db, request))
             if not result.ok or not result.structured_output:
                 raise ProviderError(self.provider_name, result.error_code or "provider_runtime_unavailable")
@@ -84,24 +85,17 @@ async def _generate_with_provider(db: Session, request: ProviderRequest, provide
     return result
 
 
-def _build_request(*, text: str, language: str | None) -> ProviderRequest:
+def _build_request(db: Session, *, text: str, language: str | None) -> ProviderRequest:
     body = (text or "").strip()
     lang = (language or "en").strip() or "en"
-    metadata = {
-        "persona_context": None,
-        "knowledge_context": {"retrieval": "unavailable", "total_matches": 0, "locked_facts": [], "hits": []},
-        "safety_policy": {
-            "knowledge_scope": "voice_transcript_only_without_tracking_evidence",
-            "tracking_truth_boundary": "Parcel live status requires tracking_fact_evidence_present=true and trusted tracking_fact_summary.",
-        },
-        "source": "webcall_ai_production",
-        "language": lang,
-    }
+    tenant_key = _env("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_KEY", _env("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID", _DEFAULT_TENANT))
+    channel_key = _env("WEBCALL_AI_PROVIDER_RUNTIME_CHANNEL_KEY", _DEFAULT_CHANNEL)
+    metadata = _runtime_metadata(db, tenant_key=tenant_key, channel_key=channel_key, body=body, language=lang)
     return ProviderRequest(
         request_id=f"webcall-ai-llm-{uuid.uuid4().hex}",
         tenant_id=_env("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID", _DEFAULT_TENANT),
-        tenant_key=_env("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_KEY", _env("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID", _DEFAULT_TENANT)),
-        channel_key=_env("WEBCALL_AI_PROVIDER_RUNTIME_CHANNEL_KEY", _DEFAULT_CHANNEL),
+        tenant_key=tenant_key,
+        channel_key=channel_key,
         session_id=_env("WEBCALL_AI_PROVIDER_RUNTIME_SESSION_ID", "webcall-ai-production"),
         scenario=_env("WEBCALL_AI_PROVIDER_RUNTIME_SCENARIO", _DEFAULT_SCENARIO),
         body=body,
@@ -112,6 +106,52 @@ def _build_request(*, text: str, language: str | None) -> ProviderRequest:
         timeout_ms=_int_env("WEBCALL_AI_PROVIDER_RUNTIME_TIMEOUT_MS", 10000, minimum=500, maximum=30000),
         metadata=metadata,
     )
+
+
+def _runtime_metadata(db: Session, *, tenant_key: str, channel_key: str, body: str, language: str) -> dict[str, Any]:
+    try:
+        context = build_webchat_runtime_context(
+            db,
+            tenant_key=tenant_key,
+            channel_key=channel_key,
+            body=body,
+            language=language,
+            audience_scope="customer",
+            tracking_fact_evidence_present=False,
+        )
+    except Exception as exc:
+        return {
+            "persona_context": None,
+            "knowledge_context": {
+                "retrieval": "unavailable",
+                "total_matches": 0,
+                "locked_facts": [],
+                "hits": [],
+                "error_code": "webcall_runtime_context_failed",
+                "error": str(exc)[:240],
+            },
+            "safety_policy": {
+                "knowledge_scope": "voice_transcript_only_without_tracking_evidence",
+                "tracking_truth_boundary": "Parcel live status requires tracking_fact_evidence_present=true and trusted tracking_fact_summary.",
+            },
+            "source": "webcall_ai_production",
+            "language": language,
+            "runtime_context_available": False,
+        }
+
+    return {
+        "persona_context": context.get("persona_context"),
+        "knowledge_context": context.get("knowledge_context") or {"retrieval": "unavailable", "total_matches": 0, "locked_facts": [], "hits": []},
+        "safety_policy": context.get("safety_policy"),
+        "runtime_context_trace": {
+            "context_version": context.get("context_version"),
+            "metadata_filters": context.get("metadata_filters"),
+            "rag_trace": context.get("rag_trace"),
+        },
+        "source": "webcall_ai_production",
+        "language": language,
+        "runtime_context_available": True,
+    }
 
 
 def _to_llm_result(result: ProviderResult) -> LLMResult:
