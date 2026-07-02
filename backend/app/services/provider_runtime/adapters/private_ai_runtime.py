@@ -92,6 +92,8 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
             return self._failure("private_ai_runtime_token_missing", started, {"token_file_configured": bool(self.token_file)}, retryable=False)
 
         fast_path = self._tracking_missing_number_fast_path(request, started=started)
+        if fast_path is None:
+            fast_path = self._tracking_format_invalid_fast_path(request, started=started)
         if fast_path is not None:
             return fast_path
 
@@ -552,6 +554,57 @@ class PrivateAIRuntimeAdapter(ProviderAdapter):
             fallback_allowed=True,
         )
 
+    def _tracking_format_invalid_fast_path(self, request: ProviderRequest, *, started: float) -> ProviderResult | None:
+        if not self.tracking_missing_fast_path_enabled:
+            return None
+        if not _is_format_invalid_tracking_request(request):
+            return None
+        body = str(request.body or "")
+        reply = _invalid_tracking_number_reply(body)
+        output = {
+            "customer_reply": reply,
+            "reply": reply,
+            "language": "zh" if _contains_cjk(body) else "en",
+            "intent": "tracking_unresolved",
+            "tracking_number": None,
+            "handoff_required": False,
+            "handoff_reason": None,
+            "recommended_agent_action": "Ask the customer to verify the full waybill number before running trusted tracking lookup.",
+            "ticket_should_create": False,
+            "tool_calls": [],
+            "evidence_used": [],
+            "confidence": 1.0,
+            "reason": "deterministic_invalid_tracking_number_fast_path",
+            "risk_level": "low",
+            "next_action": "reply",
+            "safety_notes": ["No trusted tracking evidence is present; the reply asks the customer to verify the waybill number."],
+        }
+        return ProviderResult(
+            ok=True,
+            provider=self.name,
+            raw_provider=self.name,
+            reply_source=self.name,
+            model=self.direct_model,
+            elapsed_ms=_elapsed_ms(started),
+            raw_payload_safe_summary={
+                "provider": self.name,
+                "fast_path": "tracking_format_invalid_no_evidence",
+                "provider_bypassed": True,
+                "endpoint_path": None,
+                "chat_mode": "deterministic_fast_path",
+                "request_shape": self.request_shape,
+                "model": self.direct_model,
+                "prompt_chars": 0,
+                "timeout_seconds": self.timeout_seconds,
+                "elapsed_ms": _elapsed_ms(started),
+                "token_file_configured": bool(self.token_file),
+            },
+            structured_output=output,
+            error_code=None,
+            retryable=False,
+            fallback_allowed=True,
+        )
+
 
 def _system_prompt() -> str:
     return (
@@ -573,6 +626,24 @@ def _is_missing_tracking_number_request(request: ProviderRequest) -> bool:
     if not _contains_tracking_marker(body):
         return False
     return not _contains_tracking_identifier(_request_text_with_context(request))
+
+
+def _is_format_invalid_tracking_request(request: ProviderRequest) -> bool:
+    if request.scenario != "webchat_fast_reply":
+        return False
+    if request.tracking_fact_evidence_present or request.tracking_fact_summary:
+        return False
+    metadata = _tracking_fact_metadata(request)
+    return metadata.get("tool_status") == "format_invalid" or metadata.get("failure_reason") == "invalid_ch_waybill_format"
+
+
+def _tracking_fact_metadata(request: ProviderRequest) -> dict[str, Any]:
+    metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    for key in ("tracking_fact_metadata", "tracking_fact"):
+        value = metadata.get(key)
+        if isinstance(value, dict):
+            return value
+    return {}
 
 
 def _request_text_with_context(request: ProviderRequest) -> str:
@@ -604,6 +675,12 @@ def _missing_tracking_number_reply(body: str) -> str:
     if _contains_cjk(body):
         return "请提供您的运单号，我才能查询包裹状态。"
     return "Please provide your tracking number so I can check the parcel status."
+
+
+def _invalid_tracking_number_reply(body: str) -> str:
+    if _contains_cjk(body):
+        return "我暂时无法用这个运单号查询到可信包裹记录。请核对完整运单号后重新发送。"
+    return "I could not verify that tracking number against trusted parcel records. Please check the full waybill number and send it again."
 
 
 def _empty_reply_retry_prompt(prompt: str, *, max_chars: int) -> str:

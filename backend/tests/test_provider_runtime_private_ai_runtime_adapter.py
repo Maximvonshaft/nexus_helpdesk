@@ -377,6 +377,49 @@ async def test_private_ai_runtime_missing_tracking_number_fast_path_requires_exp
 
 
 @pytest.mark.asyncio
+async def test_private_ai_runtime_invalid_tracking_number_fast_path_avoids_remote_and_redacts_identifier(monkeypatch, tmp_path):
+    token_file = tmp_path / "ai-runtime-token"
+    token_file.write_text("test-token", encoding="utf-8")
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TRACKING_MISSING_FAST_PATH_ENABLED", "true")
+    adapter = PrivateAIRuntimeAdapter()
+
+    def forbidden_post_json(endpoint, payload, token):
+        raise AssertionError("invalid tracking fast path must not call remote AI runtime")
+
+    monkeypatch.setattr(adapter, "_post_json", forbidden_post_json)
+
+    result = await adapter.generate(
+        Mock(),
+        _request(
+            body="Where is parcel CH02000126553?",
+            metadata={
+                "tracking_fact_metadata": {
+                    "tool_status": "format_invalid",
+                    "failure_reason": "invalid_ch_waybill_format",
+                    "tracking_number_hash": "sha256:test",
+                },
+            },
+        ),
+    )
+
+    assert result.ok is True
+    assert result.provider == "private_ai_runtime"
+    assert result.reply_source == "private_ai_runtime"
+    assert result.structured_output["intent"] == "tracking_unresolved"
+    assert result.structured_output["tracking_number"] is None
+    assert result.structured_output["handoff_required"] is False
+    assert "trusted parcel records" in result.structured_output["customer_reply"]
+    assert result.raw_payload_safe_summary["fast_path"] == "tracking_format_invalid_no_evidence"
+    assert result.raw_payload_safe_summary["provider_bypassed"] is True
+    assert result.raw_payload_safe_summary["endpoint_path"] is None
+    assert "CH02000126553" not in json.dumps(result.structured_output)
+
+
+@pytest.mark.asyncio
 async def test_private_ai_runtime_fast_path_does_not_hide_tracking_identifier(monkeypatch, tmp_path):
     token_file = tmp_path / "ai-runtime-token"
     token_file.write_text("test-token", encoding="utf-8")
