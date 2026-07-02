@@ -31,6 +31,7 @@ class ExternalSTTProvider(STTProvider):
         token = read_secret_file(self.token_file, provider=self.provider_name)
         timeout = float(os.getenv("STT_TIMEOUT_SECONDS", "12"))
         retries = int(os.getenv("STT_RETRIES", "1"))
+        file_field = (os.getenv("STT_FILE_FIELD", "file").strip() or "file")
 
         upload_bytes, upload_name, upload_mime = prepare_stt_audio_upload(
             audio,
@@ -45,7 +46,7 @@ class ExternalSTTProvider(STTProvider):
                     response = client.post(
                         endpoint,
                         headers={"Authorization": f"Bearer {token}"},
-                        files={"audio": (upload_name, upload_bytes, upload_mime)},
+                        files={file_field: (upload_name, upload_bytes, upload_mime)},
                         data={"language": language or "", "sample_rate": str(sample_rate or ""), "channels": str(channels or "")},
                     )
                     response.raise_for_status()

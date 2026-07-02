@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import ipaddress
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TypeVar
+from urllib.parse import urlparse
 
 import httpx
 
@@ -27,8 +29,13 @@ def endpoint_required(endpoint: str | None, *, provider: str) -> str:
     value = (endpoint or "").strip()
     if not value:
         raise ProviderError(provider, "endpoint_required", "provider endpoint is required")
-    if not (value.startswith("https://") or _local_test_endpoint_allowed(value)):
-        raise ProviderError(provider, "endpoint_invalid", "provider endpoint must be https")
+    parsed = urlparse(value)
+    if parsed.scheme == "https":
+        return value
+    if parsed.scheme != "http" or not parsed.hostname:
+        raise ProviderError(provider, "endpoint_invalid", "provider endpoint must be https or approved private http")
+    if not (_local_test_endpoint_allowed(value) or _private_http_endpoint_allowed(parsed.hostname)):
+        raise ProviderError(provider, "endpoint_invalid", "provider endpoint must be https or approved private http")
     return value
 
 
@@ -70,3 +77,18 @@ def _local_test_endpoint_allowed(endpoint: str) -> bool:
     if (os.getenv("APP_ENV") or "development").strip().lower() == "production":
         return False
     return endpoint.startswith("http://127.0.0.1") or endpoint.startswith("http://localhost")
+
+
+def _private_http_endpoint_allowed(hostname: str) -> bool:
+    allowed = {item.strip().lower() for item in (os.getenv("PROVIDER_PRIVATE_HTTP_ALLOWED_HOSTS") or "").split(",") if item.strip()}
+    host = hostname.strip().lower()
+    if host in allowed:
+        return True
+    if host.endswith(".internal") or "." not in host:
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    tailscale_cgnat = ipaddress.ip_network("100.64.0.0/10")
+    return bool(address.is_loopback or address.is_private or address.is_link_local or address in tailscale_cgnat)

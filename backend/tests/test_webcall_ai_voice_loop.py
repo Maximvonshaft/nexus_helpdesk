@@ -323,13 +323,15 @@ def test_external_provider_adapters_require_secret_files(monkeypatch):
 def test_external_provider_adapters_parse_mocked_http(monkeypatch, tmp_path):
     secret = tmp_path / "provider-token"
     secret.write_text("token-value", encoding="utf-8")
+    calls: list[tuple[str, str, dict]] = []
 
     class Response:
-        headers = {"content-type": "audio/wav"}
-        content = b"RIFFaudio"
+        content = b""
 
-        def __init__(self, payload):
+        def __init__(self, payload, *, content: bytes = b"", content_type: str = "application/json"):
             self.payload = payload
+            self.content = content
+            self.headers = {"content-type": content_type}
 
         def raise_for_status(self):
             return None
@@ -348,11 +350,16 @@ def test_external_provider_adapters_parse_mocked_http(monkeypatch, tmp_path):
             return False
 
         def post(self, endpoint, **kwargs):
+            calls.append(("post", endpoint, kwargs))
             if "stt" in endpoint:
                 return Response({"text": "track SF123456789CN", "language": "en", "confidence": 91})
             if "llm" in endpoint:
                 return Response({"response_text": "Please hold while I check.", "intent": "tracking_lookup", "handoff_required": False})
-            return Response({})
+            return Response({"file_url": "/audio/mock-output.wav", "status": "ok"})
+
+        def get(self, endpoint, **kwargs):
+            calls.append(("get", endpoint, kwargs))
+            return Response({}, content=b"RIFFaudio", content_type="audio/wav")
 
     monkeypatch.setattr("httpx.Client", Client)
 
@@ -363,3 +370,48 @@ def test_external_provider_adapters_parse_mocked_http(monkeypatch, tmp_path):
     assert stt.text == "track SF123456789CN"
     assert llm.intent == "tracking_lookup"
     assert tts.audio_bytes == b"RIFFaudio"
+    stt_call = next(kwargs for method, endpoint, kwargs in calls if method == "post" and "stt" in endpoint)
+    tts_get = next(endpoint for method, endpoint, _kwargs in calls if method == "get")
+    assert set(stt_call["files"].keys()) == {"file"}
+    assert tts_get == "https://tts.example.test/audio/mock-output.wav"
+
+
+def test_external_provider_private_http_endpoint_allowed_in_production(monkeypatch, tmp_path):
+    secret = tmp_path / "provider-token"
+    secret.write_text("token-value", encoding="utf-8")
+    monkeypatch.setenv("APP_ENV", "production")
+
+    class Response:
+        headers = {"content-type": "application/json"}
+        content = b""
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"text": "track SF123456789CN", "language": "en", "confidence": 91}
+
+    class Client:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def post(self, endpoint, **kwargs):
+            assert endpoint == "http://100.91.119.72:18081/voice/stt"
+            return Response()
+
+    monkeypatch.setattr("httpx.Client", Client)
+
+    stt = ExternalSTTProvider(endpoint="http://100.91.119.72:18081/voice/stt", token_file=str(secret)).transcribe(
+        b"\x00\x00" * 20,
+        sample_rate=16000,
+        channels=1,
+        mime_type="audio/pcm",
+    )
+
+    assert stt.text == "track SF123456789CN"
