@@ -65,6 +65,7 @@ import type {
   WebchatReadStateResult,
   WebchatThread,
   WebchatReplyResult,
+  SupportMemoryLedger,
   WhatsAppNativeAccountStatus,
   ProviderCredentialStatusResponse,
   SecurityAudit,
@@ -719,6 +720,7 @@ export const api = {
     body: JSON.stringify({ note: note || null }),
   }),
   webchatThread: (ticketId: number, init?: RequestInit) => request<WebchatThread>(`/api/webchat/admin/tickets/${ticketId}/thread`, init),
+  webchatSupportMemory: (ticketId: number, init?: RequestInit) => request<SupportMemoryLedger>(`/api/webchat/admin/tickets/${ticketId}/support-memory`, init),
   webchatEvents: (ticketId: number, afterId: number, init?: RequestInit) => request<WebchatEventsPage>(`/api/webchat/admin/tickets/${ticketId}/events?${buildWebchatEventsSearch(afterId).toString()}`, init),
   webchatReadState: (ticketId: number, payload: { marked_unread: boolean }) => request<WebchatReadStateResult>(`/api/webchat/admin/tickets/${ticketId}/read-state`, {
     method: 'POST',

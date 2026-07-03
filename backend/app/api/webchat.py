@@ -22,6 +22,7 @@ from ..services.background_jobs import WEBCHAT_AI_REPLY_JOB, enqueue_background_
 from ..services.webchat_ai_reconciler import reconcile_webchat_ai_state
 from ..services.webchat_ai_turn_service import ai_snapshot, schedule_webchat_ai_turn
 from ..services.observability import log_event, record_webchat_websocket_fallback_polling
+from ..services.support_memory_ledger import build_support_memory_ledger
 from ..services.webchat_performance import (
     admin_list_conversations_optimized,
     list_public_messages_throttled,
@@ -476,7 +477,13 @@ def get_webchat_thread(ticket_id: int, db: Session = Depends(get_db), current_us
     conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == result.get("conversation_id")).first()
     if conversation:
         result.update(ai_snapshot(conversation))
+    result["support_memory"] = build_support_memory_ledger(db, ticket_id=ticket_id, current_user=current_user)
     return result
+
+
+@router.get("/admin/tickets/{ticket_id}/support-memory")
+def get_webchat_support_memory(ticket_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
+    return build_support_memory_ledger(db, ticket_id=ticket_id, current_user=current_user)
 
 
 @router.post("/admin/tickets/{ticket_id}/read-state")

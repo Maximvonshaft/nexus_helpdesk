@@ -69,6 +69,7 @@ export function SpeedafActionsPanel({ activeCase, onToast }: { activeCase: CaseD
   const refresh = async () => {
     await client.invalidateQueries({ queryKey: ['caseDetail', activeCase.id] })
     await client.invalidateQueries({ queryKey: ['ticketTimeline', activeCase.id] })
+    await client.invalidateQueries({ queryKey: ['supportMemoryLedger', activeCase.id] })
     await client.invalidateQueries({ queryKey: ['cases'] })
   }
 

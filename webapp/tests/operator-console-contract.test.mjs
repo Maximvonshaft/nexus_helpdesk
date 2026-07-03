@@ -80,6 +80,21 @@ test('customer reply panel uses ticket-scoped channel readiness and outbound sen
   assert.match(replyPanel, /api\.sendOutboundMessage\(activeCase\.id, selectedIsEmail \? \{ channel, subject: subject\.trim\(\), body: body\.trim\(\) \} : \{ channel, body: body\.trim\(\) \}\)/)
 })
 
+test('customer reply panel renders support memory ledger and keeps customer body blank by default', () => {
+  assert.match(types, /export interface SupportMemoryLedger \{/)
+  assert.match(types, /support_memory\?: SupportMemoryLedger/)
+  assert.match(apiClient, /webchatSupportMemory: \(ticketId: number, init\?: RequestInit\) => request<SupportMemoryLedger>/)
+  assert.match(apiClient, /\/api\/webchat\/admin\/tickets\/\$\{ticketId\}\/support-memory/)
+  assert.match(replyPanel, /function SupportMemoryPanel/)
+  assert.match(replyPanel, /data-testid="support-memory-ledger-panel"/)
+  assert.match(replyPanel, /\['supportMemoryLedger', activeCase\.id\]/)
+  assert.match(replyPanel, /const \[body, setBody\] = useState\(''\)/)
+  assert.match(replyPanel, /setBody\(''\)/)
+  assert.doesNotMatch(replyPanel, /function defaultReply/)
+  assert.doesNotMatch(replyPanel, /useState\(defaultReply/)
+  assert.doesNotMatch(replyPanel, /setBody\(defaultReply/)
+})
+
 test('customer reply panel shows send semantics and refreshes workspace after send', () => {
   assert.match(replyPanel, /selectedCapability\.external_send/)
   assert.match(replyPanel, /confirmExternal/)
@@ -87,6 +102,7 @@ test('customer reply panel shows send semantics and refreshes workspace after se
   assert.match(replyPanel, /Local WebChat|本地 WebChat|外部渠道发送/)
   assert.match(replyPanel, /invalidateQueries\(\{ queryKey: \['caseDetail', activeCase\.id\] \}\)/)
   assert.match(replyPanel, /invalidateQueries\(\{ queryKey: \['ticketTimeline', activeCase\.id\] \}\)/)
+  assert.match(replyPanel, /invalidateQueries\(\{ queryKey: \['supportMemoryLedger', activeCase\.id\] \}\)/)
   assert.match(replyPanel, /invalidateQueries\(\{ queryKey: \['cases'\] \}\)/)
 })
 

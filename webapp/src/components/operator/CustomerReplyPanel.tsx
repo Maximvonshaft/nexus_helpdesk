@@ -1,28 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import type { CaseDetail, OutboundChannelCapability } from '@/lib/types'
+import type { CaseDetail, OutboundChannelCapability, SupportMemoryLedger, SupportMemoryTimelineItem } from '@/lib/types'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Field, Input, Select, Textarea } from '@/components/ui/Field'
 import { Skeleton } from '@/components/ui/Skeleton'
-import { labelize, sanitizeDisplayText } from '@/lib/format'
+import { formatDateTime, labelize, sanitizeDisplayText } from '@/lib/format'
 import { SpeedafActionsPanel } from '@/components/operator/SpeedafActionsPanel'
 
 function capabilityTone(capability?: OutboundChannelCapability) {
   if (!capability) return 'default'
   if (capability.supports_send) return capability.external_send ? 'warning' : 'success'
   return 'danger'
-}
-
-function defaultReply(activeCase: CaseDetail) {
-  return [
-    activeCase.customer_update,
-    activeCase.required_action ? `Next step: ${activeCase.required_action}` : null,
-    activeCase.missing_fields ? `Missing information: ${activeCase.missing_fields}` : null,
-  ].filter(Boolean).join('\n\n')
 }
 
 function defaultEmailSubject(activeCase: CaseDetail) {
@@ -46,11 +38,109 @@ function replyTarget(activeCase: CaseDetail, channel: string) {
   return activeCase.preferred_reply_contact || activeCase.external_channel_conversation?.recipient || activeCase.customer?.phone || activeCase.customer?.email || ''
 }
 
+function memoryTone(value?: string | null): 'default' | 'warning' | 'success' | 'danger' {
+  const normalized = String(value || '').toLowerCase()
+  if (['failed', 'blocked', 'dead', 'timeout', 'human_review_required'].some((item) => normalized.includes(item))) return 'danger'
+  if (['queued', 'pending', 'requested', 'accepted', 'review', 'suspended'].some((item) => normalized.includes(item))) return 'warning'
+  if (['completed', 'sent', 'success', 'delivered', 'ready'].some((item) => normalized.includes(item))) return 'success'
+  return 'default'
+}
+
+function compactSummary(value: unknown): string {
+  if (value === null || value === undefined || value === '') return ''
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return sanitizeDisplayText(String(value))
+  try {
+    return sanitizeDisplayText(JSON.stringify(value))
+  } catch {
+    return sanitizeDisplayText(String(value))
+  }
+}
+
+function timelineSummary(item: SupportMemoryTimelineItem) {
+  const summary = item.summary || {}
+  const entries = Object.entries(summary).filter(([, value]) => value !== null && value !== undefined && value !== '').slice(0, 3)
+  if (!entries.length) return item.source_id || item.kind
+  return entries.map(([key, value]) => `${labelize(key)}: ${compactSummary(value)}`).join(' · ')
+}
+
+function SupportMemoryPanel({ activeCase }: { activeCase: CaseDetail }) {
+  const memory = useQuery({
+    queryKey: ['supportMemoryLedger', activeCase.id],
+    queryFn: () => api.webchatSupportMemory(activeCase.id),
+    enabled: !!activeCase.id,
+    refetchInterval: 15000,
+  })
+  const data = memory.data as SupportMemoryLedger | undefined
+  const aiStatus = data?.ai_state?.ai_suspended ? 'ai_suspended' : data?.ai_state?.ai_status
+  const topEvidence = data?.evidence_timeline?.slice(0, 5) ?? []
+
+  return (
+    <Card className="soft">
+      <CardHeader title="支持记忆" subtitle={data?.generated_at ? `更新于 ${formatDateTime(data.generated_at)}` : '当前会话证据视图'} />
+      <CardBody>
+        {memory.isLoading ? <Skeleton lines={5} /> : null}
+        {memory.isError ? <EmptyState text="无法加载当前会话支持记忆。" /> : null}
+        {data ? (
+          <div className="stack" data-testid="support-memory-ledger-panel">
+            <div className="badges">
+              <Badge tone={memoryTone(data.ticket.conversation_state)}>{labelize(data.ticket.conversation_state || 'unknown')}</Badge>
+              <Badge tone={memoryTone(aiStatus)}>{labelize(aiStatus || 'ai_idle')}</Badge>
+              {data.handoff ? <Badge tone={memoryTone(data.handoff.status)}>Handoff {labelize(data.handoff.status)}</Badge> : null}
+            </div>
+
+            <div className="kv-grid">
+              <div className="kv"><label>当前意图</label><div>{sanitizeDisplayText(data.current_intent || activeCase.ai_classification || '未分类')}</div></div>
+              <div className="kv"><label>运单证据</label><div>{data.tracking.present ? `尾号 ${sanitizeDisplayText(data.tracking.suffix || '-')}` : '未记录'}</div></div>
+              <div className="kv"><label>缺失字段</label><div>{data.missing_fields.length ? data.missing_fields.map(sanitizeDisplayText).join('、') : '无'}</div></div>
+              <div className="kv"><label>证据计数</label><div>{Object.values(data.evidence_summary).reduce((sum, item) => sum + Number(item || 0), 0)}</div></div>
+            </div>
+
+            {data.required_action ? (
+              <div className="message" data-role="agent">
+                <strong>下一步：</strong> {sanitizeDisplayText(data.required_action)}
+              </div>
+            ) : null}
+
+            {data.latest_speedaf_evidence ? (
+              <div className="message" data-role="agent" data-testid="support-memory-speedaf-evidence">
+                <strong>Speedaf：</strong> {sanitizeDisplayText(data.latest_speedaf_evidence.label || 'evidence')} · {sanitizeDisplayText(data.latest_speedaf_evidence.status || 'recorded')}
+                <div className="section-subtitle">{timelineSummary(data.latest_speedaf_evidence)}</div>
+              </div>
+            ) : null}
+
+            <div className="stack compact">
+              <div className="section-subtitle">下一步动作</div>
+              <div className="badges">
+                {data.next_actions.map((item) => (
+                  <Badge key={item.key} tone={memoryTone(item.tone)}>{sanitizeDisplayText(item.label)}</Badge>
+                ))}
+              </div>
+            </div>
+
+            {topEvidence.length ? (
+              <div className="stack compact" data-testid="support-memory-evidence-timeline">
+                <div className="section-subtitle">证据链</div>
+                {topEvidence.map((item) => (
+                  <div className="message" data-role="system" key={item.source_id || `${item.kind}-${item.created_at}`}>
+                    <strong>{sanitizeDisplayText(item.label || item.kind)}</strong>
+                    {item.status ? <> · {sanitizeDisplayText(item.status)}</> : null}
+                    <div className="section-subtitle">{timelineSummary(item)}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </CardBody>
+    </Card>
+  )
+}
+
 export function CustomerReplyPanel({ activeCase, onToast }: { activeCase: CaseDetail; onToast: (toast: { message: string; tone?: 'default' | 'danger' | 'success' }) => void }) {
   const client = useQueryClient()
   const [channel, setChannel] = useState(activeCase.preferred_reply_channel || activeCase.external_channel_conversation?.channel || 'web_chat')
   const [subject, setSubject] = useState(defaultEmailSubject(activeCase))
-  const [body, setBody] = useState(defaultReply(activeCase))
+  const [body, setBody] = useState('')
   const [confirmExternal, setConfirmExternal] = useState(false)
 
   const capabilities = useQuery({
@@ -62,7 +152,7 @@ export function CustomerReplyPanel({ activeCase, onToast }: { activeCase: CaseDe
   useEffect(() => {
     setChannel(activeCase.preferred_reply_channel || activeCase.external_channel_conversation?.channel || 'web_chat')
     setSubject(defaultEmailSubject(activeCase))
-    setBody(defaultReply(activeCase))
+    setBody('')
     setConfirmExternal(false)
     // Reset only when the ticket changes; live refetches must not wipe an operator draft.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -92,6 +182,7 @@ export function CustomerReplyPanel({ activeCase, onToast }: { activeCase: CaseDe
       setConfirmExternal(false)
       await client.invalidateQueries({ queryKey: ['caseDetail', activeCase.id] })
       await client.invalidateQueries({ queryKey: ['ticketTimeline', activeCase.id] })
+      await client.invalidateQueries({ queryKey: ['supportMemoryLedger', activeCase.id] })
       await client.invalidateQueries({ queryKey: ['cases'] })
     },
     onError: (err: Error) => onToast({ message: err.message || '发送客户回复失败', tone: 'danger' }),
@@ -99,6 +190,7 @@ export function CustomerReplyPanel({ activeCase, onToast }: { activeCase: CaseDe
 
   return (
     <>
+      <SupportMemoryPanel activeCase={activeCase} />
       <Card className="soft">
         <CardHeader title="发送给客户" subtitle="从工单工作台直接闭环客户回复，发送前必须看清渠道、目标和发送语义。" />
         <CardBody>

@@ -1672,6 +1672,62 @@ export interface WebchatEventSummary {
   created_at?: string | null
 }
 
+export interface SupportMemoryTimelineItem {
+  kind: string
+  label?: string | null
+  status?: string | null
+  summary?: Record<string, unknown>
+  created_at?: string | null
+  source_id?: string | null
+}
+
+export interface SupportMemoryNextAction {
+  key: string
+  label: string
+  tone?: BadgeTone | string
+}
+
+export interface SupportMemoryLedger {
+  generated_at?: string | null
+  source: 'derived_support_memory_ledger' | string
+  ticket: {
+    id: number
+    ticket_no?: string | null
+    status?: string | null
+    conversation_state?: string | null
+    source_channel?: string | null
+    market_code?: string | null
+    country_code?: string | null
+  }
+  conversation: {
+    id: string
+    status?: string | null
+    channel_key?: string | null
+    origin?: string | null
+    last_seen_at?: string | null
+    updated_at?: string | null
+  }
+  current_intent?: string | null
+  customer_request?: string | null
+  required_action?: string | null
+  missing_fields: string[]
+  tracking: {
+    present: boolean
+    suffix?: string | null
+    hash?: string | null
+    source?: string | null
+    raw_exposed?: boolean
+  }
+  ai_state: WebchatAIRuntimeSnapshot & {
+    last_turn?: SupportMemoryTimelineItem | null
+  }
+  handoff?: WebchatHandoffRequest | null
+  latest_speedaf_evidence?: SupportMemoryTimelineItem | null
+  evidence_summary: Record<string, number>
+  evidence_timeline: SupportMemoryTimelineItem[]
+  next_actions: SupportMemoryNextAction[]
+}
+
 export interface WebchatThread extends WebchatAIRuntimeSnapshot {
   conversation_id: string
   ticket_id: number
@@ -1692,6 +1748,7 @@ export interface WebchatThread extends WebchatAIRuntimeSnapshot {
   actions?: WebchatActionAudit[]
   ai_turns?: WebchatAITurnSummary[]
   events?: WebchatEventSummary[]
+  support_memory?: SupportMemoryLedger
   last_event_id?: number
   last_read_event_id?: number
   unread_count?: number
