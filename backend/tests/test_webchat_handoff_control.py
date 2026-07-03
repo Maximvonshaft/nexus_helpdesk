@@ -361,6 +361,7 @@ def test_whatsapp_legacy_job_uses_fast_ai_runtime_for_native_reply(db_session, m
     async def fake_generate_webchat_fast_reply(**kwargs):
         assert kwargs["channel_key"] == "whatsapp"
         assert kwargs["body"] == "你好"
+        assert kwargs["language"] == "zh"
         assert kwargs["session_id"].startswith("webchat:")
         return WebchatFastReplyResult(
             ok=True,

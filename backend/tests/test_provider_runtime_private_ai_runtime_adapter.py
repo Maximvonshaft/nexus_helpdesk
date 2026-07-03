@@ -157,6 +157,45 @@ async def test_private_ai_runtime_question_shape_matches_runtime_contract(monkey
 
 
 @pytest.mark.asyncio
+async def test_private_ai_runtime_prompt_requires_customer_language(monkeypatch, tmp_path):
+    token_file = tmp_path / "ai-runtime-token"
+    token_file.write_text("test-token", encoding="utf-8")
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", str(token_file))
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_REQUEST_SHAPE", "question")
+    adapter = PrivateAIRuntimeAdapter()
+    captured_payload = {}
+
+    def fake_post_json(endpoint, payload, token):
+        captured_payload.update(payload)
+        return {
+            "status": "ok",
+            "answer": json.dumps(
+                {
+                    "customer_reply": "您好，请问有什么可以帮您？",
+                    "language": "zh",
+                    "intent": "greeting",
+                    "handoff_required": False,
+                    "ticket_should_create": False,
+                },
+                ensure_ascii=False,
+            ),
+        }
+
+    monkeypatch.setattr(adapter, "_post_json", fake_post_json)
+
+    result = await adapter.generate(Mock(), _request(body="你好", channel_key="whatsapp"))
+
+    assert result.ok is True
+    assert result.structured_output["customer_reply"] == "您好，请问有什么可以帮您？"
+    assert "same language as customer_message" in captured_payload["question"]
+    assert "customer_reply must be Chinese" in captured_payload["question"]
+    assert "Do not wrap the JSON" in captured_payload["question"]
+
+
+@pytest.mark.asyncio
 async def test_private_ai_runtime_parses_json_embedded_in_answer(monkeypatch, tmp_path):
     token_file = tmp_path / "ai-runtime-token"
     token_file.write_text("test-token", encoding="utf-8")

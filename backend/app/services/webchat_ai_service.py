@@ -582,6 +582,10 @@ def _run_fast_reply_sync(**kwargs: Any) -> WebchatFastReplyResult:
     raise RuntimeError("webchat_ai_runtime_event_loop_running")
 
 
+def _language_hint(text: str | None) -> str | None:
+    return "zh" if any("\u4e00" <= ch <= "\u9fff" for ch in text or "") else None
+
+
 def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage], tracking_fact: TrackingFactResult | None = None, session_policy: dict[str, Any] | None = None, runtime_context: dict[str, Any] | None = None) -> str:
     global _LAST_AI_REPLY_SOURCE, _LAST_AI_FALLBACK_REASON, _LAST_BRIDGE_ELAPSED_MS, _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS, _LAST_BRIDGE_WAIT_TIMEOUT_MS
 
@@ -606,7 +610,7 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
             tracking_fact_metadata=tracking_fact_metadata,
             tracking_fact_evidence_present=bool(tracking_fact_summary),
             market_id=getattr(ticket, "market_id", None),
-            language=None,
+            language=_language_hint(visitor_message.body),
         )
     except Exception as exc:
         LOGGER.exception(
