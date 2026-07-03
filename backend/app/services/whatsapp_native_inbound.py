@@ -28,8 +28,9 @@ class WhatsAppNativeInboundError(ValueError):
 
 
 SELF_ECHO_TEST_SOURCE = "self_echo_test"
+SELF_CHAT_SOURCE = "self_chat"
 DEFAULT_SELF_ECHO_TEST_PREFIX = "NEXUS_SELF_INBOUND_TEST"
-VALID_PROJECTION_MODES = {"visitor", "store_only", "test_visitor"}
+VALID_PROJECTION_MODES = {"visitor", "store_only", "test_visitor", "self_chat"}
 
 
 @dataclass(frozen=True)
@@ -128,6 +129,8 @@ def _projection_mode(payload: dict[str, Any], *, from_me: bool, body_text: str) 
         return "visitor"
     if mode == "store_only":
         return "store_only"
+    if mode == "self_chat":
+        return "self_chat"
     if mode != "test_visitor":
         return "store_only"
     prefix = _clip(payload.get("self_echo_test_prefix"), 120) or DEFAULT_SELF_ECHO_TEST_PREFIX
@@ -345,7 +348,13 @@ def ingest_whatsapp_native_inbound(db: Session, payload: dict[str, Any]) -> What
         delivery_status="sent",
         metadata_json=_metadata(
             generated_by="whatsapp_native_inbound",
-            source=SELF_ECHO_TEST_SOURCE if from_me and projection_mode == "test_visitor" else "whatsapp_native",
+            source=(
+                SELF_ECHO_TEST_SOURCE
+                if from_me and projection_mode == "test_visitor"
+                else SELF_CHAT_SOURCE
+                if from_me and projection_mode == "self_chat"
+                else "whatsapp_native"
+            ),
             from_me=from_me,
             projection_mode=projection_mode,
             account_id=account.account_id,

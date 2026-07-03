@@ -232,6 +232,36 @@ def test_from_me_test_visitor_without_prefix_store_only(db_session):
     assert db_session.query(WebchatMessage).count() == 0
 
 
+def test_from_me_self_chat_projects_without_prefix_and_marks_metadata(db_session):
+    account = _account(db_session)
+
+    result = ingest_whatsapp_native_inbound(
+        db_session,
+        _payload(
+            account_id=account.account_id,
+            external_message_id="wamid.self.chat",
+            from_me=True,
+            projection_mode="self_chat",
+            body_text="can you please check my parcel CH020000129135",
+        ),
+    )
+    db_session.commit()
+
+    inbound = db_session.query(WhatsAppInboundMessage).one()
+    message = db_session.query(WebchatMessage).filter(WebchatMessage.direction == "visitor").one()
+    metadata = json.loads(message.metadata_json)
+    assert result.ticket_id is not None
+    assert result.conversation_id is not None
+    assert result.webchat_message_id == message.id
+    assert inbound.ticket_id is not None
+    assert inbound.conversation_id is not None
+    assert inbound.webchat_message_id == message.id
+    assert metadata["source"] == "self_chat"
+    assert metadata["from_me"] is True
+    assert metadata["projection_mode"] == "self_chat"
+    assert db_session.query(WebchatAITurn).count() == 1
+
+
 def test_duplicate_inbound_is_idempotent_and_does_not_duplicate_projection(db_session):
     _account(db_session)
     payload = _payload(external_message_id="wamid.duplicate")
