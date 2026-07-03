@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -24,6 +25,7 @@ from .webchat_fact_gate import evaluate_webchat_fact_gate
 from .ai_runtime_context import build_webchat_runtime_context
 from .knowledge_grounding_service import enforce_grounded_answer
 from .knowledge_prompt_service import build_knowledge_prompt_block, summarize_rag_trace
+from .webchat_fast_ai_service import WebchatFastReplyResult, generate_webchat_fast_reply
 
 LOGGER = logging.getLogger("nexusdesk")
 settings = get_settings()
@@ -555,6 +557,31 @@ def _build_runtime_context(
         return None
 
 
+def _history_as_fast_reply_context(
+    *,
+    history_rows: list[WebchatMessage],
+    visitor_message: WebchatMessage,
+) -> list[dict[str, str]]:
+    recent: list[dict[str, str]] = []
+    for row in history_rows[-MAX_HISTORY_MESSAGES:]:
+        if row.id == visitor_message.id:
+            continue
+        text = (row.body_text or row.body or "").strip()
+        if not text:
+            continue
+        role = "customer" if row.direction == "visitor" else "ai"
+        recent.append({"role": role, "text": text[:500]})
+    return recent[-MAX_HISTORY_MESSAGES:]
+
+
+def _run_fast_reply_sync(**kwargs: Any) -> WebchatFastReplyResult:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(generate_webchat_fast_reply(**kwargs))
+    raise RuntimeError("webchat_ai_runtime_event_loop_running")
+
+
 def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage], tracking_fact: TrackingFactResult | None = None, session_policy: dict[str, Any] | None = None, runtime_context: dict[str, Any] | None = None) -> str:
     global _LAST_AI_REPLY_SOURCE, _LAST_AI_FALLBACK_REASON, _LAST_BRIDGE_ELAPSED_MS, _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS, _LAST_BRIDGE_WAIT_TIMEOUT_MS
 
@@ -564,9 +591,50 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
     _LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = None
     _LAST_BRIDGE_WAIT_TIMEOUT_MS = None
 
-    _LAST_AI_REPLY_SOURCE = "fallback"
-    _LAST_AI_FALLBACK_REASON = "provider_runtime_not_configured_for_legacy_webchat_job"
-    return _fallback_reply_for(ticket=ticket, visitor_message=visitor_message)
+    tracking_fact_summary = tracking_fact.prompt_summary() if tracking_fact and tracking_fact.fact_evidence_present and tracking_fact.pii_redacted else None
+    tracking_fact_metadata = tracking_fact.metadata_payload() if tracking_fact else {}
+    tracking_fact_metadata.pop("fact_evidence_present", None)
+    try:
+        result = _run_fast_reply_sync(
+            tenant_key=conversation.tenant_key,
+            channel_key=conversation.channel_key,
+            session_id=(session_policy or {}).get("session_key") or f"webchat:{conversation.tenant_key}:{conversation.channel_key}:{conversation.public_id}",
+            body=visitor_message.body or "",
+            recent_context=_history_as_fast_reply_context(history_rows=history_rows, visitor_message=visitor_message),
+            request_id=f"webchat-ai-job-{conversation.public_id}-{visitor_message.id}",
+            tracking_fact_summary=tracking_fact_summary,
+            tracking_fact_metadata=tracking_fact_metadata,
+            tracking_fact_evidence_present=bool(tracking_fact_summary),
+            market_id=getattr(ticket, "market_id", None),
+            language=None,
+        )
+    except Exception as exc:
+        LOGGER.exception(
+            "webchat_ai_runtime_generate_failed",
+            extra={"event_payload": {
+                "conversation_id": conversation.id,
+                "ticket_id": ticket.id,
+                "visitor_message_id": visitor_message.id,
+                "error_type": type(exc).__name__,
+            }},
+        )
+        _LAST_AI_REPLY_SOURCE = "private_ai_runtime"
+        _LAST_AI_FALLBACK_REASON = f"ai_runtime_exception:{type(exc).__name__}"[:240]
+        return ""
+
+    _LAST_BRIDGE_ELAPSED_MS = result.elapsed_ms
+    _LAST_BRIDGE_WAIT_TIMEOUT_MS = result.retry_after_ms
+    _LAST_AI_REPLY_SOURCE = result.reply_source or "private_ai_runtime"
+
+    if not result.ok or not result.reply:
+        _LAST_AI_FALLBACK_REASON = result.error_code or "ai_runtime_no_reply"
+        return ""
+    if not result.ai_generated:
+        _LAST_AI_FALLBACK_REASON = result.error_code or "ai_runtime_non_generated_reply_blocked"
+        return ""
+
+    _LAST_AI_FALLBACK_REASON = None
+    return result.reply
 
 
 def _build_prompt(*, ticket: Ticket, conversation: WebchatConversation, visitor_message: WebchatMessage, history_rows: list[WebchatMessage], tracking_fact: TrackingFactResult | None = None, session_policy: dict[str, Any] | None = None, runtime_context: dict[str, Any] | None = None) -> str:
