@@ -413,6 +413,14 @@ def complete_ai_turn_with_reply(db: Session, *, conversation: WebchatConversatio
     if result.get("status") == "superseded":
         supersede_ai_turn(db, conversation=conversation, turn=turn, reason=result.get("reason") or "reply_suppressed")
         return
+    if result.get("status") in {"review_required", "failed_no_public_reply"}:
+        mark_ai_turn_failed(
+            db,
+            conversation=conversation,
+            turn=turn,
+            reason=result.get("reason") or result.get("fallback_reason") or "ai_failed_no_public_reply",
+        )
+        return
     now = utc_now()
     turn.status = "completed"
     turn.reply_message_id = result.get("message_id")

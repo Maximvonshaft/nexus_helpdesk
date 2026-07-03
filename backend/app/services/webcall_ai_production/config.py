@@ -6,10 +6,10 @@ from functools import lru_cache
 
 
 TRUE_VALUES = {"1", "true", "yes", "on"}
-PROVIDER_PROFILES = {"fake", "external", "hybrid"}
-STT_PROVIDERS = {"fake", "external", "deepgram_streaming"}
-LLM_PROVIDERS = {"fake", "external", "provider_runtime"}
-TTS_PROVIDERS = {"fake", "external", "cartesia_streaming", "deepgram_streaming"}
+PROVIDER_PROFILES = {"disabled", "fake", "external", "hybrid"}
+STT_PROVIDERS = {"disabled", "fake", "external", "deepgram_streaming"}
+LLM_PROVIDERS = {"disabled", "fake", "external", "provider_runtime"}
+TTS_PROVIDERS = {"disabled", "fake", "external", "cartesia_streaming", "deepgram_streaming"}
 ROLLOUT_MODES = {"off", "internal", "canary", "public"}
 
 
@@ -130,6 +130,8 @@ class WebCallAIProductionSettings:
     def status(self) -> str:
         if self.kill_switch:
             return "kill_switch"
+        if self.provider_profile == "disabled":
+            return "disabled"
         if not self.production_enabled or self.public_rollout_mode == "off":
             return "disabled"
         if self.webchat_voice_provider == "livekit" and not self.livekit_configured:
@@ -141,13 +143,13 @@ class WebCallAIProductionSettings:
     def validate(self) -> None:
         app_env = (os.getenv("APP_ENV") or "development").strip().lower()
         if self.provider_profile not in PROVIDER_PROFILES:
-            raise ValueError("WEBCALL_AI_PROVIDER_PROFILE must be fake, external, or hybrid")
+            raise ValueError("WEBCALL_AI_PROVIDER_PROFILE must be disabled, fake, external, or hybrid")
         if self.stt_provider not in STT_PROVIDERS:
-            raise ValueError("STT_PROVIDER must be fake, external, or deepgram_streaming")
+            raise ValueError("STT_PROVIDER must be disabled, fake, external, or deepgram_streaming")
         if self.llm_provider not in LLM_PROVIDERS:
-            raise ValueError("LLM_PROVIDER must be fake, external, or provider_runtime")
+            raise ValueError("LLM_PROVIDER must be disabled, fake, external, or provider_runtime")
         if self.tts_provider not in TTS_PROVIDERS:
-            raise ValueError("TTS_PROVIDER must be fake, external, cartesia_streaming, or deepgram_streaming")
+            raise ValueError("TTS_PROVIDER must be disabled, fake, external, cartesia_streaming, or deepgram_streaming")
         if self.public_rollout_mode not in ROLLOUT_MODES:
             raise ValueError("WEBCALL_AI_PUBLIC_ROLLOUT_MODE must be off, internal, canary, or public")
         if self.record_raw_audio:
@@ -172,9 +174,10 @@ class WebCallAIProductionSettings:
                     raise ValueError(f"{name} must not be configured inline in production; use the matching *_FILE secret")
 
     def public_runtime_config(self) -> dict[str, object]:
+        effective_enabled = self.production_enabled and self.provider_profile != "disabled"
         return {
-            "enabled": self.production_enabled,
-            "agent_enabled": self.agent_enabled and not self.kill_switch,
+            "enabled": effective_enabled,
+            "agent_enabled": effective_enabled and self.agent_enabled and not self.kill_switch,
             "kill_switch": self.kill_switch,
             "rollout_mode": self.public_rollout_mode,
             "status": self.status,

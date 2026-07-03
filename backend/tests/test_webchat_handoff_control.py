@@ -22,7 +22,7 @@ from app import models, operator_models, webchat_fast_models, webchat_models  # 
 from app.db import Base  # noqa: E402
 from app.enums import ConversationState, EventType, JobStatus, MessageStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.models import BackgroundJob, ChannelAccount, Customer, Ticket, TicketEvent, TicketOutboundMessage, User  # noqa: E402
-from app.services import message_dispatch  # noqa: E402
+from app.services import message_dispatch, webchat_ai_safe_service, webchat_ai_service  # noqa: E402
 from app.operator_models import OperatorTask  # noqa: E402
 from app.services.permissions import CAP_WEBCHAT_HANDOFF_FORCE_TAKEOVER, resolve_capabilities  # noqa: E402
 from app.services.webchat_ai_turn_service import schedule_webchat_ai_turn  # noqa: E402
@@ -280,6 +280,74 @@ def test_worker_processes_whatsapp_admin_reply_pending_row_with_native_sidecar(d
 
     assert processed.status == MessageStatus.sent
     assert processed.provider_status == "whatsapp_native_sent"
+
+
+def test_whatsapp_safe_ack_requires_review_without_customer_visible_fallback(db_session, monkeypatch):
+    ticket, conversation, message, _account = make_whatsapp_webchat(db_session)
+    turn, _job = attach_open_ai_turn(db_session, conversation, ticket, message)
+    monkeypatch.setattr(webchat_ai_safe_service.settings, "webchat_ai_auto_reply_mode", "safe_ack")
+
+    result = webchat_ai_safe_service.process_webchat_ai_reply_job(
+        db_session,
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        visitor_message_id=message.id,
+    )
+
+    assert result["status"] == "review_required"
+    assert result["message_id"] is None
+    assert turn.status == "failed"
+    assert conversation.ai_suspended is True
+    assert ticket.conversation_state == ConversationState.human_review_required
+    assert db_session.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == "agent").count() == 0
+    assert db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).count() == 0
+
+
+def test_whatsapp_ai_reply_queues_native_outbound(db_session, monkeypatch):
+    ticket, conversation, message, _account = make_whatsapp_webchat(db_session)
+    message.body = "Can you help me check this parcel later?"
+    message.body_text = message.body
+    turn, _job = attach_open_ai_turn(db_session, conversation, ticket, message)
+    monkeypatch.setattr(webchat_ai_safe_service.settings, "webchat_ai_auto_reply_mode", "safe_ai")
+
+    def fake_generate_ai_reply(**_kwargs):
+        webchat_ai_service._LAST_AI_REPLY_SOURCE = "private_ai_runtime"
+        webchat_ai_service._LAST_AI_FALLBACK_REASON = None
+        webchat_ai_service._LAST_BRIDGE_ELAPSED_MS = 42
+        webchat_ai_service._LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = 12
+        webchat_ai_service._LAST_BRIDGE_WAIT_TIMEOUT_MS = 12000
+        return "Hi, I can help check that with the information available here."
+
+    monkeypatch.setattr(webchat_ai_service, "_generate_ai_reply", fake_generate_ai_reply)
+
+    result = webchat_ai_safe_service.process_webchat_ai_reply_job(
+        db_session,
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        visitor_message_id=message.id,
+    )
+
+    assert result["status"] == "done"
+    assert result["fallback"] is False
+    assert turn.status == "completed"
+
+    agent_message = db_session.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == "agent").one()
+    assert agent_message.delivery_status == "queued"
+
+    outbound = db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).one()
+    assert outbound.channel == SourceChannel.whatsapp
+    assert outbound.status == MessageStatus.pending
+    assert outbound.provider_status == "whatsapp_ai_reply_queued"
+    assert outbound.body == "Hi, I can help check that with the information available here."
+    assert outbound.max_retries == message_dispatch.settings.outbox_max_retries
+    assert outbound.provider_message_id == f"nexusdesk-outbound-{outbound.id}"
+
+    event = db_session.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id, TicketEvent.event_type == EventType.outbound_queued).one()
+    payload = json.loads(event.payload_json)
+    assert payload["external_send"] is True
+    assert payload["reply_channel"] == SourceChannel.whatsapp.value
+    assert payload["outbound_message_id"] == outbound.id
+    assert payload["webchat_message_id"] == agent_message.id
 
 
 def test_request_handoff_creates_traceable_queue_and_suspends_ai(db_session):

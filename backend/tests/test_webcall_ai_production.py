@@ -112,6 +112,23 @@ def test_default_runtime_is_fail_closed(monkeypatch):
     assert payload["record_raw_audio"] is False
 
 
+def test_disabled_provider_profile_is_valid_fail_closed(monkeypatch):
+    monkeypatch.setenv("WEBCALL_AI_PRODUCTION_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_AGENT_ENABLED", "true")
+    monkeypatch.setenv("WEBCALL_AI_PROVIDER_PROFILE", "disabled")
+    monkeypatch.setenv("STT_PROVIDER", "disabled")
+    monkeypatch.setenv("LLM_PROVIDER", "disabled")
+    monkeypatch.setenv("TTS_PROVIDER", "disabled")
+    get_webcall_ai_production_settings.cache_clear()
+
+    payload = get_webcall_ai_production_settings().public_runtime_config()
+
+    assert payload["enabled"] is False
+    assert payload["agent_enabled"] is False
+    assert payload["status"] == "disabled"
+    assert payload["provider_profile"] == "disabled"
+
+
 def test_audio_capture_window_defaults_are_tracking_safe():
     settings = get_webcall_ai_production_settings()
 

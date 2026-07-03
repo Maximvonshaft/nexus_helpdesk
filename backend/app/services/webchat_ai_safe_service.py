@@ -15,7 +15,12 @@ from ..utils.time import utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
 from .outbound_safety import evaluate_outbound_safety
 from .sla_service import evaluate_sla, update_first_response
-from .webchat_ai_service import AI_AUTHOR_LABEL, process_webchat_ai_reply_job as _legacy_process_webchat_ai_reply_job
+from .webchat_ai_service import (
+    AI_AUTHOR_LABEL,
+    _is_whatsapp_conversation,
+    _mark_external_ai_review_required,
+    process_webchat_ai_reply_job as _legacy_process_webchat_ai_reply_job,
+)
 from .webchat_ai_turn_service import (
     AI_TURN_OPEN_STATUSES,
     cancel_open_ai_turns_for_handoff,
@@ -150,6 +155,17 @@ def _write_safe_agent_reply(db: Session, *, conversation: WebchatConversation, t
     if suppress_stale_reply_if_needed(db, conversation=conversation, turn=turn, reason="newer_message_before_safe_ack_commit"):
         LOGGER.info("webchat_ai_reply_suppressed_stale", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "visitor_message_id": visitor_message.id, "ai_turn_id": turn.id if turn else None, "reason": "newer_message_before_safe_ack_commit"}})
         return {"status": "superseded", "reason": "newer_message_before_safe_ack_commit", "reply_source": "suppressed"}
+
+    if _is_whatsapp_conversation(conversation):
+        return _mark_external_ai_review_required(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            visitor_message=visitor_message,
+            reason=reason,
+            turn=turn,
+            reply_source=reason,
+        )
 
     final_body = _sanitize_public_reply(body)
     fact_gate_reason = None

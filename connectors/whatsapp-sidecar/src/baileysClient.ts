@@ -170,7 +170,19 @@ export class BaileysConnector implements WhatsAppConnector {
           fromMeTestPrefix: this.config.fromMeTestPrefix
         });
         if (normalized) {
-          await this.onInbound(normalized);
+          try {
+            await this.onInbound(normalized);
+          } catch (error) {
+            this.logger.warn(
+              {
+                account_id: accountId,
+                external_message_id: normalized.external_message_id,
+                chat_jid: normalized.chat_jid,
+                error
+              },
+              "whatsapp_inbound_callback_failed"
+            );
+          }
         }
       }
     });
