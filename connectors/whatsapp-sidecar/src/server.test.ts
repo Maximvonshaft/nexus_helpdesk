@@ -11,6 +11,7 @@ function config(): SidecarConfig {
     port: 0,
     mode: "mock",
     sessionRoot: "/tmp/nexus-wa-test",
+    autoStartAccounts: [],
     internalToken: "test-token",
     backendUrl: "http://backend.test",
     connectorKey: "connector-key",

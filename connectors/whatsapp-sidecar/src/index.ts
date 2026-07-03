@@ -10,6 +10,11 @@ const server = createSidecarServer(config, logger, registry);
 
 server.listen(config.port, () => {
   logger.info({ port: config.port, mode: config.mode }, "whatsapp_sidecar_started");
+  for (const accountId of config.autoStartAccounts) {
+    void registry.start(accountId).catch((error) => {
+      logger.error({ account_id: accountId, error }, "whatsapp_sidecar_auto_start_failed");
+    });
+  }
 });
 
 function shutdown(signal: string): void {

@@ -38,10 +38,17 @@ function modeEnv(): ConnectorMode {
 
 function fromMeModeEnv(): FromMeInboundMode {
   const mode = (process.env.WA_SIDECAR_FROM_ME_MODE || "ignore").trim().toLowerCase();
-  if (mode !== "ignore" && mode !== "store_only" && mode !== "test_visitor") {
-    throw new Error("WA_SIDECAR_FROM_ME_MODE must be ignore, store_only, or test_visitor");
+  if (mode !== "ignore" && mode !== "store_only" && mode !== "test_visitor" && mode !== "self_chat") {
+    throw new Error("WA_SIDECAR_FROM_ME_MODE must be ignore, store_only, test_visitor, or self_chat");
   }
   return mode;
+}
+
+function listEnv(name: string): string[] {
+  return (process.env[name] || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 export function loadConfig(): SidecarConfig {
@@ -51,6 +58,7 @@ export function loadConfig(): SidecarConfig {
     port: intEnv("WA_SIDECAR_PORT", 18793),
     mode: modeEnv(),
     sessionRoot,
+    autoStartAccounts: listEnv("WA_SIDECAR_AUTO_START_ACCOUNTS"),
     internalToken: requireEnv("WA_SIDECAR_INTERNAL_TOKEN"),
     backendUrl: requireEnv("NEXUS_BACKEND_URL").replace(/\/+$/, ""),
     connectorKey: requireEnv("NEXUS_CONNECTOR_KEY"),

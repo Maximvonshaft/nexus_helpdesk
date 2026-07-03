@@ -61,3 +61,17 @@ test("normalizes fromMe test visitor only with configured prefix", () => {
   assert.equal(withPrefix?.projection_mode, "test_visitor");
   assert.equal(withPrefix?.body_text, "SELF_TEST hello");
 });
+
+test("normalizes fromMe self chat as visitor projection", () => {
+  const normalized = normalizeBaileysInbound("wa-main", {
+    key: { id: "self-chat", remoteJid: "wa-contact@s.whatsapp.net", fromMe: true },
+    message: { conversation: "check my parcel" }
+  }, {
+    allowFromMeInbound: true,
+    fromMeMode: "self_chat"
+  });
+
+  assert.equal(normalized?.from_me, true);
+  assert.equal(normalized?.projection_mode, "self_chat");
+  assert.equal(normalized?.body_text, "check my parcel");
+});

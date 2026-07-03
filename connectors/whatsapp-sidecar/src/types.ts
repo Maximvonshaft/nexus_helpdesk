@@ -1,5 +1,5 @@
 export type ConnectorMode = "mock" | "baileys";
-export type FromMeInboundMode = "ignore" | "store_only" | "test_visitor";
+export type FromMeInboundMode = "ignore" | "store_only" | "test_visitor" | "self_chat";
 
 export type AccountStatus =
   | "idle"
@@ -16,6 +16,7 @@ export interface SidecarConfig {
   port: number;
   mode: ConnectorMode;
   sessionRoot: string;
+  autoStartAccounts: string[];
   internalToken: string;
   backendUrl: string;
   connectorKey: string;
@@ -55,7 +56,7 @@ export interface NormalizedInboundMessage {
   raw_payload: unknown;
   received_at: string;
   from_me?: boolean;
-  projection_mode?: "visitor" | "store_only" | "test_visitor";
+  projection_mode?: "visitor" | "store_only" | "test_visitor" | "self_chat";
   self_echo_test_prefix?: string;
 }
 

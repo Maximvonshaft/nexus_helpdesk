@@ -46,6 +46,8 @@ export function normalizeBaileysInbound(accountId: string, event: any, options: 
     } else if (fromMeMode === "test_visitor") {
       if (!body.startsWith(testPrefix)) return null;
       projectionMode = "test_visitor";
+    } else if (fromMeMode === "self_chat") {
+      projectionMode = "self_chat";
     } else {
       return null;
     }
