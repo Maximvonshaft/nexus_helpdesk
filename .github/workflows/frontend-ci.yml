@@ -46,7 +46,18 @@ jobs:
         run: npm run typecheck
 
       - name: Lint
-        run: npm run lint
+        run: |
+          set -o pipefail
+          npm run lint 2>&1 | tee lint-output.txt
+
+      - name: Upload lint output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-lint-output
+          path: webapp/lint-output.txt
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Build
         run: npm run build
