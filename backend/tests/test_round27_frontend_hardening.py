@@ -24,7 +24,7 @@ def test_frontend_routes_remain_consolidated_to_support_workbench():
     api = (PROJECT / 'webapp' / 'src' / 'lib' / 'api.ts').read_text()
 
     assert routes == ['index.tsx', 'login.tsx', 'root.tsx', 'webchat.tsx']
-    assert 'SupportWorkbench' in webchat
+    assert 'SupportConsolePage' in webchat
     assert '/api/admin/ai-configs' in api
     assert '/api/lookups/ai-configs' in api
 
