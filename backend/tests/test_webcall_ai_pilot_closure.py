@@ -107,7 +107,7 @@ def test_no_valid_session_is_not_false_success(db, monkeypatch):
     assert result.claimed == 0
 
 
-def test_simulated_full_loop_uses_fake_tracking_and_builds_evidence(db, monkeypatch):
+def test_simulated_full_loop_uses_fake_tracking_but_fails_closed_without_runtime_reply(db, monkeypatch):
     _enable_common(monkeypatch, "simulated_full_loop")
     monkeypatch.setenv("CI", "true")
     monkeypatch.setenv("WEBCALL_AI_TRACKING_LOOKUP_ENABLED", "true")
@@ -118,15 +118,16 @@ def test_simulated_full_loop_uses_fake_tracking_and_builds_evidence(db, monkeypa
 
     result = run_webcall_ai_pilot_closure_once(db, worker_id="worker-a", tenant_key="pilot")
 
-    assert result.ok is True
+    assert result.ok is False
+    assert result.error_code == "pilot_closure_failed"
     assert result.claimed == 1
-    assert result.transcript_segments == 1
-    assert result.turns == 1
-    assert result.actions == 1
-    assert result.tts_runtime_events == 1
-    assert result.voice_egress_sent == 1
-    assert result.evidence_report == 1
-    assert db.query(WebchatVoiceTranscriptSegment).count() == 1
+    assert result.transcript_segments == 0
+    assert result.turns == 0
+    assert result.actions == 0
+    assert result.tts_runtime_events == 0
+    assert result.voice_egress_sent == 0
+    assert result.evidence_report == 0
+    assert db.query(WebchatVoiceTranscriptSegment).count() == 0
 
 
 def test_simulated_full_loop_does_not_call_real_tracking_in_ci(db, monkeypatch):
@@ -140,7 +141,9 @@ def test_simulated_full_loop_does_not_call_real_tracking_in_ci(db, monkeypatch):
     monkeypatch.setattr(orchestrator, "lookup_tracking_fact", lambda **kwargs: (_ for _ in ()).throw(AssertionError("real lookup")))
     get_webcall_ai_settings.cache_clear()
 
-    assert run_webcall_ai_pilot_closure_once(db, worker_id="worker-a", tenant_key="pilot").ok is True
+    result = run_webcall_ai_pilot_closure_once(db, worker_id="worker-a", tenant_key="pilot")
+    assert result.ok is False
+    assert result.error_code == "pilot_closure_failed"
 
 
 def test_simulated_full_loop_without_fake_tracking_in_ci_fails_closed(db, monkeypatch):
@@ -162,12 +165,9 @@ def test_handoff_safety_produces_handoff_and_no_voice_egress(db, monkeypatch):
     get_webcall_ai_settings.cache_clear()
 
     result = run_webcall_ai_pilot_closure_once(db, worker_id="worker-a", tenant_key="pilot")
-    action = db.query(WebchatVoiceAIAction).one()
 
-    assert result.ok is True
-    assert result.handoff_events == 1
+    assert result.ok is False
+    assert result.error_code == "pilot_closure_failed"
+    assert result.handoff_events == 0
     assert result.voice_egress_sent == 0
-    assert action.model_action == "handoff_to_human"
-    assert action.nexus_decision == "handoff"
-    assert action.speedaf_tool_name is None
-    assert action.result_status == "handoff_required"
+    assert db.query(WebchatVoiceAIAction).count() == 0

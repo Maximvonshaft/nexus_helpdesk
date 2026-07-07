@@ -91,7 +91,7 @@ def test_worker_default_output_unchanged(db):
     }
 
 
-def test_worker_tts_runtime_fake_egress_returns_counters_and_writes_turn_action(db, monkeypatch):
+def test_worker_tts_runtime_fake_egress_fails_closed_without_runtime_reply(db, monkeypatch):
     _voice_session(db)
     monkeypatch.setenv("WEBCALL_AI_TTS_RUNTIME_ENABLED", "true")
     monkeypatch.setenv("WEBCALL_AI_VOICE_EGRESS_ENABLED", "true")
@@ -100,14 +100,15 @@ def test_worker_tts_runtime_fake_egress_returns_counters_and_writes_turn_action(
 
     result = run_webcall_ai_worker_once(db, "worker-a", limit=10, lease_seconds=30)
 
-    assert result["released"] == 1
-    assert result["failed"] == 0
-    assert result["tts_events"] == 1
-    assert result["tts_runtime_events"] == 1
-    assert result["voice_egress_sent"] == 1
+    assert result["released"] == 0
+    assert result["failed"] == 1
+    assert result["turns"] == 0
+    assert result["tts_events"] == 0
+    assert result["tts_runtime_events"] == 0
+    assert result["voice_egress_sent"] == 0
     assert result["voice_egress_failures"] == 0
-    assert db.query(WebchatVoiceAITurn).count() == 1
-    assert db.query(WebchatVoiceAIAction).count() == 1
+    assert db.query(WebchatVoiceAITurn).count() == 0
+    assert db.query(WebchatVoiceAIAction).count() == 0
 
 
 def test_worker_tts_runtime_failure_does_not_publish_egress_or_write_rows(db, monkeypatch):
@@ -153,9 +154,9 @@ def test_worker_voice_egress_stub_failure_counts_failure_and_rolls_back_rows(db,
     assert result["failed"] == 1
     assert result["turns"] == 0
     assert result["tts_events"] == 0
-    assert result["tts_runtime_events"] == 1
+    assert result["tts_runtime_events"] == 0
     assert result["voice_egress_sent"] == 0
-    assert result["voice_egress_failures"] == 1
+    assert result["voice_egress_failures"] == 0
     assert db.query(WebchatVoiceAITurn).count() == 0
     assert db.query(WebchatVoiceAIAction).count() == 0
     assert session.ai_agent_status == "failed"

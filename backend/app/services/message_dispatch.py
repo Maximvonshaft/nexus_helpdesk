@@ -521,28 +521,31 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
         log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Non-external outbound row was blocked from provider dispatch', payload={'message_id': message.id, 'channel': message.channel.value if hasattr(message.channel, 'value') else str(message.channel), 'provider_status': message.provider_status})
         return message
     try:
-        ticket_for_origin = message.ticket
-        has_origin_contract = bool(message.origin or message.runtime_contract_version or message.created_by is not None)
+        ticket_for_origin = getattr(message, "ticket", None)
+        origin = getattr(message, "origin", None)
+        created_by = getattr(message, "created_by", None)
+        runtime_contract_version = getattr(message, "runtime_contract_version", None)
+        has_origin_contract = bool(origin or runtime_contract_version or created_by is not None)
         if not has_origin_contract and not settings.allow_legacy_originless_outbound:
             raise ValueError("missing_customer_visible_origin_contract")
         if has_origin_contract:
             _enforce_customer_visible_origin(
                 body=message.body,
-                origin=_normalize_customer_visible_origin(message.origin, created_by=message.created_by),
+                origin=_normalize_customer_visible_origin(origin, created_by=created_by),
                 ticket=ticket_for_origin,
-                created_by=message.created_by,
-                runtime_trace_id=message.runtime_trace_id,
-                runtime_contract_version=message.runtime_contract_version,
-                runtime_signature=message.runtime_signature,
-                runtime_contract_payload_json=message.runtime_contract_payload_json,
-                runtime_contract_payload_sha256=message.runtime_contract_payload_sha256,
-                runtime_reply_type=message.runtime_reply_type,
-                safety_status=message.safety_status,
+                created_by=created_by,
+                runtime_trace_id=getattr(message, "runtime_trace_id", None),
+                runtime_contract_version=runtime_contract_version,
+                runtime_signature=getattr(message, "runtime_signature", None),
+                runtime_contract_payload_json=getattr(message, "runtime_contract_payload_json", None),
+                runtime_contract_payload_sha256=getattr(message, "runtime_contract_payload_sha256", None),
+                runtime_reply_type=getattr(message, "runtime_reply_type", None),
+                safety_status=getattr(message, "safety_status", None),
             )
     except ValueError as exc:
         reason = str(exc)
         _mark_origin_blocked(message, reason)
-        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Customer-visible outbound origin contract blocked dispatch', payload={'message_id': message.id, 'origin': message.origin, 'failure_code': reason, 'required_contract': AI_REPLY_CONTRACT_V2})
+        log_event(db, ticket_id=message.ticket_id, actor_id=getattr(message, "created_by", None), event_type=EventType.outbound_dead, note='Customer-visible outbound origin contract blocked dispatch', payload={'message_id': message.id, 'origin': getattr(message, "origin", None), 'failure_code': reason, 'required_contract': AI_REPLY_CONTRACT_V2})
         return message
     blocked = _external_dispatch_block_reason()
     if blocked:

@@ -16,6 +16,10 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_postgres_hybrid_sql_uses_tsvector_and_pgvector():
     fts_sql, fts_params = _postgres_candidate_sql(
         vector=False,
+        tenant_id="default",
+        brand_id="speedaf",
+        country_scope="CH",
+        channel_scope="website",
         market_id=1,
         channel="website",
         audience_scope="customer",
@@ -23,6 +27,10 @@ def test_postgres_hybrid_sql_uses_tsvector_and_pgvector():
     )
     vector_sql, vector_params = _postgres_candidate_sql(
         vector=True,
+        tenant_id="default",
+        brand_id="speedaf",
+        country_scope="CH",
+        channel_scope="website",
         market_id=1,
         channel="website",
         audience_scope="customer",
@@ -35,7 +43,11 @@ def test_postgres_hybrid_sql_uses_tsvector_and_pgvector():
     assert "probe_category" in fts_sql
     assert "embedding_vector <=> CAST(:query_vector AS vector)" in vector_sql
     assert "kc.embedding_vector IS NOT NULL" in vector_sql
+    assert "kc.tenant_id = :tenant_id" in fts_sql
+    assert "kc.country_scope IN (:country_scope, :global_country_scope)" in fts_sql
     assert fts_params["market_id"] == 1
+    assert fts_params["tenant_id"] == "default"
+    assert fts_params["country_scope"] == "CH"
     assert vector_params["channel"] == "website"
 
 

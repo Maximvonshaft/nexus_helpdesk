@@ -121,8 +121,8 @@ def test_multiple_candidates_asks_for_suffixes_only(monkeypatch):
     )
 
     assert result.action == "ask_waybill_suffix_selection"
-    assert "6789" in result.ai_response_text_redacted
-    assert "4321" in result.ai_response_text_redacted
+    assert result.result_status == "waybill_suffix_requested"
+    assert result.ai_response_text_redacted == ""
     assert "SF123456789CN" not in result.ai_response_text_redacted
 
 

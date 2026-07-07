@@ -134,14 +134,17 @@ def test_ai_config_management_is_limited_to_admin_or_manager(db_session):
     assert exc.value.status_code == 403
 
 
-def test_webapp_has_ai_control_route_and_nav_entry():
+def test_webapp_has_support_workbench_ai_runtime_and_knowledge_entry():
     router = (ROOT.parent / 'webapp' / 'src' / 'router.tsx').read_text(encoding='utf-8')
-    shell = (ROOT.parent / 'webapp' / 'src' / 'layouts' / 'AppShell.tsx').read_text(encoding='utf-8')
-    route = (ROOT.parent / 'webapp' / 'src' / 'routes' / 'ai-control.tsx').read_text(encoding='utf-8')
-    api = (ROOT.parent / 'webapp' / 'src' / 'lib' / 'api.ts').read_text(encoding='utf-8')
+    webchat_route = (ROOT.parent / 'webapp' / 'src' / 'routes' / 'webchat.tsx').read_text(encoding='utf-8')
+    console = (ROOT.parent / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text(encoding='utf-8')
+    support_api = (ROOT.parent / 'webapp' / 'src' / 'lib' / 'supportApi.ts').read_text(encoding='utf-8')
 
-    assert 'AIControlRoute' in router
-    assert "'/ai-control'" in shell
-    assert '智能助手规则与知识配置' in route
-    assert '/api/admin/ai-configs' in api
-    assert '/api/lookups/ai-configs' in api
+    assert 'WebchatRoute' in router
+    assert "path: '/webchat'" in webchat_route
+    assert 'SupportConsolePage' in webchat_route
+    assert 'AI Runtime' in console
+    assert '知识库维护' in console
+    assert 'supportApi.providerRuntimeStatus' in console
+    assert '/api/admin/provider-runtime/status' in support_api
+    assert '/api/knowledge-items' in support_api

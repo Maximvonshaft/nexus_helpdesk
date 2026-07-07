@@ -64,6 +64,7 @@ def test_ensure_external_dispatch_allowed_fails_for_unknown_provider(monkeypatch
 def test_process_external_message_provider_disabled_never_calls_provider(monkeypatch):
     monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
     monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "disabled")
+    monkeypatch.setattr(message_dispatch.settings, "allow_legacy_originless_outbound", True)
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(message_dispatch, "dispatch_via_external_channel_bridge", _provider_must_not_run)
     monkeypatch.setattr(message_dispatch, "dispatch_via_external_channel_mcp", _provider_must_not_run)
