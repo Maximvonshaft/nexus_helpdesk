@@ -1,3 +1,5 @@
 export function AppShell() {
-  return <main>客服工作台</main>
+  const roleWorkspaceHint = "客服工作台"
+  const canViewOps = true
+  return <main data-can-view-ops={canViewOps}>{roleWorkspaceHint}</main>
 }
