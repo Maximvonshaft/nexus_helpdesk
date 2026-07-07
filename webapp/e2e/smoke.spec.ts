@@ -288,6 +288,6 @@ test('support workbench renders the consolidated production views', async ({ pag
   await expect(page.getByText('connected')).toBeVisible()
 
   await page.getByRole('button', { name: '运行' }).click()
-  await expect(page.getByText('AI Runtime 正常')).toBeVisible()
-  await expect(page.getByText('正常')).toBeVisible()
+  await expect(page.getByText('normal')).toBeVisible()
+  await expect(page.getByText('24 小时会话')).toBeVisible()
 })
