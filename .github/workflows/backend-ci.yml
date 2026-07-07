@@ -30,21 +30,38 @@ jobs:
       - name: Compile backend
         run: python -m compileall backend/app backend/scripts
 
-      - name: Run baseline backend tests
-        run: |
-          set -Eeuo pipefail
-          timeout 600 pytest -q \
-            backend/tests/test_outbound_safety.py \
-            backend/tests/test_outbound_message_semantics.py \
-            backend/tests/test_round24_hardening.py \
-            backend/tests/test_production_settings_contract.py \
-            backend/tests/test_next_phase_max_push.py \
-            backend/tests/test_deploy_contracts.py \
-            backend/tests/test_deploy_v222_contracts.py \
-            backend/tests/test_round20a_rectification.py \
-            backend/tests/test_round20b_legacy_frontend.py \
-            backend/tests/test_round27_frontend_hardening.py \
-            backend/tests/test_tool_governance.py
+      - name: Baseline tests - outbound safety
+        run: timeout 300 pytest -q backend/tests/test_outbound_safety.py
+
+      - name: Baseline tests - outbound message semantics
+        run: timeout 300 pytest -q backend/tests/test_outbound_message_semantics.py
+
+      - name: Baseline tests - round24 hardening
+        run: timeout 600 pytest -q backend/tests/test_round24_hardening.py
+
+      - name: Baseline tests - production settings contract
+        run: timeout 300 pytest -q backend/tests/test_production_settings_contract.py
+
+      - name: Baseline tests - next phase max push
+        run: timeout 300 pytest -q backend/tests/test_next_phase_max_push.py
+
+      - name: Baseline tests - deploy contracts
+        run: timeout 300 pytest -q backend/tests/test_deploy_contracts.py
+
+      - name: Baseline tests - deploy v222 contracts
+        run: timeout 300 pytest -q backend/tests/test_deploy_v222_contracts.py
+
+      - name: Baseline tests - round20a rectification
+        run: timeout 300 pytest -q backend/tests/test_round20a_rectification.py
+
+      - name: Baseline tests - round20b legacy frontend
+        run: timeout 300 pytest -q backend/tests/test_round20b_legacy_frontend.py
+
+      - name: Baseline tests - round27 frontend hardening
+        run: timeout 300 pytest -q backend/tests/test_round27_frontend_hardening.py
+
+      - name: Baseline tests - tool governance
+        run: timeout 300 pytest -q backend/tests/test_tool_governance.py
 
       - name: Run runtime retirement and observability tests
         env:
