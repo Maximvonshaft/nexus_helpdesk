@@ -34,10 +34,19 @@ def production_env(**overrides: str) -> dict[str, str]:
         'SEED_DEMO_DATA': 'false',
         'ALLOW_DEV_AUTH': 'false',
         'ALLOW_LEGACY_INTEGRATION_API_KEY': 'false',
+        'ALLOW_LEGACY_ORIGINLESS_OUTBOUND': 'false',
         'EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED': 'false',
-        'STORAGE_BACKEND': 's3',
         'EXTERNAL_CHANNEL_TRANSPORT': 'disabled',
         'EXTERNAL_CHANNEL_DEPLOYMENT_MODE': 'disabled',
+        'EXTERNAL_CHANNEL_BRIDGE_ENABLED': 'false',
+        'EXTERNAL_CHANNEL_SYNC_ENABLED': 'false',
+        'EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED': 'false',
+        'EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED': 'false',
+        'METRICS_ENABLED': 'false',
+        'REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION': 'false',
+        'EXTERNAL_CHANNEL_ATTACHMENT_URL_FETCH_ENABLED': 'false',
+        'WHATSAPP_DISPATCH_MODE': 'disabled',
+        'WHATSAPP_NATIVE_ENABLED': 'false',
         'WEBCHAT_RATE_LIMIT_BACKEND': 'database',
         'WEBCHAT_AI_AUTO_REPLY_MODE': 'safe_ai',
         'WEBCHAT_ALLOWED_ORIGINS': 'https://example.test',
@@ -50,6 +59,7 @@ def production_env(**overrides: str) -> dict[str, str]:
         'KNOWLEDGE_EMBEDDING_PROVIDER': 'openai_compatible',
         'KNOWLEDGE_EMBEDDING_MODEL': 'text-embedding-3-small',
         'KNOWLEDGE_EMBEDDING_API_KEY_FILE': '/run/secrets/knowledge_embedding_api_key',
+        'STORAGE_BACKEND': 's3',
     }
     env.update(overrides)
     return env
