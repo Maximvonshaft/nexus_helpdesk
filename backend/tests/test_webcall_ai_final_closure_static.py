@@ -31,7 +31,7 @@ def test_final_closure_runtime_has_no_forbidden_network_or_provider_calls():
         "websockets",
         "external_channel",
         "openai",
-        "codex",
+        "legacy_ai_provider",
         "provider_runtime",
         "workorder",
         "work_order",

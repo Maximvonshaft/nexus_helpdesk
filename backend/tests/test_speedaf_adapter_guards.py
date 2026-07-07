@@ -12,6 +12,9 @@ class GuardFakeClient(SpeedafMcpClient):
             base_url="https://uat-api.speedaf.com",
             app_code="test-app-code",
             secret_key=None,
+            customer_code="CH000001",
+            platform_source="API KEY",
+            lookup_caller_id=None,
             timeout_seconds=8,
             country_code_default="CH",
             content_type="text/plain",
@@ -25,7 +28,10 @@ class GuardFakeClient(SpeedafMcpClient):
         return self.normalize_response({"success": True, "data": {}}, status_code=200)
 
 
-def test_order_query_skips_locally_without_caller_id():
+def test_order_query_skips_locally_without_caller_id(monkeypatch):
+    monkeypatch.delenv("SPEEDAF_WAYBILL_ONLY_LOOKUP_CALLER_ID", raising=False)
+    monkeypatch.delenv("SPEEDAF_UAT_CALLER_ID", raising=False)
+    monkeypatch.delenv("SPEEDAF_MCP_TEST_CALLER_ID", raising=False)
     client = GuardFakeClient()
     adapter = SpeedafCoreAdapter(client)
 

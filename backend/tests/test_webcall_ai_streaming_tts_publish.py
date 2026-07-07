@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
-from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: E402,F401
+from app import models, operator_models, tool_models, voice_models, webchat_models  # noqa: E402,F401
 from app.db import Base, SessionLocal, engine
 from app.services.webcall_ai_production.agent_session_claims import AI_STATUS_CLAIMED
 from app.services.webcall_ai_production.agent_worker import run_claimed_session_loop
@@ -255,7 +255,7 @@ def test_livekit_agent_io_does_not_materialize_stream_before_backend(monkeypatch
 def test_cartesia_streaming_tts_collects_chunks_and_builds_request(monkeypatch):
     monkeypatch.setattr("app.services.webcall_ai_production.providers.cartesia_streaming_tts.httpx.Client", FakeCartesiaClient)
 
-    result = CartesiaStreamingTTSProvider().synthesize("Please provide your tracking number.", language="en")
+    result = CartesiaStreamingTTSProvider().synthesize("Runtime generated reply.", language="en")
 
     assert result.audio_bytes == b"\x01\x00\x02\x00\x03\x00\x04\x00"
     assert result.mime_type == "audio/pcm"

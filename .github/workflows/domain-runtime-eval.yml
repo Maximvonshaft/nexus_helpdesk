@@ -5,7 +5,7 @@ on:
     paths:
       - 'backend/app/services/domain_intelligence/**'
       - 'backend/app/domain_packs/**'
-      - 'backend/app/services/webchat_fast_ai_service.py'
+      - 'backend/app/services/webchat_runtime_ai_service.py'
       - 'backend/scripts/run_domain_runtime_eval.py'
       - 'backend/tests/test_domain_query_understanding.py'
       - 'backend/tests/test_webchat_domain_shadow_trace.py'

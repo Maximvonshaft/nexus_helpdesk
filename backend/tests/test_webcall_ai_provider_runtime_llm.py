@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
-from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: E402,F401
+from app import models, operator_models, tool_models, voice_models, webchat_models  # noqa: E402,F401
 from app.db import Base, SessionLocal, engine
 from app.services.provider_runtime.registry import ProviderAdapter, ProviderRegistry
 from app.services.provider_runtime.schemas import ProviderResult
@@ -27,8 +27,8 @@ from app.voice_models import WebchatVoiceAIAction, WebchatVoiceAITurn, WebchatVo
 from app.webchat_models import WebchatEvent
 
 
-class CodexDecisionAdapter(ProviderAdapter):
-    name = "codex_app_server"
+class RuntimeDecisionAdapter(ProviderAdapter):
+    name = "private_ai_runtime"
 
     def __init__(self) -> None:
         self.requests = []
@@ -40,7 +40,7 @@ class CodexDecisionAdapter(ProviderAdapter):
             provider=self.name,
             elapsed_ms=12,
             structured_output={
-                "customer_reply": "Please share your tracking number so I can check the shipment.",
+                "customer_reply": "Could you send the shipment reference so I can check the shipment.",
                 "language": "en",
                 "intent": "tracking_missing_number",
                 "tracking_number": None,
@@ -65,7 +65,7 @@ def clean_db_and_env(monkeypatch):
     monkeypatch.setenv("STT_PROVIDER", "fake")
     monkeypatch.setenv("LLM_PROVIDER", "provider_runtime")
     monkeypatch.setenv("TTS_PROVIDER", "fake")
-    monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_PROVIDER", "codex_app_server")
+    monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_PROVIDER", "private_ai_runtime")
     monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_TENANT_ID", "default")
     monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_CHANNEL_KEY", "webcall_ai")
     monkeypatch.setenv("WEBCALL_AI_PROVIDER_RUNTIME_SCENARIO", "webcall_ai_decision")
@@ -120,24 +120,24 @@ def test_provider_router_returns_provider_runtime_llm():
     assert isinstance(get_llm_provider("provider_runtime"), ProviderRuntimeLLMProvider)
 
 
-def test_provider_runtime_llm_maps_codex_contract():
-    adapter = CodexDecisionAdapter()
-    ProviderRegistry.register("codex_app_server", lambda db: adapter)
+def test_provider_runtime_llm_maps_runtime_contract():
+    adapter = RuntimeDecisionAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
 
     result = ProviderRuntimeLLMProvider().respond("where is my parcel?", language="en")
 
-    assert result.response_text == "Please share your tracking number so I can check the shipment."
+    assert result.response_text == "Could you send the shipment reference so I can check the shipment."
     assert result.intent == "tracking_missing_number"
     assert result.handoff_required is False
-    assert result.provider_name == "provider_runtime:codex_app_server"
+    assert result.provider_name == "provider_runtime:private_ai_runtime"
     assert adapter.requests[0].scenario == "webcall_ai_decision"
-    assert adapter.requests[0].output_contract == "speedaf_webchat_fast_reply_v1"
+    assert adapter.requests[0].output_contract == "nexus_webchat_runtime_reply_v1"
     assert adapter.requests[0].body == "where is my parcel?"
 
 
-def test_session_turn_persists_provider_runtime_codex_evidence(db):
-    adapter = CodexDecisionAdapter()
-    ProviderRegistry.register("codex_app_server", lambda db: adapter)
+def test_session_turn_persists_provider_runtime_evidence(db):
+    adapter = RuntimeDecisionAdapter()
+    ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
     session = _voice_session(db)
 
     turn_result = run_session_turn(
@@ -153,7 +153,7 @@ def test_session_turn_persists_provider_runtime_codex_evidence(db):
     event_types = [row.event_type for row in db.query(WebchatEvent).filter(WebchatEvent.conversation_id == session.conversation_id).all()]
 
     assert turn_result["handoff_required"] is False
-    assert turn.provider == "provider_runtime:codex_app_server"
+    assert turn.provider == "provider_runtime:private_ai_runtime"
     assert turn.stt_provider == "fake"
     assert turn.tts_provider == "fake"
     assert turn.intent == "tracking_missing_number"

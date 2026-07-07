@@ -25,7 +25,6 @@ def _webchat_local_counts(outbound_counts: dict[str, int]) -> dict[str, int]:
     return {
         'webchat_local_ack_sent': outbound_counts['webchat_local_ack_sent'],
         'webchat_ai_delivered_sent': outbound_counts['webchat_ai_delivered_sent'],
-        'webchat_ai_safe_fallback_sent': outbound_counts['webchat_ai_safe_fallback_sent'],
         'webchat_card_sent': outbound_counts['webchat_card_sent'],
         'webchat_handoff_ack_sent': outbound_counts['webchat_handoff_ack_sent'],
     }

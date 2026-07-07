@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from .base import LLMProvider, LLMResult, ProviderError
 
-_DEFAULT_CONTRACT = "speedaf_webchat_fast_reply_v1"
+_DEFAULT_CONTRACT = "nexus_webchat_runtime_reply_v1"
 _DEFAULT_PROVIDER = "router"
 _DEFAULT_SCENARIO = "webcall_ai_decision"
 _DEFAULT_CHANNEL = "webcall_ai"

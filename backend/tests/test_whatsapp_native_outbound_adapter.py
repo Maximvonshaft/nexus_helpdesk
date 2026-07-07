@@ -149,6 +149,20 @@ def test_whatsapp_native_route_resolution_uses_active_account_and_ticket_target(
     assert route.chat_jid is None
 
 
+def test_whatsapp_native_route_preserves_lid_chat_jid(db_session):
+    ticket = _ticket(db_session, contact="+15550123456")
+    ticket.source_chat_id = "174488096354391@lid"
+    ticket.preferred_reply_contact = "+15550123456"
+    _account(db_session, account_id="wa-main")
+    message = _message(db_session, ticket)
+
+    route = resolve_whatsapp_native_route(db_session, message=message, ticket=ticket)
+
+    assert route.account_id == "wa-main"
+    assert route.target == "174488096354391@lid"
+    assert route.chat_jid == "174488096354391@lid"
+
+
 def test_whatsapp_native_send_payload_calls_sidecar(db_session, monkeypatch):
     ticket = _ticket(db_session, contact="+15550123456")
     _account(db_session, account_id="wa-main")

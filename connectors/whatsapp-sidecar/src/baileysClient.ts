@@ -170,8 +170,9 @@ export class BaileysConnector implements WhatsAppConnector {
           fromMeTestPrefix: this.config.fromMeTestPrefix
         });
         if (normalized) {
+          const projected = projectSelfTestInboundToPhoneJid(normalized, account.status);
           try {
-            await this.onInbound(normalized);
+            await this.onInbound(projected);
           } catch (error) {
             this.logger.warn(
               {
@@ -302,7 +303,7 @@ export class BaileysConnector implements WhatsAppConnector {
         retryable: true
       });
     }
-    const jid = request.chat_jid || this.targetToJid(request.target);
+    const jid = targetToWhatsAppJid(request.chat_jid) || targetToWhatsAppJid(request.target);
     if (!jid) {
       return this.cacheSend(account, request.idempotency_key, {
         ok: false,
@@ -343,11 +344,6 @@ export class BaileysConnector implements WhatsAppConnector {
     }
   }
 
-  private targetToJid(target: string | null | undefined): string | null {
-    const digits = (target || "").replace(/\D/g, "");
-    return digits ? `${digits}@s.whatsapp.net` : null;
-  }
-
   private isPairingInProgress(account: RuntimeAccount): boolean {
     return typeof account.pairingUntilMs === "number" && account.pairingUntilMs > Date.now();
   }
@@ -360,4 +356,43 @@ export class BaileysConnector implements WhatsAppConnector {
   private async emitStatus(account: RuntimeAccount): Promise<void> {
     await this.onStatus(account.accountId, account.status);
   }
+}
+
+export function targetToWhatsAppJid(target: string | null | undefined): string | null {
+  const trimmed = (target || "").trim();
+  if (!trimmed) return null;
+  if (trimmed === "status@broadcast") return null;
+  if (trimmed.endsWith("@broadcast") || trimmed.endsWith("@g.us") || trimmed.endsWith("@newsletter")) return null;
+  if (trimmed.endsWith("@s.whatsapp.net") || trimmed.endsWith("@lid")) return trimmed;
+  if (trimmed.includes("@")) return null;
+  const digits = trimmed.replace(/\D/g, "");
+  return digits ? `${digits}@s.whatsapp.net` : null;
+}
+
+export function phoneJidFromAccountSnapshot(status: Pick<AccountSnapshot, "phone_number" | "jid">): string | null {
+  const phoneDigits = (status.phone_number || "").replace(/\D/g, "");
+  if (phoneDigits) return `${phoneDigits}@s.whatsapp.net`;
+  const jidDigits = (status.jid || "").split("@")[0]?.split(":")[0]?.replace(/\D/g, "") || "";
+  return jidDigits ? `${jidDigits}@s.whatsapp.net` : null;
+}
+
+export function projectSelfTestInboundToPhoneJid(message: NormalizedInboundMessage, status: Pick<AccountSnapshot, "phone_number" | "jid">): NormalizedInboundMessage {
+  if (message.from_me !== true || message.projection_mode !== "test_visitor") return message;
+  const selfPhoneJid = phoneJidFromAccountSnapshot(status);
+  if (!selfPhoneJid) return message;
+  const rawPayload =
+    message.raw_payload && typeof message.raw_payload === "object" && !Array.isArray(message.raw_payload)
+      ? {
+          ...(message.raw_payload as Record<string, unknown>),
+          nexus_self_test_original_chat_jid: message.chat_jid,
+          nexus_self_test_projected_chat_jid: selfPhoneJid
+        }
+      : message.raw_payload;
+  return {
+    ...message,
+    chat_jid: selfPhoneJid,
+    sender_jid: selfPhoneJid,
+    sender_phone: `+${selfPhoneJid.split("@")[0]}`,
+    raw_payload: rawPayload
+  };
 }

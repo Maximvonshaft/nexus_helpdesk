@@ -16,7 +16,7 @@ printf '== Compile runtime modules ==\n'
 PYTHONPATH=backend python -m compileall -q \
   backend/app/services/domain_intelligence \
   backend/app/domain_packs \
-  backend/app/services/webchat_fast_ai_service.py \
+  backend/app/services/webchat_runtime_ai_service.py \
   backend/scripts/run_domain_runtime_eval.py \
   scripts/probe_domain_webchat_shadow_trace_e2e.py
 

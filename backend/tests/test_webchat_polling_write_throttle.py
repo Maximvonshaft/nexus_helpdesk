@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import timedelta
@@ -135,6 +136,35 @@ def test_poll_response_shape_is_compatible(monkeypatch):
     assert result["messages"][0]["id"] == 7
     assert result["messages"][0]["body"] == "body"
     assert result["next_after_id"] == 7
+
+
+def test_public_poll_redacts_internal_ai_metadata(monkeypatch):
+    monkeypatch.setattr("app.services.webchat_performance.WebchatMessage", FakeMessageModel)
+    message = FakeMessage(8, "reply")
+    message.direction = "agent"
+    message.metadata_json = json.dumps(
+        {
+            "generated_by": "webchat_ai",
+            "reply_source": "private_ai_runtime",
+            "fact_evidence_present": True,
+            "tool_name": "speedaf.order.query",
+            "fact_source": "speedaf_api.order_query",
+            "tracking_number_hash": "sha256:secret",
+            "runtime_trace": {"model": "qwen2.5:3b"},
+            "rag_trace": {"top_hits": ["internal"]},
+        }
+    )
+    db = FakeDB([message])
+    conversation = FakeConversation(last_seen_at=utc_now())
+
+    result = list_public_messages_throttled(db, conversation, after_id=0, limit=50)
+
+    metadata = result["messages"][0]["metadata_json"]
+    assert metadata == {
+        "fact_evidence_present": True,
+        "generated_by": "webchat_ai",
+        "reply_source": "private_ai_runtime",
+    }
 
 
 def test_token_mismatch_still_fails():

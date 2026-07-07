@@ -5,6 +5,7 @@ from typing import Any
 
 from ..tracking_fact_schema import TrackingFactResult
 from .client import SpeedafMcpClient, SpeedafMcpClientError
+from .error_normalizer import normalize_speedaf_error
 from .formatter import order_fact_from_payload, tracking_fact_from_order_fact
 from .redactor import safe_caller_payload, safe_waybill_payload
 from .schemas import SpeedafWaybillCandidate
@@ -19,6 +20,7 @@ class SpeedafWaybillLookupResult:
     candidates: tuple[SpeedafWaybillCandidate, ...]
     safe_summary: dict[str, Any]
     failure_reason: str | None = None
+    failure_summary: str | None = None
 
 
 class SpeedafCoreAdapter:
@@ -45,7 +47,14 @@ class SpeedafCoreAdapter:
         try:
             response = self.client.post(WAYBILL_BY_CALLER_PATH, {"callerID": caller, "countryCode": country})
         except SpeedafMcpClientError as exc:
-            return SpeedafWaybillLookupResult(ok=False, candidates=(), safe_summary=exc.safe_payload, failure_reason=exc.error.code)
+            meaning = normalize_speedaf_error(exc.error.code, message=exc.error.message, retryable=exc.error.retryable)
+            return SpeedafWaybillLookupResult(
+                ok=False,
+                candidates=(),
+                safe_summary={**exc.safe_payload, "failure_reason": meaning.kind, "failure_summary": meaning.customer_safe_summary},
+                failure_reason=meaning.kind,
+                failure_summary=meaning.customer_safe_summary,
+            )
         candidates = self._extract_waybill_candidates(response.data)
         safe_summary = {
             "tool": "speedaf.order.waybill_code.query",
@@ -65,6 +74,7 @@ class SpeedafCoreAdapter:
             import os
             caller_id = (
                 os.getenv("SPEEDAF_WAYBILL_ONLY_LOOKUP_CALLER_ID")
+                or self.client.config.lookup_caller_id
                 or os.getenv("SPEEDAF_UAT_CALLER_ID")
                 or os.getenv("SPEEDAF_MCP_TEST_CALLER_ID")
                 or ""
@@ -81,11 +91,13 @@ class SpeedafCoreAdapter:
                 pii_redacted=True,
                 fact_evidence_present=False,
                 failure_reason="missing_caller_id",
+                failure_summary="A caller/contact value is required before Speedaf can verify this shipment.",
             )
         payload: dict[str, Any] = {"waybillCode": waybill_code, "callerID": caller}
         try:
             response = self.client.post(ORDER_QUERY_PATH, payload)
         except SpeedafMcpClientError as exc:
+            meaning = normalize_speedaf_error(exc.error.code, message=exc.error.message, retryable=exc.error.retryable)
             return TrackingFactResult(
                 ok=False,
                 tracking_number=waybill_code,
@@ -94,7 +106,11 @@ class SpeedafCoreAdapter:
                 tool_status="error",
                 pii_redacted=True,
                 fact_evidence_present=False,
-                failure_reason=exc.error.code,
+                failure_reason=meaning.kind,
+                failure_summary=meaning.customer_safe_summary,
+                failure_retryable=meaning.retryable,
+                failure_needs_customer_confirmation=meaning.needs_customer_confirmation,
+                failure_needs_human_review=meaning.needs_human_review,
             )
         data = self._extract_order_payload(response.data)
         fact = order_fact_from_payload(data, checked_at=None)

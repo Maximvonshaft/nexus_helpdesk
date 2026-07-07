@@ -8,6 +8,7 @@ const detailMessages: Record<string, string> = {
   speedaf_address_update_requires_capability: '缺少 tool:speedaf.order.update_address:write，无法提交 Speedaf 地址更新。',
   speedaf_cancel_requires_capability: '缺少 tool:speedaf.order.cancel:write，无法取消 Speedaf 运单。',
   speedaf_work_order_create_disabled: 'Speedaf 催派功能当前未启用，请联系运维确认 feature flag。',
+  speedaf_mcp_disabled: 'Speedaf MCP 当前未启用，请联系运维确认生产配置。',
   speedaf_update_address_disabled: 'Speedaf 地址更新功能当前未启用，请联系运维确认 feature flag。',
   speedaf_cancel_disabled: 'Speedaf 取消运单功能当前未启用，请联系运维确认 feature flag。',
   webcall_voice_read_requires_capability: '缺少 webcall.voice.read，无法查看 WebCall 语音会话。',

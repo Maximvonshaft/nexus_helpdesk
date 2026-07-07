@@ -270,7 +270,7 @@ def _decision(text: str) -> DemoDecision:
         return DemoDecision(
             intent="handoff_required",
             action="handoff",
-            reply="For address changes, cancellation, work orders, or driver phone requests, I need to transfer this to a human agent.",
+            reply="",
             handoff_required=True,
             confidence=90,
         )
@@ -278,7 +278,7 @@ def _decision(text: str) -> DemoDecision:
         return DemoDecision(
             intent="tracking",
             action="safe_reply",
-            reply="I do not have verified parcel status in this demo mode. I can only show the safe demo flow and transfer to a human for real shipment checks.",
+            reply="",
             handoff_required=False,
             confidence=82,
         )
@@ -286,14 +286,14 @@ def _decision(text: str) -> DemoDecision:
         return DemoDecision(
             intent="tracking",
             action="ask_tracking_number",
-            reply="I can help check this. Please provide the tracking number.",
+            reply="",
             handoff_required=False,
             confidence=80,
         )
     return DemoDecision(
         intent="demo_general",
         action="safe_reply",
-        reply="This is the internal WebCall AI demo sandbox. I can demonstrate a safe text-only AI turn and browser speech playback fallback.",
+        reply="",
         handoff_required=False,
         confidence=75,
     )

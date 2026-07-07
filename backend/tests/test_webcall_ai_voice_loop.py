@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT.parent))
 
 import pytest
 
-from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: F401,E402
+from app import models, operator_models, tool_models, voice_models, webchat_models  # noqa: F401,E402
 from app.db import Base, SessionLocal, engine
 from app.services.webcall_ai_production.agent_session_claims import AI_STATUS_CLAIMED, release_session
 from app.services.webcall_ai_production.agent_worker import run_claimed_session_loop
@@ -161,7 +161,7 @@ def test_empty_transcript_first_retry_does_not_handoff(monkeypatch):
         assert result["handoff_required"] is False
         assert result["empty_transcript_retry_count"] == 1
         assert result["response"]["intent"] == "stt_empty_transcript"
-        assert result["response"]["response_text"] == "Sorry, I didn’t catch that. Could you repeat your question or tracking number?"
+        assert result["response"]["response_text"] == ""
         assert db.query(WebchatVoiceAITurn).filter(WebchatVoiceAITurn.handoff_required.is_(True)).count() == 0
     finally:
         db.close()
@@ -179,7 +179,7 @@ def test_empty_transcript_third_consecutive_retry_handoffs(monkeypatch):
 
         assert first["handoff_required"] is False
         assert second["handoff_required"] is False
-        assert second["response"]["response_text"] == "Please say the tracking number slowly, or type it if available."
+        assert second["response"]["response_text"] == ""
         assert third["handoff_required"] is True
         assert third["handoff_reason"] == "stt_empty_transcript"
         assert third["empty_transcript_retry_count"] == 3
@@ -199,7 +199,7 @@ def test_tracking_question_without_tracking_number_asks_for_number(monkeypatch):
 
         assert result["handoff_required"] is False
         assert result["response"]["intent"] == "ask_tracking_number"
-        assert result["response"]["response_text"] == "Please provide your tracking number."
+        assert result["response"]["response_text"] == ""
         assert result["tool_result"] is None
         event_types = [event.event_type for event in db.query(WebchatEvent).order_by(WebchatEvent.id).all()]
         assert "webcall_ai.tool.called" not in event_types
@@ -218,7 +218,7 @@ def test_valid_tracking_number_with_unconfigured_lookup_gets_controlled_fallback
 
         assert result["handoff_required"] is False
         assert result["response"]["intent"] == "tracking_lookup_not_configured"
-        assert result["response"]["response_text"] == "Tracking lookup is not connected yet. I have recorded your tracking number and a human agent will follow up if needed."
+        assert result["response"]["response_text"] == ""
         assert result["tool_result"]["result"]["status"] == "not_configured"
         turn = db.query(WebchatVoiceAITurn).filter(WebchatVoiceAITurn.intent == "tracking_lookup_not_configured").one()
         assert turn.action == "tracking_lookup_not_configured"

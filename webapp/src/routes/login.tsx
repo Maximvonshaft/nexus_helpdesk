@@ -38,7 +38,7 @@ function LoginPage() {
             onClick={async () => {
               try {
                 const res = await login.mutateAsync({ username, password })
-                if (res.access_token) navigate({ to: '/', replace: true })
+                if (res.access_token) navigate({ to: '/webchat', replace: true })
               } catch {
                 // React Query keeps the login error in mutation state for display above.
               }

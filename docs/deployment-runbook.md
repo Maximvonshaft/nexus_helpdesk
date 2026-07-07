@@ -14,9 +14,18 @@
 
 ## Runtime modes
 
-- WebChat Fast Reply uses `WEBCHAT_FAST_AI_PROVIDER=provider_runtime`.
+- Customer-visible WebChat replies use the unified `private_ai_runtime` provider through Provider Runtime.
+- Provider Runtime fallback providers must remain empty in production; backend failure returns no customer-visible text.
 - Legacy ExternalChannel runtime settings must remain disabled.
 - External customer sends are fail-closed unless `ENABLE_OUTBOUND_DISPATCH=true` and a native/email provider is explicitly enabled.
+
+## Runtime latency posture
+
+- For the current `qwen2.5:3b` Runtime host, keep WebChat AI generation single-lane unless Runtime-side parallel generation has been benchmarked and approved.
+- Candidate defaults are tuned for customer-facing latency: `WEBCHAT_AI_TURN_DEBOUNCE_SECONDS=0.05`, `WEBCHAT_AI_WORKER_POLL_SECONDS=0.10`, and `WEBCHAT_AI_WORKER_BUSY_POLL_SECONDS=0.02`.
+- Default Ollama output budgets are intentionally concise: short `64`, service `96`, standard `192`, repair `96`.
+- Keep customer-facing WebChat on the low-latency direct model. If `qwen3:4b` or another heavier RAG model is enabled through `PRIVATE_AI_RUNTIME_CHAT_MODE=rag|auto`, configure `PRIVATE_AI_RUNTIME_RAG_BASE_URL` to an isolated Runtime host; do not share the low-latency WebChat Ollama slot unless an explicit benchmark approves `PRIVATE_AI_RUNTIME_ALLOW_SHARED_RAG_MODEL=true`.
+- If concurrent smoke latency jumps while sequential smoke is fast, treat it as Runtime model contention first. Do not add customer-visible fallback text.
 
 ## Safe update flow
 
@@ -28,7 +37,13 @@ bash scripts/deploy/run_migrations.sh
 docker compose -f deploy/docker-compose.server.yml up -d postgres app worker-outbound worker-background worker-webchat-ai worker-handoff-snapshot nginx
 curl -fsS http://127.0.0.1/healthz
 curl -fsS http://127.0.0.1/readyz
+docker compose -f deploy/docker-compose.server.yml exec -T app python /app/scripts/smoke/warm_private_ai_runtime.py
 ```
+
+Run the Runtime warmup after every app/worker restart and before public smoke.
+It keeps the first real customer turn from paying Ollama cold-load latency.
+Warmup is a gate: if it fails, keep the previous public target or investigate
+Runtime health; do not add customer-visible fallback text.
 
 ## Outbound Email pilot gate
 

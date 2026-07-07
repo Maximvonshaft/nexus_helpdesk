@@ -17,7 +17,7 @@ if str(BACKEND) not in sys.path:
 from app.services.domain_intelligence.flags import DomainRuntimeFlags  # noqa: E402
 from app.services.domain_intelligence.webchat_shadow_bridge import build_webchat_domain_shadow_trace  # noqa: E402
 from app.services.knowledge_prompt_service import summarize_rag_trace  # noqa: E402
-from app.services.webchat_fast_ai_service import _attach_domain_shadow_trace  # noqa: E402
+from app.services.webchat_runtime_ai_service import _attach_domain_shadow_trace  # noqa: E402
 
 
 SAMPLES = [

@@ -140,6 +140,7 @@ def list_items(
     *,
     status: Optional[str] = None,
     source_type: Optional[str] = None,
+    knowledge_kind: Optional[str] = None,
     market_id: Optional[int] = None,
     channel: Optional[str] = None,
     audience_scope: Optional[str] = None,
@@ -152,6 +153,8 @@ def list_items(
         query = query.filter(KnowledgeItem.status == status.strip())
     if source_type:
         query = query.filter(KnowledgeItem.source_type == source_type.strip())
+    if knowledge_kind:
+        query = query.filter(KnowledgeItem.knowledge_kind == knowledge_kind.strip())
     if market_id is not None:
         query = query.filter(KnowledgeItem.market_id == market_id)
     if channel:

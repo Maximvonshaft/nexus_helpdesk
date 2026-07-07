@@ -28,6 +28,7 @@ from ..services.webchat_performance import (
     list_public_messages_throttled,
     webchat_poll_interval_ms,
 )
+from ..services.webchat_public_payload import public_webchat_metadata
 from ..services.webchat_rate_limit import enforce_webchat_rate_limit
 from ..webchat_models import WebchatCardAction, WebchatConversation, WebchatMessage
 from ..webchat_schemas import WebChatActionSubmitRequest
@@ -202,6 +203,7 @@ def _loads_json(value: str | None) -> Any:
 
 def _message_read(row: WebchatMessage) -> dict[str, Any]:
     body_text = getattr(row, "body_text", None) or row.body
+    metadata = _loads_json(getattr(row, "metadata_json", None))
     return {
         "id": row.id,
         "direction": row.direction,
@@ -209,7 +211,7 @@ def _message_read(row: WebchatMessage) -> dict[str, Any]:
         "body_text": body_text,
         "message_type": getattr(row, "message_type", None) or "text",
         "payload_json": _loads_json(getattr(row, "payload_json", None)),
-        "metadata_json": _loads_json(getattr(row, "metadata_json", None)),
+        "metadata_json": public_webchat_metadata(metadata),
         "client_message_id": getattr(row, "client_message_id", None),
         "ai_turn_id": getattr(row, "ai_turn_id", None),
         "delivery_status": getattr(row, "delivery_status", None) or "sent",
@@ -282,7 +284,7 @@ def _schedule_ai_turn_for_result(db: Session, *, conversation: WebchatConversati
         ticket_id=conversation.ticket_id,
         visitor_message=visitor_message,
         create_job=create_job,
-        debounce_seconds=int(getattr(settings, "webchat_ai_turn_debounce_seconds", 1) or 1),
+        debounce_seconds=float(getattr(settings, "webchat_ai_turn_debounce_seconds", 0.15) or 0),
     )
     result.update(snapshot)
     return result

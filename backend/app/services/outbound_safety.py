@@ -23,16 +23,20 @@ INTERNAL_DISCLOSURE_KEYWORDS = {
 }
 
 # Claims that must not be sent to customers unless backed by exact tool / business evidence.
-# Conservative by design: false positives are safer than hallucinated parcel, refund, or SLA claims.
+# Keep this list to definite business outcomes. Topic words such as "refund",
+# "compensation", or "lost parcel" are normal support intents and must not
+# silence the unified runtime by themselves.
 LOGISTICS_FACT_KEYWORDS = {
-    'delivered', 'delivery today', 'will arrive', 'arrive today', 'arrive tomorrow',
-    'will be delivered', 'delivery tomorrow', 'out for delivery', 'dispatched',
+    'has been delivered', 'was delivered', 'is delivered',
+    'delivery today', 'arrive today', 'arrive tomorrow',
+    'will be delivered', 'delivery tomorrow', 'is out for delivery', 'marked out for delivery',
     'lost parcel', 'parcel lost', 'customs cleared', 'customs released',
     'signed', 'signed for', 'successfully signed',
-    'refund', 'refunded', 'compensation', 'compensated', 'claim approved',
+    'refund approved', 'refunded', 'compensation approved', 'compensated', 'claim approved',
+    'address changed', 'rescheduled',
     '派送成功', '已签收', '签收成功', '今天送达', '明天送达', '预计送达',
-    '赔付', '已赔付', '补偿', '已退款', '退款成功', '清关完成',
-    '包裹已到', '包裹丢失', '已经发出', '已出库', '已派送', '已送达',
+    '赔付已批准', '已赔付', '已退款', '退款成功', '清关完成',
+    '包裹已到', '包裹丢失', '已派送', '已送达',
 }
 
 # These claims are materially higher risk in a logistics support setting. Even when
@@ -40,18 +44,32 @@ LOGISTICS_FACT_KEYWORDS = {
 # bypassing the queue guard automatically.
 HIGH_RISK_LOGISTICS_FACT_KEYWORDS = {
     'lost parcel', 'parcel lost', 'customs cleared', 'customs released',
-    'refund', 'refunded', 'compensation', 'compensated', 'claim approved',
-    '赔付', '已赔付', '补偿', '已退款', '退款成功', '清关完成', '包裹丢失',
+    'refund approved', 'refunded', 'compensation approved', 'compensated', 'claim approved',
+    '赔付已批准', '已赔付', '已退款', '退款成功', '清关完成', '包裹丢失',
 }
+STATUS_CHECK_CONTEXTS = (
+    'check whether it is out for delivery',
+    'check if it is out for delivery',
+    'whether it is out for delivery',
+    'if it is out for delivery',
+    'whether the parcel is out for delivery',
+    'if the parcel is out for delivery',
+    'whether the package is out for delivery',
+    'if the package is out for delivery',
+    'whether the shipment is out for delivery',
+    'if the shipment is out for delivery',
+)
 
 AI_SOURCE_MARKERS = {'ai', 'auto_reply', 'ai_auto_reply', 'llm', 'assistant'}
 
-# Only public webchat AI is allowed to send low-risk general replies without manual review.
-# All logistics/refund/customs/delivery factual claims still require evidence/review rules.
+# Runtime-approved public chat AI may send low-risk general replies without manual review.
+# Logistics/refund/customs/delivery factual claims still require evidence/review rules.
 PUBLIC_WEBCHAT_AI_SOURCES = {
     'webchat_ai',
     'webchat_ai_public',
     'public_webchat_ai',
+    'whatsapp_ai_reply',
+    'whatsapp_ai_reply_queued',
 }
 
 MAX_ALLOWED_BODY_CHARS = 4000
@@ -117,8 +135,11 @@ def evaluate_outbound_safety(
     if internal_hits:
         return SafetyDecision(False, 'block', [f'internal/sensitive term detected: {", ".join(internal_hits)}'], False, normalized_body)
 
-    logistics_hits = _contains_any(normalized_lower, LOGISTICS_FACT_KEYWORDS)
-    high_risk_hits = _contains_any(normalized_lower, HIGH_RISK_LOGISTICS_FACT_KEYWORDS)
+    claim_scan_text = normalized_lower
+    for context in STATUS_CHECK_CONTEXTS:
+        claim_scan_text = claim_scan_text.replace(context, '')
+    logistics_hits = _contains_any(claim_scan_text, LOGISTICS_FACT_KEYWORDS)
+    high_risk_hits = _contains_any(claim_scan_text, HIGH_RISK_LOGISTICS_FACT_KEYWORDS)
     if high_risk_hits:
         reasons.append(f'high-risk logistics claim requires human review: {", ".join(high_risk_hits)}')
     elif logistics_hits and not evidence_present:
@@ -127,6 +148,7 @@ def evaluate_outbound_safety(
     is_public_webchat_ai = (
         normalized_source in PUBLIC_WEBCHAT_AI_SOURCES
         or normalized_source.startswith('webchat_ai')
+        or normalized_source.startswith('whatsapp_ai_reply')
     )
     is_ai_source = (
         normalized_source in AI_SOURCE_MARKERS

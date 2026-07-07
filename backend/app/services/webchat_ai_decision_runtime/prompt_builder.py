@@ -34,7 +34,8 @@ def build_ai_decision_instructions() -> str:
         "- For low-signal messages, ask one short clarifying question that matches the exact message and language. Do not always repeat the same generic sentence.\n"
         "- Do not ask for a waybill number unless the customer appears to be asking about tracking, parcel status, delivery, or a shipment.\n"
         "- For random text, ask what support issue they need help with. For greeting-only messages, greet briefly and ask how you can help.\n"
-        "- If the customer explicitly asks for a human agent, refusal/return, complaint escalation, address change, cancellation, or another controlled action, request handoff through tool_calls.\n"
+        "- If the customer asks to chase, expedite, follow up, urge delivery, or create a delivery case for a verified parcel, propose speedaf.workOrder.create.\n"
+        "- If the customer explicitly asks for a human agent, refusal/return, complaint escalation, address change, cancellation, or another controlled action except delivery follow-up work order, request handoff through tool_calls.\n"
         "- You may propose tool calls in tool_calls, but you do not execute tools and you never write database state directly.\n"
         "- High-risk write actions require backend confirmation/control and must not be presented as completed unless the backend provides execution evidence.\n\n"
         "Required JSON schema:\n"
@@ -53,6 +54,7 @@ def build_ai_decision_instructions() -> str:
         "Tool-call proposal examples:\n"
         "- Explicit human/refusal request: include tool_calls=[{\"tool_name\":\"handoff.request.create\",\"arguments\":{\"reason\":\"customer_requested_human_review\"}}].\n"
         "- Tracking lookup: include tool_calls=[{\"tool_name\":\"speedaf.order.query\",\"arguments\":{\"tracking_number_hash\":\"backend_supplied_or_unknown\"}}].\n"
+        "- Delivery follow-up work order: include tool_calls=[{\"tool_name\":\"speedaf.workOrder.create\",\"arguments\":{\"workOrderType\":\"WT0103-05\",\"description\":\"delivery follow-up requested\"}}].\n"
     )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from fastapi import HTTPException
@@ -13,11 +14,14 @@ from ..services.tracking_fact_schema import hash_tracking_number
 from ..tool_models import ToolCallLog
 from ..utils.time import utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatHandoffRequest, WebchatMessage
-from .webchat_ai_turn_service import ai_snapshot
+from .webchat_ai_turn_service import ai_snapshot, safe_ai_turn_runtime_trace
 from .webchat_handoff_service import serialize_handoff_request
 
 SPEEDAF_EVIDENCE_MARKERS = ("speedaf", "tracking_fact", "waybill", "work_order")
 MAX_TIMELINE_ITEMS = 40
+EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+PHONE_RE = re.compile(r"(?<!\w)\+?\d[\d\s().-]{7,}\d(?!\w)")
+WAYBILL_RE = re.compile(r"\b[A-Z]{2}\d{8,18}\b", re.IGNORECASE)
 
 
 def _loads_json(value: str | None) -> Any:
@@ -40,8 +44,18 @@ def _iso(value: Any) -> str | None:
 
 
 def _clip(value: Any, limit: int = 240) -> str | None:
-    cleaned = " ".join(str(value or "").strip().split())
+    cleaned = " ".join(_redact_free_text(value).strip().split())
     return cleaned[:limit] if cleaned else None
+
+
+def _redact_free_text(value: Any) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    text = EMAIL_RE.sub("[redacted_email]", text)
+    text = WAYBILL_RE.sub(lambda match: f"parcel ending {match.group(0)[-6:]}", text)
+    text = PHONE_RE.sub("[redacted_phone]", text)
+    return text
 
 
 def _split_fields(value: Any) -> list[str]:
@@ -52,18 +66,83 @@ def _split_fields(value: Any) -> list[str]:
     return [part.strip()[:120] for part in parts if part.strip()][:12]
 
 
-def _tracking_summary(ticket: Ticket, conversation: WebchatConversation) -> dict[str, Any]:
+SAFE_TRACKING_REFERENCE_RE = re.compile(
+    r"(?:parcel\s+ending|tracking\s+(?:number\s+)?ending|运单尾号|单号尾号|尾号)\s*[:：#-]?\s*([A-Z0-9]{4,8})",
+    re.IGNORECASE,
+)
+
+
+def _safe_tracking_suffix_from_messages(messages: list[WebchatMessage]) -> str | None:
+    for row in messages:
+        text = str(getattr(row, "body_text", None) or getattr(row, "body", None) or "")
+        match = SAFE_TRACKING_REFERENCE_RE.search(text)
+        if match:
+            return match.group(1).upper()[-6:]
+    return None
+
+
+def _safe_tracking_from_evidence(evidence: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+    fallback_hash: str | None = None
+    for item in evidence:
+        summary = item.get("summary") if isinstance(item, dict) else None
+        if not isinstance(summary, dict):
+            continue
+        tracking_hash = summary.get("tracking_number_hash")
+        if isinstance(tracking_hash, str) and tracking_hash.strip() and fallback_hash is None:
+            fallback_hash = _clip(tracking_hash, 120)
+        nested_fact = summary.get("tracking_fact")
+        if isinstance(nested_fact, dict):
+            nested_hash = nested_fact.get("tracking_number_hash")
+            if isinstance(nested_hash, str) and nested_hash.strip() and fallback_hash is None:
+                fallback_hash = _clip(nested_hash, 120)
+            nested_suffix = nested_fact.get("tracking_reference_suffix") or nested_fact.get("waybill_suffix")
+            if isinstance(nested_suffix, str) and nested_suffix.strip():
+                return nested_suffix.strip().upper()[-6:], _clip(nested_fact.get("tracking_number_hash") or summary.get("tracking_number_hash"), 120) or fallback_hash
+            nested_safe_reference = nested_fact.get("safe_tracking_reference")
+            if isinstance(nested_safe_reference, str):
+                match = SAFE_TRACKING_REFERENCE_RE.search(nested_safe_reference)
+                if match:
+                    return match.group(1).upper()[-6:], _clip(nested_fact.get("tracking_number_hash") or summary.get("tracking_number_hash"), 120) or fallback_hash
+        suffix = summary.get("tracking_reference_suffix") or summary.get("waybill_suffix")
+        if isinstance(suffix, str) and suffix.strip():
+            return suffix.strip().upper()[-6:], _clip(summary.get("tracking_number_hash") or summary.get("waybill_hash"), 120) or fallback_hash
+        safe_reference = summary.get("safe_tracking_reference")
+        if isinstance(safe_reference, str):
+            match = SAFE_TRACKING_REFERENCE_RE.search(safe_reference)
+            if match:
+                return match.group(1).upper()[-6:], _clip(summary.get("tracking_number_hash") or summary.get("waybill_hash"), 120) or fallback_hash
+        candidates = summary.get("safe_candidates")
+        if isinstance(candidates, list) and candidates:
+            first = candidates[0] if isinstance(candidates[0], dict) else {}
+            candidate_suffix = first.get("waybill_suffix")
+            if isinstance(candidate_suffix, str) and candidate_suffix.strip():
+                return candidate_suffix.strip().upper()[-6:], _clip(first.get("waybill_hash"), 120) or fallback_hash
+    return None, fallback_hash
+
+
+def _tracking_summary(ticket: Ticket, conversation: WebchatConversation, *, messages: list[WebchatMessage] | None = None, evidence: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     tracking = (
         getattr(ticket, "tracking_number", None)
         or getattr(conversation, "last_tracking_number", None)
         or ""
     ).strip().upper()
+    evidence_suffix, evidence_hash = _safe_tracking_from_evidence(evidence or [])
+    message_suffix = _safe_tracking_suffix_from_messages(messages or [])
     suffix = tracking[-6:] if tracking else None
+    safe_suffix = suffix or evidence_suffix or message_suffix
+    safe_hash = hash_tracking_number(tracking) if tracking else evidence_hash
+    source = "ticket.tracking_number" if getattr(ticket, "tracking_number", None) else ("webchat.last_tracking_number" if getattr(conversation, "last_tracking_number", None) else None)
+    if not source and evidence_suffix:
+        source = "message.metadata.safe_tracking_reference"
+    if not source and message_suffix:
+        source = "webchat.message_safe_tracking_reference"
+    if not source and evidence_hash:
+        source = "message.metadata.tracking_number_hash"
     return {
-        "present": bool(tracking),
-        "suffix": suffix,
-        "hash": hash_tracking_number(tracking),
-        "source": "ticket.tracking_number" if getattr(ticket, "tracking_number", None) else ("webchat.last_tracking_number" if getattr(conversation, "last_tracking_number", None) else None),
+        "present": bool(tracking or safe_suffix or safe_hash),
+        "suffix": safe_suffix,
+        "hash": safe_hash,
+        "source": source,
         "raw_exposed": False,
     }
 
@@ -77,8 +156,11 @@ def _payload_summary(payload: Any) -> dict[str, Any]:
         "tool_name",
         "tool_status",
         "tracking_number_hash",
+        "tracking_reference_suffix",
+        "safe_tracking_reference",
         "tracking_fact_failure_reason",
         "candidate_count",
+        "safe_candidates",
         "status",
         "reason",
         "reason_code",
@@ -92,7 +174,25 @@ def _payload_summary(payload: Any) -> dict[str, Any]:
         "job_id",
         "dedupe_key",
     )
-    return {key: payload.get(key) for key in safe_keys if payload.get(key) not in (None, "")}
+    summary = {key: payload.get(key) for key in safe_keys if payload.get(key) not in (None, "")}
+    tracking_fact = payload.get("tracking_fact")
+    if isinstance(tracking_fact, dict):
+        safe_tracking_fact_keys = (
+            "fact_source",
+            "tool_name",
+            "tool_status",
+            "tracking_number_hash",
+            "tracking_reference_suffix",
+            "safe_tracking_reference",
+            "lookup_elapsed_ms",
+            "status_context",
+        )
+        summary["tracking_fact"] = {
+            key: tracking_fact.get(key)
+            for key in safe_tracking_fact_keys
+            if tracking_fact.get(key) not in (None, "")
+        }
+    return summary
 
 
 def _message_metadata_evidence(row: WebchatMessage) -> dict[str, Any] | None:
@@ -137,7 +237,7 @@ def _tool_call_evidence(row: ToolCallLog) -> dict[str, Any]:
         "elapsed_ms": row.elapsed_ms,
     }
     if row.output_summary:
-        summary["output_summary"] = row.output_summary[:500]
+        summary["output_summary"] = _clip(row.output_summary, 500)
     return {
         "kind": "tool_call",
         "label": row.tool_name,
@@ -165,20 +265,70 @@ def _outbound_evidence(row: TicketOutboundMessage) -> dict[str, Any]:
 
 
 def _ai_turn_evidence(row: WebchatAITurn) -> dict[str, Any]:
+    runtime_trace = None
+    if getattr(row, "runtime_trace_json", None):
+        try:
+            runtime_trace = safe_ai_turn_runtime_trace(json.loads(row.runtime_trace_json))
+        except (TypeError, ValueError):
+            runtime_trace = None
+    summary: dict[str, Any] = {
+        "reply_source": row.reply_source,
+        "fallback_reason": row.fallback_reason,
+        "fact_gate_reason": row.fact_gate_reason,
+        "bridge_elapsed_ms": row.bridge_elapsed_ms,
+        "is_public_reply_allowed": row.is_public_reply_allowed,
+    }
+    if runtime_trace:
+        summary["runtime_trace"] = runtime_trace
     return {
         "kind": "ai_turn",
         "label": f"AI turn {row.id}",
         "status": row.status,
-        "summary": {
-            "reply_source": row.reply_source,
-            "fallback_reason": row.fallback_reason,
-            "fact_gate_reason": row.fact_gate_reason,
-            "bridge_elapsed_ms": row.bridge_elapsed_ms,
-            "is_public_reply_allowed": row.is_public_reply_allowed,
-        },
+        "summary": summary,
         "created_at": _iso(row.created_at),
         "source_id": f"ai_turn:{row.id}",
     }
+
+
+def _speedaf_evidence_score(item: dict[str, Any]) -> int:
+    haystack = f"{item.get('label', '')} {item.get('summary', '')}".lower()
+    if not any(marker in haystack for marker in SPEEDAF_EVIDENCE_MARKERS):
+        return -1
+    summary = item.get("summary") if isinstance(item.get("summary"), dict) else {}
+    score = 10
+    nested_fact = summary.get("tracking_fact") if isinstance(summary, dict) else None
+    if isinstance(nested_fact, dict):
+        score += 100
+        if isinstance(nested_fact.get("status_context"), dict):
+            score += 60
+        if nested_fact.get("tracking_reference_suffix") or nested_fact.get("safe_tracking_reference"):
+            score += 40
+        if nested_fact.get("lookup_elapsed_ms") not in (None, ""):
+            score += 15
+        if str(nested_fact.get("tool_status") or "").lower() == "success":
+            score += 20
+    if summary.get("tracking_reference_suffix") or summary.get("safe_tracking_reference"):
+        score += 40
+    if summary.get("tracking_number_hash"):
+        score += 10
+    if str(summary.get("tool_status") or item.get("status") or "").lower() == "success":
+        score += 20
+    if item.get("kind") == "tool_call":
+        score += 15
+        if str(item.get("status") or "").lower() == "success":
+            score += 10
+    return score
+
+
+def _select_speedaf_evidence(evidence: list[dict[str, Any]]) -> dict[str, Any] | None:
+    candidates = [
+        (index, item, _speedaf_evidence_score(item))
+        for index, item in enumerate(evidence)
+    ]
+    candidates = [(index, item, score) for index, item, score in candidates if score >= 0]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda candidate: (candidate[2], -candidate[0]))[1]
 
 
 def _build_next_actions(
@@ -269,14 +419,15 @@ def build_support_memory_ledger(db: Session, *, ticket_id: int, current_user: Us
     evidence.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     evidence = evidence[:MAX_TIMELINE_ITEMS]
 
-    latest_speedaf = next(
-        (item for item in evidence if any(marker in f"{item.get('label', '')} {item.get('summary', '')}".lower() for marker in SPEEDAF_EVIDENCE_MARKERS)),
-        None,
-    )
-    tracking = _tracking_summary(ticket, conversation)
+    latest_speedaf = _select_speedaf_evidence(evidence)
+    tracking = _tracking_summary(ticket, conversation, messages=messages, evidence=evidence)
+    latest_ai_turn = ai_turns[0] if ai_turns else None
     ai_state = {
         **ai_snapshot(conversation),
-        "last_turn": _ai_turn_evidence(ai_turns[0]) if ai_turns else None,
+        "last_turn": _ai_turn_evidence(latest_ai_turn) if latest_ai_turn else None,
+        "last_bridge_elapsed_ms": latest_ai_turn.bridge_elapsed_ms if latest_ai_turn else None,
+        "last_ai_reply_source": latest_ai_turn.reply_source if latest_ai_turn else None,
+        "last_ai_status": latest_ai_turn.status if latest_ai_turn else None,
     }
 
     return {

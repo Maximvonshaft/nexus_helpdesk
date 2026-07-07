@@ -10,7 +10,7 @@
   <link rel="icon" href="assets/favicon-32.png" type="image/png" sizes="32x32" />
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" sizes="180x180" />
   <link rel="manifest" href="assets/site.webmanifest" />
-  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="stylesheet" href="css/styles.css?v=runtime-contract-20260704T181250Z" />
 </head>
 <body>
   <a class="skip-link" href="#mainContent">Skip to content</a>
@@ -57,10 +57,10 @@
             <h1 class="hero-title">Ship, track, and manage parcels with Speedaf.</h1>
             <p class="hero-subtitle">Reliable parcel delivery for tracking, shipping, redelivery, and business support—with AI assistance when customers need answers fast.</p>
 
-            <form class="tracking-card" id="trackForm" aria-label="Track your shipment">
+            <form class="tracking-card" id="trackForm" aria-label="Track your shipment" data-webchat-form data-webchat-input="#trackingInput">
               <label for="trackingInput">Track your shipment</label>
               <div class="tracking-row">
-                <input id="trackingInput" name="tracking" autocomplete="off" placeholder="Enter tracking number" maxlength="48" />
+                <input id="trackingInput" name="tracking" autocomplete="off" placeholder="Optional reference" maxlength="48" />
                 <button type="submit">Track</button>
               </div>
               <p class="tracking-hint">Example: CH02000126553</p>
@@ -175,7 +175,7 @@
       <nav class="footer-columns" aria-label="Footer links">
         <div>
           <strong>Shipments</strong>
-          <a href="#tracking">Track parcel</a>
+          <a href="#tracking">Shipment lookup</a>
           <a href="#ship">Ship now</a>
           <a href="#quote">Get a quote</a>
         </div>
@@ -189,7 +189,7 @@
           <strong>Support</strong>
           <a href="#support" data-open-chat>AI support</a>
           <a href="#support" data-open-chat>Human handoff</a>
-          <a href="#support" data-open-chat>Delivery issue support</a>
+          <a href="#support" data-open-chat>Support escalation</a>
         </div>
         <div>
           <strong>Company</strong>
@@ -202,45 +202,36 @@
   </div>
 
   <div id="support" class="support-anchor" aria-hidden="true"></div>
-  <button class="floating-chat" id="floatingChat" aria-label="Open Speedaf chat" aria-controls="chatPanel" aria-expanded="false" type="button">
-    <span class="badge" aria-hidden="true"></span>
-    <span class="bubblemark" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-5.4A8 8 0 1 1 21 12Z"/><path d="M8 12h.01M12 12h.01M16 12h.01"/></svg></span>
-    <span class="chat-label">Chat with Speedaf</span>
-  </button>
-
-  <div class="chat-backdrop" id="chatBackdrop" hidden></div>
-  <aside class="chat-panel is-closed" id="chatPanel" role="dialog" aria-modal="true" aria-label="Speedaf Support webchat" aria-hidden="true">
-    <div class="chat-head">
-      <div class="bot-avatar"><img src="assets/speedaf-ai-bot-avatar.png" alt="" /></div>
-      <div>
-        <div class="chat-title"><span class="chat-title-text">Speedaf Support</span><span class="online">AI</span></div>
-        <div class="chat-sub">AI support · human handoff when needed</div>
-      </div>
-      <button class="close-chat" id="closeChat" aria-label="Close chat" type="button"></button>
-    </div>
-    <div class="chat-body">
-      <div class="message-log" id="messageLog" aria-live="polite">
-        <div class="message-row bot"><div class="mini-avatar"><img src="assets/speedaf-ai-bot-avatar.png" alt="" /></div><div class="bubble">Hi, I'm Speedy. I can help with tracking, redelivery, refusal, delivery problems, and agent handoff.<span class="time">Ready</span></div></div>
-        <div class="quick-grid" aria-label="Common support actions">
-          <button class="quick-btn" type="button" data-action="track"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 8 4-8 4-8-4 8-4Z"/><path d="M4 7v10l8 4 8-4V7M12 11v10"/></svg>Track parcel</button>
-          <button class="quick-btn" type="button" data-action="redelivery"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h12v9H3zM15 10h3l3 4v2h-6"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg>Redelivery</button>
-          <button class="quick-btn" type="button" data-action="refuse"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="m8 16 8-8"/></svg>Refuse delivery</button>
-          <button class="quick-btn" type="button" data-action="problem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2 21h20L12 3Z"/><path d="M12 9v5M12 18h.01"/></svg>Delivery issue</button>
-          <button class="quick-btn human" type="button" data-action="human"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.2-5 4-7 8-7s6.8 2 8 7"/></svg>Talk to human</button>
-        </div>
-      </div>
-      <div class="composer-wrap">
-        <label class="composer" for="chatInput">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#152033" stroke-width="2" aria-hidden="true"><path d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.7 5.7L9.2 18.2a2 2 0 1 1-2.8-2.8l8.5-8.5"/></svg>
-          <input id="chatInput" autocomplete="off" maxlength="240" placeholder="Tracking number or message" aria-label="Type tracking number or message" />
-          <button class="send-btn" id="sendBtn" aria-label="Send message" type="button"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 12 16-8-5 16-3.2-6.2L4 12Z" fill="currentColor"/></svg></button>
-        </label>
-        <div class="security-note"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>Do not share passwords or payment codes.</div>
-      </div>
-    </div>
-  </aside>
-
-  <script src="/webchat/voice-entry.js?v=nexus-live-voice-card-20260629" data-tenant="default" data-channel="website" data-title="Speedaf WebCall" data-locale="en" data-voice-label="WebCall" data-live-voice-mode="edge-card" data-live-voice-ws-path="/webchat/live/ws" data-live-voice-label="VOIP Call" defer></script>
-  <script src="js/app.js?v=nexus-auto-open-chat-20260630"></script>
+  <script>
+    (function () {
+      var mobileMenuBtn = document.getElementById('mobileMenuBtn');
+      var mobileNav = document.getElementById('mobileNav');
+      if (!mobileMenuBtn || !mobileNav) return;
+      mobileMenuBtn.addEventListener('click', function () {
+        var open = mobileNav.classList.toggle('is-open');
+        mobileNav.hidden = !open;
+        mobileMenuBtn.setAttribute('aria-expanded', String(open));
+      });
+      mobileNav.addEventListener('click', function (event) {
+        if (!event.target || !event.target.closest('a')) return;
+        mobileNav.classList.remove('is-open');
+        mobileNav.hidden = true;
+        mobileMenuBtn.setAttribute('aria-expanded', 'false');
+      });
+    })();
+  </script>
+  <script src="/webchat/widget.js?v=nexus-widget-consolidated-20260706"
+    data-tenant="default"
+    data-channel="website"
+    data-title="Speedaf Support"
+    data-subtitle="AI support · human handoff when needed"
+    data-button-label="Chat with Speedaf"
+    data-input-placeholder="Message"
+    data-avatar-url="/webchat/demo/assets/speedaf-ai-bot-avatar.png"
+    data-auto-open="true"
+    data-live-voice-mode="edge-card"
+    data-live-voice-ws-path="/webchat/live/ws"
+    data-live-voice-label="VOIP Call"
+    defer></script>
 </body>
 </html>

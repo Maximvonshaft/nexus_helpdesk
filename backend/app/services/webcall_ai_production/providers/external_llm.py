@@ -49,7 +49,7 @@ class ExternalLLMProvider(LLMProvider):
                 raise classify_http_error(self.provider_name, exc) from exc
             response_text = str(payload.get("response_text") or payload.get("text") or "").strip()
             if not response_text:
-                response_text = "I cannot verify that safely right now. I will hand this call to a human support agent."
+                response_text = ""
             handoff_required = bool(payload.get("handoff_required", False))
             return LLMResult(
                 response_text=response_text,

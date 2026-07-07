@@ -24,7 +24,7 @@ def upgrade() -> None:
     if _is_postgres():
         op.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
         op.execute(sa.text("ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS search_tsvector tsvector"))
-        op.execute(sa.text("ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS embedding_vector vector(1536)"))
+        op.execute(sa.text("ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS embedding_vector vector(384)"))
     else:
         op.add_column("knowledge_chunks", sa.Column("search_tsvector", sa.Text(), nullable=True))
         op.add_column("knowledge_chunks", sa.Column("embedding_vector", sa.Text(), nullable=True))

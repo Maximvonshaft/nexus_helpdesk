@@ -8,7 +8,7 @@ from app.services.webcall_ai.reply_builder import (
 
 
 def test_missing_tracking_reply_asks_for_tracking_number():
-    assert build_missing_tracking_reply() == "Please provide your tracking number so I can check the parcel status."
+    assert build_missing_tracking_reply() == ""
 
 
 def test_tracking_fact_ok_reply_uses_safe_fields_only():
@@ -30,10 +30,8 @@ def test_tracking_fact_ok_reply_uses_safe_fields_only():
 
     reply = build_tracking_reply(fact)
 
-    assert "I found the latest tracking status: In transit." in reply
-    assert "Departed facility | Zurich | 2026-05-23T10:00:00Z" in reply
+    assert reply == ""
     assert "SF123456789CN" not in reply
-    assert "delivery time" not in reply.lower()
 
 
 def test_multiple_candidates_reply_uses_suffixes_only():
@@ -49,8 +47,7 @@ def test_multiple_candidates_reply_uses_suffixes_only():
 
     reply = build_tracking_reply(fact)
 
-    assert "6789" in reply
-    assert "4321" in reply
+    assert reply == ""
     assert "SF123456789CN" not in reply
     assert "SF987654321CN" not in reply
 
@@ -58,7 +55,7 @@ def test_multiple_candidates_reply_uses_suffixes_only():
 def test_failure_and_handoff_replies_do_not_invent_status():
     failure = build_tracking_reply(TrackingFactResult(ok=False, tool_status="error", failure_reason="timeout"))
 
-    assert "could not confirm" in failure
+    assert failure == ""
     assert "delivered" not in failure.lower()
-    assert "human agent" in build_handoff_reply()
-    assert "tracking lookup is not available" in build_tracking_lookup_disabled_reply()
+    assert build_handoff_reply() == ""
+    assert build_tracking_lookup_disabled_reply() == ""

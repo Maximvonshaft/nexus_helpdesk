@@ -95,6 +95,8 @@ class Settings:
         self.job_lock_seconds = int(os.getenv("JOB_LOCK_SECONDS", "300"))
         self.job_max_retries = int(os.getenv("JOB_MAX_RETRIES", "3"))
         self.worker_poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", "2"))
+        self.webchat_ai_worker_poll_seconds = float(os.getenv("WEBCHAT_AI_WORKER_POLL_SECONDS", "0.35"))
+        self.webchat_ai_worker_busy_poll_seconds = float(os.getenv("WEBCHAT_AI_WORKER_BUSY_POLL_SECONDS", "0.05"))
         self.external_channel_sync_enabled = os.getenv("EXTERNAL_CHANNEL_SYNC_ENABLED", "false").strip().lower() == "true"
         self.external_channel_sync_batch_size = int(os.getenv("EXTERNAL_CHANNEL_SYNC_BATCH_SIZE", "50"))
         self.external_channel_sync_stale_seconds = int(os.getenv("EXTERNAL_CHANNEL_SYNC_STALE_SECONDS", "120"))
@@ -130,7 +132,8 @@ class Settings:
         self.admin_action_rate_limit_single_max = int(os.getenv("ADMIN_ACTION_RATE_LIMIT_SINGLE_MAX", "20"))
         self.admin_action_rate_limit_batch_max = int(os.getenv("ADMIN_ACTION_RATE_LIMIT_BATCH_MAX", "3"))
         self.admin_action_rate_limit_consume_once_max = int(os.getenv("ADMIN_ACTION_RATE_LIMIT_CONSUME_ONCE_MAX", "5"))
-        self.webchat_ai_auto_reply_mode = os.getenv("WEBCHAT_AI_AUTO_REPLY_MODE", "safe_ack" if self.app_env == "production" else "safe_ai").strip().lower() or "safe_ack"
+        self.webchat_ai_auto_reply_mode = os.getenv("WEBCHAT_AI_AUTO_REPLY_MODE", "safe_ai").strip().lower() or "safe_ai"
+        self.webchat_ai_turn_debounce_seconds = float(os.getenv("WEBCHAT_AI_TURN_DEBOUNCE_SECONDS", "0.15"))
         self.webchat_ai_reconciler_enabled = _env_bool("WEBCHAT_AI_RECONCILER_ENABLED", True)
         try:
             self.webchat_ai_reconciler_interval_seconds = max(
@@ -139,14 +142,13 @@ class Settings:
             )
         except ValueError:
             self.webchat_ai_reconciler_interval_seconds = 30
-        self.webchat_static_quick_replies_mode = os.getenv("WEBCHAT_STATIC_QUICK_REPLIES_MODE", "off").strip().lower() or "off"
         self.webchat_knowledge_reply_mode = os.getenv("WEBCHAT_KNOWLEDGE_REPLY_MODE", "ai_grounded").strip().lower() or "ai_grounded"
         self.webchat_knowledge_no_evidence_fallback_enabled = _env_bool("WEBCHAT_KNOWLEDGE_NO_EVIDENCE_FALLBACK_ENABLED", True)
         self.knowledge_runtime_version = os.getenv("KNOWLEDGE_RUNTIME_VERSION", "v2").strip().lower() or "v2"
         self.knowledge_embeddings_enabled = _env_bool("KNOWLEDGE_EMBEDDINGS_ENABLED", self.app_env == "production")
         self.knowledge_embedding_provider = os.getenv("KNOWLEDGE_EMBEDDING_PROVIDER", "deterministic_hash").strip().lower() or "deterministic_hash"
         self.knowledge_embedding_model = os.getenv("KNOWLEDGE_EMBEDDING_MODEL", "nexus-deterministic-hash-v1").strip()
-        self.knowledge_embedding_dim = int(os.getenv("KNOWLEDGE_EMBEDDING_DIM", "1536"))
+        self.knowledge_embedding_dim = int(os.getenv("KNOWLEDGE_EMBEDDING_DIM", "384"))
         self.knowledge_embedding_batch_size = int(os.getenv("KNOWLEDGE_EMBEDDING_BATCH_SIZE", "32"))
         self.knowledge_embedding_timeout_seconds = int(os.getenv("KNOWLEDGE_EMBEDDING_TIMEOUT_SECONDS", "20"))
         self.knowledge_vector_fallback_allowed = _env_bool("KNOWLEDGE_VECTOR_FALLBACK_ALLOWED", True)
@@ -205,10 +207,16 @@ class Settings:
             raise RuntimeError("ADMIN_ACTION_RATE_LIMIT_BATCH_MAX must be between 1 and 1000")
         if self.admin_action_rate_limit_consume_once_max < 1 or self.admin_action_rate_limit_consume_once_max > 1000:
             raise RuntimeError("ADMIN_ACTION_RATE_LIMIT_CONSUME_ONCE_MAX must be between 1 and 1000")
-        if self.webchat_ai_auto_reply_mode not in {"off", "safe_ack", "safe_ai"}:
-            raise RuntimeError("WEBCHAT_AI_AUTO_REPLY_MODE must be off, safe_ack, or safe_ai")
-        if self.webchat_static_quick_replies_mode not in {"off", "legacy"}:
-            raise RuntimeError("WEBCHAT_STATIC_QUICK_REPLIES_MODE must be off or legacy")
+        if self.webchat_ai_auto_reply_mode not in {"off", "safe_ai"}:
+            raise RuntimeError("WEBCHAT_AI_AUTO_REPLY_MODE must be off or safe_ai")
+        if self.worker_poll_seconds < 0.1 or self.worker_poll_seconds > 60:
+            raise RuntimeError("WORKER_POLL_SECONDS must be between 0.1 and 60")
+        if self.webchat_ai_worker_poll_seconds < 0.05 or self.webchat_ai_worker_poll_seconds > 10:
+            raise RuntimeError("WEBCHAT_AI_WORKER_POLL_SECONDS must be between 0.05 and 10")
+        if self.webchat_ai_worker_busy_poll_seconds < 0.01 or self.webchat_ai_worker_busy_poll_seconds > 5:
+            raise RuntimeError("WEBCHAT_AI_WORKER_BUSY_POLL_SECONDS must be between 0.01 and 5")
+        if self.webchat_ai_turn_debounce_seconds < 0 or self.webchat_ai_turn_debounce_seconds > 10:
+            raise RuntimeError("WEBCHAT_AI_TURN_DEBOUNCE_SECONDS must be between 0 and 10")
         if self.webchat_knowledge_reply_mode not in {"ai_grounded", "deterministic_direct_answer"}:
             raise RuntimeError("WEBCHAT_KNOWLEDGE_REPLY_MODE must be ai_grounded or deterministic_direct_answer")
         if self.knowledge_runtime_version not in {"v2", "legacy"}:

@@ -1,63 +1,19 @@
 import { createRouter } from '@tanstack/react-router'
-import { Route as RootRoute } from '@/routes/root'
+import { NotFoundBoundary, Route as RootRoute } from '@/routes/root'
 import { Route as LoginRoute } from '@/routes/login'
-import { Route as AdminRoute } from '@/routes/admin'
 import { Route as IndexRoute } from '@/routes/index'
-import { Route as WorkspaceRoute } from '@/routes/workspace'
 import { Route as WebchatRoute } from '@/routes/webchat'
-import { Route as EmailRoute } from '@/routes/email'
-import { Route as WebchatVoiceRoute } from '@/routes/webchat-voice'
-import { Route as WebCallOperatorRoute } from '@/routes/webcall-operator'
-import { Route as WebCallRoute } from '@/routes/webcall'
-import { Route as WebCallAIProductionRoute } from '@/routes/webcall-ai'
-import { Route as WebCallAIDemoRoute } from '@/routes/webcall-ai-demo'
-import { Route as ProviderCredentialsRoute } from '@/routes/provider-credentials'
-import { Route as BulletinsRoute } from '@/routes/bulletins'
-import { Route as AIControlRoute } from '@/routes/ai-control'
-import { Route as KnowledgeStudioRoute } from '@/routes/knowledge-studio'
-import { Route as PersonaBuilderRoute } from '@/routes/persona-builder'
-import { Route as ControlTowerRoute } from '@/routes/control-tower'
-import { Route as QATrainingRoute } from '@/routes/qa-training'
-import { Route as ControlPlaneRoute } from '@/routes/control-plane'
-import { Route as AccountsRoute } from '@/routes/accounts'
-import { Route as OutboundEmailRoute } from '@/routes/outbound-email'
-import { Route as UsersRoute } from '@/routes/users'
-import { Route as SecurityRoute } from '@/routes/security'
-import { Route as RuntimeRoute } from '@/routes/runtime'
 
 const routeTree = RootRoute.addChildren([
   LoginRoute,
-  AdminRoute,
   IndexRoute,
-  WorkspaceRoute,
   WebchatRoute,
-  EmailRoute,
-  // Internal operator console for human WebCall handling; retained as a legacy deep link.
-  WebchatVoiceRoute,
-  // Top-level operator WebCall workbench with voice, handoff, customer profile, AI suggestion, and audit context.
-  WebCallOperatorRoute,
-  // Public/customer WebCall room; linked from widget runtime with visitor token context.
-  WebCallRoute,
-  WebCallAIProductionRoute,
-  // Internal ops-only AI sandbox; AppShell exposes it only to ops-capable users.
-  WebCallAIDemoRoute,
-  ProviderCredentialsRoute,
-  BulletinsRoute,
-  AIControlRoute,
-  KnowledgeStudioRoute,
-  PersonaBuilderRoute,
-  ControlTowerRoute,
-  QATrainingRoute,
-  ControlPlaneRoute,
-  AccountsRoute,
-  OutboundEmailRoute,
-  UsersRoute,
-  SecurityRoute,
-  RuntimeRoute,
 ])
 
 export const router = createRouter({
   routeTree,
+  notFoundMode: 'root',
+  defaultNotFoundComponent: NotFoundBoundary,
   defaultPreload: 'intent',
   scrollRestoration: true,
 })

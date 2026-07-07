@@ -43,7 +43,7 @@ def test_knowledge_chunk_pg_hybrid_columns_use_postgres_types():
     dialect = postgresql.dialect()
 
     assert KnowledgeChunk.__table__.c.search_tsvector.type.dialect_impl(dialect).compile(dialect=dialect) == "TSVECTOR"
-    assert KnowledgeChunk.__table__.c.embedding_vector.type.dialect_impl(dialect).compile(dialect=dialect) == "vector(1536)"
+    assert KnowledgeChunk.__table__.c.embedding_vector.type.dialect_impl(dialect).compile(dialect=dialect) == "vector(384)"
 
 
 def test_openai_compatible_embedding_provider_parses_ordered_vectors(monkeypatch):

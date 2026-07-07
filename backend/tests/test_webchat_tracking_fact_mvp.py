@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from app.services import tracking_fact_service
 from app.services.tracking_fact_redactor import normalize_tracking_fact, sanitize_payload
 from app.services.tracking_fact_schema import TrackingFactEvent, TrackingFactResult
+from app.services.webchat_ai_service import _allows_history_tracking_lookup, _looks_like_service_policy_question
 from app.services.webchat_fact_gate import evaluate_webchat_fact_gate
-from app.services.webchat_ai_service import _build_prompt
 
 
 def test_tracking_number_extraction_skips_plain_words_and_accepts_waybill():
     assert tracking_fact_service.extract_tracking_number("hello world only") is None
     assert tracking_fact_service.extract_tracking_number("Please check PK120053679836") == "PK120053679836"
     assert tracking_fact_service.extract_tracking_number("waybill abcd12345678 now") == "ABCD12345678"
+    assert tracking_fact_service.extract_tracking_number("hello keepalive api smoke 1783325193527") is None
+    assert tracking_fact_service.extract_tracking_number("tracking 1783325193527") == "1783325193527"
 
 
 def test_tracking_number_extraction_handles_cjk_boundaries_and_dash_normalization():
@@ -29,6 +29,12 @@ def test_tracking_number_extraction_handles_cjk_boundaries_and_dash_normalizatio
         assert tracking_fact_service.extract_tracking_number(text) == expected
     assert tracking_fact_service.extract_tracking_number("订单 12345") is None
     assert tracking_fact_service.extract_tracking_number("Speedaf customer service") is None
+
+
+def test_service_policy_question_does_not_inherit_history_tracking_lookup():
+    assert _looks_like_service_policy_question("瑞士本地到本地现在支持寄送吗？") is True
+    assert _allows_history_tracking_lookup("瑞士本地到本地现在支持寄送吗？") is False
+    assert _allows_history_tracking_lookup("刚刚这个包裹如果收件人说没有收到怎么办？") is True
 
 
 def test_tracking_payload_redacts_pii_fields_and_raw_names():
@@ -73,9 +79,13 @@ def test_normalized_tracking_fact_is_sanitized_and_prompt_ready():
     metadata = fact.metadata_payload()
     assert metadata["fact_source"] == "speedaf_api.tracking_lookup"
     assert metadata["tracking_number_hash"].startswith("sha256:")
+    fact_with_elapsed = TrackingFactResult(**{**fact.__dict__, "lookup_elapsed_ms": 123})
+    assert fact_with_elapsed.metadata_payload()["lookup_elapsed_ms"] == 123
     prompt = fact.prompt_summary()
     assert "Trusted tracking fact" in prompt
     assert "Delivered" in prompt
+    assert "PK120053679836" not in prompt
+    assert "parcel ending 679836" in prompt
     assert "John Smith" not in prompt
     assert "[redacted_name]" in prompt
 
@@ -115,10 +125,7 @@ def test_legacy_bridge_tracking_source_is_unsupported(monkeypatch):
     assert result.failure_reason == "unsupported_tracking_fact_source"
 
 
-def test_webchat_ai_prompt_includes_sanitized_tracking_fact_only():
-    ticket = SimpleNamespace(ticket_no="T-1")
-    conversation = SimpleNamespace(public_id="wc_test")
-    visitor_message = SimpleNamespace(id=10, body="Where is PK120053679836?")
+def test_tracking_fact_prompt_includes_sanitized_tracking_fact_only():
     fact = TrackingFactResult(
         ok=True,
         tracking_number="PK120053679836",
@@ -135,16 +142,12 @@ def test_webchat_ai_prompt_includes_sanitized_tracking_fact_only():
         fact_evidence_present=True,
     )
 
-    prompt = _build_prompt(
-        ticket=ticket,
-        conversation=conversation,
-        visitor_message=visitor_message,
-        history_rows=[SimpleNamespace(direction="visitor", body="Where is PK120053679836?")],
-        tracking_fact=fact,
-    )
+    prompt = fact.prompt_summary()
 
     assert "Trusted tracking fact" in prompt
     assert "Delivered" in prompt
+    assert "PK120053679836" not in prompt
+    assert "parcel ending 679836" in prompt
     assert "Do not reveal recipient names" in prompt
     assert "raw tool output" in prompt
 
@@ -162,3 +165,5 @@ def test_tracking_fact_prompt_does_not_name_legacy_bridge():
     prompt = fact.prompt_summary()
     assert "ExternalChannel" not in prompt
     assert "Bridge" not in prompt
+    assert "PK120053679836" not in prompt
+    assert "parcel ending 679836" in prompt

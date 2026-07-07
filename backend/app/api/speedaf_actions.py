@@ -25,6 +25,7 @@ from ..services.permissions import (
     ensure_can_update_speedaf_address,
     ensure_ticket_visible,
 )
+from ..services.speedaf.adapter import SpeedafCoreAdapter
 from ..services.speedaf.redactor import safe_caller_payload, safe_waybill_payload
 from ..services.speedaf.status_map import is_auto_work_order_type_allowed
 from ..utils.time import utc_now
@@ -33,6 +34,7 @@ router = APIRouter(prefix="/api/tickets", tags=["tickets", "speedaf"])
 
 WORK_ORDER_ACTION_KEY = "speedaf.work_order.create"
 ADDRESS_UPDATE_ACTION_KEY = "speedaf.address_update.submit"
+WAYBILL_LOOKUP_ACTION_KEY = "speedaf.waybill.lookup"
 WORK_ORDER_INPUT_DESCRIPTION_MAX_LENGTH = 1000
 WORK_ORDER_SPEEDAF_DESCRIPTION_MAX_LENGTH = 200
 
@@ -48,6 +50,25 @@ class SpeedafAddressUpdateRequest(BaseModel):
     waybillCode: str = Field(min_length=1, max_length=80)
     callerID: str = Field(min_length=1, max_length=80)
     whatsAppPhone: str = Field(min_length=4, max_length=80)
+
+
+class SpeedafWaybillLookupRequest(BaseModel):
+    callerID: str = Field(min_length=1, max_length=80)
+    countryCode: str = Field(default="CH", min_length=2, max_length=8)
+
+
+class SpeedafWaybillCandidateResponse(BaseModel):
+    waybillCode: str
+    suffix: str | None = None
+
+
+class SpeedafWaybillLookupResponse(BaseModel):
+    ok: bool
+    status: str
+    candidates: list[SpeedafWaybillCandidateResponse]
+    message: str | None = None
+    failureReason: str | None = None
+    safeSummary: dict[str, Any] | None = None
 
 
 class SpeedafActionResponse(BaseModel):
@@ -161,6 +182,46 @@ def _reserve_address_update(db: Session, *, dedupe_key: str, ticket_id: int, way
             )
     except IntegrityError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="speedaf_address_update_already_requested")
+
+
+@router.post("/{ticket_id}/speedaf/waybills/query", response_model=SpeedafWaybillLookupResponse)
+def query_speedaf_waybills(ticket_id: int, payload: SpeedafWaybillLookupRequest, request: Request, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    _require_feature("SPEEDAF_MCP_ENABLED", "speedaf_mcp_disabled")
+    enforce_admin_action_rate_limit(db, actor_id=current_user.id, action_key=WAYBILL_LOOKUP_ACTION_KEY, max_requests=get_settings().admin_action_rate_limit_batch_max, request_id=_request_id(request))
+    _load_visible_ticket(db, ticket_id=ticket_id, user=current_user)
+    caller = _clean(payload.callerID, limit=80)
+    country = _clean(payload.countryCode, limit=8).upper() or "CH"
+    result = SpeedafCoreAdapter().query_waybills_by_caller(caller_id=caller, country_code=country)
+    if not result.ok:
+        return SpeedafWaybillLookupResponse(
+            ok=False,
+            status="failed",
+            candidates=[],
+            message=result.failure_summary or "Speedaf waybill lookup failed.",
+            failureReason=result.failure_reason,
+            safeSummary=result.safe_summary,
+        )
+    candidates = [
+        SpeedafWaybillCandidateResponse(waybillCode=item.waybill_code, suffix=item.suffix)
+        for item in result.candidates
+    ]
+    _append_event(
+        db,
+        ticket_id=ticket_id,
+        actor_id=current_user.id,
+        field_name="speedaf_waybill_lookup",
+        new_value="completed",
+        note="Speedaf waybill lookup completed.",
+        payload={"candidate_count": len(candidates), "country_code": country, **safe_caller_payload(caller)},
+    )
+    db.commit()
+    return SpeedafWaybillLookupResponse(
+        ok=True,
+        status="completed",
+        candidates=candidates,
+        message="Speedaf waybill lookup completed.",
+        safeSummary=result.safe_summary,
+    )
 
 
 @router.post("/{ticket_id}/speedaf/work-orders", response_model=SpeedafActionResponse)

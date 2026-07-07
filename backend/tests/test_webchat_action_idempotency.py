@@ -4,13 +4,43 @@ from fastapi.testclient import TestClient
 
 from app.db import Base, SessionLocal, engine
 from app.main import app
-from app.settings import get_settings
-from app.webchat_models import WebchatCardAction, WebchatConversation
+from app.webchat_models import WebchatCardAction, WebchatConversation, WebchatMessage
+from app.webchat_schemas import WebChatCardAction, WebChatCardPayload
 
 
-def test_webchat_action_submit_is_idempotent_for_same_card_action(monkeypatch):
-    monkeypatch.setenv("WEBCHAT_STATIC_QUICK_REPLIES_MODE", "legacy")
-    get_settings.cache_clear()
+def _insert_legacy_card(conversation_id: str) -> dict:
+    db = SessionLocal()
+    try:
+        conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id).first()
+        assert conversation is not None
+        payload = WebChatCardPayload(
+            card_id="card_legacy_idempotency",
+            card_type="handoff",
+            title="",
+            body="",
+            actions=[
+                WebChatCardAction(id="escalate", label="Escalate", value="escalate", action_type="handoff_request", payload={"intent": "handoff"}),
+            ],
+        )
+        message = WebchatMessage(
+            conversation_id=conversation.id,
+            ticket_id=conversation.ticket_id,
+            direction="system",
+            body="",
+            body_text="",
+            message_type="card",
+            payload_json=payload.model_dump_json(),
+            delivery_status="sent",
+            author_label="System",
+        )
+        db.add(message)
+        db.commit()
+        return {"id": message.id, "payload_json": payload.model_dump(mode="json")}
+    finally:
+        db.close()
+
+
+def test_webchat_action_submit_is_idempotent_for_existing_legacy_card():
     Base.metadata.create_all(bind=engine)
     client = TestClient(app)
 
@@ -33,13 +63,7 @@ def test_webchat_action_submit_is_idempotent_for_same_card_action(monkeypatch):
     )
     assert sent.status_code == 200, sent.text
 
-    polled = client.get(
-        f'/api/webchat/conversations/{conversation_id}/messages',
-        headers={'X-Webchat-Visitor-Token': visitor_token},
-        params={'limit': 30},
-    )
-    assert polled.status_code == 200, polled.text
-    card = next(item for item in polled.json()['messages'] if item['message_type'] == 'card' and item['payload_json']['card_type'] == 'quick_replies')
+    card = _insert_legacy_card(conversation_id)
     action = card['payload_json']['actions'][0]
     body = {
         'message_id': card['id'],
@@ -80,4 +104,3 @@ def test_webchat_action_submit_is_idempotent_for_same_card_action(monkeypatch):
         assert len(actions) == 1
     finally:
         db.close()
-        get_settings.cache_clear()

@@ -43,7 +43,7 @@ class _EmbeddingHandler(BaseHTTPRequestHandler):
         if isinstance(inputs, str):
             inputs = [inputs]
         data = [
-            {"index": index, "embedding": _probe_embedding(str(value), dim=1536)}
+            {"index": index, "embedding": _probe_embedding(str(value), dim=384)}
             for index, value in enumerate(inputs)
         ]
         body = json.dumps({"object": "list", "data": data, "model": payload.get("model")}, ensure_ascii=False).encode("utf-8")
@@ -67,8 +67,8 @@ def main() -> int:
     os.environ["KNOWLEDGE_RUNTIME_VERSION"] = "v2"
     os.environ["KNOWLEDGE_EMBEDDINGS_ENABLED"] = "true"
     os.environ["KNOWLEDGE_EMBEDDING_PROVIDER"] = "openai_compatible"
-    os.environ["KNOWLEDGE_EMBEDDING_MODEL"] = "probe-openai-compatible-1536"
-    os.environ["KNOWLEDGE_EMBEDDING_DIM"] = "1536"
+    os.environ["KNOWLEDGE_EMBEDDING_MODEL"] = "probe-openai-compatible-384"
+    os.environ["KNOWLEDGE_EMBEDDING_DIM"] = "384"
     os.environ["KNOWLEDGE_EMBEDDING_BASE_URL"] = f"http://127.0.0.1:{server.server_port}/v1"
     os.environ["KNOWLEDGE_EMBEDDING_API_KEY"] = "probe-only-not-a-secret"
     os.environ["KNOWLEDGE_VECTOR_FALLBACK_ALLOWED"] = "false"

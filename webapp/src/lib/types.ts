@@ -1018,7 +1018,6 @@ export interface QueueSummary {
   external_dead_outbound?: number
   webchat_local_ack_sent?: number
   webchat_ai_delivered_sent?: number
-  webchat_ai_safe_fallback_sent?: number
   webchat_card_sent?: number
   webchat_handoff_ack_sent?: number
   pending_jobs: number
@@ -1026,30 +1025,45 @@ export interface QueueSummary {
   external_channel_links: number
 }
 
-export interface RuntimeHealth {
-  sync_cursor?: string | null
-  sync_daemon_last_seen_at?: string | null
-  sync_daemon_status?: string | null
-  stale_link_count: number
-  external_channel_links_count?: number
-  transcript_messages_count?: number
-  unresolved_events_count?: number
-  pending_sync_jobs: number
-  dead_sync_jobs: number
-  pending_attachment_jobs: number
-  dead_attachment_jobs: number
-  external_pending_outbound?: number
-  external_dead_outbound?: number
-  webchat_local_ack_sent?: number
-  webchat_ai_delivered_sent?: number
-  webchat_ai_safe_fallback_sent?: number
-  webchat_card_sent?: number
-  webchat_handoff_ack_sent?: number
-  outbound_dispatch_enabled?: boolean
-  outbound_provider?: string
-  external_channel_bridge_allow_writes?: boolean
-  external_channel_cli_fallback_enabled?: boolean
+export interface ProviderRuntimeProviderStatus {
+  name: string
+  selected: boolean
+  feature_enabled: boolean
+  configured: boolean
+  runtime: string
+  capabilities: Record<string, boolean>
+  diagnostics?: {
+    primary_provider?: string
+    base_url_configured?: boolean
+    rag_base_url_configured?: boolean
+    rag_runtime_isolated?: boolean
+    allow_shared_rag_model?: boolean
+    token_file_configured?: boolean
+    inline_token_configured?: boolean
+    chat_mode?: string
+    direct_path?: string
+    rag_path?: string
+    request_shape?: string
+    direct_model?: string
+    rag_model?: string
+    timeout_seconds?: string | number
+  }
+}
+
+export interface ProviderRuntimeStatus {
+  ok: boolean
+  status: string
+  app_env?: string
+  webchat_runtime_enabled?: boolean
+  configured_provider?: string
+  fallback_provider?: string | null
+  providers: ProviderRuntimeProviderStatus[]
   warnings: string[]
+  boundary?: {
+    secret_values_exposed: boolean
+    external_network_call: boolean
+    customer_message_sent: boolean
+  }
 }
 
 export interface OutboundChannelCapability {
@@ -1403,100 +1417,9 @@ export interface ExternalChannelUnresolvedEvent {
   updated_at: string
 }
 
-export interface ProviderCredentialStatus {
-  id: string
-  tenant_id: string
-  provider: string
-  provider_runtime: string
-  credential_type: string
-  profile_id: string
-  account_id?: string | null
-  email?: string | null
-  chatgpt_plan_type?: string | null
-  scope?: string | null
-  expires_at?: string | null
-  status: string
-  last_used_at?: string | null
-  last_refresh_at?: string | null
-  last_error_code?: string | null
-  token_fingerprint_prefix?: string | null
-  created_by?: string | null
-  created_at?: string | null
-  updated_at?: string | null
-  revoked_at?: string | null
-  secret_values_exposed: false
-}
-
-export interface ProviderCredentialStatusResponse {
-  provider: string
-  tenant_id: string
-  credentials: ProviderCredentialStatus[]
-  active_count: number
-  secret_values_exposed: false
-}
-
-export interface CodexAuthorizationStart {
-  session_id: string
-  authorization_url: string
-  expires_at: string
-  scope?: string | null
-  provider: string
-}
-
-export interface CodexManualAuthorizationStart extends CodexAuthorizationStart {
-  state: string
-  redirect_uri: string
-}
-
-export interface CodexManualAuthorizationCompleteRequest {
-  session_id: string
-  authorization_response: string
-}
-
-export interface CodexManualAuthorizationCompleteResult {
-  ok: boolean
-  status: string
-  credential_id?: string | null
-  provider: string
-  elapsed_ms?: number
-  secret_values_exposed: false
-}
-
-export interface CodexDeviceStart {
-  session_id: string
-  verification_url: string
-  user_code: string
-  expires_at: string
-  interval: number
-  scope?: string | null
-}
-
-export interface CodexSessionStatus {
-  session_id?: string
-  provider?: string
-  flow_type?: string
-  status: string
-  error_code?: string | null
-  expires_at?: string | null
-  completed_at?: string | null
-  scope?: string | null
-  user_code?: string | null
-  verification_url?: string | null
-  credential_id?: string | null
-}
-
-export interface CodexCredentialActionResult {
-  ok: boolean
-  status: string
-  credential_id?: string | null
-  error_code?: string | null
-  upstream_revoke?: string | null
-}
-
 export type WebchatMessageType = 'text' | 'system' | 'card' | 'action' | 'attachment' | 'voice_call'
 
 export type WebchatCardType =
-  | 'quick_replies'
   | 'tracking_status'
   | 'address_confirmation'
   | 'reschedule_picker'
@@ -1527,6 +1450,7 @@ export interface WebchatAIRuntimeSnapshot {
   ai_status?: string | null
   ai_turn_id?: number | null
   ai_pending_for_message_id?: number | null
+  ai_status_elapsed_ms?: number | null
   ai_suspended?: boolean
   handoff_status?: string | null
   current_handoff_request_id?: number | null
@@ -1774,4 +1698,128 @@ export interface WebchatReplyResult {
     normalized_body: string
   }
   message: WebchatMessage
+}
+
+export interface SupportConversationReplyPayload {
+  session_key: string
+  body: string
+  has_fact_evidence?: boolean
+  confirm_review?: boolean
+}
+
+export interface SupportConversationReplyResult extends WebchatReplyResult {
+  session_key: string
+  channel: SupportConversationChannel
+  message_id: number
+  outbound_message_id?: number | null
+}
+
+export type SupportConversationChannel = 'webchat' | 'whatsapp' | string
+
+export interface SupportConversation {
+  session_key: string
+  conversation_id: string
+  channel: SupportConversationChannel
+  source?: string | null
+  ticket_id: number
+  ticket_no: string
+  title: string
+  status: string
+  conversation_state: string
+  display_name: string
+  customer_contact?: string | null
+  updated_at?: string | null
+  last_seen_at?: string | null
+  latest_message?: string | null
+  latest_author?: 'customer' | 'agent' | 'ai' | 'system' | string | null
+  needs_human: boolean
+  required_action?: string | null
+  handoff_status?: string | null
+  handoff_request_id?: number | null
+  active_agent_id?: number | null
+  ai_pending?: boolean
+  ai_status?: string | null
+  ai_turn_id?: number | null
+  ai_pending_for_message_id?: number | null
+  ai_status_elapsed_ms?: number | null
+  ai_suspended?: boolean
+  tracking_number_present?: boolean
+  tracking_number?: string | null
+  can_force_takeover?: boolean
+  can_accept?: boolean
+  can_release?: boolean
+  can_resume_ai?: boolean
+  can_reply?: boolean
+}
+
+export interface SupportConversationPage {
+  items: SupportConversation[]
+  source: string
+  view: string
+}
+
+export interface SupportConversationMessage {
+  id: string
+  author: 'customer' | 'agent' | 'ai' | 'system' | string
+  body: string
+  timestamp?: string | null
+  message_type?: string | null
+  delivery_status?: string | null
+  author_label?: string | null
+}
+
+export interface SupportConversationDetail {
+  conversation: SupportConversation & { support_memory?: SupportMemoryLedger }
+  ticket: {
+    id: number
+    ticket_no: string
+    status: string
+    priority: string
+    required_action?: string | null
+    tracking_number_present?: boolean
+  }
+  messages: SupportConversationMessage[]
+  handoff?: WebchatHandoffRequest | null
+  support_memory?: SupportMemoryLedger
+  source: string
+}
+
+export interface SupportConversationMetrics {
+  source: string
+  since_hours: number
+  total: number
+  needs_human: number
+  ai_active: number
+  by_channel: Record<string, number>
+  by_state: Record<string, number>
+  runtime_latency?: RuntimeLatencySummary
+}
+
+export interface RuntimeLatencyBucket {
+  count: number
+  p50_ms?: number | null
+  p90_ms?: number | null
+  max_ms?: number | null
+}
+
+export interface RuntimeLatencySummary {
+  sample_count: number
+  failed_count: number
+  cold_load_count: number
+  slow_prompt_eval_count: number
+  by_latency_class: Record<string, number>
+  total_turn: RuntimeLatencyBucket
+  bridge: RuntimeLatencyBucket
+  runtime_total: RuntimeLatencyBucket
+  runtime_load: RuntimeLatencyBucket
+  runtime_prompt_eval: RuntimeLatencyBucket
+  runtime_eval: RuntimeLatencyBucket
+}
+
+export interface SupportConversationState {
+  source: string
+  open: number
+  requested_handoffs: number
+  my_handoffs: number
+  generated_at?: string | null
 }

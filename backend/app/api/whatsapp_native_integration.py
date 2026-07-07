@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -72,6 +73,50 @@ def _account(db: Session, account_id: str | None) -> ChannelAccount:
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="whatsapp_channel_account_not_found")
     return row
+
+
+def _clip(value: Any, max_length: int) -> str | None:
+    text = str(value or "").strip()
+    return text[:max_length] if text else None
+
+
+def _parse_event_at(value: Any):
+    text = str(value or "").strip()
+    if not text:
+        return utc_now()
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return utc_now()
+
+
+def apply_whatsapp_native_delivery_payload(row: TicketOutboundMessage, payload: dict[str, Any]) -> None:
+    provider_message_id = _clip(payload.get("provider_message_id"), 255)
+    event_at = _parse_event_at(payload.get("sent_at") or payload.get("occurred_at"))
+    if str(payload.get("status") or "").lower() == "sent" or payload.get("ok") is True:
+        row.status = MessageStatus.sent
+        row.provider_status = "whatsapp_native_sent"
+        if provider_message_id:
+            row.provider_message_id = provider_message_id
+        row.sent_at = event_at
+        row.delivery_status = "sent"
+        row.delivery_receipt_provider = "whatsapp_native"
+        row.delivery_receipt_id = provider_message_id or _clip(payload.get("idempotency_key"), 255)
+        row.delivery_receipt_at = event_at
+        row.error_message = None
+        row.failure_code = None
+        row.failure_reason = None
+    else:
+        row.status = MessageStatus.failed
+        row.provider_status = "whatsapp_native_failed"
+        row.error_message = str(payload.get("error_message") or payload.get("error_code") or "whatsapp_native_delivery_failed")[:500]
+        row.failure_code = str(payload.get("error_code") or "whatsapp_native_delivery_failed")[:120]
+        row.failure_reason = row.error_message
+        row.delivery_status = "failed"
+        row.delivery_receipt_provider = "whatsapp_native"
+        row.delivery_receipt_id = provider_message_id or _clip(payload.get("idempotency_key"), 255)
+        row.delivery_receipt_at = event_at
+    row.last_attempt_at = event_at
 
 
 @router.post("/inbound")
@@ -146,19 +191,6 @@ async def whatsapp_native_delivery(
     if row is None:
         return {"ok": True, "updated": False, "reason": "outbound_message_not_found"}
     with managed_session(db):
-        if str(payload.get("status") or "").lower() == "sent" or payload.get("ok") is True:
-            row.status = MessageStatus.sent
-            row.provider_status = "whatsapp_native_sent"
-            row.sent_at = utc_now()
-            row.error_message = None
-            row.failure_code = None
-            row.failure_reason = None
-        else:
-            row.status = MessageStatus.failed
-            row.provider_status = "whatsapp_native_failed"
-            row.error_message = str(payload.get("error_message") or payload.get("error_code") or "whatsapp_native_delivery_failed")[:500]
-            row.failure_code = str(payload.get("error_code") or "whatsapp_native_delivery_failed")[:120]
-            row.failure_reason = row.error_message
-        row.last_attempt_at = utc_now()
+        apply_whatsapp_native_delivery_payload(row, payload)
         db.flush()
     return {"ok": True, "updated": True, "outbound_message_id": row.id, "status": row.status.value if hasattr(row.status, "value") else str(row.status)}

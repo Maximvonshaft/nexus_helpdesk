@@ -52,7 +52,6 @@ jobs:
         run: |
           set -Eeuo pipefail
           timeout 600 pytest -q \
-            backend/tests/test_codex_app_server_image_contract.py \
             backend/tests/test_provider_runtime_status.py \
             backend/tests/test_worker_daemon_readiness.py \
             backend/tests/test_db_query_timing.py \
@@ -116,8 +115,7 @@ jobs:
             backend/tests/test_release_metadata_consistency_gate.py \
             backend/tests/test_webchat_voice_mock_ui_static.py \
             backend/tests/test_candidate_compose_contract.py \
-            backend/tests/test_support_intelligence_config.py \
-            backend/tests/test_whatsapp_lite_session_dedupe.py
+            backend/tests/test_support_intelligence_config.py
 
       - name: Run operator queue tests
         run: |
@@ -139,6 +137,6 @@ jobs:
           EXTERNAL_CHANNEL_DEPLOYMENT_MODE: disabled
           EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED: "false"
           WEBCHAT_RATE_LIMIT_BACKEND: database
-          WEBCHAT_AI_AUTO_REPLY_MODE: safe_ack
+          WEBCHAT_AI_AUTO_REPLY_MODE: safe_ai
           WEBCHAT_ALLOWED_ORIGINS: https://example.test
         run: cd backend && python scripts/validate_production_readiness.py

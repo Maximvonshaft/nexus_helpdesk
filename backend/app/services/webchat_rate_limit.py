@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 from datetime import timedelta
 
@@ -26,7 +27,8 @@ def _client_ip(request: Request) -> str:
 
 def _bucket_key(*, request: Request, tenant_key: str, conversation_id: str | None) -> str:
     scope = conversation_id or "init"
-    return f"{tenant_key}:{scope}:{_client_ip(request)}"
+    raw_key = f"{tenant_key}:{scope}:{_client_ip(request)}"
+    return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
 
 def _enforce_memory(bucket_key: str) -> None:
@@ -44,6 +46,30 @@ def _enforce_database(db: Session, bucket_key: str) -> None:
     now = utc_now()
     window_start = now - timedelta(seconds=settings.webchat_rate_limit_window_seconds)
     max_requests = settings.webchat_rate_limit_max_requests
+    if db.bind and db.bind.dialect.name.startswith("postgresql"):
+        row = db.execute(
+            text(
+                "INSERT INTO webchat_rate_limits "
+                "(bucket_key, window_start, request_count, updated_at) "
+                "VALUES (:bucket_key, :now, 1, :now) "
+                "ON CONFLICT (bucket_key) DO UPDATE SET "
+                "window_start = CASE "
+                "WHEN webchat_rate_limits.window_start IS NULL OR webchat_rate_limits.window_start < :window_start "
+                "THEN :now ELSE webchat_rate_limits.window_start END, "
+                "request_count = CASE "
+                "WHEN webchat_rate_limits.window_start IS NULL OR webchat_rate_limits.window_start < :window_start "
+                "THEN 1 ELSE webchat_rate_limits.request_count + 1 END, "
+                "updated_at = :now "
+                "RETURNING request_count"
+            ),
+            {"bucket_key": bucket_key, "now": now, "window_start": window_start},
+        ).mappings().first()
+        request_count = int((row or {}).get("request_count") or 0)
+        if request_count > max_requests:
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="too many webchat requests")
+        db.flush()
+        return
+
     # Keep the statement deliberately small and portable across SQLite/PostgreSQL.
     existing = db.execute(
         text(

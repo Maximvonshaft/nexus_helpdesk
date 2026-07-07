@@ -4,7 +4,7 @@
 
 - Visitor demo: `/webchat/demo.html`
 - Customer embed: `/webchat/widget.js`
-- Agent/admin inbox: `/webchat`
+- Agent support console: `/webchat`
 
 Visitors do not log in. Agents must log in to NexusDesk.
 
@@ -13,8 +13,7 @@ Visitors do not log in. Agents must log in to NexusDesk.
 The WebChat admin inbox shows:
 
 - visitor text messages
-- system/AI acknowledgement messages
-- structured cards
+- AI Runtime replies
 - submitted customer actions
 - handoff requests
 - required action / conversation state
@@ -28,7 +27,7 @@ If the safety gate requires review, use `confirm_review` only after human review
 
 ## Action handling
 
-When a visitor clicks a quick reply, the action is recorded in `webchat_card_actions`, a WebChat action message is added to the thread, and a ticket event is written.
+When a visitor submits a WebChat action, the action is recorded in `webchat_card_actions`, a WebChat action message is added to the thread, and a ticket event is written.
 
 When a visitor requests handoff, the ticket is marked for human review and `required_action` is populated.
 
@@ -37,8 +36,7 @@ When a visitor requests handoff, the ticket is marked for human review and `requ
 WebChat records in `ticket_outbound_messages` are local-only when their provider status is one of:
 
 - `webchat_delivered`
-- `webchat_safe_ack_delivered`
-- `webchat_ai_safe_fallback`
+- `webchat_ai_delivered`
 - `webchat_card_delivered`
 - `webchat_handoff_ack_delivered`
 
@@ -74,7 +72,7 @@ ADMIN_TOKEN='<jwt>' BASE_URL=http://127.0.0.1:8080 bash scripts/smoke/smoke_webc
 
 ## Current limits
 
-- No WebSocket/SSE; polling is optimized but still polling.
+- WebSocket is available with polling fallback; token-level streaming is not enabled.
 - Photo upload is not enabled.
 - Full shipment-status cards require trusted tracking tool/database evidence before activation.
 - Address/reschedule workflows require business-system integration before customer-visible success states.

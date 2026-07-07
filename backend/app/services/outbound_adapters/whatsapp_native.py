@@ -55,6 +55,10 @@ def _clean(value: Any) -> str | None:
     return text or None
 
 
+def _is_direct_whatsapp_jid(value: str) -> bool:
+    return value.endswith("@s.whatsapp.net") or value.endswith("@lid")
+
+
 def _active_account_by_id(db: Session, account_id: str | None) -> ChannelAccount | None:
     cleaned = _clean(account_id)
     if not cleaned:
@@ -121,7 +125,7 @@ def _ticket_target(ticket: Ticket | None, link: ExternalChannelConversationLink 
         ):
             cleaned = _clean(value)
             if cleaned:
-                chat_jid = cleaned if cleaned.endswith("@s.whatsapp.net") else None
+                chat_jid = cleaned if _is_direct_whatsapp_jid(cleaned) else None
                 return cleaned, chat_jid, source
     return None, None, WHATSAPP_NATIVE_MISSING_TARGET
 

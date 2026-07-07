@@ -33,7 +33,7 @@ def test_pr4_runtime_files_do_not_reference_real_media_or_provider_integrations(
         "urllib",
         "external_channel",
         "openai",
-        "codex",
+        "legacy_ai_provider",
         "provider_runtime",
         "speedaf",
         "websocket",

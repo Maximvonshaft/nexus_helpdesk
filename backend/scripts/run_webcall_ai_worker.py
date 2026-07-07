@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: F401,E402
+from app import models, operator_models, tool_models, voice_models, webchat_models  # noqa: F401,E402
 from app.db import db_context  # noqa: E402
 from app.services.observability import configure_logging  # noqa: E402
 from app.services.webcall_ai.worker import run_webcall_ai_worker_once  # noqa: E402

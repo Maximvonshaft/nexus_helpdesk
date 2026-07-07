@@ -14,8 +14,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Secret-safe smoke probe for the private AI Runtime.")
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--token-file", required=True)
-    parser.add_argument("--direct-path", default="/chat/direct")
-    parser.add_argument("--rag-path", default="/chat/rag")
+    parser.add_argument("--direct-path", default="/api/chat")
+    parser.add_argument("--rag-path", default="/api/chat")
     parser.add_argument("--live-health-path", default="/live/health")
     parser.add_argument("--tts-path", default="/voice/tts")
     parser.add_argument("--direct-model", default="qwen2.5:3b")
@@ -23,7 +23,7 @@ def main() -> int:
     parser.add_argument(
         "--request-shape",
         choices=["question", "system_input", "messages", "ollama_chat"],
-        default="question",
+        default="ollama_chat",
     )
     parser.add_argument("--tts-language", default="en")
     parser.add_argument("--tts-voice", default="af_heart")

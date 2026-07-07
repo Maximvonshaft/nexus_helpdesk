@@ -23,14 +23,15 @@ from .permissions import ensure_ticket_visible
 from .sla_service import update_first_response, evaluate_sla
 from .ticket_service import generate_ticket_no, get_ticket_or_404
 from .message_dispatch import queue_outbound_message
-from .background_jobs import enqueue_webchat_ai_reply_job
-from .webchat_card_factory import build_handoff_card, build_quick_replies_card
 from .webchat_handoff_service import ensure_can_reply_in_handoff, request_webchat_handoff, serialize_handoff_request
 from .webchat_ai_turn_service import is_ai_suspended_for_handoff, safe_write_webchat_event
 from .webchat_inbox_read_state import webchat_read_state_payload
-from .webchat_intent_service import detect_webchat_intent
+from .webchat_public_payload import public_webchat_metadata
 
 WEBCHAT_LOGGER = logging.getLogger("nexusdesk")
+
+RETIRED_WEBCHAT_CARD_TYPE = "quick" + "_replies"
+RETIRED_WEBCHAT_ACTION_TYPE = "quick" + "_reply"
 
 MAX_MESSAGE_CHARS = 2000
 MAX_FIELD_CHARS = 300
@@ -38,6 +39,7 @@ MAX_URL_CHARS = 700
 DEFAULT_POLL_LIMIT = 50
 MAX_POLL_LIMIT = 100
 WEBCHAT_VISITOR_TOKEN_TTL_DAYS = 7
+STALE_PUBLIC_HANDOFF_RESUME_AFTER = timedelta(minutes=30)
 SENSITIVE_EVENT_KEYS = ("token", "secret", "password", "authorization", "cookie", "credential", "api_key", "session_key")
 
 
@@ -168,7 +170,21 @@ def _message_read(row: WebchatMessage) -> dict[str, Any]:
     }
 
 
+def _public_message_read(row: WebchatMessage) -> dict[str, Any]:
+    payload = _message_read(row)
+    payload["metadata_json"] = public_webchat_metadata(payload.get("metadata_json"))
+    payload.pop("author_user_id", None)
+    return payload
+
+
 def _ai_turn_read(row: WebchatAITurn) -> dict[str, Any]:
+    runtime_trace: dict[str, Any] | None = None
+    if row.runtime_trace_json:
+        try:
+            parsed = json.loads(row.runtime_trace_json)
+            runtime_trace = parsed if isinstance(parsed, dict) else None
+        except (TypeError, ValueError):
+            runtime_trace = None
     return {
         "id": row.id,
         "status": row.status,
@@ -179,6 +195,7 @@ def _ai_turn_read(row: WebchatAITurn) -> dict[str, Any]:
         "reply_source": row.reply_source,
         "fallback_reason": row.fallback_reason,
         "bridge_elapsed_ms": row.bridge_elapsed_ms,
+        "runtime_trace": runtime_trace,
     }
 
 
@@ -309,183 +326,80 @@ def create_or_resume_conversation(db: Session, payload: Any, request: Request) -
     }
 
 
-def _webchat_auto_ack_text(visitor_body: str) -> str:
-    text = (visitor_body or "").strip().lower()
-    parcel_keywords = (
-        "tracking", "track", "parcel", "package", "shipment", "order", "delivery",
-        "where", "delay", "late",
-        "快递", "包裹", "物流", "单号", "运单", "派送", "延误", "签收",
+def _maybe_resume_stale_requested_handoff(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    ticket: Ticket | None,
+    visitor_message: WebchatMessage,
+) -> bool:
+    if ticket is None:
+        return False
+    if getattr(conversation, "handoff_status", None) != "requested":
+        return False
+    if getattr(conversation, "active_agent_id", None):
+        return False
+
+    request_row = None
+    request_id = getattr(conversation, "current_handoff_request_id", None)
+    if request_id:
+        request_row = db.query(WebchatHandoffRequest).filter(WebchatHandoffRequest.id == request_id).first()
+        if request_row is not None and request_row.status != "requested":
+            return False
+
+    stale_anchor = _ensure_aware_utc(
+        getattr(request_row, "requested_at", None)
+        if request_row is not None
+        else getattr(conversation, "ai_suspended_at", None)
     )
-    if any(k in text for k in parcel_keywords):
-        return (
-            "Thanks, we have received your parcel inquiry. "
-            "Our support team will check the shipment details and reply here. "
-            "If you have a tracking number, please send it in this chat."
-        )
-    return (
-        "Thanks, we have received your message. "
-        "Our support team will reply here as soon as possible."
-    )
+    now = _ensure_aware_utc(utc_now())
+    if stale_anchor is None or now is None or now - stale_anchor < STALE_PUBLIC_HANDOFF_RESUME_AFTER:
+        return False
 
+    if request_row is not None:
+        request_row.status = "resumed_ai"
+        request_row.closed_at = now
+        request_row.decision_note = _clip("auto_resumed_after_stale_requested_handoff", 240)
+        request_row.lock_version += 1
+        request_row.updated_at = now
 
-def _maybe_create_webchat_auto_ack(db: Session, *, conversation: WebchatConversation, visitor_message: WebchatMessage) -> WebchatMessage | None:
-    """Create a safe first-response agent message for public webchat.
+    conversation.current_handoff_request_id = None
+    conversation.handoff_status = "none"
+    conversation.active_agent_id = None
+    conversation.ai_suspended = False
+    conversation.ai_suspended_at = None
+    conversation.ai_suspended_by = None
+    conversation.ai_suspended_reason = None
+    conversation.takeover_mode = None
+    conversation.last_handoff_reason = None
+    conversation.updated_at = now
 
-    This is acknowledgement-only. It must not claim parcel status, delivery result,
-    refund status, or any fact not backed by tools.
-    """
-    if get_settings().external_channel_bridge_enabled:
-        return None
+    ticket.required_action = None
+    ticket.conversation_state = ConversationState.ai_active
+    ticket.updated_at = now
 
-    existing_agent = (
-        db.query(WebchatMessage.id)
-        .filter(
-            WebchatMessage.conversation_id == conversation.id,
-            WebchatMessage.direction == "agent",
-        )
-        .first()
-    )
-    if existing_agent:
-        return None
-
-    body = _webchat_auto_ack_text(visitor_message.body)
-    row = WebchatMessage(
-        conversation_id=conversation.id,
-        ticket_id=conversation.ticket_id,
-        direction="agent",
-        body=body,
-        body_text=body,
-        message_type="text",
-        delivery_status="sent",
-        metadata_json=_metadata(generated_by="system", safety_level="ack_only", fallback_reason="local_safe_ack", fact_evidence_present=False),
-        author_label="Support Assistant",
-    )
-    db.add(row)
-    db.flush()
-    safe_write_webchat_event(
-        db,
-        conversation_id=conversation.id,
-        ticket_id=conversation.ticket_id,
-        event_type="message.created",
-        payload={"message_id": row.id, "direction": "agent", "generated_by": "local_safe_ack"},
-    )
-    return row
-
-
-def _write_card_message(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, card: WebChatCardPayload, provider_status: str, intent_metadata: dict[str, Any]) -> WebchatMessage:
-    metadata = {
-        "generated_by": "system",
-        "intent": intent_metadata.get("intent"),
-        "confidence": intent_metadata.get("confidence"),
-        "safety_level": "handoff" if card.card_type == "handoff" else "structured_guidance",
-        "fallback_reason": intent_metadata.get("fallback_reason"),
-        "fact_evidence_present": False,
-        "recommended_card": card.card_type,
-        "source_message_id": visitor_message.id,
+    event_payload = {
+        "handoff_request_id": request_id,
+        "message_id": visitor_message.id,
+        "reason": "stale_requested_handoff",
+        "stale_after_seconds": int(STALE_PUBLIC_HANDOFF_RESUME_AFTER.total_seconds()),
     }
-    row = WebchatMessage(
-        conversation_id=conversation.id,
-        ticket_id=ticket.id,
-        direction="system",
-        body=card.title,
-        body_text=card.body or card.title,
-        message_type="card",
-        payload_json=card.model_dump_json(),
-        metadata_json=_metadata(**metadata),
-        delivery_status="sent",
-        action_status="pending",
-        author_label="Support Assistant",
-    )
-    db.add(row)
-    db.flush()
     safe_write_webchat_event(
         db,
         conversation_id=conversation.id,
         ticket_id=ticket.id,
-        event_type="message.created",
-        payload={"message_id": row.id, "direction": row.direction, "message_type": row.message_type},
+        event_type="ai.resumed",
+        payload=event_payload,
     )
-    db.add(TicketOutboundMessage(
-        ticket_id=ticket.id,
-        channel=SourceChannel.web_chat,
-        status=MessageStatus.sent,
-        body=card.title,
-        provider_status=provider_status,
-        created_by=None,
-        sent_at=utc_now(),
-        max_retries=0,
-        failure_reason="Local WebChat structured card delivered; no external provider send occurred",
-    ))
     db.add(TicketEvent(
         ticket_id=ticket.id,
         actor_id=None,
-        event_type=EventType.internal_note_added,
-        note=f"Webchat {card.card_type} card generated",
-        payload_json=json.dumps({
-            "public_conversation_id": conversation.public_id,
-            "webchat_message_id": row.id,
-            "card_id": card.card_id,
-            "card_type": card.card_type,
-            "provider_status": provider_status,
-            "external_send": False,
-            "intent": intent_metadata,
-        }, ensure_ascii=False),
+        event_type=EventType.conversation_state_changed,
+        note="Stale WebChat handoff resumed by AI",
+        payload_json=json.dumps({"public_conversation_id": conversation.public_id, **event_payload}, ensure_ascii=False),
     ))
-    WEBCHAT_LOGGER.info("webchat_card_generated", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "message_id": row.id, "card_type": card.card_type}})
-    return row
-
-
-def _maybe_create_structured_card(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage) -> None:
-    existing_card = (
-        db.query(WebchatMessage.id)
-        .filter(
-            WebchatMessage.conversation_id == conversation.id,
-            WebchatMessage.message_type == "card",
-            WebchatMessage.id > visitor_message.id,
-        )
-        .first()
-    )
-    if existing_card:
-        return
-    intent = detect_webchat_intent(visitor_message.body)
-    intent_metadata = intent.to_metadata()
-    if intent.risk_level == "high" or intent.intent in {"handoff", "complaint", "address_change", "reschedule"}:
-        ticket.required_action = "WebChat customer needs human review / handoff"
-        ticket.conversation_state = ConversationState.human_review_required
-        card = build_handoff_card(reason=f"intent:{intent.intent}")
-        _write_card_message(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, card=card, provider_status="webchat_handoff_ack_delivered", intent_metadata={**intent_metadata, "fallback_reason": "high_risk_or_handoff_intent"})
-        request_webchat_handoff(
-            db,
-            conversation=conversation,
-            ticket=ticket,
-            source="server_rule",
-            trigger_type="intent_handoff",
-            reason_code=f"intent:{intent.intent}",
-            reason_text=f"WebChat intent requires human review: {intent.intent}",
-            recommended_agent_action="Review the customer message and reply in WebChat.",
-            trigger_message_id=visitor_message.id,
-            requested_by_actor_type="system",
-        )
-        WEBCHAT_LOGGER.info("webchat_handoff_triggered", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "reason": intent.intent}})
-        return
-    if intent.recommended_card == "quick_replies" or intent.intent in {"greeting", "tracking", "unknown"}:
-        settings = get_settings()
-        if settings.webchat_static_quick_replies_mode != "legacy":
-            WEBCHAT_LOGGER.info("webchat_static_quick_replies_skipped", extra={"event_payload": {
-                "conversation_id": conversation.id,
-                "ticket_id": ticket.id,
-                "visitor_message_id": visitor_message.id,
-                "intent": intent.intent,
-                "recommended_card": intent.recommended_card,
-                "mode": settings.webchat_static_quick_replies_mode
-            }})
-            return
-
-        body = "Choose one option below. If this is about a parcel, please share your tracking number."
-        if "tracking_number" in intent.missing_fields:
-            body = "Please share your tracking number, or choose another option below."
-        card = build_quick_replies_card(body=body, intent=intent.intent)
-        _write_card_message(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, card=card, provider_status="webchat_card_delivered", intent_metadata=intent_metadata)
+    db.flush()
+    return True
 
 
 def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, body: str, request: Request, *, client_message_id: str | None = None) -> dict[str, Any]:
@@ -524,16 +438,6 @@ def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, 
     db.add(message)
 
     db.flush()
-    try:
-        with db.begin_nested():
-            _maybe_create_webchat_auto_ack(db, conversation=conversation, visitor_message=message)
-            db.flush()
-    except Exception as exc:
-        WEBCHAT_LOGGER.exception(
-            "webchat_auto_ack_failed",
-            extra={"event_payload": {"conversation_id": conversation.public_id, "error": str(exc)}},
-        )
-
     ticket = db.query(Ticket).filter(Ticket.id == conversation.ticket_id).first()
     if ticket:
         ticket.last_customer_message = normalized_body
@@ -552,30 +456,14 @@ def add_visitor_message(db: Session, public_id: str, visitor_token: str | None, 
             note="Webchat visitor message received",
             payload_json=json.dumps({"public_conversation_id": public_id, "webchat_message_id": message.id, "client_message_id": normalized_client_id}, ensure_ascii=False),
         ))
-        try:
-            _maybe_create_structured_card(db, conversation=conversation, ticket=ticket, visitor_message=message)
-        except Exception as exc:
-            WEBCHAT_LOGGER.exception("webchat_card_generation_failed", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "visitor_message_id": message.id, "error": str(exc)}})
 
     conversation.last_seen_at = utc_now()
     conversation.updated_at = utc_now()
     db.flush()
 
-    if not is_ai_suspended_for_handoff(conversation):
-        try:
-            enqueue_webchat_ai_reply_job(
-                db,
-                conversation_id=conversation.id,
-                ticket_id=conversation.ticket_id,
-                visitor_message_id=message.id,
-            )
-            db.flush()
-        except Exception as exc:
-            WEBCHAT_LOGGER.exception(
-                "webchat_ai_reply_enqueue_failed",
-                extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": conversation.ticket_id, "visitor_message_id": message.id, "error": str(exc)}},
-            )
-    else:
+    _maybe_resume_stale_requested_handoff(db, conversation=conversation, ticket=ticket, visitor_message=message)
+
+    if is_ai_suspended_for_handoff(conversation):
         safe_write_webchat_event(
             db,
             conversation_id=conversation.id,
@@ -607,7 +495,7 @@ def list_public_messages(db: Session, public_id: str, visitor_token: str | None,
     return {
         "conversation_id": conversation.public_id,
         "status": conversation.status,
-        "messages": [_message_read(row) for row in rows],
+        "messages": [_public_message_read(row) for row in rows],
         "has_more": has_more,
         "next_after_id": rows[-1].id if rows else after_id,
     }
@@ -622,8 +510,24 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
     if not card_message or (card_message.message_type or "text") != "card":
         raise HTTPException(status_code=404, detail="webchat card message not found")
     card_payload_raw = _loads_json(card_message.payload_json)
+    raw_card_payload = card_payload_raw
+    if isinstance(raw_card_payload, str):
+        raw_card_payload = _loads_json(raw_card_payload)
+    raw_card_type = raw_card_payload.get("card_type") if isinstance(raw_card_payload, dict) else None
+    if raw_card_type == RETIRED_WEBCHAT_CARD_TYPE or payload.action_type == RETIRED_WEBCHAT_ACTION_TYPE:
+        WEBCHAT_LOGGER.warning(
+            "webchat_card_action_rejected",
+            extra={
+                "event_payload": {
+                    "conversation_id": conversation.id,
+                    "message_id": payload.message_id,
+                    "reason": "retired_card_action",
+                }
+            },
+        )
+        raise HTTPException(status_code=410, detail="webchat retired card action")
     try:
-        card_payload = WebChatCardPayload.model_validate(card_payload_raw)
+        card_payload = WebChatCardPayload.model_validate(raw_card_payload)
     except Exception as exc:
         WEBCHAT_LOGGER.warning("webchat_card_action_rejected", extra={"event_payload": {"conversation_id": conversation.id, "message_id": payload.message_id, "reason": "invalid_stored_card_payload"}})
         raise HTTPException(status_code=400, detail="invalid stored card payload") from exc
@@ -715,7 +619,7 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
             ticket_id=ticket.id,
             channel=SourceChannel.web_chat,
             status=MessageStatus.sent,
-            body="Human handoff requested in WebChat",
+            body="webchat_handoff_ack",
             provider_status="webchat_handoff_ack_delivered",
             created_by=None,
             sent_at=utc_now(),
@@ -833,10 +737,22 @@ def admin_get_thread(db: Session, ticket_id: int, current_user: User) -> dict[st
     }
 
 
-def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, has_fact_evidence: bool = False, confirm_review: bool = False) -> dict[str, Any]:
+def admin_reply(
+    db: Session,
+    ticket_id: int,
+    current_user: User,
+    *,
+    body: str,
+    has_fact_evidence: bool = False,
+    confirm_review: bool = False,
+    conversation_public_id: str | None = None,
+) -> dict[str, Any]:
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
-    conversation = db.query(WebchatConversation).filter(WebchatConversation.ticket_id == ticket.id).first()
+    query = db.query(WebchatConversation).filter(WebchatConversation.ticket_id == ticket.id)
+    if conversation_public_id:
+        query = query.filter(WebchatConversation.public_id == conversation_public_id)
+    conversation = query.first()
     if not conversation:
         raise HTTPException(status_code=404, detail="webchat conversation not found for ticket")
     ensure_can_reply_in_handoff(db, conversation=conversation, ticket=ticket, current_user=current_user)
@@ -861,7 +777,7 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
         body_text=decision.normalized_body,
         message_type="text",
         delivery_status=delivery_status,
-        metadata_json=_metadata(generated_by="human_agent", safety_level=decision.level, fact_evidence_present=has_fact_evidence),
+        metadata_json=_metadata(generated_by="human_agent", safety_level=decision.level, fact_evidence_present=has_fact_evidence, external_send=is_external_reply),
         author_label=current_user.display_name,
         author_user_id=current_user.id,
         safety_level=decision.level,
@@ -896,6 +812,16 @@ def admin_reply(db: Session, ticket_id: int, current_user: User, *, body: str, h
         db.flush()
         outbound_event_type = EventType.outbound_sent
         outbound_event_note = "Webchat agent reply sent"
+    db.flush()
+    message.metadata_json = _metadata(
+        generated_by="human_agent",
+        safety_level=decision.level,
+        fact_evidence_present=has_fact_evidence,
+        external_send=is_external_reply,
+        reply_channel=reply_channel.value,
+        outbound_message_id=outbound_message.id,
+        provider_status=provider_status,
+    )
     update_first_response(ticket)
     ticket.status = TicketStatus.waiting_customer
     ticket.conversation_state = ConversationState.waiting_customer

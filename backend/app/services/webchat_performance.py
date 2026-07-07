@@ -14,6 +14,7 @@ from ..models import Ticket, User
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
 from .permissions import CAP_TICKET_READ, resolve_capabilities
+from .webchat_public_payload import public_webchat_metadata
 from .webchat_inbox_read_state import webchat_read_state_payloads
 
 DEFAULT_POLL_LIMIT = 50
@@ -33,7 +34,7 @@ def _int_env(name: str, default: int, *, minimum: int = 0, maximum: int | None =
 
 
 def webchat_poll_interval_ms() -> int:
-    return _int_env("WEBCHAT_POLL_INTERVAL_MS", 10000, minimum=4000, maximum=60000)
+    return _int_env("WEBCHAT_POLL_INTERVAL_MS", 1000, minimum=500, maximum=60000)
 
 
 def webchat_last_seen_write_interval_seconds() -> int:
@@ -76,6 +77,7 @@ def _loads_json(value: str | None) -> Any:
 def _message_read(row: WebchatMessage) -> dict[str, Any]:
     message_type = getattr(row, "message_type", None) or "text"
     body_text = getattr(row, "body_text", None) or row.body
+    metadata = _loads_json(getattr(row, "metadata_json", None))
     return {
         "id": row.id,
         "direction": row.direction,
@@ -83,7 +85,7 @@ def _message_read(row: WebchatMessage) -> dict[str, Any]:
         "body_text": body_text,
         "message_type": message_type,
         "payload_json": _loads_json(getattr(row, "payload_json", None)),
-        "metadata_json": _loads_json(getattr(row, "metadata_json", None)),
+        "metadata_json": public_webchat_metadata(metadata),
         "client_message_id": getattr(row, "client_message_id", None),
         "ai_turn_id": getattr(row, "ai_turn_id", None),
         "delivery_status": getattr(row, "delivery_status", None) or "sent",

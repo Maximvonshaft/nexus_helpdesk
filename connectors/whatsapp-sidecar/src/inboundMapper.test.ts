@@ -16,9 +16,23 @@ test("normalizes direct text message", () => {
   assert.equal(normalized?.projection_mode, "visitor");
 });
 
+test("does not derive fake phone numbers from lid JIDs", () => {
+  const normalized = normalizeBaileysInbound("wa-main", {
+    key: { id: "msg-lid", remoteJid: "174488096354391@lid", fromMe: false },
+    message: { conversation: "hello" },
+    messageTimestamp: 1781179200
+  });
+
+  assert.equal(normalized?.sender_phone, null);
+  assert.equal(normalized?.chat_jid, "174488096354391@lid");
+});
+
 test("ignores outbound, group, and empty messages", () => {
   assert.equal(normalizeBaileysInbound("wa-main", { key: { id: "x", remoteJid: "wa-contact@s.whatsapp.net", fromMe: true }, message: { conversation: "self" } }), null);
   assert.equal(normalizeBaileysInbound("wa-main", { key: { id: "x", remoteJid: "1@g.us" }, message: { conversation: "hi" } }), null);
+  assert.equal(normalizeBaileysInbound("wa-main", { key: { id: "x", remoteJid: "status@broadcast" }, message: { conversation: "status update" } }), null);
+  assert.equal(normalizeBaileysInbound("wa-main", { key: { id: "x", remoteJid: "12345@broadcast" }, message: { conversation: "broadcast" } }), null);
+  assert.equal(normalizeBaileysInbound("wa-main", { key: { id: "x", remoteJid: "12345@newsletter" }, message: { conversation: "newsletter" } }), null);
   assert.equal(normalizeBaileysInbound("wa-main", { key: { id: "x", remoteJid: "wa-contact@s.whatsapp.net" }, message: {} }), null);
 });
 
@@ -62,7 +76,7 @@ test("normalizes fromMe test visitor only with configured prefix", () => {
   assert.equal(withPrefix?.body_text, "SELF_TEST hello");
 });
 
-test("normalizes fromMe self chat as visitor projection", () => {
+test("ignores fromMe self chat to prevent production echo loops", () => {
   const normalized = normalizeBaileysInbound("wa-main", {
     key: { id: "self-chat", remoteJid: "wa-contact@s.whatsapp.net", fromMe: true },
     message: { conversation: "check my parcel" }
@@ -71,7 +85,5 @@ test("normalizes fromMe self chat as visitor projection", () => {
     fromMeMode: "self_chat"
   });
 
-  assert.equal(normalized?.from_me, true);
-  assert.equal(normalized?.projection_mode, "self_chat");
-  assert.equal(normalized?.body_text, "check my parcel");
+  assert.equal(normalized, null);
 });

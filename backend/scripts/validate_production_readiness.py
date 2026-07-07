@@ -65,8 +65,8 @@ def main() -> int:
         warnings.append("WEBCHAT_ALLOWED_ORIGINS is empty; public webchat will reject browser origins")
     if settings.app_env == "production" and settings.webchat_rate_limit_backend != "database":
         warnings.append("WEBCHAT_RATE_LIMIT_BACKEND should be database in production")
-    if settings.app_env == "production" and settings.webchat_ai_auto_reply_mode not in {"off", "safe_ack"}:
-        warnings.append("WEBCHAT_AI_AUTO_REPLY_MODE should be off or safe_ack in production")
+    if settings.app_env == "production" and settings.webchat_ai_auto_reply_mode not in {"off", "safe_ai"}:
+        warnings.append("WEBCHAT_AI_AUTO_REPLY_MODE should be off or safe_ai in production")
     if settings.webchat_allow_legacy_token_transport:
         warnings.append("WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT must remain false")
     outbound_email_successful_test_send_accounts = 0

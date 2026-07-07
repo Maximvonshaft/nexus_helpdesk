@@ -21,11 +21,13 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
 from app.db import Base  # noqa: E402
-from app.enums import SourceChannel  # noqa: E402
-from app.models import BackgroundJob, ChannelAccount, Ticket, WhatsAppInboundMessage  # noqa: E402
+from app.api.whatsapp_native_integration import apply_whatsapp_native_delivery_payload  # noqa: E402
+from app.enums import MessageStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus  # noqa: E402
+from app.models import BackgroundJob, ChannelAccount, Ticket, TicketOutboundMessage, WhatsAppInboundMessage  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 from app.services.whatsapp_native_inbound import (  # noqa: E402
     WhatsAppNativeAuthError,
+    WhatsAppNativeInboundError,
     ingest_whatsapp_native_inbound,
     verify_whatsapp_connector_headers,
 )
@@ -144,6 +146,23 @@ def test_inbound_creates_ticket_webchat_projection_and_ai_turn(db_session):
     assert result.ai_status == "queued"
 
 
+@pytest.mark.parametrize("chat_jid", ["status@broadcast", "12345@broadcast", "12345@g.us", "12345@newsletter"])
+def test_non_customer_whatsapp_chats_are_not_projected(db_session, chat_jid):
+    account = _account(db_session)
+
+    with pytest.raises(WhatsAppNativeInboundError, match="ignored_whatsapp_non_customer_chat"):
+        ingest_whatsapp_native_inbound(
+            db_session,
+            _payload(account_id=account.account_id, external_message_id=f"wamid.{chat_jid}", chat_jid=chat_jid, sender_jid=chat_jid),
+        )
+
+    assert db_session.query(WhatsAppInboundMessage).count() == 0
+    assert db_session.query(Ticket).count() == 0
+    assert db_session.query(WebchatConversation).count() == 0
+    assert db_session.query(WebchatMessage).count() == 0
+    assert db_session.query(WebchatAITurn).count() == 0
+
+
 def test_from_me_store_only_persists_raw_without_projection_or_ai(db_session):
     account = _account(db_session)
 
@@ -202,6 +221,8 @@ def test_from_me_test_visitor_with_prefix_projects_and_marks_metadata(db_session
     assert inbound.ticket_id is not None
     assert inbound.conversation_id is not None
     assert inbound.webchat_message_id == message.id
+    assert inbound.body_text == "hello from self smoke"
+    assert message.body_text == "hello from self smoke"
     assert metadata["source"] == "self_echo_test"
     assert metadata["from_me"] is True
     assert metadata["projection_mode"] == "test_visitor"
@@ -232,7 +253,7 @@ def test_from_me_test_visitor_without_prefix_store_only(db_session):
     assert db_session.query(WebchatMessage).count() == 0
 
 
-def test_from_me_self_chat_projects_without_prefix_and_marks_metadata(db_session):
+def test_from_me_self_chat_is_store_only_without_projection_or_ai(db_session):
     account = _account(db_session)
 
     result = ingest_whatsapp_native_inbound(
@@ -248,18 +269,19 @@ def test_from_me_self_chat_projects_without_prefix_and_marks_metadata(db_session
     db_session.commit()
 
     inbound = db_session.query(WhatsAppInboundMessage).one()
-    message = db_session.query(WebchatMessage).filter(WebchatMessage.direction == "visitor").one()
-    metadata = json.loads(message.metadata_json)
-    assert result.ticket_id is not None
-    assert result.conversation_id is not None
-    assert result.webchat_message_id == message.id
-    assert inbound.ticket_id is not None
-    assert inbound.conversation_id is not None
-    assert inbound.webchat_message_id == message.id
-    assert metadata["source"] == "self_chat"
-    assert metadata["from_me"] is True
-    assert metadata["projection_mode"] == "self_chat"
-    assert db_session.query(WebchatAITurn).count() == 1
+    assert result.ok is True
+    assert result.ticket_id is None
+    assert result.conversation_id is None
+    assert result.webchat_message_id is None
+    assert result.ai_turn_id is None
+    assert inbound.processed_at is not None
+    assert inbound.ticket_id is None
+    assert inbound.conversation_id is None
+    assert inbound.webchat_message_id is None
+    assert db_session.query(Ticket).count() == 0
+    assert db_session.query(WebchatConversation).count() == 0
+    assert db_session.query(WebchatMessage).count() == 0
+    assert db_session.query(WebchatAITurn).count() == 0
 
 
 def test_duplicate_inbound_is_idempotent_and_does_not_duplicate_projection(db_session):
@@ -275,3 +297,45 @@ def test_duplicate_inbound_is_idempotent_and_does_not_duplicate_projection(db_se
     assert db_session.query(WhatsAppInboundMessage).count() == 1
     assert db_session.query(WebchatMessage).filter(WebchatMessage.direction == "visitor").count() == 1
     assert db_session.query(WebchatAITurn).count() == 1
+
+
+def test_native_delivery_payload_records_provider_receipt(db_session):
+    ticket = Ticket(
+        ticket_no="WA-1",
+        title="WhatsApp delivery",
+        description="Outbound receipt test",
+        source=TicketSource.user_message,
+        source_channel=SourceChannel.whatsapp,
+        priority=TicketPriority.medium,
+        status=TicketStatus.new,
+    )
+    db_session.add(ticket)
+    db_session.flush()
+    outbound = TicketOutboundMessage(
+        ticket_id=ticket.id,
+        channel=SourceChannel.whatsapp,
+        status=MessageStatus.pending,
+        body="Hallo",
+        provider_status="whatsapp_ai_reply_queued",
+        provider_message_id="nexusdesk-outbound-1",
+    )
+    db_session.add(outbound)
+    db_session.flush()
+
+    apply_whatsapp_native_delivery_payload(
+        outbound,
+        {
+            "status": "sent",
+            "provider_message_id": "BAE5REMOTE123",
+            "sent_at": "2026-07-06T18:40:42.531Z",
+            "idempotency_key": "nexusdesk-outbound-1",
+        },
+    )
+
+    assert outbound.status == MessageStatus.sent
+    assert outbound.provider_status == "whatsapp_native_sent"
+    assert outbound.provider_message_id == "BAE5REMOTE123"
+    assert outbound.delivery_status == "sent"
+    assert outbound.delivery_receipt_provider == "whatsapp_native"
+    assert outbound.delivery_receipt_id == "BAE5REMOTE123"
+    assert outbound.sent_at.isoformat().startswith("2026-07-06T18:40:42.531")

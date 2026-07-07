@@ -17,8 +17,7 @@ EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED=false
 Rows such as the following are local WebChat runtime records only:
 
 - `channel=web_chat`, `provider_status=webchat_delivered`
-- `channel=web_chat`, `provider_status=webchat_safe_ack_delivered`
-- `channel=web_chat`, `provider_status=webchat_ai_safe_fallback`
+- `channel=web_chat`, `provider_status=webchat_ai_delivered`
 
 They must not count as WhatsApp, Telegram, SMS, or email provider sends.
 

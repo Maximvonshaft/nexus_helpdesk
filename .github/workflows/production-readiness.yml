@@ -65,7 +65,7 @@ jobs:
           ALLOWED_ORIGINS: https://console.example.com
           WEBCHAT_ALLOWED_ORIGINS: https://www.example.com
           WEBCHAT_RATE_LIMIT_BACKEND: database
-          WEBCHAT_AI_AUTO_REPLY_MODE: safe_ack
+          WEBCHAT_AI_AUTO_REPLY_MODE: safe_ai
           STORAGE_BACKEND: s3
           S3_BUCKET: ci-dummy-bucket
           S3_REGION: us-east-1
@@ -160,7 +160,7 @@ jobs:
               '/healthz',
               '/readyz',
               '/webchat/demo/',
-              '/api/webchat/fast-reply',
+              '/api/webchat/init',
               'release_metadata_complete',
               'reply_starts_json',
               'PUBLIC_WEBCHAT_SMOKE_PASS=true',

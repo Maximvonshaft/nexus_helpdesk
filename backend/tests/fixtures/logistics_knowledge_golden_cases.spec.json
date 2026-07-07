@@ -9,7 +9,7 @@
     "ai_decision_trace_required": true,
     "no_unwanted_ticket": true,
     "no_unwanted_handoff": true,
-    "no_server_safe_fallback_for_trusted_evidence": true,
+    "no_provider_runtime_review_required_for_trusted_evidence": true,
     "live_status_requires_tracking_fact": true,
     "actions_require_verification_or_tool_boundary": true
   },

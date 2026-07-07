@@ -27,7 +27,7 @@ def test_audio_ingress_stt_runtime_has_no_forbidden_provider_or_tool_imports():
         "speedaf",
         "external_channel",
         "openai",
-        "codex",
+        "legacy_ai_provider",
         "provider_runtime",
         "publish_track",
         "publish_data",

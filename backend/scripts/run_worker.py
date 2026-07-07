@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db import SessionLocal, db_context  # noqa: E402
-from app.services.background_jobs import dispatch_pending_background_jobs  # noqa: E402
+from app.services.background_jobs import dispatch_pending_background_jobs, dispatch_pending_webchat_ai_reply_jobs  # noqa: E402
 from app.services.message_dispatch import dispatch_pending_messages  # noqa: E402
 from app.services.observability import configure_logging, log_event, record_queue_snapshot, record_worker_poll, record_worker_result  # noqa: E402
 from app.services.webchat_ai_reconciler import reconcile_webchat_ai_state  # noqa: E402
@@ -22,6 +22,7 @@ settings = get_settings()
 configure_logging(settings.log_json)
 
 QUEUES = {"all", "outbound", "background", "webchat-ai", "handoff-snapshot"}
+_LAST_WEBCHAT_AI_RECONCILER_RUN_AT = 0.0
 
 
 def _is_sqlalchemy_session(db) -> bool:
@@ -83,20 +84,21 @@ def _run_webchat_ai_reconciler_watchdog(worker_id: str) -> int:
         db.commit()
         processed = int(result.get("cleared", 0) or 0) + int(result.get("failed", 0) or 0) + int(result.get("promoted", 0) or 0)
         record_queue_snapshot("webchat_ai_reconciler", "processed", processed)
-        LOGGER.info(
-            "webchat_ai_reconciler_completed",
-            extra={
-                "event_payload": {
-                    "worker_id": worker_id,
-                    "inspected": result.get("inspected"),
-                    "cleared": result.get("cleared"),
-                    "failed": result.get("failed"),
-                    "promoted": result.get("promoted"),
-                    "timed_out": result.get("timed_out"),
-                    "elapsed_ms": int((time.monotonic() - started) * 1000),
-                }
-            },
-        )
+        if processed or int(result.get("timed_out", 0) or 0):
+            LOGGER.info(
+                "webchat_ai_reconciler_completed",
+                extra={
+                    "event_payload": {
+                        "worker_id": worker_id,
+                        "inspected": result.get("inspected"),
+                        "cleared": result.get("cleared"),
+                        "failed": result.get("failed"),
+                        "promoted": result.get("promoted"),
+                        "timed_out": result.get("timed_out"),
+                        "elapsed_ms": int((time.monotonic() - started) * 1000),
+                    }
+                },
+            )
         return processed
     except Exception:
         db.rollback()
@@ -111,10 +113,24 @@ def _run_webchat_ai_reconciler_watchdog(worker_id: str) -> int:
 
 
 def _run_webchat_ai(worker_id: str) -> int:
+    global _LAST_WEBCHAT_AI_RECONCILER_RUN_AT
+    processed = 0
+    with db_context() as db:
+        jobs = dispatch_pending_webchat_ai_reply_jobs(db, limit=1, worker_id=worker_id)
+        if jobs:
+            record_worker_result(worker_id, "webchat_ai_reply", "processed", len(jobs))
+        record_queue_snapshot("webchat_ai_reply", "processed", len(jobs))
+        processed += len(jobs)
+
     if not bool(getattr(settings, "webchat_ai_reconciler_enabled", True)):
         record_queue_snapshot("webchat_ai_reconciler", "disabled", 0)
-        return 0
-    return _run_webchat_ai_reconciler_watchdog(worker_id)
+        return processed
+
+    now = time.monotonic()
+    if now - _LAST_WEBCHAT_AI_RECONCILER_RUN_AT >= _webchat_ai_reconciler_interval_seconds():
+        _LAST_WEBCHAT_AI_RECONCILER_RUN_AT = now
+        processed += _run_webchat_ai_reconciler_watchdog(worker_id)
+    return processed
 
 
 def run_queue_once(worker_id: str, queue: str) -> int:
@@ -130,12 +146,21 @@ def run_queue_once(worker_id: str, queue: str) -> int:
         processed += _run_handoff_snapshot(worker_id)
     if queue in {"webchat-ai"}:
         processed += _run_webchat_ai(worker_id)
-    log_event(20, "worker_cycle_complete", worker_id=worker_id, queue=queue, processed=processed)
+    if processed > 0 or queue != "webchat-ai":
+        log_event(20, "worker_cycle_complete", worker_id=worker_id, queue=queue, processed=processed)
     return processed
 
 
 def run_once(worker_id: str) -> int:
     return run_queue_once(worker_id, "all")
+
+
+def _sleep_seconds_for_queue(queue: str, processed: int) -> float:
+    if processed > 0:
+        return float(settings.webchat_ai_worker_busy_poll_seconds if queue == "webchat-ai" else 0.2)
+    if queue == "webchat-ai":
+        return float(settings.webchat_ai_worker_poll_seconds)
+    return float(settings.worker_poll_seconds)
 
 
 def main() -> int:
@@ -159,7 +184,7 @@ def main() -> int:
         if once:
             print(f"processed={processed}")
             return 0
-        time.sleep(settings.worker_poll_seconds if processed == 0 else 0.2)
+        time.sleep(_sleep_seconds_for_queue(queue, processed))
 
 
 if __name__ == "__main__":

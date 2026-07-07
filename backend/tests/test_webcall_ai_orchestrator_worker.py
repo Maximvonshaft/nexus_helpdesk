@@ -5,7 +5,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webcall_ai_orchestrator_wo
 
 import pytest
 
-from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: F401,E402
+from app import models, operator_models, tool_models, voice_models, webchat_models  # noqa: F401,E402
 from app.db import Base, SessionLocal, engine
 from app.services.tracking_fact_schema import TrackingFactEvent, TrackingFactResult
 from app.services.webcall_ai.config import get_webcall_ai_settings
@@ -86,7 +86,7 @@ def test_default_orchestrator_disabled_keeps_existing_mock_response(db):
     action = db.query(WebchatVoiceAIAction).one()
 
     assert result["released"] == 1
-    assert turn.ai_response_text_redacted == "Hello, this is Speedaf AI support. Please provide your tracking number."
+    assert turn.ai_response_text_redacted == ""
     assert turn.intent == "tracking_missing_number"
     assert action.result_status == "mock_turn_recorded"
 
@@ -103,7 +103,7 @@ def test_worker_orchestrator_missing_number_writes_ask_tracking_number(db, monke
 
     assert result["released"] == 1
     assert turn.action == "ask_tracking_number"
-    assert turn.ai_response_text_redacted == "Please provide your tracking number so I can check the parcel status."
+    assert turn.ai_response_text_redacted == ""
     assert action.model_action == "ask_tracking_number"
     assert action.speedaf_tool_name is None
 

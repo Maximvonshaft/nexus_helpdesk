@@ -462,7 +462,7 @@ def _candidate_rows(
         query = query.filter(KnowledgeChunk.audience_scope == audience_scope.strip())
     if language:
         lang = language.strip().lower()
-        query = query.filter(or_(KnowledgeChunk.language.is_(None), KnowledgeChunk.language == lang, KnowledgeChunk.language.like(f"{lang}-%")))
+        query = query.filter(or_(KnowledgeChunk.language.is_(None), KnowledgeChunk.language == lang, KnowledgeChunk.language == "mixed", KnowledgeChunk.language.like(f"{lang}-%")))
 
     sql_terms = _dedupe([analysis.normalized_query, *analysis.high_value_terms, *analysis.terms])[:MAX_QUERY_TERMS + 1]
     if sql_terms:
@@ -514,6 +514,11 @@ def _hit_from_row(
     aliases = [_normalize_query(alias) for alias in (item.fact_aliases_json or []) if str(alias).strip()]
     structured = (item.knowledge_kind or "document") in STRUCTURED_KINDS and item.fact_status == "approved"
     direct = structured and (item.answer_mode or "") == "direct_answer" and bool((item.fact_answer or "").strip())
+    structured_fact_answer = (
+        (item.fact_answer or "").strip()
+        if structured and (item.answer_mode or "guided_answer") in {"direct_answer", "guided_answer"}
+        else None
+    )
 
     fields = {
         "title": title,
@@ -602,7 +607,7 @@ def _hit_from_row(
         retrieval_method="+".join(sorted(methods)) if methods else "metadata_default",
         matched_terms=_dedupe(matched_terms),
         score_breakdown={key: round(value, 3) for key, value in sorted(breakdown.items())},
-        direct_answer=(item.fact_answer or "").strip() if direct else None,
+        direct_answer=structured_fact_answer,
         answer_mode=item.answer_mode,
         source_metadata=_safe_source_metadata(item, chunk),
     )

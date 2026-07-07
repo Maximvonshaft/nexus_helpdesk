@@ -3,7 +3,7 @@
 # Use a separate Compose project and a candidate env file:
 #   COMPOSE_PROJECT_NAME=nexusdesk_candidate docker compose \
 #     -f deploy/docker-compose.candidate.yml \
-#     --env-file deploy/.env.candidate up -d app-candidate worker-outbound-candidate whatsapp-sidecar-candidate
+#     --env-file deploy/.env.candidate up -d app-candidate worker-webchat-ai-candidate worker-background-candidate worker-outbound-candidate worker-handoff-snapshot-candidate whatsapp-sidecar-candidate
 #
 # Do not map this candidate to public nginx until the smoke and rollback runbook
 # gates pass.
@@ -73,6 +73,58 @@ services:
     depends_on:
       app-candidate:
         condition: service_healthy
+
+  worker-webchat-ai-candidate:
+    <<: *candidate_app
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        exec python scripts/run_worker.py
+        --worker-id "worker-webchat-ai-$${HOSTNAME:-candidate}"
+        --queue webchat-ai
+    healthcheck: *candidate_worker_healthcheck
+    depends_on:
+      app-candidate:
+        condition: service_healthy
+
+  worker-background-candidate:
+    <<: *candidate_app
+    command: python scripts/run_worker.py --worker-id worker-background-candidate --queue background
+    healthcheck: *candidate_worker_healthcheck
+    depends_on:
+      app-candidate:
+        condition: service_healthy
+
+  worker-handoff-snapshot-candidate:
+    <<: *candidate_app
+    command: python scripts/run_worker.py --worker-id worker-handoff-snapshot-candidate --queue handoff-snapshot
+    healthcheck: *candidate_worker_healthcheck
+    depends_on:
+      app-candidate:
+        condition: service_healthy
+
+  runtime-warmer-candidate:
+    <<: *candidate_app
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        while true; do
+          python /app/scripts/smoke/warm_private_ai_runtime.py || true;
+          sleep "$${PRIVATE_AI_RUNTIME_WARMUP_INTERVAL_SECONDS:-240}";
+        done
+    depends_on:
+      app-candidate:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "python -c \"from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'warm_private_ai_runtime.py' in cmd, cmd; print('runtime-warmer-ok')\""
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   whatsapp-sidecar-candidate:
     image: node:22-bookworm-slim

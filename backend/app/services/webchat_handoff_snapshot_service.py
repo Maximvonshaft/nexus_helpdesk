@@ -44,12 +44,12 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _fast_public_id_for_session(*, tenant_key: str, channel_key: str, session_id: str) -> str:
-    return f"wcf_{_hash(f'fast:{tenant_key}:{channel_key}:{session_id}')[:24]}"
+def _runtime_public_id_for_session(*, tenant_key: str, channel_key: str, session_id: str) -> str:
+    return f"wcf_{_hash(f'runtime:{tenant_key}:{channel_key}:{session_id}')[:24]}"
 
 
-def _fast_visitor_token_hash(source_key: str) -> str:
-    return hashlib.sha256(f"fast-handoff:{source_key}".encode("utf-8")).hexdigest()
+def _runtime_visitor_token_hash(source_key: str) -> str:
+    return hashlib.sha256(f"runtime-handoff:{source_key}".encode("utf-8")).hexdigest()
 
 
 def _metadata_json(payload: dict[str, Any]) -> str:
@@ -66,7 +66,7 @@ def _snapshot_issue_key(snapshot: dict[str, Any]) -> str:
 
 
 def webchat_handoff_source_dedupe_key(snapshot: dict[str, Any]) -> str:
-    return "webchat-fast-issue:{tenant}:{channel}:{issue}".format(
+    return "webchat-runtime-issue:{tenant}:{channel}:{issue}".format(
         tenant=_clip(snapshot.get("tenant_key"), 120) or "default",
         channel=_clip(snapshot.get("channel_key"), 120) or "website",
         issue=_snapshot_issue_key(snapshot),
@@ -98,7 +98,7 @@ def build_handoff_snapshot_payload(
             compact_context.append({"role": role, "text": text})
     snapshot = {
         "snapshot_type": "webchat_ai_handoff_snapshot",
-        "source": "webchat_fast_provider_runtime",
+        "source": "webchat_runtime_provider",
         "tenant_key": _clip(tenant_key, 120) or "default",
         "channel_key": _clip(channel_key, 120) or "website",
         "session_id": _clip(session_id, 120),
@@ -110,13 +110,13 @@ def build_handoff_snapshot_payload(
         "handoff_required": True,
         "handoff_reason": _clip(handoff_reason, 240) or "ai_requested_handoff",
         "recent_context_summary": compact_context,
-        "recommended_agent_action": _clip(recommended_agent_action, 500) or "Review the WebChat AI handoff snapshot and reply to the customer.",
+        "recommended_agent_action": _clip(recommended_agent_action, 500),
         "visitor": visitor or {},
         "created_at": utc_now().isoformat(),
     }
-    snapshot["fast_issue_key"] = _snapshot_issue_key(snapshot)
+    snapshot["runtime_issue_key"] = _snapshot_issue_key(snapshot)
     snapshot["source_dedupe_key"] = webchat_handoff_source_dedupe_key(snapshot)
-    snapshot["public_conversation_id"] = _fast_public_id_for_session(tenant_key=snapshot["tenant_key"], channel_key=snapshot["channel_key"], session_id=snapshot.get("session_id") or "unknown")
+    snapshot["public_conversation_id"] = _runtime_public_id_for_session(tenant_key=snapshot["tenant_key"], channel_key=snapshot["channel_key"], session_id=snapshot.get("session_id") or "unknown")
     return snapshot
 
 
@@ -151,7 +151,7 @@ def _find_or_create_customer(db: Session, *, snapshot: dict[str, Any], public_id
         existing = db.execute(select(Customer).where(Customer.external_ref == external_ref).limit(1)).scalar_one_or_none()
     if existing is not None:
         return existing
-    customer = Customer(name=_clip(visitor.get("name"), 160) or email or phone or f"Webchat Fast Visitor {public_id[-6:]}", email=email, email_normalized=email_normalized, phone=phone, phone_normalized=phone_normalized, external_ref=external_ref)
+    customer = Customer(name=_clip(visitor.get("name"), 160) or email or phone or f"Webchat Runtime Visitor {public_id[-6:]}", email=email, email_normalized=email_normalized, phone=phone, phone_normalized=phone_normalized, external_ref=external_ref)
     db.add(customer)
     db.flush()
     return customer
@@ -162,7 +162,7 @@ def _find_message(db: Session, *, conversation_id: int, client_message_id: str) 
 
 
 def _add_message_once(db: Session, *, conversation: WebchatConversation, ticket: Ticket, direction: str, body: str, client_message_id: str, author_label: str, metadata: dict[str, Any]) -> WebchatMessage:
-    clipped_client_id = _clip(client_message_id, 120) or f"fast-handoff-{direction}"
+    clipped_client_id = _clip(client_message_id, 120) or f"runtime-handoff-{direction}"
     existing = _find_message(db, conversation_id=conversation.id, client_message_id=clipped_client_id)
     if existing is not None:
         if existing.ticket_id is None:
@@ -185,48 +185,50 @@ def _add_message_once(db: Session, *, conversation: WebchatConversation, ticket:
     return message
 
 
-def _find_fast_handoff_conversation(db: Session, *, tenant: str, channel: str, session_id: str, public_id: str) -> WebchatConversation | None:
-    conversation = db.execute(select(WebchatConversation).where(WebchatConversation.tenant_key == tenant, WebchatConversation.channel_key == channel, WebchatConversation.fast_session_id == session_id, WebchatConversation.origin == "webchat-fast", WebchatConversation.status == "open").limit(1)).scalar_one_or_none()
+def _find_runtime_handoff_conversation(db: Session, *, tenant: str, channel: str, session_id: str, public_id: str) -> WebchatConversation | None:
+    conversation = db.execute(select(WebchatConversation).where(WebchatConversation.tenant_key == tenant, WebchatConversation.channel_key == channel, WebchatConversation.runtime_session_id == session_id, WebchatConversation.origin == "webchat-runtime", WebchatConversation.status == "open").limit(1)).scalar_one_or_none()
     if conversation is not None:
         return conversation
     return db.execute(select(WebchatConversation).where(WebchatConversation.public_id == public_id).limit(1)).scalar_one_or_none()
 
 
-def _ensure_fast_handoff_conversation_linkage(db: Session, *, ticket: Ticket, snapshot: dict[str, Any], source_dedupe_key: str) -> WebchatConversation:
+def _ensure_runtime_handoff_conversation_linkage(db: Session, *, ticket: Ticket, snapshot: dict[str, Any], source_dedupe_key: str) -> WebchatConversation:
     tenant = _clip(snapshot.get("tenant_key"), 120) or "default"
     channel = _clip(snapshot.get("channel_key"), 120) or "website"
     session_id = _clip(snapshot.get("session_id"), 120) or "unknown"
-    public_id = _clip(snapshot.get("public_conversation_id"), 64) or _fast_public_id_for_session(tenant_key=tenant, channel_key=channel, session_id=session_id)
+    public_id = _clip(snapshot.get("public_conversation_id"), 64) or _runtime_public_id_for_session(tenant_key=tenant, channel_key=channel, session_id=session_id)
     customer = _find_or_create_customer(db, snapshot=snapshot, public_id=public_id)
     if ticket.customer_id is None:
         ticket.customer_id = customer.id
-    conversation = _find_fast_handoff_conversation(db, tenant=tenant, channel=channel, session_id=session_id, public_id=public_id)
+    conversation = _find_runtime_handoff_conversation(db, tenant=tenant, channel=channel, session_id=session_id, public_id=public_id)
     if conversation is None:
-        conversation = WebchatConversation(public_id=public_id, visitor_token_hash=_fast_visitor_token_hash(source_dedupe_key), visitor_token_expires_at=None, tenant_key=tenant, channel_key=channel, ticket_id=ticket.id, visitor_name=_clip((snapshot.get("visitor") or {}).get("name"), 160), visitor_email=_clip((snapshot.get("visitor") or {}).get("email"), 200), visitor_phone=_clip((snapshot.get("visitor") or {}).get("phone"), 80), visitor_ref=session_id, origin="webchat-fast", page_url=None, user_agent=None, status="open", fast_session_id=session_id, fast_issue_key=_clip(snapshot.get("fast_issue_key"), 240), last_intent=_clip(snapshot.get("intent"), 120), last_tracking_number=_clip(snapshot.get("tracking_number"), 120), last_seen_at=utc_now(), created_at=utc_now(), updated_at=utc_now(), fast_context_updated_at=utc_now())
+        conversation = WebchatConversation(public_id=public_id, visitor_token_hash=_runtime_visitor_token_hash(source_dedupe_key), visitor_token_expires_at=None, tenant_key=tenant, channel_key=channel, ticket_id=ticket.id, visitor_name=_clip((snapshot.get("visitor") or {}).get("name"), 160), visitor_email=_clip((snapshot.get("visitor") or {}).get("email"), 200), visitor_phone=_clip((snapshot.get("visitor") or {}).get("phone"), 80), visitor_ref=session_id, origin="webchat-runtime", page_url=None, user_agent=None, status="open", runtime_session_id=session_id, runtime_issue_key=_clip(snapshot.get("runtime_issue_key"), 240), last_intent=_clip(snapshot.get("intent"), 120), last_tracking_number=_clip(snapshot.get("tracking_number"), 120), last_seen_at=utc_now(), created_at=utc_now(), updated_at=utc_now(), runtime_context_updated_at=utc_now())
         try:
             with db.begin_nested():
                 db.add(conversation)
                 db.flush()
         except IntegrityError:
-            conversation = _find_fast_handoff_conversation(db, tenant=tenant, channel=channel, session_id=session_id, public_id=public_id)
+            conversation = _find_runtime_handoff_conversation(db, tenant=tenant, channel=channel, session_id=session_id, public_id=public_id)
             if conversation is None:
                 raise
     conversation.ticket_id = ticket.id
-    conversation.fast_session_id = conversation.fast_session_id or session_id
-    conversation.fast_issue_key = conversation.fast_issue_key or _clip(snapshot.get("fast_issue_key"), 240)
+    conversation.runtime_session_id = conversation.runtime_session_id or session_id
+    conversation.runtime_issue_key = conversation.runtime_issue_key or _clip(snapshot.get("runtime_issue_key"), 240)
     conversation.last_intent = _clip(snapshot.get("intent"), 120) or conversation.last_intent
     conversation.last_tracking_number = _clip(snapshot.get("tracking_number"), 120) or conversation.last_tracking_number
     conversation.updated_at = utc_now()
     conversation.last_seen_at = utc_now()
-    ticket.source_chat_id = f"webchat-fast:{public_id}"[:120]
+    ticket.source_chat_id = f"webchat-runtime:{public_id}"[:120]
     ticket.preferred_reply_channel = SourceChannel.web_chat.value
     ticket.preferred_reply_contact = public_id
     client_message_id = _clip(snapshot.get("client_message_id"), 100) or "unknown"
-    customer_message = _clip(snapshot.get("customer_last_message"), 2000) or "WebChat handoff requested."
-    ai_reply = _clip(snapshot.get("ai_reply"), 1200) or "A human teammate will review this request."
-    _add_message_once(db, conversation=conversation, ticket=ticket, direction="visitor", body=customer_message, client_message_id=client_message_id, author_label="Customer", metadata={"source": "webchat_fast_handoff", "source_dedupe_key": source_dedupe_key})
-    _add_message_once(db, conversation=conversation, ticket=ticket, direction="ai", body=ai_reply, client_message_id=f"{client_message_id}:ai"[:120], author_label="Speedy", metadata={"source": "webchat_fast_handoff", "handoff_required": True})
-    _add_message_once(db, conversation=conversation, ticket=ticket, direction="system", body="WebChat Fast Lane created a human-review handoff ticket.", client_message_id=f"{client_message_id}:handoff"[:120], author_label="System", metadata={"source": "webchat_fast_handoff", "handoff_reason": snapshot.get("handoff_reason"), "recommended_agent_action": snapshot.get("recommended_agent_action"), "source_dedupe_key": source_dedupe_key})
+    customer_message = _clip(snapshot.get("customer_last_message"), 2000)
+    ai_reply = _clip(snapshot.get("ai_reply"), 1200)
+    if customer_message:
+        _add_message_once(db, conversation=conversation, ticket=ticket, direction="visitor", body=customer_message, client_message_id=client_message_id, author_label="Customer", metadata={"source": "webchat_runtime_handoff", "source_dedupe_key": source_dedupe_key})
+    if ai_reply:
+        _add_message_once(db, conversation=conversation, ticket=ticket, direction="ai", body=ai_reply, client_message_id=f"{client_message_id}:ai"[:120], author_label="AI Assistant", metadata={"source": "webchat_runtime_handoff", "handoff_required": True})
+    _add_message_once(db, conversation=conversation, ticket=ticket, direction="system", body="WebChat Runtime created a human-review handoff ticket.", client_message_id=f"{client_message_id}:handoff"[:120], author_label="System", metadata={"source": "webchat_runtime_handoff", "handoff_reason": snapshot.get("handoff_reason"), "recommended_agent_action": snapshot.get("recommended_agent_action"), "source_dedupe_key": source_dedupe_key})
     db.flush()
     return conversation
 
@@ -235,17 +237,17 @@ def create_ticket_from_webchat_snapshot(db: Session, *, snapshot: dict[str, Any]
     source_dedupe_key = snapshot.get("source_dedupe_key") or webchat_handoff_source_dedupe_key(snapshot)
     existing = _existing_ticket(db, snapshot, source_dedupe_key)
     if existing is not None:
-        _ensure_fast_handoff_conversation_linkage(db, ticket=existing, snapshot=snapshot, source_dedupe_key=source_dedupe_key)
+        _ensure_runtime_handoff_conversation_linkage(db, ticket=existing, snapshot=snapshot, source_dedupe_key=source_dedupe_key)
         return existing
-    public_id = _clip(snapshot.get("public_conversation_id"), 64) or _fast_public_id_for_session(tenant_key=_clip(snapshot.get("tenant_key"), 120) or "default", channel_key=_clip(snapshot.get("channel_key"), 120) or "website", session_id=_clip(snapshot.get("session_id"), 120) or "unknown")
+    public_id = _clip(snapshot.get("public_conversation_id"), 64) or _runtime_public_id_for_session(tenant_key=_clip(snapshot.get("tenant_key"), 120) or "default", channel_key=_clip(snapshot.get("channel_key"), 120) or "website", session_id=_clip(snapshot.get("session_id"), 120) or "unknown")
     customer = _find_or_create_customer(db, snapshot=snapshot, public_id=public_id)
     title_part = snapshot.get("tracking_number") or snapshot.get("intent") or "handoff"
-    ticket = Ticket(ticket_no=generate_ticket_no(), title=f"WebChat handoff · {title_part}"[:255], description=("AI handoff snapshot\n\n" f"Customer message: {snapshot.get('customer_last_message') or ''}\n\n" f"AI reply: {snapshot.get('ai_reply') or ''}\n\n" f"Reason: {snapshot.get('handoff_reason') or ''}")[:4000], customer_id=customer.id, source=TicketSource.user_message, source_channel=SourceChannel.web_chat, priority=TicketPriority.medium, status=TicketStatus.pending_assignment, conversation_state=ConversationState.human_review_required, tracking_number=snapshot.get("tracking_number"), source_chat_id=f"webchat-fast:{public_id}"[:120], source_dedupe_key=source_dedupe_key, case_type=_clip(snapshot.get("intent"), 120), customer_request=snapshot.get("customer_last_message"), last_customer_message=snapshot.get("customer_last_message"), required_action=snapshot.get("recommended_agent_action"), preferred_reply_channel=SourceChannel.web_chat.value, preferred_reply_contact=public_id)
+    ticket = Ticket(ticket_no=generate_ticket_no(), title=f"WebChat handoff · {title_part}"[:255], description=("AI handoff snapshot\n\n" f"Customer message: {snapshot.get('customer_last_message') or ''}\n\n" f"AI reply: {snapshot.get('ai_reply') or ''}\n\n" f"Reason: {snapshot.get('handoff_reason') or ''}")[:4000], customer_id=customer.id, source=TicketSource.user_message, source_channel=SourceChannel.web_chat, priority=TicketPriority.medium, status=TicketStatus.pending_assignment, conversation_state=ConversationState.human_review_required, tracking_number=snapshot.get("tracking_number"), source_chat_id=f"webchat-runtime:{public_id}"[:120], source_dedupe_key=source_dedupe_key, case_type=_clip(snapshot.get("intent"), 120), customer_request=snapshot.get("customer_last_message"), last_customer_message=snapshot.get("customer_last_message"), required_action=snapshot.get("recommended_agent_action"), preferred_reply_channel=SourceChannel.web_chat.value, preferred_reply_contact=public_id)
     try:
         with db.begin_nested():
             db.add(ticket)
             db.flush()
-            conversation = _ensure_fast_handoff_conversation_linkage(db, ticket=ticket, snapshot=snapshot, source_dedupe_key=source_dedupe_key)
+            conversation = _ensure_runtime_handoff_conversation_linkage(db, ticket=ticket, snapshot=snapshot, source_dedupe_key=source_dedupe_key)
             event_payload = dict(snapshot)
             event_payload["public_conversation_id"] = conversation.public_id
             event_payload["customer_id"] = ticket.customer_id
@@ -255,7 +257,7 @@ def create_ticket_from_webchat_snapshot(db: Session, *, snapshot: dict[str, Any]
         existing = _existing_ticket(db, snapshot, source_dedupe_key)
         if existing is None:
             raise
-        _ensure_fast_handoff_conversation_linkage(db, ticket=existing, snapshot=snapshot, source_dedupe_key=source_dedupe_key)
+        _ensure_runtime_handoff_conversation_linkage(db, ticket=existing, snapshot=snapshot, source_dedupe_key=source_dedupe_key)
         return existing
     return ticket
 

@@ -24,7 +24,7 @@ def test_tts_voice_egress_has_no_forbidden_runtime_imports_or_tools():
     for forbidden in [
         "external_channel",
         "openai",
-        "codex",
+        "legacy_ai_provider",
         "provider_runtime",
         "speedaf",
         "requests",

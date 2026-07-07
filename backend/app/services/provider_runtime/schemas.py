@@ -2,7 +2,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field
 
 class ProviderCapabilities(BaseModel):
-    fast_reply: bool = False
+    webchat_runtime_reply: bool = False
     structured_output: bool = False
     streaming: bool = False
     tool_execution: bool = False

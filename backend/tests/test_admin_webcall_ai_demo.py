@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
-from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: F401,E402
+from app import models, operator_models, tool_models, voice_models, webchat_models  # noqa: F401,E402
 from app.auth_service import create_access_token
 from app.db import Base, SessionLocal, engine
 from app.enums import UserRole

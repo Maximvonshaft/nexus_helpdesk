@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.parse import urlparse
 
-from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -11,16 +11,16 @@ from ..utils.time import utc_now
 from ..voice_models import WebchatVoiceSession
 from ..webchat_voice_config import load_webchat_voice_runtime_config
 from .webcall_ai.demo_lab import get_demo_lab_status
-from .webchat_fast_config import get_webchat_fast_settings
+from .webchat_runtime_config import get_webchat_runtime_settings
 
 
 HUMAN_WEBCALL_RINGING_STATUSES = {"created", "ringing"}
 HUMAN_WEBCALL_ACTIVE_STATUSES = {"accepted", "active"}
 
 
-def _provider_capabilities(*, webchat_fast_reply: bool, handoff_decision: bool = True) -> dict[str, bool]:
+def _provider_capabilities(*, webchat_runtime_reply: bool, handoff_decision: bool = True) -> dict[str, bool]:
     return {
-        "webchat_fast_reply": webchat_fast_reply,
+        "webchat_runtime_reply": webchat_runtime_reply,
         "handoff_decision": handoff_decision,
         "streaming": False,
         "tool_execution": False,
@@ -62,90 +62,51 @@ def _provider_entry(
     }
 
 
-def _credential_status(db: Session | None, tenant_id: str) -> dict[str, Any]:
-    empty = {
-        "active_credential_exists": False,
-        "has_access": False,
-        "has_refresh": False,
-        "expires_at": None,
-    }
-    if db is None:
-        return empty
-    row = db.execute(text("""
-        SELECT encrypted_access_token, encrypted_refresh_token, expires_at
-        FROM provider_credentials
-        WHERE tenant_id = :tenant_id
-          AND provider = 'openai-codex'
-          AND provider_runtime = 'codex_app_server'
-          AND credential_type = 'oauth'
-          AND status = 'active'
-          AND revoked_at IS NULL
-        ORDER BY created_at DESC
-        LIMIT 1
-    """), {"tenant_id": tenant_id}).mappings().first()
-    if not row:
-        return empty
-    return {
-        "active_credential_exists": True,
-        "has_access": bool(row["encrypted_access_token"]),
-        "has_refresh": bool(row["encrypted_refresh_token"]),
-        "expires_at": row["expires_at"].isoformat() if hasattr(row["expires_at"], "isoformat") else row["expires_at"],
-    }
-
-
-def _route_rule_exists(db: Session | None, tenant_id: str) -> bool:
-    if db is None:
-        return False
-    row = db.execute(text("""
-        SELECT 1
-        FROM provider_routing_rules
-        WHERE tenant_id = :tenant_id
-          AND channel_key = 'website'
-          AND scenario = 'webchat_fast_reply'
-          AND enabled = true
-        LIMIT 1
-    """), {"tenant_id": tenant_id}).first()
-    return bool(row)
-
-
-def _bridge_readiness_from_env() -> dict[str, Any]:
-    mode = os.environ.get("CODEX_APP_SERVER_BRIDGE_MODE", "real").strip().lower() or "real"
-    backend = os.environ.get("CODEX_APP_SERVER_REPLY_GENERATION_BACKEND", "").strip()
-    real_upstream_configured = (
-        mode == "real"
-        and (
-            bool(os.environ.get("CODEX_APP_SERVER_REAL_UPSTREAM_URL", "").strip())
-            or os.environ.get("CODEX_APP_SERVER_BRIDGE_REAL_UPSTREAM_CONFIGURED", "").strip().lower() in {"1", "true", "yes", "on"}
-        )
-    )
-    return {
-        "bridge_mode": mode,
-        "real_upstream_configured": real_upstream_configured,
-        "reply_generation_backend": backend or ("stub" if mode == "stub" else "unconfigured"),
-    }
-
-
 def _private_ai_runtime_status_from_env() -> dict[str, Any]:
-    primary_provider = os.environ.get("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "").strip() or "codex_app_server"
+    primary_provider = os.environ.get("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "").strip() or "private_ai_runtime"
     enabled = os.environ.get("PRIVATE_AI_RUNTIME_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
     base_url = os.environ.get("PRIVATE_AI_RUNTIME_BASE_URL", "").strip()
+    rag_base_url = (os.environ.get("PRIVATE_AI_RUNTIME_RAG_BASE_URL") or base_url).strip()
     token_file = os.environ.get("PRIVATE_AI_RUNTIME_TOKEN_FILE", "").strip()
     inline_token = os.environ.get("PRIVATE_AI_RUNTIME_TOKEN", "").strip()
+    direct_path = os.environ.get("PRIVATE_AI_RUNTIME_DIRECT_PATH", "/api/chat").strip() or "/api/chat"
+    rag_path = os.environ.get("PRIVATE_AI_RUNTIME_RAG_PATH", "/api/chat").strip() or "/api/chat"
+    chat_mode = os.environ.get("PRIVATE_AI_RUNTIME_CHAT_MODE", "direct").strip().lower() or "direct"
+    request_shape = os.environ.get("PRIVATE_AI_RUNTIME_REQUEST_SHAPE", "ollama_chat").strip().lower() or "ollama_chat"
+    direct_model = os.environ.get("PRIVATE_AI_RUNTIME_DIRECT_MODEL", "qwen2.5:3b").strip() or "qwen2.5:3b"
+    rag_model = os.environ.get("PRIVATE_AI_RUNTIME_RAG_MODEL", "qwen3:4b").strip() or "qwen3:4b"
+    allow_shared_rag_model = os.environ.get("PRIVATE_AI_RUNTIME_ALLOW_SHARED_RAG_MODEL", "false").strip().lower() in {"1", "true", "yes", "on"}
     app_env = (os.environ.get("APP_ENV") or "development").strip().lower()
     inline_token_allowed = app_env in {"development", "test", "local"}
     configured = bool(enabled and base_url and (token_file or (inline_token and inline_token_allowed)))
+    rag_runtime_isolated = bool(rag_base_url and not _same_runtime_origin(base_url, rag_base_url))
+    rag_isolation_error = (
+        app_env == "production"
+        and chat_mode in {"rag", "auto"}
+        and rag_model != direct_model
+        and not rag_runtime_isolated
+        and not allow_shared_rag_model
+    )
     return {
         "primary_provider": primary_provider,
         "enabled": enabled,
         "base_url_configured": bool(base_url),
+        "rag_base_url_configured": bool(rag_base_url),
+        "rag_runtime_isolated": rag_runtime_isolated,
+        "allow_shared_rag_model": allow_shared_rag_model,
         "token_file_configured": bool(token_file),
         "inline_token_configured": bool(inline_token),
         "configured": configured,
-        "chat_mode": os.environ.get("PRIVATE_AI_RUNTIME_CHAT_MODE", "direct").strip().lower() or "direct",
-        "request_shape": os.environ.get("PRIVATE_AI_RUNTIME_REQUEST_SHAPE", "system_input").strip().lower() or "system_input",
-        "direct_model": os.environ.get("PRIVATE_AI_RUNTIME_DIRECT_MODEL", "qwen2.5:3b").strip() or "qwen2.5:3b",
-        "rag_model": os.environ.get("PRIVATE_AI_RUNTIME_RAG_MODEL", "qwen3:4b").strip() or "qwen3:4b",
+        "chat_mode": chat_mode,
+        "direct_path": _safe_path(direct_path),
+        "rag_path": _safe_path(rag_path),
+        "request_shape": request_shape,
+        "direct_model": direct_model,
+        "rag_model": rag_model,
         "timeout_seconds": os.environ.get("PRIVATE_AI_RUNTIME_TIMEOUT_SECONDS", "8").strip() or "8",
+        "shape_mismatch": _known_endpoint_shape_mismatch(direct_path, request_shape, endpoint_kind="direct")
+        or (_known_endpoint_shape_mismatch(rag_path, request_shape, endpoint_kind="rag") if chat_mode in {"rag", "auto"} else None),
+        "rag_isolation_error": rag_isolation_error,
     }
 
 
@@ -225,7 +186,7 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
     """
 
     try:
-        settings = get_webchat_fast_settings()
+        settings = get_webchat_runtime_settings()
     except RuntimeError as exc:
         return {
             "ok": False,
@@ -239,141 +200,59 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
             },
         }
 
-    provider_runtime_tenant_id = "default"
-    credential_diagnostics = _credential_status(db, provider_runtime_tenant_id)
-    route_rule_exists = _route_rule_exists(db, provider_runtime_tenant_id)
-    bridge_readiness = _bridge_readiness_from_env()
     private_ai_runtime = _private_ai_runtime_status_from_env()
 
     providers = [
         _provider_entry(
-            name="codex_app_server",
-            selected=settings.provider == "codex_app_server" or (settings.provider == "provider_runtime" and private_ai_runtime["primary_provider"] == "codex_app_server"),
-            feature_enabled=settings.codex_app_server_enabled or settings.provider == "provider_runtime",
-            configured=(
-                settings.is_codex_app_server_configured and bridge_readiness["bridge_mode"] != "stub"
-                if settings.provider == "codex_app_server"
-                else bool(
-                    credential_diagnostics["active_credential_exists"]
-                    and settings.codex_app_server_bridge_url
-                    and bridge_readiness["real_upstream_configured"]
-                    and bridge_readiness["bridge_mode"] != "stub"
-                )
-            ),
-            runtime="private_sidecar_provider",
-            capabilities=_provider_capabilities(
-                webchat_fast_reply=(
-                    settings.is_codex_app_server_configured and bridge_readiness["bridge_mode"] != "stub"
-                    if settings.provider == "codex_app_server"
-                    else bool(
-                        credential_diagnostics["active_credential_exists"]
-                        and settings.codex_app_server_bridge_url
-                        and bridge_readiness["real_upstream_configured"]
-                        and bridge_readiness["bridge_mode"] != "stub"
-                    )
-                )
-            ),
-            controls={
-                "canary_percent": settings.codex_app_server_canary_percent,
-                "kill_switch": settings.codex_app_server_kill_switch,
-                "fallback_provider": settings.fallback_provider,
-            },
-            diagnostics={
-                **credential_diagnostics,
-                "bridge_url_configured": bool(settings.codex_app_server_bridge_url),
-                "login_url_configured": bool(os.environ.get("CODEX_APP_SERVER_LOGIN_URL", "").strip()),
-                "route_rule_exists": route_rule_exists,
-                **bridge_readiness,
-                "token_file_configured": bool(settings.codex_app_server_token_file),
-                "token_configured": bool(settings.codex_app_server_token),
-                "timeout_ms": settings.codex_app_server_timeout_ms,
-            },
-        ),
-        _provider_entry(
             name="private_ai_runtime",
-            selected=settings.provider == "provider_runtime" and private_ai_runtime["primary_provider"] == "private_ai_runtime",
+            selected=True,
             feature_enabled=private_ai_runtime["enabled"],
             configured=private_ai_runtime["configured"],
             runtime="server_side_ai_runtime",
-            capabilities=_provider_capabilities(webchat_fast_reply=private_ai_runtime["configured"]),
+            capabilities=_provider_capabilities(webchat_runtime_reply=private_ai_runtime["configured"]),
             diagnostics={
+                "primary_provider": private_ai_runtime["primary_provider"],
                 "base_url_configured": private_ai_runtime["base_url_configured"],
+                "rag_base_url_configured": private_ai_runtime["rag_base_url_configured"],
+                "rag_runtime_isolated": private_ai_runtime["rag_runtime_isolated"],
+                "allow_shared_rag_model": private_ai_runtime["allow_shared_rag_model"],
                 "token_file_configured": private_ai_runtime["token_file_configured"],
                 "inline_token_configured": private_ai_runtime["inline_token_configured"],
                 "chat_mode": private_ai_runtime["chat_mode"],
+                "direct_path": private_ai_runtime["direct_path"],
+                "rag_path": private_ai_runtime["rag_path"],
                 "request_shape": private_ai_runtime["request_shape"],
                 "direct_model": private_ai_runtime["direct_model"],
                 "rag_model": private_ai_runtime["rag_model"],
                 "timeout_seconds": private_ai_runtime["timeout_seconds"],
             },
         ),
-        _provider_entry(
-            name="openai_responses",
-            selected=settings.provider == "openai_responses" or (settings.provider == "provider_runtime" and private_ai_runtime["primary_provider"] == "openai_responses"),
-            feature_enabled=settings.openai_enabled,
-            configured=settings.is_openai_configured,
-            runtime="openai_responses_api",
-            capabilities=_provider_capabilities(webchat_fast_reply=settings.is_openai_configured),
-            diagnostics={
-                "api_key_file_configured": bool(settings.openai_api_key_file),
-                "api_key_configured": bool(settings.openai_token),
-            },
-        ),
-        _provider_entry(
-            name="codex_auth",
-            selected=settings.provider == "codex_auth",
-            feature_enabled=settings.codex_enabled,
-            configured=settings.is_codex_configured,
-            runtime="legacy_codex_auth_provider",
-            capabilities=_provider_capabilities(webchat_fast_reply=settings.is_codex_configured),
-            diagnostics={
-                "token_file_configured": bool(settings.codex_auth_token_file),
-                "token_configured": bool(settings.codex_token),
-            },
-        ),
     ]
 
     warnings: list[str] = []
-    selected = next((item for item in providers if item["selected"]), None)
-    if selected and not selected["configured"]:
-        warnings.append(f"selected provider {selected['name']} is not configured")
-    if settings.provider == "codex_app_server":
-        if bridge_readiness["bridge_mode"] == "stub":
-            warnings.append("codex_app_server bridge is in stub mode")
-        if settings.codex_app_server_kill_switch:
-            warnings.append(f"codex_app_server kill switch is active; traffic routes to {settings.fallback_provider}")
-        if settings.codex_app_server_canary_percent < 100 and settings.fallback_provider == "none":
-            warnings.append("codex_app_server canary below 100 requires a fallback provider for skipped traffic")
-    if settings.provider == "provider_runtime" and private_ai_runtime["primary_provider"] == "codex_app_server":
-        codex = next(item for item in providers if item["name"] == "codex_app_server")
-        if not codex["diagnostics"]["active_credential_exists"]:
-            warnings.append("provider_runtime codex_app_server active credential is missing")
-        if not settings.codex_app_server_bridge_url:
-            warnings.append("provider_runtime codex_app_server bridge URL is missing")
-        if codex["diagnostics"]["bridge_mode"] == "stub":
-            warnings.append("provider_runtime codex_app_server bridge is in stub mode")
-        if not codex["diagnostics"]["real_upstream_configured"]:
-            warnings.append("provider_runtime codex_app_server real upstream is not configured")
-        if not route_rule_exists:
-            warnings.append("provider_runtime webchat_fast_reply route rule is missing")
-    if settings.provider == "provider_runtime" and private_ai_runtime["primary_provider"] == "private_ai_runtime":
-        private_ai = next(item for item in providers if item["name"] == "private_ai_runtime")
-        if not private_ai["feature_enabled"]:
-            warnings.append("provider_runtime private_ai_runtime is disabled")
-        if not private_ai["diagnostics"]["base_url_configured"]:
-            warnings.append("provider_runtime private_ai_runtime base URL is missing")
-        if not private_ai["diagnostics"]["token_file_configured"] and settings.app_env == "production":
-            warnings.append("provider_runtime private_ai_runtime token file is missing")
-        if settings.app_env == "production" and private_ai["diagnostics"]["inline_token_configured"]:
-            warnings.append("provider_runtime private_ai_runtime inline token is forbidden in production")
+    private_ai = providers[0]
+    if not private_ai["feature_enabled"]:
+        warnings.append("private_ai_runtime is disabled")
+    if not private_ai["diagnostics"]["base_url_configured"]:
+        warnings.append("private_ai_runtime base URL is missing")
+    if private_ai_runtime["primary_provider"] != "private_ai_runtime":
+        warnings.append("provider_runtime primary provider is not private_ai_runtime")
+    if not private_ai["diagnostics"]["token_file_configured"] and settings.app_env == "production":
+        warnings.append("private_ai_runtime token file is missing")
+    if settings.app_env == "production" and private_ai["diagnostics"]["inline_token_configured"]:
+        warnings.append("private_ai_runtime inline token is forbidden in production")
+    if private_ai_runtime["shape_mismatch"]:
+        warnings.append("private_ai_runtime endpoint and request shape are incompatible")
+    if private_ai_runtime["rag_isolation_error"]:
+        warnings.append("private_ai_runtime RAG model requires an isolated runtime")
 
     return {
         "ok": not warnings,
         "status": "ready" if not warnings else "warning",
         "app_env": settings.app_env,
-        "fast_lane_enabled": settings.enabled,
-        "configured_provider": settings.provider,
-        "fallback_provider": settings.fallback_provider,
+        "webchat_runtime_enabled": settings.enabled,
+        "configured_provider": "private_ai_runtime",
+        "fallback_provider": None,
         "human_webcall": get_human_webcall_runtime_status(db),
         "webcall_ai_demo_lab": get_demo_lab_status(db),
         "providers": providers,
@@ -384,3 +263,31 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
             "customer_message_sent": False,
         },
     }
+
+
+def _safe_path(value: str) -> str:
+    return urlparse(value or "").path or "/"
+
+
+def _same_runtime_origin(left: str, right: str) -> bool:
+    left_parsed = urlparse(left or "")
+    right_parsed = urlparse(right or "")
+    return (
+        left_parsed.scheme.lower(),
+        left_parsed.hostname or "",
+        left_parsed.port,
+    ) == (
+        right_parsed.scheme.lower(),
+        right_parsed.hostname or "",
+        right_parsed.port,
+    )
+
+
+def _known_endpoint_shape_mismatch(path: str, request_shape: str, *, endpoint_kind: str) -> str | None:
+    del endpoint_kind
+    normalized_path = _safe_path(path).rstrip("/") or "/"
+    if normalized_path == "/api/chat" and request_shape != "ollama_chat":
+        return "endpoint_request_shape_mismatch"
+    if normalized_path in {"/chat/direct", "/chat/rag"} and request_shape != "question":
+        return "endpoint_request_shape_mismatch"
+    return None

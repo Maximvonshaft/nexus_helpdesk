@@ -80,6 +80,7 @@ def _retrieval_out(retrieval) -> KnowledgeRetrievalTestOut:
 def list_knowledge_items(
     status: str | None = None,
     source_type: str | None = None,
+    knowledge_kind: str | None = None,
     market_id: int | None = None,
     channel: str | None = None,
     audience_scope: str | None = None,
@@ -94,6 +95,7 @@ def list_knowledge_items(
         db,
         status=status,
         source_type=source_type,
+        knowledge_kind=knowledge_kind,
         market_id=market_id,
         channel=channel,
         audience_scope=audience_scope,

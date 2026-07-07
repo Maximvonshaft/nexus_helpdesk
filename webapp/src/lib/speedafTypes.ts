@@ -17,6 +17,20 @@ export interface SpeedafCancelPreviewResponse {
   expiresInSeconds?: number | null
 }
 
+export interface SpeedafWaybillLookupCandidate {
+  waybillCode: string
+  suffix?: string | null
+}
+
+export interface SpeedafWaybillLookupResponse {
+  ok: boolean
+  status: string
+  candidates: SpeedafWaybillLookupCandidate[]
+  message?: string | null
+  failureReason?: string | null
+  safeSummary?: Record<string, unknown> | null
+}
+
 export interface SpeedafWorkOrderPayload {
   waybillCode: string
   callerID: string
@@ -28,6 +42,11 @@ export interface SpeedafAddressUpdatePayload {
   waybillCode: string
   callerID: string
   whatsAppPhone: string
+}
+
+export interface SpeedafWaybillLookupPayload {
+  callerID: string
+  countryCode: string
 }
 
 export interface SpeedafCancelPreviewPayload {

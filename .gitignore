@@ -77,11 +77,17 @@ backend/uploads/
 *.tsbuildinfo
 
 # Local artifacts
+/artifacts/
+/backups/
+/data/
+/deploy_backups/
+/forensics/
 backend/artifacts/
 deploy/runtime_secrets/*
 !deploy/runtime_secrets/.gitkeep
 probe_reports/
 deploy/secrets/
+deploy/docker-compose.whatsapp-sidecar.yml
 deploy/*.broken.*
 deploy/.release.env
 deploy/.env.*

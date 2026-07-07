@@ -1,14 +1,26 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from app.services.release_metadata import runtime_identity, runtime_identity_status
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "export_release_metadata.sh"
+
+
+def _script_shell() -> str:
+    if os.name == "nt":
+        pytest.skip("release metadata shell script is validated on Linux CI")
+    shell = shutil.which("sh") or shutil.which("bash")
+    if not shell:
+        pytest.skip("POSIX shell is not available on this host")
+    return shell
 
 
 def test_runtime_identity_uses_explicit_env_values() -> None:
@@ -74,7 +86,7 @@ def test_runtime_identity_status_marks_complete_metadata() -> None:
 
 def test_export_release_metadata_stdout_is_non_secret() -> None:
     result = subprocess.run(
-        ["sh", str(SCRIPT)],
+        [_script_shell(), str(SCRIPT)],
         cwd=ROOT,
         check=True,
         text=True,
@@ -99,7 +111,7 @@ def test_export_release_metadata_stdout_is_non_secret() -> None:
 def test_export_release_metadata_refuses_sensitive_output_path(tmp_path: Path) -> None:
     bad_path = tmp_path / "token.env"
     result = subprocess.run(
-        ["sh", str(SCRIPT), str(bad_path)],
+        [_script_shell(), str(SCRIPT), str(bad_path)],
         cwd=ROOT,
         text=True,
         stdout=subprocess.PIPE,

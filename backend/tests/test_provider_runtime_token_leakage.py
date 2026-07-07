@@ -5,11 +5,11 @@ from app.services.provider_runtime.schemas import ProviderResult
 def test_provider_runtime_token_leakage():
     # Verify that a ProviderResult cannot inadvertently dump tokens
     # Because there are no token fields!
-    res = ProviderResult(ok=True, provider="codex", elapsed_ms=10, structured_output={"a": 1})
-    
+    res = ProviderResult(ok=True, provider="private_ai_runtime", elapsed_ms=10, structured_output={"a": 1})
+
     dump = json.dumps(res.model_dump())
     assert "token" not in dump.lower()
-    
+
     # Check that Fingerprint masks token
     from app.services.provider_runtime.credential_crypto import CredentialCryptoService
     from cryptography.fernet import Fernet

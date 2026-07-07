@@ -15,6 +15,16 @@ SENSITIVE_KEYS = {
     "acceptAddress",
     "accept_address",
     "address",
+    "acceptName",
+    "accept_name",
+    "recipientName",
+    "recipient_name",
+    "receiverName",
+    "receiver_name",
+    "consigneeName",
+    "consignee_name",
+    "contactName",
+    "contact_name",
     "waybillCode",
     "waybill_code",
     "secretKey",
@@ -77,6 +87,8 @@ def redact_mapping(payload: Mapping[str, Any] | None, *, max_depth: int = 4) -> 
             lowered = key.lower() if key else ""
             if "address" in lowered:
                 return {"redacted": True, "type": "address", "sha256_prefix": sha256_prefix(value)}
+            if "name" in lowered:
+                return {"redacted": True, "type": "name", "sha256_prefix": sha256_prefix(value)}
             if "phone" in lowered or "mobile" in lowered or "caller" in lowered:
                 return {"redacted": True, "type": "phone", "suffix": suffix(value), "sha256_prefix": sha256_prefix(value)}
             return {"redacted": True, "type": "secret_or_sensitive", "sha256_prefix": sha256_prefix(value)}

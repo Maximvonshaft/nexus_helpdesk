@@ -187,7 +187,7 @@ def test_production_rejects_foundation_forbidden_flags(monkeypatch, flag):
     [
         ("WEBCALL_STT_PROVIDER", "azure", "WEBCALL_STT_PROVIDER"),
         ("WEBCALL_TTS_PROVIDER", "elevenlabs", "WEBCALL_TTS_PROVIDER"),
-        ("WEBCALL_AI_PROVIDER", "openai_responses", "WEBCALL_AI_PROVIDER"),
+        ("WEBCALL_AI_PROVIDER", "legacy_provider", "WEBCALL_AI_PROVIDER"),
     ],
 )
 def test_invalid_provider_names_fail_closed(monkeypatch, key, value, message):

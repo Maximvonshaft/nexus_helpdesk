@@ -62,9 +62,9 @@ def detect_webchat_intent(text: str | None) -> WebChatIntent:
         return WebChatIntent(intent=intent, confidence=0.86, language=language, missing_fields=[], risk_level="high", recommended_card="handoff", customer_reply=None)
     if any(k in normalized for k in (" track ", "tracking", "parcel", "package", "shipment", "delivery", "where is", "单号", "运单", "物流", "包裹", "快递", "派送")):
         missing = [] if TRACKING_RE.search(raw) else ["tracking_number"]
-        return WebChatIntent(intent="tracking", confidence=0.82, language=language, missing_fields=missing, risk_level="medium" if missing else "low", recommended_card="quick_replies", customer_reply=None)
+        return WebChatIntent(intent="tracking", confidence=0.82, language=language, missing_fields=missing, risk_level="medium" if missing else "low", recommended_card=None, customer_reply=None)
     if any(k in normalized for k in ("human", "agent", "support", "representative", "人工", "客服", "真人")):
         return WebChatIntent(intent="handoff", confidence=0.88, language=language, missing_fields=[], risk_level="medium", recommended_card="handoff", customer_reply=None)
     if any(k in normalized for k in ("hello", "hi", "hey", "你好", "您好")):
-        return WebChatIntent(intent="greeting", confidence=0.72, language=language, missing_fields=[], risk_level="low", recommended_card="quick_replies", customer_reply=None)
-    return WebChatIntent(intent="unknown", confidence=0.35, language=language, missing_fields=[], risk_level="low", recommended_card="quick_replies", customer_reply=None)
+        return WebChatIntent(intent="greeting", confidence=0.72, language=language, missing_fields=[], risk_level="low", recommended_card=None, customer_reply=None)
+    return WebChatIntent(intent="unknown", confidence=0.35, language=language, missing_fields=[], risk_level="low", recommended_card=None, customer_reply=None)

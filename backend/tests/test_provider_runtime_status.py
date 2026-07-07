@@ -1,35 +1,26 @@
 from __future__ import annotations
 
 from app.services.provider_runtime_status import get_provider_runtime_status
-from app.services.webchat_fast_config import get_webchat_fast_settings
+from app.services.webchat_runtime_config import get_webchat_runtime_settings
 
 
 _ENV_KEYS = [
     "APP_ENV",
-    "WEBCHAT_FAST_AI_ENABLED",
-    "WEBCHAT_FAST_AI_PROVIDER",
-    "WEBCHAT_FAST_AI_FALLBACK_PROVIDER",
-    "WEBCHAT_FAST_AI_CODEX_ENABLED",
-    "WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED",
-    "WEBCHAT_FAST_AI_OPENAI_ENABLED",
-    "CODEX_AUTH_TOKEN",
-    "CODEX_AUTH_TOKEN_FILE",
-    "CODEX_APP_SERVER_BRIDGE_URL",
-    "CODEX_APP_SERVER_TOKEN",
-    "CODEX_APP_SERVER_TOKEN_FILE",
-    "CODEX_APP_SERVER_CANARY_PERCENT",
-    "CODEX_APP_SERVER_KILL_SWITCH",
-    "OPENAI_API_KEY",
-    "OPENAI_API_KEY_FILE",
+    "WEBCHAT_AI_ENABLED",
+    "WEBCHAT_AI_HISTORY_TURNS",
     "PROVIDER_RUNTIME_PRIMARY_PROVIDER",
     "PRIVATE_AI_RUNTIME_ENABLED",
     "PRIVATE_AI_RUNTIME_BASE_URL",
     "PRIVATE_AI_RUNTIME_TOKEN",
     "PRIVATE_AI_RUNTIME_TOKEN_FILE",
+    "PRIVATE_AI_RUNTIME_DIRECT_PATH",
+    "PRIVATE_AI_RUNTIME_RAG_PATH",
     "PRIVATE_AI_RUNTIME_CHAT_MODE",
     "PRIVATE_AI_RUNTIME_REQUEST_SHAPE",
     "PRIVATE_AI_RUNTIME_DIRECT_MODEL",
     "PRIVATE_AI_RUNTIME_RAG_MODEL",
+    "PRIVATE_AI_RUNTIME_RAG_BASE_URL",
+    "PRIVATE_AI_RUNTIME_ALLOW_SHARED_RAG_MODEL",
     "PRIVATE_AI_RUNTIME_TIMEOUT_SECONDS",
 ]
 
@@ -37,21 +28,20 @@ _ENV_KEYS = [
 def _clear_env(monkeypatch) -> None:
     for key in _ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
-    get_webchat_fast_settings.cache_clear()
+    get_webchat_runtime_settings.cache_clear()
 
 
-def test_provider_runtime_status_default_provider_runtime_not_configured(monkeypatch):
+def test_provider_runtime_status_default_private_runtime_not_configured(monkeypatch):
     _clear_env(monkeypatch)
     monkeypatch.setenv("APP_ENV", "development")
-    get_webchat_fast_settings.cache_clear()
 
     status = get_provider_runtime_status()
 
     assert status["ok"] is False
     assert status["status"] == "warning"
-    assert status["configured_provider"] == "provider_runtime"
-    assert "selected provider codex_app_server is not configured" in status["warnings"]
-    assert all(item["name"] != "external_channel_responses" for item in status["providers"])
+    assert status["configured_provider"] == "private_ai_runtime"
+    assert "private_ai_runtime is disabled" in status["warnings"]
+    assert "private_ai_runtime base URL is missing" in status["warnings"]
     assert status["boundary"] == {
         "secret_values_exposed": False,
         "external_network_call": False,
@@ -59,93 +49,92 @@ def test_provider_runtime_status_default_provider_runtime_not_configured(monkeyp
     }
 
 
-def test_provider_runtime_status_codex_app_server_ready_without_secret_echo(monkeypatch):
+def test_provider_runtime_status_private_ai_runtime_ready_without_secret_echo(monkeypatch):
     _clear_env(monkeypatch)
-    secret = "local-codex-secret-value"
+    secret = "private-ai-runtime-secret"
     monkeypatch.setenv("APP_ENV", "development")
-    monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "codex_app_server")
-    monkeypatch.setenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "rule_engine")
-    monkeypatch.setenv("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", "true")
-    monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18793/reply")
-    monkeypatch.setenv("CODEX_APP_SERVER_TOKEN", secret)
-    monkeypatch.setenv("CODEX_APP_SERVER_CANARY_PERCENT", "100")
-    get_webchat_fast_settings.cache_clear()
+    monkeypatch.setenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "private_ai_runtime")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN", secret)
 
     status = get_provider_runtime_status()
 
     assert status["ok"] is True
     assert status["status"] == "ready"
-    assert status["configured_provider"] == "codex_app_server"
-    assert status["fallback_provider"] == "rule_engine"
-    codex = next(item for item in status["providers"] if item["name"] == "codex_app_server")
-    assert codex["selected"] is True
-    assert codex["feature_enabled"] is True
-    assert codex["configured"] is True
-    assert codex["runtime"] == "private_sidecar_provider"
-    assert codex["safety_level"] == "reply_only"
-    assert codex["capabilities"]["webchat_fast_reply"] is True
-    assert codex["capabilities"]["tool_execution"] is False
-    assert codex["capabilities"]["ticket_action"] is False
-    assert codex["controls"] == {
-        "canary_percent": 100,
-        "kill_switch": False,
-        "fallback_provider": "rule_engine",
-    }
-    assert codex["diagnostics"]["bridge_url_configured"] is True
-    assert codex["diagnostics"]["token_configured"] is True
-    rendered = str(status)
-    assert secret not in rendered
+    assert status["fallback_provider"] is None
+    private_ai = next(item for item in status["providers"] if item["name"] == "private_ai_runtime")
+    assert private_ai["selected"] is True
+    assert private_ai["feature_enabled"] is True
+    assert private_ai["configured"] is True
+    assert private_ai["runtime"] == "server_side_ai_runtime"
+    assert private_ai["capabilities"]["webchat_runtime_reply"] is True
+    assert private_ai["diagnostics"]["direct_path"] == "/api/chat"
+    assert private_ai["diagnostics"]["request_shape"] == "ollama_chat"
+    assert secret not in str(status)
 
 
-def test_provider_runtime_status_codex_canary_requires_some_fallback(monkeypatch):
+def test_provider_runtime_status_production_requires_token_file(monkeypatch):
     _clear_env(monkeypatch)
-    monkeypatch.setenv("APP_ENV", "development")
-    monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "codex_app_server")
-    monkeypatch.setenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "none")
-    monkeypatch.setenv("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", "true")
-    monkeypatch.setenv("CODEX_APP_SERVER_BRIDGE_URL", "http://127.0.0.1:18793/reply")
-    monkeypatch.setenv("CODEX_APP_SERVER_TOKEN", "local-codex-secret-value")
-    monkeypatch.setenv("CODEX_APP_SERVER_CANARY_PERCENT", "10")
-    get_webchat_fast_settings.cache_clear()
-
-    status = get_provider_runtime_status()
-
-    assert status["ok"] is False
-    assert "codex_app_server canary below 100 requires a fallback provider for skipped traffic" in status["warnings"]
-
-
-def test_provider_runtime_status_reports_misconfiguration_without_throwing(monkeypatch):
-    _clear_env(monkeypatch)
-    monkeypatch.setenv("APP_ENV", "development")
-    monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "codex_app_server")
-    monkeypatch.delenv("WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED", raising=False)
-    get_webchat_fast_settings.cache_clear()
-
-    status = get_provider_runtime_status()
-
-    assert status["ok"] is False
-    assert status["status"] == "misconfigured"
-    assert "WEBCHAT_FAST_AI_CODEX_APP_SERVER_ENABLED" in status["config_error"]
-    assert status["providers"] == []
-    assert status["boundary"]["secret_values_exposed"] is False
-
-
-def test_provider_runtime_status_private_ai_runtime_ready_without_codex_warning(monkeypatch):
-    _clear_env(monkeypatch)
-    secret = "private-ai-runtime-secret"
-    monkeypatch.setenv("APP_ENV", "development")
-    monkeypatch.setenv("WEBCHAT_FAST_AI_PROVIDER", "provider_runtime")
+    monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "private_ai_runtime")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
-    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN", secret)
-    get_webchat_fast_settings.cache_clear()
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN", "inline-token")
 
     status = get_provider_runtime_status()
 
-    assert status["ok"] is True
+    assert status["ok"] is False
+    assert "private_ai_runtime token file is missing" in status["warnings"]
+    assert "private_ai_runtime inline token is forbidden in production" in status["warnings"]
+    assert "inline-token" not in str(status)
+
+
+def test_provider_runtime_status_warns_on_endpoint_shape_mismatch(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "private_ai_runtime")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN", "inline-token")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_DIRECT_PATH", "/chat/direct")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_REQUEST_SHAPE", "ollama_chat")
+
+    status = get_provider_runtime_status()
+
+    assert status["ok"] is False
+    assert "private_ai_runtime endpoint and request shape are incompatible" in status["warnings"]
+
+
+def test_provider_runtime_status_warns_when_production_rag_model_is_not_isolated(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "private_ai_runtime")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", "/run/nexus/ai_runtime_token")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_CHAT_MODE", "rag")
+
+    status = get_provider_runtime_status()
+
+    assert status["ok"] is False
+    assert "private_ai_runtime RAG model requires an isolated runtime" in status["warnings"]
     private_ai = next(item for item in status["providers"] if item["name"] == "private_ai_runtime")
-    assert private_ai["selected"] is True
-    assert private_ai["configured"] is True
-    assert "provider_runtime codex_app_server active credential is missing" not in status["warnings"]
-    assert secret not in str(status)
+    assert private_ai["diagnostics"]["rag_runtime_isolated"] is False
+
+
+def test_provider_runtime_status_accepts_isolated_production_rag_runtime(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "private_ai_runtime")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_RAG_BASE_URL", "http://ai-runtime-rag.internal:18081")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", "/run/nexus/ai_runtime_token")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_CHAT_MODE", "rag")
+
+    status = get_provider_runtime_status()
+
+    assert "private_ai_runtime RAG model requires an isolated runtime" not in status["warnings"]
+    private_ai = next(item for item in status["providers"] if item["name"] == "private_ai_runtime")
+    assert private_ai["diagnostics"]["rag_runtime_isolated"] is True

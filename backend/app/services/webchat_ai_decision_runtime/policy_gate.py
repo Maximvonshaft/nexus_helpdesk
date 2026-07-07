@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.services.tracking_fact_schema import hash_tracking_number
-from app.services.webchat_fast_output_parser import FastReplyParseError, assert_customer_visible_reply_is_safe
+from app.services.webchat_runtime_output_parser import RuntimeReplyParseError, assert_customer_visible_reply_is_safe
 
 from .schemas import AIDecision
 from .tool_registry import ToolContract, get_tool_contract
@@ -49,12 +49,19 @@ _ZH_STATUS_CLAIM_RE = re.compile(
 _TRACKING_RE = re.compile(r"(?<![A-Z0-9])([A-Z0-9][A-Z0-9._-]{7,47})(?![A-Z0-9])", re.IGNORECASE)
 _PHONE_RE = re.compile(r"(?<!\d)(?:\+?\d[\d\s().-]{7,}\d)(?!\d)")
 _SECRET_RE = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{12,}|Bearer\s+[A-Za-z0-9._-]{10,}|[A-Za-z0-9_-]{32,})\b")
+_TRACKING_CONTEXT_RE = re.compile(
+    r"\b(track|tracking|waybill|parcel|package|shipment|delivery|order|status|recipient)\b|"
+    r"单号|运单|物流|快递|包裹|收件人|签收|派送|配送|查件|查询|订单",
+    re.IGNORECASE,
+)
 
 
 def _tracking_fact_evidence_present(metadata: dict[str, Any] | None) -> bool:
     if not isinstance(metadata, dict):
         return False
-    return bool(metadata.get("fact_evidence_present") and metadata.get("pii_redacted"))
+    if not metadata.get("pii_redacted"):
+        return False
+    return bool(metadata.get("fact_evidence_present") or metadata.get("tool_status") == "success")
 
 
 def _contains_live_tracking_claim(reply: str) -> bool:
@@ -66,9 +73,26 @@ def _raw_tracking_exposed(text: str, tracking_number: str | None = None) -> bool
         return True
     for match in _TRACKING_RE.finditer(text or ""):
         token = re.sub(r"[^A-Z0-9]", "", match.group(1).upper())
-        if len(token) >= 10 and any(ch.isdigit() for ch in token):
+        if _looks_like_tracking_identifier(token, context=_tracking_context_window(text or "", match.start(), match.end())):
             return True
     return False
+
+
+def _tracking_context_window(text: str, start: int, end: int) -> str:
+    return text[max(0, start - 48): min(len(text), end + 48)]
+
+
+def _looks_like_tracking_identifier(value: Any, *, context: str | None = None) -> bool:
+    token = re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+    if len(token) < 10:
+        return False
+    digits = sum(ch.isdigit() for ch in token)
+    letters = sum(ch.isalpha() for ch in token)
+    if not digits or not letters:
+        return False
+    if token.startswith("CH") and digits >= 6:
+        return True
+    return len(token) >= 12 and digits >= 6 and bool(_TRACKING_CONTEXT_RE.search(context or ""))
 
 
 def _raw_phone_or_secret_exposed(text: str) -> bool:
@@ -98,6 +122,7 @@ def validate_ai_decision(
     tracking_fact_metadata: dict[str, Any] | None = None,
     tracking_number: str | None = None,
     allow_high_risk_write_execution: bool = False,
+    allowed_high_risk_write_tools: set[str] | frozenset[str] | None = None,
 ) -> PolicyGateResult:
     """Validate an AI decision before WebChat executes or returns it.
 
@@ -112,8 +137,8 @@ def validate_ai_decision(
     live_tracking_claim = _contains_live_tracking_claim(decision.customer_reply)
 
     try:
-        assert_customer_visible_reply_is_safe(decision.customer_reply)
-    except FastReplyParseError as exc:
+        assert_customer_visible_reply_is_safe(decision.customer_reply, evidence_present=evidence_present)
+    except RuntimeReplyParseError as exc:
         message = str(exc)
         if decision.intent == "tracking" and evidence_present and live_tracking_claim and "unsafe business promise" in message:
             warnings.append("tracking_status_claim_allowed_by_trusted_fact_evidence")
@@ -204,7 +229,11 @@ def validate_ai_decision(
                         risk_level=contract.risk_level,
                     )
                 )
-            if contract.risk_level == "high" and not allow_high_risk_write_execution:
+            high_risk_tool_allowed = bool(
+                allow_high_risk_write_execution
+                and contract.name in (allowed_high_risk_write_tools or set())
+            )
+            if contract.risk_level == "high" and not high_risk_tool_allowed:
                 violations.append(
                     PolicyViolation(
                         code="high_risk_write_tool_blocked",

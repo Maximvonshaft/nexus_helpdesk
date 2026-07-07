@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import logging
 from pathlib import Path
 
 os.environ.setdefault("APP_ENV", "development")
@@ -12,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
 from app.services.observability import (  # noqa: E402
+    configure_logging,
     normalize_metric_path,
     record_db_query,
     record_frontend_api_latency,
@@ -24,6 +26,17 @@ from app.services.observability import (  # noqa: E402
 def test_metric_path_normalization_removes_ids() -> None:
     assert normalize_metric_path('/api/tickets/123/messages') == '/api/tickets/{id}/messages'
     assert normalize_metric_path('/api/external_channel/abcdef1234567890/replay') == '/api/external_channel/{id}/replay'
+
+
+def test_http_client_access_logs_do_not_emit_credential_query_urls() -> None:
+    original = getattr(configure_logging, "_configured", False)
+    configure_logging._configured = False
+    try:
+        configure_logging(log_json=True)
+        assert logging.getLogger("httpx").level >= logging.WARNING
+        assert logging.getLogger("httpcore").level >= logging.WARNING
+    finally:
+        configure_logging._configured = original
 
 
 def test_metric_helpers_render_without_high_cardinality_values() -> None:

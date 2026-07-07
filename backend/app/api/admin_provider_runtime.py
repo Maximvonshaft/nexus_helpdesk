@@ -16,17 +16,16 @@ from .deps import get_current_user
 
 router = APIRouter(prefix="/api/admin/provider-runtime", tags=["admin-provider-runtime"])
 
-_ALLOWED_PRIMARY_PROVIDERS = {"codex_app_server", "codex_direct", "openai_responses"}
-_ALLOWED_FALLBACK_PROVIDERS = {"rule_engine", "openai_responses"}
-_WEBCHAT_FAST_SCENARIO = "webchat_fast_reply"
-_WEBCHAT_FAST_OUTPUT_CONTRACT = "speedaf_webchat_fast_reply_v1"
+_ALLOWED_PRIMARY_PROVIDERS = {"private_ai_runtime"}
+_WEBCHAT_RUNTIME_SCENARIO = "webchat_runtime_reply"
+_WEBCHAT_RUNTIME_OUTPUT_CONTRACT = "nexus_webchat_runtime_reply_v1"
 
 
-class WebchatFastRoutingUpdate(BaseModel):
+class WebchatRuntimeRoutingUpdate(BaseModel):
     tenant_id: str = Field(default="default", min_length=1, max_length=36)
     channel_key: str = Field(default="website", min_length=1, max_length=100)
-    primary_provider: str = Field(default="codex_app_server", min_length=1, max_length=100)
-    fallback_providers: list[str] = Field(default_factory=lambda: ["openai_responses", "rule_engine"], max_length=5)
+    primary_provider: str = Field(default="private_ai_runtime", min_length=1, max_length=100)
+    fallback_providers: list[str] = Field(default_factory=list, max_length=3)
     canary_percent: int = Field(default=0, ge=0, le=100)
     kill_switch: bool = False
     enabled: bool = True
@@ -35,8 +34,7 @@ class WebchatFastRoutingUpdate(BaseModel):
     def validate_allowed(self) -> None:
         if self.primary_provider not in _ALLOWED_PRIMARY_PROVIDERS:
             raise ValueError("primary_provider_not_allowed")
-        forbidden = [provider for provider in self.fallback_providers if provider not in _ALLOWED_FALLBACK_PROVIDERS]
-        if forbidden:
+        if self.fallback_providers:
             raise ValueError("fallback_provider_not_allowed")
 
 
@@ -93,9 +91,9 @@ def provider_runtime_audit_recent(
     return {"items": items, "total": len(items)}
 
 
-@router.patch("/routing/webchat-fast-reply")
-def update_webchat_fast_reply_routing(
-    payload: WebchatFastRoutingUpdate,
+@router.patch("/routing/webchat-runtime")
+def update_webchat_runtime_routing(
+    payload: WebchatRuntimeRoutingUpdate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -115,17 +113,17 @@ def update_webchat_fast_reply_routing(
     """), {
         "tenant_id": payload.tenant_id,
         "channel_key": payload.channel_key,
-        "scenario": _WEBCHAT_FAST_SCENARIO,
+        "scenario": _WEBCHAT_RUNTIME_SCENARIO,
     }).mappings().first()
 
     params = {
         "id": existing["id"] if existing else str(uuid.uuid4()),
         "tenant_id": payload.tenant_id,
         "channel_key": payload.channel_key,
-        "scenario": _WEBCHAT_FAST_SCENARIO,
+        "scenario": _WEBCHAT_RUNTIME_SCENARIO,
         "primary_provider": payload.primary_provider,
         "fallback_providers": json.dumps(payload.fallback_providers, separators=(",", ":")),
-        "output_contract": _WEBCHAT_FAST_OUTPUT_CONTRACT,
+        "output_contract": _WEBCHAT_RUNTIME_OUTPUT_CONTRACT,
         "timeout_ms": payload.timeout_ms,
         "canary_percent": payload.canary_percent,
         "kill_switch": payload.kill_switch,

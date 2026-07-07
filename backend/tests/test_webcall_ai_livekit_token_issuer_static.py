@@ -33,7 +33,7 @@ def test_pr9_runtime_files_do_not_import_livekit_media_or_network_clients():
         "speedaf",
         "external_channel",
         "openai",
-        "codex",
+        "legacy_ai_provider",
         "provider_runtime",
     ]:
         assert forbidden not in combined

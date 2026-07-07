@@ -462,7 +462,17 @@ def dispatch_pending_background_jobs(db: Session, *, limit: int | None = None, w
         from .email_mailbox_polling_service import enqueue_due_email_mailbox_sync_jobs
         enqueue_due_email_mailbox_sync_jobs(db, interval_seconds=settings.email_mailbox_sync_interval_seconds, limit=settings.email_mailbox_sync_batch_size)
         db.commit()
-    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB, WEBCHAT_AI_REPLY_JOB, WEBCHAT_HANDOFF_SNAPSHOT_JOB, SPEEDAF_WORK_ORDER_CREATE_JOB, SPEEDAF_ADDRESS_UPDATE_JOB, SPEEDAF_VOICE_CALLBACK_JOB, EMAIL_MAILBOX_SYNC_JOB])
+    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[AUTO_REPLY_JOB, ATTACHMENT_PERSIST_JOB, WEBCHAT_HANDOFF_SNAPSHOT_JOB, SPEEDAF_WORK_ORDER_CREATE_JOB, SPEEDAF_ADDRESS_UPDATE_JOB, SPEEDAF_VOICE_CALLBACK_JOB, EMAIL_MAILBOX_SYNC_JOB])
+    processed: list[BackgroundJob] = []
+    for job in claimed:
+        process_background_job(db, job)
+        processed.append(job)
+    db.commit()
+    return processed
+
+
+def dispatch_pending_webchat_ai_reply_jobs(db: Session, *, limit: int | None = None, worker_id: str | None = None) -> list[BackgroundJob]:
+    claimed = claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[WEBCHAT_AI_REPLY_JOB])
     processed: list[BackgroundJob] = []
     for job in claimed:
         process_background_job(db, job)

@@ -115,6 +115,8 @@ def configure_logging(log_json: bool = True) -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(logging.INFO)
+    for logger_name in ("httpx", "httpcore"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
     configure_logging._configured = True
 
 

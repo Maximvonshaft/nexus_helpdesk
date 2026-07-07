@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - 'backend/app/api/speedaf*.py'
-      - 'backend/app/api/webchat_fast.py'
+      - 'backend/app/api/webchat.py'
       - 'backend/app/api/webchat_voice.py'
       - 'backend/app/services/speedaf/**'
       - 'backend/app/services/tracking_fact*.py'

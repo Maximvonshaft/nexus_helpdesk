@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -17,8 +16,7 @@ from .schemas import ProviderRequest, ProviderResult
 
 logger = logging.getLogger(__name__)
 
-_DIRECT_ENV_PROVIDERS = {"codex_app_server", "codex_direct", "openai_responses", "private_ai_runtime", "rule_engine"}
-_REMOVED_PROVIDERS = {"external_channel_responses"}
+_DIRECT_ENV_PROVIDERS = {"private_ai_runtime"}
 
 
 class ProviderRuntimeRouter:
@@ -51,25 +49,44 @@ class ProviderRuntimeRouter:
             self.db.rollback()
 
     @staticmethod
-    def _stable_percent_bucket(tenant_id: str, channel_key: str, session_id: str) -> int:
-        raw = f"{tenant_id}:{channel_key}:{session_id}"
-        digest = hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()
-        return int(digest[:8], 16) % 100
+    def _parse_webchat_runtime_output(request: ProviderRequest, result: ProviderResult) -> dict:
+        """Accept Runtime decision JSON before customer visibility."""
 
-    @staticmethod
-    def _parse_webchat_fast_output(request: ProviderRequest, result: ProviderResult) -> dict:
-        """Accept legacy fast-reply JSON and the new AI decision JSON.
+        from app.services.webchat_runtime_output_parser import parse_runtime_reply_provider_output
 
-        ProviderRuntime historically enforced speedaf_webchat_fast_reply_v1 with
-        additionalProperties=false. WebChat fast now owns final tool execution,
-        but router-level security still rejects leaked internals, secrets, and
-        unsupported live tracking status claims before customer visibility.
-        """
-
-        from app.services.webchat_fast_output_parser import parse_fast_reply_provider_output
-
-        parsed_reply = parse_fast_reply_provider_output(result.structured_output)
-        parsed = dict(result.structured_output or {})
+        try:
+            parsed_reply = parse_runtime_reply_provider_output(
+                result.structured_output,
+                evidence_present=request.tracking_fact_evidence_present,
+            )
+            parsed = dict(result.structured_output or {})
+        except Exception:
+            if not request.tracking_fact_evidence_present or not isinstance(result.structured_output, dict):
+                raise
+            parsed = dict(result.structured_output or {})
+            reply = parsed.get("customer_reply") or parsed.get("reply")
+            if not isinstance(reply, str) or not reply.strip():
+                raise
+            OutputContracts.check_security_rules(
+                raw_output=json.dumps(parsed, ensure_ascii=False, default=str),
+                parsed=parsed,
+                evidence_present=True,
+                request_body=request.body,
+                knowledge_context=(request.metadata or {}).get("knowledge_context"),
+            )
+            parsed_reply = type(
+                "_ParsedRuntimeFallback",
+                (),
+                {
+                    "reply": reply.strip(),
+                    "intent": parsed.get("intent") or "tracking",
+                    "tracking_number": parsed.get("tracking_number"),
+                    "handoff_required": bool(parsed.get("handoff_required", False)),
+                    "handoff_reason": parsed.get("handoff_reason"),
+                    "recommended_agent_action": parsed.get("recommended_agent_action"),
+                    "ai_decision": None,
+                },
+            )()
         parsed.setdefault("customer_reply", parsed_reply.reply)
         parsed.setdefault("reply", parsed_reply.reply)
         parsed.setdefault("language", "unknown")
@@ -105,9 +122,9 @@ class ProviderRuntimeRouter:
         }).mappings().first()
 
         if not rule:
-            primary_provider = "codex_app_server"
-            fallbacks = ["openai_responses", "rule_engine"]
-            output_contract = "speedaf_webchat_fast_reply_v1"
+            primary_provider = "private_ai_runtime"
+            fallbacks = []
+            output_contract = "nexus_webchat_runtime_reply_v1"
             timeout_ms = 10000
             kill_switch = False
             canary_percent = 100
@@ -127,33 +144,17 @@ class ProviderRuntimeRouter:
             kill_switch,
             canary_percent,
         )
-        primary_provider, fallbacks = _remove_retired_providers(primary_provider, fallbacks)
+        fallbacks = [provider for provider in fallbacks if provider in _DIRECT_ENV_PROVIDERS]
 
         if kill_switch:
             self._write_audit(request, "generate", "skipped", primary_provider, 0, {"kill_switch": True}, "kill_switch_active")
-            if fallbacks:
-                primary_provider = fallbacks[0]
-                fallbacks = fallbacks[1:]
-            else:
-                return ProviderResult.unavailable("router", "kill_switch_active", 0)
-
-        if _should_route_primary_to_fallback(
-            primary_provider=primary_provider,
-            fallbacks=fallbacks,
-            canary_percent=canary_percent,
-            tenant_id=request.tenant_id,
-            channel_key=request.channel_key,
-            session_id=request.session_id,
-        ):
-            primary_provider = fallbacks[0]
-            fallbacks = fallbacks[1:]
+            return ProviderResult.unavailable("router", "kill_switch_active", 0)
 
         request.output_contract = output_contract
         request.timeout_ms = timeout_ms
         providers_to_try = [primary_provider] + list(fallbacks)
         seen: set[str] = set()
         providers_to_try = [name for name in providers_to_try if name and not (name in seen or seen.add(name))]
-        primary_failure: ProviderResult | None = None
 
         for provider_name in providers_to_try:
             health_decision = ProviderRuntimeHealth.should_skip(provider_name)
@@ -167,8 +168,6 @@ class ProviderRuntimeRouter:
                     {"provider_health": health_decision.safe_summary()},
                     health_decision.reason or "provider_health_skip",
                 )
-                if provider_name == primary_provider:
-                    primary_failure = ProviderResult.unavailable(provider_name, health_decision.reason or "provider_health_skip", 0)
                 continue
 
             adapter = ProviderRegistry.get(provider_name, self.db)
@@ -184,8 +183,6 @@ class ProviderRuntimeRouter:
                     safe_summary["provider_health"] = health_event
                     result.raw_payload_safe_summary = safe_summary
                 self._write_audit(request, "generate", "failed", provider_name, result.elapsed_ms, safe_summary, result.error_code)
-                if provider_name == primary_provider:
-                    primary_failure = result
                 if not result.fallback_allowed:
                     return result
                 continue
@@ -193,8 +190,8 @@ class ProviderRuntimeRouter:
             try:
                 if not result.structured_output:
                     raise ValueError("No structured output provided")
-                if request.scenario == "webchat_fast_reply" and output_contract == "speedaf_webchat_fast_reply_v1":
-                    parsed = self._parse_webchat_fast_output(request, result)
+                if request.scenario == "webchat_runtime_reply" and output_contract == "nexus_webchat_runtime_reply_v1":
+                    parsed = self._parse_webchat_runtime_output(request, result)
                 else:
                     parsed = OutputContracts.validate_and_parse(
                         output_contract,
@@ -218,12 +215,8 @@ class ProviderRuntimeRouter:
                 if health_event:
                     safe_summary["provider_health"] = health_event
                 self._write_audit(request, "parse_reject", "failed", provider_name, result.elapsed_ms, safe_summary, "parse_reject")
-                if provider_name == primary_provider:
-                    primary_failure = ProviderResult.unavailable(provider_name, "parse_reject", result.elapsed_ms)
                 continue
 
-        if primary_provider == "codex_direct" and primary_failure is not None:
-            return primary_failure
         self._write_audit(request, "generate", "failed", "router", 0, {}, "all_providers_failed")
         return ProviderResult.unavailable("router", "all_providers_failed", 0)
 
@@ -244,65 +237,14 @@ def _apply_env_overrides(
         env_fallbacks = os.getenv("PROVIDER_RUNTIME_FALLBACK_PROVIDERS", "")
         if env_fallbacks:
             fallbacks = _coerce_fallbacks(env_fallbacks)
-        elif primary_provider == "codex_direct":
-            fallbacks = _coerce_fallbacks(os.getenv("WEBCHAT_FAST_AI_FALLBACK_PROVIDER", "openai_responses,rule_engine"))
     env_contract = os.getenv("PROVIDER_RUNTIME_OUTPUT_CONTRACT", "").strip()
     if env_contract:
         output_contract = env_contract
     timeout_ms = _int_env("PROVIDER_RUNTIME_TIMEOUT_MS", timeout_ms, minimum=500, maximum=120000)
-    timeout_ms = _harmonize_provider_timeout_ms(primary_provider=primary_provider, timeout_ms=timeout_ms)
     canary_percent = _int_env("PROVIDER_RUNTIME_CANARY_PERCENT", canary_percent, minimum=0, maximum=100)
     if os.getenv("PROVIDER_RUNTIME_KILL_SWITCH") is not None:
         kill_switch = _env_bool("PROVIDER_RUNTIME_KILL_SWITCH", kill_switch)
     return primary_provider, fallbacks, output_contract, timeout_ms, kill_switch, canary_percent
-
-
-def _remove_retired_providers(primary_provider: str, fallbacks: list[str]) -> tuple[str, list[str]]:
-    cleaned_fallbacks = [provider for provider in fallbacks if provider not in _REMOVED_PROVIDERS]
-    if primary_provider in _REMOVED_PROVIDERS:
-        if cleaned_fallbacks:
-            return cleaned_fallbacks[0], cleaned_fallbacks[1:]
-        return "rule_engine", []
-    return primary_provider, cleaned_fallbacks
-
-
-def _should_route_primary_to_fallback(
-    *,
-    primary_provider: str,
-    fallbacks: list[str],
-    canary_percent: int,
-    tenant_id: str,
-    channel_key: str,
-    session_id: str,
-) -> bool:
-    if not primary_provider or not fallbacks:
-        return False
-    if canary_percent <= 0:
-        return True
-    if canary_percent >= 100:
-        return False
-    bucket = ProviderRuntimeRouter._stable_percent_bucket(tenant_id, channel_key, session_id)
-    return bucket >= canary_percent
-
-
-def _harmonize_provider_timeout_ms(*, primary_provider: str, timeout_ms: int) -> int:
-    """Prevent outer provider_runtime timeout from undercutting provider-owned timeout.
-
-    Codex Direct runs a CLI subprocess and owns its hard timeout through
-    CODEX_DIRECT_TIMEOUT_SECONDS. If provider_runtime is lower than that, the
-    adapter is forced to kill Codex before its configured budget is reached.
-    That caused production 10s timeouts while Codex Direct was configured for
-    25s. Keep this harmonization specific to codex_direct; other providers keep
-    their existing timeout behavior.
-    """
-
-    if primary_provider != "codex_direct":
-        return timeout_ms
-    if _env_bool("CODEX_DIRECT_ALLOW_OUTER_TIMEOUT_CAP", False):
-        return timeout_ms
-    codex_timeout_ms = _int_env("CODEX_DIRECT_TIMEOUT_SECONDS", 25, minimum=1, maximum=120) * 1000
-    buffer_ms = _int_env("CODEX_DIRECT_TIMEOUT_BUDGET_BUFFER_MS", 1000, minimum=0, maximum=10000)
-    return min(120000, max(timeout_ms, codex_timeout_ms + buffer_ms))
 
 
 def _coerce_fallbacks(value) -> list[str]:

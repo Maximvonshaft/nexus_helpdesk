@@ -124,7 +124,7 @@ def test_deepgram_streaming_tts_provider_config():
 
 
 def test_deepgram_streaming_tts_chunk_publish_is_lazy():
-    result = DeepgramStreamingTTSProvider().synthesize_lazy("Please provide your tracking number.")
+    result = DeepgramStreamingTTSProvider().synthesize_lazy("Runtime generated reply.")
     backend = LazyPublishBackend()
     io = LiveKitAgentIO(room_name="room", participant_identity="ai", ttl_seconds=60, livekit_url="wss://voice.example", backend=backend)
 
@@ -141,7 +141,7 @@ def test_deepgram_streaming_tts_chunk_publish_is_lazy():
 
 def test_deepgram_streaming_tts_cancel_stops_later_publish():
     token = CancelToken()
-    result = DeepgramStreamingTTSProvider().synthesize_lazy("Please provide your tracking number.", cancel_token=token)
+    result = DeepgramStreamingTTSProvider().synthesize_lazy("Runtime generated reply.", cancel_token=token)
     backend = LazyPublishBackend(cancel_token=token)
     io = LiveKitAgentIO(room_name="room", participant_identity="ai", ttl_seconds=60, livekit_url="wss://voice.example", backend=backend)
 

@@ -10,6 +10,9 @@ class SpeedafMcpConfig:
     base_url: str
     app_code: str | None
     secret_key: str | None
+    customer_code: str | None = None
+    platform_source: str | None = None
+    lookup_caller_id: str | None = None
     timeout_seconds: int = 8
     country_code_default: str = "CH"
     content_type: str = "text/plain"

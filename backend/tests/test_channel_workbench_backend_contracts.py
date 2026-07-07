@@ -198,7 +198,7 @@ def _attach_webcall_operator_context(db_session, *, ticket_id: int, conversation
         latest_visitor_message_id=message.id,
         job_id=job.id,
         status="bridge_calling",
-        reply_source="codex",
+        reply_source="private_ai_runtime",
         bridge_elapsed_ms=321,
         is_public_reply_allowed=True,
     )

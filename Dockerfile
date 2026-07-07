@@ -6,19 +6,6 @@ RUN npm ci
 COPY webapp/ ./
 RUN npm run build
 
-FROM docker.io/library/node:22-bookworm-slim AS nexus-codex-runtime-builder
-WORKDIR /build/nexus-codex-runtime
-COPY tools/nexus-codex-runtime/package*.json ./
-RUN npm config set registry https://registry.npmjs.org/ \
-    && npm ci
-COPY tools/nexus-codex-runtime/ ./
-RUN npm run build \
-    && npm prune --omit=dev
-
-FROM docker.io/library/node:22-bookworm-slim AS node-runtime
-RUN node --version \
-    && npm --version
-
 FROM docker.io/library/python:3.11-slim
 
 ARG GIT_SHA=unknown
@@ -52,15 +39,7 @@ RUN pip install -r /tmp/requirements.txt || pip install -r /tmp/requirements.txt
 # the image when .dockerignore drifts.
 COPY backend/ /app/backend/
 COPY scripts/ /app/scripts/
-COPY deploy/codex_app_server_bridge_proxy.py /app/deploy/
-COPY deploy/codex_app_server_private_upstream_proxy.py /app/deploy/
-COPY deploy/codex_private_reply_engine.py /app/deploy/
-COPY --from=nexus-codex-runtime-builder /build/nexus-codex-runtime /app/tools/nexus-codex-runtime
 COPY --from=webapp-builder /build/frontend_dist /app/frontend_dist
-COPY --from=node-runtime /usr/local/ /usr/local/
-
-RUN node --version \
-    && npm --version
 
 # Round B webchat widget static export
 # Keep embeddable public webchat files outside SPA fallback.

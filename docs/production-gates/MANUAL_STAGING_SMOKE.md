@@ -14,7 +14,7 @@ The workflow is read-only. It checks:
 - `/readyz`
 - browser/security headers on `/`
 - optional WebChat assets
-- optional CORS preflight for `/api/webchat/fast-reply`
+- optional CORS preflight for `/api/webchat/init`
 - optional `/metrics` with `STAGING_METRICS_TOKEN`
 
 It does not:

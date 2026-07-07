@@ -11,6 +11,7 @@ WEBCHAT_ROUTE = ROOT / "webapp" / "src" / "routes" / "webchat.tsx"
 WEBCHAT_INBOX_V5 = ROOT / "webapp" / "src" / "features" / "webchat-inbox-v5" / "WebchatInboxV5Page.tsx"
 WORKSPACE_ROUTE = ROOT / "webapp" / "src" / "routes" / "workspace.tsx"
 VOICE_ENTRY = ROOT / "backend" / "app" / "static" / "webchat" / "voice-entry.js"
+WIDGET_JS = ROOT / "backend" / "app" / "static" / "webchat" / "widget.js"
 WEBCALL_ROUTE = ROOT / "webapp" / "src" / "routes" / "webcall.tsx"
 
 
@@ -37,7 +38,7 @@ def test_frontend_p0_queue_reject_and_text_fallback_are_present():
     route = AGENT_ROUTE.read_text(encoding="utf-8")
     webchat_route = WEBCHAT_ROUTE.read_text(encoding="utf-8")
     webchat = WEBCHAT_INBOX_V5.read_text(encoding="utf-8")
-    entry = VOICE_ENTRY.read_text(encoding="utf-8")
+    widget = WIDGET_JS.read_text(encoding="utf-8")
     webcall = WEBCALL_ROUTE.read_text(encoding="utf-8")
 
     assert "Reject WebCall" in panel
@@ -49,8 +50,8 @@ def test_frontend_p0_queue_reject_and_text_fallback_are_present():
     assert "AgentWebCallPanel" in webchat
     assert "api.webchatVoiceIncomingSessions" in webchat
     assert "Incoming WebCall" in webchat
-    assert "Continue in WebChat text support" in entry
-    assert "textFallbackMessage" in entry
+    assert "nd-webchat-voice" in widget
+    assert "/webchat/live/ws" in widget
     assert "Continue with WebChat text" in webcall
     assert "visitor_token" not in panel
     assert "LIVEKIT_API_SECRET" not in panel
@@ -83,16 +84,15 @@ def test_voice_call_evidence_cards_are_present_and_do_not_render_secrets():
     assert not any(marker in evidence_blocks for marker in forbidden)
 
 
-def test_voice_entry_has_click_cooldown_to_prevent_duplicate_incoming_calls():
+def test_voice_entry_delegates_to_consolidated_widget():
     entry = VOICE_ENTRY.read_text(encoding="utf-8")
+    widget = WIDGET_JS.read_text(encoding="utf-8")
 
-    assert "lastVoiceStartedAt" in entry
-    assert "lastVoiceStartedKey" in entry
-    assert "data-voice-cooldown-ms" in entry
-    assert "cooldownRemainingMs" in entry
-    assert "recordVoiceStarted" in entry
-    assert "A WebCall was just started" in entry
-    assert "wait " in entry and " seconds before starting another one" in entry
+    assert "/webchat/widget.js" in entry
+    assert "window.__NEXUSDESK_WEBCHAT_LOADED__" in entry
+    assert "data-live-voice-mode" in entry
+    assert "startLiveVoice" in widget
+    assert "stopLiveVoice" in widget
 
 
 def test_database_rate_limit_resets_expired_bucket_instead_of_duplicate_insert():

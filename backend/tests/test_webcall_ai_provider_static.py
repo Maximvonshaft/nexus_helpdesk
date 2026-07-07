@@ -37,7 +37,7 @@ def test_pr5_runtime_files_do_not_import_real_media_network_or_provider_sdks():
         "websockets",
         "external_channel",
         "openai",
-        "codex",
+        "legacy_ai_provider",
         "provider_runtime",
         "speedaf",
         "sounddevice",

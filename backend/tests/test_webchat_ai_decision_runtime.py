@@ -43,6 +43,7 @@ def test_legacy_support_agent_tool_names_normalize_to_nexus_contracts():
         "support_knowledge_retrieve": "knowledge.search",
         "speedaf_lookup": "speedaf.order.query",
         "speedaf_query_waybills": "speedaf.order.waybillCode.query",
+        "speedaf.order.waybill_code.query": "speedaf.order.waybillCode.query",
         "speedaf_create_work_order": "speedaf.workOrder.create",
         "speedaf_cancel_order": "speedaf.order.cancel.request",
         "speedaf_update_address": "speedaf.order.updateAddress.request",
@@ -139,6 +140,58 @@ def test_handoff_requires_registered_handoff_tool():
     assert any(violation.code == "handoff_tool_missing" for violation in result.violations)
 
 
+def test_general_support_provider_result_without_tools_does_not_create_handoff():
+    provider_result = SimpleNamespace(
+        ok=True,
+        reply="你好，请问需要我帮你处理什么问题？",
+        intent="general_support",
+        handoff_required=False,
+        handoff_reason=None,
+        tracking_number=None,
+        raw_payload_safe_summary={"ai_decision": {}},
+    )
+
+    decision = decision_from_provider_result(provider_result)
+
+    assert decision.intent == "general_support"
+    assert decision.handoff_required is False
+    assert decision.tool_calls == []
+
+
+def test_provider_decision_ignores_malformed_non_visible_control_fields():
+    provider_result = SimpleNamespace(
+        ok=True,
+        reply="瑞士目前暂未开通本对本业务。",
+        intent="other",
+        handoff_required=False,
+        handoff_reason=None,
+        tracking_number=None,
+        raw_payload_safe_summary={
+            "ai_decision": {
+                "customer_reply": "瑞士目前暂未开通本对本业务。",
+                "intent": "other",
+                "confidence": 0.9,
+                "risk_level": "low",
+                "next_action": "reply",
+                "handoff_required": False,
+                "tool_calls": [{"tool_name": ""}, "not-a-tool-call"],
+                "evidence_used": [
+                    {"source": {"internal": "object"}},
+                    {"source": "", "evidence_type": "knowledge_context"},
+                    {"source": "hybrid_rag_v2", "evidence_type": "knowledge_context", "fact_evidence_present": True},
+                ],
+                "safety_notes": [],
+            }
+        },
+    )
+
+    decision = decision_from_provider_result(provider_result)
+
+    assert decision.customer_reply == "瑞士目前暂未开通本对本业务。"
+    assert decision.tool_calls == []
+    assert [item.source for item in decision.evidence_used] == ["hybrid_rag_v2"]
+
+
 def test_tracking_status_claim_requires_trusted_fact():
     decision = AIDecision(
         customer_reply="Your parcel ending 006856 is currently delivered.",
@@ -187,6 +240,32 @@ def test_tracking_status_claim_passes_with_trusted_fact_and_redacted_evidence():
     )
 
     assert result.ok is True
+
+
+def test_provider_tracking_reply_with_evidence_passes_decision_safety():
+    tracking_number = "CH020000006856"
+    provider_result = SimpleNamespace(
+        ok=True,
+        reply="Your parcel ending 006856 has been delivered.",
+        intent="tracking",
+        handoff_required=False,
+        handoff_reason=None,
+        tracking_number=None,
+        raw_payload_safe_summary={"ai_decision": {}},
+    )
+
+    decision = decision_from_provider_result(
+        provider_result,
+        tracking_fact_metadata={
+            "fact_evidence_present": True,
+            "pii_redacted": True,
+            "tracking_number_hash": hash_tracking_number(tracking_number),
+        },
+        tracking_number=tracking_number,
+    )
+
+    assert decision.intent == "tracking"
+    assert "delivered" in decision.customer_reply.lower()
 
 
 def test_trusted_tracking_decision_sanitizes_raw_waybill_and_tool_args():
@@ -250,6 +329,122 @@ def test_trusted_tracking_decision_sanitizes_raw_waybill_and_tool_args():
     assert result.ok is True
 
 
+def test_unverified_tracking_reply_sanitizes_raw_waybill_before_policy_gate():
+    tracking_number = "CH020000129135"
+    provider_result = SimpleNamespace(
+        ok=True,
+        reply="我暂时查不到 CH020000129135 的状态，请确认这个运单号是否完整。",
+        intent="tracking_unresolved",
+        handoff_required=False,
+        handoff_reason=None,
+        tracking_number=None,
+        raw_payload_safe_summary={"ai_decision": {}},
+    )
+
+    decision = decision_from_provider_result(
+        provider_result,
+        tracking_fact_metadata={
+            "tool_status": "error",
+            "pii_redacted": True,
+            "tracking_number_hash": hash_tracking_number(tracking_number),
+        },
+        tracking_number=tracking_number,
+    )
+
+    assert tracking_number not in decision.customer_reply
+    assert "129135" in decision.customer_reply
+    result = validate_ai_decision(
+        decision,
+        tracking_fact_metadata={
+            "tool_status": "error",
+            "pii_redacted": True,
+            "tracking_number_hash": hash_tracking_number(tracking_number),
+        },
+        tracking_number=tracking_number,
+    )
+    assert result.ok is True
+
+
+def test_unverified_tracking_reply_sanitizes_digit_only_waybill_variant():
+    tracking_number = "CH020000129135"
+    provider_result = SimpleNamespace(
+        ok=True,
+        reply="我暂时查不到 020000129135 的状态，请确认号码是否完整。",
+        intent="tracking_unresolved",
+        handoff_required=False,
+        handoff_reason=None,
+        tracking_number=None,
+        raw_payload_safe_summary={"ai_decision": {}},
+    )
+
+    decision = decision_from_provider_result(
+        provider_result,
+        tracking_fact_metadata={"tool_status": "error", "pii_redacted": True},
+        tracking_number=tracking_number,
+    )
+
+    assert "020000129135" not in decision.customer_reply
+    assert "129135" in decision.customer_reply
+    assert validate_ai_decision(
+        decision,
+        tracking_fact_metadata={"tool_status": "error", "pii_redacted": True},
+        tracking_number=tracking_number,
+    ).ok is True
+
+
+def test_unverified_tracking_reply_sanitizes_spaced_or_trimmed_numeric_variant():
+    tracking_number = "CH020000129135"
+    provider_result = SimpleNamespace(
+        ok=True,
+        reply="我暂时查不到 CH 020000129135 或 20000129135 的状态，请确认号码是否完整。",
+        intent="tracking_unresolved",
+        handoff_required=False,
+        handoff_reason=None,
+        tracking_number=None,
+        raw_payload_safe_summary={"ai_decision": {}},
+    )
+
+    decision = decision_from_provider_result(
+        provider_result,
+        tracking_fact_metadata={"tool_status": "error", "pii_redacted": True},
+        tracking_number=tracking_number,
+    )
+
+    assert "020000129135" not in decision.customer_reply
+    assert "20000129135" not in decision.customer_reply
+    assert validate_ai_decision(
+        decision,
+        tracking_fact_metadata={"tool_status": "error", "pii_redacted": True},
+        tracking_number=tracking_number,
+    ).ok is True
+
+
+def test_unverified_tracking_reply_polishes_duplicate_waybill_suffix_label():
+    tracking_number = "CH020000129135"
+    provider_result = SimpleNamespace(
+        ok=True,
+        reply="抱歉，我无法找到您提供的运单号码 CH020000129135 的详细信息。请确认这个号码是否完整且正确吗？",
+        intent="tracking_unresolved",
+        handoff_required=False,
+        handoff_reason=None,
+        tracking_number=None,
+        raw_payload_safe_summary={"ai_decision": {}},
+    )
+
+    decision = decision_from_provider_result(
+        provider_result,
+        tracking_fact_metadata={"tool_status": "error", "pii_redacted": True},
+        tracking_number=tracking_number,
+    )
+
+    assert "运单号运单尾号" not in decision.customer_reply
+    assert "运单号码运单尾号" not in decision.customer_reply
+    assert "您提供的运单尾号 129135" in decision.customer_reply
+    assert "是否完整且正确吗" not in decision.customer_reply
+    assert "是否完整且正确" in decision.customer_reply
+    assert tracking_number not in decision.customer_reply
+
+
 def test_raw_waybill_caller_and_secret_are_blocked_from_reply():
     decision = AIDecision(
         customer_reply="Use CH020000006856 and Bearer abcdefghijklmnopqrstuvwxyz123456 to check +41000009999.",
@@ -271,29 +466,64 @@ def test_raw_waybill_caller_and_secret_are_blocked_from_reply():
     assert "raw_caller_or_secret_exposed" in codes or "unsafe_customer_reply" in codes
 
 
+def test_business_knowledge_codes_are_not_treated_as_raw_tracking_exposure():
+    decision = AIDecision(
+        customer_reply="生产知识闭环暗号是 canyon-lime-mr9b335p，MCS唯一事实编号对应结果是 PACE-678ed070。",
+        intent="general_support",
+        confidence=0.8,
+        risk_level="low",
+        next_action="reply",
+        handoff_required=False,
+        tool_calls=[],
+        evidence_used=[AIDecisionEvidence(source="hybrid_rag_v2", evidence_type="knowledge_context", fact_evidence_present=True)],
+        safety_notes=[],
+    )
+
+    result = validate_ai_decision(decision)
+
+    assert result.ok is True
 
 
+def test_non_ch_business_code_with_logistics_context_is_still_blocked():
+    decision = AIDecision(
+        customer_reply="Your parcel PACE-678ed070 has been delivered.",
+        intent="general_support",
+        confidence=0.8,
+        risk_level="high",
+        next_action="reply",
+        handoff_required=False,
+        tool_calls=[],
+        evidence_used=[],
+        safety_notes=[],
+    )
 
-def test_runtime_trace_tracking_number_is_redacted_from_public_trace():
-    from app.api.webchat_fast import _fallback_runtime_trace, _redact_tracking_number_from_public_trace
+    result = validate_ai_decision(decision)
 
-    tracking_number = "CH120000011425"
-    raw_trace = {
-        "retrieval": "hybrid_rag_v2",
-        "query_analysis": {
-            "normalized_query": "track ch120000011425",
-            "numeric_terms": ["ch120000011425"],
-            "high_value_terms": ["CH120000011425", "tracking"],
+    assert result.ok is False
+    assert "raw_tracking_exposed" in {violation.code for violation in result.violations}
+
+
+def test_provider_tracking_control_ignores_non_tracking_business_code():
+    provider_result = SimpleNamespace(
+        ok=True,
+        reply="生产知识闭环暗号是 canyon-lime-mr9b335p。",
+        intent="general_support",
+        tracking_number=None,
+        handoff_required=False,
+        handoff_reason=None,
+        raw_payload_safe_summary={
+            "ai_decision": {
+                "customer_reply": "生产知识闭环暗号是 canyon-lime-mr9b335p。",
+                "intent": "general_support",
+                "tracking_number": "canyon-lime-mr9b335p",
+                "handoff_required": False,
+                "tool_calls": [],
+                "evidence_used": [{"source": "hybrid_rag_v2", "evidence_type": "knowledge_context", "fact_evidence_present": True}],
+            }
         },
-        "candidate_count": 0,
-        "total_matches": 0,
-    }
+    )
 
-    redacted = _redact_tracking_number_from_public_trace(raw_trace, tracking_number)
-    rendered = str(redacted).lower()
+    decision = decision_from_provider_result(provider_result)
 
-    assert tracking_number.lower() not in rendered
-    assert "tracking_number_ending_011425" in rendered
-
-    fallback_trace = _fallback_runtime_trace(raw_trace, tracking_number=tracking_number)
-    assert tracking_number.lower() not in str(fallback_trace).lower()
+    assert decision.customer_reply == "生产知识闭环暗号是 canyon-lime-mr9b335p。"
+    assert decision.intent == "general_support"

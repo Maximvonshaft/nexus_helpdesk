@@ -17,7 +17,7 @@ from .tts_runtime import run_tts_runtime_for_turn
 from .transcript_writer import CUSTOMER_PARTICIPANT_IDENTITY
 from .voice_egress_client import get_webcall_voice_egress_client
 
-MOCK_AI_RESPONSE = "Hello, this is Speedaf AI support. Please provide your tracking number."
+MOCK_AI_RESPONSE = ""
 MOCK_ACTION = "ask_tracking_number"
 MOCK_INTENT = "tracking_missing_number"
 MOCK_DECISION_REASON = "pr3_deterministic_mock_turn_no_external_effect"

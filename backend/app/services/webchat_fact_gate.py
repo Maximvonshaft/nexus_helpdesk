@@ -1,13 +1,52 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
-DANGEROUS_FACT_TERMS = (
-    "delivered", "will be delivered", "driver contacted", "refund approved", "compensation approved", "customs cleared",
-    "address changed", "rescheduled", "派送成功", "已经签收", "已联系司机", "退款已批准", "赔付已批准", "清关完成", "地址已修改", "已改派",
+DEFINITE_OPERATIONAL_CLAIM_TERMS = (
+    "has been delivered",
+    "was delivered",
+    "is delivered",
+    "will be delivered",
+    "delivery today",
+    "delivery tomorrow",
+    "arrive today",
+    "arrive tomorrow",
+    "is out for delivery",
+    "marked out for delivery",
+    "status is failed delivery",
+    "driver contacted",
+    "refund approved",
+    "compensation approved",
+    "claim approved",
+    "customs cleared",
+    "customs released",
+    "address changed",
+    "rescheduled",
+    "派送成功",
+    "已经签收",
+    "已签收",
+    "已联系司机",
+    "退款已批准",
+    "赔付已批准",
+    "清关完成",
+    "地址已修改",
+    "已改派",
+    "今天送达",
+    "明天送达",
+    "预计送达",
 )
-TRACKING_STATUS_TERMS = ("in transit", "out for delivery", "delivered", "failed delivery", "派送中", "运输中", "已签收", "派送失败")
+STATUS_CHECK_CONTEXTS = (
+    "check whether it is out for delivery",
+    "check if it is out for delivery",
+    "whether it is out for delivery",
+    "if it is out for delivery",
+    "whether the parcel is out for delivery",
+    "if the parcel is out for delivery",
+    "whether the package is out for delivery",
+    "if the package is out for delivery",
+    "whether the shipment is out for delivery",
+    "if the shipment is out for delivery",
+)
 
 
 @dataclass(frozen=True)
@@ -22,10 +61,9 @@ def evaluate_webchat_fact_gate(text: str | None, *, fact_evidence_present: bool 
     body = (text or "").strip().lower()
     if fact_evidence_present:
         return FactGateDecision(True, "allow", None, True)
-    if any(term.lower() in body for term in DANGEROUS_FACT_TERMS):
+    claim_body = body
+    for context in STATUS_CHECK_CONTEXTS:
+        claim_body = claim_body.replace(context, "")
+    if any(term.lower() in claim_body for term in DEFINITE_OPERATIONAL_CLAIM_TERMS):
         return FactGateDecision(False, "block", "missing_business_or_tool_evidence", False)
-    if any(term.lower() in body for term in TRACKING_STATUS_TERMS) and not allow_tracking_status_card:
-        return FactGateDecision(False, "block", "missing_tracking_tool_result", False)
-    if re.search(r"\bETA\b|\barriv(e|al)\b|\btomorrow\b|\btoday\b", body, re.IGNORECASE):
-        return FactGateDecision(False, "review", "possible_unverified_delivery_time", False)
     return FactGateDecision(True, "allow", None, False)

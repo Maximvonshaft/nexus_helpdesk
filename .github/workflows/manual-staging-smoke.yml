@@ -150,8 +150,8 @@ jobs:
             -X OPTIONS \
             -H "Origin: $origin" \
             -H 'Access-Control-Request-Method: POST' \
-            -H 'Access-Control-Request-Headers: content-type,x-request-id' \
-            "$base/api/webchat/fast-reply" -o /tmp/cors_headers.txt
+            -H 'Access-Control-Request-Headers: content-type,x-request-id,x-webchat-visitor-token' \
+            "$base/api/webchat/init" -o /tmp/cors_headers.txt
           if ! grep -qi '^access-control-allow-origin:' /tmp/cors_headers.txt; then
             echo 'missing access-control-allow-origin header'
             cat /tmp/cors_headers.txt

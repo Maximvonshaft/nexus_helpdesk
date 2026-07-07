@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
 from pydantic import ValidationError
 
-from app.services.knowledge_grounding_service import is_explicit_handoff_or_business_action, select_trusted_direct_answer_evidence
 from app.services.knowledge_prompt_service import summarize_rag_trace
 from app.services.tracking_fact_schema import hash_tracking_number
-from app.services.webchat_fast_output_parser import FastReplyParseError, assert_customer_visible_reply_is_safe
+from app.services.webchat_runtime_output_parser import RuntimeReplyParseError, assert_customer_visible_reply_is_safe
 
 from .audit import log_ai_decision_audit
 from .policy_gate import PolicyGateResult, validate_ai_decision
@@ -16,7 +16,6 @@ from .schemas import AI_DECISION_SCHEMA_VERSION, AIDecision, AIDecisionEvidence,
 from .tool_registry import canonical_tool_name
 
 
-_HANDOFF_INTENTS = {"handoff_request", "refusal_request", "address_change", "complaint"}
 _TRACKING_EVIDENCE_SOURCES = {"speedaf_trusted_tracking_fact", "speedaf.order.query", "speedaf_tracking_fact_unavailable"}
 
 
@@ -26,7 +25,9 @@ def _clip(value: Any, limit: int) -> str | None:
 
 
 def _trusted_tracking_fact_present(metadata: dict[str, Any] | None) -> bool:
-    return bool(isinstance(metadata, dict) and metadata.get("fact_evidence_present") and metadata.get("pii_redacted"))
+    if not isinstance(metadata, dict) or not metadata.get("pii_redacted"):
+        return False
+    return bool(metadata.get("fact_evidence_present") or metadata.get("tool_status") == "success")
 
 
 def _trusted_tracking_hash(*, metadata: dict[str, Any] | None, tracking_number: str | None) -> str | None:
@@ -43,6 +44,41 @@ def _tracking_suffix(tracking_number: str | None) -> str | None:
     return cleaned[-6:] if cleaned else None
 
 
+def _safe_tracking_control_value(value: Any, *, fallback_tracking_number: str | None = None) -> str | None:
+    cleaned = _clip(value, 120)
+    if not cleaned:
+        return _clip(fallback_tracking_number, 120)
+    lowered = cleaned.lower()
+    if (
+        "parcel ending" in lowered
+        or "tracking number ending" in lowered
+        or "tracking_reference_ending" in lowered
+        or "tracking number parcel ending" in lowered
+        or "运单尾号" in cleaned
+        or "单号尾号" in cleaned
+    ):
+        return _clip(fallback_tracking_number, 120)
+    compact = "".join(ch for ch in cleaned.upper() if ch.isalnum())
+    if " " in cleaned.strip() and not compact.startswith(("CH", "SP", "SF")):
+        return _clip(fallback_tracking_number, 120)
+    if not _looks_like_tracking_identifier(cleaned):
+        return _clip(fallback_tracking_number, 120)
+    return cleaned
+
+
+def _looks_like_tracking_identifier(value: Any) -> bool:
+    token = "".join(ch for ch in str(value or "").strip().upper() if ch.isalnum())
+    if len(token) < 10:
+        return False
+    digits = sum(ch.isdigit() for ch in token)
+    letters = sum(ch.isalpha() for ch in token)
+    if not digits or not letters:
+        return False
+    if token.startswith("CH") and digits >= 6:
+        return True
+    return len(token) >= 12 and digits >= 6
+
+
 def _polish_tracking_reference(reply: str, *, suffix: str) -> str:
     suffix_pattern = re.escape(suffix)
     polished = reply
@@ -53,12 +89,25 @@ def _polish_tracking_reference(reply: str, *, suffix: str) -> str:
         (rf"\btracking\s+number\s+ending\s+({suffix_pattern})\b", rf"parcel ending \1"),
         (rf"\b[Yy]our\s+tracking\s+number\s+parcel\s+ending\s+({suffix_pattern})\b", rf"Your parcel ending \1"),
         (rf"\btracking\s+number\s+parcel\s+ending\s+({suffix_pattern})\b", rf"parcel ending \1"),
+        (rf"\b[Yy]our\s+parcel\s+parcel\s+ending\s+({suffix_pattern})\b", rf"Your parcel ending \1"),
+        (rf"\b[Tt]he\s+parcel\s+parcel\s+ending\s+({suffix_pattern})\b", rf"The parcel ending \1"),
+        (rf"\bparcel\s+parcel\s+ending\s+({suffix_pattern})\b", rf"parcel ending \1"),
         (rf"\b[Yy]our\s+tracking\s+number\s+tracking_number_ending_({suffix_pattern})\b", rf"Your parcel ending \1"),
         (rf"\btracking\s+number\s+tracking_number_ending_({suffix_pattern})\b", rf"parcel ending \1"),
         (rf"\btracking_number_ending_({suffix_pattern})\b", rf"parcel ending \1"),
+        (rf"我提供的运单号\s*运单尾号\s*({suffix_pattern})", rf"您提供的运单尾号 \1"),
+        (rf"我提供的运单号码\s*运单尾号\s*({suffix_pattern})", rf"您提供的运单尾号 \1"),
+        (rf"我提供的单号\s*运单尾号\s*({suffix_pattern})", rf"您提供的运单尾号 \1"),
+        (rf"您提供的运单号\s*运单尾号\s*({suffix_pattern})", rf"您提供的运单尾号 \1"),
+        (rf"您提供的运单号码\s*运单尾号\s*({suffix_pattern})", rf"您提供的运单尾号 \1"),
+        (rf"您的运单号\s*运单尾号\s*({suffix_pattern})", rf"您的运单尾号 \1"),
+        (rf"您的运单号码\s*运单尾号\s*({suffix_pattern})", rf"您的运单尾号 \1"),
+        (rf"运单号\s*运单尾号\s*({suffix_pattern})", rf"运单尾号 \1"),
+        (rf"运单号码\s*运单尾号\s*({suffix_pattern})", rf"运单尾号 \1"),
     ]
     for pattern, replacement in replacements:
         polished = re.sub(pattern, replacement, polished, flags=re.IGNORECASE)
+    polished = re.sub(r"是否完整且正确吗([？?])", r"是否完整且正确\1", polished)
     return " ".join(polished.split())
 
 
@@ -76,14 +125,68 @@ def _sanitize_reply_for_trusted_tracking(reply: Any, *, tracking_number: str | N
     return _polish_tracking_reference(cleaned, suffix=suffix)
 
 
+def _sanitize_reply_for_tracking_reference(reply: Any, *, tracking_number: str | None) -> Any:
+    if not isinstance(reply, str):
+        return reply
+    raw = str(tracking_number or "").strip()
+    if not raw:
+        return reply
+    suffix = _tracking_suffix(raw)
+    if not suffix:
+        return reply
+    replacement = f"运单尾号 {suffix}" if re.search(r"[\u4e00-\u9fff]", reply) else f"parcel ending {suffix}"
+    cleaned = re.sub(re.escape(raw), replacement, reply, flags=re.IGNORECASE)
+    compact_raw = "".join(ch for ch in raw.upper() if ch.isalnum())
+    if compact_raw and compact_raw.upper() != raw.upper():
+        cleaned = re.sub(re.escape(compact_raw), replacement, cleaned, flags=re.IGNORECASE)
+    digits_raw = "".join(ch for ch in raw if ch.isdigit())
+    if len(digits_raw) >= 8:
+        cleaned = re.sub(re.escape(digits_raw), replacement, cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"(?<!\d)\d{8,}(?!\d)",
+        lambda match: replacement if match.group(0).endswith(suffix) else match.group(0),
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?<![A-Z0-9])(?:[A-Z]{1,4}[\s._-]*)?\d(?:[\s._-]*\d){7,}(?![A-Z0-9])",
+        lambda match: replacement if "".join(ch for ch in match.group(0) if ch.isalnum()).upper().endswith(suffix) else match.group(0),
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return _polish_tracking_reference(" ".join(cleaned.split()), suffix=suffix)
+
+
 def _provider_evidence_items(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [dict(item) for item in value[:20] if isinstance(item, dict)]
 
 
+def _safe_provider_evidence_item(item: dict[str, Any]) -> dict[str, Any] | None:
+    raw_source = item.get("source") or item.get("tool_name") or item.get("name") or item.get("type")
+    if not isinstance(raw_source, str):
+        return None
+    source = _clip(raw_source, 160)
+    if not source:
+        return None
+    tracking_hash = _clip(item.get("tracking_number_hash"), 120)
+    return {
+        "source": source,
+        "evidence_type": _clip(item.get("evidence_type") or item.get("type"), 120),
+        "evidence_id": _clip(item.get("evidence_id") or item.get("id") or item.get("item_key"), 240),
+        "fact_evidence_present": item.get("fact_evidence_present") if isinstance(item.get("fact_evidence_present"), bool) else None,
+        "policy_evidence_present": item.get("policy_evidence_present") if isinstance(item.get("policy_evidence_present"), bool) else None,
+        "tracking_number_hash": tracking_hash,
+        "raw_tracking_number_exposed": bool(item.get("raw_tracking_number_exposed", False)),
+    }
+
+
 def _normalized_provider_evidence(value: Any, *, tracking_fact_metadata: dict[str, Any] | None) -> list[dict[str, Any]]:
-    evidence_used = _provider_evidence_items(value)
+    evidence_used = [
+        cleaned
+        for item in _provider_evidence_items(value)
+        if (cleaned := _safe_provider_evidence_item(item)) is not None
+    ]
     if not _trusted_tracking_fact_present(tracking_fact_metadata):
         return evidence_used
     return [
@@ -104,6 +207,8 @@ def _normalized_provider_tool_calls(value: Any, *, intent: str, tracking_number:
             continue
         data = dict(item)
         tool_name = canonical_tool_name(data.get("tool_name") or data.get("name") or data.get("tool"))
+        if not tool_name:
+            continue
         data["tool_name"] = tool_name
         if tool_name == "speedaf.order.query":
             has_speedaf_query = True
@@ -133,7 +238,7 @@ def _normalized_provider_tool_calls(value: Any, *, intent: str, tracking_number:
 def _tracking_fact_evidence(metadata: dict[str, Any] | None) -> AIDecisionEvidence | None:
     if not isinstance(metadata, dict):
         return None
-    fact_present = bool(metadata.get("fact_evidence_present") and metadata.get("pii_redacted"))
+    fact_present = _trusted_tracking_fact_present(metadata)
     source = "speedaf_trusted_tracking_fact" if fact_present else "speedaf_tracking_fact_unavailable"
     tracking_hash = metadata.get("tracking_number_hash")
     return AIDecisionEvidence(
@@ -172,7 +277,7 @@ def _default_tool_calls(*, intent: str, handoff_required: bool, tracking_number:
                 requires_confirmation=False,
             )
         )
-    if handoff_required or intent in _HANDOFF_INTENTS:
+    if handoff_required:
         reason = _clip(handoff_reason, 240) or f"{intent}_requires_human_review"
         calls.append(
             AIDecisionToolCall(
@@ -190,76 +295,6 @@ def _decision_knowledge_context(runtime_context: dict[str, Any] | None) -> dict[
     return knowledge if isinstance(knowledge, dict) else {}
 
 
-def _decision_requests_handoff_or_fallback(payload: dict[str, Any], provider_result: Any) -> bool:
-    intent = normalize_intent(payload.get("intent") or getattr(provider_result, "intent", None))
-    next_action = str(payload.get("next_action") or "").strip().lower()
-    reply = str(payload.get("customer_reply") or getattr(provider_result, "reply", None) or payload.get("reply") or "").strip().lower()
-    calls = payload.get("tool_calls") if isinstance(payload.get("tool_calls"), list) else []
-    return bool(
-        payload.get("handoff_required", getattr(provider_result, "handoff_required", False)) is True
-        or intent in _HANDOFF_INTENTS
-        or next_action == "request_handoff"
-        or any(isinstance(call, dict) and (call.get("tool_name") or call.get("name") or call.get("tool")) == "handoff.request.create" for call in calls)
-        or "human teammate" in reply
-        or "support team will check" in reply
-        or "support specialist will check" in reply
-        or "temporarily unavailable" in reply
-        or "人工" in reply
-        or "暂时不可用" in reply
-    )
-
-
-def _apply_trusted_kb_direct_answer_decision_repair(
-    *,
-    payload: dict[str, Any],
-    provider_result: Any,
-    tracking_fact_metadata: dict[str, Any] | None,
-    runtime_context: dict[str, Any] | None,
-    request_body: str | None,
-) -> dict[str, Any]:
-    if _trusted_tracking_fact_present(tracking_fact_metadata):
-        return payload
-    if is_explicit_handoff_or_business_action(request_body):
-        return payload
-    if not _decision_requests_handoff_or_fallback(payload, provider_result):
-        return payload
-
-    selected = select_trusted_direct_answer_evidence(
-        _decision_knowledge_context(runtime_context),
-        query=request_body,
-        tracking_fact_evidence_present=False,
-    )
-    if not selected.applied or not selected.reply:
-        return payload
-
-    source = selected.source if isinstance(selected.source, dict) else {}
-    evidence_id = str(source.get("item_key") or source.get("title") or "trusted_direct_answer")[:240]
-    return {
-        **payload,
-        "customer_reply": selected.reply,
-        "intent": "general_support",
-        "confidence": 1.0,
-        "risk_level": "low",
-        "next_action": "reply",
-        "handoff_required": False,
-        "handoff_reason": None,
-        "tool_calls": [],
-        "tracking_number": None,
-        "evidence_used": [
-            {
-                "source": "hybrid_rag_v2",
-                "evidence_type": "knowledge_context",
-                "evidence_id": evidence_id,
-                "fact_evidence_present": True,
-                "raw_tracking_number_exposed": False,
-                "repair_applied": True,
-                "repair_reason": "trusted_kb_direct_answer_decision_repair",
-            }
-        ],
-        "safety_notes": ["trusted KB direct_answer repaired provider handoff/fallback decision"],
-    }
-
-
 def _decision_payload_from_provider(provider_result: Any, *, tracking_fact_metadata: dict[str, Any] | None = None, tracking_number: str | None = None, runtime_context: dict[str, Any] | None = None, request_body: str | None = None) -> dict[str, Any]:
     safe_summary = getattr(provider_result, "raw_payload_safe_summary", None) or {}
     raw_decision = safe_summary.get("ai_decision") if isinstance(safe_summary, dict) else None
@@ -267,18 +302,18 @@ def _decision_payload_from_provider(provider_result: Any, *, tracking_fact_metad
         payload = dict(raw_decision)
     else:
         payload = {}
-    payload = _apply_trusted_kb_direct_answer_decision_repair(
-        payload=payload,
-        provider_result=provider_result,
-        tracking_fact_metadata=tracking_fact_metadata,
-        runtime_context=runtime_context,
-        request_body=request_body,
-    )
     intent = normalize_intent(payload.get("intent") or getattr(provider_result, "intent", None))
     handoff_required = bool(payload.get("handoff_required", getattr(provider_result, "handoff_required", False)))
-    provider_tracking = _clip(payload.get("tracking_number") or getattr(provider_result, "tracking_number", None) or tracking_number, 120)
-    reply = _sanitize_reply_for_trusted_tracking(
+    provider_tracking = _safe_tracking_control_value(
+        payload.get("tracking_number") or getattr(provider_result, "tracking_number", None),
+        fallback_tracking_number=tracking_number,
+    )
+    reply = _sanitize_reply_for_tracking_reference(
         payload.get("customer_reply") or getattr(provider_result, "reply", None) or payload.get("reply"),
+        tracking_number=provider_tracking,
+    )
+    reply = _sanitize_reply_for_trusted_tracking(
+        reply,
         tracking_number=provider_tracking,
         tracking_fact_metadata=tracking_fact_metadata,
     )
@@ -329,14 +364,13 @@ def decision_from_provider_result(
                 request_body=request_body,
             )
         )
-        try:
-            assert_customer_visible_reply_is_safe(decision.customer_reply)
-        except FastReplyParseError as exc:
-            if not (_trusted_tracking_fact_present(tracking_fact_metadata) and decision.intent == "tracking" and "unsafe business promise" in str(exc)):
-                raise
+        assert_customer_visible_reply_is_safe(
+            decision.customer_reply,
+            evidence_present=_trusted_tracking_fact_present(tracking_fact_metadata),
+        )
         return decision
-    except (ValidationError, FastReplyParseError, ValueError) as exc:
-        raise FastReplyParseError(f"AI decision output is invalid: {exc}") from exc
+    except (ValidationError, RuntimeReplyParseError, ValueError) as exc:
+        raise RuntimeReplyParseError(f"AI decision output is invalid: {exc}") from exc
 
 
 def build_ai_decision_trace(
@@ -359,13 +393,6 @@ def build_ai_decision_trace(
     }
     if runtime_context:
         trace["runtime_context_trace"] = summarize_rag_trace(runtime_context)
-    if any(
-        isinstance(getattr(evidence, "model_extra", None), dict)
-        and evidence.model_extra.get("repair_applied")
-        for evidence in decision.evidence_used
-    ):
-        trace["repair_applied"] = True
-        trace["repair_reason"] = "trusted_kb_direct_answer_decision_repair"
     return trace
 
 
@@ -382,7 +409,14 @@ def validate_and_trace_decision(
     channel_key: str | None = None,
     session_id: str | None = None,
 ) -> tuple[PolicyGateResult, dict[str, Any]]:
-    policy = validate_ai_decision(decision, tracking_fact_metadata=tracking_fact_metadata, tracking_number=tracking_number)
+    auto_work_order_enabled = str(os.getenv("WEBCHAT_AI_AUTO_WORK_ORDER_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
+    policy = validate_ai_decision(
+        decision,
+        tracking_fact_metadata=tracking_fact_metadata,
+        tracking_number=tracking_number,
+        allow_high_risk_write_execution=auto_work_order_enabled,
+        allowed_high_risk_write_tools={"speedaf.workOrder.create"} if auto_work_order_enabled else set(),
+    )
     trace = build_ai_decision_trace(decision=decision, policy_result=policy, reply_source=reply_source, mode=mode, runtime_context=runtime_context)
     log_ai_decision_audit(
         event="webchat_ai_decision_validated",

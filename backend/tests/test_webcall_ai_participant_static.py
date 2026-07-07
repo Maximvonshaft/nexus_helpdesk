@@ -34,7 +34,7 @@ def test_pr8_runtime_files_do_not_import_media_network_or_provider_sdks():
         "speedaf",
         "external_channel",
         "openai",
-        "codex",
+        "legacy_ai_provider",
         "provider_runtime",
         "sounddevice",
         "pyaudio",

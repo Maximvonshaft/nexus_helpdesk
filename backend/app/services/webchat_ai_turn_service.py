@@ -23,6 +23,61 @@ DEFAULT_AI_TURN_DEBOUNCE_SECONDS = 1
 DEFAULT_QUEUED_TIMEOUT_SECONDS = 120
 DEFAULT_PROCESSING_TIMEOUT_SECONDS = 90
 DEFAULT_BRIDGE_GRACE_SECONDS = 15
+
+AI_TURN_RUNTIME_TRACE_KEYS = {
+    "latency_class",
+    "prompt_profile",
+    "prompt_chars",
+    "output_contract_repair_applied",
+    "output_contract_repair_reason",
+    "output_contract_soft_accept_reason",
+    "grounding_validation",
+    "grounding_violation",
+    "error_code",
+    "elapsed_ms",
+    "timeout_seconds",
+    "model",
+    "model_policy",
+    "model_reason",
+    "contract_repair_model",
+    "chat_mode",
+    "request_shape",
+    "ai_decision_policy_ok",
+    "ai_decision_policy_violation_codes",
+    "ai_decision_policy_warning_count",
+    "ai_decision_checked_tools",
+    "ai_decision_intent",
+    "ai_decision_next_action",
+    "ai_decision_handoff_required",
+    "ollama_keep_alive",
+    "ollama_num_predict",
+    "ollama_num_ctx",
+    "max_contract_repair_attempts",
+}
+
+
+def safe_ai_turn_runtime_trace(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    trace: dict[str, Any] = {}
+    for key in AI_TURN_RUNTIME_TRACE_KEYS:
+        item = value.get(key)
+        if item is None:
+            continue
+        if isinstance(item, bool):
+            trace[key] = item
+        elif isinstance(item, (int, float)):
+            trace[key] = item
+        elif isinstance(item, str):
+            trace[key] = item[:160]
+    runtime_usage = value.get("runtime_usage")
+    if isinstance(runtime_usage, dict):
+        trace["runtime_usage"] = {
+            key: runtime_usage[key]
+            for key in ("prompt_eval_count", "eval_count", "total_duration_ms", "load_duration_ms", "prompt_eval_duration_ms", "eval_duration_ms")
+            if isinstance(runtime_usage.get(key), (int, float))
+        }
+    return trace or None
 DEFAULT_FALLBACK_TIMEOUT_SECONDS = 60
 
 JobFactory = Callable[[dict[str, Any], str, Any], BackgroundJob]
@@ -118,11 +173,22 @@ def safe_write_webchat_event(
 def ai_snapshot(conversation: WebchatConversation) -> dict[str, Any]:
     status = getattr(conversation, "active_ai_status", None)
     turn_id = getattr(conversation, "active_ai_turn_id", None)
+    active_updated_at = getattr(conversation, "active_ai_updated_at", None)
+    active_started_at = getattr(conversation, "active_ai_started_at", None)
+    ai_status_elapsed_ms: int | None = None
+    if status in AI_TURN_TYPING_STATUSES and turn_id:
+        try:
+            reference = active_updated_at or active_started_at
+            if reference:
+                ai_status_elapsed_ms = max(0, int((utc_now() - reference).total_seconds() * 1000))
+        except Exception:
+            ai_status_elapsed_ms = None
     return {
         "ai_pending": bool(status in AI_TURN_TYPING_STATUSES and turn_id),
         "ai_status": status,
         "ai_turn_id": turn_id,
         "ai_pending_for_message_id": getattr(conversation, "active_ai_for_message_id", None),
+        "ai_status_elapsed_ms": ai_status_elapsed_ms,
         "ai_suspended": bool(getattr(conversation, "ai_suspended", False)),
         "handoff_status": getattr(conversation, "handoff_status", None) or "none",
         "current_handoff_request_id": getattr(conversation, "current_handoff_request_id", None),
@@ -196,10 +262,14 @@ def schedule_webchat_ai_turn(
     ticket_id: int,
     visitor_message: WebchatMessage,
     create_job: JobFactory,
-    debounce_seconds: int = DEFAULT_AI_TURN_DEBOUNCE_SECONDS,
+    debounce_seconds: float = DEFAULT_AI_TURN_DEBOUNCE_SECONDS,
 ) -> dict[str, Any]:
     now = utc_now()
-    debounce_at = now + timedelta(seconds=max(0, int(debounce_seconds or 0)))
+    try:
+        safe_debounce_seconds = max(0.0, float(debounce_seconds or 0))
+    except (TypeError, ValueError):
+        safe_debounce_seconds = float(DEFAULT_AI_TURN_DEBOUNCE_SECONDS)
+    debounce_at = now + timedelta(seconds=safe_debounce_seconds)
     safe_write_webchat_event(
         db,
         conversation_id=conversation.id,
@@ -414,6 +484,14 @@ def complete_ai_turn_with_reply(db: Session, *, conversation: WebchatConversatio
         supersede_ai_turn(db, conversation=conversation, turn=turn, reason=result.get("reason") or "reply_suppressed")
         return
     if result.get("status") in {"review_required", "failed_no_public_reply"}:
+        runtime_trace = safe_ai_turn_runtime_trace(result.get("runtime_trace"))
+        turn.runtime_trace_json = json.dumps(runtime_trace, ensure_ascii=False) if runtime_trace else None
+        turn.reply_source = result.get("reply_source")
+        turn.fallback_reason = result.get("fallback_reason")
+        turn.bridge_elapsed_ms = result.get("bridge_elapsed_ms")
+        wait_timeout_ms = result.get("bridge_wait_timeout_ms")
+        if wait_timeout_ms is not None:
+            turn.bridge_timeout_ms = int(wait_timeout_ms)
         mark_ai_turn_failed(
             db,
             conversation=conversation,
@@ -431,6 +509,8 @@ def complete_ai_turn_with_reply(db: Session, *, conversation: WebchatConversatio
     wait_timeout_ms = result.get("bridge_wait_timeout_ms")
     if wait_timeout_ms is not None:
         turn.bridge_timeout_ms = int(wait_timeout_ms)
+    runtime_trace = safe_ai_turn_runtime_trace(result.get("runtime_trace"))
+    turn.runtime_trace_json = json.dumps(runtime_trace, ensure_ascii=False) if runtime_trace else None
     turn.completed_at = now
     turn.updated_at = now
     safe_write_webchat_event(db, conversation_id=conversation.id, ticket_id=turn.ticket_id, event_type="message.created", payload={"message_id": turn.reply_message_id, "direction": "agent", "ai_turn_id": turn.id})
@@ -547,7 +627,13 @@ def process_webchat_ai_turn_job(db: Session, *, ai_turn_id: int, legacy_process:
         return {"status": "superseded", "reason": "stale_before_ai_call"}
 
     try:
-        result = legacy_process(db, conversation_id=turn.conversation_id, ticket_id=turn.ticket_id, visitor_message_id=turn.latest_visitor_message_id or turn.trigger_message_id)
+        result = legacy_process(
+            db,
+            conversation_id=turn.conversation_id,
+            ticket_id=turn.ticket_id,
+            visitor_message_id=turn.latest_visitor_message_id or turn.trigger_message_id,
+            ai_turn_id=turn.id,
+        )
     except Exception as exc:
         mark_ai_turn_failed(db, conversation=conversation, turn=turn, reason=f"{type(exc).__name__}: {exc}"[:500])
         raise

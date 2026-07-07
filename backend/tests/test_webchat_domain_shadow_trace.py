@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.services.domain_intelligence.webchat_shadow_bridge import build_webchat_domain_shadow_trace
-from app.services.webchat_fast_ai_service import _attach_domain_shadow_trace
+from app.services.webchat_runtime_ai_service import _attach_domain_shadow_trace
 
 
 def test_webchat_domain_shadow_trace_disabled_by_default(monkeypatch) -> None:
@@ -40,7 +40,7 @@ def test_webchat_domain_shadow_trace_enabled_is_non_enforcing(monkeypatch) -> No
     }
 
 
-def test_webchat_fast_runtime_context_only_attaches_shadow_trace_when_flag_enabled(monkeypatch) -> None:
+def test_webchat_runtime_context_only_attaches_shadow_trace_when_flag_enabled(monkeypatch) -> None:
     runtime_context = {"context_version": "nexus_webchat_runtime_context_v2"}
     monkeypatch.delenv("DOMAIN_INTELLIGENCE_WEBCHAT_SHADOW_TRACE_ENABLED", raising=False)
 

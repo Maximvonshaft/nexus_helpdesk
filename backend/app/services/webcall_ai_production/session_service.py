@@ -132,7 +132,7 @@ def create_session(
     if idempotency_key:
         existing_conversation = _conversation_for_idempotency(db, idempotency_key)
         if existing_conversation is not None:
-            if existing_conversation.fast_issue_key and existing_conversation.fast_issue_key != idem_hash:
+            if existing_conversation.runtime_issue_key and existing_conversation.runtime_issue_key != idem_hash:
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="idempotency key payload mismatch")
             active = _active_ai_session(db, existing_conversation)
             if active is not None:
@@ -143,7 +143,7 @@ def create_session(
     conversation.channel_key = "webcall-ai"
     conversation.origin = "webcall-ai-production"
     conversation.visitor_ref = idempotency_key or payload.visitor_ref
-    conversation.fast_issue_key = idem_hash
+    conversation.runtime_issue_key = idem_hash
     db.flush()
 
     active_count = (

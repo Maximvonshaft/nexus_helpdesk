@@ -17,6 +17,8 @@ from app.main import app
 from app.models import BackgroundJob, Ticket, TicketEvent, User
 from app.services.background_jobs import SPEEDAF_ADDRESS_UPDATE_JOB, process_background_job
 from app.services.speedaf.action_service import SpeedafActionResult, SpeedafActionService
+from app.services.speedaf.adapter import SpeedafCoreAdapter, SpeedafWaybillLookupResult
+from app.services.speedaf.schemas import SpeedafWaybillCandidate
 from app.tool_models import ToolCallLog  # noqa: F401
 
 
@@ -71,6 +73,46 @@ def work_order_payload(description: str = "Please follow up delivery"):
 
 def address_payload():
     return {"waybillCode": "WB123", "callerID": "41000000000", "whatsAppPhone": "41790000000"}
+
+
+def waybill_lookup_payload():
+    return {"callerID": "41000000000", "countryCode": "CH"}
+
+
+def test_waybill_lookup_disabled_by_default(harness):
+    res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/waybills/query", json=waybill_lookup_payload())
+    assert res.status_code == 403
+    assert res.json()["detail"] == "speedaf_mcp_disabled"
+
+
+def test_waybill_lookup_enabled_returns_candidates_without_background_job(harness, monkeypatch):
+    monkeypatch.setenv("SPEEDAF_MCP_ENABLED", "true")
+    calls = []
+
+    def fake_query(self, *, caller_id, country_code=None):
+        calls.append({"caller_id": caller_id, "country_code": country_code})
+        return SpeedafWaybillLookupResult(
+            ok=True,
+            candidates=(SpeedafWaybillCandidate(waybill_code="CH020000129135", suffix="129135"),),
+            safe_summary={"tool": "speedaf.order.waybill_code.query", "ok": True, "count": 1},
+        )
+
+    monkeypatch.setattr(SpeedafCoreAdapter, "query_waybills_by_caller", fake_query)
+
+    res = harness.client.post(f"/api/tickets/{harness.ticket.id}/speedaf/waybills/query", json=waybill_lookup_payload())
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "completed"
+    assert body["candidates"] == [{"waybillCode": "CH020000129135", "suffix": "129135"}]
+    assert calls == [{"caller_id": "41000000000", "country_code": "CH"}]
+    with harness.SessionLocal() as db:
+        assert db.query(BackgroundJob).count() == 0
+        event = db.query(TicketEvent).filter(TicketEvent.field_name == "speedaf_waybill_lookup").one()
+        event_payload = json.loads(event.payload_json)
+        assert event_payload["candidate_count"] == 1
+        assert "CH020000129135" not in event.payload_json
+        assert "41000000000" not in event.payload_json
 
 
 def test_work_order_disabled_by_default(harness):

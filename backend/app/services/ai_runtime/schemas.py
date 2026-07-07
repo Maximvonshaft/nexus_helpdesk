@@ -7,7 +7,7 @@ from .tool_intent import ToolIntent
 
 
 @dataclass(frozen=True)
-class FastAIProviderRequest:
+class RuntimeAIProviderRequest:
     tenant_key: str
     channel_key: str
     session_id: str
@@ -23,7 +23,7 @@ class FastAIProviderRequest:
 
 
 @dataclass(frozen=True)
-class FastAIProviderResult:
+class RuntimeAIProviderResult:
     ok: bool
     ai_generated: bool
     reply_source: str | None
@@ -49,7 +49,7 @@ class FastAIProviderResult:
         elapsed_ms: int = 0,
         retry_after_ms: int | None = 1500,
         safe_summary: dict[str, Any] | None = None,
-    ) -> "FastAIProviderResult":
+    ) -> "RuntimeAIProviderResult":
         return cls(
             ok=False,
             ai_generated=False,

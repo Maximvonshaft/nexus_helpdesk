@@ -22,11 +22,11 @@ import type {
   LiteMeta,
   Market,
   ProductionReadiness,
+  ProviderRuntimeStatus,
   QATraining,
   QATrainingAppealResult,
   QATrainingKnowledgeGapResult,
   QueueSummary,
-  RuntimeHealth,
   ExternalChannelConnectivityProbe,
   OutboundChannelCapabilitiesResponse,
   OutboundEmailAccount,
@@ -36,6 +36,12 @@ import type {
   OutboundEmailTestSendResult,
   OutboundSendPayload,
   SignoffChecklist,
+  SupportConversationDetail,
+  SupportConversationMetrics,
+  SupportConversationPage,
+  SupportConversationReplyPayload,
+  SupportConversationReplyResult,
+  SupportConversationState,
   SystemAttachment,
   AIConfigResource,
   AIConfigVersion,
@@ -67,14 +73,7 @@ import type {
   WebchatReplyResult,
   SupportMemoryLedger,
   WhatsAppNativeAccountStatus,
-  ProviderCredentialStatusResponse,
   SecurityAudit,
-  CodexAuthorizationStart,
-  CodexManualAuthorizationCompleteResult,
-  CodexManualAuthorizationStart,
-  CodexDeviceStart,
-  CodexSessionStatus,
-  CodexCredentialActionResult,
 } from '@/lib/types'
 import type { WebchatVoiceAction, WebchatVoiceActionPayload, WebchatVoiceActionResult, WebchatVoiceActionType, WebchatVoiceEvidence, WebchatVoiceIncomingSession, WebchatVoiceNoteResult, WebchatVoiceRuntimeConfig, WebchatVoiceSession } from '@/lib/webchatVoiceTypes'
 import { mapApiErrorMessage } from '@/lib/apiErrorMap'
@@ -636,7 +635,7 @@ export const api = {
   }),
 
   queueSummary: () => request<QueueSummary>('/api/admin/queues/summary'),
-  runtimeHealth: () => request<RuntimeHealth>('/api/admin/external_channel/runtime-health'),
+  providerRuntimeStatus: () => request<ProviderRuntimeStatus>('/api/admin/provider-runtime/status'),
   external_channelConnectivityCheck: () => request<ExternalChannelConnectivityProbe>('/api/admin/external_channel/connectivity-check'),
   readiness: () => request<ProductionReadiness>('/api/admin/production-readiness'),
   signoff: () => request<SignoffChecklist>('/api/admin/signoff-checklist'),
@@ -668,28 +667,26 @@ export const api = {
   }),
   webcallAIDemoEvents: (sessionId: string) => request<{ ok: boolean; session: Pick<WebCallAIDemoSession, 'public_id' | 'status' | 'mode'>; events: WebCallAIDemoEvent[]; turns: Array<Pick<WebCallAIDemoTurn, 'turn_index' | 'customer_text_redacted' | 'ai_response_text_redacted' | 'handoff_required' | 'created_at'> & { turn_id: number }> }>(`/api/admin/webcall-ai-demo/sessions/${sessionId}/events`),
 
-  codexCredentialStatus: () => request<ProviderCredentialStatusResponse>('/api/admin/provider-credentials/codex/status'),
-  startCodexAuthorization: (scopes?: string[]) => request<CodexAuthorizationStart>('/api/admin/provider-credentials/codex/authorize', {
-    method: 'POST',
-    body: JSON.stringify({ scopes: scopes?.length ? scopes : null }),
-  }),
-  startCodexManualAuthorization: () => request<CodexManualAuthorizationStart>('/api/admin/provider-credentials/codex/manual/start', {
-    method: 'POST',
-  }),
-  completeCodexManualAuthorization: (sessionId: string, authorizationResponse: string) => request<CodexManualAuthorizationCompleteResult>('/api/admin/provider-credentials/codex/manual/complete', {
-    method: 'POST',
-    body: JSON.stringify({ session_id: sessionId, authorization_response: authorizationResponse }),
-  }),
-  startCodexDeviceFlow: (scopes?: string[]) => request<CodexDeviceStart>('/api/admin/provider-credentials/codex/device/start', {
-    method: 'POST',
-    body: JSON.stringify({ scopes: scopes?.length ? scopes : null }),
-  }),
-  codexDeviceFlowStatus: (sessionId: string) => request<CodexSessionStatus>(`/api/admin/provider-credentials/codex/device/status/${sessionId}`),
-  pollCodexDeviceFlow: (sessionId: string) => request<CodexSessionStatus>(`/api/admin/provider-credentials/codex/device/poll/${sessionId}`, { method: 'POST' }),
-  refreshCodexCredential: (credentialId: string) => request<CodexCredentialActionResult>(`/api/admin/provider-credentials/codex/refresh/${credentialId}`, { method: 'POST' }),
-  revokeCodexCredential: (credentialId: string) => request<CodexCredentialActionResult>(`/api/admin/provider-credentials/codex/revoke/${credentialId}`, { method: 'POST' }),
-  disconnectCodexCredential: (credentialId: string) => request<CodexCredentialActionResult>(`/api/admin/provider-credentials/codex/disconnect/${credentialId}`, { method: 'POST' }),
   outboundChannelCapabilities: () => request<OutboundChannelCapabilitiesResponse>('/api/outbound/channels/capabilities'),
+
+  supportConversations: (params?: { view?: string; channel?: string; q?: string; limit?: number }, init?: RequestInit) => {
+    const search = new URLSearchParams()
+    search.set('view', params?.view || 'open')
+    search.set('channel', params?.channel || 'all')
+    search.set('limit', String(params?.limit ?? 80))
+    if (params?.q?.trim()) search.set('q', params.q.trim())
+    return request<SupportConversationPage>(`/api/support/conversations?${search.toString()}`, init)
+  },
+  supportConversationDetail: (sessionKey: string, init?: RequestInit) => {
+    const search = new URLSearchParams({ session_key: sessionKey })
+    return request<SupportConversationDetail>(`/api/support/conversations/detail?${search.toString()}`, init)
+  },
+  supportConversationMetrics: (sinceHours = 24, init?: RequestInit) => request<SupportConversationMetrics>(`/api/support/conversations/metrics?since_hours=${sinceHours}`, init),
+  supportConversationState: (init?: RequestInit) => request<SupportConversationState>('/api/support/conversations/state', init),
+  supportConversationReply: (payload: SupportConversationReplyPayload) => request<SupportConversationReplyResult>('/api/support/conversations/reply', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
 
   webchatConversations: (init?: RequestInit) => request<WebchatConversation[]>('/api/webchat/admin/conversations', init),
   webchatHandoffQueue: (params?: { view?: string; include_declined?: boolean; limit?: number }, init?: RequestInit) => {

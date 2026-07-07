@@ -7,7 +7,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webcall_ai_audio_reference
 
 import pytest
 
-from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: F401,E402
+from app import models, operator_models, tool_models, voice_models, webchat_models  # noqa: F401,E402
 from app.db import Base, SessionLocal, engine
 from app.services.webcall_ai.config import get_webcall_ai_settings
 from app.services.webcall_ai.deepgram_stt_provider import DeepgramSTTProvider
@@ -216,7 +216,7 @@ def test_audio_reference_resolver_has_no_runtime_or_network_imports():
         "speedaf",
         "external_channel",
         "openai",
-        "codex",
+        "legacy_ai_provider",
         "provider_runtime",
         "urllib",
     ]:

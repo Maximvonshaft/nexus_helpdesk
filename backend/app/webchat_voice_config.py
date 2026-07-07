@@ -10,6 +10,10 @@ LIVEKIT_KEY_ENV = "LIVEKIT_API_" + "KEY"
 LIVEKIT_KEY_FILE_ENV = LIVEKIT_KEY_ENV + "_FILE"
 LIVEKIT_SECRET_ENV = "LIVEKIT_API_" + "SECRET"
 LIVEKIT_SECRET_FILE_ENV = LIVEKIT_SECRET_ENV + "_FILE"
+LIVE_VOICE_UPSTREAM_WS_URL_ENV = "LIVE_VOICE_UPSTREAM_WS_URL"
+LIVE_VOICE_UPSTREAM_HEALTH_URL_ENV = "LIVE_VOICE_UPSTREAM_HEALTH_URL"
+LIVE_VOICE_UPSTREAM_TOKEN_ENV = "LIVE_VOICE_UPSTREAM_TOKEN"
+LIVE_VOICE_UPSTREAM_TOKEN_FILE_ENV = LIVE_VOICE_UPSTREAM_TOKEN_ENV + "_FILE"
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -73,6 +77,9 @@ class WebchatVoiceRuntimeConfig:
     livekit_url: str | None
     livekit_api_key: str | None
     livekit_api_secret: str | None
+    live_voice_upstream_ws_url: str | None
+    live_voice_upstream_health_url: str | None
+    live_voice_upstream_token: str | None
 
 
 def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
@@ -93,6 +100,9 @@ def load_webchat_voice_runtime_config() -> WebchatVoiceRuntimeConfig:
         livekit_url=_normalize_url(os.getenv(LIVEKIT_URL_ENV)) if read_livekit_credentials else None,
         livekit_api_key=_secret_value(LIVEKIT_KEY_ENV, LIVEKIT_KEY_FILE_ENV) if read_livekit_credentials else None,
         livekit_api_secret=_secret_value(LIVEKIT_SECRET_ENV, LIVEKIT_SECRET_FILE_ENV) if read_livekit_credentials else None,
+        live_voice_upstream_ws_url=_normalize_ws_url(os.getenv(LIVE_VOICE_UPSTREAM_WS_URL_ENV)),
+        live_voice_upstream_health_url=_normalize_url(os.getenv(LIVE_VOICE_UPSTREAM_HEALTH_URL_ENV)),
+        live_voice_upstream_token=_secret_value(LIVE_VOICE_UPSTREAM_TOKEN_ENV, LIVE_VOICE_UPSTREAM_TOKEN_FILE_ENV),
     )
     validate_webchat_voice_runtime_config(config)
     return config
@@ -127,6 +137,10 @@ def validate_webchat_voice_runtime_config(config: WebchatVoiceRuntimeConfig) -> 
         raise RuntimeError("WEBCHAT_VOICE_RECORDING_ENABLED must remain false in production until a consent policy is implemented")
     if config.enabled and config.provider == "livekit":
         _validate_livekit_runtime_config(config, app_env=app_env)
+    if config.live_voice_upstream_ws_url:
+        _validate_live_voice_ws_url(config.live_voice_upstream_ws_url, app_env=app_env)
+    if config.live_voice_upstream_health_url:
+        _validate_live_voice_health_url(config.live_voice_upstream_health_url, app_env=app_env)
 
 
 def _validate_livekit_runtime_config(config: WebchatVoiceRuntimeConfig, *, app_env: str) -> None:
@@ -146,6 +160,30 @@ def _validate_livekit_runtime_config(config: WebchatVoiceRuntimeConfig, *, app_e
         normalized_sources = {source.rstrip("/") for source in config.connect_src}
         if required_wss not in normalized_sources:
             raise RuntimeError("WEBCHAT_VOICE_CONNECT_SRC must include the LiveKit wss URL when WEBCHAT_VOICE_PROVIDER=livekit")
+
+
+def _normalize_ws_url(raw: str | None) -> str | None:
+    value = _normalize_url(raw)
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme == "http":
+        return urlunparse(parsed._replace(scheme="ws"))
+    if parsed.scheme == "https":
+        return urlunparse(parsed._replace(scheme="wss"))
+    return value
+
+
+def _validate_live_voice_ws_url(value: str, *, app_env: str) -> None:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"ws", "wss"} or not parsed.netloc:
+        raise RuntimeError("LIVE_VOICE_UPSTREAM_WS_URL must be a valid ws:// or wss:// URL")
+
+
+def _validate_live_voice_health_url(value: str, *, app_env: str) -> None:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeError("LIVE_VOICE_UPSTREAM_HEALTH_URL must be a valid http:// or https:// URL")
 
 
 def is_webchat_voice_path(path: str, config: WebchatVoiceRuntimeConfig | None = None) -> bool:

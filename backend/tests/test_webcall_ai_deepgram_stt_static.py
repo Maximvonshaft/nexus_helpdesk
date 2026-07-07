@@ -50,7 +50,7 @@ def test_pr6_runtime_files_do_not_import_forbidden_sdks_or_media_stacks():
         "livekit",
         "external_channel",
         "openai",
-        "codex",
+        "legacy_ai_provider",
         "provider_runtime",
         "speedaf",
         "sounddevice",

@@ -5,7 +5,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webcall_ai_handoff_tests.d
 
 import pytest
 
-from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: F401,E402
+from app import models, operator_models, tool_models, voice_models, webchat_models  # noqa: F401,E402
 from app.db import Base, SessionLocal, engine
 from app.services.webcall_ai.handoff_service import mark_webcall_ai_handoff_required
 from app.utils.time import utc_now
@@ -49,7 +49,7 @@ def _session_turn(db):
         ticket_id=1,
         turn_index=1,
         customer_text_redacted="Cancel my order and refund me.",
-        ai_response_text_redacted="I will connect you to a human support agent.",
+        ai_response_text_redacted="",
         handoff_required=True,
         handoff_reason="high_risk_request",
         created_at=now,

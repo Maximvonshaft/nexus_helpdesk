@@ -20,6 +20,10 @@ LIVEKIT_KEY_ENV = "LIVEKIT_API_" + "KEY"
 LIVEKIT_KEY_FILE_ENV = LIVEKIT_KEY_ENV + "_FILE"
 LIVEKIT_SECRET_ENV = "LIVEKIT_API_" + "SECRET"
 LIVEKIT_SECRET_FILE_ENV = LIVEKIT_SECRET_ENV + "_FILE"
+LIVE_VOICE_UPSTREAM_WS_URL_ENV = "LIVE_VOICE_UPSTREAM_WS_URL"
+LIVE_VOICE_UPSTREAM_HEALTH_URL_ENV = "LIVE_VOICE_UPSTREAM_HEALTH_URL"
+LIVE_VOICE_UPSTREAM_TOKEN_ENV = "LIVE_VOICE_UPSTREAM_TOKEN"
+LIVE_VOICE_UPSTREAM_TOKEN_FILE_ENV = LIVE_VOICE_UPSTREAM_TOKEN_ENV + "_FILE"
 
 VOICE_ENV_KEYS = [
     "WEBCHAT_VOICE_ENABLED",
@@ -32,6 +36,10 @@ VOICE_ENV_KEYS = [
     LIVEKIT_KEY_FILE_ENV,
     LIVEKIT_SECRET_ENV,
     LIVEKIT_SECRET_FILE_ENV,
+    LIVE_VOICE_UPSTREAM_WS_URL_ENV,
+    LIVE_VOICE_UPSTREAM_HEALTH_URL_ENV,
+    LIVE_VOICE_UPSTREAM_TOKEN_ENV,
+    LIVE_VOICE_UPSTREAM_TOKEN_FILE_ENV,
 ]
 
 
@@ -59,6 +67,12 @@ def _csp(response) -> str:
     return response.headers.get("Content-Security-Policy", "")
 
 
+def _assert_connect_sources(policy: str, *sources: str) -> None:
+    assert "connect-src " in policy
+    for source in sources:
+        assert source in policy
+
+
 def test_voice_disabled_keeps_microphone_denied_on_voice_path(monkeypatch):
     client = _client(monkeypatch)
 
@@ -68,6 +82,45 @@ def test_voice_disabled_keeps_microphone_denied_on_voice_path(monkeypatch):
     assert _permissions(response) == "camera=(), microphone=(), geolocation=()"
     assert "connect-src 'self'" in _csp(response)
     assert "wss://voice.example.test" not in _csp(response)
+
+
+def test_live_voice_disabled_returns_404_without_exposing_upstream(monkeypatch):
+    client = _client(
+        monkeypatch,
+        WEBCHAT_VOICE_ENABLED="false",
+        LIVE_VOICE_UPSTREAM_WS_URL="ws://runtime.example.test/live/ws",
+        LIVE_VOICE_UPSTREAM_HEALTH_URL="http://runtime.example.test/live/health",
+        LIVE_VOICE_UPSTREAM_TOKEN="unit-secret-token",
+    )
+
+    response = client.get("/webchat/live/health")
+    runtime_config = client.get("/api/webchat/voice/runtime-config")
+
+    assert response.status_code == 404
+    assert _permissions(response) == "camera=(), microphone=(), geolocation=()"
+    assert runtime_config.status_code == 200
+    payload = runtime_config.json()
+    assert "live_voice_upstream_ws_url" not in payload
+    assert "unit-secret-token" not in str(payload)
+
+
+def test_live_voice_enabled_health_route_is_same_origin_proxy_scope(monkeypatch):
+    client = _client(
+        monkeypatch,
+        WEBCHAT_VOICE_ENABLED="true",
+        WEBCHAT_VOICE_PROVIDER="mock",
+        WEBCHAT_VOICE_CONNECT_SRC="",
+        LIVE_VOICE_UPSTREAM_WS_URL="ws://127.0.0.1:1/live/ws",
+        LIVE_VOICE_UPSTREAM_HEALTH_URL="http://127.0.0.1:1/live/health",
+        LIVE_VOICE_UPSTREAM_TOKEN="unit-secret-token",
+    )
+
+    response = client.get("/webchat/live/health")
+
+    assert response.status_code == 503
+    assert _permissions(response) == "camera=(), microphone=(self), geolocation=()"
+    assert "unit-secret-token" not in response.text
+    assert "connect-src 'self'" in _csp(response)
 
 
 def test_voice_enabled_non_voice_path_keeps_microphone_denied(monkeypatch):
@@ -151,7 +204,14 @@ def test_voice_enabled_voice_path_allows_microphone_and_configured_wss(monkeypat
     assert response.status_code == 200
     assert _permissions(response) == "camera=(), microphone=(self), geolocation=()"
     policy = _csp(response)
-    assert "connect-src 'self' wss://voice.example.test https://voice.example.test" in policy
+    _assert_connect_sources(
+        policy,
+        "'self'",
+        "https://cloudflareinsights.com",
+        "https://static.cloudflareinsights.com",
+        "wss://voice.example.test",
+        "https://voice.example.test",
+    )
     assert "camera" not in policy
     assert "unsafe-eval" not in policy
 
@@ -168,7 +228,14 @@ def test_voice_enabled_webcall_path_allows_microphone_and_configured_wss(monkeyp
     assert response.status_code in {200, 404}
     assert _permissions(response) == "camera=(), microphone=(self), geolocation=()"
     policy = _csp(response)
-    assert "connect-src 'self' wss://voice.example.test https://voice.example.test" in policy
+    _assert_connect_sources(
+        policy,
+        "'self'",
+        "https://cloudflareinsights.com",
+        "https://static.cloudflareinsights.com",
+        "wss://voice.example.test",
+        "https://voice.example.test",
+    )
     assert "unsafe-eval" not in policy
 
 
@@ -197,11 +264,11 @@ def test_webchat_demo_and_non_voice_api_headers_follow_new_webchat_voice_scope(m
     )
 
     demo_response = client.get("/webchat/demo.html")
-    api_response = client.post("/api/webchat/fast-reply", json={})
+    api_response = client.get("/api/webchat/not-found")
 
     assert demo_response.status_code in {200, 404}
     assert _permissions(demo_response) == "camera=(), microphone=(self), geolocation=()"
-    assert api_response.status_code == 422
+    assert api_response.status_code == 404
     assert _permissions(api_response) == "camera=(), microphone=(), geolocation=()"
     assert "wss://voice.example.test" not in _csp(api_response)
 
@@ -232,5 +299,19 @@ def test_voice_enabled_webchat_and_webchat_voice_paths_allow_microphone(monkeypa
     assert webchat_voice_response.status_code in {200, 404}
     assert _permissions(webchat_response) == "camera=(), microphone=(self), geolocation=()"
     assert _permissions(webchat_voice_response) == "camera=(), microphone=(self), geolocation=()"
-    assert "connect-src 'self' wss://voice.example.test https://voice.example.test" in _csp(webchat_response)
-    assert "connect-src 'self' wss://voice.example.test https://voice.example.test" in _csp(webchat_voice_response)
+    _assert_connect_sources(
+        _csp(webchat_response),
+        "'self'",
+        "https://cloudflareinsights.com",
+        "https://static.cloudflareinsights.com",
+        "wss://voice.example.test",
+        "https://voice.example.test",
+    )
+    _assert_connect_sources(
+        _csp(webchat_voice_response),
+        "'self'",
+        "https://cloudflareinsights.com",
+        "https://static.cloudflareinsights.com",
+        "wss://voice.example.test",
+        "https://voice.example.test",
+    )

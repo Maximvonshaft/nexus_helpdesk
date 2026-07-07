@@ -18,11 +18,11 @@ from .tool_registry import default_registry
 from .tools.tracking_lookup import extract_tracking_number, is_tracking_question
 
 
-ASK_TRACKING_NUMBER_REPLY = "Please provide your tracking number."
-TRACKING_LOOKUP_NOT_CONNECTED_REPLY = "Tracking lookup is not connected yet. I have recorded your tracking number and a human agent will follow up if needed."
-EMPTY_TRANSCRIPT_FIRST_REPLY = "Sorry, I didn’t catch that. Could you repeat your question or tracking number?"
-EMPTY_TRANSCRIPT_SECOND_REPLY = "Please say the tracking number slowly, or type it if available."
-EMPTY_TRANSCRIPT_HANDOFF_REPLY = "I still cannot reliably hear the caller. I will hand this to a human support agent."
+ASK_TRACKING_NUMBER_REPLY = ""
+TRACKING_LOOKUP_NOT_CONNECTED_REPLY = ""
+EMPTY_TRANSCRIPT_FIRST_REPLY = ""
+EMPTY_TRANSCRIPT_SECOND_REPLY = ""
+EMPTY_TRANSCRIPT_HANDOFF_REPLY = ""
 
 
 def run_fake_turn(audio_or_text: bytes | str, *, language: str | None = None) -> dict[str, object]:
@@ -121,7 +121,7 @@ def run_session_turn(
             db,
             session=session,
             worker_id=worker_id,
-            response_text="I cannot safely transcribe the call right now. I will hand this to a human support agent.",
+            response_text="",
             intent="stt_provider_failed",
             handoff_required=True,
             handoff_reason=exc.code,
@@ -282,7 +282,7 @@ def _safe_llm_response(settings, stt: STTResult) -> LLMResult:
         return get_llm_provider(settings.llm_provider).respond(stt.text, language=stt.language)
     except ProviderError as exc:
         return LLMResult(
-            response_text="I cannot safely complete the AI answer right now. I will hand this to a human support agent.",
+            response_text="",
             intent="llm_provider_failed",
             handoff_required=True,
             handoff_reason=exc.code,

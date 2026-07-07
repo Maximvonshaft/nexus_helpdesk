@@ -69,6 +69,6 @@ jobs:
           EXTERNAL_CHANNEL_DEPLOYMENT_MODE: disabled
           EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED: "false"
           WEBCHAT_RATE_LIMIT_BACKEND: database
-          WEBCHAT_AI_AUTO_REPLY_MODE: safe_ack
+          WEBCHAT_AI_AUTO_REPLY_MODE: safe_ai
           WEBCHAT_ALLOWED_ORIGINS: https://example.test
         run: cd backend && python scripts/validate_production_readiness.py

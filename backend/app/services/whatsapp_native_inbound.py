@@ -31,6 +31,7 @@ SELF_ECHO_TEST_SOURCE = "self_echo_test"
 SELF_CHAT_SOURCE = "self_chat"
 DEFAULT_SELF_ECHO_TEST_PREFIX = "NEXUS_SELF_INBOUND_TEST"
 VALID_PROJECTION_MODES = {"visitor", "store_only", "test_visitor", "self_chat"}
+NON_CUSTOMER_CHAT_ERROR = "ignored_whatsapp_non_customer_chat"
 
 
 @dataclass(frozen=True)
@@ -101,6 +102,21 @@ def _clip(value: Any, limit: int) -> str | None:
     return text[:limit]
 
 
+def _is_customer_chat_jid(value: str | None) -> bool:
+    jid = (value or "").strip()
+    if not jid:
+        return False
+    if jid == "status@broadcast":
+        return False
+    if jid.endswith("@broadcast"):
+        return False
+    if jid.endswith("@g.us"):
+        return False
+    if jid.endswith("@newsletter"):
+        return False
+    return True
+
+
 def _public_id(account_id: str, chat_jid: str) -> str:
     digest = hashlib.sha256(f"{account_id}:{chat_jid}".encode("utf-8")).hexdigest()[:32]
     return f"wa_{digest}"
@@ -130,13 +146,23 @@ def _projection_mode(payload: dict[str, Any], *, from_me: bool, body_text: str) 
     if mode == "store_only":
         return "store_only"
     if mode == "self_chat":
-        return "self_chat"
+        return "store_only"
     if mode != "test_visitor":
         return "store_only"
     prefix = _clip(payload.get("self_echo_test_prefix"), 120) or DEFAULT_SELF_ECHO_TEST_PREFIX
     if not body_text.startswith(prefix):
         return "store_only"
     return "test_visitor"
+
+
+def _strip_self_echo_test_prefix(payload: dict[str, Any], body_text: str, projection_mode: str) -> str:
+    if projection_mode != "test_visitor":
+        return body_text
+    prefix = _clip(payload.get("self_echo_test_prefix"), 120) or DEFAULT_SELF_ECHO_TEST_PREFIX
+    if not body_text.startswith(prefix):
+        return body_text
+    stripped = body_text[len(prefix):].strip()
+    return stripped or body_text
 
 
 def _active_whatsapp_account(db: Session, account_id: str) -> ChannelAccount:
@@ -262,7 +288,7 @@ def _schedule_ai_turn(db: Session, *, conversation: WebchatConversation, visitor
         ticket_id=conversation.ticket_id,
         visitor_message=visitor_message,
         create_job=create_job,
-        debounce_seconds=int(getattr(get_settings(), "webchat_ai_turn_debounce_seconds", 1) or 1),
+        debounce_seconds=float(getattr(get_settings(), "webchat_ai_turn_debounce_seconds", 0.15) or 0),
     )
 
 
@@ -271,9 +297,11 @@ def ingest_whatsapp_native_inbound(db: Session, payload: dict[str, Any]) -> What
     external_message_id = _clip(payload.get("external_message_id"), 180)
     chat_jid = _clip(payload.get("chat_jid"), 180)
     sender_jid = _clip(payload.get("sender_jid"), 180) or chat_jid
-    body_text = _clip(payload.get("body_text"), 4000)
-    if not account_id or not external_message_id or not chat_jid or not body_text:
+    raw_body_text = _clip(payload.get("body_text"), 4000)
+    if not account_id or not external_message_id or not chat_jid or not raw_body_text:
         raise WhatsAppNativeInboundError("invalid_whatsapp_inbound_payload")
+    if not _is_customer_chat_jid(chat_jid):
+        raise WhatsAppNativeInboundError(NON_CUSTOMER_CHAT_ERROR)
 
     account = _active_whatsapp_account(db, account_id)
     existing = (
@@ -297,7 +325,8 @@ def ingest_whatsapp_native_inbound(db: Session, payload: dict[str, Any]) -> What
 
     sender_phone = _clip(payload.get("sender_phone"), 80)
     from_me = _truthy(payload.get("from_me"))
-    projection_mode = _projection_mode(payload, from_me=from_me, body_text=body_text)
+    projection_mode = _projection_mode(payload, from_me=from_me, body_text=raw_body_text)
+    body_text = _strip_self_echo_test_prefix(payload, raw_body_text, projection_mode)
     received_at_text = _clip(payload.get("received_at"), 80)
     try:
         received_at = datetime.fromisoformat((received_at_text or "").replace("Z", "+00:00")) if received_at_text else utc_now()

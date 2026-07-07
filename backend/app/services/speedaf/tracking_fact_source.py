@@ -102,6 +102,8 @@ def merge_speedaf_hybrid_tracking_fact(
         tool_status="success",
         pii_redacted=primary.pii_redacted and history.pii_redacted,
         fact_evidence_present=True,
+        lifecycle_summary=history.lifecycle_summary or primary.lifecycle_summary,
+        status_context=primary.status_context or history.status_context,
     )
 
 
@@ -217,7 +219,7 @@ def lookup_speedaf_track_history_fact(
         tool_type="read_only",
         input_payload=safe_query_summary(waybill_code=tracking),
         output_payload=result.metadata_payload(),
-        status="success" if result.ok and result.fact_evidence_present else "failed",
+        status="success" if result.ok else "failed",
         error_code=None if result.ok else result.failure_reason,
         error_message=result.failure_reason,
         elapsed_ms=int((time.monotonic() - started) * 1000),
@@ -257,8 +259,6 @@ def lookup_speedaf_hybrid_tracking_fact(
         request_id=request_id,
         adapter=adapter,
     )
-    if not (primary.ok and primary.fact_evidence_present):
-        return primary
 
     resolved_tracking = (primary.tracking_number or tracking_number or "").strip().upper()
     if not resolved_tracking:
@@ -267,6 +267,16 @@ def lookup_speedaf_hybrid_tracking_fact(
     resolved_client = track_client or SpeedafTrackQueryClient()
     if not resolved_client.config.configured:
         return primary
+
+    if not (primary.ok and primary.fact_evidence_present):
+        history_fallback = lookup_speedaf_track_history_fact(
+            tracking_number=resolved_tracking,
+            conversation_id=conversation_id,
+            ticket_id=ticket_id,
+            request_id=request_id,
+            client=resolved_client,
+        )
+        return history_fallback if history_fallback.ok and history_fallback.fact_evidence_present else primary
 
     history = lookup_speedaf_track_history_fact(
         tracking_number=resolved_tracking,

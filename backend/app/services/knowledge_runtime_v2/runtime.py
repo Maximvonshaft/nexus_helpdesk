@@ -235,7 +235,7 @@ def _candidate_rows(
         query = query.filter(KnowledgeChunk.audience_scope == audience_scope.strip())
     if language:
         lang = language.strip().lower()
-        query = query.filter(or_(KnowledgeChunk.language.is_(None), KnowledgeChunk.language == lang, KnowledgeChunk.language.like(f"{lang}-%")))
+        query = query.filter(or_(KnowledgeChunk.language.is_(None), KnowledgeChunk.language == lang, KnowledgeChunk.language == "mixed", KnowledgeChunk.language.like(f"{lang}-%")))
     needles = [normalized_query, *terms][:25]
     if needles:
         predicates = []
@@ -310,7 +310,7 @@ def _structured_exact_rows(
         query = query.filter(KnowledgeChunk.audience_scope == audience_scope.strip())
     if language:
         lang = language.strip().lower()
-        query = query.filter(or_(KnowledgeChunk.language.is_(None), KnowledgeChunk.language == lang, KnowledgeChunk.language.like(f"{lang}-%")))
+        query = query.filter(or_(KnowledgeChunk.language.is_(None), KnowledgeChunk.language == lang, KnowledgeChunk.language == "mixed", KnowledgeChunk.language.like(f"{lang}-%")))
     needles = [normalized_query, *terms][:25]
     predicates = []
     for term in needles:
@@ -444,7 +444,7 @@ def _postgres_candidate_sql(
         filters.append("(kc.channel IS NULL OR kc.channel = :channel)")
         params["channel"] = channel.strip()
     if language:
-        filters.append("(kc.language IS NULL OR kc.language = :language OR kc.language LIKE :language_prefix)")
+        filters.append("(kc.language IS NULL OR kc.language = :language OR kc.language = 'mixed' OR kc.language LIKE :language_prefix)")
         params["language"] = language.strip().lower()
         params["language_prefix"] = f"{language.strip().lower()}-%"
     where = " AND ".join(filters)
@@ -489,6 +489,11 @@ def _score_row(chunk: KnowledgeChunk, item: KnowledgeItem, *, terms: list[str], 
     matched = [term for term in terms if term in text_value]
     structured = (item.knowledge_kind or "document") in STRUCTURED_KINDS and item.fact_status == "approved"
     direct = structured and item.answer_mode == "direct_answer" and bool((item.fact_answer or "").strip())
+    structured_fact_answer = (
+        (item.fact_answer or "").strip()
+        if structured and (item.answer_mode or "guided_answer") in {"direct_answer", "guided_answer"}
+        else None
+    )
     breakdown: dict[str, float] = {}
     methods: set[str] = {retrieval_source}
     if structured:
@@ -532,7 +537,7 @@ def _score_row(chunk: KnowledgeChunk, item: KnowledgeItem, *, terms: list[str], 
         retrieval_method="+".join(sorted(methods)),
         matched_terms=matched[:16],
         score_breakdown=breakdown,
-        direct_answer=(item.fact_answer or "").strip() if direct else None,
+        direct_answer=structured_fact_answer,
         answer_mode=item.answer_mode,
         source_metadata={
             "item_key": item.item_key,

@@ -41,6 +41,14 @@ SUSPICIOUS_PREFIXES = (
     "wp-admin/",
 )
 
+RETIRED_EXACT_PATHS = {
+    "dsp",
+    "research",
+    "speedy-console",
+}
+
+RETIRED_PREFIXES = tuple(f"{path}/" for path in sorted(RETIRED_EXACT_PATHS))
+
 
 def _normalized_path(path: str) -> str:
     decoded = unquote(str(path or "")).replace("\\", "/")
@@ -67,6 +75,12 @@ def should_block_spa_fallback(path: str) -> bool:
         return True
 
     if normalized in SUSPICIOUS_EXACT_PATHS:
+        return True
+
+    if normalized in RETIRED_EXACT_PATHS:
+        return True
+
+    if any(normalized.startswith(prefix) for prefix in RETIRED_PREFIXES):
         return True
 
     if any(normalized.startswith(prefix) for prefix in SUSPICIOUS_PREFIXES):

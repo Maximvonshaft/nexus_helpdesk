@@ -48,6 +48,18 @@ def test_polishes_tracking_number_parcel_ending_intermediate_phrase() -> None:
     assert polished == "Your parcel ending 005451 is currently out for delivery."
 
 
+def test_polishes_duplicate_parcel_ending_phrase() -> None:
+    reply = "The parcel parcel ending 005451 is currently in pending pickup."
+
+    polished = _sanitize_reply_for_trusted_tracking(
+        reply,
+        tracking_number="CH120000005451",
+        tracking_fact_metadata=TRACKING_METADATA,
+    )
+
+    assert polished == "The parcel ending 005451 is currently in pending pickup."
+
+
 def test_does_not_polish_without_trusted_tracking_fact() -> None:
     reply = "Your tracking number CH120000005451 is currently out for delivery."
 

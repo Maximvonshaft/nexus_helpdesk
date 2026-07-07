@@ -10,7 +10,6 @@ from .utils.time import format_utc
 
 MESSAGE_TYPE_ALLOWLIST = {"text", "system", "card", "action", "attachment"}
 CARD_TYPE_ALLOWLIST = {
-    "quick_replies",
     "tracking_status",
     "address_confirmation",
     "reschedule_picker",
@@ -19,7 +18,6 @@ CARD_TYPE_ALLOWLIST = {
     "csat",
 }
 ACTION_TYPE_ALLOWLIST = {
-    "quick_reply",
     "handoff_request",
     "address_confirm",
     "address_edit",
@@ -77,7 +75,7 @@ class WebChatCardAction(BaseModel):
     id: str = Field(max_length=80)
     label: str = Field(max_length=80)
     value: str | None = Field(default=None, max_length=200)
-    action_type: str = Field(default="quick_reply", max_length=64)
+    action_type: str = Field(default="handoff_request", max_length=64)
     payload: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("id")
@@ -139,7 +137,7 @@ class WebChatCardPayload(BaseModel):
         if encoded_size > MAX_CARD_PAYLOAD_BYTES:
             raise ValueError("WebChat card payload is too large")
         _validate_urls_are_https(self.model_dump())
-        if self.card_type in {"quick_replies", "handoff"} and not self.actions:
+        if self.card_type == "handoff" and not self.actions:
             raise ValueError(f"{self.card_type} card requires at least one action")
         return self
 
@@ -165,7 +163,7 @@ class WebChatActionSubmitRequest(BaseModel):
     message_id: int
     card_id: str = Field(max_length=120)
     action_id: str = Field(max_length=80)
-    action_type: str = Field(default="quick_reply", max_length=64)
+    action_type: str = Field(default="handoff_request", max_length=64)
     payload: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("card_id")
@@ -214,7 +212,6 @@ class WebChatIncrementalMessagesResponse(BaseModel):
 
 
 WebChatCardType = Literal[
-    "quick_replies",
     "tracking_status",
     "address_confirmation",
     "reschedule_picker",

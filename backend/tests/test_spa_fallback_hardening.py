@@ -26,6 +26,16 @@ SUSPICIOUS_PATHS = [
     "/static/../.env",
 ]
 
+RETIRED_PATHS = [
+    "/speedy-console",
+    "/speedy-console/",
+    "/speedy-console/conversations",
+    "/research",
+    "/research/archive",
+    "/dsp",
+    "/dsp/legacy",
+]
+
 SPA_PRODUCT_PATHS = [
     "",
     "/workspace",
@@ -37,7 +47,6 @@ SPA_PRODUCT_PATHS = [
     "/outbound-email",
     "/users",
     "/runtime",
-    "/provider-credentials",
     "/webcall-ai",
     "/webchat-voice",
 ]
@@ -51,6 +60,11 @@ STATIC_OR_API_PATHS = [
 
 def test_suspicious_scanner_paths_are_blocked_from_spa_fallback() -> None:
     for path in SUSPICIOUS_PATHS:
+        assert should_block_spa_fallback(path), path
+
+
+def test_retired_public_surfaces_are_blocked_from_spa_fallback() -> None:
+    for path in RETIRED_PATHS:
         assert should_block_spa_fallback(path), path
 
 

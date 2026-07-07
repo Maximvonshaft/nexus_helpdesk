@@ -31,7 +31,7 @@ def test_static_no_real_media_or_external_provider_imports():
         "provider_runtime",
         "external_channel",
         "openai",
-        "codex",
+        "legacy_ai_provider",
         "llm",
         "speedaf.",
     ]
@@ -43,7 +43,7 @@ def test_mock_executor_contains_deterministic_safe_contract():
     source = EXECUTOR.read_text(encoding="utf-8")
 
     assert "execute_mock_turn_for_claimed_session" in source
-    assert "Hello, this is Speedaf AI support. Please provide your tracking number." in source
+    assert 'MOCK_AI_RESPONSE = ""' in source
     assert 'provider="mock"' in source
     assert "stt_provider=stt_provider_name" in source
     assert 'tts_provider="mock"' in source

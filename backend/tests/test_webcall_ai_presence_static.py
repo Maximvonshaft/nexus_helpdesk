@@ -38,7 +38,7 @@ def test_presence_runtime_forbids_audio_publish_subscribe_symbols():
 def test_presence_runtime_has_no_speedaf_or_llm_provider_imports():
     combined = _source(PRESENCE_CLIENT) + "\n" + _source(WORKER)
 
-    for forbidden in ["speedaf", "external_channel", "openai", "codex", "provider_runtime"]:
+    for forbidden in ["speedaf", "external_channel", "openai", "legacy_ai_provider", "provider_runtime"]:
         assert forbidden not in combined
 
 

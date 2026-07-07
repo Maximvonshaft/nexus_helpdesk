@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
-from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: E402,F401
+from app import models, operator_models, tool_models, voice_models, webchat_models  # noqa: E402,F401
 from app.auth_service import create_access_token
 from app.db import Base, SessionLocal, engine
 from app.enums import UserRole
@@ -76,12 +76,12 @@ def _seed_turn_action(db, session: WebchatVoiceSession) -> None:
         ticket_id=session.ticket_id,
         turn_index=1,
         customer_text_redacted="hello",
-        ai_response_text_redacted="Please provide your tracking number.",
+        ai_response_text_redacted="Runtime generated reply.",
         language="en",
         intent="tracking_missing_number",
         action="tracking_missing_number",
         handoff_required=False,
-        provider="provider_runtime:codex_app_server",
+        provider="provider_runtime:private_ai_runtime",
         stt_provider="deepgram_streaming",
         tts_provider="cartesia_streaming",
         latency_ms=1234,
@@ -104,14 +104,14 @@ def _seed_turn_action(db, session: WebchatVoiceSession) -> None:
 
 
 def test_webcall_ai_prometheus_metrics_render_without_customer_text():
-    record_webcall_ai_stage(stage="llm_decision", status="ok", provider="provider_runtime:codex_app_server", elapsed_ms=42)
+    record_webcall_ai_stage(stage="llm_decision", status="ok", provider="provider_runtime:private_ai_runtime", elapsed_ms=42)
     record_webcall_ai_audio(provider="cartesia_streaming", status="ok", chunks=2, bytes_count=128)
 
     rendered = render_prometheus_metrics()
 
     assert "nexusdesk_webcall_ai_stage_duration_ms_bucket" in rendered
     assert 'stage="llm_decision"' in rendered
-    assert 'provider="provider_runtime:codex_app_server"' in rendered
+    assert 'provider="provider_runtime:private_ai_runtime"' in rendered
     assert "nexusdesk_webcall_ai_audio_chunks_total" in rendered
     assert "Please provide" not in rendered
 

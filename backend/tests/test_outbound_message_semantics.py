@@ -99,16 +99,16 @@ def add_outbound(db_session, ticket, *, channel, status, provider_status, body='
     return row
 
 
-def test_webchat_safe_ack_and_fallback_do_not_count_as_external_pending(db_session):
+def test_webchat_local_messages_do_not_count_as_external_pending(db_session):
     ticket = make_ticket(db_session, channel=SourceChannel.web_chat, contact='wc-local')
-    add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.sent, provider_status='webchat_safe_ack_delivered')
-    add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.sent, provider_status='webchat_ai_safe_fallback')
+    add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.sent, provider_status='webchat_delivered')
+    add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.sent, provider_status='webchat_ai_delivered')
     add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.pending, provider_status='queued')
     counts = count_outbound_semantics(db_session)
     assert counts['external_pending_outbound'] == 0
     assert counts['external_dead_outbound'] == 0
     assert counts['webchat_local_ack_sent'] == 1
-    assert counts['webchat_ai_safe_fallback_sent'] == 1
+    assert counts['webchat_ai_delivered_sent'] == 1
 
 
 def test_whatsapp_and_telegram_pending_count_as_external_pending(db_session):
@@ -125,15 +125,15 @@ def test_whatsapp_and_telegram_pending_count_as_external_pending(db_session):
 
 def test_outbound_ui_labels_are_semantic_not_raw_provider_statuses(db_session):
     ticket = make_ticket(db_session, channel=SourceChannel.web_chat, contact='wc-label')
-    local_ack = add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.sent, provider_status='webchat_safe_ack_delivered')
-    safe_fallback = add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.sent, provider_status='webchat_ai_safe_fallback')
+    local_message = add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.sent, provider_status='webchat_delivered')
+    ai_reply = add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.sent, provider_status='webchat_ai_delivered')
     draft = add_outbound(db_session, ticket, channel=SourceChannel.whatsapp, status=MessageStatus.draft, provider_status='ai_review_required')
     pending = add_outbound(db_session, ticket, channel=SourceChannel.whatsapp, status=MessageStatus.pending, provider_status='queued')
-    assert outbound_ui_label(local_ack.channel, local_ack.status, local_ack.provider_status) == 'Local WebChat ACK'
-    assert outbound_ui_label(safe_fallback.channel, safe_fallback.status, safe_fallback.provider_status) == 'WebChat Safe Fallback'
+    assert outbound_ui_label(local_message.channel, local_message.status, local_message.provider_status) == 'Local WebChat ACK'
+    assert outbound_ui_label(ai_reply.channel, ai_reply.status, ai_reply.provider_status) == 'Local WebChat AI Reply'
     assert outbound_ui_label(draft.channel, draft.status, draft.provider_status) == 'Draft / Review Required'
     assert outbound_ui_label(pending.channel, pending.status, pending.provider_status) == 'External Send Pending'
-    assert serialize_outbound(local_ack)['payload']['is_external_send'] is False
+    assert serialize_outbound(local_message)['payload']['is_external_send'] is False
     assert serialize_outbound(pending)['payload']['is_external_send'] is True
 
 
@@ -163,9 +163,9 @@ def test_non_external_outbound_never_calls_provider_dispatch(db_session, monkeyp
     assert processed.failure_code == 'non_external_outbound_not_dispatchable'
 
 
-def test_requeue_dead_outbound_rejects_local_webchat_ack(db_session):
+def test_requeue_dead_outbound_rejects_local_webchat_message(db_session):
     ticket = make_ticket(db_session, channel=SourceChannel.web_chat, contact='wc-dead')
-    row = add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.dead, provider_status='webchat_safe_ack_delivered')
+    row = add_outbound(db_session, ticket, channel=SourceChannel.web_chat, status=MessageStatus.dead, provider_status='webchat_delivered')
     db_session.commit()
     with pytest.raises(HTTPException) as exc:
         requeue_dead_outbound_message(db_session, message_id=row.id)

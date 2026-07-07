@@ -26,12 +26,12 @@ class FakeLLMProvider(LLMProvider):
         normalized = (text or "").lower()
         if any(ch.isdigit() for ch in normalized):
             return LLMResult(
-                response_text="I found the tracking number. I will check the approved tracking tool before giving a parcel status.",
+                response_text="",
                 intent="tracking_lookup",
                 provider_name=self.provider_name,
             )
         return LLMResult(
-            response_text="Please share your tracking number so I can check the shipment.",
+            response_text="",
             intent="tracking_number_required",
             provider_name=self.provider_name,
         )

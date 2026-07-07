@@ -51,6 +51,13 @@ def _env_int(name: str, default: int, *, minimum: int = 1, maximum: int = 30) ->
     return max(minimum, min(value, maximum))
 
 
+def _env_int_any(names: tuple[str, ...], default: int, *, minimum: int = 1, maximum: int = 30) -> int:
+    for name in names:
+        if os.getenv(name) not in (None, ""):
+            return _env_int(name, default, minimum=minimum, maximum=maximum)
+    return _env_int(names[0], default, minimum=minimum, maximum=maximum)
+
+
 def _first_non_empty(*values: Any) -> Any:
     for value in values:
         if value not in (None, ""):
@@ -100,12 +107,25 @@ def load_speedaf_mcp_config() -> SpeedafMcpConfig:
     data_mode = (os.getenv("SPEEDAF_MCP_DATA_MODE", "string").strip().lower() or "string")
     if data_mode not in _ALLOWED_DATA_MODES:
         data_mode = "string"
+    customer_code = (
+        os.getenv("SPEEDAF_MCP_CUSTOMER_CODE")
+        or os.getenv("SPEEDAF_CUSTOMER_CODE")
+        or "CH000001"
+    )
+    platform_source = (
+        os.getenv("SPEEDAF_MCP_PLATFORM_SOURCE")
+        or os.getenv("SPEEDAF_PLATFORM_SOURCE")
+        or "API KEY"
+    )
     return SpeedafMcpConfig(
         enabled=_env_bool("SPEEDAF_MCP_ENABLED", False),
-        base_url=(os.getenv("SPEEDAF_MCP_BASE_URL", "https://uat-api.speedaf.com").strip() or "https://uat-api.speedaf.com").rstrip("/"),
-        app_code=os.getenv("SPEEDAF_MCP_APP_CODE"),
-        secret_key=os.getenv("SPEEDAF_MCP_SECRET_KEY"),
-        timeout_seconds=_env_int("SPEEDAF_MCP_TIMEOUT_SECONDS", 8),
+        base_url=(os.getenv("SPEEDAF_MCP_BASE_URL") or os.getenv("SPEEDAF_BASE_URL") or "https://uat-api.speedaf.com").strip().rstrip("/"),
+        app_code=os.getenv("SPEEDAF_MCP_APP_CODE") or os.getenv("SPEEDAF_APP_CODE"),
+        secret_key=os.getenv("SPEEDAF_MCP_SECRET_KEY") or os.getenv("SPEEDAF_SECRET_KEY"),
+        customer_code=customer_code.strip() or None,
+        platform_source=platform_source.strip() or None,
+        lookup_caller_id=(os.getenv("SPEEDAF_MCP_LOOKUP_CALLER_ID") or os.getenv("SPEEDAF_LOOKUP_CALLER_ID") or "").strip() or None,
+        timeout_seconds=_env_int_any(("SPEEDAF_MCP_TIMEOUT_SECONDS", "SPEEDAF_TIMEOUT"), 8),
         country_code_default=(os.getenv("SPEEDAF_MCP_COUNTRY_CODE_DEFAULT", "CH").strip().upper() or "CH"),
         content_type=content_type,
         data_mode=data_mode,
@@ -141,6 +161,10 @@ class SpeedafMcpClient:
         return SpeedafMcpEnvelope(path=path, query=query, body=body, headers=headers, timestamp_ms=timestamp_ms)
 
     def _url(self, path: str) -> str:
+        base = self.config.base_url.rstrip("/")
+        cleaned_path = "/" + path.lstrip("/")
+        if base.endswith("/open-api/mcp") and cleaned_path.startswith("/open-api/mcp/"):
+            return base + cleaned_path.removeprefix("/open-api/mcp")
         return urljoin(self.config.base_url.rstrip("/") + "/", path.lstrip("/"))
 
     def post(self, path: str, data: dict[str, Any]) -> SpeedafMcpResponse:
@@ -153,6 +177,8 @@ class SpeedafMcpClient:
             "body": redact_mapping(data),
             "content_type": envelope.headers.get("Content-Type"),
             "data_mode": self.config.data_mode,
+            "customer_code_present": bool(self.config.customer_code),
+            "platform_source_present": bool(self.config.platform_source),
         }
         try:
             client = self._http_client or httpx.Client(timeout=self.config.timeout_seconds)

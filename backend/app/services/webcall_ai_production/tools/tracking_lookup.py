@@ -42,10 +42,10 @@ def lookup_tracking(payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "status": "not_configured",
             "tracking_number_redacted": f"{tracking_number[:3]}...{tracking_number[-2:]}",
-            "summary": "Tracking lookup is not connected yet. I have recorded your tracking number and a human agent will follow up if needed.",
+            "summary": "",
         }
     return {
         "status": "not_configured",
         "tracking_number_redacted": f"{tracking_number[:3]}...{tracking_number[-2:]}",
-        "summary": "Tracking lookup is not connected yet. I have recorded your tracking number and a human agent will follow up if needed.",
+        "summary": "",
     }

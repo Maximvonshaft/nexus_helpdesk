@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, clearToken, getToken, setToken } from '@/lib/api'
+import { clearSupportToken, getSupportToken, setSupportToken, supportApi } from '@/lib/supportApi'
 
 export function useSession() {
-  const token = getToken()
+  const token = getSupportToken()
   return useQuery({
     queryKey: ['session'],
-    queryFn: api.me,
+    queryFn: supportApi.me,
     enabled: !!token,
     retry: false,
   })
@@ -15,8 +15,8 @@ export function useLogin() {
   const client = useQueryClient()
   return useMutation({
     mutationFn: async (input: { username: string; password: string }) => {
-      const res = await api.login(input.username, input.password)
-      setToken(res.access_token)
+      const res = await supportApi.login(input.username, input.password)
+      setSupportToken(res.access_token)
       return res
     },
     onSuccess: async () => {
@@ -28,7 +28,7 @@ export function useLogin() {
 export function useLogout() {
   const client = useQueryClient()
   return () => {
-    clearToken()
+    clearSupportToken()
     client.clear()
   }
 }

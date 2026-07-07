@@ -5,14 +5,14 @@ on:
     branches: [main]
     paths:
       - 'backend/app/services/provider_runtime/**'
-      - 'backend/app/services/provider_*.py'
-      - 'backend/app/api/admin_provider*.py'
-      - 'backend/app/api/webchat_fast.py'
-      - 'backend/app/main.py'
-      - 'backend/tests/test_provider_*.py'
-      - 'backend/tests/test_webchat_fast_reply_provider_runtime.py'
-      - 'backend/tests/test_oauth_*.py'
-      - 'backend/tests/test_codex_*.py'
+      - 'backend/app/services/webchat_runtime_ai_service.py'
+      - 'backend/app/services/webchat_rate_limit.py'
+      - 'backend/app/services/speedaf/**'
+      - 'backend/app/api/admin_provider_runtime.py'
+      - 'backend/tests/test_provider_runtime_*.py'
+      - 'backend/tests/test_webchat_runtime_ai_service.py'
+      - 'backend/tests/test_webchat_rate_limit_bucket.py'
+      - 'backend/tests/test_speedaf*.py'
       - 'backend/alembic/versions/*provider*.py'
       - '.github/workflows/provider-runtime-gate.yml'
   push:
@@ -50,27 +50,14 @@ jobs:
             echo 'ERROR: .venv/ must be ignored.'
             exit 1
           fi
-
-      - name: Admin provider credential API surface gate
-        run: |
-          set -Eeuo pipefail
-          grep -n "prefix=\"/api/admin/provider-credentials\"" backend/app/api/admin_provider_credentials.py
-          grep -n "secret_values_exposed.*False" backend/app/services/provider_runtime/codex_credential_broker.py
-          if git grep -nE "return .*access_token|return .*refresh_token|access_token.*JSONResponse|refresh_token.*JSONResponse" -- backend/app/api/admin_provider_credentials.py backend/app/services/provider_runtime/codex_credential_broker.py; then
-            echo 'ERROR: provider credential API may expose raw token values.'
-            exit 1
-          fi
-          if git grep -nE "(access_token|refresh_token)" -- backend/app/api/admin_provider_credentials.py; then
-            echo 'ERROR: provider credential API routes must not return raw OAuth token field names.'
+          if git grep -nE 'codex_app_server|codex_direct|openai_responses|webchat_fast_reply|Please provide your tracking number' -- backend/app backend/scripts deploy webapp/src scripts; then
+            echo 'ERROR: retired provider/runtime or canned reply marker found in executable production paths.'
             exit 1
           fi
 
       - name: Alembic revision integrity gate
         run: |
           set -Eeuo pipefail
-          test -f backend/alembic/versions/20260521_0029_provider_runtime_tables.py
-          grep -n "revision = '20260521_0029'" backend/alembic/versions/20260521_0029_provider_runtime_tables.py
-          grep -n "down_revision = '20260521_0028'" backend/alembic/versions/20260521_0029_provider_runtime_tables.py
           python - <<'PY'
           from pathlib import Path
           import re
@@ -111,25 +98,17 @@ jobs:
           set -Eeuo pipefail
           timeout 600 python -m pytest -q \
             backend/tests/test_provider_runtime_output_contracts.py \
-            backend/tests/test_provider_runtime_openai_responses_adapter.py \
+            backend/tests/test_provider_runtime_private_ai_runtime_adapter.py \
             backend/tests/test_provider_runtime_router.py \
-            backend/tests/test_provider_runtime_router_fallback_e2e.py \
-            backend/tests/test_provider_runtime_kill_switch_canary.py \
             backend/tests/test_provider_runtime_status.py \
-            backend/tests/test_provider_credentials_crypto.py \
             backend/tests/test_provider_runtime_token_leakage.py \
-            backend/tests/test_provider_runtime_tenant_isolation.py \
-            backend/tests/test_webchat_fast_reply_provider_runtime.py \
-            backend/tests/test_admin_provider_runtime_routing_api.py \
-            backend/tests/test_provider_runtime_backward_compat.py \
-            backend/tests/test_oauth_refresh_manager.py \
-            backend/tests/test_oauth_refresh_concurrency.py \
-            backend/tests/test_codex_device_auth_service.py \
-            backend/tests/test_codex_auth_profile_importer.py \
-            backend/tests/test_codex_app_server_provider_credential_store.py \
-            backend/tests/test_codex_oauth_config.py \
-            backend/tests/test_provider_runtime_codex_oauth_webchat.py \
-            backend/tests/test_provider_credentials_api.py
+            backend/tests/test_webchat_runtime_ai_service.py \
+            backend/tests/test_webchat_rate_limit_bucket.py \
+            backend/tests/test_webchat_ai_turn_runtime.py \
+            backend/tests/test_speedaf_client_contract.py \
+            backend/tests/test_speedaf_status_map.py \
+            backend/tests/test_speedaf_track_query.py \
+            backend/tests/test_speedaf_tracking_fact_source.py
 
       - name: Route safety smoke
         env:
@@ -139,11 +118,9 @@ jobs:
           python - <<'PY'
           from app.main import app
           routes = sorted(getattr(route, 'path', '') for route in app.routes)
-          assert '/api/admin/provider-credentials/codex/status' in routes, routes
-          assert '/api/admin/provider-credentials/codex/callback' in routes, routes
-          assert '/api/admin/provider-credentials/codex/manual/start' in routes, routes
-          assert '/api/admin/provider-credentials/codex/manual/complete' in routes, routes
-          assert '/api/admin/provider-runtime/routing/webchat-fast-reply' in routes, routes
-          assert any('fast-reply' in path for path in routes), routes
+          assert '/api/admin/provider-runtime/status' in routes, routes
+          assert '/api/webchat/init' in routes, routes
+          assert not any('provider-credentials/codex' in path for path in routes), routes
+          assert not any('webchat-fast' in path or 'fast-reply' in path for path in routes), routes
           print('route_smoke_ok')
           PY

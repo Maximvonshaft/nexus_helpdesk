@@ -5,7 +5,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webcall_ai_evidence_tests.
 
 import pytest
 
-from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: F401,E402
+from app import models, operator_models, tool_models, voice_models, webchat_models  # noqa: F401,E402
 from app.db import Base, SessionLocal, engine
 from app.services.tracking_fact_schema import hash_tracking_number
 from app.services.webcall_ai.evidence_builder import build_webcall_ai_evidence_report, evidence_report_to_safe_dict

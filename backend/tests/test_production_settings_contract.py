@@ -39,7 +39,7 @@ def production_env(**overrides: str) -> dict[str, str]:
         'EXTERNAL_CHANNEL_TRANSPORT': 'disabled',
         'EXTERNAL_CHANNEL_DEPLOYMENT_MODE': 'disabled',
         'WEBCHAT_RATE_LIMIT_BACKEND': 'database',
-        'WEBCHAT_AI_AUTO_REPLY_MODE': 'safe_ack',
+        'WEBCHAT_AI_AUTO_REPLY_MODE': 'safe_ai',
         'WEBCHAT_ALLOWED_ORIGINS': 'https://example.test',
         'WEBCHAT_ALLOW_LEGACY_TOKEN_TRANSPORT': 'false',
         'WEBCHAT_WS_ENABLED': 'false',

@@ -1,7 +1,6 @@
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
@@ -25,7 +24,6 @@ from app.services.knowledge_grounding_service import (  # noqa: E402
 from app.services.knowledge_prompt_service import build_knowledge_prompt_block, summarize_rag_trace  # noqa: E402
 from app.services.knowledge_retrieval_service import analyze_query, retrieve_published_chunks  # noqa: E402
 from app.services.provider_runtime.output_contracts import OutputContracts  # noqa: E402
-from app.services.webchat_ai_service import _build_prompt  # noqa: E402
 
 
 @pytest.fixture()
@@ -154,6 +152,91 @@ def test_english_query_retrieves_approved_business_fact(db_session):
     assert result.hits[0].item_key == fact.item_key
     assert "2 business days" in result.hits[0].direct_answer
     assert "sla" in result.query_analysis.intent_terms or "delivery" in result.query_analysis.service_terms
+
+
+def test_english_query_can_retrieve_mixed_language_direct_fact(db_session):
+    admin = _user(db_session)
+    fact = _business_fact(
+        db_session,
+        admin,
+        item_key="fact.ch.service-availability",
+        title="Switzerland domestic-to-domestic service availability",
+        language="mixed",
+        fact_question="Do you provide domestic-to-domestic delivery in Switzerland?",
+        fact_answer="Switzerland domestic-to-domestic service is currently unavailable. 瑞士目前暂未开通本对本业务。",
+        fact_aliases_json=[
+            "domestic to domestic delivery in Switzerland",
+            "Swiss local delivery",
+            "瑞士本对本",
+            "瑞士暂未开通",
+        ],
+        priority=6,
+    )
+
+    result = retrieve_published_chunks(
+        db_session,
+        q="Do you provide domestic to domestic delivery in Switzerland?",
+        channel="website",
+        audience_scope="customer",
+        language="en",
+        limit=5,
+    )
+
+    assert result.hits[0].item_key == fact.item_key
+    assert "currently unavailable" in result.hits[0].direct_answer
+
+
+def test_guided_structured_fact_exposes_fact_answer_for_runtime_grounding(db_session):
+    admin = _user(db_session)
+    fact = _business_fact(
+        db_session,
+        admin,
+        item_key="qa.production.guided",
+        title="生产知识闭环冒烟",
+        language="zh",
+        fact_question="客户问生产知识闭环暗号是什么？",
+        fact_answer="生产知识闭环暗号是 canyon-lime。这是知识库事实，不是固定客服话术。",
+        fact_aliases_json=["生产知识闭环暗号", "knowledge qa"],
+        answer_mode="guided_answer",
+    )
+
+    result = retrieve_published_chunks(
+        db_session,
+        q="请告诉我生产知识闭环暗号是什么？",
+        channel="website",
+        audience_scope="customer",
+        language="zh",
+        limit=5,
+    )
+
+    assert result.hits[0].item_key == fact.item_key
+    assert result.hits[0].answer_mode == "guided_answer"
+    assert result.hits[0].direct_answer == "生产知识闭环暗号是 canyon-lime。这是知识库事实，不是固定客服话术。"
+
+
+def test_tracking_query_does_not_promote_business_fact_to_locked_fact(db_session):
+    admin = _user(db_session)
+    _business_fact(
+        db_session,
+        admin,
+        item_key="fact.ch.service-availability",
+        title="Switzerland domestic-to-domestic service availability",
+        language="mixed",
+        fact_question="Do you provide domestic-to-domestic delivery in Switzerland?",
+        fact_answer="Switzerland domestic-to-domestic service is currently unavailable. 瑞士目前暂未开通本对本业务。",
+        fact_aliases_json=["domestic to domestic delivery in Switzerland", "Swiss local delivery"],
+        priority=6,
+    )
+
+    context = build_webchat_runtime_context(
+        db_session,
+        tenant_key="default",
+        channel_key="website",
+        body="Please help me track my parcel. I will provide the tracking number.",
+        language="en",
+    )
+
+    assert context["knowledge_context"]["locked_facts"] == []
 
 
 def test_swiss_ocean_shipping_sla_direct_answer_retrieval_and_runtime_context(db_session):
@@ -442,15 +525,6 @@ def test_approved_direct_answer_override_requires_entity_compatible_candidate():
         assert blocked.reason == "entity_mismatch"
 
 
-def test_knowledge_e2e_probe_runtime_sha_gate_is_dynamic():
-    script = (ROOT.parent / "scripts/probe_knowledge_retrieval_e2e.sh").read_text(encoding="utf-8")
-
-    assert 'EXPECTED_SHA="${EXPECTED_SHA:-}"' in script
-    assert "runtime_git_sha mismatch" in script
-    assert "${BASE_URL%/}/healthz" in script
-    assert "633d8c30e098" not in script
-
-
 @pytest.mark.parametrize(
     "query",
     [
@@ -517,7 +591,7 @@ def test_direct_answer_grounding_blocks_unsafe_answers(answer):
     assert decision.applied is False
 
 
-def test_runtime_context_and_prompt_are_bounded_and_sanitized(db_session):
+def test_runtime_context_is_bounded_and_sanitized(db_session):
     admin = _user(db_session)
     _create(
         db_session,
@@ -540,19 +614,7 @@ def test_runtime_context_and_prompt_are_bounded_and_sanitized(db_session):
     assert "127.0.0.1" not in encoded
     assert context["knowledge_context"]["query_analysis"]["language"] == "en"
 
-    prompt = _build_prompt(
-        ticket=SimpleNamespace(ticket_no="T-1"),
-        conversation=SimpleNamespace(),
-        visitor_message=SimpleNamespace(body="What is the return window?"),
-        history_rows=[SimpleNamespace(direction="visitor", body="What is the return window?")],
-        runtime_context=context,
-    )
-    assert "item_key=doc.return.window" in prompt
-    assert "do not say cannot confirm" in prompt
-    assert len(prompt) < 7000
-
-
-def test_persona_identity_contract_still_overrides_provider_output(db_session):
+def test_persona_identity_context_is_context_only_not_backend_reply_override(db_session):
     admin = _user(db_session)
     profile = persona_service.create_profile(
         db_session,
@@ -580,15 +642,15 @@ def test_persona_identity_contract_still_overrides_provider_output(db_session):
         body="你是谁",
     )
     parsed = OutputContracts.validate_and_parse(
-        "speedaf_webchat_fast_reply_v1",
-        json.dumps({"customer_reply": "我是 NexusDesk。", "language": "zh", "intent": "other", "handoff_required": False, "ticket_should_create": False}),
+        "nexus_webchat_runtime_reply_v1",
+        json.dumps({"customer_reply": "我是客服助手。", "language": "zh", "intent": "other", "handoff_required": False, "ticket_should_create": False}),
         evidence_present=False,
         persona_context=context["persona_context"],
         request_body="你是谁",
     )
 
-    assert parsed["customer_reply"] == "我是猴王山的悟空客服，可以协助处理客户服务问题。"
-    assert "NexusDesk" not in parsed["customer_reply"]
+    assert context["persona_context"]["identity_context"]["assistant_name"] == "悟空客服"
+    assert parsed["customer_reply"] == "我是客服助手。"
 
 
 def test_knowledge_prompt_block_force_includes_direct_answer_first(db_session):

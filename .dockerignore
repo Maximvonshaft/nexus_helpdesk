@@ -62,4 +62,10 @@ logs/
 *.p12
 *.pfx
 *secret*
-*token*
+runtime_secrets/
+**/runtime_secrets/
+*.token
+*.tokens
+*token*.env
+*token*.txt
+*token*.json

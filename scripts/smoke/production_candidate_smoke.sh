@@ -75,13 +75,13 @@ if grep -Eq '47\.87\.143\.41|console\.log|\[Speedaf Voice\]' "$OUT_DIR/voice-ent
 fi
 
 curl -fsS -i --max-time 10 \
-  -X OPTIONS "${BASE_URL%/}/api/webchat/fast-reply" \
+  -X OPTIONS "${BASE_URL%/}/api/webchat/init" \
   -H 'Origin: https://leakle.com' \
   -H 'Access-Control-Request-Method: POST' \
   -o "$OUT_DIR/cors_allowed.txt"
 
 if curl -fsS -i --max-time 10 \
-  -X OPTIONS "${BASE_URL%/}/api/webchat/fast-reply" \
+  -X OPTIONS "${BASE_URL%/}/api/webchat/init" \
   -H 'Origin: https://evil.example' \
   -H 'Access-Control-Request-Method: POST' \
   -o "$OUT_DIR/cors_blocked.txt"; then

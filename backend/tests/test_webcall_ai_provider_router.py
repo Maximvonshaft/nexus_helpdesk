@@ -5,7 +5,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webcall_ai_provider_router
 
 import pytest
 
-from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: F401,E402
+from app import models, operator_models, tool_models, voice_models, webchat_models  # noqa: F401,E402
 from app.db import Base, SessionLocal, engine
 from app.services.webcall_ai.config import get_webcall_ai_settings
 from app.services.webcall_ai.contract_stub_provider import (

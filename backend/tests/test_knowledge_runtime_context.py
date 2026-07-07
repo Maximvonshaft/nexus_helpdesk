@@ -235,6 +235,77 @@ def test_runtime_context_expands_tracking_no_evidence_query_to_waybill_rules(db_
     assert knowledge["hits"][0]["metadata"]["knowledge_kind"] == "business_fact"
 
 
+def test_runtime_context_does_not_expand_plain_numeric_smoke_text_to_waybill_rules(db_session):
+    context = build_webchat_runtime_context(
+        db_session,
+        tenant_key="default",
+        channel_key="website",
+        language="en",
+        body="hello latency smoke 1783325498843",
+        tracking_number=None,
+        tracking_fact_evidence_present=False,
+    )
+
+    knowledge = context["knowledge_context"]
+    assert "tracking lookup failed" not in knowledge["retrieval_query"]
+    assert knowledge["query_expansion_terms"] == []
+
+
+def test_runtime_context_does_not_expand_plain_alphanumeric_reference_to_waybill_rules(db_session):
+    context = build_webchat_runtime_context(
+        db_session,
+        tenant_key="default",
+        channel_key="website",
+        language="zh",
+        body="你好，生产知识闭环暗号 mr9864yr 是什么？",
+        tracking_number=None,
+        tracking_fact_evidence_present=False,
+    )
+
+    knowledge = context["knowledge_context"]
+    assert "tracking lookup failed" not in knowledge["retrieval_query"]
+    assert "waybill not found" not in knowledge["retrieval_query"]
+    assert knowledge["query_expansion_terms"] == []
+
+
+def test_runtime_context_expands_embedded_ch_waybill_identifier_without_live_status(db_session):
+    admin = _user(db_session)
+    item = knowledge_service.create_item(
+        db_session,
+        _knowledge_payload(
+            item_key="ch.embedded.waybill.format",
+            title="CH 运单格式",
+            channel="website",
+            language="zh",
+            knowledge_kind="business_fact",
+            fact_question="CH 运单号格式",
+            fact_answer="CH 运单号通常为 CH 开头，后接数字。",
+            fact_aliases_json=["CH tracking number format", "waybill format"],
+            fact_status="approved",
+            answer_mode="guided_answer",
+            draft_body="CH 运单号通常为 CH 开头，后接数字。",
+            draft_normalized_text="CH tracking number format waybill format 运单号格式",
+        ),
+        admin,
+    )
+    knowledge_service.publish_item(db_session, item, admin, notes="publish")
+
+    context = build_webchat_runtime_context(
+        db_session,
+        tenant_key="default",
+        channel_key="website",
+        language="zh",
+        body="请帮我看看 CH020000129135",
+        tracking_number=None,
+        tracking_fact_evidence_present=False,
+    )
+
+    knowledge = context["knowledge_context"]
+    assert "tracking lookup failed" in knowledge["retrieval_query"]
+    assert knowledge["query_expansion_terms"]
+    assert knowledge["hits"][0]["item_key"] == "ch.embedded.waybill.format"
+
+
 def test_runtime_context_includes_persona_identity_context_without_description(db_session):
     admin = _user(db_session)
     profile = persona_service.create_profile(

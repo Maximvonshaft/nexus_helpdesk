@@ -53,8 +53,11 @@ def test_candidate_env_example_documents_external_network() -> None:
     assert "CANDIDATE_WA_SIDECAR_PORT=18795" in env_example
     assert "CANDIDATE_NEXUS_BACKEND_URL=http://app-candidate:8080" in env_example
     assert "PRIVATE_AI_RUNTIME_TOKEN_FILE=/run/nexus/ai_runtime_token" in env_example
-    assert "PRIVATE_AI_RUNTIME_REQUEST_SHAPE=question" in env_example
-    assert "PRIVATE_AI_RUNTIME_MAX_PROMPT_CHARS=1200" in env_example
+    assert "PRIVATE_AI_RUNTIME_DIRECT_PATH=/api/chat" in env_example
+    assert "PRIVATE_AI_RUNTIME_RAG_PATH=/api/chat" in env_example
+    assert "PRIVATE_AI_RUNTIME_REQUEST_SHAPE=ollama_chat" in env_example
+    assert "PRIVATE_AI_RUNTIME_MAX_PROMPT_CHARS=3500" in env_example
+    assert "PRIVATE_AI_RUNTIME_WARMUP_INTERVAL_SECONDS=60" in env_example
     assert "PROVIDER_RUNTIME_TIMEOUT_MS=30000" in env_example
     assert "PROVIDER_RUNTIME_PRIMARY_PROVIDER=private_ai_runtime" in env_example
     assert "WHATSAPP_NATIVE_ENABLED=true" in env_example
@@ -62,6 +65,15 @@ def test_candidate_env_example_documents_external_network() -> None:
     assert "WHATSAPP_SIDECAR_URL=http://whatsapp-sidecar-candidate:18793" in env_example
     assert "SPEEDAF_MCP_ENABLED=false" in env_example
     assert "SPEEDAF_CANCEL_ENABLED=false" in env_example
+
+
+def test_candidate_compose_includes_runtime_warmer() -> None:
+    compose = (ROOT / "deploy" / "docker-compose.candidate.yml").read_text(encoding="utf-8")
+
+    assert "runtime-warmer-candidate:" in compose
+    assert "python /app/scripts/smoke/warm_private_ai_runtime.py" in compose
+    assert "PRIVATE_AI_RUNTIME_WARMUP_INTERVAL_SECONDS" in compose
+    assert "whatsapp-sidecar-candidate" in compose
 
 
 def test_candidate_whatsapp_native_gate_workflow_covers_compose_sidecar_and_backend_contracts() -> None:

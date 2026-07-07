@@ -19,9 +19,9 @@ class WebchatConversation(Base):
     __tablename__ = "webchat_conversations"
     __table_args__ = (
         UniqueConstraint("tenant_key", "channel_key", "public_id", name="uq_webchat_tenant_channel_public"),
-        Index("ix_webchat_fast_session", "tenant_key", "channel_key", "fast_session_id"),
+        Index("ix_webchat_runtime_session", "tenant_key", "channel_key", "fast_session_id"),
         Index(
-            "uq_webchat_fast_open_session",
+            "uq_webchat_runtime_open_session",
             "tenant_key",
             "channel_key",
             "fast_session_id",
@@ -30,8 +30,8 @@ class WebchatConversation(Base):
             sqlite_where=text("fast_session_id IS NOT NULL AND status = 'open'"),
             postgresql_where=text("fast_session_id IS NOT NULL AND status = 'open'"),
         ),
-        Index("ix_webchat_fast_issue_key", "tenant_key", "channel_key", "fast_issue_key"),
-        Index("ix_webchat_fast_last_tracking", "last_tracking_number"),
+        Index("ix_webchat_runtime_issue_key", "tenant_key", "channel_key", "fast_issue_key"),
+        Index("ix_webchat_runtime_last_tracking", "last_tracking_number"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -49,15 +49,15 @@ class WebchatConversation(Base):
     page_url: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
     user_agent: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="open", index=True)
-    # Fast Lane server-side continuity. These fields separate the short-lived
-    # AI conversation container from the ticket that exists only after handoff.
-    fast_session_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
-    fast_issue_key: Mapped[Optional[str]] = mapped_column(String(240), nullable=True, index=True)
+    # Runtime server-side continuity. The database column names are historical
+    # and intentionally preserved to avoid a production schema rename.
+    runtime_session_id: Mapped[Optional[str]] = mapped_column("fast_session_id", String(120), nullable=True, index=True)
+    runtime_issue_key: Mapped[Optional[str]] = mapped_column("fast_issue_key", String(240), nullable=True, index=True)
     last_intent: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     last_tracking_number: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
-    fast_last_client_message_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
-    fast_context_updated_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True, index=True)
-    # Fast-read AI runtime snapshot. These fields are cache values, not the
+    runtime_last_client_message_id: Mapped[Optional[str]] = mapped_column("fast_last_client_message_id", String(120), nullable=True, index=True)
+    runtime_context_updated_at: Mapped[Optional[datetime]] = mapped_column("fast_context_updated_at", UTCDateTime, nullable=True, index=True)
+    # AI runtime snapshot. These fields are cache values, not the
     # source of truth, so keep them as plain indexed ids to avoid circular FKs.
     active_ai_turn_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     active_ai_status: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
@@ -137,6 +137,7 @@ class WebchatAITurn(Base):
     fact_gate_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     bridge_elapsed_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     bridge_timeout_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    runtime_trace_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     superseded_by_turn_id: Mapped[Optional[int]] = mapped_column(ForeignKey("webchat_ai_turns.id"), nullable=True, index=True)
     is_public_reply_allowed: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     cancelled_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)

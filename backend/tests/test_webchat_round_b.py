@@ -57,7 +57,7 @@ def _create_webchat_message_flow(client: TestClient):
     assert polled.status_code == 200, polled.text
     messages_before = polled.json()['messages']
     assert any(item['direction'] == 'visitor' and 'Hello, what can you help me with?' in item['body'] for item in messages_before)
-    assert any(item['direction'] == 'agent' and 'received your message' in item['body'] for item in messages_before)
+    assert not any(item['direction'] == 'agent' for item in messages_before)
     return conversation_id, visitor_token
 
 
@@ -69,7 +69,18 @@ def test_public_webchat_init_send_poll_and_background_ai_reply(monkeypatch):
     from app.services import webchat_ai_safe_service
 
     monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
-    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', lambda **kwargs: 'We can help with shipment questions, delivery updates, and general support requests.')
+    def fake_generate_ai_reply(**_kwargs):
+        webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
+        webchat_ai_service._LAST_AI_FALLBACK_REASON = None
+        webchat_ai_service._LAST_BRIDGE_ELAPSED_MS = 18
+        webchat_ai_service._LAST_BRIDGE_EFFECTIVE_TIMEOUT_SECONDS = 12
+        webchat_ai_service._LAST_BRIDGE_WAIT_TIMEOUT_MS = 12000
+        webchat_ai_service._LAST_RUNTIME_HANDOFF_REQUIRED = False
+        webchat_ai_service._LAST_RUNTIME_HANDOFF_REASON = None
+        webchat_ai_service._LAST_RUNTIME_RECOMMENDED_AGENT_ACTION = None
+        return 'I can help with shipment questions, delivery updates, and general support requests.'
+
+    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
 
     db = SessionLocal()
     try:

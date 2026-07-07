@@ -19,6 +19,10 @@ MAX_LOCKED_FACTS = 3
 MAX_IDENTITY_FIELD_CHARS = 500
 MAX_IDENTITY_LIST_ITEMS = 12
 TRACKING_NUMBER_RE = re.compile(r"\b(?=[A-Z0-9]{8,30}\b)(?=[A-Z0-9]*\d)[A-Z0-9]+\b", re.I)
+TRACKING_CONTEXT_RE = re.compile(
+    r"\b(track|tracking|waybill|parcel|package|shipment|delivery|order)\b|物流|运单|单号|查件|查询|包裹|快递|订单号|订单",
+    re.I,
+)
 TRACKING_NO_EVIDENCE_EXPANSION_TERMS = [
     "tracking lookup failed",
     "waybill not found",
@@ -32,6 +36,19 @@ TRACKING_NO_EVIDENCE_EXPANSION_TERMS = [
     "CH tracking number format",
 ]
 
+
+def _looks_like_tracking_identifier(token: str) -> bool:
+    normalized = (token or "").strip().upper()
+    if not normalized:
+        return False
+    digit_count = sum(1 for char in normalized if char.isdigit())
+    letter_count = sum(1 for char in normalized if char.isalpha())
+    if digit_count == len(normalized):
+        return False
+    if normalized.startswith("CH") and len(normalized) >= 10 and digit_count >= 6:
+        return True
+    return len(normalized) >= 12 and digit_count >= 6 and letter_count >= 1
+
 _SECRET_PATTERNS = [
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.I),
     re.compile(r"sk-[A-Za-z0-9_-]{12,}", re.I),
@@ -40,8 +57,6 @@ _SECRET_PATTERNS = [
 ]
 _INTERNAL_WORDS = {
     "provider_runtime",
-    "codex_app_server",
-    "codex bridge",
     "bridge token",
     "system prompt",
     "external_channel",
@@ -125,8 +140,20 @@ def build_webchat_runtime_context(
 def _runtime_retrieval_query(*, body: str, tracking_number: str | None, tracking_fact_evidence_present: bool | None) -> tuple[str, list[str]]:
     if tracking_fact_evidence_present is True:
         return body, []
-    has_tracking_identifier = bool((tracking_number or "").strip() or TRACKING_NUMBER_RE.search(body or ""))
-    has_tracking_language = any(term in (body or "").lower() for term in ("tracking", "track", "waybill", "parcel", "shipment", "物流", "运单", "单号", "查件", "包裹"))
+    text = body or ""
+    has_tracking_language = bool(TRACKING_CONTEXT_RE.search(text))
+    token_match = TRACKING_NUMBER_RE.search(text)
+    has_tracking_identifier = bool((tracking_number or "").strip())
+    if token_match:
+        token = token_match.group(0)
+        token_is_digit_only = token.isdigit()
+        token_is_reference_only = text.strip() == token
+        token_looks_like_tracking = _looks_like_tracking_identifier(token)
+        has_tracking_identifier = has_tracking_identifier or (
+            token_is_reference_only
+            or has_tracking_language
+            or (not token_is_digit_only and token_looks_like_tracking)
+        )
     if not has_tracking_identifier and not has_tracking_language:
         return body, []
     terms = TRACKING_NO_EVIDENCE_EXPANSION_TERMS
@@ -298,6 +325,8 @@ def _evidence_pack_hit(hit: dict[str, Any]) -> dict[str, Any]:
 
 
 def _locked_facts(*, query: str, hits: list[dict[str, Any]], entity_terms: list[str]) -> list[dict[str, Any]]:
+    if _looks_like_tracking_query(query):
+        return []
     facts: list[dict[str, Any]] = []
     seen: set[str] = set()
     for hit in hits:
@@ -328,6 +357,28 @@ def _locked_facts(*, query: str, hits: list[dict[str, Any]], entity_terms: list[
         if len(facts) >= MAX_LOCKED_FACTS:
             break
     return facts
+
+
+def _looks_like_tracking_query(query: str | None) -> bool:
+    text = str(query or "").lower()
+    return any(
+        marker in text
+        for marker in (
+            "track",
+            "tracking",
+            "parcel",
+            "package",
+            "shipment",
+            "waybill",
+            "where is",
+            "物流",
+            "运单",
+            "单号",
+            "查件",
+            "包裹",
+            "快递",
+        )
+    )
 
 
 def _extract_question(text: Any) -> str | None:

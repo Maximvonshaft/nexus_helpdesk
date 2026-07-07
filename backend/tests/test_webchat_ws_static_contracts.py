@@ -103,14 +103,31 @@ def test_static_widget_uses_ws_without_url_token_transport():
     assert "data-websocket" in text
 
 
-def test_static_widget_fast_ai_uses_public_ws_and_keeps_disable_fallback():
+def test_static_widget_runtime_session_uses_public_ws_and_keeps_disable_fallback():
     text = (ROOT / "backend" / "app" / "static" / "webchat" / "widget.js").read_text(encoding="utf-8")
 
-    assert "var mode = (script.getAttribute('data-webchat-mode') || 'fast_ai').toLowerCase()" in text
+    assert "fast_ai" not in text
+    assert "data-webchat-mode" not in text
     assert "rememberPublicSession(data)" in text
-    assert "mode !== 'legacy' && mode !== 'fast_ai'" in text
     assert "script.getAttribute('data-websocket') === 'false') return" in text
     assert "X-Webchat-WS-Fallback" in text
+
+
+def test_static_widget_ai_turn_events_only_control_typing_state():
+    text = (ROOT / "backend" / "app" / "static" / "webchat" / "widget.js").read_text(encoding="utf-8")
+
+    assert "function syncAiTyping(status, pending, elapsedMs)" in text
+    assert "normalized === 'bridge_calling'" in text
+    assert "normalized === 'failed'" in text
+    assert "normalized === 'timeout'" in text
+    assert "ai_status_elapsed_ms" in text
+    assert "data-ai-status" in text
+    assert "AI processing" not in text
+    assert "AI queued" not in text
+    assert "AI retrying" not in text
+    assert "indexOf('ai_turn.')" in text
+    assert "Please provide your tracking number" not in text
+    assert "so I can check" not in text
 
 
 def test_webchat_ws_observability_and_connection_limits_contract():

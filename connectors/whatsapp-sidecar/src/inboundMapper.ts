@@ -7,6 +7,7 @@ export interface InboundMapperOptions {
 }
 
 function phoneFromJid(jid: string | undefined | null): string | null {
+  if ((jid || "").endsWith("@lid")) return null;
   const cleaned = (jid || "").split("@")[0]?.replace(/\D/g, "") || "";
   return cleaned ? `+${cleaned}` : null;
 }
@@ -28,6 +29,15 @@ function messageType(message: any): string {
   return first || "unknown";
 }
 
+function isCustomerChatJid(jid: string): boolean {
+  if (!jid) return false;
+  if (jid === "status@broadcast") return false;
+  if (jid.endsWith("@broadcast")) return false;
+  if (jid.endsWith("@g.us")) return false;
+  if (jid.endsWith("@newsletter")) return false;
+  return true;
+}
+
 export function normalizeBaileysInbound(accountId: string, event: any, options: InboundMapperOptions = {}): NormalizedInboundMessage | null {
   if (!event?.key?.id) return null;
   const fromMe = event.key.fromMe === true;
@@ -36,7 +46,7 @@ export function normalizeBaileysInbound(accountId: string, event: any, options: 
   if (fromMe && (!options.allowFromMeInbound || fromMeMode === "ignore")) return null;
   const chatJid = String(event.key.remoteJid || "");
   const senderJid = String(event.key.participant || event.key.remoteJid || "");
-  if (!chatJid || chatJid.endsWith("@g.us")) return null;
+  if (!isCustomerChatJid(chatJid)) return null;
   const body = extractText(event);
   if (!body) return null;
   let projectionMode: NormalizedInboundMessage["projection_mode"] = "visitor";
@@ -47,7 +57,7 @@ export function normalizeBaileysInbound(accountId: string, event: any, options: 
       if (!body.startsWith(testPrefix)) return null;
       projectionMode = "test_visitor";
     } else if (fromMeMode === "self_chat") {
-      projectionMode = "self_chat";
+      return null;
     } else {
       return null;
     }

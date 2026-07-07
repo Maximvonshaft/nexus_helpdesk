@@ -22,6 +22,7 @@ from app.db import Base  # noqa: E402
 from app.enums import ConversationState, EventType, MessageStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.models import Customer, Ticket, TicketEvent, TicketOutboundMessage, User  # noqa: E402
 from app.services.support_memory_ledger import build_support_memory_ledger  # noqa: E402
+from app.services.tracking_fact_schema import hash_tracking_number  # noqa: E402
 from app.tool_models import ToolCallLog  # noqa: E402
 from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatMessage  # noqa: E402
 
@@ -164,7 +165,127 @@ def test_support_memory_ledger_derives_safe_state_and_speedaf_evidence(db_sessio
     assert ledger["tracking"]["hash"].startswith("sha256:")
     assert ledger["tracking"]["raw_exposed"] is False
     assert ledger["ai_state"]["ai_suspended"] is True
+    assert ledger["ai_state"]["last_bridge_elapsed_ms"] == 321
+    assert ledger["ai_state"]["last_ai_reply_source"] == "ai_runtime"
+    assert ledger["ai_state"]["last_ai_status"] == "completed"
     assert ledger["latest_speedaf_evidence"] is not None
     assert any(item["kind"] == "tool_call" and item["label"] == "speedaf.order.query" for item in ledger["evidence_timeline"])
     assert any(item["key"] in {"handoff_active", "review_handoff", "required_action"} for item in ledger["next_actions"])
     assert "ABC123456789" not in json.dumps(ledger, ensure_ascii=False)
+
+
+def test_support_memory_ledger_redacts_free_text_customer_identifiers(db_session):
+    user = make_user(db_session)
+    ticket, conversation, message = make_ticket(db_session)
+    ticket.tracking_number = "CH020000129135"
+    conversation.last_tracking_number = "CH020000129135"
+    ticket.customer_request = "Email me at visitor@example.test or call +41 79 123 45 67 about CH020000129135."
+    ticket.required_action = "Check CH020000129135 and call +41 79 123 45 67."
+    db_session.add(ToolCallLog(
+        tool_name="speedaf.order.query",
+        provider="speedaf_mcp",
+        tool_type="read_only",
+        webchat_conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        status="success",
+        output_summary='{"waybillCode":"CH020000129135","phone":"+41 79 123 45 67","email":"visitor@example.test"}',
+        redaction_applied=False,
+    ))
+    db_session.flush()
+
+    ledger = build_support_memory_ledger(db_session, ticket_id=ticket.id, current_user=user)
+    rendered = json.dumps(ledger, ensure_ascii=False)
+
+    assert "CH020000129135" not in rendered
+    assert "+41 79 123 45 67" not in rendered
+    assert "visitor@example.test" not in rendered
+    assert "parcel ending 129135" in rendered
+    assert "[redacted_phone]" in rendered
+    assert "[redacted_email]" in rendered
+    assert ledger["tracking"]["suffix"] == "129135"
+    assert ledger["tracking"]["raw_exposed"] is False
+
+
+def test_support_memory_ledger_derives_tracking_from_safe_ai_evidence(db_session):
+    user = make_user(db_session)
+    ticket, conversation, message = make_ticket(db_session)
+    ticket.tracking_number = None
+    conversation.last_tracking_number = None
+    db_session.add(WebchatMessage(
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        direction="agent",
+        body="Your parcel ending 129135 is currently in pending pickup.",
+        body_text="Your parcel ending 129135 is currently in pending pickup.",
+        author_label="AI",
+        metadata_json=json.dumps({
+            "fact_evidence_present": True,
+            "tool_name": "speedaf.order.query",
+            "tool_status": "success",
+            "tracking_number_hash": hash_tracking_number("CH020000129135"),
+            "tracking_reference_suffix": "129135",
+            "safe_tracking_reference": "parcel ending 129135",
+        }),
+    ))
+    db_session.flush()
+
+    ledger = build_support_memory_ledger(db_session, ticket_id=ticket.id, current_user=user)
+    rendered = json.dumps(ledger, ensure_ascii=False)
+
+    assert ledger["tracking"]["present"] is True
+    assert ledger["tracking"]["suffix"] == "129135"
+    assert ledger["tracking"]["source"] == "message.metadata.safe_tracking_reference"
+    assert ledger["tracking"]["hash"] == hash_tracking_number("CH020000129135")
+    assert "CH020000129135" not in rendered
+
+
+def test_support_memory_ledger_derives_tracking_from_nested_tracking_fact(db_session):
+    user = make_user(db_session)
+    ticket, conversation, message = make_ticket(db_session)
+    ticket.tracking_number = None
+    conversation.last_tracking_number = None
+    db_session.add(TicketEvent(
+        ticket_id=ticket.id,
+        actor_id=user.id,
+        event_type=EventType.outbound_sent,
+        payload_json=json.dumps({
+            "fact_evidence_present": True,
+            "tracking_fact": {
+                "fact_source": "speedaf_api.order_query",
+                "tool_name": "speedaf.order.query",
+                "tool_status": "success",
+                "tracking_number_hash": hash_tracking_number("CH020000129135"),
+                "tracking_reference_suffix": "129135",
+                "safe_tracking_reference": "parcel ending 129135",
+                "lookup_elapsed_ms": 428,
+                "status_context": {
+                    "code": "10",
+                    "label": "pending pickup",
+                },
+            },
+        }),
+    ))
+    db_session.flush()
+    db_session.add(TicketEvent(
+        ticket_id=ticket.id,
+        actor_id=user.id,
+        event_type=EventType.field_updated,
+        payload_json=json.dumps({
+            "event": "webchat_tracking_fact_used",
+            "fact_evidence_present": True,
+            "tool_name": "speedaf.order.query",
+            "tool_status": "success",
+            "tracking_number_hash": hash_tracking_number("CH020000129135"),
+        }),
+    ))
+    db_session.flush()
+
+    ledger = build_support_memory_ledger(db_session, ticket_id=ticket.id, current_user=user)
+    rendered = json.dumps(ledger, ensure_ascii=False)
+
+    assert ledger["tracking"]["present"] is True
+    assert ledger["tracking"]["suffix"] == "129135"
+    assert ledger["tracking"]["source"] == "message.metadata.safe_tracking_reference"
+    assert ledger["tracking"]["hash"] == hash_tracking_number("CH020000129135")
+    assert ledger["latest_speedaf_evidence"]["summary"]["tracking_fact"]["status_context"]["label"] == "pending pickup"
+    assert "CH020000129135" not in rendered

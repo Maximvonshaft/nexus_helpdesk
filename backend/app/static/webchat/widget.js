@@ -12,21 +12,27 @@
   var apiBase = (script.getAttribute('data-api-base') || scriptUrl.origin).replace(/\/$/, '');
   var tenantKey = script.getAttribute('data-tenant') || 'default';
   var channelKey = script.getAttribute('data-channel') || 'website';
-  var mode = (script.getAttribute('data-webchat-mode') || 'fast_ai').toLowerCase();
+  var mode = 'public';
   var title = script.getAttribute('data-title') || 'Speedaf Support';
-  var subtitle = script.getAttribute('data-subtitle') || (mode === 'legacy' ? 'Secure website support' : 'AI support · fast reply');
+  var subtitle = script.getAttribute('data-subtitle') || 'AI support · human handoff when needed';
   var assistantName = script.getAttribute('data-assistant-name') || 'Speedy';
   var locale = (script.getAttribute('data-locale') || navigator.language || 'en').toLowerCase();
-  var defaultWelcome = locale.indexOf('zh') === 0
-    ? '您好，我是 ' + assistantName + '，请问有什么可以帮您？'
-    : 'Hi, this is ' + assistantName + '. How can I help you today?';
-  var welcome = script.getAttribute('data-welcome') || defaultWelcome;
+  var welcome = script.getAttribute('data-welcome') || '';
   var buttonLabel = script.getAttribute('data-button-label') || 'Chat with us';
   var closeLabel = script.getAttribute('data-close-label') || 'Close chat';
+  var avatarUrl = script.getAttribute('data-avatar-url') || new URL('/webchat/demo/assets/speedaf-ai-bot-avatar.png', scriptUrl.origin).toString();
+  var accentColor = script.getAttribute('data-accent-color') || '#ff5a00';
+  var securityNote = script.getAttribute('data-security-note') || 'Do not share passwords or payment codes.';
+  var autoOpen = script.getAttribute('data-auto-open') === 'true';
+  var liveVoiceMode = (script.getAttribute('data-live-voice-mode') || 'off').toLowerCase();
+  var liveVoiceWsPath = script.getAttribute('data-live-voice-ws-path') || '/webchat/live/ws';
+  var liveVoiceLabel = script.getAttribute('data-live-voice-label') || 'VOIP Call';
   var storageKey = 'nexusdesk:webchat:' + apiBase + ':' + tenantKey + ':' + channelKey + ':' + mode;
   var contextKey = storageKey + ':recent-context';
   var sessionKey = storageKey + ':session-id';
   var MAX_CONTEXT_TURNS = 5;
+  var LEGACY_POLL_IDLE_MS = Number(script.getAttribute('data-poll-ms') || 4000);
+  var LEGACY_POLL_PENDING_MS = Number(script.getAttribute('data-pending-poll-ms') || 350);
 
   var state = {
     open: false,
@@ -36,6 +42,7 @@
     userNearBottom: true,
     optimisticSeq: 0,
     typingEl: null,
+    aiWaitingSince: null,
     sessionId: loadSessionId(),
     recentContext: loadRecentContext(),
     legacyConversationId: null,
@@ -45,39 +52,47 @@
     legacyPollTimer: null,
     legacyWs: null,
     legacyWsReconnectTimer: null,
+    voiceOpen: false,
+    liveVoice: null,
     rendered: {}
   };
 
   var style = document.createElement('style');
   style.textContent = '\n'
     + '.nd-webchat-button,.nd-webchat-panel,.nd-webchat-panel *{box-sizing:border-box}\n'
-    + '.nd-webchat-button{position:fixed;right:22px;bottom:22px;z-index:2147483000;border:0;border-radius:999px;background:#101828;color:#fff;padding:12px 17px;font:650 14px/20px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;box-shadow:0 14px 34px rgba(15,23,42,.24);cursor:pointer}\n'
-    + '.nd-webchat-unread{position:absolute;right:2px;top:0;min-width:18px;height:18px;border-radius:999px;background:#ef4444;color:#fff;font:700 11px/18px system-ui;text-align:center;display:none}\n'
-    + '.nd-webchat-panel{position:fixed;right:22px;bottom:82px;z-index:2147483000;width:388px;max-width:calc(100vw - 32px);height:610px;max-height:calc(100dvh - 112px);display:none;flex-direction:column;background:#fff;border:1px solid #e5e7eb;border-radius:22px;box-shadow:0 26px 70px rgba(15,23,42,.24);overflow:hidden;font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;color:#101828}\n'
+    + '.nd-webchat-button{position:fixed;right:24px;bottom:24px;z-index:2147483000;width:64px;min-width:64px;height:64px;border:0;border-radius:999px;background:linear-gradient(135deg,' + accentColor + ',#ff7a1a);color:#fff;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 18px 42px rgba(255,90,0,.34);cursor:pointer;transition:opacity .2s ease,visibility .2s ease,transform .22s ease}\n'
+    + '.nd-webchat-button:hover{transform:translateY(-2px)}.nd-webchat-button[data-open=true]{display:none;opacity:0;visibility:hidden;transform:translateY(14px) scale(.95);pointer-events:none}\n'
+    + '.nd-webchat-button-icon{display:grid;place-items:center}.nd-webchat-button-icon svg{width:28px;height:28px}.nd-webchat-button-label{position:absolute;right:76px;top:50%;transform:translateY(-50%) translateX(8px);white-space:nowrap;background:#071126;color:#fff;padding:10px 12px;border-radius:14px;box-shadow:0 16px 36px rgba(7,17,38,.18);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .18s ease,visibility .18s ease,transform .18s ease;font:720 13.5px/18px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}.nd-webchat-button:hover .nd-webchat-button-label,.nd-webchat-button:focus-visible .nd-webchat-button-label{opacity:1;visibility:visible;transform:translateY(-50%) translateX(0)}\n'
+    + '.nd-webchat-unread{position:absolute;right:8px;top:7px;min-width:18px;height:18px;border-radius:999px;background:#ef4444;color:#fff;font:700 11px/18px system-ui;text-align:center;display:none}.nd-webchat-unread:empty{display:block;width:10px;min-width:10px;height:10px;background:#25d391;box-shadow:0 0 0 4px rgba(37,211,145,.20)}\n'
+    + '.nd-webchat-panel{position:fixed;right:28px;bottom:24px;z-index:2147483000;width:min(432px,calc(100vw - 32px));height:min(680px,calc(100dvh - 48px));display:none;flex-direction:column;background:#fff;border:1px solid rgba(231,235,241,.95);border-radius:28px;box-shadow:0 34px 96px rgba(7,17,38,.26);overflow:hidden;font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;color:#071126}\n'
     + '.nd-webchat-panel[data-open=true]{display:flex}\n'
-    + '.nd-webchat-header{flex:0 0 auto;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:14px 16px;background:#101828;color:#fff}\n'
-    + '.nd-webchat-header strong{display:block;font-size:17px;line-height:22px;font-weight:760}.nd-webchat-header span{display:block;opacity:.86;font-size:12.5px;line-height:18px;margin-top:3px;font-weight:520}\n'
-    + '.nd-webchat-close{border:0;background:rgba(255,255,255,.12);color:#fff;border-radius:10px;width:32px;height:32px;cursor:pointer;font-size:18px}\n'
-    + '.nd-webchat-messages{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:14px;background:#f7f8fb}\n'
-    + '.nd-webchat-msg{max-width:84%;margin:0 0 10px;padding:10px 12px;border-radius:16px;font-size:14.5px;line-height:1.46;white-space:pre-wrap;overflow-wrap:anywhere}\n'
-    + '.nd-webchat-msg.visitor{margin-left:auto;background:#101828;color:#fff;border-bottom-right-radius:6px}.nd-webchat-msg.agent,.nd-webchat-msg.system{margin-right:auto;background:#fff;color:#101828;border:1px solid #e3e7ee;border-bottom-left-radius:6px}\n'
+    + '.nd-webchat-header{flex:0 0 auto;min-height:94px;display:grid;grid-template-columns:56px minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:18px;background:linear-gradient(135deg,#fff7f1,#fff);border-bottom:1px solid #edf1f6;color:#071126}\n'
+    + '.nd-webchat-avatar{width:56px;height:56px;border-radius:20px;overflow:hidden;background:#fff;border:1px solid rgba(255,90,0,.20);box-shadow:0 8px 18px rgba(255,90,0,.10)}.nd-webchat-avatar img{width:100%;height:100%;object-fit:cover;display:block}.nd-webchat-title-row{display:flex;align-items:center;gap:8px;min-width:0}.nd-webchat-title-row strong{display:block;font-size:17px;line-height:22px;font-weight:780;min-width:0}.nd-webchat-online{font-size:11px;font-weight:800;padding:4px 8px;border-radius:999px;background:#eafaf3;color:#14805c}.nd-webchat-header-subtitle{display:block;margin-top:4px;font-size:13px;line-height:18px;color:#657085;font-weight:560}\n'
+    + '.nd-webchat-close,.nd-webchat-voice{border:0;cursor:pointer}.nd-webchat-close{width:38px;height:38px;border-radius:14px;background:#f2f5f9;position:relative;color:#374155}.nd-webchat-close:before,.nd-webchat-close:after{content:"";position:absolute;left:12px;right:12px;top:18px;height:2px;border-radius:2px;background:currentColor}.nd-webchat-close:before{transform:rotate(45deg)}.nd-webchat-close:after{transform:rotate(-45deg)}\n'
+    + '.nd-webchat-voice{display:none;min-width:72px;min-height:54px;margin-left:auto;margin-right:8px;padding:8px 10px;border-radius:14px;background:#f97316;color:#fff;box-shadow:0 10px 24px rgba(249,115,22,.28);font:800 12px/1.05 system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;white-space:nowrap}.nd-webchat-voice[data-visible=true]{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}.nd-webchat-voice svg{width:18px;height:18px}.nd-webchat-voice.is-live{animation:ndLiveVoicePulse 1.15s infinite}@keyframes ndLiveVoicePulse{0%{box-shadow:0 0 0 0 rgba(249,115,22,.52)}70%{box-shadow:0 0 0 12px rgba(249,115,22,0)}100%{box-shadow:0 0 0 0 rgba(249,115,22,0)}}\n'
+    + '.nd-webchat-voice-panel{display:none;border-bottom:1px solid #eef2f7;background:#fff7ed;padding:12px 16px 14px}.nd-webchat-voice-panel[data-open=true]{display:block}.nd-webchat-voice-row{display:flex;gap:8px;align-items:center}.nd-webchat-voice-select{flex:1;min-width:0;height:38px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;color:#0f172a;padding:0 10px;font-size:13px;outline:none}.nd-webchat-voice-start{height:38px;min-width:76px;border:0;border-radius:12px;background:#f97316;color:#fff;font-weight:800;cursor:pointer}.nd-webchat-voice-start.stop{background:#dc2626}.nd-webchat-voice-status{margin-top:10px;border:1px solid #fed7aa;background:#fffaf6;color:#9a3412;border-radius:13px;padding:9px 10px;font-size:12.5px;line-height:1.45}.nd-webchat-voice-transcript{margin-top:8px;max-height:126px;overflow:auto}.nd-webchat-voice-msg{margin-top:6px;padding:8px 10px;border-radius:12px;font-size:12.5px;line-height:1.42}.nd-webchat-voice-msg.user{background:#eff6ff;color:#1e3a8a}.nd-webchat-voice-msg.ai{background:#fff;color:#7c2d12;border:1px solid #fed7aa}.nd-webchat-voice-foot{margin-top:8px;color:#64748b;font-size:11.5px}\n'
+    + '.nd-webchat-messages{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:18px 18px 8px;background:linear-gradient(180deg,#fff,#fbfcfe)}\n'
+    + '.nd-webchat-msg{max-width:84%;margin:0 0 12px;padding:13px 14px;border-radius:18px 18px 18px 6px;font-size:14.5px;line-height:1.46;white-space:pre-wrap;overflow-wrap:anywhere}\n'
+    + '.nd-webchat-msg.visitor{margin-left:auto;background:' + accentColor + ';color:#fff;border-radius:18px 18px 6px 18px}.nd-webchat-msg.agent,.nd-webchat-msg.system{margin-right:auto;background:#f1f4f8;color:#243044;border:0;border-bottom-left-radius:6px}\n'
     + '.nd-webchat-msg.sending{opacity:.72}.nd-webchat-msg.failed{outline:2px solid #fca5a5}\n'
-    + '.nd-webchat-typing{max-width:84%;margin:0 0 10px;padding:10px 12px;border-radius:16px;border-bottom-left-radius:6px;background:#fff;border:1px solid #e3e7ee;display:inline-flex;align-items:center;gap:4px}\n'
-    + '.nd-webchat-typing-dot{width:6px;height:6px;border-radius:999px;background:#98a2b3;animation:ndTypingBounce 1.1s infinite ease-in-out}.nd-webchat-typing-dot:nth-child(2){animation-delay:.15s}.nd-webchat-typing-dot:nth-child(3){animation-delay:.3s}\n'
+    + '.nd-webchat-typing{max-width:84%;margin:0 0 12px;padding:13px 15px;border-radius:18px;border-bottom-left-radius:6px;background:#f1f4f8;display:inline-flex;align-items:center;gap:5px}\n'
+    + '.nd-webchat-typing-dot{width:6px;height:6px;border-radius:999px;background:#9aa4b5;animation:ndTypingBounce 1s infinite ease-in-out}.nd-webchat-typing-dot:nth-child(2){animation-delay:.12s}.nd-webchat-typing-dot:nth-child(3){animation-delay:.24s}\n'
+    + '.nd-webchat-typing-status{display:none}\n'
     + '@keyframes ndTypingBounce{0%,80%,100%{transform:translateY(0);opacity:.45}40%{transform:translateY(-4px);opacity:1}}@media (prefers-reduced-motion:reduce){.nd-webchat-typing-dot{animation:none}}\n'
     + '.nd-webchat-retry{display:block;margin-top:7px;border:1px solid currentColor;background:transparent;color:inherit;border-radius:999px;padding:5px 9px;font:700 12px system-ui;cursor:pointer}.nd-webchat-retry:disabled{opacity:.6;cursor:not-allowed}\n'
-    + '.nd-webchat-form{flex:0 0 auto;display:flex;align-items:center;gap:9px;padding:12px 14px;border-top:1px solid #edf0f4;background:#fff;padding-bottom:max(12px,env(safe-area-inset-bottom))}\n'
-    + '.nd-webchat-input{flex:1;min-width:0;height:44px;border:1px solid #d0d5dd;border-radius:15px;padding:0 14px;background:#fff;color:#101828;font:500 14.5px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;outline:none}\n'
-    + '.nd-webchat-send{flex:0 0 auto;height:44px;min-width:74px;border:0;border-radius:15px;background:#101828;color:#fff;padding:0 16px;font:720 14px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;cursor:pointer}.nd-webchat-send:disabled{opacity:.58;cursor:not-allowed}\n'
-    + '.nd-webchat-status{flex:0 0 auto;padding:7px 15px;font-size:12.5px;font-weight:560;color:#667085;border-top:1px solid #f2f4f7;background:#fff}\n'
-    + '@media (max-width:480px){.nd-webchat-panel{left:0;right:0;bottom:0;width:100vw;height:100dvh;max-height:100dvh;max-width:100vw;border-radius:0}.nd-webchat-button{right:16px;bottom:16px}.nd-webchat-button[data-open=true]{display:none}.nd-webchat-form{padding-right:max(14px,env(safe-area-inset-right));padding-left:max(14px,env(safe-area-inset-left))}.nd-webchat-send{min-width:68px;padding:0 14px}}\n';
+    + '.nd-webchat-composer-wrap{flex:0 0 auto;padding:12px 14px 14px;border-top:1px solid #edf1f6;background:#fff;padding-bottom:max(14px,env(safe-area-inset-bottom))}.nd-webchat-form{height:50px;display:grid;grid-template-columns:22px 1fr 42px;gap:8px;align-items:center;padding:0 6px 0 12px;border:1px solid #dfe5ee;border-radius:18px;background:#fff}.nd-webchat-attach{display:grid;place-items:center;color:#152033}.nd-webchat-input{min-width:0;border:0;background:#fff;color:#071126;font:500 14.5px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;outline:none}.nd-webchat-send{width:42px;height:40px;border:0;border-radius:14px;background:' + accentColor + ';color:#fff;display:grid;place-items:center;cursor:pointer}.nd-webchat-send svg{width:22px;height:22px}.nd-webchat-send:disabled{opacity:.58;cursor:not-allowed}\n'
+    + '.nd-webchat-security{display:flex;align-items:center;gap:6px;margin:9px 2px 0;color:#7a8495;font-size:12px}.nd-webchat-status{display:none;flex:0 0 auto;padding:7px 15px;font-size:12.5px;font-weight:560;color:#667085;border-top:1px solid #f2f4f7;background:#fff}.nd-webchat-status:not(:empty){display:block}\n'
+    + '@media (max-width:640px){.nd-webchat-panel{right:8px;bottom:8px;width:calc(100vw - 16px);height:calc(100dvh - 16px);max-width:none;max-height:none;border-radius:24px}.nd-webchat-header{grid-template-columns:48px minmax(0,1fr) auto 36px;min-height:82px;padding:14px}.nd-webchat-avatar{width:48px;height:48px;border-radius:17px}.nd-webchat-button{width:58px;min-width:58px;height:58px;right:16px;bottom:16px}.nd-webchat-button-label{display:none!important}}\n'
+    + '@media (max-width:390px){.nd-webchat-online{display:none}.nd-webchat-title-row{gap:5px}.nd-webchat-voice{min-width:62px;padding:7px 8px;font-size:11px}}\n';
   document.head.appendChild(style);
 
   var button = document.createElement('button');
   button.className = 'nd-webchat-button';
   button.type = 'button';
   button.setAttribute('aria-label', buttonLabel);
+  button.innerHTML = '<span class="nd-webchat-button-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-5.4A8 8 0 1 1 21 12Z"/><path d="M8 12h.01M12 12h.01M16 12h.01"/></svg></span>';
   var buttonText = document.createElement('span');
+  buttonText.className = 'nd-webchat-button-label';
   buttonText.textContent = buttonLabel;
   var unread = document.createElement('span');
   unread.className = 'nd-webchat-unread';
@@ -89,52 +104,107 @@
   panel.setAttribute('aria-label', title);
   var header = document.createElement('div');
   header.className = 'nd-webchat-header';
+  var avatar = document.createElement('div');
+  avatar.className = 'nd-webchat-avatar';
+  var avatarImg = document.createElement('img');
+  avatarImg.src = avatarUrl;
+  avatarImg.alt = '';
+  avatarImg.decoding = 'async';
+  avatar.appendChild(avatarImg);
   var headerText = document.createElement('div');
+  var titleRow = document.createElement('div');
+  titleRow.className = 'nd-webchat-title-row';
   var h = document.createElement('strong');
   h.textContent = title;
+  var online = document.createElement('span');
+  online.className = 'nd-webchat-online';
+  online.textContent = 'AI';
   var s = document.createElement('span');
+  s.className = 'nd-webchat-header-subtitle';
   s.textContent = subtitle;
-  headerText.appendChild(h);
+  titleRow.appendChild(h);
+  titleRow.appendChild(online);
+  headerText.appendChild(titleRow);
   headerText.appendChild(s);
+  var voiceBtn = document.createElement('button');
+  voiceBtn.className = 'nd-webchat-voice';
+  voiceBtn.type = 'button';
+  voiceBtn.setAttribute('aria-label', liveVoiceLabel);
+  voiceBtn.setAttribute('data-visible', liveVoiceMode === 'edge-card' ? 'true' : 'false');
+  voiceBtn.innerHTML = '<span aria-hidden="true"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.07 21 3 13.93 3 5c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.24.19 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg></span><span>' + escapeHtml(liveVoiceLabel) + '</span>';
   var close = document.createElement('button');
   close.className = 'nd-webchat-close';
   close.type = 'button';
   close.setAttribute('aria-label', closeLabel);
-  close.textContent = '×';
+  close.setAttribute('title', closeLabel);
+  header.appendChild(avatar);
   header.appendChild(headerText);
+  header.appendChild(voiceBtn);
   header.appendChild(close);
 
+  var voicePanel = document.createElement('div');
+  voicePanel.className = 'nd-webchat-voice-panel';
+  voicePanel.innerHTML = ''
+    + '<div class="nd-webchat-voice-row">'
+    + '<select class="nd-webchat-voice-select" aria-label="Voice language">'
+    + '<option value="de|de_DE-thorsten-medium|1.0">Deutsch</option>'
+    + '<option value="i|if_sara|1.0">Italiano</option>'
+    + '<option value="f|ff_siwis|1.0">Francais</option>'
+    + '<option value="b|bm_george|1.0">English UK</option>'
+    + '</select>'
+    + '<button class="nd-webchat-voice-start" type="button">Start</button>'
+    + '</div>'
+    + '<div class="nd-webchat-voice-status">Tap Start and allow microphone access.</div>'
+    + '<div class="nd-webchat-voice-transcript"></div>'
+    + '<div class="nd-webchat-voice-foot">Voice support is live. Do not share passwords or payment codes.</div>';
   var messagesEl = document.createElement('div');
   messagesEl.className = 'nd-webchat-messages';
   messagesEl.setAttribute('role', 'log');
   messagesEl.setAttribute('aria-live', 'polite');
+  var composerWrap = document.createElement('div');
+  composerWrap.className = 'nd-webchat-composer-wrap';
   var formEl = document.createElement('form');
   formEl.className = 'nd-webchat-form';
+  var attachIcon = document.createElement('span');
+  attachIcon.className = 'nd-webchat-attach';
+  attachIcon.setAttribute('aria-hidden', 'true');
+  attachIcon.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.7 5.7L9.2 18.2a2 2 0 1 1-2.8-2.8l8.5-8.5"/></svg>';
   var inputEl = document.createElement('input');
   inputEl.className = 'nd-webchat-input';
   inputEl.maxLength = 2000;
-  inputEl.placeholder = script.getAttribute('data-input-placeholder') || 'Type your message...';
+  inputEl.placeholder = script.getAttribute('data-input-placeholder') || 'Message';
   inputEl.autocomplete = 'off';
   var sendEl = document.createElement('button');
   sendEl.className = 'nd-webchat-send';
   sendEl.type = 'submit';
-  sendEl.textContent = script.getAttribute('data-send-label') || 'Send';
+  sendEl.setAttribute('aria-label', script.getAttribute('data-send-label') || 'Send');
+  sendEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 12 16-8-5 16-3.2-6.2L4 12Z" fill="currentColor"/></svg>';
+  formEl.appendChild(attachIcon);
   formEl.appendChild(inputEl);
   formEl.appendChild(sendEl);
+  var securityEl = document.createElement('div');
+  securityEl.className = 'nd-webchat-security';
+  securityEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg><span>' + escapeHtml(securityNote) + '</span>';
+  composerWrap.appendChild(formEl);
+  composerWrap.appendChild(securityEl);
   var statusEl = document.createElement('div');
   statusEl.className = 'nd-webchat-status';
   panel.appendChild(header);
+  panel.appendChild(voicePanel);
   panel.appendChild(messagesEl);
-  panel.appendChild(formEl);
+  panel.appendChild(composerWrap);
   panel.appendChild(statusEl);
   document.body.appendChild(panel);
   document.body.appendChild(button);
 
-  setStatus('Online');
-  appendMessage('agent', welcome);
+  setStatus('');
+  if (welcome) appendMessage('agent', welcome);
 
   button.addEventListener('click', function () { openPanel(); });
   close.addEventListener('click', function () { openPanel(false); });
+  voiceBtn.addEventListener('click', function () { toggleVoicePanel(); });
+  var voiceStartBtn = voicePanel.querySelector('.nd-webchat-voice-start');
+  if (voiceStartBtn) voiceStartBtn.addEventListener('click', startLiveVoice);
   inputEl.addEventListener('compositionstart', function () { state.composing = true; });
   inputEl.addEventListener('compositionend', function () { state.composing = false; });
   messagesEl.addEventListener('scroll', function () { state.userNearBottom = isNearBottom(); });
@@ -143,15 +213,97 @@
     if (state.composing || event.isComposing || state.busy) return;
     var body = inputEl.value.trim();
     if (!body) return;
-    if (mode === 'legacy') sendLegacyMessage(body);
-    else sendFastMessage(body);
+    sendConversationMessage(body);
   });
 
   restoreLegacySession();
+  bindPageTriggers();
+  exposePublicApi();
+  if (autoOpen) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { openPanel(true); }, { once: true });
+    } else {
+      setTimeout(function () { openPanel(true); }, 0);
+    }
+  }
 
   function setStatus(text) {
     statusEl.textContent = text;
     panel.setAttribute('data-status', String(text || '').toLowerCase().replace(/\s+/g, '-'));
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function exposePublicApi() {
+    window.NexusDeskWebChat = {
+      open: function () { openPanel(true); },
+      close: function () { openPanel(false); },
+      toggle: function () { openPanel(); },
+      prefill: function (text) {
+        inputEl.value = String(text || '').slice(0, inputEl.maxLength || 2000);
+        openPanel(true);
+        setTimeout(function () { inputEl.focus(); }, 80);
+      },
+      send: function (text) {
+        var body = String(text || '').trim();
+        if (!body) return;
+        openPanel(true);
+        sendConversationMessage(body);
+      }
+    };
+  }
+
+  function findClosest(node, selector) {
+    while (node && node !== document) {
+      if (node.matches && node.matches(selector)) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+
+  function bindPageTriggers() {
+    document.addEventListener('click', function (event) {
+      var trigger = findClosest(event.target, '[data-open-chat]');
+      if (!trigger) return;
+      event.preventDefault();
+      var message = trigger.getAttribute('data-webchat-message') || '';
+      var inputSelector = trigger.getAttribute('data-webchat-input') || '';
+      if (inputSelector) {
+        var source = document.querySelector(inputSelector);
+        if (source && source.value) message = source.value;
+      }
+      if (trigger.getAttribute('data-webchat-send') === 'true' && String(message || '').trim()) {
+        sendConversationMessage(String(message).trim());
+      } else {
+        openPanel(true);
+        if (message) inputEl.value = String(message).slice(0, inputEl.maxLength || 2000);
+      }
+    });
+
+    document.addEventListener('submit', function (event) {
+      var form = findClosest(event.target, '[data-webchat-form]');
+      if (!form) return;
+      event.preventDefault();
+      var inputSelector = form.getAttribute('data-webchat-input') || 'input,textarea';
+      var source = form.querySelector(inputSelector) || document.querySelector(inputSelector);
+      var value = source && source.value ? String(source.value).trim() : '';
+      if (!value) {
+        if (source && source.focus) source.focus();
+        return;
+      }
+      if (form.getAttribute('data-webchat-submit') === 'prefill') {
+        window.NexusDeskWebChat.prefill(value);
+      } else {
+        window.NexusDeskWebChat.send(value);
+      }
+    });
   }
 
   function openPanel(force) {
@@ -163,12 +315,9 @@
       state.unread = 0;
       updateUnread();
       setTimeout(function () { inputEl.focus(); }, 80);
-      if (mode === 'legacy') ensureLegacySession().then(scheduleLegacyPoll);
-      else if (mode === 'fast_ai' && state.legacyConversationId && state.legacyVisitorToken) {
-        startLegacyWs();
-        scheduleLegacyPoll();
-      }
+      ensureLegacySession().then(scheduleLegacyPoll);
     }
+    panel.dispatchEvent(new CustomEvent('nexusdesk:webchat:open-change', { detail: { open: state.open } }));
   }
 
   function appendMessage(role, text, extraClass, key) {
@@ -218,7 +367,10 @@
   }
 
   function showTyping() {
-    if (state.typingEl) return;
+    if (state.typingEl) {
+      updateTypingStatus();
+      return;
+    }
     var wrapper = document.createElement('div');
     wrapper.className = 'nd-webchat-typing';
     wrapper.setAttribute('aria-label', assistantName + ' is replying');
@@ -227,8 +379,12 @@
       dot.className = 'nd-webchat-typing-dot';
       wrapper.appendChild(dot);
     }
+    var label = document.createElement('span');
+    label.className = 'nd-webchat-typing-status';
+    wrapper.appendChild(label);
     state.typingEl = wrapper;
     messagesEl.appendChild(wrapper);
+    updateTypingStatus();
     scrollToBottomIfNeeded(true);
   }
 
@@ -236,6 +392,45 @@
     if (!state.typingEl) return;
     state.typingEl.remove();
     state.typingEl = null;
+    state.aiWaitingSince = null;
+  }
+
+  function updateTypingStatus(status, elapsedMs) {
+    if (!state.typingEl) return;
+    var label = state.typingEl.querySelector('.nd-webchat-typing-status');
+    var normalized = String(status || '').toLowerCase();
+    var elapsed = Number(elapsedMs);
+    if (!Number.isFinite(elapsed)) {
+      elapsed = state.aiWaitingSince ? Date.now() - state.aiWaitingSince : 0;
+    }
+    state.typingEl.setAttribute('data-ai-status', normalized || 'processing');
+    state.typingEl.setAttribute('data-ai-wait-ms', String(Math.max(0, Math.round(elapsed))));
+    if (label) {
+      label.textContent = '';
+      label.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  function syncAiTyping(status, pending, elapsedMs) {
+    var normalized = String(status || '').toLowerCase();
+    var active = pending === true || normalized === 'queued' || normalized === 'processing' || normalized === 'bridge_calling' || normalized === 'fallback_generating';
+    var terminal = normalized === 'completed' || normalized === 'failed' || normalized === 'timeout' || normalized === 'cancelled' || normalized === 'superseded';
+    if (active) {
+      var elapsed = Number(elapsedMs);
+      state.aiWaitingSince = Number.isFinite(elapsed) ? Date.now() - Math.max(0, elapsed) : (state.aiWaitingSince || Date.now());
+      showTyping();
+      updateTypingStatus(normalized, elapsedMs);
+    }
+    else if (terminal || pending === false) hideTyping();
+  }
+
+  function legacyPollDelayMs() {
+    if (document.visibilityState === 'hidden') return Math.max(15000, LEGACY_POLL_IDLE_MS * 3);
+    if (state.typingEl) {
+      updateTypingStatus();
+      return Math.max(250, Math.min(LEGACY_POLL_PENDING_MS, 2000));
+    }
+    return Math.max(1000, LEGACY_POLL_IDLE_MS);
   }
 
   function isNearBottom() {
@@ -249,6 +444,237 @@
   function updateUnread() {
     unread.style.display = state.unread > 0 ? 'block' : 'none';
     unread.textContent = String(Math.min(state.unread, 9));
+  }
+
+  function toggleVoicePanel(force) {
+    if (liveVoiceMode !== 'edge-card') return;
+    openPanel(true);
+    state.voiceOpen = typeof force === 'boolean' ? force : !state.voiceOpen;
+    voicePanel.setAttribute('data-open', state.voiceOpen ? 'true' : 'false');
+  }
+
+  function voiceStatus(text) {
+    var el = voicePanel.querySelector('.nd-webchat-voice-status');
+    if (el) el.textContent = text || '';
+  }
+
+  function addVoiceTranscript(kind, text) {
+    if (!text) return;
+    var wrap = voicePanel.querySelector('.nd-webchat-voice-transcript');
+    if (!wrap) return;
+    var div = document.createElement('div');
+    div.className = 'nd-webchat-voice-msg ' + kind;
+    div.textContent = text;
+    wrap.appendChild(div);
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+
+  function stopLivePlayback() {
+    var live = state.liveVoice;
+    if (!live) return;
+    (live.playingSources || []).forEach(function (sourceNode) {
+      try { sourceNode.stop(); } catch (err) {}
+    });
+    live.playingSources = [];
+    if (live.audioContext) live.nextPlayTime = live.audioContext.currentTime + 0.03;
+  }
+
+  function resetLiveVoice(statusText) {
+    voiceBtn.classList.remove('is-live');
+    var startBtn = voicePanel.querySelector('.nd-webchat-voice-start');
+    if (startBtn) {
+      startBtn.classList.remove('stop');
+      startBtn.textContent = 'Start';
+    }
+    if (statusText) voiceStatus(statusText);
+  }
+
+  function stopLiveVoice() {
+    var live = state.liveVoice;
+    if (!live) return;
+    try { if (live.ws) live.ws.close(); } catch (err) {}
+    try { if (live.processor) live.processor.disconnect(); } catch (err) {}
+    try { if (live.source) live.source.disconnect(); } catch (err) {}
+    try { if (live.silentGain) live.silentGain.disconnect(); } catch (err) {}
+    try { if (live.stream) live.stream.getTracks().forEach(function (track) { track.stop(); }); } catch (err) {}
+    stopLivePlayback();
+    state.liveVoice = null;
+    resetLiveVoice('Voice stopped.');
+  }
+
+  function safeLiveVoicePath(path) {
+    var value = String(path || '').trim();
+    if (!value || value.indexOf('://') !== -1 || value.charAt(0) !== '/') return '/webchat/live/ws';
+    return value;
+  }
+
+  function buildLiveWsUrl(langCode, voice, speed) {
+    var url = new URL(safeLiveVoicePath(liveVoiceWsPath), window.location.href);
+    url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    url.host = window.location.host;
+    url.search = '';
+    url.searchParams.set('lang_code', langCode);
+    url.searchParams.set('voice', voice);
+    url.searchParams.set('speed', speed);
+    return url.toString();
+  }
+
+  function floatTo16BitPcm(float32Array) {
+    var out = new Int16Array(float32Array.length);
+    for (var index = 0; index < float32Array.length; index += 1) {
+      var sample = Math.max(-1, Math.min(1, float32Array[index]));
+      out[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+    }
+    return out;
+  }
+
+  function downsampleBuffer(buffer, inputRate, outputRate) {
+    if (outputRate === inputRate) return buffer;
+    var ratio = inputRate / outputRate;
+    var newLength = Math.round(buffer.length / ratio);
+    var result = new Float32Array(newLength);
+    var offsetResult = 0;
+    var offsetBuffer = 0;
+    while (offsetResult < result.length) {
+      var nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+      var accum = 0;
+      var count = 0;
+      for (var i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i += 1) {
+        accum += buffer[i];
+        count += 1;
+      }
+      result[offsetResult] = count ? accum / count : 0;
+      offsetResult += 1;
+      offsetBuffer = nextOffsetBuffer;
+    }
+    return result;
+  }
+
+  function playPcm16(arrayBuffer, sampleRate) {
+    var live = state.liveVoice;
+    if (!live || !live.audioContext) return Promise.resolve();
+    var pcm = new Int16Array(arrayBuffer);
+    if (!pcm.length) return Promise.resolve();
+    var float32 = new Float32Array(pcm.length);
+    for (var index = 0; index < pcm.length; index += 1) {
+      float32[index] = pcm[index] / 32768;
+    }
+    var audioBuffer = live.audioContext.createBuffer(1, float32.length, sampleRate || 24000);
+    audioBuffer.copyToChannel(float32, 0);
+    var sourceNode = live.audioContext.createBufferSource();
+    sourceNode.buffer = audioBuffer;
+    sourceNode.connect(live.audioContext.destination);
+    live.playingSources.push(sourceNode);
+    sourceNode.onended = function () {
+      live.playingSources = live.playingSources.filter(function (item) { return item !== sourceNode; });
+    };
+    var startAt = Math.max(live.audioContext.currentTime + 0.03, live.nextPlayTime || 0);
+    sourceNode.start(startAt);
+    live.nextPlayTime = startAt + audioBuffer.duration;
+    return Promise.resolve();
+  }
+
+  function handleLiveMessage(event) {
+    var live = state.liveVoice;
+    if (!live) return Promise.resolve();
+    if (typeof event.data !== 'string') {
+      return playPcm16(event.data, live.currentTtsSampleRate || 24000);
+    }
+    var payload = null;
+    try { payload = JSON.parse(event.data); } catch (err) {}
+    if (!payload) return Promise.resolve();
+    if (payload.type === 'barge_in') {
+      stopLivePlayback();
+      voiceStatus('Listening...');
+    }
+    if (payload.type === 'speech_start') voiceStatus('Listening...');
+    if (payload.type === 'stt_start') voiceStatus('Transcribing...');
+    if (payload.type === 'stt_result') {
+      addVoiceTranscript('user', payload.text);
+      voiceStatus('Thinking...');
+    }
+    if (payload.type === 'ai_answer') {
+      addVoiceTranscript('ai', payload.answer);
+      voiceStatus('Speaking...');
+    }
+    if (payload.type === 'tts_start' && payload.sample_rate) {
+      live.currentTtsSampleRate = payload.sample_rate;
+      if (live.audioContext) live.nextPlayTime = live.audioContext.currentTime + 0.03;
+    }
+    if (payload.type === 'tts_end') voiceStatus('Ready. You can speak again.');
+    if (payload.type === 'turn_error') voiceStatus('Voice error: ' + (payload.message || payload.error || 'unknown'));
+    return Promise.resolve();
+  }
+
+  function startLiveVoice() {
+    if (liveVoiceMode !== 'edge-card') return;
+    toggleVoicePanel(true);
+    if (state.liveVoice && state.liveVoice.ws && state.liveVoice.ws.readyState === WebSocket.OPEN) {
+      stopLiveVoice();
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      voiceStatus('Microphone is not available in this browser.');
+      return;
+    }
+    var startBtn = voicePanel.querySelector('.nd-webchat-voice-start');
+    var presetEl = voicePanel.querySelector('.nd-webchat-voice-select');
+    var preset = (presetEl && presetEl.value ? presetEl.value : 'de|de_DE-thorsten-medium|1.0').split('|');
+    var langCode = preset[0] || 'de';
+    var voice = preset[1] || 'de_DE-thorsten-medium';
+    var speed = preset[2] || '1.0';
+    var live = {
+      ws: null,
+      audioContext: null,
+      source: null,
+      processor: null,
+      silentGain: null,
+      stream: null,
+      playingSources: [],
+      currentTtsSampleRate: 24000,
+      nextPlayTime: 0
+    };
+    state.liveVoice = live;
+    voiceStatus('Connecting voice support...');
+    live.ws = new WebSocket(buildLiveWsUrl(langCode, voice, speed));
+    live.ws.binaryType = 'arraybuffer';
+    live.ws.onopen = function () {
+      Promise.resolve().then(function () {
+        voiceBtn.classList.add('is-live');
+        if (startBtn) {
+          startBtn.classList.add('stop');
+          startBtn.textContent = 'Stop';
+        }
+        voiceStatus('Connected. Requesting microphone access...');
+        live.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        return live.audioContext.resume();
+      }).then(function () {
+        return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      }).then(function (mediaStream) {
+        live.stream = mediaStream;
+        voiceStatus('Listening...');
+        live.source = live.audioContext.createMediaStreamSource(mediaStream);
+        live.processor = live.audioContext.createScriptProcessor(4096, 1, 1);
+        live.silentGain = live.audioContext.createGain();
+        live.silentGain.gain.value = 0;
+        live.processor.onaudioprocess = function (audioEvent) {
+          if (!live.ws || live.ws.readyState !== WebSocket.OPEN) return;
+          var input = audioEvent.inputBuffer.getChannelData(0);
+          var down = downsampleBuffer(input, live.audioContext.sampleRate, 16000);
+          var pcm16 = floatTo16BitPcm(down);
+          live.ws.send(pcm16.buffer);
+        };
+        live.source.connect(live.processor);
+        live.processor.connect(live.silentGain);
+        live.silentGain.connect(live.audioContext.destination);
+      }).catch(function (err) {
+        voiceStatus('Microphone error: ' + (err && err.message ? err.message : String(err)));
+        stopLiveVoice();
+      });
+    };
+    live.ws.onmessage = function (event) { handleLiveMessage(event); };
+    live.ws.onerror = function () { voiceStatus('WebSocket error.'); };
+    live.ws.onclose = function () { resetLiveVoice('Voice disconnected.'); };
   }
 
   function api(path, options, timeoutMs) {
@@ -298,53 +724,6 @@
       }
     }
     return { event: eventName, payload: payload };
-  }
-
-  function streamApi(path, payload, timeoutMs, onEvent) {
-    var controller = window.AbortController ? new AbortController() : null;
-    var timer = controller ? setTimeout(function () { controller.abort(); }, timeoutMs || 90000) : null;
-    return fetch(apiBase + path, {
-      method: 'POST',
-      mode: 'cors',
-      signal: controller ? controller.signal : undefined,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream'
-      },
-      body: JSON.stringify(payload)
-    }).then(async function (res) {
-      var contentType = String(res.headers.get('content-type') || '').toLowerCase();
-      if (!res.ok || contentType.indexOf('text/event-stream') === -1 || !res.body || !res.body.getReader) {
-        var data = {};
-        try {
-          data = await res.json();
-        } catch (err) {}
-        var error = new Error(data.detail || data.error_code || ('HTTP ' + res.status));
-        error.status = res.status;
-        error.payload = data;
-        throw error;
-      }
-      var reader = res.body.getReader();
-      var decoder = new TextDecoder();
-      var buffer = '';
-      while (true) {
-        var chunk = await reader.read();
-        if (chunk.done) break;
-        buffer += decoder.decode(chunk.value, { stream: true });
-        while (buffer.indexOf('\n\n') >= 0) {
-          var idx = buffer.indexOf('\n\n');
-          var block = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-          var parsed = parseSseBlock(block);
-          if (parsed) onEvent(parsed.event, parsed.payload || {});
-        }
-      }
-      buffer += decoder.decode();
-      if (buffer.trim()) {
-        var trailing = parseSseBlock(buffer);
-        if (trailing) onEvent(trailing.event, trailing.payload || {});
-      }
-    }).finally(function () { if (timer) clearTimeout(timer); });
   }
 
   function clientMessageId() {
@@ -398,141 +777,6 @@
     persistRecentContext();
   }
 
-  function buildApiRecentContext() {
-    return state.recentContext.filter(function (item) {
-      var role = String((item && item.role) || '').toLowerCase();
-      return role === 'visitor' || role === 'customer' || role === 'client' || role === 'user';
-    }).map(function (item) {
-      return { role: 'visitor', text: String(item.text || '').slice(0, 500) };
-    }).filter(function (item) {
-      return item.text.trim();
-    }).slice(-MAX_CONTEXT_TURNS);
-  }
-
-  function sendFastMessage(body, existingEl, reuseClientMessageId) {
-    var cmid = reuseClientMessageId || (existingEl && existingEl.getAttribute('data-client-message-id')) || clientMessageId();
-    var bubble = existingEl || appendMessage('visitor', body, 'sending', 'client:' + cmid);
-    bubble.setAttribute('data-client-message-id', cmid);
-    state.busy = true;
-    sendEl.disabled = true;
-    inputEl.value = '';
-    setStatus(assistantName + ' is replying...');
-    showTyping();
-    var aiBubble = null;
-    var aiText = '';
-    var sawVisibleStreamText = false;
-    var finalSeen = false;
-    var replayed = false;
-    var requestPayload = {
-      tenant_key: tenantKey,
-      channel_key: channelKey,
-      session_id: state.sessionId,
-      client_message_id: cmid,
-      body: body,
-      recent_context: buildApiRecentContext()
-    };
-    var timeoutMs = Number(script.getAttribute('data-fast-reply-timeout-ms') || script.getAttribute('data-timeout-ms') || 90000);
-
-    function ensureAIBubble() {
-      if (!aiBubble) aiBubble = appendMessage('agent', '', 'streaming', 'agent:' + cmid);
-      return aiBubble;
-    }
-
-    function markReplyComplete(stateName) {
-      hideTyping();
-      updateMessage(bubble, body, 'visitor');
-      if (aiBubble) {
-        updateMessage(aiBubble, aiText, 'agent', 'complete');
-        setBubbleState(aiBubble, stateName || 'complete');
-      }
-      pushRecentContext('customer', body);
-      if (aiText) pushRecentContext('ai', aiText);
-      setStatus('Online');
-    }
-
-    function markReplyInterrupted() {
-      hideTyping();
-      updateMessage(bubble, body, 'visitor');
-      aiBubble = ensureAIBubble();
-      aiText = aiText ? aiText + '\n\nThis reply was interrupted. Please retry.' : 'This reply was interrupted. Please retry.';
-      updateMessage(aiBubble, aiText, 'agent', 'failed');
-      setBubbleState(aiBubble, 'failed_incomplete');
-      setStatus('Connection issue. Please try again.');
-      appendRetry(aiBubble, body, function (retryBody) { sendFastMessage(retryBody, bubble, cmid); });
-    }
-
-    function fallbackToNonStream() {
-      hideTyping();
-      api('/api/webchat/fast-reply', {
-        method: 'POST',
-        body: JSON.stringify(requestPayload)
-      }, timeoutMs).then(function (data) {
-        updateMessage(bubble, body, 'visitor');
-        if (data && data.ok === true && data.reply) {
-          rememberPublicSession(data);
-          aiText = String(data.reply || '');
-          aiBubble = ensureAIBubble();
-          updateMessage(aiBubble, aiText, 'agent', 'complete');
-          setBubbleState(aiBubble, 'complete');
-          pushRecentContext('customer', body);
-          pushRecentContext('ai', aiText);
-          setStatus(data.handoff_required === true ? 'Support handoff requested' : 'Online');
-          return;
-        }
-        updateMessage(bubble, body, 'visitor', 'failed');
-        setStatus(data && data.retry_after_ms ? 'Speedy is reconnecting...' : 'Connection issue. Please try again.');
-        appendRetry(bubble, body, function (retryBody) { sendFastMessage(retryBody, bubble, cmid); });
-      }).catch(function () {
-        updateMessage(bubble, body, 'visitor', 'failed');
-        setStatus('Connection issue. Please try again.');
-        appendRetry(bubble, body, function (retryBody) { sendFastMessage(retryBody, bubble, cmid); });
-      });
-    }
-
-    streamApi('/api/webchat/fast-reply/stream', requestPayload, timeoutMs, function (eventName, data) {
-      if (!eventName || (eventName !== 'reply_delta' && eventName !== 'replay' && eventName !== 'final' && eventName !== 'error')) return;
-      if (eventName === 'reply_delta' && data && typeof data.text === 'string' && data.text) {
-        hideTyping();
-        sawVisibleStreamText = true;
-        aiBubble = ensureAIBubble();
-        appendTextToMessage(aiBubble, data.text);
-        aiText += data.text;
-        updateMessage(aiBubble, aiText, 'agent', 'streaming');
-        setBubbleState(aiBubble, 'streaming');
-        return;
-      }
-      if (eventName === 'replay' && data && typeof data.reply === 'string') {
-        hideTyping();
-        replayed = true;
-        sawVisibleStreamText = true;
-        aiText = data.reply;
-        aiBubble = ensureAIBubble();
-        updateMessage(aiBubble, aiText, 'agent', 'complete');
-        setBubbleState(aiBubble, 'replayed_complete');
-        return;
-      }
-      if (eventName === 'final') {
-        finalSeen = true;
-        rememberPublicSession(data);
-        markReplyComplete(replayed || (data && data.replayed === true) ? 'replayed_complete' : 'complete');
-        return;
-      }
-      if (eventName === 'error') {
-        if (sawVisibleStreamText) markReplyInterrupted();
-        else throw new Error('stream_failed_before_reply');
-      }
-    }).then(function () {
-      if (!finalSeen && sawVisibleStreamText) markReplyInterrupted();
-      else if (!finalSeen && !sawVisibleStreamText) fallbackToNonStream();
-    }).catch(function () {
-      if (sawVisibleStreamText) markReplyInterrupted();
-      else fallbackToNonStream();
-    }).finally(function () {
-      state.busy = false;
-      sendEl.disabled = false;
-    });
-  }
-
   function restoreLegacySession() {
     try {
       var cached = JSON.parse(window.sessionStorage.getItem(storageKey + ':legacy') || '{}');
@@ -568,7 +812,7 @@
       startLegacyWs();
       return Promise.resolve();
     }
-    setStatus('Connecting...');
+    setStatus('');
     return api('/api/webchat/init', {
       method: 'POST',
       headers: state.legacyVisitorToken ? { 'X-Webchat-Visitor-Token': state.legacyVisitorToken } : {},
@@ -583,11 +827,11 @@
       state.legacyConversationId = data.conversation_id;
       state.legacyVisitorToken = data.visitor_token;
       persistLegacySession();
-      setStatus('Online');
+      setStatus('');
       startLegacyWs();
       return pollLegacy(true);
     }).catch(function () {
-      setStatus('Temporarily unavailable');
+      setStatus('');
     });
   }
 
@@ -595,7 +839,9 @@
     if (!msg || !msg.id) return;
     if (msg.id && msg.id > state.legacyLastMessageId) state.legacyLastMessageId = msg.id;
     var role = msg.direction === 'visitor' ? 'visitor' : 'agent';
-    appendMessage(role, msg.body_text || msg.body || (msg.payload_json && (msg.payload_json.title || msg.payload_json.body)) || '', '', 'server:' + String(msg.id));
+    var text = msg.body_text || msg.body || (msg.payload_json && (msg.payload_json.title || msg.payload_json.body)) || '';
+    if (!String(text || '').trim()) return;
+    appendMessage(role, text, '', 'server:' + String(msg.id));
     persistLegacySession();
   }
 
@@ -607,25 +853,24 @@
     if (!(state.legacyWs && state.legacyWs.readyState === WebSocket.OPEN)) headers['X-Webchat-WS-Fallback'] = 'true';
     return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/messages' + qs, {
       headers: headers
-    }, Number(script.getAttribute('data-fast-reply-timeout-ms') || script.getAttribute('data-timeout-ms') || 90000)).then(function (data) {
+    }, Number(script.getAttribute('data-timeout-ms') || 90000)).then(function (data) {
       (data.messages || []).forEach(renderServerMessage);
-      if (reset) setStatus('Online');
+      syncAiTyping(data.ai_status, data.ai_pending, data.ai_status_elapsed_ms);
+      if (reset) setStatus('');
     }).catch(function () {
-      setStatus('Reconnecting...');
+      setStatus('');
     });
   }
 
   function scheduleLegacyPoll() {
-    if (mode !== 'legacy' && mode !== 'fast_ai') return;
     if (state.legacyPollTimer) clearTimeout(state.legacyPollTimer);
     state.legacyPollTimer = setTimeout(function tick() {
       if (state.open && document.visibilityState !== 'hidden' && !(state.legacyWs && state.legacyWs.readyState === WebSocket.OPEN)) pollLegacy(false).finally(scheduleLegacyPoll);
       else scheduleLegacyPoll();
-    }, document.visibilityState === 'hidden' ? 15000 : 4000);
+    }, legacyPollDelayMs());
   }
 
   function startLegacyWs() {
-    if (mode !== 'legacy' && mode !== 'fast_ai') return;
     if (script.getAttribute('data-websocket') === 'false') return;
     if (!window.WebSocket || !state.legacyConversationId || !state.legacyVisitorToken) return;
     if (state.legacyWs && state.legacyWs.readyState === WebSocket.OPEN) return;
@@ -643,7 +888,7 @@
           visitor_token: state.legacyVisitorToken,
           last_event_id: state.legacyLastEventId
         }));
-        setStatus('Online');
+        setStatus('');
       };
       state.legacyWs.onmessage = function (event) {
         var data = {};
@@ -660,30 +905,34 @@
         if (data.type === 'message.created' && data.message) {
           hideTyping();
           renderServerMessage(data.message);
-          setStatus('Online');
+          setStatus('');
+        } else if (String(data.type || '').indexOf('ai_turn.') === 0) {
+          syncAiTyping(String(data.type || '').slice('ai_turn.'.length));
         }
       };
       state.legacyWs.onclose = function () {
-        if ((mode !== 'legacy' && mode !== 'fast_ai') || !state.open) return;
-        setStatus('Reconnecting...');
+        if (!state.open) return;
+        setStatus('');
         state.legacyWsReconnectTimer = setTimeout(startLegacyWs, 4000);
         scheduleLegacyPoll();
       };
       state.legacyWs.onerror = function () {
-        setStatus('Reconnecting...');
+        setStatus('');
       };
     } catch (err) {
       scheduleLegacyPoll();
     }
   }
 
-  function sendLegacyMessage(body, existingEl) {
+  function sendConversationMessage(body, existingEl) {
+    if (state.busy && !existingEl) return;
     var cmid = clientMessageId();
     var bubble = existingEl || appendMessage('visitor', body, 'sending', 'client:' + cmid);
     state.busy = true;
     sendEl.disabled = true;
     inputEl.value = '';
-    setStatus('Sending...');
+    setStatus('');
+    showTyping();
     ensureLegacySession().then(function () {
       return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/messages', {
         method: 'POST',
@@ -695,13 +944,15 @@
       if (data && data.message) {
         renderServerMessage(data.message);
       }
-      setStatus('Sent');
+      setStatus('');
       startLegacyWs();
+      scheduleLegacyPoll();
       return pollLegacy(true);
     }).catch(function () {
+      hideTyping();
       updateMessage(bubble, body, 'visitor', 'failed');
-      setStatus('Failed to send. Please retry.');
-      appendRetry(bubble, body, sendLegacyMessage);
+      setStatus('');
+      appendRetry(bubble, body, sendConversationMessage);
     }).finally(function () {
       state.busy = false;
       sendEl.disabled = false;

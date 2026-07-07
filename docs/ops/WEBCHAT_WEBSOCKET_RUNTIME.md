@@ -14,10 +14,14 @@ Enable in stages:
 
 ## Public Widget Behavior
 
-Both public widget modes use the same customer-side WebSocket runtime when enabled:
+The public widget uses the durable WebChat conversation runtime:
 
-- `data-webchat-mode="fast_ai"` first sends the existing fast-reply REST/SSE request. After the server creates or resumes the durable `webchat_conversation`, the response includes `conversation_id`, `visitor_token`, `last_message_id`, and `last_event_id`. The widget stores those values in session storage, opens `/api/webchat/ws`, sends `connection.hello` with the visitor token in the JSON body, and subscribes from `last_event_id`.
-- `data-webchat-mode="legacy"` keeps the existing `/api/webchat/init` and message POST flow. Once it has `conversation_id` and `visitor_token`, it uses the same visitor WebSocket subscription and falls back to the same message polling endpoint.
+- It creates or resumes the conversation through `/api/webchat/init`.
+- It sends visitor messages to `/api/webchat/conversations/{conversation_id}/messages`.
+- Once it has `conversation_id` and `visitor_token`, it opens `/api/webchat/ws`,
+  sends `connection.hello` with the visitor token in the JSON body, and
+  subscribes from `last_event_id`.
+- It falls back to `after_id` polling when WebSocket is unavailable.
 
 The public widget never sends `visitor_token` in a WebSocket URL. If the socket is unavailable, disabled, or closed, the widget keeps using `/api/webchat/conversations/{conversation_id}/messages?after_id=...` with `X-Webchat-Visitor-Token`.
 
@@ -67,7 +71,11 @@ Nginx must forward `Upgrade` and `Connection` headers for `/api/webchat/ws`, use
 Minimum production validation before enabling public WebSocket:
 
 1. Enable `WEBCHAT_WS_ENABLED=true`, `WEBCHAT_WS_ADMIN_ENABLED=true`, and `WEBCHAT_WS_PUBLIC_ENABLED=true` in staging.
-2. Load a `fast_ai` widget, send a message that triggers server or AI handoff, accept the handoff in the agent console, and send an agent reply. The customer widget should receive the reply through a `message.created` WebSocket event without refresh.
-3. Repeat the same flow with `data-webchat-mode="legacy"`.
-4. Disable `WEBCHAT_WS_PUBLIC_ENABLED` and confirm the customer widget still sends messages and receives replies through polling.
-5. Set `data-websocket="false"` on the embed and confirm polling fallback works while admin WebSocket remains enabled.
+2. Load the public widget, send a message that triggers AI or human handoff,
+   accept the handoff in the agent console, and send an agent reply. The
+   customer widget should receive the reply through a `message.created`
+   WebSocket event without refresh.
+3. Disable `WEBCHAT_WS_PUBLIC_ENABLED` and confirm the customer widget still
+   sends messages and receives replies through polling.
+4. Set `data-websocket="false"` on the embed and confirm polling fallback works
+   while admin WebSocket remains enabled.

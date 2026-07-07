@@ -16,6 +16,10 @@ from .tool_governance import record_tool_call
 settings = get_settings()
 
 TRACKING_NUMBER_RE = re.compile(r"(?<![A-Z0-9])([A-Z0-9][A-Z0-9-]{7,34}[A-Z0-9])(?![A-Z0-9])", re.IGNORECASE)
+TRACKING_CONTEXT_RE = re.compile(
+    r"\b(track|tracking|parcel|package|shipment|waybill|delivery|order)\b|查件|查询|物流|包裹|快递|单号|运单|订单号|订单",
+    re.IGNORECASE,
+)
 
 
 def extract_tracking_number(*values: str | None) -> str | None:
@@ -25,6 +29,8 @@ def extract_tracking_number(*values: str | None) -> str | None:
             continue
         for match in TRACKING_NUMBER_RE.finditer(text):
             candidate = re.sub(r"[-\u2010-\u2015\u2212]+", "", match.group(1).strip().upper())
+            if candidate.isdigit() and not TRACKING_CONTEXT_RE.search(text):
+                continue
             if _looks_like_tracking_number(candidate):
                 return candidate
     return None

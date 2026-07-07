@@ -5,7 +5,7 @@ from typing import Any
 from ..tracking_fact_schema import TrackingFactEvent, TrackingFactResult
 from .redactor import redact_mapping
 from .schemas import SpeedafOrderFact
-from .status_map import safe_order_class_label, safe_order_status_label
+from .status_map import order_status_context, safe_order_class_label, safe_order_status_label
 
 SPEEDAF_TRACKING_FACT_SOURCE = "speedaf_api.order_query"
 SPEEDAF_TRACKING_FACT_TOOL_NAME = "speedaf.order.query"
@@ -58,4 +58,5 @@ def tracking_fact_from_order_fact(fact: SpeedafOrderFact) -> TrackingFactResult:
         tool_status="success",
         pii_redacted=True,
         fact_evidence_present=True,
+        status_context=order_status_context(fact.status),
     )

@@ -24,10 +24,6 @@ x-app-image: &app_image
     WEBCHAT_WS_MAX_CONNECTIONS_PER_USER: ${WEBCHAT_WS_MAX_CONNECTIONS_PER_USER:-10}
     REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION: "true"
     DB_SLOW_QUERY_MS: ${DB_SLOW_QUERY_MS:-500}
-    CODEX_APP_SERVER_AUTH_MODE: ${CODEX_APP_SERVER_AUTH_MODE:-per_request}
-    CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED: ${CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED:-false}
-    CODEX_APP_SERVER_TOTAL_TIMEOUT_MS: ${CODEX_APP_SERVER_TOTAL_TIMEOUT_MS:-10000}
-    CODEX_APP_SERVER_CONNECT_TIMEOUT_MS: ${CODEX_APP_SERVER_CONNECT_TIMEOUT_MS:-250}
     GIT_SHA: ${GIT_SHA:-unknown}
     BUILD_TIME: ${BUILD_TIME:-unknown}
     IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
@@ -36,7 +32,6 @@ x-app-image: &app_image
   volumes: &app_volumes
     - /run/secrets:/run/secrets:ro
     - ${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/ai_runtime_token:/run/nexus/ai_runtime_token:ro
-    - ${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
     - ${NEXUSDESK_UPLOADS_DIR:-/opt/nexus_helpdesk/data/uploads}:/app/backend/uploads
   logging: &json_logging
     driver: json-file
@@ -142,6 +137,28 @@ services:
       app:
         condition: service_healthy
 
+  runtime-warmer:
+    <<: *app_image
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        while true; do
+          python /app/scripts/smoke/warm_private_ai_runtime.py || true;
+          sleep "$${PRIVATE_AI_RUNTIME_WARMUP_INTERVAL_SECONDS:-240}";
+        done
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "python -c \"from pathlib import Path; cmd=Path('/proc/1/cmdline').read_text(errors='replace'); assert 'warm_private_ai_runtime.py' in cmd, cmd; print('runtime-warmer-ok')\""
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   webcall-ai-agent:
     <<: *app_image
     profiles:
@@ -159,116 +176,6 @@ services:
     depends_on:
       app:
         condition: service_healthy
-
-  codex-app-server-bridge:
-    <<: *app_image
-    profiles:
-      - codex-app-server
-    environment:
-      APP_ENV: production
-      BIND_HOST: 0.0.0.0
-      PORT: "18794"
-      CODEX_APP_SERVER_TOKEN_FILE: /run/nexus/codex_app_server_bridge_token
-      CODEX_APP_SERVER_AUTH_MODE: ${CODEX_APP_SERVER_AUTH_MODE:-per_request}
-      CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED: ${CODEX_APP_SERVER_LEGACY_LOGIN_STATE_ENABLED:-false}
-      CODEX_APP_SERVER_BRIDGE_MODE: ${CODEX_APP_SERVER_BRIDGE_MODE:-real}
-      CODEX_APP_SERVER_RUNTIME_BACKEND: ${CODEX_APP_SERVER_RUNTIME_BACKEND:-python_cli_pool}
-      CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL_PYTHON:-http://codex-private-reply-engine:18796/reply}
-      CODEX_APP_SERVER_REAL_UPSTREAM_URL_NODE: ${CODEX_APP_SERVER_REAL_UPSTREAM_URL_NODE:-http://codex-appserver-runtime:18810/reply}
-      CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: ${CODEX_APP_SERVER_REPLY_GENERATION_BACKEND:-}
-      CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_UPSTREAM_TIMEOUT_SECONDS:-9}
-      CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_READYZ_TIMEOUT_SECONDS:-30}
-    volumes:
-      - ${NEXUSDESK_RUNTIME_SECRETS_DIR:-/opt/nexus_helpdesk/deploy/runtime_secrets}/codex_app_server_bridge_token:/run/nexus/codex_app_server_bridge_token:ro
-    ports:
-      - "172.18.0.1:18794:18794"
-    command: python /app/deploy/codex_app_server_bridge_proxy.py
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18794/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  codex-appserver-runtime:
-    <<: *app_image
-    profiles:
-      - codex-app-server
-    environment:
-      APP_ENV: production
-      HOME: /home/appuser
-      BIND_HOST: 0.0.0.0
-      GIT_SHA: ${GIT_SHA:-unknown}
-      IMAGE_TAG: ${IMAGE_TAG:-nexusdesk/helpdesk:server}
-      APP_VERSION: ${APP_VERSION:-server}
-      BUILD_TIME: ${BUILD_TIME:-unknown}
-      CODEX_APPSERVER_RUNTIME_ENABLED: ${CODEX_APPSERVER_RUNTIME_ENABLED:-true}
-      CODEX_APPSERVER_HOST: 0.0.0.0
-      CODEX_APPSERVER_PORT: "18810"
-      CODEX_APPSERVER_PERFORMANCE_PROFILE: ${CODEX_APPSERVER_PERFORMANCE_PROFILE:-webchat_fast}
-      CODEX_APPSERVER_MODEL: ${CODEX_APPSERVER_MODEL:-gpt-5.3-codex-spark}
-      CODEX_APPSERVER_REASONING_EFFORT: ${CODEX_APPSERVER_REASONING_EFFORT:-low}
-      CODEX_APPSERVER_SERVICE_TIER: ${CODEX_APPSERVER_SERVICE_TIER:-priority}
-      CODEX_APPSERVER_THREAD_MODE: ${CODEX_APPSERVER_THREAD_MODE:-ephemeral}
-      CODEX_APPSERVER_CLIENT_CACHE_TTL_SECONDS: ${CODEX_APPSERVER_CLIENT_CACHE_TTL_SECONDS:-1800}
-      CODEX_APPSERVER_MAX_CONCURRENCY: ${CODEX_APPSERVER_MAX_CONCURRENCY:-4}
-      CODEX_APPSERVER_QUEUE_TIMEOUT_MS: ${CODEX_APPSERVER_QUEUE_TIMEOUT_MS:-750}
-      CODEX_APPSERVER_REPLY_TIMEOUT_MS: ${CODEX_APPSERVER_REPLY_TIMEOUT_MS:-8000}
-      CODEX_APPSERVER_STATE_DIR: /tmp/nexus-codex-runtime
-      CODEX_APPSERVER_WORK_DIR: /tmp/nexus-codex-runtime/webchat-workdir
-    expose:
-      - "18810"
-    command: ["node", "/app/tools/nexus-codex-runtime/dist/src/server.js"]
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18810/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  codex-app-server-upstream:
-    <<: *app_image
-    profiles:
-      - codex-app-server
-    environment:
-      APP_ENV: production
-      BIND_HOST: 0.0.0.0
-      PORT: "18795"
-      CODEX_APP_SERVER_PRIVATE_REPLY_URL: ${CODEX_APP_SERVER_PRIVATE_REPLY_URL:-}
-      CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: ${CODEX_APP_SERVER_REPLY_GENERATION_BACKEND:-unconfigured}
-      CODEX_APP_SERVER_PRIVATE_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_PRIVATE_TIMEOUT_SECONDS:-30}
-      CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS: ${CODEX_APP_SERVER_PRIVATE_READYZ_TIMEOUT_SECONDS:-30}
-    ports:
-      - "172.18.0.1:18795:18795"
-    command: python /app/deploy/codex_app_server_private_upstream_proxy.py
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18795/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  codex-private-reply-engine:
-    <<: *app_image
-    profiles:
-      - codex-app-server
-    environment:
-      APP_ENV: production
-      BIND_HOST: 0.0.0.0
-      PORT: "18796"
-      CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL: ${CODEX_PRIVATE_REPLY_ENGINE_MODEL_URL:-}
-      CODEX_PRIVATE_REPLY_ENGINE_MODEL_TIMEOUT_SECONDS: ${CODEX_PRIVATE_REPLY_ENGINE_MODEL_TIMEOUT_SECONDS:-30}
-      CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS: ${CODEX_PRIVATE_REPLY_ENGINE_READYZ_TIMEOUT_SECONDS:-30}
-      CODEX_APP_SERVER_REPLY_GENERATION_BACKEND: ${CODEX_APP_SERVER_REPLY_GENERATION_BACKEND:-unconfigured}
-    expose:
-      - "18796"
-    command: python /app/deploy/codex_private_reply_engine.py
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18796/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
 
   legacy-worker:
     <<: *app_image

@@ -2,36 +2,197 @@ import { expect, test, type Page, type Route } from '@playwright/test'
 
 const TOKEN_KEY = 'helpdesk-webapp-token'
 
-function authUser(kind: 'agent' | 'admin') {
-  if (kind === 'admin') {
-    return {
-      id: 1,
-      username: 'admin',
-      display_name: 'Admin User',
-      role: 'admin',
-      capabilities: ['runtime.manage', 'channel_account.manage', 'ai_config.read', 'ai_config.manage', 'user.manage'],
-    }
-  }
+function authUser() {
   return {
-    id: 2,
-    username: 'agent',
-    display_name: 'Agent User',
-    role: 'agent',
-    capabilities: [],
+    id: 1,
+    username: 'admin',
+    display_name: 'Admin User',
+    role: 'admin',
+    capabilities: ['ticket.read', 'runtime.manage', 'channel_account.manage', 'ai_config.read', 'ai_config.manage'],
   }
 }
 
-async function fulfillApi(route: Route, kind: 'agent' | 'admin') {
+async function fulfillApi(route: Route) {
   const url = new URL(route.request().url())
   const path = url.pathname
+  const json = (body: unknown) => route.fulfill({
+    status: 200,
+    contentType: 'application/json; charset=utf-8',
+    body: JSON.stringify(body),
+  })
 
-  const json = (body: unknown) => route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(body) })
-
-  if (path === '/api/auth/me') return json(authUser(kind))
-  if (path === '/api/lookups/bulletins') return json([])
-  if (path === '/api/lookups/markets') return json([{ id: 11, code: 'CH', name: 'Switzerland', country_code: 'CH', is_active: true }])
-  if (path === '/api/lite/cases') return json({ items: [], next_cursor: null, has_more: false })
-  if (path === '/api/admin/queues/summary') return json({ pending_outbound: 0, dead_outbound: 0, pending_jobs: 0, dead_jobs: 0, external_channel_links: 0 })
+  if (path === '/api/auth/me') return json(authUser())
+  if (path === '/api/support/conversations') {
+    return json({
+      source: 'nexus_support_conversations',
+      view: url.searchParams.get('view') || 'open',
+      items: [
+        {
+          session_key: 'webchat:conv-1',
+          conversation_id: 'conv-1',
+          channel: 'webchat',
+          source: 'webchat',
+          ticket_id: 11,
+          ticket_no: 'T-11',
+          title: 'WebChat visitor',
+          status: 'open',
+          conversation_state: 'ai_active',
+          display_name: 'WebChat Visitor',
+          customer_contact: 'visitor@example.test',
+          updated_at: '2026-07-04T08:00:00Z',
+          latest_message: 'hello',
+          latest_author: 'customer',
+          needs_human: false,
+          handoff_status: 'none',
+          ai_status: 'private_ai_runtime',
+          ai_suspended: false,
+          tracking_number_present: false,
+          can_force_takeover: true,
+          can_accept: false,
+          can_release: false,
+          can_resume_ai: false,
+          can_reply: true,
+        },
+      ],
+    })
+  }
+  if (path === '/api/support/conversations/detail') {
+    return json({
+      source: 'nexus_support_conversations',
+      conversation: {
+        session_key: 'webchat:conv-1',
+        conversation_id: 'conv-1',
+        channel: 'webchat',
+        ticket_id: 11,
+        ticket_no: 'T-11',
+        title: 'WebChat visitor',
+        status: 'open',
+        conversation_state: 'ai_active',
+        display_name: 'WebChat Visitor',
+        customer_contact: 'visitor@example.test',
+        needs_human: false,
+        handoff_status: 'none',
+        ai_status: 'private_ai_runtime',
+        ai_suspended: false,
+        tracking_number_present: false,
+        can_force_takeover: true,
+        can_reply: true,
+      },
+      ticket: {
+        id: 11,
+        ticket_no: 'T-11',
+        status: 'open',
+        priority: 'normal',
+        tracking_number_present: false,
+      },
+      messages: [
+        { id: 'm-1', author: 'customer', body: 'hello', timestamp: '2026-07-04T08:00:00Z' },
+        { id: 'm-2', author: 'ai', body: 'Hello, how can I assist you today?', timestamp: '2026-07-04T08:00:01Z' },
+      ],
+      support_memory: {
+        source: 'derived_support_memory_ledger',
+        ticket: { id: 11, ticket_no: 'T-11', status: 'open' },
+        conversation: { id: 'conv-1', status: 'open', channel_key: 'webchat' },
+        missing_fields: [],
+        tracking: { present: false },
+        ai_state: {},
+        evidence_summary: {},
+        evidence_timeline: [],
+        next_actions: [],
+      },
+    })
+  }
+  if (path === '/api/support/conversations/state') {
+    return json({
+      source: 'nexus_support_conversations',
+      open: 1,
+      requested_handoffs: 0,
+      my_handoffs: 0,
+      generated_at: '2026-07-04T08:00:00Z',
+    })
+  }
+  if (path === '/api/support/conversations/metrics') {
+    return json({
+      source: 'nexus_support_conversations',
+      since_hours: 24,
+      total: 1,
+      needs_human: 0,
+      ai_active: 1,
+      by_channel: { webchat: 1 },
+      by_state: { ai_active: 1 },
+    })
+  }
+  if (path === '/api/lite/knowledge-studio') {
+    return json({
+      generated_at: '2026-07-04T08:00:00Z',
+      role: 'admin',
+      user_id: 1,
+      capabilities: [],
+      kpis: [{ key: 'published', label: '已发布', value: 2, hint: '', tone: 'success' }],
+      items: [{
+        id: 1,
+        item_key: 'kb-1',
+        title: 'Delivery status',
+        status: 'published',
+        source_type: 'manual',
+        knowledge_kind: 'support',
+        audience_scope: 'customer',
+        priority: 100,
+        parsing_status: 'ready',
+        fact_status: 'ready',
+        answer_mode: 'runtime_context',
+        published_version: 1,
+        indexed_version: 1,
+        chunk_count: 3,
+        draft_ready: true,
+        publish_ready: true,
+        retrieval_test_ready: true,
+        has_conflict: false,
+        updated_at: '2026-07-04T08:00:00Z',
+        href: '#',
+        evidence: 'ok',
+      }],
+      conflicts: [],
+      release_lifecycle: [],
+      template_blocks: [],
+      facts: {},
+    })
+  }
+  if (path === '/api/admin/channel-accounts') {
+    return json([
+      {
+        id: 7,
+        provider: 'whatsapp',
+        account_id: 'default',
+        display_name: 'WhatsApp Default (disabled history)',
+        is_active: false,
+        priority: 10,
+        health_status: 'disabled',
+        updated_at: '2026-07-04T08:00:00Z',
+      },
+      {
+        id: 8,
+        provider: 'whatsapp',
+        account_id: 'wa-test-41798559737',
+        display_name: 'WhatsApp Native +41798559737',
+        is_active: true,
+        priority: 10,
+        health_status: 'healthy',
+        updated_at: '2026-07-04T08:00:00Z',
+      },
+    ])
+  }
+  if (path === '/api/admin/whatsapp/accounts/wa-test-41798559737/status') {
+    return json({
+      account_id: 'wa-test-41798559737',
+      status: 'connected',
+      qr_status: 'linked',
+      phone_number: '+41790000000',
+      reconnect_count: 0,
+      channel_account_id: 8,
+      channel_health_status: 'healthy',
+    })
+  }
   if (path === '/api/admin/external_channel/runtime-health') {
     return json({
       stale_link_count: 0,
@@ -39,61 +200,23 @@ async function fulfillApi(route: Route, kind: 'agent' | 'admin') {
       dead_sync_jobs: 0,
       pending_attachment_jobs: 0,
       dead_attachment_jobs: 0,
+      external_dead_outbound: 0,
       warnings: [],
     })
-  }
-  if (path === '/api/admin/production-readiness') {
-    return json({
-      app_env: 'development',
-      database_url_scheme: 'sqlite',
-      is_postgres: false,
-      storage_backend: 'local',
-      external_channel_transport: 'disabled',
-      metrics_enabled: false,
-      external_channel_sync_enabled: false,
-      outbound_email_production_pilot_enabled: false,
-      outbound_email_active_accounts: 1,
-      outbound_email_successful_test_send_accounts: 1,
-      outbound_email_test_send_max_age_hours: 24,
-      warnings: [],
-    })
-  }
-  if (path === '/api/admin/signoff-checklist') return json({ status: 'not_ready', checks: {}, warnings: [] })
-  if (path === '/api/admin/channel-accounts') return json([])
-  if (path === '/api/admin/outbound-email/accounts') {
-    return json([
-      {
-        id: 7,
-        display_name: 'Pilot SMTP',
-        host: 'smtp.example.test',
-        port: 587,
-        username: 'support@example.test',
-        from_address: 'support@example.test',
-        reply_to: 'replies@example.test',
-        security_mode: 'starttls',
-        market_id: null,
-        is_active: true,
-        priority: 10,
-        health_status: 'ok',
-        last_test_status: 'success',
-        last_test_error: null,
-        last_test_at: '2026-05-27T12:00:00Z',
-        password_configured: true,
-        password_mask: '********',
-        created_at: '2026-05-27T11:00:00Z',
-        updated_at: '2026-05-27T12:00:00Z',
-      },
-    ])
   }
 
-  return route.fulfill({ status: 404, contentType: 'application/json; charset=utf-8', body: JSON.stringify({ detail: `Unhandled mock for ${path}` }) })
+  return route.fulfill({
+    status: 404,
+    contentType: 'application/json; charset=utf-8',
+    body: JSON.stringify({ detail: `Unhandled mock for ${path}` }),
+  })
 }
 
-async function mockAuthenticatedConsole(page: Page, kind: 'agent' | 'admin') {
+async function mockAuthenticatedConsole(page: Page) {
   await page.addInitScript(([storageKey, token]) => {
     window.sessionStorage.setItem(storageKey, token)
-  }, [TOKEN_KEY, `${kind}-token`])
-  await page.route('**/api/**', (route) => fulfillApi(route, kind))
+  }, [TOKEN_KEY, 'admin-token'])
+  await page.route('**/api/**', fulfillApi)
 }
 
 test('login page renders', async ({ page }) => {
@@ -104,39 +227,39 @@ test('login page renders', async ({ page }) => {
 })
 
 test('unauthenticated protected route redirects back to login', async ({ page }) => {
-  await page.goto('/users')
+  await page.goto('/webchat')
   await expect(page).toHaveURL(/\/login$/)
   await expect(page.getByText('登录状态只保存在当前浏览器会话中。')).toBeVisible()
 })
 
-test('agent navigation hides management entry points', async ({ page }) => {
-  await mockAuthenticatedConsole(page, 'agent')
-  await page.goto('/')
+test('deleted legacy routes fall back to the support workbench boundary', async ({ page }) => {
+  await mockAuthenticatedConsole(page)
+  await page.goto('/workspace')
 
-  await expect(page.getByTestId('operator-primary-navigation')).toBeVisible()
-  await expect(page.getByRole('link', { name: /处理工单/ })).toBeVisible()
-  await expect(page.getByRole('link', { name: /控制面/ })).toHaveCount(0)
-  await expect(page.getByRole('link', { name: /账号权限/ })).toHaveCount(0)
-  await expect(page.getByRole('link', { name: /发送线路/ })).toHaveCount(0)
+  await expect(page.getByTestId('legacy-route-retired')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '旧入口已下线' })).toBeVisible()
+  await page.getByRole('link', { name: '进入客服工作台' }).click()
+  await expect(page).toHaveURL(/\/webchat$/)
 })
 
-test('admin-capable navigation shows management entry points', async ({ page }) => {
-  await mockAuthenticatedConsole(page, 'admin')
-  await page.goto('/')
+test('support workbench renders the consolidated production views', async ({ page }) => {
+  await mockAuthenticatedConsole(page)
+  await page.goto('/webchat')
 
-  await expect(page.getByRole('link', { name: /控制面/ })).toBeVisible()
-  await expect(page.getByRole('link', { name: /账号权限/ })).toBeVisible()
-  await expect(page.getByRole('link', { name: /发送线路/ })).toBeVisible()
-  await expect(page.getByRole('link', { name: /运行恢复/ })).toBeVisible()
-})
+  await expect(page.getByTestId('nexus-support-console')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '客服工作台' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'WebChat Visitor' })).toBeVisible()
+  await expect(page.getByText('Hello, how can I assist you today?')).toBeVisible()
 
-test('admin can open outbound email configuration page', async ({ page }) => {
-  await mockAuthenticatedConsole(page, 'admin')
-  await page.goto('/outbound-email')
+  await page.getByRole('button', { name: '知识' }).click()
+  await expect(page.getByText('Delivery status')).toBeVisible()
 
-  await expect(page.getByRole('heading', { name: 'SMTP 账号配置' })).toBeVisible()
-  await expect(page.getByText('Pilot SMTP')).toBeVisible()
-  await expect(page.getByText('测试发送会发出真实邮件')).toBeVisible()
-  await expect(page.getByRole('button', { name: '发送测试邮件' })).toBeVisible()
-  await expect(page.getByText('密码：********')).toBeVisible()
+  await page.getByRole('button', { name: '渠道' }).click()
+  await expect(page.getByText('WhatsApp Native +41798559737')).toBeVisible()
+  await expect(page.getByText('WhatsApp Default (disabled history)')).toHaveCount(0)
+  await expect(page.getByText('connected')).toBeVisible()
+
+  await page.getByRole('button', { name: '运行' }).click()
+  await expect(page.getByText('AI 与队列运行')).toBeVisible()
+  await expect(page.getByText('正常')).toBeVisible()
 })

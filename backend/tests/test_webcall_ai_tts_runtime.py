@@ -5,7 +5,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/webcall_ai_tts_runtime_tes
 
 import pytest
 
-from app import models, operator_models, tool_models, voice_models, webchat_fast_models, webchat_models  # noqa: F401,E402
+from app import models, operator_models, tool_models, voice_models, webchat_models  # noqa: F401,E402
 from app.db import Base, SessionLocal, engine
 from app.services.webcall_ai.config import get_webcall_ai_settings
 from app.services.webcall_ai.media_schemas import WebCallTTSInput, WebCallTTSResult
@@ -53,7 +53,7 @@ def db():
         session.close()
 
 
-def _session_and_turn(db, *, reply: str | None = "Please provide your tracking number."):
+def _session_and_turn(db, *, reply: str | None = "Runtime generated reply."):
     now = utc_now()
     session = WebchatVoiceSession(
         public_id=f"voice_{uuid4().hex}",
@@ -111,7 +111,7 @@ def test_tts_runtime_uses_provider_and_input_contract(db, monkeypatch):
     result = run_tts_runtime_for_turn(turn=turn, session=session, worker_id="worker-a")
 
     assert result.usable is True
-    assert provider.inputs[0].text_redacted == "Please provide your tracking number."
+    assert provider.inputs[0].text_redacted == "Runtime generated reply."
     assert provider.inputs[0].language == "en"
 
 

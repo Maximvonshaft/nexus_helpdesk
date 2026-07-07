@@ -18,7 +18,7 @@ class PGVector(UserDefinedType):
     cache_ok = True
 
     def get_col_spec(self, **_kw) -> str:
-        return "vector(1536)"
+        return "vector(384)"
 
 
 class PersonaProfile(Base):

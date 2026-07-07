@@ -34,7 +34,7 @@ def test_worker_script_has_no_forbidden_runtime_integrations():
         "provider_runtime",
         "llm",
         "openai",
-        "codex",
+        "legacy_ai_provider",
     ]:
         assert forbidden not in script
 

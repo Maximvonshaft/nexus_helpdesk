@@ -13,7 +13,6 @@ from sqlalchemy.engine import Connection
 from .api.admin_outbound_semantics import router as admin_outbound_semantics_router
 from .api.admin_perf import router as admin_perf_router
 from .api.admin_provider_runtime import router as admin_provider_runtime_router
-from .api.admin_provider_credentials import router as admin_provider_credentials_router
 from .api.admin_webcall_ai import router as admin_webcall_ai_router
 from .api.admin_webcall_ai_demo import router as admin_webcall_ai_demo_router
 from .api.admin_whatsapp_native import router as admin_whatsapp_native_router
@@ -35,16 +34,16 @@ from .api.persona_profiles import router as persona_profiles_router
 from .api.speedaf_actions import router as speedaf_actions_router
 from .api.speedaf_cancel import router as speedaf_cancel_router
 from .api.stats import router as stats_router
+from .api.support_conversations import router as support_conversations_router
 from .api.support_intelligence import router as support_intelligence_router
 from .api.ticket_perf import router as ticket_perf_router
 from .api.tickets import router as tickets_router
-from .api.webchat_fast import router as webchat_fast_router
 from .api.webchat import router as webchat_router
 from .api.webchat_events import router as webchat_events_router
+from .api.webchat_live_voice import router as webchat_live_voice_router
 from .api.webchat_ws import router as webchat_ws_router
 from .api.webchat_voice import router as webchat_voice_router
 from .api.webcall_ai import router as webcall_ai_router
-from .api.whatsapp_lite import router as whatsapp_lite_router
 from .api.whatsapp_native_integration import router as whatsapp_native_integration_router
 from .db import engine, reset_current_request_id, set_current_request_id
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
@@ -90,13 +89,26 @@ app.add_middleware(
     allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allow_headers=['Authorization', 'Content-Type', 'X-API-Key', 'X-Client-Key-Id', 'X-Client-Key', 'Idempotency-Key', 'X-Requested-With', settings.request_id_header],
+    allow_headers=[
+        'Authorization',
+        'Content-Type',
+        'X-API-Key',
+        'X-Client-Key-Id',
+        'X-Client-Key',
+        'Idempotency-Key',
+        'X-Requested-With',
+        'X-Webchat-Visitor-Token',
+        'X-Webchat-WS-Fallback',
+        settings.request_id_header,
+    ],
     expose_headers=[settings.request_id_header],
 )
 
 DEFAULT_PERMISSIONS_POLICY = 'camera=(), microphone=(), geolocation=()'
 VOICE_PERMISSIONS_POLICY = 'camera=(), microphone=(self), geolocation=()'
-DEFAULT_CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+CSP_SCRIPT_SRC = "'self' https://static.cloudflareinsights.com"
+CSP_BASE_CONNECT_SRC = "'self' https://cloudflareinsights.com https://static.cloudflareinsights.com"
+DEFAULT_CSP = f"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src {CSP_SCRIPT_SRC}; connect-src {CSP_BASE_CONNECT_SRC}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
 
 def _runtime_identity() -> dict[str, object]:
@@ -146,11 +158,11 @@ def _content_security_policy_for_request(path: str) -> str:
     if not _voice_runtime_headers_enabled(path, config):
         return DEFAULT_CSP
     try:
-        connect_src = ["'self'", *webchat_voice_connect_sources(config)]
+        connect_src = [CSP_BASE_CONNECT_SRC, *webchat_voice_connect_sources(config)]
     except Exception as exc:
         app_log_event(30, 'webchat_voice_runtime_config_unavailable', path=path, error_type=type(exc).__name__)
         return DEFAULT_CSP
-    return "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; " + f"connect-src {' '.join(connect_src)}; " + "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    return f"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src {CSP_SCRIPT_SRC}; " + f"connect-src {' '.join(connect_src)}; " + "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
 
 def _permissions_policy_for_request(path: str) -> str:
@@ -184,6 +196,8 @@ async def request_context_middleware(request: Request, call_next):
     response.headers['Content-Security-Policy'] = _content_security_policy_for_request(request.url.path)
     if request.url.path.startswith('/api/'):
         response.headers.setdefault('Cache-Control', 'no-store')
+    elif request.url.path.startswith('/assets/'):
+        response.headers['Cache-Control'] = 'no-cache, max-age=0, must-revalidate'
     return response
 
 
@@ -237,7 +251,6 @@ def readyz():
 app.include_router(admin_outbound_semantics_router)
 app.include_router(admin_perf_router)
 app.include_router(admin_provider_runtime_router)
-app.include_router(admin_provider_credentials_router)
 app.include_router(admin_webcall_ai_router)
 app.include_router(admin_webcall_ai_demo_router)
 app.include_router(admin_whatsapp_native_router)
@@ -260,13 +273,13 @@ app.include_router(stats_router)
 app.include_router(tickets_router)
 app.include_router(speedaf_actions_router)
 app.include_router(speedaf_cancel_router)
+app.include_router(support_conversations_router)
 app.include_router(support_intelligence_router)
-app.include_router(webchat_fast_router)
 app.include_router(webchat_events_router)
+app.include_router(webchat_live_voice_router)
 app.include_router(webchat_ws_router)
 app.include_router(webcall_ai_router)
 app.include_router(webchat_voice_router)
-app.include_router(whatsapp_lite_router)
 app.include_router(whatsapp_native_integration_router)
 app.include_router(webchat_router)
 

@@ -12,41 +12,12 @@ _SECRET_PATTERNS = [
     re.compile(("ey" + "J") + r"[A-Za-z0-9_\-]{12,}"),
     re.compile(("Bear" + "er") + r"\s+[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
 ]
-_INTERNAL_PATTERNS = ["localhost", "127.0.0.1", "::1", "bridge", "codex_app_server", "external_channel", "provider_runtime"]
+_INTERNAL_PATTERNS = ["localhost", "127.0.0.1", "::1", "bridge", "external_channel", "provider_runtime"]
 _STATUS_WORDS = [
     "delivered", "in transit", "out for delivery", "customs", "returned", "failed delivery",
     "派送", "已签收", "运输中", "清关", "退回",
 ]
-_MAX_FAST_REPLY_CHARS = 1200
-_MAX_VISIBLE_PREFIX_CHARS = 80
-_NEUTRAL_IDENTITY_ZH = "我是在线客服助手，可以协助处理常见客户服务问题。"
-_NEUTRAL_IDENTITY_EN = "I’m an online support assistant. I can help with common customer service questions."
-_CHINESE_IDENTITY_EXACT = {
-    "你是谁",
-    "你是什么客服",
-    "你是哪里的客服",
-    "你是哪家客服",
-    "什么客服",
-    "哪里的客服",
-    "哪家客服",
-}
-_ENGLISH_IDENTITY_EXACT = {
-    "who are you",
-    "what support are you",
-    "which company support are you",
-}
-_IDENTITY_FIELDS = {
-    "brand_name",
-    "assistant_name",
-    "role_label",
-    "identity_statement",
-    "identity_answer_rule",
-    "capabilities",
-    "disallowed_identity_claims",
-    "handoff_boundary",
-    "tone",
-    "guardrails",
-}
+_MAX_RUNTIME_REPLY_CHARS = 1200
 _COUNTRY_CONFLICT_GROUPS = (
     ("nigeria", "尼日利亚"),
     ("switzerland", "swiss", "瑞士"),
@@ -64,13 +35,15 @@ _SERVICE_CONFLICT_GROUPS = (
     ("address change", "address-change", "改地址", "地址变更"),
     ("customs clearance", "customs", "清关"),
     ("redelivery", "reattempt", "重派", "重新派送"),
+    ("currently unavailable", "not available", "not provide", "does not provide", "do not provide", "unavailable", "暂未开通", "未开通", "不支持"),
+    ("we provide", "we offer", "we support", "service is available", "available in", "已开通", "支持"),
 )
 
 
 class OutputContracts:
     @staticmethod
     def get_schema(contract_name: str) -> dict[str, Any]:
-        if contract_name == "speedaf_webchat_fast_reply_v1":
+        if contract_name == "nexus_webchat_runtime_reply_v1":
             return {
                 "type": "object",
                 "properties": {
@@ -135,10 +108,8 @@ class OutputContracts:
             raise ValueError("Output must be valid JSON") from exc
         if not isinstance(parsed, dict):
             raise ValueError("Output must be a JSON object")
-        if contract_name == "speedaf_webchat_fast_reply_v1":
-            parsed = OutputContracts._normalize_fast_reply_v1(parsed)
-            parsed = OutputContracts.enforce_identity_fast_reply(parsed, persona_context, request_body)
-            parsed = OutputContracts.enforce_persona_fast_reply(parsed, persona_context)
+        if contract_name == "nexus_webchat_runtime_reply_v1":
+            parsed = OutputContracts._normalize_runtime_reply_v1(parsed)
             raw_output = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
 
         schema = OutputContracts.get_schema(contract_name)
@@ -158,7 +129,12 @@ class OutputContracts:
         return parsed
 
     @staticmethod
-    def locked_fact_validation(reply: Any, knowledge_context: dict[str, Any] | None) -> dict[str, Any]:
+    def locked_fact_validation(
+        reply: Any,
+        knowledge_context: dict[str, Any] | None,
+        *,
+        request_body: Any = None,
+    ) -> dict[str, Any]:
         locked_facts = OutputContracts._locked_facts(knowledge_context)
         ids = [str(fact.get("item_key") or "") for fact in locked_facts if fact.get("item_key")]
         if not locked_facts:
@@ -168,9 +144,18 @@ class OutputContracts:
             return {"status": "fail", "reason": "empty_reply", "locked_fact_ids": ids}
         for fact in locked_facts:
             answer = str(fact.get("answer") or "").strip()
+            if answer and OutputContracts._locked_fact_conflict(reply_text, answer):
+                return {
+                    "status": "fail",
+                    "reason": "reply_conflicts_with_locked_fact",
+                    "locked_fact_ids": [str(fact.get("item_key") or "")] if fact.get("item_key") else ids,
+                    "source": fact.get("source") if isinstance(fact.get("source"), dict) else {"item_key": fact.get("item_key"), "title": fact.get("title")},
+                }
+        for fact in locked_facts:
+            answer = str(fact.get("answer") or "").strip()
             if not answer:
                 continue
-            if OutputContracts._reply_matches_direct_answer(reply_text, answer):
+            if OutputContracts._reply_matches_direct_answer(reply_text, answer, request_body=request_body):
                 return {
                     "status": "pass",
                     "locked_fact_ids": [str(fact.get("item_key") or "")] if fact.get("item_key") else ids,
@@ -179,7 +164,7 @@ class OutputContracts:
         return {"status": "fail", "reason": "reply_not_fact_equivalent", "locked_fact_ids": ids}
 
     @staticmethod
-    def _normalize_fast_reply_v1(parsed: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_runtime_reply_v1(parsed: dict[str, Any]) -> dict[str, Any]:
         if "customer_reply" in parsed or not isinstance(parsed.get("reply"), str):
             return parsed
         parsed = {**parsed, "customer_reply": parsed["reply"]}
@@ -195,201 +180,11 @@ class OutputContracts:
         return parsed
 
     @staticmethod
-    def enforce_persona_fast_reply(parsed: dict[str, Any], persona_context: dict[str, Any] | None) -> dict[str, Any]:
-        prefix = OutputContracts.extract_persona_visible_prefix(persona_context)
-        if not prefix:
-            return parsed
-        reply = str(parsed.get("customer_reply") or "").strip()
-        if not reply or reply.startswith(prefix):
-            return {**parsed, "customer_reply": reply}
-        return {**parsed, "customer_reply": OutputContracts._truncate_reply(f"{prefix} {reply}")}
-
-    @staticmethod
-    def enforce_identity_fast_reply(
-        parsed: dict[str, Any],
-        persona_context: dict[str, Any] | None,
-        request_body: Any,
-    ) -> dict[str, Any]:
-        if not OutputContracts.is_identity_question(request_body):
-            return parsed
-        identity = OutputContracts.extract_identity_context(persona_context)
-        reply = OutputContracts.build_identity_reply(identity, request_body)
-        if not reply:
-            return parsed
-        return {
-            **parsed,
-            "customer_reply": OutputContracts._truncate_reply(reply),
-            "intent": "other",
-            "tracking_number": None,
-            "handoff_required": False,
-            "handoff_reason": None,
-            "recommended_agent_action": None,
-            "ticket_should_create": False,
-        }
-
-    @staticmethod
-    def is_identity_question(request_body: Any) -> bool:
-        if not isinstance(request_body, str):
-            return False
-        text = request_body.strip()
-        if not text:
-            return False
-        chinese = re.sub(r"[\s，。？！,.!?;:：；、]+", "", text)
-        if chinese in _CHINESE_IDENTITY_EXACT:
-            return True
-        if re.fullmatch(r"你(?:是否是|是不是|是).{1,40}(?:的)?客服", chinese):
-            return True
-        english = re.sub(r"[^a-z0-9\s]", " ", text.lower())
-        english = " ".join(english.split())
-        if english in _ENGLISH_IDENTITY_EXACT:
-            return True
-        return bool(re.fullmatch(r"are you .{1,80} support", english))
-
-    @staticmethod
-    def extract_identity_context(persona_context: dict[str, Any] | None) -> dict[str, Any]:
-        if not isinstance(persona_context, dict):
-            return {}
-        content = persona_context.get("content_json")
-        if not isinstance(content, dict):
-            content = {}
-        nested_content = content.get("identity_context")
-        identity = persona_context.get("identity_context")
-        merged: dict[str, Any] = {}
-        if isinstance(nested_content, dict):
-            merged.update(nested_content)
-        merged.update({key: content[key] for key in content if key in _IDENTITY_FIELDS and content[key] not in (None, "", [])})
-        if isinstance(identity, dict):
-            merged.update({key: value for key, value in identity.items() if key in _IDENTITY_FIELDS and value not in (None, "", [])})
-        return {
-            "brand_name": OutputContracts._identity_string(merged.get("brand_name")),
-            "assistant_name": OutputContracts._identity_string(merged.get("assistant_name")),
-            "role_label": OutputContracts._identity_string(merged.get("role_label")),
-            "identity_statement": OutputContracts._identity_string(merged.get("identity_statement")),
-            "identity_answer_rule": OutputContracts._identity_string(merged.get("identity_answer_rule")),
-            "capabilities": OutputContracts._identity_list(merged.get("capabilities")),
-            "disallowed_identity_claims": OutputContracts._identity_list(merged.get("disallowed_identity_claims")),
-            "handoff_boundary": OutputContracts._identity_string(merged.get("handoff_boundary")),
-            "tone": OutputContracts._identity_string(merged.get("tone")),
-            "guardrails": OutputContracts._identity_list(merged.get("guardrails")),
-        }
-
-    @staticmethod
-    def build_identity_reply(identity: dict[str, Any], request_body: Any) -> str | None:
-        chinese = OutputContracts._contains_cjk(str(request_body or ""))
-        brand = OutputContracts._identity_string(identity.get("brand_name"))
-        assistant = OutputContracts._identity_string(identity.get("assistant_name"))
-        role = OutputContracts._identity_string(identity.get("role_label")) or ("AI 客服" if chinese else "AI support")
-        statement = OutputContracts._identity_string(identity.get("identity_statement"))
-        capabilities = OutputContracts._identity_list(identity.get("capabilities"))
-        disallowed = OutputContracts._identity_list(identity.get("disallowed_identity_claims"))
-        nexus_allowed = OutputContracts._is_explicit_nexusdesk(brand) or OutputContracts._is_explicit_nexusdesk(assistant)
-
-        candidates: list[str] = []
-        if statement:
-            candidates.append(statement)
-        if assistant:
-            capability_text = OutputContracts._capability_text(capabilities, chinese)
-            if brand:
-                base = f"我是{assistant}，{brand}的{role}" if chinese else f"I’m {assistant}, {brand} {role}"
-            else:
-                base = f"我是{assistant}" if chinese else f"I’m {assistant}"
-            if capability_text:
-                candidates.append(
-                    f"{base}，可以协助{capability_text}。"
-                    if chinese
-                    else f"{base}. I can help with {capability_text}."
-                )
-            else:
-                candidates.append(f"{base}。" if chinese else f"{base}.")
-        if brand:
-            candidates.append(f"我是{brand} AI 客服。" if chinese else f"I’m {brand} AI support.")
-        candidates.append(_NEUTRAL_IDENTITY_ZH if chinese else _NEUTRAL_IDENTITY_EN)
-
-        for candidate in candidates:
-            cleaned = OutputContracts._truncate_reply(candidate)
-            if OutputContracts._contains_forbidden_identity_claim(cleaned, disallowed, nexus_allowed=nexus_allowed):
-                continue
-            return cleaned
-        return None
-
-    @staticmethod
-    def _identity_string(value: Any) -> str | None:
-        if not isinstance(value, str):
-            return None
-        cleaned = " ".join(value.strip().split())
-        return cleaned or None
-
-    @staticmethod
-    def _identity_list(value: Any) -> list[str]:
-        if isinstance(value, list):
-            raw_items = value
-        elif isinstance(value, str):
-            raw_items = [value]
-        else:
-            return []
-        items: list[str] = []
-        for item in raw_items:
-            if not isinstance(item, str):
-                continue
-            cleaned = " ".join(item.strip().split())
-            if cleaned:
-                items.append(cleaned)
-        return items
-
-    @staticmethod
-    def _capability_text(capabilities: list[str], chinese: bool) -> str:
-        if not capabilities:
-            return "常见客户服务问题" if chinese else "common customer service questions"
-        separator = "、" if chinese else ", "
-        return separator.join(capabilities[:4])
-
-    @staticmethod
-    def _contains_cjk(value: str) -> bool:
-        return any("\u4e00" <= ch <= "\u9fff" for ch in value)
-
-    @staticmethod
-    def _is_explicit_nexusdesk(value: str | None) -> bool:
-        return bool(value and value.strip().lower() == "nexusdesk")
-
-    @staticmethod
-    def _contains_forbidden_identity_claim(text: str, disallowed: list[str], *, nexus_allowed: bool) -> bool:
-        lower = text.lower()
-        if not nexus_allowed and "nexusdesk" in lower:
-            return True
-        for claim in disallowed:
-            if claim and claim.lower() in lower:
-                return True
-        return False
-
-    @staticmethod
-    def extract_persona_visible_prefix(persona_context: dict[str, Any] | None) -> str | None:
-        if not isinstance(persona_context, dict):
-            return None
-        content_json = persona_context.get("content_json")
-        if not isinstance(content_json, dict):
-            return None
-        for key in ("must_prefix", "reply_prefix", "visible_prefix"):
-            value = content_json.get(key)
-            if not isinstance(value, str):
-                continue
-            cleaned = " ".join(value.strip().split())
-            if not cleaned or len(cleaned) > _MAX_VISIBLE_PREFIX_CHARS:
-                continue
-            if "[REDACTED_" in cleaned:
-                continue
-            if any(marker in cleaned.lower() for marker in _INTERNAL_PATTERNS):
-                continue
-            if any(pattern.search(cleaned) for pattern in _SECRET_PATTERNS):
-                continue
-            return cleaned
-        return None
-
-    @staticmethod
     def _truncate_reply(value: str) -> str:
         cleaned = " ".join(str(value or "").strip().split())
-        if len(cleaned) <= _MAX_FAST_REPLY_CHARS:
+        if len(cleaned) <= _MAX_RUNTIME_REPLY_CHARS:
             return cleaned
-        return cleaned[: _MAX_FAST_REPLY_CHARS - 3].rstrip() + "..."
+        return cleaned[: _MAX_RUNTIME_REPLY_CHARS - 3].rstrip() + "..."
 
     @staticmethod
     def check_security_rules(
@@ -431,10 +226,90 @@ class OutputContracts:
             )
         ):
             raise ValueError("Parcel status language requires trusted tracking evidence")
-        if parsed.get("handoff_required") is not True:
-            validation = OutputContracts.locked_fact_validation(reply, knowledge_context)
+        if (
+            parsed.get("handoff_required") is not True
+            and not OutputContracts._trusted_tracking_reply_can_bypass_locked_facts(
+                evidence_present=evidence_present,
+                request_body=request_body,
+                parsed=parsed,
+            )
+        ):
+            validation = OutputContracts.locked_fact_validation(reply, knowledge_context, request_body=request_body)
             if validation["status"] == "fail":
                 raise ValueError("Locked fact grounding conflict")
+
+    @staticmethod
+    def _trusted_tracking_reply_can_bypass_locked_facts(
+        *,
+        evidence_present: bool,
+        request_body: Any,
+        parsed: dict[str, Any] | None,
+    ) -> bool:
+        if not evidence_present:
+            return False
+        text = str(request_body or "").strip().lower()
+        if not text:
+            return False
+        if OutputContracts._looks_like_service_or_policy_question(text):
+            return False
+        intent = str((parsed or {}).get("intent") or "").strip().lower()
+        if intent in {"tracking", "tracking_status", "tracking_unresolved", "delivery_issue", "logistics"}:
+            return True
+        logistics_markers = (
+            "track",
+            "tracking",
+            "parcel",
+            "package",
+            "shipment",
+            "waybill",
+            "delivery",
+            "delivered",
+            "recipient",
+            "received",
+            "receive",
+            "not received",
+            "did not receive",
+            "where is",
+            "status",
+            "order",
+            "单号",
+            "运单",
+            "物流",
+            "快递",
+            "包裹",
+            "收件人",
+            "没收到",
+            "没有收到",
+            "签收",
+            "派送",
+            "配送",
+            "查件",
+            "查询",
+        )
+        return any(marker in text for marker in logistics_markers)
+
+    @staticmethod
+    def _looks_like_service_or_policy_question(text: str) -> bool:
+        service_markers = (
+            "do you provide",
+            "do you offer",
+            "do you support",
+            "is there",
+            "is it available",
+            "service available",
+            "service availability",
+            "domestic to domestic",
+            "domestic-to-domestic",
+            "local-to-local",
+            "local delivery",
+            "本对本",
+            "本地到本地",
+            "本地寄本地",
+            "是否开通",
+            "支持寄送",
+            "可以寄",
+        )
+        return any(marker in text for marker in service_markers)
 
     @staticmethod
     def _is_safe_grounded_business_reply(
@@ -467,7 +342,11 @@ class OutputContracts:
             return False
         if not candidate:
             return False
-        return OutputContracts._reply_matches_direct_answer(reply, str(candidate.get("answer") or ""))
+        return OutputContracts._reply_matches_direct_answer(
+            reply,
+            str(candidate.get("answer") or ""),
+            request_body=request_body,
+        )
 
     @staticmethod
     def _looks_like_specific_parcel_status_claim(reply: str) -> bool:
@@ -489,8 +368,10 @@ class OutputContracts:
         return False
 
     @staticmethod
-    def _reply_matches_direct_answer(reply: str, answer: str) -> bool:
+    def _reply_matches_direct_answer(reply: str, answer: str, *, request_body: Any = None) -> bool:
         if OutputContracts._locked_fact_conflict(reply, answer):
+            return False
+        if not OutputContracts._reply_uses_answer_specific_terms(reply, answer, request_body=request_body):
             return False
         reply_norm = OutputContracts._contract_match_text(reply)
         answer_norm = OutputContracts._contract_match_text(answer)
@@ -501,12 +382,74 @@ class OutputContracts:
         if len(reply_norm) >= 8 and reply_norm in answer_norm:
             return True
         answer_numbers = set(re.findall(r"\d+(?:\.\d+)?", answer_norm))
-        if not answer_numbers or not answer_numbers.issubset(set(re.findall(r"\d+(?:\.\d+)?", reply_norm))):
-            return False
-        reply_numbers = set(re.findall(r"\d+(?:\.\d+)?", reply_norm))
-        if reply_numbers - answer_numbers:
-            return False
+        if answer_numbers:
+            if not answer_numbers.issubset(set(re.findall(r"\d+(?:\.\d+)?", reply_norm))):
+                return False
+            reply_numbers = set(re.findall(r"\d+(?:\.\d+)?", reply_norm))
+            if reply_numbers - answer_numbers:
+                return False
         return len(OutputContracts._meaningful_overlap_terms(reply, answer)) >= 2
+
+    @staticmethod
+    def _reply_uses_answer_specific_terms(reply: str, answer: str, *, request_body: Any = None) -> bool:
+        answer_terms = OutputContracts._meaningful_overlap_terms(answer, answer)
+        if not answer_terms:
+            return True
+        request_terms = OutputContracts._meaningful_overlap_terms(str(request_body or ""), str(request_body or ""))
+        weak_terms = {
+            "speedaf",
+            "support",
+            "customer",
+            "service",
+            "answer",
+            "result",
+            "help",
+            "please",
+            "物流",
+            "客服",
+            "客户",
+            "知识",
+            "闭环",
+            "结果",
+            "请问",
+        }
+        specific_terms = {
+            term
+            for term in answer_terms - request_terms
+            if len(term) >= 2 and term not in weak_terms
+        }
+        if not specific_terms:
+            return True
+        reply_terms = OutputContracts._meaningful_overlap_terms(reply, reply)
+        if bool(specific_terms & reply_terms):
+            return True
+        answer_numbers = OutputContracts._factual_numbers(answer)
+        reply_numbers = OutputContracts._factual_numbers(reply)
+        if answer_numbers and answer_numbers.issubset(reply_numbers) and not (reply_numbers - answer_numbers):
+            return True
+        return OutputContracts._answer_specific_group_covered(reply, answer, request_body=request_body)
+
+    @staticmethod
+    def _factual_numbers(value: str) -> set[str]:
+        text = unicodedata.normalize("NFKC", str(value or ""))
+        return set(re.findall(r"(?<![A-Za-z0-9])\d+(?:\.\d+)?(?![A-Za-z0-9])", text))
+
+    @staticmethod
+    def _answer_specific_group_covered(reply: str, answer: str, *, request_body: Any = None) -> bool:
+        reply_text = OutputContracts._contract_match_text(reply)
+        answer_text = OutputContracts._contract_match_text(answer)
+        request_text = OutputContracts._contract_match_text(str(request_body or ""))
+        if not reply_text or not answer_text:
+            return False
+        for group in (*_COUNTRY_CONFLICT_GROUPS, *_SERVICE_CONFLICT_GROUPS):
+            answer_has_specific_group = any(
+                OutputContracts._contract_match_text(term) in answer_text
+                and OutputContracts._contract_match_text(term) not in request_text
+                for term in group
+            )
+            if answer_has_specific_group and any(OutputContracts._contract_match_text(term) in reply_text for term in group):
+                return True
+        return False
 
     @staticmethod
     def _locked_facts(knowledge_context: dict[str, Any] | None) -> list[dict[str, Any]]:

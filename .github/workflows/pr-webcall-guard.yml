@@ -86,7 +86,6 @@ jobs:
               backend/app/api/ticket_perf.py) return 0 ;;
               backend/app/api/webcall_ai.py) return 0 ;;
               backend/app/api/webchat*.py) return 0 ;;
-              backend/app/api/whatsapp_lite.py) return 0 ;;
               backend/app/api/whatsapp_native*.py) return 0 ;;
               backend/app/main.py) return 0 ;;
               backend/app/models.py) return 0 ;;
@@ -139,7 +138,6 @@ jobs:
               backend/tests/test_background_job_transaction_boundary.py) return 0 ;;
               backend/tests/test_candidate_compose_contract.py) return 0 ;;
               backend/tests/test_channel_workbench_backend_contracts.py) return 0 ;;
-              backend/tests/test_codex*.py) return 0 ;;
               backend/tests/test_domain_query_understanding.py) return 0 ;;
               backend/tests/test_knowledge*.py) return 0 ;;
               backend/tests/test_oauth_refresh_concurrency.py) return 0 ;;
@@ -173,7 +171,6 @@ jobs:
               docs/security/**) return 0 ;;
               docs/speedaf-mcp-uat-github-workflow.md) return 0 ;;
               scripts/**) return 0 ;;
-              tools/nexus-codex-runtime/**) return 0 ;;
               webapp/package-lock.json) return 0 ;;
               webapp/package.json) return 0 ;;
               webapp/src/**) return 0 ;;
@@ -252,7 +249,7 @@ jobs:
           done < /tmp/changed_files.txt
 
           if [ "$strict_scope_required" -eq 1 ] && [ "$fail" -ne 0 ]; then
-            echo "Scope guard failed. This PR includes files outside the approved WebCall/Codex runtime scope."
+            echo "Scope guard failed. This PR includes files outside the approved WebCall/runtime scope."
             exit 1
           fi
 
