@@ -1,3 +1,10 @@
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(ROOT))
+sys.path.append(str(ROOT.parent))
+
 from app.services.ai_reply_v3_rollout import AI_REPLY_CONTRACT_V2, AI_REPLY_CONTRACT_V3, AIReplyV3RolloutConfig, choose_reply_contract_version
 
 
