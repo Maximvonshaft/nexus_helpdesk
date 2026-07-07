@@ -204,6 +204,27 @@ async function fulfillApi(route: Route) {
       warnings: [],
     })
   }
+  if (path === '/api/admin/provider-runtime/status') {
+    return json({
+      ok: true,
+      status: 'ready',
+      fallback_provider: null,
+      warnings: [],
+      providers: [{
+        name: 'private_ai_runtime',
+        status: 'ready',
+        ok: true,
+        diagnostics: {
+          direct_model: 'ci-direct-model',
+          rag_model: 'ci-rag-model',
+          chat_mode: 'direct',
+          request_shape: 'responses',
+          rag_runtime_isolated: true,
+          allow_shared_rag_model: false,
+        },
+      }],
+    })
+  }
 
   return route.fulfill({
     status: 404,
@@ -260,6 +281,6 @@ test('support workbench renders the consolidated production views', async ({ pag
   await expect(page.getByText('connected')).toBeVisible()
 
   await page.getByRole('button', { name: '运行' }).click()
-  await expect(page.getByText('AI 与队列运行')).toBeVisible()
+  await expect(page.getByText('AI Runtime')).toBeVisible()
   await expect(page.getByText('正常')).toBeVisible()
 })
