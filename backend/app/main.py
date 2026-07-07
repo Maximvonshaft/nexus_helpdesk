@@ -196,6 +196,8 @@ async def request_context_middleware(request: Request, call_next):
     response.headers['Content-Security-Policy'] = _content_security_policy_for_request(request.url.path)
     if request.url.path.startswith('/api/'):
         response.headers.setdefault('Cache-Control', 'no-store')
+    elif request.url.path.startswith('/webchat/') or request.url.path.startswith('/static/webchat/'):
+        response.headers['Cache-Control'] = 'no-cache, max-age=0, must-revalidate'
     elif request.url.path.startswith('/assets/'):
         response.headers['Cache-Control'] = 'no-cache, max-age=0, must-revalidate'
     return response

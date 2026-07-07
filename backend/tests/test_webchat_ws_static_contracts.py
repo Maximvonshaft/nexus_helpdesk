@@ -140,6 +140,17 @@ def test_static_widget_merges_server_echo_with_optimistic_message():
     assert "if (clientKey) state.rendered[clientKey] = el;" in text
 
 
+def test_webchat_static_assets_force_cache_revalidation():
+    main = (ROOT / "backend" / "app" / "main.py").read_text(encoding="utf-8")
+    demo = (ROOT / "backend" / "app" / "static" / "webchat" / "demo" / "index.html").read_text(encoding="utf-8")
+
+    assert "request.url.path.startswith('/webchat/')" in main
+    assert "request.url.path.startswith('/static/webchat/')" in main
+    assert "no-cache, max-age=0, must-revalidate" in main
+    assert "/webchat/widget.js?v=webchat-recovery-35ba9488" in demo
+    assert "nexus-widget-consolidated-20260706" not in demo
+
+
 def test_webchat_ws_observability_and_connection_limits_contract():
     settings_text = (ROOT / "backend" / "app" / "settings.py").read_text(encoding="utf-8")
     env_example = (ROOT / "backend" / ".env.example").read_text(encoding="utf-8")
