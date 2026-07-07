@@ -134,14 +134,11 @@ def test_ai_config_management_is_limited_to_admin_or_manager(db_session):
     assert exc.value.status_code == 403
 
 
-def test_webapp_has_ai_control_route_and_nav_entry():
-    router = (ROOT.parent / 'webapp' / 'src' / 'router.tsx').read_text(encoding='utf-8')
-    shell = (ROOT.parent / 'webapp' / 'src' / 'layouts' / 'AppShell.tsx').read_text(encoding='utf-8')
-    route = (ROOT.parent / 'webapp' / 'src' / 'routes' / 'ai-control.tsx').read_text(encoding='utf-8')
+def test_webapp_routes_remain_consolidated_to_support_workbench():
+    routes_dir = ROOT.parent / 'webapp' / 'src' / 'routes'
+    routes = sorted(path.name for path in routes_dir.glob('*.tsx'))
     api = (ROOT.parent / 'webapp' / 'src' / 'lib' / 'api.ts').read_text(encoding='utf-8')
 
-    assert 'AIControlRoute' in router
-    assert "'/ai-control'" in shell
-    assert '智能助手规则与知识配置' in route
+    assert routes == ['index.tsx', 'login.tsx', 'root.tsx', 'webchat.tsx']
     assert '/api/admin/ai-configs' in api
     assert '/api/lookups/ai-configs' in api
