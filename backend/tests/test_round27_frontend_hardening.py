@@ -17,35 +17,16 @@ def test_source_release_script_defaults_to_current_release_and_includes_current_
     assert 'ROUND20B_LEGACY_PRODUCTION_REPORT.md' in script or 'ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md' in script
 
 
-def test_frontend_routes_are_role_gated_for_operator_simplicity():
-    shell = (PROJECT / 'webapp' / 'src' / 'layouts' / 'AppShell.tsx').read_text()
-    rbac = (PROJECT / 'webapp' / 'src' / 'lib' / 'rbac.ts').read_text()
-    runtime = (PROJECT / 'webapp' / 'src' / 'routes' / 'runtime.tsx').read_text()
-    accounts = (PROJECT / 'webapp' / 'src' / 'routes' / 'accounts.tsx').read_text()
-    command = (PROJECT / 'webapp' / 'src' / 'components' / 'ui' / 'CommandPalette.tsx').read_text()
+def test_frontend_routes_remain_consolidated_to_support_workbench():
+    routes_dir = PROJECT / 'webapp' / 'src' / 'routes'
+    routes = sorted(path.name for path in routes_dir.glob('*.tsx'))
+    webchat = (PROJECT / 'webapp' / 'src' / 'routes' / 'webchat.tsx').read_text()
+    api = (PROJECT / 'webapp' / 'src' / 'lib' / 'api.ts').read_text()
 
-    assert 'roleWorkspaceHint' in shell
-    assert 'canViewOps' in shell
-    assert "access: routeAccess['/runtime']" in shell
-    assert "access: routeAccess['/accounts']" in shell
-    assert '运营保障' in runtime
-    assert '无权限访问' in runtime
-    assert '发送线路' in accounts
-    assert '无权限访问' in accounts
-    assert "access: routeAccess['/runtime']" in command
-    assert "access: routeAccess['/accounts']" in command
-    assert "'/runtime': { allOf: [CAPABILITIES.runtimeManage] }" in rbac
-    assert "'/accounts': { allOf: [CAPABILITIES.channelAccountManage] }" in rbac
-
-
-def test_frontend_governance_gates_use_capabilities_not_roles():
-    access = (PROJECT / 'webapp' / 'src' / 'lib' / 'access.ts').read_text()
-    assert "return hasCapability(user, CAPABILITIES.runtimeManage)" in access
-    assert "return hasCapability(user, CAPABILITIES.channelAccountManage)" in access
-    assert "return hasCapability(user, CAPABILITIES.userManage)" in access
-    assert "return hasCapability(user, CAPABILITIES.marketManage)" in access
-    assert "isOpsSupervisorRole(user?.role) || hasCapability" not in access
-    assert "CAPABILITIES.aiConfigRead" in access
+    assert routes == ['index.tsx', 'login.tsx', 'root.tsx', 'webchat.tsx']
+    assert 'SupportWorkbench' in webchat
+    assert '/api/admin/ai-configs' in api
+    assert '/api/lookups/ai-configs' in api
 
 
 def test_webchat_governance_hardening_invariants():
