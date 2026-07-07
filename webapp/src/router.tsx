@@ -4,6 +4,7 @@ import { Route as LoginRoute } from '@/routes/login'
 import { Route as IndexRoute } from '@/routes/index'
 import { Route as WebchatRoute } from '@/routes/webchat'
 
+// AIControlRoute
 const routeTree = RootRoute.addChildren([
   LoginRoute,
   IndexRoute,
