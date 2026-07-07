@@ -122,6 +122,47 @@ async function fulfillApi(route: Route) {
       by_state: { ai_active: 1 },
     })
   }
+  if (path === '/api/knowledge-items') {
+    return json({
+      items: [{
+        id: 1,
+        item_key: 'kb-1',
+        title: 'Delivery status',
+        summary: 'Delivery status customer-visible guidance',
+        status: 'active',
+        source_type: 'text',
+        knowledge_kind: 'business_fact',
+        tenant_id: 'default',
+        brand_id: 'default',
+        country_scope: 'GLOBAL',
+        channel_scope: 'all',
+        visibility: 'customer',
+        shareability: 'customer_visible',
+        authority_level: 'faq',
+        risk_level: 'low',
+        market_id: null,
+        channel: null,
+        audience_scope: 'customer',
+        language: null,
+        priority: 100,
+        parsing_status: 'ready',
+        indexed_version: 1,
+        chunk_count: 3,
+        fact_question: 'Where is my parcel?',
+        fact_answer: 'Check the delivery status and confirm customer contact details.',
+        fact_aliases_json: ['delivery status'],
+        fact_status: 'approved',
+        answer_mode: 'guided_answer',
+        draft_body: 'Delivery status draft guidance',
+        published_body: 'Delivery status customer-visible guidance',
+        published_version: 1,
+        published_at: '2026-07-04T08:00:00Z',
+        created_at: '2026-07-04T08:00:00Z',
+        updated_at: '2026-07-04T08:00:00Z',
+      }],
+      total: 1,
+    })
+  }
   if (path === '/api/lite/knowledge-studio') {
     return json({
       generated_at: '2026-07-04T08:00:00Z',
@@ -129,29 +170,7 @@ async function fulfillApi(route: Route) {
       user_id: 1,
       capabilities: [],
       kpis: [{ key: 'published', label: '已发布', value: 2, hint: '', tone: 'success' }],
-      items: [{
-        id: 1,
-        item_key: 'kb-1',
-        title: 'Delivery status',
-        status: 'published',
-        source_type: 'manual',
-        knowledge_kind: 'support',
-        audience_scope: 'customer',
-        priority: 100,
-        parsing_status: 'ready',
-        fact_status: 'ready',
-        answer_mode: 'runtime_context',
-        published_version: 1,
-        indexed_version: 1,
-        chunk_count: 3,
-        draft_ready: true,
-        publish_ready: true,
-        retrieval_test_ready: true,
-        has_conflict: false,
-        updated_at: '2026-07-04T08:00:00Z',
-        href: '#',
-        evidence: 'ok',
-      }],
+      items: [],
       conflicts: [],
       release_lifecycle: [],
       template_blocks: [],
@@ -239,7 +258,7 @@ test('deleted legacy routes fall back to the support workbench boundary', async 
   await expect(page.getByTestId('legacy-route-retired')).toBeVisible()
   await expect(page.getByRole('heading', { name: '旧入口已下线' })).toBeVisible()
   await page.getByRole('link', { name: '进入客服工作台' }).click()
-  await expect(page).toHaveURL(/\/webchat$/)
+  await expect(page).toHaveURL(/\/webchat(?:\?.*)?$/)
 })
 
 test('support workbench renders the consolidated production views', async ({ page }) => {
