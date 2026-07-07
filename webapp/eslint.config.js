@@ -27,6 +27,7 @@ export default tseslint.config(
       'no-control-regex': 'off',
       'react-hooks/set-state-in-effect': 'off',
       'react-hooks/preserve-manual-memoization': 'off',
+      'react-hooks/use-memo': 'warn',
     },
   },
 )
