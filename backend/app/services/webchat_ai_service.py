@@ -31,6 +31,7 @@ from .webchat_ai_turn_service import is_ai_suspended_for_handoff, safe_write_web
 from .webchat_fact_gate import evaluate_webchat_fact_gate
 from .webchat_handoff_service import request_webchat_handoff
 from .webchat_runtime_ai_service import WebchatRuntimeReplyResult, generate_webchat_runtime_reply
+from .ai_runtime_context import build_webchat_runtime_context
 from .ai_reply_contract import build_ai_reply_contract
 
 LOGGER = logging.getLogger("nexusdesk")
@@ -852,6 +853,32 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
     tracking_fact_summary = tracking_fact.prompt_summary() if tracking_fact and tracking_fact.fact_evidence_present and tracking_fact.pii_redacted else None
     tracking_fact_metadata = tracking_fact.metadata_payload() if tracking_fact else {}
     tracking_fact_metadata.pop("fact_evidence_present", None)
+    target_language = _language_hint(visitor_message.body)
+    tracking_number_for_context = (
+        getattr(tracking_fact, "tracking_number", None)
+        or tracking_fact_metadata.get("tracking_number")
+        or ticket.tracking_number
+    )
+    runtime_context = None
+    db_session = Session.object_session(ticket)
+    if db_session is not None:
+        try:
+            runtime_context = build_webchat_runtime_context(
+                db=db_session,
+                tenant_key=conversation.tenant_key,
+                channel_key=conversation.channel_key,
+                body=visitor_message.body or "",
+                market_id=getattr(ticket, "market_id", None),
+                language=target_language,
+                tracking_number=tracking_number_for_context,
+                tracking_fact_evidence_present=bool(tracking_fact_summary),
+                ticket=ticket,
+                conversation=conversation,
+                customer=getattr(ticket, "customer", None),
+                channel_payload=tracking_fact_metadata,
+            )
+        except Exception:
+            LOGGER.exception("webchat_ai_runtime_context_prefetch_failed", extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id}})
     try:
         result = _run_runtime_reply_sync(
             tenant_key=conversation.tenant_key,
@@ -864,7 +891,8 @@ def _generate_ai_reply(*, ticket: Ticket, conversation: WebchatConversation, vis
             tracking_fact_metadata=tracking_fact_metadata,
             tracking_fact_evidence_present=bool(tracking_fact_summary),
             market_id=getattr(ticket, "market_id", None),
-            language=_language_hint(visitor_message.body),
+            language=target_language,
+            runtime_context=runtime_context,
         )
     except Exception as exc:
         LOGGER.exception(

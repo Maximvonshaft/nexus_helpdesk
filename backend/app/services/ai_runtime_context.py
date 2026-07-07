@@ -7,6 +7,8 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from . import persona_service
+from ..models import Market
+from .effective_country import effective_country_payload, resolve_effective_country
 from .knowledge_grounding_service import select_grounding_candidate
 from .knowledge_retrieval_service import KnowledgeChunkHit, retrieve_published_chunks
 
@@ -91,6 +93,10 @@ def build_webchat_runtime_context(
     audience_scope: str = "customer",
     tracking_number: str | None = None,
     tracking_fact_evidence_present: bool | None = None,
+    ticket: Any = None,
+    conversation: Any = None,
+    customer: Any = None,
+    channel_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     profile, match_rank = persona_service.resolve_preview(
         db,
@@ -103,12 +109,24 @@ def build_webchat_runtime_context(
         tracking_number=tracking_number,
         tracking_fact_evidence_present=tracking_fact_evidence_present,
     )
+    country_payload = _channel_payload_with_market_country(
+        db,
+        channel_payload=channel_payload,
+        market_id=market_id,
+    )
+    effective_country = resolve_effective_country(
+        ticket=ticket,
+        conversation=conversation,
+        customer=customer,
+        market_id=market_id,
+        channel_payload=country_payload,
+    )
     retrieval = retrieve_published_chunks(
         db,
         q=retrieval_query,
         tenant_id=tenant_key,
         brand_id="default",
-        country_scope="GLOBAL",
+        country_scope=effective_country.country,
         channel_scope=channel_key,
         market_id=market_id,
         channel=channel_key,
@@ -116,6 +134,8 @@ def build_webchat_runtime_context(
         language=language,
         limit=MAX_CONTEXT_HITS,
     )
+    rag_trace = dict(retrieval.as_trace())
+    rag_trace.update(effective_country_payload(effective_country))
     return sanitize_runtime_context({
         "context_version": "nexus_webchat_runtime_context_v2",
         "tenant_key": tenant_key,
@@ -124,10 +144,11 @@ def build_webchat_runtime_context(
             "channel": channel_key,
             "language": language,
             "audience_scope": audience_scope,
+            **effective_country_payload(effective_country),
         },
         "persona_context": _persona_context(profile, match_rank),
         "knowledge_context": _knowledge_context(retrieval, query=retrieval_query, original_query=body, query_expansion_terms=expansion_terms),
-        "rag_trace": retrieval.as_trace(),
+        "rag_trace": rag_trace,
         "safety_policy": {
             "knowledge_scope": "policy_sop_faq_only",
             "locked_facts_contract": "Use locked_facts as authoritative facts. Natural rephrasing is allowed, but do not change countries, service types, timing, numbers, prices, or policy boundaries.",
@@ -139,6 +160,21 @@ def build_webchat_runtime_context(
             ],
         },
     })
+
+
+def _channel_payload_with_market_country(
+    db: Session,
+    *,
+    channel_payload: dict[str, Any] | None,
+    market_id: int | None,
+) -> dict[str, Any]:
+    payload = dict(channel_payload or {})
+    if market_id is None or payload.get("market_country") or payload.get("ticket_market_country"):
+        return payload
+    market = db.query(Market).filter(Market.id == market_id).first()
+    if market and market.country_code:
+        payload["market_country"] = market.country_code
+    return payload
 
 
 def _runtime_retrieval_query(*, body: str, tracking_number: str | None, tracking_fact_evidence_present: bool | None) -> tuple[str, list[str]]:

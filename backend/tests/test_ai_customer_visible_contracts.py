@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+import json
 import os
 import sys
 import uuid
@@ -21,7 +24,8 @@ from app.db import Base  # noqa: E402
 from app.enums import ConversationState, MessageStatus, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
 from app.models import Team, Ticket, TicketOutboundMessage, User  # noqa: E402
 from app.schemas_control_plane import KnowledgeItemCreate, KnowledgePublishRequest  # noqa: E402
-from app.services.ai_reply_contract import AI_REPLY_CONTRACT_V2, build_ai_reply_contract  # noqa: E402
+from app.settings import get_settings  # noqa: E402
+from app.services.ai_reply_contract import AI_REPLY_CONTRACT_V2, AI_REPLY_CONTRACT_V3, build_ai_reply_contract  # noqa: E402
 from app.services.knowledge_runtime_v2 import retrieve_knowledge  # noqa: E402
 from app.services import knowledge_service  # noqa: E402
 from app.services.message_dispatch import process_outbound_message, queue_outbound_message  # noqa: E402
@@ -193,6 +197,39 @@ def test_country_scope_specific_beats_global(db_session):
     assert "Switzerland" in (result.hits[0].direct_answer or result.hits[0].text)
 
 
+def test_country_specific_knowledge_beats_global(db_session):
+    actor = _user(db_session)
+    _publish(db_session, actor, item_key=f"kb.global.address.{_uid()}", country_scope="GLOBAL", fact_question="Can I change delivery address?", fact_answer="Global address changes require support review.", draft_body="Can I change delivery address?\nGlobal address changes require support review.")
+    _publish(db_session, actor, item_key=f"kb.ch.address.{_uid()}", country_scope="CH", fact_question="Can I change delivery address?", fact_answer="Switzerland address changes are allowed before dispatch.", draft_body="Can I change delivery address?\nSwitzerland address changes are allowed before dispatch.")
+
+    result = retrieve_knowledge(db_session, query="Can I change delivery address?", tenant_key="default", brand_id="default", country_scope="CH", channel_scope="website", channel="website", language="en", limit=5)
+
+    assert result.hits
+    assert result.hits[0].metadata["country_scope"] == "CH"
+    assert "Switzerland" in (result.hits[0].direct_answer or result.hits[0].text)
+
+
+def test_global_fallback_when_country_specific_missing(db_session):
+    actor = _user(db_session)
+    _publish(db_session, actor, item_key=f"kb.global.pickup.{_uid()}", country_scope="GLOBAL", fact_question="Can I schedule pickup?", fact_answer="Pickup scheduling is handled by support.", draft_body="Can I schedule pickup?\nPickup scheduling is handled by support.")
+
+    result = retrieve_knowledge(db_session, query="Can I schedule pickup?", tenant_key="default", brand_id="default", country_scope="CH", channel_scope="website", channel="website", language="en", limit=5)
+
+    assert result.hits
+    assert {hit.metadata["country_scope"] for hit in result.hits} == {"GLOBAL"}
+    assert "Pickup scheduling" in (result.hits[0].direct_answer or result.hits[0].text)
+
+
+def test_country_specific_knowledge_does_not_cross_country(db_session):
+    actor = _user(db_session)
+    _publish(db_session, actor, item_key=f"kb.de.customs.{_uid()}", country_scope="DE", fact_question="How does customs clearance work?", fact_answer="Germany customs clearance requires German policy review.", draft_body="How does customs clearance work?\nGermany customs clearance requires German policy review.")
+
+    result = retrieve_knowledge(db_session, query="How does customs clearance work?", tenant_key="default", brand_id="default", country_scope="CH", channel_scope="website", channel="website", language="en", limit=5)
+
+    assert result.hits == []
+    assert result.no_answer_reason == "no_evidence"
+
+
 def test_internal_note_never_customer_quoted(db_session):
     actor = _user(db_session)
     _publish(
@@ -266,3 +303,66 @@ def test_process_outbound_message_rechecks_runtime_contract(db_session, monkeypa
 
     assert processed.status == MessageStatus.dead
     assert processed.failure_code == "runtime_signature_invalid"
+
+
+def test_ai_reply_v3_answer_requires_used_sources():
+    with pytest.raises(ValueError, match="ai_reply_v3_answer_requires_used_sources"):
+        build_ai_reply_contract(
+            body="Grounded answer",
+            runtime_trace={"request_id": "rt-v3-no-source"},
+            contract_version=AI_REPLY_CONTRACT_V3,
+            reply_type="answer",
+            used_sources=[],
+        )
+
+
+def test_ai_reply_v3_blocks_unsupported_claims():
+    with pytest.raises(ValueError, match="ai_reply_v3_unsupported_claims_blocked"):
+        build_ai_reply_contract(
+            body="Grounded answer",
+            runtime_trace={"request_id": "rt-v3-unsupported"},
+            contract_version=AI_REPLY_CONTRACT_V3,
+            reply_type="answer",
+            used_sources=["kb.policy.1#v1:0"],
+            unsupported_claims=["delivery takes one day"],
+        )
+
+
+def test_runtime_signature_uses_hmac_secret(monkeypatch):
+    secret = "runtime-contract-signing-secret-32-bytes"
+    monkeypatch.setenv("RUNTIME_CONTRACT_SIGNING_SECRET", secret)
+    get_settings.cache_clear()
+    try:
+        contract = build_ai_reply_contract(
+            body="Grounded answer",
+            runtime_trace={"request_id": "rt-v3-hmac"},
+            contract_version=AI_REPLY_CONTRACT_V3,
+            reply_type="answer",
+            used_sources=["kb.policy.1#v1:0"],
+            unsupported_claims=[],
+            confidence=0.91,
+            channel="webchat",
+        )
+        payload = {
+            "body_sha256": hashlib.sha256("Grounded answer".encode("utf-8")).hexdigest(),
+            "runtime_trace_id": "rt-v3-hmac",
+            "contract_version": AI_REPLY_CONTRACT_V3,
+            "safety_status": "passed",
+            "reply": {
+                "type": "answer",
+                "text_sha256": hashlib.sha256("Grounded answer".encode("utf-8")).hexdigest(),
+            },
+            "grounding": {
+                "used_sources": ["kb.policy.1#v1:0"],
+                "unsupported_claims": [],
+                "conflicts": [],
+            },
+            "risk": {"confidence": 0.91},
+            "channel": "webchat",
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        expected = hmac.new(secret.encode("utf-8"), encoded.encode("utf-8"), hashlib.sha256).hexdigest()
+    finally:
+        get_settings.cache_clear()
+
+    assert contract.runtime_signature == expected

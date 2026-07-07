@@ -43,6 +43,70 @@ _SERVICE_CONFLICT_GROUPS = (
 class OutputContracts:
     @staticmethod
     def get_schema(contract_name: str) -> dict[str, Any]:
+        if contract_name == "nexus.ai_reply.v3":
+            return {
+                "type": "object",
+                "properties": {
+                    "reply": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "enum": ["answer", "clarifying_question", "handoff_notice"]},
+                            "text": {"type": "string", "maxLength": 1200},
+                        },
+                        "required": ["type", "text"],
+                        "additionalProperties": False,
+                    },
+                    "language": {"type": "string", "maxLength": 32},
+                    "intent": {"type": "string", "maxLength": 80},
+                    "tracking_number": {"type": ["string", "null"], "maxLength": 80},
+                    "handoff_required": {"type": "boolean"},
+                    "handoff_reason": {"type": ["string", "null"], "maxLength": 500},
+                    "recommended_agent_action": {"type": ["string", "null"], "maxLength": 500},
+                    "ticket_should_create": {"type": "boolean"},
+                    "internal_summary": {"type": ["string", "null"], "maxLength": 1000},
+                    "risk_flags": {"type": "array", "items": {"type": "string", "maxLength": 100}, "maxItems": 20},
+                    "runtime_trace_id": {"type": "string", "maxLength": 120},
+                    "contract_version": {"type": "string", "const": "nexus.ai_reply.v3"},
+                    "runtime_signature": {"type": "string", "minLength": 32, "maxLength": 128},
+                    "safety_status": {"type": "string", "enum": ["passed", "reviewed"]},
+                    "origin": {"type": "string", "enum": ["provider_runtime", "ai_runtime"]},
+                    "grounding": {
+                        "type": "object",
+                        "properties": {
+                            "used_sources": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 240}, "maxItems": 20},
+                            "unsupported_claims": {"type": "array", "items": {"type": "string", "maxLength": 240}, "maxItems": 20},
+                            "conflicts": {"type": "array", "items": {"type": "string", "maxLength": 240}, "maxItems": 20},
+                        },
+                        "required": ["used_sources", "unsupported_claims", "conflicts"],
+                        "additionalProperties": False,
+                    },
+                    "risk": {
+                        "type": "object",
+                        "properties": {
+                            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                        },
+                        "required": ["confidence"],
+                        "additionalProperties": False,
+                    },
+                    "channel": {"type": "string", "maxLength": 80},
+                },
+                "required": [
+                    "reply",
+                    "language",
+                    "intent",
+                    "handoff_required",
+                    "ticket_should_create",
+                    "runtime_trace_id",
+                    "contract_version",
+                    "runtime_signature",
+                    "safety_status",
+                    "origin",
+                    "grounding",
+                    "risk",
+                    "channel",
+                ],
+                "additionalProperties": False,
+            }
         if contract_name == "nexus.ai_reply.v2":
             return {
                 "type": "object",
@@ -152,6 +216,8 @@ class OutputContracts:
                 jsonschema.validate(instance=parsed, schema=schema)
             except jsonschema.exceptions.ValidationError as exc:
                 raise ValueError(f"Schema validation failed: {exc.message}") from exc
+        if contract_name == "nexus.ai_reply.v3":
+            OutputContracts._validate_ai_reply_v3(parsed)
 
         OutputContracts.check_security_rules(
             raw_output=raw_output,
@@ -161,6 +227,15 @@ class OutputContracts:
             knowledge_context=knowledge_context,
         )
         return parsed
+
+    @staticmethod
+    def _validate_ai_reply_v3(parsed: dict[str, Any]) -> None:
+        reply = parsed.get("reply") if isinstance(parsed.get("reply"), dict) else {}
+        grounding = parsed.get("grounding") if isinstance(parsed.get("grounding"), dict) else {}
+        if reply.get("type") == "answer" and not grounding.get("used_sources"):
+            raise ValueError("answer requires grounding.used_sources")
+        if reply.get("type") == "answer" and grounding.get("unsupported_claims"):
+            raise ValueError("answer cannot contain unsupported_claims")
 
     @staticmethod
     def locked_fact_validation(
@@ -242,7 +317,8 @@ class OutputContracts:
                 raise ValueError("Internal runtime references are prohibited")
 
         intent = parsed.get("intent")
-        reply = str(parsed.get("customer_reply") or parsed.get("customer_visible_reply") or "")
+        nested_reply = parsed.get("reply") if isinstance(parsed.get("reply"), dict) else {}
+        reply = str(parsed.get("customer_reply") or parsed.get("customer_visible_reply") or nested_reply.get("text") or "")
         reply_lower = reply.lower()
         if intent == "tracking":
             if not parsed.get("tracking_number"):

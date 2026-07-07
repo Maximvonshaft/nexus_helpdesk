@@ -15,8 +15,8 @@ sys.path.insert(0, str(ROOT))
 from app.db import Base  # noqa: E402
 from app import models  # noqa: F401,E402
 from app import models_control_plane  # noqa: F401,E402
-from app.enums import UserRole  # noqa: E402
-from app.models import User  # noqa: E402
+from app.enums import ConversationState, TicketPriority, TicketSource, TicketStatus, UserRole, SourceChannel, ResolutionCategory  # noqa: E402
+from app.models import Market, Ticket, User  # noqa: E402
 from app.schemas_control_plane import KnowledgeItemCreate, KnowledgePublishRequest, PersonaProfileCreate, PersonaPublishRequest  # noqa: E402
 from app.services import knowledge_service, persona_service  # noqa: E402
 from app.services.ai_runtime_context import build_webchat_runtime_context  # noqa: E402
@@ -194,6 +194,57 @@ def test_runtime_context_includes_published_persona_and_safe_knowledge(db_sessio
     assert context["knowledge_context"]["hits"][0]["item_key"] == "runtime.address"
     assert context["safety_policy"]["knowledge_scope"] == "policy_sop_faq_only"
     assert "tracking_fact_evidence_present=true" in context["safety_policy"]["tracking_truth_boundary"]
+
+
+def test_webchat_runtime_context_uses_effective_country_not_global(db_session):
+    admin = _user(db_session)
+    ch_market = Market(code="CH", name="Switzerland", country_code="CH", is_active=True)
+    db_session.add(ch_market)
+    db_session.flush()
+    ticket = Ticket(
+        ticket_no="T-CH-COUNTRY",
+        title="Swiss customer",
+        description="Swiss customer",
+        source=TicketSource.user_message,
+        source_channel=SourceChannel.web_chat,
+        priority=TicketPriority.medium,
+        status=TicketStatus.new,
+        resolution_category=ResolutionCategory.none,
+        market_id=ch_market.id,
+        conversation_state=ConversationState.ai_active,
+    )
+    db_session.add(ticket)
+    item = knowledge_service.create_item(
+        db_session,
+        _knowledge_payload(
+            item_key="ch.country.policy",
+            title="Swiss policy",
+            channel="website",
+            country_scope="CH",
+            draft_body="Swiss delivery support uses local Switzerland policy.",
+            draft_normalized_text="Swiss delivery support uses local Switzerland policy.",
+        ),
+        admin,
+    )
+    knowledge_service.publish_item(db_session, item, admin, notes="publish")
+
+    context = build_webchat_runtime_context(
+        db_session,
+        tenant_key="default",
+        channel_key="website",
+        language="en",
+        body="Swiss delivery support policy",
+        market_id=ch_market.id,
+        ticket=ticket,
+        channel_payload={"order_destination_country": "CH"},
+    )
+
+    assert context["metadata_filters"]["effective_country"] == "CH"
+    assert context["metadata_filters"]["country_source"] == "order_destination_country"
+    assert context["rag_trace"]["effective_country"] == "CH"
+    assert context["rag_trace"]["country_source"] == "order_destination_country"
+    assert context["rag_trace"]["filters"]["country_scope"] == "CH"
+    assert context["knowledge_context"]["hits"][0]["metadata"]["country_scope"] == "CH"
 
 
 def test_runtime_context_expands_tracking_no_evidence_query_to_waybill_rules(db_session):

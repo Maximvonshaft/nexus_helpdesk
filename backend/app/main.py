@@ -49,6 +49,7 @@ from .db import engine, reset_current_request_id, set_current_request_id
 from .services.observability import configure_logging, log_event as app_log_event, record_request_metric, render_prometheus_metrics, timed_request
 from .services.password_policy import MIN_PASSWORD_LENGTH, PasswordPolicyError, validate_admin_password_policy
 from .services.release_metadata import runtime_identity_status
+from .services.ai_reply_contract import runtime_contract_secret_ready
 from .services.spa_fallback_hardening import should_block_spa_fallback
 from .services.storage_readiness import check_storage_readiness
 from .settings import get_settings
@@ -223,17 +224,19 @@ def metrics(x_metrics_token: str | None = Header(default=None, alias='X-Metrics-
 def readyz():
     storage_readiness = check_storage_readiness()
     frontend_readiness = _frontend_readiness()
+    runtime_contract_readiness = runtime_contract_secret_ready()
     try:
         with engine.connect() as conn:
             conn.execute(text('SELECT 1'))
             migration_revision = _migration_revision(conn)
-        ready = storage_readiness.ok and bool(frontend_readiness['ok'])
+        ready = storage_readiness.ok and bool(frontend_readiness['ok']) and bool(runtime_contract_readiness['ok'])
         payload = {
             'status': 'ready' if ready else 'not_ready',
             'database': 'ok',
             'migration_revision': migration_revision,
             'storage': storage_readiness.as_dict(),
             'frontend': frontend_readiness,
+            'runtime_contract_signing': runtime_contract_readiness,
             **_runtime_identity(),
         }
         if not storage_readiness.ok:
@@ -241,6 +244,9 @@ def readyz():
             return JSONResponse(status_code=503, content=payload)
         if not frontend_readiness['ok']:
             app_log_event(40, 'readiness_frontend_check_failed', frontend=frontend_readiness)
+            return JSONResponse(status_code=503, content=payload)
+        if not runtime_contract_readiness['ok']:
+            app_log_event(40, 'readiness_runtime_contract_signing_failed', runtime_contract_signing=runtime_contract_readiness)
             return JSONResponse(status_code=503, content=payload)
         if storage_readiness.warnings:
             app_log_event(30, 'readiness_storage_warning', storage=storage_readiness.as_dict())

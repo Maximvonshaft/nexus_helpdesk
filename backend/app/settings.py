@@ -111,6 +111,7 @@ class Settings:
         self.external_channel_event_driver_enabled = os.getenv("EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED", "false").strip().lower() == "true"
         self.external_channel_sync_daemon_stale_seconds = int(os.getenv("EXTERNAL_CHANNEL_SYNC_DAEMON_STALE_SECONDS", "90"))
         self.require_prometheus_client_in_production = os.getenv("REQUIRE_PROMETHEUS_CLIENT_IN_PRODUCTION", "false").strip().lower() == "true"
+        self.runtime_contract_signing_secret = os.getenv("RUNTIME_CONTRACT_SIGNING_SECRET", "").strip()
 
         self.login_max_failures = int(os.getenv("LOGIN_MAX_FAILURES", "5"))
         self.login_lock_minutes = int(os.getenv("LOGIN_LOCK_MINUTES", "15"))

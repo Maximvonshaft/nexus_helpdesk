@@ -1223,6 +1223,7 @@ async def generate_webchat_runtime_reply(
     tracking_fact_evidence_present: bool = False,
     market_id: int | None = None,
     language: str | None = None,
+    runtime_context: dict[str, Any] | None = None,
 ) -> WebchatRuntimeReplyResult:
     settings = get_webchat_runtime_settings()
     if not settings.enabled:
@@ -1257,16 +1258,20 @@ async def generate_webchat_runtime_reply(
     target_language = language_decision.language
     latency_class = _latency_class_for_request(body=body, evidence_present=evidence_present)
     runtime_context = (
-        _trusted_tracking_runtime_context()
-        if evidence_present
-        else _runtime_context_for_request(
-            tenant_key=tenant_key,
-            channel_key=channel_key,
-            body=body,
-            market_id=market_id,
-            language=target_language,
-            tracking_number=tracking_number_for_policy,
-            tracking_fact_evidence_present=evidence_present,
+        runtime_context
+        if isinstance(runtime_context, dict)
+        else (
+            _trusted_tracking_runtime_context()
+            if evidence_present
+            else _runtime_context_for_request(
+                tenant_key=tenant_key,
+                channel_key=channel_key,
+                body=body,
+                market_id=market_id,
+                language=target_language,
+                tracking_number=tracking_number_for_policy,
+                tracking_fact_evidence_present=evidence_present,
+            )
         )
     )
     latency_class = _latency_class_with_runtime_context(
