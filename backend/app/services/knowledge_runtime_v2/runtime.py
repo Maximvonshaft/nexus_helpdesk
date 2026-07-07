@@ -16,6 +16,15 @@ from .embeddings import cosine_similarity, get_embedding_provider, vector_litera
 
 STRUCTURED_KINDS = {"faq", "business_fact"}
 TRACKING_TERMS = {"tracking", "track", "waybill", "物流", "运单", "单号", "包裹", "查件"}
+GLOBAL_COUNTRY_SCOPE = "GLOBAL"
+GLOBAL_CHANNEL_SCOPE = "all"
+CUSTOMER_VISIBILITY = "customer"
+CUSTOMER_SHAREABILITY = {"customer_visible", "runtime_context"}
+AUTHORITY_RANK = {"tool": 0, "official_policy": 1, "policy": 2, "sop": 3, "faq": 4, "imported": 5}
+HIGH_RISK_TERMS = {
+    "refund", "赔付", "赔偿", "退款", "claim", "customs", "清关", "tax", "duty", "delivery time", "时效", "物流状态", "tracking status"
+}
+MIN_HIGH_RISK_SCORE = 18.0
 
 
 @dataclass(frozen=True)
@@ -66,6 +75,9 @@ def retrieve_knowledge(
     *,
     query: str,
     tenant_key: str | None = None,
+    brand_id: str | None = None,
+    country_scope: str | None = None,
+    channel_scope: str | None = None,
     market_id: int | None = None,
     channel: str | None = None,
     audience_scope: str = "customer",
@@ -78,15 +90,26 @@ def retrieve_knowledge(
     options = options or KnowledgeRuntimeOptions()
     normalized = _normalize(query)
     terms = _terms(normalized)
+    tenant_id = _scope_value(tenant_key, "default")
+    brand = _scope_value(brand_id, "default")
+    country = _country_scope(country_scope)
+    channel_filter = _scope_value(channel_scope or channel, GLOBAL_CHANNEL_SCOPE)
     filters = {
-        "tenant_key": tenant_key,
+        "tenant_id": tenant_id,
+        "brand_id": brand,
+        "country_scope": country,
+        "country_fallback": GLOBAL_COUNTRY_SCOPE,
+        "channel_scope": channel_filter,
+        "channel_fallback": GLOBAL_CHANNEL_SCOPE,
         "market_id": market_id,
         "channel": channel,
         "audience_scope": audience_scope,
         "language": language,
+        "visibility": CUSTOMER_VISIBILITY,
+        "shareability": sorted(CUSTOMER_SHAREABILITY),
         "probe_exclusion": True,
     }
-    candidate_rows = _candidate_rows(db, terms=terms, normalized_query=normalized, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language)
+    candidate_rows = _candidate_rows(db, terms=terms, normalized_query=normalized, tenant_id=tenant_id, brand_id=brand, country_scope=country, channel_scope=channel_filter, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language)
     candidate_hits: dict[tuple[int, int, int], KnowledgeRuntimeHit] = {}
     source_counts = {"structured_exact": 0, "fts": 0, "postgres_fts": 0, "vector": 0, "pgvector": 0, "legacy_candidate": len(candidate_rows)}
     vector_degraded: str | None = None
@@ -115,7 +138,7 @@ def retrieve_knowledge(
                 timeout_seconds=settings.knowledge_embedding_timeout_seconds,
             )
             query_embedding = provider.embed_texts([normalized])[0]
-            vector_rows = _vector_rows(db, query_embedding=query_embedding, fallback_rows=candidate_rows, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language, limit=limit)
+            vector_rows = _vector_rows(db, query_embedding=query_embedding, fallback_rows=candidate_rows, tenant_id=tenant_id, brand_id=brand, country_scope=country, channel_scope=channel_filter, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language, limit=limit)
             vector_rows.sort(key=lambda item: item[2], reverse=True)
             for chunk, item, similarity in vector_rows[: max(limit * 4, 20)]:
                 if similarity <= 0:
@@ -156,7 +179,8 @@ def retrieve_knowledge(
             )
 
     fused = _rrf_fuse(list(candidate_hits.values()))
-    fused.sort(key=lambda hit: (-hit.score, hit.metadata.get("priority") or 10000, hit.item_key, hit.chunk_index))
+    fused = _apply_answerability_policy(fused, normalized_query=normalized)
+    fused.sort(key=lambda hit: (_country_rank(hit, country), _authority_rank(hit), -hit.score, hit.metadata.get("priority") or 10000, hit.item_key, hit.chunk_index))
     hits = fused[: max(1, min(limit, 20))]
     direct_facts = [_fact_from_hit(hit) for hit in hits if hit.direct_answer and hit.metadata.get("fact_status") == "approved"]
     direct_facts = [fact for fact in direct_facts if fact]
@@ -205,13 +229,17 @@ def _candidate_rows(
     *,
     terms: list[str],
     normalized_query: str,
+    tenant_id: str,
+    brand_id: str,
+    country_scope: str,
+    channel_scope: str,
     market_id: int | None,
     channel: str | None,
     audience_scope: str,
     language: str | None,
 ) -> list[tuple[KnowledgeChunk, KnowledgeItem]]:
     if _is_postgres(db):
-        return _postgres_candidate_rows(db, terms=terms, normalized_query=normalized_query, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language)
+        return _postgres_candidate_rows(db, terms=terms, normalized_query=normalized_query, tenant_id=tenant_id, brand_id=brand_id, country_scope=country_scope, channel_scope=channel_scope, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language)
     now = utc_now()
     query = (
         db.query(KnowledgeChunk, KnowledgeItem)
@@ -221,8 +249,24 @@ def _candidate_rows(
             KnowledgeItem.status == "active",
             KnowledgeChunk.published_version > 0,
             KnowledgeChunk.published_version == KnowledgeItem.published_version,
+            KnowledgeChunk.tenant_id == tenant_id,
+            KnowledgeItem.tenant_id == tenant_id,
+            KnowledgeChunk.brand_id == brand_id,
+            KnowledgeItem.brand_id == brand_id,
+            KnowledgeChunk.country_scope.in_((country_scope, GLOBAL_COUNTRY_SCOPE)),
+            KnowledgeItem.country_scope.in_((country_scope, GLOBAL_COUNTRY_SCOPE)),
+            KnowledgeChunk.channel_scope.in_((channel_scope, GLOBAL_CHANNEL_SCOPE)),
+            KnowledgeItem.channel_scope.in_((channel_scope, GLOBAL_CHANNEL_SCOPE)),
+            KnowledgeChunk.visibility == CUSTOMER_VISIBILITY,
+            KnowledgeItem.visibility == CUSTOMER_VISIBILITY,
+            KnowledgeChunk.shareability.in_(tuple(CUSTOMER_SHAREABILITY)),
+            KnowledgeItem.shareability.in_(tuple(CUSTOMER_SHAREABILITY)),
             or_(KnowledgeChunk.starts_at.is_(None), KnowledgeChunk.starts_at <= now),
             or_(KnowledgeChunk.ends_at.is_(None), KnowledgeChunk.ends_at >= now),
+            or_(KnowledgeChunk.valid_from.is_(None), KnowledgeChunk.valid_from <= now),
+            or_(KnowledgeChunk.valid_until.is_(None), KnowledgeChunk.valid_until >= now),
+            or_(KnowledgeItem.valid_from.is_(None), KnowledgeItem.valid_from <= now),
+            or_(KnowledgeItem.valid_until.is_(None), KnowledgeItem.valid_until >= now),
             or_(KnowledgeItem.knowledge_kind.is_(None), KnowledgeItem.knowledge_kind.notin_(tuple(STRUCTURED_KINDS)), KnowledgeItem.fact_status == "approved"),
         )
     )
@@ -261,15 +305,19 @@ def _postgres_candidate_rows(
     *,
     terms: list[str],
     normalized_query: str,
+    tenant_id: str,
+    brand_id: str,
+    country_scope: str,
+    channel_scope: str,
     market_id: int | None,
     channel: str | None,
     audience_scope: str,
     language: str | None,
 ) -> list[tuple[KnowledgeChunk, KnowledgeItem]]:
     rows_by_id: dict[int, tuple[KnowledgeChunk, KnowledgeItem]] = {}
-    for chunk, item in _structured_exact_rows(db, terms=terms, normalized_query=normalized_query, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language):
+    for chunk, item in _structured_exact_rows(db, terms=terms, normalized_query=normalized_query, tenant_id=tenant_id, brand_id=brand_id, country_scope=country_scope, channel_scope=channel_scope, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language):
         rows_by_id[chunk.id] = (chunk, item)
-    search_ids = _postgres_fts_ids(db, query_text=normalized_query or " ".join(terms), market_id=market_id, channel=channel, audience_scope=audience_scope, language=language)
+    search_ids = _postgres_fts_ids(db, query_text=normalized_query or " ".join(terms), tenant_id=tenant_id, brand_id=brand_id, country_scope=country_scope, channel_scope=channel_scope, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language)
     if search_ids:
         ordered = _rows_by_chunk_ids(db, search_ids)
         rows_by_id.update({chunk.id: (chunk, item) for chunk, item in ordered})
@@ -281,6 +329,10 @@ def _structured_exact_rows(
     *,
     terms: list[str],
     normalized_query: str,
+    tenant_id: str,
+    brand_id: str,
+    country_scope: str,
+    channel_scope: str,
     market_id: int | None,
     channel: str | None,
     audience_scope: str,
@@ -295,8 +347,24 @@ def _structured_exact_rows(
             KnowledgeItem.status == "active",
             KnowledgeChunk.published_version > 0,
             KnowledgeChunk.published_version == KnowledgeItem.published_version,
+            KnowledgeChunk.tenant_id == tenant_id,
+            KnowledgeItem.tenant_id == tenant_id,
+            KnowledgeChunk.brand_id == brand_id,
+            KnowledgeItem.brand_id == brand_id,
+            KnowledgeChunk.country_scope.in_((country_scope, GLOBAL_COUNTRY_SCOPE)),
+            KnowledgeItem.country_scope.in_((country_scope, GLOBAL_COUNTRY_SCOPE)),
+            KnowledgeChunk.channel_scope.in_((channel_scope, GLOBAL_CHANNEL_SCOPE)),
+            KnowledgeItem.channel_scope.in_((channel_scope, GLOBAL_CHANNEL_SCOPE)),
+            KnowledgeChunk.visibility == CUSTOMER_VISIBILITY,
+            KnowledgeItem.visibility == CUSTOMER_VISIBILITY,
+            KnowledgeChunk.shareability.in_(tuple(CUSTOMER_SHAREABILITY)),
+            KnowledgeItem.shareability.in_(tuple(CUSTOMER_SHAREABILITY)),
             or_(KnowledgeChunk.starts_at.is_(None), KnowledgeChunk.starts_at <= now),
             or_(KnowledgeChunk.ends_at.is_(None), KnowledgeChunk.ends_at >= now),
+            or_(KnowledgeChunk.valid_from.is_(None), KnowledgeChunk.valid_from <= now),
+            or_(KnowledgeChunk.valid_until.is_(None), KnowledgeChunk.valid_until >= now),
+            or_(KnowledgeItem.valid_from.is_(None), KnowledgeItem.valid_from <= now),
+            or_(KnowledgeItem.valid_until.is_(None), KnowledgeItem.valid_until >= now),
             KnowledgeItem.knowledge_kind.in_(tuple(STRUCTURED_KINDS)),
             KnowledgeItem.fact_status == "approved",
         )
@@ -333,6 +401,10 @@ def _postgres_fts_ids(
     db: Session,
     *,
     query_text: str,
+    tenant_id: str,
+    brand_id: str,
+    country_scope: str,
+    channel_scope: str,
     market_id: int | None,
     channel: str | None,
     audience_scope: str,
@@ -342,6 +414,10 @@ def _postgres_fts_ids(
         return []
     sql, params = _postgres_candidate_sql(
         vector=False,
+        tenant_id=tenant_id,
+        brand_id=brand_id,
+        country_scope=country_scope,
+        channel_scope=channel_scope,
         market_id=market_id,
         channel=channel,
         audience_scope=audience_scope,
@@ -370,6 +446,10 @@ def _vector_rows(
     *,
     query_embedding: list[float],
     fallback_rows: list[tuple[KnowledgeChunk, KnowledgeItem]],
+    tenant_id: str,
+    brand_id: str,
+    country_scope: str,
+    channel_scope: str,
     market_id: int | None,
     channel: str | None,
     audience_scope: str,
@@ -377,7 +457,7 @@ def _vector_rows(
     limit: int,
 ) -> list[tuple[KnowledgeChunk, KnowledgeItem, float]]:
     if _is_postgres(db):
-        ids_and_scores = _postgres_vector_ids(db, query_embedding=query_embedding, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language, limit=max(limit * 8, 40))
+        ids_and_scores = _postgres_vector_ids(db, query_embedding=query_embedding, tenant_id=tenant_id, brand_id=brand_id, country_scope=country_scope, channel_scope=channel_scope, market_id=market_id, channel=channel, audience_scope=audience_scope, language=language, limit=max(limit * 8, 40))
         rows_by_id = {chunk.id: (chunk, item) for chunk, item in _rows_by_chunk_ids(db, [chunk_id for chunk_id, _score in ids_and_scores])}
         return [(rows_by_id[chunk_id][0], rows_by_id[chunk_id][1], score) for chunk_id, score in ids_and_scores if chunk_id in rows_by_id]
     return [
@@ -391,6 +471,10 @@ def _postgres_vector_ids(
     db: Session,
     *,
     query_embedding: list[float],
+    tenant_id: str,
+    brand_id: str,
+    country_scope: str,
+    channel_scope: str,
     market_id: int | None,
     channel: str | None,
     audience_scope: str,
@@ -399,6 +483,10 @@ def _postgres_vector_ids(
 ) -> list[tuple[int, float]]:
     sql, params = _postgres_candidate_sql(
         vector=True,
+        tenant_id=tenant_id,
+        brand_id=brand_id,
+        country_scope=country_scope,
+        channel_scope=channel_scope,
         market_id=market_id,
         channel=channel,
         audience_scope=audience_scope,
@@ -413,20 +501,49 @@ def _postgres_vector_ids(
 def _postgres_candidate_sql(
     *,
     vector: bool,
+    tenant_id: str,
+    brand_id: str,
+    country_scope: str,
+    channel_scope: str,
     market_id: int | None,
     channel: str | None,
     audience_scope: str,
     language: str | None,
     limit: int = 320,
 ) -> tuple[str, dict[str, Any]]:
-    params: dict[str, Any] = {"audience_scope": audience_scope, "limit": limit}
+    params: dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "brand_id": brand_id,
+        "country_scope": country_scope,
+        "global_country_scope": GLOBAL_COUNTRY_SCOPE,
+        "channel_scope": channel_scope,
+        "global_channel_scope": GLOBAL_CHANNEL_SCOPE,
+        "audience_scope": audience_scope,
+        "limit": limit,
+    }
     filters = [
         "kc.status = 'active'",
         "ki.status = 'active'",
         "kc.published_version > 0",
         "kc.published_version = ki.published_version",
+        "kc.tenant_id = :tenant_id",
+        "ki.tenant_id = :tenant_id",
+        "kc.brand_id = :brand_id",
+        "ki.brand_id = :brand_id",
+        "kc.country_scope IN (:country_scope, :global_country_scope)",
+        "ki.country_scope IN (:country_scope, :global_country_scope)",
+        "kc.channel_scope IN (:channel_scope, :global_channel_scope)",
+        "ki.channel_scope IN (:channel_scope, :global_channel_scope)",
+        "kc.visibility = 'customer'",
+        "ki.visibility = 'customer'",
+        "kc.shareability IN ('customer_visible', 'runtime_context')",
+        "ki.shareability IN ('customer_visible', 'runtime_context')",
         "(kc.starts_at IS NULL OR kc.starts_at <= now())",
         "(kc.ends_at IS NULL OR kc.ends_at >= now())",
+        "(kc.valid_from IS NULL OR kc.valid_from <= now())",
+        "(kc.valid_until IS NULL OR kc.valid_until >= now())",
+        "(ki.valid_from IS NULL OR ki.valid_from <= now())",
+        "(ki.valid_until IS NULL OR ki.valid_until >= now())",
         "(ki.knowledge_kind IS NULL OR ki.knowledge_kind NOT IN ('faq', 'business_fact') OR ki.fact_status = 'approved')",
         "ki.item_key NOT ILIKE '%probe%'",
         "kc.item_key NOT ILIKE '%probe%'",
@@ -517,6 +634,16 @@ def _score_row(chunk: KnowledgeChunk, item: KnowledgeItem, *, terms: list[str], 
     metadata = dict(chunk.metadata_json or {})
     metadata.update({
         "priority": priority,
+        "tenant_id": chunk.tenant_id or item.tenant_id,
+        "brand_id": chunk.brand_id or item.brand_id,
+        "country_scope": (chunk.country_scope or item.country_scope or GLOBAL_COUNTRY_SCOPE).upper(),
+        "channel_scope": chunk.channel_scope or item.channel_scope or GLOBAL_CHANNEL_SCOPE,
+        "locale": chunk.locale or item.locale or chunk.language or item.language,
+        "visibility": chunk.visibility or item.visibility,
+        "shareability": chunk.shareability or item.shareability,
+        "authority_level": chunk.authority_level or item.authority_level or "faq",
+        "risk_level": chunk.risk_level or item.risk_level or "low",
+        "review_due_at": chunk.review_due_at.isoformat() if chunk.review_due_at else (item.review_due_at.isoformat() if item.review_due_at else None),
         "knowledge_kind": item.knowledge_kind,
         "fact_status": item.fact_status,
         "answer_mode": item.answer_mode,
@@ -544,6 +671,12 @@ def _score_row(chunk: KnowledgeChunk, item: KnowledgeItem, *, terms: list[str], 
             "title": item.title,
             "published_version": item.published_version,
             "chunk_index": chunk.chunk_index,
+            "tenant_id": chunk.tenant_id or item.tenant_id,
+            "brand_id": chunk.brand_id or item.brand_id,
+            "country_scope": (chunk.country_scope or item.country_scope or GLOBAL_COUNTRY_SCOPE).upper(),
+            "channel_scope": chunk.channel_scope or item.channel_scope or GLOBAL_CHANNEL_SCOPE,
+            "authority_level": chunk.authority_level or item.authority_level or "faq",
+            "risk_level": chunk.risk_level or item.risk_level or "low",
             "citation": item.citation_metadata_json or metadata.get("citation") or {},
         },
     )
@@ -567,6 +700,49 @@ def _rrf_fuse(hits: list[KnowledgeRuntimeHit]) -> list[KnowledgeRuntimeHit]:
         fused_score = round(hit.score + (60.0 / (60 + rank)), 3)
         fused.append(KnowledgeRuntimeHit(**{**hit.__dict__, "score": fused_score}))
     return fused
+
+
+def _scope_value(value: str | None, default: str) -> str:
+    cleaned = str(value or "").strip()
+    return cleaned or default
+
+
+def _country_scope(value: str | None) -> str:
+    cleaned = _scope_value(value, GLOBAL_COUNTRY_SCOPE).upper()
+    if cleaned in {"*", "ALL", "ANY"}:
+        return GLOBAL_COUNTRY_SCOPE
+    return cleaned[:16]
+
+
+def _country_rank(hit: KnowledgeRuntimeHit, requested: str) -> int:
+    scope = str(hit.metadata.get("country_scope") or GLOBAL_COUNTRY_SCOPE).upper()
+    if requested != GLOBAL_COUNTRY_SCOPE and scope == requested:
+        return 0
+    if scope == GLOBAL_COUNTRY_SCOPE:
+        return 1
+    return 2
+
+
+def _authority_rank(hit: KnowledgeRuntimeHit) -> int:
+    return AUTHORITY_RANK.get(str(hit.metadata.get("authority_level") or "faq"), 9)
+
+
+def _apply_answerability_policy(hits: list[KnowledgeRuntimeHit], *, normalized_query: str) -> list[KnowledgeRuntimeHit]:
+    if not hits:
+        return []
+    if not _looks_high_risk_policy_query(normalized_query):
+        return hits
+    gated: list[KnowledgeRuntimeHit] = []
+    for hit in hits:
+        authority = str(hit.metadata.get("authority_level") or "faq")
+        if authority in {"tool", "official_policy", "policy"} and hit.score >= MIN_HIGH_RISK_SCORE:
+            gated.append(hit)
+    return gated
+
+
+def _looks_high_risk_policy_query(value: str) -> bool:
+    lowered = value.lower()
+    return any(term in lowered for term in HIGH_RISK_TERMS)
 
 
 def _vector_fail_closed_result(

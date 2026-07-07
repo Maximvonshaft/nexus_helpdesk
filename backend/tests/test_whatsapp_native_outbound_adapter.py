@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
 from app.db import Base  # noqa: E402
-from app.enums import MessageStatus, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus  # noqa: E402
+from app.enums import ConversationState, MessageStatus, ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus  # noqa: E402
 from app.models import ChannelAccount, Customer, Team, Ticket, TicketOutboundMessage  # noqa: E402
 from app.services import message_dispatch  # noqa: E402
 from app.services.outbound_adapters.whatsapp_native import (  # noqa: E402
@@ -105,6 +105,7 @@ def _ticket(db_session, *, contact="+15550123456") -> Ticket:
         status=TicketStatus.pending_assignment,
         resolution_category=ResolutionCategory.none,
         team_id=team.id,
+        conversation_state=ConversationState.human_owned,
         source_chat_id=contact,
         preferred_reply_channel=SourceChannel.whatsapp.value,
         preferred_reply_contact=contact,
@@ -120,6 +121,9 @@ def _message(db_session, ticket: Ticket, *, body="hello") -> TicketOutboundMessa
         channel=SourceChannel.whatsapp,
         status=MessageStatus.processing,
         body=body,
+        origin="human_agent",
+        safety_status="passed",
+        created_by=1,
         provider_status="queued",
         max_retries=3,
         locked_by="worker-test",

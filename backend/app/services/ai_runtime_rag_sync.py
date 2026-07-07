@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..models_control_plane import KnowledgeChunk, KnowledgeItem
@@ -72,6 +73,7 @@ def build_runtime_rag_sync_items(
     include_internal: bool = False,
     limit: int | None = None,
 ) -> tuple[list[RuntimeRagSyncItem], int]:
+    now = utc_now()
     query = (
         db.query(KnowledgeChunk, KnowledgeItem)
         .join(KnowledgeItem, KnowledgeItem.id == KnowledgeChunk.item_id)
@@ -82,6 +84,18 @@ def build_runtime_rag_sync_items(
             KnowledgeChunk.published_version == KnowledgeItem.published_version,
             KnowledgeChunk.published_version > 0,
             KnowledgeItem.audience_scope == "customer",
+            KnowledgeItem.visibility == "customer",
+            KnowledgeChunk.visibility == "customer",
+            KnowledgeItem.shareability.in_(("customer_visible", "runtime_context")),
+            KnowledgeChunk.shareability.in_(("customer_visible", "runtime_context")),
+            or_(KnowledgeItem.starts_at.is_(None), KnowledgeItem.starts_at <= now),
+            or_(KnowledgeItem.ends_at.is_(None), KnowledgeItem.ends_at >= now),
+            or_(KnowledgeItem.valid_from.is_(None), KnowledgeItem.valid_from <= now),
+            or_(KnowledgeItem.valid_until.is_(None), KnowledgeItem.valid_until >= now),
+            or_(KnowledgeChunk.starts_at.is_(None), KnowledgeChunk.starts_at <= now),
+            or_(KnowledgeChunk.ends_at.is_(None), KnowledgeChunk.ends_at >= now),
+            or_(KnowledgeChunk.valid_from.is_(None), KnowledgeChunk.valid_from <= now),
+            or_(KnowledgeChunk.valid_until.is_(None), KnowledgeChunk.valid_until >= now),
         )
         .order_by(KnowledgeItem.priority.asc(), KnowledgeItem.item_key.asc(), KnowledgeChunk.chunk_index.asc())
     )
@@ -227,6 +241,17 @@ def _sync_metadata(item: KnowledgeItem, chunk: KnowledgeChunk, *, text: str) -> 
         "title": item.title,
         "knowledge_kind": item.knowledge_kind,
         "audience_scope": item.audience_scope,
+        "tenant_id": chunk.tenant_id or item.tenant_id,
+        "brand_id": chunk.brand_id or item.brand_id,
+        "country_scope": (chunk.country_scope or item.country_scope or "GLOBAL").upper(),
+        "channel_scope": chunk.channel_scope or item.channel_scope or "all",
+        "locale": chunk.locale or item.locale or item.language,
+        "visibility": chunk.visibility or item.visibility,
+        "shareability": chunk.shareability or item.shareability,
+        "authority_level": chunk.authority_level or item.authority_level,
+        "risk_level": chunk.risk_level or item.risk_level,
+        "valid_from": (chunk.valid_from or item.valid_from).isoformat() if (chunk.valid_from or item.valid_from) else None,
+        "valid_until": (chunk.valid_until or item.valid_until).isoformat() if (chunk.valid_until or item.valid_until) else None,
         "channel": item.channel,
         "language": item.language,
         "priority": item.priority,

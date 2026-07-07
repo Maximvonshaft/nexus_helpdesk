@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException, UploadFile
@@ -18,6 +19,10 @@ VALID_SOURCE_TYPES = {"text", "url", "file"}
 VALID_KNOWLEDGE_KINDS = {"document", "faq", "business_fact", "policy", "sop"}
 VALID_FACT_STATUSES = {"draft", "approved", "archived"}
 VALID_ANSWER_MODES = {"direct_answer", "guided_answer", "handoff_only"}
+VALID_VISIBILITY = {"customer", "internal"}
+VALID_SHAREABILITY = {"customer_visible", "internal_only", "runtime_context"}
+VALID_AUTHORITY_LEVELS = {"tool", "official_policy", "policy", "sop", "faq", "imported"}
+VALID_RISK_LEVELS = {"low", "medium", "high"}
 _BACKEND_OWNED_FIELDS = {
     "parsing_status",
     "parsing_error",
@@ -63,7 +68,39 @@ def _detect_text_language(text: str | None) -> str | None:
     return None
 
 
-def _validate_shape(*, status: str, source_type: str, knowledge_kind: str = "document", fact_status: str = "draft", answer_mode: str = "guided_answer") -> None:
+def _normalize_scope(value: str | None, default: str) -> str:
+    cleaned = _clean_optional_text(value)
+    return cleaned or default
+
+
+def _normalize_country_scope(value: str | None) -> str:
+    cleaned = _normalize_scope(value, "GLOBAL").upper()
+    return "GLOBAL" if cleaned in {"*", "ALL", "ANY"} else cleaned[:16]
+
+
+def _parse_snapshot_datetime(value):
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _validate_shape(
+    *,
+    status: str,
+    source_type: str,
+    knowledge_kind: str = "document",
+    fact_status: str = "draft",
+    answer_mode: str = "guided_answer",
+    visibility: str = "customer",
+    shareability: str = "customer_visible",
+    authority_level: str = "faq",
+    risk_level: str = "low",
+) -> None:
     if status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail="Unsupported knowledge status")
     if source_type not in VALID_SOURCE_TYPES:
@@ -74,6 +111,23 @@ def _validate_shape(*, status: str, source_type: str, knowledge_kind: str = "doc
         raise HTTPException(status_code=400, detail="Unsupported fact_status")
     if answer_mode not in VALID_ANSWER_MODES:
         raise HTTPException(status_code=400, detail="Unsupported answer_mode")
+    if visibility not in VALID_VISIBILITY:
+        raise HTTPException(status_code=400, detail="Unsupported visibility")
+    if shareability not in VALID_SHAREABILITY:
+        raise HTTPException(status_code=400, detail="Unsupported shareability")
+    if authority_level not in VALID_AUTHORITY_LEVELS:
+        raise HTTPException(status_code=400, detail="Unsupported authority_level")
+    if risk_level not in VALID_RISK_LEVELS:
+        raise HTTPException(status_code=400, detail="Unsupported risk_level")
+
+
+def _normalize_authority_level(value: str | None, *, knowledge_kind: str, fact_status: str) -> str:
+    cleaned = _normalize_scope(value, "faq")
+    if cleaned == "faq" and fact_status == "approved" and knowledge_kind in {"business_fact", "policy"}:
+        return "official_policy"
+    if cleaned == "faq" and knowledge_kind == "sop":
+        return "sop"
+    return cleaned
 
 
 def _has_draft_content(row: KnowledgeItem) -> bool:
@@ -108,6 +162,18 @@ def _snapshot(row: KnowledgeItem, *, version: int, published_at) -> dict:
         "status": row.status,
         "source_type": row.source_type,
         "knowledge_kind": row.knowledge_kind,
+        "tenant_id": row.tenant_id,
+        "brand_id": row.brand_id,
+        "country_scope": row.country_scope,
+        "channel_scope": row.channel_scope,
+        "locale": row.locale,
+        "visibility": row.visibility,
+        "shareability": row.shareability,
+        "authority_level": row.authority_level,
+        "risk_level": row.risk_level,
+        "review_due_at": row.review_due_at.isoformat() if row.review_due_at else None,
+        "valid_from": row.valid_from.isoformat() if row.valid_from else None,
+        "valid_until": row.valid_until.isoformat() if row.valid_until else None,
         "market_id": row.market_id,
         "channel": row.channel,
         "audience_scope": row.audience_scope,
@@ -198,6 +264,10 @@ def create_item(db: Session, payload, actor) -> KnowledgeItem:
         knowledge_kind=payload.knowledge_kind,
         fact_status=payload.fact_status,
         answer_mode=payload.answer_mode,
+        visibility=payload.visibility,
+        shareability=payload.shareability,
+        authority_level=payload.authority_level,
+        risk_level=payload.risk_level,
     )
     if db.query(KnowledgeItem).filter(KnowledgeItem.item_key == key).first() is not None:
         raise HTTPException(status_code=409, detail="item_key already exists")
@@ -208,6 +278,18 @@ def create_item(db: Session, payload, actor) -> KnowledgeItem:
         status=payload.status,
         source_type=payload.source_type,
         knowledge_kind=payload.knowledge_kind,
+        tenant_id=_normalize_scope(payload.tenant_id, "default"),
+        brand_id=_normalize_scope(payload.brand_id, "default"),
+        country_scope=_normalize_country_scope(payload.country_scope),
+        channel_scope=_normalize_scope(payload.channel_scope, "all"),
+        locale=_clean_optional_text(payload.locale),
+        visibility=_normalize_scope(payload.visibility, "customer"),
+        shareability=_normalize_scope(payload.shareability, "customer_visible"),
+        authority_level=_normalize_authority_level(payload.authority_level, knowledge_kind=payload.knowledge_kind, fact_status=payload.fact_status),
+        risk_level=_normalize_scope(payload.risk_level, "low"),
+        review_due_at=payload.review_due_at,
+        valid_from=payload.valid_from,
+        valid_until=payload.valid_until,
         market_id=payload.market_id,
         channel=payload.channel,
         audience_scope=payload.audience_scope,
@@ -261,6 +343,15 @@ def create_file_item_from_upload(
         status="draft",
         source_type="file",
         knowledge_kind="document",
+        tenant_id="default",
+        brand_id="default",
+        country_scope="GLOBAL",
+        channel_scope=channel or "all",
+        locale=_clean_optional_text(language),
+        visibility="customer",
+        shareability="customer_visible",
+        authority_level="imported",
+        risk_level="medium",
         market_id=market_id,
         channel=_clean_optional_text(channel),
         audience_scope=_clean_optional_text(audience_scope) or "customer",
@@ -361,7 +452,30 @@ def update_item(db: Session, row: KnowledgeItem, payload, actor) -> KnowledgeIte
     knowledge_kind = values.get("knowledge_kind", row.knowledge_kind)
     fact_status = values.get("fact_status", row.fact_status)
     answer_mode = values.get("answer_mode", row.answer_mode)
-    _validate_shape(status=status, source_type=source_type, knowledge_kind=knowledge_kind, fact_status=fact_status, answer_mode=answer_mode)
+    visibility = values.get("visibility", row.visibility)
+    shareability = values.get("shareability", row.shareability)
+    authority_level = values.get("authority_level", row.authority_level)
+    risk_level = values.get("risk_level", row.risk_level)
+    _validate_shape(
+        status=status,
+        source_type=source_type,
+        knowledge_kind=knowledge_kind,
+        fact_status=fact_status,
+        answer_mode=answer_mode,
+        visibility=visibility,
+        shareability=shareability,
+        authority_level=authority_level,
+        risk_level=risk_level,
+    )
+    for key, default in {"tenant_id": "default", "brand_id": "default", "channel_scope": "all", "visibility": "customer", "shareability": "customer_visible", "risk_level": "low"}.items():
+        if key in values:
+            values[key] = _normalize_scope(values.get(key), default)
+    if "authority_level" in values:
+        values["authority_level"] = _normalize_authority_level(values.get("authority_level"), knowledge_kind=knowledge_kind, fact_status=fact_status)
+    if "country_scope" in values:
+        values["country_scope"] = _normalize_country_scope(values.get("country_scope"))
+    if "locale" in values:
+        values["locale"] = _clean_optional_text(values.get("locale"))
     if values.get("draft_normalized_text") is None and "draft_body" in values:
         values["draft_normalized_text"] = values.get("draft_body")
     if "fact_aliases_json" in values and values["fact_aliases_json"] is None:
@@ -417,6 +531,18 @@ def rollback_item(db: Session, row: KnowledgeItem, *, version: int, actor, notes
     row.status = snapshot.get("status") or row.status
     row.source_type = snapshot.get("source_type") or row.source_type
     row.knowledge_kind = snapshot.get("knowledge_kind") or row.knowledge_kind
+    row.tenant_id = snapshot.get("tenant_id") or row.tenant_id or "default"
+    row.brand_id = snapshot.get("brand_id") or row.brand_id or "default"
+    row.country_scope = _normalize_country_scope(snapshot.get("country_scope") or row.country_scope)
+    row.channel_scope = snapshot.get("channel_scope") or row.channel_scope or "all"
+    row.locale = snapshot.get("locale")
+    row.visibility = snapshot.get("visibility") or row.visibility or "customer"
+    row.shareability = snapshot.get("shareability") or row.shareability or "customer_visible"
+    row.authority_level = snapshot.get("authority_level") or row.authority_level or "faq"
+    row.risk_level = snapshot.get("risk_level") or row.risk_level or "low"
+    row.review_due_at = _parse_snapshot_datetime(snapshot.get("review_due_at"))
+    row.valid_from = _parse_snapshot_datetime(snapshot.get("valid_from"))
+    row.valid_until = _parse_snapshot_datetime(snapshot.get("valid_until"))
     row.market_id = snapshot.get("market_id")
     row.channel = snapshot.get("channel")
     row.audience_scope = snapshot.get("audience_scope") or row.audience_scope
@@ -453,8 +579,12 @@ def search_published(
     query = db.query(KnowledgeItem).filter(
         KnowledgeItem.status == "active",
         KnowledgeItem.published_version > 0,
+        KnowledgeItem.visibility == "customer",
+        KnowledgeItem.shareability.in_(("customer_visible", "runtime_context")),
         or_(KnowledgeItem.starts_at.is_(None), KnowledgeItem.starts_at <= now),
         or_(KnowledgeItem.ends_at.is_(None), KnowledgeItem.ends_at >= now),
+        or_(KnowledgeItem.valid_from.is_(None), KnowledgeItem.valid_from <= now),
+        or_(KnowledgeItem.valid_until.is_(None), KnowledgeItem.valid_until >= now),
     )
     if market_id is not None:
         query = query.filter(or_(KnowledgeItem.market_id.is_(None), KnowledgeItem.market_id == market_id))

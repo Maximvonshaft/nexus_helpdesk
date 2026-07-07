@@ -761,6 +761,8 @@ def send_outbound_message(db: Session, ticket_id: int, payload: OutboundSendRequ
         subject=subject,
         body=payload.body,
         created_by=current_user.id,
+        origin="human_agent",
+        safety_status="passed",
     )
     _attach_outbound_message(db, message, attachments)
     update_first_response(ticket)

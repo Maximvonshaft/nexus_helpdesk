@@ -399,6 +399,9 @@ def process_background_job(db: Session, job: BackgroundJob) -> BackgroundJob:
             customer_request = transcript_context or ticket.customer_request or ticket.description or ''
             bulletin_context = build_bulletin_context(db, ticket=ticket)
             polished_text = polish_reply_text(customer_request, human_note, bulletin_context=bulletin_context)
+            if not polished_text:
+                _mark_done(job)
+                return job
             channel_value = (ticket.preferred_reply_channel or 'whatsapp').lower().strip()
             try:
                 channel = SourceChannel(channel_value)

@@ -31,6 +31,7 @@ from .webchat_ai_turn_service import is_ai_suspended_for_handoff, safe_write_web
 from .webchat_fact_gate import evaluate_webchat_fact_gate
 from .webchat_handoff_service import request_webchat_handoff
 from .webchat_runtime_ai_service import WebchatRuntimeReplyResult, generate_webchat_runtime_reply
+from .ai_reply_contract import build_ai_reply_contract
 
 LOGGER = logging.getLogger("nexusdesk")
 settings = get_settings()
@@ -535,6 +536,11 @@ def process_webchat_ai_reply_job(
 
     db.add(TicketComment(ticket_id=ticket.id, author_id=None, body=final_body, visibility=NoteVisibility.external))
     if is_external_whatsapp:
+        ai_contract = build_ai_reply_contract(
+            body=final_body,
+            runtime_trace=runtime_trace,
+            safety_status="passed" if decision.level in {"allow", "ok", "pass"} else "reviewed",
+        )
         outbound_message = queue_outbound_message(
             db,
             ticket_id=ticket.id,
@@ -542,15 +548,30 @@ def process_webchat_ai_reply_job(
             body=final_body,
             created_by=None,
             provider_status=provider_status,
+            origin="provider_runtime",
+            runtime_trace_id=ai_contract.runtime_trace_id,
+            runtime_contract_version=ai_contract.contract_version,
+            runtime_signature=ai_contract.runtime_signature,
+            safety_status=ai_contract.safety_status,
         )
         outbound_event_type = EventType.outbound_queued
         outbound_event_note = "WhatsApp AI reply queued"
     else:
+        ai_contract = build_ai_reply_contract(
+            body=final_body,
+            runtime_trace=runtime_trace,
+            safety_status="passed" if decision.level in {"allow", "ok", "pass"} else "reviewed",
+        )
         outbound_message = TicketOutboundMessage(
             ticket_id=ticket.id,
             channel=SourceChannel.web_chat,
             status=MessageStatus.sent,
             body=final_body,
+            origin="provider_runtime",
+            runtime_trace_id=ai_contract.runtime_trace_id,
+            runtime_contract_version=ai_contract.contract_version,
+            runtime_signature=ai_contract.runtime_signature,
+            safety_status=ai_contract.safety_status,
             provider_status=provider_status,
             error_message=None,
             created_by=None,

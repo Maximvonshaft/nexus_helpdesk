@@ -43,6 +43,40 @@ _SERVICE_CONFLICT_GROUPS = (
 class OutputContracts:
     @staticmethod
     def get_schema(contract_name: str) -> dict[str, Any]:
+        if contract_name == "nexus.ai_reply.v2":
+            return {
+                "type": "object",
+                "properties": {
+                    "customer_reply": {"type": "string", "maxLength": 1200},
+                    "language": {"type": "string", "maxLength": 32},
+                    "intent": {"type": "string", "maxLength": 80},
+                    "tracking_number": {"type": ["string", "null"], "maxLength": 80},
+                    "handoff_required": {"type": "boolean"},
+                    "handoff_reason": {"type": ["string", "null"], "maxLength": 500},
+                    "recommended_agent_action": {"type": ["string", "null"], "maxLength": 500},
+                    "ticket_should_create": {"type": "boolean"},
+                    "internal_summary": {"type": ["string", "null"], "maxLength": 1000},
+                    "risk_flags": {"type": "array", "items": {"type": "string", "maxLength": 100}, "maxItems": 20},
+                    "runtime_trace_id": {"type": "string", "maxLength": 120},
+                    "contract_version": {"type": "string", "const": "nexus.ai_reply.v2"},
+                    "runtime_signature": {"type": "string", "minLength": 32, "maxLength": 128},
+                    "safety_status": {"type": "string", "enum": ["passed", "reviewed"]},
+                    "origin": {"type": "string", "enum": ["provider_runtime", "ai_runtime"]},
+                },
+                "required": [
+                    "customer_reply",
+                    "language",
+                    "intent",
+                    "handoff_required",
+                    "ticket_should_create",
+                    "runtime_trace_id",
+                    "contract_version",
+                    "runtime_signature",
+                    "safety_status",
+                    "origin",
+                ],
+                "additionalProperties": False,
+            }
         if contract_name == "nexus_webchat_runtime_reply_v1":
             return {
                 "type": "object",

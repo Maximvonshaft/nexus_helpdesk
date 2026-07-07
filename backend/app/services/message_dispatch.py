@@ -15,6 +15,14 @@ from ..utils.time import utc_now
 from .audit_service import log_event
 from .email_mailbox_identity import ensure_outbound_mailbox_identity
 from .observability import LOGGER
+from .ai_reply_contract import (
+    AI_ORIGINS,
+    AI_REPLY_CONTRACT_V2,
+    FORBIDDEN_CUSTOMER_VISIBLE_ORIGINS,
+    HUMAN_ORIGIN,
+    HUMAN_REPLY_STATES,
+    validate_ai_reply_contract,
+)
 from .external_channel_bridge import dispatch_via_external_channel_bridge, dispatch_via_external_channel_cli, dispatch_via_external_channel_mcp
 from .outbound_adapters.email import dispatch_email_outbound
 from .outbound_adapters.whatsapp_native import dispatch_whatsapp_native_outbound
@@ -102,13 +110,35 @@ def queue_outbound_message(
     created_by: int | None,
     subject: str | None = None,
     provider_status: str = 'queued',
+    origin: str | None = None,
+    runtime_trace_id: str | None = None,
+    runtime_contract_version: str | None = None,
+    runtime_signature: str | None = None,
+    safety_status: str | None = None,
 ) -> TicketOutboundMessage:
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    normalized_origin = _normalize_customer_visible_origin(origin, created_by=created_by)
+    _enforce_customer_visible_origin(
+        body=body,
+        origin=normalized_origin,
+        ticket=ticket,
+        created_by=created_by,
+        runtime_trace_id=runtime_trace_id,
+        runtime_contract_version=runtime_contract_version,
+        runtime_signature=runtime_signature,
+        safety_status=safety_status,
+    )
     message = TicketOutboundMessage(
         ticket_id=ticket_id,
         channel=channel,
         status=MessageStatus.pending,
         subject=subject,
         body=body,
+        origin=normalized_origin,
+        runtime_trace_id=runtime_trace_id,
+        runtime_contract_version=runtime_contract_version,
+        runtime_signature=runtime_signature,
+        safety_status=safety_status,
         provider_status=provider_status,
         created_by=created_by,
         max_retries=settings.outbox_max_retries,
@@ -121,6 +151,52 @@ def queue_outbound_message(
         ensure_outbound_mailbox_identity(message, include_message_id=True)
     db.flush()
     return message
+
+
+def _normalize_customer_visible_origin(origin: str | None, *, created_by: int | None) -> str:
+    cleaned = (origin or "").strip().lower()
+    if cleaned:
+        return cleaned
+    return HUMAN_ORIGIN if created_by is not None else "business_system"
+
+
+def _enforce_customer_visible_origin(
+    *,
+    body: str,
+    origin: str,
+    ticket: Ticket | None,
+    created_by: int | None,
+    runtime_trace_id: str | None,
+    runtime_contract_version: str | None,
+    runtime_signature: str | None,
+    safety_status: str | None,
+) -> None:
+    if origin in FORBIDDEN_CUSTOMER_VISIBLE_ORIGINS:
+        raise ValueError(f"{origin}_cannot_queue_customer_visible_text")
+    if origin in AI_ORIGINS:
+        if ticket is not None and ticket.conversation_state in HUMAN_REPLY_STATES:
+            raise ValueError("human_active_blocks_ai_autoreply")
+        violation = validate_ai_reply_contract(
+            body=body,
+            runtime_trace_id=runtime_trace_id,
+            contract_version=runtime_contract_version,
+            runtime_signature=runtime_signature,
+            safety_status=safety_status,
+        )
+        if violation:
+            raise ValueError(violation)
+        return
+    if origin == HUMAN_ORIGIN:
+        if created_by is None:
+            raise ValueError("human_agent_origin_requires_actor")
+        if ticket is not None and ticket.conversation_state == ConversationState.ai_active:
+            raise ValueError("human_agent_reply_requires_handoff_or_takeover")
+        return
+    raise ValueError("unsupported_customer_visible_origin")
+
+
+def _mark_origin_blocked(message: TicketOutboundMessage, reason: str) -> None:
+    _mark_dead(message, reason, failure_code=reason)
 
 
 def _mark_retry(message: TicketOutboundMessage, reason: str, *, failure_code: str | None = None) -> None:
@@ -405,6 +481,23 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
     if not is_external_outbound_message(message):
         _mark_dead(message, 'Non-external outbound row is not eligible for provider dispatch', failure_code='non_external_outbound_not_dispatchable')
         log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Non-external outbound row was blocked from provider dispatch', payload={'message_id': message.id, 'channel': message.channel.value if hasattr(message.channel, 'value') else str(message.channel), 'provider_status': message.provider_status})
+        return message
+    try:
+        ticket_for_origin = message.ticket
+        _enforce_customer_visible_origin(
+            body=message.body,
+            origin=_normalize_customer_visible_origin(message.origin, created_by=message.created_by),
+            ticket=ticket_for_origin,
+            created_by=message.created_by,
+            runtime_trace_id=message.runtime_trace_id,
+            runtime_contract_version=message.runtime_contract_version,
+            runtime_signature=message.runtime_signature,
+            safety_status=message.safety_status,
+        )
+    except ValueError as exc:
+        reason = str(exc)
+        _mark_origin_blocked(message, reason)
+        log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_dead, note='Customer-visible outbound origin contract blocked dispatch', payload={'message_id': message.id, 'origin': message.origin, 'failure_code': reason, 'required_contract': AI_REPLY_CONTRACT_V2})
         return message
     blocked = _external_dispatch_block_reason()
     if blocked:

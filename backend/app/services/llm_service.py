@@ -3,8 +3,8 @@ from __future__ import annotations
 import subprocess
 import logging
 
-def polish_reply_text(original_request: str, agent_note: str, bulletin_context: str = "") -> str:
-    """Uses Gemini CLI to rewrite the human note, with a fallback to a hardcoded string."""
+def polish_reply_text(original_request: str, agent_note: str, bulletin_context: str = "") -> str | None:
+    """Uses Gemini CLI to rewrite the human note. Never fabricates a customer-visible fallback."""
     prompt = f"""
 You are an AI assistant for SPEEDAF customer support.
 A customer submitted the following request:
@@ -35,6 +35,4 @@ Output ONLY the final reply text, nothing else.
     except Exception as exc:
         logging.error(f"Exception calling Gemini CLI: {exc}")
 
-    # Fallback
-    extra = f"\n\nRelevant notice(s):\n{bulletin_context}" if bulletin_context else ""
-    return f"Dear Customer,\n\nUpdate on your request: {agent_note}{extra}\n\nBest regards,\nSPEEDAF Support"
+    return None

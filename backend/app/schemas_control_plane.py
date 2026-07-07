@@ -269,6 +269,18 @@ class KnowledgeItemBase(BaseModel):
     status: str = Field(default="draft", max_length=40)
     source_type: str = Field(default="text", max_length=20)
     knowledge_kind: str = Field(default="document", max_length=40)
+    tenant_id: str = Field(default="default", min_length=1, max_length=80)
+    brand_id: str = Field(default="default", min_length=1, max_length=80)
+    country_scope: str = Field(default="GLOBAL", min_length=1, max_length=16)
+    channel_scope: str = Field(default="all", min_length=1, max_length=40)
+    locale: Optional[str] = Field(default=None, max_length=16)
+    visibility: str = Field(default="customer", max_length=40)
+    shareability: str = Field(default="customer_visible", max_length=40)
+    authority_level: str = Field(default="faq", max_length=40)
+    risk_level: str = Field(default="low", max_length=40)
+    review_due_at: Optional[datetime] = None
+    valid_from: Optional[datetime] = None
+    valid_until: Optional[datetime] = None
     market_id: Optional[int] = None
     channel: Optional[str] = Field(default=None, max_length=40)
     audience_scope: str = Field(default="customer", max_length=40)
@@ -290,7 +302,7 @@ class KnowledgeItemBase(BaseModel):
     draft_body: Optional[str] = Field(default=None, max_length=120000)
     draft_normalized_text: Optional[str] = Field(default=None, max_length=120000)
 
-    @field_validator("title", "summary", "status", "source_type", "knowledge_kind", "channel", "audience_scope", "language", "source_url", "file_name", "file_storage_key", "mime_type", "fact_question", "fact_answer", "fact_status", "answer_mode", "draft_body", "draft_normalized_text", mode="before")
+    @field_validator("title", "summary", "status", "source_type", "knowledge_kind", "tenant_id", "brand_id", "country_scope", "channel_scope", "locale", "visibility", "shareability", "authority_level", "risk_level", "channel", "audience_scope", "language", "source_url", "file_name", "file_storage_key", "mime_type", "fact_question", "fact_answer", "fact_status", "answer_mode", "draft_body", "draft_normalized_text", mode="before")
     @classmethod
     def strip_optional_strings(cls, value):
         return _strip_optional_string(value)
@@ -314,6 +326,18 @@ class KnowledgeItemUpdate(BaseModel):
     status: Optional[str] = Field(default=None, max_length=40)
     source_type: Optional[str] = Field(default=None, max_length=20)
     knowledge_kind: Optional[str] = Field(default=None, max_length=40)
+    tenant_id: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    brand_id: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    country_scope: Optional[str] = Field(default=None, min_length=1, max_length=16)
+    channel_scope: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    locale: Optional[str] = Field(default=None, max_length=16)
+    visibility: Optional[str] = Field(default=None, max_length=40)
+    shareability: Optional[str] = Field(default=None, max_length=40)
+    authority_level: Optional[str] = Field(default=None, max_length=40)
+    risk_level: Optional[str] = Field(default=None, max_length=40)
+    review_due_at: Optional[datetime] = None
+    valid_from: Optional[datetime] = None
+    valid_until: Optional[datetime] = None
     market_id: Optional[int] = None
     channel: Optional[str] = Field(default=None, max_length=40)
     audience_scope: Optional[str] = Field(default=None, max_length=40)
@@ -335,7 +359,7 @@ class KnowledgeItemUpdate(BaseModel):
     draft_body: Optional[str] = Field(default=None, max_length=120000)
     draft_normalized_text: Optional[str] = Field(default=None, max_length=120000)
 
-    @field_validator("title", "summary", "status", "source_type", "knowledge_kind", "channel", "audience_scope", "language", "source_url", "file_name", "file_storage_key", "mime_type", "fact_question", "fact_answer", "fact_status", "answer_mode", "draft_body", "draft_normalized_text", mode="before")
+    @field_validator("title", "summary", "status", "source_type", "knowledge_kind", "tenant_id", "brand_id", "country_scope", "channel_scope", "locale", "visibility", "shareability", "authority_level", "risk_level", "channel", "audience_scope", "language", "source_url", "file_name", "file_storage_key", "mime_type", "fact_question", "fact_answer", "fact_status", "answer_mode", "draft_body", "draft_normalized_text", mode="before")
     @classmethod
     def strip_optional_strings(cls, value):
         return _strip_optional_string(value)
@@ -446,6 +470,18 @@ class KnowledgeItemOut(ControlPlaneModel):
     status: str
     source_type: str
     knowledge_kind: str = "document"
+    tenant_id: str = "default"
+    brand_id: str = "default"
+    country_scope: str = "GLOBAL"
+    channel_scope: str = "all"
+    locale: Optional[str] = None
+    visibility: str = "customer"
+    shareability: str = "customer_visible"
+    authority_level: str = "faq"
+    risk_level: str = "low"
+    review_due_at: Optional[datetime] = None
+    valid_from: Optional[datetime] = None
+    valid_until: Optional[datetime] = None
     market_id: Optional[int] = None
     channel: Optional[str] = None
     audience_scope: str

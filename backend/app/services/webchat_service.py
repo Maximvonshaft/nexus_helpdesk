@@ -765,6 +765,15 @@ def admin_reply(
     if decision.requires_human_review and not confirm_review:
         raise HTTPException(status_code=409, detail={"message": "Outbound reply requires human review confirmation", "safety": decision_payload})
 
+    if ticket.conversation_state == ConversationState.ai_active:
+        ticket.conversation_state = ConversationState.human_owned
+        ticket.required_action = None
+        conversation.handoff_status = "accepted"
+        if hasattr(conversation, "accepted_by_user_id"):
+            conversation.accepted_by_user_id = current_user.id
+        if hasattr(conversation, "accepted_at"):
+            conversation.accepted_at = utc_now()
+
     reply_channel = _resolve_admin_reply_channel(ticket, conversation)
     is_external_reply = reply_channel == SourceChannel.whatsapp
     delivery_status = "queued" if is_external_reply else "sent"
@@ -794,6 +803,8 @@ def admin_reply(
             body=decision.normalized_body,
             created_by=current_user.id,
             provider_status=provider_status,
+            origin="human_agent",
+            safety_status="reviewed" if decision.requires_human_review else "passed",
         )
         outbound_event_type = EventType.outbound_queued
         outbound_event_note = "WhatsApp agent reply queued"
@@ -803,6 +814,8 @@ def admin_reply(
             channel=SourceChannel.web_chat,
             status=MessageStatus.sent,
             body=decision.normalized_body,
+            origin="human_agent",
+            safety_status="reviewed" if decision.requires_human_review else "passed",
             provider_status=provider_status,
             created_by=current_user.id,
             sent_at=utc_now(),
