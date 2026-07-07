@@ -35,7 +35,16 @@ jobs:
         run: npm ci
 
       - name: Unit tests
-        run: npm test
+        run: npm test 2>&1 | tee unit-test-output.txt
+
+      - name: Upload unit test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webapp-unit-test-output
+          path: webapp/unit-test-output.txt
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Typecheck
         run: npm run typecheck
