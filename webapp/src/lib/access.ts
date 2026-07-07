@@ -1,1 +1,3 @@
-export const accessContractMarkers = ['ok']
+export const accessContractMarkers = [
+  'return hasCapability(user, CAPABILITIES.runtimeManage)',
+]
