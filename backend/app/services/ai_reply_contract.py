@@ -216,6 +216,8 @@ def validate_ai_reply_v3_payload(
         return "ai_reply_v3_answer_requires_used_sources"
     if reply_type == "answer" and _clean_list(unsupported_claims):
         return "ai_reply_v3_unsupported_claims_blocked"
+    if reply_type == "handoff_notice" and _clean_list(unsupported_claims):
+        return "ai_reply_v3_handoff_notice_unsupported_claims_blocked"
     return None
 
 

@@ -12,13 +12,13 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketStatus
-from ..models import Ticket, TicketComment, TicketEvent
+from ..enums import ConversationState, EventType, MessageStatus, SourceChannel, TicketStatus
+from ..models import Ticket, TicketEvent
 from ..settings import get_settings
 from ..utils.time import ensure_utc, utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
 from .customer_language import detect_customer_language
-from .customer_visible_message_service import create_customer_visible_outbound
+from .customer_visible_message_service import create_customer_visible_message
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .background_jobs import enqueue_speedaf_work_order_create_job
 from .sla_service import evaluate_sla, update_first_response
@@ -493,90 +493,17 @@ def process_webchat_ai_reply_job(
     is_external_whatsapp = _is_whatsapp_conversation(conversation)
     delivery_status = "queued" if is_external_whatsapp else "sent"
     provider_status = "whatsapp_ai_reply_queued" if is_external_whatsapp else "webchat_ai_delivered"
-
-    message = WebchatMessage(
-        conversation_id=conversation.id,
-        ticket_id=ticket.id,
-        direction="agent",
-        body=final_body,
-        body_text=final_body,
-        message_type="text",
-        ai_turn_id=ai_turn_id,
-        delivery_status=delivery_status,
-        metadata_json=_message_metadata(
-            generated_by="webchat_ai",
-            decision_level=decision.level,
-            fallback_reason=fallback_reason,
-            reply_source=reply_source,
-            fact_evidence_present=fact_evidence_present,
-            external_send=is_external_whatsapp,
-            external_channel_session_key=session_policy['session_key'],
-            external_channel_session_generation=session_policy['generation'],
-            external_channel_session_rotation_reason=session_policy['rotation_reason'],
-            fact_gate_reason=fact_gate_reason,
-            bridge_elapsed_ms=bridge_elapsed_ms,
-            bridge_timeout_seconds=bridge_timeout_seconds,
-            bridge_effective_timeout_seconds=bridge_effective_timeout_seconds,
-            bridge_wait_timeout_ms=bridge_wait_timeout_ms,
-            runtime_trace=runtime_trace,
-            runtime_tool_calls=runtime_tool_calls,
-            auto_work_order=auto_work_order,
-            sanitized_empty=sanitized_empty,
-            ai_turn_id=ai_turn_id,
-            rag_trace=rag_trace,
-            grounding_applied=grounding_applied,
-            grounding_source=grounding_source,
-            **tracking_fact_metadata,
-        ),
-        author_label=AI_AUTHOR_LABEL,
-        safety_level=decision.level,
-        safety_reasons_json=json.dumps(safety_payload.get("reasons", []), ensure_ascii=False),
-    )
-    db.add(message)
-    db.flush()
-
-    db.add(TicketComment(ticket_id=ticket.id, author_id=None, body=final_body, visibility=NoteVisibility.external))
     if ticket.conversation_state not in {ConversationState.human_review_required, ConversationState.ready_to_reply}:
         ticket.conversation_state = ConversationState.ai_active
-    if is_external_whatsapp:
-        ai_contract = build_ai_reply_contract(
-            body=final_body,
-            runtime_trace=runtime_trace,
-            safety_status="passed" if decision.level in {"allow", "ok", "pass"} else "reviewed",
-        )
-        outbound_result = create_customer_visible_outbound(
-            db,
-            ticket=ticket,
-            channel=SourceChannel.whatsapp,
-            body=final_body,
-            created_by=None,
-            provider_status=provider_status,
-            origin="provider_runtime",
-            ai_contract=ai_contract,
-        )
-        outbound_message = outbound_result.outbound_message
-        outbound_event_type = EventType.outbound_queued
-        outbound_event_note = "WhatsApp AI reply queued"
-    else:
-        ai_contract = build_ai_reply_contract(
-            body=final_body,
-            runtime_trace=runtime_trace,
-            safety_status="passed" if decision.level in {"allow", "ok", "pass"} else "reviewed",
-        )
-        outbound_result = create_customer_visible_outbound(
-            db,
-            ticket=ticket,
-            channel=SourceChannel.web_chat,
-            body=final_body,
-            origin="provider_runtime",
-            provider_status=provider_status,
-            created_by=None,
-            ai_contract=ai_contract,
-            status=MessageStatus.sent,
-        )
-        outbound_message = outbound_result.outbound_message
-        outbound_event_type = EventType.outbound_sent
-        outbound_event_note = "Webchat AI reply sent"
+
+    reply_channel = SourceChannel.whatsapp if is_external_whatsapp else SourceChannel.web_chat
+    outbound_event_type = EventType.outbound_queued if is_external_whatsapp else EventType.outbound_sent
+    outbound_event_note = "WhatsApp AI reply queued" if is_external_whatsapp else "Webchat AI reply sent"
+    ai_contract = build_ai_reply_contract(
+        body=final_body,
+        runtime_trace=runtime_trace,
+        safety_status="passed" if decision.level in {"allow", "ok", "pass"} else "reviewed",
+    )
 
     if runtime_handoff_required:
         ticket.required_action = runtime_recommended_agent_action or "Runtime requested human review"
@@ -609,7 +536,6 @@ def process_webchat_ai_reply_job(
         "conversation_id": conversation.id,
         "ticket_id": ticket.id,
         "visitor_message_id": visitor_message.id,
-        "webchat_message_id": message.id,
         "ai_turn_id": ai_turn_id,
         "safety": safety_payload,
         "fallback_reason": fallback_reason,
@@ -620,7 +546,6 @@ def process_webchat_ai_reply_job(
         "provider_status": provider_status,
         "external_send": is_external_whatsapp,
         "reply_channel": SourceChannel.whatsapp.value if is_external_whatsapp else SourceChannel.web_chat.value,
-        "outbound_message_id": outbound_message.id,
         "external_channel_session_key": session_policy['session_key'],
         "external_channel_session_generation": session_policy['generation'],
         "external_channel_session_rotation_reason": session_policy['rotation_reason'],
@@ -636,13 +561,57 @@ def process_webchat_ai_reply_job(
         "grounding_applied": grounding_applied,
         "grounding_source": grounding_source,
     }
-    db.add(TicketEvent(
-        ticket_id=ticket.id,
-        actor_id=None,
+    visible_result = create_customer_visible_message(
+        db,
+        ticket=ticket,
+        conversation=conversation,
+        channel=reply_channel,
+        body=final_body,
+        origin="provider_runtime",
+        created_by=None,
+        provider_status=provider_status,
+        ai_contract=ai_contract,
+        outbound_status=MessageStatus.sent if not is_external_whatsapp else None,
+        ai_turn_id=ai_turn_id,
+        delivery_status=delivery_status,
+        metadata_json=_message_metadata(
+            generated_by="webchat_ai",
+            decision_level=decision.level,
+            fallback_reason=fallback_reason,
+            reply_source=reply_source,
+            fact_evidence_present=fact_evidence_present,
+            external_send=is_external_whatsapp,
+            external_channel_session_key=session_policy['session_key'],
+            external_channel_session_generation=session_policy['generation'],
+            external_channel_session_rotation_reason=session_policy['rotation_reason'],
+            fact_gate_reason=fact_gate_reason,
+            bridge_elapsed_ms=bridge_elapsed_ms,
+            bridge_timeout_seconds=bridge_timeout_seconds,
+            bridge_effective_timeout_seconds=bridge_effective_timeout_seconds,
+            bridge_wait_timeout_ms=bridge_wait_timeout_ms,
+            runtime_trace=runtime_trace,
+            runtime_tool_calls=runtime_tool_calls,
+            auto_work_order=auto_work_order,
+            sanitized_empty=sanitized_empty,
+            ai_turn_id=ai_turn_id,
+            rag_trace=rag_trace,
+            grounding_applied=grounding_applied,
+            grounding_source=grounding_source,
+            **tracking_fact_metadata,
+        ),
+        author_label=AI_AUTHOR_LABEL,
+        safety_level=decision.level,
+        safety_reasons_json=json.dumps(safety_payload.get("reasons", []), ensure_ascii=False),
         event_type=outbound_event_type,
-        note=outbound_event_note,
-        payload_json=json.dumps(event_payload, ensure_ascii=False),
-    ))
+        event_note=outbound_event_note,
+        event_payload=event_payload,
+    )
+    message = visible_result.webchat_message
+    outbound_message = visible_result.outbound_message
+    if message is None or outbound_message is None:
+        return {"status": "suppressed", "reason": "no_customer_visible_message", "reply_source": reply_source}
+    event_payload["webchat_message_id"] = message.id
+    event_payload["outbound_message_id"] = outbound_message.id
     if tracking_fact:
         db.add(TicketEvent(
             ticket_id=ticket.id,

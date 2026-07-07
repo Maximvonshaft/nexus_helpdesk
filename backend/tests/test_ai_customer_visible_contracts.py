@@ -502,7 +502,7 @@ def test_signed_ai_outbound_body_cannot_be_mutated_after_signature(db_session, m
 
 def test_webchat_ai_reply_uses_customer_visible_message_service():
     source = Path("backend/app/services/webchat_ai_service.py").read_text(encoding="utf-8")
-    assert "create_customer_visible_outbound" in source
+    assert "create_customer_visible_message" in source
     assert "TicketOutboundMessage(" not in source
     assert "queue_outbound_message" not in source
 
@@ -550,3 +550,88 @@ def test_v3_null_reply_not_sent_to_customer(db_session):
     )
     assert send_result.outbound_message is None
     assert db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).count() == 0
+
+
+def test_handoff_notice_origin_cannot_bypass_contract(db_session):
+    ticket = _ticket(db_session)
+    with pytest.raises(ValueError, match="unsupported_customer_visible_origin"):
+        create_customer_visible_outbound(
+            db_session,
+            ticket=ticket,
+            channel=SourceChannel.web_chat,
+            body="A support agent will review this conversation.",
+            origin="handoff_notice",
+            created_by=None,
+            provider_status="handoff_notice",
+            status=MessageStatus.sent,
+        )
+
+    contract = build_ai_reply_contract(
+        body="A support agent will review this conversation.",
+        runtime_trace={"request_id": "rt-handoff-notice"},
+        contract_version=AI_REPLY_CONTRACT_V3,
+        reply_type="handoff_notice",
+        unsupported_claims=[],
+        channel="webchat",
+    )
+    row = create_customer_visible_outbound(
+        db_session,
+        ticket=ticket,
+        channel=SourceChannel.web_chat,
+        body="A support agent will review this conversation.",
+        origin="provider_runtime",
+        created_by=None,
+        provider_status="handoff_notice",
+        ai_contract=contract,
+        status=MessageStatus.sent,
+    ).outbound_message
+    assert row is not None
+    assert row.runtime_contract_version == AI_REPLY_CONTRACT_V3
+    assert row.runtime_reply_type == "handoff_notice"
+
+
+def test_webchat_handoff_ack_does_not_create_customer_visible_text_without_runtime_contract():
+    source = Path("backend/app/services/webchat_service.py").read_text(encoding="utf-8")
+    assert "webchat_handoff_ack" not in source
+    assert 'origin="handoff_notice"' not in source
+
+
+def test_webchat_ai_does_not_directly_create_customer_visible_webchat_message():
+    source = Path("backend/app/services/webchat_ai_service.py").read_text(encoding="utf-8")
+    assert "create_customer_visible_message" in source
+    assert "WebchatMessage(" not in source
+
+
+def test_webchat_ai_does_not_directly_create_external_ticket_comment():
+    source = Path("backend/app/services/webchat_ai_service.py").read_text(encoding="utf-8")
+    assert "TicketComment(" not in source
+    assert "visibility=NoteVisibility.external" not in source
+
+
+def test_admin_reply_uses_customer_visible_message_service_for_visible_entities():
+    source = Path("backend/app/services/webchat_service.py").read_text(encoding="utf-8")
+    admin_reply = source.split("def admin_reply(", 1)[1]
+    assert "create_customer_visible_message(" in admin_reply
+    assert "WebchatMessage(" not in admin_reply
+    assert "TicketComment(" not in admin_reply
+    assert "TicketEvent(" not in admin_reply
+
+
+def test_originless_external_outbound_is_blocked_after_contract_cutover(db_session, monkeypatch):
+    ticket = _ticket(db_session)
+    row = TicketOutboundMessage(
+        ticket_id=ticket.id,
+        channel=SourceChannel.whatsapp,
+        status=MessageStatus.pending,
+        body="legacy originless text",
+        provider_status="queued",
+        max_retries=1,
+    )
+    db_session.add(row)
+    db_session.flush()
+    monkeypatch.setattr("app.services.message_dispatch.dispatch_whatsapp_native_outbound", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("dispatch must not run")))
+
+    processed = process_outbound_message(db_session, row)
+
+    assert processed.status == MessageStatus.dead
+    assert processed.failure_code == "missing_customer_visible_origin_contract"

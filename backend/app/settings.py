@@ -87,6 +87,7 @@ class Settings:
         self.outbox_batch_size = int(os.getenv("OUTBOX_BATCH_SIZE", "50"))
         self.outbox_lock_seconds = int(os.getenv("OUTBOX_LOCK_SECONDS", "300"))
         self.outbox_max_retries = int(os.getenv("OUTBOX_MAX_RETRIES", "3"))
+        self.allow_legacy_originless_outbound = _env_bool("ALLOW_LEGACY_ORIGINLESS_OUTBOUND", False)
         self.email_mailbox_sync_enabled = _env_bool("EMAIL_MAILBOX_SYNC_ENABLED", True)
         self.email_mailbox_sync_interval_seconds = int(os.getenv("EMAIL_MAILBOX_SYNC_INTERVAL_SECONDS", "60"))
         self.email_mailbox_sync_batch_size = int(os.getenv("EMAIL_MAILBOX_SYNC_BATCH_SIZE", "20"))

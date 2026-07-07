@@ -522,7 +522,10 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
         return message
     try:
         ticket_for_origin = message.ticket
-        if message.origin or message.runtime_contract_version or message.created_by is not None:
+        has_origin_contract = bool(message.origin or message.runtime_contract_version or message.created_by is not None)
+        if not has_origin_contract and not settings.allow_legacy_originless_outbound:
+            raise ValueError("missing_customer_visible_origin_contract")
+        if has_origin_contract:
             _enforce_customer_visible_origin(
                 body=message.body,
                 origin=_normalize_customer_visible_origin(message.origin, created_by=message.created_by),

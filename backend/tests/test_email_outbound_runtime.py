@@ -312,6 +312,7 @@ def test_process_email_message_uses_smtp_adapter_and_marks_sent(db_session, monk
 
     monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
     monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "email")
+    monkeypatch.setattr(message_dispatch.settings, "allow_legacy_originless_outbound", True)
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
     monkeypatch.setattr(message_dispatch, "dispatch_via_external_channel_bridge", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("legacy bridge alias must not run for email")))
@@ -340,6 +341,7 @@ def test_process_email_failure_preserves_smtp_failure_code(db_session, monkeypat
 
     monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
     monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "email")
+    monkeypatch.setattr(message_dispatch.settings, "allow_legacy_originless_outbound", True)
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
 

@@ -240,6 +240,7 @@ def test_native_dispatch_mode_non_retryable_sidecar_failure_marks_dead(db_sessio
     monkeypatch.setattr(message_dispatch_settings, "enable_outbound_dispatch", True)
     monkeypatch.setattr(message_dispatch_settings, "outbound_provider", "native")
     monkeypatch.setattr(message_dispatch_settings, "whatsapp_dispatch_mode", "native_sidecar")
+    monkeypatch.setattr(message_dispatch_settings, "allow_legacy_originless_outbound", True)
     monkeypatch.setattr(message_dispatch, "log_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(message_dispatch, "_enforce_outbound_safety", lambda *args, **kwargs: True)
 

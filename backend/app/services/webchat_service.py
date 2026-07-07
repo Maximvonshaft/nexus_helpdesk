@@ -22,7 +22,7 @@ from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .permissions import ensure_ticket_visible
 from .sla_service import update_first_response, evaluate_sla
 from .ticket_service import generate_ticket_no, get_ticket_or_404
-from .customer_visible_message_service import create_customer_visible_outbound
+from .customer_visible_message_service import create_customer_visible_message
 from .webchat_handoff_service import ensure_can_reply_in_handoff, request_webchat_handoff, serialize_handoff_request
 from .webchat_ai_turn_service import is_ai_suspended_for_handoff, safe_write_webchat_event
 from .webchat_inbox_read_state import webchat_read_state_payload
@@ -615,16 +615,6 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
             trigger_message_id=action_message.id,
             requested_by_actor_type="visitor",
         )
-        create_customer_visible_outbound(
-            db,
-            ticket=ticket,
-            channel=SourceChannel.web_chat,
-            body="webchat_handoff_ack",
-            origin="handoff_notice",
-            provider_status="webchat_handoff_ack_delivered",
-            created_by=None,
-            status=MessageStatus.sent,
-        )
         db.add(TicketEvent(
             ticket_id=ticket.id,
             actor_id=None,
@@ -777,51 +767,41 @@ def admin_reply(
     is_external_reply = reply_channel == SourceChannel.whatsapp
     delivery_status = "queued" if is_external_reply else "sent"
     provider_status = "whatsapp_agent_reply_queued" if is_external_reply else "webchat_delivered"
-    message = WebchatMessage(
-        conversation_id=conversation.id,
-        ticket_id=ticket.id,
-        direction="agent",
+    outbound_event_type = EventType.outbound_queued if is_external_reply else EventType.outbound_sent
+    outbound_event_note = "WhatsApp agent reply queued" if is_external_reply else "Webchat agent reply sent"
+    visible_result = create_customer_visible_message(
+        db,
+        ticket=ticket,
+        conversation=conversation,
+        channel=reply_channel,
         body=decision.normalized_body,
-        body_text=decision.normalized_body,
-        message_type="text",
+        origin="human_agent",
+        created_by=current_user.id,
+        provider_status=provider_status,
+        outbound_status=MessageStatus.sent if not is_external_reply else None,
         delivery_status=delivery_status,
         metadata_json=_metadata(generated_by="human_agent", safety_level=decision.level, fact_evidence_present=has_fact_evidence, external_send=is_external_reply),
         author_label=current_user.display_name,
         author_user_id=current_user.id,
         safety_level=decision.level,
         safety_reasons_json=json.dumps(decision.reasons, ensure_ascii=False),
+        comment_author_id=current_user.id,
+        event_type=outbound_event_type,
+        event_note=outbound_event_note,
+        event_payload={
+            "public_conversation_id": conversation.public_id,
+            "safety_level": decision.level,
+            "safety_reasons": decision.reasons,
+            "safety_reason_text": format_safety_reasons(decision),
+            "external_send": is_external_reply,
+            "reply_channel": reply_channel.value,
+            "provider_status": provider_status,
+        },
     )
-    db.add(message)
-    db.add(TicketComment(ticket_id=ticket.id, author_id=current_user.id, body=decision.normalized_body, visibility=NoteVisibility.external))
-    db.flush()
-    if is_external_reply:
-        outbound_result = create_customer_visible_outbound(
-            db,
-            ticket=ticket,
-            channel=SourceChannel.whatsapp,
-            body=decision.normalized_body,
-            created_by=current_user.id,
-            provider_status=provider_status,
-            origin="human_agent",
-        )
-        outbound_message = outbound_result.outbound_message
-        outbound_event_type = EventType.outbound_queued
-        outbound_event_note = "WhatsApp agent reply queued"
-    else:
-        outbound_result = create_customer_visible_outbound(
-            db,
-            ticket=ticket,
-            channel=SourceChannel.web_chat,
-            body=decision.normalized_body,
-            origin="human_agent",
-            provider_status=provider_status,
-            created_by=current_user.id,
-            status=MessageStatus.sent,
-        )
-        outbound_message = outbound_result.outbound_message
-        outbound_event_type = EventType.outbound_sent
-        outbound_event_note = "Webchat agent reply sent"
-    db.flush()
+    message = visible_result.webchat_message
+    outbound_message = visible_result.outbound_message
+    if message is None or outbound_message is None:
+        raise HTTPException(status_code=500, detail="customer visible reply was not created")
     message.metadata_json = _metadata(
         generated_by="human_agent",
         safety_level=decision.level,
@@ -837,23 +817,6 @@ def admin_reply(
     ticket.last_human_update = decision.normalized_body
     ticket.updated_at = utc_now()
     conversation.updated_at = utc_now()
-    db.add(TicketEvent(
-        ticket_id=ticket.id,
-        actor_id=current_user.id,
-        event_type=outbound_event_type,
-        note=outbound_event_note,
-        payload_json=json.dumps({
-            "public_conversation_id": conversation.public_id,
-            "safety_level": decision.level,
-            "safety_reasons": decision.reasons,
-            "safety_reason_text": format_safety_reasons(decision),
-            "external_send": is_external_reply,
-            "reply_channel": reply_channel.value,
-            "outbound_message_id": outbound_message.id,
-            "webchat_message_id": message.id,
-            "provider_status": provider_status,
-        }, ensure_ascii=False),
-    ))
     db.flush()
     safe_write_webchat_event(
         db,
