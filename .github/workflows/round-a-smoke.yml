@@ -37,17 +37,33 @@ jobs:
       - name: Backend compile
         run: python -m compileall backend/app backend/scripts
 
-      - name: Deterministic backend tests
+      - name: Deterministic backend tests - outbound safety
         working-directory: backend
-        run: |
-          pytest -q \
-            tests/test_outbound_safety.py \
-            tests/test_next_phase_max_push.py \
-            tests/test_deploy_contracts.py \
-            tests/test_deploy_v222_contracts.py \
-            tests/test_round20a_rectification.py \
-            tests/test_round20b_legacy_frontend.py \
-            tests/test_round27_frontend_hardening.py
+        run: pytest -q tests/test_outbound_safety.py
+
+      - name: Deterministic backend tests - next phase max push
+        working-directory: backend
+        run: pytest -q tests/test_next_phase_max_push.py
+
+      - name: Deterministic backend tests - deploy contracts
+        working-directory: backend
+        run: pytest -q tests/test_deploy_contracts.py
+
+      - name: Deterministic backend tests - deploy v222 contracts
+        working-directory: backend
+        run: pytest -q tests/test_deploy_v222_contracts.py
+
+      - name: Deterministic backend tests - round20a rectification
+        working-directory: backend
+        run: pytest -q tests/test_round20a_rectification.py
+
+      - name: Deterministic backend tests - round20b legacy frontend
+        working-directory: backend
+        run: pytest -q tests/test_round20b_legacy_frontend.py
+
+      - name: Deterministic backend tests - round27 frontend hardening
+        working-directory: backend
+        run: pytest -q tests/test_round27_frontend_hardening.py
 
       - name: Alembic upgrade on disposable SQLite
         working-directory: backend
