@@ -271,7 +271,7 @@ test('support workbench renders the consolidated production views', async ({ pag
   await expect(page.getByText('Hello, how can I assist you today?')).toBeVisible()
 
   await page.getByRole('button', { name: '知识' }).click()
-  await expect(page.getByText('Delivery status')).toBeVisible()
+  await expect(page.getByRole('button', { name: /Delivery status Where is my parcel/ })).toBeVisible()
 
   await page.getByRole('button', { name: '渠道' }).click()
   await expect(page.getByText('WhatsApp Native +41798559737')).toBeVisible()
