@@ -130,6 +130,16 @@ def test_static_widget_ai_turn_events_only_control_typing_state():
     assert "so I can check" not in text
 
 
+def test_static_widget_merges_server_echo_with_optimistic_message():
+    text = (ROOT / "backend" / "app" / "static" / "webchat" / "widget.js").read_text(encoding="utf-8")
+
+    assert "var clientKey = msg.client_message_id ? 'client:' + String(msg.client_message_id) : null;" in text
+    assert "if (clientKey && state.rendered[clientKey])" in text
+    assert "state.rendered[serverKey] = state.rendered[clientKey]" in text
+    assert "var el = appendMessage(role, text, '', serverKey);" in text
+    assert "if (clientKey) state.rendered[clientKey] = el;" in text
+
+
 def test_webchat_ws_observability_and_connection_limits_contract():
     settings_text = (ROOT / "backend" / "app" / "settings.py").read_text(encoding="utf-8")
     env_example = (ROOT / "backend" / ".env.example").read_text(encoding="utf-8")

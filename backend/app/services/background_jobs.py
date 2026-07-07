@@ -5,7 +5,7 @@ import hashlib
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import or_, select, text, update
+from sqlalchemy import and_, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -216,7 +216,12 @@ def claim_pending_jobs(db: Session, *, limit: int | None = None, worker_id: str 
     now = utc_now()
     lock_deadline = now - timedelta(seconds=settings.job_lock_seconds)
     normalized_job_types = tuple(sorted({str(job_type) for job_type in (job_types or []) if job_type}))
-    pending_filters = [BackgroundJob.status == JobStatus.pending, or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now), or_(BackgroundJob.locked_at.is_(None), BackgroundJob.locked_at < lock_deadline)]
+    due_filter = or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now)
+    stale_processing_filter = and_(
+        BackgroundJob.status == JobStatus.processing,
+        or_(BackgroundJob.locked_at.is_(None), BackgroundJob.locked_at < lock_deadline),
+    )
+    pending_filters = [or_(and_(BackgroundJob.status == JobStatus.pending, due_filter), stale_processing_filter)]
     if normalized_job_types:
         pending_filters.append(BackgroundJob.job_type.in_(normalized_job_types))
     if db.bind and db.bind.dialect.name.startswith('postgresql'):

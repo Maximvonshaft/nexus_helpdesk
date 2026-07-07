@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from types import SimpleNamespace
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.db import Base
 from app.enums import JobStatus
+from app.models import BackgroundJob
 from app.services import background_jobs
 from app.services.background_job_transaction_boundary import apply_background_job_transaction_boundary_patch
+from app.utils.time import utc_now
 
 
 class _FakeQuery:
@@ -24,11 +31,15 @@ class _FakeDB:
         self.current_recovery_row = rows[0] if rows else None
         self.commits = 0
         self.rollbacks = 0
+        self.fail_next_commit = False
 
     def query(self, model):
         return _FakeQuery(self)
 
     def commit(self):
+        if self.fail_next_commit:
+            self.fail_next_commit = False
+            raise RuntimeError("commit deadlock")
         self.commits += 1
 
     def rollback(self):
@@ -137,3 +148,82 @@ def test_dispatch_pending_sync_jobs_uses_same_attempt_boundary(monkeypatch):
     assert db.rollbacks == 0
     assert db.commits == 1
     assert row.status == JobStatus.done
+
+
+def test_dispatch_pending_webchat_ai_jobs_uses_attempt_boundary(monkeypatch):
+    apply_background_job_transaction_boundary_patch()
+
+    row = _job(11, job_type=background_jobs.WEBCHAT_AI_REPLY_JOB)
+    db = _FakeDB([row])
+    db.current_recovery_row = row
+
+    monkeypatch.setattr(background_jobs, 'claim_pending_jobs', lambda db, limit=None, worker_id=None, job_types=None: [row])
+    monkeypatch.setattr(background_jobs, 'process_background_job', lambda db, job: (_ for _ in ()).throw(RuntimeError('webchat job failed')))
+
+    processed = background_jobs.dispatch_pending_webchat_ai_reply_jobs(db, worker_id='worker-webchat-ai-test')
+
+    assert [item.id for item in processed] == [11]
+    assert db.rollbacks == 1
+    assert db.commits == 1
+    assert row.status == JobStatus.pending
+    assert row.attempt_count == 1
+    assert row.locked_at is None
+    assert row.locked_by is None
+
+
+def test_attempt_boundary_recovers_commit_failure(monkeypatch):
+    apply_background_job_transaction_boundary_patch()
+
+    row = _job(12, job_type=background_jobs.WEBCHAT_AI_REPLY_JOB)
+    db = _FakeDB([row])
+    db.current_recovery_row = row
+    db.fail_next_commit = True
+
+    monkeypatch.setattr(background_jobs, 'claim_pending_jobs', lambda db, limit=None, worker_id=None, job_types=None: [row])
+
+    def fake_process(db_arg, job):
+        job.status = JobStatus.done
+        job.locked_at = None
+        job.locked_by = None
+        return job
+
+    monkeypatch.setattr(background_jobs, 'process_background_job', fake_process)
+
+    processed = background_jobs.dispatch_pending_webchat_ai_reply_jobs(db, worker_id='worker-webchat-ai-test')
+
+    assert [item.id for item in processed] == [12]
+    assert db.rollbacks == 1
+    assert db.commits == 1
+    assert row.status == JobStatus.pending
+    assert row.attempt_count == 1
+    assert row.last_error == 'Unhandled background job exception: RuntimeError'
+
+
+def test_claim_pending_jobs_reclaims_stale_processing_job(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'jobs.db'}", connect_args={"check_same_thread": False}, future=True)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(background_jobs.settings, "job_lock_seconds", 60)
+
+    stale_time = utc_now() - timedelta(minutes=10)
+    with SessionLocal() as db:
+        row = BackgroundJob(
+            queue_name="webchat_ai_reply",
+            job_type=background_jobs.WEBCHAT_AI_REPLY_JOB,
+            payload_json="{}",
+            status=JobStatus.processing,
+            locked_at=stale_time,
+            locked_by="dead-worker",
+            dedupe_key="webchat-ai-turn:test",
+        )
+        db.add(row)
+        db.commit()
+
+        claimed = background_jobs.claim_pending_jobs(db, limit=1, worker_id="new-worker", job_types=[background_jobs.WEBCHAT_AI_REPLY_JOB])
+
+        assert [job.id for job in claimed] == [row.id]
+        assert claimed[0].status == JobStatus.processing
+        assert claimed[0].locked_by == "new-worker"
+        assert claimed[0].locked_at > stale_time
+
+    engine.dispose()

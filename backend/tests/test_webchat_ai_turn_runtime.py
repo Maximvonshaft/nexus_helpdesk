@@ -22,6 +22,17 @@ def _ensure_schema_and_user() -> None:
         columns = {col["name"] for col in inspect(conn).get_columns("webchat_ai_turns")}
         if "runtime_trace_json" not in columns:
             conn.execute(text("ALTER TABLE webchat_ai_turns ADD COLUMN runtime_trace_json TEXT"))
+        outbound_columns = {col["name"] for col in inspect(conn).get_columns("ticket_outbound_messages")}
+        outbound_contract_columns = {
+            "origin": "VARCHAR(40)",
+            "runtime_trace_id": "VARCHAR(120)",
+            "runtime_contract_version": "VARCHAR(80)",
+            "runtime_signature": "VARCHAR(128)",
+            "safety_status": "VARCHAR(40)",
+        }
+        for column_name, column_type in outbound_contract_columns.items():
+            if column_name not in outbound_columns:
+                conn.execute(text(f"ALTER TABLE ticket_outbound_messages ADD COLUMN {column_name} {column_type}"))
     db = SessionLocal()
     try:
         if not db.query(User).filter(User.id == 98765).first():

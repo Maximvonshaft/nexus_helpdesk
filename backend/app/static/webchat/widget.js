@@ -841,7 +841,17 @@
     var role = msg.direction === 'visitor' ? 'visitor' : 'agent';
     var text = msg.body_text || msg.body || (msg.payload_json && (msg.payload_json.title || msg.payload_json.body)) || '';
     if (!String(text || '').trim()) return;
-    appendMessage(role, text, '', 'server:' + String(msg.id));
+    var serverKey = 'server:' + String(msg.id);
+    if (state.rendered[serverKey]) return;
+    var clientKey = msg.client_message_id ? 'client:' + String(msg.client_message_id) : null;
+    if (clientKey && state.rendered[clientKey]) {
+      updateMessage(state.rendered[clientKey], text, role);
+      state.rendered[serverKey] = state.rendered[clientKey];
+      persistLegacySession();
+      return;
+    }
+    var el = appendMessage(role, text, '', serverKey);
+    if (clientKey) state.rendered[clientKey] = el;
     persistLegacySession();
   }
 

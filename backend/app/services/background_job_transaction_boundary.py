@@ -49,6 +49,7 @@ def _process_claimed_jobs_with_attempt_boundary(db: Any, jobs: Iterable[Any], *,
         job_id = job.id
         try:
             background_jobs.process_background_job(db, job)
+            db.commit()
         except Exception as exc:
             db.rollback()
             recovered = _recover_unhandled_background_job_exception(db, job_id=job_id, exc=exc)
@@ -56,7 +57,6 @@ def _process_claimed_jobs_with_attempt_boundary(db: Any, jobs: Iterable[Any], *,
                 db.commit()
                 processed.append(recovered)
             continue
-        db.commit()
         processed.append(job)
     return processed
 
@@ -103,6 +103,13 @@ def _dispatch_pending_sync_jobs_with_attempt_boundary(db: Any, *, limit: int | N
     return _process_claimed_jobs_with_attempt_boundary(db, claimed, sync_only=True)
 
 
+def _dispatch_pending_webchat_ai_reply_jobs_with_attempt_boundary(db: Any, *, limit: int | None = None, worker_id: str | None = None) -> list[Any]:
+    from . import background_jobs
+
+    claimed = background_jobs.claim_pending_jobs(db, limit=limit, worker_id=worker_id, job_types=[background_jobs.WEBCHAT_AI_REPLY_JOB])
+    return _process_claimed_jobs_with_attempt_boundary(db, claimed)
+
+
 def apply_background_job_transaction_boundary_patch() -> None:
     global _PATCHED
     if _PATCHED:
@@ -112,4 +119,5 @@ def apply_background_job_transaction_boundary_patch() -> None:
 
     background_jobs.dispatch_pending_background_jobs = _dispatch_pending_background_jobs_with_attempt_boundary
     background_jobs.dispatch_pending_sync_jobs = _dispatch_pending_sync_jobs_with_attempt_boundary
+    background_jobs.dispatch_pending_webchat_ai_reply_jobs = _dispatch_pending_webchat_ai_reply_jobs_with_attempt_boundary
     _PATCHED = True
