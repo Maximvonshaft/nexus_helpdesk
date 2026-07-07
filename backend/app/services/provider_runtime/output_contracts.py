@@ -50,8 +50,8 @@ class OutputContracts:
                     "reply": {
                         "type": "object",
                         "properties": {
-                            "type": {"type": "string", "enum": ["answer", "clarifying_question", "handoff_notice"]},
-                            "text": {"type": "string", "maxLength": 1200},
+                            "type": {"type": "string", "enum": ["answer", "clarifying_question", "handoff_notice", "null_reply"]},
+                            "text": {"type": ["string", "null"], "maxLength": 1200},
                         },
                         "required": ["type", "text"],
                         "additionalProperties": False,
@@ -70,6 +70,7 @@ class OutputContracts:
                     "runtime_signature": {"type": "string", "minLength": 32, "maxLength": 128},
                     "safety_status": {"type": "string", "enum": ["passed", "reviewed"]},
                     "origin": {"type": "string", "enum": ["provider_runtime", "ai_runtime"]},
+                    "customer_visible": {"type": "boolean"},
                     "grounding": {
                         "type": "object",
                         "properties": {
@@ -101,6 +102,7 @@ class OutputContracts:
                     "runtime_signature",
                     "safety_status",
                     "origin",
+                    "customer_visible",
                     "grounding",
                     "risk",
                     "channel",
@@ -232,6 +234,12 @@ class OutputContracts:
     def _validate_ai_reply_v3(parsed: dict[str, Any]) -> None:
         reply = parsed.get("reply") if isinstance(parsed.get("reply"), dict) else {}
         grounding = parsed.get("grounding") if isinstance(parsed.get("grounding"), dict) else {}
+        if reply.get("type") == "null_reply":
+            if parsed.get("customer_visible") is not False:
+                raise ValueError("null_reply requires customer_visible=false")
+            if reply.get("text") is not None:
+                raise ValueError("null_reply requires reply.text=null")
+            return
         if reply.get("type") == "answer" and not grounding.get("used_sources"):
             raise ValueError("answer requires grounding.used_sources")
         if reply.get("type") == "answer" and grounding.get("unsupported_claims"):

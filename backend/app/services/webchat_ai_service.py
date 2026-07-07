@@ -13,12 +13,12 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketStatus
-from ..models import Ticket, TicketComment, TicketEvent, TicketOutboundMessage
+from ..models import Ticket, TicketComment, TicketEvent
 from ..settings import get_settings
 from ..utils.time import ensure_utc, utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
 from .customer_language import detect_customer_language
-from .message_dispatch import queue_outbound_message
+from .customer_visible_message_service import create_customer_visible_outbound
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .background_jobs import enqueue_speedaf_work_order_create_job
 from .sla_service import evaluate_sla, update_first_response
@@ -536,25 +536,25 @@ def process_webchat_ai_reply_job(
     db.flush()
 
     db.add(TicketComment(ticket_id=ticket.id, author_id=None, body=final_body, visibility=NoteVisibility.external))
+    if ticket.conversation_state not in {ConversationState.human_review_required, ConversationState.ready_to_reply}:
+        ticket.conversation_state = ConversationState.ai_active
     if is_external_whatsapp:
         ai_contract = build_ai_reply_contract(
             body=final_body,
             runtime_trace=runtime_trace,
             safety_status="passed" if decision.level in {"allow", "ok", "pass"} else "reviewed",
         )
-        outbound_message = queue_outbound_message(
+        outbound_result = create_customer_visible_outbound(
             db,
-            ticket_id=ticket.id,
+            ticket=ticket,
             channel=SourceChannel.whatsapp,
             body=final_body,
             created_by=None,
             provider_status=provider_status,
             origin="provider_runtime",
-            runtime_trace_id=ai_contract.runtime_trace_id,
-            runtime_contract_version=ai_contract.contract_version,
-            runtime_signature=ai_contract.runtime_signature,
-            safety_status=ai_contract.safety_status,
+            ai_contract=ai_contract,
         )
+        outbound_message = outbound_result.outbound_message
         outbound_event_type = EventType.outbound_queued
         outbound_event_note = "WhatsApp AI reply queued"
     else:
@@ -563,26 +563,18 @@ def process_webchat_ai_reply_job(
             runtime_trace=runtime_trace,
             safety_status="passed" if decision.level in {"allow", "ok", "pass"} else "reviewed",
         )
-        outbound_message = TicketOutboundMessage(
-            ticket_id=ticket.id,
+        outbound_result = create_customer_visible_outbound(
+            db,
+            ticket=ticket,
             channel=SourceChannel.web_chat,
-            status=MessageStatus.sent,
             body=final_body,
             origin="provider_runtime",
-            runtime_trace_id=ai_contract.runtime_trace_id,
-            runtime_contract_version=ai_contract.contract_version,
-            runtime_signature=ai_contract.runtime_signature,
-            safety_status=ai_contract.safety_status,
             provider_status=provider_status,
-            error_message=None,
             created_by=None,
-            sent_at=utc_now(),
-            max_retries=0,
-            failure_code=None,
-            failure_reason=None,
+            ai_contract=ai_contract,
+            status=MessageStatus.sent,
         )
-        db.add(outbound_message)
-        db.flush()
+        outbound_message = outbound_result.outbound_message
         outbound_event_type = EventType.outbound_sent
         outbound_event_note = "Webchat AI reply sent"
 
@@ -606,7 +598,8 @@ def process_webchat_ai_reply_job(
     if not runtime_handoff_required:
         ticket.status = TicketStatus.waiting_customer
         ticket.conversation_state = ConversationState.waiting_customer
-    ticket.last_human_update = final_body
+    ticket.last_ai_update = final_body
+    ticket.last_runtime_reply_at = utc_now()
     ticket.updated_at = utc_now()
     conversation.updated_at = utc_now()
     conversation.last_seen_at = utc_now()

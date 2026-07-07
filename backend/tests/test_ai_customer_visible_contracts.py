@@ -28,7 +28,9 @@ from app.settings import get_settings  # noqa: E402
 from app.services.ai_reply_contract import AI_REPLY_CONTRACT_V2, AI_REPLY_CONTRACT_V3, build_ai_reply_contract  # noqa: E402
 from app.services.knowledge_runtime_v2 import retrieve_knowledge  # noqa: E402
 from app.services import knowledge_service  # noqa: E402
-from app.services.message_dispatch import process_outbound_message, queue_outbound_message  # noqa: E402
+from app.services.customer_visible_message_service import create_customer_visible_outbound, record_runtime_null_reply  # noqa: E402
+from app.services.message_dispatch import _build_fact_evidence, process_outbound_message, queue_outbound_message  # noqa: E402
+from app.services.outbound_safety import SafetyDecision  # noqa: E402
 
 
 @pytest.fixture()
@@ -366,3 +368,185 @@ def test_runtime_signature_uses_hmac_secret(monkeypatch):
         get_settings.cache_clear()
 
     assert contract.runtime_signature == expected
+
+
+def test_v3_answer_with_used_sources_passes_outbound_gateway(db_session, monkeypatch):
+    ticket = _ticket(db_session)
+    contract = build_ai_reply_contract(
+        body="Switzerland address changes are allowed before dispatch.",
+        runtime_trace={"request_id": "rt-v3-pass"},
+        contract_version=AI_REPLY_CONTRACT_V3,
+        reply_type="answer",
+        used_sources=["knowledge:ch-address-policy"],
+        unsupported_claims=[],
+        confidence=0.94,
+        channel="whatsapp",
+    )
+    row = queue_outbound_message(
+        db_session,
+        ticket_id=ticket.id,
+        channel=SourceChannel.whatsapp,
+        body="Switzerland address changes are allowed before dispatch.",
+        created_by=None,
+        origin="provider_runtime",
+        runtime_trace_id=contract.runtime_trace_id,
+        runtime_contract_version=contract.contract_version,
+        runtime_signature=contract.runtime_signature,
+        runtime_contract_payload_json=contract.payload_json(body="Switzerland address changes are allowed before dispatch.", origin="provider_runtime"),
+        runtime_contract_payload_sha256=contract.payload_sha256(body="Switzerland address changes are allowed before dispatch.", origin="provider_runtime"),
+        runtime_reply_type=contract.reply_type,
+        safety_status=contract.safety_status,
+    )
+    monkeypatch.setattr("app.services.message_dispatch._external_dispatch_block_reason", lambda: None)
+    monkeypatch.setattr("app.services.message_dispatch._enforce_outbound_safety", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        "app.services.message_dispatch._dispatch_whatsapp_message",
+        lambda *args, **kwargs: (MessageStatus.sent, "whatsapp_native_sent", None, {"adapter": "test", "idempotency_key": "idem"}),
+    )
+
+    processed = process_outbound_message(db_session, row)
+
+    assert processed.status == MessageStatus.sent
+    assert processed.runtime_reply_type == "answer"
+
+
+def test_v3_answer_without_used_sources_blocked(db_session):
+    ticket = _ticket(db_session)
+    with pytest.raises(ValueError, match="ai_reply_v3_answer_requires_used_sources"):
+        queue_outbound_message(
+            db_session,
+            ticket_id=ticket.id,
+            channel=SourceChannel.whatsapp,
+            body="Ungrounded answer",
+            created_by=None,
+            origin="provider_runtime",
+            runtime_trace_id="rt-v3-no-sources",
+            runtime_contract_version=AI_REPLY_CONTRACT_V3,
+            runtime_signature="bad",
+            runtime_reply_type="answer",
+            safety_status="passed",
+        )
+
+
+def test_v3_unsupported_claims_blocked(db_session):
+    ticket = _ticket(db_session)
+    with pytest.raises(ValueError, match="ai_reply_v3_unsupported_claims_blocked"):
+        build_ai_reply_contract(
+            body="Unsupported claim",
+            runtime_trace={"request_id": "rt-v3-unsupported-gateway"},
+            contract_version=AI_REPLY_CONTRACT_V3,
+            reply_type="answer",
+            used_sources=["knowledge:policy"],
+            unsupported_claims=["unsupported delivery promise"],
+            channel="whatsapp",
+        )
+    contract = build_ai_reply_contract(
+        body="Unsupported claim",
+        runtime_trace={"request_id": "rt-v3-unsupported-gateway-2"},
+        contract_version=AI_REPLY_CONTRACT_V3,
+        reply_type="answer",
+        used_sources=["knowledge:policy"],
+        unsupported_claims=[],
+        channel="whatsapp",
+    )
+    payload = contract.payload_dict(body="Unsupported claim", origin="provider_runtime")
+    payload["grounding"]["unsupported_claims"] = ["mutated unsupported claim"]
+    payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    with pytest.raises(ValueError, match="ai_reply_v3_unsupported_claims_blocked"):
+        queue_outbound_message(
+            db_session,
+            ticket_id=ticket.id,
+            channel=SourceChannel.whatsapp,
+            body="Unsupported claim",
+            created_by=None,
+            origin="provider_runtime",
+            runtime_trace_id=contract.runtime_trace_id,
+            runtime_contract_version=contract.contract_version,
+            runtime_signature=contract.runtime_signature,
+            runtime_contract_payload_json=payload_json,
+            runtime_contract_payload_sha256=hashlib.sha256(payload_json.encode("utf-8")).hexdigest(),
+            runtime_reply_type="answer",
+            safety_status=contract.safety_status,
+        )
+
+
+def test_signed_ai_outbound_body_cannot_be_mutated_after_signature(db_session, monkeypatch):
+    ticket = _ticket(db_session)
+    contract = build_ai_reply_contract(body="Exact signed body", runtime_trace={"request_id": "rt-mutation"})
+    row = queue_outbound_message(
+        db_session,
+        ticket_id=ticket.id,
+        channel=SourceChannel.whatsapp,
+        body="Exact signed body",
+        created_by=None,
+        origin="provider_runtime",
+        runtime_trace_id=contract.runtime_trace_id,
+        runtime_contract_version=contract.contract_version,
+        runtime_signature=contract.runtime_signature,
+        safety_status=contract.safety_status,
+    )
+    monkeypatch.setattr("app.services.message_dispatch._external_dispatch_block_reason", lambda: None)
+    monkeypatch.setattr(
+        "app.services.message_dispatch.evaluate_outbound_safety",
+        lambda *args, **kwargs: SafetyDecision(True, "allow", [], False, "Exact signed body "),
+    )
+    monkeypatch.setattr("app.services.message_dispatch.dispatch_whatsapp_native_outbound", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("dispatch must not run")))
+
+    processed = process_outbound_message(db_session, row)
+
+    assert processed.status == MessageStatus.dead
+    assert processed.failure_code == "runtime_signed_body_mutation"
+    assert processed.body == "Exact signed body"
+
+
+def test_webchat_ai_reply_uses_customer_visible_message_service():
+    source = Path("backend/app/services/webchat_ai_service.py").read_text(encoding="utf-8")
+    assert "create_customer_visible_outbound" in source
+    assert "TicketOutboundMessage(" not in source
+    assert "queue_outbound_message" not in source
+
+
+def test_ai_reply_does_not_update_last_human_update():
+    source = Path("backend/app/services/webchat_ai_service.py").read_text(encoding="utf-8")
+    assert "ticket.last_human_update" not in source
+    assert "ticket.last_ai_update = final_body" in source
+
+
+def test_fact_evidence_does_not_use_ai_reply_as_human_evidence(db_session):
+    ticket = _ticket(db_session)
+    ticket.tracking_number = "CH020000129135"
+    ticket.last_human_update = "AI-generated reply that must not become operator evidence"
+    ticket.last_ai_update = "AI-generated reply that must not become operator evidence"
+    db_session.flush()
+
+    assert _build_fact_evidence(ticket) is None
+
+
+def test_v3_null_reply_not_sent_to_customer(db_session):
+    ticket = _ticket(db_session)
+    contract = build_ai_reply_contract(
+        body=None,
+        runtime_trace={"request_id": "rt-null"},
+        contract_version=AI_REPLY_CONTRACT_V3,
+        reply_type="null_reply",
+        channel="webchat",
+    )
+
+    result = record_runtime_null_reply(db_session, ticket=ticket, ai_contract=contract)
+
+    assert result.outbound_message is None
+    assert result.customer_visible is False
+    assert db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).count() == 0
+    send_result = create_customer_visible_outbound(
+        db_session,
+        ticket=ticket,
+        channel=SourceChannel.web_chat,
+        body="",
+        origin="provider_runtime",
+        created_by=None,
+        provider_status="runtime_null_reply",
+        ai_contract=contract,
+    )
+    assert send_result.outbound_message is None
+    assert db_session.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id == ticket.id).count() == 0

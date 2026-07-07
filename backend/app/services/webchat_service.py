@@ -13,7 +13,7 @@ from fastapi import HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from ..enums import ConversationState, EventType, MessageStatus, NoteVisibility, SourceChannel, TicketPriority, TicketSource, TicketStatus
-from ..models import Customer, Ticket, TicketComment, TicketEvent, TicketOutboundMessage, User
+from ..models import Customer, Ticket, TicketComment, TicketEvent, User
 from ..utils.time import utc_now
 from ..settings import get_settings
 from ..webchat_models import WebchatAITurn, WebchatCardAction, WebchatConversation, WebchatEvent, WebchatHandoffRequest, WebchatMessage
@@ -22,7 +22,7 @@ from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
 from .permissions import ensure_ticket_visible
 from .sla_service import update_first_response, evaluate_sla
 from .ticket_service import generate_ticket_no, get_ticket_or_404
-from .message_dispatch import queue_outbound_message
+from .customer_visible_message_service import create_customer_visible_outbound
 from .webchat_handoff_service import ensure_can_reply_in_handoff, request_webchat_handoff, serialize_handoff_request
 from .webchat_ai_turn_service import is_ai_suspended_for_handoff, safe_write_webchat_event
 from .webchat_inbox_read_state import webchat_read_state_payload
@@ -615,17 +615,16 @@ def submit_card_action(db: Session, public_id: str, visitor_token: str | None, p
             trigger_message_id=action_message.id,
             requested_by_actor_type="visitor",
         )
-        db.add(TicketOutboundMessage(
-            ticket_id=ticket.id,
+        create_customer_visible_outbound(
+            db,
+            ticket=ticket,
             channel=SourceChannel.web_chat,
-            status=MessageStatus.sent,
             body="webchat_handoff_ack",
+            origin="handoff_notice",
             provider_status="webchat_handoff_ack_delivered",
             created_by=None,
-            sent_at=utc_now(),
-            max_retries=0,
-            failure_reason="Local WebChat handoff acknowledgement; no external provider send occurred",
-        ))
+            status=MessageStatus.sent,
+        )
         db.add(TicketEvent(
             ticket_id=ticket.id,
             actor_id=None,
@@ -796,33 +795,30 @@ def admin_reply(
     db.add(TicketComment(ticket_id=ticket.id, author_id=current_user.id, body=decision.normalized_body, visibility=NoteVisibility.external))
     db.flush()
     if is_external_reply:
-        outbound_message = queue_outbound_message(
+        outbound_result = create_customer_visible_outbound(
             db,
-            ticket_id=ticket.id,
+            ticket=ticket,
             channel=SourceChannel.whatsapp,
             body=decision.normalized_body,
             created_by=current_user.id,
             provider_status=provider_status,
             origin="human_agent",
-            safety_status="reviewed" if decision.requires_human_review else "passed",
         )
+        outbound_message = outbound_result.outbound_message
         outbound_event_type = EventType.outbound_queued
         outbound_event_note = "WhatsApp agent reply queued"
     else:
-        outbound_message = TicketOutboundMessage(
-            ticket_id=ticket.id,
+        outbound_result = create_customer_visible_outbound(
+            db,
+            ticket=ticket,
             channel=SourceChannel.web_chat,
-            status=MessageStatus.sent,
             body=decision.normalized_body,
             origin="human_agent",
-            safety_status="reviewed" if decision.requires_human_review else "passed",
             provider_status=provider_status,
             created_by=current_user.id,
-            sent_at=utc_now(),
-            max_retries=0,
+            status=MessageStatus.sent,
         )
-        db.add(outbound_message)
-        db.flush()
+        outbound_message = outbound_result.outbound_message
         outbound_event_type = EventType.outbound_sent
         outbound_event_note = "Webchat agent reply sent"
     db.flush()

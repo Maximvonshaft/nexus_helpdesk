@@ -21,7 +21,11 @@ from .ai_reply_contract import (
     FORBIDDEN_CUSTOMER_VISIBLE_ORIGINS,
     HUMAN_ORIGIN,
     HUMAN_REPLY_STATES,
+    contract_payload_sha256,
+    contract_validation_args_from_payload,
+    parse_runtime_contract_payload,
     validate_ai_reply_contract,
+    validate_contract_payload_hash,
 )
 from .external_channel_bridge import dispatch_via_external_channel_bridge, dispatch_via_external_channel_cli, dispatch_via_external_channel_mcp
 from .outbound_adapters.email import dispatch_email_outbound
@@ -114,8 +118,13 @@ def queue_outbound_message(
     runtime_trace_id: str | None = None,
     runtime_contract_version: str | None = None,
     runtime_signature: str | None = None,
+    runtime_contract_payload_json: str | None = None,
+    runtime_contract_payload_sha256: str | None = None,
+    runtime_reply_type: str | None = None,
     safety_status: str | None = None,
 ) -> TicketOutboundMessage:
+    if runtime_contract_payload_json and not runtime_contract_payload_sha256:
+        runtime_contract_payload_sha256 = contract_payload_sha256(runtime_contract_payload_json)
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     normalized_origin = _normalize_customer_visible_origin(origin, created_by=created_by)
     _enforce_customer_visible_origin(
@@ -126,6 +135,9 @@ def queue_outbound_message(
         runtime_trace_id=runtime_trace_id,
         runtime_contract_version=runtime_contract_version,
         runtime_signature=runtime_signature,
+        runtime_contract_payload_json=runtime_contract_payload_json,
+        runtime_contract_payload_sha256=runtime_contract_payload_sha256,
+        runtime_reply_type=runtime_reply_type,
         safety_status=safety_status,
     )
     message = TicketOutboundMessage(
@@ -138,6 +150,9 @@ def queue_outbound_message(
         runtime_trace_id=runtime_trace_id,
         runtime_contract_version=runtime_contract_version,
         runtime_signature=runtime_signature,
+        runtime_contract_payload_json=runtime_contract_payload_json,
+        runtime_contract_payload_sha256=runtime_contract_payload_sha256,
+        runtime_reply_type=runtime_reply_type,
         safety_status=safety_status,
         provider_status=provider_status,
         created_by=created_by,
@@ -169,19 +184,36 @@ def _enforce_customer_visible_origin(
     runtime_trace_id: str | None,
     runtime_contract_version: str | None,
     runtime_signature: str | None,
-    safety_status: str | None,
+    runtime_contract_payload_json: str | None = None,
+    runtime_contract_payload_sha256: str | None = None,
+    runtime_reply_type: str | None = None,
+    safety_status: str | None = None,
 ) -> None:
     if origin in FORBIDDEN_CUSTOMER_VISIBLE_ORIGINS:
         raise ValueError(f"{origin}_cannot_queue_customer_visible_text")
     if origin in AI_ORIGINS:
         if ticket is not None and ticket.conversation_state in HUMAN_REPLY_STATES:
             raise ValueError("human_active_blocks_ai_autoreply")
+        payload_violation = validate_contract_payload_hash(runtime_contract_payload_json, runtime_contract_payload_sha256)
+        if payload_violation:
+            raise ValueError(payload_violation)
+        contract_payload = parse_runtime_contract_payload(runtime_contract_payload_json)
+        payload_args = contract_validation_args_from_payload(contract_payload) if contract_payload else {}
+        if runtime_reply_type == "null_reply" or payload_args.get("reply_type") == "null_reply":
+            raise ValueError("ai_reply_v3_null_reply_not_customer_visible")
         violation = validate_ai_reply_contract(
             body=body,
-            runtime_trace_id=runtime_trace_id,
-            contract_version=runtime_contract_version,
-            runtime_signature=runtime_signature,
-            safety_status=safety_status,
+            runtime_trace_id=payload_args.get("runtime_trace_id") or runtime_trace_id,
+            contract_version=payload_args.get("contract_version") or runtime_contract_version,
+            runtime_signature=payload_args.get("runtime_signature") or runtime_signature,
+            safety_status=payload_args.get("safety_status") or safety_status,
+            reply_type=payload_args.get("reply_type", "answer"),
+            used_sources=payload_args.get("used_sources"),
+            unsupported_claims=payload_args.get("unsupported_claims"),
+            conflicts=payload_args.get("conflicts"),
+            confidence=payload_args.get("confidence"),
+            channel=payload_args.get("channel"),
+            customer_visible=payload_args.get("customer_visible", True),
         )
         if violation:
             raise ValueError(violation)
@@ -343,7 +375,7 @@ def claim_pending_messages(db: Session, *, limit: int | None = None, worker_id: 
 def _build_fact_evidence(ticket: Ticket | None) -> dict[str, Any] | None:
     if ticket is None or not getattr(ticket, 'tracking_number', None):
         return None
-    evidence_summary = ticket.customer_update or ticket.resolution_summary or ticket.last_human_update
+    evidence_summary = ticket.customer_update or ticket.resolution_summary
     if not evidence_summary:
         return None
     return {
@@ -373,6 +405,12 @@ def _enforce_outbound_safety(db: Session, message: TicketOutboundMessage, ticket
         _mark_review_required(message, reason)
         log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_failed, note='Outbound safety gate requires human review before send', payload={'message_id': message.id, 'safety_level': decision.level, 'reasons': decision.reasons, 'fact_evidence_present': fact_evidence is not None})
         return False
+    if _normalize_customer_visible_origin(message.origin, created_by=message.created_by) in AI_ORIGINS and message.runtime_signature:
+        if decision.normalized_body != message.body:
+            _mark_dead(message, 'Signed AI outbound body changed after runtime signature', failure_code='runtime_signed_body_mutation')
+            log_event(db, ticket_id=message.ticket_id, actor_id=message.created_by, event_type=EventType.outbound_failed, note='Signed AI outbound body mutation blocked', payload={'message_id': message.id, 'safety_level': decision.level, 'reasons': decision.reasons})
+            return False
+        return True
     message.body = decision.normalized_body
     return True
 
@@ -484,16 +522,20 @@ def process_outbound_message(db: Session, message: TicketOutboundMessage) -> Tic
         return message
     try:
         ticket_for_origin = message.ticket
-        _enforce_customer_visible_origin(
-            body=message.body,
-            origin=_normalize_customer_visible_origin(message.origin, created_by=message.created_by),
-            ticket=ticket_for_origin,
-            created_by=message.created_by,
-            runtime_trace_id=message.runtime_trace_id,
-            runtime_contract_version=message.runtime_contract_version,
-            runtime_signature=message.runtime_signature,
-            safety_status=message.safety_status,
-        )
+        if message.origin or message.runtime_contract_version or message.created_by is not None:
+            _enforce_customer_visible_origin(
+                body=message.body,
+                origin=_normalize_customer_visible_origin(message.origin, created_by=message.created_by),
+                ticket=ticket_for_origin,
+                created_by=message.created_by,
+                runtime_trace_id=message.runtime_trace_id,
+                runtime_contract_version=message.runtime_contract_version,
+                runtime_signature=message.runtime_signature,
+                runtime_contract_payload_json=message.runtime_contract_payload_json,
+                runtime_contract_payload_sha256=message.runtime_contract_payload_sha256,
+                runtime_reply_type=message.runtime_reply_type,
+                safety_status=message.safety_status,
+            )
     except ValueError as exc:
         reason = str(exc)
         _mark_origin_blocked(message, reason)

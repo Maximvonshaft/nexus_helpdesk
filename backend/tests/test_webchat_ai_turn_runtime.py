@@ -28,11 +28,22 @@ def _ensure_schema_and_user() -> None:
             "runtime_trace_id": "VARCHAR(120)",
             "runtime_contract_version": "VARCHAR(80)",
             "runtime_signature": "VARCHAR(128)",
+            "runtime_contract_payload_json": "TEXT",
+            "runtime_contract_payload_sha256": "VARCHAR(64)",
+            "runtime_reply_type": "VARCHAR(40)",
             "safety_status": "VARCHAR(40)",
         }
         for column_name, column_type in outbound_contract_columns.items():
             if column_name not in outbound_columns:
                 conn.execute(text(f"ALTER TABLE ticket_outbound_messages ADD COLUMN {column_name} {column_type}"))
+        ticket_columns = {col["name"] for col in inspect(conn).get_columns("tickets")}
+        ticket_ai_columns = {
+            "last_ai_update": "TEXT",
+            "last_runtime_reply_at": "DATETIME",
+        }
+        for column_name, column_type in ticket_ai_columns.items():
+            if column_name not in ticket_columns:
+                conn.execute(text(f"ALTER TABLE tickets ADD COLUMN {column_name} {column_type}"))
     db = SessionLocal()
     try:
         if not db.query(User).filter(User.id == 98765).first():
