@@ -223,6 +223,15 @@ async function fulfillApi(route: Route) {
       warnings: [],
     })
   }
+  if (path === '/api/admin/provider-runtime/status') {
+    return json({
+      ok: true,
+      status: 'normal',
+      provider: 'private_ai_runtime',
+      mode: 'safe_ai',
+      warnings: [],
+    })
+  }
 
   return route.fulfill({
     status: 404,
@@ -279,6 +288,6 @@ test('support workbench renders the consolidated production views', async ({ pag
   await expect(page.getByText('connected')).toBeVisible()
 
   await page.getByRole('button', { name: '运行' }).click()
-  await expect(page.getByText('AI 与队列运行')).toBeVisible()
+  await expect(page.getByText('AI Runtime 正常')).toBeVisible()
   await expect(page.getByText('正常')).toBeVisible()
 })
