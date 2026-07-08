@@ -18,8 +18,10 @@ from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatEvent
 from ..services.permissions import ensure_ticket_visible
 from .deps import get_current_user
+from .webchat_debug import router as webchat_debug_router
 
 router = APIRouter(prefix="/api/webchat", tags=["webchat-events"])
+router.include_router(webchat_debug_router)
 settings = get_settings()
 DEFAULT_EVENTS_MAX_WAIT_MS = 5000
 
