@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from . import persona_service
 from ..models import Market
+from ..webchat_models import WebchatMessage
 from .effective_country import effective_country_payload, resolve_effective_country
 from .knowledge_grounding_service import select_grounding_candidate
 from .knowledge_retrieval_service import KnowledgeChunkHit, retrieve_published_chunks
@@ -20,6 +21,8 @@ MAX_CONTEXT_HITS = 5
 MAX_LOCKED_FACTS = 3
 MAX_IDENTITY_FIELD_CHARS = 500
 MAX_IDENTITY_LIST_ITEMS = 12
+MAX_STRUCTURED_RECENT_CONTEXT = 12
+MAX_RECENT_CONTEXT_TEXT_CHARS = 500
 TRACKING_NUMBER_RE = re.compile(r"\b(?=[A-Z0-9]{8,30}\b)(?=[A-Z0-9]*\d)[A-Z0-9]+\b", re.I)
 TRACKING_CONTEXT_RE = re.compile(
     r"\b(track|tracking|waybill|parcel|package|shipment|delivery|order)\b|物流|运单|单号|查件|查询|包裹|快递|订单号|订单",
@@ -37,6 +40,7 @@ TRACKING_NO_EVIDENCE_EXPANSION_TERMS = [
     "核对单号",
     "CH tracking number format",
 ]
+_TRACKING_REFERENCE_RE = re.compile(r"\b(?=[A-Z0-9-]{8,35}\b)(?=[A-Z0-9-]*\d)[A-Z0-9][A-Z0-9-]*[A-Z0-9]\b", re.I)
 
 
 def _looks_like_tracking_identifier(token: str) -> bool:
@@ -136,6 +140,15 @@ def build_webchat_runtime_context(
     )
     rag_trace = dict(retrieval.as_trace())
     rag_trace.update(effective_country_payload(effective_country))
+    knowledge_context = _knowledge_context(retrieval, query=retrieval_query, original_query=body, query_expansion_terms=expansion_terms)
+    structured_recent_context = build_structured_recent_context(db=db, conversation=conversation, current_body=body)
+    tracking_intent_detected = _runtime_tracking_intent_detected(body=body, tracking_number=tracking_number)
+    guard = build_runtime_context_guard(
+        structured_recent_context=structured_recent_context,
+        tracking_intent_detected=tracking_intent_detected,
+        tracking_fact_evidence_present=bool(tracking_fact_evidence_present),
+        kb_hits_count=len(knowledge_context.get("hits") or []),
+    )
     return sanitize_runtime_context({
         "context_version": "nexus_webchat_runtime_context_v2",
         "tenant_key": tenant_key,
@@ -147,7 +160,7 @@ def build_webchat_runtime_context(
             **effective_country_payload(effective_country),
         },
         "persona_context": _persona_context(profile, match_rank),
-        "knowledge_context": _knowledge_context(retrieval, query=retrieval_query, original_query=body, query_expansion_terms=expansion_terms),
+        "knowledge_context": knowledge_context,
         "rag_trace": rag_trace,
         "safety_policy": {
             "knowledge_scope": "policy_sop_faq_only",
@@ -159,7 +172,148 @@ def build_webchat_runtime_context(
                 "Do not override trusted tracking facts with knowledge text.",
             ],
         },
+        **guard,
     })
+
+
+def build_structured_recent_context(
+    *,
+    db: Session | None = None,
+    conversation: Any = None,
+    history_rows: list[Any] | None = None,
+    current_message_id: int | None = None,
+    current_body: str | None = None,
+    limit: int = MAX_STRUCTURED_RECENT_CONTEXT,
+) -> list[dict[str, Any]]:
+    rows = list(history_rows or [])
+    if not rows and db is not None and getattr(conversation, "id", None) is not None:
+        rows = (
+            db.query(WebchatMessage)
+            .filter(WebchatMessage.conversation_id == conversation.id)
+            .order_by(WebchatMessage.created_at.desc(), WebchatMessage.id.desc())
+            .limit(limit)
+            .all()
+        )
+        rows.reverse()
+    current_body_norm = " ".join(str(current_body or "").split())
+    structured: list[dict[str, Any]] = []
+    skipped_current = False
+    for row in rows[-limit:]:
+        row_id = getattr(row, "id", None)
+        if current_message_id is not None and row_id == current_message_id:
+            continue
+        text = _row_text(row)
+        if not text:
+            continue
+        direction = str(getattr(row, "direction", "") or "").strip().lower()
+        if not skipped_current and current_body_norm and direction == "visitor" and " ".join(text.split()) == current_body_norm:
+            skipped_current = True
+            continue
+        if direction == "visitor":
+            role = "customer"
+            source = "webchat_message"
+            factuality = "customer_claim"
+            use = "conversation_context"
+        else:
+            role = "ai"
+            source = "previous_ai_reply"
+            factuality = "not_evidence"
+            use = "coherence_only"
+        structured.append({
+            "role": role,
+            "text": _redact_conversation_text(text),
+            "source": source,
+            "message_id": row_id,
+            "factuality": factuality,
+            "use": use,
+        })
+    return structured[-limit:]
+
+
+def build_runtime_context_guard(
+    *,
+    structured_recent_context: list[dict[str, Any]] | None,
+    tracking_intent_detected: bool,
+    tracking_fact_evidence_present: bool,
+    kb_hits_count: int,
+) -> dict[str, Any]:
+    recent = [item for item in (structured_recent_context or []) if isinstance(item, dict)]
+    prior_ai_messages_count = sum(1 for item in recent if item.get("source") == "previous_ai_reply" or item.get("role") == "ai")
+    customer_claim_count = sum(1 for item in recent if item.get("factuality") == "customer_claim" or item.get("role") == "customer")
+    evidence_contract = {
+        "tool_facts_present": bool(tracking_fact_evidence_present),
+        "tracking_fact_evidence_present": bool(tracking_fact_evidence_present),
+        "kb_hits_count": int(kb_hits_count or 0),
+        "recent_context_count": len(recent),
+        "prior_ai_messages_count": prior_ai_messages_count,
+        "customer_claim_count": customer_claim_count,
+        "memory_items_count": 0,
+        "memory_system": "not_enabled",
+        "support_memory_ledger_used_by_runtime": False,
+    }
+    if tracking_intent_detected and not tracking_fact_evidence_present:
+        answer_policy = {
+            "live_tracking_answer_allowed": False,
+            "allowed_reply_types": ["clarifying_question", "handoff_notice", "null_reply"],
+            "forbidden": [
+                "Do not answer live parcel status from KB.",
+                "Do not answer live parcel status from previous AI reply.",
+                "Do not answer live parcel status from customer claim.",
+            ],
+        }
+    elif tracking_intent_detected and tracking_fact_evidence_present:
+        answer_policy = {
+            "live_tracking_answer_allowed": True,
+            "required_sources": ["tracking_tool"],
+        }
+    else:
+        answer_policy = {
+            "live_tracking_answer_allowed": bool(tracking_fact_evidence_present),
+            "required_sources": ["tracking_tool"] if tracking_fact_evidence_present else [],
+        }
+    return {
+        "structured_recent_context": recent,
+        "recent_context_policy": {
+            "legacy_recent_context_role_text_only": True,
+            "legacy_recent_context_use": "backward_compatibility_only",
+            "structured_recent_context_is_authoritative_for_factuality": True,
+        },
+        "context_policy": {
+            "previous_ai_replies_are_not_facts": True,
+            "customer_messages_are_claims_not_verified_facts": True,
+            "tracking_status_requires_tool_fact": True,
+            "kb_cannot_answer_live_tracking_status": True,
+            "tool_result_overrides_kb": True,
+            "ask_clarifying_question_when_intent_unclear": True,
+        },
+        "evidence_contract": evidence_contract,
+        "answer_policy": answer_policy,
+        "runtime_trace_context_fields": {
+            "structured_recent_context_count": len(recent),
+            "prior_ai_messages_count": prior_ai_messages_count,
+            "customer_claim_count": customer_claim_count,
+            "tracking_intent_detected": bool(tracking_intent_detected),
+            "tracking_fact_evidence_present": bool(tracking_fact_evidence_present),
+            "live_tracking_answer_allowed": bool(answer_policy.get("live_tracking_answer_allowed")),
+            "support_memory_ledger_used_by_runtime": False,
+        },
+    }
+
+
+def _row_text(row: Any) -> str:
+    return str(getattr(row, "body_text", None) or getattr(row, "body", None) or "").strip()
+
+
+def _redact_conversation_text(text: str) -> str:
+    cleaned = " ".join(str(text or "").split())[:MAX_RECENT_CONTEXT_TEXT_CHARS]
+    return _TRACKING_REFERENCE_RE.sub("[redacted_tracking_reference]", cleaned)
+
+
+def _runtime_tracking_intent_detected(*, body: str | None, tracking_number: str | None) -> bool:
+    text = str(body or "")
+    if bool((tracking_number or "").strip()):
+        return True
+    return bool(TRACKING_CONTEXT_RE.search(text) or TRACKING_NUMBER_RE.search(text))
 
 
 def _channel_payload_with_market_country(
