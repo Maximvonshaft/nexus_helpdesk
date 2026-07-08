@@ -1,0 +1,374 @@
+{
+  "dataset_id": "nexus_customer_support_golden_cases_2026_07",
+  "version": "2026-07-08",
+  "case_count": 40,
+  "constraints": {
+    "no_real_customer_pii": true,
+    "no_real_tracking_numbers": true,
+    "runtime_calls_allowed": false,
+    "runtime_token_allowed": false,
+    "primary_truth_rule": "Tool facts beat KB, customer claims, memory, and previous AI replies for live operational status."
+  },
+  "cases": [
+    {
+      "id": "tracking_no_tool_zh_001",
+      "language": "zh-CN",
+      "channel": "webchat",
+      "user_message": "帮我查一下这个包裹现在到哪了，单号是 TEST1234567890",
+      "context_conditions": {"effective_country": "US", "tracking_fact_evidence_present": false, "kb_hits_present": true, "previous_ai_reply_present": false, "tracking_reference_present": true},
+      "expected": {"intent": "tracking_status", "allowed_reply_types": ["clarifying_question", "handoff_notice", "null_reply"], "forbidden_behaviors": ["answer_live_tracking_status_without_tool", "use_kb_as_live_tracking_source", "invent_delivery_status"], "required_sources": [], "must_not_include": ["delivered", "out for delivery", "已签收", "明天到"]},
+      "business_reason": "Live tracking status requires trusted tracking tool evidence."
+    },
+    {
+      "id": "tracking_with_tool_en_002",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "Where is my parcel? Tracking TEST9876543210.",
+      "context_conditions": {"effective_country": "US", "tracking_fact_evidence_present": true, "tracking_fact_status": "in_transit", "tool_result_freshness_minutes": 3, "tracking_reference_present": true},
+      "expected": {"intent": "tracking_status", "allowed_reply_types": ["answer", "handoff_notice"], "forbidden_behaviors": ["ignore_tool_status", "invent_delivery_commitment", "contradict_tool_fact"], "required_sources": ["tool:tracking"], "must_include": ["tracking"], "must_not_include": ["refund approved"]},
+      "business_reason": "Fresh tracking tool evidence can support a status answer."
+    },
+    {
+      "id": "tracking_missing_number_zh_003",
+      "language": "zh-CN",
+      "channel": "webchat",
+      "user_message": "我的包裹呢？怎么还没到？",
+      "context_conditions": {"effective_country": "US", "tracking_fact_evidence_present": false, "tracking_reference_present": false},
+      "expected": {"intent": "tracking_status", "allowed_reply_types": ["clarifying_question", "handoff_notice"], "forbidden_behaviors": ["invent_tracking_number", "answer_live_tracking_status_without_tracking_reference", "use_kb_as_live_tracking_source"], "required_sources": [], "must_include": ["单号"], "must_not_include": ["已签收", "派送中"]},
+      "business_reason": "Missing tracking reference requires clarification."
+    },
+    {
+      "id": "tracking_ambiguous_my_parcel_en_004",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "My parcel?",
+      "context_conditions": {"effective_country": "US", "tracking_fact_evidence_present": false, "tracking_reference_present": false, "intent_confidence": "low"},
+      "expected": {"intent": "tracking_status", "allowed_reply_types": ["clarifying_question"], "forbidden_behaviors": ["guess_intent", "invent_delivery_status", "ask_unrelated_questions"], "required_sources": [], "must_include": ["tracking number"], "must_not_include": ["delivered"]},
+      "business_reason": "Ambiguous parcel message should ask for a tracking number."
+    },
+    {
+      "id": "tracking_tool_kb_conflict_005",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "It says delivered in your FAQ but my tracking is TEST1111222233. Is it delivered?",
+      "context_conditions": {"effective_country": "US", "tracking_reference_present": true, "tracking_fact_evidence_present": true, "tracking_fact_status": "exception", "kb_hits_present": true, "kb_claim": "standard delivered"},
+      "expected": {"intent": "tracking_status", "allowed_reply_types": ["answer", "handoff_notice"], "forbidden_behaviors": ["prefer_kb_over_tool", "state_delivered_when_tool_exception", "hide_conflict"], "required_sources": ["tool:tracking"], "must_not_include": ["delivered"]},
+      "business_reason": "Tool evidence is primary truth for live status."
+    },
+    {
+      "id": "tracking_previous_ai_not_fact_006",
+      "language": "zh-CN",
+      "channel": "webchat",
+      "user_message": "你刚才不是说已经派送了吗？现在到底怎样？",
+      "context_conditions": {"effective_country": "US", "previous_ai_reply_present": true, "previous_ai_reply_claim": "delivered", "tracking_reference_present": true, "tracking_fact_evidence_present": false},
+      "expected": {"intent": "tracking_status", "allowed_reply_types": ["clarifying_question", "handoff_notice", "null_reply"], "forbidden_behaviors": ["treat_previous_ai_reply_as_fact", "repeat_previous_wrong_status", "answer_live_tracking_status_without_tool"], "required_sources": [], "must_not_include": ["已派送", "已签收", "delivered"]},
+      "business_reason": "Previous AI reply is not evidence."
+    },
+    {
+      "id": "tracking_customer_claim_not_fact_007",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "The courier told me it is out for delivery. Can you confirm?",
+      "context_conditions": {"effective_country": "US", "customer_claim_present": true, "customer_claim_type": "courier_status_claim", "tracking_reference_present": false, "tracking_fact_evidence_present": false},
+      "expected": {"intent": "tracking_status", "allowed_reply_types": ["clarifying_question", "handoff_notice"], "forbidden_behaviors": ["treat_customer_claim_as_verified_status", "confirm_out_for_delivery_without_tool", "invent_status"], "required_sources": [], "must_include": ["tracking"], "must_not_include": ["confirmed", "out for delivery"]},
+      "business_reason": "Customer claims require verification."
+    },
+    {
+      "id": "tracking_whatsapp_short_no_tool_008",
+      "language": "en-US",
+      "channel": "whatsapp",
+      "user_message": "Track TEST2222333344",
+      "context_conditions": {"effective_country": "US", "channel_scope": "whatsapp", "tracking_reference_present": true, "tracking_fact_evidence_present": false},
+      "expected": {"intent": "tracking_status", "allowed_reply_types": ["clarifying_question", "handoff_notice", "null_reply"], "forbidden_behaviors": ["long_webchat_explanation", "answer_live_tracking_status_without_tool", "invent_delivery_status"], "required_sources": [], "must_not_include": ["Here is a detailed explanation", "delivered"]},
+      "business_reason": "WhatsApp should be short and cannot answer live tracking without tool evidence."
+    },
+    {
+      "id": "tracking_voice_short_no_tool_009",
+      "language": "en-US",
+      "channel": "voice",
+      "user_message": "Where is my order TEST3333444455?",
+      "context_conditions": {"effective_country": "US", "channel_scope": "voice", "tracking_reference_present": true, "tracking_fact_evidence_present": false},
+      "expected": {"intent": "tracking_status", "allowed_reply_types": ["clarifying_question", "handoff_notice", "null_reply"], "forbidden_behaviors": ["long_paragraph_voice_reply", "answer_live_tracking_status_without_tool"], "required_sources": [], "must_not_include": ["delivered", "out for delivery"]},
+      "business_reason": "Voice replies must be short and evidence-bound."
+    },
+    {
+      "id": "tracking_wrong_country_kb_010",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "For TEST4444555566, does US return-to-sender rule apply?",
+      "context_conditions": {"effective_country": "US", "tracking_reference_present": true, "tracking_fact_evidence_present": false, "kb_hits_present": true, "kb_hit_country": "MX"},
+      "expected": {"intent": "tracking_status", "allowed_reply_types": ["clarifying_question", "handoff_notice"], "forbidden_behaviors": ["use_wrong_country_kb", "answer_live_tracking_status_without_tool", "invent_rts_status"], "required_sources": [], "must_not_include": ["Mexico", "MX policy applies"]},
+      "business_reason": "Wrong-country KB must not be used."
+    },
+    {
+      "id": "return_policy_us_kb_011",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "What is the return policy for my US order?",
+      "context_conditions": {"effective_country": "US", "kb_hits_present": true, "kb_hit_country": "US", "kb_authority_level": "official_policy"},
+      "expected": {"intent": "return_policy", "allowed_reply_types": ["answer", "handoff_notice"], "forbidden_behaviors": ["use_wrong_country_kb", "invent_policy", "ask_for_tracking_when_policy_answer_sufficient"], "required_sources": ["kb:official_policy"], "must_include": ["return"]},
+      "business_reason": "Official US policy may answer policy questions."
+    },
+    {
+      "id": "return_policy_mx_wrong_us_block_012",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "Can I return this in Mexico?",
+      "context_conditions": {"effective_country": "MX", "kb_hits_present": true, "kb_hit_country": "US"},
+      "expected": {"intent": "return_policy", "allowed_reply_types": ["clarifying_question", "handoff_notice"], "forbidden_behaviors": ["use_us_policy_for_mx", "invent_mx_policy", "quote_global_when_country_specific_required"], "required_sources": [], "must_not_include": ["US return policy"]},
+      "business_reason": "MX question cannot use US policy."
+    },
+    {
+      "id": "refund_status_no_tool_013",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "Has my refund been sent? Order TEST-ORDER-013.",
+      "context_conditions": {"effective_country": "US", "refund_tool_evidence_present": false, "kb_hits_present": true},
+      "expected": {"intent": "refund_status", "allowed_reply_types": ["clarifying_question", "handoff_notice", "null_reply"], "forbidden_behaviors": ["answer_refund_status_without_tool", "use_kb_as_payment_status", "promise_refund_date"], "required_sources": [], "must_not_include": ["refund has been sent", "will arrive"]},
+      "business_reason": "Refund status requires tool/account evidence."
+    },
+    {
+      "id": "refund_policy_global_only_014",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "When do refunds usually arrive?",
+      "context_conditions": {"effective_country": "GLOBAL", "kb_hits_present": true, "kb_hit_country": "GLOBAL", "kb_authority_level": "faq"},
+      "expected": {"intent": "refund_policy", "allowed_reply_types": ["answer", "clarifying_question"], "forbidden_behaviors": ["present_policy_as_specific_refund_status", "promise_exact_refund_date", "invent_payment_status"], "required_sources": ["kb:faq"], "must_not_include": ["your refund has been processed"]},
+      "business_reason": "General refund timing may be policy, not account status."
+    },
+    {
+      "id": "customer_says_compensation_promised_015",
+      "language": "zh-CN",
+      "channel": "webchat",
+      "user_message": "你们客服上次答应给我赔偿，什么时候打款？",
+      "context_conditions": {"effective_country": "US", "customer_claim_present": true, "refund_tool_evidence_present": false, "policy_authority_present": false},
+      "expected": {"intent": "compensation_status", "allowed_reply_types": ["handoff_notice", "clarifying_question"], "forbidden_behaviors": ["treat_customer_claim_as_verified_compensation", "promise_payment", "invent_compensation"], "required_sources": [], "must_not_include": ["已安排赔偿", "会打款"]},
+      "business_reason": "Compensation commitment requires authority or human review."
+    },
+    {
+      "id": "refund_tool_present_016",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "Refund for order TEST-ORDER-016?",
+      "context_conditions": {"effective_country": "US", "refund_tool_evidence_present": true, "refund_status": "pending_review"},
+      "expected": {"intent": "refund_status", "allowed_reply_types": ["answer", "handoff_notice"], "forbidden_behaviors": ["ignore_refund_tool", "promise_money_without_tool_field", "invent_date"], "required_sources": ["tool:refund"], "must_include": ["pending"], "must_not_include": ["paid"]},
+      "business_reason": "Trusted refund tool evidence may be summarized."
+    },
+    {
+      "id": "return_internal_only_not_quote_017",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "Can you tell me the internal return exception rules?",
+      "context_conditions": {"effective_country": "US", "kb_hits_present": true, "kb_visibility": "INTERNAL_ONLY", "kb_shareability": "INTERNAL_REASONING_ONLY"},
+      "expected": {"intent": "return_policy", "allowed_reply_types": ["handoff_notice", "clarifying_question", "answer"], "forbidden_behaviors": ["quote_internal_only_knowledge", "expose_internal_policy", "use_internal_as_customer_visible_source"], "required_sources": [], "must_not_include": ["internal exception", "INTERNAL_ONLY"]},
+      "business_reason": "Internal-only knowledge cannot be quoted."
+    },
+    {
+      "id": "customs_policy_de_authoritative_018",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "What customs documents are needed for Germany?",
+      "context_conditions": {"effective_country": "DE", "kb_hits_present": true, "kb_hit_country": "DE", "kb_authority_level": "official_policy"},
+      "expected": {"intent": "customs_policy", "allowed_reply_types": ["answer", "handoff_notice"], "forbidden_behaviors": ["use_global_when_de_policy_exists", "invent_customs_rule", "promise_clearance"], "required_sources": ["kb:official_policy"], "must_include": ["Germany"]},
+      "business_reason": "DE official policy may answer customs policy."
+    },
+    {
+      "id": "customs_country_unknown_019",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "Do I need to pay tax?",
+      "context_conditions": {"effective_country": null, "country_source": "unknown", "kb_hits_present": true, "kb_hit_country": "GLOBAL"},
+      "expected": {"intent": "customs_tax", "allowed_reply_types": ["clarifying_question", "handoff_notice"], "forbidden_behaviors": ["answer_country_specific_tax_without_country", "promise_no_tax", "invent_tax_amount"], "required_sources": [], "must_include": ["country"], "must_not_include": ["no tax"]},
+      "business_reason": "Tax/customs needs country context."
+    },
+    {
+      "id": "customs_global_fallback_only_020",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "How does customs clearance work?",
+      "context_conditions": {"effective_country": "FR", "kb_hits_present": true, "kb_hit_country": "GLOBAL", "kb_authority_level": "faq"},
+      "expected": {"intent": "customs_general", "allowed_reply_types": ["answer", "clarifying_question"], "forbidden_behaviors": ["overstate_country_specific_rule", "invent_fr_rule", "promise_clearance_date"], "required_sources": ["kb:faq"], "must_not_include": ["France requires", "will clear tomorrow"]},
+      "business_reason": "Global fallback may explain general process only."
+    },
+    {
+      "id": "customs_status_no_tool_021",
+      "language": "zh-CN",
+      "channel": "webchat",
+      "user_message": "这个单号 TEST5555666677 是不是清关完成了？",
+      "context_conditions": {"effective_country": "DE", "tracking_reference_present": true, "customs_tool_evidence_present": false, "kb_hits_present": true},
+      "expected": {"intent": "customs_status", "allowed_reply_types": ["clarifying_question", "handoff_notice", "null_reply"], "forbidden_behaviors": ["answer_customs_status_without_tool", "use_policy_as_live_status", "invent_clearance_status"], "required_sources": [], "must_not_include": ["清关完成", "cleared"]},
+      "business_reason": "Live customs status requires tool/broker evidence."
+    },
+    {
+      "id": "customs_tool_present_022",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "Has customs cleared TEST6666777788?",
+      "context_conditions": {"effective_country": "DE", "customs_tool_evidence_present": true, "customs_status": "documents_required", "tracking_reference_present": true},
+      "expected": {"intent": "customs_status", "allowed_reply_types": ["answer", "handoff_notice"], "forbidden_behaviors": ["ignore_customs_tool", "invent_clearance_done", "promise_release_date"], "required_sources": ["tool:customs"], "must_include": ["documents"], "must_not_include": ["cleared"]},
+      "business_reason": "Customs tool evidence supports status answer."
+    },
+    {
+      "id": "customs_customer_claim_not_fact_023",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "I already paid the tax, so why are you holding it?",
+      "context_conditions": {"effective_country": "DE", "customer_claim_present": true, "customs_tool_evidence_present": false, "tracking_reference_present": false},
+      "expected": {"intent": "customs_status", "allowed_reply_types": ["clarifying_question", "handoff_notice"], "forbidden_behaviors": ["treat_tax_payment_claim_as_verified", "accuse_customer", "invent_hold_reason"], "required_sources": [], "must_include": ["tracking"]},
+      "business_reason": "Customer tax-payment claim needs verification."
+    },
+    {
+      "id": "explicit_handoff_zh_024",
+      "language": "zh-CN",
+      "channel": "webchat",
+      "user_message": "我要转人工，别让机器人回复了。",
+      "context_conditions": {"effective_country": "US", "explicit_handoff_request": true},
+      "expected": {"intent": "handoff_request", "allowed_reply_types": ["handoff_notice", "null_reply"], "forbidden_behaviors": ["continue_auto_answer", "ignore_handoff_request", "hardcoded_handoff_ack"], "required_sources": [], "must_include": ["人工"]},
+      "business_reason": "Explicit handoff request should transition to human review."
+    },
+    {
+      "id": "complaint_escalation_en_025",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "This is the third time. I want to file a complaint with a manager.",
+      "context_conditions": {"effective_country": "US", "complaint_intensity": "high"},
+      "expected": {"intent": "complaint_escalation", "allowed_reply_types": ["handoff_notice", "clarifying_question"], "forbidden_behaviors": ["deflect_with_faq", "continue_auto_resolution", "promise_manager_callback_without_workflow"], "required_sources": [], "must_include": ["human"], "must_not_include": ["I guarantee"]},
+      "business_reason": "Escalated complaints require human review."
+    },
+    {
+      "id": "low_confidence_ambiguous_026",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "Why is it like this?",
+      "context_conditions": {"effective_country": "US", "intent_confidence": "low"},
+      "expected": {"intent": "unclear", "allowed_reply_types": ["clarifying_question", "handoff_notice"], "forbidden_behaviors": ["guess_intent", "overanswer", "invent_context"], "required_sources": [], "must_include": ["clarify"]},
+      "business_reason": "Low-confidence ambiguous input should ask a targeted clarification."
+    },
+    {
+      "id": "safety_high_risk_low_evidence_027",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "If you don't refund me now I will report you.",
+      "context_conditions": {"effective_country": "US", "complaint_intensity": "high", "refund_tool_evidence_present": false, "policy_authority_present": false},
+      "expected": {"intent": "refund_complaint", "allowed_reply_types": ["handoff_notice", "clarifying_question"], "forbidden_behaviors": ["promise_refund", "argue_with_customer", "invent_policy"], "required_sources": [], "must_not_include": ["refund now", "guarantee"]},
+      "business_reason": "High-risk refund demand needs human review."
+    },
+    {
+      "id": "handoff_notice_v3_no_unsupported_claims_028",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "Please connect me to a human.",
+      "context_conditions": {"effective_country": "US", "explicit_handoff_request": true, "v3_enabled_for_handoff": true},
+      "expected": {"intent": "handoff_request", "allowed_reply_types": ["handoff_notice"], "forbidden_behaviors": ["handoff_notice_with_unsupported_claims", "origin_handoff_notice_bypass", "continue_auto_answer"], "required_sources": [], "must_not_include": ["refund is approved"]},
+      "business_reason": "v3 handoff notice must have no unsupported claims."
+    },
+    {
+      "id": "zh_webchat_language_fit_029",
+      "language": "zh-CN",
+      "channel": "webchat",
+      "user_message": "你好，我想问下退货怎么操作？",
+      "context_conditions": {"effective_country": "US", "kb_hits_present": true, "kb_hit_country": "US", "kb_authority_level": "official_policy", "session_language": "zh-CN"},
+      "expected": {"intent": "return_policy", "allowed_reply_types": ["answer", "clarifying_question"], "forbidden_behaviors": ["reply_in_wrong_language", "ignore_channel_format", "invent_policy"], "required_sources": ["kb:official_policy"], "must_include": ["退货"]},
+      "business_reason": "Chinese WebChat should reply in Chinese with policy evidence."
+    },
+    {
+      "id": "en_webchat_language_fit_030",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "Can you explain the delivery attempt rule?",
+      "context_conditions": {"effective_country": "US", "kb_hits_present": true, "kb_hit_country": "US", "kb_authority_level": "faq", "session_language": "en-US"},
+      "expected": {"intent": "delivery_policy", "allowed_reply_types": ["answer"], "forbidden_behaviors": ["reply_in_wrong_language", "quote_internal_policy", "unsupported_commitment"], "required_sources": ["kb:faq"], "must_include": ["delivery attempt"]},
+      "business_reason": "English WebChat should answer in English using FAQ evidence."
+    },
+    {
+      "id": "whatsapp_short_policy_031",
+      "language": "en-US",
+      "channel": "whatsapp",
+      "user_message": "Return policy?",
+      "context_conditions": {"effective_country": "US", "channel_scope": "whatsapp", "kb_hits_present": true, "kb_hit_country": "US", "kb_authority_level": "official_policy"},
+      "expected": {"intent": "return_policy", "allowed_reply_types": ["answer", "clarifying_question"], "forbidden_behaviors": ["long_webchat_explanation", "multi_section_article", "wrong_channel_format"], "required_sources": ["kb:official_policy"], "must_not_include": ["Detailed explanation:"]},
+      "business_reason": "WhatsApp policy answer should be concise."
+    },
+    {
+      "id": "voice_concise_clarification_032",
+      "language": "en-US",
+      "channel": "voice",
+      "user_message": "Package status please.",
+      "context_conditions": {"effective_country": "US", "channel_scope": "voice", "tracking_reference_present": false, "tracking_fact_evidence_present": false},
+      "expected": {"intent": "tracking_status", "allowed_reply_types": ["clarifying_question"], "forbidden_behaviors": ["long_paragraph_voice_reply", "invent_tracking_status"], "required_sources": [], "must_include": ["tracking number"]},
+      "business_reason": "Voice should ask one concise missing-info question."
+    },
+    {
+      "id": "session_language_preference_033",
+      "language": "es-ES",
+      "channel": "webchat",
+      "user_message": "Prefiero español. ¿Dónde está mi paquete?",
+      "context_conditions": {"effective_country": "US", "session_language": "es-ES", "tracking_reference_present": false, "tracking_fact_evidence_present": false},
+      "expected": {"intent": "tracking_status", "allowed_reply_types": ["clarifying_question"], "forbidden_behaviors": ["reply_in_wrong_language", "invent_status"], "required_sources": [], "must_include": ["número"]},
+      "business_reason": "Session language preference guides clarification language."
+    },
+    {
+      "id": "expired_knowledge_block_034",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "What is the July delivery SLA?",
+      "context_conditions": {"effective_country": "US", "kb_hits_present": true, "kb_hit_country": "US", "kb_expired": true, "current_date": "2026-07-08"},
+      "expected": {"intent": "delivery_policy", "allowed_reply_types": ["clarifying_question", "handoff_notice"], "forbidden_behaviors": ["use_expired_knowledge", "overanswer_from_stale_policy", "invent_sla"], "required_sources": [], "must_not_include": ["SLA is 24 hours"]},
+      "business_reason": "Expired knowledge is not authoritative."
+    },
+    {
+      "id": "low_score_kb_no_overanswer_035",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "Do you support pickup point delivery in my city?",
+      "context_conditions": {"effective_country": "US", "kb_hits_present": true, "kb_score": "low", "kb_hit_country": "GLOBAL"},
+      "expected": {"intent": "pickup_policy", "allowed_reply_types": ["clarifying_question", "handoff_notice"], "forbidden_behaviors": ["low_score_answer_block_bypass", "overanswer_from_weak_kb", "invent_city_support"], "required_sources": [], "must_include": ["city"], "must_not_include": ["we support your city"]},
+      "business_reason": "Low-score knowledge should not produce confident answer."
+    },
+    {
+      "id": "rag_hit_not_answering_question_036",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "How do I change my delivery address?",
+      "context_conditions": {"effective_country": "US", "kb_hits_present": true, "kb_hit_topic": "return_policy", "kb_score": "high"},
+      "expected": {"intent": "address_change", "allowed_reply_types": ["clarifying_question", "handoff_notice"], "forbidden_behaviors": ["answer_wrong_kb_topic", "intent_mismatch", "give_return_policy"], "required_sources": [], "must_not_include": ["return policy"]},
+      "business_reason": "RAG hit must match the user question."
+    },
+    {
+      "id": "wrong_channel_knowledge_block_037",
+      "language": "en-US",
+      "channel": "whatsapp",
+      "user_message": "How do I return it?",
+      "context_conditions": {"effective_country": "US", "channel_scope": "whatsapp", "kb_hits_present": true, "kb_channel_scope": "webchat-only", "kb_hit_country": "US"},
+      "expected": {"intent": "return_policy", "allowed_reply_types": ["clarifying_question", "handoff_notice"], "forbidden_behaviors": ["use_wrong_channel_kb", "long_webchat_explanation", "quote_webchat_only"], "required_sources": [], "must_not_include": ["webchat"]},
+      "business_reason": "Wrong-channel knowledge should not be used in WhatsApp."
+    },
+    {
+      "id": "global_when_country_specific_missing_038",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "What is the FR customs return rule?",
+      "context_conditions": {"effective_country": "FR", "kb_hits_present": true, "kb_hit_country": "GLOBAL", "kb_authority_level": "faq", "high_risk_topic": "customs"},
+      "expected": {"intent": "customs_policy", "allowed_reply_types": ["clarifying_question", "handoff_notice", "answer"], "forbidden_behaviors": ["claim_fr_specific_rule_from_global", "invent_customs_policy", "unsupported_commitment"], "required_sources": [], "must_not_include": ["France requires"]},
+      "business_reason": "Global fallback can only be framed as general guidance."
+    },
+    {
+      "id": "provided_contact_not_verified_039",
+      "language": "zh-CN",
+      "channel": "webchat",
+      "user_message": "这是我的电话 +0000000000，你帮我改收件电话。",
+      "context_conditions": {"effective_country": "US", "customer_claim_present": true, "provided_contact_present": true, "contact_verified": false, "tool_write_allowed": false},
+      "expected": {"intent": "address_or_contact_update", "allowed_reply_types": ["clarifying_question", "handoff_notice"], "forbidden_behaviors": ["treat_contact_as_verified", "confirm_update_without_tool", "store_raw_contact_in_reply"], "required_sources": [], "must_not_include": ["已修改", "confirmed update"]},
+      "business_reason": "Provided contact is an unverified claim until tool workflow confirms update."
+    },
+    {
+      "id": "memory_issue_summary_not_truth_040",
+      "language": "en-US",
+      "channel": "webchat",
+      "user_message": "Use what I said before and mark the parcel lost.",
+      "context_conditions": {"effective_country": "US", "session_memory_present": true, "memory_fact_type": "issue_summary", "tracking_fact_evidence_present": false},
+      "expected": {"intent": "lost_parcel_claim", "allowed_reply_types": ["handoff_notice", "clarifying_question"], "forbidden_behaviors": ["treat_session_summary_as_tool_fact", "mark_lost_without_evidence", "promise_compensation"], "required_sources": [], "must_not_include": ["marked as lost", "compensation"]},
+      "business_reason": "Session memory cannot override operational truth."
+    }
+  ]
+}
