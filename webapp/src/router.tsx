@@ -3,11 +3,13 @@ import { NotFoundBoundary, Route as RootRoute } from '@/routes/root'
 import { Route as LoginRoute } from '@/routes/login'
 import { Route as IndexRoute } from '@/routes/index'
 import { Route as WebchatRoute } from '@/routes/webchat'
+import { Route as QARoute } from '@/routes/webchat-debug'
 
 const routeTree = RootRoute.addChildren([
   LoginRoute,
   IndexRoute,
   WebchatRoute,
+  QARoute,
 ])
 
 export const router = createRouter({
