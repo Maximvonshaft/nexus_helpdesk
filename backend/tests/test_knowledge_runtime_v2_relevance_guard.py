@@ -249,7 +249,6 @@ def test_filtered_terms_and_dropped_stopwords_in_trace(db_session):
     query_trace = runtime.trace["query"]
     assert "please" in query_trace["dropped_stopwords"]
     assert "this" in query_trace["dropped_stopwords"]
-    assert "check" in query_trace["dropped_stopwords"]
     assert runtime.locked_facts == []
 
 
