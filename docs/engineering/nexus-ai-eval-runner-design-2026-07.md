@@ -1,6 +1,6 @@
 # Nexus AI Eval Runner Design
 
-Date: 2026-07-08  
+Date: 2026-07-08
 Scope: Eval runner design only. No Runtime calls. No token usage.
 
 ## Goals
