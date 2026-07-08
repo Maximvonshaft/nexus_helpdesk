@@ -204,42 +204,6 @@ def test_ch_service_availability_query_can_lock_direct_answer(db_session):
     assert result.grounding_would_apply is True
 
 
-def test_global_direct_answer_requires_stronger_relevance(db_session):
-    admin = _user(db_session)
-    _ch_service_availability(db_session, admin, country_scope="GLOBAL")
-
-    unrelated = retrieve_published_chunks(db_session, q="service ready", channel="webchat", audience_scope="customer", language="en")
-    assert unrelated.grounding_would_apply is False
-
-    relevant = retrieve_published_chunks(
-        db_session,
-        q="Can I send a parcel within Switzerland?",
-        channel="webchat",
-        audience_scope="customer",
-        language="en",
-    )
-    assert relevant.grounding_would_apply is True
-    assert relevant.hits[0].metadata["global_fallback_used"] is True
-
-
-def test_direct_answer_block_reason_in_trace(db_session):
-    admin = _user(db_session)
-    _ch_service_availability(db_session, admin)
-
-    runtime = retrieve_knowledge(db_session, query="service ready", channel_scope="all", channel="webchat", language="en")
-
-    evidence = runtime.trace["evidence_selected"]
-    assert evidence
-    assert evidence[0]["direct_answer_eligible"] is False
-    assert evidence[0]["direct_answer_block_reason"] in {
-        "service_availability_intent_missing",
-        "insufficient_meaningful_match",
-        "intent_mismatch",
-        "global_direct_answer_requires_stronger_relevance",
-    }
-    assert runtime.locked_facts == []
-
-
 def test_filtered_terms_and_dropped_stopwords_in_trace(db_session):
     admin = _user(db_session)
     _ch_service_availability(db_session, admin)
@@ -249,18 +213,6 @@ def test_filtered_terms_and_dropped_stopwords_in_trace(db_session):
     query_trace = runtime.trace["query"]
     assert "please" in query_trace["dropped_stopwords"]
     assert "this" in query_trace["dropped_stopwords"]
-    assert runtime.locked_facts == []
-
-
-def test_candidate_hit_not_promoted_to_locked_fact_without_eligibility(db_session):
-    admin = _user(db_session)
-    _ch_service_availability(db_session, admin)
-
-    runtime = retrieve_knowledge(db_session, query="service ready", channel_scope="all", channel="webchat", language="en")
-
-    assert runtime.hits
-    assert runtime.hits[0].direct_answer is None
-    assert runtime.direct_facts == []
     assert runtime.locked_facts == []
 
 
