@@ -17,7 +17,7 @@ from ..services.webchat_debug_bundle_service import build_ai_debug_bundle, creat
 from ..utils.time import utc_now
 from ..webchat_models import WebchatAITurn, WebchatEvent
 
-router = APIRouter(prefix="/api/webchat/admin", tags=["webchat-debug"])
+router = APIRouter(prefix="/admin", tags=["webchat-debug"])
 
 
 class DebugFindingPayload(BaseModel):
@@ -188,36 +188,19 @@ def list_debug_runs(
 
 
 @router.get("/tickets/{ticket_id}/debug-events")
-def list_ticket_debug_events(
-    ticket_id: int,
-    after_id: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=200),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-) -> dict[str, Any]:
+def list_ticket_debug_events(ticket_id: int, after_id: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=200), db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
     ticket = db.get(Ticket, ticket_id)
     if ticket is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ticket_not_found")
     ensure_ticket_visible(current_user, ticket, db)
-    rows = (
-        db.query(WebchatEvent)
-        .filter(WebchatEvent.ticket_id == ticket_id, WebchatEvent.id > after_id)
-        .order_by(WebchatEvent.id.asc())
-        .limit(limit)
-        .all()
-    )
+    rows = db.query(WebchatEvent).filter(WebchatEvent.ticket_id == ticket_id, WebchatEvent.id > after_id).order_by(WebchatEvent.id.asc()).limit(limit).all()
     events = []
     for row in rows:
         payload = _loads_json(row.payload_json)
         event_type = row.event_type
         if not (event_type.startswith("ai.debug.") or event_type.startswith("ai_turn.") or event_type == "message.created"):
             continue
-        events.append({
-            "id": row.id,
-            "event_type": event_type,
-            "payload_json": payload,
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-        })
+        events.append({"id": row.id, "event_type": event_type, "payload_json": payload, "created_at": row.created_at.isoformat() if row.created_at else None})
     return {"events": events, "last_event_id": rows[-1].id if rows else after_id, "has_more": len(rows) >= limit}
 
 
@@ -225,16 +208,7 @@ def list_ticket_debug_events(
 def create_ai_turn_test_finding(ai_turn_id: int, payload: DebugFindingPayload, db: Session = Depends(get_db), current_user=Depends(get_current_user)) -> dict[str, Any]:
     turn = _load_turn_visible(db, ai_turn_id=ai_turn_id, current_user=current_user)
     _bundle, run = build_ai_debug_bundle(db, turn=turn)
-    row = create_test_finding(
-        db,
-        run=run,
-        current_user_id=getattr(current_user, "id", None),
-        finding_type=payload.finding_type,
-        severity=payload.severity,
-        tester_note=payload.tester_note,
-        expected_behavior=payload.expected_behavior,
-        actual_behavior=payload.actual_behavior,
-    )
+    row = create_test_finding(db, run=run, current_user_id=getattr(current_user, "id", None), finding_type=payload.finding_type, severity=payload.severity, tester_note=payload.tester_note, expected_behavior=payload.expected_behavior, actual_behavior=payload.actual_behavior)
     db.commit()
     return _finding_out(row)
 
