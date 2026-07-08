@@ -397,12 +397,12 @@ def build_term_policy(value: str | None) -> TermPolicy:
         cleaned = term.strip().lower()
         if not cleaned:
             continue
-        if _is_query_stopword(cleaned):
-            dropped.append(cleaned)
-            continue
         if cleaned in COUNTRY_CODE_TERMS:
             country_terms.append(cleaned)
             entity_terms.append(cleaned)
+            dropped.append(cleaned)
+            continue
+        if _is_query_stopword(cleaned):
             dropped.append(cleaned)
             continue
         if cleaned in COUNTRY_ENTITY_TERMS:
