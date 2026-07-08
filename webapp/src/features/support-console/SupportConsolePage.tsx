@@ -1196,7 +1196,7 @@ export function SupportConsolePage() {
   const navigate = useNavigate()
   const logout = useLogout()
   const session = useSession()
-  const initialSearch = useMemo(readSupportWorkbenchSearch, [])
+  const initialSearch = useMemo(() => readSupportWorkbenchSearch(), [])
   const [activeView, setActiveView] = useState<WorkbenchView>(initialSearch.activeView)
   const [view, setView] = useState<InboxView>(initialSearch.view)
   const [channel, setChannel] = useState<ChannelFilter>(initialSearch.channel)
@@ -1324,11 +1324,16 @@ export function SupportConsolePage() {
       if (parseSafetyError(error)) setConfirmReview(true)
     },
   })
+  const resetReplyMutationRef = useRef(replyMutation.reset)
+
+  useEffect(() => {
+    resetReplyMutationRef.current = replyMutation.reset
+  }, [replyMutation.reset])
 
   useEffect(() => {
     setReply('')
     setConfirmReview(false)
-    replyMutation.reset()
+    resetReplyMutationRef.current()
   }, [activeSessionKey])
 
   useEffect(() => {

@@ -38,6 +38,7 @@ function websocketUrl() {
 export function useWebchatRealtime({ enabled, selectedTicketId, handoffView, onEvent }: UseWebchatRealtimeOptions) {
   const [status, setStatus] = useState<WebchatRealtimeStatus>('disabled')
   const [lastEventId, setLastEventId] = useState(0)
+  const lastEventIdRef = useRef(0)
   const onEventRef = useRef(onEvent)
   const reconnectFailures = useRef(0)
   const stopped = useRef(false)
@@ -75,8 +76,8 @@ export function useWebchatRealtime({ enabled, selectedTicketId, handoffView, onE
       ws = new WebSocket(websocketUrl())
       ws.onopen = () => {
         send({ type: 'connection.hello', client_type: 'agent', access_token: token })
-        send({ type: 'subscribe.handoff_queue', view: handoffView, last_event_id: lastEventId })
-        if (selectedTicketId) send({ type: 'subscribe.conversation', ticket_id: selectedTicketId, last_event_id: lastEventId })
+        send({ type: 'subscribe.handoff_queue', view: handoffView, last_event_id: lastEventIdRef.current })
+        if (selectedTicketId) send({ type: 'subscribe.conversation', ticket_id: selectedTicketId, last_event_id: lastEventIdRef.current })
         heartbeatTimer = window.setInterval(() => send({ type: 'ping' }), 25000)
       }
       ws.onmessage = (message) => {
@@ -97,7 +98,11 @@ export function useWebchatRealtime({ enabled, selectedTicketId, handoffView, onE
           setStatus('fallback')
           return
         }
-        if (typeof event.event_id === 'number') setLastEventId((value) => Math.max(value, event.event_id || 0))
+        if (typeof event.event_id === 'number') {
+          const nextEventId = Math.max(lastEventIdRef.current, event.event_id || 0)
+          lastEventIdRef.current = nextEventId
+          setLastEventId(nextEventId)
+        }
         onEventRef.current(event)
       }
       ws.onerror = () => setStatus('fallback')

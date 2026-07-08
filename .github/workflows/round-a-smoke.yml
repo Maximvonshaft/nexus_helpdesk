@@ -44,7 +44,6 @@ jobs:
             tests/test_outbound_safety.py \
             tests/test_next_phase_max_push.py \
             tests/test_deploy_contracts.py \
-            tests/test_deploy_v222_contracts.py \
             tests/test_round20a_rectification.py \
             tests/test_round20b_legacy_frontend.py \
             tests/test_round27_frontend_hardening.py

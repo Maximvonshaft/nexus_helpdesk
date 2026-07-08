@@ -3,22 +3,26 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKSPACE = ROOT / 'webapp' / 'src' / 'routes' / 'workspace.tsx'
-API = ROOT / 'webapp' / 'src' / 'lib' / 'api.ts'
-NODE_TEST = ROOT / 'webapp' / 'tests' / 'workspace-ticket-detail.test.mjs'
+SUPPORT_CONSOLE = ROOT / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx'
+SUPPORT_API = ROOT / 'webapp' / 'src' / 'lib' / 'supportApi.ts'
+E2E_SMOKE = ROOT / 'webapp' / 'e2e' / 'smoke.spec.ts'
 
 
 def test_ticket_lightweight_frontend_contract_files_exist():
-    assert WORKSPACE.exists()
-    assert API.exists()
-    assert NODE_TEST.exists()
+    assert SUPPORT_CONSOLE.exists()
+    assert SUPPORT_API.exists()
+    assert E2E_SMOKE.exists()
 
 
 def test_ticket_detail_first_paint_uses_summary_and_timeline_not_heavy_endpoint():
-    workspace = WORKSPACE.read_text(encoding='utf-8')
-    api = API.read_text(encoding='utf-8')
-    assert "api.caseDetail(selectedId as number)" in workspace
-    assert "api.ticketTimeline(selectedId as number, { limit: 50 })" in workspace
-    assert "api.ticket(" not in workspace
-    assert "`/api/tickets/${ticketId}/summary`" in api
-    assert "`/api/tickets/${ticketId}/timeline?${search.toString()}`" in api
+    console = SUPPORT_CONSOLE.read_text(encoding='utf-8')
+    api = SUPPORT_API.read_text(encoding='utf-8')
+
+    assert "supportApi.supportConversations" in console
+    assert "supportApi.supportConversationDetail" in console
+    assert "supportApi.supportConversationState" in console
+    assert "supportApi.supportConversationMetrics" in console
+    assert "supportApi.supportConversationReply" in console
+    assert "supportApi.ticket(" not in console
+    assert "/api/support/conversations/detail" in api
+    assert "/api/support/conversations/metrics" in api

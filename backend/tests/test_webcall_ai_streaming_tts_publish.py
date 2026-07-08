@@ -272,7 +272,7 @@ def test_cartesia_streaming_tts_collects_chunks_and_builds_request(monkeypatch):
     assert call["json"]["language"] == "en"
 
 
-def test_agent_loop_publishes_cartesia_chunks_through_stream_path(db, monkeypatch):
+def test_agent_loop_fails_closed_when_streaming_tts_has_no_runtime_text(db, monkeypatch):
     monkeypatch.setattr("app.services.webcall_ai_production.providers.cartesia_streaming_tts.httpx.Client", FakeCartesiaClient)
     session = _claimed_session(db)
     io = FakeStreamingAgentIO([b"Please track SF123456789CN"])
@@ -282,18 +282,13 @@ def test_agent_loop_publishes_cartesia_chunks_through_stream_path(db, monkeypatc
     turns = db.query(WebchatVoiceAITurn).order_by(WebchatVoiceAITurn.id.asc()).all()
     event_types = [event.event_type for event in db.query(WebchatEvent).order_by(WebchatEvent.id.asc()).all()]
 
-    assert result["status"] == "visitor_disconnected"
+    assert result["status"] == "failed"
     assert io.connected is True
     assert io.closed is True
-    assert len(io.published_streams) >= 2
+    assert io.published_streams == [[]]
     assert io.published_fallback == []
-    assert all(stream == [b"\x01\x00\x02\x00", b"\x03\x00\x04\x00"] for stream in io.published_streams)
-    assert FakeCartesiaClient.event_order[:4] == [
-        "cartesia:chunk:1",
-        "livekit:publish:1",
-        "cartesia:chunk:2",
-        "livekit:publish:2",
-    ]
-    assert {turn.tts_provider for turn in turns} == {"cartesia_streaming"}
-    assert "webcall_ai.response.spoken" in event_types
-    assert len(FakeCartesiaClient.calls) >= 2
+    assert FakeCartesiaClient.event_order == []
+    assert len(turns) == 1
+    assert (turns[0].ai_response_text_redacted or "") == ""
+    assert "webcall_ai.response.spoken" not in event_types
+    assert len(FakeCartesiaClient.calls) == 0

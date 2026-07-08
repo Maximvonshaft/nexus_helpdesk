@@ -17,35 +17,38 @@ def test_source_release_script_defaults_to_current_release_and_includes_current_
     assert 'ROUND20B_LEGACY_PRODUCTION_REPORT.md' in script or 'ROUND27_FRONTEND_OPERATOR_HARDENING_REPORT.md' in script
 
 
-def test_frontend_routes_are_role_gated_for_operator_simplicity():
-    shell = (PROJECT / 'webapp' / 'src' / 'layouts' / 'AppShell.tsx').read_text()
-    rbac = (PROJECT / 'webapp' / 'src' / 'lib' / 'rbac.ts').read_text()
-    runtime = (PROJECT / 'webapp' / 'src' / 'routes' / 'runtime.tsx').read_text()
-    accounts = (PROJECT / 'webapp' / 'src' / 'routes' / 'accounts.tsx').read_text()
-    command = (PROJECT / 'webapp' / 'src' / 'components' / 'ui' / 'CommandPalette.tsx').read_text()
+def test_frontend_routes_are_consolidated_into_authenticated_support_workbench():
+    router = (PROJECT / 'webapp' / 'src' / 'router.tsx').read_text()
+    root = (PROJECT / 'webapp' / 'src' / 'routes' / 'root.tsx').read_text()
+    webchat = (PROJECT / 'webapp' / 'src' / 'routes' / 'webchat.tsx').read_text()
+    console = (PROJECT / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text()
 
-    assert 'roleWorkspaceHint' in shell
-    assert 'canViewOps' in shell
-    assert "access: routeAccess['/runtime']" in shell
-    assert "access: routeAccess['/accounts']" in shell
-    assert '运营保障' in runtime
-    assert '无权限访问' in runtime
-    assert '发送线路' in accounts
-    assert '无权限访问' in accounts
-    assert "access: routeAccess['/runtime']" in command
-    assert "access: routeAccess['/accounts']" in command
-    assert "'/runtime': { allOf: [CAPABILITIES.runtimeManage] }" in rbac
-    assert "'/accounts': { allOf: [CAPABILITIES.channelAccountManage] }" in rbac
+    assert 'WebchatRoute' in router
+    assert 'RuntimeRoute' not in router
+    assert 'AccountsRoute' not in router
+    assert '旧入口已下线' in root
+    assert "to={getSupportToken() ? '/webchat' : '/login'}" in root
+    assert "path: '/webchat'" in webchat
+    assert 'beforeLoad' in webchat
+    assert 'getSupportToken()' in webchat
+    assert '客服后台视图' in console
+    assert 'AI Runtime' in console
+    assert '渠道账号' in console
 
 
-def test_frontend_governance_gates_use_capabilities_not_roles():
-    access = (PROJECT / 'webapp' / 'src' / 'lib' / 'access.ts').read_text()
-    assert "return hasCapability(user, CAPABILITIES.runtimeManage)" in access
-    assert "return hasCapability(user, CAPABILITIES.channelAccountManage)" in access
-    assert "return hasCapability(user, CAPABILITIES.userManage)" in access
-    assert "return hasCapability(user, CAPABILITIES.marketManage)" in access
-    assert "isOpsSupervisorRole(user?.role) || hasCapability" not in access
-    assert "CAPABILITIES.aiConfigRead" in access
+def test_frontend_governance_is_concentrated_in_support_api_and_login_boundary():
+    webchat = (PROJECT / 'webapp' / 'src' / 'routes' / 'webchat.tsx').read_text()
+    support_api = (PROJECT / 'webapp' / 'src' / 'lib' / 'supportApi.ts').read_text()
+    console = (PROJECT / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text()
+
+    assert "redirect({ to: '/login' })" in webchat
+    assert 'Authorization' in support_api
+    assert 'clearSupportToken()' in support_api
+    assert '/api/auth/me' in support_api
+    assert '/api/admin/provider-runtime/status' in support_api
+    assert '/api/admin/channel-accounts' in support_api
+    assert 'isOpsSupervisorRole' not in console
+    assert 'routeAccess' not in console
 
 
 def test_webchat_governance_hardening_invariants():

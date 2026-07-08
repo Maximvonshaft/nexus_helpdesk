@@ -87,25 +87,29 @@ def test_operator_lookup_endpoints_are_available_to_agent_role(db_session):
     assert bulletins and bulletins[0].title == '延误提醒'
 
 
-def test_round20a_access_model_keeps_lead_out_of_ops_pages_and_bulletins_edit_mode():
-    access = (ROOT.parent / 'webapp' / 'src' / 'lib' / 'access.ts').read_text(encoding='utf-8')
-    app_shell = (ROOT.parent / 'webapp' / 'src' / 'layouts' / 'AppShell.tsx').read_text(encoding='utf-8')
-    api = (ROOT.parent / 'webapp' / 'src' / 'lib' / 'api.ts').read_text(encoding='utf-8')
+def test_round20a_support_workbench_uses_single_authenticated_operator_surface():
+    console = (ROOT.parent / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text(encoding='utf-8')
+    webchat_route = (ROOT.parent / 'webapp' / 'src' / 'routes' / 'webchat.tsx').read_text(encoding='utf-8')
+    support_api = (ROOT.parent / 'webapp' / 'src' / 'lib' / 'supportApi.ts').read_text(encoding='utf-8')
 
-    assert "['admin', 'manager'].includes" in access
-    assert "'lead'" not in access.split('includes', 1)[1].split('\n', 1)[0]
-    assert 'canEditBulletins' in access
-    assert "enabled: !!session.data && canSeeOps" in app_shell
-    assert "/api/lookups/markets" in api
-    assert "/api/lookups/bulletins" in api
+    assert "beforeLoad" in webchat_route
+    assert "getSupportToken()" in webchat_route
+    assert "useSession()" in console
+    assert "客服后台视图" in console
+    assert "会话" in console
+    assert "知识" in console
+    assert "渠道" in console
+    assert "运行" in console
+    assert "/api/support/conversations" in support_api
+    assert "/api/admin/channel-accounts" in support_api
 
 
 def test_workspace_hides_session_key_from_customer_service_view():
-    workspace = (ROOT.parent / 'webapp' / 'src' / 'routes' / 'workspace.tsx').read_text(encoding='utf-8')
+    console = (ROOT.parent / 'webapp' / 'src' / 'features' / 'support-console' / 'SupportConsolePage.tsx').read_text(encoding='utf-8')
     legacy = (ROOT.parent / 'frontend' / 'app.js').read_text(encoding='utf-8')
 
-    assert '会话编号' not in workspace
-    assert '来源状态' in workspace
+    assert '会话编号' not in console
+    assert '客户、联系方式' in console
     assert '会话编号' not in legacy
     assert '已绑定来信来源' in legacy
 

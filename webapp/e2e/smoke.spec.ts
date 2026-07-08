@@ -158,6 +158,38 @@ async function fulfillApi(route: Route) {
       facts: {},
     })
   }
+  if (path === '/api/knowledge-items') {
+    return json({
+      total: 1,
+      limit: 20,
+      offset: 0,
+      items: [{
+        id: 1,
+        item_key: 'kb-1',
+        title: 'Delivery status',
+        status: 'active',
+        source_type: 'manual',
+        knowledge_kind: 'business_fact',
+        audience_scope: 'customer',
+        priority: 100,
+        parsing_status: 'ready',
+        fact_status: 'approved',
+        answer_mode: 'runtime_context',
+        published_version: 1,
+        indexed_version: 1,
+        chunk_count: 3,
+        draft_ready: true,
+        publish_ready: true,
+        retrieval_test_ready: true,
+        has_conflict: false,
+        updated_at: '2026-07-04T08:00:00Z',
+        href: '#',
+        evidence: 'ok',
+        fact_question: 'Where is my parcel?',
+        fact_answer: 'Use the tracking tool before answering delivery status questions.',
+      }],
+    })
+  }
   if (path === '/api/admin/channel-accounts') {
     return json([
       {
@@ -204,6 +236,27 @@ async function fulfillApi(route: Route) {
       warnings: [],
     })
   }
+  if (path === '/api/admin/provider-runtime/status') {
+    return json({
+      ok: true,
+      status: 'ready',
+      fallback_provider: null,
+      warnings: [],
+      providers: [{
+        name: 'private_ai_runtime',
+        status: 'ready',
+        ok: true,
+        diagnostics: {
+          direct_model: 'ci-direct-model',
+          rag_model: 'ci-rag-model',
+          chat_mode: 'direct',
+          request_shape: 'responses',
+          rag_runtime_isolated: true,
+          allow_shared_rag_model: false,
+        },
+      }],
+    })
+  }
 
   return route.fulfill({
     status: 404,
@@ -239,7 +292,7 @@ test('deleted legacy routes fall back to the support workbench boundary', async 
   await expect(page.getByTestId('legacy-route-retired')).toBeVisible()
   await expect(page.getByRole('heading', { name: '旧入口已下线' })).toBeVisible()
   await page.getByRole('link', { name: '进入客服工作台' }).click()
-  await expect(page).toHaveURL(/\/webchat$/)
+  await expect(page).toHaveURL(/\/webchat(?:\?.*)?$/)
 })
 
 test('support workbench renders the consolidated production views', async ({ page }) => {
@@ -252,7 +305,7 @@ test('support workbench renders the consolidated production views', async ({ pag
   await expect(page.getByText('Hello, how can I assist you today?')).toBeVisible()
 
   await page.getByRole('button', { name: '知识' }).click()
-  await expect(page.getByText('Delivery status')).toBeVisible()
+  await expect(page.getByRole('button', { name: /Delivery status/ })).toBeVisible()
 
   await page.getByRole('button', { name: '渠道' }).click()
   await expect(page.getByText('WhatsApp Native +41798559737')).toBeVisible()
@@ -260,6 +313,6 @@ test('support workbench renders the consolidated production views', async ({ pag
   await expect(page.getByText('connected')).toBeVisible()
 
   await page.getByRole('button', { name: '运行' }).click()
-  await expect(page.getByText('AI 与队列运行')).toBeVisible()
+  await expect(page.getByText('AI Runtime')).toBeVisible()
   await expect(page.getByText('正常')).toBeVisible()
 })

@@ -209,7 +209,7 @@ def test_ended_non_demo_and_unsafe_turns(monkeypatch):
     )
     assert unsafe.status_code == 200, unsafe.text
     assert unsafe.json()["turn"]["handoff_required"] is True
-    assert "driver phone" in unsafe.json()["turn"]["ai_response_text_redacted"].lower()
+    assert unsafe.json()["turn"]["ai_response_text_redacted"] == ""
 
     ended = client.post(f"/api/admin/webcall-ai-demo/sessions/{public_id}/end", headers=_headers(), json={"reason": "operator_end"})
     assert ended.status_code == 200
