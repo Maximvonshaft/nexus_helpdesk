@@ -1,0 +1,418 @@
+{
+  "baseline": "bcec9cba93103b4fa71e523d0b3ca7c0a8f8c1e4",
+  "generated_at": "2026-07-07",
+  "merge_queue": [
+    {
+      "pr": null,
+      "title": "Baseline CI Stabilization",
+      "decision": "required first",
+      "lane": "release",
+      "reason": "Baseline checks must be stable before any PR is merged.",
+      "next_action": "Make required CI and smoke checks green."
+    },
+    {
+      "pr": 440,
+      "title": "fix: harden active-content attachment downloads",
+      "decision": "first candidate after baseline stabilization",
+      "lane": "security",
+      "reason": "Small P0 hardening patch.",
+      "next_action": "Run focused test, complete review, require green CI."
+    },
+    {
+      "pr": 439,
+      "title": "#439A docs/audit/runbook",
+      "decision": "replacement PR",
+      "lane": "release",
+      "reason": "Split docs/audit/runbook from #439.",
+      "next_action": "Create #439A from current main."
+    },
+    {
+      "pr": 439,
+      "title": "#439B metrics wiring",
+      "decision": "replacement PR",
+      "lane": "release",
+      "reason": "Split metrics wiring from #439.",
+      "next_action": "Create #439B from current main."
+    },
+    {
+      "pr": 439,
+      "title": "#439C baseline CI / smoke contract",
+      "decision": "replacement PR",
+      "lane": "release",
+      "reason": "Split CI and smoke contract from #439.",
+      "next_action": "Create #439C from current main."
+    },
+    {
+      "pr": 395,
+      "title": "T1 Tracking Contract PR",
+      "decision": "replacement PR",
+      "lane": "tracking",
+      "reason": "Replace stale #395 with current-main tracking contract.",
+      "next_action": "Add allow-list, primary truth source and source-contract tests."
+    },
+    {
+      "pr": 353,
+      "title": "K1/K2 Knowledge extraction",
+      "decision": "replacement PRs",
+      "lane": "rag",
+      "reason": "Replace stale #353 with runtime and quality-test extractions.",
+      "next_action": "Create K1 and K2 from current main."
+    },
+    {
+      "pr": 438,
+      "title": "W1-W4 WhatsApp split",
+      "decision": "split required",
+      "lane": "whatsapp",
+      "reason": "Use #438 as source material only.",
+      "next_action": "Create W1 outbound contract, W2 admin status, W3 sidecar lifecycle, W4 UI/docs."
+    },
+    {
+      "pr": null,
+      "title": "Frontend / Email / WebCall post-release lanes",
+      "decision": "defer",
+      "lane": "frontend/email/webcall",
+      "reason": "Lower priority cleanup lanes.",
+      "next_action": "Process after release, tracking, knowledge and WhatsApp split work."
+    }
+  ],
+  "split_required": [
+    {
+      "pr": 439,
+      "title": "chore: freeze visible message contract milestone and add production audits",
+      "decision": "split required",
+      "lane": "release",
+      "reason": "Do not repair as one monolith.",
+      "next_action": "Split into #439A, #439B and #439C."
+    },
+    {
+      "pr": 438,
+      "title": "Harden native WhatsApp channel candidate",
+      "decision": "split required",
+      "lane": "whatsapp",
+      "reason": "Keep draft as source material only.",
+      "next_action": "Create W1-W4 from current main."
+    },
+    {
+      "pr": 376,
+      "title": "Draft: frontend production closure IA RBAC E2E",
+      "decision": "split required",
+      "lane": "frontend",
+      "reason": "Draft and too broad.",
+      "next_action": "Split route permissions, lookup route, state views and E2E support."
+    },
+    {
+      "pr": 337,
+      "title": "chore(webcall): top-level operator workbench and handoff capability gating",
+      "decision": "split required",
+      "lane": "webcall",
+      "reason": "Large aggregate across multiple lanes.",
+      "next_action": "Archive as source material or split into clean WebCall slices."
+    }
+  ],
+  "superseded": [
+    {
+      "pr": 414,
+      "title": "[codex] add whatsapp webchat channel bridge",
+      "decision": "superseded by main",
+      "lane": "whatsapp",
+      "reason": "Old bridge path predates current outbound governance.",
+      "next_action": "Do not merge; replace only through W1 if still needed."
+    },
+    {
+      "pr": 336,
+      "title": "[codex] Add Security & Audit lens",
+      "decision": "superseded by main",
+      "lane": "security",
+      "reason": "Overlaps current #439 split direction.",
+      "next_action": "Extract missing assertions only if absent."
+    },
+    {
+      "pr": 333,
+      "title": "[codex] Add Email mailbox queue projection",
+      "decision": "superseded by main",
+      "lane": "email",
+      "reason": "Old stacked Email queue slice.",
+      "next_action": "Archive or extract tests only."
+    },
+    {
+      "pr": 332,
+      "title": "[codex] Add Email delivery receipts",
+      "decision": "superseded by main",
+      "lane": "email",
+      "reason": "Old Email receipt slice.",
+      "next_action": "Recreate only if approved."
+    },
+    {
+      "pr": 331,
+      "title": "[codex] Add Email inbound ingest sync",
+      "decision": "superseded by main",
+      "lane": "email",
+      "reason": "Old Email inbound slice.",
+      "next_action": "Recreate only after Email decision."
+    },
+    {
+      "pr": 308,
+      "title": "[codex] Add WebChat v1.7.8 template block parity",
+      "decision": "superseded by main",
+      "lane": "webchat",
+      "reason": "Stale WebChat template slice.",
+      "next_action": "Archive."
+    },
+    {
+      "pr": 307,
+      "title": "[codex] Add top-level WebCall operator workbench",
+      "decision": "superseded by main",
+      "lane": "webcall",
+      "reason": "Old WebCall operator iteration.",
+      "next_action": "Archive."
+    },
+    {
+      "pr": 305,
+      "title": "[codex] Add WebCall AI monitor workbench",
+      "decision": "superseded by main",
+      "lane": "webcall",
+      "reason": "Duplicate or stale WebCall AI monitor.",
+      "next_action": "Archive."
+    },
+    {
+      "pr": 300,
+      "title": "[codex] Add WebChat AI suggestions template parity",
+      "decision": "superseded by main",
+      "lane": "webchat",
+      "reason": "Old WebChat suggestion slice.",
+      "next_action": "Archive."
+    },
+    {
+      "pr": 295,
+      "title": "[codex] Add Realtime Health workbench API",
+      "decision": "superseded by main",
+      "lane": "webchat",
+      "reason": "Duplicate realtime line.",
+      "next_action": "Archive."
+    },
+    {
+      "pr": 276,
+      "title": "fix(webchat): persist demo handoff polling client",
+      "decision": "superseded by main",
+      "lane": "webchat",
+      "reason": "Old WebChat demo hotfix.",
+      "next_action": "Archive after main verification."
+    },
+    {
+      "pr": 272,
+      "title": "fix(webchat): solidify direct JSON demo and current-turn handoff policy",
+      "decision": "superseded by main",
+      "lane": "webchat",
+      "reason": "Old WebChat demo/handoff hotfix.",
+      "next_action": "Archive after main verification."
+    }
+  ],
+  "close_candidates": [
+    {
+      "pr": 414,
+      "title": "[codex] add whatsapp webchat channel bridge",
+      "decision": "close/archive candidate",
+      "lane": "whatsapp",
+      "reason": "Old bridge path predates current governance.",
+      "next_action": "Close/supersede only after human approval."
+    },
+    {
+      "pr": 234,
+      "title": "[codex] Implement email outbound production pack",
+      "decision": "close/archive candidate",
+      "lane": "email",
+      "reason": "Large stale Email pack.",
+      "next_action": "Archive; no direct merge."
+    },
+    {
+      "pr": 337,
+      "title": "chore(webcall): top-level operator workbench and handoff capability gating",
+      "decision": "close/archive candidate",
+      "lane": "webcall",
+      "reason": "Large aggregate across many lanes.",
+      "next_action": "Split or archive."
+    }
+  ],
+  "extract_candidates": [
+    {
+      "pr": 395,
+      "title": "feat: add Speedaf hybrid tracking source",
+      "decision": "extract small patch only",
+      "lane": "tracking",
+      "reason": "Replace with T1 Tracking Contract PR.",
+      "next_action": "Create T1 from current main."
+    },
+    {
+      "pr": 353,
+      "title": "fix: harden Knowledge Runtime v2 production deployment",
+      "decision": "extract small patch only",
+      "lane": "rag",
+      "reason": "Replace with K1/K2 extraction.",
+      "next_action": "Create K1 runtime/readiness and K2 quality/golden tests."
+    },
+    {
+      "pr": 323,
+      "title": "Add Knowledge Studio conflict and golden tests",
+      "decision": "extract small patch only",
+      "lane": "rag",
+      "reason": "Useful K2 test material.",
+      "next_action": "Extract compatible tests only."
+    },
+    {
+      "pr": 330,
+      "title": "[codex] Add WebCall session action commands",
+      "decision": "extract small patch only",
+      "lane": "webcall",
+      "reason": "Useful command ledger concept but stale.",
+      "next_action": "Recreate clean WebCall action-command PR if approved."
+    },
+    {
+      "pr": 329,
+      "title": "[codex] Add WebCall transcript evidence API",
+      "decision": "extract small patch only",
+      "lane": "webcall",
+      "reason": "Useful evidence concept but stale.",
+      "next_action": "Recreate clean evidence-read PR if missing."
+    },
+    {
+      "pr": 328,
+      "title": "[codex] Add WebCall call note write path",
+      "decision": "extract small patch only",
+      "lane": "webcall",
+      "reason": "Useful notes concept but stale.",
+      "next_action": "Recreate clean call-note PR if approved."
+    },
+    {
+      "pr": 186,
+      "title": "fix: harden Speedaf UAT smoke report sanitizer",
+      "decision": "extract small patch only",
+      "lane": "security",
+      "reason": "Privacy sanitizer may still be useful but stale.",
+      "next_action": "Verify main; recreate tiny patch if absent."
+    }
+  ],
+  "design_reference": [
+    {
+      "pr": 438,
+      "title": "Harden native WhatsApp channel candidate",
+      "decision": "keep draft as source material",
+      "lane": "whatsapp",
+      "reason": "Large native WhatsApp candidate is useful as source material only.",
+      "next_action": "Use for W1-W4 split PRs only."
+    },
+    {
+      "pr": 422,
+      "title": "[codex] Add production drift audit for 178.105.160.174",
+      "decision": "keep as design reference",
+      "lane": "ops",
+      "reason": "Historical drift report.",
+      "next_action": "Refresh before using as current evidence."
+    },
+    {
+      "pr": 246,
+      "title": "docs: add single-file AGENTS execution blueprint",
+      "decision": "keep as design reference",
+      "lane": "ops",
+      "reason": "Process reference, not release cleanup merge candidate.",
+      "next_action": "Review separately."
+    },
+    {
+      "pr": 238,
+      "title": "docs(chatwoot): compare sidecar and fork strategies for Nexus",
+      "decision": "keep as design reference",
+      "lane": "archive",
+      "reason": "Design-only strategy package.",
+      "next_action": "Keep as reference or close after extracting design notes."
+    },
+    {
+      "pr": 159,
+      "title": "feat(codex): promote Codex to provider runtime reply transport",
+      "decision": "keep as design reference",
+      "lane": "archive",
+      "reason": "Old provider-runtime stack conflicts with current freeze.",
+      "next_action": "Keep as reference only."
+    },
+    {
+      "pr": null,
+      "title": "Old Codex stack #153/#152/#150/#149/#148/#145/#143/#140/#137/#134",
+      "decision": "keep as design reference",
+      "lane": "archive",
+      "reason": "Old provider/runtime research stack.",
+      "next_action": "Keep as reference only."
+    }
+  ],
+  "do_not_merge_directly": [
+    {
+      "pr": 440,
+      "title": "fix: harden active-content attachment downloads",
+      "decision": "do not merge before baseline stabilization",
+      "lane": "security",
+      "reason": "First merge candidate only after Baseline CI Stabilization.",
+      "next_action": "Stabilize CI, then review."
+    },
+    {
+      "pr": 439,
+      "title": "#439 monolith",
+      "decision": "do not merge directly",
+      "lane": "release",
+      "reason": "Must be split into #439A/#439B/#439C.",
+      "next_action": "Create replacement PRs from current main."
+    },
+    {
+      "pr": 438,
+      "title": "Harden native WhatsApp channel candidate",
+      "decision": "do not merge directly",
+      "lane": "whatsapp",
+      "reason": "Source material only; split required.",
+      "next_action": "Create W1-W4 split PRs."
+    },
+    {
+      "pr": 414,
+      "title": "[codex] add whatsapp webchat channel bridge",
+      "decision": "do not merge directly",
+      "lane": "whatsapp",
+      "reason": "Old bridge path predates current outbound governance.",
+      "next_action": "Close/supersede after human approval."
+    },
+    {
+      "pr": 395,
+      "title": "feat: add Speedaf hybrid tracking source",
+      "decision": "do not merge directly",
+      "lane": "tracking",
+      "reason": "Replace with T1 Tracking Contract PR.",
+      "next_action": "Create T1 from current main."
+    },
+    {
+      "pr": 353,
+      "title": "fix: harden Knowledge Runtime v2 production deployment",
+      "decision": "do not merge directly",
+      "lane": "rag",
+      "reason": "Replace with K1/K2 extraction.",
+      "next_action": "Create K1/K2 from current main."
+    },
+    {
+      "pr": 337,
+      "title": "chore(webcall): top-level operator workbench and handoff capability gating",
+      "decision": "do not merge directly",
+      "lane": "webcall",
+      "reason": "Large aggregate across multiple lanes.",
+      "next_action": "Split or archive."
+    },
+    {
+      "pr": 234,
+      "title": "[codex] Implement email outbound production pack",
+      "decision": "do not merge directly",
+      "lane": "email",
+      "reason": "Large stale Email pack.",
+      "next_action": "Archive."
+    },
+    {
+      "pr": null,
+      "title": "Remaining stale open PRs listed in superseded/design/extract arrays",
+      "decision": "do not merge directly",
+      "lane": "archive",
+      "reason": "They are stale, stacked, broad, superseded or require product/security decision.",
+      "next_action": "Use the matching cleanup category before any action."
+    }
+  ]
+}
