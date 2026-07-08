@@ -13,6 +13,13 @@ from .storage import StoredFile, get_storage_backend
 settings = get_settings()
 STORAGE = get_storage_backend()
 
+DEFAULT_ATTACHMENT_DOWNLOAD_MEDIA_TYPE = 'application/octet-stream'
+ACTIVE_CONTENT_ATTACHMENT_MIME_TYPES = {
+    'text/' + 'html',
+    'application/' + 'xhtml+xml',
+    'image/' + 'svg+xml',
+}
+
 
 class StoredUpload:
     def __init__(self, stored_name: str, storage_key: str, file_path: str, file_size: int, mime_type: str):
@@ -55,6 +62,15 @@ def get_attachment_or_404(db: Session, attachment_id: int) -> TicketAttachment:
     return item
 
 
+def safe_attachment_download_media_type(media_type: str | None) -> str:
+    normalized = (media_type or DEFAULT_ATTACHMENT_DOWNLOAD_MEDIA_TYPE).split(';', 1)[0].strip().lower()
+    if not normalized:
+        return DEFAULT_ATTACHMENT_DOWNLOAD_MEDIA_TYPE
+    if normalized in ACTIVE_CONTENT_ATTACHMENT_MIME_TYPES:
+        return DEFAULT_ATTACHMENT_DOWNLOAD_MEDIA_TYPE
+    return normalized
+
+
 def _resolve_attachment_path(attachment: TicketAttachment) -> Path:
     storage_key = attachment.storage_key or Path(attachment.file_path or '').name
     if not storage_key:
@@ -63,7 +79,7 @@ def _resolve_attachment_path(attachment: TicketAttachment) -> Path:
 
 
 def download_attachment_response(attachment: TicketAttachment):
-    media_type = attachment.mime_type or 'application/octet-stream'
+    media_type = safe_attachment_download_media_type(attachment.mime_type)
     if attachment.storage_key:
         presigned = STORAGE.download_url(attachment.storage_key, filename=attachment.file_name, media_type=media_type)
         if presigned:
