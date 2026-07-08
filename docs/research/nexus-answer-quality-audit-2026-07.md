@@ -1,7 +1,7 @@
 # Nexus Answer Quality Audit and AI Runtime Governance
 
-Date: 2026-07-08  
-Scope: Answer Quality / Golden Eval / Runtime Integration Governance  
+Date: 2026-07-08
+Scope: Answer Quality / Golden Eval / Runtime Integration Governance
 Mode: docs and evals only; no Runtime call; no token access; no `backend/app` changes.
 
 ## Executive conclusion
