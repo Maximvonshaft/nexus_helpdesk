@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextvars
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from . import runtime as _runtime
@@ -60,7 +60,7 @@ QUERY_STOPWORDS = {
     "your",
 }
 CJK_STOPWORDS = {"一下", "一个", "什么", "怎么", "可以", "请问", "如果", "这个", "那个", "我们", "你们", "客户"}
-COUNTRY_CODE_TERMS = {"ch", "cn", "de", "eg", "es", "fr", "gh", "it", "ke", "ma", "me", "mk", "mx", "ng", "pk", "sa", "uae", "uk", "us", "usa"}
+COUNTRY_CODE_TERMS = {"ch", "cn", "de", "eg", "es", "fr", "gh", "ke", "ma", "mk", "mx", "ng", "pk", "sa", "uae", "uk", "usa"}
 COUNTRY_ENTITY_TERMS = {
     "china",
     "chinese",
@@ -164,17 +164,15 @@ _CURRENT_POLICY: contextvars.ContextVar[TermPolicy | None] = contextvars.Context
 _INSTALLED = False
 _ORIGINAL_RETRIEVE_KNOWLEDGE: Callable[..., Any] | None = None
 _ORIGINAL_CANDIDATE_ROWS: Callable[..., Any] | None = None
-_ORIGINAL_SCORE_ROW: Callable[..., Any] | None = None
 _ORIGINAL_TRACE_HIT: Callable[..., Any] | None = None
 
 
 def install() -> None:
-    global _INSTALLED, _ORIGINAL_RETRIEVE_KNOWLEDGE, _ORIGINAL_CANDIDATE_ROWS, _ORIGINAL_SCORE_ROW, _ORIGINAL_TRACE_HIT
+    global _INSTALLED, _ORIGINAL_RETRIEVE_KNOWLEDGE, _ORIGINAL_CANDIDATE_ROWS, _ORIGINAL_TRACE_HIT
     if _INSTALLED:
         return
     _ORIGINAL_RETRIEVE_KNOWLEDGE = _runtime.retrieve_knowledge
     _ORIGINAL_CANDIDATE_ROWS = _runtime._candidate_rows
-    _ORIGINAL_SCORE_ROW = _runtime._score_row
     _ORIGINAL_TRACE_HIT = _runtime._trace_hit
     _runtime.retrieve_knowledge = retrieve_knowledge_guarded
     _runtime._terms = terms_guarded
@@ -266,8 +264,8 @@ def score_row_guarded(chunk, item, *, terms: list[str], normalized_query: str, r
     strong_phrase = _strong_phrase_match(normalized_query, text_value)
     item_service_availability = _looks_like_service_availability(text_value)
     intent_match = _intent_matches(policy=policy, item_service_availability=item_service_availability, matched_terms=matched, alias_match=alias_match, strong_phrase=strong_phrase)
-    scope_match = True
     meaningful_count = len(set(matched))
+    source_country_scope = (chunk.country_scope or item.country_scope or _runtime.GLOBAL_COUNTRY_SCOPE).upper()
     direct_answer_eligible, block_reason = _direct_answer_eligibility(
         has_fact_answer=has_fact_answer,
         is_direct_mode=is_direct_mode,
@@ -277,7 +275,7 @@ def score_row_guarded(chunk, item, *, terms: list[str], normalized_query: str, r
         alias_match=alias_match,
         strong_phrase=strong_phrase,
         intent_match=intent_match,
-        source_country_scope=(chunk.country_scope or item.country_scope or _runtime.GLOBAL_COUNTRY_SCOPE).upper(),
+        source_country_scope=source_country_scope,
     )
     breakdown: dict[str, float] = {}
     methods: set[str] = {retrieval_source}
@@ -305,7 +303,6 @@ def score_row_guarded(chunk, item, *, terms: list[str], normalized_query: str, r
         breakdown["priority"] = max(0.0, 6.0 - min(priority, 600) / 100.0)
     score = round(sum(breakdown.values()), 3)
     metadata = dict(chunk.metadata_json or {})
-    source_country_scope = (chunk.country_scope or item.country_scope or _runtime.GLOBAL_COUNTRY_SCOPE).upper()
     metadata.update(
         {
             "priority": priority,
@@ -328,14 +325,13 @@ def score_row_guarded(chunk, item, *, terms: list[str], normalized_query: str, r
             "score_breakdown": breakdown,
             "match_type": _match_type(matched=matched, alias_match=alias_match, strong_phrase=strong_phrase, vector_score=vector_score),
             "meaningful_term_count": meaningful_count,
-            "scope_match": scope_match,
+            "scope_match": True,
             "intent_match": intent_match,
             "direct_answer_eligible": direct_answer_eligible,
             "direct_answer_block_reason": block_reason,
             "global_fallback_used": source_country_scope == _runtime.GLOBAL_COUNTRY_SCOPE,
         }
     )
-    direct_answer = fact_answer if has_fact_answer and direct_answer_eligible else None
     return _runtime.KnowledgeRuntimeHit(
         item_id=chunk.item_id,
         item_key=chunk.item_key,
@@ -348,7 +344,7 @@ def score_row_guarded(chunk, item, *, terms: list[str], normalized_query: str, r
         retrieval_method="+".join(sorted(methods)),
         matched_terms=matched[:16],
         score_breakdown=breakdown,
-        direct_answer=direct_answer,
+        direct_answer=fact_answer if has_fact_answer and direct_answer_eligible else None,
         answer_mode=item.answer_mode,
         source_metadata={
             "item_key": item.item_key,
@@ -371,30 +367,11 @@ def fact_from_hit_guarded(hit) -> dict[str, Any] | None:
         return None
     if hit.metadata.get("direct_answer_eligible") is False:
         return None
-    return {
-        "item_key": hit.item_key,
-        "title": hit.title,
-        "answer": hit.direct_answer,
-        "answer_mode": hit.answer_mode,
-        "source": hit.source_metadata,
-        "score": hit.score,
-    }
+    return {"item_key": hit.item_key, "title": hit.title, "answer": hit.direct_answer, "answer_mode": hit.answer_mode, "source": hit.source_metadata, "score": hit.score}
 
 
 def trace_hit_guarded(hit) -> dict[str, Any]:
-    if _ORIGINAL_TRACE_HIT is not None:
-        trace = _ORIGINAL_TRACE_HIT(hit)
-    else:
-        trace = {
-            "item_key": hit.item_key,
-            "title": hit.title,
-            "score": hit.score,
-            "chunk_index": hit.chunk_index,
-            "retrieval_method": hit.retrieval_method,
-            "matched_terms": hit.matched_terms,
-            "answer_mode": hit.answer_mode,
-            "source_metadata": hit.source_metadata,
-        }
+    trace = _ORIGINAL_TRACE_HIT(hit) if _ORIGINAL_TRACE_HIT is not None else {"item_key": hit.item_key, "title": hit.title, "score": hit.score, "chunk_index": hit.chunk_index, "retrieval_method": hit.retrieval_method, "matched_terms": hit.matched_terms, "answer_mode": hit.answer_mode, "source_metadata": hit.source_metadata}
     trace.update(
         {
             "match_type": hit.metadata.get("match_type"),
@@ -420,6 +397,9 @@ def build_term_policy(value: str | None) -> TermPolicy:
         cleaned = term.strip().lower()
         if not cleaned:
             continue
+        if _is_query_stopword(cleaned):
+            dropped.append(cleaned)
+            continue
         if cleaned in COUNTRY_CODE_TERMS:
             country_terms.append(cleaned)
             entity_terms.append(cleaned)
@@ -430,24 +410,15 @@ def build_term_policy(value: str | None) -> TermPolicy:
             entity_terms.append(cleaned)
         if cleaned in PROTECTED_DOMAIN_TERMS or cleaned in SERVICE_AVAILABILITY_PHRASES:
             domain_terms.append(cleaned)
-        if _is_query_stopword(cleaned):
-            dropped.append(cleaned)
-            continue
         filtered.append(cleaned)
-    filtered = _dedupe(filtered)
-    dropped = _dedupe(dropped)
-    domain_terms = _dedupe(domain_terms)
-    entity_terms = _dedupe(entity_terms)
-    country_terms = _dedupe(country_terms)
-    service_availability_intent = any(_phrase_in_text(phrase, normalized) for phrase in SERVICE_AVAILABILITY_PHRASES)
     return TermPolicy(
         raw_terms=raw_terms,
-        filtered_terms=filtered,
-        dropped_stopwords=dropped,
-        domain_terms=domain_terms,
-        entity_terms=entity_terms,
-        country_terms=country_terms,
-        service_availability_intent=service_availability_intent,
+        filtered_terms=_dedupe(filtered),
+        dropped_stopwords=_dedupe(dropped),
+        domain_terms=_dedupe(domain_terms),
+        entity_terms=_dedupe(entity_terms),
+        country_terms=_dedupe(country_terms),
+        service_availability_intent=any(_phrase_in_text(phrase, normalized) for phrase in SERVICE_AVAILABILITY_PHRASES),
     )
 
 
@@ -466,9 +437,7 @@ def _is_query_stopword(term: str) -> bool:
         return True
     if _contains_cjk(term):
         return False
-    if len(term) < 3 and term not in PROTECTED_DOMAIN_TERMS:
-        return True
-    return False
+    return len(term) < 3 and term not in PROTECTED_DOMAIN_TERMS
 
 
 def _query_has_meaningful_content(normalized_query: str, policy: TermPolicy) -> bool:
@@ -481,20 +450,14 @@ def _alias_matches(aliases: list[str], normalized_query: str) -> bool:
     query = _normalize_for_match(normalized_query)
     for alias in aliases:
         cleaned = _normalize_for_match(alias)
-        if len(cleaned) < 3:
-            continue
-        if _phrase_in_text(cleaned, query) or _phrase_in_text(query, cleaned):
+        if len(cleaned) >= 3 and (_phrase_in_text(cleaned, query) or _phrase_in_text(query, cleaned)):
             return True
     return False
 
 
 def _strong_phrase_match(normalized_query: str, text_value: str) -> bool:
     query = _normalize_for_match(normalized_query)
-    if len(query) < 8:
-        return False
-    if _phrase_in_text(query, text_value):
-        return True
-    return False
+    return len(query) >= 8 and _phrase_in_text(query, text_value)
 
 
 def _intent_matches(*, policy: TermPolicy, item_service_availability: bool, matched_terms: list[str], alias_match: bool, strong_phrase: bool) -> bool:
@@ -512,9 +475,7 @@ def _direct_answer_eligibility(*, has_fact_answer: bool, is_direct_mode: bool, p
         return False, "service_availability_intent_missing"
     if source_country_scope == _runtime.GLOBAL_COUNTRY_SCOPE and is_direct_mode and not (alias_match or strong_phrase or meaningful_count >= 2):
         return False, "global_direct_answer_requires_stronger_relevance"
-    if strong_phrase or alias_match:
-        return True, None
-    if meaningful_count >= 2:
+    if strong_phrase or alias_match or meaningful_count >= 2:
         return True, None
     if item_service_availability and policy.service_availability_intent and meaningful_count >= 1 and policy.country_terms:
         return True, None
@@ -522,9 +483,7 @@ def _direct_answer_eligibility(*, has_fact_answer: bool, is_direct_mode: bool, p
 
 
 def _looks_like_service_availability(text_value: str) -> bool:
-    return any(_phrase_in_text(phrase, text_value) for phrase in SERVICE_AVAILABILITY_PHRASES) or (
-        _phrase_in_text("service", text_value) and (_phrase_in_text("available", text_value) or _phrase_in_text("unavailable", text_value))
-    )
+    return any(_phrase_in_text(phrase, text_value) for phrase in SERVICE_AVAILABILITY_PHRASES) or (_phrase_in_text("service", text_value) and (_phrase_in_text("available", text_value) or _phrase_in_text("unavailable", text_value)))
 
 
 def _match_type(*, matched: list[str], alias_match: bool, strong_phrase: bool, vector_score: float) -> str:
