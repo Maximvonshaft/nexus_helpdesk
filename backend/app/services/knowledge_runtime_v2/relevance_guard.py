@@ -473,11 +473,11 @@ def _direct_answer_eligibility(*, has_fact_answer: bool, is_direct_mode: bool, p
         return False, "intent_mismatch"
     if item_service_availability and not policy.service_availability_intent:
         return False, "service_availability_intent_missing"
+    if item_service_availability and policy.service_availability_intent and meaningful_count >= 1 and policy.country_terms:
+        return True, None
     if source_country_scope == _runtime.GLOBAL_COUNTRY_SCOPE and is_direct_mode and not (alias_match or strong_phrase or meaningful_count >= 2):
         return False, "global_direct_answer_requires_stronger_relevance"
     if strong_phrase or alias_match or meaningful_count >= 2:
-        return True, None
-    if item_service_availability and policy.service_availability_intent and meaningful_count >= 1 and policy.country_terms:
         return True, None
     return False, "insufficient_meaningful_match"
 
