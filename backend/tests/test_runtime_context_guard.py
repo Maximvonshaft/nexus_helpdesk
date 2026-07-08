@@ -7,6 +7,8 @@ from app.services.ai_runtime_context import (
     build_structured_recent_context,
 )
 
+# Regression coverage for M1 Runtime Context Guard source/factuality policies.
+
 
 def _row(row_id: int, direction: str, text: str):
     return SimpleNamespace(id=row_id, direction=direction, body=text, body_text=None)
