@@ -105,7 +105,7 @@ Old PRs remain historical source material by default. Current-main replacement P
 |---|---|---|
 | #440 | Active-content attachment download hardening | Landed in `521ae3f5b7247ab6d44d1765565b59e3dc3a9bdd` |
 | #186 | Speedaf report sanitizer | Verify gap on main before any current-main extraction |
-| #239 | OpenClaw vendor/reference | Security/license/supply-chain review required before any action |
+| #239 | Retired vendor/reference | Security/license/supply-chain review required before any action |
 
 ## Business Capability Lane
 
