@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -23,6 +24,11 @@ from .webchat_ai_turn_service import safe_write_webchat_event
 
 LOGGER = logging.getLogger("nexusdesk")
 
+_LIVE_TRACKING_REPLY_RE = re.compile(
+    r"\b(out for delivery|delivered|in transit|arrived|picked up|returned|customs|signed|delivery failed|派送中|已签收|运输中|已到达|已揽收|已退回|清关|派送失败)\b",
+    re.IGNORECASE,
+)
+
 
 def _loads_json(value: str | None) -> dict[str, Any]:
     if not value:
@@ -43,6 +49,14 @@ def _safe_str(value: Any, *, limit: int = 160) -> str | None:
         return None
     text = " ".join(str(value).strip().split())
     return text[:limit] if text else None
+
+
+def _reply_text(reply_message: WebchatMessage | None) -> str:
+    return str(getattr(reply_message, "body_text", None) or getattr(reply_message, "body", None) or "") if reply_message else ""
+
+
+def _reply_looks_like_live_tracking_answer(reply_message: WebchatMessage | None) -> bool:
+    return bool(_LIVE_TRACKING_REPLY_RE.search(_reply_text(reply_message)))
 
 
 def _reply_message_for_turn(db: Session, turn: WebchatAITurn, result: dict[str, Any] | None) -> WebchatMessage | None:
@@ -133,13 +147,15 @@ def _tracking_intent_present(metadata: dict[str, Any], result: dict[str, Any] | 
     return bool(trace_fields.get("tracking_intent_detected") or metadata.get("tracking_number_hash") or metadata.get("safe_tracking_reference"))
 
 
-def _business_reply_type(*, result: dict[str, Any] | None, metadata: dict[str, Any], tracking_fact: TrackingFactResult | None, knowledge_hits: list[KnowledgeChunkHit]) -> BusinessReplyType:
+def _business_reply_type(*, result: dict[str, Any] | None, metadata: dict[str, Any], tracking_fact: TrackingFactResult | None, knowledge_hits: list[KnowledgeChunkHit], reply_message: WebchatMessage | None) -> BusinessReplyType:
     status = str((result or {}).get("status") or "").lower()
     if status in {"review_required", "failed_no_public_reply", "suppressed"}:
         return BusinessReplyType.NO_ANSWER
     if bool((result or {}).get("runtime_handoff_required")) or bool(metadata.get("runtime_handoff_required")):
         return BusinessReplyType.HANDOFF_NOTICE
     if tracking_fact and tracking_fact.fact_evidence_present and tracking_fact.pii_redacted and _tracking_intent_present(metadata, result):
+        return BusinessReplyType.TRACKING_STATUS_ANSWER
+    if _tracking_intent_present(metadata, result) and _reply_looks_like_live_tracking_answer(reply_message):
         return BusinessReplyType.TRACKING_STATUS_ANSWER
     if _has_customer_visible_knowledge(knowledge_hits):
         return BusinessReplyType.KNOWLEDGE_ANSWER
@@ -172,6 +188,7 @@ def _case_context_summary(row: CaseContextRecord | None) -> dict[str, Any]:
 
 def _audit_summary(audit: RuntimeDecisionAuditRecord, case_context: CaseContextRecord | None) -> dict[str, Any]:
     return {
+        "mode": "audit_only",
         "audit_id": audit.id,
         "allowed": bool(audit.allowed),
         "business_reply_type": audit.business_reply_type,
@@ -257,11 +274,11 @@ def audit_completed_webchat_ai_turn(
             "tracking_fact_failure_reason",
         }})
         save_case_context(db, case_context, tenant_id=getattr(conversation, "tenant_key", None) or "default")
-    reply_type = _business_reply_type(result=result, metadata=metadata, tracking_fact=tracking_fact, knowledge_hits=knowledge_hits)
+    reply_type = _business_reply_type(result=result, metadata=metadata, tracking_fact=tracking_fact, knowledge_hits=knowledge_hits, reply_message=reply_message)
     decision = build_runtime_decision_from_existing_runtime(
         business_reply_type=reply_type,
         next_action=_next_action(reply_type),
-        customer_reply=getattr(reply_message, "body_text", None) or getattr(reply_message, "body", None) if reply_message else None,
+        customer_reply=_reply_text(reply_message) if reply_message else None,
         tracking_fact=tracking_fact,
         knowledge_hits=knowledge_hits,
         case_context=case_context,
