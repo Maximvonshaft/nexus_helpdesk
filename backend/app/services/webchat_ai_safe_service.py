@@ -103,14 +103,15 @@ def _complete_turn_if_present(db: Session, *, conversation: WebchatConversation,
         return
     complete_ai_turn_with_reply(db, conversation=conversation, turn=turn, result=result)
     try:
-        audit_completed_webchat_ai_turn(
-            db,
-            conversation=conversation,
-            ticket=ticket,
-            visitor_message=visitor_message,
-            turn=turn,
-            result=result,
-        )
+        with db.begin_nested():
+            audit_completed_webchat_ai_turn(
+                db,
+                conversation=conversation,
+                ticket=ticket,
+                visitor_message=visitor_message,
+                turn=turn,
+                result=result,
+            )
     except Exception as exc:  # pragma: no cover - behavior covered by explicit monkeypatch test
         LOGGER.warning(
             "webchat_osr_audit_failed_non_blocking",
