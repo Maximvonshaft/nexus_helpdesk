@@ -115,6 +115,14 @@ def _agent_message(conversation_id: str) -> WebchatMessage:
         db.close()
 
 
+def test_webchat_ai_job_worker_uses_safe_service_entrypoint():
+    from app.services import background_jobs
+    from app.services.webchat_ai_safe_service import process_webchat_ai_reply_job
+
+    assert background_jobs.process_background_job.__globals__["WEBCHAT_AI_REPLY_JOB"] == "webchat.ai_reply"
+    assert process_webchat_ai_reply_job.__module__ == "app.services.webchat_ai_safe_service"
+
+
 def test_webchat_osr_audit_persists_allowed_tracking_decision_without_body_change(monkeypatch):
     _ensure_schema_and_user()
     client = TestClient(app)
@@ -167,11 +175,14 @@ def test_webchat_osr_audit_persists_allowed_tracking_decision_without_body_chang
         assert context is not None
         assert context.tracking_number_hash
         metadata = json.loads(message.metadata_json or '{}')
+        assert metadata['osr_audit']['mode'] == 'audit_only'
         assert metadata['osr_audit']['audit_id'] == audit.id
         assert metadata['osr_audit']['allowed'] is True
         metadata_text = json.dumps(metadata, ensure_ascii=False)
         assert 'CH020000129135' not in metadata_text
         bundle, _debug_run = build_ai_debug_bundle(db, turn=turn)
+        assert bundle['osr']['mode'] == 'audit_only'
+        assert bundle['osr']['audit_id'] == audit.id
         timeline_types = {item.get('event_type') for item in bundle.get('timeline', [])}
         assert 'osr.runtime_decision.audited' in timeline_types
     finally:
@@ -217,6 +228,43 @@ def test_webchat_osr_audit_without_fact_uses_clarification_not_factual_tracking(
         db.close()
 
 
+def test_webchat_osr_audit_without_fact_live_status_reply_is_disallowed_but_reply_unchanged(monkeypatch):
+    _ensure_schema_and_user()
+    client = TestClient(app)
+    conversation_id, visitor_token = _init_conversation(client, 'nofact-live')
+    sent = _send(client, conversation_id, visitor_token, 'Please track my parcel.', 'osr-audit-nofact-live-1')
+    ai_turn_id = sent['ai_turn_id']
+
+    from app.services import webchat_ai_safe_service, webchat_ai_service
+    monkeypatch.setattr(webchat_ai_safe_service.settings, 'webchat_ai_auto_reply_mode', 'safe_ai')
+    monkeypatch.setattr(webchat_ai_service, '_maybe_lookup_tracking_fact', lambda **_kwargs: None)
+
+    def fake_generate_ai_reply(**_kwargs):
+        webchat_ai_service._LAST_AI_REPLY_SOURCE = 'private_ai_runtime'
+        webchat_ai_service._LAST_AI_FALLBACK_REASON = None
+        webchat_ai_service._LAST_RUNTIME_TRACE = {'ai_decision_intent': 'tracking', 'ai_decision_next_action': 'reply', 'runtime_trace_context_fields': {'tracking_intent_detected': True}}
+        return 'Your parcel is out for delivery.'
+
+    monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
+
+    _run_ai_turn(ai_turn_id, worker='osr-audit-nofact-live-worker')
+    message = _agent_message(conversation_id)
+    assert message.body == 'Your parcel is out for delivery.'
+
+    db = SessionLocal()
+    try:
+        audit = db.query(RuntimeDecisionAuditRecord).filter(RuntimeDecisionAuditRecord.ticket_id == message.ticket_id, RuntimeDecisionAuditRecord.conversation_id == message.conversation_id).order_by(RuntimeDecisionAuditRecord.id.desc()).first()
+        assert audit is not None
+        assert audit.business_reply_type == 'tracking_status_answer'
+        assert audit.allowed is False
+        assert any(item.get('code') == 'tracking_status_without_mcp_current_status' for item in (audit.violations_json or []))
+        metadata = json.loads(db.query(WebchatMessage).filter(WebchatMessage.id == message.id).first().metadata_json or '{}')
+        assert metadata['osr_audit']['mode'] == 'audit_only'
+        assert metadata['osr_audit']['allowed'] is False
+    finally:
+        db.close()
+
+
 def test_webchat_osr_audit_failure_does_not_block_customer_visible_reply(monkeypatch):
     _ensure_schema_and_user()
     client = TestClient(app)
@@ -244,6 +292,9 @@ def test_webchat_osr_audit_failure_does_not_block_customer_visible_reply(monkeyp
 
     db = SessionLocal()
     try:
+        job = db.query(BackgroundJob).filter(BackgroundJob.dedupe_key == f'webchat-ai-turn:{ai_turn_id}').first()
+        assert job is not None
+        assert str(job.status) == 'done'
         assert db.query(RuntimeDecisionAuditRecord).filter(RuntimeDecisionAuditRecord.ticket_id == message.ticket_id, RuntimeDecisionAuditRecord.conversation_id == message.conversation_id).count() == 0
         assert db.query(WebchatMessage).filter(WebchatMessage.id == message.id).first().body == 'Hello, how can I help?'
     finally:
