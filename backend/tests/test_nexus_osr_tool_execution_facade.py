@@ -18,9 +18,13 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app import models, webchat_models, models_osr, tool_models, operator_models  # noqa: F401,E402
 from app.db import Base  # noqa: E402
-from app.models_osr import ToolExecutionPolicyRecord  # noqa: E402
+from app.models_osr import RuntimeDecisionAuditRecord, ToolExecutionPolicyRecord  # noqa: E402
 from app.services.nexus_osr.case_context import CaseContext  # noqa: E402
-from app.services.nexus_osr.tool_execution_facade import OSRToolExecutionFacade, OSRToolExecutionMode  # noqa: E402
+from app.services.nexus_osr.tool_execution_facade import (  # noqa: E402
+    OSRToolExecutionFacade,
+    OSRToolExecutionMode,
+    osr_tool_execution_mode_from_env,
+)
 from app.services.nexus_osr.tool_execution_policy_seed import seed_default_tool_execution_policies  # noqa: E402
 from app.tool_models import ToolCallLog  # noqa: E402
 
@@ -87,12 +91,21 @@ def ctx_with_tracking_and_contact() -> CaseContext:
     return ctx_with_tracking().with_contact_method(channel="whatsapp", value="+382 67123456", source="webchat_form")
 
 
-def execute_one(db_session, tool_call, case_context: CaseContext | None = None, *, channel: str = "webchat", country_code: str = "ME"):
+def execute_one(
+    db_session,
+    tool_call,
+    case_context: CaseContext | None = None,
+    *,
+    channel: str = "webchat",
+    country_code: str = "ME",
+    mode: OSRToolExecutionMode | str | None = OSRToolExecutionMode.POLICY_EXECUTE,
+):
     return OSRToolExecutionFacade(db_session).execute(
         tool_calls=[tool_call],
         case_context=case_context or ctx_empty(),
         channel=channel,
         country_code=country_code,
+        mode=mode,
     )
 
 
@@ -110,18 +123,30 @@ def test_default_tool_execution_policy_seed_sets_safe_defaults(db_session):
     assert by_name["speedaf.workOrder.create"].risk_level == "high"
 
 
-def test_observe_only_mode_never_executes_or_writes_log(db_session):
+def test_env_mode_defaults_to_observe_only(monkeypatch):
+    monkeypatch.delenv("OSR_TOOL_EXECUTION_MODE", raising=False)
+    assert osr_tool_execution_mode_from_env() == OSRToolExecutionMode.OBSERVE_ONLY
+    monkeypatch.setenv("OSR_TOOL_EXECUTION_MODE", "policy_execute")
+    assert osr_tool_execution_mode_from_env() == OSRToolExecutionMode.POLICY_EXECUTE
+    monkeypatch.setenv("OSR_TOOL_EXECUTION_MODE", "blocked")
+    assert osr_tool_execution_mode_from_env() == OSRToolExecutionMode.BLOCKED
+    monkeypatch.setenv("OSR_TOOL_EXECUTION_MODE", "invalid")
+    assert osr_tool_execution_mode_from_env() == OSRToolExecutionMode.OBSERVE_ONLY
+
+
+def test_default_mode_observe_only_never_executes_or_writes_tool_call_log(db_session, monkeypatch):
+    monkeypatch.delenv("OSR_TOOL_EXECUTION_MODE", raising=False)
     add_policy(db_session, "ticket.create")
     result = OSRToolExecutionFacade(db_session).execute(
         tool_calls=[{"tool_name": "ticket.create", "idempotency_key": "observe-only"}],
         case_context=ctx_with_tracking_and_contact(),
-        mode=OSRToolExecutionMode.OBSERVE_ONLY,
     )
 
     assert result.mode == OSRToolExecutionMode.OBSERVE_ONLY
     assert result.executed is False
     assert result.results[0].status == "observe_only"
     assert db_session.query(ToolCallLog).count() == 0
+    assert db_session.query(RuntimeDecisionAuditRecord).count() == 1
 
 
 def test_no_policy_must_block(db_session):
@@ -198,6 +223,20 @@ def test_policy_execute_returns_safe_result_not_direct_send(db_session):
     assert result.safe_customer_visible_results[0]["summary_template"]
 
 
+def test_policy_execute_allows_only_nexus_safe_tools(db_session):
+    add_policy(db_session, "speedaf.workOrder.create", enabled=True, ai_auto_executable=True, risk_level="high")
+
+    result = execute_one(
+        db_session,
+        {"tool_name": "speedaf.workOrder.create", "idempotency_key": "speedaf-policy-execute"},
+        ctx_with_tracking_and_contact(),
+    )
+
+    assert result.mode == OSRToolExecutionMode.BLOCKED
+    assert result.results[0].error_code == "tool_not_allowed_in_policy_execute"
+    assert db_session.query(ToolCallLog).count() == 0
+
+
 def test_speedaf_seed_keeps_high_risk_write_blocked(db_session):
     seed_default_tool_execution_policies(db_session, country_code="ME", channel="webchat")
 
@@ -208,4 +247,30 @@ def test_speedaf_seed_keeps_high_risk_write_blocked(db_session):
     )
 
     assert result.mode == OSRToolExecutionMode.BLOCKED
-    assert result.results[0].error_code == "high_risk_write_tool_blocked"
+    assert result.results[0].error_code == "tool_not_allowed_in_policy_execute"
+
+
+def test_observe_only_audit_redacts_raw_arguments(db_session):
+    result = OSRToolExecutionFacade(db_session).execute(
+        tool_calls=[
+            {
+                "tool_name": "ticket.create",
+                "idempotency_key": "observe-raw",
+                "arguments": {
+                    "tracking_number": "CH1234567890",
+                    "phone": "+382 67123456",
+                    "address": "123 Unsafe Street",
+                    "raw_payload": {"token": "secret-value"},
+                },
+            }
+        ],
+        case_context=ctx_with_tracking_and_contact(),
+    )
+
+    assert result.mode == OSRToolExecutionMode.OBSERVE_ONLY
+    audit = db_session.query(RuntimeDecisionAuditRecord).one()
+    serialized = str(audit.decision_json)
+    assert "CH1234567890" not in serialized
+    assert "+382" not in serialized
+    assert "123 Unsafe Street" not in serialized
+    assert "secret-value" not in serialized
