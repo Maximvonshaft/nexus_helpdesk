@@ -158,7 +158,7 @@ def test_flag_off_preserves_existing_high_risk_review_path(db_session):
     assert db_session.query(WebchatHandoffRequest).count() == 0
 
 
-def test_flag_on_online_escalation_uses_existing_handoff_service(db_session, monkeypatch):
+def test_flag_on_online_escalation_uses_existing_handoff_service_after_webchat_osr_audit(db_session, monkeypatch):
     monkeypatch.setattr(webchat_ai_safe_service.settings, "osr_escalation_orchestration_enabled", True, raising=False)
     add_hours(db_session, online=True)
     add_escalation(db_session, "legal_threat", "legal", max_ai_attempts=0)
@@ -172,6 +172,7 @@ def test_flag_on_online_escalation_uses_existing_handoff_service(db_session, mon
 
     assert result["reason"] == "osr_handoff_requested"
     assert result["runtime_handoff_required"] is True
+    assert result["osr_escalation"]["webchat_runtime_audit_id"] is not None
     assert handoff is not None
     assert handoff.source == "nexus_osr"
     assert conversation.ai_suspended is True
@@ -179,7 +180,7 @@ def test_flag_on_online_escalation_uses_existing_handoff_service(db_session, mon
     assert db_session.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == "agent").count() == 0
 
 
-def test_flag_on_offline_escalation_creates_or_reuses_ticket_without_customer_body(db_session, monkeypatch):
+def test_flag_on_offline_escalation_creates_or_reuses_ticket_without_customer_body_after_webchat_osr_audit(db_session, monkeypatch):
     monkeypatch.setattr(webchat_ai_safe_service.settings, "osr_escalation_orchestration_enabled", True, raising=False)
     add_hours(db_session, online=False)
     add_escalation(db_session, "compensation", "compensation", max_ai_attempts=0)
@@ -192,6 +193,7 @@ def test_flag_on_offline_escalation_creates_or_reuses_ticket_without_customer_bo
     assert result["reason"] == "osr_ticket_created"
     assert result["osr_escalation"]["ticket_id"] == ticket.id
     assert result["osr_escalation"]["ticket_created"] is False
+    assert result["osr_escalation"]["webchat_runtime_audit_id"] is not None
     assert turn.status == "failed"
     assert db_session.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == "agent").count() == 0
 
@@ -215,7 +217,7 @@ def test_flag_on_compensation_before_max_attempts_continues_ai_and_bypasses_lega
     assert db_session.query(WebchatHandoffRequest).count() == 0
 
 
-def test_osr_escalation_audit_payload_redacts_customer_pii_and_tracking(db_session, monkeypatch):
+def test_osr_escalation_audit_payload_redacts_customer_pii_tracking_and_raw_fields(db_session, monkeypatch):
     monkeypatch.setattr(webchat_ai_safe_service.settings, "osr_escalation_orchestration_enabled", True, raising=False)
     add_hours(db_session, online=False)
     add_escalation(db_session, "legal_threat", "legal", max_ai_attempts=0)
@@ -237,5 +239,8 @@ def test_osr_escalation_audit_payload_redacts_customer_pii_and_tracking(db_sessi
     assert raw_tracking not in serialized
     assert raw_email not in serialized
     assert raw_phone not in serialized
+    assert "raw_prompt" not in serialized
+    assert "raw_provider_payload" not in serialized
+    assert "raw_tool_payload" not in serialized
     assert "[redacted_email]" in serialized
     assert "[redacted_phone]" in serialized
