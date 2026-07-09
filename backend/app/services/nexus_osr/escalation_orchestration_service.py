@@ -18,6 +18,7 @@ from .auto_ticket_service import AutoTicketResult, create_or_reuse_ticket_from_c
 from .case_context import CaseContext, redact_case_text
 from .persistence import audit_runtime_decision, load_escalation_policies, resolve_human_hours_policy, save_case_context
 from .policies import EscalationAction, EscalationDecision, HumanAvailabilityDecision, HumanAvailabilityStatus, evaluate_escalation
+from .queue_key_resolver import QueueKeyResolution, resolve_queue_key
 from .runtime_decision_contract import (
     BusinessReplyType,
     RuntimeAction,
@@ -47,6 +48,7 @@ class EscalationOrchestrationResult:
     ticket_result: AutoTicketResult | None = None
     audit_id: int | None = None
     event_payload: dict[str, Any] | None = None
+    queue_resolution: QueueKeyResolution | None = None
 
     @property
     def ticket(self) -> Ticket | None:
@@ -57,6 +59,65 @@ _CUSTOMER_CANNOT_WAIT_RE = re.compile(
     r"\b(can't wait|cannot wait|cant wait|urgent|asap|immediately|right now|too late)\b|等不了|马上|立刻|加急|很急|等不及",
     re.IGNORECASE,
 )
+
+
+def evaluate_escalation_for_case(
+    db: Session,
+    *,
+    ticket: Ticket,
+    conversation: WebchatConversation,
+    case_context: CaseContext,
+    inbound_message: str,
+    country_code: str | None = None,
+    channel: str | None = None,
+    language: str | None = None,
+    issue_type: str | None = None,
+    tenant_id: str | None = None,
+    ai_attempt_count: int = 0,
+    now: datetime | None = None,
+    customer: Customer | None = None,
+    trigger_message_id: int | None = None,
+    ai_turn_id: int | None = None,
+) -> EscalationOrchestrationResult:
+    """Reusable OSR orchestration entrypoint for WebChat and WhatsApp.
+
+    Agent 2 never generates customer-visible reply bodies here. Customer-facing
+    notices remain owned by CustomerVisibleMessageService or the caller that
+    already uses that service.
+    """
+
+    resolved_channel = channel or case_context.channel or getattr(conversation, "channel_key", None) or "webchat"
+    resolved_country = (country_code or case_context.country_code or getattr(ticket, "country_code", None) or "GLOBAL").upper()
+    resolved_tenant = tenant_id or getattr(conversation, "tenant_key", None) or "default"
+    resolved_issue = issue_type or case_context.issue_type or getattr(conversation, "last_intent", None) or getattr(ticket, "case_type", None)
+    context = replace(
+        case_context,
+        country_code=resolved_country,
+        channel=resolved_channel,
+        issue_type=resolved_issue,
+    )
+    queue_resolution = resolve_queue_key(
+        db,
+        country_code=resolved_country,
+        channel=resolved_channel,
+        language=language,
+        issue_type=resolved_issue,
+        tenant_id=resolved_tenant,
+    )
+    return evaluate_and_orchestrate_escalation(
+        db,
+        ticket=ticket,
+        conversation=conversation,
+        case_context=context,
+        inbound_message=inbound_message,
+        queue_key=queue_resolution.queue_key,
+        ai_attempt_count=ai_attempt_count,
+        now=now,
+        customer=customer,
+        trigger_message_id=trigger_message_id,
+        ai_turn_id=ai_turn_id,
+        queue_resolution=queue_resolution,
+    )
 
 
 def evaluate_and_orchestrate_escalation(
@@ -72,6 +133,7 @@ def evaluate_and_orchestrate_escalation(
     customer: Customer | None = None,
     trigger_message_id: int | None = None,
     ai_turn_id: int | None = None,
+    queue_resolution: QueueKeyResolution | None = None,
 ) -> EscalationOrchestrationResult:
     """Policy-driven handoff/ticket orchestration for Nexus OSR.
 
@@ -94,13 +156,14 @@ def evaluate_and_orchestrate_escalation(
     )
     cannot_wait = _customer_cannot_wait(inbound_message)
     action = _decide_action(escalation=escalation, human=human, cannot_wait=cannot_wait)
+    queue_payload = queue_resolution.as_safe_dict() if queue_resolution else None
 
     if action == EscalationOrchestrationAction.CONTINUE_AI:
         save_case_context(db, context, tenant_id=getattr(conversation, "tenant_key", None) or "default")
-        decision = _runtime_decision(action=action, escalation=escalation, audit_reasons=["continue_ai"])
+        decision = _runtime_decision(action=action, escalation=escalation, audit_reasons=["continue_ai", f"queue_key:{queue_key}"])
         evaluation, audit_id = _audit(db, decision=decision, case_context=context, ticket=ticket, conversation=conversation, country_code=country_code, channel=channel)
-        payload = _event_payload(action=action, human=human, escalation=escalation, audit_id=audit_id)
-        return EscalationOrchestrationResult(action, context, human, escalation, evaluation, audit_id=audit_id, event_payload=payload)
+        payload = _event_payload(action=action, human=human, escalation=escalation, audit_id=audit_id, queue_resolution=queue_payload)
+        return EscalationOrchestrationResult(action, context, human, escalation, evaluation, audit_id=audit_id, event_payload=payload, queue_resolution=queue_resolution)
 
     if action == EscalationOrchestrationAction.REQUEST_HANDOFF:
         context = context.mark_handoff_requested(summary=_handover_summary(escalation, human))
@@ -118,11 +181,11 @@ def evaluate_and_orchestrate_escalation(
             ai_turn_id=ai_turn_id,
             requested_by_actor_type="nexus_osr",
         )
-        decision = _runtime_decision(action=action, escalation=escalation, handoff=True, audit_reasons=[human.reason])
+        decision = _runtime_decision(action=action, escalation=escalation, handoff=True, handoff_request_id=request.id, audit_reasons=[human.reason, f"queue_key:{queue_key}"])
         evaluation, audit_id = _audit(db, decision=decision, case_context=context, ticket=ticket, conversation=conversation, country_code=country_code, channel=channel)
-        payload = _event_payload(action=action, human=human, escalation=escalation, audit_id=audit_id, handoff_request_id=request.id)
+        payload = _event_payload(action=action, human=human, escalation=escalation, audit_id=audit_id, handoff_request_id=request.id, queue_resolution=queue_payload)
         _write_orchestration_events(db, ticket=ticket, conversation=conversation, payload=payload)
-        return EscalationOrchestrationResult(action, context, human, escalation, evaluation, handoff_request=request, audit_id=audit_id, event_payload=payload)
+        return EscalationOrchestrationResult(action, context, human, escalation, evaluation, handoff_request=request, audit_id=audit_id, event_payload=payload, queue_resolution=queue_resolution)
 
     context = _context_for_ticket(context, action=action, escalation=escalation, human=human)
     ticket_result = create_or_reuse_ticket_from_case_context(
@@ -139,13 +202,13 @@ def evaluate_and_orchestrate_escalation(
         action=action,
         escalation=escalation,
         ticket=True,
-        audit_reasons=[human.reason, "customer_cannot_wait" if cannot_wait else "ticket_required"],
+        audit_reasons=[human.reason, "customer_cannot_wait" if cannot_wait else "ticket_required", f"queue_key:{queue_key}"],
         ticket_id=ticket_result.ticket.id,
     )
     evaluation, audit_id = _audit(db, decision=decision, case_context=context, ticket=ticket_result.ticket, conversation=conversation, country_code=country_code, channel=channel)
-    payload = _event_payload(action=action, human=human, escalation=escalation, audit_id=audit_id, ticket_id=ticket_result.ticket.id, ticket_created=ticket_result.created)
+    payload = _event_payload(action=action, human=human, escalation=escalation, audit_id=audit_id, ticket_id=ticket_result.ticket.id, ticket_created=ticket_result.created, queue_resolution=queue_payload)
     _write_orchestration_events(db, ticket=ticket_result.ticket, conversation=conversation, payload=payload)
-    return EscalationOrchestrationResult(action, context, human, escalation, evaluation, ticket_result=ticket_result, audit_id=audit_id, event_payload=payload)
+    return EscalationOrchestrationResult(action, context, human, escalation, evaluation, ticket_result=ticket_result, audit_id=audit_id, event_payload=payload, queue_resolution=queue_resolution)
 
 
 def _customer_cannot_wait(value: str | None) -> bool:
@@ -189,6 +252,7 @@ def _runtime_decision(
     handoff: bool = False,
     ticket: bool = False,
     audit_reasons: list[str] | None = None,
+    handoff_request_id: int | None = None,
     ticket_id: int | None = None,
 ) -> RuntimeDecision:
     if action == EscalationOrchestrationAction.REQUEST_HANDOFF:
@@ -202,6 +266,8 @@ def _runtime_decision(
         reply_type = BusinessReplyType.CLARIFICATION
         next_action = RuntimeAction.REPLY
     tool_actions = []
+    if handoff and handoff_request_id is not None:
+        tool_actions.append(RuntimeToolAction(tool_name="handoff.request.create", arguments={"handoff_request_id": handoff_request_id}, executed=True, result_source_id=f"handoff:{handoff_request_id}"))
     if ticket and ticket_id is not None:
         tool_actions.append(RuntimeToolAction(tool_name="ticket.create", arguments={"ticket_id": ticket_id}, executed=True, result_source_id=f"ticket:{ticket_id}"))
     return RuntimeDecision(
