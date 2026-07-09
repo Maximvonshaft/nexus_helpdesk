@@ -40,9 +40,11 @@ LOGGER = logging.getLogger("nexusdesk")
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
 HIGH_RISK_TERMS = (
-    "refund", "compensation", "lost", "damaged", "customs", " tax ", "claim", "legal", "pod",
-    "proof of delivery", "delivered but not received", "address change", "change address", "complaint",
+    "refund", "compensation", "lost", "damaged", "customs", " tax ", "claim", "legal", "lawyer",
+    "attorney", "solicitor", "court", " lawsuit ", " sue ", "pod", "proof of delivery",
+    "delivered but not received", "address change", "change address", "complaint",
     "赔偿", "赔付", "退款", "丢件", "破损", "海关", "清关", "签收未收到", "改地址", "投诉", "索赔",
+    "律师", "法律", "起诉", "法院",
 )
 
 
