@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
-from app.services.nexus_osr.case_context import CaseContext, CaseContextStatus  # noqa: E402
+from app.services.nexus_osr.case_context import CaseContext, CaseContextStatus, extract_tracking_reference  # noqa: E402
 from app.services.nexus_osr.controlled_action_executor import (  # noqa: E402
     ActionExecutionRequest,
     ControlledActionExecutor,
@@ -121,6 +121,7 @@ def test_case_context_redacts_transient_customer_inputs_and_tracks_short_lived_s
     ctx = ctx.with_inbound_message("My email is user@example.com and my number is +382 67123456. Track CH1234567890 please.")
 
     assert ctx.safe_tracking_reference is not None
+    assert ctx.safe_tracking_reference == "parcel ending 567890"
     assert ctx.tracking_number_hash is not None
     assert "user@example.com" not in (ctx.customer_claim_summary or "")
     assert "+382" not in (ctx.customer_claim_summary or "")
@@ -133,6 +134,20 @@ def test_case_context_redacts_transient_customer_inputs_and_tracks_short_lived_s
     assert ctx.ticket_created is True
     assert ctx.status == CaseContextStatus.CLOSED
     assert ctx.closed_at is not None
+
+
+def test_case_context_does_not_accept_phone_number_as_tracking_reference():
+    phone_only = CaseContext(conversation_id="wc-phone", channel="webchat").with_inbound_message(
+        "My phone is +382 67123456, please contact me. I do not have the parcel number yet."
+    )
+
+    assert phone_only.safe_tracking_reference is None
+    assert phone_only.tracking_number_hash is None
+    assert "tracking_reference_captured" not in phone_only.ai_actions_taken
+
+    safe_ref, tracking_hash = extract_tracking_reference("Call +382 67123456 first, then check CH1234567890 please")
+    assert safe_ref == "parcel ending 567890"
+    assert tracking_hash is not None
 
 
 def test_human_hours_policy_handles_online_offline_and_holidays():
