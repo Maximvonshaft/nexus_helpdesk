@@ -11,7 +11,7 @@ from ...webchat_models import WebchatConversation
 from ..webchat_ai_decision_runtime.schemas import AIDecision
 from .case_context import CaseContext
 from .controlled_action_executor import ActionExecutionResult
-from .tool_execution_service import execute_controlled_tool_calls, runtime_tool_actions_from_tool_calls
+from .tool_execution_service import GovernedToolExecutionOptions, execute_controlled_tool_calls, runtime_tool_actions_from_tool_calls
 
 
 class OSRToolExecutionMode(StrEnum):
@@ -77,6 +77,7 @@ class OSRToolExecutionFacade:
         customer: Customer | None = None,
         ai_decision: AIDecision | None = None,
         mode: OSRToolExecutionMode | str = OSRToolExecutionMode.POLICY_EXECUTE,
+        options: GovernedToolExecutionOptions | None = None,
     ) -> OSRToolExecutionFacadeResult:
         normalized_mode = _normalize_mode(mode)
         if normalized_mode == OSRToolExecutionMode.OBSERVE_ONLY:
@@ -97,6 +98,7 @@ class OSRToolExecutionFacade:
             ticket=ticket,
             customer=customer,
             ai_decision=ai_decision,
+            options=options,
         ))
         return OSRToolExecutionFacadeResult(
             mode=_mode_from_results(results),
