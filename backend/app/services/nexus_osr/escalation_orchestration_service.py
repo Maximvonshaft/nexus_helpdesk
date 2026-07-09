@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from ...enums import EventType, SourceChannel, TicketPriority
 from ...models import Customer, Ticket, TicketEvent
-from ...utils.time import utc_now
 from ...webchat_models import WebchatConversation, WebchatHandoffRequest
 from ..webchat_ai_turn_service import safe_write_webchat_event
 from ..webchat_handoff_service import request_webchat_handoff
@@ -169,7 +168,7 @@ def _context_for_ticket(context: CaseContext, *, action: EscalationOrchestration
     summary = _handover_summary(escalation, human)
     next_context = context.mark_handoff_requested(summary=summary)
     if not next_context.issue_type:
-        object.__setattr__(next_context, "issue_type", escalation.risk_key or str(action))
+        return replace(next_context, issue_type=escalation.risk_key or str(action))
     return next_context
 
 
