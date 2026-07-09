@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, Protocol
 
 from sqlalchemy.orm import Session
@@ -32,6 +33,54 @@ Customer claim: {customer_claim_summary}
 Missing info: {missing_info}
 Case status: {case_status}"""
 
+_IDEMPOTENT_DISPATCH_STATUSES = {"pending", "dispatched", "retryable", "fallback_used"}
+
+
+class OSROperationsDispatchStatus(StrEnum):
+    PENDING = "pending"
+    DISPATCHED = "dispatched"
+    FAILED = "failed"
+    RETRYABLE = "retryable"
+    CANCELLED = "cancelled"
+    FALLBACK_USED = "fallback_used"
+
+
+@dataclass(frozen=True)
+class OSROperationsDispatchQueueItem:
+    """Internal operations-dispatch contract persisted through TicketEvent.
+
+    This is not a native WhatsApp sidecar contract. Provider group identifiers
+    remain sensitive implementation details; audit surfaces use group keys and
+    provider id hashes only.
+    """
+
+    dispatch_key: str
+    status: OSROperationsDispatchStatus
+    destination_group_key: str | None
+    provider_group_id_hash: str | None
+    fallback_group_key: str | None = None
+    fallback_provider_group_id_hash: str | None = None
+    attempted_group_key: str | None = None
+    fallback_used: bool = False
+    retryable: bool = False
+    external_message_id: str | None = None
+    error_code: str | None = None
+
+    def as_event_payload(self) -> dict[str, Any]:
+        return {
+            "dispatch_key": self.dispatch_key,
+            "dispatch_status": str(self.status),
+            "destination_group_key": self.destination_group_key,
+            "provider_group_id_hash": self.provider_group_id_hash,
+            "fallback_group_key": self.fallback_group_key,
+            "fallback_provider_group_id_hash": self.fallback_provider_group_id_hash,
+            "attempted_group_key": self.attempted_group_key,
+            "fallback_used": self.fallback_used,
+            "retryable": self.retryable,
+            "external_message_id": self.external_message_id,
+            "error_code": self.error_code,
+        }
+
 
 @dataclass(frozen=True)
 class WhatsAppDispatchResult:
@@ -45,13 +94,12 @@ class WhatsAppDispatchResult:
 class WhatsAppGroupDispatcher(Protocol):
     """Narrow group-dispatch protocol for future safe adapters.
 
-    The repository currently has customer-visible WhatsApp outbound paths, but
-    no stable OSR operations-group dispatcher contract. Production code may
-    inject an implementation later; without one this service records pending
-    dispatch events instead of inventing a sidecar protocol.
+    Production code may inject an implementation later. Without one this service
+    records a pending operations-dispatch event and does not call any WhatsApp
+    sidecar API or customer-visible outbound path.
     """
 
-    def send_group_message(self, *, group_id: str, message: str, metadata: dict[str, Any]) -> WhatsAppDispatchResult | dict[str, Any] | bool:
+    def send_group_message(self, *, provider_group_id: str, message: str, metadata: dict[str, Any]) -> WhatsAppDispatchResult | dict[str, Any] | bool:
         ...
 
 
@@ -60,13 +108,21 @@ class WhatsAppRoutingResult:
     routed: bool
     status: str
     case_context: CaseContext
-    destination_group_id: str | None = None
-    attempted_group_id: str | None = None
-    fallback_group_id: str | None = None
+    dispatch_key: str | None = None
+    destination_group_key: str | None = None
+    attempted_group_key: str | None = None
+    fallback_group_key: str | None = None
     fallback_used: bool = False
     dispatch_status: str | None = None
     event_id: int | None = None
     message_text: str | None = None
+
+
+@dataclass(frozen=True)
+class _RuleResolution:
+    rule: WhatsAppRoutingRuleRecord | None
+    scope: str
+    disabled_rule: WhatsAppRoutingRuleRecord | None = None
 
 
 def route_ticket_to_whatsapp_group(
@@ -80,19 +136,38 @@ def route_ticket_to_whatsapp_group(
 ) -> WhatsAppRoutingResult:
     """Route an OSR case to an operations WhatsApp group.
 
-    This service is rule-driven and audit-first. If a safe group dispatcher is
-    not injected, it writes a pending dispatch TicketEvent and marks the
-    CaseContext routed, but does not call any WhatsApp sidecar API.
+    This service is rule-driven and audit-first. If a safe operations-group
+    dispatcher is not injected, it writes a pending dispatch TicketEvent and
+    marks the CaseContext routed to the business `destination_group_key`, but it
+    does not call any WhatsApp sidecar API.
     """
 
     country_code = _normalize_country(case_context.country_code or getattr(ticket, "country_code", None))
     issue_type = _normalize_issue(case_context.issue_type or getattr(ticket, "case_type", None))
     channel = _normalize_channel(routing_channel)
+    dispatch_key = _dispatch_key(ticket=ticket, case_context=case_context, country_code=country_code, issue_type=issue_type, routing_channel=channel)
 
-    rule = resolve_whatsapp_routing_rule(db, country_code=country_code, issue_type=issue_type, channel=channel)
-    if rule is None:
-        disabled_rule = _find_disabled_rule(db, country_code=country_code, issue_type=issue_type, channel=channel)
-        status = "routing_disabled" if disabled_rule is not None else "routing_not_configured"
+    existing = _find_existing_dispatch(db, ticket=ticket, dispatch_key=dispatch_key)
+    if existing is not None:
+        event, payload = existing
+        status = str(payload.get("dispatch_status") or "pending")
+        return WhatsAppRoutingResult(
+            routed=True,
+            status=status,
+            case_context=case_context,
+            dispatch_key=dispatch_key,
+            destination_group_key=payload.get("destination_group_key"),
+            attempted_group_key=payload.get("attempted_group_key"),
+            fallback_group_key=payload.get("fallback_group_key"),
+            fallback_used=bool(payload.get("fallback_used")),
+            dispatch_status=status,
+            event_id=event.id,
+        )
+
+    resolution = _resolve_routing_rule(db, country_code=country_code, issue_type=issue_type, channel=channel)
+    if resolution.rule is None:
+        status = "routing_disabled" if resolution.disabled_rule is not None else "routing_not_configured"
+        queue_status = OSROperationsDispatchStatus.CANCELLED if resolution.disabled_rule is not None else OSROperationsDispatchStatus.FAILED
         payload = _base_event_payload(
             ticket=ticket,
             case_context=case_context,
@@ -100,97 +175,140 @@ def route_ticket_to_whatsapp_group(
             issue_type=issue_type,
             routing_channel=channel,
             event=status,
+            dispatch_key=dispatch_key,
         )
-        if disabled_rule is not None:
-            payload["routing_rule_id"] = disabled_rule.id
+        payload.update(OSROperationsDispatchQueueItem(
+            dispatch_key=dispatch_key,
+            status=queue_status,
+            destination_group_key=None,
+            provider_group_id_hash=None,
+            retryable=False,
+            error_code=status,
+        ).as_event_payload())
+        payload["routing_scope"] = resolution.scope
+        if resolution.disabled_rule is not None:
+            payload["routing_rule_id"] = resolution.disabled_rule.id
         event = _write_routing_event(db, ticket=ticket, note=f"Nexus OSR WhatsApp routing {status}", payload=payload)
-        return WhatsAppRoutingResult(routed=False, status=status, case_context=case_context, event_id=event.id)
+        return WhatsAppRoutingResult(routed=False, status=status, case_context=case_context, dispatch_key=dispatch_key, dispatch_status=str(queue_status), event_id=event.id)
 
+    rule = resolution.rule
     message = build_safe_group_message(ticket=ticket, case_context=case_context, rule=rule)
-    metadata = _dispatch_metadata(ticket=ticket, case_context=case_context, rule=rule, routing_channel=channel)
-    destination_group_id = str(rule.destination_group_id or "").strip()
-    fallback_group_id = str(rule.fallback_group_id or "").strip() or None
+    provider_group_id = _provider_group_id(rule, fallback=False)
+    fallback_provider_group_id = _provider_group_id(rule, fallback=True)
+    destination_group_key = _destination_group_key(rule, fallback=False)
+    fallback_group_key = _destination_group_key(rule, fallback=True) if fallback_provider_group_id else None
+    metadata = _dispatch_metadata(
+        ticket=ticket,
+        case_context=case_context,
+        rule=rule,
+        routing_channel=channel,
+        dispatch_key=dispatch_key,
+        destination_group_key=destination_group_key,
+    )
 
     if dispatcher is None:
-        next_context = case_context.mark_routed(destination_group_id)
+        next_context = case_context.mark_routed(destination_group_key)
         save_case_context(db, next_context, tenant_id=tenant_id)
+        queue = OSROperationsDispatchQueueItem(
+            dispatch_key=dispatch_key,
+            status=OSROperationsDispatchStatus.PENDING,
+            destination_group_key=destination_group_key,
+            provider_group_id_hash=_hash_provider_group_id(provider_group_id),
+            fallback_group_key=fallback_group_key,
+            fallback_provider_group_id_hash=_hash_provider_group_id(fallback_provider_group_id),
+            attempted_group_key=destination_group_key,
+        )
         payload = _base_event_payload(
             ticket=ticket,
             case_context=next_context,
             country_code=country_code,
             issue_type=issue_type,
             routing_channel=channel,
-            event="whatsapp_routing_pending_dispatch",
+            event="operations_dispatch_pending",
+            dispatch_key=dispatch_key,
         )
+        payload.update(queue.as_event_payload())
         payload.update({
             "routing_rule_id": rule.id,
-            "destination_group_id": destination_group_id,
-            "fallback_group_id": fallback_group_id,
-            "dispatch_status": "pending_dispatch",
-            "dispatch_mode": "pending_no_group_dispatcher",
+            "routing_scope": resolution.scope,
+            "dispatch_mode": "pending_no_operations_dispatcher",
             "message_sha256": _sha256(message),
             "message_preview": _message_preview(message),
         })
-        event = _write_routing_event(db, ticket=ticket, note="Nexus OSR WhatsApp routing pending dispatch", payload=payload)
+        event = _write_routing_event(db, ticket=ticket, note="Nexus OSR operations dispatch pending", payload=payload)
         return WhatsAppRoutingResult(
             routed=True,
-            status="pending_dispatch",
+            status=str(OSROperationsDispatchStatus.PENDING),
             case_context=next_context,
-            destination_group_id=destination_group_id,
-            attempted_group_id=destination_group_id,
-            fallback_group_id=fallback_group_id,
-            dispatch_status="pending_dispatch",
+            dispatch_key=dispatch_key,
+            destination_group_key=destination_group_key,
+            attempted_group_key=destination_group_key,
+            fallback_group_key=fallback_group_key,
+            dispatch_status=str(OSROperationsDispatchStatus.PENDING),
             event_id=event.id,
             message_text=message,
         )
 
-    primary = _send(dispatcher, group_id=destination_group_id, message=message, metadata=metadata)
-    target_group_id = destination_group_id
+    primary = _send(dispatcher, provider_group_id=provider_group_id, message=message, metadata=metadata)
+    target_group_key = destination_group_key
+    target_provider_group_id = provider_group_id
     fallback_used = False
     dispatch = primary
-    if not primary.ok and fallback_group_id:
+    if not primary.ok and fallback_provider_group_id:
         fallback_used = True
-        target_group_id = fallback_group_id
-        fallback_metadata = {**metadata, "fallback_for_group_id": destination_group_id}
-        dispatch = _send(dispatcher, group_id=fallback_group_id, message=message, metadata=fallback_metadata)
+        target_group_key = fallback_group_key or destination_group_key
+        target_provider_group_id = fallback_provider_group_id
+        fallback_metadata = {**metadata, "fallback_for_group_key": destination_group_key, "destination_group_key": target_group_key}
+        dispatch = _send(dispatcher, provider_group_id=fallback_provider_group_id, message=message, metadata=fallback_metadata)
 
     routed = dispatch.ok
-    status = "dispatched" if routed else "dispatch_failed"
-    next_context = case_context.mark_routed(target_group_id) if routed else case_context
+    queue_status = _queue_status_from_dispatch(dispatch, fallback_used=fallback_used)
+    next_context = case_context.mark_routed(target_group_key) if routed else case_context
     if routed:
         save_case_context(db, next_context, tenant_id=tenant_id)
 
+    queue = OSROperationsDispatchQueueItem(
+        dispatch_key=dispatch_key,
+        status=queue_status,
+        destination_group_key=destination_group_key,
+        provider_group_id_hash=_hash_provider_group_id(provider_group_id),
+        fallback_group_key=fallback_group_key,
+        fallback_provider_group_id_hash=_hash_provider_group_id(fallback_provider_group_id),
+        attempted_group_key=target_group_key,
+        fallback_used=fallback_used,
+        retryable=dispatch.retryable,
+        external_message_id=dispatch.external_message_id,
+        error_code=dispatch.error_code,
+    )
     payload = _base_event_payload(
         ticket=ticket,
         case_context=next_context,
         country_code=country_code,
         issue_type=issue_type,
         routing_channel=channel,
-        event=f"whatsapp_routing_{status}",
+        event=f"operations_dispatch_{queue_status}",
+        dispatch_key=dispatch_key,
     )
+    payload.update(queue.as_event_payload())
     payload.update({
         "routing_rule_id": rule.id,
-        "destination_group_id": destination_group_id,
-        "fallback_group_id": fallback_group_id,
-        "attempted_group_id": target_group_id,
-        "fallback_used": fallback_used,
-        "dispatch_status": dispatch.status,
-        "dispatch_error_code": dispatch.error_code,
-        "dispatch_retryable": dispatch.retryable,
-        "external_message_id": dispatch.external_message_id,
+        "routing_scope": resolution.scope,
+        "dispatch_result_status": dispatch.status,
         "message_sha256": _sha256(message),
         "message_preview": _message_preview(message),
+        "attempted_provider_group_id_hash": _hash_provider_group_id(target_provider_group_id),
     })
-    event = _write_routing_event(db, ticket=ticket, note=f"Nexus OSR WhatsApp routing {status}", payload=payload)
+    event = _write_routing_event(db, ticket=ticket, note=f"Nexus OSR operations dispatch {queue_status}", payload=payload)
     return WhatsAppRoutingResult(
         routed=routed,
-        status=status,
+        status=str(queue_status),
         case_context=next_context,
-        destination_group_id=destination_group_id,
-        attempted_group_id=target_group_id,
-        fallback_group_id=fallback_group_id,
+        dispatch_key=dispatch_key,
+        destination_group_key=destination_group_key,
+        attempted_group_key=target_group_key,
+        fallback_group_key=fallback_group_key,
         fallback_used=fallback_used,
-        dispatch_status=dispatch.status,
+        dispatch_status=str(queue_status),
         event_id=event.id,
         message_text=message,
     )
@@ -200,6 +318,83 @@ def build_safe_group_message(*, ticket: Ticket, case_context: CaseContext, rule:
     fields = _safe_template_fields(ticket=ticket, case_context=case_context)
     template = (rule.message_template or _DEFAULT_TEMPLATE).strip() or _DEFAULT_TEMPLATE
     return _redact_for_group(_render_template(template, fields), limit=1200)
+
+
+def _resolve_routing_rule(db: Session, *, country_code: str, issue_type: str, channel: str) -> _RuleResolution:
+    scopes = _routing_scopes(country_code=country_code, issue_type=issue_type)
+    for index, (candidate_country, candidate_issue, scope) in enumerate(scopes):
+        if index == 0:
+            rule = resolve_whatsapp_routing_rule(db, country_code=candidate_country, issue_type=candidate_issue, channel=channel)
+        else:
+            rule = _find_enabled_rule(db, country_code=candidate_country, issue_type=candidate_issue, channel=channel)
+        if rule is not None:
+            return _RuleResolution(rule=rule, scope=scope)
+        disabled = _find_disabled_rule(db, country_code=candidate_country, issue_type=candidate_issue, channel=channel)
+        if disabled is not None:
+            return _RuleResolution(rule=None, disabled_rule=disabled, scope=scope)
+    return _RuleResolution(rule=None, scope="no_match")
+
+
+def _routing_scopes(*, country_code: str, issue_type: str) -> list[tuple[str, str, str]]:
+    raw = [
+        (country_code, issue_type, "exact_country_issue_channel"),
+        (country_code, "general", "country_general_channel"),
+        ("GLOBAL", issue_type, "global_issue_channel"),
+        ("GLOBAL", "general", "global_general_channel"),
+    ]
+    seen: set[tuple[str, str]] = set()
+    result: list[tuple[str, str, str]] = []
+    for country, issue, scope in raw:
+        key = (_normalize_country(country), _normalize_issue(issue))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append((key[0], key[1], scope))
+    return result
+
+
+def _find_enabled_rule(db: Session, *, country_code: str, issue_type: str, channel: str) -> WhatsAppRoutingRuleRecord | None:
+    return (
+        db.query(WhatsAppRoutingRuleRecord)
+        .filter(WhatsAppRoutingRuleRecord.enabled.is_(True))
+        .filter(WhatsAppRoutingRuleRecord.country_code == country_code)
+        .filter(WhatsAppRoutingRuleRecord.issue_type == issue_type)
+        .filter(WhatsAppRoutingRuleRecord.channel == channel)
+        .order_by(WhatsAppRoutingRuleRecord.priority.asc(), WhatsAppRoutingRuleRecord.id.asc())
+        .first()
+    )
+
+
+def _find_disabled_rule(db: Session, *, country_code: str, issue_type: str, channel: str) -> WhatsAppRoutingRuleRecord | None:
+    return (
+        db.query(WhatsAppRoutingRuleRecord)
+        .filter(WhatsAppRoutingRuleRecord.enabled.is_(False))
+        .filter(WhatsAppRoutingRuleRecord.country_code == country_code)
+        .filter(WhatsAppRoutingRuleRecord.issue_type == issue_type)
+        .filter(WhatsAppRoutingRuleRecord.channel == channel)
+        .order_by(WhatsAppRoutingRuleRecord.priority.asc(), WhatsAppRoutingRuleRecord.id.asc())
+        .first()
+    )
+
+
+def _find_existing_dispatch(db: Session, *, ticket: Ticket, dispatch_key: str) -> tuple[TicketEvent, dict[str, Any]] | None:
+    rows = (
+        db.query(TicketEvent)
+        .filter(TicketEvent.ticket_id == ticket.id)
+        .order_by(TicketEvent.id.desc())
+        .all()
+    )
+    for row in rows:
+        try:
+            payload = json.loads(row.payload_json or "{}")
+        except Exception:
+            continue
+        if payload.get("dispatch_key") != dispatch_key:
+            continue
+        status = str(payload.get("dispatch_status") or "")
+        if status in _IDEMPOTENT_DISPATCH_STATUSES:
+            return row, payload
+    return None
 
 
 def _safe_template_fields(*, ticket: Ticket, case_context: CaseContext) -> dict[str, str]:
@@ -241,21 +436,9 @@ def _safe_tracking_token(token: str) -> str:
     return "tracking reference provided"
 
 
-def _find_disabled_rule(db: Session, *, country_code: str, issue_type: str, channel: str) -> WhatsAppRoutingRuleRecord | None:
-    return (
-        db.query(WhatsAppRoutingRuleRecord)
-        .filter(WhatsAppRoutingRuleRecord.enabled.is_(False))
-        .filter(WhatsAppRoutingRuleRecord.country_code == country_code)
-        .filter(WhatsAppRoutingRuleRecord.issue_type == issue_type)
-        .filter(WhatsAppRoutingRuleRecord.channel == channel)
-        .order_by(WhatsAppRoutingRuleRecord.priority.asc(), WhatsAppRoutingRuleRecord.id.asc())
-        .first()
-    )
-
-
-def _send(dispatcher: WhatsAppGroupDispatcher, *, group_id: str, message: str, metadata: dict[str, Any]) -> WhatsAppDispatchResult:
+def _send(dispatcher: WhatsAppGroupDispatcher, *, provider_group_id: str, message: str, metadata: dict[str, Any]) -> WhatsAppDispatchResult:
     try:
-        raw = dispatcher.send_group_message(group_id=group_id, message=message, metadata=metadata)
+        raw = dispatcher.send_group_message(provider_group_id=provider_group_id, message=message, metadata=metadata)
     except Exception as exc:
         return WhatsAppDispatchResult(ok=False, status="error", error_code=type(exc).__name__, retryable=True)
     if isinstance(raw, WhatsAppDispatchResult):
@@ -274,6 +457,16 @@ def _send(dispatcher: WhatsAppGroupDispatcher, *, group_id: str, message: str, m
     return WhatsAppDispatchResult(ok=False, status="invalid_dispatch_result", error_code="invalid_dispatch_result")
 
 
+def _queue_status_from_dispatch(dispatch: WhatsAppDispatchResult, *, fallback_used: bool) -> OSROperationsDispatchStatus:
+    if dispatch.ok and fallback_used:
+        return OSROperationsDispatchStatus.FALLBACK_USED
+    if dispatch.ok:
+        return OSROperationsDispatchStatus.DISPATCHED
+    if dispatch.retryable:
+        return OSROperationsDispatchStatus.RETRYABLE
+    return OSROperationsDispatchStatus.FAILED
+
+
 def _base_event_payload(
     *,
     ticket: Ticket,
@@ -282,10 +475,12 @@ def _base_event_payload(
     issue_type: str,
     routing_channel: str,
     event: str,
+    dispatch_key: str,
 ) -> dict[str, Any]:
     return {
         "event": event,
         "source": "nexus_osr",
+        "dispatch_key": dispatch_key,
         "ticket_id": getattr(ticket, "id", None),
         "ticket_no": getattr(ticket, "ticket_no", None),
         "country_code": country_code,
@@ -306,13 +501,23 @@ def _base_event_payload(
     }
 
 
-def _dispatch_metadata(*, ticket: Ticket, case_context: CaseContext, rule: WhatsAppRoutingRuleRecord, routing_channel: str) -> dict[str, Any]:
+def _dispatch_metadata(
+    *,
+    ticket: Ticket,
+    case_context: CaseContext,
+    rule: WhatsAppRoutingRuleRecord,
+    routing_channel: str,
+    dispatch_key: str,
+    destination_group_key: str,
+) -> dict[str, Any]:
     return {
         "source": "nexus_osr",
+        "dispatch_key": dispatch_key,
         "ticket_id": getattr(ticket, "id", None),
         "ticket_no": getattr(ticket, "ticket_no", None),
         "routing_rule_id": rule.id,
         "routing_channel": routing_channel,
+        "destination_group_key": destination_group_key,
         "country_code": _normalize_country(case_context.country_code or getattr(ticket, "country_code", None)),
         "issue_type": _normalize_issue(case_context.issue_type or getattr(ticket, "case_type", None)),
         "safe_tracking_reference": case_context.safe_tracking_reference,
@@ -344,8 +549,41 @@ def _safe_payload(value: Any) -> Any:
     return value
 
 
+def _destination_group_key(rule: WhatsAppRoutingRuleRecord, *, fallback: bool) -> str:
+    suffix = "fallback" if fallback else "destination"
+    country = _normalize_country(rule.country_code).lower()
+    issue = _normalize_issue(rule.issue_type)
+    channel = _normalize_channel(rule.channel)
+    return f"{channel}:{country}:{issue}:{suffix}"
+
+
+def _provider_group_id(rule: WhatsAppRoutingRuleRecord, *, fallback: bool) -> str | None:
+    raw = rule.fallback_group_id if fallback else rule.destination_group_id
+    cleaned = str(raw or "").strip()
+    return cleaned or None
+
+
+def _hash_provider_group_id(value: str | None) -> str | None:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return None
+    return _sha256(cleaned)
+
+
 def _message_preview(message: str) -> str:
     return _redact_for_group(message, limit=500)
+
+
+def _dispatch_key(*, ticket: Ticket, case_context: CaseContext, country_code: str, issue_type: str, routing_channel: str) -> str:
+    parts = [
+        str(getattr(ticket, "id", "") or ""),
+        str(case_context.conversation_id or ""),
+        str(case_context.ticket_id or getattr(ticket, "id", "") or ""),
+        country_code,
+        issue_type,
+        routing_channel,
+    ]
+    return _sha256("|".join(parts))
 
 
 def _sha256(value: str) -> str:
