@@ -11,7 +11,6 @@ from ...webchat_models import WebchatConversation
 from ..webchat_ai_decision_runtime.schemas import AIDecision
 from .case_context import CaseContext
 from .controlled_action_executor import ActionExecutionResult
-from .runtime_decision_contract import RuntimeToolAction
 from .tool_execution_service import execute_controlled_tool_calls, runtime_tool_actions_from_tool_calls
 
 
