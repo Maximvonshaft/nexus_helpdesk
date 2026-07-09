@@ -180,6 +180,23 @@ def test_flag_on_online_escalation_uses_existing_handoff_service_after_webchat_o
     assert db_session.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == "agent").count() == 0
 
 
+def test_flag_on_lawyer_wording_reaches_osr_legal_threat_policy(db_session, monkeypatch):
+    monkeypatch.setattr(webchat_ai_safe_service.settings, "osr_escalation_orchestration_enabled", True, raising=False)
+    add_hours(db_session, online=False)
+    add_escalation(db_session, "legal_threat", "lawyer", max_ai_attempts=0)
+    ticket, conversation, visitor, turn = make_webchat_case(db_session, body="I will contact my lawyer", suffix="lawyer-threat")
+    db_session.commit()
+
+    result = run_hook(db_session, ticket=ticket, conversation=conversation, visitor=visitor)
+    db_session.refresh(turn)
+
+    assert result["reason"] == "osr_ticket_created"
+    assert result["osr_escalation"]["risk_key"] == "legal_threat"
+    assert result["osr_escalation"]["webchat_runtime_audit_id"] is not None
+    assert turn.status == "failed"
+    assert db_session.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == "agent").count() == 0
+
+
 def test_flag_on_offline_escalation_creates_or_reuses_ticket_without_customer_body_after_webchat_osr_audit(db_session, monkeypatch):
     monkeypatch.setattr(webchat_ai_safe_service.settings, "osr_escalation_orchestration_enabled", True, raising=False)
     add_hours(db_session, online=False)
