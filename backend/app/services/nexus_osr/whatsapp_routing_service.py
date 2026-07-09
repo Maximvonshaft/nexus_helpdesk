@@ -439,6 +439,13 @@ def _safe_tracking_token(token: str) -> str:
 def _send(dispatcher: WhatsAppGroupDispatcher, *, provider_group_id: str, message: str, metadata: dict[str, Any]) -> WhatsAppDispatchResult:
     try:
         raw = dispatcher.send_group_message(provider_group_id=provider_group_id, message=message, metadata=metadata)
+    except TypeError as exc:
+        if "provider_group_id" not in str(exc):
+            return WhatsAppDispatchResult(ok=False, status="error", error_code=type(exc).__name__, retryable=True)
+        try:
+            raw = dispatcher.send_group_message(group_id=provider_group_id, message=message, metadata=metadata)  # type: ignore[call-arg]
+        except Exception as fallback_exc:
+            return WhatsAppDispatchResult(ok=False, status="error", error_code=type(fallback_exc).__name__, retryable=True)
     except Exception as exc:
         return WhatsAppDispatchResult(ok=False, status="error", error_code=type(exc).__name__, retryable=True)
     if isinstance(raw, WhatsAppDispatchResult):
