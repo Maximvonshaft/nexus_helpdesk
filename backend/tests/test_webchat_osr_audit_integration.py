@@ -228,7 +228,7 @@ def test_webchat_osr_audit_without_fact_uses_clarification_not_factual_tracking(
         db.close()
 
 
-def test_webchat_osr_audit_without_fact_live_status_reply_is_disallowed_but_reply_unchanged(monkeypatch):
+def test_webchat_osr_audit_records_fact_gate_block_without_customer_visible_reply(monkeypatch):
     _ensure_schema_and_user()
     client = TestClient(app)
     conversation_id, visitor_token = _init_conversation(client, 'nofact-live')
@@ -248,19 +248,21 @@ def test_webchat_osr_audit_without_fact_live_status_reply_is_disallowed_but_repl
     monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
 
     _run_ai_turn(ai_turn_id, worker='osr-audit-nofact-live-worker')
-    message = _agent_message(conversation_id)
-    assert message.body == 'Your parcel is out for delivery.'
 
     db = SessionLocal()
     try:
-        audit = db.query(RuntimeDecisionAuditRecord).filter(RuntimeDecisionAuditRecord.ticket_id == message.ticket_id, RuntimeDecisionAuditRecord.conversation_id == message.conversation_id).order_by(RuntimeDecisionAuditRecord.id.desc()).first()
+        conversation = db.query(WebchatConversation).filter(WebchatConversation.public_id == conversation_id).first()
+        assert conversation is not None
+        assert db.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == 'agent').count() == 0
+        audit = db.query(RuntimeDecisionAuditRecord).filter(RuntimeDecisionAuditRecord.ticket_id == conversation.ticket_id, RuntimeDecisionAuditRecord.conversation_id == conversation.id).order_by(RuntimeDecisionAuditRecord.id.desc()).first()
         assert audit is not None
-        assert audit.business_reply_type == 'tracking_status_answer'
-        assert audit.allowed is False
-        assert any(item.get('code') == 'tracking_status_without_mcp_current_status' for item in (audit.violations_json or []))
-        metadata = json.loads(db.query(WebchatMessage).filter(WebchatMessage.id == message.id).first().metadata_json or '{}')
-        assert metadata['osr_audit']['mode'] == 'audit_only'
-        assert metadata['osr_audit']['allowed'] is False
+        assert audit.business_reply_type == 'no_answer'
+        assert audit.next_action == 'block'
+        assert audit.allowed is True
+        assert audit.violations_json in (None, [])
+        context = db.query(CaseContextRecord).filter(CaseContextRecord.ticket_id == conversation.ticket_id, CaseContextRecord.conversation_id == conversation.id).first()
+        assert context is not None
+        assert context.issue_type == 'tracking'
     finally:
         db.close()
 
@@ -295,7 +297,7 @@ def test_webchat_osr_audit_failure_does_not_block_customer_visible_reply(monkeyp
     try:
         job = db.query(BackgroundJob).filter(BackgroundJob.dedupe_key == f'webchat-ai-turn:{ai_turn_id}').first()
         assert job is not None
-        assert str(job.status) == 'done'
+        assert getattr(job.status, 'value', job.status) == 'done'
         assert db.query(RuntimeDecisionAuditRecord).filter(RuntimeDecisionAuditRecord.ticket_id == message.ticket_id, RuntimeDecisionAuditRecord.conversation_id == message.conversation_id).count() == 0
         assert db.query(WebchatMessage).filter(WebchatMessage.id == message.id).first().body == 'Hello, how can I help?'
     finally:
