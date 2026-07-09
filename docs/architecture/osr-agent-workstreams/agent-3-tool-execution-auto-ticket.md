@@ -32,6 +32,17 @@ Implement production-grade execution path for OSR-controlled tool actions:
 6. Update `CaseContextRecord` and `RuntimeDecisionAuditRecord`.
 7. Return a safe customer-visible action result template, but do not send it directly. Customer-visible send must stay under `CustomerVisibleMessageService`.
 
+## Channel-facing entry point
+
+Channel integrations must call `OSRToolExecutionFacade`, not `execute_controlled_tool_calls()` directly. The lower service remains an internal implementation detail for the facade and tests.
+
+Execution modes:
+
+- `observe_only`: normalize proposed tool calls and return observed safe results without side effects.
+- `policy_execute`: run PolicyGate, resolve `ToolExecutionPolicyRecord`, execute only allowed controlled handlers, and audit.
+- `confirmation_required`: return a safe confirmation-required result without executing.
+- `blocked`: return a safe blocked result without executing.
+
 ## Required first handlers
 
 - `ticket.create`: use `create_or_reuse_ticket_from_case_context()`.
@@ -40,12 +51,22 @@ Implement production-grade execution path for OSR-controlled tool actions:
 
 MCP/Speedaf write actions such as `speedaf.workOrder.create` may be scaffolded but must remain policy gated and disabled unless tests explicitly configure them.
 
+## ToolExecutionPolicy seed
+
+Default seed rows:
+
+- `ticket.create`: `enabled=true`, `ai_auto_executable=true`, `risk_level=medium`.
+- `handoff.request.create`: `enabled=true`, `ai_auto_executable=true`, `risk_level=medium`.
+- `timeline.event.create`: `enabled=true`, `ai_auto_executable=true`, `risk_level=low`.
+- `speedaf.workOrder.create`: `enabled=false`, `ai_auto_executable=false`, `risk_level=high`, tracking/contact/human-confirmation required.
+
 ## Hard rules
 
 Do not:
 
 - Execute high-risk write tools by default.
 - Bypass `ToolExecutionPolicyRecord`.
+- Bypass `PolicyGate`.
 - Bypass `CustomerVisibleMessageService`.
 - Add provider-native tool execution.
 - Store raw tracking numbers, raw phone numbers, raw addresses, or raw tool payloads in audit.
@@ -60,10 +81,13 @@ Do:
 
 ## Expected files likely touched
 
+- `backend/app/services/nexus_osr/tool_execution_facade.py`
 - `backend/app/services/nexus_osr/tool_execution_service.py`
+- `backend/app/services/nexus_osr/tool_execution_policy_seed.py`
 - `backend/app/services/nexus_osr/controlled_action_executor.py`
 - `backend/app/services/nexus_osr/auto_ticket_service.py`
 - `backend/tests/test_nexus_osr_tool_execution_service.py`
+- `backend/tests/test_nexus_osr_tool_execution_facade.py`
 
 Coordinate with Agent 1 and Agent 2 if touching `webchat_ai_service.py`. Prefer a pure service first.
 
@@ -77,6 +101,10 @@ Coordinate with Agent 1 and Agent 2 if touching `webchat_ai_service.py`. Prefer 
 6. Confirmation-required tool returns confirmation_required without execution.
 7. Tool action writes safe audit output with no raw PII/tracking.
 8. Duplicate tool execution is idempotent.
+9. Missing policy is blocked.
+10. Channel mismatch is blocked.
+11. Country mismatch is blocked.
+12. Facade returns safe templates only and never sends customer-visible messages directly.
 
 ## Prompt for the agent
 
