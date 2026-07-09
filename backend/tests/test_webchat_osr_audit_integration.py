@@ -281,7 +281,8 @@ def test_webchat_osr_audit_failure_does_not_block_customer_visible_reply(monkeyp
         return 'Hello, how can I help?'
 
     def raising_audit(db, **_kwargs):
-        db.execute(text('INSERT INTO missing_osr_audit_table VALUES (1)'))
+        db.add(RuntimeDecisionAuditRecord(next_action='reply', decision_json={}))
+        db.flush()
 
     monkeypatch.setattr(webchat_ai_service, '_generate_ai_reply', fake_generate_ai_reply)
     monkeypatch.setattr(webchat_ai_safe_service, 'audit_completed_webchat_ai_turn', raising_audit)
