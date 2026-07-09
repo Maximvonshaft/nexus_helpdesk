@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ...enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus
+from ...enums import ConversationState, EventType, SourceChannel, TicketPriority, TicketSource, TicketStatus
 from ...models import Customer, Ticket, TicketEvent
 from ...utils.time import utc_now
 from ...webchat_models import WebchatConversation
@@ -36,7 +37,7 @@ def create_or_reuse_ticket_from_case_context(
     """Create or reuse a support ticket from OSR Case Context.
 
     This is the production-side replacement for the framework-light
-    `ticket.create` handler.  It is deliberately idempotent by existing ticket id,
+    `ticket.create` handler. It is deliberately idempotent by existing ticket id,
     conversation ticket id, and safe tracking hash where available.
     """
 
@@ -105,7 +106,7 @@ def _find_existing_ticket(db: Session, *, case_context: CaseContext, conversatio
         if row is not None:
             return row
     if case_context.tracking_number_hash:
-        # We do not store raw tracking numbers here.  Reuse by CaseContext records
+        # We do not store raw tracking numbers here. Reuse by CaseContext records
         # is handled before this point, so this fallback is intentionally empty
         # until a dedicated tracking-hash index exists on Ticket.
         return None
@@ -173,7 +174,7 @@ def _write_ticket_event(db: Session, *, ticket: Ticket, case_context: CaseContex
     db.add(TicketEvent(
         ticket_id=ticket.id,
         actor_id=None,
-        event_type="field_updated",
+        event_type=EventType.field_updated,
         note="Nexus OSR auto ticket created" if created else "Nexus OSR ticket reused",
-        payload_json=__import__("json").dumps(payload, ensure_ascii=False, default=str),
+        payload_json=json.dumps(payload, ensure_ascii=False, default=str),
     ))
