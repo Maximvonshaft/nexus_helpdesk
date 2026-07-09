@@ -28,6 +28,27 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _normalise_tracking_token(value: str | None) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").strip().upper())
+
+
+def _is_probable_tracking_token(value: str | None) -> bool:
+    """Return true only for waybill-like references, not phone/date tokens.
+
+    OSR case context may later unlock policy-gated actions that require a
+    tracking reference. Treating phone numbers as tracking evidence would let
+    those actions proceed without a real parcel reference, so the foundation only
+    captures alphanumeric waybill-like references with both letters and digits.
+    """
+
+    token = _normalise_tracking_token(value)
+    if not (8 <= len(token) <= 35):
+        return False
+    has_digit = any(char.isdigit() for char in token)
+    has_alpha = any("A" <= char <= "Z" for char in token)
+    return has_digit and has_alpha
+
+
 def redact_case_text(value: Any, *, limit: int = 500) -> str:
     text = " ".join(str(value or "").strip().split())
     if not text:
@@ -36,11 +57,11 @@ def redact_case_text(value: Any, *, limit: int = 500) -> str:
     text = _PHONE_RE.sub("[redacted_phone]", text)
 
     def _tracking(match: re.Match[str]) -> str:
-        token = match.group(0).upper().replace("-", "")
-        # Avoid replacing ordinary long English words with no digits.
-        if not any(char.isdigit() for char in token):
+        token = match.group(0).strip().upper()
+        if not _is_probable_tracking_token(token):
             return match.group(0)
-        return f"tracking ending {token[-6:]}"
+        normalised = _normalise_tracking_token(token)
+        return f"tracking ending {normalised[-6:]}"
 
     text = _TRACKING_RE.sub(_tracking, text)
     return text[:limit]
@@ -49,7 +70,7 @@ def redact_case_text(value: Any, *, limit: int = 500) -> str:
 def extract_tracking_reference(text: str | None) -> tuple[str | None, str | None]:
     for match in _TRACKING_RE.finditer(str(text or "")):
         token = match.group(0).strip().upper()
-        if any(char.isdigit() for char in token):
+        if _is_probable_tracking_token(token):
             return safe_tracking_reference(token), hash_tracking_number(token)
     return None, None
 
