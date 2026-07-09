@@ -59,6 +59,12 @@ Invalid or missing values resolve to `observe_only`.
 - `handoff.request.create`
 - `timeline.event.create`
 
+RuntimeDecision integration:
+
+- `runtime_bridge.execute_runtime_decision_tool_proposals()` accepts `RuntimeDecision.tool_actions` and routes them through `OSRToolExecutionFacade`.
+- If no mode is passed, the bridge uses `OSR_TOOL_EXECUTION_MODE` and therefore defaults to `observe_only`.
+- The bridge does not send customer-visible messages and does not accept provider-native tool calls.
+
 ## Required first handlers
 
 - `ticket.create`: use `create_or_reuse_ticket_from_case_context()`.
@@ -100,10 +106,12 @@ Do:
 - `backend/app/services/nexus_osr/tool_execution_facade.py`
 - `backend/app/services/nexus_osr/tool_execution_service.py`
 - `backend/app/services/nexus_osr/tool_execution_policy_seed.py`
+- `backend/app/services/nexus_osr/runtime_bridge.py`
 - `backend/app/services/nexus_osr/controlled_action_executor.py`
 - `backend/app/services/nexus_osr/auto_ticket_service.py`
 - `backend/tests/test_nexus_osr_tool_execution_service.py`
 - `backend/tests/test_nexus_osr_tool_execution_facade.py`
+- `backend/tests/test_nexus_osr_runtime_bridge.py`
 
 Coordinate with Agent 1 and Agent 2 if touching `webchat_ai_service.py`. Prefer a pure service first until #451/#452/#453 are merged and #454 can be retargeted to `main`.
 
@@ -124,6 +132,7 @@ Coordinate with Agent 1 and Agent 2 if touching `webchat_ai_service.py`. Prefer 
 13. Default execution mode is `observe_only`.
 14. `observe_only` writes audit/debug summary but does not write executed `ToolCallLog` or perform side effects.
 15. `policy_execute` blocks tools outside the safe allow-list.
+16. RuntimeDecision tool proposals route through the facade and default to observe_only.
 
 ## Prompt for the agent
 
