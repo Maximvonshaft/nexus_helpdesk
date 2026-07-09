@@ -125,13 +125,12 @@ def _require_operator_review(db: Session, *, conversation: WebchatConversation, 
     )
 
 
-def _complete_turn_if_present(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, turn: WebchatAITurn | None, result: dict[str, Any]) -> None:
+def _audit_webchat_osr_turn_non_blocking(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, turn: WebchatAITurn | None, result: dict[str, Any]) -> dict[str, Any] | None:
     if turn is None:
-        return
-    complete_ai_turn_with_reply(db, conversation=conversation, turn=turn, result=result)
+        return None
     try:
         with db.begin_nested():
-            audit_completed_webchat_ai_turn(
+            return audit_completed_webchat_ai_turn(
                 db,
                 conversation=conversation,
                 ticket=ticket,
@@ -142,8 +141,25 @@ def _complete_turn_if_present(db: Session, *, conversation: WebchatConversation,
     except Exception as exc:  # pragma: no cover - behavior covered by explicit monkeypatch test
         LOGGER.warning(
             "webchat_osr_audit_failed_non_blocking",
-            extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "visitor_message_id": visitor_message.id, "ai_turn_id": turn.id, "error_type": type(exc).__name__}},
+            extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "visitor_message_id": visitor_message.id, "ai_turn_id": turn.id if turn else None, "error_type": type(exc).__name__}},
         )
+        return None
+
+
+def _complete_turn_if_present(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, turn: WebchatAITurn | None, result: dict[str, Any], audit_after_complete: bool = True) -> dict[str, Any] | None:
+    if turn is None:
+        return None
+    complete_ai_turn_with_reply(db, conversation=conversation, turn=turn, result=result)
+    if not audit_after_complete:
+        return None
+    return _audit_webchat_osr_turn_non_blocking(
+        db,
+        conversation=conversation,
+        ticket=ticket,
+        visitor_message=visitor_message,
+        turn=turn,
+        result=result,
+    )
 
 
 def _case_context_for_webchat(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage) -> CaseContext:
@@ -171,8 +187,8 @@ def _ai_attempt_count(db: Session, *, conversation: WebchatConversation) -> int:
     return int(db.query(WebchatAITurn.id).filter(WebchatAITurn.conversation_id == conversation.id).count())
 
 
-def _safe_escalation_payload(result: EscalationOrchestrationResult) -> dict[str, Any]:
-    return {
+def _safe_escalation_payload(result: EscalationOrchestrationResult, *, webchat_osr_audit_summary: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = {
         "action": _status_value(result.action),
         "audit_id": result.audit_id,
         "handoff_request_id": result.handoff_request.id if result.handoff_request else None,
@@ -185,10 +201,14 @@ def _safe_escalation_payload(result: EscalationOrchestrationResult) -> dict[str,
         "queue_key": result.human_availability.queue_key,
         "queue_resolution": result.queue_resolution.as_safe_dict() if result.queue_resolution else None,
     }
+    if webchat_osr_audit_summary:
+        payload["webchat_runtime_audit_id"] = webchat_osr_audit_summary.get("audit_id")
+        payload["webchat_runtime_audit_mode"] = webchat_osr_audit_summary.get("mode")
+    return payload
 
 
-def _result_from_osr_escalation(result: EscalationOrchestrationResult) -> dict[str, Any] | None:
-    payload = _safe_escalation_payload(result)
+def _result_from_osr_escalation(result: EscalationOrchestrationResult, *, webchat_osr_audit_summary: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    payload = _safe_escalation_payload(result, webchat_osr_audit_summary=webchat_osr_audit_summary)
     if result.action == EscalationOrchestrationAction.CONTINUE_AI:
         if not result.escalation.matched:
             return None
@@ -218,7 +238,7 @@ def _result_from_osr_escalation(result: EscalationOrchestrationResult) -> dict[s
     }
 
 
-def _maybe_orchestrate_osr_escalation(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, turn: WebchatAITurn | None) -> dict[str, Any] | None:
+def _maybe_orchestrate_osr_escalation(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, turn: WebchatAITurn | None, webchat_osr_audit_summary: dict[str, Any] | None = None) -> dict[str, Any] | None:
     if not _osr_escalation_orchestration_enabled():
         return None
     if not _has_high_risk_intent(visitor_message.body):
@@ -245,7 +265,16 @@ def _maybe_orchestrate_osr_escalation(db: Session, *, conversation: WebchatConve
             extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "visitor_message_id": visitor_message.id, "ai_turn_id": turn.id if turn else None, "error_type": type(exc).__name__}},
         )
         return None
-    return _result_from_osr_escalation(result)
+    return _result_from_osr_escalation(result, webchat_osr_audit_summary=webchat_osr_audit_summary)
+
+
+def _safe_ai_high_risk_review_result() -> dict[str, Any]:
+    return {
+        "status": "review_required",
+        "reason": "webchat_safe_ai_high_risk_review",
+        "reply_source": "webchat_safe_ai_high_risk_review",
+        "fallback_reason": "webchat_safe_ai_high_risk_review",
+    }
 
 
 def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id: int, visitor_message_id: int) -> dict[str, Any]:
@@ -279,17 +308,54 @@ def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
         _complete_turn_if_present(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, turn=turn, result=result)
         return result
 
-    osr_escalation_result = _maybe_orchestrate_osr_escalation(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, turn=turn)
-    osr_continue_ai = bool(osr_escalation_result and osr_escalation_result.get("status") == "continue_ai")
-    if osr_escalation_result is not None and not osr_continue_ai:
-        if not osr_escalation_result.get("osr_turn_closed_by_handoff"):
-            _complete_turn_if_present(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, turn=turn, result=osr_escalation_result)
-        return osr_escalation_result
+    if mode == "safe_ai" and _has_high_risk_intent(visitor_message.body):
+        preview_result = _safe_ai_high_risk_review_result()
+        osr_escalation_result = None
+        webchat_osr_audit_summary = None
+        if _osr_escalation_orchestration_enabled():
+            webchat_osr_audit_summary = _audit_webchat_osr_turn_non_blocking(
+                db,
+                conversation=conversation,
+                ticket=ticket,
+                visitor_message=visitor_message,
+                turn=turn,
+                result=preview_result,
+            )
+            osr_escalation_result = _maybe_orchestrate_osr_escalation(
+                db,
+                conversation=conversation,
+                ticket=ticket,
+                visitor_message=visitor_message,
+                turn=turn,
+                webchat_osr_audit_summary=webchat_osr_audit_summary,
+            )
 
-    if mode == "safe_ai" and _has_high_risk_intent(visitor_message.body) and not osr_continue_ai:
-        result = _require_operator_review(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, reason="webchat_safe_ai_high_risk_review", turn=turn)
-        _complete_turn_if_present(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, turn=turn, result=result)
-        return result
+        osr_continue_ai = bool(osr_escalation_result and osr_escalation_result.get("status") == "continue_ai")
+        if osr_escalation_result is not None and not osr_continue_ai:
+            if not osr_escalation_result.get("osr_turn_closed_by_handoff"):
+                _complete_turn_if_present(
+                    db,
+                    conversation=conversation,
+                    ticket=ticket,
+                    visitor_message=visitor_message,
+                    turn=turn,
+                    result=osr_escalation_result,
+                    audit_after_complete=webchat_osr_audit_summary is None,
+                )
+            return osr_escalation_result
+
+        if not osr_continue_ai:
+            result = _require_operator_review(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, reason="webchat_safe_ai_high_risk_review", turn=turn)
+            _complete_turn_if_present(
+                db,
+                conversation=conversation,
+                ticket=ticket,
+                visitor_message=visitor_message,
+                turn=turn,
+                result=result,
+                audit_after_complete=webchat_osr_audit_summary is None,
+            )
+            return result
 
     result = _legacy_process_webchat_ai_reply_job(db, conversation_id=conversation_id, ticket_id=ticket_id, visitor_message_id=visitor_message_id, ai_turn_id=turn.id if turn else None)
     _complete_turn_if_present(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, turn=turn, result=result or {})
