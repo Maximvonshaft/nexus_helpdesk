@@ -1,6 +1,6 @@
 # Agent 1 — WebChat OSR Audit Integration
 
-Base branch: `feat/nexus-osr-runtime-foundation` (#451)
+Base branch: `main` after #451 Nexus OSR runtime foundation merge.
 
 ## Mission
 
@@ -20,7 +20,7 @@ The repository already has:
 - `backend/app/models_webchat_debug.py`
 - `backend/app/models_osr.py`
 
-#451 adds OSR runtime/persistence/bridge code. This PR should build on that instead of creating parallel concepts.
+#451 has been merged into `main`. This PR should build on that foundation instead of creating parallel concepts.
 
 ## Scope
 
@@ -66,9 +66,10 @@ Do:
 
 ## Expected files likely touched
 
-- `backend/app/services/webchat_ai_service.py`
+- `backend/app/services/webchat_ai_safe_service.py`
 - `backend/app/services/webchat_debug_bundle_service.py`
-- `backend/tests/test_*webchat*osr*audit*.py`
+- `backend/app/services/webchat_osr_audit_service.py`
+- `backend/tests/test_webchat_osr_audit_integration.py`
 
 Avoid touching unrelated frontend files.
 
@@ -85,4 +86,4 @@ Add tests covering:
 
 ## Prompt for the agent
 
-You are Agent 1 for Nexus OSR. Your task is to integrate OSR audit into the existing WebChat AI path without changing customer-visible behavior. Use #451 foundation code. Work only from current repository facts. Do not invent a new runtime or memory system. Implement a non-blocking audit sidecar that creates CaseContextRecord and RuntimeDecisionAuditRecord for each WebChat AI turn. Preserve CustomerVisibleMessageService as the only outbound boundary. Add tests proving existing replies are unchanged and OSR audit is persisted safely. If uncertain, audit only; do not block or execute tools.
+You are Agent 1 for Nexus OSR. Your task is to integrate OSR audit into the existing WebChat AI path without changing customer-visible behavior. Use the OSR foundation now merged into `main`. Work only from current repository facts. Do not invent a new runtime or memory system. Implement a non-blocking audit sidecar that creates CaseContextRecord and RuntimeDecisionAuditRecord for each WebChat AI turn. Preserve CustomerVisibleMessageService as the only outbound boundary. Add tests proving existing replies are unchanged and OSR audit is persisted safely. If uncertain, audit only; do not block or execute tools.
