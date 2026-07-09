@@ -160,7 +160,7 @@ def resolve_tool_execution_policy(db: Session, *, tool_name: str, country_code: 
         ToolExecutionPolicyRecord,
         country_code=country_code,
         channel=channel,
-        extra_filters=[ToolExecutionPolicyRecord.tool_name == tool_name, ToolExecutionPolicyRecord.enabled.is_(True)],
+        extra_filters=[ToolExecutionPolicyRecord.tool_name == tool_name],
     )
     if not row:
         return None

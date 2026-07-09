@@ -20,6 +20,7 @@ from app import models, webchat_models, models_osr  # noqa: F401,E402
 from app.db import Base  # noqa: E402
 from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus  # noqa: E402
 from app.models import Customer, Ticket  # noqa: E402
+from app.models_osr import RuntimeDecisionAuditRecord  # noqa: E402
 from app.services.knowledge_retrieval_service import KnowledgeChunkHit  # noqa: E402
 from app.services.nexus_osr.case_context import CaseContext  # noqa: E402
 from app.services.nexus_osr.runtime_bridge import (  # noqa: E402
@@ -28,10 +29,18 @@ from app.services.nexus_osr.runtime_bridge import (  # noqa: E402
     build_runtime_decision_from_existing_runtime,
     evidence_from_knowledge_hits,
     evidence_from_tracking_fact,
+    execute_runtime_decision_tool_proposals,
     mark_ticket_created_action,
 )
-from app.services.nexus_osr.runtime_decision_contract import BusinessReplyType, RuntimeAction, evaluate_runtime_decision  # noqa: E402
+from app.services.nexus_osr.runtime_decision_contract import (  # noqa: E402
+    BusinessReplyType,
+    RuntimeAction,
+    RuntimeToolAction,
+    evaluate_runtime_decision,
+)
+from app.services.nexus_osr.tool_execution_facade import OSRToolExecutionMode  # noqa: E402
 from app.services.tracking_fact_schema import TrackingFactEvent, TrackingFactResult  # noqa: E402
+from app.tool_models import ToolCallLog  # noqa: E402
 from app.webchat_models import WebchatConversation, WebchatMessage  # noqa: E402
 
 
@@ -175,6 +184,38 @@ def test_bridge_builds_and_audits_existing_webchat_runtime_decision(db_session):
     assert audit.allowed is True
     assert audit.decision_json["business_reply_type"] == "tracking_status_answer"
     assert audit.case_context_json["safe_tracking_reference"] is not None
+
+
+def test_runtime_decision_tool_proposals_default_to_observe_only(db_session, monkeypatch):
+    monkeypatch.delenv("OSR_TOOL_EXECUTION_MODE", raising=False)
+    ticket, conversation, message = make_ticket_conversation_message(db_session)
+    ctx = build_case_context_from_webchat(
+        db_session,
+        ticket=ticket,
+        conversation=conversation,
+        visitor_message=message,
+        issue_type="tracking",
+    ).with_contact_method(channel="whatsapp", value="+382 67123456", source="webchat_form")
+    decision = build_runtime_decision_from_existing_runtime(
+        business_reply_type=BusinessReplyType.TOOL_ACTION_RESULT,
+        next_action=RuntimeAction.CALL_TOOL,
+        customer_reply=None,
+        case_context=ctx,
+        tool_actions=[RuntimeToolAction(tool_name="ticket.create", arguments={"reason": "follow_up"})],
+    )
+
+    result = execute_runtime_decision_tool_proposals(
+        db_session,
+        decision=decision,
+        case_context=ctx,
+        ticket=ticket,
+        conversation=conversation,
+    )
+
+    assert result.mode == OSRToolExecutionMode.OBSERVE_ONLY
+    assert result.executed is False
+    assert db_session.query(ToolCallLog).count() == 0
+    assert db_session.query(RuntimeDecisionAuditRecord).count() >= 1
 
 
 def test_ticket_created_notice_requires_marked_executed_action():
