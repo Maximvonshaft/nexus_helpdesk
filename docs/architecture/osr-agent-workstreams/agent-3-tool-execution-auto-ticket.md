@@ -38,10 +38,26 @@ Channel integrations must call `OSRToolExecutionFacade`, not `execute_controlled
 
 Execution modes:
 
-- `observe_only`: normalize proposed tool calls and return observed safe results without side effects.
+- `observe_only`: normalize proposed tool calls, write `RuntimeDecisionAuditRecord` debug/audit summary, and return observed safe results without side effects.
 - `policy_execute`: run PolicyGate, resolve `ToolExecutionPolicyRecord`, execute only allowed controlled handlers, and audit.
 - `confirmation_required`: return a safe confirmation-required result without executing.
 - `blocked`: return a safe blocked result without executing.
+
+Configuration:
+
+```bash
+OSR_TOOL_EXECUTION_MODE=observe_only   # default
+OSR_TOOL_EXECUTION_MODE=policy_execute
+OSR_TOOL_EXECUTION_MODE=blocked
+```
+
+Invalid or missing values resolve to `observe_only`.
+
+`policy_execute` is allow-listed to these tools only:
+
+- `ticket.create`
+- `handoff.request.create`
+- `timeline.event.create`
 
 ## Required first handlers
 
@@ -89,7 +105,7 @@ Do:
 - `backend/tests/test_nexus_osr_tool_execution_service.py`
 - `backend/tests/test_nexus_osr_tool_execution_facade.py`
 
-Coordinate with Agent 1 and Agent 2 if touching `webchat_ai_service.py`. Prefer a pure service first.
+Coordinate with Agent 1 and Agent 2 if touching `webchat_ai_service.py`. Prefer a pure service first until #451/#452/#453 are merged and #454 can be retargeted to `main`.
 
 ## Acceptance tests
 
@@ -105,6 +121,9 @@ Coordinate with Agent 1 and Agent 2 if touching `webchat_ai_service.py`. Prefer 
 10. Channel mismatch is blocked.
 11. Country mismatch is blocked.
 12. Facade returns safe templates only and never sends customer-visible messages directly.
+13. Default execution mode is `observe_only`.
+14. `observe_only` writes audit/debug summary but does not write executed `ToolCallLog` or perform side effects.
+15. `policy_execute` blocks tools outside the safe allow-list.
 
 ## Prompt for the agent
 
