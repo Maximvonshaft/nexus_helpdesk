@@ -25,6 +25,7 @@ from .webchat_ai_turn_service import (
     mark_ai_turn_processing,
     suppress_stale_reply_if_needed,
 )
+from .webchat_osr_audit_service import audit_completed_webchat_ai_turn
 
 settings = get_settings()
 LOGGER = logging.getLogger("nexusdesk")
@@ -97,9 +98,24 @@ def _require_operator_review(db: Session, *, conversation: WebchatConversation, 
     )
 
 
-def _complete_turn_if_present(db: Session, *, conversation: WebchatConversation, turn: WebchatAITurn | None, result: dict[str, Any]) -> None:
-    if turn is not None:
-        complete_ai_turn_with_reply(db, conversation=conversation, turn=turn, result=result)
+def _complete_turn_if_present(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, turn: WebchatAITurn | None, result: dict[str, Any]) -> None:
+    if turn is None:
+        return
+    complete_ai_turn_with_reply(db, conversation=conversation, turn=turn, result=result)
+    try:
+        audit_completed_webchat_ai_turn(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            visitor_message=visitor_message,
+            turn=turn,
+            result=result,
+        )
+    except Exception as exc:  # pragma: no cover - behavior covered by explicit monkeypatch test
+        LOGGER.warning(
+            "webchat_osr_audit_failed_non_blocking",
+            extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "visitor_message_id": visitor_message.id, "ai_turn_id": turn.id, "error_type": type(exc).__name__}},
+        )
 
 
 def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id: int, visitor_message_id: int) -> dict[str, Any]:
@@ -114,7 +130,7 @@ def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
         mark_ai_turn_bridge_calling(db, conversation=conversation, turn=turn, context_cutoff_message_id=cutoff_id)
     if _agent_reply_exists(db, conversation=conversation, visitor_message=visitor_message):
         result = {"status": "skipped", "reason": "agent_reply_already_exists", "reply_source": "existing_reply"}
-        _complete_turn_if_present(db, conversation=conversation, turn=turn, result=result)
+        _complete_turn_if_present(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, turn=turn, result=result)
         return result
 
     if suppress_stale_reply_if_needed(db, conversation=conversation, turn=turn, reason="newer_message_before_reply"):
@@ -130,14 +146,14 @@ def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
             payload_json=json.dumps({"conversation_id": conversation.id, "visitor_message_id": visitor_message.id, "ai_turn_id": turn.id if turn else None}, ensure_ascii=False),
         ))
         result = {"status": "skipped", "reason": "webchat_ai_auto_reply_off", "reply_source": "off"}
-        _complete_turn_if_present(db, conversation=conversation, turn=turn, result=result)
+        _complete_turn_if_present(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, turn=turn, result=result)
         return result
 
     if mode == "safe_ai" and _has_high_risk_intent(visitor_message.body):
         result = _require_operator_review(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, reason="webchat_safe_ai_high_risk_review", turn=turn)
-        _complete_turn_if_present(db, conversation=conversation, turn=turn, result=result)
+        _complete_turn_if_present(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, turn=turn, result=result)
         return result
 
     result = _legacy_process_webchat_ai_reply_job(db, conversation_id=conversation_id, ticket_id=ticket_id, visitor_message_id=visitor_message_id, ai_turn_id=turn.id if turn else None)
-    _complete_turn_if_present(db, conversation=conversation, turn=turn, result=result or {})
+    _complete_turn_if_present(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, turn=turn, result=result or {})
     return result
