@@ -21,6 +21,7 @@ from .runtime_decision_contract import (
     RuntimeToolAction,
     evaluate_runtime_decision,
 )
+from .tool_execution_facade import OSRToolExecutionFacade, OSRToolExecutionFacadeResult, OSRToolExecutionMode, osr_tool_execution_mode_from_env
 
 
 def build_case_context_from_webchat(
@@ -176,6 +177,43 @@ def audit_existing_webchat_runtime_decision(
         country_code=getattr(ticket, "country_code", None),
         conversation_id=conversation.id,
         ticket_id=ticket.id,
+    )
+
+
+def execute_runtime_decision_tool_proposals(
+    db: Session,
+    *,
+    decision: RuntimeDecision,
+    case_context: CaseContext,
+    ticket: Ticket | None = None,
+    conversation: WebchatConversation | None = None,
+    mode: OSRToolExecutionMode | str | None = None,
+) -> OSRToolExecutionFacadeResult:
+    """Execute RuntimeDecision tool proposals through the governed facade.
+
+    Missing mode resolves from `OSR_TOOL_EXECUTION_MODE`, which defaults to
+    observe_only. This bridge never directly calls provider-native tool calls and
+    never sends customer-visible messages.
+    """
+
+    tool_calls = [
+        {
+            "tool_name": action.tool_name,
+            "arguments": dict(action.arguments or {}),
+            "requires_confirmation": action.requires_confirmation,
+            "idempotency_key": action.result_source_id,
+        }
+        for action in decision.tool_actions
+    ]
+    return OSRToolExecutionFacade(db).execute(
+        tool_calls=tool_calls,
+        case_context=case_context,
+        channel=case_context.channel or getattr(conversation, "channel_key", None),
+        country_code=case_context.country_code or getattr(ticket, "country_code", None),
+        tenant_id=getattr(conversation, "tenant_key", None) or "default",
+        conversation=conversation,
+        ticket=ticket,
+        mode=mode if mode is not None else osr_tool_execution_mode_from_env(),
     )
 
 
