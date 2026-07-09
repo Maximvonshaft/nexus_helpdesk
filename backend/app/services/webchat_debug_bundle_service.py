@@ -235,6 +235,8 @@ def build_ai_debug_bundle(db: Session, *, turn: WebchatAITurn) -> tuple[dict[str
     visitor_message = db.get(WebchatMessage, turn.latest_visitor_message_id or turn.trigger_message_id)
     reply_message = db.get(WebchatMessage, turn.reply_message_id) if turn.reply_message_id else None
     metadata = _message_metadata(reply_message)
+    osr_audit = metadata.get("osr_audit") if isinstance(metadata.get("osr_audit"), dict) else {"mode": "audit_only", "present": False}
+    osr_audit.setdefault("mode", "audit_only")
     runtime_trace = _runtime_trace(turn, reply_message)
     rag_trace = metadata.get("rag_trace") if isinstance(metadata.get("rag_trace"), dict) else None
     trace_fields = runtime_trace.get("runtime_trace_context_fields") if isinstance(runtime_trace.get("runtime_trace_context_fields"), dict) else {}
@@ -298,6 +300,7 @@ def build_ai_debug_bundle(db: Session, *, turn: WebchatAITurn) -> tuple[dict[str
         },
         "evidence": evidence,
         "policy": policy,
+        "osr": _sanitize_value(osr_audit, key="osr"),
         "tool_calls": tool_calls,
         "knowledge": {"retrieval": _safe_str((rag_trace or {}).get("retrieval") if isinstance(rag_trace, dict) else None), "kb_hits_count": kb_hits, "top_hits": _top_knowledge_hits(rag_trace)},
         "safety": {"safety_status": safety_status or "unknown", "fact_gate_reason": _safe_str(turn.fact_gate_reason or metadata.get("fact_gate_reason"), limit=240), "unsupported_claims": runtime_trace.get("unsupported_claims") if isinstance(runtime_trace.get("unsupported_claims"), int) else 0},
