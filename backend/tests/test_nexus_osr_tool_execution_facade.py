@@ -223,12 +223,20 @@ def test_policy_execute_returns_safe_result_not_direct_send(db_session):
     assert result.safe_customer_visible_results[0]["summary_template"]
 
 
-def test_policy_execute_allows_only_nexus_safe_tools(db_session):
-    add_policy(db_session, "speedaf.workOrder.create", enabled=True, ai_auto_executable=True, risk_level="high")
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "speedaf.workOrder.create",
+        "speedaf.order.cancel.request",
+        "speedaf.order.updateAddress.request",
+    ],
+)
+def test_policy_execute_blocks_high_risk_speedaf_write_tools(db_session, tool_name):
+    add_policy(db_session, tool_name, enabled=True, ai_auto_executable=True, risk_level="high")
 
     result = execute_one(
         db_session,
-        {"tool_name": "speedaf.workOrder.create", "idempotency_key": "speedaf-policy-execute"},
+        {"tool_name": tool_name, "idempotency_key": f"{tool_name}-policy-execute"},
         ctx_with_tracking_and_contact(),
     )
 
