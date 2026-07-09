@@ -135,6 +135,7 @@ class Settings:
         self.admin_action_rate_limit_batch_max = int(os.getenv("ADMIN_ACTION_RATE_LIMIT_BATCH_MAX", "3"))
         self.admin_action_rate_limit_consume_once_max = int(os.getenv("ADMIN_ACTION_RATE_LIMIT_CONSUME_ONCE_MAX", "5"))
         self.webchat_ai_auto_reply_mode = os.getenv("WEBCHAT_AI_AUTO_REPLY_MODE", "safe_ai").strip().lower() or "safe_ai"
+        self.osr_escalation_orchestration_enabled = _env_bool("OSR_ESCALATION_ORCHESTRATION_ENABLED", False)
         self.webchat_ai_turn_debounce_seconds = float(os.getenv("WEBCHAT_AI_TURN_DEBOUNCE_SECONDS", "0.15"))
         self.webchat_ai_reconciler_enabled = _env_bool("WEBCHAT_AI_RECONCILER_ENABLED", True)
         try:
