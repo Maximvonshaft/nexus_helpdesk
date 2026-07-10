@@ -10,6 +10,8 @@ from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+from app.services.nexus_osr.runtime_decision_contract import BusinessReplyType, RuntimeAction
+
 DATASET_SCHEMA_VERSION = "nexus.osr.eval.dataset.v1"
 RESULT_SCHEMA_VERSION = "nexus.osr.eval.result.v1"
 _DATASET_JSON_SCHEMA = Path(__file__).with_name("dataset.schema.json")
@@ -19,6 +21,8 @@ _ALLOWED_APPROVAL_STATUS = {"pending", "approved", "rejected"}
 _ALLOWED_RISK_LEVELS = {"low", "medium", "high", "critical"}
 _ALLOWED_PERMISSIONS = {"public", "customer", "operator", "admin", "system"}
 _ALLOWED_CHANNELS = {"webchat", "whatsapp", "email", "voice", "admin"}
+_ALLOWED_BUSINESS_REPLY_TYPES = {item.value for item in BusinessReplyType}
+_ALLOWED_RUNTIME_ACTIONS = {item.value for item in RuntimeAction}
 _ALLOWED_UNSAFE_MARKERS = {
     "raw_prompt_marker",
     "provider_payload_marker",
@@ -53,6 +57,28 @@ _LONG_IDENTIFIER_RE = re.compile(
     r"\b(?=[A-Z0-9]{12,}\b)(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]+\b",
     re.IGNORECASE,
 )
+_ADDRESS_SUFFIX = (
+    r"street|st|road|rd|avenue|ave|boulevard|blvd|lane|ln|drive|dr|way|court|ct|"
+    r"place|pl|square|sq|highway|hwy|strasse|straße|str|gasse|platz|rue|route|"
+    r"chemin|quai|all[eé]e|via|viale|ulica|ul|bulevar|bul|put|naselje|trg"
+)
+_ADDRESS_RE = re.compile(
+    rf"""
+    (?:
+        \b\d{{1,5}}[A-Za-z]?\s+(?:[^\W\d_][\wÀ-ž.'-]*\s+){{0,5}}(?:{_ADDRESS_SUFFIX})\b
+        |
+        \b(?:[^\W\d_][\wÀ-ž.'-]*\s+){{0,5}}(?:{_ADDRESS_SUFFIX})\s+\d{{1,5}}[A-Za-z]?\b
+        |
+        \b[\wÀ-ž.'-]*(?:strasse|straße|gasse)\s+\d{{1,5}}[A-Za-z]?\b
+        |
+        \b(?:rue|chemin|quai|all[eé]e|via|viale|ulica|bulevar|boulevard|avenue|trg)
+        \s+(?:[^\W\d_][\wÀ-ž.'-]*\s+){{0,5}}\d{{1,5}}[A-Za-z]?\b
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_KEY_TOKEN_RE = re.compile(r"[a-z0-9]+")
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$")
 _COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
 _LANGUAGE_RE = re.compile(r"^[a-z]{2}(?:-[A-Z]{2})?$")
@@ -305,6 +331,10 @@ def _validate_case(case: dict[str, Any], *, index: int) -> None:
         },
         f"case_{index}_decision",
     )
+    if decision["business_reply_type"] not in _ALLOWED_BUSINESS_REPLY_TYPES:
+        raise EvalSchemaError(f"case_{index}_invalid_business_reply_type")
+    if decision["next_action"] not in _ALLOWED_RUNTIME_ACTIONS:
+        raise EvalSchemaError(f"case_{index}_invalid_next_action")
     if decision["risk_level"] != case["risk_level"]:
         raise EvalSchemaError(f"case_{index}_risk_mismatch")
     if decision["language"] != case["language"]:
@@ -390,11 +420,40 @@ def _validate_case(case: dict[str, Any], *, index: int) -> None:
         raise EvalSchemaError(f"case_{index}_boundary_invalid")
 
 
+def _key_tokens(value: str) -> set[str]:
+    split_camel = _CAMEL_BOUNDARY_RE.sub("_", value.strip())
+    return set(_KEY_TOKEN_RE.findall(split_camel.lower()))
+
+
+def _is_forbidden_key(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in _FORBIDDEN_KEYS:
+        return True
+
+    tokens = _key_tokens(value)
+    if tokens & {"email", "phone", "address", "credential", "credentials"}:
+        return True
+    if {"api", "key"} <= tokens:
+        return True
+    if "token" in tokens and tokens & {"access", "refresh", "credential", "auth"}:
+        return True
+    if "provider" in tokens and tokens & {"payload", "request", "response"}:
+        return True
+    if {"provider", "group"} <= tokens and tokens & {"id", "identifier", "key", "raw"}:
+        return True
+    if "tracking" in tokens and tokens & {"number", "id", "identifier", "code", "raw", "payload"}:
+        return True
+    if "tool" in tokens and tokens & {"result", "payload", "arguments", "args", "request", "response"}:
+        return True
+    if "raw" in tokens and tokens & {"prompt", "payload", "contact", "address"}:
+        return True
+    return False
+
+
 def _scan_forbidden_payloads(value: Any, *, path: tuple[str, ...] = ()) -> None:
     if isinstance(value, dict):
         for key, child in value.items():
-            normalized_key = str(key).strip().lower()
-            if normalized_key in _FORBIDDEN_KEYS:
+            if _is_forbidden_key(str(key)):
                 raise EvalSchemaError(f"forbidden_field:{'.'.join(path + (str(key),))}")
             _scan_forbidden_payloads(child, path=path + (str(key),))
         return
@@ -408,6 +467,8 @@ def _scan_forbidden_payloads(value: Any, *, path: tuple[str, ...] = ()) -> None:
         raise EvalSchemaError(f"forbidden_email_like_value:{'.'.join(path)}")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) and _PHONE_RE.search(value):
         raise EvalSchemaError(f"forbidden_phone_like_value:{'.'.join(path)}")
+    if _ADDRESS_RE.search(value):
+        raise EvalSchemaError(f"forbidden_address_like_value:{'.'.join(path)}")
     if _LONG_IDENTIFIER_RE.search(value) and not value.startswith("nexus.osr."):
         raise EvalSchemaError(f"forbidden_identifier_like_value:{'.'.join(path)}")
 
