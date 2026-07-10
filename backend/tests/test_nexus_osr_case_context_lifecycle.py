@@ -188,8 +188,10 @@ def test_database_rejects_identity_less_active_row(db):
         db.flush()
     db.rollback()
 
-    db.add(CaseContextRecord(tenant_id="default", status="active", is_active=False))
+    row = CaseContextRecord(tenant_id="default", status="active")
+    db.add(row)
     db.flush()
+    assert row.is_active is False
 
 
 def test_migration_uses_stable_predicates_and_duplicate_preflight():
@@ -200,7 +202,10 @@ def test_migration_uses_stable_predicates_and_duplicate_preflight():
     assert "case_context_active_identity_duplicates_detected" in migration
     assert "case_context_legacy_unique_downgrade_blocked" in migration
     assert "ck_case_context_active_requires_identity" in migration
-    assert "conversation_id IS NULL AND ticket_id IS NULL" in migration
+    assert "server_default=sa.false()" in migration
+    assert "SET is_active = false" in migration
+    assert "SET is_active = true" in migration
+    assert "conversation_id IS NOT NULL OR ticket_id IS NOT NULL" in migration
     assert "row_ids" in migration
     assert "is_active IS TRUE" in migration
     assert "now()" not in migration.lower()
