@@ -253,22 +253,20 @@ def test_flag_on_configured_chargeback_pattern_reaches_policy_without_legacy_ter
     assert rows[0].case_context_json.get("last_mcp_fact") is None
 
 
-def test_flag_on_configured_escalation_failure_fails_closed_without_agent_body(db_session, monkeypatch):
+def test_flag_on_configured_policy_read_failure_fails_closed_without_agent_body(db_session, monkeypatch):
     monkeypatch.setattr(webchat_ai_safe_service.settings, "osr_escalation_orchestration_enabled", True, raising=False)
-    add_hours(db_session, online=True)
-    add_escalation(db_session, "payment_dispute", r"\bchargeback\b", max_ai_attempts=0)
-    ticket, conversation, visitor, turn = make_webchat_case(db_session, body="I will start a chargeback", suffix="configured-failure")
+    ticket, conversation, visitor, turn = make_webchat_case(db_session, body="I will start a chargeback", suffix="configured-read-failure")
     db_session.commit()
 
-    def fail_orchestration(*_args, **_kwargs):
+    def fail_policy_read(*_args, **_kwargs):
         raise RuntimeError("policy database unavailable")
 
-    monkeypatch.setattr(webchat_ai_safe_service, "evaluate_escalation_for_case", fail_orchestration)
+    monkeypatch.setattr(webchat_ai_safe_service, "load_escalation_policies", fail_policy_read)
     result = run_hook(db_session, ticket=ticket, conversation=conversation, visitor=visitor)
     db_session.refresh(turn)
 
     assert result["status"] == "review_required"
-    assert result["reason"] == "osr_escalation_evaluation_failed"
+    assert result["reason"] == "osr_escalation_policy_evaluation_failed"
     assert turn.status == "failed"
     assert db_session.query(WebchatHandoffRequest).count() == 0
     assert db_session.query(RuntimeDecisionAuditRecord).count() == 0
