@@ -288,7 +288,7 @@ def _audit(db: Session, *, decision: RuntimeDecision, case_context: CaseContext,
         db,
         decision=decision,
         evaluation=evaluation,
-        case_context=case_context,
+        case_context=_safe_audit_case_context(case_context),
         tenant_id=getattr(conversation, "tenant_key", None) or "default",
         channel=channel,
         country_code=country_code,
@@ -296,6 +296,19 @@ def _audit(db: Session, *, decision: RuntimeDecision, case_context: CaseContext,
         ticket_id=ticket.id,
     )
     return evaluation, row.id
+
+
+def _safe_audit_case_context(case_context: CaseContext) -> CaseContext:
+    """Remove message, contact, tracking, provider, and tool payload material."""
+
+    return replace(
+        case_context,
+        safe_tracking_reference=None,
+        tracking_number_hash=None,
+        contact_methods=[],
+        customer_claim_summary=None,
+        last_mcp_fact=None,
+    )
 
 
 def _event_payload(*, action: EscalationOrchestrationAction, human: HumanAvailabilityDecision, escalation: EscalationDecision, audit_id: int | None, **extra: Any) -> dict[str, Any]:
