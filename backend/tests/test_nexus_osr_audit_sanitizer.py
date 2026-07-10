@@ -22,6 +22,16 @@ class _HostileObject:
         return "HostileObject(sk-proj-REPRSECRET123456789)"
 
 
+class _HostileEquality:
+    def __eq__(self, other):  # pragma: no cover - the sanitizer must not call this
+        raise RuntimeError("comparison must not run")
+
+
+class _ExplodingMapping(dict):
+    def items(self):  # pragma: no cover - used to prove fail-closed fallback
+        raise RuntimeError("malformed mapping")
+
+
 def _serialized(value) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
 
@@ -39,6 +49,7 @@ def test_sanitizer_redacts_hostile_nested_payload_and_preserves_safe_metadata():
         "policy_key": "tracking.current_status",
         "status": _Status.READY,
         "observed_at": datetime(2026, 7, 10, 10, 0, tzinfo=timezone.utc),
+        "checked_at": "2026-07-10T10:00:00+00:00",
         "confidence": 0.95,
         "verified": True,
         "provider_payload": {"authorization": f"Bearer {raw_secret}"},
@@ -67,6 +78,8 @@ def test_sanitizer_redacts_hostile_nested_payload_and_preserves_safe_metadata():
     assert sanitized["source_type"] == "order_query"
     assert sanitized["policy_key"] == "tracking.current_status"
     assert sanitized["status"] == "ready"
+    assert sanitized["observed_at"] == "2026-07-10T10:00:00+00:00"
+    assert sanitized["checked_at"] == "2026-07-10T10:00:00+00:00"
     assert sanitized["verified"] is True
     assert sanitized["provider_payload"]["redacted"] is True
     assert sanitized["tool_arguments"]["redacted"] is True
@@ -119,6 +132,15 @@ def test_sanitizer_redacts_sensitive_keys_and_key_names():
     assert result["tracking_number_hash"] == "abc123hash"
     assert result["safe_tracking_reference"] == "***7890"
     assert result["provider_group_id"]["redacted"] is True
+
+
+def test_sanitizer_failure_marker_does_not_call_hostile_equality_or_repr():
+    result = sanitize_audit_payload(_ExplodingMapping(hostile=_HostileEquality()))
+
+    assert result["redacted"] is True
+    assert result["category"] == "sanitizer_failure"
+    assert result["present"] is True
+    assert "comparison must not run" not in _serialized(result)
 
 
 def test_safe_audit_label_rejects_free_form_and_pii():
