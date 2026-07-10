@@ -54,6 +54,7 @@ def test_exact_nullable_identity_combinations_and_unscoped_load_rejected(db):
     unscoped = save_case_context(db, _context(), tenant_id="tenant-a")
 
     assert len({conversation_only.id, ticket_only.id, both.id, unscoped.id}) == 4
+    assert unscoped.is_active is False
     assert load_case_context(db, conversation_id=101, tenant_id="tenant-a").ticket_id is None
     assert load_case_context(db, ticket_id=201, tenant_id="tenant-a").conversation_id is None
     assert load_case_context(db, conversation_id=101, ticket_id=201, tenant_id="tenant-a").ticket_id == 201
