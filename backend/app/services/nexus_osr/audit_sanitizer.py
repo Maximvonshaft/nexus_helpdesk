@@ -162,9 +162,16 @@ def _sanitize_text(value: str, *, key: str, limits: AuditSanitizerLimits) -> str
         text = _ADDRESS_RE.sub("[redacted_address]", text)
     if normalized_key not in _SAFE_EXACT_KEYS and not normalized_key.endswith(("_hash", "_hash_present", "_present")):
         text = _TRACKING_RE.sub("[redacted_tracking]", text)
-    if len(text) > limits.max_string_length:
-        text = f"{text[:max(0, limits.max_string_length - 30)]}...[truncated:{_hash_prefix(text)}]"
-    return text
+    return _truncate_text(text, limit=limits.max_string_length)
+
+
+def _truncate_text(text: str, *, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    suffix = f"...[truncated:{_hash_prefix(text)}]"
+    if limit <= len(suffix):
+        return suffix[:limit]
+    return text[: limit - len(suffix)] + suffix
 
 
 def _safe_key(value: str, *, limits: AuditSanitizerLimits) -> str:
