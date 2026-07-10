@@ -214,7 +214,7 @@ def route_ticket_to_whatsapp_group(
 def build_safe_group_message(template: str, *, values: Mapping[str, Any] | None = None) -> str:
     """Render a bounded internal preview; this helper never sends or enqueues."""
 
-    source = str(template or "").strip()
+    source = _sanitize_text(str(template or "").strip(), limit=800)
     if not source:
         return ""
     data = dict(values or {})
@@ -226,7 +226,7 @@ def build_safe_group_message(template: str, *, values: Mapping[str, Any] | None 
         return _sanitize_text(data.get(key), limit=80)
 
     rendered = _TEMPLATE_TOKEN_RE.sub(replace, source)
-    return _sanitize_text(rendered, limit=800)
+    return rendered[:800]
 
 
 def _validate_template_context(values: Mapping[str, Any] | None) -> None:
