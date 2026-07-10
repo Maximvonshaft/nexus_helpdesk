@@ -203,7 +203,30 @@ def retrieve_knowledge(
             filters=filters,
             routing_target="tracking_truth_layer",
         )
+
+    preflight_provider = None
     if settings.knowledge_embeddings_enabled:
+        if not settings.knowledge_vector_fallback_allowed:
+            try:
+                preflight_provider = get_embedding_provider(
+                    settings.knowledge_embedding_provider,
+                    dim=settings.knowledge_embedding_dim,
+                    model=settings.knowledge_embedding_model,
+                    base_url=settings.knowledge_embedding_base_url,
+                    api_key=settings.knowledge_embedding_api_key,
+                    api_key_file=settings.knowledge_embedding_api_key_file,
+                    timeout_seconds=settings.knowledge_embedding_timeout_seconds,
+                )
+            except Exception as exc:
+                return _vector_fail_closed_result(
+                    normalized=normalized,
+                    terms=terms,
+                    filters=filters,
+                    source_counts=_empty_source_counts(),
+                    settings=settings,
+                    vector_degraded=type(exc).__name__,
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                )
         try:
             validate_embedding_dimension(settings.knowledge_embedding_dim)
         except KnowledgeVectorContractError as exc:
@@ -230,14 +253,8 @@ def retrieve_knowledge(
         language=language,
     )
     candidate_hits: dict[tuple[int, int, int], KnowledgeRuntimeHit] = {}
-    source_counts = {
-        "structured_exact": 0,
-        "fts": 0,
-        "postgres_fts": 0,
-        "vector": 0,
-        "pgvector": 0,
-        "legacy_candidate": len(candidate_rows),
-    }
+    source_counts = _empty_source_counts()
+    source_counts["legacy_candidate"] = len(candidate_rows)
     vector_degraded: str | None = None
 
     for chunk, item in candidate_rows:
@@ -260,7 +277,7 @@ def retrieve_knowledge(
 
     if settings.knowledge_embeddings_enabled:
         try:
-            provider = get_embedding_provider(
+            provider = preflight_provider or get_embedding_provider(
                 settings.knowledge_embedding_provider,
                 dim=settings.knowledge_embedding_dim,
                 model=settings.knowledge_embedding_model,
@@ -407,6 +424,17 @@ def retrieve_knowledge(
         retrieval_methods=methods,
         latency_ms=latency_ms,
     )
+
+
+def _empty_source_counts() -> dict[str, int]:
+    return {
+        "structured_exact": 0,
+        "fts": 0,
+        "postgres_fts": 0,
+        "vector": 0,
+        "pgvector": 0,
+        "legacy_candidate": 0,
+    }
 
 
 def _candidate_rows(
@@ -1314,15 +1342,7 @@ def _blocked_result(
         "routing_target": routing_target,
         "filters": filters,
         "query": {"normalized": normalized, "terms": terms},
-        "candidates_by_source": source_counts
-        or {
-            "structured_exact": 0,
-            "fts": 0,
-            "postgres_fts": 0,
-            "vector": 0,
-            "pgvector": 0,
-            "legacy_candidate": 0,
-        },
+        "candidates_by_source": source_counts or _empty_source_counts(),
         "evidence_selected": [],
         "retrieval_methods": [],
         "no_answer_reason": reason,
