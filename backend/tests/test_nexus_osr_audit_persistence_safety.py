@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+import json
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app import models as _models  # noqa: F401
+from app import models_osr as _models_osr  # noqa: F401
+from app import webchat_models as _webchat_models  # noqa: F401
+from app.db import Base
+from app.models_osr import RuntimeDecisionAuditRecord
+from app.services.nexus_osr.case_context import CaseContext, ContactMethod
+from app.services.nexus_osr.persistence import audit_runtime_decision
+from app.services.nexus_osr.runtime_decision_contract import (
+    BusinessReplyType,
+    EvidenceSource,
+    EvidenceType,
+    RuntimeAction,
+    RuntimeDecision,
+    RuntimeDecisionEvaluation,
+    RuntimeDecisionViolation,
+    RuntimeToolAction,
+)
+
+
+def _serialized(value) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def test_final_audit_write_sanitizes_every_json_field(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'audit-safety.db'}", future=True)
+    Base.metadata.create_all(bind=engine)
+    SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+    db = SessionLocal()
+
+    raw_tracking = "CH1234567890"
+    raw_phone = "+382 67123456"
+    raw_email = "customer@example.test"
+    raw_secret = "sk-proj-PERSISTSECRET123456789"
+    raw_group = "120363999999999999@g.us"
+    raw_address = "221 Baker Street"
+
+    decision = RuntimeDecision(
+        business_reply_type=BusinessReplyType.TRACKING_STATUS_ANSWER,
+        next_action=RuntimeAction.REPLY,
+        risk_level="high",
+        evidence_sources=[EvidenceSource(
+            evidence_type=EvidenceType.MCP_CURRENT_STATUS,
+            source_id=raw_tracking,
+            label=f"Provider result for {raw_email}",
+            summary={
+                "authority": "mcp",
+                "source_type": "order_query",
+                "status": "out_for_delivery",
+                "tracking_number": raw_tracking,
+                "provider_payload": {"authorization": f"Bearer {raw_secret}"},
+                "provider_group_id": raw_group,
+            },
+            confidence=0.99,
+            verified=True,
+            current_status=True,
+            created_at="2026-07-10T10:00:00+00:00",
+        )],
+        tool_actions=[RuntimeToolAction(
+            tool_name="ticket.create",
+            arguments={
+                "tracking_number": raw_tracking,
+                "phone": raw_phone,
+                "email": raw_email,
+                "address": raw_address,
+                "token": raw_secret,
+            },
+            requires_confirmation=True,
+            executed=False,
+            result_source_id=raw_tracking,
+        )],
+        audit_reasons=[f"Contact {raw_email} at {raw_phone} about {raw_tracking}"],
+    )
+    evaluation = RuntimeDecisionEvaluation(
+        allowed=False,
+        violations=[RuntimeDecisionViolation(
+            code="operator_review_required",
+            message=f"Do not expose {raw_secret} for {raw_tracking}",
+            severity="high",
+        )],
+        warnings=[f"Address {raw_address}; contact {raw_email}"],
+    )
+    context = CaseContext(
+        conversation_id=101,
+        ticket_id=201,
+        channel="webchat",
+        country_code="ME",
+        issue_type="tracking",
+        customer_claim_summary=f"Parcel {raw_tracking} for {raw_email}",
+        contact_methods=[ContactMethod(channel="whatsapp", value_redacted=raw_phone, source="customer_form")],
+        last_mcp_fact={"status": "out_for_delivery", "provider_payload": {"api_key": raw_secret}, "address": raw_address},
+        agent_handover_summary=f"Call {raw_phone} and route to {raw_group}",
+    )
+
+    try:
+        row = audit_runtime_decision(
+            db,
+            decision=decision,
+            evaluation=evaluation,
+            case_context=context,
+            tenant_id="tenant-a",
+            channel="webchat",
+            country_code="ME",
+            conversation_id=101,
+            ticket_id=201,
+        )
+        db.commit()
+        stored = db.get(RuntimeDecisionAuditRecord, row.id)
+
+        text = _serialized({
+            "violations": stored.violations_json,
+            "warnings": stored.warnings_json,
+            "decision": stored.decision_json,
+            "case_context": stored.case_context_json,
+        })
+        for raw in (raw_tracking, raw_phone, raw_email, raw_secret, raw_group, raw_address):
+            assert raw not in text
+
+        assert stored.business_reply_type == "tracking_status_answer"
+        assert stored.next_action == "reply"
+        assert stored.risk_level == "high"
+        assert stored.decision_json["evidence_sources"][0]["evidence_type"] == "mcp.current_status"
+        assert stored.decision_json["evidence_sources"][0]["summary"]["authority"] == "mcp"
+        assert stored.decision_json["evidence_sources"][0]["verified"] is True
+        assert stored.decision_json["tool_actions"][0]["tool_name"] == "ticket.create"
+        assert stored.decision_json["tool_actions"][0]["arguments"]["redacted"] is True
+        assert stored.case_context_json["customer_claim_summary"]["redacted"] is True
+    finally:
+        db.close()
+        engine.dispose()
