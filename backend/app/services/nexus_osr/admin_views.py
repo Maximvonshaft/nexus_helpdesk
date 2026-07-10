@@ -100,6 +100,20 @@ def build_osr_debug_snapshot(
         "schema": OSR_DEBUG_SCHEMA,
         "tenant_id": tenant_id,
         "mode": "audit_only",
+        # Compatibility fields retained from the existing WebChat osr_audit metadata
+        # contract while the richer unified snapshot is adopted.
+        "audit_id": audit.id if audit else None,
+        "allowed": bool(audit.allowed) if audit else None,
+        "business_reply_type": safe_json(audit.business_reply_type if audit else None, key="business_reply_type"),
+        "next_action": safe_json(audit.next_action if audit else None, key="next_action"),
+        "risk_level": safe_json(audit.risk_level if audit else None, key="risk_level"),
+        "violation_codes": [
+            safe_json(item.get("code"), key="violation_code")
+            for item in (audit.violations_json or [])
+            if isinstance(item, dict) and item.get("code")
+        ][:20] if audit else [],
+        "warning_count": len(audit.warnings_json or []) if audit else 0,
+        "case_context": case_snapshot,
         "reply_metadata_audit": {
             "osr_audit_present": audit is not None,
             "case_context_present": context is not None,
