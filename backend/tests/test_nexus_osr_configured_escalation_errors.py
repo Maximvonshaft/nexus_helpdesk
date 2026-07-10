@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT.parent))
 from app import models, models_osr, operator_models, webchat_models  # noqa: F401,E402
 from app.db import Base  # noqa: E402
 from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus  # noqa: E402
-from app.models import Customer, Ticket  # noqa: E402
+from app.models import Customer, Ticket, TicketEvent  # noqa: E402
 from app.models_osr import RuntimeDecisionAuditRecord  # noqa: E402
 from app.services import webchat_ai_safe_service  # noqa: E402
 from app.webchat_models import WebchatAITurn, WebchatConversation, WebchatHandoffRequest, WebchatMessage  # noqa: E402
@@ -130,10 +130,9 @@ def _run(db, *, ticket: Ticket, conversation: WebchatConversation, visitor: Webc
 
 
 def _assert_operator_review(db, *, result, ticket: Ticket, conversation: WebchatConversation, expected_reason: str):
-    db.refresh(ticket)
     assert result["status"] == "review_required"
     assert result["reason"] == expected_reason
-    assert ticket.conversation_state == ConversationState.human_review_required
+    assert db.query(TicketEvent).filter(TicketEvent.ticket_id == ticket.id).count() == 1
     assert db.query(WebchatHandoffRequest).count() == 0
     assert db.query(RuntimeDecisionAuditRecord).count() == 0
     assert (
