@@ -42,7 +42,7 @@ _SENSITIVE_KEY_RE = re.compile(
     r"(?:^|_)(?:raw|prompt|system_prompt|developer_prompt|user_prompt|customer_reply|customer_claim|"
     r"claim_summary|message|user_message|assistant_message|message_body|body_text|input_text|output_text|"
     r"content|transcript|handover_summary|provider_payload|provider_request|provider_response|provider_body|"
-    r"tool_args|tool_arguments|tool_result|tool_results|tracking_number|phone|email|postal_address|street_address|"
+    r"tool_args|tool_arguments|arguments|tool_result|tool_results|tracking_number|phone|email|postal_address|street_address|"
     r"address|credential|credentials|api_key|authorization|bearer|cookie|session_secret|token|password|secret|"
     r"private_key|provider_group_id|destination_group_id|fallback_group_id)(?:$|_)",
     re.I,
