@@ -1,6 +1,6 @@
 # Nexus OSR Annual Plan 2026
 
-Current authority baseline: `main` at `990aa91e0fe8bdb8f3e261f074e384172df478dc` (`docs(osr): restore roadmap control files (#462)`).
+Current authority baseline: `main` at `aed11916884bcf7ef0b2f7703589b6069c7a9a10` (`feat(osr): recover WhatsApp operations routing on current main (#464)`).
 
 This roadmap is the current-main control file for Nexus OSR delivery. It supersedes stale prompt assumptions and uses PR #450 only as strategic source material because #450 was authored against the older `ec0af3fd8e853b447f47f901a69d036cae3d86e7` baseline.
 
@@ -33,11 +33,11 @@ Evidence date: 2026-07-10, from current main, control Issue #461, Work Orders #4
 | --- | --- | --- |
 | WebChat runtime and governed customer-visible boundary | Main contains WebChat AI runtime, Runtime Context Guard, TrackingFactResult, KnowledgeItem/KnowledgeChunk, CustomerVisibleMessageService, Tool Registry, Policy Gate, Handoff Service, support memory ledger, and WebChat QA observability foundations. | Preserve boundaries; no customer-visible bypasses. |
 | Runtime audit integration | PR #452 merged into main as `6261ecf0d81ccfef3a8790a4c7ca1d9f163e69f8`. | Treat as baseline. |
-| Human hours and escalation orchestration | PR #453 merged into main as `57b1f89351df04b00e95b57db5aa1fe00aaacc6a`, default-off and using existing handoff/auto-ticket services. | Address post-merge P2 findings through Work Order #459 when unblocked. |
-| Governed tool execution | PR #454 merged into main as `f5f4cd13d87a7766ca5fd5b43751979a326825c8` after Admin gate. Validated head `0b7bf941d460a364b41c8078b79d128b8e68ed87` had required checks green. | Treat as M3 baseline. Do not reopen unless a verified regression appears. |
-| WhatsApp operations routing | PR #464 is the current-main recovery candidate for the #455 workstream. Original PR #455 remains open/draft on old base at `200069b02d4d086e76382a9a40257b682abf940f`. PR #464 head `40437b21af12eda892584617b9a131e436ca55d6` is aligned to main `990aa91e0fe8bdb8f3e261f074e384172df478dc`, compares `ahead 3 / behind 0`, and has the observed required workflows green. | Admin should decide whether PR #464 supersedes original PR #455 and, if accepted, proceed through the Admin release gate without deployment, tag, or customer outbound. |
-| Admin debug and Control Tower surfaces | PR #456 remains draft/queued and behind current main. A preflight finding exists around raw provider group ID exposure on create/get/update detail surfaces. | Keep last until #455 lands, then rebase and fix or explicitly authorize runtime-admin provider group ID detail exposure. |
-| Roadmap control files | PR #462 merged as `990aa91e0fe8bdb8f3e261f074e384172df478dc`, restoring this file and `docs/roadmap/nexus-osr-plan.yaml` on main. | Treat roadmap files as the current control baseline; keep them aligned with merged main facts. |
+| Human hours and escalation orchestration | PR #453 merged into main as `57b1f89351df04b00e95b57db5aa1fe00aaacc6a`, default-off and using existing handoff/auto-ticket services. | Address post-merge P2 findings through Work Order #459 when non-conflicting. |
+| Governed tool execution | PR #454 merged into main as `f5f4cd13d87a7766ca5fd5b43751979a326825c8` after Admin gate. | Treat as M3 baseline. Do not reopen unless a verified regression appears. |
+| WhatsApp operations routing | PR #464 merged into main as `aed11916884bcf7ef0b2f7703589b6069c7a9a10`, from validated head `40437b21af12eda892584617b9a131e436ca55d6`. It adds the #455 recovery scope with no direct sidecar call and no customer-visible behavior change. | Treat as M6 baseline. Original PR #455 should be treated as superseded unless Admin explicitly decides otherwise. |
+| Admin debug and Control Tower surfaces | PR #456 remains draft/queued last, old-base, mergeable=false. Known blocker: raw provider group ID detail-surface decision/fix. | Next backend workstream: rebase/refresh #456 onto `aed11916884...`, resolve admin/debug conflicts, fix or explicitly authorize provider group ID detail exposure, then run focused admin/debug/control-tower tests. |
+| Roadmap control files | PR #462 restored roadmap files; PR #465 is the active docs-only reconciliation branch after #464 merge. | Admin can review/merge #465 after confirming facts remain current. |
 
 ## 2026 capability map
 
@@ -47,26 +47,11 @@ Month labels are sequencing hints, not rigid calendar commitments. Current SHA, 
 
 Target outcome: all AI decisions are represented as governed runtime state, not ad hoc text generation.
 
-Acceptance focus:
-
-- No C-end long-term memory introduced.
-- Case Context remains short-lived and case-scoped.
-- MCP facts remain higher authority than customer claims, previous AI replies, and knowledge hits.
-- Customer-visible messages remain governed.
-
 Current status: runtime audit and human-hours/escalation foundations have landed on main. Post-merge P2 escalation findings remain under Work Order #459.
 
 ### M2 — Handoff, auto-ticket, and offline closure path
 
 Target outcome: human handoff and offline auto-ticket closure work as production-safe runtime decisions.
-
-Acceptance focus:
-
-- Human online routes to existing handoff.
-- Human offline creates tickets when escalation requires it.
-- No Agent path generates customer-visible body text outside the governed boundary.
-- Reused escalation tickets remain visible for human/operator review.
-- Configured escalation policies can trigger even when terms are not in legacy hard-coded filters.
 
 Current status: main includes default-off escalation orchestration; Work Order #459 remains the follow-up holder.
 
@@ -74,26 +59,11 @@ Current status: main includes default-off escalation orchestration; Work Order #
 
 Target outcome: OSR tool proposals can become policy-controlled operational actions without bypassing audit, idempotency, or customer-visible governance.
 
-Acceptance focus:
-
-- `OSR_TOOL_EXECUTION_MODE` remains safe by default, currently observe-only unless explicitly configured.
-- Policy execute allow-list remains limited to `ticket.create`, `handoff.request.create`, and `timeline.event.create`.
-- High-risk Speedaf write tools stay blocked by default.
-- Safe customer-visible results are never direct sends.
-- Raw tool arguments do not leak to audit/debug/customer surfaces.
-
 Current status: PR #454 is merged and is now the mainline M3 baseline.
 
 ### M4 — MCP truth contract and tracking authority
 
 Target outcome: tracking/status answers clearly separate current status facts from history enrichment.
-
-Acceptance focus:
-
-- `speedaf.order.query` can satisfy current status when trusted.
-- `speedaf.express.track.query` can enrich history but cannot override current status.
-- Customer claims about delivery/non-delivery remain claims until verified.
-- Previous AI replies are not evidence.
 
 Current status: PR #395 and PR #446 are historical/reference material; do not revive or merge without current-main Work Order and conflict review.
 
@@ -101,97 +71,49 @@ Current status: PR #395 and PR #446 are historical/reference material; do not re
 
 Target outcome: knowledge answers are scoped, customer-visible, and safe for policy/service commitments.
 
-Acceptance focus:
-
-- Knowledge never answers live tracking status.
-- Country/channel/audience filters are enforced.
-- Customer-visible templates are separated from internal notes.
-- Unsupported or stale answers become knowledge gap tasks.
+Acceptance focus: knowledge never answers live tracking status; country/channel/audience filters are enforced; unsupported or stale answers become knowledge gap tasks.
 
 ### M6 — WhatsApp operations routing
 
 Target outcome: OSR-created tickets/cases can route to the correct operations group through configuration without direct sidecar coupling.
 
-Acceptance focus:
-
-- No hard-coded countries or groups.
-- No send without enabled routing rule.
-- Provider group IDs are not exposed in general surfaces.
-- Customer-visible behavior remains unchanged.
-- No WhatsApp sidecar change unless separately approved.
-
-Current status: PR #464 head `40437b21af12eda892584617b9a131e436ca55d6` is current-main aligned and validated as a `READY_FOR_ADMIN_GATE_CANDIDATE`; Admin decision is next.
+Current status: landed through PR #464. Main now includes `backend/app/services/nexus_osr/whatsapp_routing_service.py`, focused routing tests, and the Agent 4 architecture note.
 
 ### M7 — Debug, eval, and regression gate
 
 Target outcome: AI behavior is inspectable, replayable, and continuously regression-tested.
 
-Acceptance focus:
-
-- Tracking without current MCP fact must not answer live status.
-- Complaint/compensation escalates according to policy.
-- Human offline creates a ticket when required.
-- Tool disabled blocks execution.
-- Customer-visible replies contain no raw internal payloads.
+Current status: queued; should align with #456 admin/debug/control-tower work and later eval hardening.
 
 ### M8 — Admin policy APIs and Control Tower
 
 Target outcome: operators can manage OSR safely through admin APIs and read-only observability surfaces.
 
-Acceptance focus:
-
-- RuntimeDecisionAudit remains read-only through admin APIs.
-- Sensitive fields remain redacted.
-- Admin/debug/control tower work merges after runtime foundations.
-
-Current status: PR #456 is draft/queued last and has a known provider group ID detail-surface decision/fix pending.
+Current status: PR #456 is the next backend/admin dependency after #464. It must be refreshed onto current main and boundary-reviewed before any Admin gate.
 
 ### M9 — Operations workspace and queues
 
 Target outcome: human operators can close cases with evidence, SLA context, and safe action suggestions.
 
-Acceptance focus:
-
-- Operator-visible state reflects high-risk and offline escalations.
-- Actions are auditable and permission-gated.
-- No raw sensitive data leaks in shared surfaces.
-
 ### M10 — Operations analytics and Control Tower maturity
 
 Target outcome: operational leaders can measure AI closure, handoff, tickets, tool execution, routing, and knowledge quality.
-
-Acceptance focus:
-
-- Metrics are sourced from durable audit/read-model records.
-- Dashboards do not expose raw PII, tool payloads, provider payloads, or provider group IDs.
 
 ### M11 — Internal SOP SkillBank
 
 Target outcome: internal-only skills assist operators without becoming uncontrolled customer-facing behavior.
 
-Acceptance focus:
-
-- Skills do not bypass ToolExecutionPolicy or customer-visible message governance.
-- External-facing outputs still pass governed outbound boundaries.
-
 ### M12 — Production hardening and readiness
 
 Target outcome: OSR is production-ready for multi-country operations with rollback, privacy, load, and regression discipline.
 
-Acceptance focus:
-
-- Full CI and relevant integration/migration checks are green for exact release head.
-- Rollback implications are documented.
-- No unresolved safety/governance review blocker remains.
-- No production deployment is performed from autonomous development workflows.
-
 ## Active dependency order
 
-1. Treat PR #454 as merged M3 baseline and PR #462 as merged roadmap-control baseline on main `990aa91e0fe8bdb8f3e261f074e384172df478dc`.
-2. Let Admin decide whether PR #464 at `40437b21af12eda892584617b9a131e436ca55d6` supersedes original PR #455 after exact-head validation.
-3. If accepted, move PR #464 through the Admin release gate; ordinary agents should not mark Ready, merge, deploy, tag, or rerun full CI.
-4. Keep PR #456 queued until the WhatsApp routing workstream lands; then rebase and fix/authorize provider group ID detail exposure.
-5. Address Work Order #459 escalation follow-up on a current-main branch when it does not conflict with the active runtime PR.
+1. Treat PR #454 as merged M3 baseline, PR #462 as merged roadmap-control baseline, and PR #464 as merged M6 WhatsApp routing baseline on main `aed11916884bcf7ef0b2f7703589b6069c7a9a10`.
+2. Refresh/rebase PR #456 onto current main, resolve admin/debug conflicts, and fix or explicitly authorize provider group ID detail exposure.
+3. Run focused #456 checks before any Admin gate: `backend/tests/test_nexus_osr_admin_api.py`, plus persistence/runtime bridge/auto-ticket coverage as relevant.
+4. Address Work Order #459 escalation follow-up on a current-main branch when it does not conflict with #456.
+5. Keep roadmap files aligned through #465 or a successor docs-only reconciliation PR.
 6. Continue M4/M5/M7+ only through current-main Work Orders and exact-head conflict checks.
 
 ## Swarm execution policy
@@ -205,7 +127,8 @@ Acceptance focus:
 
 ## Stale PR guidance
 
-- PR #450: strategic annual-plan source, but stale against current main. Supersede with the restored `docs/roadmap/*` files once reviewed.
-- PR #455: original WhatsApp routing PR on an old branch; PR #464 is the current recovery candidate until Admin decides supersession.
-- PR #456: keep queued last; admin/debug surfaces depend on stable runtime foundations and provider-group-ID redaction decision.
+- PR #450: strategic annual-plan source only; superseded by restored roadmap control files.
+- PR #455: original WhatsApp routing PR on an old branch; superseded by merged PR #464 unless Admin explicitly reopens that path.
+- PR #456: current next backend/admin dependency; must be refreshed and safety-reviewed last.
+- PR #465: docs-only roadmap reconciliation branch; should reflect #464 merged and #456 next.
 - Older WhatsApp/native, tracking, and knowledge PRs must not be revived without current-main Work Order, exact-head review, and conflict check.
