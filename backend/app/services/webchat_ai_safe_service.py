@@ -235,8 +235,8 @@ def _has_configured_escalation_intent(
         return False
 
 
-def _safe_escalation_payload(result: EscalationOrchestrationResult, *, webchat_osr_audit_summary: dict[str, Any] | None = None) -> dict[str, Any]:
-    payload = {
+def _safe_escalation_payload(result: EscalationOrchestrationResult) -> dict[str, Any]:
+    return {
         "action": _status_value(result.action),
         "audit_id": result.audit_id,
         "handoff_request_id": result.handoff_request.id if result.handoff_request else None,
@@ -249,14 +249,10 @@ def _safe_escalation_payload(result: EscalationOrchestrationResult, *, webchat_o
         "queue_key": result.human_availability.queue_key,
         "queue_resolution": result.queue_resolution.as_safe_dict() if result.queue_resolution else None,
     }
-    if webchat_osr_audit_summary:
-        payload["webchat_runtime_audit_id"] = webchat_osr_audit_summary.get("audit_id")
-        payload["webchat_runtime_audit_mode"] = webchat_osr_audit_summary.get("mode")
-    return payload
 
 
-def _result_from_osr_escalation(result: EscalationOrchestrationResult, *, webchat_osr_audit_summary: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    payload = _safe_escalation_payload(result, webchat_osr_audit_summary=webchat_osr_audit_summary)
+def _result_from_osr_escalation(result: EscalationOrchestrationResult) -> dict[str, Any] | None:
+    payload = _safe_escalation_payload(result)
     if result.action == EscalationOrchestrationAction.CONTINUE_AI:
         if not result.escalation.matched:
             return None
@@ -293,7 +289,6 @@ def _maybe_orchestrate_osr_escalation(
     ticket: Ticket,
     visitor_message: WebchatMessage,
     turn: WebchatAITurn | None,
-    webchat_osr_audit_summary: dict[str, Any] | None = None,
     ai_attempt_count: int | None = None,
     configured_escalation_intent: bool | None = None,
 ) -> dict[str, Any] | None:
@@ -337,16 +332,7 @@ def _maybe_orchestrate_osr_escalation(
             extra={"event_payload": {"conversation_id": conversation.id, "ticket_id": ticket.id, "visitor_message_id": visitor_message.id, "ai_turn_id": turn.id if turn else None, "error_type": type(exc).__name__}},
         )
         return None
-    return _result_from_osr_escalation(result, webchat_osr_audit_summary=webchat_osr_audit_summary)
-
-
-def _safe_ai_high_risk_review_result() -> dict[str, Any]:
-    return {
-        "status": "review_required",
-        "reason": "webchat_safe_ai_high_risk_review",
-        "reply_source": "webchat_safe_ai_high_risk_review",
-        "fallback_reason": "webchat_safe_ai_high_risk_review",
-    }
+    return _result_from_osr_escalation(result)
 
 
 def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id: int, visitor_message_id: int) -> dict[str, Any]:
@@ -395,25 +381,14 @@ def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
         high_risk_intent or osr_customer_wait_intent or configured_escalation_intent
     )
     if mode == "safe_ai" and (high_risk_intent or osr_escalation_intent):
-        preview_result = _safe_ai_high_risk_review_result()
         osr_escalation_result = None
-        webchat_osr_audit_summary = None
         if osr_escalation_intent:
-            webchat_osr_audit_summary = _audit_webchat_osr_turn_non_blocking(
-                db,
-                conversation=conversation,
-                ticket=ticket,
-                visitor_message=visitor_message,
-                turn=turn,
-                result=preview_result,
-            )
             osr_escalation_result = _maybe_orchestrate_osr_escalation(
                 db,
                 conversation=conversation,
                 ticket=ticket,
                 visitor_message=visitor_message,
                 turn=turn,
-                webchat_osr_audit_summary=webchat_osr_audit_summary,
                 ai_attempt_count=osr_ai_attempt_count,
                 configured_escalation_intent=configured_escalation_intent,
             )
@@ -428,9 +403,29 @@ def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
                     visitor_message=visitor_message,
                     turn=turn,
                     result=osr_escalation_result,
-                    audit_after_complete=webchat_osr_audit_summary is None,
+                    audit_after_complete=False,
                 )
             return osr_escalation_result
+
+        if osr_escalation_intent and osr_escalation_result is None:
+            result = _require_operator_review(
+                db,
+                conversation=conversation,
+                ticket=ticket,
+                visitor_message=visitor_message,
+                reason="osr_escalation_evaluation_failed",
+                turn=turn,
+            )
+            _complete_turn_if_present(
+                db,
+                conversation=conversation,
+                ticket=ticket,
+                visitor_message=visitor_message,
+                turn=turn,
+                result=result,
+                audit_after_complete=False,
+            )
+            return result
 
         if high_risk_intent and not osr_continue_ai:
             result = _require_operator_review(db, conversation=conversation, ticket=ticket, visitor_message=visitor_message, reason="webchat_safe_ai_high_risk_review", turn=turn)
@@ -441,7 +436,7 @@ def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
                 visitor_message=visitor_message,
                 turn=turn,
                 result=result,
-                audit_after_complete=webchat_osr_audit_summary is None,
+                audit_after_complete=not osr_enabled,
             )
             return result
 
