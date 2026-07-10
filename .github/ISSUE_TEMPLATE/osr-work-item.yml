@@ -7,14 +7,56 @@ body:
   - type: markdown
     attributes:
       value: |
-        A Work Item owns the required outcome and acceptance boundary. The linked Pull Request owns implementation facts and test evidence.
+        A Work Item is the lifecycle and ownership source of truth. The Issue assignee is the owner. Keep Lifecycle, Current PR, Blocked by, and Supersedes updated as work changes. The linked Pull Request owns implementation facts and exact-head evidence.
 
   - type: input
     id: parent_epic
     attributes:
       label: Parent Epic
-      description: Link exactly one M1-M12 Epic Issue.
+      description: Link exactly one M1-M12 Epic Issue, or write governance/release integration when applicable.
       placeholder: "#491"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: lifecycle
+    attributes:
+      label: Lifecycle
+      description: Initial Work Item lifecycle. Update the Issue body when this changes.
+      options:
+        - Backlog
+        - Ready
+        - In Progress
+        - In Review
+        - Release Gate
+        - Blocked
+    validations:
+      required: true
+
+  - type: input
+    id: current_pr
+    attributes:
+      label: Current PR
+      description: Link the single current implementation Pull Request, or write none when no PR exists.
+      placeholder: "none"
+    validations:
+      required: true
+
+  - type: input
+    id: blocked_by
+    attributes:
+      label: Blocked by
+      description: Link every blocking Issue, or write none.
+      placeholder: "none or #484"
+    validations:
+      required: true
+
+  - type: input
+    id: supersedes
+    attributes:
+      label: Supersedes
+      description: Link superseded Issues or Pull Requests, or write none.
+      placeholder: "none"
     validations:
       required: true
 
@@ -115,8 +157,8 @@ body:
   - type: textarea
     id: dependencies
     attributes:
-      label: Dependencies
-      description: Link blocked-by and blocking Issues and define merge order.
+      label: Dependency and merge order
+      description: Link blocked-by and blocking Issues and define merge order. This must agree with the Blocked by field.
     validations:
       required: true
 
@@ -132,6 +174,8 @@ body:
         - label: No other active Work Item or Pull Request owns the same scope.
           required: true
         - label: One current implementation Pull Request will be used.
+          required: true
+        - label: The Issue assignee will be treated as the current owner.
           required: true
         - label: Green CI alone will not be treated as production proof.
           required: true
