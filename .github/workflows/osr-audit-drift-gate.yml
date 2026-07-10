@@ -83,7 +83,7 @@ jobs:
       - name: Run final persistence boundary tests
         run: pytest -q backend/tests/test_nexus_osr_audit_persistence_safety.py
 
-      - name: Run model registration tests
+      - name: Run model registration and non-PostgreSQL guard tests
         run: pytest -q backend/tests/test_osr_model_registration.py
 
       - name: Run persistence and runtime compatibility
@@ -91,15 +91,6 @@ jobs:
 
       - name: Run Admin audit redaction compatibility
         run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_runtime_audit_is_strictly_read_only_and_redacted backend/tests/test_nexus_osr_admin_api.py::test_debug_snapshot_has_unified_contract_and_no_raw_payloads
-
-      - name: Verify drift gate is PostgreSQL-only
-        run: |
-          set +e
-          output=$(cd backend && python scripts/check_model_migration_drift.py 2>&1)
-          status=$?
-          set -e
-          test "$status" -eq 2
-          printf '%s' "$output" | grep -F "must run against PostgreSQL"
 
       - name: Check diff whitespace
         run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
