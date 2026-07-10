@@ -157,9 +157,6 @@ def route_ticket_to_whatsapp_group(
         country_code,
         issue_type,
         channel_key,
-        rule.id,
-        destination_group_key,
-        destination_group_hash,
     )
     enqueue = enqueue_operations_dispatch(
         db,
@@ -175,8 +172,8 @@ def route_ticket_to_whatsapp_group(
     record = enqueue.record
     routed = record.status in _ACTIVE_OR_DELIVERED_STATUSES
     next_context = case_context
-    if routed and case_context.routed_group_key != destination_group_key:
-        next_context = case_context.mark_routed(destination_group_key)
+    if routed and case_context.routed_group_key != record.destination_group_key:
+        next_context = case_context.mark_routed(record.destination_group_key)
         save_case_context(db, next_context, tenant_id=tenant_key)
 
     event_id: int | None = None
