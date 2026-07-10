@@ -4,14 +4,14 @@ from datetime import datetime
 
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, object_session
+from sqlalchemy.orm import Query, Session, object_session
 
 from ...models_osr import CaseContextRecord
 from ...utils.time import ensure_utc, utc_now
 from ...webchat_models import WebchatConversation
 from .case_context import CaseContext, CaseContextStatus, ContactMethod
 
-_TERMINAL_CASE_CONTEXT_STATUSES = {
+_TERMINAL_STATUSES = {
     CaseContextStatus.CLOSED.value,
     CaseContextStatus.ARCHIVED.value,
 }
@@ -26,12 +26,12 @@ def load_case_context(
     include_inactive: bool = False,
     now: datetime | None = None,
 ) -> CaseContext | None:
-    """Load one exact, tenant-scoped Case Context identity.
+    """Load one tenant-scoped context without silently crossing identities.
 
-    The default runtime path is active-only and refuses an unscoped/global
-    lookup. Existing internal callers may omit ``tenant_id`` only when it can be
-    derived from the globally unique WebChat conversation or from exactly one
-    persisted tenant for the globally unique ticket. Ambiguity fails closed.
+    A single-key selector first resolves its exact single-key identity. For
+    backwards-compatible internal reads it may then resolve one unique active
+    two-key row. Multiple fallback candidates fail closed instead of choosing a
+    random case. Saving always remains exact-combination only.
     """
 
     conversation = _safe_identity(conversation_id)
@@ -39,22 +39,48 @@ def load_case_context(
     if conversation is None and ticket is None:
         raise ValueError("case_context_identity_required")
 
-    current = ensure_utc(now) or utc_now()
-    query = _case_context_identity_query(
+    tenant = _resolve_tenant(
         db,
-        tenant_id=_resolve_tenant(db, tenant_id=tenant_id, conversation_id=conversation, ticket_id=ticket),
+        tenant_id=tenant_id,
         conversation_id=conversation,
         ticket_id=ticket,
     )
-    if not include_inactive:
-        query = (
-            query.filter(CaseContextRecord.is_active.is_(True))
-            .filter(CaseContextRecord.closed_at.is_(None))
-            .filter(~CaseContextRecord.status.in_(_TERMINAL_CASE_CONTEXT_STATUSES))
-            .filter(or_(CaseContextRecord.expires_at.is_(None), CaseContextRecord.expires_at > current))
+    current = ensure_utc(now) or utc_now()
+
+    exact = _identity_query(
+        db,
+        tenant_id=tenant,
+        conversation_id=conversation,
+        ticket_id=ticket,
+    )
+    row = _first_context_row(
+        _apply_read_state(exact, include_inactive=include_inactive, now=current)
+    )
+    if row is not None:
+        return record_to_case_context(row)
+    if conversation is not None and ticket is not None:
+        return None
+
+    fallback = db.query(CaseContextRecord).filter(CaseContextRecord.tenant_id == tenant)
+    if conversation is not None:
+        fallback = fallback.filter(
+            CaseContextRecord.conversation_id == conversation,
+            CaseContextRecord.ticket_id.is_not(None),
         )
-    row = query.order_by(CaseContextRecord.id.desc()).first()
-    return record_to_case_context(row) if row else None
+    else:
+        fallback = fallback.filter(
+            CaseContextRecord.ticket_id == ticket,
+            CaseContextRecord.conversation_id.is_not(None),
+        )
+    candidates = (
+        _apply_read_state(fallback, include_inactive=include_inactive, now=current)
+        .order_by(CaseContextRecord.id.desc())
+        .limit(2)
+        .all()
+    )
+    if len(candidates) > 1:
+        raise ValueError("case_context_identity_ambiguous")
+    return record_to_case_context(candidates[0]) if candidates else None
 
 
 def save_case_context(
@@ -64,13 +90,7 @@ def save_case_context(
     tenant_id: str = "default",
     expires_at: datetime | None = None,
 ) -> CaseContextRecord:
-    """Persist one short-lived Case Context without reviving history.
-
-    The stable ``is_active`` discriminator is the database uniqueness boundary;
-    wall-clock expiry is resolved before insert/update because PostgreSQL partial
-    indexes cannot safely use non-immutable ``now()`` predicates. A row without
-    either identity may be retained for audit/history but is never active.
-    """
+    """Persist short-lived case state without reviving inactive history."""
 
     tenant = _normalize_tenant(tenant_id)
     conversation = _safe_identity(context.conversation_id)
@@ -81,32 +101,28 @@ def save_case_context(
     status = _status_value(context.status)
     incoming_active = (
         (conversation is not None or ticket is not None)
-        and _active_values(
-            status=status,
-            closed_at=closed_at,
-            expires_at=expiry,
-            now=current,
-        )
+        and status not in _TERMINAL_STATUSES
+        and closed_at is None
+        and (expiry is None or expiry > current)
     )
 
     if conversation is not None or ticket is not None:
-        _deactivate_logically_inactive_identity_rows(
+        _deactivate_logically_inactive_rows(
             db,
             tenant_id=tenant,
             conversation_id=conversation,
             ticket_id=ticket,
             now=current,
         )
-
-    row = None
-    if conversation is not None or ticket is not None:
-        row = _active_case_context_row(
+        row = _active_exact_row(
             db,
             tenant_id=tenant,
             conversation_id=conversation,
             ticket_id=ticket,
             now=current,
         )
+    else:
+        row = None
 
     if row is None:
         row = CaseContextRecord(
@@ -115,7 +131,7 @@ def save_case_context(
             ticket_id=ticket,
         )
 
-    _apply_case_context_values(
+    _apply_values(
         row,
         context=context,
         tenant_id=tenant,
@@ -127,7 +143,7 @@ def save_case_context(
         closed_at=closed_at,
     )
 
-    if row.id is not None or not incoming_active or (conversation is None and ticket is None):
+    if row.id is not None or not incoming_active:
         if row.id is None:
             db.add(row)
         db.flush()
@@ -142,7 +158,7 @@ def save_case_context(
         if object_session(row) is db:
             db.expunge(row)
         db.expire_all()
-        winner = _active_case_context_row(
+        winner = _active_exact_row(
             db,
             tenant_id=tenant,
             conversation_id=conversation,
@@ -151,7 +167,7 @@ def save_case_context(
         )
         if winner is None:
             raise exc
-        _apply_case_context_values(
+        _apply_values(
             winner,
             context=context,
             tenant_id=tenant,
@@ -175,7 +191,7 @@ def close_case_context(
     now: datetime | None = None,
 ) -> CaseContextRecord | None:
     current = ensure_utc(now) or utc_now()
-    row = _active_case_context_row(
+    row = _active_exact_row(
         db,
         tenant_id=_normalize_tenant(tenant_id),
         conversation_id=_safe_identity(conversation_id),
@@ -201,7 +217,7 @@ def expire_case_context(
     now: datetime | None = None,
 ) -> CaseContextRecord | None:
     current = ensure_utc(now) or utc_now()
-    row = _active_case_context_row(
+    row = _active_exact_row(
         db,
         tenant_id=_normalize_tenant(tenant_id),
         conversation_id=_safe_identity(conversation_id),
@@ -232,55 +248,41 @@ def _resolve_tenant(
             .filter(WebchatConversation.id == conversation_id)
             .scalar()
         )
-        if not resolved:
-            raise ValueError("case_context_tenant_unresolvable")
-        return _normalize_tenant(resolved)
-    if ticket_id is None:
+        if resolved:
+            return _normalize_tenant(resolved)
+        tenant_rows = (
+            db.query(CaseContextRecord.tenant_id)
+            .filter(CaseContextRecord.conversation_id == conversation_id)
+            .distinct()
+            .limit(2)
+            .all()
+        )
+    elif ticket_id is not None:
+        tenant_rows = (
+            db.query(CaseContextRecord.tenant_id)
+            .filter(CaseContextRecord.ticket_id == ticket_id)
+            .distinct()
+            .limit(2)
+            .all()
+        )
+    else:
         raise ValueError("case_context_tenant_required")
-    tenant_rows = (
-        db.query(CaseContextRecord.tenant_id)
-        .filter(CaseContextRecord.ticket_id == ticket_id)
-        .distinct()
-        .limit(2)
-        .all()
-    )
     if len(tenant_rows) != 1:
-        raise ValueError("case_context_tenant_ambiguous" if tenant_rows else "case_context_tenant_unresolvable")
+        raise ValueError(
+            "case_context_tenant_ambiguous"
+            if tenant_rows
+            else "case_context_tenant_unresolvable"
+        )
     return _normalize_tenant(tenant_rows[0][0])
 
 
-def _normalize_tenant(value: str | None) -> str:
-    return (str(value or "default").strip() or "default")[:80]
-
-
-def _safe_identity(value: int | str | None) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        raise ValueError("case_context_identity_invalid")
-    if isinstance(value, int):
-        return value
-    cleaned = str(value).strip()
-    if not cleaned.isdigit():
-        raise ValueError("case_context_identity_invalid")
-    return int(cleaned)
-
-
-def _status_value(value: CaseContextStatus | str) -> str:
-    return value.value if isinstance(value, CaseContextStatus) else str(value)
-
-
-def _active_values(*, status: str, closed_at: datetime | None, expires_at: datetime | None, now: datetime) -> bool:
-    return status not in _TERMINAL_CASE_CONTEXT_STATUSES and closed_at is None and (expires_at is None or expires_at > now)
-
-
-def _case_context_identity_query(
+def _identity_query(
     db: Session,
     *,
     tenant_id: str,
     conversation_id: int | None,
     ticket_id: int | None,
-):
+) -> Query:
     if conversation_id is None and ticket_id is None:
         raise ValueError("case_context_identity_required")
     return (
@@ -299,7 +301,22 @@ def _case_context_identity_query(
     )
 
 
-def _active_case_context_row(
+def _apply_read_state(query: Query, *, include_inactive: bool, now: datetime) -> Query:
+    if include_inactive:
+        return query
+    return (
+        query.filter(CaseContextRecord.is_active.is_(True))
+        .filter(CaseContextRecord.closed_at.is_(None))
+        .filter(~CaseContextRecord.status.in_(_TERMINAL_STATUSES))
+        .filter(or_(CaseContextRecord.expires_at.is_(None), CaseContextRecord.expires_at > now))
+    )
+
+
+def _first_context_row(query: Query) -> CaseContextRecord | None:
+    return query.order_by(CaseContextRecord.id.desc()).first()
+
+
+def _active_exact_row(
     db: Session,
     *,
     tenant_id: str,
@@ -309,23 +326,21 @@ def _active_case_context_row(
 ) -> CaseContextRecord | None:
     if conversation_id is None and ticket_id is None:
         return None
-    return (
-        _case_context_identity_query(
-            db,
-            tenant_id=tenant_id,
-            conversation_id=conversation_id,
-            ticket_id=ticket_id,
+    return _first_context_row(
+        _apply_read_state(
+            _identity_query(
+                db,
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                ticket_id=ticket_id,
+            ),
+            include_inactive=False,
+            now=now,
         )
-        .filter(CaseContextRecord.is_active.is_(True))
-        .filter(CaseContextRecord.closed_at.is_(None))
-        .filter(~CaseContextRecord.status.in_(_TERMINAL_CASE_CONTEXT_STATUSES))
-        .filter(or_(CaseContextRecord.expires_at.is_(None), CaseContextRecord.expires_at > now))
-        .order_by(CaseContextRecord.id.desc())
-        .first()
     )
 
 
-def _deactivate_logically_inactive_identity_rows(
+def _deactivate_logically_inactive_rows(
     db: Session,
     *,
     tenant_id: str,
@@ -333,10 +348,8 @@ def _deactivate_logically_inactive_identity_rows(
     ticket_id: int | None,
     now: datetime,
 ) -> None:
-    if conversation_id is None and ticket_id is None:
-        return
     rows = (
-        _case_context_identity_query(
+        _identity_query(
             db,
             tenant_id=tenant_id,
             conversation_id=conversation_id,
@@ -346,7 +359,7 @@ def _deactivate_logically_inactive_identity_rows(
         .filter(
             or_(
                 CaseContextRecord.closed_at.is_not(None),
-                CaseContextRecord.status.in_(_TERMINAL_CASE_CONTEXT_STATUSES),
+                CaseContextRecord.status.in_(_TERMINAL_STATUSES),
                 CaseContextRecord.expires_at <= now,
             )
         )
@@ -359,7 +372,7 @@ def _deactivate_logically_inactive_identity_rows(
         db.flush()
 
 
-def _apply_case_context_values(
+def _apply_values(
     row: CaseContextRecord,
     *,
     context: CaseContext,
@@ -396,15 +409,17 @@ def _apply_case_context_values(
 
 
 def record_to_case_context(row: CaseContextRecord) -> CaseContext:
-    contacts = []
+    contacts: list[ContactMethod] = []
     for item in row.contact_methods_json or []:
         if isinstance(item, dict):
-            contacts.append(ContactMethod(
-                channel=str(item.get("channel") or "unknown"),
-                value_redacted=str(item.get("value_redacted") or ""),
-                source=str(item.get("source") or "unknown"),
-                is_default=bool(item.get("is_default")),
-            ))
+            contacts.append(
+                ContactMethod(
+                    channel=str(item.get("channel") or "unknown"),
+                    value_redacted=str(item.get("value_redacted") or ""),
+                    source=str(item.get("source") or "unknown"),
+                    is_default=bool(item.get("is_default")),
+                )
+            )
     try:
         status = CaseContextStatus(row.status)
     except ValueError:
@@ -431,6 +446,27 @@ def record_to_case_context(row: CaseContextRecord) -> CaseContext:
         updated_at=row.updated_at.isoformat() if row.updated_at else "",
         closed_at=row.closed_at.isoformat() if row.closed_at else None,
     )
+
+
+def _normalize_tenant(value: str | None) -> str:
+    return (str(value or "default").strip() or "default")[:80]
+
+
+def _safe_identity(value: int | str | None) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("case_context_identity_invalid")
+    if isinstance(value, int):
+        return value
+    cleaned = str(value).strip()
+    if not cleaned.isdigit():
+        raise ValueError("case_context_identity_invalid")
+    return int(cleaned)
+
+
+def _status_value(value: CaseContextStatus | str) -> str:
+    return value.value if isinstance(value, CaseContextStatus) else str(value)
 
 
 def _parse_iso(value: str | None) -> datetime | None:
