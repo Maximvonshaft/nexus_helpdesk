@@ -1,5 +1,5 @@
 schema_version: nexus-osr-plan-v1
-updated_at: '2026-07-10T04:12:00Z'
+updated_at: '2026-07-10T04:59:00Z'
 source_of_truth:
   repository: Maximvonshaft/nexus_helpdesk
   main_sha: aed11916884bcf7ef0b2f7703589b6069c7a9a10
@@ -109,6 +109,7 @@ current_state:
       validated_head_sha: 40437b21af12eda892584617b9a131e436ca55d6
       merge_sha: aed11916884bcf7ef0b2f7703589b6069c7a9a10
       status: merged_by_admin_gate
+      supersedes_pr: 455
       accepted_boundaries:
         no_direct_whatsapp_sidecar_call: preserved
         no_customer_visible_behavior_change: preserved
@@ -127,8 +128,12 @@ current_state:
       workstream: roadmap_control_files_recovery
     - issue: 463
       mission_id: OSR-20260710-03-W455
-      status: completed_by_pr464_merge
+      status: completed_by_pr464_merge_and_pr455_superseded_closure
       workstream: whatsapp_operations_routing_rebase
+    - issue: 466
+      mission_id: OSR-20260710-06-PR456
+      status: active_pr456_current_main_recovery_work_order
+      workstream: admin_debug_control_tower_current_main_recovery
 
 active_release_candidate:
   pr: null
@@ -171,11 +176,11 @@ stale_or_reference_prs:
     reason: Based on old main ec0af3fd; useful as strategic source, not current status authority.
   - pr: 455
     title: 'feat(osr): add WhatsApp operations routing'
-    status: superseded_by_merged_pr464_unless_admin_reopens
-    reason: Original WhatsApp routing PR remains open/draft on old branch; equivalent recovery scope merged through PR #464.
+    status: closed_unmerged_superseded_by_merged_pr464
+    reason: Original WhatsApp routing PR was on an old branch; equivalent recovery scope merged through PR #464 and #455 was closed unmerged to avoid duplicate release-control state.
   - pr: 465
-    title: 'docs(osr): reconcile roadmap after #462 merge'
-    status: active_docs_only_reconciliation_after_pr464_merge
+    title: 'docs(osr): reconcile roadmap after #464 merge'
+    status: active_docs_only_reconciliation_after_pr464_merge_and_pr455_closure
     reason: Keeps roadmap files aligned with current main facts.
   - pr: 395
     title: 'feat: add Speedaf hybrid tracking source'
@@ -222,6 +227,7 @@ milestones:
     name: WhatsApp operations routing
     status: merged_mainline_baseline
     merged_pr: 464
+    superseded_pr: 455
     merge_sha: aed11916884bcf7ef0b2f7703589b6069c7a9a10
     acceptance_focus:
       - configuration_driven_group_routing
@@ -256,13 +262,13 @@ active_dependency_order:
   - step: 1
     action: Treat PR #454 as merged M3 baseline, PR #462 as merged roadmap baseline, and PR #464 as merged M6 WhatsApp routing baseline on main aed11916884bcf7ef0b2f7703589b6069c7a9a10.
   - step: 2
-    action: Refresh/rebase PR #456 onto current main, resolve admin/debug conflicts, and fix or explicitly authorize provider group ID detail exposure.
+    action: Treat original PR #455 as closed unmerged and superseded by PR #464 unless Admin explicitly reopens that path.
   - step: 3
-    action: Run focused #456 admin/debug/control-tower tests before any Admin release gate.
+    action: Refresh/rebase or recover PR #456 onto current main, resolve admin/debug conflicts, and fix or explicitly authorize provider group ID detail exposure.
   - step: 4
-    action: Keep roadmap control files aligned through PR #465 or a successor docs-only reconciliation PR.
+    action: Run focused #456 admin/debug/control-tower tests before any Admin release gate.
   - step: 5
-    action: Treat original PR #455 as superseded by merged PR #464 unless Admin explicitly closes or reopens it.
+    action: Keep roadmap control files aligned through PR #465 or a successor docs-only reconciliation PR.
   - step: 6
     action: Address Work Order #459 escalation follow-up on a current-main branch when non-conflicting.
   - step: 7
