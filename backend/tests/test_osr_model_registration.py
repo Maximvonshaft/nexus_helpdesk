@@ -57,6 +57,46 @@ def test_registration_drift_detects_a_deliberately_missing_table(monkeypatch):
     assert any(item.name == "app.models_osr" for item in drift)
 
 
+def test_unique_contract_accepts_equivalent_non_partial_unique_index():
+    module = _load_drift_module()
+
+    class Inspector:
+        def get_unique_constraints(self, table_name):
+            return []
+
+        def get_indexes(self, table_name):
+            return [{
+                "name": "ux_equivalent",
+                "column_names": ["tenant_id", "external_key"],
+                "unique": True,
+                "dialect_options": {"postgresql_where": None},
+            }]
+
+    names, signatures = module._database_unique_contracts(Inspector(), "example")
+    assert "ux_equivalent" in names
+    assert frozenset({"tenant_id", "external_key"}) in signatures
+
+
+def test_partial_unique_index_does_not_satisfy_global_unique_constraint():
+    module = _load_drift_module()
+
+    class Inspector:
+        def get_unique_constraints(self, table_name):
+            return []
+
+        def get_indexes(self, table_name):
+            return [{
+                "name": "ux_active_only",
+                "column_names": ["tenant_id", "external_key"],
+                "unique": True,
+                "dialect_options": {"postgresql_where": "enabled IS TRUE"},
+            }]
+
+    names, signatures = module._database_unique_contracts(Inspector(), "example")
+    assert not names
+    assert not signatures
+
+
 def test_drift_gate_rejects_non_postgresql_database(monkeypatch, capsys):
     module = _load_drift_module()
     monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(is_postgres=False))
