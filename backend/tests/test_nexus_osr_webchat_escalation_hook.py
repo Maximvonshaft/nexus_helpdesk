@@ -167,6 +167,10 @@ def test_flag_off_configured_only_pattern_preserves_legacy_runtime(db_session, m
     def fake_legacy(*_args, **_kwargs):
         return {"status": "done", "message_id": None, "reply_source": "legacy_flag_off"}
 
+    def fail_policy_read(*_args, **_kwargs):
+        raise AssertionError("configured escalation policies must not be read while the feature flag is off")
+
+    monkeypatch.setattr(webchat_ai_safe_service, "load_escalation_policies", fail_policy_read)
     monkeypatch.setattr(webchat_ai_safe_service, "_legacy_process_webchat_ai_reply_job", fake_legacy)
     result = run_hook(db_session, ticket=ticket, conversation=conversation, visitor=visitor)
 
