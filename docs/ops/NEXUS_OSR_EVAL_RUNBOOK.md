@@ -39,7 +39,20 @@ The machine-readable matrix declares required and actual coverage for:
 - scenario category;
 - actor permission.
 
-The initial dataset covers normal and ambiguous requests, positive and negative high-risk closure, MCP tracking truth, customer-claim and previous-AI negative tracking cases, customer-visible and internal Knowledge boundaries, handoff, auto-ticket, governed-tool observe-only behavior, unsafe output, tenant isolation and permission allow/deny cases.
+The initial dataset covers normal and ambiguous requests, positive and negative high-risk closure, MCP tracking truth, customer-claim and previous-AI negative tracking cases, customer-visible and internal Knowledge boundaries, handoff, auto-ticket, governed-tool behavior, unsafe output, tenant isolation and permission allow/deny cases.
+
+A focused outcome-pair gate requires both an allowed and denied evaluated result for each core scenario category:
+
+- normal;
+- high risk;
+- Tracking;
+- Knowledge;
+- handoff;
+- auto-ticket;
+- governed tool;
+- unsafe output.
+
+The gate derives the result from the actual runtime evaluation, not only from fixture labels. Removing either polarity from a required category fails CI.
 
 Adding a required matrix value without a matching case makes the run fail and records the exact gap in `coverage.json`.
 
@@ -77,17 +90,19 @@ Each file is limited to 64 KiB. Artifacts intentionally omit customer reply bodi
 1. Confirm the scenario is synthetic and contains no copied production content.
 2. Add one deterministic case with country, channel, language, risk, tenant, actor permission and required permission.
 3. Define the expected policy result, violation codes, customer-visible boolean and boundary decision.
-4. Use empty tool arguments. Model unsafe material only through an allowed synthetic marker; never store representative secrets or identifiers.
-5. Increment the dataset semantic version and update approval/review metadata.
-6. Run schema, golden, coverage and artifact tests locally.
-7. Review `coverage.json` for accidental gaps or low-value duplication.
-8. Keep the PR Draft until exact-head focused and full regression checks are accepted.
+4. Preserve both allowed and denied coverage for every required core scenario category.
+5. Use empty tool arguments. Model unsafe material only through an allowed synthetic marker; never store representative secrets or identifiers.
+6. Increment the dataset semantic version and update approval/review metadata.
+7. Run schema, golden, outcome-pair, coverage and artifact tests locally.
+8. Review `coverage.json` for accidental gaps or low-value duplication.
+9. Keep the PR Draft until exact-head focused and full regression checks are accepted.
 
 ## Failure triage
 
 - `json_schema_violation` — structural drift or unknown fields; update the formal schema only when the contract intentionally changes.
 - `dataset_review_overdue`, `dataset_expired` or approval failures — stop release use and complete governance review; do not extend dates without approval.
 - case mismatch — inspect only case ID, expected/actual violation codes and mismatch fields; do not add raw payload logging.
+- missing outcome pair — restore an approved allow or deny case for the affected core scenario category.
 - coverage gap — add an approved positive or negative case, or explicitly revise the required matrix with approval.
 - `artifact_too_large` — reduce cardinality or safe diagnostic detail; never increase the limit to carry raw payloads.
 - forbidden field/value — replace it with categorical synthetic metadata; never waive the redaction scanner for production-shaped examples.
