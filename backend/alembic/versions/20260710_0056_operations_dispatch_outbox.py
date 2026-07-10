@@ -58,6 +58,31 @@ def upgrade() -> None:
             "status IN ('pending','processing','dispatched','retryable','failed','cancelled','dead_letter')",
             name="ck_operations_dispatch_outbox_status",
         ),
+        sa.CheckConstraint(
+            "attempt_count >= 0",
+            name="ck_operations_dispatch_outbox_attempt_count_nonnegative",
+        ),
+        sa.CheckConstraint(
+            "max_attempts >= 1",
+            name="ck_operations_dispatch_outbox_max_attempts_positive",
+        ),
+        sa.CheckConstraint(
+            "((status = 'processing' AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL) "
+            "OR (status <> 'processing' AND lease_owner IS NULL AND lease_expires_at IS NULL))",
+            name="ck_operations_dispatch_outbox_lease_state",
+        ),
+        sa.CheckConstraint(
+            "(status <> 'retryable' OR next_retry_at IS NOT NULL)",
+            name="ck_operations_dispatch_outbox_retry_timestamp",
+        ),
+        sa.CheckConstraint(
+            "(status <> 'dispatched' OR dispatched_at IS NOT NULL)",
+            name="ck_operations_dispatch_outbox_dispatched_timestamp",
+        ),
+        sa.CheckConstraint(
+            "(status <> 'cancelled' OR cancelled_at IS NOT NULL)",
+            name="ck_operations_dispatch_outbox_cancelled_timestamp",
+        ),
     )
     op.create_index("ix_operations_dispatch_outbox_ticket_id", "operations_dispatch_outbox", ["ticket_id"])
     op.create_index("ix_operations_dispatch_outbox_routing_rule_id", "operations_dispatch_outbox", ["routing_rule_id"])
