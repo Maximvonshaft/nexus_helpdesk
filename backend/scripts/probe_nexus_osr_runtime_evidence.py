@@ -17,19 +17,19 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.services.nexus_osr.runtime_evidence import (  # noqa: E402
     MAX_ARTIFACT_BYTES,
     ReadOnlyProbeSpec,
-    bounded_json_bytes,
     build_runtime_evidence_snapshot,
+    finalize_runtime_evidence,
     render_prometheus_metrics,
     run_read_only_http_probe,
+    unavailable_snapshot,
 )
 
 MAX_INPUT_BYTES = 256 * 1024
 
 
 def _load_json(path: Path) -> Any:
-    size = path.stat().st_size
-    if size > MAX_INPUT_BYTES:
-        raise ValueError(f"input_too_large:{path}")
+    if path.stat().st_size > MAX_INPUT_BYTES:
+        raise ValueError("input_too_large")
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
@@ -58,16 +58,29 @@ def _materialize_probes(
         for item in fixtures
         if isinstance(item, Mapping) and item.get("path")
     }
+    raw_probes = config.get("probes")
+    if not isinstance(raw_probes, list):
+        return []
     results: list[dict[str, Any]] = []
-    for raw_spec in config.get("probes") or []:
+    for raw_spec in raw_probes:
         if not isinstance(raw_spec, Mapping):
+            results.append(
+                {
+                    "path": "runtime_decision",
+                    "method": "GET",
+                    "permission_granted": False,
+                    "status_code": 0,
+                    "observed_at": datetime.now(timezone.utc).isoformat(),
+                    "payload": {},
+                    "error_code": "payload_invalid",
+                }
+            )
             continue
         path = str(raw_spec.get("path") or "")
         fixture = by_path.get(path)
         if fixture is not None:
             results.append(fixture)
             continue
-
         endpoint = raw_spec.get("endpoint")
         if staging_base_url and endpoint and bearer_token:
             results.append(
@@ -84,7 +97,6 @@ def _materialize_probes(
                 )
             )
             continue
-
         results.append(
             {
                 "path": path,
@@ -101,9 +113,7 @@ def _materialize_probes(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description=(
-            "Build bounded Nexus OSR runtime evidence from synthetic fixtures or explicitly allowed read-only staging GET probes."
-        )
+        description="Build bounded Nexus OSR runtime evidence from synthetic fixtures or explicitly allowed HTTPS GET probes."
     )
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--expected-identity", type=Path, required=True)
@@ -131,47 +141,57 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    config = _load_json(args.config)
-    expected_identity = _load_json(args.expected_identity)
-    observed_identity = _load_json(args.observed_identity)
-    samples = _load_json(args.samples)
-    probe_fixtures = _load_json(args.probe_fixtures)
-    if not isinstance(config, Mapping) or not isinstance(samples, Mapping):
-        raise ValueError("invalid_runtime_evidence_input")
+    requested_now: datetime | None = None
+    try:
+        requested_now = _parse_now(args.now)
+        config = _load_json(args.config)
+        expected_identity = _load_json(args.expected_identity)
+        observed_identity = _load_json(args.observed_identity)
+        samples = _load_json(args.samples)
+        probe_fixtures = _load_json(args.probe_fixtures)
+        if (
+            not isinstance(config, Mapping)
+            or not isinstance(samples, Mapping)
+            or not isinstance(config.get("failure_budgets"), list)
+            or not isinstance(config.get("probes"), list)
+            or not isinstance(probe_fixtures, list)
+        ):
+            raise ValueError("invalid_runtime_evidence_input")
+        bearer_token = os.environ.get(args.admin_token_env, "").strip() or None
+        probes = _materialize_probes(
+            config=config,
+            fixture_payload=probe_fixtures,
+            tenant_id=args.tenant,
+            staging_base_url=args.staging_base_url,
+            allowed_hosts=list(args.allow_host),
+            bearer_token=bearer_token,
+        )
+        snapshot = build_runtime_evidence_snapshot(
+            tenant_id=args.tenant,
+            expected_identity=expected_identity,
+            observed_identity=observed_identity,
+            budget_definitions=config["failure_budgets"],
+            samples=samples,
+            probes=probes,
+            now=requested_now,
+            max_age_seconds=config.get("max_evidence_age_seconds", 900),
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, OverflowError):
+        snapshot = unavailable_snapshot("payload_invalid", now=requested_now)
 
-    bearer_token = os.environ.get(args.admin_token_env, "").strip() or None
-    probes = _materialize_probes(
-        config=config,
-        fixture_payload=probe_fixtures,
-        tenant_id=args.tenant,
-        staging_base_url=args.staging_base_url,
-        allowed_hosts=list(args.allow_host),
-        bearer_token=bearer_token,
-    )
-    snapshot = build_runtime_evidence_snapshot(
-        tenant_id=args.tenant,
-        expected_identity=expected_identity,
-        observed_identity=observed_identity,
-        budget_definitions=list(config.get("failure_budgets") or []),
-        samples=samples,
-        probes=probes,
-        now=_parse_now(args.now),
-        max_age_seconds=int(config.get("max_evidence_age_seconds") or 900),
-    )
-
+    final_snapshot, artifact_bytes = finalize_runtime_evidence(snapshot, max_bytes=MAX_ARTIFACT_BYTES)
     args.artifact.parent.mkdir(parents=True, exist_ok=True)
     args.metrics.parent.mkdir(parents=True, exist_ok=True)
-    artifact_bytes = bounded_json_bytes(snapshot, max_bytes=MAX_ARTIFACT_BYTES)
     args.artifact.write_bytes(artifact_bytes + b"\n")
-    args.metrics.write_text(render_prometheus_metrics(snapshot), encoding="utf-8")
+    args.metrics.write_text(render_prometheus_metrics(final_snapshot), encoding="utf-8")
 
-    state = str(snapshot.get("state") or "unavailable")
+    state = str(final_snapshot.get("state") or "unavailable")
     print(
         json.dumps(
             {
-                "schema": snapshot.get("schema"),
+                "schema": final_snapshot.get("schema"),
                 "state": state,
-                "reason_codes": snapshot.get("reason_codes"),
+                "reason_codes": final_snapshot.get("reason_codes"),
                 "artifact_bytes": len(artifact_bytes),
                 "read_only": True,
             },
