@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
+import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from ...enums import ConversationState, EventType, SourceChannel, TicketPriority, TicketSource, TicketStatus
 from ...models import Customer, Ticket, TicketEvent
@@ -25,6 +27,19 @@ class AutoTicketResult:
 
 
 MAX_TICKET_NO_GENERATION_ATTEMPTS = 5
+POSTGRES_UNIQUE_VIOLATION_SQLSTATE = "23505"
+_TICKET_NO_CONSTRAINT_NAMES = {
+    "ix_tickets_ticket_no",
+    "tickets_ticket_no_key",
+    "uq_tickets_ticket_no",
+    "ux_tickets_ticket_no",
+}
+_TERMINAL_TICKET_STATUSES = {
+    TicketStatus.resolved,
+    TicketStatus.closed,
+    TicketStatus.canceled,
+}
+_REUSED_TICKET_ACTION = "Review reused Nexus OSR support ticket and follow up with the customer."
 
 
 def create_or_reuse_ticket_from_case_context(
@@ -41,27 +56,35 @@ def create_or_reuse_ticket_from_case_context(
 ) -> AutoTicketResult:
     """Create or reuse a support ticket from OSR Case Context.
 
-    This is the production-side replacement for the framework-light
-    `ticket.create` handler. It is deliberately idempotent by existing ticket id,
-    conversation ticket id, and safe tracking hash where available.
+    The caller owns the outer transaction. This service uses savepoints so a
+    ticket-number collision, event failure, or Case Context write failure does
+    not poison the caller's SQLAlchemy session or leave a service-created
+    Customer/Ticket half persisted.
     """
 
     existing = _find_existing_ticket(db, case_context=case_context, conversation=conversation)
     if existing is not None:
-        _project_existing_ticket_to_human_review(
-            existing,
-            case_context=case_context,
-            source_channel=source_channel,
-            priority=priority,
-            issue_type=issue_type,
-        )
-        if conversation is not None:
-            conversation.ticket_id = existing.id
-            conversation.updated_at = utc_now()
-        next_context = case_context.mark_ticket_created(existing.id)
-        save_case_context(db, next_context, tenant_id=getattr(conversation, "tenant_key", None) or "default")
-        _write_ticket_event(db, ticket=existing, case_context=next_context, created=False)
-        db.flush()
+        with db.begin_nested():
+            changed_fields = _project_existing_ticket_to_human_review(
+                existing,
+                priority=priority,
+            )
+            if conversation is not None:
+                if conversation.ticket_id != existing.id:
+                    conversation.ticket_id = existing.id
+                    changed_fields.add("conversation.ticket_id")
+                conversation.updated_at = utc_now()
+            next_context = _mark_ticket_created(case_context, existing.id)
+            save_case_context(db, next_context, tenant_id=getattr(conversation, "tenant_key", None) or "default")
+            if changed_fields:
+                _write_ticket_event(
+                    db,
+                    ticket=existing,
+                    case_context=next_context,
+                    created=False,
+                    changed_fields=changed_fields,
+                )
+            db.flush()
         return AutoTicketResult(
             ticket=existing,
             created=False,
@@ -69,29 +92,32 @@ def create_or_reuse_ticket_from_case_context(
             customer_visible_summary=f"Your existing support ticket is {existing.ticket_no}.",
         )
 
-    customer = customer or _customer_from_conversation(db, conversation)
-    if customer is None:
-        customer = Customer(name="WebChat Visitor", external_ref=_external_ref(case_context, conversation))
-        db.add(customer)
+    with db.begin_nested():
+        resolved_customer = customer or _customer_from_conversation(db, conversation)
+        if resolved_customer is None:
+            resolved_customer = Customer(name="WebChat Visitor", external_ref=_external_ref(case_context, conversation))
+        if resolved_customer.id is None:
+            db.add(resolved_customer)
+            db.flush()
+
+        ticket = _create_ticket_with_retry(
+            db,
+            case_context=case_context,
+            customer=resolved_customer,
+            source_channel=source_channel,
+            title=title,
+            description=description,
+            priority=priority,
+            issue_type=issue_type,
+        )
+        if conversation is not None:
+            conversation.ticket_id = ticket.id
+            conversation.updated_at = utc_now()
+        next_context = _mark_ticket_created(case_context, ticket.id)
+        save_case_context(db, next_context, tenant_id=getattr(conversation, "tenant_key", None) or "default")
+        _write_ticket_event(db, ticket=ticket, case_context=next_context, created=True)
         db.flush()
 
-    ticket = _create_ticket_with_retry(
-        db,
-        case_context=case_context,
-        customer=customer,
-        source_channel=source_channel,
-        title=title,
-        description=description,
-        priority=priority,
-        issue_type=issue_type,
-    )
-    if conversation is not None:
-        conversation.ticket_id = ticket.id
-        conversation.updated_at = utc_now()
-    next_context = case_context.mark_ticket_created(ticket.id)
-    save_case_context(db, next_context, tenant_id=getattr(conversation, "tenant_key", None) or "default")
-    _write_ticket_event(db, ticket=ticket, case_context=next_context, created=True)
-    db.flush()
     return AutoTicketResult(
         ticket=ticket,
         created=True,
@@ -129,13 +155,15 @@ def _create_ticket_with_retry(
                 db.flush()
             return ticket
         except IntegrityError as exc:
+            _discard_failed_ticket(db, ticket)
             if not _is_ticket_no_unique_violation(exc):
                 raise
             last_error = exc
-            # Requery after rolling back the savepoint. This confirms the
-            # collision was with an already-persisted ticket_no and keeps the
-            # outer transaction usable for the next generated candidate.
+            # Requery only after the failed savepoint has rolled back. We do
+            # not reuse the colliding row: the number is an identifier, not an
+            # idempotency key for the current Case Context.
             _ticket_no_exists(db, ticket.ticket_no)
+
     if last_error is not None:
         raise last_error
     raise RuntimeError("Unable to create Nexus OSR auto ticket")
@@ -179,23 +207,50 @@ def _build_ticket(
 def _project_existing_ticket_to_human_review(
     ticket: Ticket,
     *,
-    case_context: CaseContext,
-    source_channel: SourceChannel,
     priority: TicketPriority,
-    issue_type: str | None,
-) -> None:
-    ticket.status = TicketStatus.pending_assignment
-    ticket.conversation_state = ConversationState.human_review_required
-    ticket.priority = _max_priority(ticket.priority, priority)
-    ticket.source_channel = source_channel
-    ticket.preferred_reply_channel = _source_channel_value(source_channel)
-    ticket.preferred_reply_contact = _preferred_contact(case_context) or ticket.preferred_reply_contact
-    ticket.country_code = case_context.country_code or ticket.country_code
-    ticket.case_type = issue_type or case_context.issue_type or ticket.case_type
-    ticket.customer_request = case_context.customer_claim_summary or ticket.customer_request
-    ticket.missing_fields = ", ".join(case_context.missing_info) if case_context.missing_info else ticket.missing_fields
-    ticket.required_action = "Review reused Nexus OSR support ticket and follow up with the customer."
-    ticket.updated_at = utc_now()
+) -> set[str]:
+    """Project a reused ticket without replacing ownership or contact facts."""
+
+    changed_fields: set[str] = set()
+    terminal_status = ticket.status in _TERMINAL_TICKET_STATUSES
+    if terminal_status:
+        target_status = TicketStatus.in_progress if ticket.assignee_id is not None else TicketStatus.pending_assignment
+        if ticket.status != target_status:
+            ticket.status = target_status
+            changed_fields.add("status")
+        if ticket.closed_at is not None:
+            ticket.closed_at = None
+            changed_fields.add("closed_at")
+        if ticket.resolved_at is not None:
+            ticket.resolved_at = None
+            changed_fields.add("resolved_at")
+        ticket.reopen_count = int(ticket.reopen_count or 0) + 1
+        changed_fields.add("reopen_count")
+    elif ticket.status == TicketStatus.new:
+        ticket.status = TicketStatus.pending_assignment
+        changed_fields.add("status")
+
+    target_conversation_state = (
+        ConversationState.human_owned
+        if ticket.assignee_id is not None
+        else ConversationState.human_review_required
+    )
+    if ticket.conversation_state != target_conversation_state:
+        ticket.conversation_state = target_conversation_state
+        changed_fields.add("conversation_state")
+
+    next_priority = _max_priority(ticket.priority, priority)
+    if ticket.priority != next_priority:
+        ticket.priority = next_priority
+        changed_fields.add("priority")
+
+    if not ticket.required_action:
+        ticket.required_action = _REUSED_TICKET_ACTION
+        changed_fields.add("required_action")
+
+    if changed_fields:
+        ticket.updated_at = utc_now()
+    return changed_fields
 
 
 def _find_existing_ticket(db: Session, *, case_context: CaseContext, conversation: WebchatConversation | None) -> Ticket | None:
@@ -231,12 +286,14 @@ def _external_ref(case_context: CaseContext, conversation: WebchatConversation |
 
 
 def _generate_ticket_no(case_context: CaseContext, *, attempt: int = 0) -> str:
-    prefix = (case_context.country_code or "OSR").upper()[:8]
-    timestamp = utc_now().strftime("%Y%m%d%H%M%S%f")
-    suffix = secrets.token_hex(2).upper()
-    if attempt:
-        suffix = f"{suffix}{attempt:X}"[:5]
-    return f"OSR-{prefix}-{timestamp}-{suffix}"[:40]
+    del attempt  # retries generate a fresh cryptographic suffix
+    prefix = re.sub(r"[^A-Z0-9]", "", (case_context.country_code or "OSR").upper())[:8] or "OSR"
+    timestamp = utc_now().strftime("%Y%m%d%H%M%S")
+    suffix = secrets.token_hex(5).upper()
+    ticket_no = f"OSR-{prefix}-{timestamp}-{suffix}"
+    if len(ticket_no) > 40:  # model/reporting contract guard
+        raise RuntimeError("Generated OSR ticket number exceeds the 40-character contract")
+    return ticket_no
 
 
 def _ticket_no_exists(db: Session, ticket_no: str) -> bool:
@@ -245,8 +302,37 @@ def _ticket_no_exists(db: Session, ticket_no: str) -> bool:
 
 
 def _is_ticket_no_unique_violation(exc: IntegrityError) -> bool:
-    message = str(exc.orig).lower() if getattr(exc, "orig", None) is not None else str(exc).lower()
+    orig = getattr(exc, "orig", None)
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    normalized_constraint = str(constraint_name or "").lower()
+
+    if sqlstate == POSTGRES_UNIQUE_VIOLATION_SQLSTATE:
+        if normalized_constraint:
+            return normalized_constraint in _TICKET_NO_CONSTRAINT_NAMES or "ticket_no" in normalized_constraint
+        return _statement_targets_ticket_no(exc)
+
+    sqlite_errorcode = getattr(orig, "sqlite_errorcode", None)
+    if sqlite_errorcode in {sqlite3.SQLITE_CONSTRAINT, sqlite3.SQLITE_CONSTRAINT_UNIQUE}:
+        message = str(orig or "").lower()
+        return "tickets.ticket_no" in message or _statement_targets_ticket_no(exc)
+
+    # Last-resort compatibility for DBAPI wrappers that expose neither SQLSTATE
+    # nor sqlite_errorcode. This is intentionally not the primary decision path.
+    message = str(orig or exc).lower()
     return "ticket_no" in message and ("unique" in message or "duplicate" in message)
+
+
+def _statement_targets_ticket_no(exc: IntegrityError) -> bool:
+    statement = str(getattr(exc, "statement", None) or "").lower()
+    params = getattr(exc, "params", None)
+    params_include_ticket_no = isinstance(params, dict) and "ticket_no" in params
+    return "tickets" in statement and "ticket_no" in statement and (params_include_ticket_no or "insert" in statement)
+
+
+def _discard_failed_ticket(db: Session, ticket: Ticket) -> None:
+    if object_session(ticket) is db:
+        db.expunge(ticket)
 
 
 def _max_priority(left: TicketPriority, right: TicketPriority) -> TicketPriority:
@@ -256,7 +342,15 @@ def _max_priority(left: TicketPriority, right: TicketPriority) -> TicketPriority
         TicketPriority.high: 2,
         TicketPriority.urgent: 3,
     }
+    if left is None:
+        return right
     return right if order.get(right, 0) > order.get(left, 0) else left
+
+
+def _mark_ticket_created(case_context: CaseContext, ticket_id: int) -> CaseContext:
+    if case_context.ticket_created and str(case_context.ticket_id) == str(ticket_id):
+        return case_context
+    return case_context.mark_ticket_created(ticket_id)
 
 
 def _default_title(case_context: CaseContext) -> str:
@@ -290,15 +384,31 @@ def _preferred_contact(case_context: CaseContext) -> str | None:
     return f"{first.channel}:{first.value_redacted}"
 
 
-def _write_ticket_event(db: Session, *, ticket: Ticket, case_context: CaseContext, created: bool) -> None:
+def _write_ticket_event(
+    db: Session,
+    *,
+    ticket: Ticket,
+    case_context: CaseContext,
+    created: bool,
+    changed_fields: set[str] | None = None,
+) -> None:
     payload: dict[str, Any] = {
         "source": "nexus_osr",
         "created": created,
-        "operator_projection": "human_review_required",
+        "operator_projection": _enum_value(ticket.conversation_state),
         "ticket_status": _enum_value(ticket.status),
         "conversation_state": _enum_value(ticket.conversation_state),
-        "case_context": case_context.as_dict(),
+        "case_context_state": {
+            "status": _enum_value(case_context.status),
+            "ticket_created": bool(case_context.ticket_created),
+            "handoff_requested": bool(case_context.handoff_requested),
+            "has_tracking_reference": bool(case_context.safe_tracking_reference or case_context.tracking_number_hash),
+            "has_contact_method": bool(case_context.contact_methods),
+            "missing_info_count": len(case_context.missing_info),
+        },
     }
+    if changed_fields:
+        payload["changed_fields"] = sorted(changed_fields)
     db.add(TicketEvent(
         ticket_id=ticket.id,
         actor_id=None,
