@@ -18,7 +18,8 @@ from .nexus_osr.escalation_orchestration_service import (
     EscalationOrchestrationResult,
     evaluate_escalation_for_case,
 )
-from .nexus_osr.persistence import load_case_context
+from .nexus_osr.persistence import load_case_context, load_escalation_policies
+from .nexus_osr.policies import evaluate_escalation
 from .webchat_ai_service import (
     AI_AUTHOR_LABEL,
     _mark_ai_review_required,
@@ -199,6 +200,41 @@ def _ai_attempt_count(db: Session, *, conversation: WebchatConversation) -> int:
     return int(db.query(WebchatAITurn.id).filter(WebchatAITurn.conversation_id == conversation.id).count())
 
 
+def _has_configured_escalation_intent(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    ticket: Ticket,
+    inbound_message: str | None,
+    ai_attempt_count: int,
+) -> bool:
+    """Check persisted policy patterns without making the legacy term list authoritative."""
+
+    country_code = (getattr(ticket, "country_code", None) or "GLOBAL").upper()
+    channel = getattr(conversation, "channel_key", None) or "webchat"
+    try:
+        policies = load_escalation_policies(db, country_code=country_code, channel=channel)
+        if not policies:
+            return False
+        return evaluate_escalation(
+            inbound_message or "",
+            ai_attempt_count=ai_attempt_count,
+            policies=policies,
+        ).matched
+    except Exception as exc:
+        LOGGER.warning(
+            "webchat_osr_configured_escalation_prefilter_failed_non_blocking",
+            extra={
+                "event_payload": {
+                    "conversation_id": conversation.id,
+                    "ticket_id": ticket.id,
+                    "error_type": type(exc).__name__,
+                }
+            },
+        )
+        return False
+
+
 def _safe_escalation_payload(result: EscalationOrchestrationResult, *, webchat_osr_audit_summary: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = {
         "action": _status_value(result.action),
@@ -250,10 +286,34 @@ def _result_from_osr_escalation(result: EscalationOrchestrationResult, *, webcha
     }
 
 
-def _maybe_orchestrate_osr_escalation(db: Session, *, conversation: WebchatConversation, ticket: Ticket, visitor_message: WebchatMessage, turn: WebchatAITurn | None, webchat_osr_audit_summary: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def _maybe_orchestrate_osr_escalation(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    ticket: Ticket,
+    visitor_message: WebchatMessage,
+    turn: WebchatAITurn | None,
+    webchat_osr_audit_summary: dict[str, Any] | None = None,
+    ai_attempt_count: int | None = None,
+    configured_escalation_intent: bool | None = None,
+) -> dict[str, Any] | None:
     if not _osr_escalation_orchestration_enabled():
         return None
-    if not (_has_high_risk_intent(visitor_message.body) or _has_customer_wait_intent(visitor_message.body)):
+    resolved_attempt_count = ai_attempt_count if ai_attempt_count is not None else _ai_attempt_count(db, conversation=conversation)
+    configured_match = configured_escalation_intent
+    if configured_match is None:
+        configured_match = _has_configured_escalation_intent(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            inbound_message=visitor_message.body,
+            ai_attempt_count=resolved_attempt_count,
+        )
+    if not (
+        _has_high_risk_intent(visitor_message.body)
+        or _has_customer_wait_intent(visitor_message.body)
+        or configured_match
+    ):
         return None
     try:
         result = evaluate_escalation_for_case(
@@ -267,7 +327,7 @@ def _maybe_orchestrate_osr_escalation(db: Session, *, conversation: WebchatConve
             language=None,
             issue_type=getattr(ticket, "case_type", None) or getattr(conversation, "last_intent", None),
             tenant_id=getattr(conversation, "tenant_key", None) or "default",
-            ai_attempt_count=_ai_attempt_count(db, conversation=conversation),
+            ai_attempt_count=resolved_attempt_count,
             trigger_message_id=visitor_message.id,
             ai_turn_id=turn.id if turn else None,
         )
@@ -321,12 +381,24 @@ def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
         return result
 
     high_risk_intent = _has_high_risk_intent(visitor_message.body)
-    osr_customer_wait_intent = _osr_escalation_orchestration_enabled() and _has_customer_wait_intent(visitor_message.body)
-    if mode == "safe_ai" and (high_risk_intent or osr_customer_wait_intent):
+    osr_enabled = _osr_escalation_orchestration_enabled()
+    osr_customer_wait_intent = osr_enabled and _has_customer_wait_intent(visitor_message.body)
+    osr_ai_attempt_count = _ai_attempt_count(db, conversation=conversation) if osr_enabled else 0
+    configured_escalation_intent = osr_enabled and _has_configured_escalation_intent(
+        db,
+        conversation=conversation,
+        ticket=ticket,
+        inbound_message=visitor_message.body,
+        ai_attempt_count=osr_ai_attempt_count,
+    )
+    osr_escalation_intent = osr_enabled and (
+        high_risk_intent or osr_customer_wait_intent or configured_escalation_intent
+    )
+    if mode == "safe_ai" and (high_risk_intent or osr_escalation_intent):
         preview_result = _safe_ai_high_risk_review_result()
         osr_escalation_result = None
         webchat_osr_audit_summary = None
-        if _osr_escalation_orchestration_enabled():
+        if osr_escalation_intent:
             webchat_osr_audit_summary = _audit_webchat_osr_turn_non_blocking(
                 db,
                 conversation=conversation,
@@ -342,6 +414,8 @@ def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
                 visitor_message=visitor_message,
                 turn=turn,
                 webchat_osr_audit_summary=webchat_osr_audit_summary,
+                ai_attempt_count=osr_ai_attempt_count,
+                configured_escalation_intent=configured_escalation_intent,
             )
 
         osr_continue_ai = bool(osr_escalation_result and osr_escalation_result.get("status") == "continue_ai")
