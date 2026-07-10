@@ -27,7 +27,20 @@ _ADDRESS_RE = re.compile(
     re.I,
 )
 _ISO_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})?)?$")
+_SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
 _TIMESTAMP_KEYS = {"created_at", "updated_at", "observed_at", "checked_at", "timestamp", "closed_at", "expires_at"}
+_TOOL_ARGUMENT_KEYS = {"arguments", "tool_arguments", "tool_args"}
+_SAFE_TOOL_ARGUMENT_KEYS = {
+    "ticket_id",
+    "handoff_request_id",
+    "conversation_id",
+    "case_context_id",
+    "operator_task_id",
+}
+_TEXT_REDACT_KEYS = {
+    "customer_claim_summary",
+    "agent_handover_summary",
+}
 _SAFE_EXACT_KEYS = {
     "authority", "authority_level", "source_type", "evidence_type", "policy_key", "rule_key", "risk_key",
     "status", "safe_status", "failure_category", "error_category", "business_reply_type", "next_action",
@@ -40,11 +53,11 @@ _SAFE_EXACT_KEYS = {
 }
 _SENSITIVE_KEY_RE = re.compile(
     r"(?:^|_)(?:raw|prompt|system_prompt|developer_prompt|user_prompt|customer_reply|customer_claim|"
-    r"claim_summary|message|user_message|assistant_message|message_body|body_text|input_text|output_text|"
-    r"content|transcript|handover_summary|provider_payload|provider_request|provider_response|provider_body|"
-    r"tool_args|tool_arguments|arguments|tool_result|tool_results|tracking_number|phone|email|postal_address|street_address|"
-    r"address|credential|credentials|api_key|authorization|bearer|cookie|session_secret|token|password|secret|"
-    r"private_key|provider_group_id|destination_group_id|fallback_group_id)(?:$|_)",
+    r"message|user_message|assistant_message|message_body|body_text|input_text|output_text|content|transcript|"
+    r"provider_payload|provider_request|provider_response|provider_body|tool_result|tool_results|tracking_number|"
+    r"phone|email|postal_address|street_address|address|credential|credentials|api_key|authorization|bearer|"
+    r"cookie|session_secret|token|password|secret|private_key|provider_group_id|destination_group_id|"
+    r"fallback_group_id)(?:$|_)",
     re.I,
 )
 _SAFE_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$")
@@ -66,7 +79,13 @@ def sanitize_audit_payload(value: Any, *, limits: AuditSanitizerLimits = DEFAULT
     try:
         return _sanitize(value, key="", depth=0, seen=set(), limits=limits)
     except Exception:
-        return {"redacted": True, "category": "sanitizer_failure", "type": _safe_type_name(value), "present": _present(value), "sha256_prefix": _hash_prefix(value)}
+        return {
+            "redacted": True,
+            "category": "sanitizer_failure",
+            "type": _safe_type_name(value),
+            "present": _present(value),
+            "sha256_prefix": _hash_prefix(value),
+        }
 
 
 def safe_audit_label(value: Any, *, fallback: str, max_length: int = 160) -> str:
@@ -123,12 +142,57 @@ def _sanitize_mapping(value: Mapping[Any, Any], *, depth: int, seen: MutableSet[
         result: dict[str, Any] = {}
         for safe_key, source_key, raw_value in items:
             output_key = safe_key if safe_key not in result else f"{safe_key}:{_hash_prefix(source_key)}"
-            result[output_key] = _marker(raw_value, category=_sensitive_category(source_key)) if _is_sensitive_key(source_key) else _sanitize(raw_value, key=source_key, depth=depth + 1, seen=seen, limits=limits)
+            normalized_key = source_key.lower()
+            if normalized_key in _TOOL_ARGUMENT_KEYS:
+                result[output_key] = _sanitize_tool_arguments(raw_value, limits=limits)
+            elif _is_sensitive_key(source_key):
+                result[output_key] = _marker(raw_value, category=_sensitive_category(source_key))
+            else:
+                result[output_key] = _sanitize(raw_value, key=source_key, depth=depth + 1, seen=seen, limits=limits)
         if len(value) > limits.max_mapping_items:
             result["__truncated_keys__"] = len(value) - limits.max_mapping_items
         return result
     finally:
         seen.discard(object_id)
+
+
+def _sanitize_tool_arguments(value: Any, *, limits: AuditSanitizerLimits) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return _marker(value, category="tool_arguments")
+
+    safe: dict[str, Any] = {}
+    redacted_count = 0
+    for raw_key, raw_value in sorted(value.items(), key=lambda item: str(item[0]))[:limits.max_mapping_items]:
+        key = str(raw_key).lower()
+        if key not in _SAFE_TOOL_ARGUMENT_KEYS:
+            redacted_count += 1
+            continue
+        normalized = _safe_identifier(raw_value)
+        if normalized is None:
+            redacted_count += 1
+            continue
+        safe[key] = normalized
+
+    if len(value) > limits.max_mapping_items:
+        redacted_count += len(value) - limits.max_mapping_items
+    if redacted_count:
+        safe["redacted"] = True
+        safe["redacted_field_count"] = redacted_count
+    if safe:
+        return safe
+    return _marker(value, category="tool_arguments")
+
+
+def _safe_identifier(value: Any) -> int | str | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if _SAFE_IDENTIFIER_RE.fullmatch(text) and not _contains_sensitive_value(text):
+            return text
+    return None
 
 
 def _sanitize_sequence(value: Sequence[Any], *, key: str, depth: int, seen: MutableSet[int], limits: AuditSanitizerLimits) -> list[Any] | dict[str, Any]:
@@ -171,7 +235,7 @@ def _truncate_text(text: str, *, limit: int) -> str:
     suffix = f"...[truncated:{_hash_prefix(text)}]"
     if limit <= len(suffix):
         return suffix[:limit]
-    return text[: limit - len(suffix)] + suffix
+    return text[:limit - len(suffix)] + suffix
 
 
 def _safe_key(value: str, *, limits: AuditSanitizerLimits) -> str:
@@ -183,7 +247,9 @@ def _safe_key(value: str, *, limits: AuditSanitizerLimits) -> str:
 
 def _is_sensitive_key(key: str) -> bool:
     normalized = key.lower()
-    if normalized in _SAFE_EXACT_KEYS or normalized.endswith(("_hash", "_hash_present", "_present", "_count", "_size")):
+    if normalized in _SAFE_EXACT_KEYS or normalized in _TEXT_REDACT_KEYS or normalized in _TOOL_ARGUMENT_KEYS:
+        return False
+    if normalized.endswith(("_hash", "_hash_present", "_present", "_count", "_size")):
         return False
     return bool(_SENSITIVE_KEY_RE.search(normalized))
 
