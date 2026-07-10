@@ -17,16 +17,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
-from app import models, webchat_models, models_osr  # noqa: F401,E402
+from app import models, models_operations_dispatch, models_osr, webchat_models  # noqa: F401,E402
 from app.db import Base  # noqa: E402
 from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus  # noqa: E402
 from app.models import Customer, Ticket, TicketEvent  # noqa: E402
+from app.models_operations_dispatch import OperationsDispatchOutboxRecord  # noqa: E402
 from app.models_osr import WhatsAppRoutingRuleRecord  # noqa: E402
 from app.services.nexus_osr.case_context import CaseContext  # noqa: E402
 from app.services.nexus_osr.persistence import load_case_context  # noqa: E402
 from app.services.nexus_osr.whatsapp_routing_service import (  # noqa: E402
     OSROperationsDispatchStatus,
-    WhatsAppDispatchResult,
     route_ticket_to_whatsapp_group,
 )
 
@@ -35,8 +35,8 @@ RAW_TRACKING = "CH1234567890"
 RAW_PHONE = "+382 67 123 456"
 RAW_EMAIL = "customer@example.com"
 RAW_ADDRESS = "address 123 Main Street Podgorica"
-PROVIDER_GROUP_ID = "provider-me-delivery-group-raw-id"
-FALLBACK_PROVIDER_GROUP_ID = "provider-me-fallback-group-raw-id"
+PROVIDER_GROUP_ID = "120363012345678901@g.us"
+FALLBACK_PROVIDER_GROUP_ID = "120363099999999999@g.us"
 
 
 @pytest.fixture()
@@ -54,12 +54,12 @@ def db_session(tmp_path):
         engine.dispose()
 
 
-def _ticket(db_session, *, country_code: str = "ME", case_type: str = "signed_not_received") -> Ticket:
-    customer = Customer(name="OSR Routing Visitor", external_ref="osr-routing-visitor")
+def _ticket(db_session, *, suffix: str = "1", country_code: str = "ME", case_type: str = "signed_not_received") -> Ticket:
+    customer = Customer(name="OSR Routing Visitor", external_ref=f"osr-routing-visitor-{suffix}")
     db_session.add(customer)
     db_session.flush()
     ticket = Ticket(
-        ticket_no=f"OSR-{country_code}-000001",
+        ticket_no=f"OSR-{country_code}-{suffix.zfill(6)}",
         title="OSR routing test",
         description="OSR routing test",
         customer_id=customer.id,
@@ -80,7 +80,7 @@ def _ticket(db_session, *, country_code: str = "ME", case_type: str = "signed_no
 
 def _case_context(ticket: Ticket, *, country_code: str = "ME", issue_type: str = "signed_not_received") -> CaseContext:
     return CaseContext(
-        conversation_id=1001,
+        conversation_id=1000 + ticket.id,
         ticket_id=ticket.id,
         channel="webchat",
         country_code=country_code,
@@ -100,7 +100,6 @@ def _rule(
     destination_group_id: str = PROVIDER_GROUP_ID,
     fallback_group_id: str | None = None,
     enabled: bool = True,
-    message_template: str | None = None,
 ) -> WhatsAppRoutingRuleRecord:
     row = WhatsAppRoutingRuleRecord(
         country_code=country_code,
@@ -108,7 +107,6 @@ def _rule(
         channel="whatsapp",
         destination_group_id=destination_group_id,
         fallback_group_id=fallback_group_id,
-        message_template=message_template,
         priority=10,
         enabled=enabled,
     )
@@ -126,13 +124,17 @@ def _events(db_session, ticket: Ticket) -> list[TicketEvent]:
     )
 
 
+def _outbox(db_session) -> list[OperationsDispatchOutboxRecord]:
+    return db_session.query(OperationsDispatchOutboxRecord).order_by(OperationsDispatchOutboxRecord.id.asc()).all()
+
+
 def _latest_event_payload(db_session, ticket: Ticket) -> dict:
     events = _events(db_session, ticket)
     assert events
     return json.loads(events[-1].payload_json)
 
 
-def _assert_no_raw_pii(value: object) -> None:
+def _assert_no_raw_sensitive(value: object) -> None:
     dumped = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str) if not isinstance(value, str) else value
     assert RAW_TRACKING not in dumped
     assert RAW_PHONE not in dumped
@@ -142,64 +144,81 @@ def _assert_no_raw_pii(value: object) -> None:
     assert FALLBACK_PROVIDER_GROUP_ID not in dumped
 
 
-def test_matching_rule_selects_destination_key_and_writes_pending_dispatch_event(db_session):
+def test_matching_rule_durably_enqueues_and_ticket_event_is_audit_reference_only(db_session):
     ticket = _ticket(db_session)
     ctx = _case_context(ticket)
-    _rule(db_session)
+    rule = _rule(db_session)
 
-    result = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx, tenant_id="pytest")
+    result = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx, tenant_id="tenant-me")
     db_session.commit()
 
     assert result.routed is True
     assert result.status == OSROperationsDispatchStatus.PENDING
-    assert result.destination_group_key == "whatsapp:me:signed_not_received:destination"
-    assert result.case_context.routed_group_key == "whatsapp:me:signed_not_received:destination"
+    assert result.message_text is None
+    assert result.outbox_id is not None
+    assert result.enqueue_created is True
+    rows = _outbox(db_session)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.routing_rule_id == rule.id
+    assert row.tenant_key == "tenant-me"
+    assert row.country_code == "ME"
+    assert row.destination_group_key == "whatsapp:me:signed_not_received:destination"
+    assert row.destination_group_hash.startswith("sha256:")
+    assert row.status == "pending"
+
     loaded = load_case_context(db_session, ticket_id=ticket.id)
     assert loaded is not None
-    assert loaded.routed_group_key == "whatsapp:me:signed_not_received:destination"
+    assert loaded.routed_group_key == row.destination_group_key
+
     payload = _latest_event_payload(db_session, ticket)
-    assert payload["event"] == "operations_dispatch_pending"
+    assert payload["event"] == "operations_dispatch_enqueued"
+    assert payload["outbox_id"] == row.id
+    assert payload["dispatch_key"] == row.dispatch_key
     assert payload["dispatch_status"] == "pending"
-    assert payload["destination_group_key"] == "whatsapp:me:signed_not_received:destination"
-    assert payload["provider_group_id_hash"].startswith("sha256:")
-    assert payload["routing_scope"] == "exact_country_issue_channel"
-    _assert_no_raw_pii(result.message_text or "")
-    _assert_no_raw_pii(payload)
+    assert "case_context" not in payload
+    assert "ticket_no" not in payload
+    assert "message_preview" not in payload
+    _assert_no_raw_sensitive(payload)
+    _assert_no_raw_sensitive({column.name: getattr(row, column.name) for column in row.__table__.columns})
 
 
-def test_route_idempotency_does_not_duplicate_pending_dispatch(db_session):
+def test_route_idempotency_uses_outbox_unique_record_not_ticket_event_truth(db_session):
     ticket = _ticket(db_session)
     ctx = _case_context(ticket)
     _rule(db_session)
 
-    first = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx, tenant_id="pytest")
-    second = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx, tenant_id="pytest")
+    first = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx, tenant_id="tenant-me")
+    second = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx, tenant_id="tenant-me")
 
     assert first.status == "pending"
     assert second.status == "pending"
-    assert second.event_id == first.event_id
+    assert second.outbox_id == first.outbox_id
+    assert second.enqueue_created is False
+    assert second.event_id is None
+    assert len(_outbox(db_session)) == 1
     assert len(_events(db_session, ticket)) == 1
 
 
-def test_disabled_exact_rule_does_not_route_and_writes_safe_cancelled_event(db_session):
+def test_disabled_exact_rule_fails_closed_without_outbox_or_broader_rule(db_session):
     ticket = _ticket(db_session, case_type="delivery_delay")
     ctx = _case_context(ticket, issue_type="delivery_delay")
-    _rule(db_session, issue_type="delivery_delay", destination_group_id=PROVIDER_GROUP_ID, enabled=False)
-    _rule(db_session, country_code="GLOBAL", issue_type="general", destination_group_id="provider-global-general")
+    _rule(db_session, issue_type="delivery_delay", enabled=False)
+    _rule(db_session, issue_type="general", destination_group_id="120363011111111111@g.us")
 
     result = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx)
 
     assert result.routed is False
     assert result.status == "routing_disabled"
-    assert result.case_context.routed_group_key is None
+    assert result.dispatch_status == "cancelled"
+    assert _outbox(db_session) == []
     payload = _latest_event_payload(db_session, ticket)
-    assert payload["event"] == "routing_disabled"
-    assert payload["dispatch_status"] == "cancelled"
-    assert "destination_group_key" not in payload or payload["destination_group_key"] is None
-    _assert_no_raw_pii(payload)
+    assert payload["routing_status"] == "failed_closed"
+    assert payload["routing_scope"] == "exact_country_issue_channel"
+    _assert_no_raw_sensitive(payload)
 
 
-def test_no_rule_writes_routing_not_configured_without_group_dispatch(db_session):
+def test_no_rule_fails_closed_without_outbox(db_session):
     ticket = _ticket(db_session, case_type="unknown_issue")
     ctx = _case_context(ticket, issue_type="unknown_issue")
 
@@ -207,17 +226,18 @@ def test_no_rule_writes_routing_not_configured_without_group_dispatch(db_session
 
     assert result.routed is False
     assert result.status == "routing_not_configured"
+    assert result.dispatch_status == "failed"
+    assert _outbox(db_session) == []
     payload = _latest_event_payload(db_session, ticket)
-    assert payload["event"] == "routing_not_configured"
-    assert payload["dispatch_status"] == "failed"
-    assert payload["case_context"]["routed_group_key"] is None
-    _assert_no_raw_pii(payload)
+    assert payload["routing_status"] == "failed_closed"
+    assert "destination_group_key" not in payload
+    _assert_no_raw_sensitive(payload)
 
 
-def test_routing_fallback_country_general_channel(db_session):
-    ticket = _ticket(db_session, country_code="ME", case_type="address_issue")
-    ctx = _case_context(ticket, country_code="ME", issue_type="address_issue")
-    _rule(db_session, country_code="ME", issue_type="general", destination_group_id="provider-me-general")
+def test_country_general_rule_is_allowed_within_same_country(db_session):
+    ticket = _ticket(db_session, case_type="address_issue")
+    ctx = _case_context(ticket, issue_type="address_issue")
+    _rule(db_session, country_code="ME", issue_type="general", destination_group_id="120363022222222222@g.us")
 
     result = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx)
 
@@ -225,118 +245,74 @@ def test_routing_fallback_country_general_channel(db_session):
     assert result.destination_group_key == "whatsapp:me:general:destination"
     payload = _latest_event_payload(db_session, ticket)
     assert payload["routing_scope"] == "country_general_channel"
-    _assert_no_raw_pii(payload)
 
 
-def test_routing_fallback_global_issue_channel(db_session):
-    ticket = _ticket(db_session, country_code="ME", case_type="customs_delay")
-    ctx = _case_context(ticket, country_code="ME", issue_type="customs_delay")
-    _rule(db_session, country_code="GLOBAL", issue_type="customs_delay", destination_group_id="provider-global-customs")
-
-    result = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx)
-
-    assert result.routed is True
-    assert result.destination_group_key == "whatsapp:global:customs_delay:destination"
-    payload = _latest_event_payload(db_session, ticket)
-    assert payload["routing_scope"] == "global_issue_channel"
-    _assert_no_raw_pii(payload)
-
-
-def test_routing_fallback_global_general_channel(db_session):
-    ticket = _ticket(db_session, country_code="ME", case_type="unmapped_issue")
-    ctx = _case_context(ticket, country_code="ME", issue_type="unmapped_issue")
-    _rule(db_session, country_code="GLOBAL", issue_type="general", destination_group_id="provider-global-general")
+def test_global_rule_is_not_used_for_country_scoped_case(db_session):
+    ticket = _ticket(db_session, case_type="customs_delay")
+    ctx = _case_context(ticket, issue_type="customs_delay")
+    _rule(db_session, country_code="GLOBAL", issue_type="customs_delay", destination_group_id="120363033333333333@g.us")
+    _rule(db_session, country_code="GLOBAL", issue_type="general", destination_group_id="120363044444444444@g.us")
 
     result = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx)
 
-    assert result.routed is True
-    assert result.destination_group_key == "whatsapp:global:general:destination"
-    payload = _latest_event_payload(db_session, ticket)
-    assert payload["routing_scope"] == "global_general_channel"
-    _assert_no_raw_pii(payload)
+    assert result.routed is False
+    assert result.status == "routing_not_configured"
+    assert _outbox(db_session) == []
 
 
-def test_dispatch_failure_uses_fallback_group_and_marks_case_context_routed(db_session):
+def test_routing_never_invokes_injected_dispatcher_and_does_not_generate_text(db_session):
     ticket = _ticket(db_session, case_type="failed_delivery")
     ctx = _case_context(ticket, issue_type="failed_delivery")
     _rule(
         db_session,
         issue_type="failed_delivery",
-        destination_group_id=PROVIDER_GROUP_ID,
         fallback_group_id=FALLBACK_PROVIDER_GROUP_ID,
     )
 
-    class _Dispatcher:
-        def __init__(self) -> None:
-            self.calls: list[tuple[str, str, dict]] = []
+    class _ForbiddenDispatcher:
+        calls = 0
 
-        def send_group_message(self, *, provider_group_id: str, message: str, metadata: dict):
-            self.calls.append((provider_group_id, message, metadata))
-            if len(self.calls) == 1:
-                return WhatsAppDispatchResult(ok=False, status="failed", error_code="primary_unavailable", retryable=True)
-            return WhatsAppDispatchResult(ok=True, status="sent", external_message_id="fallback-msg-1")
+        def send_group_message(self, **kwargs):
+            self.calls += 1
+            raise AssertionError("routing must not call a provider or sidecar")
 
-    dispatcher = _Dispatcher()
-    result = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx, dispatcher=dispatcher)
-    db_session.commit()
-
-    assert result.routed is True
-    assert result.status == OSROperationsDispatchStatus.FALLBACK_USED
-    assert result.fallback_used is True
-    assert result.attempted_group_key == "whatsapp:me:failed_delivery:fallback"
-    assert [call[0] for call in dispatcher.calls] == [PROVIDER_GROUP_ID, FALLBACK_PROVIDER_GROUP_ID]
-    loaded = load_case_context(db_session, ticket_id=ticket.id)
-    assert loaded is not None
-    assert loaded.routed_group_key == "whatsapp:me:failed_delivery:fallback"
-    payload = _latest_event_payload(db_session, ticket)
-    assert payload["event"] == "operations_dispatch_fallback_used"
-    assert payload["dispatch_status"] == "fallback_used"
-    assert payload["fallback_used"] is True
-    assert payload["external_message_id"]
-    assert payload["external_message_id"] != "fallback-msg-1"
-    assert "fallback-msg-1" not in json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
-    _assert_no_raw_pii(result.message_text or "")
-    _assert_no_raw_pii(payload)
-
-
-def test_retryable_failure_records_retryable_queue_state(db_session):
-    ticket = _ticket(db_session, case_type="failed_delivery")
-    ctx = _case_context(ticket, issue_type="failed_delivery")
-    _rule(db_session, issue_type="failed_delivery", destination_group_id=PROVIDER_GROUP_ID)
-
-    class _Dispatcher:
-        def send_group_message(self, *, provider_group_id: str, message: str, metadata: dict):
-            return WhatsAppDispatchResult(ok=False, status="failed", error_code="timeout", retryable=True)
-
-    result = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx, dispatcher=_Dispatcher())
-
-    assert result.routed is False
-    assert result.status == OSROperationsDispatchStatus.RETRYABLE
-    payload = _latest_event_payload(db_session, ticket)
-    assert payload["dispatch_status"] == "retryable"
-    assert payload["retryable"] is True
-    _assert_no_raw_pii(payload)
-
-
-def test_custom_template_only_renders_safe_allowed_fields(db_session):
-    ticket = _ticket(db_session, case_type="address_issue")
-    ctx = _case_context(ticket, issue_type="address_issue")
-    _rule(
+    dispatcher = _ForbiddenDispatcher()
+    result = route_ticket_to_whatsapp_group(
         db_session,
-        issue_type="address_issue",
-        destination_group_id=PROVIDER_GROUP_ID,
-        message_template=(
-            "Ticket {ticket_no} {safe_tracking_reference} {customer_claim_summary} "
-            f"phone={RAW_PHONE} email={RAW_EMAIL} tracking={RAW_TRACKING} {RAW_ADDRESS} "
-            "raw={raw_tracking_number}"
-        ),
+        ticket=ticket,
+        case_context=ctx,
+        dispatcher=dispatcher,
     )
 
-    result = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx)
+    assert result.routed is True
+    assert result.status == "pending"
+    assert result.message_text is None
+    assert result.fallback_used is False
+    assert dispatcher.calls == 0
+    dumped = json.dumps(
+        [
+            {column.name: getattr(row, column.name) for column in row.__table__.columns}
+            for row in _outbox(db_session)
+        ]
+        + [json.loads(event.payload_json) for event in _events(db_session, ticket)],
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    _assert_no_raw_sensitive(dumped)
 
-    message_text = result.message_text or ""
-    assert "raw_tracking_number" not in message_text
-    assert "{raw_tracking_number}" not in message_text
-    _assert_no_raw_pii(message_text)
-    payload = _latest_event_payload(db_session, ticket)
-    _assert_no_raw_pii(payload)
+
+def test_tenant_key_is_part_of_dispatch_identity_and_scope(db_session):
+    ticket_a = _ticket(db_session, suffix="2", case_type="delivery_delay")
+    ticket_b = _ticket(db_session, suffix="3", case_type="delivery_delay")
+    ctx_a = _case_context(ticket_a, issue_type="delivery_delay")
+    ctx_b = _case_context(ticket_b, issue_type="delivery_delay")
+    _rule(db_session, issue_type="delivery_delay")
+
+    first = route_ticket_to_whatsapp_group(db_session, ticket=ticket_a, case_context=ctx_a, tenant_id="tenant-a")
+    second = route_ticket_to_whatsapp_group(db_session, ticket=ticket_b, case_context=ctx_b, tenant_id="tenant-b")
+
+    assert first.dispatch_key != second.dispatch_key
+    rows = _outbox(db_session)
+    assert {row.tenant_key for row in rows} == {"tenant-a", "tenant-b"}
+    assert all(row.country_code == "ME" for row in rows)
