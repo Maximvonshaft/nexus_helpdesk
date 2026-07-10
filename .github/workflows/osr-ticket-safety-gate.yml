@@ -121,7 +121,7 @@ jobs:
 
           changed = subprocess.check_output([
               "git", "diff", "--name-only",
-              f"{Path('.git').exists() and 'origin/' or ''}${{ github.base_ref }}...HEAD"
+              "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}",
           ], text=True)
           assert not any(path.startswith("backend/alembic/versions/") for path in changed.splitlines())
           PY
