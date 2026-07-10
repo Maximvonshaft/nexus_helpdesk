@@ -1,6 +1,6 @@
 # Nexus OSR Annual Plan 2026
 
-Current authority baseline: `main` at `f5f4cd13d87a7766ca5fd5b43751979a326825c8` (`feat(osr): add governed tool execution path (#454)`).
+Current authority baseline: `main` at `990aa91e0fe8bdb8f3e261f074e384172df478dc` (`docs(osr): restore roadmap control files (#462)`).
 
 This roadmap is the current-main control file for Nexus OSR delivery. It supersedes stale prompt assumptions and uses PR #450 only as strategic source material because #450 was authored against the older `ec0af3fd8e853b447f47f901a69d036cae3d86e7` baseline.
 
@@ -27,7 +27,7 @@ Nexus OSR closes logistics cases safely through facts, policies, tickets, handof
 
 ## Current implementation state
 
-Evidence date: 2026-07-10, from current main, control Issue #461, Work Orders #458/#459/#460, and current PR state.
+Evidence date: 2026-07-10, from current main, control Issue #461, Work Orders #458/#459/#460/#463, and current PR state.
 
 | Area | Current state | Next control action |
 | --- | --- | --- |
@@ -35,9 +35,9 @@ Evidence date: 2026-07-10, from current main, control Issue #461, Work Orders #4
 | Runtime audit integration | PR #452 merged into main as `6261ecf0d81ccfef3a8790a4c7ca1d9f163e69f8`. | Treat as baseline. |
 | Human hours and escalation orchestration | PR #453 merged into main as `57b1f89351df04b00e95b57db5aa1fe00aaacc6a`, default-off and using existing handoff/auto-ticket services. | Address post-merge P2 findings through Work Order #459 when unblocked. |
 | Governed tool execution | PR #454 merged into main as `f5f4cd13d87a7766ca5fd5b43751979a326825c8` after Admin gate. Validated head `0b7bf941d460a364b41c8078b79d128b8e68ed87` had required checks green. | Treat as M3 baseline. Do not reopen unless a verified regression appears. |
-| WhatsApp operations routing | PR #455 is next. Remote head remains `200069b02d4d086e76382a9a40257b682abf940f` on old base. Agent 09 produced a clean local rebase target but could not push because remote auth/object creation was unavailable. | A writer with authenticated push or Git object creation should repeat/apply the clean rebase onto `f5f4cd13`, then run focused WhatsApp routing checks. |
+| WhatsApp operations routing | PR #464 is the current recovery candidate for the #455 workstream. Original PR #455 remains open/draft on old base at `200069b02d4d086e76382a9a40257b682abf940f`. PR #464 was created from `f5f4cd13` and is now stale after the docs-only #462 merge to `990aa91e`. | Refresh/rebase PR #464 onto `990aa91e`, run focused WhatsApp routing, persistence, and auto-ticket checks in an environment with backend test dependencies, then let Admin decide whether #464 supersedes original #455. |
 | Admin debug and Control Tower surfaces | PR #456 remains draft/queued and behind current main. A preflight finding exists around raw provider group ID exposure on create/get/update detail surfaces. | Keep last until #455 lands, then rebase and fix or explicitly authorize runtime-admin provider group ID detail exposure. |
-| Roadmap control files | PR #462 restores this file and `docs/roadmap/nexus-osr-plan.yaml`; this refresh updates them after #454 merged. | Admin can review/merge docs-only recovery after confirming no newer main change invalidates facts. |
+| Roadmap control files | PR #462 merged as `990aa91e0fe8bdb8f3e261f074e384172df478dc`, restoring this file and `docs/roadmap/nexus-osr-plan.yaml` on main. | Treat roadmap files as the current control baseline; keep them aligned with merged main facts. |
 
 ## 2026 capability map
 
@@ -120,7 +120,7 @@ Acceptance focus:
 - Customer-visible behavior remains unchanged.
 - No WhatsApp sidecar change unless separately approved.
 
-Current status: PR #455 is the next runtime dependency after #454. Remote branch still needs a current-main rebase/update and focused tests.
+Current status: PR #464 is the current recovery candidate for the #455 workstream, but it must be refreshed against `990aa91e` and focused-tested before Admin gate.
 
 ### M7 — Debug, eval, and regression gate
 
@@ -187,10 +187,10 @@ Acceptance focus:
 
 ## Active dependency order
 
-1. Treat PR #454 as merged M3 baseline on main `f5f4cd13d87a7766ca5fd5b43751979a326825c8`.
-2. Finish the PR #455 WhatsApp routing branch update/rebase onto `f5f4cd13`, then run focused WhatsApp routing, persistence, and auto-ticket checks.
-3. Keep PR #456 queued until #455 lands; then rebase and fix/authorize provider group ID detail exposure.
-4. Close or supersede stale PR #450 once these restored roadmap files are merged.
+1. Treat PR #454 as merged M3 baseline and PR #462 as merged roadmap-control baseline on main `990aa91e0fe8bdb8f3e261f074e384172df478dc`.
+2. Refresh/rebase PR #464 onto `990aa91e`, then run focused WhatsApp routing, persistence, and auto-ticket checks.
+3. Let Admin decide whether PR #464 supersedes original PR #455 after exact-head validation.
+4. Keep PR #456 queued until the WhatsApp routing workstream lands; then rebase and fix/authorize provider group ID detail exposure.
 5. Address Work Order #459 escalation follow-up on a current-main branch when it does not conflict with the active runtime PR.
 6. Continue M4/M5/M7+ only through current-main Work Orders and exact-head conflict checks.
 
@@ -206,6 +206,6 @@ Acceptance focus:
 ## Stale PR guidance
 
 - PR #450: strategic annual-plan source, but stale against current main. Supersede with the restored `docs/roadmap/*` files once reviewed.
-- PR #455: current primary runtime dependency; remote branch still needs authenticated update after #454 merge.
+- PR #455: original WhatsApp routing PR on an old branch; PR #464 is the current recovery candidate until Admin decides supersession.
 - PR #456: keep queued last; admin/debug surfaces depend on stable runtime foundations and provider-group-ID redaction decision.
 - Older WhatsApp/native, tracking, and knowledge PRs must not be revived without current-main Work Order, exact-head review, and conflict check.
