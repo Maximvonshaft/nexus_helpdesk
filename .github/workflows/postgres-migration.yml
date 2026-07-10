@@ -60,11 +60,30 @@ jobs:
           alembic downgrade 20260525_0033
           alembic upgrade head
 
-      - name: Check registered model and migration drift
+      - name: Collect registered model and migration drift
+        id: model_drift
         env:
           DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
           APP_ENV: development
-        run: cd backend && python scripts/check_model_migration_drift.py
+        run: |
+          set +e
+          cd backend
+          python scripts/check_model_migration_drift.py --report-json ../model-drift-report.json
+          status=$?
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload model drift report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-migration-drift-report
+          path: model-drift-report.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Enforce model migration drift result
+        run: test "${{ steps.model_drift.outputs.exit_code }}" -eq 0
 
       - name: Strict production-like readiness check
         env:
