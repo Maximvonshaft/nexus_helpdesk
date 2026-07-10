@@ -79,22 +79,22 @@ jobs:
           pytest -q backend/tests/test_nexus_osr_admin_api.py -k "admin_crud or admin_can_manage or policy_schema or validation_errors or non_admin"
 
       - name: Run Admin tenant isolation tests
-        run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_tenant_isolation_applies_to_context_audit_debug_and_control_tower
+        run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_tenant_isolation_for_list_detail_update_debug_and_control_tower
 
       - name: Run Admin runtime audit tests
-        run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_runtime_audit_is_read_only_and_recursively_redacted
+        run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_runtime_audit_is_strictly_read_only_and_redacted
 
       - name: Run Admin Case Context patch tests
-        run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_case_context_allows_only_safe_fields_and_blocks_unsafe_patch
+        run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_case_context_allows_only_safe_fields_and_redacts_before_persistence
 
       - name: Run Admin unified debug snapshot test
-        run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_debug_snapshot_has_unified_shape_and_redacted_payloads
+        run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_debug_snapshot_has_unified_contract_and_no_raw_payloads
 
       - name: Run WebChat debug sanitizer test
         run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_webchat_debug_sanitizer_blocks_hostile_provider_tool_and_contact_payloads
 
       - name: Run route mount and composition test
-        run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_route_mount_and_webchat_debug_composition_are_stable
+        run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_route_mount_and_webchat_debug_composition_are_present
 
       - name: Check diff whitespace
         run: git diff --check origin/${{ github.base_ref }}...HEAD
