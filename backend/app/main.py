@@ -29,6 +29,7 @@ from .api.knowledge_items import router as knowledge_items_router
 from .api.lookups import router as lookups_router
 from .api.lite import router as lite_router
 from .api.operator_queue import router as operator_queue_router
+from .api.osr_admin import router as osr_admin_router
 from .api.outbound_channels import router as outbound_channels_router
 from .api.persona_profiles import router as persona_profiles_router
 from .api.speedaf_actions import router as speedaf_actions_router
@@ -84,7 +85,6 @@ def _custom_openapi() -> dict:
 admin_api._validate_password_length = _validate_admin_password_or_http
 app.openapi = _custom_openapi
 
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
@@ -98,6 +98,7 @@ app.add_middleware(
         'X-Client-Key',
         'Idempotency-Key',
         'X-Requested-With',
+        'X-Nexus-Tenant',
         'X-Webchat-Visitor-Token',
         'X-Webchat-WS-Fallback',
         settings.request_id_header,
@@ -265,6 +266,7 @@ app.include_router(admin_whatsapp_native_router)
 app.include_router(ticket_perf_router)
 app.include_router(admin_router)
 app.include_router(admin_queue_router)
+app.include_router(osr_admin_router)
 app.include_router(operator_queue_router)
 app.include_router(outbound_channels_router)
 app.include_router(auth_router)
