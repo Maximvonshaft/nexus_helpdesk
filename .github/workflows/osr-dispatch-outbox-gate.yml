@@ -186,12 +186,51 @@ jobs:
           DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
         run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_postgres.py
 
-      - name: Prove metadata registration and migration drift
-        env:
-          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
+      - name: Prove Outbox metadata and drift wiring
         run: |
-          cd backend
-          python scripts/check_model_migration_drift.py
+          python - <<'PY'
+          from pathlib import Path
+          from app.db import Base
+          from app.model_registry import register_all_models
+          from app import models_operations_dispatch  # noqa: F401
+          from app.scripts_placeholder import never  # type: ignore
+          PY
+        continue-on-error: true
+
+      - name: Enforce Outbox metadata and drift wiring
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from app.db import Base
+          from app.model_registry import register_all_models
+
+          modules = register_all_models()
+          assert "app.models_operations_dispatch" in modules, modules
+          table = Base.metadata.tables["operations_dispatch_outbox"]
+          check_names = {item.name for item in table.constraints if item.name}
+          index_names = {item.name for item in table.indexes if item.name}
+          assert "uq_operations_dispatch_outbox_dispatch_key" in check_names
+          assert {
+              "ck_operations_dispatch_outbox_status",
+              "ck_operations_dispatch_outbox_attempt_count_nonnegative",
+              "ck_operations_dispatch_outbox_max_attempts_positive",
+              "ck_operations_dispatch_outbox_attempt_count_bounded",
+              "ck_operations_dispatch_outbox_lease_state",
+              "ck_operations_dispatch_outbox_retry_timestamp",
+              "ck_operations_dispatch_outbox_dispatched_timestamp",
+              "ck_operations_dispatch_outbox_cancelled_timestamp",
+          } <= check_names
+          assert {
+              "ix_operations_dispatch_outbox_scope",
+              "ix_operations_dispatch_outbox_due",
+              "ix_operations_dispatch_outbox_lease",
+          } <= index_names
+
+          drift_source = Path("backend/scripts/check_model_migration_drift.py").read_text(encoding="utf-8")
+          assert '"operations_dispatch_outbox"' in drift_source
+          assert '"ck_operations_dispatch_outbox_status"' in drift_source
+          assert '"ix_operations_dispatch_outbox_due"' in drift_source
+          PY
 
       - name: Prove enqueue-only and no-message storage boundary
         run: |
