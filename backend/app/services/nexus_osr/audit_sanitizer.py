@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, MutableSet, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -8,7 +9,7 @@ import hashlib
 import json
 import math
 import re
-from typing import Any, Mapping, MutableSet, Sequence
+from typing import Any
 
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 _PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\d .()\-]{6,}\d)(?!\w)")
@@ -28,6 +29,10 @@ _ADDRESS_RE = re.compile(
     r"boulevard|blvd\.?|lane|ln\.?|drive|dr\.?|ulica|put|strasse|straße)\b",
     re.I,
 )
+_ISO_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})?)?$"
+)
+_TIMESTAMP_KEYS = {"created_at", "updated_at", "observed_at", "checked_at", "timestamp", "closed_at", "expires_at"}
 
 _SAFE_EXACT_KEYS = {
     "authority",
@@ -47,11 +52,7 @@ _SAFE_EXACT_KEYS = {
     "tool_name",
     "code",
     "severity",
-    "created_at",
-    "updated_at",
-    "observed_at",
-    "checked_at",
-    "timestamp",
+    *_TIMESTAMP_KEYS,
     "confidence",
     "allowed",
     "executed",
@@ -86,13 +87,13 @@ _SAFE_EXACT_KEYS = {
 
 _SENSITIVE_KEY_RE = re.compile(
     r"(?:^|_)(?:raw|prompt|system_prompt|developer_prompt|user_prompt|customer_reply|customer_claim|"
-    r"message_body|body_text|provider_payload|provider_request|provider_response|provider_body|"
+    r"claim_summary|message|user_message|assistant_message|message_body|body_text|input_text|output_text|"
+    r"content|transcript|handover_summary|provider_payload|provider_request|provider_response|provider_body|"
     r"tool_args|tool_arguments|tool_result|tool_results|tracking_number|phone|email|postal_address|"
     r"street_address|address|credential|credentials|api_key|authorization|bearer|cookie|session_secret|"
     r"token|password|secret|private_key|provider_group_id|destination_group_id|fallback_group_id)(?:$|_)",
     re.I,
 )
-
 _SAFE_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$")
 
 
@@ -111,15 +112,20 @@ DEFAULT_LIMITS = AuditSanitizerLimits()
 def sanitize_audit_payload(value: Any, *, limits: AuditSanitizerLimits = DEFAULT_LIMITS) -> Any:
     """Return deterministic, bounded, JSON-safe audit data.
 
-    This function never trusts caller shaping. Unsupported objects and malformed
-    containers fail closed to safe type/category markers. The caller-owned input
-    is never mutated.
+    Caller shaping is never trusted. Unsupported or malformed values fail closed
+    to type/category markers, and caller-owned data is never mutated.
     """
 
     try:
         return _sanitize(value, key="", depth=0, seen=set(), limits=limits)
     except Exception:
-        return _marker(value, category="sanitizer_failure")
+        return {
+            "redacted": True,
+            "category": "sanitizer_failure",
+            "type": _safe_type_name(value),
+            "present": _present(value),
+            "sha256_prefix": _hash_prefix(value),
+        }
 
 
 def safe_audit_label(value: Any, *, fallback: str, max_length: int = 160) -> str:
@@ -170,7 +176,6 @@ def _sanitize(
         }
     if depth >= limits.max_depth:
         return _marker(value, category="max_depth")
-
     if isinstance(value, Mapping):
         return _sanitize_mapping(value, depth=depth, seen=seen, limits=limits)
     if isinstance(value, (list, tuple)):
@@ -180,7 +185,6 @@ def _sanitize(
         if not isinstance(sanitized, list):
             return sanitized
         return sorted(sanitized, key=_canonical_json)
-
     return {
         "redacted": True,
         "category": "unsupported_object",
@@ -204,15 +208,12 @@ def _sanitize_mapping(
         items: list[tuple[str, str, Any]] = []
         for raw_key, raw_value in list(value.items())[: limits.max_mapping_items]:
             source_key = str(raw_key)
-            safe_key = _safe_key(source_key, limits=limits)
-            items.append((safe_key, source_key, raw_value))
+            items.append((_safe_key(source_key, limits=limits), source_key, raw_value))
         items.sort(key=lambda item: (item[0], item[1]))
 
         result: dict[str, Any] = {}
         for safe_key, source_key, raw_value in items:
-            output_key = safe_key
-            if output_key in result:
-                output_key = f"{safe_key}:{_hash_prefix(source_key)}"
+            output_key = safe_key if safe_key not in result else f"{safe_key}:{_hash_prefix(source_key)}"
             if _is_sensitive_key(source_key):
                 result[output_key] = _marker(raw_value, category=_sensitive_category(source_key))
             else:
@@ -258,6 +259,9 @@ def _sanitize_text(value: str, *, key: str, limits: AuditSanitizerLimits) -> str
     text = " ".join(value.strip().split())
     if not text:
         return ""
+    normalized_key = key.lower()
+    if normalized_key in _TIMESTAMP_KEYS and _ISO_TIMESTAMP_RE.fullmatch(text):
+        return text[: limits.max_string_length]
     if _is_sensitive_key(key):
         return _marker(value, category=_sensitive_category(key))
 
@@ -265,9 +269,9 @@ def _sanitize_text(value: str, *, key: str, limits: AuditSanitizerLimits) -> str
     text = _PROVIDER_GROUP_RE.sub("[redacted_provider_group]", text)
     text = _EMAIL_RE.sub("[redacted_email]", text)
     text = _PHONE_RE.sub("[redacted_phone]", text)
-    if "address" in key.lower() or _ADDRESS_RE.search(text):
+    if "address" in normalized_key or _ADDRESS_RE.search(text):
         text = _ADDRESS_RE.sub("[redacted_address]", text)
-    if key.lower() not in _SAFE_EXACT_KEYS and not key.lower().endswith(("_hash", "_hash_present", "_present")):
+    if normalized_key not in _SAFE_EXACT_KEYS and not normalized_key.endswith(("_hash", "_hash_present", "_present")):
         text = _TRACKING_RE.sub("[redacted_tracking]", text)
 
     if len(text) > limits.max_string_length:
@@ -314,12 +318,22 @@ def _contains_sensitive_value(value: str) -> bool:
     )
 
 
+def _present(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value)
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bool(len(value))
+    return True
+
+
 def _marker(value: Any, *, category: str) -> dict[str, Any]:
     return {
         "redacted": True,
         "category": category,
         "type": _safe_type_name(value),
-        "present": value not in (None, ""),
+        "present": _present(value),
         "sha256_prefix": _hash_prefix(value),
     }
 
