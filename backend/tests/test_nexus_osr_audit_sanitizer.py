@@ -126,12 +126,36 @@ def test_sanitizer_enforces_collection_and_string_bounds():
 
 def test_sensitive_keys_key_names_and_failure_fallback_are_safe():
     raw_email_key = "person@example.test"
-    result = sanitize_audit_payload({raw_email_key: "safe", "tracking_number_hash": "abc123hash", "safe_tracking_reference": "***7890", "provider_group_id": "120363999999999999@g.us"})
+    raw_tracking = "CH1234567890"
+    raw_phone = "+382 67123456"
+    raw_email = "claim@example.test"
+    result = sanitize_audit_payload({
+        raw_email_key: "safe",
+        "tracking_number_hash": "abc123hash",
+        "safe_tracking_reference": "***7890",
+        "provider_group_id": "120363999999999999@g.us",
+        "arguments": {
+            "ticket_id": 17,
+            "handoff_request_id": 23,
+            "tracking_number": raw_tracking,
+            "phone": raw_phone,
+        },
+        "customer_claim_summary": f"Parcel {raw_tracking}; email {raw_email}; phone {raw_phone}",
+    })
     text = _serialized(result)
-    assert raw_email_key not in text
+
+    for raw in (raw_email_key, raw_tracking, raw_phone, raw_email):
+        assert raw not in text
     assert result["tracking_number_hash"] == "abc123hash"
     assert result["safe_tracking_reference"] == "***7890"
     assert result["provider_group_id"]["redacted"] is True
+    assert result["arguments"]["ticket_id"] == 17
+    assert result["arguments"]["handoff_request_id"] == 23
+    assert result["arguments"]["redacted"] is True
+    assert result["arguments"]["redacted_field_count"] == 2
+    assert "[redacted_tracking]" in result["customer_claim_summary"]
+    assert "[redacted_email]" in result["customer_claim_summary"]
+    assert "[redacted_phone]" in result["customer_claim_summary"]
 
     fallback = sanitize_audit_payload(_ExplodingMapping(hostile=_HostileEquality()))
     assert fallback["category"] == "sanitizer_failure"
