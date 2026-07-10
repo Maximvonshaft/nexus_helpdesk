@@ -65,8 +65,14 @@ jobs:
       - name: Sanitizer hostile nested payload
         run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_sanitizer_redacts_hostile_nested_payload_and_preserves_safe_metadata
 
-      - name: Sanitizer deterministic bounds and cycle
-        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_sanitizer_is_deterministic_bounded_and_cycle_safe
+      - name: Sanitizer deterministic output
+        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_sanitizer_is_deterministic
+
+      - name: Sanitizer cycle safety
+        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_sanitizer_is_cycle_safe
+
+      - name: Sanitizer collection and string bounds
+        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_sanitizer_enforces_collection_and_string_bounds
 
       - name: Sanitizer sensitive keys and failure fallback
         run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_sensitive_keys_key_names_and_failure_fallback_are_safe
