@@ -83,10 +83,20 @@ jobs:
           DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
         run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_enqueue_is_idempotent_database_unique_and_scope_safe
 
-      - name: SQLite lease recovery and stale owner
+      - name: SQLite active lease blocks second worker
         env:
           DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
-        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_worker_lease_expiry_recovery_and_stale_owner_rejection
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_worker_lease_blocks_second_worker_before_expiry
+
+      - name: SQLite stale owner cannot acknowledge
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_stale_owner_cannot_ack_after_lease_expiry
+
+      - name: SQLite expired lease recovery
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_expired_lease_is_recovered_by_new_owner
 
       - name: SQLite retry backoff and dead letter
         env:
