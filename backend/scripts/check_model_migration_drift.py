@@ -38,6 +38,16 @@ IGNORED_UNIQUE_CONSTRAINTS_WITH_REASON = {
 
 REQUIRED_CHECK_CONSTRAINTS: dict[str, set[str]] = {
     "case_contexts": {"ck_case_context_active_requires_identity"},
+    "operations_dispatch_outbox": {
+        "ck_operations_dispatch_outbox_status",
+        "ck_operations_dispatch_outbox_attempt_count_nonnegative",
+        "ck_operations_dispatch_outbox_max_attempts_positive",
+        "ck_operations_dispatch_outbox_attempt_count_bounded",
+        "ck_operations_dispatch_outbox_lease_state",
+        "ck_operations_dispatch_outbox_retry_timestamp",
+        "ck_operations_dispatch_outbox_dispatched_timestamp",
+        "ck_operations_dispatch_outbox_cancelled_timestamp",
+    },
 }
 
 REQUIRED_INDEXES: dict[str, set[str]] = {
@@ -46,6 +56,22 @@ REQUIRED_INDEXES: dict[str, set[str]] = {
         "uq_case_context_active_conversation_only",
         "uq_case_context_active_ticket_only",
         "uq_case_context_active_conversation_ticket",
+    },
+    "operations_dispatch_outbox": {
+        "ix_operations_dispatch_outbox_ticket_id",
+        "ix_operations_dispatch_outbox_routing_rule_id",
+        "ix_operations_dispatch_outbox_status",
+        "ix_operations_dispatch_outbox_next_retry_at",
+        "ix_operations_dispatch_outbox_lease_owner",
+        "ix_operations_dispatch_outbox_lease_expires_at",
+        "ix_operations_dispatch_outbox_error_category",
+        "ix_operations_dispatch_outbox_created_at",
+        "ix_operations_dispatch_outbox_updated_at",
+        "ix_operations_dispatch_outbox_dispatched_at",
+        "ix_operations_dispatch_outbox_cancelled_at",
+        "ix_operations_dispatch_outbox_scope",
+        "ix_operations_dispatch_outbox_due",
+        "ix_operations_dispatch_outbox_lease",
     },
 }
 
@@ -160,7 +186,7 @@ def collect_schema_drift(inspector) -> list[Drift]:
                 drift.append(Drift("missing_metadata_check", f"{table_name}.{constraint_name}", "required check is absent from ORM metadata"))
             db_checks = {item.get("name") for item in inspector.get_check_constraints(table_name) if item.get("name")}
             for constraint_name in sorted(required_checks - db_checks):
-                drift.append(Drift("missing_check_constraint", f"{table_name}.{constraint_name}", "required lifecycle check is absent from database"))
+                drift.append(Drift("missing_check_constraint", f"{table_name}.{constraint_name}", "required safety check is absent from database"))
 
         required_indexes = REQUIRED_INDEXES.get(table_name, set())
         if required_indexes:
@@ -169,7 +195,7 @@ def collect_schema_drift(inspector) -> list[Drift]:
                 drift.append(Drift("missing_metadata_index", f"{table_name}.{index_name}", "required index is absent from ORM metadata"))
             db_indexes = {item.get("name") for item in inspector.get_indexes(table_name) if item.get("name")}
             for index_name in sorted(required_indexes - db_indexes):
-                drift.append(Drift("missing_index", f"{table_name}.{index_name}", "required lifecycle index is absent from database"))
+                drift.append(Drift("missing_index", f"{table_name}.{index_name}", "required safety index is absent from database"))
 
     return drift
 
