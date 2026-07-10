@@ -1,0 +1,10 @@
+[
+  {"path": "runtime_decision", "method": "GET", "permission_granted": true, "status_code": 200, "observed_at": "2026-07-10T19:59:30Z", "payload": {"tenant_id": "tenant-a", "state": "ready", "observed_at": "2026-07-10T19:59:30Z", "evidence_count": 12}},
+  {"path": "handoff", "method": "GET", "permission_granted": true, "status_code": 200, "observed_at": "2026-07-10T19:59:30Z", "payload": {"tenant_id": "tenant-a", "state": "ready", "observed_at": "2026-07-10T19:59:30Z", "evidence_count": 4}},
+  {"path": "ticket", "method": "GET", "permission_granted": true, "status_code": 200, "observed_at": "2026-07-10T19:59:30Z", "payload": {"tenant_id": "tenant-a", "state": "ready", "observed_at": "2026-07-10T19:59:30Z", "evidence_count": 5}},
+  {"path": "tracking", "method": "GET", "permission_granted": true, "status_code": 200, "observed_at": "2026-07-10T19:59:30Z", "payload": {"tenant_id": "tenant-a", "state": "ready", "observed_at": "2026-07-10T19:59:30Z", "evidence_count": 8}},
+  {"path": "knowledge", "method": "GET", "permission_granted": true, "status_code": 200, "observed_at": "2026-07-10T19:59:30Z", "payload": {"tenant_id": "tenant-a", "state": "ready", "observed_at": "2026-07-10T19:59:30Z", "evidence_count": 8}},
+  {"path": "dispatch", "method": "GET", "permission_granted": true, "status_code": 200, "observed_at": "2026-07-10T19:59:30Z", "payload": {"tenant_id": "tenant-a", "state": "ready", "observed_at": "2026-07-10T19:59:30Z", "evidence_count": 3}},
+  {"path": "queue_worker", "method": "GET", "permission_granted": true, "status_code": 200, "observed_at": "2026-07-10T19:59:30Z", "payload": {"tenant_id": "tenant-a", "state": "ready", "observed_at": "2026-07-10T19:59:30Z", "evidence_count": 2}},
+  {"path": "provider_runtime", "method": "GET", "permission_granted": true, "status_code": 200, "observed_at": "2026-07-10T19:59:30Z", "payload": {"tenant_id": "tenant-a", "state": "ready", "observed_at": "2026-07-10T19:59:30Z", "evidence_count": 1}}
+]
