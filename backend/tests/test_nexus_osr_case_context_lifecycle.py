@@ -63,6 +63,24 @@ def test_exact_nullable_identity_combinations_and_unscoped_load_rejected(db):
         load_case_context(db, tenant_id="tenant-a")
 
 
+def test_single_selector_falls_back_to_one_unique_two_key_row(db):
+    save_case_context(db, _context(conversation_id=111, ticket_id=211), tenant_id="tenant-a")
+
+    by_conversation = load_case_context(db, conversation_id=111, tenant_id="tenant-a")
+    by_ticket = load_case_context(db, ticket_id=211, tenant_id="tenant-a")
+
+    assert by_conversation is not None and by_conversation.ticket_id == 211
+    assert by_ticket is not None and by_ticket.conversation_id == 111
+
+
+def test_single_selector_fallback_fails_closed_when_multiple_candidates_exist(db):
+    save_case_context(db, _context(conversation_id=121, ticket_id=221), tenant_id="tenant-a")
+    save_case_context(db, _context(conversation_id=122, ticket_id=221), tenant_id="tenant-a")
+
+    with pytest.raises(ValueError, match="case_context_identity_ambiguous"):
+        load_case_context(db, ticket_id=221, tenant_id="tenant-a")
+
+
 def test_ticket_only_tenant_inference_fails_closed_when_ambiguous(db):
     save_case_context(db, _context(ticket_id=301), tenant_id="tenant-a")
     save_case_context(db, _context(ticket_id=301), tenant_id="tenant-b")
