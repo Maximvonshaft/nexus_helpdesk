@@ -1,0 +1,137 @@
+name: Nexus OSR Work Item
+description: Define one independently assignable, implementable, reviewable, and closable unit of work.
+title: "[OSR Work] "
+labels:
+  - osr-work-order
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A Work Item owns the required outcome and acceptance boundary. The linked Pull Request owns implementation facts and test evidence.
+
+  - type: input
+    id: parent_epic
+    attributes:
+      label: Parent Epic
+      description: Link exactly one M1-M12 Epic Issue.
+      placeholder: "#491"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: work_type
+    attributes:
+      label: Work type
+      options:
+        - Feature
+        - Bug
+        - Tech debt
+        - Security
+        - Research
+        - Release
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - P0
+        - P1
+        - P2
+        - P3
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_behavior
+    attributes:
+      label: Current verified behavior
+      description: Describe the current code/runtime behavior with file, function, table, endpoint, or test evidence.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      description: Describe the end state in observable terms.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Owned scope
+      description: List modules, APIs, tables, workers, UI surfaces, and tests this Work Item owns.
+    validations:
+      required: true
+
+  - type: textarea
+    id: forbidden_scope
+    attributes:
+      label: Forbidden scope and safety constraints
+      description: State what must not change or be bypassed.
+      placeholder: |
+        - No CustomerVisibleMessageService bypass
+        - No cross-tenant reads
+        - No direct provider or sidecar call
+        - No production deployment
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Use a testable checklist covering behavior, isolation, idempotency, concurrency, audit, privacy, and failure states.
+      placeholder: |
+        - [ ] Functional behavior
+        - [ ] Tenant/country/channel isolation
+        - [ ] Idempotency and duplicate-event behavior
+        - [ ] Concurrency and rollback
+        - [ ] Audit and redaction
+        - [ ] Failure and recovery behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Required validation and runtime evidence
+      description: Define focused tests, database/runtime environment, migration checks, and exact-head release evidence.
+    validations:
+      required: true
+
+  - type: textarea
+    id: migration_rollback
+    attributes:
+      label: Migration, rollout, and rollback
+      description: State schema/data impact, upgrade/downgrade, feature flags, repair steps, and rollback behavior. Write None with justification if not applicable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Link blocked-by and blocking Issues and define merge order.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: readiness
+    attributes:
+      label: Ready criteria
+      options:
+        - label: The current behavior was verified against current main.
+          required: true
+        - label: This Work Item is independently reviewable and closable.
+          required: true
+        - label: No other active Work Item or Pull Request owns the same scope.
+          required: true
+        - label: One current implementation Pull Request will be used.
+          required: true
+        - label: Green CI alone will not be treated as production proof.
+          required: true

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Nexus OSR delivery governance
+    url: https://github.com/Maximvonshaft/nexus_helpdesk/issues/489
+    about: Review the governance index, Epic map, WIP limits, and current Work Items before opening new work.
+  - name: OSR audit portfolio
+    url: https://github.com/Maximvonshaft/nexus_helpdesk/issues/467
+    about: Review audit evidence and remediation origin. The portfolio does not authorize implementation by itself.
