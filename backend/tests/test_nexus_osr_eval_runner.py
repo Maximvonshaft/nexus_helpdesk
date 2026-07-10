@@ -153,4 +153,6 @@ def test_failure_artifacts_are_bounded_redacted_and_actionable(tmp_path: Path) -
     assert "Synthetic blocked response" not in combined
     assert "synthetic-secret-marker" not in combined
     assert "evidence_sources" not in combined
+    assert "business_reply_type" not in combined
+    assert "next_action" not in combined
     assert all(item["bytes"] <= 64 * 1024 for item in manifest["artifacts"])
