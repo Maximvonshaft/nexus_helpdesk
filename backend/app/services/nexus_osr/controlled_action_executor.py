@@ -48,13 +48,20 @@ class ControlledActionExecutor:
 
     This class does not directly know about WebChat, WhatsApp, SQLAlchemy, or MCP.
     It validates the action against product policy and delegates the actual side
-    effect to a registered handler.  The handler is where repository-specific
+    effect to a registered handler. The handler is where repository-specific
     ticket/MCP/WhatsApp integrations should be connected.
     """
 
-    def __init__(self, *, policies: dict[str, ToolExecutionPolicy], handlers: dict[str, ActionHandler]):
+    def __init__(
+        self,
+        *,
+        policies: dict[str, ToolExecutionPolicy],
+        handlers: dict[str, ActionHandler],
+        allowed_high_risk_write_tools: set[str] | frozenset[str] | None = None,
+    ):
         self._policies = dict(policies)
         self._handlers = dict(handlers)
+        self._allowed_high_risk_write_tools = set(allowed_high_risk_write_tools or set())
 
     def execute(self, request: ActionExecutionRequest) -> ActionExecutionResult:
         policy = self._policies.get(request.action.tool_name)
@@ -82,7 +89,16 @@ class ControlledActionExecutor:
                 error_message=policy_decision.reason,
                 summary={"missing_requirements": policy_decision.missing_requirements},
             )
-        if policy_decision.requires_customer_confirmation and not request.action.requires_confirmation:
+        if str(policy.risk_level or "").lower() == "high" and policy.tool_name not in self._allowed_high_risk_write_tools:
+            return ActionExecutionResult(
+                ok=False,
+                tool_name=request.action.tool_name,
+                status="blocked",
+                policy_decision=policy_decision,
+                error_code="high_risk_write_tool_blocked",
+                error_message="High-risk write tools require explicit test or operator configuration before execution.",
+            )
+        if policy_decision.requires_customer_confirmation:
             return ActionExecutionResult(
                 ok=False,
                 tool_name=request.action.tool_name,
@@ -91,7 +107,7 @@ class ControlledActionExecutor:
                 error_code="customer_confirmation_required",
                 error_message="Customer confirmation is required before this action can execute.",
             )
-        if policy_decision.requires_human_confirmation and not request.action.requires_confirmation:
+        if policy_decision.requires_human_confirmation:
             return ActionExecutionResult(
                 ok=False,
                 tool_name=request.action.tool_name,
@@ -128,7 +144,7 @@ def ticket_create_handler(request: ActionExecutionRequest) -> ActionExecutionRes
     """Framework-light ticket.create handler for tests and future integration.
 
     The production integration should replace this with a handler that creates or
-    reuses a real Ticket row.  This handler still encodes the product contract:
+    reuses a real Ticket row. This handler still encodes the product contract:
     it requires a CaseContext, marks the ticket as created, and returns a safe
     customer-visible summary.
     """
