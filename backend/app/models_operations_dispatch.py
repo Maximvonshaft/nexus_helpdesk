@@ -37,6 +37,31 @@ class OperationsDispatchOutboxRecord(Base):
             "status IN ('pending','processing','dispatched','retryable','failed','cancelled','dead_letter')",
             name="ck_operations_dispatch_outbox_status",
         ),
+        CheckConstraint(
+            "attempt_count >= 0",
+            name="ck_operations_dispatch_outbox_attempt_count_nonnegative",
+        ),
+        CheckConstraint(
+            "max_attempts >= 1",
+            name="ck_operations_dispatch_outbox_max_attempts_positive",
+        ),
+        CheckConstraint(
+            "((status = 'processing' AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL) "
+            "OR (status <> 'processing' AND lease_owner IS NULL AND lease_expires_at IS NULL))",
+            name="ck_operations_dispatch_outbox_lease_state",
+        ),
+        CheckConstraint(
+            "(status <> 'retryable' OR next_retry_at IS NOT NULL)",
+            name="ck_operations_dispatch_outbox_retry_timestamp",
+        ),
+        CheckConstraint(
+            "(status <> 'dispatched' OR dispatched_at IS NOT NULL)",
+            name="ck_operations_dispatch_outbox_dispatched_timestamp",
+        ),
+        CheckConstraint(
+            "(status <> 'cancelled' OR cancelled_at IS NOT NULL)",
+            name="ck_operations_dispatch_outbox_cancelled_timestamp",
+        ),
         Index(
             "ix_operations_dispatch_outbox_scope",
             "tenant_key",
