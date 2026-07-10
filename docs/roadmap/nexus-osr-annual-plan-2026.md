@@ -2,18 +2,16 @@
 
 ## Governance status
 
-This file is a strategic capability plan, not the live delivery board.
+This file is a strategic capability plan, not a live delivery board.
 
-Authoritative live execution state is maintained in:
+Live execution state is owned by:
 
-1. Delivery Index Issue #489
-2. M1–M12 Epic Issues #490–#501
-3. executable Work Item Issues
-4. one current Pull Request per active Work Item
+1. executable Work Item Issues;
+2. M1–M12 Epic Issues;
+3. one current Pull Request per active Work Item;
+4. Issue #489 as a stable navigation index.
 
-GitHub Project #1 is optional and non-authoritative. No workflow, release gate, or merge decision may depend on Project fields or views.
-
-Current point-in-time main at this reconciliation: `dddd7c4f8b579bb8653d4f4fc8e452365df72c14`.
+GitHub Project #1 is optional and non-authoritative. No workflow, release gate, ownership decision, or merge decision may depend on Project fields or views.
 
 Nexus OSR means Nexus Operations Service Runtime: a multi-country logistics customer-service and operations-closure runtime. It is not a chatbot and not a C-end long-term memory system.
 
@@ -37,45 +35,38 @@ Nexus OSR closes logistics cases safely through facts, policies, tickets, handof
 
 ## Capability map
 
-| Milestone | Epic | Capability | Strategic status at reconciliation |
+| Milestone | Epic | Capability | Stable dependency |
 |---|---:|---|---|
-| M1 | #490 | RuntimeDecision and Case Context Kernel | Delivered baseline |
-| M2 | #491 | Escalation, Handoff and Auto-ticket Closure | Active |
-| M3 | #492 | Governed Tool Execution | Delivered baseline |
-| M4 | #493 | Tracking Truth Layer | Ready |
-| M5 | #494 | Customer-visible Knowledge Quality | Ready; K1 before K2 |
-| M6 | #495 | Channel Gateway and Operations Routing | Delivered baseline |
-| M7 | #496 | Debug, Eval and Audit | Active |
-| M8 | #497 | Admin Policy APIs and Control Tower | Delivered baseline |
-| M9 | #498 | Operator Workspace and Queues | Backlog |
-| M10 | #499 | Operations Analytics and Control Tower Maturity | Backlog |
-| M11 | #500 | Internal SOP SkillBank | Backlog |
-| M12 | #501 | Production Hardening and Readiness | `NO_GO` until runtime evidence is complete |
+| M1 | #490 | RuntimeDecision and Case Context Kernel | Foundation |
+| M2 | #491 | Escalation, Handoff and Auto-ticket Closure | Ticket safety before configured escalation |
+| M3 | #492 | Governed Tool Execution | M1 safety kernel |
+| M4 | #493 | Tracking Truth Layer | MCP/approved current-status authority |
+| M5 | #494 | Customer-visible Knowledge Quality | K1 data safety before K2 readiness |
+| M6 | #495 | Channel Gateway and Operations Routing | Configuration-driven routing and durable outbox |
+| M7 | #496 | Debug, Eval and Audit | Redacted runtime evidence |
+| M8 | #497 | Admin Policy APIs and Control Tower | Permission and tenant isolation |
+| M9 | #498 | Operator Workspace and Queues | M2, M4, M5, M6, M8 |
+| M10 | #499 | Operations Analytics and Control Tower Maturity | M9 |
+| M11 | #500 | Internal SOP SkillBank | M5, M8, M9 |
+| M12 | #501 | Production Hardening and Readiness | Final release program |
 
-The table is a strategic snapshot only. Current lifecycle, ownership, blockers, current PRs, and release state must be read from #489 and the linked Work Items.
+Current lifecycle, ownership, blockers, current PRs, exact SHAs, CI results, and release state must be read from the linked Work Items and Pull Requests, not from this file.
 
-## Stable dependency doctrine
-
-- M2 ticket-safety work precedes configured escalation entry.
-- M5 Knowledge K1 data safety precedes K2 readiness.
-- M9 follows stable M2, M4, M5, M6, and M8 foundations.
-- M10 follows an operationally complete M9 workflow.
-- M11 follows safe Knowledge, Admin, and Operator foundations.
-- M12 is the final release program and cannot be inferred from green CI alone.
-
-## Issue-first delivery policy
+## Issue-only delivery policy
 
 - Product-code changes require a narrow executable Work Item.
-- Work Item ownership is assignee plus lifecycle state plus one linked current Draft PR.
+- Every open Work Item contains a `Control` block with parent Epic, lifecycle, owner, current PR, blockers, and supersession state.
+- Work Item ownership is the Issue assignee.
 - Comment-based claims and leases are not used.
-- Maximum active product Work Items: two.
+- Maximum active implementation Work Items: two.
 - Maximum release candidates: one.
+- One current Pull Request per Work Item.
 - Merge one PR at a time.
 - Re-read main after every merge.
 - Recompute downstream base, migration chain, and affected tests after every merge.
 - Old-base green checks are not merge authority.
 - Parent defect and audit Issues are evidence/portfolio records when executable child Work Items exist.
-- Roadmap files are not updated after every status transition; #489 is the live index.
+- Roadmap files are not updated after every status transition.
 
 ## Release evidence doctrine
 
@@ -94,6 +85,7 @@ A production release decision requires more than unit or PR CI. M12 must include
 
 - #461 is the closed historical swarm control log and accepts no new claims.
 - #467 is the audit and remediation evidence portfolio.
-- #489 is the authoritative live delivery index.
+- #489 is the Issue-only navigation index.
+- #505 records the rejected Project-control path and is closed as `not_planned`.
 - Historical and superseded PRs remain reference evidence only.
-- GitHub Project #1 may be retained for personal visualization, but it is not maintained by the delivery workflow and must not be treated as authoritative.
+- GitHub Project #1 may be retained for personal visualization, but it is not maintained by the delivery workflow and is never authoritative.
