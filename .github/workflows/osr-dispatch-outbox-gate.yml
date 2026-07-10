@@ -186,17 +186,6 @@ jobs:
           DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
         run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_postgres.py
 
-      - name: Prove Outbox metadata and drift wiring
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          from app.db import Base
-          from app.model_registry import register_all_models
-          from app import models_operations_dispatch  # noqa: F401
-          from app.scripts_placeholder import never  # type: ignore
-          PY
-        continue-on-error: true
-
       - name: Enforce Outbox metadata and drift wiring
         run: |
           python - <<'PY'
@@ -207,9 +196,9 @@ jobs:
           modules = register_all_models()
           assert "app.models_operations_dispatch" in modules, modules
           table = Base.metadata.tables["operations_dispatch_outbox"]
-          check_names = {item.name for item in table.constraints if item.name}
+          constraint_names = {item.name for item in table.constraints if item.name}
           index_names = {item.name for item in table.indexes if item.name}
-          assert "uq_operations_dispatch_outbox_dispatch_key" in check_names
+          assert "uq_operations_dispatch_outbox_dispatch_key" in constraint_names
           assert {
               "ck_operations_dispatch_outbox_status",
               "ck_operations_dispatch_outbox_attempt_count_nonnegative",
@@ -219,7 +208,7 @@ jobs:
               "ck_operations_dispatch_outbox_retry_timestamp",
               "ck_operations_dispatch_outbox_dispatched_timestamp",
               "ck_operations_dispatch_outbox_cancelled_timestamp",
-          } <= check_names
+          } <= constraint_names
           assert {
               "ix_operations_dispatch_outbox_scope",
               "ix_operations_dispatch_outbox_due",
