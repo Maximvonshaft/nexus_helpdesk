@@ -71,4 +71,5 @@ def test_existing_vector_migration_matches_orm_without_new_revision():
     assert 'revision = "20260601_0047"' in migration
     assert 'down_revision = "20260601_0046"' in migration
     assert "vector(384)" in migration
-    assert "existing_type=Text()" in migration
+    assert 'sa.Column("embedding_vector", sa.Text(), nullable=True)' in migration
+    assert 'op.drop_column("knowledge_chunks", "embedding_vector")' in migration
