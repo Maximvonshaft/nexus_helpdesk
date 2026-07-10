@@ -31,7 +31,9 @@ def load_case_context(
     A single-key selector first resolves its exact single-key identity. For
     backwards-compatible internal reads it may then resolve one unique active
     two-key row. Multiple fallback candidates fail closed instead of choosing a
-    random case. Saving always remains exact-combination only.
+    random case. Saving always remains exact-combination only. A selector with
+    no tenant or persisted context evidence returns ``None`` so first-use runtime
+    flows can create the context normally.
     """
 
     conversation = _safe_identity(conversation_id)
@@ -45,6 +47,8 @@ def load_case_context(
         conversation_id=conversation,
         ticket_id=ticket,
     )
+    if tenant is None:
+        return None
     current = ensure_utc(now) or utc_now()
 
     exact = _identity_query(
@@ -239,7 +243,7 @@ def _resolve_tenant(
     tenant_id: str | None,
     conversation_id: int | None,
     ticket_id: int | None,
-) -> str:
+) -> str | None:
     if tenant_id is not None:
         return _normalize_tenant(tenant_id)
     if conversation_id is not None:
@@ -267,12 +271,10 @@ def _resolve_tenant(
         )
     else:
         raise ValueError("case_context_tenant_required")
-    if len(tenant_rows) != 1:
-        raise ValueError(
-            "case_context_tenant_ambiguous"
-            if tenant_rows
-            else "case_context_tenant_unresolvable"
-        )
+    if not tenant_rows:
+        return None
+    if len(tenant_rows) > 1:
+        raise ValueError("case_context_tenant_ambiguous")
     return _normalize_tenant(tenant_rows[0][0])
 
 
