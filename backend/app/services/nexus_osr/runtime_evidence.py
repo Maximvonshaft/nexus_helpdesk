@@ -4,11 +4,17 @@ import hashlib
 import json
 import math
 import re
-from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, Iterable, Mapping, Sequence
-from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
+from typing import Any, Iterable, Mapping, Sequence
+
+from .runtime_evidence_transport import (
+    MAX_PROBE_BYTES,
+    ReadOnlyProbeSpec,
+    prepare_read_only_probe_target,
+    resolve_public_addresses,
+    run_read_only_http_probe,
+    validate_read_only_probe_url,
+)
 
 SCHEMA = "nexus.osr.runtime_evidence.v1"
 ALLOWED_STATES = ("ready", "degraded", "not_ready", "unavailable")
@@ -24,9 +30,10 @@ RUNTIME_PATHS = (
 )
 STATE_SEVERITY = {"ready": 0, "degraded": 1, "not_ready": 2, "unavailable": 3}
 MAX_ARTIFACT_BYTES = 64 * 1024
-MAX_PROBE_BYTES = 64 * 1024
 MAX_COLLECTION_ITEMS = 100
 MAX_SCAN_NODES = 2_000
+_MAX_COUNTER = 10**12
+_MAX_DURATION_SECONDS = 31 * 24 * 60 * 60
 
 ALLOWED_REASON_CODES = {
     "probe_ok",
@@ -92,17 +99,6 @@ _SAFE_EVIDENCE_KEYS = {
     "tenant_scope_hash",
 }
 _SHA_RE = re.compile(r"^[a-fA-F0-9]{7,64}$")
-_FORBIDDEN_PROBE_PATH_RE = re.compile(
-    r"(?:^|/)(?:send|execute|dispatch-now|publish|delete|remove|create|update|mutate|action)(?:/|$)",
-    re.I,
-)
-
-
-@dataclass(frozen=True)
-class ReadOnlyProbeSpec:
-    path: str
-    endpoint: str
-    method: str = "GET"
 
 
 def utc_now() -> datetime:
@@ -113,9 +109,8 @@ def parse_timestamp(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         parsed = value
     elif isinstance(value, str) and value.strip():
-        text = value.strip().replace("Z", "+00:00")
         try:
-            parsed = datetime.fromisoformat(text)
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
         except ValueError:
             return None
     else:
@@ -134,9 +129,7 @@ def _bounded_token(value: Any, *, sha: bool = False) -> str | None:
     if not text:
         return None
     matcher = _SHA_RE if sha else _SAFE_TOKEN_RE
-    if not matcher.fullmatch(text):
-        return None
-    return text[:128]
+    return text[:128] if matcher.fullmatch(text) else None
 
 
 def _reason_codes(values: Iterable[str]) -> list[str]:
@@ -179,17 +172,49 @@ def _state_for_reasons(reasons: Iterable[str], *, default: str = "ready") -> str
     return default
 
 
+def _strict_int(
+    value: Any,
+    *,
+    default: int,
+    minimum: int = 0,
+    maximum: int = _MAX_COUNTER,
+) -> tuple[int, bool]:
+    if value is None:
+        return default, True
+    if isinstance(value, bool) or not isinstance(value, int):
+        return default, False
+    if value < minimum or value > maximum:
+        return default, False
+    return value, True
+
+
+def _strict_float(
+    value: Any,
+    *,
+    default: float,
+    minimum: float = 0.0,
+    maximum: float = 1.0,
+) -> tuple[float, bool]:
+    if value is None:
+        return default, True
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default, False
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < minimum or parsed > maximum:
+        return default, False
+    return parsed, True
+
+
 def _safe_identity(identity: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(identity, Mapping):
         return None
+    observed_at = parse_timestamp(identity.get("observed_at"))
     return {
         "code_sha": _bounded_token(identity.get("code_sha"), sha=True),
         "config_sha256": _bounded_token(identity.get("config_sha256"), sha=True),
         "build_id": _bounded_token(identity.get("build_id")),
         "migration_head": _bounded_token(identity.get("migration_head")),
-        "observed_at": parse_timestamp(identity.get("observed_at")).isoformat()
-        if parse_timestamp(identity.get("observed_at"))
-        else None,
+        "observed_at": observed_at.isoformat() if observed_at else None,
     }
 
 
@@ -198,21 +223,28 @@ def compare_runtime_identity(
     observed: Mapping[str, Any] | None,
     *,
     now: datetime | None = None,
-    max_age_seconds: int = 900,
+    max_age_seconds: Any = 900,
 ) -> dict[str, Any]:
-    now = (now or utc_now()).astimezone(timezone.utc)
-    reasons: list[str] = []
+    current = (now or utc_now()).astimezone(timezone.utc)
+    max_age, max_age_valid = _strict_int(
+        max_age_seconds,
+        default=900,
+        minimum=1,
+        maximum=_MAX_DURATION_SECONDS,
+    )
+    reasons: list[str] = [] if max_age_valid else ["payload_invalid"]
     expected_safe = _safe_identity(expected)
     observed_safe = _safe_identity(observed)
     if expected_safe is None:
         reasons.append("identity_expected_missing")
     if observed_safe is None:
         reasons.append("identity_observed_missing")
-    if reasons:
+    if expected_safe is None or observed_safe is None:
+        reason_codes = _reason_codes(reasons)
         return {
             "schema": SCHEMA,
             "state": "unavailable",
-            "reason_codes": _reason_codes(reasons),
+            "reason_codes": reason_codes,
             "expected": expected_safe,
             "observed": observed_safe,
             "age_seconds": None,
@@ -229,26 +261,25 @@ def compare_runtime_identity(
     if observed_at is None:
         reasons.append("identity_invalid")
     else:
-        age_seconds = math.floor((now - observed_at).total_seconds())
+        age_seconds = math.floor((current - observed_at).total_seconds())
         if age_seconds < -300:
             reasons.append("clock_skew")
-        elif age_seconds > max(1, int(max_age_seconds)):
+        elif age_seconds > max_age:
             reasons.append("evidence_stale")
 
-    comparisons = (
+    for field, reason in (
         ("code_sha", "code_drift"),
         ("config_sha256", "config_drift"),
         ("build_id", "build_drift"),
         ("migration_head", "migration_drift"),
-    )
-    for field, reason in comparisons:
+    ):
         if expected_safe.get(field) and observed_safe.get(field) and expected_safe[field] != observed_safe[field]:
             reasons.append(reason)
 
     reason_codes = _reason_codes(reasons)
     return {
         "schema": SCHEMA,
-        "state": _state_for_reasons(reason_codes),
+        "state": "unavailable" if not max_age_valid else _state_for_reasons(reason_codes),
         "reason_codes": reason_codes or ["probe_ok"],
         "expected": expected_safe,
         "observed": observed_safe,
@@ -260,54 +291,90 @@ def _ratio(numerator: int, denominator: int) -> float:
     return round(float(numerator) / float(denominator), 6) if denominator > 0 else 0.0
 
 
+def _invalid_budget(path: str, owner: Any, reason: str) -> dict[str, Any]:
+    return {
+        "schema": SCHEMA,
+        "path": path if path in RUNTIME_PATHS else "runtime_decision",
+        "state": "unavailable",
+        "reason_codes": [reason],
+        "owner": _bounded_token(owner) or "unassigned",
+        "window_seconds": 0,
+        "sample_size": 0,
+        "ratios": {"error": 0.0, "unavailable": 0.0, "fail_closed": 0.0},
+        "p95_latency_ms": 0,
+        "backlog": 0,
+        "redaction_failures": 0,
+    }
+
+
 def evaluate_failure_budget(definition: Mapping[str, Any], sample: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(definition, Mapping):
+        return _invalid_budget("runtime_decision", None, "payload_invalid")
     path = str(definition.get("path") or "")
-    if path not in RUNTIME_PATHS or not isinstance(sample, Mapping):
-        return {
-            "schema": SCHEMA,
-            "path": path if path in RUNTIME_PATHS else "runtime_decision",
-            "state": "unavailable",
-            "reason_codes": ["source_unavailable"],
-            "owner": _bounded_token(definition.get("owner")) or "unassigned",
-            "window_seconds": int(definition.get("window_seconds") or 0),
-            "ratios": {"error": 0.0, "unavailable": 0.0, "fail_closed": 0.0},
-        }
+    if path not in RUNTIME_PATHS:
+        return _invalid_budget(path, definition.get("owner"), "payload_invalid")
+    if not isinstance(sample, Mapping):
+        return _invalid_budget(path, definition.get("owner"), "source_unavailable")
 
-    requests = max(0, int(sample.get("requests") or 0))
-    errors = max(0, int(sample.get("errors") or 0))
-    unavailable = max(0, int(sample.get("unavailable") or 0))
-    fail_closed = max(0, int(sample.get("fail_closed") or 0))
-    redaction_failures = max(0, int(sample.get("redaction_failures") or 0))
-    p95_latency_ms = max(0, int(sample.get("p95_latency_ms") or 0))
-    backlog = max(0, int(sample.get("backlog") or 0))
+    parsed_ints: dict[str, int] = {}
+    valid = True
+    for key in (
+        "requests",
+        "errors",
+        "unavailable",
+        "fail_closed",
+        "redaction_failures",
+        "p95_latency_ms",
+        "backlog",
+    ):
+        parsed_ints[key], item_valid = _strict_int(sample.get(key), default=0)
+        valid = valid and item_valid
 
+    definition_ints: dict[str, int] = {}
+    for key, default, minimum, maximum in (
+        ("window_seconds", 1, 1, _MAX_DURATION_SECONDS),
+        ("min_sample_size", 1, 1, _MAX_COUNTER),
+        ("max_p95_latency_ms", 0, 0, _MAX_COUNTER),
+        ("max_backlog", 0, 0, _MAX_COUNTER),
+    ):
+        definition_ints[key], item_valid = _strict_int(
+            definition.get(key),
+            default=default,
+            minimum=minimum,
+            maximum=maximum,
+        )
+        valid = valid and item_valid
+
+    thresholds: dict[str, float] = {}
+    for key, output_key in (
+        ("max_error_ratio", "error"),
+        ("max_unavailable_ratio", "unavailable"),
+        ("max_fail_closed_ratio", "fail_closed"),
+    ):
+        thresholds[output_key], item_valid = _strict_float(definition.get(key), default=0.0)
+        valid = valid and item_valid
+    if not valid:
+        return _invalid_budget(path, definition.get("owner"), "payload_invalid")
+
+    requests = parsed_ints["requests"]
     reasons: list[str] = []
-    if any(value > requests for value in (errors, unavailable, fail_closed)):
+    if any(parsed_ints[key] > requests for key in ("errors", "unavailable", "fail_closed")):
         reasons.append("contradictory_evidence")
-    if redaction_failures:
+    if parsed_ints["redaction_failures"]:
         reasons.append("redaction_failed")
-
-    min_sample_size = max(1, int(definition.get("min_sample_size") or 1))
-    if requests < min_sample_size:
+    if requests < definition_ints["min_sample_size"]:
         reasons.append("insufficient_sample")
 
     ratios = {
-        "error": _ratio(errors, requests),
-        "unavailable": _ratio(unavailable, requests),
-        "fail_closed": _ratio(fail_closed, requests),
+        "error": _ratio(parsed_ints["errors"], requests),
+        "unavailable": _ratio(parsed_ints["unavailable"], requests),
+        "fail_closed": _ratio(parsed_ints["fail_closed"], requests),
     }
-    thresholds = {
-        "error": float(definition.get("max_error_ratio") or 0.0),
-        "unavailable": float(definition.get("max_unavailable_ratio") or 0.0),
-        "fail_closed": float(definition.get("max_fail_closed_ratio") or 0.0),
-    }
-
     exhausted = any(ratios[kind] > thresholds[kind] for kind in ratios)
     near = any(thresholds[kind] > 0 and ratios[kind] >= thresholds[kind] * 0.8 for kind in ratios)
-    if p95_latency_ms > int(definition.get("max_p95_latency_ms") or 0):
+    if parsed_ints["p95_latency_ms"] > definition_ints["max_p95_latency_ms"]:
         exhausted = True
-    max_backlog = int(definition.get("max_backlog") or 0)
-    if max_backlog and backlog > max_backlog:
+    if definition_ints["max_backlog"] and parsed_ints["backlog"] > definition_ints["max_backlog"]:
         reasons.append("queue_backlog_high")
         exhausted = True
     if exhausted:
@@ -323,12 +390,12 @@ def evaluate_failure_budget(definition: Mapping[str, Any], sample: Mapping[str, 
         "reason_codes": reason_codes or ["probe_ok"],
         "owner": _bounded_token(definition.get("owner")) or "unassigned",
         "rationale": str(definition.get("rationale") or "")[:240],
-        "window_seconds": max(1, int(definition.get("window_seconds") or 1)),
+        "window_seconds": definition_ints["window_seconds"],
         "sample_size": requests,
         "ratios": ratios,
-        "p95_latency_ms": p95_latency_ms,
-        "backlog": backlog,
-        "redaction_failures": redaction_failures,
+        "p95_latency_ms": parsed_ints["p95_latency_ms"],
+        "backlog": parsed_ints["backlog"],
+        "redaction_failures": parsed_ints["redaction_failures"],
     }
 
 
@@ -338,13 +405,10 @@ def scan_for_unsafe_evidence(payload: Any) -> dict[str, Any]:
 
     def visit(value: Any, *, key: str = "", depth: int = 0) -> None:
         nonlocal nodes
-        if nodes >= MAX_SCAN_NODES:
+        if nodes >= MAX_SCAN_NODES or depth > 8:
             violations.append("payload_invalid")
             return
         nodes += 1
-        if depth > 8:
-            violations.append("payload_invalid")
-            return
         if key and _SENSITIVE_KEY_RE.search(key):
             violations.append("redaction_failed")
             return
@@ -377,12 +441,20 @@ def evaluate_probe_result(
     *,
     expected_tenant_id: str,
     now: datetime | None = None,
-    max_age_seconds: int = 900,
+    max_age_seconds: Any = 900,
 ) -> dict[str, Any]:
-    now = (now or utc_now()).astimezone(timezone.utc)
+    current = (now or utc_now()).astimezone(timezone.utc)
+    if not isinstance(probe, Mapping):
+        probe = {}
+    max_age, max_age_valid = _strict_int(
+        max_age_seconds,
+        default=900,
+        minimum=1,
+        maximum=_MAX_DURATION_SECONDS,
+    )
     path = str(probe.get("path") or "")
     path = path if path in RUNTIME_PATHS else "runtime_decision"
-    reasons: list[str] = []
+    reasons: list[str] = [] if max_age_valid else ["payload_invalid"]
     error_code = str(probe.get("error_code") or "")
     if error_code in ALLOWED_REASON_CODES:
         reasons.append(error_code)
@@ -392,14 +464,13 @@ def evaluate_probe_result(
     if not bool(probe.get("permission_granted", False)):
         reasons.append("permission_denied")
     status_code = probe.get("status_code")
-    if not isinstance(status_code, int) or not 200 <= status_code < 300:
+    if isinstance(status_code, bool) or not isinstance(status_code, int) or not 200 <= status_code < 300:
         reasons.append("source_unavailable")
 
     payload = probe.get("payload")
     if not isinstance(payload, Mapping):
         reasons.append("payload_invalid")
         payload = {}
-
     tenant_id = str(payload.get("tenant_id") or "").strip()
     if not tenant_id:
         reasons.append("tenant_scope_missing")
@@ -408,41 +479,72 @@ def evaluate_probe_result(
 
     scan = scan_for_unsafe_evidence(payload)
     reasons.extend(scan["reason_codes"])
-
     observed_at = parse_timestamp(probe.get("observed_at") or payload.get("observed_at"))
     age_seconds: int | None = None
     if observed_at is None:
         reasons.append("payload_invalid")
     else:
-        age_seconds = math.floor((now - observed_at).total_seconds())
+        age_seconds = math.floor((current - observed_at).total_seconds())
         if age_seconds < -300:
             reasons.append("clock_skew")
-        elif age_seconds > max(1, int(max_age_seconds)):
+        elif age_seconds > max_age:
             reasons.append("evidence_stale")
 
     declared_state = str(payload.get("state") or "ready")
     if declared_state not in ALLOWED_STATES:
         reasons.append("payload_invalid")
+        declared_state = "not_ready"
     elif declared_state in {"not_ready", "unavailable"}:
         reasons.append("provider_not_ready" if path == "provider_runtime" else "source_unavailable")
     elif declared_state == "degraded":
         reasons.append("budget_near_exhaustion")
-
     if bool(payload.get("contradictory")):
         reasons.append("contradictory_evidence")
 
+    evidence_count, evidence_count_valid = _strict_int(
+        payload.get("evidence_count"),
+        default=0,
+        maximum=MAX_COLLECTION_ITEMS,
+    )
+    if not evidence_count_valid:
+        reasons.append("payload_invalid")
     reason_codes = _reason_codes(reasons)
+    state = _state_for_reasons(reason_codes, default=declared_state)
+    if not max_age_valid:
+        state = "unavailable"
     return {
         "schema": SCHEMA,
         "path": path,
-        "state": _state_for_reasons(reason_codes, default=declared_state if declared_state in ALLOWED_STATES else "not_ready"),
+        "state": state,
         "reason_codes": reason_codes or ["probe_ok"],
         "tenant_scope_hash": sha256_prefix(expected_tenant_id),
         "permission_verified": bool(probe.get("permission_granted", False)),
         "redaction_verified": bool(scan["safe"]),
         "nodes_scanned": scan["nodes_scanned"],
         "age_seconds": age_seconds,
-        "evidence_count": min(max(0, int(payload.get("evidence_count") or 0)), MAX_COLLECTION_ITEMS),
+        "evidence_count": evidence_count,
+    }
+
+
+def unavailable_snapshot(reason_code: str = "payload_invalid", *, now: datetime | None = None) -> dict[str, Any]:
+    current = (now or utc_now()).astimezone(timezone.utc)
+    reason = reason_code if reason_code in ALLOWED_REASON_CODES else "payload_invalid"
+    return {
+        "schema": SCHEMA,
+        "generated_at": current.isoformat(),
+        "state": "unavailable",
+        "reason_codes": [reason],
+        "failure_budgets": [],
+        "probes": [],
+        "boundaries": {
+            "read_only": True,
+            "synthetic_or_staging_safe": True,
+            "customer_message_sent": False,
+            "tool_execution_performed": False,
+            "production_mutation_performed": False,
+            "raw_payload_retained": False,
+            "tenant_scope_exposed_as_metric_label": False,
+        },
     }
 
 
@@ -455,33 +557,42 @@ def build_runtime_evidence_snapshot(
     samples: Mapping[str, Mapping[str, Any]],
     probes: Sequence[Mapping[str, Any]],
     now: datetime | None = None,
-    max_age_seconds: int = 900,
+    max_age_seconds: Any = 900,
 ) -> dict[str, Any]:
     if not _SAFE_TOKEN_RE.fullmatch(str(tenant_id or "")):
-        raise ValueError("invalid_tenant_scope")
-    now = (now or utc_now()).astimezone(timezone.utc)
+        return unavailable_snapshot("payload_invalid", now=now)
+    if (
+        not isinstance(samples, Mapping)
+        or not isinstance(budget_definitions, Sequence)
+        or isinstance(budget_definitions, (str, bytes))
+        or not isinstance(probes, Sequence)
+        or isinstance(probes, (str, bytes))
+    ):
+        return unavailable_snapshot("payload_invalid", now=now)
+    current = (now or utc_now()).astimezone(timezone.utc)
     identity = compare_runtime_identity(
         expected_identity,
         observed_identity,
-        now=now,
+        now=current,
         max_age_seconds=max_age_seconds,
     )
     budgets = [
         evaluate_failure_budget(definition, samples.get(str(definition.get("path") or "")))
+        if isinstance(definition, Mapping)
+        else _invalid_budget("runtime_decision", None, "payload_invalid")
         for definition in list(budget_definitions)[:MAX_COLLECTION_ITEMS]
     ]
     probe_results = [
         evaluate_probe_result(
             probe,
             expected_tenant_id=tenant_id,
-            now=now,
+            now=current,
             max_age_seconds=max_age_seconds,
         )
         for probe in list(probes)[:MAX_COLLECTION_ITEMS]
     ]
-
     states = [identity["state"], *(item["state"] for item in budgets), *(item["state"] for item in probe_results)]
-    overall_state = max(states, key=lambda state: STATE_SEVERITY[state]) if states else "unavailable"
+    overall_state = max(states, key=lambda state: STATE_SEVERITY.get(state, 3)) if states else "unavailable"
     reasons = _reason_codes(
         [
             *identity.get("reason_codes", []),
@@ -489,9 +600,11 @@ def build_runtime_evidence_snapshot(
             *(reason for item in probe_results for reason in item.get("reason_codes", [])),
         ]
     )
+    if len(reasons) > 1 and "probe_ok" in reasons:
+        reasons.remove("probe_ok")
     return {
         "schema": SCHEMA,
-        "generated_at": now.isoformat(),
+        "generated_at": current.isoformat(),
         "state": overall_state,
         "reason_codes": reasons or ["probe_ok"],
         "tenant_scope_hash": sha256_prefix(tenant_id),
@@ -516,11 +629,15 @@ def render_prometheus_metrics(snapshot: Mapping[str, Any]) -> str:
         "# TYPE nexus_osr_runtime_evidence_state gauge",
     ]
     overall = str(snapshot.get("state") or "unavailable")
+    if overall not in ALLOWED_STATES:
+        overall = "unavailable"
     for state in ALLOWED_STATES:
         lines.append(f'nexus_osr_runtime_evidence_state{{state="{state}"}} {1 if state == overall else 0}')
 
     identity = snapshot.get("identity") if isinstance(snapshot.get("identity"), Mapping) else {}
     identity_state = str(identity.get("state") or "unavailable")
+    if identity_state not in ALLOWED_STATES:
+        identity_state = "unavailable"
     lines.extend(
         [
             "# HELP nexus_osr_runtime_identity_state Runtime identity comparison state.",
@@ -543,7 +660,10 @@ def render_prometheus_metrics(snapshot: Mapping[str, Any]) -> str:
         ]
     )
     redaction_failure = 0
-    for item in snapshot.get("failure_budgets") or []:
+    failure_budgets = snapshot.get("failure_budgets")
+    if not isinstance(failure_budgets, Sequence) or isinstance(failure_budgets, (str, bytes)):
+        failure_budgets = []
+    for item in failure_budgets:
         if not isinstance(item, Mapping):
             continue
         path = str(item.get("path") or "")
@@ -553,11 +673,13 @@ def render_prometheus_metrics(snapshot: Mapping[str, Any]) -> str:
         lines.append(f'nexus_osr_failure_budget_state{{path="{path}",state="{state}"}} 1')
         ratios = item.get("ratios") if isinstance(item.get("ratios"), Mapping) else {}
         for kind in ("error", "unavailable", "fail_closed"):
-            value = float(ratios.get(kind) or 0.0)
-            lines.append(f'nexus_osr_failure_budget_ratio{{path="{path}",kind="{kind}"}} {value:.6f}')
+            value, valid = _strict_float(ratios.get(kind), default=0.0)
+            lines.append(f'nexus_osr_failure_budget_ratio{{path="{path}",kind="{kind}"}} {value if valid else 0.0:.6f}')
         if path == "queue_worker":
-            lines.append(f'nexus_osr_queue_backlog{{path="queue_worker"}} {int(item.get("backlog") or 0)}')
-        redaction_failure = max(redaction_failure, 1 if int(item.get("redaction_failures") or 0) > 0 else 0)
+            backlog, _ = _strict_int(item.get("backlog"), default=0)
+            lines.append(f'nexus_osr_queue_backlog{{path="queue_worker"}} {backlog}')
+        failures, _ = _strict_int(item.get("redaction_failures"), default=0)
+        redaction_failure = max(redaction_failure, 1 if failures > 0 else 0)
 
     lines.extend(
         [
@@ -565,7 +687,10 @@ def render_prometheus_metrics(snapshot: Mapping[str, Any]) -> str:
             "# TYPE nexus_osr_probe_state gauge",
         ]
     )
-    for item in snapshot.get("probes") or []:
+    probes = snapshot.get("probes")
+    if not isinstance(probes, Sequence) or isinstance(probes, (str, bytes)):
+        probes = []
+    for item in probes:
         if not isinstance(item, Mapping):
             continue
         path = str(item.get("path") or "")
@@ -579,116 +704,24 @@ def render_prometheus_metrics(snapshot: Mapping[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def bounded_json_bytes(payload: Mapping[str, Any], *, max_bytes: int = MAX_ARTIFACT_BYTES) -> bytes:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
-    if len(encoded) > max_bytes:
-        fallback = {
-            "schema": SCHEMA,
-            "state": "unavailable",
-            "reason_codes": ["artifact_too_large"],
-            "boundaries": {
-                "read_only": True,
-                "customer_message_sent": False,
-                "tool_execution_performed": False,
-                "production_mutation_performed": False,
-                "raw_payload_retained": False,
-            },
-        }
-        return json.dumps(fallback, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return encoded
-
-
-def validate_read_only_probe_url(base_url: str, endpoint: str, *, allowed_hosts: Sequence[str]) -> str:
-    parsed_base = urlparse(base_url)
-    host = (parsed_base.hostname or "").lower()
-    if parsed_base.scheme not in {"https", "http"}:
-        raise ValueError("unsafe_probe_url")
-    if parsed_base.scheme == "http" and host not in {"localhost", "127.0.0.1", "::1"}:
-        raise ValueError("unsafe_probe_url")
-    if host not in {item.lower() for item in allowed_hosts}:
-        raise ValueError("unsafe_probe_url")
-    parsed_endpoint = urlparse(endpoint)
-    if parsed_endpoint.scheme or parsed_endpoint.netloc:
-        raise ValueError("unsafe_probe_url")
-    if not endpoint.startswith("/") or _FORBIDDEN_PROBE_PATH_RE.search(parsed_endpoint.path):
-        raise ValueError("unsafe_probe_url")
-    return urljoin(base_url.rstrip("/") + "/", endpoint.lstrip("/"))
-
-
-def run_read_only_http_probe(
-    spec: ReadOnlyProbeSpec,
+def finalize_runtime_evidence(
+    snapshot: Mapping[str, Any],
     *,
-    base_url: str,
-    allowed_hosts: Sequence[str],
-    tenant_id: str,
-    bearer_token: str,
-    timeout_seconds: float = 5.0,
-    opener: Callable[..., Any] = urlopen,
-) -> dict[str, Any]:
-    if spec.method.upper() != "GET":
-        return {
-            "path": spec.path,
-            "method": spec.method,
-            "permission_granted": False,
-            "status_code": 0,
-            "payload": {},
-            "observed_at": utc_now().isoformat(),
-            "error_code": "unsafe_probe_method",
-        }
+    max_bytes: int = MAX_ARTIFACT_BYTES,
+) -> tuple[dict[str, Any], bytes]:
+    limit, valid_limit = _strict_int(max_bytes, default=MAX_ARTIFACT_BYTES, minimum=512, maximum=MAX_ARTIFACT_BYTES)
+    candidate = dict(snapshot) if isinstance(snapshot, Mapping) else unavailable_snapshot("payload_invalid")
     try:
-        url = validate_read_only_probe_url(base_url, spec.endpoint, allowed_hosts=allowed_hosts)
-    except ValueError:
-        return {
-            "path": spec.path,
-            "method": "GET",
-            "permission_granted": False,
-            "status_code": 0,
-            "payload": {},
-            "observed_at": utc_now().isoformat(),
-            "error_code": "unsafe_probe_url",
-        }
+        encoded = json.dumps(candidate, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    except (TypeError, ValueError, OverflowError):
+        candidate = unavailable_snapshot("payload_invalid")
+        encoded = json.dumps(candidate, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    if not valid_limit or len(encoded) > limit:
+        candidate_time = parse_timestamp(candidate.get("generated_at"))
+        candidate = unavailable_snapshot("artifact_too_large", now=candidate_time)
+        encoded = json.dumps(candidate, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return candidate, encoded
 
-    request = Request(
-        url,
-        method="GET",
-        headers={
-            "Accept": "application/json",
-            "Authorization": f"Bearer {bearer_token}",
-            "X-Nexus-Tenant": tenant_id,
-        },
-    )
-    try:
-        with opener(request, timeout=max(0.1, min(float(timeout_seconds), 15.0))) as response:
-            body = response.read(MAX_PROBE_BYTES + 1)
-            status_code = int(getattr(response, "status", 0) or 0)
-        if len(body) > MAX_PROBE_BYTES:
-            return {
-                "path": spec.path,
-                "method": "GET",
-                "permission_granted": True,
-                "status_code": status_code,
-                "payload": {},
-                "observed_at": utc_now().isoformat(),
-                "error_code": "probe_response_too_large",
-            }
-        payload = json.loads(body.decode("utf-8"))
-        if not isinstance(payload, Mapping):
-            payload = {}
-        return {
-            "path": spec.path,
-            "method": "GET",
-            "permission_granted": True,
-            "status_code": status_code,
-            "payload": payload,
-            "observed_at": utc_now().isoformat(),
-        }
-    except Exception:
-        return {
-            "path": spec.path,
-            "method": "GET",
-            "permission_granted": True,
-            "status_code": 0,
-            "payload": {},
-            "observed_at": utc_now().isoformat(),
-            "error_code": "source_unavailable",
-        }
+
+def bounded_json_bytes(payload: Mapping[str, Any], *, max_bytes: int = MAX_ARTIFACT_BYTES) -> bytes:
+    return finalize_runtime_evidence(payload, max_bytes=max_bytes)[1]
