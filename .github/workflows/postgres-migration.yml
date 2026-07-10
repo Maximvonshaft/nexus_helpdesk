@@ -60,18 +60,64 @@ jobs:
           alembic downgrade 20260525_0033
           alembic upgrade head
 
+      - name: Import complete model registry under PostgreSQL settings
+        env:
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
+          APP_ENV: development
+        run: |
+          cd backend
+          python - <<'PY'
+          from app.model_registry import register_all_models
+          modules = register_all_models()
+          assert modules
+          print("registered modules:", ", ".join(modules))
+          PY
+
+      - name: Import model drift checker module
+        env:
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
+          APP_ENV: development
+        run: cd backend && python -c "import scripts.check_model_migration_drift"
+
       - name: Collect registered model and migration drift
         id: model_drift
         env:
           DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
           APP_ENV: development
+          PYTHONPATH: backend
         run: |
-          set +e
-          cd backend
-          python scripts/check_model_migration_drift.py --report-json ../model-drift-report.json
-          status=$?
-          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
-          exit 0
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          report = Path("model-drift-report.json").resolve()
+          report.write_text(json.dumps({
+              "schema": "nexus.model_migration_drift.v1",
+              "status": "bootstrap_started",
+              "registered_model_modules": [],
+              "drift_count": 0,
+              "drift": [],
+              "error": None,
+          }, indent=2, sort_keys=True), encoding="utf-8")
+
+          result = subprocess.run([
+              sys.executable,
+              "backend/scripts/check_model_migration_drift.py",
+              "--report-json",
+              str(report),
+          ], env=os.environ.copy(), check=False)
+          Path("model-drift-exit-code.txt").write_text(str(result.returncode), encoding="utf-8")
+
+          data = json.loads(report.read_text(encoding="utf-8"))
+          if data.get("status") == "bootstrap_started":
+              data["status"] = "pre_main_failure"
+              data["error"] = f"process_exit_{result.returncode}"
+              report.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+          PY
+          echo "exit_code=$(cat model-drift-exit-code.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Require structured drift report
         run: test -s model-drift-report.json
