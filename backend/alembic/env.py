@@ -6,13 +6,10 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.db import Base
+from app.model_registry import register_all_models
 from app.settings import get_settings
-from app import models  # noqa: F401
-from app import tool_models  # noqa: F401
-from app import operator_models  # noqa: F401
-from app import webchat_models  # noqa: F401
-from app import voice_models  # noqa: F401
-from app import models_control_plane  # noqa: F401
+
+REGISTERED_MODEL_MODULES = register_all_models()
 
 config = context.config
 if config.config_file_name is not None:
@@ -74,7 +71,6 @@ def _include_object(object_, name, type_, reflected, compare_to):
     if dialect_name == 'sqlite' and type_ == 'foreign_key_constraint':
         return False
     return True
-
 
 
 def run_migrations_offline() -> None:
