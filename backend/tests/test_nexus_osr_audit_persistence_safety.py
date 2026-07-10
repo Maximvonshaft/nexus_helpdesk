@@ -65,6 +65,8 @@ def test_final_audit_write_sanitizes_every_json_field(tmp_path):
         tool_actions=[RuntimeToolAction(
             tool_name="ticket.create",
             arguments={
+                "ticket_id": 201,
+                "handoff_request_id": 301,
                 "tracking_number": raw_tracking,
                 "phone": raw_phone,
                 "email": raw_email,
@@ -120,6 +122,7 @@ def test_final_audit_write_sanitizes_every_json_field(tmp_path):
         })
         for raw in (raw_tracking, raw_phone, raw_email, raw_secret, raw_group, raw_address):
             assert raw not in text
+
         assert stored.business_reply_type == "tracking_status_answer"
         assert stored.next_action == "reply"
         assert stored.risk_level == "high"
@@ -127,8 +130,21 @@ def test_final_audit_write_sanitizes_every_json_field(tmp_path):
         assert stored.decision_json["evidence_sources"][0]["summary"]["authority"] == "mcp"
         assert stored.decision_json["evidence_sources"][0]["verified"] is True
         assert stored.decision_json["tool_actions"][0]["tool_name"] == "ticket.create"
-        assert stored.decision_json["tool_actions"][0]["arguments"]["redacted"] is True
-        assert stored.case_context_json["customer_claim_summary"]["redacted"] is True
+
+        safe_arguments = stored.decision_json["tool_actions"][0]["arguments"]
+        assert safe_arguments["ticket_id"] == 201
+        assert safe_arguments["handoff_request_id"] == 301
+        assert safe_arguments["redacted"] is True
+        assert safe_arguments["redacted_field_count"] == 5
+        for forbidden in ("tracking_number", "phone", "email", "address", "token"):
+            assert forbidden not in safe_arguments
+
+        claim_summary = stored.case_context_json["customer_claim_summary"]
+        assert isinstance(claim_summary, str)
+        assert "[redacted_tracking]" in claim_summary
+        assert "[redacted_email]" in claim_summary
+        assert raw_tracking not in claim_summary
+        assert raw_email not in claim_summary
     finally:
         db.close()
         engine.dispose()
