@@ -6,13 +6,12 @@ Create Date: 2026-07-10
 
 Operator remediation
 --------------------
-Upgrade preserves every Case Context row. Before unique indexes are created it
-marks already closed, archived, expired, or identity-less rows inactive, then
-fails closed if multiple active rows remain for any tenant/exact-identity
-combination. The error contains the identity and row IDs. Resolve duplicates
-manually by selecting the one current case row and setting ``is_active = false``
-on the historical rows; do not delete or merge records. Re-run the migration
-after remediation.
+Upgrade preserves every Case Context row. It starts from an inactive default,
+activates only rows with a reusable identity and a non-terminal/non-expired
+lifecycle, then fails closed if multiple active rows remain for any
+tenant/exact-identity combination. The error contains the identity and row IDs.
+Resolve duplicates manually by selecting the one current case row and setting
+``is_active = false`` on historical rows; do not delete or merge records.
 """
 
 from __future__ import annotations
@@ -215,15 +214,18 @@ def upgrade() -> None:
     if "is_active" not in _column_names(bind):
         op.add_column(
             _TABLE,
-            sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
+            sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.false()),
         )
+
+    bind.execute(sa.text(f"UPDATE {_TABLE} SET is_active = false"))
     bind.execute(sa.text(
-        f"UPDATE {_TABLE} SET is_active = false "
-        "WHERE closed_at IS NOT NULL "
-        "OR status IN ('closed', 'archived') "
-        "OR (expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP) "
-        "OR (conversation_id IS NULL AND ticket_id IS NULL)"
+        f"UPDATE {_TABLE} SET is_active = true "
+        "WHERE (conversation_id IS NOT NULL OR ticket_id IS NOT NULL) "
+        "AND closed_at IS NULL "
+        "AND status NOT IN ('closed', 'archived') "
+        "AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)"
     ))
+
     _preflight_duplicates(bind)
     _drop_old_unique(bind)
     _create_active_identity_check(bind)
