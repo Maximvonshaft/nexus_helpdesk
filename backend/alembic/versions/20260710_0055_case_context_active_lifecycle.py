@@ -7,11 +7,12 @@ Create Date: 2026-07-10
 Operator remediation
 --------------------
 Upgrade preserves every Case Context row. Before unique indexes are created it
-marks already closed, archived, or expired rows inactive, then fails closed if
-multiple active rows remain for any tenant/exact-identity combination. The error
-contains the identity and row IDs. Resolve duplicates manually by selecting the
-one current case row and setting ``is_active = false`` on the historical rows;
-do not delete or merge records. Re-run the migration after remediation.
+marks already closed, archived, expired, or identity-less rows inactive, then
+fails closed if multiple active rows remain for any tenant/exact-identity
+combination. The error contains the identity and row IDs. Resolve duplicates
+manually by selecting the one current case row and setting ``is_active = false``
+on the historical rows; do not delete or merge records. Re-run the migration
+after remediation.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ depends_on = None
 
 _TABLE = "case_contexts"
 _OLD_UNIQUE = "uq_case_context_conversation_ticket"
+_ACTIVE_IDENTITY_CHECK = "ck_case_context_active_requires_identity"
 _ACTIVE_INDEXES = (
     "uq_case_context_active_conversation_only",
     "uq_case_context_active_ticket_only",
@@ -55,6 +57,12 @@ def _unique_names(bind) -> set[str]:
     return {item.get("name") for item in _inspector(bind).get_unique_constraints(_TABLE) if item.get("name")}
 
 
+def _check_names(bind) -> set[str]:
+    if _TABLE not in _inspector(bind).get_table_names():
+        return set()
+    return {item.get("name") for item in _inspector(bind).get_check_constraints(_TABLE) if item.get("name")}
+
+
 def _drop_old_unique(bind) -> None:
     if _OLD_UNIQUE not in _unique_names(bind):
         return
@@ -63,6 +71,17 @@ def _drop_old_unique(bind) -> None:
             batch.drop_constraint(_OLD_UNIQUE, type_="unique")
     else:
         op.drop_constraint(_OLD_UNIQUE, _TABLE, type_="unique")
+
+
+def _create_active_identity_check(bind) -> None:
+    if _ACTIVE_IDENTITY_CHECK in _check_names(bind):
+        return
+    condition = "NOT is_active OR conversation_id IS NOT NULL OR ticket_id IS NOT NULL"
+    if bind.dialect.name == "sqlite":
+        with op.batch_alter_table(_TABLE, recreate="always") as batch:
+            batch.create_check_constraint(_ACTIVE_IDENTITY_CHECK, condition)
+    else:
+        op.create_check_constraint(_ACTIVE_IDENTITY_CHECK, _TABLE, condition)
 
 
 def _duplicate_groups(bind, *, mode: str) -> list[dict[str, object]]:
@@ -202,10 +221,12 @@ def upgrade() -> None:
         f"UPDATE {_TABLE} SET is_active = false "
         "WHERE closed_at IS NOT NULL "
         "OR status IN ('closed', 'archived') "
-        "OR (expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP)"
+        "OR (expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP) "
+        "OR (conversation_id IS NULL AND ticket_id IS NULL)"
     ))
     _preflight_duplicates(bind)
     _drop_old_unique(bind)
+    _create_active_identity_check(bind)
     if "ix_case_contexts_is_active" not in _index_names(bind):
         op.create_index("ix_case_contexts_is_active", _TABLE, ["is_active"], unique=False)
     _create_active_indexes(bind)
@@ -223,19 +244,19 @@ def downgrade() -> None:
     if "ix_case_contexts_is_active" in _index_names(bind):
         op.drop_index("ix_case_contexts_is_active", table_name=_TABLE)
 
-    if _OLD_UNIQUE not in _unique_names(bind):
-        if bind.dialect.name == "sqlite":
-            with op.batch_alter_table(_TABLE, recreate="always") as batch:
+    if bind.dialect.name == "sqlite":
+        with op.batch_alter_table(_TABLE, recreate="always") as batch:
+            if _ACTIVE_IDENTITY_CHECK in _check_names(bind):
+                batch.drop_constraint(_ACTIVE_IDENTITY_CHECK, type_="check")
+            if _OLD_UNIQUE not in _unique_names(bind):
                 batch.create_unique_constraint(_OLD_UNIQUE, ["conversation_id", "ticket_id"])
-                if "is_active" in _column_names(bind):
-                    batch.drop_column("is_active")
-        else:
-            op.create_unique_constraint(_OLD_UNIQUE, _TABLE, ["conversation_id", "ticket_id"])
             if "is_active" in _column_names(bind):
-                op.drop_column(_TABLE, "is_active")
-    elif "is_active" in _column_names(bind):
-        if bind.dialect.name == "sqlite":
-            with op.batch_alter_table(_TABLE, recreate="always") as batch:
                 batch.drop_column("is_active")
-        else:
-            op.drop_column(_TABLE, "is_active")
+        return
+
+    if _ACTIVE_IDENTITY_CHECK in _check_names(bind):
+        op.drop_constraint(_ACTIVE_IDENTITY_CHECK, _TABLE, type_="check")
+    if _OLD_UNIQUE not in _unique_names(bind):
+        op.create_unique_constraint(_OLD_UNIQUE, _TABLE, ["conversation_id", "ticket_id"])
+    if "is_active" in _column_names(bind):
+        op.drop_column(_TABLE, "is_active")
