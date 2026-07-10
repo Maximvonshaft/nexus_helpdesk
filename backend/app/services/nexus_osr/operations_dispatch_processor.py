@@ -24,7 +24,10 @@ class OperationsDispatchRequest:
     `dispatch_key` is the required provider idempotency key. This contract does
     not contain a raw provider group ID or a message body; a future approved
     adapter must resolve provider-specific data through a separately governed
-    contract using the routing rule and safe destination references.
+    contract using the routing rule and safe destination references. Before any
+    external call it must hash the resolved raw destination and compare it with
+    `destination_group_hash`; a mismatch must fail closed rather than send to a
+    changed route.
     """
 
     outbox_id: int
