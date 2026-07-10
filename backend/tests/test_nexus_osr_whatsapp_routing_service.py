@@ -186,17 +186,25 @@ def test_matching_rule_durably_enqueues_and_ticket_event_is_audit_reference_only
 def test_route_idempotency_uses_outbox_unique_record_not_ticket_event_truth(db_session):
     ticket = _ticket(db_session)
     ctx = _case_context(ticket)
-    _rule(db_session)
+    rule = _rule(db_session)
 
     first = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx, tenant_id="tenant-me")
+    original_hash = _outbox(db_session)[0].destination_group_hash
+
+    # A later rule-target edit must not create a second delivery intent for the
+    # same case scope. The original outbox snapshot remains the dispatch truth.
+    rule.destination_group_id = "120363055555555555@g.us"
+    db_session.flush()
     second = route_ticket_to_whatsapp_group(db_session, ticket=ticket, case_context=ctx, tenant_id="tenant-me")
 
     assert first.status == "pending"
     assert second.status == "pending"
     assert second.outbox_id == first.outbox_id
+    assert second.dispatch_key == first.dispatch_key
     assert second.enqueue_created is False
     assert second.event_id is None
     assert len(_outbox(db_session)) == 1
+    assert _outbox(db_session)[0].destination_group_hash == original_hash
     assert len(_events(db_session, ticket)) == 1
 
 
