@@ -68,6 +68,8 @@ def test_live_tracking_intent_is_blocked_but_tracking_policy_is_not() -> None:
     assert guard.is_live_tracking_intent("Where is my parcel ME020000123456?") is True
     assert guard.is_live_tracking_intent("ME020000123456 这个包裹现在到哪里了") is True
     assert guard.is_live_tracking_intent("What is the tracking number format policy?") is False
+    assert guard.is_live_tracking_intent("CH020000129135 tracking lookup failed; show tracking number format") is False
+    assert guard.is_live_tracking_intent("What is the current status of CH020000129135?") is True
     assert guard.is_live_tracking_intent("如何查询包裹？") is False
 
 
