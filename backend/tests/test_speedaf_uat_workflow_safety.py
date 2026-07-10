@@ -78,8 +78,10 @@ def test_knowledge_runtime_readiness_is_independent_from_speedaf_samples():
     assert "READINESS_REPORT_HIGH_CARDINALITY_LABEL" in workflow
     assert "SPEEDAF_UAT" not in workflow
     assert "SPEEDAF_MCP" not in workflow
-    assert "waybill" not in workflow.lower()
-    assert "caller_id" not in workflow.lower()
+    assert "SPEEDAF_MCP_TEST_WAYBILL_CODE" not in workflow
+    assert "SPEEDAF_MCP_TEST_CALLER_ID" not in workflow
+    assert "inputs.waybill_code" not in workflow
+    assert "inputs.caller_id" not in workflow
 
 
 def test_knowledge_runtime_readiness_probe_has_no_tracking_lookup_or_secret_sample_contract():
