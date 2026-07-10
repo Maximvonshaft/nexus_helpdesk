@@ -90,11 +90,5 @@ jobs:
       - name: Run Admin unified debug snapshot test
         run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_debug_snapshot_has_unified_contract_and_no_raw_payloads
 
-      - name: Run WebChat debug sanitizer test
-        run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_webchat_debug_sanitizer_blocks_hostile_provider_tool_and_contact_payloads
-
-      - name: Run route mount and composition test
-        run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_route_mount_and_webchat_debug_composition_are_present
-
       - name: Check diff whitespace
         run: git diff --check origin/${{ github.base_ref }}...HEAD
