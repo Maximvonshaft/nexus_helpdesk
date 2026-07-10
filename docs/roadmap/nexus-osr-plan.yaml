@@ -1,5 +1,5 @@
 schema_version: nexus-osr-plan-v1
-updated_at: '2026-07-10T02:15:00Z'
+updated_at: '2026-07-10T03:34:00Z'
 source_of_truth:
   repository: Maximvonshaft/nexus_helpdesk
   main_sha: 990aa91e0fe8bdb8f3e261f074e384172df478dc
@@ -118,8 +118,8 @@ active_release_candidate:
   pr: null
   branch: null
   head_sha: null
-  state: none_selected_after_pr462_merge
-  state_note: PR #462 merged after #454; no runtime release candidate is selected until #464/#455 is refreshed and focused-tested.
+  state: none_selected_pending_admin_decision
+  state_note: PR #464 is current-main aligned and validated as READY_FOR_ADMIN_GATE_CANDIDATE, but Admin has not selected or gated it yet.
   sole_release_candidate: true
   release_gate: admin_selects_next_candidate_only_after_exact_head_focused_evidence
 
@@ -127,8 +127,19 @@ current_primary_runtime_dependency:
   pr: 464
   title: 'feat(osr): recover WhatsApp operations routing on current main'
   branch: agent13/osr-whatsapp-routing-main-recovery-20260710-03
-  remote_head_sha: 65ea2aa5c56e626853c6835a13acd198ec4b10c1
-  status: draft_recovery_pr_stale_after_pr462_merge_requires_refresh_and_focused_tests
+  remote_head_sha: 40437b21af12eda892584617b9a131e436ca55d6
+  status: current_main_aligned_ready_for_admin_gate_candidate
+  base_sha: 990aa91e0fe8bdb8f3e261f074e384172df478dc
+  compare_status: ahead_3_behind_0
+  observed_required_checks:
+    WebCall_PR_Guard: success
+    integration_contracts: success
+    postgres_migration: success
+    webapp_build: success
+    production_readiness: success
+    round_a_smoke: success
+    backend_ci: success
+    backend_full_regression: success
   original_pr: 455
   original_branch: feat/osr-whatsapp-routing
   original_remote_head_sha: 200069b02d4d086e76382a9a40257b682abf940f
@@ -139,13 +150,13 @@ current_primary_runtime_dependency:
     reason_remote_not_updated: git_push_auth_unavailable_and_connector_rejected_nonexistent_commit_object
   recovery_attempt:
     pr: 464
-    result: replacement_pr_created_from_main_f5f4cd13_before_pr462_merge
-    latest_static_validation: git_diff_check_compile_and_static_boundary_passed_but_pytest_dependencies_missing
-    blocker: now_stale_against_main_990aa91e_after_docs_only_pr462_merge
+    result: refreshed_onto_current_main_990aa91e_and_validated
+    latest_head_sha: 40437b21af12eda892584617b9a131e436ca55d6
+    latest_validation: agent05_focused_static_compile_boundary_checks_passed_and_github_required_checks_green
+    blocker: admin_decision_required_to_supersede_original_pr455_and_enter_release_gate
   next_action: >-
-    Refresh/rebase PR #464 onto main 990aa91e0fe8bdb8f3e261f074e384172df478dc, run focused WhatsApp routing,
-    persistence, and auto-ticket checks in an environment with backend test dependencies, then let Admin decide
-    whether PR #464 supersedes original PR #455.
+    Admin should decide whether PR #464 at 40437b21af12eda892584617b9a131e436ca55d6 supersedes original
+    PR #455 and, if accepted, move it through the Admin release gate without deployment, tag, or customer outbound.
 
 queued_prs:
   - pr: 456
@@ -217,7 +228,7 @@ milestones:
       - no_live_tracking_from_knowledge_only
   - id: M6
     name: WhatsApp operations routing
-    status: current_primary_pr_464_recovery_needs_refresh_after_pr462_merge
+    status: current_primary_pr_464_ready_for_admin_gate_candidate
     acceptance_focus:
       - configuration_driven_group_routing
       - no_provider_group_id_leakage
@@ -254,7 +265,7 @@ active_dependency_order:
   - step: 1
     action: Treat PR #454 as merged M3 baseline and PR #462 as merged roadmap-control baseline on main 990aa91e0fe8bdb8f3e261f074e384172df478dc.
   - step: 2
-    action: Refresh/rebase PR #464 onto main 990aa91e and run focused WhatsApp routing checks; then Admin decides whether #464 supersedes original #455.
+    action: Admin decides whether PR #464 at 40437b21af12eda892584617b9a131e436ca55d6 supersedes original PR #455 and, if accepted, moves it through Admin release gate.
   - step: 3
     action: Keep PR #456 queued until the WhatsApp routing workstream lands, then rebase and fix/authorize provider group ID detail exposure.
   - step: 4
