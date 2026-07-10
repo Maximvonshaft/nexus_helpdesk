@@ -1,0 +1,89 @@
+name: Nexus OSR Epic
+description: Define one milestone-level business capability and its completion boundary.
+title: "[EPIC] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use an Epic for a durable product capability, not for one code change. Break implementation into linked Work Items.
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: Describe the final business and operational result.
+      placeholder: Operators can close a logistics case safely from verified evidence through completion.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Capability scope
+      description: List the systems, users, countries, channels, and workflows included.
+    validations:
+      required: true
+
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and architecture invariants
+      description: State the boundaries that may not be weakened.
+      placeholder: |
+        - No C-end long-term memory
+        - MCP/approved sources remain live-fact authority
+        - Customer-visible output uses the governed outbound boundary
+        - Tenant/country/channel isolation is mandatory
+    validations:
+      required: true
+
+  - type: textarea
+    id: children
+    attributes:
+      label: Child Work Items
+      description: Link existing Work Issues or list the Work Issues that must be created.
+      placeholder: |
+        - [ ] #123
+        - [ ] #124
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and sequencing
+      description: Record blocked-by and blocking relationships and the required merge order.
+    validations:
+      required: true
+
+  - type: textarea
+    id: completion
+    attributes:
+      label: Epic completion criteria
+      description: Define measurable product, safety, data, runtime, and operational evidence required to close the Epic.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: lifecycle
+    attributes:
+      label: Initial lifecycle
+      options:
+        - Backlog
+        - Ready
+        - In progress
+        - Blocked
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: governance
+    attributes:
+      label: Governance confirmation
+      options:
+        - label: This Epic does not duplicate an existing M1-M12 capability.
+          required: true
+        - label: Implementation will be split into independently reviewable Work Items.
+          required: true
+        - label: The Epic itself does not authorize production deployment, real outbound, or irreversible actions.
+          required: true
