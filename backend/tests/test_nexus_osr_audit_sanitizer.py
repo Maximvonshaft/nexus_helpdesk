@@ -84,18 +84,44 @@ def test_sanitizer_redacts_hostile_nested_payload_and_preserves_safe_metadata():
     assert payload["summary"] == original["summary"]
 
 
-def test_sanitizer_is_deterministic_bounded_and_cycle_safe():
+def _bounded_payload():
     cyclic: dict[str, object] = {"status": "active"}
     cyclic["self"] = cyclic
-    payload = {"cycle": cyclic, "many": list(range(20)), "mapping": {f"key_{i}": i for i in range(20)}, "long": "x" * 500}
-    limits = AuditSanitizerLimits(max_depth=4, max_mapping_items=5, max_sequence_items=4, max_string_length=60, max_key_length=40)
+    payload = {
+        "cycle": cyclic,
+        "many": list(range(20)),
+        "mapping": {f"key_{i}": i for i in range(20)},
+        "long": "x" * 500,
+    }
+    limits = AuditSanitizerLimits(
+        max_depth=4,
+        max_mapping_items=5,
+        max_sequence_items=4,
+        max_string_length=60,
+        max_key_length=40,
+    )
+    return payload, limits
+
+
+def test_sanitizer_is_deterministic():
+    payload, limits = _bounded_payload()
     first = sanitize_audit_payload(payload, limits=limits)
     second = sanitize_audit_payload(payload, limits=limits)
     assert first == second
-    assert first["cycle"]["self"]["category"] == "cycle"
-    assert first["many"][-1]["__truncated_items__"] == 16
-    assert first["mapping"]["__truncated_keys__"] == 15
-    assert len(first["long"]) <= 60
+
+
+def test_sanitizer_is_cycle_safe():
+    payload, limits = _bounded_payload()
+    result = sanitize_audit_payload(payload, limits=limits)
+    assert result["cycle"]["self"]["category"] == "cycle"
+
+
+def test_sanitizer_enforces_collection_and_string_bounds():
+    payload, limits = _bounded_payload()
+    result = sanitize_audit_payload(payload, limits=limits)
+    assert result["many"][-1]["__truncated_items__"] == 16
+    assert result["mapping"]["__truncated_keys__"] == 15
+    assert len(result["long"]) <= 60
 
 
 def test_sensitive_keys_key_names_and_failure_fallback_are_safe():
