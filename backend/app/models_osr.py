@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -15,7 +15,31 @@ UTCDateTime = DateTime(timezone=True)
 class CaseContextRecord(Base):
     __tablename__ = "case_contexts"
     __table_args__ = (
-        UniqueConstraint("conversation_id", "ticket_id", name="uq_case_context_conversation_ticket"),
+        Index(
+            "uq_case_context_active_conversation_only",
+            "tenant_id",
+            "conversation_id",
+            unique=True,
+            sqlite_where=text("is_active = 1 AND conversation_id IS NOT NULL AND ticket_id IS NULL"),
+            postgresql_where=text("is_active IS TRUE AND conversation_id IS NOT NULL AND ticket_id IS NULL"),
+        ),
+        Index(
+            "uq_case_context_active_ticket_only",
+            "tenant_id",
+            "ticket_id",
+            unique=True,
+            sqlite_where=text("is_active = 1 AND conversation_id IS NULL AND ticket_id IS NOT NULL"),
+            postgresql_where=text("is_active IS TRUE AND conversation_id IS NULL AND ticket_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_case_context_active_conversation_ticket",
+            "tenant_id",
+            "conversation_id",
+            "ticket_id",
+            unique=True,
+            sqlite_where=text("is_active = 1 AND conversation_id IS NOT NULL AND ticket_id IS NOT NULL"),
+            postgresql_where=text("is_active IS TRUE AND conversation_id IS NOT NULL AND ticket_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -26,6 +50,7 @@ class CaseContextRecord(Base):
     country_code: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, index=True)
     issue_type: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(40), default="active", index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     safe_tracking_reference: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     tracking_number_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     contact_methods_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
