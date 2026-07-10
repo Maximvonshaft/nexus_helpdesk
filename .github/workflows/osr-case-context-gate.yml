@@ -35,6 +35,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -91,4 +93,4 @@ jobs:
         run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_debug_snapshot_has_unified_contract_and_no_raw_payloads
 
       - name: Check diff whitespace
-        run: git diff --check origin/${{ github.base_ref }}...HEAD
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
