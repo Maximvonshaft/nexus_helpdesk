@@ -14,6 +14,7 @@ from ..models_webchat_debug import WebchatAIDebugRun, WebchatAIEvalCase, Webchat
 from ..tool_models import ToolCallLog
 from ..utils.time import utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatEvent, WebchatMessage
+from .nexus_osr.admin_views import build_osr_debug_snapshot
 
 DEBUG_BUNDLE_SCHEMA = "nexus.debug_bundle.v1"
 DEBUG_EVENT_SCHEMA = "nexus.ai_debug.v1"
@@ -32,8 +33,33 @@ _ALLOWED_FINDING_TYPES = {
     "tool_error",
     "other",
 }
-_SENSITIVE_KEY_RE = re.compile(r"(authorization|credential|password|secret|api[_-]?key|cookie|session|prompt|system|developer)", re.I)
-_RAW_TRACKING_RE = re.compile(r"\b(?=[A-Z0-9-]{8,35}\b)(?=[A-Z0-9-]*\d)[A-Z0-9][A-Z0-9-]*[A-Z0-9]\b", re.I)
+_SENSITIVE_KEY_RE = re.compile(
+    r"(?:authorization|credential|password|secret|api[_-]?key|cookie|session|prompt|system|developer|"
+    r"provider_(?:payload|request|response|body|group_id)|destination_group_id|fallback_group_id|"
+    r"tool_(?:args|arguments|result|results|payload)|(?:^|_)(?:arguments|credentials)(?:$|_)|"
+    r"tracking_number|phone|email|customer_reply|raw(?:_|$)|payload)",
+    re.I,
+)
+_RAW_TRACKING_RE = re.compile(
+    r"\b(?=[A-Z0-9._-]{8,48}\b)(?=(?:[A-Z0-9._-]*\d){4})(?=[A-Z0-9._-]*[A-Z])[A-Z0-9][A-Z0-9._-]+\b",
+    re.I,
+)
+_EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
+_PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\d .()\-]{6,}\d)(?!\w)")
+_SECRET_VALUE_RE = re.compile(
+    r"(?:\bbearer\s+[A-Za-z0-9._~+/=-]{8,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{12,}|\b(?:password|secret|api[_-]?key|credential)\s*[:=]\s*\S+)",
+    re.I,
+)
+_SAFE_TRACKING_KEYS = {
+    "suffix",
+    "tracking_number_hash",
+    "tracking_number_hash_present",
+    "sha256_prefix",
+    "request_id",
+    "background_job_id",
+    "item_key",
+    "country_scope",
+}
 
 
 def _loads_json(value: str | None) -> Any:
@@ -54,11 +80,30 @@ def _sha_prefix(value: Any, *, length: int = 16) -> str:
     return hashlib.sha256(_dumps_json(value).encode("utf-8", errors="ignore")).hexdigest()[:length]
 
 
-def _safe_str(value: Any, *, limit: int = 160) -> str | None:
+def _redaction_marker(value: Any) -> dict[str, Any]:
+    return {
+        "redacted": True,
+        "present": value not in (None, ""),
+        "sha256_prefix": _sha_prefix(value),
+    }
+
+
+def _redact_text(value: Any, *, limit: int = 240, redact_tracking: bool = True) -> str | None:
     if value is None:
         return None
     text = " ".join(str(value).strip().split())
-    return text[:limit] if text else None
+    if not text:
+        return None
+    text = _SECRET_VALUE_RE.sub("[redacted_secret]", text)
+    text = _EMAIL_RE.sub("[redacted_email]", text)
+    text = _PHONE_RE.sub("[redacted_phone]", text)
+    if redact_tracking:
+        text = _RAW_TRACKING_RE.sub("[redacted_tracking]", text)
+    return text[:limit]
+
+
+def _safe_str(value: Any, *, limit: int = 160) -> str | None:
+    return _redact_text(value, limit=limit)
 
 
 def _sanitize_value(value: Any, *, key: str = "", depth: int = 0) -> Any:
@@ -66,23 +111,22 @@ def _sanitize_value(value: Any, *, key: str = "", depth: int = 0) -> Any:
         return value
     if depth > 4:
         return {"redacted": True, "type": type(value).__name__, "sha256_prefix": _sha_prefix(value)}
+    if _SENSITIVE_KEY_RE.search(key):
+        return _redaction_marker(value)
     if isinstance(value, dict):
         safe: dict[str, Any] = {}
         for raw_key, item in list(value.items())[:60]:
             item_key = str(raw_key)
-            if _SENSITIVE_KEY_RE.search(item_key):
-                safe[item_key] = {"redacted": True, "sha256_prefix": _sha_prefix(item)}
-            else:
-                safe[item_key] = _sanitize_value(item, key=item_key, depth=depth + 1)
+            safe[item_key] = _redaction_marker(item) if _SENSITIVE_KEY_RE.search(item_key) else _sanitize_value(item, key=item_key, depth=depth + 1)
         return safe
     if isinstance(value, list):
         return [_sanitize_value(item, key=key, depth=depth + 1) for item in value[:30]]
     if isinstance(value, str):
         text = " ".join(value.strip().split())
-        if _SENSITIVE_KEY_RE.search(key):
-            return {"redacted": True, "length": len(text), "sha256_prefix": _sha_prefix(text)}
-        if _RAW_TRACKING_RE.search(text) and key.lower() not in {"suffix", "tracking_number_hash", "sha256_prefix"}:
-            return {"redacted": True, "tracking_like": True, "suffix": text[-4:] if len(text) >= 4 else None, "sha256_prefix": _sha_prefix(text)}
+        if _SECRET_VALUE_RE.search(text) or _EMAIL_RE.search(text) or _PHONE_RE.search(text):
+            return _redact_text(text, limit=240, redact_tracking=True)
+        if _RAW_TRACKING_RE.search(text) and key.lower() not in _SAFE_TRACKING_KEYS:
+            return {"redacted": True, "tracking_like": True, "sha256_prefix": _sha_prefix(text)}
         if len(text) > 240:
             return {"redacted": True, "length": len(text), "sha256_prefix": _sha_prefix(text)}
         return text
@@ -95,9 +139,12 @@ def _privacy_report(bundle: dict[str, Any]) -> dict[str, bool]:
     return {
         "raw_customer_text_included": False,
         "raw_tracking_number_included": bool(_RAW_TRACKING_RE.search(serialized.replace("tracking_number_hash", ""))),
+        "raw_phone_included": bool(_PHONE_RE.search(serialized)),
+        "raw_email_included": bool(_EMAIL_RE.search(serialized)),
         "token_included": "bearer " in lower or "visitor_token" in lower,
         "prompt_included": "system prompt" in lower or "developer prompt" in lower,
-        "secret_included": "secret_key" in lower or "api_key" in lower,
+        "secret_included": bool(_SECRET_VALUE_RE.search(serialized)) or "secret_key" in lower or "api_key" in lower,
+        "provider_group_id_included": "@g.us" in lower or "destination_group_id\"" in lower or "fallback_group_id\"" in lower,
         "raw_tool_payload_included": False,
     }
 
@@ -121,10 +168,12 @@ def _event_belongs_to_turn(row: WebchatEvent, turn: WebchatAITurn) -> bool:
 def _runtime_trace(turn: WebchatAITurn, reply_message: WebchatMessage | None) -> dict[str, Any]:
     trace = _loads_json(turn.runtime_trace_json)
     if isinstance(trace, dict) and trace:
-        return trace
+        sanitized = _sanitize_value(trace)
+        return sanitized if isinstance(sanitized, dict) else {}
     metadata = _loads_json(reply_message.metadata_json if reply_message else None)
     if isinstance(metadata, dict) and isinstance(metadata.get("runtime_trace"), dict):
-        return _sanitize_value(metadata.get("runtime_trace"))
+        sanitized = _sanitize_value(metadata.get("runtime_trace"))
+        return sanitized if isinstance(sanitized, dict) else {}
     return {}
 
 
@@ -235,8 +284,6 @@ def build_ai_debug_bundle(db: Session, *, turn: WebchatAITurn) -> tuple[dict[str
     visitor_message = db.get(WebchatMessage, turn.latest_visitor_message_id or turn.trigger_message_id)
     reply_message = db.get(WebchatMessage, turn.reply_message_id) if turn.reply_message_id else None
     metadata = _message_metadata(reply_message)
-    osr_audit = metadata.get("osr_audit") if isinstance(metadata.get("osr_audit"), dict) else {"mode": "audit_only", "present": False}
-    osr_audit.setdefault("mode", "audit_only")
     runtime_trace = _runtime_trace(turn, reply_message)
     rag_trace = metadata.get("rag_trace") if isinstance(metadata.get("rag_trace"), dict) else None
     trace_fields = runtime_trace.get("runtime_trace_context_fields") if isinstance(runtime_trace.get("runtime_trace_context_fields"), dict) else {}
@@ -279,6 +326,12 @@ def build_ai_debug_bundle(db: Session, *, turn: WebchatAITurn) -> tuple[dict[str
         "live_tracking_answer_allowed": live_tracking_allowed,
         "allowed_reply_types": ["answer"] if live_tracking_allowed else ["clarifying_question", "handoff_notice", "null_reply"],
     }
+    osr_snapshot = build_osr_debug_snapshot(
+        db,
+        tenant_id=conversation.tenant_key or "default",
+        conversation_id=turn.conversation_id,
+        ticket_id=turn.ticket_id,
+    )
     bundle = {
         "schema": DEBUG_BUNDLE_SCHEMA,
         "conversation_id": turn.conversation_id,
@@ -300,18 +353,37 @@ def build_ai_debug_bundle(db: Session, *, turn: WebchatAITurn) -> tuple[dict[str
         },
         "evidence": evidence,
         "policy": policy,
-        "osr": _sanitize_value(osr_audit, key="osr"),
+        "osr": osr_snapshot,
         "tool_calls": tool_calls,
-        "knowledge": {"retrieval": _safe_str((rag_trace or {}).get("retrieval") if isinstance(rag_trace, dict) else None), "kb_hits_count": kb_hits, "top_hits": _top_knowledge_hits(rag_trace)},
-        "safety": {"safety_status": safety_status or "unknown", "fact_gate_reason": _safe_str(turn.fact_gate_reason or metadata.get("fact_gate_reason"), limit=240), "unsupported_claims": runtime_trace.get("unsupported_claims") if isinstance(runtime_trace.get("unsupported_claims"), int) else 0},
-        "visible_message": {"created": customer_visible_created, "origin": "provider_runtime" if customer_visible_created else None, "channel": metadata.get("reply_channel") or conversation.channel_key, "provider_status": metadata.get("provider_status")},
+        "knowledge": {
+            "retrieval": _safe_str((rag_trace or {}).get("retrieval") if isinstance(rag_trace, dict) else None),
+            "kb_hits_count": kb_hits,
+            "top_hits": _top_knowledge_hits(rag_trace),
+        },
+        "safety": {
+            "safety_status": safety_status or "unknown",
+            "fact_gate_reason": _safe_str(turn.fact_gate_reason or metadata.get("fact_gate_reason"), limit=240),
+            "unsupported_claims": runtime_trace.get("unsupported_claims") if isinstance(runtime_trace.get("unsupported_claims"), int) else 0,
+        },
+        "visible_message": {
+            "created": customer_visible_created,
+            "origin": "provider_runtime" if customer_visible_created else None,
+            "channel": _safe_str(metadata.get("reply_channel") or conversation.channel_key),
+            "provider_status": _safe_str(metadata.get("provider_status")),
+        },
         "timeline": [_event_out(row) for row in turn_events[-80:]],
         "privacy": {},
     }
     bundle["privacy"] = _privacy_report(bundle)
     run = db.query(WebchatAIDebugRun).filter(WebchatAIDebugRun.ai_turn_id == turn.id).first()
     if run is None:
-        run = WebchatAIDebugRun(conversation_id=turn.conversation_id, ticket_id=turn.ticket_id, ai_turn_id=turn.id, debug_bundle_json="{}", privacy_report_json="{}")
+        run = WebchatAIDebugRun(
+            conversation_id=turn.conversation_id,
+            ticket_id=turn.ticket_id,
+            ai_turn_id=turn.id,
+            debug_bundle_json="{}",
+            privacy_report_json="{}",
+        )
         db.add(run)
         db.flush()
     run.visitor_message_id = turn.latest_visitor_message_id or turn.trigger_message_id
@@ -349,7 +421,17 @@ def build_ai_debug_bundle(db: Session, *, turn: WebchatAITurn) -> tuple[dict[str
     return bundle, run
 
 
-def create_test_finding(db: Session, *, run: WebchatAIDebugRun, current_user_id: int | None, finding_type: str, severity: str = "medium", tester_note: str | None = None, expected_behavior: str | None = None, actual_behavior: str | None = None) -> WebchatAITestFinding:
+def create_test_finding(
+    db: Session,
+    *,
+    run: WebchatAIDebugRun,
+    current_user_id: int | None,
+    finding_type: str,
+    severity: str = "medium",
+    tester_note: str | None = None,
+    expected_behavior: str | None = None,
+    actual_behavior: str | None = None,
+) -> WebchatAITestFinding:
     if finding_type not in _ALLOWED_FINDING_TYPES:
         finding_type = "other"
     severity = severity if severity in {"low", "medium", "high", "critical"} else "medium"
@@ -371,7 +453,12 @@ def create_test_finding(db: Session, *, run: WebchatAIDebugRun, current_user_id:
     return row
 
 
-def create_eval_case_from_finding(db: Session, *, finding: WebchatAITestFinding, current_user_id: int | None) -> WebchatAIEvalCase:
+def create_eval_case_from_finding(
+    db: Session,
+    *,
+    finding: WebchatAITestFinding,
+    current_user_id: int | None,
+) -> WebchatAIEvalCase:
     run = db.get(WebchatAIDebugRun, finding.debug_run_id)
     if run is None:
         raise ValueError("debug_run_not_found")
