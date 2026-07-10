@@ -31,6 +31,19 @@ _POLICY_TERMS = {
     "pravilo",
     "politika",
 }
+_NO_EVIDENCE_EXPANSION_TERMS = (
+    "tracking lookup failed",
+    "waybill not found",
+    "wrong tracking number",
+    "tracking number format",
+    "waybill format",
+    "客户输入运单号查不到",
+    "订单号多输少输",
+    "运单号格式",
+    "核对单号",
+    "CH tracking number format",
+)
+_NO_EVIDENCE_EXPANSION_SUFFIX = " ".join(_NO_EVIDENCE_EXPANSION_TERMS)
 _CURRENT_LOCATION_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
@@ -57,12 +70,30 @@ def install() -> None:
     _INSTALLED = True
 
 
-def is_live_tracking_intent_guarded(value: str | None) -> bool:
+def _customer_intent_text(value: str | None) -> str:
+    """Remove the deterministic internal KB expansion before classifying intent.
+
+    ``ai_runtime_context`` appends this suffix only to retrieve static waybill
+    guidance when no trusted tracking fact exists.  Classifying that expanded
+    retrieval query as customer intent makes the synthetic words ``tracking``
+    and ``waybill`` look like a live-status request.  Keep the expansion for
+    retrieval, but classify only the original customer prefix (plus any
+    separately appended identifier).
+    """
+
     text = _runtime._normalize(value)
+    suffix = _runtime._normalize(_NO_EVIDENCE_EXPANSION_SUFFIX)
+    if suffix and text.endswith(suffix):
+        return text[: -len(suffix)].strip()
+    return text
+
+
+def is_live_tracking_intent_guarded(value: str | None) -> bool:
+    text = _customer_intent_text(value)
     if not text:
         return False
 
-    original = (value or "").upper()
+    original = text.upper()
     has_tracking = any(term in text for term in _runtime.LIVE_TRACKING_TERMS)
     has_status = any(term in text for term in _runtime.LIVE_STATUS_TERMS)
     has_identifier = any(
