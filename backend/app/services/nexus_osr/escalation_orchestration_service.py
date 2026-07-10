@@ -299,7 +299,7 @@ def _audit(db: Session, *, decision: RuntimeDecision, case_context: CaseContext,
 
 
 def _safe_audit_case_context(case_context: CaseContext) -> CaseContext:
-    """Remove message, contact, tracking, provider, and tool payload material."""
+    """Keep only non-content operational state in escalation audit records."""
 
     return replace(
         case_context,
@@ -307,6 +307,9 @@ def _safe_audit_case_context(case_context: CaseContext) -> CaseContext:
         tracking_number_hash=None,
         contact_methods=[],
         customer_claim_summary=None,
+        missing_info=[],
+        agent_handover_summary=None,
+        ai_actions_taken=[],
         last_mcp_fact=None,
     )
 
