@@ -1,0 +1,78 @@
+name: osr-runtime-evidence
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/services/nexus_osr/runtime_evidence.py"
+      - "backend/scripts/probe_nexus_osr_runtime_evidence.py"
+      - "backend/tests/test_nexus_osr_runtime_evidence.py"
+      - "docs/ops/NEXUS_OSR_RUNTIME_EVIDENCE_RUNBOOK.md"
+      - ".github/workflows/osr-runtime-evidence.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  runtime-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONPATH: backend
+      APP_ENV: development
+      DATABASE_URL: sqlite:////tmp/osr-runtime-evidence.db
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r backend/requirements.txt
+
+      - name: Compile runtime evidence scope
+        run: |
+          python -m py_compile \
+            backend/app/services/nexus_osr/runtime_evidence.py \
+            backend/scripts/probe_nexus_osr_runtime_evidence.py \
+            backend/tests/test_nexus_osr_runtime_evidence.py
+
+      - name: Run focused runtime evidence tests
+        run: pytest -q backend/tests/test_nexus_osr_runtime_evidence.py
+
+      - name: Generate bounded synthetic runtime evidence report
+        run: |
+          python backend/scripts/probe_nexus_osr_runtime_evidence.py \
+            --expected-sha "${{ github.event.pull_request.head.sha }}" \
+            --output runtime-evidence-report.json
+
+      - name: Validate bounded report contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("runtime-evidence-report.json").read_text(encoding="utf-8"))
+          assert payload["schema"] == "nexus.osr.runtime_evidence.v1"
+          assert payload["state"] in {"ready", "degraded", "not_ready", "unavailable"}
+          assert payload["reason_count"] <= 20
+          rendered = json.dumps(payload, ensure_ascii=False)
+          forbidden = ["raw_prompt", "provider_payload", "tool_args", "credential", "password", "@example.com"]
+          assert not any(token in rendered for token in forbidden)
+          PY
+
+      - name: Check exact-head diff whitespace
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
