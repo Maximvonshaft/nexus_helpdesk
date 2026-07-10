@@ -57,10 +57,16 @@ def test_exact_nullable_identity_combinations_and_unscoped_load_rejected(db):
     assert load_case_context(db, conversation_id=101, tenant_id="tenant-a").ticket_id is None
     assert load_case_context(db, ticket_id=201, tenant_id="tenant-a").conversation_id is None
     assert load_case_context(db, conversation_id=101, ticket_id=201, tenant_id="tenant-a").ticket_id == 201
+    assert load_case_context(db, ticket_id=201).conversation_id is None
     with pytest.raises(ValueError, match="case_context_identity_required"):
         load_case_context(db, tenant_id="tenant-a")
-    with pytest.raises(ValueError, match="case_context_tenant_required"):
-        load_case_context(db, ticket_id=201)
+
+
+def test_ticket_only_tenant_inference_fails_closed_when_ambiguous(db):
+    save_case_context(db, _context(ticket_id=301), tenant_id="tenant-a")
+    save_case_context(db, _context(ticket_id=301), tenant_id="tenant-b")
+    with pytest.raises(ValueError, match="case_context_tenant_ambiguous"):
+        load_case_context(db, ticket_id=301)
 
 
 def test_tenant_scope_is_part_of_active_identity(db):
