@@ -39,7 +39,7 @@ jobs:
           set -Eeuo pipefail
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install -r backend/requirements.txt
-          python -m pip install pytest pytest-asyncio jsonschema cryptography httpx
+          python -m pip install pytest pytest-asyncio pytest-timeout jsonschema cryptography httpx
 
       - name: Compile backend
         run: |
@@ -49,7 +49,7 @@ jobs:
       - name: Execute full backend test suite
         run: |
           set +e
-          timeout 900 python -m pytest -vv --tb=short --disable-warnings backend/tests > /tmp/backend-pytest.log 2>&1
+          timeout 900 python -m pytest -vv --tb=short --disable-warnings --timeout=120 --timeout-method=thread backend/tests > /tmp/backend-pytest.log 2>&1
           status=$?
           set -e
           printf '%s' "$status" > /tmp/backend-pytest-status
