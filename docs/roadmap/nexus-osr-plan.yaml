@@ -1,9 +1,9 @@
 schema_version: nexus-osr-plan-v1
-updated_at: '2026-07-10T01:50:00Z'
+updated_at: '2026-07-10T04:59:00Z'
 source_of_truth:
   repository: Maximvonshaft/nexus_helpdesk
-  main_sha: f5f4cd13d87a7766ca5fd5b43751979a326825c8
-  main_latest_commit: 'feat(osr): add governed tool execution path (#454)'
+  main_sha: aed11916884bcf7ef0b2f7703589b6069c7a9a10
+  main_latest_commit: 'feat(osr): recover WhatsApp operations routing on current main (#464)'
   control_issue: 461
   cycle_issue: 457
   source_work_order: 460
@@ -74,8 +74,8 @@ safety_kernel:
 current_state:
   evidence_date: '2026-07-10'
   main:
-    sha: f5f4cd13d87a7766ca5fd5b43751979a326825c8
-    latest_commit_title: 'feat(osr): add governed tool execution path (#454)'
+    sha: aed11916884bcf7ef0b2f7703589b6069c7a9a10
+    latest_commit_title: 'feat(osr): recover WhatsApp operations routing on current main (#464)'
   merged_baseline:
     runtime_audit_pr:
       pr: 452
@@ -100,6 +100,23 @@ current_state:
         provider_native_tool_calls: not_introduced
         safe_customer_visible_results_send_directly_false: preserved
         redaction_regression: fixed_and_full_regression_green
+    roadmap_recovery_pr:
+      pr: 462
+      merge_sha: 990aa91e0fe8bdb8f3e261f074e384172df478dc
+      status: merged_by_admin_gate
+    whatsapp_operations_routing_pr:
+      pr: 464
+      validated_head_sha: 40437b21af12eda892584617b9a131e436ca55d6
+      merge_sha: aed11916884bcf7ef0b2f7703589b6069c7a9a10
+      status: merged_by_admin_gate
+      supersedes_pr: 455
+      accepted_boundaries:
+        no_direct_whatsapp_sidecar_call: preserved
+        no_customer_visible_behavior_change: preserved
+        no_customer_visible_message_service_change: preserved
+        no_send_without_whatsapp_routing_rule_record: preserved
+        provider_group_ids_hashed_or_keyed_in_events: preserved
+        no_hardcoded_country_or_group_routing: preserved
   open_work_orders:
     - issue: 459
       mission_id: OSR-20260710-02-W2
@@ -107,50 +124,64 @@ current_state:
       workstream: human_hours_escalation_post_merge_follow_up
     - issue: 460
       mission_id: OSR-20260710-02-W3
-      status: in_progress_by_pr462_docs_recovery
+      status: completed_by_pr462_merge
       workstream: roadmap_control_files_recovery
     - issue: 463
       mission_id: OSR-20260710-03-W455
-      status: created_by_agent09_but_remote_branch_update_blocked
+      status: completed_by_pr464_merge_and_pr455_superseded_closure
       workstream: whatsapp_operations_routing_rebase
+    - issue: 466
+      mission_id: OSR-20260710-06-PR456
+      status: active_pr456_current_main_recovery_work_order
+      workstream: admin_debug_control_tower_current_main_recovery
 
 active_release_candidate:
   pr: null
   branch: null
   head_sha: null
-  state: none_selected_after_pr454_merge
+  state: none_selected_after_pr464_merge
+  state_note: PR #464 has merged; no new release candidate is selected until #456 is refreshed and boundary-reviewed.
   sole_release_candidate: true
   release_gate: admin_selects_next_candidate_only_after_exact_head_focused_evidence
 
 current_primary_runtime_dependency:
-  pr: 455
-  title: 'feat(osr): add WhatsApp operations routing'
-  branch: feat/osr-whatsapp-routing
-  remote_head_sha: 200069b02d4d086e76382a9a40257b682abf940f
-  status: draft_next_runtime_dependency_remote_still_old_base
-  known_attempt:
-    agent: AGENT-09
-    result: local_rebase_succeeded_but_remote_update_blocked
-    local_rebased_head_sha: ed30e265528898bee214b68ebe4129cd002afc38
-    reason_remote_not_updated: git_push_auth_unavailable_and_connector_rejected_nonexistent_commit_object
+  pr: 456
+  title: 'feat(osr): add admin debug and control tower surfaces'
+  branch: feat/osr-admin-debug-control-tower
+  remote_head_sha: d35090a71a03e683feebaaec0749e83e5bdcd645
+  status: draft_old_base_next_after_whatsapp_routing_merge
+  base_sha_seen: 6261ecf0d81ccfef3a8790a4c7ca1d9f163e69f8
+  current_main_required_base: aed11916884bcf7ef0b2f7703589b6069c7a9a10
+  known_blockers:
+    - provider_group_id_detail_surface_exposure_requires_fix_or_explicit_runtime_admin_authorization
+    - branch_must_rebase_or_recover_onto_current_main_after_pr464_merge
+    - focused_admin_debug_control_tower_tests_required_before_admin_gate
   next_action: >-
-    A writer with authenticated git push or Git object creation should repeat/apply the clean rebase onto
-    main f5f4cd13d87a7766ca5fd5b43751979a326825c8, update the remote branch, run focused WhatsApp routing,
-    persistence, and auto-ticket checks, then hand to Admin gate only if clean.
+    One writer should claim PR #456, refresh/rebase or recover its admin/debug/control-tower scope onto main
+    aed11916884bcf7ef0b2f7703589b6069c7a9a10, resolve conflicts, fix or explicitly authorize provider group ID detail exposure,
+    and run focused admin/debug/control-tower tests before any Admin gate.
 
 queued_prs:
   - pr: 456
     title: 'feat(osr): add admin debug and control tower surfaces'
-    status: draft_queued_last
-    reason: Admin/debug/control tower surfaces depend on settled #455 routing runtime.
+    status: current_next_backend_admin_dependency
+    reason: Admin/debug/control tower surfaces merge last after WhatsApp routing landed.
     known_blocker: provider_group_id_detail_surface_exposure_requires_fix_or_explicit_runtime_admin_authorization
-    next_action: Rebase and reassess only after PR #455 lands.
+    next_action: Rebase/recover onto main aed11916884bcf7ef0b2f7703589b6069c7a9a10 and run focused tests.
 
 stale_or_reference_prs:
   - pr: 450
     title: 'docs: define Nexus OSR final annual development plan'
-    status: superseded_candidate_after_roadmap_recovery
+    status: superseded_by_merged_roadmap_control_files
     reason: Based on old main ec0af3fd; useful as strategic source, not current status authority.
+  - pr: 455
+    title: 'feat(osr): add WhatsApp operations routing'
+    status: closed_unmerged_superseded_by_merged_pr464
+    reason: Original WhatsApp routing PR was on an old branch; equivalent recovery scope merged through PR #464 and #455 was closed unmerged to avoid duplicate release-control state.
+  - pr: 465
+    title: 'docs(osr): reconcile roadmap after #464 merge'
+    status: active_docs_only_reconciliation_after_pr464_merge_and_pr455_closure
+    reason: Keeps roadmap files aligned with current main facts.
   - pr: 395
     title: 'feat: add Speedaf hybrid tracking source'
     status: reference_only
@@ -158,7 +189,7 @@ stale_or_reference_prs:
   - pr: 446
     title: 'docs: add T1 tracking truth-source readiness plan'
     status: reference_only
-    reason: Tracking truth-source work must wait for current-main roadmap and Work Order alignment.
+    reason: Tracking truth-source work must wait for current-main Work Order alignment.
 
 milestones:
   - id: M1
@@ -186,29 +217,18 @@ milestones:
     status: merged_mainline_baseline
     merged_pr: 454
     merge_sha: f5f4cd13d87a7766ca5fd5b43751979a326825c8
-    acceptance_focus:
-      - observe_only_default
-      - policy_execute_allowlist_limited
-      - high_risk_tools_blocked_by_default
-      - safe_customer_visible_results_send_directly_false
-      - no_raw_tool_arguments_in_audit_or_debug
   - id: M4
     name: MCP truth contract and tracking authority
     status: queued_after_runtime_foundations
-    acceptance_focus:
-      - current_status_vs_history_enrichment_split
-      - customer_claims_not_facts
-      - previous_ai_replies_not_evidence
   - id: M5
     name: Customer-visible knowledge quality
     status: queued
-    acceptance_focus:
-      - country_channel_audience_filtering
-      - allowed_commitments_and_forbidden_claims
-      - no_live_tracking_from_knowledge_only
   - id: M6
     name: WhatsApp operations routing
-    status: current_primary_pr_455_but_remote_update_blocked
+    status: merged_mainline_baseline
+    merged_pr: 464
+    superseded_pr: 455
+    merge_sha: aed11916884bcf7ef0b2f7703589b6069c7a9a10
     acceptance_focus:
       - configuration_driven_group_routing
       - no_provider_group_id_leakage
@@ -216,18 +236,15 @@ milestones:
       - no_customer_visible_behavior_change
   - id: M7
     name: Debug, eval, and regression gate
-    status: queued
-    acceptance_focus:
-      - runtime_decision_debug_bundle
-      - finding_to_eval_cases
-      - ci_regression_gate_for_safety
+    status: queued_with_admin_debug_work
   - id: M8
     name: Admin policy APIs and Control Tower
-    status: queued_pr_456_last
+    status: current_next_pr_456_old_base
     acceptance_focus:
       - read_only_runtime_audit
       - redacted_admin_surfaces
       - merge_after_runtime_foundations
+      - provider_group_id_detail_surface_decision_or_fix
   - id: M9
     name: Operations workspace and queues
     status: future
@@ -243,15 +260,15 @@ milestones:
 
 active_dependency_order:
   - step: 1
-    action: Treat PR #454 as merged M3 baseline on main f5f4cd13d87a7766ca5fd5b43751979a326825c8.
+    action: Treat PR #454 as merged M3 baseline, PR #462 as merged roadmap baseline, and PR #464 as merged M6 WhatsApp routing baseline on main aed11916884bcf7ef0b2f7703589b6069c7a9a10.
   - step: 2
-    action: Update/rebase PR #455 remote branch onto main f5f4cd13 and run focused WhatsApp routing checks.
+    action: Treat original PR #455 as closed unmerged and superseded by PR #464 unless Admin explicitly reopens that path.
   - step: 3
-    action: Keep PR #456 queued until PR #455 lands, then rebase and fix/authorize provider group ID detail exposure.
+    action: Refresh/rebase or recover PR #456 onto current main, resolve admin/debug conflicts, and fix or explicitly authorize provider group ID detail exposure.
   - step: 4
-    action: Merge docs-only roadmap recovery PR #462 after Admin confirms these facts remain current.
+    action: Run focused #456 admin/debug/control-tower tests before any Admin release gate.
   - step: 5
-    action: Close or supersede stale PR #450 once restored roadmap files are accepted.
+    action: Keep roadmap control files aligned through PR #465 or a successor docs-only reconciliation PR.
   - step: 6
     action: Address Work Order #459 escalation follow-up on a current-main branch when non-conflicting.
   - step: 7
