@@ -123,10 +123,40 @@ jobs:
           DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
         run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_migration.py
 
-      - name: Run routing enqueue-only tests
+      - name: Routing durable enqueue and safe audit
         env:
           DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
-        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py::test_matching_rule_enqueues_one_durable_dispatch_and_safe_audit
+
+      - name: Routing idempotency and audit deduplication
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py::test_repeated_route_is_idempotent_and_does_not_duplicate_audit
+
+      - name: Routing no rule has no scope widening
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py::test_no_rule_does_not_widen_to_global_scope
+
+      - name: Routing disabled rule fails closed
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py::test_disabled_exact_rule_fails_closed_without_global_fallback
+
+      - name: Routing cross-country isolation
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py::test_cross_country_rule_does_not_route
+
+      - name: Routing direct send and tenant conflict forbidden
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py::test_direct_dispatch_message_and_tenant_conflict_are_forbidden
+
+      - name: Routing template context safety
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py::test_template_context_is_validated_but_never_persisted
 
       - name: Prove one Alembic head
         env:
