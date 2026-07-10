@@ -1,0 +1,161 @@
+name: osr-dispatch-outbox-gate
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/models_operations_dispatch.py"
+      - "backend/app/model_registry.py"
+      - "backend/app/services/nexus_osr/operations_dispatch_outbox.py"
+      - "backend/app/services/nexus_osr/operations_dispatch_processor.py"
+      - "backend/app/services/nexus_osr/whatsapp_routing_service.py"
+      - "backend/alembic/versions/*operations_dispatch*.py"
+      - "backend/scripts/check_model_migration_drift.py"
+      - "backend/tests/test_nexus_osr_operations_dispatch*.py"
+      - "backend/tests/test_nexus_osr_whatsapp_routing_service.py"
+      - "backend/tests/test_osr_model_registration.py"
+      - ".github/workflows/osr-dispatch-outbox-gate.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  osr-dispatch-outbox-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: helpdesk
+          POSTGRES_USER: helpdesk
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U helpdesk -d helpdesk"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PYTHONPATH: backend
+      APP_ENV: development
+      ALLOW_DEV_AUTH: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r backend/requirements.txt
+
+      - name: Compile dispatch scope
+        run: |
+          python -m py_compile \
+            backend/app/models_operations_dispatch.py \
+            backend/app/services/nexus_osr/operations_dispatch_outbox.py \
+            backend/app/services/nexus_osr/operations_dispatch_processor.py \
+            backend/app/services/nexus_osr/whatsapp_routing_service.py \
+            backend/scripts/check_model_migration_drift.py \
+            backend/tests/test_nexus_osr_operations_dispatch_outbox.py \
+            backend/tests/test_nexus_osr_operations_dispatch_migration.py \
+            backend/tests/test_nexus_osr_operations_dispatch_postgres.py \
+            backend/tests/test_nexus_osr_whatsapp_routing_service.py
+
+      - name: Run SQLite outbox state-machine tests
+        env:
+          DATABASE_URL: sqlite:////tmp/osr-dispatch-outbox-gate.db
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py
+
+      - name: Run migration unit round trip
+        env:
+          DATABASE_URL: sqlite:////tmp/osr-dispatch-outbox-gate.db
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_migration.py
+
+      - name: Run routing enqueue-only tests
+        env:
+          DATABASE_URL: sqlite:////tmp/osr-dispatch-outbox-gate.db
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py
+
+      - name: Prove one Alembic head
+        env:
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
+        run: |
+          cd backend
+          python - <<'PY'
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+          config = Config("alembic.ini")
+          heads = ScriptDirectory.from_config(config).get_heads()
+          assert heads == ["20260710_0056"], heads
+          PY
+
+      - name: Run PostgreSQL migration round trip
+        env:
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
+        run: |
+          set -Eeuo pipefail
+          cd backend
+          alembic upgrade head
+          alembic downgrade 20260710_0055
+          alembic upgrade head
+
+      - name: Run PostgreSQL concurrency and lease tests
+        env:
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_postgres.py
+
+      - name: Prove metadata registration and migration drift
+        env:
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
+        run: |
+          cd backend
+          python scripts/check_model_migration_drift.py
+
+      - name: Prove enqueue-only and no-message storage boundary
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          routing = Path("backend/app/services/nexus_osr/whatsapp_routing_service.py").read_text(encoding="utf-8")
+          processor = Path("backend/app/services/nexus_osr/operations_dispatch_processor.py").read_text(encoding="utf-8")
+          model = Path("backend/app/models_operations_dispatch.py").read_text(encoding="utf-8")
+          migration = Path("backend/alembic/versions/20260710_0056_operations_dispatch_outbox.py").read_text(encoding="utf-8")
+
+          assert "send_group_message" not in routing
+          assert "dispatcher.send(" not in routing
+          assert "sidecar" not in routing.lower()
+          assert "adapter.dispatch(envelope)" in processor
+          assert "DisabledOperationsDispatchAdapter" in processor
+
+          stored_schema = model + "\n" + migration
+          for forbidden in (
+              "message_body",
+              "message_text",
+              "raw_destination",
+              "raw_group_id",
+              "tracking_number",
+              "phone_number",
+              "email_address",
+              "credential_json",
+          ):
+              assert forbidden not in stored_schema, forbidden
+          PY
+
+      - name: Check exact-head diff whitespace
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
