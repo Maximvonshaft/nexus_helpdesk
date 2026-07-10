@@ -2,7 +2,19 @@ from __future__ import annotations
 
 from app.services.speedaf.schemas import SpeedafWaybillCandidate
 from app.services.speedaf.tracking_fact_source import lookup_speedaf_tracking_fact
-from app.services.tracking_fact_schema import TrackingFactResult
+from app.services.tracking_fact_schema import (
+    EVIDENCE_CONTRADICTORY,
+    EVIDENCE_NO_EVIDENCE,
+    EVIDENCE_STALE,
+    EVIDENCE_TIMEOUT,
+    EVIDENCE_UNAVAILABLE,
+    SOURCE_AUTHORITY_ENRICHMENT,
+    SOURCE_AUTHORITY_NONE,
+    SOURCE_AUTHORITY_PRIMARY,
+    TrackingFactResult,
+    sanitize_tracking_metadata,
+)
+from app.services.tracking_fact_service import TRACKING_FACT_SOURCE_ALLOWLIST
 
 
 class FakeLookup:
@@ -58,3 +70,35 @@ def test_no_tracking_and_multiple_candidates_returns_safe_selection(monkeypatch)
 def test_no_tracking_and_no_caller_stays_missing_tracking():
     result = lookup_speedaf_tracking_fact(tracking_number=None, caller_id=None, adapter=FakeAdapter([]))
     assert result.failure_reason == "missing_tracking_number"
+
+
+def test_tracking_truth_contract_surface_is_allowlisted_and_structured():
+    assert "speedaf_hybrid" in TRACKING_FACT_SOURCE_ALLOWLIST
+    assert {
+        EVIDENCE_STALE,
+        EVIDENCE_TIMEOUT,
+        EVIDENCE_UNAVAILABLE,
+        EVIDENCE_CONTRADICTORY,
+        EVIDENCE_NO_EVIDENCE,
+    } == {"stale", "timeout", "unavailable", "contradictory", "no_evidence"}
+    assert {
+        SOURCE_AUTHORITY_PRIMARY,
+        SOURCE_AUTHORITY_ENRICHMENT,
+        SOURCE_AUTHORITY_NONE,
+    } == {"primary_current_status", "history_enrichment", "none"}
+
+
+def test_tracking_metadata_sanitizer_removes_raw_sensitive_fields_and_preserves_contract_values():
+    safe = sanitize_tracking_metadata(
+        {
+            "tracking_number": "CH120000005451",
+            "secret_key": "credential-value",
+            "provider_payload": {"recipient": "Jane"},
+            "authority": SOURCE_AUTHORITY_ENRICHMENT,
+            "safe": "bounded",
+        }
+    )
+    assert safe == {
+        "authority": SOURCE_AUTHORITY_ENRICHMENT,
+        "safe": "bounded",
+    }
