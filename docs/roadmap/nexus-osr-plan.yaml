@@ -1,22 +1,22 @@
-schema_version: nexus-osr-plan-v2
-updated_at: '2026-07-10T17:20:00+02:00'
+schema_version: nexus-osr-plan-v3
 
 governance:
-  model: issue_first
-  live_delivery_index_issue: 489
+  model: issue_only
+  work_item_state_authority: work_item_issue_body_assignee_and_state
+  epic_capability_authority: epic_issues_490_through_501
+  navigation_index_issue: 489
   audit_portfolio_issue: 467
   historical_control_issue: 461
-  optional_project_url: https://github.com/users/Maximvonshaft/projects/1/views/1
-  optional_project_authoritative: false
+  project_control_enabled: false
+  project_optional_visualization_only: true
   note: >-
-    Live lifecycle, ownership, blockers, current Pull Requests and release state
-    are maintained in Issue #489 and linked Epic/Work Item Issues. This YAML is
-    a stable machine-readable capability manifest and must not duplicate live status.
+    Lifecycle, ownership, blockers, current Pull Requests and closure state are
+    owned by executable Work Item Issues. Issue #489 is a stable navigation
+    index and must not duplicate exact SHAs, CI results or implementation facts.
 
 repository:
   name: Maximvonshaft/nexus_helpdesk
-  reconciliation_main_sha: dddd7c4f8b579bb8653d4f4fc8e452365df72c14
-  reconciliation_commit: 'revert(governance): remove accidental noop file'
+  default_branch: main
 
 product:
   name: Nexus OSR
@@ -70,14 +70,28 @@ safety_kernel:
     - identity_action_without_governed_authorization
     - irreversible_deletion_without_governed_authorization
 
-lifecycle_states:
-  - Backlog
-  - Ready
-  - In Progress
-  - In Review
-  - Release Gate
-  - Blocked
-  - Done
+lifecycle_contract:
+  states:
+    - Backlog
+    - Ready
+    - In Progress
+    - In Review
+    - Release Gate
+    - Blocked
+    - Done
+    - Not Planned
+  required_work_item_control_fields:
+    - parent_epic
+    - lifecycle
+    - owner
+    - current_pr
+    - blocked_by
+    - supersedes
+  completion_authority:
+    done: issue_closed_with_completed_reason
+    not_planned: issue_closed_with_not_planned_reason
+  ownership_authority: issue_assignee
+  implementation_authority: linked_current_pull_request
 
 ownership_contract:
   issue_assignee_required_for_in_progress: true
@@ -85,7 +99,7 @@ ownership_contract:
   one_current_pull_request_per_work_item: true
   comment_based_claims_enabled: false
   action_claim_enabled: false
-  maximum_active_product_work_items: 2
+  maximum_active_implementation_work_items: 2
   maximum_release_candidates: 1
 
 merge_policy:
@@ -100,56 +114,44 @@ capabilities:
   - id: M1
     epic_issue: 490
     name: RuntimeDecision and Case Context Kernel
-    durable_baseline_delivered: true
   - id: M2
     epic_issue: 491
     name: Escalation, Handoff and Auto-ticket Closure
-    durable_baseline_delivered: false
     stable_dependency: ticket_safety_before_configured_escalation
   - id: M3
     epic_issue: 492
     name: Governed Tool Execution
-    durable_baseline_delivered: true
   - id: M4
     epic_issue: 493
     name: Tracking Truth Layer
-    durable_baseline_delivered: false
   - id: M5
     epic_issue: 494
     name: Customer-visible Knowledge Quality
-    durable_baseline_delivered: false
     stable_dependency: knowledge_k1_before_k2
   - id: M6
     epic_issue: 495
     name: Channel Gateway and Operations Routing
-    durable_baseline_delivered: true
   - id: M7
     epic_issue: 496
     name: Debug, Eval and Audit
-    durable_baseline_delivered: false
   - id: M8
     epic_issue: 497
     name: Admin Policy APIs and Control Tower
-    durable_baseline_delivered: true
   - id: M9
     epic_issue: 498
     name: Operator Workspace and Queues
-    durable_baseline_delivered: false
     depends_on: [M2, M4, M5, M6, M8]
   - id: M10
     epic_issue: 499
     name: Operations Analytics and Control Tower Maturity
-    durable_baseline_delivered: false
     depends_on: [M9]
   - id: M11
     epic_issue: 500
     name: Internal SOP SkillBank
-    durable_baseline_delivered: false
     depends_on: [M5, M8, M9]
   - id: M12
     epic_issue: 501
     name: Production Hardening and Readiness
-    durable_baseline_delivered: false
     production_posture: NO_GO_until_runtime_evidence_is_complete
 
 release_evidence:
@@ -167,6 +169,7 @@ release_evidence:
 
 roadmap_files:
   purpose: stable_strategy_and_governance_only
-  live_status_authority: issue_489
+  live_status_authority: executable_work_item_issues
   update_after_every_status_transition: false
   manual_live_status_duplication_allowed: false
+  manual_main_sha_tracking_allowed: false
