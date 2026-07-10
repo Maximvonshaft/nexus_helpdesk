@@ -1,0 +1,255 @@
+name: osr-dispatch-outbox-gate
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/models_operations_dispatch.py"
+      - "backend/app/model_registry.py"
+      - "backend/app/services/nexus_osr/operations_dispatch_outbox.py"
+      - "backend/app/services/nexus_osr/operations_dispatch_processor.py"
+      - "backend/app/services/nexus_osr/whatsapp_routing_service.py"
+      - "backend/alembic/versions/*operations_dispatch*.py"
+      - "backend/scripts/check_model_migration_drift.py"
+      - "backend/tests/test_nexus_osr_operations_dispatch*.py"
+      - "backend/tests/test_nexus_osr_whatsapp_routing_service.py"
+      - "backend/tests/test_osr_model_registration.py"
+      - ".github/workflows/osr-dispatch-outbox-gate.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  osr-dispatch-outbox-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: helpdesk
+          POSTGRES_USER: helpdesk
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U helpdesk -d helpdesk"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PYTHONPATH: backend
+      APP_ENV: development
+      ALLOW_DEV_AUTH: "false"
+      SQLITE_DATABASE_URL: sqlite:////tmp/osr-dispatch-outbox-gate.db
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r backend/requirements.txt
+
+      - name: Compile dispatch scope
+        run: |
+          python -m py_compile \
+            backend/app/models_operations_dispatch.py \
+            backend/app/services/nexus_osr/operations_dispatch_outbox.py \
+            backend/app/services/nexus_osr/operations_dispatch_processor.py \
+            backend/app/services/nexus_osr/whatsapp_routing_service.py \
+            backend/scripts/check_model_migration_drift.py \
+            backend/tests/test_nexus_osr_operations_dispatch_outbox.py \
+            backend/tests/test_nexus_osr_operations_dispatch_migration.py \
+            backend/tests/test_nexus_osr_operations_dispatch_postgres.py \
+            backend/tests/test_nexus_osr_whatsapp_routing_service.py
+
+      - name: SQLite enqueue idempotency and scope safety
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_enqueue_is_idempotent_database_unique_and_scope_safe
+
+      - name: SQLite active lease blocks second worker
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_worker_lease_blocks_second_worker_before_expiry
+
+      - name: SQLite stale owner cannot acknowledge
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_stale_owner_cannot_ack_after_lease_expiry
+
+      - name: SQLite expired lease recovery
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_expired_lease_is_recovered_by_new_owner
+
+      - name: SQLite retry backoff and dead letter
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_retry_backoff_and_max_attempts_dead_letter
+
+      - name: SQLite result and error redaction
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_provider_ack_external_reference_and_errors_are_redacted
+
+      - name: SQLite processor transaction boundary
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_processor_commits_claim_before_adapter_and_exposes_only_safe_envelope
+
+      - name: SQLite disabled adapter fail closed
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_disabled_adapter_fails_closed_without_external_transport
+
+      - name: Run migration unit round trip
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_migration.py
+
+      - name: Routing durable enqueue and safe audit
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py::test_matching_rule_enqueues_one_durable_dispatch_and_safe_audit
+
+      - name: Routing idempotency and audit deduplication
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py::test_repeated_route_is_idempotent_and_does_not_duplicate_audit
+
+      - name: Routing no rule has no scope widening
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py::test_no_rule_does_not_widen_to_global_scope
+
+      - name: Routing disabled rule fails closed
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py::test_disabled_exact_rule_fails_closed_without_global_fallback
+
+      - name: Routing cross-country isolation
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py::test_cross_country_rule_does_not_route
+
+      - name: Routing direct send and tenant conflict forbidden
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py::test_direct_dispatch_message_and_tenant_conflict_are_forbidden
+
+      - name: Routing template context safety
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py::test_template_context_is_validated_but_never_persisted
+
+      - name: Prove one Alembic head
+        env:
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
+        run: |
+          cd backend
+          python - <<'PY'
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+          config = Config("alembic.ini")
+          heads = ScriptDirectory.from_config(config).get_heads()
+          assert heads == ["20260710_0056"], heads
+          PY
+
+      - name: Run PostgreSQL migration round trip
+        env:
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
+        run: |
+          set -Eeuo pipefail
+          cd backend
+          alembic upgrade head
+          alembic downgrade 20260710_0055
+          alembic upgrade head
+
+      - name: Run PostgreSQL concurrency and lease tests
+        env:
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_postgres.py
+
+      - name: Enforce Outbox metadata and drift wiring
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from app.db import Base
+          from app.model_registry import register_all_models
+
+          modules = register_all_models()
+          assert "app.models_operations_dispatch" in modules, modules
+          table = Base.metadata.tables["operations_dispatch_outbox"]
+          constraint_names = {item.name for item in table.constraints if item.name}
+          index_names = {item.name for item in table.indexes if item.name}
+          assert "uq_operations_dispatch_outbox_dispatch_key" in constraint_names
+          assert {
+              "ck_operations_dispatch_outbox_status",
+              "ck_operations_dispatch_outbox_attempt_count_nonnegative",
+              "ck_operations_dispatch_outbox_max_attempts_positive",
+              "ck_operations_dispatch_outbox_attempt_count_bounded",
+              "ck_operations_dispatch_outbox_lease_state",
+              "ck_operations_dispatch_outbox_retry_timestamp",
+              "ck_operations_dispatch_outbox_dispatched_timestamp",
+              "ck_operations_dispatch_outbox_cancelled_timestamp",
+          } <= constraint_names
+          assert {
+              "ix_operations_dispatch_outbox_scope",
+              "ix_operations_dispatch_outbox_due",
+              "ix_operations_dispatch_outbox_lease",
+          } <= index_names
+
+          drift_source = Path("backend/scripts/check_model_migration_drift.py").read_text(encoding="utf-8")
+          assert '"operations_dispatch_outbox"' in drift_source
+          assert '"ck_operations_dispatch_outbox_status"' in drift_source
+          assert '"ix_operations_dispatch_outbox_due"' in drift_source
+          PY
+
+      - name: Prove enqueue-only and no-message storage boundary
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          routing = Path("backend/app/services/nexus_osr/whatsapp_routing_service.py").read_text(encoding="utf-8")
+          processor = Path("backend/app/services/nexus_osr/operations_dispatch_processor.py").read_text(encoding="utf-8")
+          model = Path("backend/app/models_operations_dispatch.py").read_text(encoding="utf-8")
+          migration = Path("backend/alembic/versions/20260710_0056_operations_dispatch_outbox.py").read_text(encoding="utf-8")
+
+          assert "send_group_message" not in routing
+          assert "dispatcher.send(" not in routing
+          assert "sidecar" not in routing.lower()
+          assert "adapter.dispatch(envelope)" in processor
+          assert "DisabledOperationsDispatchAdapter" in processor
+
+          stored_schema = model + "\n" + migration
+          for forbidden in (
+              "message_body",
+              "message_text",
+              "raw_destination",
+              "raw_group_id",
+              "tracking_number",
+              "phone_number",
+              "email_address",
+              "credential_json",
+          ):
+              assert forbidden not in stored_schema, forbidden
+          PY
+
+      - name: Check exact-head diff whitespace
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
