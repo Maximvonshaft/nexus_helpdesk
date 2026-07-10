@@ -60,6 +60,12 @@ jobs:
           alembic downgrade 20260525_0033
           alembic upgrade head
 
+      - name: Check registered model and migration drift
+        env:
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
+          APP_ENV: development
+        run: cd backend && python scripts/check_model_migration_drift.py
+
       - name: Strict production-like readiness check
         env:
           DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
