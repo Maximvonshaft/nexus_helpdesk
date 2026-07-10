@@ -13,6 +13,7 @@ from ...models_osr import (
     ToolExecutionPolicyRecord,
     WhatsAppRoutingRuleRecord,
 )
+from .audit_sanitizer import safe_audit_label, sanitize_audit_payload
 from .case_context import CaseContext
 from .case_context_persistence import (
     close_case_context,
@@ -124,20 +125,27 @@ def audit_runtime_decision(
     conversation_id: int | None = None,
     ticket_id: int | None = None,
 ) -> RuntimeDecisionAuditRecord:
+    """Persist one RuntimeDecisionAudit only after final-boundary sanitization."""
+
+    violations = sanitize_audit_payload([asdict(item) for item in evaluation.violations])
+    warnings = sanitize_audit_payload(list(evaluation.warnings))
+    decision_payload = sanitize_audit_payload(_decision_json(decision))
+    context_payload = sanitize_audit_payload(case_context.as_dict()) if case_context else None
+
     row = RuntimeDecisionAuditRecord(
-        tenant_id=tenant_id,
-        channel=channel,
-        country_code=country_code,
+        tenant_id=safe_audit_label(tenant_id, fallback="default", max_length=80),
+        channel=safe_audit_label(channel, fallback="unknown", max_length=40) if channel else None,
+        country_code=safe_audit_label(country_code, fallback="GLOBAL", max_length=16) if country_code else None,
         conversation_id=conversation_id,
         ticket_id=ticket_id,
-        business_reply_type=str(decision.business_reply_type),
-        next_action=str(decision.next_action),
-        risk_level=decision.risk_level,
-        allowed=evaluation.allowed,
-        violations_json=[asdict(item) for item in evaluation.violations],
-        warnings_json=list(evaluation.warnings),
-        decision_json=_decision_json(decision),
-        case_context_json=case_context.as_dict() if case_context else None,
+        business_reply_type=safe_audit_label(decision.business_reply_type, fallback="unknown_reply_type", max_length=120),
+        next_action=safe_audit_label(decision.next_action, fallback="unknown_action", max_length=120),
+        risk_level=safe_audit_label(decision.risk_level, fallback="unknown", max_length=40),
+        allowed=bool(evaluation.allowed),
+        violations_json=violations if isinstance(violations, list) else [violations],
+        warnings_json=warnings if isinstance(warnings, list) else [warnings],
+        decision_json=decision_payload if isinstance(decision_payload, dict) else {"payload": decision_payload},
+        case_context_json=context_payload if isinstance(context_payload, dict) or context_payload is None else {"payload": context_payload},
     )
     db.add(row)
     db.flush()

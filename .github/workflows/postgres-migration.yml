@@ -60,6 +60,148 @@ jobs:
           alembic downgrade 20260525_0033
           alembic upgrade head
 
+      - name: Import complete model registry under PostgreSQL settings
+        env:
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
+          APP_ENV: development
+        run: |
+          cd backend
+          python - <<'PY'
+          from app.model_registry import register_all_models
+          modules = register_all_models()
+          assert modules
+          print("registered modules:", ", ".join(modules))
+          PY
+
+      - name: Import model drift checker module
+        env:
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
+          APP_ENV: development
+        run: cd backend && python -c "import scripts.check_model_migration_drift"
+
+      - name: Collect registered model and migration drift
+        id: model_drift
+        env:
+          DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
+          APP_ENV: development
+          PYTHONPATH: backend
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          report = Path("model-drift-report.json").resolve()
+          report.write_text(json.dumps({
+              "schema": "nexus.model_migration_drift.v1",
+              "status": "bootstrap_started",
+              "registered_model_modules": [],
+              "drift_count": 0,
+              "drift": [],
+              "error": None,
+          }, indent=2, sort_keys=True), encoding="utf-8")
+
+          result = subprocess.run([
+              sys.executable,
+              "backend/scripts/check_model_migration_drift.py",
+              "--report-json",
+              str(report),
+          ], env=os.environ.copy(), check=False)
+          Path("model-drift-exit-code.txt").write_text(str(result.returncode), encoding="utf-8")
+
+          data = json.loads(report.read_text(encoding="utf-8"))
+          if data.get("status") == "bootstrap_started":
+              data["status"] = "pre_main_failure"
+              data["error"] = f"process_exit_{result.returncode}"
+              report.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+          PY
+          echo "exit_code=$(cat model-drift-exit-code.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Require structured drift report
+        run: test -s model-drift-report.json
+
+      - name: Require successful drift inspection
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          assert data["status"] in {"ok", "drift_detected"}, data
+          PY
+
+      - name: Require complete model registration
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          bad = [item for item in data["drift"] if item["kind"] == "unregistered_model_table"]
+          assert not bad, bad
+          PY
+
+      - name: Require table and column parity
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          bad = [item for item in data["drift"] if item["kind"] in {"missing_table", "missing_column"}]
+          assert not bad, bad
+          PY
+
+      - name: Require named unique constraint parity
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          bad = [item for item in data["drift"] if item["kind"] == "missing_unique_constraint"]
+          assert not bad, bad
+          PY
+
+      - name: Require ORM check constraint registration
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          bad = [item for item in data["drift"] if item["kind"] == "missing_metadata_check"]
+          assert not bad, bad
+          PY
+
+      - name: Require database check constraint parity
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          bad = [item for item in data["drift"] if item["kind"] == "missing_check_constraint"]
+          assert not bad, bad
+          PY
+
+      - name: Require ORM index registration
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          bad = [item for item in data["drift"] if item["kind"] == "missing_metadata_index"]
+          assert not bad, bad
+          PY
+
+      - name: Require database index parity
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          bad = [item for item in data["drift"] if item["kind"] == "missing_index"]
+          assert not bad, bad
+          PY
+
+      - name: Enforce clean model migration drift
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          assert data["status"] == "ok", data
+          PY
+          test "${{ steps.model_drift.outputs.exit_code }}" -eq 0
+
       - name: Strict production-like readiness check
         env:
           DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk

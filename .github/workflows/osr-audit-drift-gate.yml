@@ -1,0 +1,96 @@
+name: osr-audit-drift-gate
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/model_registry.py"
+      - "backend/app/services/nexus_osr/audit_sanitizer.py"
+      - "backend/app/services/nexus_osr/persistence.py"
+      - "backend/alembic/env.py"
+      - "backend/scripts/check_model_migration_drift.py"
+      - "backend/tests/test_nexus_osr_audit_*.py"
+      - "backend/tests/test_osr_model_registration.py"
+      - "backend/tests/test_nexus_osr_persistence.py"
+      - "backend/tests/test_nexus_osr_runtime_bridge.py"
+      - "backend/tests/test_nexus_osr_admin_api.py"
+      - ".github/workflows/postgres-migration.yml"
+      - ".github/workflows/osr-audit-drift-gate.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  osr-audit-drift-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: backend
+      APP_ENV: development
+      DATABASE_URL: sqlite:////tmp/osr-audit-drift-gate.db
+      ALLOW_DEV_AUTH: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r backend/requirements.txt
+
+      - name: Compile audit and drift scope
+        run: |
+          python -m py_compile \
+            backend/app/model_registry.py \
+            backend/app/services/nexus_osr/audit_sanitizer.py \
+            backend/app/services/nexus_osr/persistence.py \
+            backend/scripts/check_model_migration_drift.py \
+            backend/tests/test_nexus_osr_audit_sanitizer.py \
+            backend/tests/test_nexus_osr_audit_persistence_safety.py \
+            backend/tests/test_osr_model_registration.py
+
+      - name: Sanitizer hostile nested payload
+        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_sanitizer_redacts_hostile_nested_payload_and_preserves_safe_metadata
+
+      - name: Sanitizer deterministic output
+        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_sanitizer_is_deterministic
+
+      - name: Sanitizer cycle safety
+        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_sanitizer_is_cycle_safe
+
+      - name: Sanitizer collection and string bounds
+        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_sanitizer_enforces_collection_and_string_bounds
+
+      - name: Sanitizer sensitive keys and failure fallback
+        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_sensitive_keys_key_names_and_failure_fallback_are_safe
+
+      - name: Sanitizer safe label contract
+        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_safe_audit_label_rejects_free_form_and_pii
+
+      - name: Run final persistence boundary tests
+        run: pytest -q backend/tests/test_nexus_osr_audit_persistence_safety.py
+
+      - name: Run model registration and non-PostgreSQL guard tests
+        run: pytest -q backend/tests/test_osr_model_registration.py
+
+      - name: Run persistence and runtime compatibility
+        run: pytest -q backend/tests/test_nexus_osr_persistence.py backend/tests/test_nexus_osr_runtime_bridge.py
+
+      - name: Run Admin audit redaction compatibility
+        run: pytest -q backend/tests/test_nexus_osr_admin_api.py::test_runtime_audit_is_strictly_read_only_and_redacted backend/tests/test_nexus_osr_admin_api.py::test_debug_snapshot_has_unified_contract_and_no_raw_payloads
+
+      - name: Check diff whitespace
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"

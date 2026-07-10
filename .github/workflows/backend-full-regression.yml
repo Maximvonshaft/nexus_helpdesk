@@ -46,7 +46,39 @@ jobs:
           set -Eeuo pipefail
           python -m compileall backend/app backend/scripts
 
-      - name: Run full backend test suite
+      - name: Execute full backend test suite
         run: |
-          set -Eeuo pipefail
-          timeout 900 python -m pytest -q backend/tests
+          set +e
+          timeout 900 python -m pytest -q --disable-warnings backend/tests > /tmp/backend-pytest.log 2>&1
+          status=$?
+          set -e
+          printf '%s' "$status" > /tmp/backend-pytest-status
+
+          echo "--- backend pytest tail (last 200 lines) ---"
+          tail -n 200 /tmp/backend-pytest.log || true
+          echo "--- end backend pytest tail ---"
+          exit 0
+
+      - name: Upload backend regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-full-regression-evidence
+          path: |
+            /tmp/backend-pytest.log
+            /tmp/backend-pytest-status
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Require backend suite to finish within 900 seconds
+        run: |
+          status=$(cat /tmp/backend-pytest-status)
+          test "$status" -ne 124
+
+      - name: Require full backend test suite success
+        run: |
+          status=$(cat /tmp/backend-pytest-status)
+          if [ "$status" -ne 0 ]; then
+            echo "backend full regression failed with exit code $status" >&2
+            exit "$status"
+          fi
