@@ -1,5 +1,5 @@
 name: Nexus OSR Work Item
-description: Define one independently assignable, implementable, reviewable, and closable unit of work.
+description: Define one coherent, independently claimable, implementable, reviewable, rollbackable, and closable unit of work.
 title: "[OSR Work] "
 labels:
   - osr-work-order
@@ -7,14 +7,18 @@ body:
   - type: markdown
     attributes:
       value: |
-        A Work Item is the lifecycle and ownership source of truth. The Issue assignee is the owner. Keep Lifecycle, Current PR, Blocked by, and Supersedes updated as work changes. The linked Pull Request owns implementation facts and exact-head evidence.
+        A Work Item is the lifecycle and acceptance source of truth. The Issue assignee is the account-level owner. The Issue comment thread owns the active Agent Run claim, lease, heartbeat, interruption handoff, and reclaim history. The linked Pull Request owns implementation facts and exact-head evidence.
+
+        Claimable Work Items normally have `Lifecycle: Ready`, `Current PR: none`, `Blocked by: none`, and no valid unexpired claim. Before any branch or file write, post `## AGENT_CLAIM`, re-read the complete thread, and confirm that your claim is the earliest valid claim. The default lease is 120 minutes from the latest valid claim or heartbeat comment.
+
+        Before any graceful incomplete exit, post `## AGENT_HANDOFF` with bounded, redacted evidence and the next safe action. A hard-crashed session is recovered after lease expiry through `## AGENT_RECLAIM`.
 
   - type: input
     id: parent_epic
     attributes:
       label: Parent Epic
       description: Link exactly one M1-M12 Epic Issue, or write governance/release integration when applicable.
-      placeholder: "#491"
+      placeholder: "#494"
     validations:
       required: true
 
@@ -22,7 +26,7 @@ body:
     id: lifecycle
     attributes:
       label: Lifecycle
-      description: Initial Work Item lifecycle. Update the Issue body when this changes.
+      description: Initial Work Item lifecycle. Use Ready only when it is claimable now; otherwise use Backlog or Blocked.
       options:
         - Backlog
         - Ready
@@ -37,7 +41,7 @@ body:
     id: current_pr
     attributes:
       label: Current PR
-      description: Link the single current implementation Pull Request, or write none when no PR exists.
+      description: Link the single current implementation Pull Request, write pending after a valid claim but before PR creation, or none.
       placeholder: "none"
     validations:
       required: true
@@ -47,7 +51,7 @@ body:
     attributes:
       label: Blocked by
       description: Link every blocking Issue, or write none.
-      placeholder: "none or #484"
+      placeholder: "none or #473"
     validations:
       required: true
 
@@ -71,6 +75,7 @@ body:
         - Security
         - Research
         - Release
+        - Governance
     validations:
       required: true
 
@@ -90,15 +95,15 @@ body:
     id: current_behavior
     attributes:
       label: Current verified behavior
-      description: Describe the current code/runtime behavior with file, function, table, endpoint, or test evidence.
+      description: Describe the current code/runtime behavior with file, function, table, endpoint, test, or operational evidence. Separate facts from assumptions.
     validations:
       required: true
 
   - type: textarea
     id: expected_behavior
     attributes:
-      label: Expected behavior
-      description: Describe the end state in observable terms.
+      label: Expected observable outcome
+      description: Describe one coherent end state that can be independently accepted and closed.
     validations:
       required: true
 
@@ -106,7 +111,27 @@ body:
     id: scope
     attributes:
       label: Owned scope
-      description: List modules, APIs, tables, workers, UI surfaces, and tests this Work Item owns.
+      description: List modules, APIs, tables, workers, UI surfaces, tests, and documentation this Work Item owns. A vertical slice may span layers when it remains one contract and rollback boundary.
+    validations:
+      required: true
+
+  - type: textarea
+    id: concurrency_resources
+    attributes:
+      label: Declared concurrency and conflict resources
+      description: Declare resources that another active Agent must compare before parallel writes.
+      placeholder: |
+        Write paths:
+        - backend/app/services/...
+        Contracts:
+        - KnowledgeReadinessResult
+        Database/migrations:
+        - knowledge_items / knowledge_chunks
+        - migration: yes/no
+        Workflows/generated files:
+        - .github/workflows/...
+        External mutable resources:
+        - none
     validations:
       required: true
 
@@ -127,14 +152,15 @@ body:
     id: acceptance
     attributes:
       label: Acceptance criteria
-      description: Use a testable checklist covering behavior, isolation, idempotency, concurrency, audit, privacy, and failure states.
+      description: Use a testable checklist covering observable behavior, isolation, idempotency, concurrency, audit, privacy, failure states, and complete vertical closure.
       placeholder: |
-        - [ ] Functional behavior
+        - [ ] Functional outcome
         - [ ] Tenant/country/channel isolation
         - [ ] Idempotency and duplicate-event behavior
         - [ ] Concurrency and rollback
         - [ ] Audit and redaction
         - [ ] Failure and recovery behavior
+        - [ ] End-to-end operator or runtime outcome
     validations:
       required: true
 
@@ -142,25 +168,39 @@ body:
     id: validation
     attributes:
       label: Required validation and runtime evidence
-      description: Define focused tests, database/runtime environment, migration checks, and exact-head release evidence.
+      description: Define focused tests, integration/regression tests, database/runtime environment, migration checks, accessibility/performance checks, and exact-head release evidence.
     validations:
       required: true
 
   - type: textarea
     id: migration_rollback
     attributes:
-      label: Migration, rollout, and rollback
-      description: State schema/data impact, upgrade/downgrade, feature flags, repair steps, and rollback behavior. Write None with justification if not applicable.
+      label: Migration, rollout, repair, and rollback
+      description: State schema/data impact, upgrade/downgrade/re-upgrade, feature flags, repair steps, and rollback behavior. Write None with justification if not applicable.
     validations:
       required: true
 
   - type: textarea
     id: dependencies
     attributes:
-      label: Dependency and merge order
-      description: Link blocked-by and blocking Issues and define merge order. This must agree with the Blocked by field.
+      label: Dependency, stack, and merge order
+      description: Link blocked-by and blocking Issues, declare independent or stacked development, and define required merge order. This must agree with Blocked by.
     validations:
       required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Agent comment contract
+
+        Use the exact headings below in the Issue thread:
+
+        - `## AGENT_CLAIM` before any writes; include Run ID, 120-minute lease, starting main, intended branch/PR, declared resources, and dependency check.
+        - `## AGENT_HEARTBEAT` after branch/PR creation and meaningful checkpoints; include branch, PR, head, checks, blocker, next action, and lease renewal.
+        - `## AGENT_HANDOFF` before any graceful incomplete exit; include reason, main/branch/PR/head, files, tests, migration state, bounded error evidence, cleanup, next safe action, and claim release.
+        - `## AGENT_RECLAIM` after explicit release or lease expiry; re-read all facts and continue the existing PR when safe.
+
+        Do not copy credentials, raw customer/provider payloads, tracking numbers, contact data, addresses, unsafe logs, or secrets into comments.
 
   - type: checkboxes
     id: readiness
@@ -169,13 +209,17 @@ body:
       options:
         - label: The current behavior was verified against current main.
           required: true
-        - label: This Work Item is independently reviewable and closable.
+        - label: This Work Item is a coherent vertical outcome with one acceptance and rollback boundary.
           required: true
-        - label: No other active Work Item or Pull Request owns the same scope.
+        - label: Dependencies and blocked state are explicit.
+          required: true
+        - label: Concurrency resources are declared for cross-Agent comparison.
+          required: true
+        - label: No other active Work Item or Pull Request owns an exclusive conflicting resource.
           required: true
         - label: One current implementation Pull Request will be used.
           required: true
-        - label: The Issue assignee will be treated as the current owner.
+        - label: The assignee is account-level ownership; the comment lease identifies the active Agent Run.
           required: true
         - label: Green CI alone will not be treated as production proof.
           required: true

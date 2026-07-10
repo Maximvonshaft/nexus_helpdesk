@@ -7,11 +7,12 @@ This file defines the annual capability plan and stable dependency doctrine. It 
 Live execution state is owned by:
 
 1. executable Work Item Issues;
-2. M1–M12 Epic Issues;
-3. one current Pull Request per active Work Item;
-4. Issue #489 as a stable navigation index.
+2. structured claim, heartbeat, handoff, and reclaim comments on those Issues;
+3. M1–M12 Epic Issues;
+4. one current Pull Request per active Work Item;
+5. Issue #489 as a stable navigation index.
 
-GitHub Project #1 is optional and non-authoritative. No workflow, release gate, ownership decision, or merge decision may depend on Project fields or views.
+GitHub Project #1 is optional and non-authoritative. No workflow, claim, release gate, ownership decision, or merge decision may depend on Project fields or views.
 
 Nexus OSR means Nexus Operations Service Runtime: a multi-country logistics customer-service and operations-closure runtime. It is not a chatbot and not a C-end long-term memory system.
 
@@ -26,8 +27,8 @@ Nexus OSR means Nexus Operations Service Runtime: a multi-country logistics cust
 - Human online means existing handoff. Human offline means automatic ticket creation when escalation is required.
 - Complaints, compensation, refunds, legal threats, personal-data requests, and other high-risk cases follow configurable policy.
 - Country, language, channel, queue, tool, policy, WhatsApp routing, and group behavior remain configuration-driven.
-- Raw prompts, provider payloads, tool arguments/results, tracking numbers, phone/email, credentials, and provider group IDs must not leak into unsafe surfaces.
-- No production deploys, release tags, real external customer messages, funds/legal/identity actions, or irreversible deletion are authorized by planning status.
+- Raw prompts, provider payloads, tool arguments/results, tracking numbers, phone/email, credentials, and provider group IDs must not leak into unsafe surfaces, Issue comments, logs, or artifacts.
+- No production deploys, release tags, real external customer messages, funds/legal/identity actions, or irreversible deletion are authorized by planning status or an Agent claim.
 
 ## Product doctrine
 
@@ -50,7 +51,7 @@ Nexus OSR closes logistics cases safely through facts, policies, tickets, handof
 | M11 | #500 | Versioned internal SOP SkillBank |
 | M12 | #501 | Production hardening, runtime proof and release readiness |
 
-Current lifecycle, ownership, blockers, current PRs, CI evidence, and merge state must be read from the Epic, Work Item, and Pull Request—not from this file.
+Current lifecycle, ownership, claims, blockers, current PRs, CI evidence, and merge state must be read from the Epic, Work Item, Issue comments, and Pull Request—not from this file.
 
 ## Stable dependency doctrine
 
@@ -61,18 +62,23 @@ Current lifecycle, ownership, blockers, current PRs, CI evidence, and merge stat
 - M11 follows safe Knowledge, Admin, and Operator foundations.
 - M12 is the final release program and cannot be inferred from green CI alone.
 
+Dependencies restrict merge and release order, not unrelated development. Independent Work Items may be developed, reviewed, and tested concurrently. Explicitly stacked PRs may be developed concurrently while preserving parent-before-child merge order.
+
 ## Issue-only delivery policy
 
-- Product-code changes require a narrow executable Work Item.
-- The Work Item Issue owns lifecycle, assignee, blockers, current PR, acceptance and closure state.
+- Product-code changes require a coherent executable Work Item.
+- Prefer substantial vertical Work Items with one dominant contract, one acceptance boundary, and one rollback boundary; do not create micro-Issues per file or test.
+- The Work Item Issue owns lifecycle, account-level owner, blockers, current PR, acceptance and closure state.
+- Structured Issue comments own transient Agent Run claims, 120-minute leases, heartbeats, interruption evidence, handoffs, and reclaims.
 - The Pull Request owns exact SHAs, changed files, migration impact, tests, runtime evidence and rollback.
 - Issue #489 is navigation-only and must not duplicate volatile implementation evidence.
-- Comment-based claims and leases are not used.
-- Maximum active implementation Work Items: two.
-- Maximum release candidates: one.
-- Merge one PR at a time.
+- There is no fixed repository-wide limit on independent active Work Items or Agent sessions.
+- One valid unexpired Agent Run claim and one current implementation PR are allowed per Work Item.
+- Conflicting resources, dependencies, migration chains, generated artifacts, external mutable resources, main integration, deployment, tags, and production actions are serialized when required.
+- A graceful incomplete Agent exit must leave a structured handoff comment. A hard crash is recovered after lease expiry through reclaim and complete fact re-verification.
+- Merge accepted PRs into `main` in a controlled sequence.
 - Re-read main after every merge.
-- Recompute downstream base, migration chain, and affected tests after every merge.
+- Recompute downstream base, migration chain, resource conflicts, and affected tests after every merge.
 - Old-base green checks are not merge authority.
 - Parent defect and audit Issues are evidence/portfolio records when executable child Work Items exist.
 
