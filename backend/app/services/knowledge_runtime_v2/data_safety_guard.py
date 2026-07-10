@@ -40,8 +40,9 @@ def is_live_tracking_intent(value: str | None) -> bool:
     has_tracking = any(term in text for term in LIVE_TRACKING_TERMS)
     has_status = any(term in text for term in LIVE_STATUS_TERMS)
     has_identifier = any(any(char.isdigit() for char in match.group(0)) for match in TRACKING_ID_RE.finditer((value or "").upper()))
-    policy_only = any(term in text for term in POLICY_TERMS) and not has_identifier
-    return has_tracking and (has_status or has_identifier) and not policy_only
+    policy_only = any(term in text for term in POLICY_TERMS) and not has_status
+    live_signal = (has_tracking and (has_status or has_identifier)) or (has_identifier and has_status)
+    return live_signal and not policy_only
 
 
 def _as_utc(value: Any) -> datetime | None:
