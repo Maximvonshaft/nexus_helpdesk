@@ -182,6 +182,16 @@ def test_database_partial_indexes_reject_duplicate_active_exact_identity(db):
     db.flush()
 
 
+def test_database_rejects_identity_less_active_row(db):
+    db.add(CaseContextRecord(tenant_id="default", status="active", is_active=True))
+    with pytest.raises(IntegrityError):
+        db.flush()
+    db.rollback()
+
+    db.add(CaseContextRecord(tenant_id="default", status="active", is_active=False))
+    db.flush()
+
+
 def test_migration_uses_stable_predicates_and_duplicate_preflight():
     migration = Path("backend/alembic/versions/20260710_0055_case_context_active_lifecycle.py").read_text(encoding="utf-8")
 
@@ -189,6 +199,8 @@ def test_migration_uses_stable_predicates_and_duplicate_preflight():
     assert 'down_revision = "20260709_0054"' in migration
     assert "case_context_active_identity_duplicates_detected" in migration
     assert "case_context_legacy_unique_downgrade_blocked" in migration
+    assert "ck_case_context_active_requires_identity" in migration
+    assert "conversation_id IS NULL AND ticket_id IS NULL" in migration
     assert "row_ids" in migration
     assert "is_active IS TRUE" in migration
     assert "now()" not in migration.lower()
