@@ -49,7 +49,7 @@ jobs:
       - name: Execute full backend test suite
         run: |
           set +e
-          timeout 900 python -m pytest -q --disable-warnings backend/tests > /tmp/backend-pytest.log 2>&1
+          timeout 900 python -m pytest -vv --tb=short --disable-warnings backend/tests > /tmp/backend-pytest.log 2>&1
           status=$?
           set -e
           printf '%s' "$status" > /tmp/backend-pytest-status
