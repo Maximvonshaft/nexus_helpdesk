@@ -87,9 +87,14 @@ jobs:
       - name: Run Admin Case Context patch tests
         run: pytest -q backend/tests/test_nexus_osr_admin_api.py -k "case_context_allows"
 
-      - name: Run Admin debug and redaction tests
-        run: |
-          pytest -q backend/tests/test_nexus_osr_admin_api.py -k "debug_snapshot or webchat_debug or route_mount"
+      - name: Run Admin unified debug snapshot test
+        run: pytest -q backend/tests/test_nexus_osr_admin_api.py -k "debug_snapshot_has_unified"
+
+      - name: Run WebChat debug sanitizer test
+        run: pytest -q backend/tests/test_nexus_osr_admin_api.py -k "webchat_debug_sanitizer"
+
+      - name: Run route mount and composition test
+        run: pytest -q backend/tests/test_nexus_osr_admin_api.py -k "route_mount"
 
       - name: Check diff whitespace
         run: git diff --check origin/${{ github.base_ref }}...HEAD
