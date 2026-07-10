@@ -7,7 +7,28 @@ from pathlib import Path
 from evals.nexus_osr.runner import evaluate_dataset, write_artifacts
 from evals.nexus_osr.schema import GovernedDataset, load_dataset
 
-DATASET = Path(__file__).resolve().parents[1] / "evals" / "nexus_osr" / "datasets" / "m7-governed-eval-v1.json"
+
+DATASET = (
+    Path(__file__).resolve().parents[1]
+    / "evals"
+    / "nexus_osr"
+    / "datasets"
+    / "m7-governed-eval-v1.json"
+)
+REQUIRED_CATEGORY_OUTCOMES = {
+    (category, outcome)
+    for category in {
+        "normal",
+        "high_risk",
+        "tracking",
+        "knowledge",
+        "handoff",
+        "auto_ticket",
+        "governed_tool",
+        "unsafe_output",
+    }
+    for outcome in {"allow", "deny"}
+}
 
 
 def test_deterministic_eval_matches_golden_expectations() -> None:
@@ -17,7 +38,9 @@ def test_deterministic_eval_matches_golden_expectations() -> None:
     second = evaluate_dataset(dataset)
 
     assert first == second
+    assert first["dataset"]["version"] == "1.1.0"
     assert first["run"]["ok"] is True
+    assert first["run"]["case_count"] == 21
     assert first["run"]["failed"] == 0
     assert first["coverage"]["complete"] is True
     assert first["safety"] == {
@@ -31,22 +54,46 @@ def test_deterministic_eval_matches_golden_expectations() -> None:
     }
 
 
-def test_runtime_truth_knowledge_handoff_ticket_and_tool_boundaries_are_covered() -> None:
+def test_required_scenario_categories_have_positive_and_negative_outcomes() -> None:
+    report = evaluate_dataset(load_dataset(DATASET))
+    actual_pairs = {
+        (case["category"], "allow" if case["actual"]["allowed"] else "deny")
+        for case in report["cases"]
+    }
+
+    assert REQUIRED_CATEGORY_OUTCOMES <= actual_pairs
+
+
+def test_runtime_truth_knowledge_handoff_ticket_tool_and_output_boundaries_are_covered() -> None:
     report = evaluate_dataset(load_dataset(DATASET))
     by_id = {case["id"]: case for case in report["cases"]}
 
+    assert by_id["normal_knowledge_answer_allowed"]["actual"]["allowed"] is True
+    assert by_id["normal_blocked_reply_denied"]["actual"]["violation_codes"] == [
+        "blocked_decision_has_customer_reply"
+    ]
     assert by_id["tracking_mcp_current_status_allowed"]["actual"]["allowed"] is True
     assert by_id["tracking_customer_claim_denied"]["actual"]["violation_codes"] == [
         "customer_claim_used_as_fact",
         "tracking_status_without_mcp_current_status",
     ]
+    assert by_id["knowledge_customer_visible_allowed"]["actual"]["allowed"] is True
     assert by_id["knowledge_internal_only_denied"]["actual"]["violation_codes"] == [
         "knowledge_answer_without_customer_visible_knowledge"
     ]
     assert by_id["high_risk_handoff_allowed"]["actual"]["allowed"] is True
+    assert by_id["handoff_notice_allowed"]["actual"]["allowed"] is True
+    assert by_id["handoff_notice_without_handoff_denied"]["actual"]["violation_codes"] == [
+        "escalation_without_handoff_or_ticket"
+    ]
     assert by_id["auto_ticket_notice_allowed"]["actual"]["allowed"] is True
     assert by_id["auto_ticket_notice_missing_action_denied"]["actual"]["allowed"] is False
     assert by_id["governed_tool_observe_only_allowed"]["actual"]["customer_visible"] is False
+    assert by_id["governed_tool_unverified_result_denied"]["actual"]["violation_codes"] == [
+        "previous_ai_reply_used_as_fact"
+    ]
+    assert by_id["unsafe_output_clean_block_allowed"]["actual"]["allowed"] is True
+    assert by_id["unsafe_output_clean_block_allowed"]["actual"]["customer_visible"] is False
 
 
 def test_tenant_permission_and_unsafe_output_cases_fail_closed() -> None:
