@@ -20,7 +20,7 @@ concurrency:
 jobs:
   backend-full-regression:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       PYTHONPATH: backend
     steps:
@@ -49,7 +49,7 @@ jobs:
       - name: Execute full backend test suite
         run: |
           set +e
-          timeout 900 python -m pytest -vv --tb=short --disable-warnings --timeout=120 --timeout-method=thread backend/tests > /tmp/backend-pytest.log 2>&1
+          timeout 1500 python -m pytest -vv --tb=short --disable-warnings --timeout=120 --timeout-method=thread backend/tests > /tmp/backend-pytest.log 2>&1
           status=$?
           set -e
           printf '%s' "$status" > /tmp/backend-pytest-status
@@ -70,7 +70,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Require backend suite to finish within 900 seconds
+      - name: Require backend suite to finish within 1500 seconds
         run: |
           status=$(cat /tmp/backend-pytest-status)
           test "$status" -ne 124

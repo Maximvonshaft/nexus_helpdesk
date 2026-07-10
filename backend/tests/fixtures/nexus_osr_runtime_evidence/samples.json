@@ -1,0 +1,10 @@
+{
+  "runtime_decision": {"requests": 1000, "errors": 1, "unavailable": 0, "fail_closed": 15, "redaction_failures": 0, "p95_latency_ms": 420, "backlog": 0},
+  "handoff": {"requests": 200, "errors": 1, "unavailable": 0, "fail_closed": 2, "redaction_failures": 0, "p95_latency_ms": 700, "backlog": 0},
+  "ticket": {"requests": 200, "errors": 1, "unavailable": 0, "fail_closed": 2, "redaction_failures": 0, "p95_latency_ms": 720, "backlog": 0},
+  "tracking": {"requests": 800, "errors": 2, "unavailable": 1, "fail_closed": 20, "redaction_failures": 0, "p95_latency_ms": 900, "backlog": 0},
+  "knowledge": {"requests": 600, "errors": 1, "unavailable": 0, "fail_closed": 12, "redaction_failures": 0, "p95_latency_ms": 620, "backlog": 0},
+  "dispatch": {"requests": 180, "errors": 1, "unavailable": 0, "fail_closed": 2, "redaction_failures": 0, "p95_latency_ms": 800, "backlog": 20},
+  "queue_worker": {"requests": 1000, "errors": 2, "unavailable": 0, "fail_closed": 4, "redaction_failures": 0, "p95_latency_ms": 350, "backlog": 35},
+  "provider_runtime": {"requests": 1000, "errors": 1, "unavailable": 0, "fail_closed": 2, "redaction_failures": 0, "p95_latency_ms": 110, "backlog": 0}
+}

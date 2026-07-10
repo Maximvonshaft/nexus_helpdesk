@@ -1,0 +1,67 @@
+name: Nexus OSR Runtime Evidence
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/services/nexus_osr/runtime_evidence.py"
+      - "backend/tests/test_nexus_osr_runtime_evidence.py"
+      - "backend/tests/fixtures/nexus_osr_runtime_evidence/**"
+      - "backend/scripts/probe_nexus_osr_runtime_evidence.py"
+      - "config/observability/nexus_osr_runtime_evidence.json"
+      - "deploy/observability/nexus-osr-runtime-alerts.yml"
+      - "docs/ops/NEXUS_OSR_RUNTIME_EVIDENCE_RUNBOOK.md"
+      - ".github/workflows/osr-runtime-evidence.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-evidence-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install focused test dependency
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Compile runtime evidence code
+        run: python -m compileall backend/app/services/nexus_osr/runtime_evidence.py backend/scripts/probe_nexus_osr_runtime_evidence.py
+      - name: Validate configuration and alert syntax
+        run: |
+          python -m json.tool config/observability/nexus_osr_runtime_evidence.json >/dev/null
+          python -m json.tool deploy/observability/nexus-osr-runtime-alerts.yml >/dev/null
+      - name: Run focused contract, failure-injection and cardinality tests
+        run: PYTHONPATH=backend python -m pytest -q backend/tests/test_nexus_osr_runtime_evidence.py
+      - name: Produce deterministic bounded synthetic evidence
+        run: |
+          mkdir -p artifacts
+          python backend/scripts/probe_nexus_osr_runtime_evidence.py \
+            --config config/observability/nexus_osr_runtime_evidence.json \
+            --expected-identity backend/tests/fixtures/nexus_osr_runtime_evidence/expected_identity.json \
+            --observed-identity backend/tests/fixtures/nexus_osr_runtime_evidence/observed_identity.json \
+            --samples backend/tests/fixtures/nexus_osr_runtime_evidence/samples.json \
+            --probe-fixtures backend/tests/fixtures/nexus_osr_runtime_evidence/probes.json \
+            --tenant tenant-a \
+            --artifact artifacts/nexus-osr-runtime-evidence.json \
+            --metrics artifacts/nexus-osr-runtime-evidence.prom \
+            --now 2026-07-10T20:00:00Z
+      - name: Enforce bounded artifact and unsafe marker scan
+        run: |
+          test "$(wc -c < artifacts/nexus-osr-runtime-evidence.json)" -le 65537
+          ! grep -E -i 'authorization|bearer |api[_-]?key|password|customer@example|tracking_number|provider_payload|tool_arguments|tenant-a' artifacts/nexus-osr-runtime-evidence.json artifacts/nexus-osr-runtime-evidence.prom
+      - name: Check exact-head diff
+        if: github.event_name == 'pull_request'
+        run: |
+          git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexus-osr-runtime-evidence
+          path: |
+            artifacts/nexus-osr-runtime-evidence.json
+            artifacts/nexus-osr-runtime-evidence.prom
+          retention-days: 14

@@ -1,0 +1,66 @@
+{
+  "groups": [
+    {
+      "name": "nexus-osr-runtime-evidence",
+      "interval": "30s",
+      "rules": [
+        {
+          "alert": "NexusOSRRuntimeIdentityDrift",
+          "expr": "nexus_osr_runtime_identity_state{state=~\"not_ready|unavailable\"} > 0",
+          "for": "5m",
+          "labels": {"severity": "critical", "owner": "nexus-osr-runtime", "reason_family": "identity"},
+          "annotations": {"summary": "Nexus OSR runtime identity is stale, unavailable or drifted", "runbook": "docs/ops/NEXUS_OSR_RUNTIME_EVIDENCE_RUNBOOK.md#identity-drift"}
+        },
+        {
+          "alert": "NexusOSREvidenceUnavailable",
+          "expr": "nexus_osr_runtime_evidence_state{state=\"unavailable\"} > 0",
+          "for": "2m",
+          "labels": {"severity": "critical", "owner": "nexus-osr-runtime", "reason_family": "availability"},
+          "annotations": {"summary": "Mandatory bounded runtime evidence is unavailable", "runbook": "docs/ops/NEXUS_OSR_RUNTIME_EVIDENCE_RUNBOOK.md#unavailable-evidence"}
+        },
+        {
+          "alert": "NexusOSREvidenceNotReady",
+          "expr": "nexus_osr_runtime_evidence_state{state=\"not_ready\"} > 0",
+          "for": "5m",
+          "labels": {"severity": "critical", "owner": "nexus-osr-runtime", "reason_family": "readiness"},
+          "annotations": {"summary": "Nexus OSR evidence failed closed", "runbook": "docs/ops/NEXUS_OSR_RUNTIME_EVIDENCE_RUNBOOK.md#not-ready-evidence"}
+        },
+        {
+          "alert": "NexusOSRFailureBudgetExhausted",
+          "expr": "max by (path) (nexus_osr_failure_budget_state{state=\"not_ready\"}) > 0",
+          "for": "5m",
+          "labels": {"severity": "critical", "owner": "nexus-osr-runtime", "reason_family": "budget"},
+          "annotations": {"summary": "A governed OSR path exhausted its failure budget", "runbook": "docs/ops/NEXUS_OSR_RUNTIME_EVIDENCE_RUNBOOK.md#failure-budget"}
+        },
+        {
+          "alert": "NexusOSRFailClosedSpike",
+          "expr": "max by (path) (nexus_osr_failure_budget_ratio{kind=\"fail_closed\"}) > 0.08",
+          "for": "10m",
+          "labels": {"severity": "warning", "owner": "nexus-osr-runtime", "reason_family": "fail_closed"},
+          "annotations": {"summary": "Fail-closed decisions are elevated on a governed OSR path", "runbook": "docs/ops/NEXUS_OSR_RUNTIME_EVIDENCE_RUNBOOK.md#fail-closed-spike"}
+        },
+        {
+          "alert": "NexusOSRQueueBacklogHigh",
+          "expr": "nexus_osr_queue_backlog{path=\"queue_worker\"} > 500",
+          "for": "10m",
+          "labels": {"severity": "warning", "owner": "nexus-osr-runtime", "reason_family": "queue"},
+          "annotations": {"summary": "Queue or worker backlog exceeds the bounded threshold", "runbook": "docs/ops/NEXUS_OSR_RUNTIME_EVIDENCE_RUNBOOK.md#queue-backlog"}
+        },
+        {
+          "alert": "NexusOSRProviderRuntimeNotReady",
+          "expr": "nexus_osr_probe_state{path=\"provider_runtime\",state=~\"not_ready|unavailable\"} > 0",
+          "for": "5m",
+          "labels": {"severity": "critical", "owner": "nexus-osr-runtime", "reason_family": "provider_runtime"},
+          "annotations": {"summary": "Provider runtime configuration/readiness evidence is not ready", "runbook": "docs/ops/NEXUS_OSR_RUNTIME_EVIDENCE_RUNBOOK.md#provider-runtime"}
+        },
+        {
+          "alert": "NexusOSRRedactionFailure",
+          "expr": "nexus_osr_redaction_failure_detected > 0",
+          "for": "0m",
+          "labels": {"severity": "critical", "owner": "nexus-osr-runtime", "reason_family": "privacy"},
+          "annotations": {"summary": "Unsafe data was detected in bounded runtime evidence", "runbook": "docs/ops/NEXUS_OSR_RUNTIME_EVIDENCE_RUNBOOK.md#redaction-failure"}
+        }
+      ]
+    }
+  ]
+}
