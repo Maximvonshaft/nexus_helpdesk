@@ -58,6 +58,22 @@ def _operations_dispatch_summary(context: CaseContextRecord | None) -> dict[str,
     }
 
 
+def _legacy_case_context_summary(context: CaseContextRecord | None) -> dict[str, Any]:
+    if context is None:
+        return {}
+    return {
+        "case_context_id": context.id,
+        "status": safe_json(context.status, key="status"),
+        "channel": safe_json(context.channel, key="channel"),
+        "country_code": safe_json(context.country_code, key="country_code"),
+        "issue_type": safe_json(context.issue_type, key="issue_type"),
+        "safe_tracking_reference": safe_json(context.safe_tracking_reference, key="safe_tracking_reference"),
+        "tracking_number_hash_present": bool(context.tracking_number_hash),
+        "handoff_requested": bool(context.handoff_requested),
+        "ticket_created": bool(context.ticket_created),
+    }
+
+
 def _policy_snapshot(audit: RuntimeDecisionAuditRecord | None, context: CaseContextRecord | None) -> dict[str, Any]:
     return {
         "country_code": safe_json((audit.country_code if audit else None) or (context.country_code if context else None), key="country_code"),
@@ -113,7 +129,7 @@ def build_osr_debug_snapshot(
             if isinstance(item, dict) and item.get("code")
         ][:20] if audit else [],
         "warning_count": len(audit.warnings_json or []) if audit else 0,
-        "case_context": case_snapshot,
+        "case_context": _legacy_case_context_summary(context),
         "reply_metadata_audit": {
             "osr_audit_present": audit is not None,
             "case_context_present": context is not None,
