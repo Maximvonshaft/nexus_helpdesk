@@ -1,0 +1,81 @@
+name: osr-case-context-gate
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/models_osr.py"
+      - "backend/app/services/nexus_osr/case_context.py"
+      - "backend/app/services/nexus_osr/case_context_persistence.py"
+      - "backend/app/services/nexus_osr/persistence.py"
+      - "backend/alembic/versions/*case_context*.py"
+      - "backend/tests/test_nexus_osr_case_context*.py"
+      - "backend/tests/test_nexus_osr_persistence.py"
+      - "backend/tests/test_nexus_osr_runtime_bridge.py"
+      - "backend/tests/test_nexus_osr_auto_ticket_service.py"
+      - "backend/tests/test_nexus_osr_whatsapp_routing_service.py"
+      - "backend/tests/test_nexus_osr_admin_api.py"
+      - ".github/workflows/osr-case-context-gate.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  osr-case-context-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: backend
+      APP_ENV: development
+      DATABASE_URL: sqlite:////tmp/osr-case-context-gate.db
+      ALLOW_DEV_AUTH: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r backend/requirements.txt
+
+      - name: Compile Case Context scope
+        run: |
+          python -m py_compile \
+            backend/app/models_osr.py \
+            backend/app/services/nexus_osr/case_context.py \
+            backend/app/services/nexus_osr/case_context_persistence.py \
+            backend/app/services/nexus_osr/persistence.py \
+            backend/tests/test_nexus_osr_case_context_lifecycle.py \
+            backend/tests/test_nexus_osr_case_context_no_row.py
+
+      - name: Run Case Context lifecycle tests
+        run: pytest -q backend/tests/test_nexus_osr_case_context_lifecycle.py backend/tests/test_nexus_osr_case_context_no_row.py
+
+      - name: Run persistence compatibility tests
+        run: pytest -q backend/tests/test_nexus_osr_persistence.py
+
+      - name: Run runtime bridge compatibility tests
+        run: pytest -q backend/tests/test_nexus_osr_runtime_bridge.py
+
+      - name: Run auto-ticket compatibility tests
+        run: pytest -q backend/tests/test_nexus_osr_auto_ticket_service.py
+
+      - name: Run WhatsApp routing compatibility tests
+        run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py
+
+      - name: Run Admin Case Context compatibility tests
+        run: pytest -q backend/tests/test_nexus_osr_admin_api.py
+
+      - name: Check diff whitespace
+        run: git diff --check origin/${{ github.base_ref }}...HEAD
