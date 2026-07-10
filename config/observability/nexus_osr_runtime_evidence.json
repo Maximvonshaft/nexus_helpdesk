@@ -1,0 +1,116 @@
+{
+  "schema": "nexus.osr.runtime_evidence.config.v1",
+  "owner": "nexus-osr-runtime",
+  "max_evidence_age_seconds": 900,
+  "artifact_retention_days": 14,
+  "metric_labels": ["path", "state", "kind"],
+  "forbidden_metric_labels": ["tenant_id", "conversation_id", "ticket_id", "tracking_number", "provider_group_id", "error_message"],
+  "failure_budgets": [
+    {
+      "path": "runtime_decision",
+      "owner": "nexus-osr-runtime",
+      "rationale": "Runtime decisions are the governed entry boundary; unavailable or error outcomes must remain exceptional.",
+      "window_seconds": 300,
+      "min_sample_size": 20,
+      "max_error_ratio": 0.01,
+      "max_unavailable_ratio": 0.005,
+      "max_fail_closed_ratio": 0.05,
+      "max_p95_latency_ms": 800,
+      "max_backlog": 0
+    },
+    {
+      "path": "handoff",
+      "owner": "nexus-osr-runtime",
+      "rationale": "Human-online escalation must preserve ownership and avoid silent loss.",
+      "window_seconds": 900,
+      "min_sample_size": 10,
+      "max_error_ratio": 0.02,
+      "max_unavailable_ratio": 0.01,
+      "max_fail_closed_ratio": 0.05,
+      "max_p95_latency_ms": 1500,
+      "max_backlog": 0
+    },
+    {
+      "path": "ticket",
+      "owner": "nexus-osr-runtime",
+      "rationale": "Human-offline escalation must create or reuse a durable ticket idempotently.",
+      "window_seconds": 900,
+      "min_sample_size": 10,
+      "max_error_ratio": 0.02,
+      "max_unavailable_ratio": 0.01,
+      "max_fail_closed_ratio": 0.05,
+      "max_p95_latency_ms": 1500,
+      "max_backlog": 0
+    },
+    {
+      "path": "tracking",
+      "owner": "nexus-osr-runtime",
+      "rationale": "Tracking truth is a primary operational fact source and must fail closed when unavailable.",
+      "window_seconds": 300,
+      "min_sample_size": 20,
+      "max_error_ratio": 0.02,
+      "max_unavailable_ratio": 0.01,
+      "max_fail_closed_ratio": 0.08,
+      "max_p95_latency_ms": 1800,
+      "max_backlog": 0
+    },
+    {
+      "path": "knowledge",
+      "owner": "nexus-osr-runtime",
+      "rationale": "Knowledge evidence may degrade but cannot silently bypass approval, scope or freshness controls.",
+      "window_seconds": 300,
+      "min_sample_size": 20,
+      "max_error_ratio": 0.02,
+      "max_unavailable_ratio": 0.01,
+      "max_fail_closed_ratio": 0.08,
+      "max_p95_latency_ms": 1200,
+      "max_backlog": 0
+    },
+    {
+      "path": "dispatch",
+      "owner": "nexus-osr-runtime",
+      "rationale": "Operations dispatch uses a durable outbox and must expose retry/backlog risk without sending from probes.",
+      "window_seconds": 900,
+      "min_sample_size": 10,
+      "max_error_ratio": 0.02,
+      "max_unavailable_ratio": 0.01,
+      "max_fail_closed_ratio": 0.05,
+      "max_p95_latency_ms": 1500,
+      "max_backlog": 250
+    },
+    {
+      "path": "queue_worker",
+      "owner": "nexus-osr-runtime",
+      "rationale": "Worker health and queue backlog are leading indicators for customer and operator closure delays.",
+      "window_seconds": 300,
+      "min_sample_size": 20,
+      "max_error_ratio": 0.02,
+      "max_unavailable_ratio": 0.01,
+      "max_fail_closed_ratio": 0.05,
+      "max_p95_latency_ms": 1000,
+      "max_backlog": 500
+    },
+    {
+      "path": "provider_runtime",
+      "owner": "nexus-osr-runtime",
+      "rationale": "Provider readiness is configuration evidence only; probes must not send customer messages or model requests.",
+      "window_seconds": 300,
+      "min_sample_size": 20,
+      "max_error_ratio": 0.01,
+      "max_unavailable_ratio": 0.005,
+      "max_fail_closed_ratio": 0.05,
+      "max_p95_latency_ms": 500,
+      "max_backlog": 0
+    }
+  ],
+  "probes": [
+    {"path": "runtime_decision", "mode": "synthetic_or_read_only", "method": "GET", "endpoint": "/api/admin/osr/runtime-decision-audits?limit=1"},
+    {"path": "handoff", "mode": "synthetic_or_read_only", "method": "GET", "endpoint": null},
+    {"path": "ticket", "mode": "synthetic_or_read_only", "method": "GET", "endpoint": null},
+    {"path": "tracking", "mode": "synthetic_or_read_only", "method": "GET", "endpoint": null},
+    {"path": "knowledge", "mode": "synthetic_or_read_only", "method": "GET", "endpoint": null},
+    {"path": "dispatch", "mode": "synthetic_or_read_only", "method": "GET", "endpoint": null},
+    {"path": "queue_worker", "mode": "synthetic_or_read_only", "method": "GET", "endpoint": null},
+    {"path": "provider_runtime", "mode": "synthetic_or_read_only", "method": "GET", "endpoint": null}
+  ]
+}
