@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -15,6 +15,10 @@ UTCDateTime = DateTime(timezone=True)
 class CaseContextRecord(Base):
     __tablename__ = "case_contexts"
     __table_args__ = (
+        CheckConstraint(
+            "NOT is_active OR conversation_id IS NOT NULL OR ticket_id IS NOT NULL",
+            name="ck_case_context_active_requires_identity",
+        ),
         Index(
             "uq_case_context_active_conversation_only",
             "tenant_id",
