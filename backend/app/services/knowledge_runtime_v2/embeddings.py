@@ -3,11 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
 from pathlib import Path
+
+
+DIMENSION_REQUEST_CAPABILITY_ENV = "KNOWLEDGE_EMBEDDING_DIMENSION_REQUEST_SUPPORTED"
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+_FALSE_VALUES = {"0", "false", "no", "off"}
 
 
 class EmbeddingProvider(ABC):
@@ -25,7 +31,18 @@ class DeterministicHashEmbeddingProvider(EmbeddingProvider):
 
 
 class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
-    def __init__(self, *, base_url: str, api_key: str, model: str, dim: int, timeout_seconds: int) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        dim: int,
+        timeout_seconds: int,
+        dimension_request_supported: bool = True,
+    ) -> None:
+        if not dimension_request_supported:
+            raise ValueError("embedding_provider_dimension_request_unsupported")
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -35,7 +52,14 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        body = json.dumps({"model": self.model, "input": texts}, ensure_ascii=False).encode("utf-8")
+        body = json.dumps(
+            {
+                "model": self.model,
+                "input": texts,
+                "dimensions": self.dim,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
         request = urllib.request.Request(
             f"{self.base_url}/embeddings",
             data=body,
@@ -60,7 +84,12 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
             vector = row.get("embedding")
             if not isinstance(vector, list) or not vector:
                 raise RuntimeError("embedding_provider_missing_vector")
-            cleaned = [float(value) for value in vector]
+            try:
+                cleaned = [float(value) for value in vector]
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("embedding_provider_invalid_vector") from exc
+            if any(not math.isfinite(value) for value in cleaned):
+                raise RuntimeError("embedding_provider_invalid_vector")
             if self.dim and len(cleaned) != self.dim:
                 raise RuntimeError("embedding_provider_dimension_mismatch")
             vectors.append(cleaned)
@@ -76,6 +105,7 @@ def get_embedding_provider(
     api_key: str | None = None,
     api_key_file: str | None = None,
     timeout_seconds: int = 20,
+    dimension_request_supported: bool | None = None,
 ) -> EmbeddingProvider:
     if provider in {"deterministic_hash", "hash", "test"}:
         return DeterministicHashEmbeddingProvider(dim=dim)
@@ -83,12 +113,18 @@ def get_embedding_provider(
         key = api_key or _read_secret_file(api_key_file)
         if not key:
             raise ValueError("missing_embedding_api_key")
+        capability = (
+            _dimension_request_supported_from_env()
+            if dimension_request_supported is None
+            else dimension_request_supported
+        )
         return OpenAICompatibleEmbeddingProvider(
             base_url=base_url or "https://api.openai.com/v1",
             api_key=key,
             model=model or "text-embedding-3-small",
             dim=dim,
             timeout_seconds=timeout_seconds,
+            dimension_request_supported=capability,
         )
     raise ValueError(f"unsupported_embedding_provider:{provider}")
 
@@ -111,6 +147,15 @@ def semantic_hash(text: str) -> str:
 
 def vector_literal(vector: list[float]) -> str:
     return "[" + ",".join(f"{float(value):.8f}" for value in vector) + "]"
+
+
+def _dimension_request_supported_from_env() -> bool:
+    value = os.getenv(DIMENSION_REQUEST_CAPABILITY_ENV, "true").strip().lower()
+    if value in _TRUE_VALUES:
+        return True
+    if value in _FALSE_VALUES:
+        return False
+    raise ValueError("embedding_provider_dimension_request_capability_invalid")
 
 
 def _read_secret_file(path: str | None) -> str | None:
