@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 from app.db import Base
 from app.model_registry import REPRESENTATIVE_TABLES, REQUIRED_MODEL_MODULES, register_all_models
@@ -56,7 +57,9 @@ def test_registration_drift_detects_a_deliberately_missing_table(monkeypatch):
     assert any(item.name == "app.models_osr" for item in drift)
 
 
-def test_drift_gate_remains_postgresql_only():
-    source = (ROOT / "scripts" / "check_model_migration_drift.py").read_text(encoding="utf-8")
-    assert "if not settings.is_postgres" in source
-    assert "must run against PostgreSQL" in source
+def test_drift_gate_rejects_non_postgresql_database(monkeypatch, capsys):
+    module = _load_drift_module()
+    monkeypatch.setattr(module, "get_settings", lambda: SimpleNamespace(is_postgres=False))
+
+    assert module.main() == 2
+    assert "must run against PostgreSQL" in capsys.readouterr().err
