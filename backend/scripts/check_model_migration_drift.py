@@ -148,18 +148,25 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    settings = get_settings()
-    if not settings.is_postgres:
-        error = "check_model_migration_drift.py must run against PostgreSQL DATABASE_URL"
-        _write_report(args.report_json, status="unsupported_database", drift=[], error=error)
-        print("ERROR: " + error, file=sys.stderr)
-        return 2
-
-    engine = create_engine(settings.database_url, future=True)
+    _write_report(args.report_json, status="started", drift=[])
     try:
-        drift = collect_schema_drift(inspect(engine))
-    finally:
-        engine.dispose()
+        settings = get_settings()
+        if not settings.is_postgres:
+            error = "check_model_migration_drift.py must run against PostgreSQL DATABASE_URL"
+            _write_report(args.report_json, status="unsupported_database", drift=[], error=error)
+            print("ERROR: " + error, file=sys.stderr)
+            return 2
+
+        engine = create_engine(settings.database_url, future=True)
+        try:
+            drift = collect_schema_drift(inspect(engine))
+        finally:
+            engine.dispose()
+    except Exception as exc:
+        error_type = type(exc).__name__[:80]
+        _write_report(args.report_json, status="internal_error", drift=[], error=error_type)
+        print(f"ERROR: model migration drift inspection failed ({error_type})", file=sys.stderr)
+        return 3
 
     if drift:
         _write_report(args.report_json, status="drift_detected", drift=drift)
