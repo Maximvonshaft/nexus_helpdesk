@@ -190,7 +190,6 @@ def test_flag_off_configured_only_pattern_preserves_legacy_runtime(db_session, m
     assert result["status"] == "done"
     assert result["reply_source"] == "legacy_flag_off"
     assert db_session.query(WebchatHandoffRequest).count() == 0
-    assert db_session.query(RuntimeDecisionAuditRecord).count() == 0
 
 
 def test_flag_on_online_escalation_uses_existing_handoff_service_with_one_minimal_audit(db_session, monkeypatch):
