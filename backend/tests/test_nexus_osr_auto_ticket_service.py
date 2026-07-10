@@ -18,8 +18,9 @@ sys.path.insert(0, str(ROOT.parent))
 
 from app import models, webchat_models, models_osr  # noqa: F401,E402
 from app.db import Base  # noqa: E402
-from app.enums import SourceChannel  # noqa: E402
+from app.enums import ConversationState, EventType, SourceChannel, TicketPriority, TicketStatus  # noqa: E402
 from app.models import Customer, Ticket, TicketEvent  # noqa: E402
+from app.services.nexus_osr import auto_ticket_service  # noqa: E402
 from app.services.nexus_osr.auto_ticket_service import create_or_reuse_ticket_from_case_context  # noqa: E402
 from app.services.nexus_osr.case_context import CaseContext  # noqa: E402
 from app.services.nexus_osr.persistence import load_case_context  # noqa: E402
@@ -93,6 +94,9 @@ def test_auto_ticket_reuses_existing_conversation_ticket(db_session):
         case_context=CaseContext(channel="webchat", country_code="ME", issue_type="tracking"),
         source_channel=SourceChannel.web_chat,
     )
+    first.ticket.status = TicketStatus.closed
+    first.ticket.conversation_state = ConversationState.replied_to_customer
+    first.ticket.priority = TicketPriority.low
     conversation = WebchatConversation(
         public_id="auto_ticket_wc_2",
         visitor_token_hash="token-hash-2",
@@ -109,8 +113,46 @@ def test_auto_ticket_reuses_existing_conversation_ticket(db_session):
         case_context=CaseContext(conversation_id=conversation.id, channel="webchat", country_code="ME", issue_type="tracking"),
         conversation=conversation,
         source_channel=SourceChannel.web_chat,
+        priority=TicketPriority.high,
     )
 
     assert reused.created is False
     assert reused.ticket.id == first.ticket.id
+    assert reused.ticket.status == TicketStatus.pending_assignment
+    assert reused.ticket.conversation_state == ConversationState.human_review_required
+    assert reused.ticket.priority == TicketPriority.high
+    assert reused.ticket.required_action == "Review reused Nexus OSR support ticket and follow up with the customer."
     assert reused.customer_visible_summary.startswith("Your existing support ticket")
+    reuse_event = (
+        db_session.query(TicketEvent)
+        .filter(TicketEvent.ticket_id == reused.ticket.id, TicketEvent.note == "Nexus OSR ticket reused")
+        .one()
+    )
+    assert reuse_event.event_type == EventType.field_updated
+    assert "human_review_required" in (reuse_event.payload_json or "")
+
+
+def test_auto_ticket_retries_ticket_no_unique_collision(db_session, monkeypatch):
+    first = create_or_reuse_ticket_from_case_context(
+        db_session,
+        case_context=CaseContext(channel="webchat", country_code="ME", issue_type="tracking"),
+        source_channel=SourceChannel.web_chat,
+    )
+    db_session.commit()
+    generated = [first.ticket.ticket_no, "OSR-ME-RETRY-SAFE-0001"]
+
+    def fake_generate_ticket_no(case_context, *, attempt=0):
+        return generated.pop(0)
+
+    monkeypatch.setattr(auto_ticket_service, "_generate_ticket_no", fake_generate_ticket_no)
+
+    result = create_or_reuse_ticket_from_case_context(
+        db_session,
+        case_context=CaseContext(channel="webchat", country_code="ME", issue_type="refund"),
+        source_channel=SourceChannel.web_chat,
+    )
+    db_session.commit()
+
+    assert result.created is True
+    assert result.ticket.ticket_no == "OSR-ME-RETRY-SAFE-0001"
+    assert db_session.query(Ticket).filter(Ticket.ticket_no == first.ticket.ticket_no).count() == 1
