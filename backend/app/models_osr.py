@@ -54,7 +54,7 @@ class CaseContextRecord(Base):
     country_code: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, index=True)
     issue_type: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(40), default="active", index=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     safe_tracking_reference: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     tracking_number_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     contact_methods_json: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
