@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import sys
 
 from app.db import Base
 from app.model_registry import (
@@ -18,6 +19,7 @@ def _load_drift_module():
     spec = importlib.util.spec_from_file_location("osr_model_drift_gate", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
