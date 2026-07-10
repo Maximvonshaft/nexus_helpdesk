@@ -1,22 +1,23 @@
-schema_version: nexus-osr-plan-v2
-updated_at: '2026-07-10T17:20:00+02:00'
+schema_version: nexus-osr-plan-v3
 
 governance:
-  model: issue_first
-  live_delivery_index_issue: 489
+  model: issue_only
+  lifecycle_authority: work_item_issue
+  ownership_authority: issue_assignee
+  completion_authority: issue_state_and_reason
+  implementation_authority: linked_current_pull_request
+  epic_authority: epic_issue
+  navigation_index_issue: 489
   audit_portfolio_issue: 467
   historical_control_issue: 461
+  rejected_project_gate_issue: 505
   optional_project_url: https://github.com/users/Maximvonshaft/projects/1/views/1
   optional_project_authoritative: false
   note: >-
-    Live lifecycle, ownership, blockers, current Pull Requests and release state
-    are maintained in Issue #489 and linked Epic/Work Item Issues. This YAML is
-    a stable machine-readable capability manifest and must not duplicate live status.
-
-repository:
-  name: Maximvonshaft/nexus_helpdesk
-  reconciliation_main_sha: dddd7c4f8b579bb8653d4f4fc8e452365df72c14
-  reconciliation_commit: 'revert(governance): remove accidental noop file'
+    Work Item Issues own lifecycle, owner, blockers, current PR, acceptance and
+    closure state. Pull Requests own exact implementation and validation evidence.
+    Issue #489 is navigation-only. This manifest contains stable capability and
+    governance contracts and must not duplicate live delivery status.
 
 product:
   name: Nexus OSR
@@ -61,38 +62,67 @@ safety_kernel:
     - email
     - credentials
     - provider_group_id
-  prohibited_actions:
-    - production_deploy_without_release_authorization
-    - release_tag_without_release_authorization
-    - real_external_customer_message_without_governed_outbound
-    - funds_or_refund_action_without_governed_authorization
-    - legal_action_without_governed_authorization
-    - identity_action_without_governed_authorization
-    - irreversible_deletion_without_governed_authorization
+  prohibited_without_separate_governed_authorization:
+    - production_deploy
+    - release_tag
+    - real_external_customer_message
+    - funds_or_refund_action
+    - legal_action
+    - identity_action
+    - irreversible_deletion
 
-lifecycle_states:
-  - Backlog
-  - Ready
-  - In Progress
-  - In Review
-  - Release Gate
-  - Blocked
-  - Done
-
-ownership_contract:
-  issue_assignee_required_for_in_progress: true
-  explicit_lifecycle_in_work_item_required: true
+work_item_control:
+  required_fields:
+    - parent_epic
+    - lifecycle
+    - owner_assignee
+    - current_pr
+    - blocked_by
+    - supersedes
+    - current_verified_behavior
+    - expected_behavior
+    - owned_scope
+    - forbidden_scope
+    - acceptance_criteria
+    - validation_and_runtime_evidence
+    - migration_rollout_and_rollback
+    - dependency_and_merge_order
+  lifecycle_states:
+    open:
+      - Backlog
+      - Ready
+      - In Progress
+      - In Review
+      - Release Gate
+      - Blocked
+    closed:
+      completed: Done
+      not_planned: Not Planned
   one_current_pull_request_per_work_item: true
   comment_based_claims_enabled: false
   action_claim_enabled: false
-  maximum_active_product_work_items: 2
+  maximum_active_implementation_work_items: 2
   maximum_release_candidates: 1
+
+pull_request_contract:
+  owns:
+    - exact_base_and_head_sha
+    - changed_files
+    - migration_impact
+    - focused_tests
+    - full_regression
+    - runtime_evidence
+    - review_findings
+    - not_verified
+    - rollback
+  draft_until_exact_head_acceptance: true
+  old_base_green_checks_are_merge_authority: false
 
 merge_policy:
   one_pull_request_at_a_time: true
   reread_main_after_each_merge: true
   recompute_downstream_base_after_each_merge: true
-  old_base_green_checks_are_merge_authority: false
+  recompute_migration_chain_after_each_merge: true
   exact_head_acceptance_required: true
   parallel_schema_work_must_converge_to_one_alembic_head: true
 
@@ -100,56 +130,45 @@ capabilities:
   - id: M1
     epic_issue: 490
     name: RuntimeDecision and Case Context Kernel
-    durable_baseline_delivered: true
   - id: M2
     epic_issue: 491
     name: Escalation, Handoff and Auto-ticket Closure
-    durable_baseline_delivered: false
     stable_dependency: ticket_safety_before_configured_escalation
   - id: M3
     epic_issue: 492
     name: Governed Tool Execution
-    durable_baseline_delivered: true
   - id: M4
     epic_issue: 493
     name: Tracking Truth Layer
-    durable_baseline_delivered: false
   - id: M5
     epic_issue: 494
     name: Customer-visible Knowledge Quality
-    durable_baseline_delivered: false
     stable_dependency: knowledge_k1_before_k2
   - id: M6
     epic_issue: 495
     name: Channel Gateway and Operations Routing
-    durable_baseline_delivered: true
   - id: M7
     epic_issue: 496
     name: Debug, Eval and Audit
-    durable_baseline_delivered: false
   - id: M8
     epic_issue: 497
     name: Admin Policy APIs and Control Tower
-    durable_baseline_delivered: true
   - id: M9
     epic_issue: 498
     name: Operator Workspace and Queues
-    durable_baseline_delivered: false
     depends_on: [M2, M4, M5, M6, M8]
   - id: M10
     epic_issue: 499
     name: Operations Analytics and Control Tower Maturity
-    durable_baseline_delivered: false
     depends_on: [M9]
   - id: M11
     epic_issue: 500
     name: Internal SOP SkillBank
-    durable_baseline_delivered: false
     depends_on: [M5, M8, M9]
   - id: M12
     epic_issue: 501
     name: Production Hardening and Readiness
-    durable_baseline_delivered: false
+    depends_on: [M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11]
     production_posture: NO_GO_until_runtime_evidence_is_complete
 
 release_evidence:
@@ -167,6 +186,7 @@ release_evidence:
 
 roadmap_files:
   purpose: stable_strategy_and_governance_only
-  live_status_authority: issue_489
+  live_status_authority: work_item_issues
+  navigation_index_issue: 489
   update_after_every_status_transition: false
   manual_live_status_duplication_allowed: false
