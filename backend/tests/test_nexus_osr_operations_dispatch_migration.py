@@ -69,6 +69,16 @@ def test_operations_dispatch_migration_upgrade_and_downgrade(tmp_path):
         assert required <= columns
         unique_names = {item["name"] for item in inspector.get_unique_constraints("operations_dispatch_outbox")}
         assert "uq_operations_dispatch_outbox_dispatch_key" in unique_names
+        check_names = {item["name"] for item in inspector.get_check_constraints("operations_dispatch_outbox")}
+        assert {
+            "ck_operations_dispatch_outbox_status",
+            "ck_operations_dispatch_outbox_attempt_count_nonnegative",
+            "ck_operations_dispatch_outbox_max_attempts_positive",
+            "ck_operations_dispatch_outbox_lease_state",
+            "ck_operations_dispatch_outbox_retry_timestamp",
+            "ck_operations_dispatch_outbox_dispatched_timestamp",
+            "ck_operations_dispatch_outbox_cancelled_timestamp",
+        } <= check_names
         index_names = {item["name"] for item in inspector.get_indexes("operations_dispatch_outbox")}
         assert {
             "ix_operations_dispatch_outbox_scope",
