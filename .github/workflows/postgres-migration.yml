@@ -73,17 +73,53 @@ jobs:
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Upload model drift report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: model-migration-drift-report
-          path: model-drift-report.json
-          if-no-files-found: error
-          retention-days: 7
+      - name: Require structured drift report
+        run: test -s model-drift-report.json
 
-      - name: Enforce model migration drift result
-        run: test "${{ steps.model_drift.outputs.exit_code }}" -eq 0
+      - name: Require successful drift inspection
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          assert data["status"] in {"ok", "drift_detected"}, data
+          PY
+
+      - name: Require complete model registration
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          bad = [item for item in data["drift"] if item["kind"] == "unregistered_model_table"]
+          assert not bad, bad
+          PY
+
+      - name: Require table and column parity
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          bad = [item for item in data["drift"] if item["kind"] in {"missing_table", "missing_column"}]
+          assert not bad, bad
+          PY
+
+      - name: Require constraint and index parity
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          kinds = {"missing_unique_constraint", "missing_metadata_check", "missing_check_constraint", "missing_metadata_index", "missing_index"}
+          bad = [item for item in data["drift"] if item["kind"] in kinds]
+          assert not bad, bad
+          PY
+
+      - name: Enforce clean model migration drift
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          assert data["status"] == "ok", data
+          PY
+          test "${{ steps.model_drift.outputs.exit_code }}" -eq 0
 
       - name: Strict production-like readiness check
         env:
