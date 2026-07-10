@@ -7,10 +7,9 @@ from threading import Barrier
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from app.db import Base
 from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus
 from app.model_registry import register_all_models
 from app.models import Customer, Ticket
@@ -40,9 +39,13 @@ RAW_GROUP_ID = "120363012345678901@g.us"
 def pg_database():
     engine = create_engine(DATABASE_URL, future=True, pool_pre_ping=True)
     Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
+    with engine.begin() as connection:
+        connection.execute(text("DELETE FROM operations_dispatch_outbox"))
     try:
         yield engine, Session
     finally:
+        with engine.begin() as connection:
+            connection.execute(text("DELETE FROM operations_dispatch_outbox"))
         engine.dispose()
 
 
