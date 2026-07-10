@@ -22,18 +22,18 @@ IGNORED_TABLES_WITH_REASON = {
 }
 
 IGNORED_UNIQUE_CONSTRAINTS_WITH_REASON = {
-    "uq_auth_throttle_entries_throttle_key": "Covered by model-level unique/index declaration.",
-    "uq_integration_clients_key_id": "Covered by model-level unique/index declaration.",
-    "uq_integration_clients_name": "Covered by model-level unique/index declaration.",
-    "uq_markets_code": "Covered by model-level unique/index declaration.",
-    "uq_markets_name": "Covered by model-level unique/index declaration.",
-    "uq_sla_policies_name": "Covered by model-level unique/index declaration.",
-    "uq_sla_policies_priority": "Covered by model-level unique/index declaration.",
-    "uq_tags_name": "Covered by model-level unique/index declaration.",
-    "uq_teams_name": "Covered by model-level unique/index declaration.",
-    "uq_tickets_ticket_no": "Covered by model-level unique/index declaration.",
-    "uq_users_email": "Covered by model-level unique/index declaration.",
-    "uq_users_username": "Covered by model-level unique/index declaration.",
+    "uq_auth_throttle_entries_throttle_key": "Legacy equivalent unique index is accepted by column signature.",
+    "uq_integration_clients_key_id": "Legacy equivalent unique index is accepted by column signature.",
+    "uq_integration_clients_name": "Legacy equivalent unique index is accepted by column signature.",
+    "uq_markets_code": "Legacy equivalent unique index is accepted by column signature.",
+    "uq_markets_name": "Legacy equivalent unique index is accepted by column signature.",
+    "uq_sla_policies_name": "Legacy equivalent unique index is accepted by column signature.",
+    "uq_sla_policies_priority": "Legacy equivalent unique index is accepted by column signature.",
+    "uq_tags_name": "Legacy equivalent unique index is accepted by column signature.",
+    "uq_teams_name": "Legacy equivalent unique index is accepted by column signature.",
+    "uq_tickets_ticket_no": "Legacy equivalent unique index is accepted by column signature.",
+    "uq_users_email": "Legacy equivalent unique index is accepted by column signature.",
+    "uq_users_username": "Legacy equivalent unique index is accepted by column signature.",
 }
 
 REQUIRED_CHECK_CONSTRAINTS: dict[str, set[str]] = {
@@ -60,8 +60,50 @@ class Drift:
         return f"[{self.kind}] {self.name}: {self.detail}"
 
 
-def _metadata_unique_constraints(table) -> set[str]:
-    return {constraint.name for constraint in table.constraints if isinstance(constraint, UniqueConstraint) and constraint.name}
+def _column_signature(column_names) -> frozenset[str]:
+    return frozenset(str(name) for name in (column_names or []) if name)
+
+
+def _metadata_unique_constraints(table) -> dict[str, frozenset[str]]:
+    return {
+        constraint.name: _column_signature(column.name for column in constraint.columns)
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint) and constraint.name
+    }
+
+
+def _is_partial_unique_index(index: dict) -> bool:
+    options = index.get("dialect_options") or {}
+    return bool(
+        options.get("postgresql_where")
+        or options.get("sqlite_where")
+        or index.get("where")
+    )
+
+
+def _database_unique_contracts(inspector, table_name: str) -> tuple[set[str], set[frozenset[str]]]:
+    names: set[str] = set()
+    signatures: set[frozenset[str]] = set()
+
+    for item in inspector.get_unique_constraints(table_name):
+        name = item.get("name")
+        signature = _column_signature(item.get("column_names"))
+        if name:
+            names.add(str(name))
+        if signature:
+            signatures.add(signature)
+
+    for item in inspector.get_indexes(table_name):
+        if not item.get("unique") or _is_partial_unique_index(item):
+            continue
+        name = item.get("name")
+        signature = _column_signature(item.get("column_names"))
+        if name:
+            names.add(str(name))
+        if signature:
+            signatures.add(signature)
+
+    return names, signatures
 
 
 def _metadata_check_constraints(table) -> set[str]:
@@ -97,11 +139,19 @@ def collect_schema_drift(inspector) -> list[Drift]:
         for column_name in sorted(metadata_columns - db_columns):
             drift.append(Drift("missing_column", f"{table_name}.{column_name}", "column exists in Base.metadata but not in database"))
 
-        db_unique_names = {item.get("name") for item in inspector.get_unique_constraints(table_name) if item.get("name")}
-        metadata_unique_names = _metadata_unique_constraints(Base.metadata.tables[table_name])
-        for constraint_name in sorted(metadata_unique_names - db_unique_names):
-            if constraint_name not in IGNORED_UNIQUE_CONSTRAINTS_WITH_REASON:
-                drift.append(Drift("missing_unique_constraint", f"{table_name}.{constraint_name}", "unique constraint exists in metadata but not in database"))
+        db_unique_names, db_unique_signatures = _database_unique_contracts(inspector, table_name)
+        metadata_unique = _metadata_unique_constraints(Base.metadata.tables[table_name])
+        for constraint_name, signature in sorted(metadata_unique.items()):
+            if constraint_name in db_unique_names or signature in db_unique_signatures:
+                continue
+            if constraint_name in IGNORED_UNIQUE_CONSTRAINTS_WITH_REASON:
+                continue
+            columns = ",".join(sorted(signature)) or "unknown"
+            drift.append(Drift(
+                "missing_unique_constraint",
+                f"{table_name}.{constraint_name}",
+                f"no database unique constraint or non-partial unique index covers columns [{columns}]",
+            ))
 
         required_checks = REQUIRED_CHECK_CONSTRAINTS.get(table_name, set())
         if required_checks:
