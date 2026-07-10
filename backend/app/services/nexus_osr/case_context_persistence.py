@@ -68,7 +68,8 @@ def save_case_context(
 
     The stable ``is_active`` discriminator is the database uniqueness boundary;
     wall-clock expiry is resolved before insert/update because PostgreSQL partial
-    indexes cannot safely use non-immutable ``now()`` predicates.
+    indexes cannot safely use non-immutable ``now()`` predicates. A row without
+    either identity may be retained for audit/history but is never active.
     """
 
     tenant = _normalize_tenant(tenant_id)
@@ -78,11 +79,14 @@ def save_case_context(
     expiry = ensure_utc(expires_at)
     closed_at = ensure_utc(_parse_iso(context.closed_at))
     status = _status_value(context.status)
-    incoming_active = _active_values(
-        status=status,
-        closed_at=closed_at,
-        expires_at=expiry,
-        now=current,
+    incoming_active = (
+        (conversation is not None or ticket is not None)
+        and _active_values(
+            status=status,
+            closed_at=closed_at,
+            expires_at=expiry,
+            now=current,
+        )
     )
 
     if conversation is not None or ticket is not None:
