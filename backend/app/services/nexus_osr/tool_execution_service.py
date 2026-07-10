@@ -511,7 +511,7 @@ def _safe_value(key: str, value: Any) -> Any:
     if any(token in lowered for token in ("phone", "caller", "contact", "email")):
         return redact_case_text(value, limit=120) or "[redacted_contact]"
     if any(token in lowered for token in ("address", "recipient")):
-        return redact_case_text(value, limit=160) or "[redacted_address]"
+        return "[redacted_address]"
     if lowered in {"raw", "raw_payload", "payload", "request", "response", "body", "message", "customer_message"}:
         return "[redacted_payload]"
     if isinstance(value, dict):
