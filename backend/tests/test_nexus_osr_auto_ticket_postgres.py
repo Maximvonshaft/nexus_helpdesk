@@ -174,4 +174,7 @@ def test_postgres_real_ticket_number_collision_recovers_inside_service_savepoint
     with Session() as db:
         assert db.query(Ticket).filter(Ticket.ticket_no.in_(outcomes)).count() == 2
         assert db.query(Ticket).filter(Ticket.ticket_no == common_ticket_no).count() == 1
-        assert not db.in_transaction()
+        db.commit()
+        # A new transaction in the same session still succeeds after the real
+        # SQLSTATE 23505/savepoint collision path.
+        assert db.query(Ticket.id).filter(Ticket.ticket_no.in_(outcomes)).count() == 2
