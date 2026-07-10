@@ -148,13 +148,48 @@ jobs:
           assert not bad, bad
           PY
 
-      - name: Require constraint and index parity
+      - name: Require named unique constraint parity
         run: |
           python - <<'PY'
           import json
           data = json.load(open("model-drift-report.json", encoding="utf-8"))
-          kinds = {"missing_unique_constraint", "missing_metadata_check", "missing_check_constraint", "missing_metadata_index", "missing_index"}
-          bad = [item for item in data["drift"] if item["kind"] in kinds]
+          bad = [item for item in data["drift"] if item["kind"] == "missing_unique_constraint"]
+          assert not bad, bad
+          PY
+
+      - name: Require ORM check constraint registration
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          bad = [item for item in data["drift"] if item["kind"] == "missing_metadata_check"]
+          assert not bad, bad
+          PY
+
+      - name: Require database check constraint parity
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          bad = [item for item in data["drift"] if item["kind"] == "missing_check_constraint"]
+          assert not bad, bad
+          PY
+
+      - name: Require ORM index registration
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          bad = [item for item in data["drift"] if item["kind"] == "missing_metadata_index"]
+          assert not bad, bad
+          PY
+
+      - name: Require database index parity
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("model-drift-report.json", encoding="utf-8"))
+          bad = [item for item in data["drift"] if item["kind"] == "missing_index"]
           assert not bad, bad
           PY
 
