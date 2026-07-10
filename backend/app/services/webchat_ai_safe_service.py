@@ -207,8 +207,8 @@ def _has_configured_escalation_intent(
     ticket: Ticket,
     inbound_message: str | None,
     ai_attempt_count: int,
-) -> bool:
-    """Check persisted policy patterns without making the legacy term list authoritative."""
+) -> bool | None:
+    """Return True/False for policy match, or None when policy evaluation is unavailable."""
 
     country_code = (getattr(ticket, "country_code", None) or "GLOBAL").upper()
     channel = getattr(conversation, "channel_key", None) or "webchat"
@@ -223,7 +223,7 @@ def _has_configured_escalation_intent(
         ).matched
     except Exception as exc:
         LOGGER.warning(
-            "webchat_osr_configured_escalation_prefilter_failed_non_blocking",
+            "webchat_osr_configured_escalation_prefilter_failed_closed",
             extra={
                 "event_payload": {
                     "conversation_id": conversation.id,
@@ -232,7 +232,7 @@ def _has_configured_escalation_intent(
                 }
             },
         )
-        return False
+        return None
 
 
 def _safe_escalation_payload(result: EscalationOrchestrationResult) -> dict[str, Any]:
@@ -307,7 +307,7 @@ def _maybe_orchestrate_osr_escalation(
     if not (
         _has_high_risk_intent(visitor_message.body)
         or _has_customer_wait_intent(visitor_message.body)
-        or configured_match
+        or configured_match is True
     ):
         return None
     try:
@@ -370,17 +370,44 @@ def process_webchat_ai_reply_job(db: Session, *, conversation_id: int, ticket_id
     osr_enabled = _osr_escalation_orchestration_enabled()
     osr_customer_wait_intent = osr_enabled and _has_customer_wait_intent(visitor_message.body)
     osr_ai_attempt_count = _ai_attempt_count(db, conversation=conversation) if osr_enabled else 0
-    configured_escalation_intent = osr_enabled and _has_configured_escalation_intent(
-        db,
-        conversation=conversation,
-        ticket=ticket,
-        inbound_message=visitor_message.body,
-        ai_attempt_count=osr_ai_attempt_count,
-    )
+    configured_escalation_state: bool | None = False
+    if osr_enabled:
+        configured_escalation_state = _has_configured_escalation_intent(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            inbound_message=visitor_message.body,
+            ai_attempt_count=osr_ai_attempt_count,
+        )
+    configured_escalation_intent = configured_escalation_state is True
+    configured_policy_unavailable = configured_escalation_state is None
     osr_escalation_intent = osr_enabled and (
-        high_risk_intent or osr_customer_wait_intent or configured_escalation_intent
+        high_risk_intent
+        or osr_customer_wait_intent
+        or configured_escalation_intent
+        or configured_policy_unavailable
     )
     if mode == "safe_ai" and (high_risk_intent or osr_escalation_intent):
+        if configured_policy_unavailable:
+            result = _require_operator_review(
+                db,
+                conversation=conversation,
+                ticket=ticket,
+                visitor_message=visitor_message,
+                reason="osr_escalation_policy_evaluation_failed",
+                turn=turn,
+            )
+            _complete_turn_if_present(
+                db,
+                conversation=conversation,
+                ticket=ticket,
+                visitor_message=visitor_message,
+                turn=turn,
+                result=result,
+                audit_after_complete=False,
+            )
+            return result
+
         osr_escalation_result = None
         if osr_escalation_intent:
             osr_escalation_result = _maybe_orchestrate_osr_escalation(
