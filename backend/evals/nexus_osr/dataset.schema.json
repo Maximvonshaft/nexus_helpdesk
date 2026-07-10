@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/osr-eval-dataset-v1.json",
+  "title": "Nexus OSR governed evaluation dataset v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "dataset_id",
+    "dataset_version",
+    "title",
+    "governance",
+    "coverage_requirements",
+    "runner_contract",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": {"const": "nexus.osr.eval.dataset.v1"},
+    "dataset_id": {"type": "string", "minLength": 1},
+    "dataset_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$"
+    },
+    "title": {"type": "string", "minLength": 1},
+    "governance": {"$ref": "#/$defs/governance"},
+    "coverage_requirements": {"$ref": "#/$defs/coverage"},
+    "runner_contract": {"$ref": "#/$defs/runnerContract"},
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/case"}
+    }
+  },
+  "$defs": {
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "owner_id",
+        "approver_id",
+        "status",
+        "valid_from",
+        "review_date",
+        "valid_until",
+        "source_classification",
+        "change_approval"
+      ],
+      "properties": {
+        "owner_id": {"type": "string", "minLength": 1},
+        "approver_id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["draft", "approved", "deprecated"]},
+        "valid_from": {"type": "string", "format": "date"},
+        "review_date": {"type": "string", "format": "date"},
+        "valid_until": {"type": "string", "format": "date"},
+        "source_classification": {"const": "synthetic_redacted"},
+        "change_approval": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "approved_by", "approved_at", "issue"],
+          "properties": {
+            "status": {"enum": ["pending", "approved", "rejected"]},
+            "approved_by": {"type": "string", "minLength": 1},
+            "approved_at": {"type": "string", "format": "date"},
+            "issue": {"type": "string", "pattern": "^#[0-9]+$"}
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["countries", "channels", "languages", "risk_levels", "categories", "permissions"],
+      "properties": {
+        "countries": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
+        "channels": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
+        "languages": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
+        "risk_levels": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
+        "categories": {"$ref": "#/$defs/nonEmptyUniqueStrings"},
+        "permissions": {"$ref": "#/$defs/nonEmptyUniqueStrings"}
+      }
+    },
+    "nonEmptyUniqueStrings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "runnerContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "read_only",
+        "customer_visible_behavior_changes",
+        "messages_sent",
+        "tools_executed",
+        "production_mutations",
+        "production_payload_collection"
+      ],
+      "properties": {
+        "read_only": {"const": true},
+        "customer_visible_behavior_changes": {"const": false},
+        "messages_sent": {"const": 0},
+        "tools_executed": {"const": 0},
+        "production_mutations": {"const": 0},
+        "production_payload_collection": {"const": false}
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "category",
+        "country_code",
+        "channel",
+        "language",
+        "risk_level",
+        "tenant_key",
+        "expected_tenant_key",
+        "actor_permission",
+        "required_permission",
+        "synthetic_unsafe_markers",
+        "decision",
+        "expected"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "category": {"type": "string", "minLength": 1},
+        "country_code": {"type": "string", "pattern": "^[A-Z]{2}$"},
+        "channel": {"enum": ["webchat", "whatsapp", "email", "voice", "admin"]},
+        "language": {"type": "string", "pattern": "^[a-z]{2}(?:-[A-Z]{2})?$"},
+        "risk_level": {"enum": ["low", "medium", "high", "critical"]},
+        "tenant_key": {"type": "string", "minLength": 1},
+        "expected_tenant_key": {"type": "string", "minLength": 1},
+        "actor_permission": {"enum": ["public", "customer", "operator", "admin", "system"]},
+        "required_permission": {"enum": ["public", "customer", "operator", "admin", "system"]},
+        "synthetic_unsafe_markers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "raw_prompt_marker",
+              "provider_payload_marker",
+              "credential_marker",
+              "tracking_identifier_marker",
+              "contact_marker",
+              "address_marker",
+              "provider_group_marker",
+              "tool_payload_marker"
+            ]
+          }
+        },
+        "decision": {"$ref": "#/$defs/decision"},
+        "expected": {"$ref": "#/$defs/expected"}
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "business_reply_type",
+        "next_action",
+        "customer_reply",
+        "language",
+        "risk_level",
+        "evidence_sources",
+        "tool_actions",
+        "handoff_required",
+        "ticket_required",
+        "routing_required"
+      ],
+      "properties": {
+        "business_reply_type": {"type": "string", "minLength": 1},
+        "next_action": {"type": "string", "minLength": 1},
+        "customer_reply": {"type": ["string", "null"]},
+        "language": {"type": "string", "minLength": 2},
+        "risk_level": {"enum": ["low", "medium", "high", "critical"]},
+        "evidence_sources": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/evidence"}
+        },
+        "tool_actions": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/toolAction"}
+        },
+        "handoff_required": {"type": "boolean"},
+        "ticket_required": {"type": "boolean"},
+        "routing_required": {"type": "boolean"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_type",
+        "source_id",
+        "label",
+        "summary",
+        "confidence",
+        "customer_visible",
+        "verified",
+        "current_status",
+        "created_at"
+      ],
+      "properties": {
+        "evidence_type": {"type": "string", "minLength": 1},
+        "source_id": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "summary": {"type": "object"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "customer_visible": {"type": "boolean"},
+        "verified": {"type": "boolean"},
+        "current_status": {"type": "boolean"},
+        "created_at": {"type": ["string", "null"]}
+      }
+    },
+    "toolAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_name", "arguments", "requires_confirmation", "executed", "result_source_id"],
+      "properties": {
+        "tool_name": {"type": "string", "minLength": 1},
+        "arguments": {"type": "object", "maxProperties": 0},
+        "requires_confirmation": {"type": "boolean"},
+        "executed": {"type": "boolean"},
+        "result_source_id": {"type": ["string", "null"]}
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "violation_codes", "customer_visible", "boundary"],
+      "properties": {
+        "allowed": {"type": "boolean"},
+        "violation_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "customer_visible": {"type": "boolean"},
+        "boundary": {"enum": ["allow", "deny"]}
+      }
+    }
+  }
+}
