@@ -35,7 +35,7 @@ Evidence date: 2026-07-10, from current main, control Issue #461, Work Orders #4
 | Runtime audit integration | PR #452 merged into main as `6261ecf0d81ccfef3a8790a4c7ca1d9f163e69f8`. | Treat as baseline. |
 | Human hours and escalation orchestration | PR #453 merged into main as `57b1f89351df04b00e95b57db5aa1fe00aaacc6a`, default-off and using existing handoff/auto-ticket services. | Address post-merge P2 findings through Work Order #459 when unblocked. |
 | Governed tool execution | PR #454 merged into main as `f5f4cd13d87a7766ca5fd5b43751979a326825c8` after Admin gate. Validated head `0b7bf941d460a364b41c8078b79d128b8e68ed87` had required checks green. | Treat as M3 baseline. Do not reopen unless a verified regression appears. |
-| WhatsApp operations routing | PR #464 is the current recovery candidate for the #455 workstream. Original PR #455 remains open/draft on old base at `200069b02d4d086e76382a9a40257b682abf940f`. PR #464 was created from `f5f4cd13` and is now stale after the docs-only #462 merge to `990aa91e`. | Refresh/rebase PR #464 onto `990aa91e`, run focused WhatsApp routing, persistence, and auto-ticket checks in an environment with backend test dependencies, then let Admin decide whether #464 supersedes original #455. |
+| WhatsApp operations routing | PR #464 is the current-main recovery candidate for the #455 workstream. Original PR #455 remains open/draft on old base at `200069b02d4d086e76382a9a40257b682abf940f`. PR #464 head `40437b21af12eda892584617b9a131e436ca55d6` is aligned to main `990aa91e0fe8bdb8f3e261f074e384172df478dc`, compares `ahead 3 / behind 0`, and has the observed required workflows green. | Admin should decide whether PR #464 supersedes original PR #455 and, if accepted, proceed through the Admin release gate without deployment, tag, or customer outbound. |
 | Admin debug and Control Tower surfaces | PR #456 remains draft/queued and behind current main. A preflight finding exists around raw provider group ID exposure on create/get/update detail surfaces. | Keep last until #455 lands, then rebase and fix or explicitly authorize runtime-admin provider group ID detail exposure. |
 | Roadmap control files | PR #462 merged as `990aa91e0fe8bdb8f3e261f074e384172df478dc`, restoring this file and `docs/roadmap/nexus-osr-plan.yaml` on main. | Treat roadmap files as the current control baseline; keep them aligned with merged main facts. |
 
@@ -120,7 +120,7 @@ Acceptance focus:
 - Customer-visible behavior remains unchanged.
 - No WhatsApp sidecar change unless separately approved.
 
-Current status: PR #464 is the current recovery candidate for the #455 workstream, but it must be refreshed against `990aa91e` and focused-tested before Admin gate.
+Current status: PR #464 head `40437b21af12eda892584617b9a131e436ca55d6` is current-main aligned and validated as a `READY_FOR_ADMIN_GATE_CANDIDATE`; Admin decision is next.
 
 ### M7 — Debug, eval, and regression gate
 
@@ -188,8 +188,8 @@ Acceptance focus:
 ## Active dependency order
 
 1. Treat PR #454 as merged M3 baseline and PR #462 as merged roadmap-control baseline on main `990aa91e0fe8bdb8f3e261f074e384172df478dc`.
-2. Refresh/rebase PR #464 onto `990aa91e`, then run focused WhatsApp routing, persistence, and auto-ticket checks.
-3. Let Admin decide whether PR #464 supersedes original PR #455 after exact-head validation.
+2. Let Admin decide whether PR #464 at `40437b21af12eda892584617b9a131e436ca55d6` supersedes original PR #455 after exact-head validation.
+3. If accepted, move PR #464 through the Admin release gate; ordinary agents should not mark Ready, merge, deploy, tag, or rerun full CI.
 4. Keep PR #456 queued until the WhatsApp routing workstream lands; then rebase and fix/authorize provider group ID detail exposure.
 5. Address Work Order #459 escalation follow-up on a current-main branch when it does not conflict with the active runtime PR.
 6. Continue M4/M5/M7+ only through current-main Work Orders and exact-head conflict checks.
