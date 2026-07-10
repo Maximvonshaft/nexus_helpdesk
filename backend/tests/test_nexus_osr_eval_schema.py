@@ -66,6 +66,20 @@ def test_dataset_rejects_forbidden_raw_payload_fields() -> None:
         "provider_group_id_raw",
         "tool_result_body",
         "toolArgumentsJson",
+        "customer_contact",
+        "contactDetails",
+        "contact-value",
+        "recipient_contact_record",
+        "client_secret",
+        "clientSecretValue",
+        "password_value",
+        "authorization-header",
+        "x_authorization_header",
+        "bearerToken",
+        "session_token",
+        "session-token-value",
+        "identity_token",
+        "token_value",
     ],
 )
 def test_dataset_rejects_derived_sensitive_field_names(field_name: str) -> None:
@@ -74,6 +88,29 @@ def test_dataset_rejects_derived_sensitive_field_names(field_name: str) -> None:
 
     with pytest.raises(EvalSchemaError, match="forbidden_field"):
         validate_dataset(payload)
+
+
+def test_dataset_rejects_nested_derived_sensitive_field_names() -> None:
+    payload = _payload()
+    _first_summary(payload)["safe_wrapper"] = {
+        "nested": {
+            "customerContactValue": "synthetic-redacted",
+        }
+    }
+
+    with pytest.raises(EvalSchemaError, match="forbidden_field"):
+        validate_dataset(payload)
+
+
+def test_forbidden_field_failure_does_not_echo_sensitive_value() -> None:
+    payload = _payload()
+    sensitive_value = "synthetic-private-credential-material"
+    _first_summary(payload)["client_secret"] = sensitive_value
+
+    with pytest.raises(EvalSchemaError, match="forbidden_field") as exc_info:
+        validate_dataset(payload)
+
+    assert sensitive_value not in str(exc_info.value)
 
 
 @pytest.mark.parametrize(
@@ -103,6 +140,10 @@ def test_dataset_allows_safe_operational_summary_fields() -> None:
             "provider_readiness_state": "unavailable",
             "tool_action_count": 0,
             "review_date_label": "2026-07-10",
+            "token_usage_count": 17,
+            "token_budget_summary": "within synthetic limit",
+            "contact_policy_summary": "Use the governed escalation path",
+            "contactless_delivery_summary": "enabled",
         }
     )
 
