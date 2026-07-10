@@ -44,6 +44,7 @@ jobs:
       PYTHONPATH: backend
       APP_ENV: development
       ALLOW_DEV_AUTH: "false"
+      SQLITE_DATABASE_URL: sqlite:////tmp/osr-dispatch-outbox-gate.db
 
     steps:
       - name: Checkout
@@ -77,19 +78,44 @@ jobs:
             backend/tests/test_nexus_osr_operations_dispatch_postgres.py \
             backend/tests/test_nexus_osr_whatsapp_routing_service.py
 
-      - name: Run SQLite outbox state-machine tests
+      - name: SQLite enqueue idempotency and scope safety
         env:
-          DATABASE_URL: sqlite:////tmp/osr-dispatch-outbox-gate.db
-        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_enqueue_is_idempotent_database_unique_and_scope_safe
+
+      - name: SQLite lease recovery and stale owner
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_worker_lease_expiry_recovery_and_stale_owner_rejection
+
+      - name: SQLite retry backoff and dead letter
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_retry_backoff_and_max_attempts_dead_letter
+
+      - name: SQLite result and error redaction
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_provider_ack_external_reference_and_errors_are_redacted
+
+      - name: SQLite processor transaction boundary
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_processor_commits_claim_before_adapter_and_exposes_only_safe_envelope
+
+      - name: SQLite disabled adapter fail closed
+        env:
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
+        run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_outbox.py::test_disabled_adapter_fails_closed_without_external_transport
 
       - name: Run migration unit round trip
         env:
-          DATABASE_URL: sqlite:////tmp/osr-dispatch-outbox-gate.db
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
         run: pytest -q backend/tests/test_nexus_osr_operations_dispatch_migration.py
 
       - name: Run routing enqueue-only tests
         env:
-          DATABASE_URL: sqlite:////tmp/osr-dispatch-outbox-gate.db
+          DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
         run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py
 
       - name: Prove one Alembic head
