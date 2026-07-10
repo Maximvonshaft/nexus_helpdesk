@@ -130,6 +130,13 @@ def test_coverage_gaps_are_machine_visible() -> None:
 def test_failure_artifacts_are_bounded_redacted_and_actionable(tmp_path: Path) -> None:
     dataset = load_dataset(DATASET)
     payload = copy.deepcopy(dataset.payload)
+    first_summary = next(
+        evidence["summary"]
+        for case in payload["cases"]
+        for evidence in case["decision"]["evidence_sources"]
+    )
+    first_summary["client_secret"] = "synthetic-private-credential-material"
+
     expanded_cases = []
     for cycle in range(3):
         for original in payload["cases"]:
@@ -152,6 +159,8 @@ def test_failure_artifacts_are_bounded_redacted_and_actionable(tmp_path: Path) -
     assert manifest["redacted"] is True
     assert "Synthetic blocked response" not in combined
     assert "synthetic-secret-marker" not in combined
+    assert "synthetic-private-credential-material" not in combined
+    assert "client_secret" not in combined
     assert "evidence_sources" not in combined
     assert "business_reply_type" not in combined
     assert "next_action" not in combined
