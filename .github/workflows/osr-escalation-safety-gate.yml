@@ -47,12 +47,17 @@ jobs:
             backend/tests/test_nexus_osr_webchat_escalation_hook.py \
             backend/tests/test_nexus_osr_configured_escalation_errors.py
 
-      - name: Run focused configured escalation tests
-        run: |
-          python -m pytest -q --timeout=120 \
-            backend/tests/test_nexus_osr_escalation_orchestration.py \
-            backend/tests/test_nexus_osr_webchat_escalation_hook.py \
-            backend/tests/test_nexus_osr_configured_escalation_errors.py
+      - name: Run escalation orchestration service tests
+        run: python -m pytest -q --timeout=120 backend/tests/test_nexus_osr_escalation_orchestration.py
+
+      - name: Run WebChat escalation entry tests
+        run: python -m pytest -q --timeout=120 backend/tests/test_nexus_osr_webchat_escalation_hook.py
+
+      - name: Prove configured policy evaluation exception handling
+        run: python -m pytest -q --timeout=120 backend/tests/test_nexus_osr_configured_escalation_errors.py::test_configured_policy_evaluation_error_routes_to_operator_review
+
+      - name: Prove escalation orchestration exception handling
+        run: python -m pytest -q --timeout=120 backend/tests/test_nexus_osr_configured_escalation_errors.py::test_orchestration_error_routes_to_operator_review
 
       - name: Prove one unchanged Alembic head
         working-directory: backend
