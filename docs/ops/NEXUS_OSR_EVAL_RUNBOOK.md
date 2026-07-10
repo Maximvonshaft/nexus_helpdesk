@@ -56,6 +56,16 @@ The gate derives the result from the actual runtime evaluation, not only from fi
 
 Adding a required matrix value without a matching case makes the run fail and records the exact gap in `coverage.json`.
 
+## Runtime-evidence integration
+
+M7 runtime evidence is delivered independently through the sibling Work Item #523. The eval runner does not call its probes or mutate its configuration. PR acceptance must nevertheless validate the GitHub merge result against the latest `main`, so runtime-evidence changes and this eval package are exercised together by the repository integration and full-regression gates.
+
+The responsibilities remain separate:
+
+- runtime evidence proves identity, freshness, failure budgets, alerts and read-only probe health;
+- governed eval proves decision-policy outcomes, evidence authority, escalation closure, tenant/permission isolation and output safety;
+- neither capability is a production deployment or a substitute for M12 staging and operational evidence.
+
 ## Local execution
 
 From the repository root:
