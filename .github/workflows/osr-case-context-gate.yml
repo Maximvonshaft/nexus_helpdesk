@@ -74,8 +74,22 @@ jobs:
       - name: Run WhatsApp routing compatibility tests
         run: pytest -q backend/tests/test_nexus_osr_whatsapp_routing_service.py
 
-      - name: Run Admin Case Context compatibility tests
-        run: pytest -q backend/tests/test_nexus_osr_admin_api.py
+      - name: Run Admin policy and permission tests
+        run: |
+          pytest -q backend/tests/test_nexus_osr_admin_api.py -k "admin_crud or admin_can_manage or policy_schema or validation_errors or non_admin"
+
+      - name: Run Admin tenant isolation tests
+        run: pytest -q backend/tests/test_nexus_osr_admin_api.py -k "tenant_isolation"
+
+      - name: Run Admin runtime audit tests
+        run: pytest -q backend/tests/test_nexus_osr_admin_api.py -k "runtime_audit"
+
+      - name: Run Admin Case Context patch tests
+        run: pytest -q backend/tests/test_nexus_osr_admin_api.py -k "case_context_allows"
+
+      - name: Run Admin debug and redaction tests
+        run: |
+          pytest -q backend/tests/test_nexus_osr_admin_api.py -k "debug_snapshot or webchat_debug or route_mount"
 
       - name: Check diff whitespace
         run: git diff --check origin/${{ github.base_ref }}...HEAD
