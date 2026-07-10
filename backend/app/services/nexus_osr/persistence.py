@@ -7,100 +7,22 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ...models_osr import (
-    CaseContextRecord,
     EscalationPolicyRecord,
     HumanHoursPolicyRecord,
     RuntimeDecisionAuditRecord,
     ToolExecutionPolicyRecord,
     WhatsAppRoutingRuleRecord,
 )
-from .case_context import CaseContext, CaseContextStatus, ContactMethod
+from .case_context import CaseContext
+from .case_context_persistence import (
+    close_case_context,
+    expire_case_context,
+    load_case_context,
+    record_to_case_context,
+    save_case_context,
+)
 from .policies import EscalationAction, EscalationPolicy, HumanHoursPolicy, ToolExecutionPolicy
 from .runtime_decision_contract import RuntimeDecision, RuntimeDecisionEvaluation
-
-
-def load_case_context(db: Session, *, conversation_id: int | None = None, ticket_id: int | None = None) -> CaseContext | None:
-    query = db.query(CaseContextRecord)
-    if conversation_id is not None:
-        query = query.filter(CaseContextRecord.conversation_id == conversation_id)
-    if ticket_id is not None:
-        query = query.filter(CaseContextRecord.ticket_id == ticket_id)
-    row = query.order_by(CaseContextRecord.id.desc()).first()
-    return record_to_case_context(row) if row else None
-
-
-def save_case_context(db: Session, context: CaseContext, *, tenant_id: str = "default", expires_at: datetime | None = None) -> CaseContextRecord:
-    row = None
-    if context.conversation_id is not None or context.ticket_id is not None:
-        query = db.query(CaseContextRecord)
-        if context.conversation_id is not None:
-            query = query.filter(CaseContextRecord.conversation_id == int(context.conversation_id))
-        if context.ticket_id is not None:
-            query = query.filter(CaseContextRecord.ticket_id == int(context.ticket_id))
-        row = query.order_by(CaseContextRecord.id.desc()).first()
-    if row is None:
-        row = CaseContextRecord()
-        db.add(row)
-    row.tenant_id = tenant_id
-    row.conversation_id = int(context.conversation_id) if context.conversation_id is not None and str(context.conversation_id).isdigit() else None
-    row.ticket_id = int(context.ticket_id) if context.ticket_id is not None and str(context.ticket_id).isdigit() else None
-    row.channel = context.channel
-    row.country_code = context.country_code
-    row.issue_type = context.issue_type
-    row.status = str(context.status)
-    row.safe_tracking_reference = context.safe_tracking_reference
-    row.tracking_number_hash = context.tracking_number_hash
-    row.contact_methods_json = [item.as_dict() for item in context.contact_methods]
-    row.customer_claim_summary = context.customer_claim_summary
-    row.last_mcp_fact_json = context.last_mcp_fact
-    row.missing_info_json = list(context.missing_info)
-    row.handoff_requested = context.handoff_requested
-    row.ticket_created = context.ticket_created
-    row.routed_group_key = context.routed_group_key
-    row.ai_actions_taken_json = list(context.ai_actions_taken)
-    row.agent_handover_summary = context.agent_handover_summary
-    row.expires_at = expires_at
-    row.closed_at = _parse_iso(context.closed_at)
-    db.flush()
-    return row
-
-
-def record_to_case_context(row: CaseContextRecord) -> CaseContext:
-    contacts = []
-    for item in row.contact_methods_json or []:
-        if isinstance(item, dict):
-            contacts.append(ContactMethod(
-                channel=str(item.get("channel") or "unknown"),
-                value_redacted=str(item.get("value_redacted") or ""),
-                source=str(item.get("source") or "unknown"),
-                is_default=bool(item.get("is_default")),
-            ))
-    try:
-        status = CaseContextStatus(row.status)
-    except ValueError:
-        status = CaseContextStatus.ACTIVE
-    return CaseContext(
-        conversation_id=row.conversation_id,
-        ticket_id=row.ticket_id,
-        channel=row.channel,
-        country_code=row.country_code,
-        issue_type=row.issue_type,
-        status=status,
-        safe_tracking_reference=row.safe_tracking_reference,
-        tracking_number_hash=row.tracking_number_hash,
-        contact_methods=contacts,
-        customer_claim_summary=row.customer_claim_summary,
-        last_mcp_fact=row.last_mcp_fact_json,
-        missing_info=list(row.missing_info_json or []),
-        handoff_requested=row.handoff_requested,
-        ticket_created=row.ticket_created,
-        routed_group_key=row.routed_group_key,
-        ai_actions_taken=list(row.ai_actions_taken_json or []),
-        agent_handover_summary=row.agent_handover_summary,
-        created_at=row.created_at.isoformat() if row.created_at else "",
-        updated_at=row.updated_at.isoformat() if row.updated_at else "",
-        closed_at=row.closed_at.isoformat() if row.closed_at else None,
-    )
 
 
 def resolve_human_hours_policy(db: Session, *, country_code: str | None, channel: str | None, queue_key: str) -> HumanHoursPolicy | None:
