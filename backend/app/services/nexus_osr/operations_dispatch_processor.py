@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from sqlalchemy.orm import Session
 
+from ...enums import EventType
 from ...models import TicketEvent
 from ...models_operations_dispatch import OperationsDispatchOutboxRecord
 from .operations_dispatch_outbox import (
+    OperationsDispatchLeaseLostError,
     claim_next_operations_dispatch,
     mark_operations_dispatch_failure,
     mark_operations_dispatch_success,
@@ -100,28 +103,34 @@ def process_operations_dispatch_batch(
                 error_summary=str(exc),
             )
 
-        if result.success:
-            finalized = mark_operations_dispatch_success(
-                db,
-                record_id=envelope.outbox_id,
-                lease_owner=worker_id,
-                provider_acknowledgement=result.acknowledgement,
-                external_reference=result.external_reference,
-            )
-            _audit_timeline(db, record=finalized, phase="dispatched")
-        else:
-            finalized = mark_operations_dispatch_failure(
-                db,
-                record_id=envelope.outbox_id,
-                lease_owner=worker_id,
-                retryable=result.retryable,
-                error_category=result.error_category or "dispatch_failed",
-                error_summary=result.error_summary,
-            )
-            _audit_timeline(db, record=finalized, phase="failed")
-
-        db.commit()
-        processed += 1
+        try:
+            if result.success:
+                finalized = mark_operations_dispatch_success(
+                    db,
+                    record_id=envelope.outbox_id,
+                    lease_owner=worker_id,
+                    provider_acknowledgement=result.acknowledgement,
+                    external_reference=result.external_reference,
+                )
+                _audit_timeline(db, record=finalized, phase="dispatched")
+            else:
+                finalized = mark_operations_dispatch_failure(
+                    db,
+                    record_id=envelope.outbox_id,
+                    lease_owner=worker_id,
+                    retryable=result.retryable,
+                    error_category=result.error_category or "dispatch_failed",
+                    error_summary=result.error_summary,
+                )
+                _audit_timeline(db, record=finalized, phase="failed")
+            db.commit()
+            processed += 1
+        except OperationsDispatchLeaseLostError:
+            db.rollback()
+            # The adapter may already have produced a side effect. We must not
+            # overwrite a newer worker's state. Provider-side idempotency uses
+            # the same stable dispatch_key on any later retry.
+            continue
     return processed
 
 
@@ -146,14 +155,16 @@ def _envelope(record: OperationsDispatchOutboxRecord) -> OperationsDispatchEnvel
 def _audit_timeline(db: Session, *, record: OperationsDispatchOutboxRecord, phase: str) -> None:
     if record.ticket_id is None:
         return
+    payload = {
+        "source": "nexus_osr",
+        "phase": phase,
+        "dispatch": safe_operations_dispatch_reference(record),
+    }
     db.add(TicketEvent(
         ticket_id=record.ticket_id,
-        event_type="operations_dispatch_outbox",
-        actor_type="system",
-        actor_user_id=None,
-        details_json={
-            "phase": phase,
-            "dispatch": safe_operations_dispatch_reference(record),
-        },
+        actor_id=None,
+        event_type=EventType.field_updated,
+        note=f"Nexus OSR operations dispatch {phase}",
+        payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
     ))
     db.flush()
