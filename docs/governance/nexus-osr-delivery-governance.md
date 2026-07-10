@@ -2,24 +2,22 @@
 
 ## Purpose
 
-This document defines how Nexus OSR work is planned, owned, implemented, reviewed, accepted, and archived. The operating model is intentionally Issue-first because Issues, Pull Requests, branches, comments, labels, assignees, and repository files are the governance surfaces that the connected GitHub tooling can reliably read and write.
+This document defines how Nexus OSR work is planned, owned, implemented, reviewed, accepted, and archived through GitHub Issues and Pull Requests.
 
-Nexus OSR is a multi-country logistics customer-service and operations-closure runtime. Governance must preserve its safety kernel while allowing small, independently reviewable increments to move quickly.
+The control model is intentionally limited to GitHub surfaces that the connected operating agent can read and update reliably. GitHub Projects is optional and non-authoritative.
 
 ## Source-of-truth hierarchy
 
 Use the following authority order:
 
-1. **Delivery Index Issue #489** — live portfolio index, current Work Items, dependencies, WIP, and current Pull Requests.
-2. **Epic Issue** — durable M1–M12 capability outcome and completion boundary.
-3. **Work Item Issue** — independently assignable, implementable, reviewable, and closable unit of work.
-4. **Pull Request** — implementation facts, exact SHAs, diff, migration, tests, runtime evidence, and rollback.
+1. **Work Item Issue** — lifecycle, owner, dependencies, acceptance criteria, and closure state for one independently deliverable unit of work.
+2. **Epic Issue** — durable M1–M12 capability outcome, child Work Items, dependency graph, and completion boundary.
+3. **Pull Request** — implementation facts, exact SHAs, changed files, migration impact, tests, runtime evidence, review, and rollback.
+4. **Issue #489** — stable navigation index for Epics, active Work Items, governance rules, and query links; it must not duplicate volatile implementation details.
 5. **Architecture and roadmap documentation** — durable doctrine and milestone intent, not live execution state.
-6. **Audit portfolio #467** — point-in-time findings and remediation evidence, not task authorization.
+6. **Audit portfolio** — point-in-time findings and remediation evidence, not task authorization.
 
-GitHub Projects may exist as an optional human-only visualization, but it is not authoritative and must not be required for execution or acceptance.
-
-A lower layer must not contradict a higher layer. Point-in-time SHAs in Issues or reports are evidence, not manually maintained live status fields.
+The user-created GitHub Project may be used as a personal visualization, but no Nexus OSR workflow, release gate, or ownership decision depends on it.
 
 ## Immutable safety kernel
 
@@ -38,21 +36,7 @@ Every Epic, Work Item, and Pull Request must preserve these rules:
 
 ## Planning model
 
-### Delivery Index Issue
-
-Issue #489 is the only live portfolio index. It must contain:
-
-- current main SHA as point-in-time evidence;
-- Epic map and lifecycle;
-- executable Work Items only;
-- current implementation PR for each active Work Item;
-- blocking relationships and required merge order;
-- WIP and release-candidate count;
-- links to the audit portfolio and release/integration gate.
-
-The index is updated after every accepted merge, Work Item creation, blocking decision, supersession, and release-candidate transition.
-
-### Epic
+### Epic Issue
 
 An Epic represents one durable product capability, normally one annual milestone. It owns:
 
@@ -62,21 +46,23 @@ An Epic represents one durable product capability, normally one annual milestone
 - dependency graph;
 - completion evidence.
 
-An Epic is not a branch, a release candidate, or a place for execution logs.
+An Epic is not a branch, a release candidate, or a place for execution logs. Close an Epic with `completed` only when all completion criteria are satisfied.
 
-### Work Item
+### Work Item Issue
 
 A Work Item is the smallest unit that can be independently assigned, implemented, reviewed, accepted, and closed. It owns:
 
+- parent Epic;
 - current verified behavior;
 - expected behavior;
 - allowed and forbidden scope;
+- lifecycle state;
+- current owner;
+- blocked-by and blocking relationships;
 - acceptance criteria;
 - test and runtime evidence requirements;
 - migration, rollout, repair, and rollback requirements;
-- blocked-by and blocking relationships;
-- lifecycle line: `Backlog`, `Ready`, `In Progress`, `In Review`, `Release Gate`, `Blocked`, or `Done`;
-- current owner and current PR.
+- current implementation Pull Request, when one exists.
 
 Stable requirements belong in the Work Item. Volatile implementation facts such as exact head SHA, actual changed files, final migration revision, and test output belong in the Pull Request.
 
@@ -93,46 +79,79 @@ One Work Item may have only one current implementation Pull Request. The Pull Re
 
 Old-base, superseded, or abandoned Pull Requests are closed and retained as historical evidence. They are never current merge authority.
 
-## Lifecycle and ownership
+## Lifecycle contract
 
-Lifecycle is recorded in the Work Item body and reflected in #489. Ownership is established by:
+Lifecycle is recorded directly in the Work Item Issue.
 
-- Issue assignee;
-- explicit lifecycle state in the Work Item;
-- exactly one linked current Draft PR when implementation has started.
+| Lifecycle | Required evidence |
+|---|---|
+| Backlog | Open Issue; outcome known; not yet acceptance-ready |
+| Ready | Open Issue; acceptance complete; no unresolved blocker; no current owner required |
+| In Progress | Open Issue; assignee set; implementation active; at most one current PR |
+| In Review | Open Issue; one current Draft or review-ready PR linked |
+| Release Gate | Open Issue; exact-head checks complete; release decision pending |
+| Blocked | Open Issue; explicit `Blocked by #...` dependency or external evidence |
+| Done | Issue closed with reason `completed` after accepted merge or verified non-code completion |
+| Not Planned | Issue closed with reason `not_planned` and explicit disposition |
 
-Comment-based leases and `ACTION_CLAIM` records are not used.
+Each open Work Item body must contain a compact control block:
+
+```markdown
+## Control
+- Parent Epic: #...
+- Lifecycle: Backlog | Ready | In Progress | In Review | Release Gate | Blocked
+- Owner: @username | unassigned
+- Current PR: #... | none
+- Blocked by: #... | none
+- Supersedes: #... | none
+```
+
+Issue state is authoritative for completion. Assignee is authoritative for ownership. The linked current Pull Request is authoritative for implementation status and exact-head evidence.
 
 ## Standard lifecycle
 
-1. A requirement, defect, or audit finding is linked to an Epic.
+1. A requirement, defect, or audit finding is linked to one Epic.
 2. A Work Item is created with complete acceptance and safety boundaries.
 3. Dependencies are recorded before the Work Item enters `Ready`.
-4. Ownership is established by assignee and `In Progress` state.
-5. One Draft Pull Request is opened from current `main`.
-6. Focused validation moves the Work Item to `In Review`.
+4. Ownership is established by assigning the Work Item and setting `Lifecycle: In Progress`.
+5. One Draft Pull Request is opened from current `main` and linked as `Current PR`.
+6. The Work Item moves to `In Review` while focused validation and review run.
 7. Exact-head full checks and required runtime evidence move it to `Release Gate`.
 8. The release owner accepts or rejects the exact head.
-9. Merge closes the Work Item and records `Done` in #489.
-10. The parent Epic closes only when all completion criteria are satisfied.
+9. Accepted merge closes the Work Item with `completed`.
+10. The parent Epic closes only when all child completion criteria are satisfied.
 
-## WIP and ownership rules
+## WIP and ownership
 
-- Maximum active product Work Items: two.
+- Maximum active implementation Work Items: two.
 - Maximum release candidates: one.
 - One owner per Work Item.
 - One current implementation Pull Request per Work Item.
 - Shared review does not create a second implementation branch.
-- A parent defect or audit Issue does not count as a second Work Item when executable child Work Items exist.
+- Comment-based leases and centralized claim logs are not used.
+- A parent defect or audit Issue is not counted as a second workstream when executable child Work Items exist.
 
 ## Dependency and merge policy
 
-- Record blocked-by/blocking relationships in both linked Work Items and #489.
+- Record `Blocked by #...` directly in the Work Item; use native GitHub dependencies where available.
 - Merge one Pull Request at a time.
 - Re-read `main` after every merge.
 - Recompute downstream base, migration chain, and affected tests after every merge.
 - Old-base green checks are not merge authority.
 - Parallel schema work must converge to one expected Alembic head before release acceptance.
+
+## Governance index
+
+Issue #489 is a stable navigation surface, not a manually synchronized project database. It may contain:
+
+- links to M1–M12 Epic Issues;
+- links to open Work Items;
+- links to current Pull Requests;
+- WIP and release rules;
+- saved GitHub search URLs;
+- historical-control and audit references.
+
+It must not copy exact head SHAs, CI results, changed files, or detailed lifecycle evidence already owned by a Work Item or Pull Request.
 
 ## Release evidence
 
@@ -147,12 +166,12 @@ A release decision must distinguish:
 
 Green CI alone is not production proof. M12 remains `NO_GO` until the required runtime and operational evidence is complete.
 
-## Historical and optional surfaces
+## Historical records
 
 - Issue #461 is the closed historical swarm control log.
 - Issue #467 is the audit and remediation evidence portfolio.
-- Issue #489 is the authoritative live delivery index.
-- GitHub Project #1 is optional and non-authoritative; no workflow may depend on it.
+- Issue #489 is the Issue-only governance index.
+- Issue #505 records the rejected GitHub Project control path and is closed as `not_planned`.
 - Historical Pull Requests remain available for code and review evidence after closure.
 
-Roadmap Markdown and YAML describe architecture, milestone definitions, and stable governance rules only. They must not duplicate live status from #489. Machine-readable exports, if needed, should be generated from Issues and Pull Requests rather than manually synchronized.
+Roadmap Markdown may describe architecture and milestone intent. Roadmap YAML must not be manually maintained as a second live execution database. Any machine-readable export must be generated from GitHub Issues and Pull Requests, not from a manually maintained Project board.
