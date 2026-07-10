@@ -62,8 +62,17 @@ jobs:
             backend/tests/test_nexus_osr_audit_persistence_safety.py \
             backend/tests/test_osr_model_registration.py
 
-      - name: Run sanitizer unit tests
-        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py
+      - name: Sanitizer hostile nested payload
+        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_sanitizer_redacts_hostile_nested_payload_and_preserves_safe_metadata
+
+      - name: Sanitizer deterministic bounds and cycle
+        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_sanitizer_is_deterministic_bounded_and_cycle_safe
+
+      - name: Sanitizer sensitive keys and failure fallback
+        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_sensitive_keys_key_names_and_failure_fallback_are_safe
+
+      - name: Sanitizer safe label contract
+        run: pytest -q backend/tests/test_nexus_osr_audit_sanitizer.py::test_safe_audit_label_rejects_free_form_and_pii
 
       - name: Run final persistence boundary tests
         run: pytest -q backend/tests/test_nexus_osr_audit_persistence_safety.py
