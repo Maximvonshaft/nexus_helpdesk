@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import hashlib
+import json
 import re
 from dataclasses import dataclass
 from enum import StrEnum
@@ -8,6 +8,7 @@ from typing import Any, Mapping, Protocol
 
 from sqlalchemy.orm import Session
 
+from ...enums import EventType
 from ...models import Ticket, TicketEvent
 from ...models_osr import WhatsAppRoutingRuleRecord
 from .case_context import CaseContext
@@ -21,8 +22,15 @@ from .persistence import save_case_context
 _SAFE_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 _PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\d .()\-]{6,}\d)(?!\w)")
-_TRACKING_RE = re.compile(r"\b(?=[A-Z0-9._-]{8,48}\b)(?=(?:[A-Z0-9._-]*\d){4})(?=[A-Z0-9._-]*[A-Z])[A-Z0-9][A-Z0-9._-]+\b", re.I)
-_SECRET_RE = re.compile(r"(?:\bbearer\s+\S+|\bsk-(?:proj-)?[A-Za-z0-9_-]{12,}|\b(?:password|secret|api[_-]?key|token)\s*[:=]\s*\S+)", re.I)
+_TRACKING_RE = re.compile(
+    r"\b(?=[A-Z0-9._-]{8,48}\b)(?=(?:[A-Z0-9._-]*\d){4})(?=[A-Z0-9._-]*[A-Z])[A-Z0-9][A-Z0-9._-]+\b",
+    re.I,
+)
+_SECRET_RE = re.compile(
+    r"(?:\bbearer\s+\S+|\bsk-(?:proj-)?[A-Za-z0-9_-]{12,}|"
+    r"\b(?:password|secret|api[_-]?key|token)\s*[:=]\s*\S+)",
+    re.I,
+)
 _GROUP_ID_RE = re.compile(r"\b\d{10,24}@g\.us\b", re.I)
 _TEMPLATE_TOKEN_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.:-]+)\s*\}\}")
 _ALLOWED_TEMPLATE_KEYS = {
@@ -85,30 +93,39 @@ def route_ticket_to_whatsapp_group(
     ticket: Ticket,
     channel: str = "whatsapp",
     tenant_key: str | None = None,
+    tenant_id: str | None = None,
     template_context: Mapping[str, Any] | None = None,
     dispatcher: WhatsAppGroupDispatcher | None = None,
     message: str | None = None,
 ) -> WhatsAppRoutingResult:
-    """Resolve one configured rule and enqueue a durable operations dispatch.
+    """Resolve one exact configured rule and enqueue a durable dispatch.
 
-    Direct transport is forbidden. ``dispatcher`` and free-form ``message`` are
-    retained only as explicit compatibility traps and fail closed when supplied.
-    Template context may be validated separately with ``build_safe_group_message``
-    but no message body is stored in the outbox or TicketEvent timeline.
+    Direct transport is forbidden. No message body is generated or persisted.
+    There is no country, tenant, issue, or fallback-group widening.
     """
 
     if dispatcher is not None:
         raise RuntimeError("direct_whatsapp_dispatch_forbidden")
     if message not in (None, ""):
         raise RuntimeError("operations_dispatch_message_body_forbidden")
-    if template_context:
-        # Validate caller-supplied values without persisting or returning text.
-        build_safe_group_message("", values=template_context)
+    _validate_template_context(template_context)
 
-    country = _scope(case_context.country_code or getattr(ticket, "country_code", None) or "GLOBAL", field="country_code", limit=16).upper()
-    issue_type = _scope(case_context.issue_type or getattr(ticket, "case_type", None) or "general", field="issue_type", limit=120)
+    if tenant_key and tenant_id and tenant_key != tenant_id:
+        raise ValueError("whatsapp_routing_tenant_scope_conflict")
+
+    country = _scope(
+        case_context.country_code or getattr(ticket, "country_code", None) or "GLOBAL",
+        field="country_code",
+        limit=16,
+    ).upper()
+    issue_type = _scope(
+        case_context.issue_type or getattr(ticket, "case_type", None) or "general",
+        field="issue_type",
+        limit=120,
+    )
     channel_key = _scope(channel or "whatsapp", field="channel", limit=40).lower()
-    tenant = _scope(tenant_key or "default", field="tenant_key", limit=80)
+    tenant = _scope(tenant_key or tenant_id or "default", field="tenant_key", limit=80)
+    ticket_id = int(ticket.id) if getattr(ticket, "id", None) is not None else None
 
     rule = (
         db.query(WhatsAppRoutingRuleRecord)
@@ -119,31 +136,36 @@ def route_ticket_to_whatsapp_group(
         .first()
     )
     if rule is None:
-        return _not_routed(
+        result = _not_routed(
             status=WhatsAppRoutingStatus.NO_RULE,
             reason="whatsapp_routing_rule_not_found",
             case_context=case_context,
         )
+        _audit_routing_decision(db, ticket_id=ticket_id, result=result)
+        return result
     if not rule.enabled:
-        return _not_routed(
+        result = _not_routed(
             status=WhatsAppRoutingStatus.DISABLED_RULE,
             reason="whatsapp_routing_rule_disabled",
             case_context=case_context,
             rule_id=rule.id,
         )
+        _audit_routing_decision(db, ticket_id=ticket_id, result=result)
+        return result
 
     destination_id = str(rule.destination_group_id or "").strip()
     if not destination_id:
-        return _not_routed(
+        result = _not_routed(
             status=WhatsAppRoutingStatus.DISABLED_RULE,
             reason="whatsapp_routing_destination_missing",
             case_context=case_context,
             rule_id=rule.id,
         )
+        _audit_routing_decision(db, ticket_id=ticket_id, result=result)
+        return result
 
     group_hash = digest_identifier(destination_id)
     group_key = _group_key(group_hash)
-    ticket_id = int(ticket.id) if getattr(ticket, "id", None) is not None else None
     case_reference = ":".join([
         str(case_context.conversation_id or "none"),
         str(case_context.tracking_number_hash or "none"),
@@ -171,27 +193,7 @@ def route_ticket_to_whatsapp_group(
 
     updated_context = case_context.mark_routed(group_key)
     save_case_context(db, updated_context, tenant_id=tenant)
-    if ticket_id is not None:
-        db.add(TicketEvent(
-            ticket_id=ticket_id,
-            event_type="whatsapp_group_routed",
-            actor_type="system",
-            actor_user_id=None,
-            details_json={
-                "routing_status": WhatsAppRoutingStatus.ROUTED.value,
-                "rule_id": rule.id,
-                "group_key": group_key,
-                "group_hash": group_hash,
-                "fallback_used": False,
-                "outbox_id": enqueue_result.record.id,
-                "dispatch_key": dispatch_key,
-                "dispatch_status": enqueue_result.record.status,
-                "outbox_created": enqueue_result.created,
-            },
-        ))
-        db.flush()
-
-    return WhatsAppRoutingResult(
+    result = WhatsAppRoutingResult(
         status=WhatsAppRoutingStatus.ROUTED,
         routed=True,
         reason="whatsapp_operations_dispatch_enqueued",
@@ -204,14 +206,13 @@ def route_ticket_to_whatsapp_group(
         dispatch_key=dispatch_key,
         dispatch_status=enqueue_result.record.status,
     )
+    if enqueue_result.created:
+        _audit_routing_decision(db, ticket_id=ticket_id, result=result)
+    return result
 
 
 def build_safe_group_message(template: str, *, values: Mapping[str, Any] | None = None) -> str:
-    """Render a bounded internal template without exposing arbitrary values.
-
-    This helper does not send or enqueue text. It remains available for future
-    governed provider-adapter work and existing safe preview tests.
-    """
+    """Render a bounded internal preview; this helper never sends or enqueues."""
 
     source = str(template or "").strip()
     if not source:
@@ -226,6 +227,39 @@ def build_safe_group_message(template: str, *, values: Mapping[str, Any] | None 
 
     rendered = _TEMPLATE_TOKEN_RE.sub(replace, source)
     return _sanitize_text(rendered, limit=800)
+
+
+def _validate_template_context(values: Mapping[str, Any] | None) -> None:
+    if values is None:
+        return
+    for raw_key, raw_value in values.items():
+        key = str(raw_key)
+        if key not in _ALLOWED_TEMPLATE_KEYS:
+            raise ValueError("whatsapp_routing_unsupported_template_context")
+        _sanitize_text(raw_value, limit=80)
+
+
+def _audit_routing_decision(
+    db: Session,
+    *,
+    ticket_id: int | None,
+    result: WhatsAppRoutingResult,
+) -> None:
+    if ticket_id is None:
+        return
+    payload = {
+        "source": "nexus_osr",
+        "event": "operations_dispatch_routing",
+        "routing": result.as_safe_dict(),
+    }
+    db.add(TicketEvent(
+        ticket_id=ticket_id,
+        actor_id=None,
+        event_type=EventType.field_updated,
+        note=f"Nexus OSR operations routing {result.status.value}",
+        payload_json=json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+    ))
+    db.flush()
 
 
 def _not_routed(
