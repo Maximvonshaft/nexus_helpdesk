@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import argparse
+from dataclasses import asdict, dataclass
+import json
+from pathlib import Path
 import sys
-from dataclasses import dataclass
 
 from sqlalchemy import CheckConstraint, UniqueConstraint, create_engine, inspect
 
@@ -121,10 +124,35 @@ def collect_schema_drift(inspector) -> list[Drift]:
     return drift
 
 
-def main() -> int:
+def _write_report(path: str | None, *, status: str, drift: list[Drift], error: str | None = None) -> None:
+    if not path:
+        return
+    payload = {
+        "schema": "nexus.model_migration_drift.v1",
+        "status": status,
+        "registered_model_modules": list(REGISTERED_MODEL_MODULES),
+        "drift_count": len(drift),
+        "drift": [asdict(item) for item in drift],
+        "error": error,
+    }
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--report-json", default=None, help="Write a non-sensitive JSON drift report to this path.")
+    return parser.parse_args(argv or [])
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
     settings = get_settings()
     if not settings.is_postgres:
-        print("ERROR: check_model_migration_drift.py must run against PostgreSQL DATABASE_URL", file=sys.stderr)
+        error = "check_model_migration_drift.py must run against PostgreSQL DATABASE_URL"
+        _write_report(args.report_json, status="unsupported_database", drift=[], error=error)
+        print("ERROR: " + error, file=sys.stderr)
         return 2
 
     engine = create_engine(settings.database_url, future=True)
@@ -134,15 +162,17 @@ def main() -> int:
         engine.dispose()
 
     if drift:
+        _write_report(args.report_json, status="drift_detected", drift=drift)
         print("Model / migration drift detected:", file=sys.stderr)
         for item in drift:
             print(" - " + item.render(), file=sys.stderr)
         return 1
 
+    _write_report(args.report_json, status="ok", drift=[])
     print("model migration drift check ok")
     print("registered model modules: " + ", ".join(REGISTERED_MODEL_MODULES))
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))
