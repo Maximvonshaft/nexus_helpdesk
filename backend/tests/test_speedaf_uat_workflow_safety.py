@@ -68,27 +68,25 @@ def test_speedaf_full_uat_probe_does_not_inline_sensitive_dispatch_inputs():
     assert "inputs.whatsapp_phone" not in workflow
 
 
-def test_knowledge_runtime_readiness_does_not_inline_sensitive_dispatch_inputs():
+def test_knowledge_runtime_readiness_is_independent_from_speedaf_samples():
     workflow = _workflow("knowledge-runtime-readiness.yml")
 
-    assert "SPEEDAF_MCP_TEST_WAYBILL_CODE: ${{ secrets.SPEEDAF_UAT_TEST_WAYBILL_CODE }}" in workflow
-    assert "SPEEDAF_MCP_TEST_CALLER_ID: ${{ secrets.SPEEDAF_UAT_TEST_CALLER_ID }}" in workflow
-    assert "configure SPEEDAF_UAT_TEST_WAYBILL_CODE and SPEEDAF_UAT_TEST_CALLER_ID as GitHub Secrets" in workflow
-    assert "Assert readiness log is sanitized" in workflow
-    assert "readiness log contains waybill code" in workflow
-    assert 'grep -F "$SPEEDAF_MCP_TEST_WAYBILL_CODE" "$REPORT"' in workflow
-    assert "inputs.waybill_code" not in workflow
-    assert "inputs.caller_id" not in workflow
-    assert "CH020000006856" not in workflow
+    assert "secrets.KNOWLEDGE_READINESS_DATABASE_URL" in workflow
+    assert "nexus_knowledge_runtime_v2_readiness_probe.sh" in workflow
+    assert "Assert readiness report is machine-readable and redacted" in workflow
+    assert "nexus_knowledge_readiness_v1" in workflow
+    assert "READINESS_REPORT_HIGH_CARDINALITY_LABEL" in workflow
+    assert "SPEEDAF_UAT" not in workflow
+    assert "SPEEDAF_MCP" not in workflow
+    assert "waybill" not in workflow.lower()
+    assert "caller_id" not in workflow.lower()
 
 
-def test_knowledge_runtime_readiness_probe_requires_secret_samples():
+def test_knowledge_runtime_readiness_probe_has_no_tracking_lookup_or_secret_sample_contract():
     script = _script("nexus_knowledge_runtime_v2_readiness_probe.sh")
 
-    assert 'WAYBILL="${SPEEDAF_MCP_TEST_WAYBILL_CODE:-}"' in script
-    assert "SPEEDAF_MCP_TEST_WAYBILL_CODE\") or" not in script
-    assert "set SPEEDAF_MCP_TEST_WAYBILL_CODE and SPEEDAF_MCP_TEST_CALLER_ID from GitHub Secrets" in script
-    assert 'waybill=os.environ["SPEEDAF_MCP_TEST_WAYBILL_CODE"]' in script
-    assert "def safe_payload():" in script
-    assert 'text=text.replace(secret, "[REDACTED]")' in script
-    assert 'assert result.ok and result.fact_evidence_present and result.tool_status == "success", "speedaf_direct_lookup_failed"' in script
+    assert "probe_knowledge_readiness.py" in script
+    assert 'exec python "${ROOT_DIR}/backend/scripts/probe_knowledge_readiness.py" "$@"' in script
+    assert "SPEEDAF" not in script
+    assert "waybill" not in script.lower()
+    assert "caller" not in script.lower()
