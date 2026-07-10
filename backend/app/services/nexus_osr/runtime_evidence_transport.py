@@ -304,10 +304,20 @@ def run_read_only_http_probe(
             )
         try:
             payload = json.loads(body.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            payload = {}
+        except Exception:
+            return _probe_failure(
+                spec.path,
+                "payload_invalid",
+                permission_granted=True,
+                status_code=status_code,
+            )
         if not isinstance(payload, Mapping):
-            payload = {}
+            return _probe_failure(
+                spec.path,
+                "payload_invalid",
+                permission_granted=True,
+                status_code=status_code,
+            )
         return {
             "path": spec.path,
             "method": "GET",
