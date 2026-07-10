@@ -55,6 +55,7 @@ jobs:
           test "$(wc -c < artifacts/nexus-osr-runtime-evidence.json)" -le 65537
           ! grep -E -i 'authorization|bearer |api[_-]?key|password|customer@example|tracking_number|provider_payload|tool_arguments|tenant-a' artifacts/nexus-osr-runtime-evidence.json artifacts/nexus-osr-runtime-evidence.prom
       - name: Check exact-head diff
+        if: github.event_name == 'pull_request'
         run: |
           git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
       - uses: actions/upload-artifact@v4
