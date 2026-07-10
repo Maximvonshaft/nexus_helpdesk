@@ -1,26 +1,27 @@
 schema_version: nexus-osr-plan-v1
-updated_at: '2026-07-10T04:59:00Z'
+updated_at: '2026-07-10T10:51:00Z'
 source_of_truth:
   repository: Maximvonshaft/nexus_helpdesk
-  main_sha: aed11916884bcf7ef0b2f7703589b6069c7a9a10
-  main_latest_commit: 'feat(osr): recover WhatsApp operations routing on current main (#464)'
+  main_sha: 0ddebe8081ea2401b51fcb36c332b85d9d494d2b
+  main_latest_commit: 'feat(osr): add admin debug and control tower surfaces (#456)'
   control_issue: 461
-  cycle_issue: 457
-  source_work_order: 460
+  portfolio_issue: 467
+  reconciliation_work_order: 480
   strategic_source_pr: 450
   note: >-
-    This file records current-main roadmap/control state. PR #450 remains a strategic
-    annual-plan source based on old main ec0af3fd8e853b447f47f901a69d036cae3d86e7
-    and is not authoritative for current implementation status.
+    This file records accepted mainline state and the exact status of the
+    OSR-20260710-A manual parallel batch. Open Draft PRs are not represented as
+    merged capability. PR #450 remains strategic source material only.
 
 product:
   name: Nexus OSR
   expansion: Nexus Operations Service Runtime
   doctrine: >-
-    Multi-country logistics customer-service and operations-closure runtime using
-    MCP facts, customer-visible knowledge, short-lived Case Context, governed
-    outbound, policy-controlled tool execution, handoff, ticketing, routing,
-    debug/eval/audit, and Control Tower surfaces. It is not a chatbot.
+    Multi-country logistics customer-service and operations-closure runtime
+    using MCP facts, customer-visible knowledge, short-lived Case Context,
+    governed outbound, policy-controlled tool execution, handoff, ticketing,
+    routing, debug/eval/audit, Admin and Control Tower surfaces. It is not a
+    chatbot.
 
 safety_kernel:
   no_c_end_long_term_memory: true
@@ -36,13 +37,6 @@ safety_kernel:
     - current_governed_equivalent
   human_online_action: existing_handoff
   human_offline_action: automatic_ticket_when_escalation_required
-  high_risk_escalation_required:
-    - formal_complaint
-    - compensation
-    - refund
-    - legal_threat
-    - personal_data_request
-    - serious_service_failure
   configuration_driven:
     - country
     - language
@@ -74,8 +68,8 @@ safety_kernel:
 current_state:
   evidence_date: '2026-07-10'
   main:
-    sha: aed11916884bcf7ef0b2f7703589b6069c7a9a10
-    latest_commit_title: 'feat(osr): recover WhatsApp operations routing on current main (#464)'
+    sha: 0ddebe8081ea2401b51fcb36c332b85d9d494d2b
+    latest_commit_title: 'feat(osr): add admin debug and control tower surfaces (#456)'
   merged_baseline:
     runtime_audit_pr:
       pr: 452
@@ -87,167 +81,169 @@ current_state:
       status: merged_with_follow_up_required
     governed_tool_execution_pr:
       pr: 454
-      validated_head_sha: 0b7bf941d460a364b41c8078b79d128b8e68ed87
       merge_sha: f5f4cd13d87a7766ca5fd5b43751979a326825c8
       status: merged_by_admin_gate
-      accepted_boundaries:
-        observe_only_default: preserved
-        policy_execute_allowlist:
-          - ticket.create
-          - handoff.request.create
-          - timeline.event.create
-        high_risk_speedaf_default_block: preserved
-        provider_native_tool_calls: not_introduced
-        safe_customer_visible_results_send_directly_false: preserved
-        redaction_regression: fixed_and_full_regression_green
     roadmap_recovery_pr:
       pr: 462
       merge_sha: 990aa91e0fe8bdb8f3e261f074e384172df478dc
       status: merged_by_admin_gate
     whatsapp_operations_routing_pr:
       pr: 464
-      validated_head_sha: 40437b21af12eda892584617b9a131e436ca55d6
       merge_sha: aed11916884bcf7ef0b2f7703589b6069c7a9a10
       status: merged_by_admin_gate
       supersedes_pr: 455
+    roadmap_post_routing_reconciliation_pr:
+      pr: 465
+      merge_sha: f448258c784216d3b984a8a579b0989686db7549
+      status: merged
+    admin_debug_control_tower_pr:
+      pr: 456
+      validated_head_sha: 930243ae2700f362b07f0d74fd396b03dd28dfc0
+      merge_sha: 0ddebe8081ea2401b51fcb36c332b85d9d494d2b
+      status: merged_by_supervisor_gate
+      work_order: 466
       accepted_boundaries:
-        no_direct_whatsapp_sidecar_call: preserved
+        strict_admin_and_runtime_manage_gate: preserved
+        tenant_scoped_case_audit_debug_reads: preserved
+        runtime_decision_audit_read_only: preserved
+        case_context_safe_field_patch_only: preserved
+        provider_group_ids_presence_hash_key_only: preserved
         no_customer_visible_behavior_change: preserved
-        no_customer_visible_message_service_change: preserved
-        no_send_without_whatsapp_routing_rule_record: preserved
-        provider_group_ids_hashed_or_keyed_in_events: preserved
-        no_hardcoded_country_or_group_routing: preserved
+  manual_batch:
+    batch_id: OSR-20260710-A
+    supervisor_run: OSR-20260710-MANUAL-INTEGRATION-1243
+    accepted_drafts_requiring_current_main_reconstruction:
+      - pr: 468
+        work_order: 459
+        capability: ticket_identifier_transaction_and_reuse_projection
+        accepted_head: 3ac33b208d3e0b52ef03801a3d779f971574cc4e
+        must_precede: 479
+      - pr: 479
+        work_order: 459
+        capability: configured_escalation_policy_entry
+        accepted_head: e44aabdf00bd7b967b10612129a107f1a35ab150
+        depends_on: 468
+      - pr: 475
+        work_order: 471
+        capability: tracking_primary_truth_contract
+        accepted_head: f7c73b96a277f74610a04bbf892941d2afaa015f
+      - pr: 476
+        work_order: 473
+        capability: knowledge_vector_backfill_and_retrieval_safety
+        accepted_head: ffbd71839bc7913c18aee6a6d47b4b116d0f749e
+        must_precede: 478
+      - pr: 478
+        work_order: 474
+        capability: knowledge_fail_closed_readiness
+        accepted_head: 08dcbcceecf0c3d2fab2c2bbf735159aa7e5606c
+        depends_on: 476
+    repair_drafts:
+      - pr: 477
+        work_order: 472
+        capability: durable_operations_dispatch_outbox
+        reviewed_head: 883d91f4f6a966464b599eacd58a25e91a1b104b
+        migration_revision: 20260710_0056
+        migration_down_revision: 20260709_0054
+        blockers:
+          - models_operations_dispatch_not_registered_in_alembic_metadata
+          - outbox_model_not_loaded_by_model_migration_drift_check
+          - postgres_concurrent_lease_contention_not_runtime_verified
+          - provider_adapter_idempotency_not_implemented
+    blocked_work_orders:
+      - issue: 469
+        capability: case_context_active_uniqueness_and_lifecycle
+        implementation_pr: null
+      - issue: 470
+        capability: runtime_audit_final_sanitizer_and_model_drift_registration
+        implementation_pr: null
   open_work_orders:
-    - issue: 459
-      mission_id: OSR-20260710-02-W2
-      status: ready_after_branch_creation
-      workstream: human_hours_escalation_post_merge_follow_up
-    - issue: 460
-      mission_id: OSR-20260710-02-W3
-      status: completed_by_pr462_merge
-      workstream: roadmap_control_files_recovery
-    - issue: 463
-      mission_id: OSR-20260710-03-W455
-      status: completed_by_pr464_merge_and_pr455_superseded_closure
-      workstream: whatsapp_operations_routing_rebase
-    - issue: 466
-      mission_id: OSR-20260710-06-PR456
-      status: active_pr456_current_main_recovery_work_order
-      workstream: admin_debug_control_tower_current_main_recovery
+    - {issue: 459, status: accepted_drafts_require_current_main_reconstruction}
+    - {issue: 469, status: blocked_no_implementation_pr}
+    - {issue: 470, status: blocked_no_implementation_pr}
+    - {issue: 471, status: accepted_draft_requires_current_main_reconstruction}
+    - {issue: 472, status: repair_required}
+    - {issue: 473, status: accepted_draft_requires_current_main_reconstruction}
+    - {issue: 474, status: accepted_dependent_draft_requires_current_main_reconstruction}
+    - {issue: 480, status: active_docs_only_reconciliation}
 
 active_release_candidate:
   pr: null
   branch: null
   head_sha: null
-  state: none_selected_after_pr464_merge
-  state_note: PR #464 has merged; no new release candidate is selected until #456 is refreshed and boundary-reviewed.
+  state: none_selected_after_pr456_merge
   sole_release_candidate: true
-  release_gate: admin_selects_next_candidate_only_after_exact_head_focused_evidence
+  release_gate: >-
+    Select one Draft only after reconstruction on current main, focused evidence,
+    exact-head required checks, migration safety, privacy review and dependency
+    verification.
 
 current_primary_runtime_dependency:
-  pr: 456
-  title: 'feat(osr): add admin debug and control tower surfaces'
-  branch: feat/osr-admin-debug-control-tower
-  remote_head_sha: d35090a71a03e683feebaaec0749e83e5bdcd645
-  status: draft_old_base_next_after_whatsapp_routing_merge
-  base_sha_seen: 6261ecf0d81ccfef3a8790a4c7ca1d9f163e69f8
-  current_main_required_base: aed11916884bcf7ef0b2f7703589b6069c7a9a10
-  known_blockers:
-    - provider_group_id_detail_surface_exposure_requires_fix_or_explicit_runtime_admin_authorization
-    - branch_must_rebase_or_recover_onto_current_main_after_pr464_merge
-    - focused_admin_debug_control_tower_tests_required_before_admin_gate
+  pr: 468
+  title: 'fix(osr): harden auto-ticket safety'
+  status: accepted_code_requires_reconstruction_on_current_main
+  current_main_required_base: 0ddebe8081ea2401b51fcb36c332b85d9d494d2b
   next_action: >-
-    One writer should claim PR #456, refresh/rebase or recover its admin/debug/control-tower scope onto main
-    aed11916884bcf7ef0b2f7703589b6069c7a9a10, resolve conflicts, fix or explicitly authorize provider group ID detail exposure,
-    and run focused admin/debug/control-tower tests before any Admin gate.
+    Reconstruct PR #468 on current main, run its focused and exact-head checks,
+    merge only after green evidence, then reconstruct PR #479 on the resulting
+    main.
 
 queued_prs:
-  - pr: 456
-    title: 'feat(osr): add admin debug and control tower surfaces'
-    status: current_next_backend_admin_dependency
-    reason: Admin/debug/control tower surfaces merge last after WhatsApp routing landed.
-    known_blocker: provider_group_id_detail_surface_exposure_requires_fix_or_explicit_runtime_admin_authorization
-    next_action: Rebase/recover onto main aed11916884bcf7ef0b2f7703589b6069c7a9a10 and run focused tests.
+  - {pr: 468, verdict: ACCEPT, state: draft_reconstruct_then_validate}
+  - {pr: 479, verdict: ACCEPT, state: draft_after_pr468}
+  - {pr: 475, verdict: ACCEPT, state: draft_reconstruct_then_validate}
+  - {pr: 476, verdict: ACCEPT, state: draft_reconstruct_then_validate}
+  - {pr: 478, verdict: ACCEPT, state: draft_after_pr476}
+  - {pr: 477, verdict: REPAIR, state: draft_blocked_by_470_and_model_registration}
 
 stale_or_reference_prs:
   - pr: 450
-    title: 'docs: define Nexus OSR final annual development plan'
     status: superseded_by_merged_roadmap_control_files
-    reason: Based on old main ec0af3fd; useful as strategic source, not current status authority.
+    reason: Strategic annual-plan source based on old main only.
   - pr: 455
-    title: 'feat(osr): add WhatsApp operations routing'
     status: closed_unmerged_superseded_by_merged_pr464
-    reason: Original WhatsApp routing PR was on an old branch; equivalent recovery scope merged through PR #464 and #455 was closed unmerged to avoid duplicate release-control state.
-  - pr: 465
-    title: 'docs(osr): reconcile roadmap after #464 merge'
-    status: active_docs_only_reconciliation_after_pr464_merge_and_pr455_closure
-    reason: Keeps roadmap files aligned with current main facts.
+    reason: Equivalent current-main routing recovery merged through PR #464.
   - pr: 395
-    title: 'feat: add Speedaf hybrid tracking source'
-    status: reference_only
-    reason: Do not revive without current-main Work Order and exact-head conflict review.
+    status: reference_only_superseded_by_current_t1_pr475_when_merged
   - pr: 446
-    title: 'docs: add T1 tracking truth-source readiness plan'
-    status: reference_only
-    reason: Tracking truth-source work must wait for current-main Work Order alignment.
+    status: reference_only_superseded_by_current_t1_pr475_when_merged
 
 milestones:
   - id: M1
     name: Runtime decision and case-context foundation
-    status: landed_with_follow_up_required
-    current_evidence:
-      - Runtime audit integration merged through PR #452.
-      - Human-hours/escalation orchestration merged through PR #453.
-      - Post-merge P2 findings remain under Work Order #459.
-    acceptance_focus:
-      - short_lived_case_context_only
-      - mcp_facts_authoritative
-      - customer_visible_boundary_preserved
-      - redaction_and_audit
+    status: landed_with_lifecycle_and_final_audit_follow_up_blocked
+    blockers: [469, 470]
   - id: M2
     name: Handoff, auto-ticket, and offline closure path
-    status: follow_up_required
+    status: accepted_drafts_require_reconstruction
     governing_work_order: 459
-    acceptance_focus:
-      - human_online_uses_existing_handoff
-      - human_offline_uses_auto_ticket_when_required
-      - no_customer_visible_body_generation_outside_governed_boundary
   - id: M3
     name: Governed tool execution baseline
     status: merged_mainline_baseline
     merged_pr: 454
-    merge_sha: f5f4cd13d87a7766ca5fd5b43751979a326825c8
   - id: M4
     name: MCP truth contract and tracking authority
-    status: queued_after_runtime_foundations
+    status: accepted_draft_requires_reconstruction
+    pr: 475
   - id: M5
     name: Customer-visible knowledge quality
-    status: queued
+    status: accepted_drafts_require_ordered_reconstruction
+    prs: [476, 478]
   - id: M6
     name: WhatsApp operations routing
     status: merged_mainline_baseline
     merged_pr: 464
-    superseded_pr: 455
-    merge_sha: aed11916884bcf7ef0b2f7703589b6069c7a9a10
-    acceptance_focus:
-      - configuration_driven_group_routing
-      - no_provider_group_id_leakage
-      - no_sidecar_change_without_separate_approval
-      - no_customer_visible_behavior_change
   - id: M7
     name: Debug, eval, and regression gate
-    status: queued_with_admin_debug_work
+    status: admin_debug_baseline_landed_more_eval_hardening_future
   - id: M8
     name: Admin policy APIs and Control Tower
-    status: current_next_pr_456_old_base
-    acceptance_focus:
-      - read_only_runtime_audit
-      - redacted_admin_surfaces
-      - merge_after_runtime_foundations
-      - provider_group_id_detail_surface_decision_or_fix
+    status: merged_mainline_baseline
+    merged_pr: 456
+    merge_sha: 0ddebe8081ea2401b51fcb36c332b85d9d494d2b
   - id: M9
     name: Operations workspace and queues
-    status: future
+    status: durable_outbox_repair_required
+    pr: 477
   - id: M10
     name: Operations analytics and Control Tower maturity
     status: future
@@ -256,23 +252,23 @@ milestones:
     status: future
   - id: M12
     name: Production hardening and readiness
-    status: future
+    status: no_go_runtime_evidence_incomplete
 
 active_dependency_order:
   - step: 1
-    action: Treat PR #454 as merged M3 baseline, PR #462 as merged roadmap baseline, and PR #464 as merged M6 WhatsApp routing baseline on main aed11916884bcf7ef0b2f7703589b6069c7a9a10.
+    action: Implement Work Orders #469 and #470 or explicitly rescope them with evidence.
   - step: 2
-    action: Treat original PR #455 as closed unmerged and superseded by PR #464 unless Admin explicitly reopens that path.
+    action: Reconstruct and validate PR #468 on current main, then merge it before PR #479.
   - step: 3
-    action: Refresh/rebase or recover PR #456 onto current main, resolve admin/debug conflicts, and fix or explicitly authorize provider group ID detail exposure.
+    action: Reconstruct and validate PR #479 on the post-#468 main.
   - step: 4
-    action: Run focused #456 admin/debug/control-tower tests before any Admin release gate.
+    action: Reconstruct and validate PR #475 independently on the then-current main.
   - step: 5
-    action: Keep roadmap control files aligned through PR #465 or a successor docs-only reconciliation PR.
+    action: Reconstruct and validate PR #476, then reconstruct PR #478 on the post-#476 main.
   - step: 6
-    action: Address Work Order #459 escalation follow-up on a current-main branch when non-conflicting.
+    action: Repair PR #477 with complete model registration, drift coverage and PostgreSQL contention evidence before release gate.
   - step: 7
-    action: Continue M4/M5/M7+ only through current-main Work Orders and exact-head conflict checks.
+    action: Reconcile roadmap after every accepted merge and keep M12 production posture at NO_GO until runtime proof is complete.
 
 swarm_protocol:
   claim_first_required: true
@@ -280,13 +276,15 @@ swarm_protocol:
   work_order_required_before_product_code_change: true
   one_coherent_action_per_run: true
   ordinary_development_agents_may_run_focused_tests: true
-  admin_controls_full_ci_release_gate_and_merge: true
+  supervisor_controls_full_ci_release_gate_and_merge: true
+  one_merge_at_a_time: true
+  reread_main_after_each_merge: true
   if_no_non_conflicting_material_action: exit_quietly
 
 roadmap_file_scope:
   authoritative_files:
     - docs/roadmap/nexus-osr-annual-plan-2026.md
     - docs/roadmap/nexus-osr-plan.yaml
-  generation_work_order: 460
+  reconciliation_work_order: 480
   docs_only: true
   product_code_changed: false
