@@ -20,6 +20,7 @@ from .operations_dispatch_outbox import (
 from .persistence import save_case_context
 
 _SAFE_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
+_SAFE_TEMPLATE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,79}$")
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 _PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\d .()\-]{6,}\d)(?!\w)")
 _TRACKING_RE = re.compile(
@@ -223,7 +224,7 @@ def build_safe_group_message(template: str, *, values: Mapping[str, Any] | None 
         key = match.group(1)
         if key not in _ALLOWED_TEMPLATE_KEYS:
             return "[unsupported_template_value]"
-        return _sanitize_text(data.get(key), limit=80)
+        return _sanitize_template_value(key, data.get(key))
 
     rendered = _TEMPLATE_TOKEN_RE.sub(replace, source)
     return rendered[:800]
@@ -236,7 +237,23 @@ def _validate_template_context(values: Mapping[str, Any] | None) -> None:
         key = str(raw_key)
         if key not in _ALLOWED_TEMPLATE_KEYS:
             raise ValueError("whatsapp_routing_unsupported_template_context")
-        _sanitize_text(raw_value, limit=80)
+        _sanitize_template_value(key, raw_value)
+
+
+def _sanitize_template_value(key: str, value: Any) -> str:
+    if key == "safe_tracking_reference":
+        return _sanitize_text(value, limit=80)
+    text = " ".join(str(value or "").strip().split())
+    if (
+        not text
+        or not _SAFE_TEMPLATE_IDENTIFIER_RE.fullmatch(text)
+        or _SECRET_RE.search(text)
+        or _GROUP_ID_RE.search(text)
+        or _EMAIL_RE.search(text)
+        or _PHONE_RE.search(text)
+    ):
+        raise ValueError("whatsapp_routing_invalid_template_value")
+    return text[:80]
 
 
 def _audit_routing_decision(
