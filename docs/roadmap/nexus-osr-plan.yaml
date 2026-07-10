@@ -1,0 +1,275 @@
+schema_version: nexus-osr-plan-v1
+updated_at: '2026-07-10T01:50:00Z'
+source_of_truth:
+  repository: Maximvonshaft/nexus_helpdesk
+  main_sha: f5f4cd13d87a7766ca5fd5b43751979a326825c8
+  main_latest_commit: 'feat(osr): add governed tool execution path (#454)'
+  control_issue: 461
+  cycle_issue: 457
+  source_work_order: 460
+  strategic_source_pr: 450
+  note: >-
+    This file records current-main roadmap/control state. PR #450 remains a strategic
+    annual-plan source based on old main ec0af3fd8e853b447f47f901a69d036cae3d86e7
+    and is not authoritative for current implementation status.
+
+product:
+  name: Nexus OSR
+  expansion: Nexus Operations Service Runtime
+  doctrine: >-
+    Multi-country logistics customer-service and operations-closure runtime using
+    MCP facts, customer-visible knowledge, short-lived Case Context, governed
+    outbound, policy-controlled tool execution, handoff, ticketing, routing,
+    debug/eval/audit, and Control Tower surfaces. It is not a chatbot.
+
+safety_kernel:
+  no_c_end_long_term_memory: true
+  case_context_scope: short_lived_case_scoped
+  live_fact_authority: mcp_or_approved_operational_sources
+  customer_claims_are_facts: false
+  previous_ai_replies_are_facts: false
+  customer_visible_boundary: CustomerVisibleMessageService_or_governed_outbound_contract
+  tool_execution_boundary:
+    - ToolExecutionPolicy
+    - PolicyGate
+    - ControlledActionExecutor
+    - current_governed_equivalent
+  human_online_action: existing_handoff
+  human_offline_action: automatic_ticket_when_escalation_required
+  high_risk_escalation_required:
+    - formal_complaint
+    - compensation
+    - refund
+    - legal_threat
+    - personal_data_request
+    - serious_service_failure
+  configuration_driven:
+    - country
+    - language
+    - channel
+    - queue
+    - tool
+    - policy
+    - whatsapp_routing
+    - group
+  redaction_required_for:
+    - raw_prompt
+    - provider_payload
+    - raw_tool_arguments
+    - raw_tool_results
+    - tracking_number
+    - phone
+    - email
+    - credentials
+    - provider_group_id
+  prohibited_actions:
+    - production_deploy
+    - release_tag
+    - real_external_customer_message
+    - funds_or_refund_action
+    - legal_action
+    - identity_action
+    - irreversible_deletion
+
+current_state:
+  evidence_date: '2026-07-10'
+  main:
+    sha: f5f4cd13d87a7766ca5fd5b43751979a326825c8
+    latest_commit_title: 'feat(osr): add governed tool execution path (#454)'
+  merged_baseline:
+    runtime_audit_pr:
+      pr: 452
+      merge_sha: 6261ecf0d81ccfef3a8790a4c7ca1d9f163e69f8
+      status: merged
+    human_hours_escalation_pr:
+      pr: 453
+      merge_sha: 57b1f89351df04b00e95b57db5aa1fe00aaacc6a
+      status: merged_with_follow_up_required
+    governed_tool_execution_pr:
+      pr: 454
+      validated_head_sha: 0b7bf941d460a364b41c8078b79d128b8e68ed87
+      merge_sha: f5f4cd13d87a7766ca5fd5b43751979a326825c8
+      status: merged_by_admin_gate
+      accepted_boundaries:
+        observe_only_default: preserved
+        policy_execute_allowlist:
+          - ticket.create
+          - handoff.request.create
+          - timeline.event.create
+        high_risk_speedaf_default_block: preserved
+        provider_native_tool_calls: not_introduced
+        safe_customer_visible_results_send_directly_false: preserved
+        redaction_regression: fixed_and_full_regression_green
+  open_work_orders:
+    - issue: 459
+      mission_id: OSR-20260710-02-W2
+      status: ready_after_branch_creation
+      workstream: human_hours_escalation_post_merge_follow_up
+    - issue: 460
+      mission_id: OSR-20260710-02-W3
+      status: in_progress_by_pr462_docs_recovery
+      workstream: roadmap_control_files_recovery
+    - issue: 463
+      mission_id: OSR-20260710-03-W455
+      status: created_by_agent09_but_remote_branch_update_blocked
+      workstream: whatsapp_operations_routing_rebase
+
+active_release_candidate:
+  pr: null
+  branch: null
+  head_sha: null
+  state: none_selected_after_pr454_merge
+  sole_release_candidate: true
+  release_gate: admin_selects_next_candidate_only_after_exact_head_focused_evidence
+
+current_primary_runtime_dependency:
+  pr: 455
+  title: 'feat(osr): add WhatsApp operations routing'
+  branch: feat/osr-whatsapp-routing
+  remote_head_sha: 200069b02d4d086e76382a9a40257b682abf940f
+  status: draft_next_runtime_dependency_remote_still_old_base
+  known_attempt:
+    agent: AGENT-09
+    result: local_rebase_succeeded_but_remote_update_blocked
+    local_rebased_head_sha: ed30e265528898bee214b68ebe4129cd002afc38
+    reason_remote_not_updated: git_push_auth_unavailable_and_connector_rejected_nonexistent_commit_object
+  next_action: >-
+    A writer with authenticated git push or Git object creation should repeat/apply the clean rebase onto
+    main f5f4cd13d87a7766ca5fd5b43751979a326825c8, update the remote branch, run focused WhatsApp routing,
+    persistence, and auto-ticket checks, then hand to Admin gate only if clean.
+
+queued_prs:
+  - pr: 456
+    title: 'feat(osr): add admin debug and control tower surfaces'
+    status: draft_queued_last
+    reason: Admin/debug/control tower surfaces depend on settled #455 routing runtime.
+    known_blocker: provider_group_id_detail_surface_exposure_requires_fix_or_explicit_runtime_admin_authorization
+    next_action: Rebase and reassess only after PR #455 lands.
+
+stale_or_reference_prs:
+  - pr: 450
+    title: 'docs: define Nexus OSR final annual development plan'
+    status: superseded_candidate_after_roadmap_recovery
+    reason: Based on old main ec0af3fd; useful as strategic source, not current status authority.
+  - pr: 395
+    title: 'feat: add Speedaf hybrid tracking source'
+    status: reference_only
+    reason: Do not revive without current-main Work Order and exact-head conflict review.
+  - pr: 446
+    title: 'docs: add T1 tracking truth-source readiness plan'
+    status: reference_only
+    reason: Tracking truth-source work must wait for current-main roadmap and Work Order alignment.
+
+milestones:
+  - id: M1
+    name: Runtime decision and case-context foundation
+    status: landed_with_follow_up_required
+    current_evidence:
+      - Runtime audit integration merged through PR #452.
+      - Human-hours/escalation orchestration merged through PR #453.
+      - Post-merge P2 findings remain under Work Order #459.
+    acceptance_focus:
+      - short_lived_case_context_only
+      - mcp_facts_authoritative
+      - customer_visible_boundary_preserved
+      - redaction_and_audit
+  - id: M2
+    name: Handoff, auto-ticket, and offline closure path
+    status: follow_up_required
+    governing_work_order: 459
+    acceptance_focus:
+      - human_online_uses_existing_handoff
+      - human_offline_uses_auto_ticket_when_required
+      - no_customer_visible_body_generation_outside_governed_boundary
+  - id: M3
+    name: Governed tool execution baseline
+    status: merged_mainline_baseline
+    merged_pr: 454
+    merge_sha: f5f4cd13d87a7766ca5fd5b43751979a326825c8
+    acceptance_focus:
+      - observe_only_default
+      - policy_execute_allowlist_limited
+      - high_risk_tools_blocked_by_default
+      - safe_customer_visible_results_send_directly_false
+      - no_raw_tool_arguments_in_audit_or_debug
+  - id: M4
+    name: MCP truth contract and tracking authority
+    status: queued_after_runtime_foundations
+    acceptance_focus:
+      - current_status_vs_history_enrichment_split
+      - customer_claims_not_facts
+      - previous_ai_replies_not_evidence
+  - id: M5
+    name: Customer-visible knowledge quality
+    status: queued
+    acceptance_focus:
+      - country_channel_audience_filtering
+      - allowed_commitments_and_forbidden_claims
+      - no_live_tracking_from_knowledge_only
+  - id: M6
+    name: WhatsApp operations routing
+    status: current_primary_pr_455_but_remote_update_blocked
+    acceptance_focus:
+      - configuration_driven_group_routing
+      - no_provider_group_id_leakage
+      - no_sidecar_change_without_separate_approval
+      - no_customer_visible_behavior_change
+  - id: M7
+    name: Debug, eval, and regression gate
+    status: queued
+    acceptance_focus:
+      - runtime_decision_debug_bundle
+      - finding_to_eval_cases
+      - ci_regression_gate_for_safety
+  - id: M8
+    name: Admin policy APIs and Control Tower
+    status: queued_pr_456_last
+    acceptance_focus:
+      - read_only_runtime_audit
+      - redacted_admin_surfaces
+      - merge_after_runtime_foundations
+  - id: M9
+    name: Operations workspace and queues
+    status: future
+  - id: M10
+    name: Operations analytics and Control Tower maturity
+    status: future
+  - id: M11
+    name: Internal SOP SkillBank
+    status: future
+  - id: M12
+    name: Production hardening and readiness
+    status: future
+
+active_dependency_order:
+  - step: 1
+    action: Treat PR #454 as merged M3 baseline on main f5f4cd13d87a7766ca5fd5b43751979a326825c8.
+  - step: 2
+    action: Update/rebase PR #455 remote branch onto main f5f4cd13 and run focused WhatsApp routing checks.
+  - step: 3
+    action: Keep PR #456 queued until PR #455 lands, then rebase and fix/authorize provider group ID detail exposure.
+  - step: 4
+    action: Merge docs-only roadmap recovery PR #462 after Admin confirms these facts remain current.
+  - step: 5
+    action: Close or supersede stale PR #450 once restored roadmap files are accepted.
+  - step: 6
+    action: Address Work Order #459 escalation follow-up on a current-main branch when non-conflicting.
+  - step: 7
+    action: Continue M4/M5/M7+ only through current-main Work Orders and exact-head conflict checks.
+
+swarm_protocol:
+  claim_first_required: true
+  second_read_gate_required: true
+  work_order_required_before_product_code_change: true
+  one_coherent_action_per_run: true
+  ordinary_development_agents_may_run_focused_tests: true
+  admin_controls_full_ci_release_gate_and_merge: true
+  if_no_non_conflicting_material_action: exit_quietly
+
+roadmap_file_scope:
+  authoritative_files:
+    - docs/roadmap/nexus-osr-annual-plan-2026.md
+    - docs/roadmap/nexus-osr-plan.yaml
+  generation_work_order: 460
+  docs_only: true
+  product_code_changed: false
