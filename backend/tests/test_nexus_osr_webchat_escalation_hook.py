@@ -158,6 +158,25 @@ def test_flag_off_preserves_existing_high_risk_review_path(db_session):
     assert db_session.query(WebchatHandoffRequest).count() == 0
 
 
+def test_flag_off_configured_only_pattern_preserves_legacy_runtime(db_session, monkeypatch):
+    add_hours(db_session, online=True)
+    add_escalation(db_session, "payment_dispute", r"\bchargeback\b", max_ai_attempts=0)
+    ticket, conversation, visitor, _turn = make_webchat_case(db_session, body="I will start a chargeback", suffix="configured-flag-off")
+    db_session.commit()
+
+    def fake_legacy(*_args, **_kwargs):
+        return {"status": "done", "message_id": None, "reply_source": "legacy_flag_off"}
+
+    monkeypatch.setattr(webchat_ai_safe_service, "_legacy_process_webchat_ai_reply_job", fake_legacy)
+    result = run_hook(db_session, ticket=ticket, conversation=conversation, visitor=visitor)
+
+    assert webchat_ai_safe_service._has_high_risk_intent(visitor.body) is False
+    assert result["status"] == "done"
+    assert result["reply_source"] == "legacy_flag_off"
+    assert db_session.query(WebchatHandoffRequest).count() == 0
+    assert db_session.query(RuntimeDecisionAuditRecord).count() == 0
+
+
 def test_flag_on_online_escalation_uses_existing_handoff_service_after_webchat_osr_audit(db_session, monkeypatch):
     monkeypatch.setattr(webchat_ai_safe_service.settings, "osr_escalation_orchestration_enabled", True, raising=False)
     add_hours(db_session, online=True)
@@ -178,6 +197,42 @@ def test_flag_on_online_escalation_uses_existing_handoff_service_after_webchat_o
     assert conversation.ai_suspended is True
     assert turn.status == "cancelled"
     assert db_session.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == "agent").count() == 0
+
+
+def test_flag_on_configured_chargeback_pattern_reaches_policy_without_legacy_term(db_session, monkeypatch):
+    monkeypatch.setattr(webchat_ai_safe_service.settings, "osr_escalation_orchestration_enabled", True, raising=False)
+    add_hours(db_session, online=True)
+    add_escalation(db_session, "payment_dispute", r"\bchargeback\b", max_ai_attempts=0)
+    raw_tracking = "CH020000123456"
+    raw_email = "customer@example.com"
+    raw_phone = "+382 68123456"
+    body = f"I will start a chargeback for {raw_tracking}; email {raw_email}; phone {raw_phone}"
+    ticket, conversation, visitor, turn = make_webchat_case(db_session, body=body, suffix="configured-chargeback")
+    db_session.commit()
+
+    assert webchat_ai_safe_service._has_high_risk_intent(body) is False
+    result = run_hook(db_session, ticket=ticket, conversation=conversation, visitor=visitor)
+    handoff = db_session.query(WebchatHandoffRequest).one()
+    db_session.refresh(turn)
+
+    assert result["reason"] == "osr_handoff_requested"
+    assert result["runtime_handoff_required"] is True
+    assert result["osr_escalation"]["risk_key"] == "payment_dispute"
+    assert handoff.source == "nexus_osr"
+    assert turn.status == "cancelled"
+    assert db_session.query(WebchatMessage).filter(WebchatMessage.conversation_id == conversation.id, WebchatMessage.direction == "agent").count() == 0
+
+    rows = db_session.query(RuntimeDecisionAuditRecord).all()
+    serialized = json.dumps([
+        {"decision": row.decision_json, "case_context": row.case_context_json, "violations": row.violations_json, "warnings": row.warnings_json}
+        for row in rows
+    ], ensure_ascii=False, default=str)
+    assert raw_tracking not in serialized
+    assert raw_email not in serialized
+    assert raw_phone not in serialized
+    assert "raw_prompt" not in serialized
+    assert "raw_provider_payload" not in serialized
+    assert "raw_tool_payload" not in serialized
 
 
 def test_flag_on_lawyer_wording_reaches_osr_legal_threat_policy(db_session, monkeypatch):
