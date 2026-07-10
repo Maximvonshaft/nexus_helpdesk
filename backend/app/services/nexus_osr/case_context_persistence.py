@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, object_session
 
 from ...models_osr import CaseContextRecord
 from ...utils.time import ensure_utc, utc_now
+from ...webchat_models import WebchatConversation
 from .case_context import CaseContext, CaseContextStatus, ContactMethod
 
 _TERMINAL_CASE_CONTEXT_STATUSES = {
@@ -21,14 +22,16 @@ def load_case_context(
     *,
     conversation_id: int | None = None,
     ticket_id: int | None = None,
-    tenant_id: str = "default",
+    tenant_id: str | None = None,
     include_inactive: bool = False,
     now: datetime | None = None,
 ) -> CaseContext | None:
     """Load one exact, tenant-scoped Case Context identity.
 
     The default runtime path is active-only and refuses an unscoped/global
-    lookup. Historical reads must be explicit through ``include_inactive``.
+    lookup. When an existing internal caller omits ``tenant_id``, the tenant is
+    derived only from the globally unique WebChat conversation record. A
+    ticket-only read must provide its tenant explicitly.
     """
 
     conversation = _safe_identity(conversation_id)
@@ -39,7 +42,7 @@ def load_case_context(
     current = ensure_utc(now) or utc_now()
     query = _case_context_identity_query(
         db,
-        tenant_id=_normalize_tenant(tenant_id),
+        tenant_id=_resolve_tenant(db, tenant_id=tenant_id, conversation_id=conversation),
         conversation_id=conversation,
         ticket_id=ticket,
     )
@@ -208,6 +211,21 @@ def expire_case_context(
     row.updated_at = current
     db.flush()
     return row
+
+
+def _resolve_tenant(db: Session, *, tenant_id: str | None, conversation_id: int | None) -> str:
+    if tenant_id is not None:
+        return _normalize_tenant(tenant_id)
+    if conversation_id is None:
+        raise ValueError("case_context_tenant_required")
+    resolved = (
+        db.query(WebchatConversation.tenant_key)
+        .filter(WebchatConversation.id == conversation_id)
+        .scalar()
+    )
+    if not resolved:
+        raise ValueError("case_context_tenant_unresolvable")
+    return _normalize_tenant(resolved)
 
 
 def _normalize_tenant(value: str | None) -> str:
