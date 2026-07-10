@@ -117,6 +117,23 @@ def _kwargs(ticket_id: int, rule_id: int, *, suffix: str = "default", max_attemp
     }
 
 
+def _enqueue_and_claim(Session, *, suffix: str, lease_seconds: int = 20):
+    ticket_id, rule_id = _seed_scope(Session)
+    with Session() as db:
+        enqueue_operations_dispatch(db, **_kwargs(ticket_id, rule_id, suffix=suffix))
+        db.commit()
+        claimed = claim_next_operations_dispatch(
+            db,
+            lease_owner="worker-a",
+            now=NOW,
+            lease_seconds=lease_seconds,
+        )
+        assert claimed is not None
+        record_id = claimed.id
+        db.commit()
+    return ticket_id, rule_id, record_id
+
+
 def _dump(record: OperationsDispatchOutboxRecord) -> str:
     return json.dumps(
         {column.name: getattr(record, column.name) for column in OperationsDispatchOutboxRecord.__table__.columns},
@@ -165,36 +182,47 @@ def test_enqueue_is_idempotent_database_unique_and_scope_safe(database):
         db.rollback()
 
 
-def test_worker_lease_expiry_recovery_and_stale_owner_rejection(database):
+def test_worker_lease_blocks_second_worker_before_expiry(database):
     _, Session = database
-    ticket_id, rule_id = _seed_scope(Session)
+    _, _, record_id = _enqueue_and_claim(Session, suffix="lease-block")
+
     with Session() as db:
-        enqueue_operations_dispatch(db, **_kwargs(ticket_id, rule_id, suffix="lease"))
-        db.commit()
-
-        first = claim_next_operations_dispatch(db, lease_owner="worker-a", now=NOW, lease_seconds=20)
-        assert first is not None
-        assert first.status == OperationsDispatchStatus.PROCESSING.value
-        assert first.attempt_count == 1
-        db.commit()
-
         assert claim_next_operations_dispatch(
             db,
             lease_owner="worker-b",
             now=NOW + timedelta(seconds=19),
             lease_seconds=20,
         ) is None
-        db.commit()
+        current = db.get(OperationsDispatchOutboxRecord, record_id)
+        assert current.status == OperationsDispatchStatus.PROCESSING.value
+        assert current.lease_owner == "worker-a"
+        assert current.attempt_count == 1
 
+
+def test_stale_owner_cannot_ack_after_lease_expiry(database):
+    _, Session = database
+    _, _, record_id = _enqueue_and_claim(Session, suffix="lease-stale")
+
+    with Session() as db:
         with pytest.raises(OperationsDispatchLeaseLostError):
             mark_operations_dispatch_success(
                 db,
-                record_id=first.id,
+                record_id=record_id,
                 lease_owner="worker-a",
                 now=NOW + timedelta(seconds=21),
             )
         db.rollback()
+        current = db.get(OperationsDispatchOutboxRecord, record_id)
+        assert current.status == OperationsDispatchStatus.PROCESSING.value
+        assert current.lease_owner == "worker-a"
+        assert current.dispatched_at is None
 
+
+def test_expired_lease_is_recovered_by_new_owner(database):
+    _, Session = database
+    _, _, record_id = _enqueue_and_claim(Session, suffix="lease-recover")
+
+    with Session() as db:
         recovered = claim_next_operations_dispatch(
             db,
             lease_owner="worker-b",
@@ -202,7 +230,8 @@ def test_worker_lease_expiry_recovery_and_stale_owner_rejection(database):
             lease_seconds=20,
         )
         assert recovered is not None
-        assert recovered.id == first.id
+        assert recovered.id == record_id
+        assert recovered.status == OperationsDispatchStatus.PROCESSING.value
         assert recovered.lease_owner == "worker-b"
         assert recovered.attempt_count == 2
 
@@ -215,6 +244,7 @@ def test_retry_backoff_and_max_attempts_dead_letter(database):
         db.commit()
 
         first = claim_next_operations_dispatch(db, lease_owner="worker-a", now=NOW, lease_seconds=60)
+        assert first is not None
         failed = mark_operations_dispatch_failure(
             db,
             record_id=first.id,
@@ -268,6 +298,7 @@ def test_provider_ack_external_reference_and_errors_are_redacted(database):
         enqueue_operations_dispatch(db, **_kwargs(ticket_id, rule_id, suffix="success-redaction"))
         db.commit()
         record = claim_next_operations_dispatch(db, lease_owner="worker-a", now=NOW, lease_seconds=60)
+        assert record is not None
         succeeded = mark_operations_dispatch_success(
             db,
             record_id=record.id,
@@ -289,6 +320,7 @@ def test_provider_ack_external_reference_and_errors_are_redacted(database):
         enqueue_operations_dispatch(db, **_kwargs(ticket_id, rule_id, suffix="failure-redaction"))
         db.commit()
         second = claim_next_operations_dispatch(db, lease_owner="worker-b", now=NOW + timedelta(seconds=2))
+        assert second is not None
         failed = mark_operations_dispatch_failure(
             db,
             record_id=second.id,
