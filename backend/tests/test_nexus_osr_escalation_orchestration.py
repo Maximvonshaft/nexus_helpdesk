@@ -294,3 +294,54 @@ def test_audit_payload_does_not_store_raw_tracking_phone_or_email(db_session):
     assert "+382" not in encoded
     assert "CH1234567890" not in encoded
     assert "tracking ending 4567890" not in encoded
+
+
+def test_audit_payload_drops_raw_prompt_provider_and_tool_payloads(db_session):
+    add_hours(db_session)
+    customer, ticket, conversation, ctx = make_case(db_session, conversation_ticket=False)
+    raw_email = "sensitive@example.test"
+    raw_phone = "+382 69111222"
+    raw_tracking = "CH020000998877"
+    raw_prompt = "system secret prompt"
+    provider_payload = {"raw_provider_payload": {"email": raw_email, "tracking": raw_tracking}}
+    tool_payload = {"raw_tool_payload": {"phone": raw_phone, "authorization": "Bearer secret"}}
+    ctx = ctx.with_inbound_message(
+        f"I cannot wait. {raw_email} {raw_phone} {raw_tracking}",
+        channel="webchat",
+        country_code="ME",
+    ).with_mcp_fact({
+        "provider_payload": provider_payload,
+        "tool_payload": tool_payload,
+        "raw_prompt": raw_prompt,
+    })
+    db_session.commit()
+
+    evaluate_and_orchestrate_escalation(
+        db_session,
+        ticket=ticket,
+        conversation=conversation,
+        case_context=ctx,
+        inbound_message=f"I cannot wait. {raw_email} {raw_phone} {raw_tracking}",
+        queue_key="support",
+        now=datetime.fromisoformat("2026-07-06T20:00:00+00:00"),
+        customer=customer,
+    )
+    row = db_session.query(RuntimeDecisionAuditRecord).one()
+    encoded = json.dumps(
+        {
+            "decision": row.decision_json,
+            "case_context": row.case_context_json,
+            "violations": row.violations_json,
+            "warnings": row.warnings_json,
+        },
+        ensure_ascii=False,
+        default=str,
+    )
+
+    for secret in (raw_email, raw_phone, raw_tracking, raw_prompt, "raw_provider_payload", "raw_tool_payload", "Bearer secret"):
+        assert secret not in encoded
+    assert row.case_context_json.get("safe_tracking_reference") is None
+    assert row.case_context_json.get("tracking_number_hash") is None
+    assert row.case_context_json.get("contact_methods") == []
+    assert row.case_context_json.get("customer_claim_summary") is None
+    assert row.case_context_json.get("last_mcp_fact") is None

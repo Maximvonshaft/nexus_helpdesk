@@ -1,0 +1,77 @@
+name: osr-escalation-safety-gate
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/services/nexus_osr/escalation_orchestration_service.py"
+      - "backend/app/services/webchat_ai_safe_service.py"
+      - "backend/tests/test_nexus_osr_escalation_orchestration.py"
+      - "backend/tests/test_nexus_osr_webchat_escalation_hook.py"
+      - "backend/tests/test_nexus_osr_configured_escalation_errors.py"
+      - ".github/workflows/osr-escalation-safety-gate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  osr-escalation-safety-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_ENV: development
+      ALLOW_DEV_AUTH: "false"
+      DATABASE_URL: sqlite:////tmp/nexus_osr_escalation_safety_gate.db
+      PYTHONPATH: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+          python -m pip install pytest pytest-timeout
+
+      - name: Compile escalation safety scope
+        run: |
+          python -m py_compile \
+            backend/app/services/nexus_osr/escalation_orchestration_service.py \
+            backend/app/services/webchat_ai_safe_service.py \
+            backend/tests/test_nexus_osr_escalation_orchestration.py \
+            backend/tests/test_nexus_osr_webchat_escalation_hook.py \
+            backend/tests/test_nexus_osr_configured_escalation_errors.py
+
+      - name: Run focused configured escalation tests
+        run: |
+          python -m pytest -q --timeout=120 \
+            backend/tests/test_nexus_osr_escalation_orchestration.py \
+            backend/tests/test_nexus_osr_webchat_escalation_hook.py \
+            backend/tests/test_nexus_osr_configured_escalation_errors.py
+
+      - name: Prove one unchanged Alembic head
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+
+          script = ScriptDirectory.from_config(Config("alembic.ini"))
+          heads = script.get_heads()
+          assert heads == ["20260710_0056"], heads
+          PY
+
+      - name: Prove no schema migration in this PR
+        run: |
+          if git diff --name-only "${{ github.event.pull_request.base.sha }}...HEAD" | grep -q '^backend/alembic/versions/'; then
+            echo "Unexpected migration file in configured escalation Work Item"
+            exit 1
+          fi
+
+      - name: Check exact-head diff whitespace
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
