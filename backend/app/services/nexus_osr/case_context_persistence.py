@@ -29,9 +29,9 @@ def load_case_context(
     """Load one exact, tenant-scoped Case Context identity.
 
     The default runtime path is active-only and refuses an unscoped/global
-    lookup. When an existing internal caller omits ``tenant_id``, the tenant is
-    derived only from the globally unique WebChat conversation record. A
-    ticket-only read must provide its tenant explicitly.
+    lookup. Existing internal callers may omit ``tenant_id`` only when it can be
+    derived from the globally unique WebChat conversation or from exactly one
+    persisted tenant for the globally unique ticket. Ambiguity fails closed.
     """
 
     conversation = _safe_identity(conversation_id)
@@ -42,7 +42,7 @@ def load_case_context(
     current = ensure_utc(now) or utc_now()
     query = _case_context_identity_query(
         db,
-        tenant_id=_resolve_tenant(db, tenant_id=tenant_id, conversation_id=conversation),
+        tenant_id=_resolve_tenant(db, tenant_id=tenant_id, conversation_id=conversation, ticket_id=ticket),
         conversation_id=conversation,
         ticket_id=ticket,
     )
@@ -213,19 +213,36 @@ def expire_case_context(
     return row
 
 
-def _resolve_tenant(db: Session, *, tenant_id: str | None, conversation_id: int | None) -> str:
+def _resolve_tenant(
+    db: Session,
+    *,
+    tenant_id: str | None,
+    conversation_id: int | None,
+    ticket_id: int | None,
+) -> str:
     if tenant_id is not None:
         return _normalize_tenant(tenant_id)
-    if conversation_id is None:
+    if conversation_id is not None:
+        resolved = (
+            db.query(WebchatConversation.tenant_key)
+            .filter(WebchatConversation.id == conversation_id)
+            .scalar()
+        )
+        if not resolved:
+            raise ValueError("case_context_tenant_unresolvable")
+        return _normalize_tenant(resolved)
+    if ticket_id is None:
         raise ValueError("case_context_tenant_required")
-    resolved = (
-        db.query(WebchatConversation.tenant_key)
-        .filter(WebchatConversation.id == conversation_id)
-        .scalar()
+    tenant_rows = (
+        db.query(CaseContextRecord.tenant_id)
+        .filter(CaseContextRecord.ticket_id == ticket_id)
+        .distinct()
+        .limit(2)
+        .all()
     )
-    if not resolved:
-        raise ValueError("case_context_tenant_unresolvable")
-    return _normalize_tenant(resolved)
+    if len(tenant_rows) != 1:
+        raise ValueError("case_context_tenant_ambiguous" if tenant_rows else "case_context_tenant_unresolvable")
+    return _normalize_tenant(tenant_rows[0][0])
 
 
 def _normalize_tenant(value: str | None) -> str:
