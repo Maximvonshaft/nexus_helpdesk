@@ -9,7 +9,8 @@ RUN npm run build
 FROM docker.io/library/python:3.11-alpine3.22 AS python-wheel-builder
 WORKDIR /build
 COPY backend/requirements.txt /build/requirements.txt
-RUN apk add --no-cache --virtual .build-deps \
+RUN apk upgrade --no-cache \
+    && apk add --no-cache --virtual .build-deps \
         build-base \
         cargo \
         libffi-dev \
@@ -44,21 +45,30 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install only the prebuilt candidate dependency set. Compilers, Cargo and
-# development headers remain in the discarded wheel-builder stage.
+# Apply the current Alpine security repository before installing the candidate.
+# Install only prebuilt wheels; compilers, Cargo and development headers remain
+# in the discarded wheel-builder stage. Packaging/build tools are removed from
+# the runtime after installation because the service never builds packages.
 COPY backend/requirements.txt /tmp/requirements.txt
 COPY --from=python-wheel-builder /wheels /wheels
-RUN python -m pip install \
+RUN apk upgrade --no-cache \
+    && python -m pip install \
         --no-index \
         --find-links=/wheels \
         --requirement /tmp/requirements.txt \
-    && rm -rf /wheels /tmp/requirements.txt
+    && python -m pip uninstall -y \
+        autocommand \
+        jaraco.context \
+        setuptools \
+        wheel \
+    && rm -rf /wheels /tmp/requirements.txt /root/.cache
 
 # Keep the runtime image deterministic. Do not COPY the whole repository because
 # that can bake local caches, VCS metadata, env files, uploads, or secrets into
 # the image when .dockerignore drifts.
 COPY backend/ /app/backend/
 COPY scripts/ /app/scripts/
+COPY THIRD_PARTY_NOTICES.md /app/THIRD_PARTY_NOTICES.md
 COPY --from=webapp-builder /build/frontend_dist /app/frontend_dist
 
 # Round B webchat widget static export. Keep embeddable public files outside SPA
