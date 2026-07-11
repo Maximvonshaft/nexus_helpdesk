@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
 
-
 SCHEMA = "nexus.external-channel-retirement.inventory.v1"
 EXPECTED_DISCOVERY_TOKENS = (
     "ExternalChannel",
@@ -56,6 +55,8 @@ RULE_FIELDS = frozenset(
 IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,127}$")
 VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+REGULAR_GIT_MODES = frozenset({"100644", "100755"})
+NON_FILE_GIT_MODES = frozenset({"120000", "160000"})
 MAX_RULES = 500
 MAX_LIST_ITEMS = 100
 MAX_TEXT_LENGTH = 500
@@ -166,40 +167,31 @@ def parse_inventory(payload: object) -> Inventory:
     if discovery_tokens != EXPECTED_DISCOVERY_TOKENS:
         raise InventoryError("inventory_discovery_tokens_invalid")
 
-    production_roots = _prefix_tuple(
-        root["production_roots"],
-        "inventory_production_roots_invalid",
-    )
+    production_roots = _prefix_tuple(root["production_roots"], "inventory_production_roots_invalid")
     historical_roots = _prefix_tuple(
         root["allowed_historical_glob_roots"],
         "inventory_historical_roots_invalid",
     )
-    if set(production_roots) & set(historical_roots):
-        raise InventoryError("inventory_root_overlap")
-    for production in production_roots:
-        if any(
-            production.startswith(historical) or historical.startswith(production)
-            for historical in historical_roots
-        ):
-            raise InventoryError("inventory_root_overlap", production)
+    _validate_root_sets(production_roots, historical_roots)
 
     raw_rules = _sequence(root["rules"], "inventory_rules_invalid")
     if not raw_rules or len(raw_rules) > MAX_RULES:
         raise InventoryError("inventory_rule_count_invalid")
-    expanded_rules: list[InventoryRule] = []
-    for value in raw_rules:
-        expanded_rules.extend(
+
+    expanded: list[InventoryRule] = []
+    for raw_rule in raw_rules:
+        expanded.extend(
             _parse_rules(
-                value,
+                raw_rule,
                 production_roots=production_roots,
                 historical_roots=historical_roots,
             )
         )
-    if not expanded_rules or len(expanded_rules) > MAX_RULES:
+    if not expanded or len(expanded) > MAX_RULES:
         raise InventoryError("inventory_rule_count_invalid")
-    rules = tuple(expanded_rules)
+
     identities: set[tuple[str, str]] = set()
-    for rule in rules:
+    for rule in expanded:
         if rule.identity in identities:
             raise InventoryError("inventory_rule_duplicate", rule.identity[1])
         identities.add(rule.identity)
@@ -217,9 +209,20 @@ def parse_inventory(payload: object) -> Inventory:
         discovery_tokens=discovery_tokens,
         production_roots=production_roots,
         allowed_historical_glob_roots=historical_roots,
-        rules=rules,
+        rules=tuple(expanded),
         inventory_sha256=hashlib.sha256(canonical).hexdigest(),
     )
+
+
+def _validate_root_sets(production_roots: Sequence[str], historical_roots: Sequence[str]) -> None:
+    if set(production_roots) & set(historical_roots):
+        raise InventoryError("inventory_root_overlap")
+    for production in production_roots:
+        if any(
+            production.startswith(historical) or historical.startswith(production)
+            for historical in historical_roots
+        ):
+            raise InventoryError("inventory_root_overlap", production)
 
 
 def _parse_rules(
@@ -231,52 +234,27 @@ def _parse_rules(
     row = _mapping(payload, "inventory_rule_invalid")
     _exact_keys(row, RULE_FIELDS, "inventory_rule_fields_invalid")
 
-    raw_path = row["path"]
-    raw_paths = row["paths"]
-    raw_glob = row["glob"]
-    if sum(value is not None for value in (raw_path, raw_paths, raw_glob)) != 1:
+    selectors = (row["path"], row["paths"], row["glob"])
+    if sum(value is not None for value in selectors) != 1:
         raise InventoryError("inventory_rule_selector_invalid")
 
     exact_paths: tuple[str, ...] = ()
     glob: str | None = None
-    if raw_path is not None:
-        exact_paths = (
-            _relative_path(
-                raw_path,
-                "inventory_rule_path_invalid",
-                allow_glob=False,
-            ),
-        )
-    elif raw_paths is not None:
-        path_rows = _sequence(raw_paths, "inventory_rule_paths_invalid")
+    if row["path"] is not None:
+        exact_paths = (_relative_path(row["path"], "inventory_rule_path_invalid", allow_glob=False),)
+    elif row["paths"] is not None:
+        path_rows = _sequence(row["paths"], "inventory_rule_paths_invalid")
         if not path_rows or len(path_rows) > MAX_RULES:
             raise InventoryError("inventory_rule_paths_invalid")
         exact_paths = tuple(
-            _relative_path(
-                item,
-                "inventory_rule_path_invalid",
-                allow_glob=False,
-            )
+            _relative_path(item, "inventory_rule_path_invalid", allow_glob=False)
             for item in path_rows
         )
         if len(exact_paths) != len(set(exact_paths)):
             raise InventoryError("inventory_rule_paths_invalid")
     else:
-        glob = _relative_path(
-            raw_glob,
-            "inventory_rule_glob_invalid",
-            allow_glob=True,
-        )
-        static_prefix = _glob_static_prefix(glob)
-        if not static_prefix:
-            raise InventoryError("inventory_historical_glob_root_invalid", glob)
-        if any(
-            static_prefix.startswith(root) or root.startswith(static_prefix)
-            for root in production_roots
-        ):
-            raise InventoryError("inventory_production_glob_forbidden", glob)
-        if not any(static_prefix.startswith(root) for root in historical_roots):
-            raise InventoryError("inventory_historical_glob_root_invalid", glob)
+        glob = _relative_path(row["glob"], "inventory_rule_glob_invalid", allow_glob=True)
+        _validate_historical_glob(glob, production_roots, historical_roots)
 
     asset_type = _identifier(row["asset_type"], "inventory_asset_type_invalid")
     disposition = _identifier(row["disposition"], "inventory_disposition_invalid")
@@ -296,74 +274,90 @@ def _parse_rules(
         "inventory_prerequisites_invalid",
         allow_empty=True,
     )
+    selector_detail = exact_paths[0] if exact_paths else glob
     if write_surface and (
         not exact_paths
         or not stop_new_writes_required
         or "caller_migration" not in prerequisites
     ):
-        raise InventoryError(
-            "inventory_write_surface_control_invalid",
-            exact_paths[0] if exact_paths else glob,
-        )
+        raise InventoryError("inventory_write_surface_control_invalid", selector_detail)
     if not write_surface and stop_new_writes_required:
-        raise InventoryError(
-            "inventory_write_surface_control_invalid",
-            exact_paths[0] if exact_paths else glob,
+        raise InventoryError("inventory_write_surface_control_invalid", selector_detail)
+
+    common = {
+        "asset_type": asset_type,
+        "disposition": disposition,
+        "owner": owner,
+        "rationale": rationale,
+        "write_surface": write_surface,
+        "stop_new_writes_required": stop_new_writes_required,
+        "prerequisites": prerequisites,
+    }
+    if glob is not None:
+        return (InventoryRule(path=None, glob=glob, **common),)
+    return tuple(InventoryRule(path=path, glob=None, **common) for path in exact_paths)
+
+
+def _validate_historical_glob(
+    pattern: str,
+    production_roots: Sequence[str],
+    historical_roots: Sequence[str],
+) -> None:
+    static_prefix = _glob_static_prefix(pattern)
+    if not static_prefix:
+        raise InventoryError("inventory_historical_glob_root_invalid", pattern)
+    if any(
+        static_prefix.startswith(root) or root.startswith(static_prefix)
+        for root in production_roots
+    ):
+        raise InventoryError("inventory_production_glob_forbidden", pattern)
+    if not any(static_prefix.startswith(root) for root in historical_roots):
+        raise InventoryError("inventory_historical_glob_root_invalid", pattern)
+
+
+def parse_tracked_file_index(raw: bytes) -> tuple[str, ...]:
+    """Parse `git ls-files -z --stage`, retaining only regular tracked files."""
+    try:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise InventoryError("inventory_git_path_encoding_invalid") from exc
+
+    paths: list[str] = []
+    for record in decoded.split("\0"):
+        if not record:
+            continue
+        try:
+            metadata, raw_path = record.split("\t", 1)
+            mode, object_id, stage = metadata.split(" ")
+        except ValueError as exc:
+            raise InventoryError("inventory_git_index_invalid") from exc
+        if not SHA_RE.fullmatch(object_id) or stage != "0":
+            raise InventoryError("inventory_git_index_invalid")
+        if mode in NON_FILE_GIT_MODES:
+            continue
+        if mode not in REGULAR_GIT_MODES:
+            raise InventoryError("inventory_git_mode_unsupported", mode)
+        paths.append(
+            _relative_path(raw_path, "inventory_tracked_path_invalid", allow_glob=False)
         )
 
-    if glob is not None:
-        return (
-            InventoryRule(
-                path=None,
-                glob=glob,
-                asset_type=asset_type,
-                disposition=disposition,
-                owner=owner,
-                rationale=rationale,
-                write_surface=write_surface,
-                stop_new_writes_required=stop_new_writes_required,
-                prerequisites=prerequisites,
-            ),
-        )
-    return tuple(
-        InventoryRule(
-            path=path,
-            glob=None,
-            asset_type=asset_type,
-            disposition=disposition,
-            owner=owner,
-            rationale=rationale,
-            write_surface=write_surface,
-            stop_new_writes_required=stop_new_writes_required,
-            prerequisites=prerequisites,
-        )
-        for path in exact_paths
-    )
+    if len(paths) != len(set(paths)):
+        raise InventoryError("inventory_tracked_path_duplicate")
+    return tuple(sorted(paths))
 
 
 def list_tracked_files(repo_root: Path) -> tuple[str, ...]:
     root = repo_root.resolve()
     try:
         completed = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-z"],
+            ["git", "-C", str(root), "ls-files", "-z", "--stage"],
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         raise InventoryError("inventory_git_ls_files_failed") from exc
-    try:
-        decoded = completed.stdout.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise InventoryError("inventory_git_path_encoding_invalid") from exc
-    paths = [
-        _relative_path(value, "inventory_tracked_path_invalid", allow_glob=False)
-        for value in decoded.split("\0")
-        if value
-    ]
-    if len(paths) != len(set(paths)):
-        raise InventoryError("inventory_tracked_path_duplicate")
-    return tuple(sorted(paths))
+    return parse_tracked_file_index(completed.stdout)
 
 
 def discover_token_paths(
@@ -375,15 +369,11 @@ def discover_token_paths(
     token_bytes = tuple(token.encode("utf-8") for token in tokens)
     matches: list[str] = []
     for raw_path in tracked_paths:
-        path = _relative_path(
-            raw_path,
-            "inventory_tracked_path_invalid",
-            allow_glob=False,
-        )
+        path = _relative_path(raw_path, "inventory_tracked_path_invalid", allow_glob=False)
         candidate = root / path
         try:
-            if candidate.is_symlink():
-                raise InventoryError("inventory_tracked_symlink_forbidden", path)
+            if candidate.is_symlink() or not candidate.is_file():
+                raise InventoryError("inventory_tracked_file_type_invalid", path)
             data = candidate.read_bytes()
         except InventoryError:
             raise
@@ -404,12 +394,10 @@ def evaluate_inventory(
     tracked = _normalized_path_set(tracked_paths, "inventory_tracked_path_invalid")
     references = _normalized_path_set(token_paths, "inventory_token_path_invalid")
     if not references.issubset(tracked):
-        missing = sorted(references - tracked)[0]
-        raise InventoryError("inventory_token_path_not_tracked", missing)
+        raise InventoryError("inventory_token_path_not_tracked", sorted(references - tracked)[0])
 
     exact_rules = tuple(rule for rule in inventory.rules if rule.path is not None)
     glob_rules = tuple(rule for rule in inventory.rules if rule.glob is not None)
-
     for rule in exact_rules:
         assert rule.path is not None
         if rule.path not in tracked:
@@ -467,11 +455,7 @@ def build_safe_summary(
 def check_repository(repo_root: Path, manifest_path: Path) -> dict[str, object]:
     inventory = load_inventory(manifest_path)
     tracked = list_tracked_files(repo_root)
-    references = discover_token_paths(
-        repo_root,
-        tracked,
-        inventory.discovery_tokens,
-    )
+    references = discover_token_paths(repo_root, tracked, inventory.discovery_tokens)
     evaluation = evaluate_inventory(inventory, tracked, references)
     return build_safe_summary(inventory, evaluation)
 
@@ -488,11 +472,7 @@ def _sequence(value: object, reason: str) -> list[Any]:
     return value
 
 
-def _exact_keys(
-    mapping: Mapping[str, Any],
-    expected: frozenset[str],
-    reason: str,
-) -> None:
+def _exact_keys(mapping: Mapping[str, Any], expected: frozenset[str], reason: str) -> None:
     if set(mapping) != expected:
         raise InventoryError(reason)
 
@@ -566,8 +546,7 @@ def _prefix_tuple(value: object, reason: str) -> tuple[str, ...]:
         raw = _text(item, reason, 300)
         if not raw.endswith("/"):
             raise InventoryError(reason, raw)
-        prefix = _relative_path(raw[:-1], reason, allow_glob=False) + "/"
-        result.append(prefix)
+        result.append(_relative_path(raw[:-1], reason, allow_glob=False) + "/")
     if len(result) != len(set(result)):
         raise InventoryError(reason)
     return tuple(result)
@@ -591,11 +570,8 @@ def _relative_path(value: object, reason: str, *, allow_glob: bool) -> str:
 
 
 def _glob_static_prefix(pattern: str) -> str:
-    wildcard_positions = [
-        position
-        for marker in ("*", "?", "[")
-        if (position := pattern.find(marker)) >= 0
-    ]
+    positions = [pattern.find(marker) for marker in ("*", "?", "[")]
+    wildcard_positions = [position for position in positions if position >= 0]
     if not wildcard_positions:
         return ""
     static = pattern[: min(wildcard_positions)]
@@ -605,10 +581,7 @@ def _glob_static_prefix(pattern: str) -> str:
 
 
 def _normalized_path_set(values: Sequence[str], reason: str) -> set[str]:
-    normalized = [
-        _relative_path(value, reason, allow_glob=False)
-        for value in values
-    ]
+    normalized = [_relative_path(value, reason, allow_glob=False) for value in values]
     if len(normalized) != len(set(normalized)):
         raise InventoryError(f"{reason}_duplicate")
     return set(normalized)
@@ -616,7 +589,7 @@ def _normalized_path_set(values: Sequence[str], reason: str) -> set[str]:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Validate the retired ExternalChannel repository inventory.",
+        description="Validate the retired ExternalChannel repository inventory."
     )
     parser.add_argument(
         "--repo-root",
@@ -642,11 +615,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except InventoryError as exc:
         print(
             json.dumps(
-                {
-                    "ok": False,
-                    "reason": exc.reason,
-                    "detail": exc.detail,
-                },
+                {"ok": False, "reason": exc.reason, "detail": exc.detail},
                 sort_keys=True,
                 separators=(",", ":"),
             ),
