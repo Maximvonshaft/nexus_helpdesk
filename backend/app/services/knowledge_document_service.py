@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import csv
 import re
-import zipfile
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from io import BytesIO
 from io import StringIO
 from pathlib import Path
-from xml.etree import ElementTree
 
 from fastapi import HTTPException, UploadFile
 
 from ..settings import get_settings
+from .knowledge_archive_safety import (
+    KnowledgeArchiveLimits,
+    SafeKnowledgeArchive,
+    archive_limits_for_upload,
+    enforce_extracted_text_budget,
+    parse_bounded_xml,
+)
 from .text_decoding import TextDecodingError, decode_text_upload
 
 TEXT_DOCUMENT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".html", ".htm"}
@@ -321,23 +326,29 @@ def _extract_html_text(content: bytes) -> str:
 
 
 def _extract_docx_text(content: bytes) -> str:
+    limits = archive_limits_for_upload(get_settings().max_upload_bytes)
     try:
-        with zipfile.ZipFile(BytesIO(content)) as archive:
-            names = archive.namelist()
+        with SafeKnowledgeArchive(content, limits=limits) as archive:
+            names = archive.names
             xml_names = [
                 "word/document.xml",
                 *sorted(name for name in names if name.startswith("word/header") and name.endswith(".xml")),
                 *sorted(name for name in names if name.startswith("word/footer") and name.endswith(".xml")),
             ]
-            return "\n\n".join(_extract_word_xml_text(_read_zip_member(archive, name)) for name in xml_names if name in names).strip()
-    except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=400, detail="Unable to extract text from DOCX knowledge document") from exc
+            text = "\n\n".join(
+                _extract_word_xml_text(archive.read(name, xml=True), limits=limits)
+                for name in xml_names
+                if name in names
+            ).strip()
+            return enforce_extracted_text_budget(text, limits=limits)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Unable to extract text from DOCX knowledge document") from exc
 
 
-def _extract_word_xml_text(xml_bytes: bytes) -> str:
-    root = ElementTree.fromstring(xml_bytes)
+def _extract_word_xml_text(xml_bytes: bytes, *, limits: KnowledgeArchiveLimits) -> str:
+    root = parse_bounded_xml(xml_bytes, limits=limits)
     paragraph_tag = f"{{{_DOCX_NAMESPACE}}}p"
     text_tag = f"{{{_DOCX_NAMESPACE}}}t"
     tab_tag = f"{{{_DOCX_NAMESPACE}}}tab"
@@ -360,25 +371,40 @@ def _extract_word_xml_text(xml_bytes: bytes) -> str:
 
 
 def _extract_xlsx_text(content: bytes) -> str:
+    limits = archive_limits_for_upload(get_settings().max_upload_bytes)
     try:
-        with zipfile.ZipFile(BytesIO(content)) as archive:
-            names = archive.namelist()
-            shared_strings = _xlsx_shared_strings(archive, names)
-            sheet_names = sorted(name for name in names if name.startswith("xl/worksheets/sheet") and name.endswith(".xml"))
+        with SafeKnowledgeArchive(content, limits=limits) as archive:
+            names = archive.names
+            shared_strings = _xlsx_shared_strings(archive, names, limits=limits)
+            sheet_names = sorted(
+                name for name in names
+                if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
+            )
             rows: list[str] = []
             for sheet_name in sheet_names:
-                rows.extend(_extract_xlsx_sheet_rows(_read_zip_member(archive, sheet_name), shared_strings))
-            return "\n".join(rows).strip()
-    except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=400, detail="Unable to extract text from XLSX knowledge document") from exc
+                rows.extend(
+                    _extract_xlsx_sheet_rows(
+                        archive.read(sheet_name, xml=True),
+                        shared_strings,
+                        limits=limits,
+                    )
+                )
+            return enforce_extracted_text_budget("\n".join(rows).strip(), limits=limits)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Unable to extract text from XLSX knowledge document") from exc
 
 
-def _xlsx_shared_strings(archive: zipfile.ZipFile, names: list[str]) -> list[str]:
+def _xlsx_shared_strings(
+    archive: SafeKnowledgeArchive,
+    names: tuple[str, ...],
+    *,
+    limits: KnowledgeArchiveLimits,
+) -> list[str]:
     if "xl/sharedStrings.xml" not in names:
         return []
-    root = ElementTree.fromstring(_read_zip_member(archive, "xl/sharedStrings.xml"))
+    root = parse_bounded_xml(archive.read("xl/sharedStrings.xml", xml=True), limits=limits)
     text_tag = f"{{{_XLSX_NAMESPACE}}}t"
     values: list[str] = []
     for item in root:
@@ -387,8 +413,13 @@ def _xlsx_shared_strings(archive: zipfile.ZipFile, names: list[str]) -> list[str
     return values
 
 
-def _extract_xlsx_sheet_rows(xml_bytes: bytes, shared_strings: list[str]) -> list[str]:
-    root = ElementTree.fromstring(xml_bytes)
+def _extract_xlsx_sheet_rows(
+    xml_bytes: bytes,
+    shared_strings: list[str],
+    *,
+    limits: KnowledgeArchiveLimits,
+) -> list[str]:
+    root = parse_bounded_xml(xml_bytes, limits=limits)
     row_tag = f"{{{_XLSX_NAMESPACE}}}row"
     cell_tag = f"{{{_XLSX_NAMESPACE}}}c"
     value_tag = f"{{{_XLSX_NAMESPACE}}}v"
@@ -412,10 +443,3 @@ def _extract_xlsx_sheet_rows(xml_bytes: bytes, shared_strings: list[str]) -> lis
         if cells:
             rows.append(" | ".join(cells))
     return rows
-
-
-def _read_zip_member(archive: zipfile.ZipFile, name: str) -> bytes:
-    info = archive.getinfo(name)
-    if info.file_size > get_settings().max_upload_bytes:
-        raise HTTPException(status_code=400, detail="Knowledge document contains an extracted file that is too large")
-    return archive.read(name)
