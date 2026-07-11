@@ -1,0 +1,62 @@
+name: connector-fix-config-hash-redaction
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/connector-fix-config-hash-redaction.yml"
+      - "backend/app/services/nexus_osr/release_profiles.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Fix key-aware redaction
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('backend/app/services/nexus_osr/release_profiles.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''    for raw_key, raw_value in list(value.items())[:32]:
+        key = safe_reason(raw_key, fallback="field")[:80]
+        if any(token in key for token in ("secret", "token", "password", "authorization", "credential", "cookie", "payload")):
+            safe[key] = "[redacted]"
+'''
+          new = '''    for raw_key, raw_value in list(value.items())[:32]:
+        raw_key_text = str(raw_key or "").strip().lower().replace(" ", "_")[:80]
+        key = raw_key_text if _REASON_RE.fullmatch(raw_key_text) else "field"
+        sensitive_key = any(
+            token in raw_key_text
+            for token in ("secret", "token", "password", "authorization", "credential", "cookie", "payload", "api_key", "apikey")
+        )
+        if sensitive_key:
+            safe[key] = "[redacted]"
+'''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'CONFIG_HASH_BLOCK_COUNT={count}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          python -m py_compile backend/app/services/nexus_osr/release_profiles.py
+          pytest -q backend/tests/test_nexus_osr_release_profiles.py
+          git diff --check
+      - name: Commit exact correction
+        run: |
+          set -Eeuo pipefail
+          git config user.name "nexus-readiness-automation"
+          git config user.email "nexus-readiness-automation@users.noreply.github.com"
+          git add backend/app/services/nexus_osr/release_profiles.py
+          git commit -m "fix(readiness): redact configuration values before hashing"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
