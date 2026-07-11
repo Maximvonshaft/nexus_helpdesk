@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 from typing import Callable
+from urllib.parse import urlsplit
 
 from .private_ai_runtime import PrivateAIRuntimeAdapter
 from ..runtime_capabilities import (
@@ -83,6 +84,14 @@ class CapabilityVerifiedPrivateAIRuntimeAdapter(PrivateAIRuntimeAdapter):
                 paths_in_use.append(self.rag_path)
             if any(path != expected_path for path in paths_in_use):
                 return "capability_generation_contract_mismatch"
+
+        if self.chat_mode in {"rag", "auto"} and not _same_runtime_origin(
+            self.base_url,
+            self.rag_base_url,
+        ):
+            # One capability manifest proves one Runtime identity. A request must
+            # never probe Runtime A and then send authoritative generation to B.
+            return "capability_runtime_identity_mismatch"
 
         expected_request_contract = (
             os.getenv("PRIVATE_AI_RUNTIME_EXPECTED_REQUEST_CONTRACT") or ""
@@ -208,3 +217,20 @@ def _capability_timeout_from_env() -> float:
     if not 0.1 <= timeout <= 30.0:
         return -1.0
     return timeout
+
+
+def _same_runtime_origin(left: str, right: str) -> bool:
+    try:
+        left_parts = urlsplit(left)
+        right_parts = urlsplit(right)
+    except ValueError:
+        return False
+    return (
+        left_parts.scheme.lower(),
+        left_parts.hostname or "",
+        left_parts.port,
+    ) == (
+        right_parts.scheme.lower(),
+        right_parts.hostname or "",
+        right_parts.port,
+    )
