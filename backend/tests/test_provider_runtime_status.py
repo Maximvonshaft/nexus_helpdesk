@@ -15,13 +15,26 @@ _ENV_KEYS = [
     "PRIVATE_AI_RUNTIME_TOKEN_FILE",
     "PRIVATE_AI_RUNTIME_DIRECT_PATH",
     "PRIVATE_AI_RUNTIME_RAG_PATH",
+    "PRIVATE_AI_RUNTIME_CAPABILITIES_PATH",
     "PRIVATE_AI_RUNTIME_CHAT_MODE",
     "PRIVATE_AI_RUNTIME_REQUEST_SHAPE",
+    "PRIVATE_AI_RUNTIME_GENERATION_MODEL",
     "PRIVATE_AI_RUNTIME_DIRECT_MODEL",
     "PRIVATE_AI_RUNTIME_RAG_MODEL",
     "PRIVATE_AI_RUNTIME_RAG_BASE_URL",
-    "PRIVATE_AI_RUNTIME_ALLOW_SHARED_RAG_MODEL",
     "PRIVATE_AI_RUNTIME_TIMEOUT_SECONDS",
+    "PRIVATE_AI_RUNTIME_CAPABILITY_TIMEOUT_SECONDS",
+    "PRIVATE_AI_RUNTIME_EXPECTED_RUNTIME_ID",
+    "PRIVATE_AI_RUNTIME_EXPECTED_RUNTIME_VERSION",
+    "PRIVATE_AI_RUNTIME_EXPECTED_GENERATION_MODEL",
+    "PRIVATE_AI_RUNTIME_EXPECTED_GENERATION_PATH",
+    "PRIVATE_AI_RUNTIME_EXPECTED_REQUEST_CONTRACT",
+    "PRIVATE_AI_RUNTIME_EXPECTED_RESPONSE_CONTRACT",
+    "PRIVATE_AI_RUNTIME_EXPECTED_RETRIEVAL_BACKEND",
+    "PRIVATE_AI_RUNTIME_EXPECTED_EMBEDDING_MODEL",
+    "PRIVATE_AI_RUNTIME_EXPECTED_EMBEDDING_DIMENSION",
+    "PRIVATE_AI_RUNTIME_EXPECTED_RERANKER_MODEL",
+    "PRIVATE_AI_RUNTIME_EXPECTED_COLLECTION_ALIAS",
 ]
 
 
@@ -29,6 +42,24 @@ def _clear_env(monkeypatch) -> None:
     for key in _ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
     get_webchat_runtime_settings.cache_clear()
+
+
+def _configure_expectations(monkeypatch) -> None:
+    values = {
+        "PRIVATE_AI_RUNTIME_EXPECTED_RUNTIME_ID": "nexus-private-ai-runtime",
+        "PRIVATE_AI_RUNTIME_EXPECTED_RUNTIME_VERSION": "2026.07.12.1",
+        "PRIVATE_AI_RUNTIME_EXPECTED_GENERATION_MODEL": "nexus-gemma4-e4b:latest",
+        "PRIVATE_AI_RUNTIME_EXPECTED_GENERATION_PATH": "/api/chat",
+        "PRIVATE_AI_RUNTIME_EXPECTED_REQUEST_CONTRACT": "ollama.chat.v1",
+        "PRIVATE_AI_RUNTIME_EXPECTED_RESPONSE_CONTRACT": "nexus_webchat_runtime_reply_v1",
+        "PRIVATE_AI_RUNTIME_EXPECTED_RETRIEVAL_BACKEND": "qdrant",
+        "PRIVATE_AI_RUNTIME_EXPECTED_EMBEDDING_MODEL": "qwen3-embedding",
+        "PRIVATE_AI_RUNTIME_EXPECTED_EMBEDDING_DIMENSION": "1024",
+        "PRIVATE_AI_RUNTIME_EXPECTED_RERANKER_MODEL": "qwen3-reranker",
+        "PRIVATE_AI_RUNTIME_EXPECTED_COLLECTION_ALIAS": "nexus-knowledge-active",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
 
 
 def test_provider_runtime_status_default_private_runtime_not_configured(monkeypatch):
@@ -42,40 +73,60 @@ def test_provider_runtime_status_default_private_runtime_not_configured(monkeypa
     assert status["configured_provider"] == "private_ai_runtime"
     assert "private_ai_runtime is disabled" in status["warnings"]
     assert "private_ai_runtime base URL is missing" in status["warnings"]
+    assert (
+        "private_ai_runtime capability expectation invalid: capability_expectation_missing"
+        in status["warnings"]
+    )
     assert status["boundary"] == {
         "secret_values_exposed": False,
         "external_network_call": False,
         "customer_message_sent": False,
+        "internal_endpoint_exposed": False,
     }
 
 
 def test_provider_runtime_status_private_ai_runtime_ready_without_secret_echo(monkeypatch):
     _clear_env(monkeypatch)
+    _configure_expectations(monkeypatch)
     secret = "private-ai-runtime-secret"
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "private_ai_runtime")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN", secret)
+    monkeypatch.setenv(
+        "PRIVATE_AI_RUNTIME_GENERATION_MODEL",
+        "nexus-gemma4-e4b:latest",
+    )
 
     status = get_provider_runtime_status()
 
     assert status["ok"] is True
     assert status["status"] == "ready"
     assert status["fallback_provider"] is None
-    private_ai = next(item for item in status["providers"] if item["name"] == "private_ai_runtime")
+    private_ai = next(
+        item for item in status["providers"] if item["name"] == "private_ai_runtime"
+    )
     assert private_ai["selected"] is True
     assert private_ai["feature_enabled"] is True
     assert private_ai["configured"] is True
     assert private_ai["runtime"] == "server_side_ai_runtime"
     assert private_ai["capabilities"]["webchat_runtime_reply"] is True
     assert private_ai["diagnostics"]["direct_path"] == "/api/chat"
+    assert private_ai["diagnostics"]["capabilities_path"] == "/v1/capabilities"
     assert private_ai["diagnostics"]["request_shape"] == "ollama_chat"
+    assert (
+        private_ai["diagnostics"]["generation_model"]
+        == "nexus-gemma4-e4b:latest"
+    )
+    assert private_ai["diagnostics"]["capability_expectation"]["status"] == "ready"
     assert secret not in str(status)
+    assert "ai-runtime.internal" not in str(status)
 
 
 def test_provider_runtime_status_production_requires_token_file(monkeypatch):
     _clear_env(monkeypatch)
+    _configure_expectations(monkeypatch)
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "private_ai_runtime")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
@@ -92,6 +143,7 @@ def test_provider_runtime_status_production_requires_token_file(monkeypatch):
 
 def test_provider_runtime_status_warns_on_endpoint_shape_mismatch(monkeypatch):
     _clear_env(monkeypatch)
+    _configure_expectations(monkeypatch)
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "private_ai_runtime")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
@@ -103,38 +155,69 @@ def test_provider_runtime_status_warns_on_endpoint_shape_mismatch(monkeypatch):
     status = get_provider_runtime_status()
 
     assert status["ok"] is False
-    assert "private_ai_runtime endpoint and request shape are incompatible" in status["warnings"]
+    assert (
+        "private_ai_runtime endpoint and request shape are incompatible"
+        in status["warnings"]
+    )
+    private_ai = status["providers"][0]
+    assert private_ai["configured"] is False
 
 
-def test_provider_runtime_status_warns_when_production_rag_model_is_not_isolated(monkeypatch):
+def test_provider_runtime_status_rejects_stale_legacy_qwen_model_configuration(monkeypatch):
     _clear_env(monkeypatch)
+    _configure_expectations(monkeypatch)
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "private_ai_runtime")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", "/run/nexus/ai_runtime_token")
-    monkeypatch.setenv("PRIVATE_AI_RUNTIME_CHAT_MODE", "rag")
+    monkeypatch.setenv(
+        "PRIVATE_AI_RUNTIME_GENERATION_MODEL",
+        "nexus-gemma4-e4b:latest",
+    )
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_DIRECT_MODEL", "qwen2.5:3b")
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_RAG_MODEL", "qwen3:4b")
 
     status = get_provider_runtime_status()
 
     assert status["ok"] is False
-    assert "private_ai_runtime RAG model requires an isolated runtime" in status["warnings"]
-    private_ai = next(item for item in status["providers"] if item["name"] == "private_ai_runtime")
-    assert private_ai["diagnostics"]["rag_runtime_isolated"] is False
+    assert (
+        "private_ai_runtime legacy model configuration conflicts with generation model"
+        in status["warnings"]
+    )
+    private_ai = status["providers"][0]
+    assert private_ai["configured"] is False
+    assert private_ai["diagnostics"]["legacy_model_configuration_valid"] is False
+    assert "direct_model" not in private_ai["diagnostics"]
+    assert "rag_model" not in private_ai["diagnostics"]
 
 
-def test_provider_runtime_status_accepts_isolated_production_rag_runtime(monkeypatch):
+def test_provider_runtime_status_treats_retrieval_as_independent_capability(monkeypatch):
     _clear_env(monkeypatch)
+    _configure_expectations(monkeypatch)
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "private_ai_runtime")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_ENABLED", "true")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_BASE_URL", "http://ai-runtime.internal:18081")
-    monkeypatch.setenv("PRIVATE_AI_RUNTIME_RAG_BASE_URL", "http://ai-runtime-rag.internal:18081")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_TOKEN_FILE", "/run/nexus/ai_runtime_token")
     monkeypatch.setenv("PRIVATE_AI_RUNTIME_CHAT_MODE", "rag")
+    monkeypatch.setenv(
+        "PRIVATE_AI_RUNTIME_GENERATION_MODEL",
+        "nexus-gemma4-e4b:latest",
+    )
 
     status = get_provider_runtime_status()
 
-    assert "private_ai_runtime RAG model requires an isolated runtime" not in status["warnings"]
-    private_ai = next(item for item in status["providers"] if item["name"] == "private_ai_runtime")
-    assert private_ai["diagnostics"]["rag_runtime_isolated"] is True
+    assert status["ok"] is True
+    private_ai = status["providers"][0]
+    assert private_ai["configured"] is True
+    assert (
+        private_ai["diagnostics"]["capability_expectation"]["expected"]["retrieval"]
+        == {
+            "backend": "qdrant",
+            "embedding_model": "qwen3-embedding",
+            "embedding_dimension": 1024,
+            "reranker_model": "qwen3-reranker",
+            "collection_alias": "nexus-knowledge-active",
+        }
+    )
