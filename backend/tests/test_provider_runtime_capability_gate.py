@@ -124,6 +124,7 @@ def configure_static_runtime(monkeypatch, tmp_path: Path) -> None:
     }
     for name, value in values.items():
         monkeypatch.setenv(name, value)
+    monkeypatch.delenv("PRIVATE_AI_RUNTIME_RAG_BASE_URL", raising=False)
     monkeypatch.delenv("PRIVATE_AI_RUNTIME_DIRECT_MODEL", raising=False)
     monkeypatch.delenv("PRIVATE_AI_RUNTIME_RAG_MODEL", raising=False)
 
@@ -193,6 +194,13 @@ def test_conflicting_legacy_model_configuration_fails_closed(
                 "PRIVATE_AI_RUNTIME_RAG_PATH": "/other-rag-path",
             },
             "capability_generation_contract_mismatch",
+        ),
+        (
+            {
+                "PRIVATE_AI_RUNTIME_CHAT_MODE": "rag",
+                "PRIVATE_AI_RUNTIME_RAG_BASE_URL": "http://other-runtime.internal:18081",
+            },
+            "capability_runtime_identity_mismatch",
         ),
     ],
 )
