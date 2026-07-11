@@ -1,6 +1,6 @@
 # Nexus Production Technical Manual
 
-Last updated: 2026-07-05
+Last updated: 2026-07-12
 
 This manual describes the current production direction. Retired alternate
 provider bridges, old direct reply APIs, and template-fallback paths are not
@@ -16,24 +16,36 @@ part of the production runtime.
 - Knowledge is context for Runtime, not a backend template reply source.
 - Safety gates may allow, block, repair privacy leaks, or retry malformed
   Runtime output. They must not create replacement canned replies.
+- An authoritative Runtime call requires an exact authenticated
+  `nexus.ai_runtime.capabilities.v1` match. A URL, token, health response or
+  successful generation response alone is not readiness evidence.
 
 ## Production Runtime
 
-Current 178 candidate deployment uses:
+The current production direction is:
 
 - Provider: `private_ai_runtime`
 - Runtime request shape: `ollama_chat`
-- Direct model: `qwen2.5:3b`
-- Complex/RAG model configured at Runtime side: `qwen3:4b`
-- Production guard: heavier RAG models must use an isolated Runtime origin when
-  `PRIVATE_AI_RUNTIME_CHAT_MODE=rag|auto`; shared low-latency WebChat Runtime
-  is rejected unless explicitly allowed after benchmarking.
+- Generation model: `nexus-gemma4-e4b:latest`
+- Generation request contract: `ollama.chat.v1`
+- Customer-visible response contract: `nexus_webchat_runtime_reply_v1`
+- Retrieval: independent Qdrant capability with exact embedding model,
+  embedding dimension, reranker and active collection alias verified from the
+  Runtime manifest
+- Voice: STT, TTS and live voice represented independently from generation and
+  retrieval
 - Tracking fact source: `speedaf_hybrid`
 - WebChat AI turn source of truth: `webchat_ai_turns`
 
-The private Runtime endpoint and token are configured through deployment
-environment and secret files. Do not write token values, app codes, or Speedaf
-secrets into docs, logs, tickets, or committed files.
+Legacy `PRIVATE_AI_RUNTIME_DIRECT_MODEL` and
+`PRIVATE_AI_RUNTIME_RAG_MODEL` are migration-only inputs. They are not
+capability authority and must not identify different models. A conflicting
+legacy value fails closed.
+
+The private Runtime endpoint, exact expectations and token are configured
+through deployment environment and root-managed secret files. Do not write
+Runtime authorities, token values, app codes or Speedaf secrets into browser
+assets, release evidence, docs, logs, tickets or committed files.
 
 ## WebChat Flow
 
@@ -43,6 +55,8 @@ sequenceDiagram
   participant W as WebChat API
   participant Q as AI Turn Queue
   participant S as Speedaf Fact Source
+  participant P as Provider Traffic Authority
+  participant G as Capability Gate
   participant R as Private AI Runtime
   participant DB as Nexus DB
 
@@ -50,11 +64,18 @@ sequenceDiagram
   W->>DB: persist visitor message
   W->>Q: schedule WebChat AI turn
   Q->>S: lookup trusted tracking fact when applicable
-  Q->>R: send compact prompt + trusted facts/knowledge
-  R-->>Q: final customer-visible reply
-  Q->>DB: persist reply and runtime trace
+  Q->>P: resolve control/shadow/canary/kill switch
+  P->>G: candidate path only
+  G->>R: authenticated capability probe
+  R-->>G: strict manifest
+  G->>R: generation only after exact match
+  R-->>Q: governed structured output
+  Q->>DB: persist reply and bounded runtime trace
   W-->>C: poll returns reply
 ```
+
+Control, `0%` canary and kill-switch paths do not contact the Runtime.
+Capability mismatch returns no customer-visible fallback text.
 
 ## Performance Profiles
 
@@ -65,7 +86,8 @@ sequenceDiagram
   already selected; Runtime receives compact facts and returns final reply text.
 - `standard_v1`: general logistics questions that need broader context.
 
-These profiles reduce prompt size without creating backend templates.
+These profiles reduce prompt size without creating backend templates or
+changing the approved generation identity.
 
 ## Speedaf Native Capability
 
@@ -78,17 +100,21 @@ Nexus native Speedaf integration covers the production support tool family:
 - cancel preview and confirm
 - customer-visible support knowledge retrieval
 
-Nexus production support logic is implemented natively in this repository. WebChat replies do not depend on any external agent runtime.
+Nexus production support logic is implemented natively in this repository.
+WebChat replies do not depend on any external agent runtime.
 
 ## Knowledge And Persona
 
 Production support knowledge is maintained in Nexus `KnowledgeItem` and
 `KnowledgeChunk` rows with customer/internal audience separation.
 
-- Customer-visible items are synced to AI Runtime RAG.
+- Customer-visible items may be synchronized to the approved Runtime retrieval
+  stack.
 - Internal SOP/persona/tool/memory files are retained in Nexus for operator and
-  runtime governance, but are not directly exposed as customer RAG text.
+  runtime governance, but are not directly exposed as customer retrieval text.
 - Live parcel status must always come from trusted Speedaf facts, not knowledge.
+- Runtime retrieval identity does not change the Nexus PostgreSQL vector schema;
+  schema changes require a separate approved Work Item and migration.
 
 ## Support Console
 
@@ -96,32 +122,44 @@ The current production target is a lightweight support workbench centered on:
 
 - conversation list
 - customer message timeline
-- AI turn status and runtime trace
+- AI turn status and bounded runtime trace
 - handoff state
 - Speedaf controlled actions
 - knowledge/customer context visible to operators
+- static Runtime expectation status and privileged read-only capability probe
 
 Ticket-heavy workflows remain out of scope unless explicitly reintroduced.
 
 ## Production Gates
 
-Use focused gates before release:
+Use the Provider Runtime gate before release:
 
 ```bash
-cd backend
-python -m pytest tests/test_provider_runtime_private_ai_runtime_adapter.py \
-  tests/test_webchat_runtime_ai_service.py \
-  tests/test_webchat_ai_turn_runtime.py \
-  tests/test_webchat_rate_limit_bucket.py \
-  tests/test_speedaf_client_contract.py \
-  tests/test_speedaf_status_map.py \
-  tests/test_speedaf_track_query.py \
-  -q
+PYTHONPATH=backend python -m pytest -q \
+  backend/tests/test_provider_runtime_capabilities.py \
+  backend/tests/test_private_ai_runtime_capability_endpoint.py \
+  backend/tests/test_provider_runtime_capability_gate.py \
+  backend/tests/test_provider_runtime_capability_status.py \
+  backend/tests/test_provider_runtime_private_ai_runtime_adapter.py \
+  backend/tests/test_provider_runtime_router.py \
+  backend/tests/test_provider_runtime_traffic_selection.py \
+  backend/tests/test_provider_runtime_status.py \
+  backend/tests/test_webchat_runtime_ai_service.py \
+  backend/tests/test_webchat_ai_turn_runtime.py \
+  backend/tests/test_speedaf_client_contract.py \
+  backend/tests/test_speedaf_status_map.py \
+  backend/tests/test_speedaf_track_query.py
 ```
 
-For deployed verification, use public WebChat smoke against
-`https://www.leakle.com/webchat/demo/` and inspect the matching
-`webchat_ai_turns.runtime_trace_json`.
+Before deployed verification:
+
+1. Confirm static Admin status has exact approved expectations and no secret or
+   internal authority.
+2. Run the privileged read-only capability probe and require `status=ready`.
+3. Run capability-gated upstream Smoke and warmup.
+4. Run candidate WebChat smoke and inspect bounded `webchat_ai_turns` and
+   Provider audit evidence.
+5. Require exact-head CI, security review and separate release GO.
 
 ## Retired Paths
 
@@ -134,3 +172,5 @@ The following are retired from production and must not be reintroduced:
 - customer-visible canned fallback replies
 - static welcome bubbles
 - backend template replies for customer questions
+- dual generation-model authority for direct versus RAG
+- unverified Runtime identity inferred from URL/token/health only
