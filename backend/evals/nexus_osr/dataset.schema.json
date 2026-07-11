@@ -170,8 +170,30 @@
         "routing_required"
       ],
       "properties": {
-        "business_reply_type": {"type": "string", "minLength": 1},
-        "next_action": {"type": "string", "minLength": 1},
+        "business_reply_type": {
+          "enum": [
+            "tracking_status_answer",
+            "knowledge_answer",
+            "clarification",
+            "handoff_notice",
+            "ticket_created_notice",
+            "tool_action_result",
+            "complaint_escalation",
+            "compensation_escalation",
+            "no_answer"
+          ]
+        },
+        "next_action": {
+          "enum": [
+            "reply",
+            "ask_missing_info",
+            "call_tool",
+            "create_ticket",
+            "request_handoff",
+            "route_to_group",
+            "block"
+          ]
+        },
         "customer_reply": {"type": ["string", "null"]},
         "language": {"type": "string", "minLength": 2},
         "risk_level": {"enum": ["low", "medium", "high", "critical"]},
