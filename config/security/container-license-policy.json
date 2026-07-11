@@ -38,5 +38,22 @@
     "LGPL-3.0-or-later"
   ],
   "unknown_action": "review",
-  "exceptions": []
+  "exceptions": [
+    {
+      "package": "psycopg",
+      "version": "3.2.6",
+      "license": "LGPL-3.0-only",
+      "owner": "open-source-compliance",
+      "expires_on": "2026-09-30",
+      "reason": "Exact unmodified component is permitted only with the machine-verified LGPL compliance record and retained notices."
+    },
+    {
+      "package": "psycopg-binary",
+      "version": "3.2.6",
+      "license": "LGPL-3.0-only",
+      "owner": "open-source-compliance",
+      "expires_on": "2026-09-30",
+      "reason": "Exact unmodified component is permitted only with the machine-verified LGPL compliance record and retained notices."
+    }
+  ]
 }
