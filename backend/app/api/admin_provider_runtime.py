@@ -40,7 +40,7 @@ class WebchatRuntimeRoutingUpdate(BaseModel):
             raise ValueError("fallback_provider_not_allowed")
 
 
-def _traffic_routing_rules(db: Session) -> list[dict[str, Any]]:
+def _traffic_routing_rules(db: Session) -> dict[str, Any]:
     try:
         rows = db.execute(
             text(
@@ -50,16 +50,22 @@ def _traffic_routing_rules(db: Session) -> list[dict[str, Any]]:
                 FROM provider_routing_rules
                 WHERE scenario = :scenario
                 ORDER BY tenant_id ASC, channel_key ASC
-                LIMIT 100
+                LIMIT 101
                 """
             ),
             {"scenario": _WEBCHAT_RUNTIME_SCENARIO},
         ).mappings().all()
     except Exception:
-        return []
+        return {
+            "status": "unavailable",
+            "reason_code": "provider_runtime_routing_rules_unavailable",
+            "items": [],
+            "truncated": False,
+        }
 
+    truncated = len(rows) > 100
     output: list[dict[str, Any]] = []
-    for row in rows:
+    for row in rows[:100]:
         selection = safe_traffic_configuration(
             default_canary_percent=int(row["canary_percent"] or 0),
             default_kill_switch=bool(row["kill_switch"]),
@@ -76,7 +82,12 @@ def _traffic_routing_rules(db: Session) -> list[dict[str, Any]]:
                 "updated_at": row["updated_at"].isoformat() if hasattr(row["updated_at"], "isoformat") else row["updated_at"],
             }
         )
-    return output
+    return {
+        "status": "ready",
+        "reason_code": None,
+        "items": output,
+        "truncated": truncated,
+    }
 
 
 @router.get("/status")
@@ -87,13 +98,17 @@ def provider_runtime_status(db: Session = Depends(get_db), current_user=Depends(
     traffic["scope"] = "global_defaults_and_environment_overrides"
     traffic["webchat_runtime_rules"] = _traffic_routing_rules(db)
     snapshot["traffic_selection"] = traffic
+
     configuration_errors = list(traffic.get("configuration_errors") or [])
-    if configuration_errors:
+    routing_rules_status = traffic["webchat_runtime_rules"].get("status")
+    if configuration_errors or routing_rules_status != "ready":
         warnings = list(snapshot.get("warnings") or [])
         warnings.extend(f"provider_runtime traffic configuration invalid: {code}" for code in configuration_errors)
+        if routing_rules_status != "ready":
+            warnings.append("provider_runtime routing rules are unavailable")
         snapshot["warnings"] = warnings
         snapshot["ok"] = False
-        snapshot["status"] = "misconfigured"
+        snapshot["status"] = "misconfigured" if configuration_errors else "unavailable"
     return snapshot
 
 
