@@ -11,10 +11,14 @@ def bootstrap_provider_runtime() -> None:
     if _BOOTSTRAPPED:
         return
 
-    from .adapters.private_ai_runtime import PrivateAIRuntimeAdapter
+    from .adapters.capability_verified_private_ai_runtime import (
+        CapabilityVerifiedPrivateAIRuntimeAdapter,
+    )
 
-    ProviderRegistry.register("private_ai_runtime", lambda db: PrivateAIRuntimeAdapter())
-
+    ProviderRegistry.register(
+        "private_ai_runtime",
+        lambda db: CapabilityVerifiedPrivateAIRuntimeAdapter(),
+    )
     _BOOTSTRAPPED = True
 
 
