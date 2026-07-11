@@ -17,6 +17,8 @@ EXPECTED_DISCOVERY_TOKENS = (
     "ExternalChannel",
     "external_channel",
     "EXTERNAL_CHANNEL",
+    "externalChannel",
+    "external-channel",
 )
 ALLOWED_DISPOSITIONS = frozenset(
     {
