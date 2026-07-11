@@ -12,6 +12,7 @@ from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
 from .ai_reply_contract import AIReplyContract, AI_REPLY_CONTRACT_V3
 from .message_dispatch import _enforce_customer_visible_origin, _normalize_customer_visible_origin, queue_outbound_message
+from .ticket_event_sanitizer import serialize_ticket_event_payload
 
 
 @dataclass(frozen=True)
@@ -190,7 +191,7 @@ def create_customer_visible_message(
         payload.setdefault("reply_channel", channel.value if hasattr(channel, "value") else str(channel))
         payload.setdefault("external_send", channel == SourceChannel.whatsapp)
         if conversation is not None:
-            payload.setdefault("public_conversation_id", conversation.public_id)
+            payload.setdefault("conversation_public_id", conversation.public_id)
             payload.setdefault("conversation_id", conversation.id)
         if webchat_message is not None:
             payload.setdefault("webchat_message_id", webchat_message.id)
@@ -201,7 +202,7 @@ def create_customer_visible_message(
             actor_id=created_by,
             event_type=event_type,
             note=event_note,
-            payload_json=json.dumps(payload, ensure_ascii=False, default=str),
+            payload_json=serialize_ticket_event_payload(payload),
         )
         db.add(ticket_event)
         db.flush()
