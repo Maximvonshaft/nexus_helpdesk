@@ -34,6 +34,7 @@ checker = _load_checker()
 def _rule(
     *,
     path: str | None = None,
+    paths: list[str] | None = None,
     glob: str | None = None,
     disposition: str = "safe_to_remove",
     write_surface: bool = False,
@@ -41,8 +42,9 @@ def _rule(
 ) -> dict[str, object]:
     return {
         "path": path,
+        "paths": paths,
         "glob": glob,
-        "asset_type": "service" if path else "documentation",
+        "asset_type": "service" if path or paths else "documentation",
         "disposition": disposition,
         "owner": "m6-channel-gateway",
         "rationale": "Bounded retirement classification for a known repository asset.",
@@ -108,6 +110,27 @@ class ExternalChannelRetirementInventoryTests(unittest.TestCase):
         self.assertEqual(result.write_surface_count, 1)
         self.assertEqual(result.disposition_counts["safe_to_remove"], 1)
         self.assertEqual(result.disposition_counts["historical_evidence"], 1)
+
+    def test_exact_path_group_expands_to_individual_production_assets(self) -> None:
+        inventory = checker.parse_inventory(
+            _payload(
+                _rule(
+                    paths=["backend/app/one.py", "backend/app/two.py"],
+                    write_surface=True,
+                    stop_new_writes_required=True,
+                )
+            )
+        )
+
+        result = checker.evaluate_inventory(
+            inventory,
+            tracked_paths=("backend/app/one.py", "backend/app/two.py"),
+            token_paths=("backend/app/one.py", "backend/app/two.py"),
+        )
+
+        self.assertEqual(result.exact_rule_count, 2)
+        self.assertEqual(result.write_surface_count, 2)
+        self.assertEqual(result.disposition_counts["safe_to_remove"], 2)
 
     def test_uncovered_reference_fails_closed(self) -> None:
         inventory = checker.parse_inventory(
