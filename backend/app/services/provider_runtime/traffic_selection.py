@@ -11,6 +11,7 @@ from .schemas import ProviderRequest
 
 TRAFFIC_SELECTION_SCHEMA = "nexus.provider_runtime.traffic_selection.v1"
 TRAFFIC_MODE_ENV = "PROVIDER_RUNTIME_TRAFFIC_MODE"
+_BUCKET_CONTRACT = "sha256(tenant_id,tenant_key,channel_key,session_id,scenario)%100"
 _TRAFFIC_MODE_INVALID = "provider_runtime_traffic_mode_invalid"
 _CANARY_PERCENT_INVALID = "provider_runtime_canary_percent_invalid"
 _KILL_SWITCH_INVALID = "provider_runtime_kill_switch_invalid"
@@ -35,25 +36,31 @@ class ProviderTrafficSelection:
     execute_candidate: bool
     authoritative: bool
     reason: str
+    configuration_errors: tuple[str, ...] = ()
     schema_version: str = TRAFFIC_SELECTION_SCHEMA
 
     def safe_summary(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
             "configured_mode": self.configured_mode,
+            "configuration_errors": list(self.configuration_errors),
             "path": self.path.value,
             "canary_percent": self.canary_percent,
             "bucket": self.bucket,
             "execute_candidate": self.execute_candidate,
             "authoritative": self.authoritative,
             "reason": self.reason,
-            "bucket_contract": "sha256(tenant,channel,session,scenario)%100",
+            "bucket_contract": _BUCKET_CONTRACT,
         }
 
 
 def configured_traffic_mode(value: str | None = None) -> str:
-    raw = value if value is not None else os.getenv(TRAFFIC_MODE_ENV, "canary")
-    mode = str(raw or "canary").strip().lower()
+    if value is None:
+        configured = os.getenv(TRAFFIC_MODE_ENV)
+        raw = "canary" if configured is None else configured
+    else:
+        raw = value
+    mode = str(raw).strip().lower()
     if mode not in _VALID_CONFIGURED_MODES:
         raise ValueError(_TRAFFIC_MODE_INVALID)
     return mode
@@ -75,6 +82,12 @@ def _validated_canary_percent(value: Any) -> int:
     return percent
 
 
+def _validated_kill_switch(value: Any) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(_KILL_SWITCH_INVALID)
+    return value
+
+
 def effective_canary_percent(default: int) -> int:
     raw = os.getenv("PROVIDER_RUNTIME_CANARY_PERCENT")
     return _validated_canary_percent(default if raw is None else raw.strip())
@@ -83,9 +96,7 @@ def effective_canary_percent(default: int) -> int:
 def effective_kill_switch(default: bool) -> bool:
     raw = os.getenv("PROVIDER_RUNTIME_KILL_SWITCH")
     if raw is None:
-        if not isinstance(default, bool):
-            raise ValueError(_KILL_SWITCH_INVALID)
-        return default
+        return _validated_kill_switch(default)
     normalized = raw.strip().lower()
     if normalized in _TRUE_VALUES:
         return True
@@ -94,36 +105,67 @@ def effective_kill_switch(default: bool) -> bool:
     raise ValueError(_KILL_SWITCH_INVALID)
 
 
+def _append_unique(errors: list[str], error_code: str) -> None:
+    if error_code not in errors:
+        errors.append(error_code)
+
+
 def safe_traffic_configuration(
     *,
     default_canary_percent: int = 100,
     default_kill_switch: bool = False,
 ) -> dict[str, Any]:
     errors: list[str] = []
+
+    try:
+        normalized_default_canary: int | None = _validated_canary_percent(default_canary_percent)
+    except ValueError:
+        normalized_default_canary = None
+        _append_unique(errors, _CANARY_PERCENT_INVALID)
+
+    try:
+        normalized_default_kill_switch: bool | None = _validated_kill_switch(default_kill_switch)
+    except ValueError:
+        normalized_default_kill_switch = None
+        _append_unique(errors, _KILL_SWITCH_INVALID)
+
     try:
         mode = configured_traffic_mode()
     except ValueError:
         mode = "invalid"
-        errors.append(_TRAFFIC_MODE_INVALID)
-    try:
-        canary_percent: int | None = effective_canary_percent(default_canary_percent)
-    except ValueError:
-        canary_percent = None
-        errors.append(_CANARY_PERCENT_INVALID)
-    try:
-        kill_switch: bool | None = effective_kill_switch(default_kill_switch)
-    except ValueError:
-        kill_switch = None
-        errors.append(_KILL_SWITCH_INVALID)
+        _append_unique(errors, _TRAFFIC_MODE_INVALID)
+
+    canary_override = os.getenv("PROVIDER_RUNTIME_CANARY_PERCENT")
+    if canary_override is None:
+        canary_percent = normalized_default_canary
+    else:
+        try:
+            canary_percent = _validated_canary_percent(canary_override.strip())
+        except ValueError:
+            canary_percent = None
+            _append_unique(errors, _CANARY_PERCENT_INVALID)
+
+    kill_switch_override = os.getenv("PROVIDER_RUNTIME_KILL_SWITCH")
+    if kill_switch_override is None:
+        kill_switch = normalized_default_kill_switch
+    else:
+        try:
+            kill_switch = effective_kill_switch(False)
+        except ValueError:
+            kill_switch = None
+            _append_unique(errors, _KILL_SWITCH_INVALID)
+
     return {
         "schema_version": TRAFFIC_SELECTION_SCHEMA,
         "configured_mode": mode,
         "configuration_errors": errors,
+        "default_canary_percent": normalized_default_canary,
+        "default_kill_switch": normalized_default_kill_switch,
         "canary_percent": canary_percent,
-        "canary_percent_env_override": os.getenv("PROVIDER_RUNTIME_CANARY_PERCENT") is not None,
+        "canary_percent_env_override": canary_override is not None,
         "kill_switch": kill_switch,
-        "kill_switch_env_override": os.getenv("PROVIDER_RUNTIME_KILL_SWITCH") is not None,
-        "bucket_contract": "sha256(tenant,channel,session,scenario)%100",
+        "kill_switch_env_override": kill_switch_override is not None,
+        "bucket_contract": _BUCKET_CONTRACT,
         "authoritative_rule": "configured_mode=canary and bucket<canary_percent",
     }
 
@@ -149,12 +191,20 @@ def select_provider_traffic(
     kill_switch: bool,
     configured_mode_value: str | None = None,
 ) -> ProviderTrafficSelection:
-    percent = _validated_canary_percent(canary_percent)
-    if not isinstance(kill_switch, bool):
-        raise ValueError(_KILL_SWITCH_INVALID)
-    mode = configured_traffic_mode(configured_mode_value)
+    normalized_kill_switch = _validated_kill_switch(kill_switch)
 
-    if kill_switch:
+    if normalized_kill_switch:
+        errors: list[str] = []
+        try:
+            percent = _validated_canary_percent(canary_percent)
+        except ValueError:
+            percent = 0
+            _append_unique(errors, _CANARY_PERCENT_INVALID)
+        try:
+            mode = configured_traffic_mode(configured_mode_value)
+        except ValueError:
+            mode = "invalid"
+            _append_unique(errors, _TRAFFIC_MODE_INVALID)
         return ProviderTrafficSelection(
             configured_mode=mode,
             path=ProviderTrafficPath.KILL_SWITCH,
@@ -163,8 +213,11 @@ def select_provider_traffic(
             execute_candidate=False,
             authoritative=False,
             reason="kill_switch_active",
+            configuration_errors=tuple(errors),
         )
 
+    percent = _validated_canary_percent(canary_percent)
+    mode = configured_traffic_mode(configured_mode_value)
     bucket = stable_canary_bucket(request)
 
     if mode == "control":
