@@ -22,6 +22,8 @@ on:
       - 'scripts/smoke/warm_private_ai_runtime.py'
       - 'deploy/.env.candidate.example'
       - 'deploy/.env.prod.example'
+      - 'docs/deployment-runbook.md'
+      - 'docs/TECHNICAL_MANUAL.md'
       - 'docs/engineering/private-ai-runtime-capability-contract.md'
       - 'docs/ops/PRIVATE_AI_RUNTIME_ROLLOUT_RUNBOOK.md'
       - '.github/workflows/provider-runtime-gate.yml'
@@ -64,7 +66,7 @@ jobs:
             echo 'ERROR: retired provider/runtime or canned reply marker found in executable production paths.'
             exit 1
           fi
-          if git grep -nE 'qwen2\.5:3b|qwen3:4b' -- deploy backend/scripts scripts/smoke docs/ops; then
+          if git grep -nE 'qwen2\.5:3b|qwen3:4b' -- deploy backend/scripts scripts/smoke docs/ops docs/deployment-runbook.md docs/TECHNICAL_MANUAL.md; then
             echo 'ERROR: stale Qwen generation authority found in active runtime configuration or operations paths.'
             exit 1
           fi
@@ -76,6 +78,8 @@ jobs:
             backend/app/services/provider_runtime/runtime_capabilities.py \
             backend/app/services/provider_runtime/adapters/capability_verified_private_ai_runtime.py \
             backend/app/services/provider_runtime_capability_status.py \
+            backend/app/services/provider_runtime_status.py \
+            backend/app/api/admin_provider_runtime.py \
             infra/private_ai_runtime/capability_api.py \
             backend/scripts/smoke_private_ai_runtime.py \
             scripts/smoke/warm_private_ai_runtime.py
