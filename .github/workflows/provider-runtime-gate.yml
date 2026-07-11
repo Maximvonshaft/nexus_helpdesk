@@ -76,6 +76,7 @@ jobs:
           set -Eeuo pipefail
           python -m py_compile \
             backend/app/services/provider_runtime/runtime_capabilities.py \
+            backend/app/services/provider_runtime/runtime_capability_cache.py \
             backend/app/services/provider_runtime/adapters/capability_verified_private_ai_runtime.py \
             backend/app/services/provider_runtime_capability_status.py \
             backend/app/services/provider_runtime_status.py \
@@ -127,6 +128,7 @@ jobs:
           set -Eeuo pipefail
           timeout 600 python -m pytest -q \
             backend/tests/test_provider_runtime_capabilities.py \
+            backend/tests/test_provider_runtime_capability_cache.py \
             backend/tests/test_private_ai_runtime_capability_endpoint.py \
             backend/tests/test_provider_runtime_capability_gate.py \
             backend/tests/test_provider_runtime_capability_status.py \
