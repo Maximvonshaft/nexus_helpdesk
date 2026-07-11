@@ -43,7 +43,7 @@ def _stub_admin_dependencies(monkeypatch):
     )
 
 
-def test_admin_provider_runtime_routing_api_inserts_safe_default(monkeypatch):
+def test_admin_provider_runtime_routing_api_inserts_rule_without_granting_default_authority(monkeypatch):
     monkeypatch.setattr("app.api.admin_provider_runtime.ensure_can_manage_runtime", lambda current_user, db: None)
     db = Mock()
     select_result = Mock()
@@ -64,11 +64,12 @@ def test_admin_provider_runtime_routing_api_inserts_safe_default(monkeypatch):
     assert rule["output_contract"] == "nexus_webchat_runtime_reply_v1"
     assert rule["canary_percent"] == 100
     assert rule["kill_switch"] is False
-    assert rule["traffic_selection"]["schema_version"] == "nexus.provider_runtime.traffic_selection.v1"
-    assert rule["traffic_selection"]["configured_mode"] == "canary"
-    assert rule["traffic_selection"]["default_canary_percent"] == 100
-    assert rule["traffic_selection"]["canary_percent"] == 100
-    assert rule["traffic_selection"]["configuration_errors"] == []
+    traffic = rule["traffic_selection"]
+    assert traffic["schema_version"] == "nexus.provider_runtime.traffic_selection.v1"
+    assert traffic["configured_mode"] == "control"
+    assert traffic["default_canary_percent"] == 100
+    assert traffic["canary_percent"] == 100
+    assert traffic["configuration_errors"] == []
     assert db.commit.called
 
 
@@ -115,13 +116,15 @@ def test_admin_provider_runtime_status_exposes_effective_traffic_authority(monke
     }
 
 
-def test_admin_provider_runtime_status_reports_effective_database_rules(monkeypatch):
+def test_admin_provider_runtime_status_reports_database_rule_under_safe_control_default(monkeypatch):
     _stub_admin_dependencies(monkeypatch)
     db = _db_with_routing_rows([_routing_row()])
 
     response = provider_runtime_status(db=db, current_user=Mock())
 
     assert response["ok"] is True
+    assert response["traffic_selection"]["configured_mode"] == "control"
+    assert response["traffic_selection"]["canary_percent"] == 0
     routing_state = response["traffic_selection"]["webchat_runtime_rules"]
     assert routing_state["status"] == "ready"
     assert routing_state["truncated"] is False
@@ -133,7 +136,7 @@ def test_admin_provider_runtime_status_reports_effective_database_rules(monkeypa
     assert rule["database_configuration_errors"] == []
     assert rule["effective_traffic_selection"]["default_canary_percent"] == 5
     assert rule["effective_traffic_selection"]["canary_percent"] == 5
-    assert rule["effective_traffic_selection"]["configured_mode"] == "canary"
+    assert rule["effective_traffic_selection"]["configured_mode"] == "control"
     assert rule["effective_traffic_selection"]["configuration_errors"] == []
 
 
