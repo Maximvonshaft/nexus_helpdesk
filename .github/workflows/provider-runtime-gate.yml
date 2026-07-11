@@ -5,15 +5,25 @@ on:
     branches: [main]
     paths:
       - 'backend/app/services/provider_runtime/**'
+      - 'backend/app/services/provider_runtime_capability_status.py'
+      - 'backend/app/services/provider_runtime_status.py'
       - 'backend/app/services/webchat_runtime_ai_service.py'
       - 'backend/app/services/webchat_rate_limit.py'
       - 'backend/app/services/speedaf/**'
       - 'backend/app/api/admin_provider_runtime.py'
+      - 'backend/scripts/smoke_private_ai_runtime.py'
       - 'backend/tests/test_provider_runtime_*.py'
+      - 'backend/tests/test_private_ai_runtime_capability_endpoint.py'
       - 'backend/tests/test_webchat_runtime_ai_service.py'
       - 'backend/tests/test_webchat_rate_limit_bucket.py'
       - 'backend/tests/test_speedaf*.py'
       - 'backend/alembic/versions/*provider*.py'
+      - 'infra/private_ai_runtime/**'
+      - 'scripts/smoke/warm_private_ai_runtime.py'
+      - 'deploy/.env.candidate.example'
+      - 'deploy/.env.prod.example'
+      - 'docs/engineering/private-ai-runtime-capability-contract.md'
+      - 'docs/ops/PRIVATE_AI_RUNTIME_ROLLOUT_RUNBOOK.md'
       - '.github/workflows/provider-runtime-gate.yml'
   push:
     branches: [main]
@@ -54,6 +64,21 @@ jobs:
             echo 'ERROR: retired provider/runtime or canned reply marker found in executable production paths.'
             exit 1
           fi
+          if git grep -nE 'qwen2\.5:3b|qwen3:4b' -- deploy backend/scripts scripts/smoke docs/ops; then
+            echo 'ERROR: stale Qwen generation authority found in active runtime configuration or operations paths.'
+            exit 1
+          fi
+
+      - name: Capability contract syntax gate
+        run: |
+          set -Eeuo pipefail
+          python -m py_compile \
+            backend/app/services/provider_runtime/runtime_capabilities.py \
+            backend/app/services/provider_runtime/adapters/capability_verified_private_ai_runtime.py \
+            backend/app/services/provider_runtime_capability_status.py \
+            infra/private_ai_runtime/capability_api.py \
+            backend/scripts/smoke_private_ai_runtime.py \
+            scripts/smoke/warm_private_ai_runtime.py
 
       - name: Alembic revision integrity gate
         run: |
@@ -97,6 +122,10 @@ jobs:
         run: |
           set -Eeuo pipefail
           timeout 600 python -m pytest -q \
+            backend/tests/test_provider_runtime_capabilities.py \
+            backend/tests/test_private_ai_runtime_capability_endpoint.py \
+            backend/tests/test_provider_runtime_capability_gate.py \
+            backend/tests/test_provider_runtime_capability_status.py \
             backend/tests/test_provider_runtime_output_contracts.py \
             backend/tests/test_provider_runtime_private_ai_runtime_adapter.py \
             backend/tests/test_provider_runtime_router.py \
@@ -135,6 +164,7 @@ jobs:
           paths = list(route_paths(app.routes))
           expected = {
               '/api/admin/provider-runtime/status',
+              '/api/admin/provider-runtime/capabilities/probe',
               '/api/webchat/init',
           }
           missing = sorted(expected.difference(paths))
