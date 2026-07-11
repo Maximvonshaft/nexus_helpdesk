@@ -4,6 +4,7 @@ from unittest.mock import Mock
 import pytest
 
 from app.services import provider_runtime as provider_runtime_module
+from app.services.provider_runtime.health import ProviderHealthDecision, ProviderRuntimeHealth
 from app.services.provider_runtime.registry import ProviderAdapter, ProviderRegistry
 from app.services.provider_runtime.router import ProviderRuntimeRouter
 from app.services.provider_runtime.schemas import ProviderRequest, ProviderResult
@@ -28,6 +29,10 @@ def isolated_provider_registry(monkeypatch):
         "PROVIDER_RUNTIME_TRAFFIC_MODE",
         "PROVIDER_RUNTIME_CANARY_PERCENT",
         "PROVIDER_RUNTIME_KILL_SWITCH",
+        "PROVIDER_RUNTIME_PRIMARY_PROVIDER",
+        "PROVIDER_RUNTIME_FALLBACK_PROVIDERS",
+        "PROVIDER_RUNTIME_OUTPUT_CONTRACT",
+        "PROVIDER_RUNTIME_TIMEOUT_MS",
     ):
         monkeypatch.delenv(name, raising=False)
     yield
@@ -62,13 +67,13 @@ def _mock_db(rule: dict):
     return mock_db
 
 
-def _request() -> ProviderRequest:
+def _request(*, session_id: str = "s1") -> ProviderRequest:
     return ProviderRequest(
         request_id="req1",
         tenant_id="t1",
         tenant_key="tk1",
         channel_key="c1",
-        session_id="s1",
+        session_id=session_id,
         scenario="webchat_runtime_reply",
         body="hello",
         output_contract="nexus_webchat_runtime_reply_v1",
@@ -118,6 +123,10 @@ def _trusted_tracking_followup_request() -> ProviderRequest:
     )
 
 
+def _audit_summary(row) -> dict:
+    return json.loads(row["safe_summary"])
+
+
 @pytest.mark.asyncio
 async def test_provider_runtime_router_single_runtime_success_and_audit():
     mock_db = _mock_db(_rule())
@@ -131,7 +140,7 @@ async def test_provider_runtime_router_single_runtime_success_and_audit():
     assert result.structured_output["customer_reply"] == "hi"
     assert adapter.calls == 1
     assert mock_db.execute.call_count == 2
-    summary = json.loads(mock_db.audit_rows[-1]["safe_summary"])
+    summary = _audit_summary(mock_db.audit_rows[-1])
     assert summary["traffic_selection"]["path"] == "canary_authoritative"
     assert summary["traffic_selection"]["authoritative"] is True
 
@@ -147,7 +156,7 @@ async def test_zero_percent_routes_to_control_without_calling_candidate():
     assert not result.ok
     assert result.error_code == "provider_canary_control_path"
     assert adapter.calls == 0
-    summary = json.loads(mock_db.audit_rows[-1]["safe_summary"])
+    summary = _audit_summary(mock_db.audit_rows[-1])
     assert summary["traffic_selection"]["path"] == "control"
     assert summary["traffic_selection"]["execute_candidate"] is False
 
@@ -180,7 +189,7 @@ async def test_shadow_mode_calls_candidate_but_never_returns_customer_output(mon
     assert adapter.calls == 1
     assert mock_db.audit_rows[-1]["operation"] == "shadow_generate"
     assert mock_db.audit_rows[-1]["status"] == "ok"
-    summary = json.loads(mock_db.audit_rows[-1]["safe_summary"])
+    summary = _audit_summary(mock_db.audit_rows[-1])
     assert summary["traffic_selection"]["authoritative"] is False
 
 
@@ -195,8 +204,34 @@ async def test_kill_switch_overrides_full_canary_and_shadow(monkeypatch):
 
     assert result.error_code == "kill_switch_active"
     assert adapter.calls == 0
-    summary = json.loads(mock_db.audit_rows[-1]["safe_summary"])
+    summary = _audit_summary(mock_db.audit_rows[-1])
     assert summary["traffic_selection"]["path"] == "kill_switch"
+
+
+@pytest.mark.asyncio
+async def test_valid_emergency_kill_switch_overrides_invalid_lower_priority_settings(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "true")
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "invalid")
+    monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "invalid")
+    mock_db = _mock_db(_rule())
+    adapter = DummyAdapter("private_ai_runtime", _valid_result())
+    ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
+
+    result = await ProviderRuntimeRouter(mock_db).route(_request())
+
+    assert result.error_code == "kill_switch_active"
+    assert adapter.calls == 0
+    audit = mock_db.audit_rows[-1]
+    assert audit["operation"] == "traffic_select"
+    assert audit["status"] == "skipped"
+    summary = _audit_summary(audit)["traffic_selection"]
+    assert summary["path"] == "kill_switch"
+    assert summary["execute_candidate"] is False
+    assert summary["authoritative"] is False
+    assert summary["configuration_errors"] == [
+        "provider_runtime_canary_percent_invalid",
+        "provider_runtime_traffic_mode_invalid",
+    ]
 
 
 @pytest.mark.asyncio
@@ -227,9 +262,68 @@ async def test_invalid_traffic_configuration_fails_closed_without_provider_call(
     assert audit["operation"] == "traffic_select"
     assert audit["status"] == "failed"
     assert audit["error_code"] == expected_error
-    summary = json.loads(audit["safe_summary"])
+    summary = _audit_summary(audit)
     assert summary["traffic_selection"]["configuration_errors"] == [expected_error]
     assert summary["traffic_selection"]["execute_candidate"] is False
+
+
+@pytest.mark.asyncio
+async def test_persisted_invalid_kill_switch_fails_closed_without_provider_call():
+    mock_db = _mock_db(_rule(kill_switch="false"))
+    adapter = DummyAdapter("private_ai_runtime", _valid_result())
+    ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
+
+    result = await ProviderRuntimeRouter(mock_db).route(_request())
+
+    assert result.error_code == "provider_runtime_kill_switch_invalid"
+    assert adapter.calls == 0
+    assert _audit_summary(mock_db.audit_rows[-1])["traffic_selection"]["execute_candidate"] is False
+
+
+@pytest.mark.asyncio
+async def test_health_skip_never_calls_candidate_and_every_audit_row_has_traffic_evidence(monkeypatch):
+    monkeypatch.setattr(
+        ProviderRuntimeHealth,
+        "should_skip",
+        lambda provider: ProviderHealthDecision(skip=True, reason="provider_health_cooldown", consecutive_failures=3),
+    )
+    mock_db = _mock_db(_rule())
+    adapter = DummyAdapter("private_ai_runtime", _valid_result())
+    ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
+
+    result = await ProviderRuntimeRouter(mock_db).route(_request())
+
+    assert result.error_code == "all_providers_failed"
+    assert adapter.calls == 0
+    assert [row["status"] for row in mock_db.audit_rows] == ["skipped", "failed"]
+    for row in mock_db.audit_rows:
+        traffic = _audit_summary(row)["traffic_selection"]
+        assert traffic["path"] == "canary_authoritative"
+        assert traffic["authoritative"] is True
+
+
+@pytest.mark.asyncio
+async def test_authoritative_timeout_is_audited_and_fails_without_unapproved_fallback():
+    timeout_result = ProviderResult.unavailable(
+        "private_ai_runtime",
+        "provider_timeout",
+        3000,
+        fallback_allowed=False,
+    )
+    mock_db = _mock_db(_rule())
+    adapter = DummyAdapter("private_ai_runtime", timeout_result)
+    ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
+
+    result = await ProviderRuntimeRouter(mock_db).route(_request())
+
+    assert result.error_code == "provider_timeout"
+    assert adapter.calls == 1
+    audit = mock_db.audit_rows[-1]
+    assert audit["operation"] == "generate"
+    assert audit["status"] == "failed"
+    traffic = _audit_summary(audit)["traffic_selection"]
+    assert traffic["path"] == "canary_authoritative"
+    assert traffic["authoritative"] is True
 
 
 @pytest.mark.asyncio
@@ -251,6 +345,8 @@ async def test_provider_runtime_router_parse_reject_returns_no_customer_reply():
     assert not result.ok
     assert result.error_code == "all_providers_failed"
     assert mock_db.execute.call_count == 3
+    for row in mock_db.audit_rows:
+        assert "traffic_selection" in _audit_summary(row)
 
 
 @pytest.mark.asyncio
