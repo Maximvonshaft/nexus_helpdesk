@@ -21,6 +21,8 @@ router = APIRouter(prefix="/api/admin/provider-runtime", tags=["admin-provider-r
 _ALLOWED_PRIMARY_PROVIDERS = {"private_ai_runtime"}
 _WEBCHAT_RUNTIME_SCENARIO = "webchat_runtime_reply"
 _WEBCHAT_RUNTIME_OUTPUT_CONTRACT = "nexus_webchat_runtime_reply_v1"
+_CANARY_PERCENT_INVALID = "provider_runtime_canary_percent_invalid"
+_KILL_SWITCH_INVALID = "provider_runtime_kill_switch_invalid"
 
 
 class WebchatRuntimeRoutingUpdate(BaseModel):
@@ -38,6 +40,15 @@ class WebchatRuntimeRoutingUpdate(BaseModel):
             raise ValueError("primary_provider_not_allowed")
         if self.fallback_providers:
             raise ValueError("fallback_provider_not_allowed")
+
+
+def _database_configuration_errors(selection: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if selection.get("default_canary_percent") is None:
+        errors.append(_CANARY_PERCENT_INVALID)
+    if selection.get("default_kill_switch") is None:
+        errors.append(_KILL_SWITCH_INVALID)
+    return errors
 
 
 def _traffic_routing_rules(db: Session) -> dict[str, Any]:
@@ -65,26 +76,30 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
 
     truncated = len(rows) > 100
     output: list[dict[str, Any]] = []
+    invalid_rule_found = False
     for row in rows[:100]:
         selection = safe_traffic_configuration(
-            default_canary_percent=int(row["canary_percent"] or 0),
-            default_kill_switch=bool(row["kill_switch"]),
+            default_canary_percent=row["canary_percent"],
+            default_kill_switch=row["kill_switch"],
         )
+        database_errors = _database_configuration_errors(selection)
+        invalid_rule_found = invalid_rule_found or bool(database_errors)
         output.append(
             {
                 "tenant_id": str(row["tenant_id"] or "")[:120],
                 "channel_key": str(row["channel_key"] or "")[:120],
                 "primary_provider": str(row["primary_provider"] or "")[:100],
                 "enabled": bool(row["enabled"]),
-                "database_canary_percent": int(row["canary_percent"] or 0),
-                "database_kill_switch": bool(row["kill_switch"]),
+                "database_canary_percent": selection.get("default_canary_percent"),
+                "database_kill_switch": selection.get("default_kill_switch"),
+                "database_configuration_errors": database_errors,
                 "effective_traffic_selection": selection,
                 "updated_at": row["updated_at"].isoformat() if hasattr(row["updated_at"], "isoformat") else row["updated_at"],
             }
         )
     return {
-        "status": "ready",
-        "reason_code": None,
+        "status": "misconfigured" if invalid_rule_found else "ready",
+        "reason_code": "provider_runtime_routing_rule_invalid" if invalid_rule_found else None,
         "items": output,
         "truncated": truncated,
     }
@@ -104,11 +119,13 @@ def provider_runtime_status(db: Session = Depends(get_db), current_user=Depends(
     if configuration_errors or routing_rules_status != "ready":
         warnings = list(snapshot.get("warnings") or [])
         warnings.extend(f"provider_runtime traffic configuration invalid: {code}" for code in configuration_errors)
-        if routing_rules_status != "ready":
+        if routing_rules_status == "misconfigured":
+            warnings.append("provider_runtime routing rules are misconfigured")
+        elif routing_rules_status == "unavailable":
             warnings.append("provider_runtime routing rules are unavailable")
         snapshot["warnings"] = warnings
         snapshot["ok"] = False
-        snapshot["status"] = "misconfigured" if configuration_errors else "unavailable"
+        snapshot["status"] = "misconfigured" if configuration_errors or routing_rules_status == "misconfigured" else "unavailable"
     return snapshot
 
 
@@ -175,8 +192,13 @@ def update_webchat_runtime_routing(
     ensure_can_manage_runtime(current_user, db)
     try:
         payload.validate_allowed()
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail={"error_code": str(exc)}) from exc
+    except ValueError:
+        error_code = (
+            "primary_provider_not_allowed"
+            if payload.primary_provider not in _ALLOWED_PRIMARY_PROVIDERS
+            else "fallback_provider_not_allowed"
+        )
+        raise HTTPException(status_code=400, detail={"error_code": error_code}) from None
 
     existing = db.execute(
         text(
