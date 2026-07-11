@@ -30,6 +30,7 @@ from .api.lookups import router as lookups_router
 from .api.lite import router as lite_router
 from .api.operator_queue import router as operator_queue_router
 from .api.osr_admin import router as osr_admin_router
+from .api.osr_readiness import router as osr_readiness_router
 from .api.outbound_channels import router as outbound_channels_router
 from .api.persona_profiles import router as persona_profiles_router
 from .api.speedaf_actions import router as speedaf_actions_router
@@ -230,16 +231,38 @@ def readyz():
         with engine.connect() as conn:
             conn.execute(text('SELECT 1'))
             migration_revision = _migration_revision(conn)
-        ready = storage_readiness.ok and bool(frontend_readiness['ok']) and bool(runtime_contract_readiness['ok'])
+        expected_migration_head = settings.expected_migration_head
+        migration_identity_ready = bool(
+            expected_migration_head
+            and migration_revision
+            and migration_revision == expected_migration_head
+        ) if settings.app_env == 'production' or expected_migration_head else True
+        ready = (
+            storage_readiness.ok
+            and bool(frontend_readiness['ok'])
+            and bool(runtime_contract_readiness['ok'])
+            and migration_identity_ready
+        )
         payload = {
             'status': 'ready' if ready else 'not_ready',
             'database': 'ok',
             'migration_revision': migration_revision,
+            'expected_migration_head': expected_migration_head,
+            'migration_identity': 'ready' if migration_identity_ready else 'not_ready',
+            'release_profile': settings.nexus_osr_release_profile,
             'storage': storage_readiness.as_dict(),
             'frontend': frontend_readiness,
             'runtime_contract_signing': runtime_contract_readiness,
             **_runtime_identity(),
         }
+        if not migration_identity_ready:
+            app_log_event(
+                40,
+                'readiness_migration_identity_failed',
+                observed_migration_head=migration_revision,
+                expected_migration_head=expected_migration_head,
+            )
+            return JSONResponse(status_code=503, content=payload)
         if not storage_readiness.ok:
             app_log_event(40, 'readiness_storage_check_failed', storage=storage_readiness.as_dict())
             return JSONResponse(status_code=503, content=payload)
@@ -267,6 +290,7 @@ app.include_router(ticket_perf_router)
 app.include_router(admin_router)
 app.include_router(admin_queue_router)
 app.include_router(osr_admin_router)
+app.include_router(osr_readiness_router)
 app.include_router(operator_queue_router)
 app.include_router(outbound_channels_router)
 app.include_router(auth_router)

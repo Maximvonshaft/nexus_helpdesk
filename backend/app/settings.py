@@ -18,6 +18,8 @@ class Settings:
         self.project_root = Path(__file__).resolve().parents[2]
         self.backend_root = self.project_root / "backend"
         self.app_env = os.getenv("APP_ENV", "development").strip().lower() or "development"
+        self.nexus_osr_release_profile = os.getenv("NEXUS_OSR_RELEASE_PROFILE", "development").strip().lower() or "development"
+        self.expected_migration_head = os.getenv("EXPECTED_MIGRATION_HEAD", "").strip() or None
         self.legacy_frontend_root = self.project_root / "frontend"
         self.frontend_dist_root = self.project_root / "frontend_dist"
         self.frontend_dist_index = self.frontend_dist_root / "index.html"
@@ -96,6 +98,12 @@ class Settings:
         self.job_lock_seconds = int(os.getenv("JOB_LOCK_SECONDS", "300"))
         self.job_max_retries = int(os.getenv("JOB_MAX_RETRIES", "3"))
         self.worker_poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", "2"))
+        self.nexus_osr_required_workers = tuple(self._parse_csv(os.getenv("NEXUS_OSR_REQUIRED_WORKERS", "background_worker,outbound_worker,webchat_ai_worker,handoff_snapshot_worker,operations_dispatch_worker")))
+        self.nexus_osr_worker_stale_seconds = int(os.getenv("NEXUS_OSR_WORKER_STALE_SECONDS", "90"))
+        self.nexus_osr_queue_warn_age_seconds = int(os.getenv("NEXUS_OSR_QUEUE_WARN_AGE_SECONDS", "120"))
+        self.nexus_osr_queue_fail_age_seconds = int(os.getenv("NEXUS_OSR_QUEUE_FAIL_AGE_SECONDS", "600"))
+        self.nexus_osr_dispatch_warn_age_seconds = int(os.getenv("NEXUS_OSR_DISPATCH_WARN_AGE_SECONDS", "120"))
+        self.nexus_osr_dispatch_fail_age_seconds = int(os.getenv("NEXUS_OSR_DISPATCH_FAIL_AGE_SECONDS", "600"))
         self.webchat_ai_worker_poll_seconds = float(os.getenv("WEBCHAT_AI_WORKER_POLL_SECONDS", "0.35"))
         self.webchat_ai_worker_busy_poll_seconds = float(os.getenv("WEBCHAT_AI_WORKER_BUSY_POLL_SECONDS", "0.05"))
         self.external_channel_sync_enabled = os.getenv("EXTERNAL_CHANNEL_SYNC_ENABLED", "false").strip().lower() == "true"
@@ -270,6 +278,16 @@ class Settings:
             raise RuntimeError("EMAIL_MAILBOX_SYNC_BATCH_SIZE must be between 1 and 100")
         if self.webchat_tracking_fact_lookup_enabled and not self.webchat_tracking_fact_redaction_enabled:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED must be true when tracking lookup is enabled")
+        if self.nexus_osr_release_profile not in {"development", "shadow", "pilot", "full_osr"}:
+            raise RuntimeError("NEXUS_OSR_RELEASE_PROFILE must be development, shadow, pilot, or full_osr")
+        if not self.nexus_osr_required_workers:
+            raise RuntimeError("NEXUS_OSR_REQUIRED_WORKERS must declare at least one worker")
+        if self.nexus_osr_worker_stale_seconds < 10 or self.nexus_osr_worker_stale_seconds > 3600:
+            raise RuntimeError("NEXUS_OSR_WORKER_STALE_SECONDS must be between 10 and 3600")
+        if self.nexus_osr_queue_warn_age_seconds < 10 or self.nexus_osr_queue_fail_age_seconds < self.nexus_osr_queue_warn_age_seconds:
+            raise RuntimeError("NEXUS_OSR queue age thresholds are invalid")
+        if self.nexus_osr_dispatch_warn_age_seconds < 10 or self.nexus_osr_dispatch_fail_age_seconds < self.nexus_osr_dispatch_warn_age_seconds:
+            raise RuntimeError("NEXUS_OSR dispatch age thresholds are invalid")
         if self.external_channel_transport != "disabled":
             raise RuntimeError("EXTERNAL_CHANNEL_TRANSPORT has been retired; set EXTERNAL_CHANNEL_TRANSPORT=disabled")
         if self.external_channel_deployment_mode != "disabled":
@@ -285,6 +303,12 @@ class Settings:
         if self.external_channel_event_driver_enabled:
             raise RuntimeError("EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED has been retired; set EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED=false")
         if self.app_env == "production":
+            if not self.expected_migration_head:
+                raise RuntimeError("EXPECTED_MIGRATION_HEAD must be set in production")
+            if self.nexus_osr_release_profile == "development":
+                raise RuntimeError("NEXUS_OSR_RELEASE_PROFILE=development is not allowed in production")
+            if self.nexus_osr_release_profile in {"shadow", "pilot", "full_osr"} and not self.osr_escalation_orchestration_enabled:
+                raise RuntimeError("OSR_ESCALATION_ORCHESTRATION_ENABLED=true is required for governed production profiles")
             if not self.jwt_secret_key:
                 raise RuntimeError("SECRET_KEY must be set in production")
             weak_secrets = {"change-me", "changeme", "replace-me", "replace_this", "secret", "default"}
