@@ -133,6 +133,12 @@ def _private_ai_runtime_status_from_env() -> dict[str, Any]:
         not value or value == generation_model
         for value in (legacy_direct_model, legacy_rag_model)
     )
+    rag_runtime_isolated = bool(
+        rag_base_url and not _same_runtime_origin(base_url, rag_base_url)
+    )
+    runtime_identity_configuration_valid = not (
+        chat_mode in {"rag", "auto"} and rag_runtime_isolated
+    )
     capability_expectation = get_provider_runtime_capability_expectation_status()
     local_generation_configuration = get_local_generation_configuration_status(
         generation_model=generation_model,
@@ -160,6 +166,7 @@ def _private_ai_runtime_status_from_env() -> dict[str, Any]:
         and base_url
         and token_file
         and legacy_model_configuration_valid
+        and runtime_identity_configuration_valid
         and shape_mismatch is None
         and capability_expectation["status"] == "ready"
         and local_generation_configuration["status"] == "ready"
@@ -169,8 +176,9 @@ def _private_ai_runtime_status_from_env() -> dict[str, Any]:
         "enabled": enabled,
         "base_url_configured": bool(base_url),
         "rag_base_url_configured": bool(rag_base_url),
-        "rag_runtime_isolated": bool(
-            rag_base_url and not _same_runtime_origin(base_url, rag_base_url)
+        "rag_runtime_isolated": rag_runtime_isolated,
+        "runtime_identity_configuration_valid": (
+            runtime_identity_configuration_valid
         ),
         "token_file_configured": bool(token_file),
         "inline_token_configured": bool(inline_token),
@@ -333,6 +341,9 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
                 "rag_runtime_isolated": private_ai_runtime[
                     "rag_runtime_isolated"
                 ],
+                "runtime_identity_configuration_valid": private_ai_runtime[
+                    "runtime_identity_configuration_valid"
+                ],
                 "token_file_configured": private_ai_runtime[
                     "token_file_configured"
                 ],
@@ -395,6 +406,10 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
     if not private_ai_runtime["legacy_model_configuration_valid"]:
         warnings.append(
             "private_ai_runtime legacy model configuration conflicts with generation model"
+        )
+    if not private_ai_runtime["runtime_identity_configuration_valid"]:
+        warnings.append(
+            "private_ai_runtime RAG endpoint is outside the verified Runtime identity"
         )
     capability_expectation = private_ai_runtime["capability_expectation"]
     for reason_code in capability_expectation.get("reason_codes") or []:
