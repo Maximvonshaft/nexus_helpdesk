@@ -1,6 +1,6 @@
 {
   "schema": "nexus.external-channel-retirement.inventory.v1",
-  "inventory_version": "2026-07-12.1",
+  "inventory_version": "2026-07-12.2",
   "audited_main_sha": "e761bcfd9850451bcba7ffe679c4b83f87ec91bf",
   "discovery_tokens": [
     "ExternalChannel",
@@ -157,6 +157,7 @@
     {
       "path": null,
       "paths": [
+        ".gitignore",
         "backend/.env.example",
         "backend/scripts/postgres_cutover_rehearsal.py",
         "backend/scripts/smoke_verify_round27.py",
@@ -177,7 +178,7 @@
       "asset_type": "deployment_script_compatibility",
       "disposition": "safe_to_remove",
       "owner": "m12-production-readiness",
-      "rationale": "Executable, readiness and deployment references must be removed only after migration and observation evidence.",
+      "rationale": "Executable, readiness and local environment compatibility references require migration and observation before cleanup.",
       "write_surface": false,
       "stop_new_writes_required": false,
       "prerequisites": [
