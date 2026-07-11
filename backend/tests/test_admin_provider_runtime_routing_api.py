@@ -55,3 +55,19 @@ def test_admin_provider_runtime_status_exposes_effective_traffic_authority(monke
     assert traffic["canary_percent"] == 25
     assert traffic["kill_switch"] is False
     assert traffic["bucket_contract"] == "sha256(tenant,channel,session,scenario)%100"
+
+
+def test_admin_provider_runtime_status_fails_closed_on_invalid_traffic_mode(monkeypatch):
+    monkeypatch.setattr("app.api.admin_provider_runtime.ensure_can_manage_runtime", lambda current_user, db: None)
+    monkeypatch.setattr(
+        "app.api.admin_provider_runtime.get_provider_runtime_status",
+        lambda db: {"ok": True, "status": "ready", "warnings": []},
+    )
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "invalid")
+
+    response = provider_runtime_status(db=Mock(), current_user=Mock())
+
+    assert response["ok"] is False
+    assert response["status"] == "misconfigured"
+    assert response["traffic_selection"]["mode_error"] == "provider_runtime_traffic_mode_invalid"
+    assert "provider_runtime traffic mode is invalid" in response["warnings"]
