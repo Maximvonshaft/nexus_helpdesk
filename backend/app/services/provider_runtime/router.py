@@ -17,7 +17,6 @@ from .traffic_selection import (
     TRAFFIC_SELECTION_SCHEMA,
     ProviderTrafficPath,
     ProviderTrafficSelection,
-    effective_canary_percent,
     effective_kill_switch,
     select_provider_traffic,
 )
@@ -167,7 +166,7 @@ class ProviderRuntimeRouter:
             output_contract = rule["output_contract"]
             timeout_ms = rule["timeout_ms"]
             kill_switch = rule["kill_switch"]
-            canary_percent = rule["canary_percent"] or 0
+            canary_percent = 0 if rule["canary_percent"] is None else rule["canary_percent"]
 
         try:
             (
@@ -198,6 +197,9 @@ class ProviderRuntimeRouter:
                     "schema_version": TRAFFIC_SELECTION_SCHEMA,
                     "configured_mode": "invalid",
                     "configuration_errors": [error_code],
+                    "path": "control",
+                    "canary_percent": None,
+                    "bucket": None,
                     "execute_candidate": False,
                     "authoritative": False,
                     "reason": error_code,
@@ -398,8 +400,8 @@ def _apply_env_overrides(
     output_contract: str,
     timeout_ms: int,
     kill_switch: bool,
-    canary_percent: int,
-) -> tuple[str, list[str], str, int, bool, int]:
+    canary_percent,
+) -> tuple[str, list[str], str, int, bool, object]:
     env_primary = os.getenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "").strip()
     if env_primary:
         if env_primary not in _DIRECT_ENV_PROVIDERS:
@@ -412,8 +414,15 @@ def _apply_env_overrides(
     if env_contract:
         output_contract = env_contract
     timeout_ms = _int_env("PROVIDER_RUNTIME_TIMEOUT_MS", timeout_ms, minimum=500, maximum=120000)
-    canary_percent = effective_canary_percent(canary_percent)
+
+    # Validate the emergency stop first. A valid true override must remain able to
+    # suppress every candidate call even when lower-priority mode/percent data is
+    # malformed. The selector records those lower-priority errors as bounded
+    # evidence without allowing them to defeat the kill switch.
     kill_switch = effective_kill_switch(kill_switch)
+    canary_override = os.getenv("PROVIDER_RUNTIME_CANARY_PERCENT")
+    if canary_override is not None:
+        canary_percent = canary_override.strip()
     return primary_provider, fallbacks, output_contract, timeout_ms, kill_switch, canary_percent
 
 
