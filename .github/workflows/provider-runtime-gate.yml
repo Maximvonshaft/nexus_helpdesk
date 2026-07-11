@@ -144,16 +144,6 @@ jobs:
           assert any(item['name'] == 'provider_runtime_status' for item in routes)
           PY
 
-      - name: Diagnostic - Any Provider Runtime path mounted
-        continue-on-error: true
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          routes = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          assert any('provider-runtime' in item['path'] for item in routes)
-          PY
-
       - name: Diagnostic - Exact Provider status path mounted
         continue-on-error: true
         run: |
@@ -162,6 +152,36 @@ jobs:
           from pathlib import Path
           routes = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
           assert any(item['path'] == '/api/admin/provider-runtime/status' for item in routes)
+          PY
+
+      - name: Diagnostic - Public WebChat init path mounted
+        continue-on-error: true
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          routes = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
+          assert any(item['path'] == '/api/webchat/init' for item in routes)
+          PY
+
+      - name: Diagnostic - Retired Provider credential paths absent
+        continue-on-error: true
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          routes = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
+          assert not any('provider-credentials/codex' in item['path'] for item in routes)
+          PY
+
+      - name: Diagnostic - Retired fast reply paths absent
+        continue-on-error: true
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          routes = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
+          assert not any('webchat-fast' in item['path'] or 'fast-reply' in item['path'] for item in routes)
           PY
 
       - name: Application route contract
@@ -187,7 +207,6 @@ jobs:
           if missing or retired:
               print('missing_expected_routes=' + repr(missing))
               print('retired_routes_present=' + repr(retired))
-              print('provider_route_candidates=' + repr([item for item in routes if 'provider' in item['path'].lower() or 'provider' in item['name'].lower()]))
               raise SystemExit(1)
           print('application_route_contract_ok')
           PY
