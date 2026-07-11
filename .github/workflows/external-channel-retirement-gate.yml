@@ -70,7 +70,20 @@ jobs:
 
       - name: Verify tracked repository inventory
         run: |
-          set -Eeuo pipefail
+          set +e
           python scripts/ci/check_external_channel_retirement.py \
             --repo-root . \
-            --manifest config/governance/external-channel-assets.v1.json
+            --manifest config/governance/external-channel-assets.v1.json \
+            > external-channel-retirement-result.json 2>&1
+          status=$?
+          cat external-channel-retirement-result.json
+          exit "$status"
+
+      - name: Upload bounded inventory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-channel-retirement-result
+          path: external-channel-retirement-result.json
+          if-no-files-found: error
+          retention-days: 14
