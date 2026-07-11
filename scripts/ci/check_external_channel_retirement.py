@@ -381,9 +381,9 @@ def discover_token_paths(
             raise
         except OSError as exc:
             raise InventoryError("inventory_tracked_file_unavailable", path) from exc
-        if b"\x00" in data:
-            continue
-        if any(token in data for token in token_bytes):
+        path_match = any(token in path for token in tokens)
+        content_match = b"\x00" not in data and any(token in data for token in token_bytes)
+        if path_match or content_match:
             matches.append(path)
     return tuple(sorted(matches))
 
