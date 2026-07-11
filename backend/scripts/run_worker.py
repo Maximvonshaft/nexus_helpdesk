@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db import SessionLocal, db_context  # noqa: E402
 from app.services.background_jobs import dispatch_pending_background_jobs, dispatch_pending_webchat_ai_reply_jobs  # noqa: E402
+from app.services.heartbeat_service import update_service_heartbeat  # noqa: E402
 from app.services.message_dispatch import dispatch_pending_messages  # noqa: E402
 from app.services.observability import configure_logging, log_event, record_queue_snapshot, record_worker_poll, record_worker_result  # noqa: E402
 from app.services.webchat_ai_reconciler import reconcile_webchat_ai_state  # noqa: E402
@@ -22,7 +23,14 @@ settings = get_settings()
 configure_logging(settings.log_json)
 
 QUEUES = {"all", "outbound", "background", "webchat-ai", "handoff-snapshot"}
+WORKER_SERVICE_NAMES = {
+    "outbound": "outbound_worker",
+    "background": "background_worker",
+    "webchat-ai": "webchat_ai_worker",
+    "handoff-snapshot": "handoff_snapshot_worker",
+}
 _LAST_WEBCHAT_AI_RECONCILER_RUN_AT = 0.0
+_LAST_HEARTBEAT_AT: dict[str, float] = {}
 
 
 def _is_sqlalchemy_session(db) -> bool:
@@ -30,6 +38,55 @@ def _is_sqlalchemy_session(db) -> bool:
     # fake to assert dispatch behavior. The WebChat handoff snapshot worker uses
     # BackgroundJob claiming and therefore requires a real SQLAlchemy Session.
     return hasattr(db, "bind") and hasattr(db, "query") and hasattr(db, "commit")
+
+
+def _heartbeat_interval_seconds() -> float:
+    try:
+        return float(max(5, min(int(getattr(settings, "worker_heartbeat_interval_seconds", 30) or 30), 300)))
+    except (TypeError, ValueError):
+        return 30.0
+
+
+def _record_worker_heartbeat(
+    *,
+    worker_id: str,
+    queue: str,
+    status: str,
+    processed: int,
+    force: bool = False,
+) -> None:
+    service_name = WORKER_SERVICE_NAMES.get(queue)
+    if service_name is None:
+        return
+    now_monotonic = time.monotonic()
+    if not force and status == "ok":
+        last = _LAST_HEARTBEAT_AT.get(service_name, 0.0)
+        if now_monotonic - last < _heartbeat_interval_seconds():
+            return
+
+    db = SessionLocal()
+    try:
+        update_service_heartbeat(
+            db,
+            service_name=service_name,
+            instance_id=str(worker_id)[:120],
+            status="ok" if status == "ok" else "error",
+            details={
+                "queue": queue,
+                "processed": max(0, int(processed)),
+                "worker_id": str(worker_id)[:120],
+            },
+        )
+        db.commit()
+        _LAST_HEARTBEAT_AT[service_name] = now_monotonic
+    except Exception:
+        db.rollback()
+        LOGGER.exception(
+            "worker_heartbeat_write_failed",
+            extra={"event_payload": {"worker_id": worker_id, "queue": queue, "status": status}},
+        )
+    finally:
+        db.close()
 
 
 def _run_outbound(worker_id: str) -> int:
@@ -175,12 +232,29 @@ def main() -> int:
     once = bool(getattr(args, "once", False))
 
     while True:
-        if queue == "all":
-            if _should_run_webchat_ai_reconciler(worker_id):
-                _run_webchat_ai_reconciler_watchdog(worker_id)
-            processed = run_once(worker_id)
-        else:
-            processed = run_queue_once(worker_id, queue)
+        try:
+            if queue == "all":
+                if _should_run_webchat_ai_reconciler(worker_id):
+                    _run_webchat_ai_reconciler_watchdog(worker_id)
+                processed = run_once(worker_id)
+            else:
+                processed = run_queue_once(worker_id, queue)
+            _record_worker_heartbeat(
+                worker_id=worker_id,
+                queue=queue,
+                status="ok",
+                processed=processed,
+                force=once,
+            )
+        except Exception:
+            _record_worker_heartbeat(
+                worker_id=worker_id,
+                queue=queue,
+                status="error",
+                processed=0,
+                force=True,
+            )
+            raise
         if once:
             print(f"processed={processed}")
             return 0
