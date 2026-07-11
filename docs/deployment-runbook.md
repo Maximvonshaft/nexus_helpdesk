@@ -19,13 +19,16 @@
 - Legacy ExternalChannel runtime settings must remain disabled.
 - External customer sends are fail-closed unless `ENABLE_OUTBOUND_DISPATCH=true` and a native/email provider is explicitly enabled.
 
-## Runtime latency posture
+## Runtime capability and latency posture
 
-- For the current `qwen2.5:3b` Runtime host, keep WebChat AI generation single-lane unless Runtime-side parallel generation has been benchmarked and approved.
+- The active generation model is configured through `PRIVATE_AI_RUNTIME_GENERATION_MODEL` and must exactly match the authenticated `nexus.ai_runtime.capabilities.v1` manifest and the approved candidate expectation.
+- Retrieval is an independent capability. Its backend, embedding model and dimension, reranker, and active collection alias must match the approved manifest; do not represent RAG as a second generation model.
 - Candidate defaults are tuned for customer-facing latency: `WEBCHAT_AI_TURN_DEBOUNCE_SECONDS=0.05`, `WEBCHAT_AI_WORKER_POLL_SECONDS=0.10`, and `WEBCHAT_AI_WORKER_BUSY_POLL_SECONDS=0.02`.
-- Default Ollama output budgets are intentionally concise: short `64`, service `96`, standard `192`, repair `96`.
-- Keep customer-facing WebChat on the low-latency direct model. If `qwen3:4b` or another heavier RAG model is enabled through `PRIVATE_AI_RUNTIME_CHAT_MODE=rag|auto`, configure `PRIVATE_AI_RUNTIME_RAG_BASE_URL` to an isolated Runtime host; do not share the low-latency WebChat Ollama slot unless an explicit benchmark approves `PRIVATE_AI_RUNTIME_ALLOW_SHARED_RAG_MODEL=true`.
-- If concurrent smoke latency jumps while sequential smoke is fast, treat it as Runtime model contention first. Do not add customer-visible fallback text.
+- Default Ollama output budgets are intentionally concise: short `24`, service `96`, standard `192`, repair `96`.
+- Run the authenticated capability probe before generation Smoke or warmup. A mismatch blocks cutover; do not change expectations merely to accept an unexpected Runtime.
+- If concurrent smoke latency jumps while sequential smoke is fast, treat it as Runtime contention first. Do not add customer-visible fallback text.
+
+See [Private AI Runtime Rollout Runbook](ops/PRIVATE_AI_RUNTIME_ROLLOUT_RUNBOOK.md) for exact contract, token rotation, Smoke and traffic gates.
 
 ## Safe update flow
 
@@ -40,10 +43,7 @@ curl -fsS http://127.0.0.1/readyz
 docker compose -f deploy/docker-compose.server.yml exec -T app python /app/scripts/smoke/warm_private_ai_runtime.py
 ```
 
-Run the Runtime warmup after every app/worker restart and before public smoke.
-It keeps the first real customer turn from paying Ollama cold-load latency.
-Warmup is a gate: if it fails, keep the previous public target or investigate
-Runtime health; do not add customer-visible fallback text.
+Run Runtime capability verification and warmup after every relevant Runtime or app/worker restart and before public smoke. Warmup is a gate: if it fails, keep the previous public target or investigate Runtime identity/health; do not add customer-visible fallback text.
 
 ## Outbound Email pilot gate
 
@@ -68,6 +68,7 @@ Never overwrite these blindly:
 
 - `deploy/.env.prod`
 - `deploy/docker-compose.server.yml`
+- Runtime capability manifest and token files
 - local Nginx overrides
 - local secrets and token files
 - database volumes and backups
