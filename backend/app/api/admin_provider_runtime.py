@@ -12,12 +12,14 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..services.permissions import ensure_can_manage_runtime
 from ..services.provider_runtime.traffic_selection import safe_traffic_configuration
+from ..services.provider_runtime_capability_status import (
+    probe_provider_runtime_capabilities,
+)
 from ..services.provider_runtime_status import get_provider_runtime_status
 from .deps import get_current_user
 
 
 router = APIRouter(prefix="/api/admin/provider-runtime", tags=["admin-provider-runtime"])
-
 _ALLOWED_PRIMARY_PROVIDERS = {"private_ai_runtime"}
 _WEBCHAT_RUNTIME_SCENARIO = "webchat_runtime_reply"
 _WEBCHAT_RUNTIME_OUTPUT_CONTRACT = "nexus_webchat_runtime_reply_v1"
@@ -26,7 +28,11 @@ _WEBCHAT_RUNTIME_OUTPUT_CONTRACT = "nexus_webchat_runtime_reply_v1"
 class WebchatRuntimeRoutingUpdate(BaseModel):
     tenant_id: str = Field(default="default", min_length=1, max_length=36)
     channel_key: str = Field(default="website", min_length=1, max_length=100)
-    primary_provider: str = Field(default="private_ai_runtime", min_length=1, max_length=100)
+    primary_provider: str = Field(
+        default="private_ai_runtime",
+        min_length=1,
+        max_length=100,
+    )
     fallback_providers: list[str] = Field(default_factory=list, max_length=3)
     canary_percent: int = Field(default=0, ge=0, le=100)
     kill_switch: bool = False
@@ -79,7 +85,11 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
                 "database_canary_percent": int(row["canary_percent"] or 0),
                 "database_kill_switch": bool(row["kill_switch"]),
                 "effective_traffic_selection": selection,
-                "updated_at": row["updated_at"].isoformat() if hasattr(row["updated_at"], "isoformat") else row["updated_at"],
+                "updated_at": (
+                    row["updated_at"].isoformat()
+                    if hasattr(row["updated_at"], "isoformat")
+                    else row["updated_at"]
+                ),
             }
         )
     return {
@@ -91,7 +101,10 @@ def _traffic_routing_rules(db: Session) -> dict[str, Any]:
 
 
 @router.get("/status")
-def provider_runtime_status(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def provider_runtime_status(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     ensure_can_manage_runtime(current_user, db)
     snapshot = get_provider_runtime_status(db)
     traffic = safe_traffic_configuration()
@@ -103,13 +116,29 @@ def provider_runtime_status(db: Session = Depends(get_db), current_user=Depends(
     routing_rules_status = traffic["webchat_runtime_rules"].get("status")
     if configuration_errors or routing_rules_status != "ready":
         warnings = list(snapshot.get("warnings") or [])
-        warnings.extend(f"provider_runtime traffic configuration invalid: {code}" for code in configuration_errors)
+        warnings.extend(
+            f"provider_runtime traffic configuration invalid: {code}"
+            for code in configuration_errors
+        )
         if routing_rules_status != "ready":
             warnings.append("provider_runtime routing rules are unavailable")
         snapshot["warnings"] = warnings
         snapshot["ok"] = False
-        snapshot["status"] = "misconfigured" if configuration_errors else "unavailable"
+        snapshot["status"] = (
+            "misconfigured" if configuration_errors else "unavailable"
+        )
     return snapshot
+
+
+@router.get("/capabilities/probe")
+def provider_runtime_capabilities_probe(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Run one privileged, read-only, secret-free Runtime capability probe."""
+
+    ensure_can_manage_runtime(current_user, db)
+    return probe_provider_runtime_capabilities()
 
 
 @router.get("/audit/recent")
@@ -157,10 +186,16 @@ def provider_runtime_audit_recent(
                 "session_id": row["session_id"],
                 "operation": row["operation"],
                 "status": row["status"],
-                "safe_summary": safe_summary if isinstance(safe_summary, dict) else {},
+                "safe_summary": (
+                    safe_summary if isinstance(safe_summary, dict) else {}
+                ),
                 "error_code": row["error_code"],
                 "elapsed_ms": row["elapsed_ms"],
-                "created_at": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else row["created_at"],
+                "created_at": (
+                    row["created_at"].isoformat()
+                    if hasattr(row["created_at"], "isoformat")
+                    else row["created_at"]
+                ),
             }
         )
     return {"items": items, "total": len(items)}
@@ -176,7 +211,10 @@ def update_webchat_runtime_routing(
     try:
         payload.validate_allowed()
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail={"error_code": str(exc)}) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": str(exc)},
+        ) from exc
 
     existing = db.execute(
         text(
@@ -202,7 +240,10 @@ def update_webchat_runtime_routing(
         "channel_key": payload.channel_key,
         "scenario": _WEBCHAT_RUNTIME_SCENARIO,
         "primary_provider": payload.primary_provider,
-        "fallback_providers": json.dumps(payload.fallback_providers, separators=(",", ":")),
+        "fallback_providers": json.dumps(
+            payload.fallback_providers,
+            separators=(",", ":"),
+        ),
         "output_contract": _WEBCHAT_RUNTIME_OUTPUT_CONTRACT,
         "timeout_ms": payload.timeout_ms,
         "canary_percent": payload.canary_percent,
@@ -233,12 +274,14 @@ def update_webchat_runtime_routing(
             text(
                 """
                 INSERT INTO provider_routing_rules (
-                    id, tenant_id, channel_key, scenario, primary_provider, fallback_providers,
-                    output_contract, timeout_ms, canary_percent, kill_switch, enabled, created_at, updated_at
+                    id, tenant_id, channel_key, scenario, primary_provider,
+                    fallback_providers, output_contract, timeout_ms,
+                    canary_percent, kill_switch, enabled, created_at, updated_at
                 )
                 VALUES (
-                    :id, :tenant_id, :channel_key, :scenario, :primary_provider, :fallback_providers,
-                    :output_contract, :timeout_ms, :canary_percent, :kill_switch, :enabled,
+                    :id, :tenant_id, :channel_key, :scenario, :primary_provider,
+                    :fallback_providers, :output_contract, :timeout_ms,
+                    :canary_percent, :kill_switch, :enabled,
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 """
