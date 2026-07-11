@@ -35,6 +35,7 @@ def isolated_provider_registry(monkeypatch):
         "PROVIDER_RUNTIME_TIMEOUT_MS",
     ):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "canary")
     yield
 
 
@@ -49,7 +50,7 @@ def _rule(*, canary_percent=100, kill_switch=False):
     }
 
 
-def _mock_db(rule: dict):
+def _mock_db(rule):
     mock_db = Mock()
     mock_rule = Mock()
     mock_rule.mappings.return_value.first.return_value = rule
@@ -125,6 +126,24 @@ def _trusted_tracking_followup_request() -> ProviderRequest:
 
 def _audit_summary(row) -> dict:
     return json.loads(row["safe_summary"])
+
+
+@pytest.mark.asyncio
+async def test_missing_rule_and_missing_traffic_env_default_to_control_zero(monkeypatch):
+    monkeypatch.delenv("PROVIDER_RUNTIME_TRAFFIC_MODE", raising=False)
+    monkeypatch.delenv("PROVIDER_RUNTIME_CANARY_PERCENT", raising=False)
+    mock_db = _mock_db(None)
+    adapter = DummyAdapter("private_ai_runtime", _valid_result())
+    ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
+
+    result = await ProviderRuntimeRouter(mock_db).route(_request())
+
+    assert result.error_code == "provider_canary_control_path"
+    assert adapter.calls == 0
+    traffic = _audit_summary(mock_db.audit_rows[-1])["traffic_selection"]
+    assert traffic["configured_mode"] == "control"
+    assert traffic["canary_percent"] == 0
+    assert traffic["path"] == "control"
 
 
 @pytest.mark.asyncio
