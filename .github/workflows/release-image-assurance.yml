@@ -49,8 +49,12 @@ jobs:
           set -Eeuo pipefail
           python -m py_compile \
             scripts/security/release_image_assurance.py \
-            scripts/security/tests/test_release_image_assurance.py
-          python -m unittest scripts/security/tests/test_release_image_assurance.py
+            scripts/security/sanitize_image_sbom.py \
+            scripts/security/tests/test_release_image_assurance.py \
+            scripts/security/tests/test_sanitize_image_sbom.py
+          python -m unittest \
+            scripts/security/tests/test_release_image_assurance.py \
+            scripts/security/tests/test_sanitize_image_sbom.py
 
       - name: Build local candidate image only
         run: |
@@ -75,19 +79,49 @@ jobs:
         with:
           image-ref: ${{ env.CANDIDATE_IMAGE }}
           format: json
-          output: artifacts/release-image/trivy.json
+          output: artifacts/release-image/trivy.raw.json
           severity: CRITICAL,HIGH
           ignore-unfixed: false
           exit-code: "0"
           scanners: vuln
 
-      - name: Generate CycloneDX image SBOM with immutable Syft action
+      - name: Generate raw CycloneDX image SBOM with immutable Syft action
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
         with:
           image: ${{ env.CANDIDATE_IMAGE }}
           format: cyclonedx-json
-          output-file: artifacts/release-image/image.cdx.json
+          output-file: artifacts/release-image/image.raw.cdx.json
           upload-artifact: false
+
+      - name: Produce minimal PII-free application SBOM
+        id: sanitize_sbom
+        shell: bash
+        run: |
+          set +e
+          python scripts/security/sanitize_image_sbom.py \
+            --input "${ARTIFACT_DIR}/image.raw.cdx.json" \
+            --overrides config/security/container-license-metadata-overrides.json \
+            --output "${ARTIFACT_DIR}/image.safe.cdx.json"
+          code=$?
+          printf '%s\n' "${code}" > "${ARTIFACT_DIR}/sbom-sanitization-exit-code"
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          root = Path('artifacts/release-image')
+          def digest(path):
+              return 'sha256:' + hashlib.sha256(path.read_bytes()).hexdigest()
+          payload = {
+              'schema_version': 'nexus_raw_image_evidence_digests_v1',
+              'trivy_report_sha256': digest(root / 'trivy.raw.json'),
+              'raw_cyclonedx_sha256': digest(root / 'image.raw.cdx.json'),
+          }
+          (root / 'raw-evidence-digests.json').write_text(
+              json.dumps(payload, sort_keys=True, indent=2) + '\n',
+              encoding='utf-8',
+          )
+          PY
+          exit 0
 
       - name: Evaluate vulnerability and license policy
         id: policy
@@ -95,13 +129,13 @@ jobs:
         run: |
           set +e
           python scripts/security/release_image_assurance.py vulnerabilities \
-            --report "${ARTIFACT_DIR}/trivy.json" \
+            --report "${ARTIFACT_DIR}/trivy.raw.json" \
             --exceptions config/security/container-vulnerability-exceptions.json \
             --output "${ARTIFACT_DIR}/vulnerability-summary.json" \
             --today 2026-07-11
           vuln_code=$?
           python scripts/security/release_image_assurance.py licenses \
-            --sbom "${ARTIFACT_DIR}/image.cdx.json" \
+            --sbom "${ARTIFACT_DIR}/image.safe.cdx.json" \
             --policy config/security/container-license-policy.json \
             --output "${ARTIFACT_DIR}/license-summary.json" \
             --today 2026-07-11
@@ -110,7 +144,7 @@ jobs:
           python scripts/security/release_image_assurance.py manifest \
             --source-sha "${GITHUB_SHA}" \
             --image-id "${image_id}" \
-            --sbom "${ARTIFACT_DIR}/image.cdx.json" \
+            --sbom "${ARTIFACT_DIR}/image.safe.cdx.json" \
             --vulnerabilities "${ARTIFACT_DIR}/vulnerability-summary.json" \
             --licenses "${ARTIFACT_DIR}/license-summary.json" \
             --output "${ARTIFACT_DIR}/release-image-manifest.json"
@@ -123,7 +157,15 @@ jobs:
           echo "manifest_exit=${manifest_code}" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Scan all evidence for secrets and PII
+      - name: Remove raw third-party metadata before evidence upload
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          rm -f "${ARTIFACT_DIR}/trivy.raw.json" "${ARTIFACT_DIR}/image.raw.cdx.json"
+          test ! -e "${ARTIFACT_DIR}/trivy.raw.json"
+          test ! -e "${ARTIFACT_DIR}/image.raw.cdx.json"
+
+      - name: Scan bounded evidence for secrets and customer PII
         id: artifact_scan
         shell: bash
         run: |
@@ -131,8 +173,9 @@ jobs:
           python scripts/security/scan_artifacts.py \
             --root . \
             --output "${ARTIFACT_DIR}/artifact-scan.json" \
-            "${ARTIFACT_DIR}/trivy.json" \
-            "${ARTIFACT_DIR}/image.cdx.json" \
+            "${ARTIFACT_DIR}/image.safe.cdx.json" \
+            "${ARTIFACT_DIR}/image.safe.cdx.json.summary.json" \
+            "${ARTIFACT_DIR}/raw-evidence-digests.json" \
             "${ARTIFACT_DIR}/vulnerability-summary.json" \
             "${ARTIFACT_DIR}/license-summary.json" \
             "${ARTIFACT_DIR}/release-image-manifest.json"
@@ -142,7 +185,7 @@ jobs:
           exit 0
 
       - name: Attest bounded release-image manifest
-        if: github.event_name == 'workflow_dispatch' && steps.policy.outputs.manifest_exit == '0' && steps.artifact_scan.outputs.exit_code == '0'
+        if: github.event_name == 'workflow_dispatch' && steps.sanitize_sbom.outputs.exit_code == '0' && steps.policy.outputs.manifest_exit == '0' && steps.artifact_scan.outputs.exit_code == '0'
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
           subject-path: artifacts/release-image/release-image-manifest.json
@@ -160,6 +203,7 @@ jobs:
         if: always()
         run: |
           set -Eeuo pipefail
+          test "$(cat "${ARTIFACT_DIR}/sbom-sanitization-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/vulnerability-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/license-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/manifest-exit-code")" = "0"
