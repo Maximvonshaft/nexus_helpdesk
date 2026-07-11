@@ -5,6 +5,8 @@ import logging
 import re
 from time import perf_counter
 
+from .log_sanitizer import build_safe_log_payload, sanitize_log_event
+
 LOGGER = logging.getLogger("nexusdesk")
 
 try:
@@ -21,11 +23,32 @@ except Exception:  # pragma: no cover
 
 class _JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        payload = {"level": record.levelname, "logger": record.name, "message": record.getMessage()}
-        extra = getattr(record, "event_payload", None)
-        if isinstance(extra, dict):
-            payload.update(extra)
-        return json.dumps(payload, ensure_ascii=False)
+        try:
+            payload = build_safe_log_payload(
+                level=record.levelname,
+                logger=record.name,
+                message=record.getMessage(),
+                event_payload=getattr(record, "event_payload", None),
+            )
+            return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+        except Exception:
+            return '{"level":"ERROR","logger":"logging","message":"log_formatter_failure","redacted":true}'
+
+
+class _SafeTextFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        try:
+            payload = build_safe_log_payload(
+                level=record.levelname,
+                logger=record.name,
+                message=record.getMessage(),
+                event_payload=getattr(record, "event_payload", None),
+            )
+            event = {key: value for key, value in payload.items() if key not in {"level", "logger", "message"}}
+            suffix = f" {json.dumps(event, ensure_ascii=False, sort_keys=True, default=str)}" if event else ""
+            return f"{payload['level']} {payload['logger']} {payload['message']}{suffix}"
+        except Exception:
+            return "ERROR logging log_formatter_failure"
 
 
 _PROM_REGISTRY = CollectorRegistry() if CollectorRegistry else None
@@ -55,7 +78,7 @@ _BACKGROUND_JOB_DURATION = Histogram('nexusdesk_worker_job_duration_ms', 'Backgr
 _BACKGROUND_JOB_RETRIES = Counter('nexusdesk_worker_job_retries_total', 'Background job retry count', ['job_type', 'result'], registry=_PROM_REGISTRY) if Counter else None
 _BACKGROUND_JOB_OLDEST_PENDING = Gauge('nexusdesk_worker_oldest_pending_job_age_ms', 'Oldest pending job age in milliseconds by job type', ['job_type'], registry=_PROM_REGISTRY) if Gauge else None
 _OUTBOUND_QUEUED_TO_SENT = Histogram('nexusdesk_outbound_queued_to_sent_ms', 'Outbound queued_at to sent_at latency in milliseconds', ['channel', 'provider', 'status'], registry=_PROM_REGISTRY, buckets=(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 300000)) if Histogram else None
-_OUTBOUND_PROVIDER_DISPATCH = Histogram('nexusdesk_outbound_provider_dispatch_ms', 'Outbound provider dispatch duration in milliseconds', ['provider', 'status'], registry=_PROM_REGISTRY, buckets=(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000)) if Histogram else None
+_OUTBOUND_PROVIDER_DISPATCH = Histogram('nexusdesk_outbound_provider_dispatch_ms', 'Outbound provider dispatch duration in milliseconds', ['provider', 'status'], registry=_PROM_REGISTRY, buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000)) if Histogram else None
 _OUTBOUND_PROVIDER_RESULT = Counter('nexusdesk_outbound_provider_result_total', 'Outbound provider dispatch result count', ['provider', 'status'], registry=_PROM_REGISTRY) if Counter else None
 _FRONTEND_API_LATENCY = Histogram('nexusdesk_frontend_api_latency_ms', 'Frontend-observed API latency in milliseconds', ['method', 'path', 'status'], registry=_PROM_REGISTRY, buckets=(25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 15000)) if Histogram else None
 _WEB_VITALS = Histogram('nexusdesk_web_vitals_value', 'Frontend Web Vitals values reported without PII', ['name', 'rating'], registry=_PROM_REGISTRY, buckets=(0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10)) if Histogram else None
@@ -108,10 +131,7 @@ def configure_logging(log_json: bool = True) -> None:
     if getattr(configure_logging, "_configured", False):
         return
     handler = logging.StreamHandler()
-    if log_json:
-        handler.setFormatter(_JsonFormatter())
-    else:
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    handler.setFormatter(_JsonFormatter() if log_json else _SafeTextFormatter())
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(logging.INFO)
@@ -121,7 +141,7 @@ def configure_logging(log_json: bool = True) -> None:
 
 
 def log_event(level: int, message: str, **payload) -> None:
-    LOGGER.log(level, message, extra={"event_payload": payload})
+    LOGGER.log(level, message, extra={"event_payload": sanitize_log_event(payload)})
 
 
 def record_request_metric(path: str, method: str, status_code: int, duration_ms: float) -> None:
@@ -245,11 +265,11 @@ def record_db_query(duration_ms: int | float, statement: str | None = None, *, s
             _DB_SLOW_QUERY_TOTAL.labels(category=category).inc()
         LOGGER.warning(
             'db_slow_query',
-            extra={'event_payload': {
+            extra={'event_payload': sanitize_log_event({
                 'duration_ms': round(safe_duration, 2),
                 'category': category,
                 'request_id': _label(request_id, 'none'),
-            }},
+            })},
         )
 
 
@@ -333,6 +353,7 @@ def record_webcall_ai_audio_metric(provider: str | None, status: str | None, *, 
 def record_webcall_ai_barge_in(reason: str | None = None) -> None:
     if _WEBCALL_AI_BARGE_IN:
         _WEBCALL_AI_BARGE_IN.labels(reason=_label(reason, "barge_in")).inc()
+
 
 def log_signoff_state(state: str, **fields) -> None:
     log_event(20, "production_signoff_state", state=state, **fields)
