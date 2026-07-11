@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..settings import get_settings
 from ..utils.time import utc_now
+from .webchat_tenant_binding import resolve_public_webchat_scope
 
 settings = get_settings()
 _MEMORY_BUCKETS: dict[str, list[float]] = {}
@@ -70,7 +71,6 @@ def _enforce_database(db: Session, bucket_key: str) -> None:
         db.flush()
         return
 
-    # Keep the statement deliberately small and portable across SQLite/PostgreSQL.
     existing = db.execute(
         text(
             "SELECT id, window_start, request_count FROM webchat_rate_limits "
@@ -122,7 +122,18 @@ def enforce_webchat_rate_limit(
     tenant_key: str,
     conversation_id: str | None = None,
 ) -> None:
-    bucket_key = _bucket_key(request=request, tenant_key=(tenant_key or "default"), conversation_id=conversation_id)
+    verified_scope = resolve_public_webchat_scope(
+        db,
+        request=request,
+        requested_tenant_key=tenant_key,
+        requested_channel_key=request.query_params.get("channel_key") or None,
+        conversation_id=conversation_id,
+    )
+    bucket_key = _bucket_key(
+        request=request,
+        tenant_key=verified_scope.tenant_key,
+        conversation_id=conversation_id,
+    )
     if settings.webchat_rate_limit_backend == "memory":
         _enforce_memory(bucket_key)
         return

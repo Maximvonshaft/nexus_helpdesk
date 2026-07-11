@@ -13,6 +13,7 @@ from importlib.util import find_spec
 REQUIRED_MODEL_MODULES: tuple[str, ...] = (
     "app.models",
     "app.webchat_models",
+    "app.models_webchat_binding",
     "app.voice_models",
     "app.tool_models",
     "app.operator_models",
@@ -28,6 +29,7 @@ OPTIONAL_MODEL_MODULES: tuple[str, ...] = (
 REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models": "tickets",
     "app.webchat_models": "webchat_conversations",
+    "app.models_webchat_binding": "webchat_public_origin_bindings",
     "app.voice_models": "webchat_voice_sessions",
     "app.tool_models": "tool_registry",
     "app.operator_models": "operator_tasks",
