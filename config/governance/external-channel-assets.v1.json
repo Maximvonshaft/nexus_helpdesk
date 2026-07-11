@@ -1,6 +1,6 @@
 {
   "schema": "nexus.external-channel-retirement.inventory.v1",
-  "inventory_version": "2026-07-12.2",
+  "inventory_version": "2026-07-12.3",
   "audited_main_sha": "e761bcfd9850451bcba7ffe679c4b83f87ec91bf",
   "discovery_tokens": [
     "ExternalChannel",
@@ -19,7 +19,8 @@
   "allowed_historical_glob_roots": [
     "backend/alembic/versions/",
     "backend/tests/",
-    "docs/"
+    "docs/",
+    "webapp/e2e/"
   ],
   "rules": [
     {
@@ -286,6 +287,18 @@
       "disposition": "historical_evidence",
       "owner": "m12-production-readiness",
       "rationale": "Tests preserve compatibility and historical behavior evidence while runtime consumers are migrated.",
+      "write_surface": false,
+      "stop_new_writes_required": false,
+      "prerequisites": []
+    },
+    {
+      "path": null,
+      "paths": null,
+      "glob": "webapp/e2e/*.ts",
+      "asset_type": "test",
+      "disposition": "historical_evidence",
+      "owner": "frontend-compatibility",
+      "rationale": "End-to-end compatibility tests preserve retired ExternalChannel behavior evidence without runtime authority.",
       "write_surface": false,
       "stop_new_writes_required": false,
       "prerequisites": []
