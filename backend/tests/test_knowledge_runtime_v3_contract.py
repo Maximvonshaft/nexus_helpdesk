@@ -3,10 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from sqlalchemy.dialects import postgresql
 
 from app.models_control_plane import KnowledgeChunk
-from app.services.knowledge_runtime_v2.embeddings import OpenAICompatibleEmbeddingProvider, vector_literal
+from app.services.knowledge_runtime_v2.embeddings import (
+    OpenAICompatibleEmbeddingProvider,
+    get_embedding_provider,
+    vector_literal,
+)
 from app.services.knowledge_runtime_v2.runtime import _postgres_candidate_sql
 
 
@@ -58,7 +63,7 @@ def test_knowledge_chunk_pg_hybrid_columns_use_postgres_types():
     assert KnowledgeChunk.__table__.c.embedding_vector.type.dialect_impl(dialect).compile(dialect=dialect) == "vector(384)"
 
 
-def test_openai_compatible_embedding_provider_parses_ordered_vectors(monkeypatch):
+def test_openai_compatible_embedding_provider_requests_and_parses_ordered_vectors(monkeypatch):
     captured = {}
 
     class FakeResponse:
@@ -86,7 +91,13 @@ def test_openai_compatible_embedding_provider_parses_ordered_vectors(monkeypatch
         return FakeResponse()
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    provider = OpenAICompatibleEmbeddingProvider(base_url="https://embedding.example/v1", api_key="secret", model="text-embedding-3-small", dim=3, timeout_seconds=7)
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="https://embedding.example/v1",
+        api_key="secret",
+        model="text-embedding-3-small",
+        dim=3,
+        timeout_seconds=7,
+    )
 
     vectors = provider.embed_texts(["first", "second"])
 
@@ -95,9 +106,86 @@ def test_openai_compatible_embedding_provider_parses_ordered_vectors(monkeypatch
         "url": "https://embedding.example/v1/embeddings",
         "timeout": 7,
         "authorization": "Bearer secret",
-        "body": {"model": "text-embedding-3-small", "input": ["first", "second"]},
+        "body": {
+            "model": "text-embedding-3-small",
+            "input": ["first", "second"],
+            "dimensions": 3,
+        },
     }
     assert vector_literal([1, 0.25, -0.5]) == "[1.00000000,0.25000000,-0.50000000]"
+
+
+def test_openai_compatible_embedding_provider_fails_closed_without_dimension_capability():
+    with pytest.raises(ValueError, match="embedding_provider_dimension_request_unsupported"):
+        OpenAICompatibleEmbeddingProvider(
+            base_url="https://embedding.example/v1",
+            api_key="secret",
+            model="fixed-native-model",
+            dim=384,
+            timeout_seconds=7,
+            dimension_request_supported=False,
+        )
+
+
+def test_embedding_provider_factory_fails_closed_when_dimension_requests_are_unsupported(monkeypatch):
+    monkeypatch.setenv("KNOWLEDGE_EMBEDDING_DIMENSION_REQUEST_SUPPORTED", "false")
+
+    with pytest.raises(ValueError, match="embedding_provider_dimension_request_unsupported"):
+        get_embedding_provider(
+            "openai_compatible",
+            dim=384,
+            model="fixed-native-model",
+            base_url="https://embedding.example/v1",
+            api_key="secret",
+            timeout_seconds=7,
+        )
+
+
+def test_embedding_provider_factory_rejects_invalid_dimension_capability(monkeypatch):
+    monkeypatch.setenv("KNOWLEDGE_EMBEDDING_DIMENSION_REQUEST_SUPPORTED", "sometimes")
+
+    with pytest.raises(ValueError, match="embedding_provider_dimension_request_capability_invalid"):
+        get_embedding_provider(
+            "openai_compatible",
+            dim=384,
+            model="text-embedding-3-small",
+            base_url="https://embedding.example/v1",
+            api_key="secret",
+            timeout_seconds=7,
+        )
+
+
+@pytest.mark.parametrize(
+    "embedding",
+    [
+        [0.0] * 383,
+        [0.0] * 383 + [float("nan")],
+        [0.0] * 383 + [float("inf")],
+        [0.0] * 383 + ["not-a-number"],
+    ],
+)
+def test_openai_compatible_embedding_provider_rejects_invalid_native_output(monkeypatch, embedding):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps({"data": [{"index": 0, "embedding": embedding}]}).encode("utf-8")
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: FakeResponse())
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="https://embedding.example/v1",
+        api_key="secret",
+        model="text-embedding-3-small",
+        dim=384,
+        timeout_seconds=7,
+    )
+
+    with pytest.raises(RuntimeError, match="embedding_provider_(dimension_mismatch|invalid_vector)"):
+        provider.embed_texts(["first"])
 
 
 def test_pg_hybrid_action_proves_production_like_retrieval_path():
