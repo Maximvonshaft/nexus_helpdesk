@@ -132,6 +132,26 @@ class ExternalChannelRetirementInventoryTests(unittest.TestCase):
         self.assertEqual(result.write_surface_count, 2)
         self.assertEqual(result.disposition_counts["safe_to_remove"], 2)
 
+    def test_git_stage_parser_excludes_gitlinks_and_symlinks(self) -> None:
+        raw = (
+            b"100644 " + b"a" * 40 + b" 0\tbackend/app/legacy.py\0"
+            b"100755 " + b"b" * 40 + b" 0\tscripts/check.sh\0"
+            b"120000 " + b"c" * 40 + b" 0\tdocs/latest.md\0"
+            b"160000 " + b"d" * 40 + b" 0\tvendor/chatwoot\0"
+        )
+
+        self.assertEqual(
+            checker.parse_tracked_file_index(raw),
+            ("backend/app/legacy.py", "scripts/check.sh"),
+        )
+
+    def test_git_stage_parser_rejects_malformed_records(self) -> None:
+        with self.assertRaisesRegex(
+            checker.InventoryError,
+            "inventory_git_index_invalid",
+        ):
+            checker.parse_tracked_file_index(b"not-a-stage-record\0")
+
     def test_uncovered_reference_fails_closed(self) -> None:
         inventory = checker.parse_inventory(
             _payload(_rule(path="backend/app/legacy.py"))
