@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -39,11 +40,45 @@ class WebchatRuntimeRoutingUpdate(BaseModel):
             raise ValueError("fallback_provider_not_allowed")
 
 
+def _traffic_routing_rules(db: Session) -> list[dict[str, Any]]:
+    try:
+        rows = db.execute(text("""
+            SELECT tenant_id, channel_key, primary_provider, canary_percent,
+                   kill_switch, enabled, updated_at
+            FROM provider_routing_rules
+            WHERE scenario = :scenario
+            ORDER BY tenant_id ASC, channel_key ASC
+            LIMIT 100
+        """), {"scenario": _WEBCHAT_RUNTIME_SCENARIO}).mappings().all()
+    except Exception:
+        return []
+
+    output: list[dict[str, Any]] = []
+    for row in rows:
+        selection = safe_traffic_configuration(
+            default_canary_percent=int(row["canary_percent"] or 0),
+            default_kill_switch=bool(row["kill_switch"]),
+        )
+        output.append({
+            "tenant_id": str(row["tenant_id"] or "")[:120],
+            "channel_key": str(row["channel_key"] or "")[:120],
+            "primary_provider": str(row["primary_provider"] or "")[:100],
+            "enabled": bool(row["enabled"]),
+            "database_canary_percent": int(row["canary_percent"] or 0),
+            "database_kill_switch": bool(row["kill_switch"]),
+            "effective_traffic_selection": selection,
+            "updated_at": row["updated_at"].isoformat() if hasattr(row["updated_at"], "isoformat") else row["updated_at"],
+        })
+    return output
+
+
 @router.get("/status")
 def provider_runtime_status(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
     snapshot = get_provider_runtime_status(db)
     traffic = safe_traffic_configuration()
+    traffic["scope"] = "global_defaults_and_environment_overrides"
+    traffic["webchat_runtime_rules"] = _traffic_routing_rules(db)
     snapshot["traffic_selection"] = traffic
     if traffic["mode_error"]:
         warnings = list(snapshot.get("warnings") or [])
