@@ -1,9 +1,7 @@
 name: connector-refine-worker-readiness
 
 on:
-  push:
-    branches:
-      - audit/p1-release-readiness-549-20260711
+  pull_request:
     paths:
       - ".github/scripts/connector_refine_worker_readiness.py"
       - ".github/workflows/connector-refine-worker-readiness.yml"
@@ -14,13 +12,14 @@ permissions:
 
 jobs:
   apply:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout branch
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: audit/p1-release-readiness-549-20260711
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
           persist-credentials: true
       - name: Apply deterministic refinement
@@ -46,4 +45,4 @@ jobs:
             backend/app/services/nexus_osr/business_readiness_service.py \
             backend/tests/test_nexus_osr_business_readiness.py
           git commit -m "fix(readiness): align worker evidence to release profile"
-          git push origin HEAD:audit/p1-release-readiness-549-20260711
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
