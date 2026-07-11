@@ -65,6 +65,8 @@ def _payload(*rules: dict[str, object]) -> dict[str, object]:
             "ExternalChannel",
             "external_channel",
             "EXTERNAL_CHANNEL",
+            "externalChannel",
+            "external-channel",
         ],
         "production_roots": [
             ".github/workflows/",
@@ -151,6 +153,27 @@ class ExternalChannelRetirementInventoryTests(unittest.TestCase):
             "inventory_git_index_invalid",
         ):
             checker.parse_tracked_file_index(b"not-a-stage-record\0")
+
+    def test_discovery_covers_camel_and_hyphen_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "camel.ts").write_text(
+                "const externalChannel = 'retired';",
+                encoding="utf-8",
+            )
+            (root / "hyphen.md").write_text(
+                "The external-channel transport is retired.",
+                encoding="utf-8",
+            )
+            (root / "clean.txt").write_text("current runtime", encoding="utf-8")
+
+            discovered = checker.discover_token_paths(
+                root,
+                ("camel.ts", "hyphen.md", "clean.txt"),
+                checker.EXPECTED_DISCOVERY_TOKENS,
+            )
+
+        self.assertEqual(discovered, ("camel.ts", "hyphen.md"))
 
     def test_uncovered_reference_fails_closed(self) -> None:
         inventory = checker.parse_inventory(
