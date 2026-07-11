@@ -138,8 +138,13 @@ def test_support_conversations_unifies_webchat_and_whatsapp(api_context):
     payload = listing.json()
     assert payload["source"] == "nexus_support_conversations"
     by_key = {item["session_key"]: item for item in payload["items"]}
-    assert by_key[f"webchat:{webchat.public_id}"]["latest_message"] == "hello from webchat"
-    assert by_key[f"webchat:{webchat.public_id}"]["tracking_number"] == "CH020000129131"
+    webchat_item = by_key[f"webchat:{webchat.public_id}"]
+    assert webchat_item["latest_message"] == "hello from webchat"
+    assert webchat_item["tracking_number"] is None
+    assert webchat_item["tracking_reference"] == "parcel ending 129131"
+    assert webchat_item["pii_minimized"] is True
+    assert webchat_item["customer_contact"] == "phone ending 01"
+    assert webchat_item["display_name"].endswith("•••")
     assert by_key[f"whatsapp:{whatsapp.public_id}"]["channel"] == "whatsapp"
     assert by_key[f"whatsapp:{whatsapp.public_id}"]["ai_status"] == "queued"
     assert by_key[f"whatsapp:{whatsapp.public_id}"]["ai_pending"] is False
@@ -154,6 +159,8 @@ def test_support_conversations_unifies_webchat_and_whatsapp(api_context):
     assert detail_payload["conversation"]["can_force_takeover"] is True
     assert detail_payload["messages"][0]["author"] == "customer"
     assert detail_payload["messages"][0]["body"] == "hello from whatsapp"
+    assert detail_payload["conversation"]["tracking_number"] == "CH020000129132"
+    assert detail_payload["conversation"]["pii_minimized"] is False
 
     metrics = client.get("/api/support/conversations/metrics", params={"since_hours": 24})
     assert metrics.status_code == 200
