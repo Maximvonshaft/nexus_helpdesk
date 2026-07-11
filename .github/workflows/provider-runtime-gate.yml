@@ -143,12 +143,21 @@ jobs:
               'main_router_paths': [getattr(route, 'path', '') for route in main_module.admin_provider_runtime_router.routes],
           }
           Path('/tmp/nexus-provider-routes.json').write_text(
-              json.dumps(snapshot, ensure_ascii=True),
+              json.dumps(snapshot, ensure_ascii=True, indent=2),
               encoding='utf-8',
           )
           print('application_routes_captured=' + str(len(snapshot['app_paths'])))
           print('provider_source_routes_captured=' + str(len(snapshot['source_paths'])))
           PY
+
+      - name: Upload bounded route diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-runtime-route-diagnostics
+          path: /tmp/nexus-provider-routes.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Checkout application modules loaded
         run: |
