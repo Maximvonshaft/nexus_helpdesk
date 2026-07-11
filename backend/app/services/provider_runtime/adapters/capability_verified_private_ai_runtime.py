@@ -10,7 +10,9 @@ from ..runtime_capabilities import (
     CapabilityExpectationError,
     CapabilityProbeResult,
     load_capability_expectations_from_env,
-    probe_private_ai_runtime_capabilities,
+)
+from ..runtime_capability_cache import (
+    probe_private_ai_runtime_capabilities_cached,
 )
 from ..schemas import ProviderRequest, ProviderResult
 
@@ -61,6 +63,8 @@ class CapabilityVerifiedPrivateAIRuntimeAdapter(PrivateAIRuntimeAdapter):
             return parent_error
         if not self.token_file:
             return "capability_token_missing"
+        if self.capability_timeout_seconds < 0:
+            return "capability_expectation_invalid"
         for name in (
             "PRIVATE_AI_RUNTIME_DIRECT_MODEL",
             "PRIVATE_AI_RUNTIME_RAG_MODEL",
@@ -119,7 +123,7 @@ class CapabilityVerifiedPrivateAIRuntimeAdapter(PrivateAIRuntimeAdapter):
             expectations = load_capability_expectations_from_env()
         except CapabilityExpectationError as exc:
             return CapabilityProbeResult.not_ready(exc.reason_code)
-        return probe_private_ai_runtime_capabilities(
+        return probe_private_ai_runtime_capabilities_cached(
             base_url=self.base_url,
             capabilities_path=self.capabilities_path,
             token_file=self.token_file,
