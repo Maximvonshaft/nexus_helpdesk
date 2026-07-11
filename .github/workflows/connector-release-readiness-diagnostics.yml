@@ -1,11 +1,17 @@
 name: connector-release-readiness-diagnostics
 
 on:
-  push:
-    branches:
-      - audit/p1-release-readiness-549-20260711
+  pull_request:
     paths:
       - ".github/workflows/connector-release-readiness-diagnostics.yml"
+      - "backend/app/services/nexus_osr/release_profiles.py"
+      - "backend/app/services/nexus_osr/business_readiness_service.py"
+      - "backend/app/api/osr_readiness.py"
+      - "backend/app/settings.py"
+      - "backend/app/main.py"
+      - "backend/tests/test_nexus_osr_release_profiles.py"
+      - "backend/tests/test_nexus_osr_business_readiness.py"
+      - "backend/tests/test_production_settings_contract.py"
   workflow_dispatch:
 
 permissions:
@@ -37,7 +43,6 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           pip install -r backend/requirements.txt
       - name: Capture focused diagnostics
-        id: tests
         shell: bash
         run: |
           set +e
