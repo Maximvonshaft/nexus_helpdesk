@@ -14,6 +14,7 @@ from .output_contracts import OutputContracts
 from .registry import ProviderRegistry
 from .schemas import ProviderRequest, ProviderResult
 from .traffic_selection import (
+    TRAFFIC_SELECTION_SCHEMA,
     ProviderTrafficPath,
     ProviderTrafficSelection,
     effective_canary_percent,
@@ -24,6 +25,11 @@ from .traffic_selection import (
 logger = logging.getLogger(__name__)
 
 _DIRECT_ENV_PROVIDERS = {"private_ai_runtime"}
+_TRAFFIC_CONFIGURATION_ERRORS = {
+    "provider_runtime_traffic_mode_invalid",
+    "provider_runtime_canary_percent_invalid",
+    "provider_runtime_kill_switch_invalid",
+}
 
 
 class ProviderRuntimeRouter:
@@ -41,24 +47,29 @@ class ProviderRuntimeRouter:
         error_code: str | None = None,
     ):
         try:
-            self.db.execute(text("""
-                INSERT INTO provider_runtime_audit_logs
-                (id, tenant_id, provider, request_id, channel_key, session_id, operation, status, safe_summary, error_code, elapsed_ms, created_at)
-                VALUES (:id, :tenant_id, :provider, :request_id, :channel_key, :session_id, :operation, :status, :safe_summary, :error_code, :elapsed_ms, :now)
-            """), {
-                "id": str(uuid.uuid4()),
-                "tenant_id": request.tenant_id,
-                "provider": provider,
-                "request_id": request.request_id,
-                "channel_key": request.channel_key,
-                "session_id": request.session_id,
-                "operation": operation,
-                "status": status,
-                "safe_summary": json.dumps(safe_summary or {}),
-                "error_code": error_code,
-                "elapsed_ms": elapsed_ms,
-                "now": datetime.now(timezone.utc),
-            })
+            self.db.execute(
+                text(
+                    """
+                    INSERT INTO provider_runtime_audit_logs
+                    (id, tenant_id, provider, request_id, channel_key, session_id, operation, status, safe_summary, error_code, elapsed_ms, created_at)
+                    VALUES (:id, :tenant_id, :provider, :request_id, :channel_key, :session_id, :operation, :status, :safe_summary, :error_code, :elapsed_ms, :now)
+                    """
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "tenant_id": request.tenant_id,
+                    "provider": provider,
+                    "request_id": request.request_id,
+                    "channel_key": request.channel_key,
+                    "session_id": request.session_id,
+                    "operation": operation,
+                    "status": status,
+                    "safe_summary": json.dumps(safe_summary or {}),
+                    "error_code": error_code,
+                    "elapsed_ms": elapsed_ms,
+                    "now": datetime.now(timezone.utc),
+                },
+            )
             self.db.commit()
         except Exception as exc:
             logger.error("provider_runtime_audit_write_failed", extra={"error": str(exc)})
@@ -103,6 +114,7 @@ class ProviderRuntimeRouter:
                     "ai_decision": None,
                 },
             )()
+
         parsed.setdefault("customer_reply", parsed_reply.reply)
         parsed.setdefault("reply", parsed_reply.reply)
         parsed.setdefault("language", "unknown")
@@ -127,15 +139,20 @@ class ProviderRuntimeRouter:
         from . import bootstrap_provider_runtime
 
         bootstrap_provider_runtime()
-        rule = self.db.execute(text("""
-            SELECT primary_provider, fallback_providers, output_contract, timeout_ms, kill_switch, canary_percent
-            FROM provider_routing_rules
-            WHERE tenant_id = :tenant_id AND channel_key = :channel AND scenario = :scenario AND enabled = true
-        """), {
-            "tenant_id": request.tenant_id,
-            "channel": request.channel_key,
-            "scenario": request.scenario,
-        }).mappings().first()
+        rule = self.db.execute(
+            text(
+                """
+                SELECT primary_provider, fallback_providers, output_contract, timeout_ms, kill_switch, canary_percent
+                FROM provider_routing_rules
+                WHERE tenant_id = :tenant_id AND channel_key = :channel AND scenario = :scenario AND enabled = true
+                """
+            ),
+            {
+                "tenant_id": request.tenant_id,
+                "channel": request.channel_key,
+                "scenario": request.scenario,
+            },
+        ).mappings().first()
 
         if not rule:
             primary_provider = "private_ai_runtime"
@@ -152,30 +169,38 @@ class ProviderRuntimeRouter:
             kill_switch = rule["kill_switch"]
             canary_percent = rule["canary_percent"] or 0
 
-        primary_provider, fallbacks, output_contract, timeout_ms, kill_switch, canary_percent = _apply_env_overrides(
-            primary_provider,
-            fallbacks,
-            output_contract,
-            timeout_ms,
-            kill_switch,
-            canary_percent,
-        )
-        fallbacks = [provider for provider in fallbacks if provider in _DIRECT_ENV_PROVIDERS]
-
         try:
+            (
+                primary_provider,
+                fallbacks,
+                output_contract,
+                timeout_ms,
+                kill_switch,
+                canary_percent,
+            ) = _apply_env_overrides(
+                primary_provider,
+                fallbacks,
+                output_contract,
+                timeout_ms,
+                kill_switch,
+                canary_percent,
+            )
+            fallbacks = [provider for provider in fallbacks if provider in _DIRECT_ENV_PROVIDERS]
             traffic = select_provider_traffic(
                 request,
                 canary_percent=canary_percent,
                 kill_switch=kill_switch,
             )
-        except (TypeError, ValueError):
+        except (RuntimeError, TypeError, ValueError) as exc:
+            error_code = _traffic_configuration_error_code(exc)
             summary = {
                 "traffic_selection": {
-                    "schema_version": "nexus.provider_runtime.traffic_selection.v1",
+                    "schema_version": TRAFFIC_SELECTION_SCHEMA,
                     "configured_mode": "invalid",
+                    "configuration_errors": [error_code],
                     "execute_candidate": False,
                     "authoritative": False,
-                    "reason": "provider_runtime_traffic_mode_invalid",
+                    "reason": error_code,
                 }
             }
             self._write_audit(
@@ -185,13 +210,9 @@ class ProviderRuntimeRouter:
                 primary_provider,
                 0,
                 summary,
-                "provider_runtime_traffic_mode_invalid",
+                error_code,
             )
-            return _unavailable_with_traffic(
-                "provider_runtime_traffic_mode_invalid",
-                None,
-                summary=summary,
-            )
+            return _unavailable_with_traffic(error_code, None, summary=summary)
 
         if traffic.path == ProviderTrafficPath.KILL_SWITCH:
             self._write_audit(
@@ -219,7 +240,7 @@ class ProviderRuntimeRouter:
 
         request.output_contract = output_contract
         request.timeout_ms = timeout_ms
-        providers_to_try = [primary_provider] + list(fallbacks)
+        providers_to_try = [primary_provider, *fallbacks]
         seen: set[str] = set()
         providers_to_try = [name for name in providers_to_try if name and not (name in seen or seen.add(name))]
         shadow_only = traffic.path == ProviderTrafficPath.SHADOW_ONLY
@@ -299,7 +320,7 @@ class ProviderRuntimeRouter:
                 self._write_audit(
                     request,
                     operation,
-                    "shadow_ok" if shadow_only else "ok",
+                    "ok",
                     provider_name,
                     result.elapsed_ms,
                     safe_summary,
@@ -342,6 +363,13 @@ class ProviderRuntimeRouter:
         return _unavailable_with_traffic(error_code, traffic, elapsed_ms=last_elapsed_ms)
 
 
+def _traffic_configuration_error_code(exc: BaseException) -> str:
+    value = str(exc).strip()
+    if value in _TRAFFIC_CONFIGURATION_ERRORS:
+        return value
+    return "provider_runtime_traffic_configuration_invalid"
+
+
 def _summary_with_traffic(summary: dict | None, traffic: ProviderTrafficSelection) -> dict:
     safe_summary = dict(summary or {})
     safe_summary["traffic_selection"] = traffic.safe_summary()
@@ -375,7 +403,7 @@ def _apply_env_overrides(
     env_primary = os.getenv("PROVIDER_RUNTIME_PRIMARY_PROVIDER", "").strip()
     if env_primary:
         if env_primary not in _DIRECT_ENV_PROVIDERS:
-            raise RuntimeError("PROVIDER_RUNTIME_PRIMARY_PROVIDER must be a registered provider")
+            raise RuntimeError("provider_runtime_primary_provider_invalid")
         primary_provider = env_primary
         env_fallbacks = os.getenv("PROVIDER_RUNTIME_FALLBACK_PROVIDERS", "")
         if env_fallbacks:
