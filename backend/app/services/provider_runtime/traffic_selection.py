@@ -56,17 +56,23 @@ def configured_traffic_mode(value: str | None = None) -> str:
     return mode
 
 
+def _validated_canary_percent(value: Any) -> int:
+    try:
+        percent = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("provider_runtime_canary_percent_invalid") from exc
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError("provider_runtime_canary_percent_invalid")
+    if isinstance(value, str) and value.strip() != str(percent):
+        raise ValueError("provider_runtime_canary_percent_invalid")
+    if not 0 <= percent <= 100:
+        raise ValueError("provider_runtime_canary_percent_invalid")
+    return percent
+
+
 def effective_canary_percent(default: int) -> int:
     raw = os.getenv("PROVIDER_RUNTIME_CANARY_PERCENT")
-    if raw is None:
-        return max(0, min(int(default), 100))
-    try:
-        value = int(raw.strip())
-    except (AttributeError, TypeError, ValueError) as exc:
-        raise ValueError("provider_runtime_canary_percent_invalid") from exc
-    if not 0 <= value <= 100:
-        raise ValueError("provider_runtime_canary_percent_invalid")
-    return value
+    return _validated_canary_percent(default if raw is None else raw.strip())
 
 
 def effective_kill_switch(default: bool) -> bool:
@@ -136,7 +142,7 @@ def select_provider_traffic(
     kill_switch: bool,
     configured_mode_value: str | None = None,
 ) -> ProviderTrafficSelection:
-    percent = max(0, min(int(canary_percent), 100))
+    percent = _validated_canary_percent(canary_percent)
     mode = configured_traffic_mode(configured_mode_value)
 
     if kill_switch:
@@ -174,7 +180,7 @@ def select_provider_traffic(
             reason="shadow_mode_configured",
         )
 
-    if percent <= 0:
+    if percent == 0:
         return ProviderTrafficSelection(
             configured_mode=mode,
             path=ProviderTrafficPath.CONTROL,
