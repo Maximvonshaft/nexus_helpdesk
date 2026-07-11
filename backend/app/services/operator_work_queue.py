@@ -4,18 +4,23 @@ import base64
 import hashlib
 import hmac
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import and_, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, case, exists, func, not_, or_, select
+from sqlalchemy.orm import Session, aliased
 
-from ..enums import TicketStatus, UserRole
+# The operations outbox has an FK to the routing-rule model.  Import the FK
+# target before the optional outbox module so isolated API/test imports build a
+# complete SQLAlchemy metadata graph even when model_registry is not called.
+from .. import models_osr as _models_osr  # noqa: F401
+from ..enums import TicketPriority, TicketStatus, UserRole
 from ..models import Ticket
 from ..models_operations_dispatch import OperationsDispatchOutboxRecord
 from ..settings import get_settings
 from ..webchat_models import WebchatConversation, WebchatHandoffRequest
+from .nexus_osr.operations_dispatch_outbox import safe_operations_dispatch_error_category
 from .operator_queue_scope import (
     authorize_operator_scope,
     scope_grant_version,
@@ -24,6 +29,7 @@ from .operator_queue_scope import (
 
 _SOURCE_RANK = {"handoff": 0, "ticket": 1, "dispatch": 2}
 _ACTIVE_HANDOFF = {"requested", "accepted"}
+_HANDOFF_STATUSES = _ACTIVE_HANDOFF | {"closed", "cancelled", "expired", "resumed_ai"}
 _ACTIVE_TICKET = {
     TicketStatus.new,
     TicketStatus.pending_assignment,
@@ -33,13 +39,15 @@ _ACTIVE_TICKET = {
     TicketStatus.escalated,
 }
 _ACTIVE_DISPATCH = {"pending", "processing", "retryable"}
+_DISPATCH_STATUSES = _ACTIVE_DISPATCH | {"dispatched", "failed", "cancelled", "dead_letter"}
 _PRIORITY_RANK = {"low": 1, "medium": 2, "high": 3, "urgent": 4}
+_STALE_AFTER_SECONDS = 86_400
 _ALLOWED = {
     "state": {None, "active", "terminal"},
     "source_type": {None, "handoff", "ticket", "dispatch"},
     "owner": {None, "any", "mine", "unassigned", "team"},
     "priority": {None, "low", "medium", "high", "urgent"},
-    "sla": {None, "healthy", "at_risk", "breached", "paused", "not_applicable", "unavailable"},
+    "sla": {None, "healthy", "at_risk", "breached", "paused", "stale", "not_applicable", "unavailable"},
     "retry": {None, "not_applicable", "pending", "processing", "retry_scheduled", "exhausted", "settled"},
     "sort": {"oldest", "newest"},
 }
@@ -59,13 +67,6 @@ def _iso(value: datetime | None) -> str | None:
 
 def _enum_value(value: Any) -> str:
     return str(getattr(value, "value", value))
-
-
-def _bounded_code(value: str | None, limit: int = 80) -> str | None:
-    if not value:
-        return None
-    normalized = "".join(ch for ch in str(value).strip().lower() if ch.isalnum() or ch in "._-")
-    return normalized[:limit] or None
 
 
 def _visibility_filter(query, *, current_user):
@@ -89,21 +90,31 @@ def _owner(ticket: Ticket | None, *, assigned_user_id: int | None = None, worker
     return {"kind": "unassigned", "user_id": None, "team_id": None}
 
 
-def _sla(ticket: Ticket | None, *, terminal: bool, now: datetime) -> dict[str, Any]:
+def _sla(
+    ticket: Ticket | None,
+    *,
+    terminal: bool,
+    now: datetime,
+    source_updated_at: datetime | None,
+) -> dict[str, Any]:
     if terminal:
         return {"state": "not_applicable", "due_at": None, "seconds_remaining": None}
-    if ticket is None:
-        return {"state": "unavailable", "due_at": None, "seconds_remaining": None}
-    if bool(ticket.sla_paused):
+    if ticket is not None and bool(ticket.sla_paused):
         return {"state": "paused", "due_at": None, "seconds_remaining": None}
-    due = ticket.first_response_due_at if ticket.first_response_at is None else ticket.resolution_due_at
-    if bool(ticket.first_response_breached) or bool(ticket.resolution_breached):
+    due = None
+    if ticket is not None:
+        due = ticket.first_response_due_at if ticket.first_response_at is None else ticket.resolution_due_at
+    if ticket is not None and (bool(ticket.first_response_breached) or bool(ticket.resolution_breached)):
         state = "breached"
     elif due is None:
+        last_update = source_updated_at or (ticket.updated_at if ticket is not None else None)
+        if last_update is not None and (now - _utc(last_update)).total_seconds() >= _STALE_AFTER_SECONDS:
+            return {"state": "stale", "due_at": None, "seconds_remaining": None}
         return {"state": "unavailable", "due_at": None, "seconds_remaining": None}
     else:
-        seconds = max(-31_536_000, min(31_536_000, int((_utc(due) - now).total_seconds())))
-        state = "breached" if seconds <= 0 else "at_risk" if seconds <= 1800 else "healthy"
+        raw_seconds = (_utc(due) - now).total_seconds()
+        seconds = max(-31_536_000, min(31_536_000, int(raw_seconds)))
+        state = "breached" if raw_seconds <= 0 else "at_risk" if raw_seconds <= 1800 else "healthy"
         return {"state": state, "due_at": _iso(due), "seconds_remaining": seconds}
     return {"state": state, "due_at": _iso(due), "seconds_remaining": None}
 
@@ -132,7 +143,7 @@ def _retry(row: OperationsDispatchOutboxRecord | None) -> dict[str, Any]:
         "attempt_count": min(1000, max(0, int(row.attempt_count or 0))),
         "max_attempts": min(1000, max(0, int(row.max_attempts or 0))),
         "next_retry_at": _iso(row.next_retry_at),
-        "error_category": _bounded_code(row.error_category),
+        "error_category": safe_operations_dispatch_error_category(row.error_category),
     }
 
 
@@ -181,6 +192,9 @@ def _decode_cursor(raw: str) -> dict[str, Any]:
     try:
         padded = raw + "=" * (-len(raw) % 4)
         decoded = base64.b64decode(padded, altchars=b"-_", validate=True)
+        canonical = base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=")
+        if not hmac.compare_digest(canonical, raw):
+            raise ValueError("noncanonical encoding")
         if len(decoded) < 34 or decoded[-33] != ord("."):
             raise ValueError("framing")
         body, signature = decoded[:-33], decoded[-32:]
@@ -237,6 +251,144 @@ def _ordered(query, *, created_column, id_column, sort: str):
     return query.order_by(created_column.asc(), id_column.asc())
 
 
+def _tenant_conflict(ticket_id_column, *, tenant: str, as_of: datetime):
+    conversation = aliased(WebchatConversation)
+    dispatch = aliased(OperationsDispatchOutboxRecord)
+    return or_(
+        exists().where(
+            and_(
+                conversation.ticket_id == ticket_id_column,
+                conversation.tenant_key != tenant,
+                conversation.created_at <= as_of,
+            )
+        ),
+        exists().where(
+            and_(
+                dispatch.ticket_id == ticket_id_column,
+                dispatch.tenant_key != tenant,
+                dispatch.created_at <= as_of,
+            )
+        ),
+    )
+
+
+def _apply_state_sql(query, *, status_column, active_statuses, requested: str | None):
+    if requested == "active":
+        return query.filter(status_column.in_(active_statuses))
+    if requested == "terminal":
+        return query.filter(not_(status_column.in_(active_statuses)))
+    return query
+
+
+def _apply_priority_sql(query, *, requested: str | None, ticket_optional: bool = False):
+    if requested is None:
+        return query
+    priority = TicketPriority(requested)
+    if ticket_optional and requested == "medium":
+        return query.filter(or_(Ticket.priority == priority, Ticket.id.is_(None)))
+    return query.filter(Ticket.priority == priority)
+
+
+def _apply_owner_sql(query, *, source_type: str, requested: str, current_user):
+    if requested == "any":
+        return query
+    user_id = int(current_user.id)
+    if source_type == "handoff":
+        if requested == "mine":
+            return query.filter(
+                or_(
+                    WebchatHandoffRequest.assigned_agent_id == user_id,
+                    and_(
+                        WebchatHandoffRequest.assigned_agent_id.is_(None),
+                        Ticket.assignee_id == user_id,
+                    ),
+                )
+            )
+        unclaimed = and_(
+            WebchatHandoffRequest.assigned_agent_id.is_(None),
+            Ticket.assignee_id.is_(None),
+        )
+        if requested == "team":
+            return query.filter(unclaimed, Ticket.team_id.is_not(None))
+        return query.filter(unclaimed, Ticket.team_id.is_(None))
+    if source_type == "ticket":
+        if requested == "mine":
+            return query.filter(Ticket.assignee_id == user_id)
+        if requested == "team":
+            return query.filter(Ticket.assignee_id.is_(None), Ticket.team_id.is_not(None))
+        return query.filter(Ticket.assignee_id.is_(None), Ticket.team_id.is_(None))
+
+    # A processing dispatch is owned by a worker lease, never by a user/team.
+    not_worker_owned = OperationsDispatchOutboxRecord.status != "processing"
+    if requested == "mine":
+        return query.filter(not_worker_owned, Ticket.assignee_id == user_id)
+    if requested == "team":
+        return query.filter(not_worker_owned, Ticket.assignee_id.is_(None), Ticket.team_id.is_not(None))
+    return query.filter(
+        not_worker_owned,
+        or_(Ticket.id.is_(None), and_(Ticket.assignee_id.is_(None), Ticket.team_id.is_(None))),
+    )
+
+
+def _apply_sla_sql(
+    query,
+    *,
+    status_column,
+    active_statuses,
+    requested: str | None,
+    now: datetime,
+    source_updated_column,
+):
+    if requested is None:
+        return query
+    active = status_column.in_(active_statuses)
+    terminal = not_(active)
+    if requested == "not_applicable":
+        return query.filter(terminal)
+    due = case(
+        (Ticket.first_response_at.is_(None), Ticket.first_response_due_at),
+        else_=Ticket.resolution_due_at,
+    )
+    paused = and_(active, Ticket.id.is_not(None), Ticket.sla_paused.is_(True))
+    breach_flag = or_(Ticket.first_response_breached.is_(True), Ticket.resolution_breached.is_(True))
+    eligible = and_(active, not_(paused))
+    if requested == "paused":
+        return query.filter(paused)
+    missing_sla = or_(Ticket.id.is_(None), and_(not_(breach_flag), due.is_(None)))
+    stale_before = now - timedelta(seconds=_STALE_AFTER_SECONDS)
+    if requested == "stale":
+        return query.filter(eligible, missing_sla, source_updated_column <= stale_before)
+    if requested == "unavailable":
+        return query.filter(
+            eligible,
+            missing_sla,
+            or_(source_updated_column.is_(None), source_updated_column > stale_before),
+        )
+    if requested == "breached":
+        return query.filter(eligible, or_(breach_flag, due <= now))
+    healthy_after = now + timedelta(seconds=1800)
+    if requested == "at_risk":
+        return query.filter(eligible, not_(breach_flag), due > now, due <= healthy_after)
+    return query.filter(eligible, not_(breach_flag), due > healthy_after)
+
+
+def _apply_retry_sql(query, *, source_type: str, requested: str | None):
+    if requested is None:
+        return query
+    if source_type != "dispatch":
+        return query if requested == "not_applicable" else None
+    statuses = {
+        "pending": {"pending"},
+        "processing": {"processing"},
+        "retry_scheduled": {"retryable"},
+        "exhausted": {"failed", "dead_letter"},
+        "settled": {"dispatched", "cancelled"},
+    }
+    if requested == "not_applicable":
+        return None
+    return query.filter(OperationsDispatchOutboxRecord.status.in_(statuses[requested]))
+
+
 def _matches_filters(item: dict[str, Any], filters: dict[str, Any], *, current_user) -> bool:
     for key in ("state", "source_type", "priority"):
         if filters[key] and item[key] != filters[key]:
@@ -253,27 +405,6 @@ def _matches_filters(item: dict[str, Any], filters: dict[str, Any], *, current_u
     if owner == "team" and item["owner"]["kind"] != "team":
         return False
     return True
-
-
-def _ticket_tenant_provenance(db: Session, ticket_ids: list[int]) -> dict[int, set[str]]:
-    result = {ticket_id: set() for ticket_id in ticket_ids}
-    if not ticket_ids:
-        return result
-    for ticket_id, tenant in (
-        db.query(WebchatConversation.ticket_id, WebchatConversation.tenant_key)
-        .filter(WebchatConversation.ticket_id.in_(ticket_ids))
-        .all()
-    ):
-        if ticket_id and tenant:
-            result[int(ticket_id)].add(str(tenant))
-    for ticket_id, tenant in (
-        db.query(OperationsDispatchOutboxRecord.ticket_id, OperationsDispatchOutboxRecord.tenant_key)
-        .filter(OperationsDispatchOutboxRecord.ticket_id.in_(ticket_ids))
-        .all()
-    ):
-        if ticket_id and tenant:
-            result[int(ticket_id)].add(str(tenant))
-    return result
 
 
 def list_unified_operator_queue(
@@ -331,11 +462,10 @@ def list_unified_operator_queue(
     else:
         as_of = datetime.now(timezone.utc)
 
-    fetch_limit = min(301, max(101, limit * 3 + 1))
+    fetch_limit = limit + 1
     items: list[dict[str, Any]] = []
-    ambiguous_ticket_scope = 0
 
-    if source_type in {None, "handoff"}:
+    if source_type in {None, "handoff"} and retry in {None, "not_applicable"}:
         query = (
             db.query(WebchatHandoffRequest, WebchatConversation, Ticket)
             .join(WebchatConversation, WebchatConversation.id == WebchatHandoffRequest.conversation_id)
@@ -351,9 +481,30 @@ def list_unified_operator_queue(
                 WebchatConversation.channel_key == channel,
                 Ticket.country_code == country,
                 WebchatHandoffRequest.created_at <= as_of,
+                WebchatHandoffRequest.updated_at <= as_of,
+                WebchatConversation.updated_at <= as_of,
+                Ticket.updated_at <= as_of,
             )
         )
         query = _visibility_filter(query, current_user=current_user)
+        query = _apply_state_sql(
+            query,
+            status_column=WebchatHandoffRequest.status,
+            active_statuses=tuple(_ACTIVE_HANDOFF),
+            requested=state,
+        )
+        query = _apply_priority_sql(query, requested=priority)
+        query = _apply_owner_sql(query, source_type="handoff", requested=filters["owner"], current_user=current_user)
+        query = _apply_sla_sql(
+            query,
+            status_column=WebchatHandoffRequest.status,
+            active_statuses=tuple(_ACTIVE_HANDOFF),
+            requested=sla,
+            now=as_of,
+            source_updated_column=WebchatHandoffRequest.updated_at,
+        )
+        conflict = _tenant_conflict(Ticket.id, tenant=tenant, as_of=as_of)
+        query = query.filter(not_(conflict))
         query = _apply_cursor_query(
             query,
             created_column=WebchatHandoffRequest.created_at,
@@ -363,15 +514,7 @@ def list_unified_operator_queue(
             sort=sort,
         )
         query = _ordered(query, created_column=WebchatHandoffRequest.created_at, id_column=WebchatHandoffRequest.id, sort=sort)
-        handoff_rows = query.limit(fetch_limit).all()
-        handoff_provenance = _ticket_tenant_provenance(
-            db,
-            sorted({int(ticket.id) for _, _, ticket in handoff_rows}),
-        )
-        for handoff, conversation, ticket in handoff_rows:
-            if handoff_provenance.get(ticket.id) != {tenant}:
-                ambiguous_ticket_scope = min(1000, ambiguous_ticket_scope + 1)
-                continue
+        for handoff, conversation, ticket in query.limit(fetch_limit).all():
             terminal = handoff.status not in _ACTIVE_HANDOFF
             item = {
                 "queue_id": f"handoff:{handoff.id}",
@@ -383,10 +526,11 @@ def list_unified_operator_queue(
                 "country_code": country,
                 "channel_key": channel,
                 "state": "terminal" if terminal else "active",
-                "source_status": _bounded_code(handoff.status, 40) or "unknown",
+                "source_status": handoff.status if handoff.status in _HANDOFF_STATUSES else "unknown",
+                "reopened": bool(ticket.reopen_count),
                 "priority": _priority(ticket),
                 "owner": _owner(ticket, assigned_user_id=handoff.assigned_agent_id),
-                "sla": _sla(ticket, terminal=terminal, now=as_of),
+                "sla": _sla(ticket, terminal=terminal, now=as_of, source_updated_at=handoff.updated_at),
                 "retry": _retry(None),
                 "created_at": _iso(handoff.created_at),
                 "updated_at": _iso(handoff.updated_at),
@@ -396,18 +540,65 @@ def list_unified_operator_queue(
             if _matches_filters(item, filters, current_user=current_user) and _cursor_allows(item, cursor_payload, sort=sort):
                 items.append(item)
 
-    if source_type in {None, "ticket"}:
+    if source_type in {None, "ticket"} and retry in {None, "not_applicable"}:
+        scoped_conversation = aliased(WebchatConversation)
+        scoped_dispatch = aliased(OperationsDispatchOutboxRecord)
+        exact_conversation_id = (
+            select(func.max(scoped_conversation.id))
+            .where(
+                scoped_conversation.ticket_id == Ticket.id,
+                scoped_conversation.tenant_key == tenant,
+                scoped_conversation.channel_key == channel,
+                scoped_conversation.created_at <= as_of,
+                scoped_conversation.updated_at <= as_of,
+            )
+            .correlate(Ticket)
+            .scalar_subquery()
+        )
+        exact_dispatch_id = (
+            select(func.max(scoped_dispatch.id))
+            .where(
+                scoped_dispatch.ticket_id == Ticket.id,
+                scoped_dispatch.tenant_key == tenant,
+                scoped_dispatch.country_code == country,
+                scoped_dispatch.channel_key == channel,
+                scoped_dispatch.created_at <= as_of,
+            )
+            .correlate(Ticket)
+            .scalar_subquery()
+        )
         query = (
             db.query(Ticket, WebchatConversation)
-            .join(WebchatConversation, WebchatConversation.ticket_id == Ticket.id)
+            .outerjoin(WebchatConversation, WebchatConversation.id == exact_conversation_id)
             .filter(
-                WebchatConversation.tenant_key == tenant,
-                WebchatConversation.channel_key == channel,
-                Ticket.country_code == country,
+                or_(exact_conversation_id.is_not(None), exact_dispatch_id.is_not(None)),
+                or_(
+                    Ticket.country_code == country,
+                    and_(Ticket.country_code.is_(None), exact_dispatch_id.is_not(None)),
+                ),
                 Ticket.created_at <= as_of,
+                Ticket.updated_at <= as_of,
             )
         )
         query = _visibility_filter(query, current_user=current_user)
+        query = _apply_state_sql(
+            query,
+            status_column=Ticket.status,
+            active_statuses=tuple(_ACTIVE_TICKET),
+            requested=state,
+        )
+        query = _apply_priority_sql(query, requested=priority)
+        query = _apply_owner_sql(query, source_type="ticket", requested=filters["owner"], current_user=current_user)
+        query = _apply_sla_sql(
+            query,
+            status_column=Ticket.status,
+            active_statuses=tuple(_ACTIVE_TICKET),
+            requested=sla,
+            now=as_of,
+            source_updated_column=Ticket.updated_at,
+        )
+        conflict = _tenant_conflict(Ticket.id, tenant=tenant, as_of=as_of)
+        query = query.filter(not_(conflict))
         query = _apply_cursor_query(
             query,
             created_column=Ticket.created_at,
@@ -417,17 +608,7 @@ def list_unified_operator_queue(
             sort=sort,
         )
         query = _ordered(query, created_column=Ticket.created_at, id_column=Ticket.id, sort=sort)
-        rows = query.limit(fetch_limit * 2).all()
-        ticket_ids = sorted({int(ticket.id) for ticket, _ in rows})
-        provenance = _ticket_tenant_provenance(db, ticket_ids)
-        seen: set[int] = set()
-        for ticket, conversation in rows:
-            if ticket.id in seen:
-                continue
-            seen.add(ticket.id)
-            if provenance.get(ticket.id) != {tenant}:
-                ambiguous_ticket_scope = min(1000, ambiguous_ticket_scope + 1)
-                continue
+        for ticket, conversation in query.limit(fetch_limit).all():
             terminal = ticket.status not in _ACTIVE_TICKET
             item = {
                 "queue_id": f"ticket:{ticket.id}",
@@ -435,24 +616,30 @@ def list_unified_operator_queue(
                 "source_type": "ticket",
                 "source_id": ticket.id,
                 "ticket_id": ticket.id,
-                "conversation_id": conversation.id,
+                "conversation_id": conversation.id if conversation is not None else None,
                 "country_code": country,
                 "channel_key": channel,
                 "state": "terminal" if terminal else "active",
                 "source_status": _enum_value(ticket.status),
+                "reopened": bool(ticket.reopen_count),
                 "priority": _priority(ticket),
                 "owner": _owner(ticket),
-                "sla": _sla(ticket, terminal=terminal, now=as_of),
+                "sla": _sla(ticket, terminal=terminal, now=as_of, source_updated_at=ticket.updated_at),
                 "retry": _retry(None),
                 "created_at": _iso(ticket.created_at),
                 "updated_at": _iso(ticket.updated_at),
-                "source_links": _links(ticket_id=ticket.id, conversation_id=conversation.id, handoff_id=None, dispatch_id=None),
+                "source_links": _links(
+                    ticket_id=ticket.id,
+                    conversation_id=conversation.id if conversation is not None else None,
+                    handoff_id=None,
+                    dispatch_id=None,
+                ),
                 "_created": ticket.created_at,
             }
             if _matches_filters(item, filters, current_user=current_user) and _cursor_allows(item, cursor_payload, sort=sort):
                 items.append(item)
 
-    if source_type in {None, "dispatch"}:
+    if source_type in {None, "dispatch"} and retry != "not_applicable":
         query = (
             db.query(OperationsDispatchOutboxRecord, Ticket)
             .outerjoin(Ticket, Ticket.id == OperationsDispatchOutboxRecord.ticket_id)
@@ -461,6 +648,14 @@ def list_unified_operator_queue(
                 OperationsDispatchOutboxRecord.country_code == country,
                 OperationsDispatchOutboxRecord.channel_key == channel,
                 OperationsDispatchOutboxRecord.created_at <= as_of,
+                OperationsDispatchOutboxRecord.updated_at <= as_of,
+                or_(
+                    Ticket.id.is_(None),
+                    and_(
+                        Ticket.updated_at <= as_of,
+                        or_(Ticket.country_code.is_(None), Ticket.country_code == country),
+                    ),
+                ),
             )
         )
         if current_user.role not in {UserRole.admin, UserRole.manager, UserRole.auditor}:
@@ -468,6 +663,26 @@ def list_unified_operator_queue(
             if getattr(current_user, "team_id", None):
                 visible.append(Ticket.team_id == int(current_user.team_id))
             query = query.filter(or_(*visible))
+        query = _apply_state_sql(
+            query,
+            status_column=OperationsDispatchOutboxRecord.status,
+            active_statuses=tuple(_ACTIVE_DISPATCH),
+            requested=state,
+        )
+        query = _apply_priority_sql(query, requested=priority, ticket_optional=True)
+        query = _apply_owner_sql(query, source_type="dispatch", requested=filters["owner"], current_user=current_user)
+        query = _apply_sla_sql(
+            query,
+            status_column=OperationsDispatchOutboxRecord.status,
+            active_statuses=tuple(_ACTIVE_DISPATCH),
+            requested=sla,
+            now=as_of,
+            source_updated_column=OperationsDispatchOutboxRecord.updated_at,
+        )
+        query = _apply_retry_sql(query, source_type="dispatch", requested=retry)
+        conflict = _tenant_conflict(Ticket.id, tenant=tenant, as_of=as_of)
+        linked_conflict = and_(Ticket.id.is_not(None), conflict)
+        query = query.filter(not_(linked_conflict))
         query = _apply_cursor_query(
             query,
             created_column=OperationsDispatchOutboxRecord.created_at,
@@ -482,17 +697,7 @@ def list_unified_operator_queue(
             id_column=OperationsDispatchOutboxRecord.id,
             sort=sort,
         )
-        dispatch_rows = query.limit(fetch_limit).all()
-        dispatch_provenance = _ticket_tenant_provenance(
-            db,
-            sorted({int(ticket.id) for _, ticket in dispatch_rows if ticket is not None}),
-        )
-        for dispatch, ticket in dispatch_rows:
-            if ticket is not None and dispatch_provenance.get(ticket.id) != {tenant}:
-                ambiguous_ticket_scope = min(1000, ambiguous_ticket_scope + 1)
-                continue
-            if ticket is not None and ticket.country_code and str(ticket.country_code).upper() != country:
-                continue
+        for dispatch, ticket in query.limit(fetch_limit).all():
             terminal = dispatch.status not in _ACTIVE_DISPATCH
             item = {
                 "queue_id": f"dispatch:{dispatch.id}",
@@ -504,10 +709,16 @@ def list_unified_operator_queue(
                 "country_code": country,
                 "channel_key": channel,
                 "state": "terminal" if terminal else "active",
-                "source_status": _bounded_code(dispatch.status, 40) or "unknown",
+                "source_status": dispatch.status if dispatch.status in _DISPATCH_STATUSES else "unknown",
+                "reopened": bool(ticket and ticket.reopen_count),
                 "priority": _priority(ticket),
                 "owner": _owner(ticket, worker=dispatch.status == "processing"),
-                "sla": _sla(ticket, terminal=terminal, now=as_of),
+                "sla": _sla(
+                    ticket,
+                    terminal=terminal,
+                    now=as_of,
+                    source_updated_at=dispatch.updated_at,
+                ),
                 "retry": _retry(dispatch),
                 "created_at": _iso(dispatch.created_at),
                 "updated_at": _iso(dispatch.updated_at),
@@ -544,5 +755,4 @@ def list_unified_operator_queue(
         "next_cursor": next_cursor,
         "scope": {"tenant_hash": tenant_scope_hash(tenant), "country_code": country, "channel_key": channel},
         "filters": filters,
-        "omitted": {"ambiguous_ticket_scope": ambiguous_ticket_scope},
     }

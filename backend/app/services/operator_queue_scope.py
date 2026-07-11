@@ -124,11 +124,15 @@ def authorize_operator_scope(
 
 
 def scope_grant_version(grant: OperatorQueueScopeGrant | None, *, current_user) -> str:
+    auth_context = (
+        f"role:{getattr(getattr(current_user, 'role', None), 'value', getattr(current_user, 'role', 'unknown'))}:"
+        f"team:{getattr(current_user, 'team_id', None) or 'none'}"
+    )
     if grant is None:
-        raw = f"admin:{int(current_user.id)}"
+        raw = f"admin:{int(current_user.id)}:{auth_context}"
     else:
         updated = grant.updated_at.isoformat() if isinstance(grant.updated_at, datetime) else str(grant.updated_at)
-        raw = f"grant:{grant.id}:{updated}:{int(bool(grant.enabled))}"
+        raw = f"grant:{grant.id}:{updated}:{int(bool(grant.enabled))}:{auth_context}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 

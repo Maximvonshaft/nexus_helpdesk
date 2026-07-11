@@ -78,7 +78,7 @@ class UnifiedQueueOwner(BaseModel):
 
 
 class UnifiedQueueSLA(BaseModel):
-    state: Literal["healthy", "at_risk", "breached", "paused", "not_applicable", "unavailable"]
+    state: Literal["healthy", "at_risk", "breached", "paused", "stale", "not_applicable", "unavailable"]
     due_at: str | None = None
     seconds_remaining: int | None = None
 
@@ -109,6 +109,7 @@ class UnifiedOperatorQueueItem(BaseModel):
     channel_key: str = Field(max_length=40)
     state: Literal["active", "terminal"]
     source_status: str = Field(max_length=40)
+    reopened: bool = False
     priority: Literal["low", "medium", "high", "urgent"]
     owner: UnifiedQueueOwner
     sla: UnifiedQueueSLA
@@ -134,13 +135,8 @@ class UnifiedQueueFilters(BaseModel):
     sort: Literal["oldest", "newest"]
 
 
-class UnifiedQueueOmitted(BaseModel):
-    ambiguous_ticket_scope: int = Field(default=0, ge=0, le=1000)
-
-
 class UnifiedOperatorQueueResponse(BaseModel):
     items: list[UnifiedOperatorQueueItem]
     next_cursor: str | None = None
     scope: UnifiedQueueScope
     filters: UnifiedQueueFilters
-    omitted: UnifiedQueueOmitted = Field(default_factory=UnifiedQueueOmitted)

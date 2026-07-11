@@ -333,6 +333,14 @@ def safe_operations_dispatch_reference(record: OperationsDispatchOutboxRecord) -
     }
 
 
+def safe_operations_dispatch_error_category(value: Any) -> str | None:
+    """Normalize legacy/read-path categories through the writer redaction boundary."""
+
+    if value is None:
+        return None
+    return _category(value)
+
+
 def _recover_expired_leases(db: Session, *, current: datetime) -> None:
     base = (
         OperationsDispatchOutboxRecord.status == OperationsDispatchStatus.PROCESSING.value,

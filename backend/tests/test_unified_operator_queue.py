@@ -253,12 +253,17 @@ def test_live_union_returns_three_authoritative_sources_without_projection_write
 
 
 def test_response_is_bounded_and_contains_no_customer_or_provider_secrets(db_session):
-    _, agent, *_ = _seed_all(db_session)
+    _, agent, _, _, handoff, dispatch = _seed_all(db_session)
+    dispatch.error_category = SENSITIVE_SENTINEL
+    handoff.status = SENSITIVE_SENTINEL
+    db_session.commit()
     serialized = UnifiedOperatorQueueResponse.model_validate(_list(db_session, agent)).model_dump_json()
     assert SENSITIVE_SENTINEL not in serialized
     for forbidden in ("visitor_email", "tracking_number", "lease_owner", "destination_group", "error_summary", "provider_acknowledgement"):
         assert forbidden not in serialized
     assert TENANT not in serialized
+    assert "redacted_error_category" in serialized
+    assert next(item for item in _list(db_session, agent)["items"] if item["source_type"] == "handoff")["source_status"] == "unknown"
 
 
 def test_non_admin_requires_exact_active_scope_grant(db_session):
@@ -313,7 +318,6 @@ def test_cross_tenant_ticket_provenance_fails_closed(db_session):
     result = _list(db_session, agent)
 
     assert result["items"] == []
-    assert result["omitted"]["ambiguous_ticket_scope"] == 3
 
 
 def test_orphan_dispatch_remains_visible_only_in_its_exact_scope(db_session):
@@ -338,6 +342,27 @@ def test_filters_cover_state_source_owner_priority_sla_and_retry(db_session):
     assert [item["source_type"] for item in retry["items"]] == ["dispatch"]
 
 
+def test_stale_and_reopened_states_are_explicit(db_session):
+    _, agent, ticket, *_ = _seed_all(db_session)
+    ticket.first_response_due_at = None
+    ticket.resolution_due_at = None
+    ticket.reopen_count = 2
+    ticket.updated_at = NOW - timedelta(days=2)
+    conversation = db_session.query(WebchatConversation).filter(WebchatConversation.ticket_id == ticket.id).one()
+    conversation.updated_at = NOW - timedelta(days=2)
+    handoff = db_session.query(WebchatHandoffRequest).filter(WebchatHandoffRequest.ticket_id == ticket.id).one()
+    handoff.updated_at = NOW - timedelta(days=2)
+    dispatch = db_session.query(OperationsDispatchOutboxRecord).filter(OperationsDispatchOutboxRecord.ticket_id == ticket.id).one()
+    dispatch.updated_at = NOW - timedelta(days=2)
+    db_session.commit()
+
+    result = _list(db_session, agent, sla="stale")
+
+    assert {item["source_type"] for item in result["items"]} == {"handoff", "ticket", "dispatch"}
+    assert all(item["sla"]["state"] == "stale" for item in result["items"])
+    assert all(item["reopened"] is True for item in result["items"])
+
+
 def test_stable_cursor_has_no_duplicates_and_is_bound_to_actor_filters_and_grant(db_session):
     admin, agent, *_ = _seed_all(db_session)
     page1 = _list(db_session, agent, limit=2)
@@ -356,6 +381,18 @@ def test_stable_cursor_has_no_duplicates_and_is_bound_to_actor_filters_and_grant
     with pytest.raises(HTTPException) as filter_exc:
         _list(db_session, agent, limit=2, state="active", cursor=page1["next_cursor"])
     assert filter_exc.value.detail == "operator_queue_cursor_context_mismatch"
+
+    same_country_market = Market(code="M-CURSOR", name="Cursor market", country_code=COUNTRY, is_active=True)
+    db_session.add(same_country_market)
+    db_session.flush()
+    new_team = Team(name="Cursor team", market_id=same_country_market.id, is_active=True)
+    db_session.add(new_team)
+    db_session.flush()
+    agent.team_id = new_team.id
+    db_session.commit()
+    with pytest.raises(HTTPException) as changed_auth:
+        _list(db_session, agent, limit=2, cursor=page1["next_cursor"])
+    assert changed_auth.value.detail == "operator_queue_cursor_context_mismatch"
 
     grant = db_session.query(OperatorQueueScopeGrant).filter(OperatorQueueScopeGrant.user_id == agent.id).one()
     grant.enabled = False
@@ -393,6 +430,87 @@ def test_cursor_continues_across_more_than_one_source_fetch_window(db_session, s
     assert len(seen) == len(expected)
     assert len(seen) == len(set(seen))
     assert set(seen) == expected
+
+
+def test_sql_filters_do_not_lose_match_after_large_nonmatching_prefix(db_session):
+    _, team = _team(db_session)
+    admin = _user(db_session, username="filter-admin", role=UserRole.admin)
+    agent = _user(db_session, username="filter-agent", role=UserRole.agent, team_id=team.id)
+    _grant(db_session, admin=admin, user=agent)
+    prefix_start = NOW - timedelta(seconds=200)
+    for index in range(250):
+        ticket = _ticket(
+            db_session,
+            suffix=f"LOW-{index}",
+            team_id=team.id,
+            priority=TicketPriority.low,
+            created_at=prefix_start + timedelta(seconds=index),
+        )
+        _conversation(db_session, ticket=ticket, suffix=f"low-{index}")
+    urgent = _ticket(
+        db_session,
+        suffix="URGENT-AFTER-PREFIX",
+        team_id=team.id,
+        priority=TicketPriority.urgent,
+        created_at=NOW - timedelta(seconds=100),
+    )
+    _conversation(db_session, ticket=urgent, suffix="urgent-after-prefix")
+    db_session.commit()
+
+    result = _list(db_session, agent, source_type="ticket", priority="urgent", limit=10)
+
+    assert [item["source_id"] for item in result["items"]] == [urgent.id]
+    assert result["next_cursor"] is None
+
+
+def test_many_same_scope_conversations_cannot_monopolize_ticket_page(db_session):
+    _, team = _team(db_session)
+    admin = _user(db_session, username="conversation-admin", role=UserRole.admin)
+    agent = _user(db_session, username="conversation-agent", role=UserRole.agent, team_id=team.id)
+    _grant(db_session, admin=admin, user=agent)
+    first = _ticket(db_session, suffix="MULTI-CONV", team_id=team.id, created_at=NOW)
+    for index in range(250):
+        _conversation(db_session, ticket=first, suffix=f"many-{index}")
+    second = _ticket(db_session, suffix="AFTER-MULTI", team_id=team.id, created_at=NOW + timedelta(seconds=1))
+    _conversation(db_session, ticket=second, suffix="after-many")
+    db_session.commit()
+
+    first_page = _list(db_session, agent, source_type="ticket", limit=1)
+    second_page = _list(db_session, agent, source_type="ticket", limit=1, cursor=first_page["next_cursor"])
+
+    assert [item["source_id"] for item in first_page["items"]] == [first.id]
+    assert [item["source_id"] for item in second_page["items"]] == [second.id]
+    assert second_page["next_cursor"] is None
+
+
+def test_ticket_with_exact_outbox_provenance_but_no_webchat_is_included(db_session):
+    _, team = _team(db_session)
+    admin = _user(db_session, username="outbox-admin", role=UserRole.admin)
+    agent = _user(db_session, username="outbox-agent", role=UserRole.agent, team_id=team.id)
+    _grant(db_session, admin=admin, user=agent)
+    ticket = _ticket(db_session, suffix="OUTBOX-ONLY", team_id=team.id)
+    dispatch = _dispatch(db_session, ticket=ticket)
+    no_provenance = _ticket(db_session, suffix="NO-PROVENANCE", team_id=team.id, created_at=NOW + timedelta(seconds=1))
+    db_session.commit()
+
+    result = _list(db_session, agent, source_type="ticket")
+
+    assert [item["source_id"] for item in result["items"]] == [ticket.id]
+    assert result["items"][0]["conversation_id"] is None
+    assert no_provenance.id not in {item["source_id"] for item in result["items"]}
+    assert dispatch.ticket_id == ticket.id
+
+
+def test_source_links_only_reference_existing_safe_routes(db_session):
+    _, agent, *_ = _seed_all(db_session)
+    by_source = {item["source_type"]: item for item in _list(db_session, agent)["items"]}
+    assert by_source["ticket"]["source_links"]["ticket"].startswith("/api/tickets/")
+    assert by_source["handoff"]["source_links"]["conversation"].startswith("/api/webchat/admin/tickets/")
+    assert by_source["handoff"]["source_links"]["handoff"] == "/api/webchat/admin/handoff/queue"
+    assert by_source["dispatch"]["source_links"]["dispatch"] is None
+    serialized = UnifiedOperatorQueueResponse.model_validate(_list(db_session, agent)).model_dump_json()
+    assert "/api/admin/webchat/" not in serialized
+    assert "/api/admin/nexus-osr/" not in serialized
 
 
 @pytest.mark.parametrize("cursor", ["not-base64!", "e30", "A" * 2049])
