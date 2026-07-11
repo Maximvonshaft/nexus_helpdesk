@@ -1,0 +1,169 @@
+name: release-image-assurance
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "backend/**"
+      - "webapp/**"
+      - "scripts/**"
+      - "config/security/container-*.json"
+      - ".github/workflows/release-image-assurance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  assure-candidate-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CANDIDATE_IMAGE: nexus-candidate:${{ github.sha }}
+      ARTIFACT_DIR: artifacts/release-image
+    steps:
+      - name: Checkout immutable
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Python immutable
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Compile and unit-test assurance policy
+        run: |
+          set -Eeuo pipefail
+          python -m py_compile \
+            scripts/security/release_image_assurance.py \
+            scripts/security/tests/test_release_image_assurance.py
+          python -m unittest scripts/security/tests/test_release_image_assurance.py
+
+      - name: Build local candidate image only
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          docker build \
+            --build-arg GIT_SHA="${GITHUB_SHA}" \
+            --build-arg BUILD_TIME="1970-01-01T00:00:00Z" \
+            --build-arg IMAGE_TAG="${CANDIDATE_IMAGE}" \
+            --build-arg APP_VERSION="candidate" \
+            --build-arg FRONTEND_BUILD_SHA="${GITHUB_SHA}" \
+            --tag "${CANDIDATE_IMAGE}" \
+            --file Dockerfile .
+          image_id="$(docker image inspect "${CANDIDATE_IMAGE}" --format '{{.Id}}')"
+          test -n "${image_id}"
+          printf '%s\n' "${image_id}" > "${ARTIFACT_DIR}/image-id.txt"
+          printf '%s\n' "${GITHUB_SHA}" > "${ARTIFACT_DIR}/source-sha.txt"
+          test "$(docker image inspect "${CANDIDATE_IMAGE}" --format '{{index .Config.Env 0}}' | sed -n '1p')" != ""
+
+      - name: Scan candidate image with immutable Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ env.CANDIDATE_IMAGE }}
+          format: json
+          output: artifacts/release-image/trivy.json
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: "0"
+          scanners: vuln
+
+      - name: Generate CycloneDX image SBOM with immutable Syft action
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          image: ${{ env.CANDIDATE_IMAGE }}
+          format: cyclonedx-json
+          output-file: artifacts/release-image/image.cdx.json
+          upload-artifact: false
+
+      - name: Evaluate vulnerability and license policy
+        id: policy
+        shell: bash
+        run: |
+          set +e
+          python scripts/security/release_image_assurance.py vulnerabilities \
+            --report "${ARTIFACT_DIR}/trivy.json" \
+            --exceptions config/security/container-vulnerability-exceptions.json \
+            --output "${ARTIFACT_DIR}/vulnerability-summary.json" \
+            --today 2026-07-11
+          vuln_code=$?
+          python scripts/security/release_image_assurance.py licenses \
+            --sbom "${ARTIFACT_DIR}/image.cdx.json" \
+            --policy config/security/container-license-policy.json \
+            --output "${ARTIFACT_DIR}/license-summary.json" \
+            --today 2026-07-11
+          license_code=$?
+          image_id="$(cat "${ARTIFACT_DIR}/image-id.txt")"
+          python scripts/security/release_image_assurance.py manifest \
+            --source-sha "${GITHUB_SHA}" \
+            --image-id "${image_id}" \
+            --sbom "${ARTIFACT_DIR}/image.cdx.json" \
+            --vulnerabilities "${ARTIFACT_DIR}/vulnerability-summary.json" \
+            --licenses "${ARTIFACT_DIR}/license-summary.json" \
+            --output "${ARTIFACT_DIR}/release-image-manifest.json"
+          manifest_code=$?
+          printf '%s\n' "${vuln_code}" > "${ARTIFACT_DIR}/vulnerability-exit-code"
+          printf '%s\n' "${license_code}" > "${ARTIFACT_DIR}/license-exit-code"
+          printf '%s\n' "${manifest_code}" > "${ARTIFACT_DIR}/manifest-exit-code"
+          echo "vulnerability_exit=${vuln_code}" >> "$GITHUB_OUTPUT"
+          echo "license_exit=${license_code}" >> "$GITHUB_OUTPUT"
+          echo "manifest_exit=${manifest_code}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Scan all evidence for secrets and PII
+        id: artifact_scan
+        shell: bash
+        run: |
+          set +e
+          python scripts/security/scan_artifacts.py \
+            --root . \
+            --output "${ARTIFACT_DIR}/artifact-scan.json" \
+            "${ARTIFACT_DIR}/trivy.json" \
+            "${ARTIFACT_DIR}/image.cdx.json" \
+            "${ARTIFACT_DIR}/vulnerability-summary.json" \
+            "${ARTIFACT_DIR}/license-summary.json" \
+            "${ARTIFACT_DIR}/release-image-manifest.json"
+          code=$?
+          printf '%s\n' "${code}" > "${ARTIFACT_DIR}/artifact-scan-exit-code"
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Attest bounded release-image manifest
+        if: github.event_name == 'workflow_dispatch' && steps.policy.outputs.manifest_exit == '0' && steps.artifact_scan.outputs.exit_code == '0'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
+        with:
+          subject-path: artifacts/release-image/release-image-manifest.json
+
+      - name: Upload bounded release-image evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-image-assurance
+          path: artifacts/release-image
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Enforce release image gate
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          test "$(cat "${ARTIFACT_DIR}/vulnerability-exit-code")" = "0"
+          test "$(cat "${ARTIFACT_DIR}/license-exit-code")" = "0"
+          test "$(cat "${ARTIFACT_DIR}/manifest-exit-code")" = "0"
+          test "$(cat "${ARTIFACT_DIR}/artifact-scan-exit-code")" = "0"
+          test "$(jq -r '.status' "${ARTIFACT_DIR}/release-image-manifest.json")" = "pass"
+          test "$(jq -r '.image_pushed' "${ARTIFACT_DIR}/release-image-manifest.json")" = "false"
+          test "$(jq -r '.deployment_performed' "${ARTIFACT_DIR}/release-image-manifest.json")" = "false"
