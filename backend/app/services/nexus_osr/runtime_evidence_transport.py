@@ -292,7 +292,21 @@ def run_read_only_http_probe(
             return _probe_failure(
                 spec.path,
                 "unsafe_probe_url",
-                permission_granted=True,
+                permission_granted=False,
+                status_code=status_code,
+            )
+        if status_code in {401, 403}:
+            return _probe_failure(
+                spec.path,
+                "permission_denied",
+                permission_granted=False,
+                status_code=status_code,
+            )
+        if not 200 <= status_code < 300:
+            return _probe_failure(
+                spec.path,
+                "source_unavailable",
+                permission_granted=False,
                 status_code=status_code,
             )
         if len(body) > MAX_PROBE_BYTES:
@@ -329,6 +343,6 @@ def run_read_only_http_probe(
     return _probe_failure(
         spec.path,
         "source_unavailable",
-        permission_granted=True,
+        permission_granted=False,
         status_code=last_status,
     )
