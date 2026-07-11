@@ -44,6 +44,7 @@ jobs:
             scripts/ci/agent_coordination_reclaim_adapter.py \
             scripts/ci/agent_coordination_policy_gate.py \
             scripts/ci/agent_coordination_path_policy.py \
+            scripts/ci/agent_coordination_open_pr_policy.py \
             scripts/ci/agent_coordination_entrypoint.py
 
       - name: Evaluate proposed pull request with trusted base policy
