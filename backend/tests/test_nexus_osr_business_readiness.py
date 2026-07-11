@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app import models, models_control_plane, models_operations_dispatch, models_osr, models_webchat_binding  # noqa: F401
+from app import models, models_control_plane, models_operations_dispatch, models_osr, models_webchat_binding, webchat_models  # noqa: F401
 from app.db import Base
 from app.enums import JobStatus
 from app.models import BackgroundJob, ServiceHeartbeat

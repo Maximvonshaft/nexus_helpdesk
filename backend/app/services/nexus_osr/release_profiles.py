@@ -183,6 +183,9 @@ PROFILES: Mapping[ReleaseProfileName, ReleaseProfile] = {
 
 def safe_reason(value: Any, *, fallback: str = "unknown") -> str:
     normalized = str(value or "").strip().lower().replace(" ", "_")[:120]
+    sensitive_tokens = ("bearer", "secret", "token", "password", "authorization", "credential", "cookie", "api_key", "apikey")
+    if any(token in normalized for token in sensitive_tokens):
+        return fallback
     return normalized if _REASON_RE.fullmatch(normalized) else fallback
 
 
