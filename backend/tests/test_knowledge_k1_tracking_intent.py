@@ -62,6 +62,8 @@ def test_identifier_or_explicit_current_location_routes_to_tracking_truth(query)
         "运单号格式是什么？",
         "CH120000005451",
         "Example waybill number",
+        "Is CH120000005451 a valid tracking number format?",
+        "CH120000005451 运单号格式对吗？",
     ],
 )
 def test_format_guidance_and_identifier_only_do_not_trigger_live_tracking(query):
