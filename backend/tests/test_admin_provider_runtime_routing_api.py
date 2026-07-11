@@ -69,7 +69,12 @@ def test_admin_provider_runtime_status_exposes_effective_traffic_authority(monke
     assert traffic["configuration_errors"] == []
     assert traffic["bucket_contract"] == "sha256(tenant,channel,session,scenario)%100"
     assert traffic["scope"] == "global_defaults_and_environment_overrides"
-    assert traffic["webchat_runtime_rules"] == []
+    assert traffic["webchat_runtime_rules"] == {
+        "status": "ready",
+        "reason_code": None,
+        "items": [],
+        "truncated": False,
+    }
 
 
 def test_admin_provider_runtime_status_reports_effective_database_rules(monkeypatch):
@@ -94,14 +99,35 @@ def test_admin_provider_runtime_status_reports_effective_database_rules(monkeypa
 
     response = provider_runtime_status(db=db, current_user=Mock())
 
-    rules = response["traffic_selection"]["webchat_runtime_rules"]
-    assert len(rules) == 1
-    rule = rules[0]
+    routing_state = response["traffic_selection"]["webchat_runtime_rules"]
+    assert routing_state["status"] == "ready"
+    assert routing_state["truncated"] is False
+    assert len(routing_state["items"]) == 1
+    rule = routing_state["items"][0]
     assert rule["tenant_id"] == "tenant-a"
     assert rule["database_canary_percent"] == 5
     assert rule["effective_traffic_selection"]["canary_percent"] == 5
     assert rule["effective_traffic_selection"]["configured_mode"] == "canary"
     assert rule["effective_traffic_selection"]["configuration_errors"] == []
+
+
+def test_admin_provider_runtime_status_fails_closed_when_rule_query_fails(monkeypatch):
+    monkeypatch.setattr("app.api.admin_provider_runtime.ensure_can_manage_runtime", lambda current_user, db: None)
+    monkeypatch.setattr(
+        "app.api.admin_provider_runtime.get_provider_runtime_status",
+        lambda db: {"ok": True, "status": "ready", "warnings": []},
+    )
+    db = Mock()
+    db.execute.side_effect = RuntimeError("database unavailable")
+
+    response = provider_runtime_status(db=db, current_user=Mock())
+
+    assert response["ok"] is False
+    assert response["status"] == "unavailable"
+    routing_state = response["traffic_selection"]["webchat_runtime_rules"]
+    assert routing_state["status"] == "unavailable"
+    assert routing_state["reason_code"] == "provider_runtime_routing_rules_unavailable"
+    assert "provider_runtime routing rules are unavailable" in response["warnings"]
 
 
 @pytest.mark.parametrize(
