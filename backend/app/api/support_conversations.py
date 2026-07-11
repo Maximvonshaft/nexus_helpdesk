@@ -14,6 +14,7 @@ from ..db import get_db
 from ..enums import ConversationState, TicketStatus
 from ..models import Ticket
 from ..services.permissions import CAP_TICKET_READ, ensure_capability
+from ..services.support_conversation_scope import apply_support_ticket_scope
 from ..services.support_memory_ledger import build_support_memory_ledger
 from ..services.webchat_ai_turn_service import AI_TURN_TYPING_STATUSES, ai_snapshot
 from ..services.webchat_service import admin_get_thread, admin_reply
@@ -83,18 +84,25 @@ def _message_out(row: WebchatMessage) -> dict[str, Any]:
     }
 
 
-def _load_conversation(db: Session, session_key: str) -> tuple[WebchatConversation, Ticket]:
+def _load_conversation(
+    db: Session,
+    session_key: str,
+    *,
+    current_user,
+) -> tuple[WebchatConversation, Ticket]:
     key = (session_key or "").strip()
     if not key:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="session_key_required")
     public_id = key.split(":", 1)[1] if ":" in key else key
-    row = (
+    query = (
         db.query(WebchatConversation, Ticket)
         .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
         .filter(WebchatConversation.public_id == public_id)
-        .first()
     )
+    row = apply_support_ticket_scope(query, current_user).first()
     if row is None:
+        # The same response is used for missing and unauthorized cases so object
+        # existence is not disclosed across support scopes.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="support_conversation_not_found")
     return row
 
@@ -159,10 +167,14 @@ def _latency_stats(values: list[int]) -> dict[str, int | None]:
     }
 
 
-def _runtime_latency_summary(db: Session, *, since) -> dict[str, Any]:
-    turns = (
+def _runtime_latency_summary(db: Session, *, since, current_user) -> dict[str, Any]:
+    query = (
         db.query(WebchatAITurn)
+        .join(Ticket, Ticket.id == WebchatAITurn.ticket_id)
         .filter(WebchatAITurn.created_at >= since)
+    )
+    turns = (
+        apply_support_ticket_scope(query, current_user)
         .order_by(WebchatAITurn.id.desc())
         .limit(120)
         .all()
@@ -182,7 +194,9 @@ def _runtime_latency_summary(db: Session, *, since) -> dict[str, Any]:
         if turn.status in {"failed", "timeout"}:
             failed_count += 1
         if turn.created_at and (turn.completed_at or turn.updated_at):
-            total_turn_ms.append(max(0, int(((turn.completed_at or turn.updated_at) - turn.created_at).total_seconds() * 1000)))
+            total_turn_ms.append(
+                max(0, int(((turn.completed_at or turn.updated_at) - turn.created_at).total_seconds() * 1000))
+            )
         if isinstance(turn.bridge_elapsed_ms, int):
             bridge_elapsed_ms.append(turn.bridge_elapsed_ms)
         trace = _parse_runtime_trace(turn.runtime_trace_json)
@@ -272,7 +286,10 @@ def _conversation_out(
             and not _ai_blocks_manual_reply(conversation)
             and (
                 getattr(conversation, "handoff_status", None) in {None, "none"}
-                or (getattr(conversation, "handoff_status", None) == "accepted" and getattr(conversation, "active_agent_id", None) == current_user.id)
+                or (
+                    getattr(conversation, "handoff_status", None) == "accepted"
+                    and getattr(conversation, "active_agent_id", None) == current_user.id
+                )
             )
         ),
     }
@@ -299,6 +316,7 @@ def list_support_conversations(
         .outerjoin(latest_message_ids, latest_message_ids.c.conversation_id == WebchatConversation.id)
         .outerjoin(WebchatMessage, WebchatMessage.id == latest_message_ids.c.last_message_id)
     )
+    query = apply_support_ticket_scope(query, current_user)
     if view == "closed":
         query = query.filter(Ticket.status.in_([TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled]))
     elif view != "all":
@@ -331,7 +349,13 @@ def list_support_conversations(
     rows = query.order_by(WebchatConversation.updated_at.desc(), WebchatConversation.id.desc()).limit(limit * 3).all()
     items = []
     for conversation, ticket, last_message in rows:
-        item = _conversation_out(db, conversation=conversation, ticket=ticket, last_message=last_message, current_user=current_user)
+        item = _conversation_out(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            last_message=last_message,
+            current_user=current_user,
+        )
         if channel and channel != "all" and item["channel"] != channel:
             continue
         items.append(item)
@@ -347,7 +371,7 @@ def get_support_conversation_detail(
     current_user=Depends(get_current_user),
 ) -> dict[str, Any]:
     ensure_capability(current_user, CAP_TICKET_READ, db, message="support_conversation_read_requires_capability")
-    conversation, ticket = _load_conversation(db, session_key)
+    conversation, ticket = _load_conversation(db, session_key, current_user=current_user)
     messages = (
         db.query(WebchatMessage)
         .filter(WebchatMessage.conversation_id == conversation.id)
@@ -388,7 +412,7 @@ def reply_support_conversation(
     current_user=Depends(get_current_user),
 ) -> dict[str, Any]:
     with managed_session(db):
-        conversation, ticket = _load_conversation(db, payload.session_key)
+        conversation, ticket = _load_conversation(db, payload.session_key, current_user=current_user)
         result = admin_reply(
             db,
             ticket.id,
@@ -415,12 +439,12 @@ def support_conversation_metrics(
 ) -> dict[str, Any]:
     ensure_capability(current_user, CAP_TICKET_READ, db, message="support_conversation_read_requires_capability")
     since = utc_now() - timedelta(hours=since_hours)
-    rows = (
+    query = (
         db.query(WebchatConversation, Ticket)
         .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
         .filter(WebchatConversation.updated_at >= since)
-        .all()
     )
+    rows = apply_support_ticket_scope(query, current_user).all()
     by_channel: Counter[str] = Counter()
     state_counts: Counter[str] = Counter()
     needs_human = 0
@@ -428,7 +452,11 @@ def support_conversation_metrics(
     for conversation, ticket in rows:
         by_channel[_channel(conversation, ticket)] += 1
         state_counts[_enum_value(ticket.conversation_state)] += 1
-        if ticket.conversation_state == ConversationState.human_review_required or ticket.required_action or getattr(conversation, "handoff_status", None) in {"requested", "accepted"}:
+        if (
+            ticket.conversation_state == ConversationState.human_review_required
+            or ticket.required_action
+            or getattr(conversation, "handoff_status", None) in {"requested", "accepted"}
+        ):
             needs_human += 1
         if _ai_pending(conversation):
             ai_active += 1
@@ -440,7 +468,7 @@ def support_conversation_metrics(
         "ai_active": ai_active,
         "by_channel": dict(by_channel),
         "by_state": dict(state_counts),
-        "runtime_latency": _runtime_latency_summary(db, since=since),
+        "runtime_latency": _runtime_latency_summary(db, since=since, current_user=current_user),
     }
 
 
@@ -450,18 +478,31 @@ def support_conversation_state(
     current_user=Depends(get_current_user),
 ) -> dict[str, Any]:
     ensure_capability(current_user, CAP_TICKET_READ, db, message="support_conversation_read_requires_capability")
-    open_count = (
-        db.query(WebchatConversation)
+
+    open_query = (
+        db.query(WebchatConversation.id)
         .join(Ticket, Ticket.id == WebchatConversation.ticket_id)
         .filter(Ticket.status.notin_([TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled]))
-        .count()
     )
-    requested_handoffs = db.query(WebchatHandoffRequest).filter(WebchatHandoffRequest.status == "requested").count()
-    my_handoffs = (
-        db.query(WebchatHandoffRequest)
-        .filter(WebchatHandoffRequest.status == "accepted", WebchatHandoffRequest.assigned_agent_id == current_user.id)
-        .count()
+    open_count = apply_support_ticket_scope(open_query, current_user).count()
+
+    requested_query = (
+        db.query(WebchatHandoffRequest.id)
+        .join(Ticket, Ticket.id == WebchatHandoffRequest.ticket_id)
+        .filter(WebchatHandoffRequest.status == "requested")
     )
+    requested_handoffs = apply_support_ticket_scope(requested_query, current_user).count()
+
+    my_query = (
+        db.query(WebchatHandoffRequest.id)
+        .join(Ticket, Ticket.id == WebchatHandoffRequest.ticket_id)
+        .filter(
+            WebchatHandoffRequest.status == "accepted",
+            WebchatHandoffRequest.assigned_agent_id == current_user.id,
+        )
+    )
+    my_handoffs = apply_support_ticket_scope(my_query, current_user).count()
+
     return {
         "source": "nexus_support_conversations",
         "open": open_count,
