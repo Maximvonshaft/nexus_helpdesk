@@ -36,6 +36,31 @@ def _request_for_bucket(target: int) -> ProviderRequest:
     raise AssertionError(f"bucket {target} not found")
 
 
+def test_missing_traffic_configuration_defaults_to_control_zero(monkeypatch):
+    for name in (
+        "PROVIDER_RUNTIME_TRAFFIC_MODE",
+        "PROVIDER_RUNTIME_CANARY_PERCENT",
+        "PROVIDER_RUNTIME_KILL_SWITCH",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    summary = safe_traffic_configuration()
+    decision = select_provider_traffic(
+        _request(),
+        canary_percent=summary["canary_percent"],
+        kill_switch=summary["kill_switch"],
+        configured_mode_value=summary["configured_mode"],
+    )
+
+    assert summary["configured_mode"] == "control"
+    assert summary["canary_percent"] == 0
+    assert summary["kill_switch"] is False
+    assert summary["configuration_errors"] == []
+    assert decision.path == ProviderTrafficPath.CONTROL
+    assert decision.execute_candidate is False
+    assert decision.authoritative is False
+
+
 def test_zero_percent_is_control_and_does_not_execute_candidate():
     decision = select_provider_traffic(
         _request(),
