@@ -19,6 +19,7 @@ from ..settings import get_settings
 from ..webchat_models import WebchatAITurn, WebchatCardAction, WebchatConversation, WebchatEvent, WebchatHandoffRequest, WebchatMessage
 from ..webchat_schemas import WebChatActionSubmitRequest, WebChatCardPayload
 from .outbound_safety import evaluate_outbound_safety, format_safety_reasons
+from .server_fact_evidence import resolve_server_fact_evidence
 from .permissions import ensure_ticket_visible
 from .sla_service import update_first_response, evaluate_sla
 from .ticket_service import generate_ticket_no, get_ticket_or_404
@@ -733,6 +734,7 @@ def admin_reply(
     *,
     body: str,
     has_fact_evidence: bool = False,
+    evidence_reference_id: int | None = None,
     confirm_review: bool = False,
     conversation_public_id: str | None = None,
 ) -> dict[str, Any]:
@@ -747,8 +749,22 @@ def admin_reply(
     ensure_can_reply_in_handoff(db, conversation=conversation, ticket=ticket, current_user=current_user)
 
     normalized_body = _clip_body(body)
-    decision = evaluate_outbound_safety(ticket, normalized_body, source="manual", has_fact_evidence=has_fact_evidence)
+    server_evidence = resolve_server_fact_evidence(
+        db,
+        ticket=ticket,
+        conversation=conversation,
+        evidence_reference_id=evidence_reference_id,
+    )
+    # Backwards-compatible parsing only.  The client boolean is never trusted.
+    _ = has_fact_evidence
+    decision = evaluate_outbound_safety(
+        ticket,
+        normalized_body,
+        source="manual",
+        has_fact_evidence=server_evidence.present,
+    )
     decision_payload = asdict(decision)
+    decision_payload["evidence"] = server_evidence.audit_payload()
     if decision.level == "block":
         raise HTTPException(status_code=400, detail={"message": "Outbound reply blocked by safety gate", "safety": decision_payload})
     if decision.requires_human_review and not confirm_review:
@@ -780,7 +796,7 @@ def admin_reply(
         provider_status=provider_status,
         outbound_status=MessageStatus.sent if not is_external_reply else None,
         delivery_status=delivery_status,
-        metadata_json=_metadata(generated_by="human_agent", safety_level=decision.level, fact_evidence_present=has_fact_evidence, external_send=is_external_reply),
+        metadata_json=_metadata(generated_by="human_agent", safety_level=decision.level, fact_evidence_present=server_evidence.present, fact_evidence_reference_id=server_evidence.reference_id, fact_evidence_reason=server_evidence.reason, external_send=is_external_reply),
         author_label=current_user.display_name,
         author_user_id=current_user.id,
         safety_level=decision.level,
@@ -796,6 +812,9 @@ def admin_reply(
             "external_send": is_external_reply,
             "reply_channel": reply_channel.value,
             "provider_status": provider_status,
+            "case_context_id": server_evidence.reference_id,
+            "fact_evidence_present": server_evidence.present,
+            "fact_evidence_reason": server_evidence.reason,
         },
     )
     message = visible_result.webchat_message
@@ -805,7 +824,9 @@ def admin_reply(
     message.metadata_json = _metadata(
         generated_by="human_agent",
         safety_level=decision.level,
-        fact_evidence_present=has_fact_evidence,
+        fact_evidence_present=server_evidence.present,
+        fact_evidence_reference_id=server_evidence.reference_id,
+        fact_evidence_reason=server_evidence.reason,
         external_send=is_external_reply,
         reply_channel=reply_channel.value,
         outbound_message_id=outbound_message.id,

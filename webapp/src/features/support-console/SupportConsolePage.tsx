@@ -1269,7 +1269,6 @@ export function SupportConsolePage() {
   const messages = detailReady ? detail.data?.messages ?? [] : []
   const supportMemory = detailReady ? detail.data?.support_memory ?? detail.data?.conversation.support_memory : undefined
   const activeSessionKey = activeConversation?.session_key ?? null
-  const hasFactEvidence = Boolean(activeConversation?.tracking_number_present || supportMemory?.tracking?.present || supportMemory?.evidence_timeline?.length)
 
   useEffect(() => {
     if (activeView !== 'conversations') return
@@ -1312,7 +1311,6 @@ export function SupportConsolePage() {
     mutationFn: (payload: { sessionKey: string; body: string; confirmReview: boolean }) => supportApi.supportConversationReply({
       session_key: payload.sessionKey,
       body: payload.body,
-      has_fact_evidence: hasFactEvidence,
       confirm_review: payload.confirmReview,
     }),
     onSuccess: async () => {
