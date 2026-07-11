@@ -23,11 +23,13 @@ from .release_profiles import (
     get_release_profile,
 )
 
-DEFAULT_REQUIRED_WORKERS = (
+SHADOW_REQUIRED_WORKERS = (
     "background_worker",
-    "outbound_worker",
     "webchat_ai_worker",
     "handoff_snapshot_worker",
+)
+WRITE_REQUIRED_WORKERS = (
+    "outbound_worker",
     "operations_dispatch_worker",
 )
 
@@ -179,8 +181,23 @@ def _escalation_evidence(db: Session, settings: Any) -> CapabilityEvidence:
     return _ready("configured_escalation.active", enabled_policies=int(policy_count))
 
 
-def _worker_evidence(db: Session, *, now: datetime) -> CapabilityEvidence:
-    required_workers = _csv_env("NEXUS_OSR_REQUIRED_WORKERS", DEFAULT_REQUIRED_WORKERS)
+def _required_workers_for_profile(settings: Any, profile_name: str) -> tuple[str, ...]:
+    configured = tuple(getattr(settings, "nexus_osr_required_workers", ()) or ())
+    if configured:
+        return tuple(dict.fromkeys(str(item).strip()[:80] for item in configured if str(item).strip()))
+    if profile_name == "development":
+        return ()
+    if profile_name == "shadow":
+        return SHADOW_REQUIRED_WORKERS
+    return (*SHADOW_REQUIRED_WORKERS, *WRITE_REQUIRED_WORKERS)
+
+
+def _worker_evidence(
+    db: Session,
+    *,
+    now: datetime,
+    required_workers: tuple[str, ...],
+) -> CapabilityEvidence:
     stale_after = _env_int("NEXUS_OSR_WORKER_STALE_SECONDS", 90, minimum=10, maximum=3600)
     if not required_workers:
         return _not_configured("workers.required_set_empty")
@@ -335,6 +352,8 @@ def collect_business_readiness(
     profile = get_release_profile(profile_value)
     expected_head = expected_migration_head or os.getenv("EXPECTED_MIGRATION_HEAD")
 
+    required_workers = _required_workers_for_profile(settings, profile.name.value)
+
     release_identity = runtime_identity_status(default_app_version="server")
     evidence: dict[str, CapabilityEvidence] = {
         "database": _ready("database.connection_ok") if database_ready else _not_ready("database.connection_failed"),
@@ -345,7 +364,7 @@ def collect_business_readiness(
         "tracking_truth": _tracking_evidence(settings),
         "knowledge_runtime": _knowledge_evidence(db),
         "configured_escalation": _escalation_evidence(db, settings),
-        "workers": _worker_evidence(db, now=current),
+        "workers": _worker_evidence(db, now=current, required_workers=required_workers),
         "background_queue": _background_queue_evidence(db, now=current),
         "provider_runtime": _provider_evidence(db, now=current),
         "dispatch_outbox": _dispatch_evidence(db, now=current),
@@ -363,6 +382,6 @@ def collect_business_readiness(
         "knowledge_runtime_version": str(getattr(settings, "knowledge_runtime_version", "") or "")[:40],
         "configured_escalation_enabled": bool(getattr(settings, "osr_escalation_orchestration_enabled", False)),
         "outbound_dispatch_enabled": bool(getattr(settings, "enable_outbound_dispatch", False)),
-        "required_workers": list(_csv_env("NEXUS_OSR_REQUIRED_WORKERS", DEFAULT_REQUIRED_WORKERS)),
+        "required_workers": list(required_workers),
     }
     return evaluate_release_profile(profile, evidence, configuration=effective_config)

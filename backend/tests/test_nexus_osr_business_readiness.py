@@ -16,7 +16,8 @@ from app.models_operations_dispatch import OperationsDispatchOutboxRecord
 from app.models_osr import EscalationPolicyRecord, WhatsAppRoutingRuleRecord
 from app.models_webchat_binding import WebchatPublicOriginBinding
 from app.services.nexus_osr.business_readiness_service import (
-    DEFAULT_REQUIRED_WORKERS,
+    SHADOW_REQUIRED_WORKERS,
+    WRITE_REQUIRED_WORKERS,
     collect_business_readiness,
 )
 from app.services.nexus_osr.release_profiles import CapabilityStatus
@@ -58,7 +59,7 @@ def _settings(**overrides):
     return SimpleNamespace(**values)
 
 
-def _seed_governed_runtime(db, *, now):
+def _seed_governed_runtime(db, *, now, include_write_workers: bool = True):
     db.add(
         WebchatPublicOriginBinding(
             normalized_origin="https://support.example.test",
@@ -92,7 +93,10 @@ def _seed_governed_runtime(db, *, now):
             enabled=True,
         )
     )
-    for name in DEFAULT_REQUIRED_WORKERS:
+    worker_names = list(SHADOW_REQUIRED_WORKERS)
+    if include_write_workers:
+        worker_names.extend(WRITE_REQUIRED_WORKERS)
+    for name in worker_names:
         db.add(
             ServiceHeartbeat(
                 service_name=name,
@@ -116,7 +120,7 @@ def _seed_governed_runtime(db, *, now):
 
 def test_shadow_profile_can_be_ready_only_with_governed_read_path(db_session, monkeypatch):
     now = utc_now()
-    _seed_governed_runtime(db_session, now=now)
+    _seed_governed_runtime(db_session, now=now, include_write_workers=False)
     monkeypatch.setenv("EXPECTED_MIGRATION_HEAD", "20260711_0058")
 
     result = collect_business_readiness(
@@ -159,7 +163,7 @@ def test_missing_and_stale_worker_heartbeats_fail_closed(db_session, monkeypatch
     now = utc_now()
     _seed_governed_runtime(db_session, now=now)
     monkeypatch.setenv("EXPECTED_MIGRATION_HEAD", "20260711_0058")
-    db_session.query(ServiceHeartbeat).filter(ServiceHeartbeat.service_name == "operations_dispatch_worker").delete()
+    db_session.query(ServiceHeartbeat).filter(ServiceHeartbeat.service_name == "webchat_ai_worker").delete()
     db_session.flush()
 
     missing = collect_business_readiness(
@@ -176,7 +180,7 @@ def test_missing_and_stale_worker_heartbeats_fail_closed(db_session, monkeypatch
 
     db_session.add(
         ServiceHeartbeat(
-            service_name="operations_dispatch_worker",
+            service_name="webchat_ai_worker",
             status="ok",
             last_seen_at=now - timedelta(minutes=10),
         )

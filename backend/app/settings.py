@@ -98,7 +98,8 @@ class Settings:
         self.job_lock_seconds = int(os.getenv("JOB_LOCK_SECONDS", "300"))
         self.job_max_retries = int(os.getenv("JOB_MAX_RETRIES", "3"))
         self.worker_poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", "2"))
-        self.nexus_osr_required_workers = tuple(self._parse_csv(os.getenv("NEXUS_OSR_REQUIRED_WORKERS", "background_worker,outbound_worker,webchat_ai_worker,handoff_snapshot_worker,operations_dispatch_worker")))
+        self.nexus_osr_required_workers = tuple(self._parse_csv(os.getenv("NEXUS_OSR_REQUIRED_WORKERS", "")))
+        self.worker_heartbeat_interval_seconds = int(os.getenv("WORKER_HEARTBEAT_INTERVAL_SECONDS", "30"))
         self.nexus_osr_worker_stale_seconds = int(os.getenv("NEXUS_OSR_WORKER_STALE_SECONDS", "90"))
         self.nexus_osr_queue_warn_age_seconds = int(os.getenv("NEXUS_OSR_QUEUE_WARN_AGE_SECONDS", "120"))
         self.nexus_osr_queue_fail_age_seconds = int(os.getenv("NEXUS_OSR_QUEUE_FAIL_AGE_SECONDS", "600"))
@@ -282,8 +283,12 @@ class Settings:
             raise RuntimeError("NEXUS_OSR_RELEASE_PROFILE must be development, shadow, pilot, or full_osr")
         if not self.nexus_osr_required_workers:
             raise RuntimeError("NEXUS_OSR_REQUIRED_WORKERS must declare at least one worker")
+        if self.worker_heartbeat_interval_seconds < 5 or self.worker_heartbeat_interval_seconds > 300:
+            raise RuntimeError("WORKER_HEARTBEAT_INTERVAL_SECONDS must be between 5 and 300")
         if self.nexus_osr_worker_stale_seconds < 10 or self.nexus_osr_worker_stale_seconds > 3600:
             raise RuntimeError("NEXUS_OSR_WORKER_STALE_SECONDS must be between 10 and 3600")
+        if self.nexus_osr_worker_stale_seconds <= self.worker_heartbeat_interval_seconds:
+            raise RuntimeError("NEXUS_OSR_WORKER_STALE_SECONDS must exceed WORKER_HEARTBEAT_INTERVAL_SECONDS")
         if self.nexus_osr_queue_warn_age_seconds < 10 or self.nexus_osr_queue_fail_age_seconds < self.nexus_osr_queue_warn_age_seconds:
             raise RuntimeError("NEXUS_OSR queue age thresholds are invalid")
         if self.nexus_osr_dispatch_warn_age_seconds < 10 or self.nexus_osr_dispatch_fail_age_seconds < self.nexus_osr_dispatch_warn_age_seconds:
