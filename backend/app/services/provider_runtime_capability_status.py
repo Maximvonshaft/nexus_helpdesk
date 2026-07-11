@@ -12,9 +12,20 @@ from .provider_runtime.runtime_capabilities import (
 )
 
 CAPABILITY_EXPECTATION_SCHEMA = "nexus.ai_runtime.capability_expectation.v1"
+LOCAL_GENERATION_CONFIGURATION_SCHEMA = (
+    "nexus.ai_runtime.local_generation_configuration.v1"
+)
+_REQUEST_CONTRACT_BY_SHAPE = {
+    "ollama_chat": "ollama.chat.v1",
+    "messages": "openai.chat.v1",
+    "question": "nexus.question.v1",
+    "system_input": "nexus.system_input.v1",
+}
 
 
-def _expectation_summary(expectations: RuntimeCapabilityExpectations) -> dict[str, Any]:
+def _expectation_summary(
+    expectations: RuntimeCapabilityExpectations,
+) -> dict[str, Any]:
     return {
         "capability_schema": expectations.schema,
         "runtime": {
@@ -61,9 +72,66 @@ def get_provider_runtime_capability_expectation_status() -> dict[str, Any]:
     }
 
 
+def get_local_generation_configuration_status(
+    *,
+    generation_model: str,
+    direct_path: str,
+    rag_path: str,
+    chat_mode: str,
+    request_shape: str,
+    capability_expectation: dict[str, Any],
+) -> dict[str, Any]:
+    reason_codes: list[str] = []
+    expected = capability_expectation.get("expected")
+    expected_generation = (
+        expected.get("generation")
+        if isinstance(expected, dict)
+        and isinstance(expected.get("generation"), dict)
+        else None
+    )
+    if capability_expectation.get("status") != "ready" or not expected_generation:
+        for reason_code in capability_expectation.get("reason_codes") or [
+            "capability_expectation_missing"
+        ]:
+            if reason_code not in reason_codes:
+                reason_codes.append(reason_code)
+    else:
+        if generation_model != expected_generation.get("model"):
+            reason_codes.append("capability_generation_model_mismatch")
+        expected_path = expected_generation.get("api_path")
+        paths_in_use = [direct_path]
+        if chat_mode in {"rag", "auto"}:
+            paths_in_use.append(rag_path)
+        if not expected_path or any(path != expected_path for path in paths_in_use):
+            reason_codes.append("capability_generation_contract_mismatch")
+        actual_request_contract = _REQUEST_CONTRACT_BY_SHAPE.get(request_shape)
+        if actual_request_contract != expected_generation.get("request_contract"):
+            if "capability_generation_contract_mismatch" not in reason_codes:
+                reason_codes.append("capability_generation_contract_mismatch")
+
+    return {
+        "schema": LOCAL_GENERATION_CONFIGURATION_SCHEMA,
+        "status": "ready" if not reason_codes else "not_ready",
+        "reason_codes": reason_codes,
+        "generation": {
+            "model": generation_model,
+            "direct_path": direct_path,
+            "rag_path": rag_path if chat_mode in {"rag", "auto"} else None,
+            "request_contract": _REQUEST_CONTRACT_BY_SHAPE.get(request_shape),
+        },
+        "boundary": {
+            "external_network_call": False,
+            "secret_values_exposed": False,
+            "internal_endpoint_exposed": False,
+        },
+    }
+
+
 def probe_provider_runtime_capabilities(
     *,
-    probe_fn: Callable[..., CapabilityProbeResult] = probe_private_ai_runtime_capabilities,
+    probe_fn: Callable[..., CapabilityProbeResult] = (
+        probe_private_ai_runtime_capabilities
+    ),
 ) -> dict[str, Any]:
     try:
         expectations = load_capability_expectations_from_env()
@@ -77,7 +145,9 @@ def probe_provider_runtime_capabilities(
         ).safe_summary()
     token_file = (os.getenv("PRIVATE_AI_RUNTIME_TOKEN_FILE") or "").strip()
     if not token_file:
-        return CapabilityProbeResult.not_ready("capability_token_missing").safe_summary()
+        return CapabilityProbeResult.not_ready(
+            "capability_token_missing"
+        ).safe_summary()
     capabilities_path = (
         os.getenv("PRIVATE_AI_RUNTIME_CAPABILITIES_PATH") or "/v1/capabilities"
     ).strip() or "/v1/capabilities"
