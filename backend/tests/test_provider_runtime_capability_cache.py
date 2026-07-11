@@ -6,9 +6,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from app.services.provider_runtime.runtime_capabilities import (
-    CapabilityProbeCache,
     CapabilityProbeResult,
     RuntimeCapabilityExpectations,
+)
+from app.services.provider_runtime.runtime_capability_cache import (
+    CapabilityProbeCache,
     build_capability_cache_key,
 )
 
@@ -136,7 +138,10 @@ def test_cache_key_changes_with_exact_expectations_and_token_file_fingerprint(
         expectations=expectations(),
     )
 
-    token_file.write_text("second-secret-with-different-size", encoding="utf-8")
+    token_file.write_text(
+        "second-secret-with-different-size",
+        encoding="utf-8",
+    )
     os.utime(token_file, None)
     second = build_capability_cache_key(
         base_url="https://runtime.example",
