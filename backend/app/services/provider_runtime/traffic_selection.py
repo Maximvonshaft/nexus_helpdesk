@@ -57,6 +57,8 @@ def configured_traffic_mode(value: str | None = None) -> str:
 
 
 def _validated_canary_percent(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError("provider_runtime_canary_percent_invalid")
     try:
         percent = int(value)
     except (TypeError, ValueError) as exc:
