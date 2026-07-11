@@ -24,9 +24,10 @@ jobs:
       webcall_checks_required: ${{ steps.changed_files.outputs.webcall_checks_required }}
     steps:
       - name: Checkout PR
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Validate knowledge retrieval probe shell syntax
         shell: bash
@@ -193,9 +194,8 @@ jobs:
               webapp/src/routes/webcall-ai-demo.tsx) return 0 ;;
               webapp/src/routes/webcall-operator.tsx) return 0 ;;
               webapp/src/routes/webcall.tsx) return 0 ;;
-              webapp/tests/operator-console-contract.test.mjs) return 0 ;;
-              webapp/tests/webcall-livekit-lazy-contract.test.mjs) return 0 ;;
-              webapp/tests/webcall-operator-workbench-contract.test.mjs) return 0 ;;
+              webapp/tests/a11y-production-gates.test.mjs) return 0 ;;
+              webapp/tests/support-workbench-contract.test.mjs) return 0 ;;
               webapp/package.json) return 0 ;;
               webapp/package-lock.json) return 0 ;;
               backend/app/webchat_voice_config.py) return 0 ;;
@@ -258,8 +258,10 @@ jobs:
     if: needs.scope-guard.outputs.webcall_checks_required == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
       - name: Install backend dependencies
@@ -283,8 +285,10 @@ jobs:
     if: needs.scope-guard.outputs.webcall_checks_required == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@04be95cf3511ea51ebf9f224ddfb99cc7ab87cd4
         with:
           node-version: 22
           cache: npm
@@ -292,6 +296,6 @@ jobs:
       - name: Install webapp dependencies
         working-directory: webapp
         run: npm ci
-      - name: Run operator console contract tests
+      - name: Run current production workbench contracts
         working-directory: webapp
-        run: node --test tests/operator-console-contract.test.mjs tests/webcall-operator-workbench-contract.test.mjs tests/webcall-livekit-lazy-contract.test.mjs
+        run: npm test

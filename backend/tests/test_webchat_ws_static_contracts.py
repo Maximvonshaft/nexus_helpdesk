@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 import pytest
-from fastapi.routing import APIWebSocketRoute
+from starlette.routing import Match
 
 from app.settings import Settings
 
@@ -89,9 +89,18 @@ def test_webchat_ws_runtime_dependency_and_route_registry_contract(monkeypatch):
 
     assert "websockets==13.1" in requirements
 
-    from app.main import app
+    from app.api import webchat_ws as ws_module
 
-    assert any(isinstance(route, APIWebSocketRoute) and route.path == "/api/webchat/ws" for route in app.routes)
+    route = next((item for item in ws_module.router.routes if getattr(item, "path", None) == "/api/webchat/ws"), None)
+    assert route is not None
+    websocket_scope = {"type": "websocket", "path": "/api/webchat/ws", "root_path": ""}
+    http_scope = {"type": "http", "path": "/api/webchat/ws", "root_path": "", "method": "GET"}
+    assert route.matches(websocket_scope)[0] is Match.FULL
+    assert route.matches(http_scope)[0] is not Match.FULL
+    assert getattr(route, "endpoint", None) is ws_module.webchat_ws
+
+    main_source = (ROOT / "backend" / "app" / "main.py").read_text(encoding="utf-8")
+    assert "app.include_router(webchat_ws_router)" in main_source
 
 
 def test_static_widget_uses_ws_without_url_token_transport():
