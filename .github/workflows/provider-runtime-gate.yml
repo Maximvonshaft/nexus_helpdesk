@@ -110,7 +110,7 @@ jobs:
             backend/tests/test_speedaf_track_query.py \
             backend/tests/test_speedaf_tracking_fact_source.py
 
-      - name: Route safety smoke
+      - name: Provider Admin route mounted
         env:
           PYTHONPATH: backend
         run: |
@@ -119,8 +119,41 @@ jobs:
           from app.main import app
           routes = sorted(getattr(route, 'path', '') for route in app.routes)
           assert '/api/admin/provider-runtime/status' in routes, routes
+          print('provider_admin_route_ok')
+          PY
+
+      - name: Public WebChat route mounted
+        env:
+          PYTHONPATH: backend
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from app.main import app
+          routes = sorted(getattr(route, 'path', '') for route in app.routes)
           assert '/api/webchat/init' in routes, routes
+          print('public_webchat_route_ok')
+          PY
+
+      - name: Retired Provider credential routes absent
+        env:
+          PYTHONPATH: backend
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from app.main import app
+          routes = sorted(getattr(route, 'path', '') for route in app.routes)
           assert not any('provider-credentials/codex' in path for path in routes), routes
+          print('retired_provider_credential_routes_absent')
+          PY
+
+      - name: Retired fast reply routes absent
+        env:
+          PYTHONPATH: backend
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from app.main import app
+          routes = sorted(getattr(route, 'path', '') for route in app.routes)
           assert not any('webchat-fast' in path or 'fast-reply' in path for path in routes), routes
-          print('route_smoke_ok')
+          print('retired_fast_reply_routes_absent')
           PY
