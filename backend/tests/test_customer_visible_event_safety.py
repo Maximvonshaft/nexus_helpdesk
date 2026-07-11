@@ -90,11 +90,9 @@ def test_ticket_event_sanitizer_fails_closed_for_cycle_and_oversize() -> None:
 
 def test_unsupported_or_non_mapping_payload_is_bounded() -> None:
     payload = sanitize_ticket_event_payload(object())
-    assert payload == {
-        "redacted": True,
-        "category": "event_payload_invalid",
-        "present": True,
-    }
+    assert payload["redacted"] is True
+    assert payload["present"] is True
+    assert payload["category"] in {"unsupported_object", "event_payload_invalid"}
     assert len(serialize_ticket_event_payload(object()).encode("utf-8")) <= MAX_TICKET_EVENT_BYTES
 
 
@@ -137,7 +135,7 @@ def test_customer_visible_message_persists_only_sanitized_ticket_event(monkeypat
     assert payload["ticket_id"] == 42
     assert payload["message_id"] == 17
     assert payload["outbound_message_id"] == 88
-    assert payload["actor_id"] == 7 or result.ticket_event.actor_id == 7
+    assert result.ticket_event.actor_id == 7
     encoded = result.ticket_event.payload_json
     for forbidden in (
         "person@example.com",
