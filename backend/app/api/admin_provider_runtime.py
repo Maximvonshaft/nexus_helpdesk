@@ -43,7 +43,14 @@ class WebchatRuntimeRoutingUpdate(BaseModel):
 def provider_runtime_status(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
     snapshot = get_provider_runtime_status(db)
-    snapshot["traffic_selection"] = safe_traffic_configuration()
+    traffic = safe_traffic_configuration()
+    snapshot["traffic_selection"] = traffic
+    if traffic["mode_error"]:
+        warnings = list(snapshot.get("warnings") or [])
+        warnings.append("provider_runtime traffic mode is invalid")
+        snapshot["warnings"] = warnings
+        snapshot["ok"] = False
+        snapshot["status"] = "misconfigured"
     return snapshot
 
 
