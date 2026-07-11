@@ -92,7 +92,7 @@ jobs:
           heads = script.get_heads()
           assert len(heads) == 1, heads
           assert script.get_revision("20260711_0057") is not None
-          ancestry = {revision.revision for revision in script.walk_revisions(heads[0], "base")}
+          ancestry = {revision.revision for revision in script.walk_revisions("base", heads[0])}
           assert "20260711_0057" in ancestry, ancestry
           PY
 
