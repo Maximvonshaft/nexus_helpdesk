@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT.parent))
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
@@ -499,6 +499,84 @@ def test_ticket_with_exact_outbox_provenance_but_no_webchat_is_included(db_sessi
     assert result["items"][0]["conversation_id"] is None
     assert no_provenance.id not in {item["source_id"] for item in result["items"]}
     assert dispatch.ticket_id == ticket.id
+
+
+def test_post_snapshot_outbox_scope_change_cannot_admit_ticket_on_later_page(db_session):
+    _, team = _team(db_session)
+    admin = _user(db_session, username="snapshot-outbox-admin", role=UserRole.admin)
+    agent = _user(db_session, username="snapshot-outbox-agent", role=UserRole.agent, team_id=team.id)
+    _grant(db_session, admin=admin, user=agent)
+    first = _ticket(
+        db_session,
+        suffix="SNAPSHOT-FIRST",
+        team_id=team.id,
+        created_at=NOW - timedelta(seconds=3),
+    )
+    _conversation(db_session, ticket=first, suffix="snapshot-first")
+    hidden = _ticket(
+        db_session,
+        suffix="SNAPSHOT-HIDDEN",
+        team_id=team.id,
+        created_at=NOW - timedelta(seconds=2),
+    )
+    poisoned_provenance = _dispatch(
+        db_session,
+        ticket=hidden,
+        created_at=NOW - timedelta(seconds=4),
+    )
+    poisoned_provenance.tenant_key = "tenant-before-snapshot"
+    last = _ticket(
+        db_session,
+        suffix="SNAPSHOT-LAST",
+        team_id=team.id,
+        created_at=NOW - timedelta(seconds=1),
+    )
+    _conversation(db_session, ticket=last, suffix="snapshot-last")
+    db_session.commit()
+
+    first_page = _list(db_session, agent, source_type="ticket", sort="oldest", limit=1)
+    assert [item["source_id"] for item in first_page["items"]] == [first.id]
+    assert first_page["next_cursor"]
+
+    # The row existed before page 1, but its exact-scope provenance is changed
+    # after the signed cursor snapshot. It must not become visible on page 2.
+    poisoned_provenance.tenant_key = TENANT
+    poisoned_provenance.updated_at = NOW + timedelta(days=1)
+    db_session.commit()
+
+    second_page = _list(
+        db_session,
+        agent,
+        source_type="ticket",
+        sort="oldest",
+        limit=10,
+        cursor=first_page["next_cursor"],
+    )
+    assert [item["source_id"] for item in second_page["items"]] == [last.id]
+    assert hidden.id not in {item["source_id"] for item in second_page["items"]}
+
+
+def test_poisoned_legacy_ticket_status_is_bounded_to_unknown(db_session):
+    _, team = _team(db_session)
+    admin = _user(db_session, username="poisoned-status-admin", role=UserRole.admin)
+    agent = _user(db_session, username="poisoned-status-agent", role=UserRole.agent, team_id=team.id)
+    _grant(db_session, admin=admin, user=agent)
+    ticket = _ticket(db_session, suffix="POISONED-STATUS", team_id=team.id)
+    _conversation(db_session, ticket=ticket, suffix="poisoned-status")
+    db_session.commit()
+    db_session.execute(
+        text("UPDATE tickets SET status = :status WHERE id = :ticket_id"),
+        {"status": "legacy_poisoned_status", "ticket_id": ticket.id},
+    )
+    db_session.commit()
+    db_session.expire_all()
+
+    result = _list(db_session, agent, source_type="ticket")
+
+    assert len(result["items"]) == 1
+    assert result["items"][0]["source_id"] == ticket.id
+    assert result["items"][0]["source_status"] == "unknown"
+    assert result["items"][0]["state"] == "terminal"
 
 
 def test_source_links_only_reference_existing_safe_routes(db_session):

@@ -8,8 +8,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import and_, case, exists, func, not_, or_, select
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy import String, and_, case, cast, exists, func, not_, or_, select
+from sqlalchemy.orm import Session, aliased, defer
 
 # The operations outbox has an FK to the routing-rule model.  Import the FK
 # target before the optional outbox module so isolated API/test imports build a
@@ -38,6 +38,8 @@ _ACTIVE_TICKET = {
     TicketStatus.waiting_internal,
     TicketStatus.escalated,
 }
+_ACTIVE_TICKET_VALUES = {item.value for item in _ACTIVE_TICKET}
+_TICKET_STATUSES = {item.value for item in TicketStatus}
 _ACTIVE_DISPATCH = {"pending", "processing", "retryable"}
 _DISPATCH_STATUSES = _ACTIVE_DISPATCH | {"dispatched", "failed", "cancelled", "dead_letter"}
 _PRIORITY_RANK = {"low": 1, "medium": 2, "high": 3, "urgent": 4}
@@ -67,6 +69,11 @@ def _iso(value: datetime | None) -> str | None:
 
 def _enum_value(value: Any) -> str:
     return str(getattr(value, "value", value))
+
+
+def _safe_ticket_status(value: Any) -> str:
+    normalized = _enum_value(value)
+    return normalized if normalized in _TICKET_STATUSES else "unknown"
 
 
 def _visibility_filter(query, *, current_user):
@@ -468,6 +475,7 @@ def list_unified_operator_queue(
     if source_type in {None, "handoff"} and retry in {None, "not_applicable"}:
         query = (
             db.query(WebchatHandoffRequest, WebchatConversation, Ticket)
+            .options(defer(Ticket.status))
             .join(WebchatConversation, WebchatConversation.id == WebchatHandoffRequest.conversation_id)
             .join(
                 Ticket,
@@ -563,12 +571,14 @@ def list_unified_operator_queue(
                 scoped_dispatch.country_code == country,
                 scoped_dispatch.channel_key == channel,
                 scoped_dispatch.created_at <= as_of,
+                scoped_dispatch.updated_at <= as_of,
             )
             .correlate(Ticket)
             .scalar_subquery()
         )
         query = (
-            db.query(Ticket, WebchatConversation)
+            db.query(Ticket, WebchatConversation, cast(Ticket.status, String).label("queue_ticket_status"))
+            .options(defer(Ticket.status))
             .outerjoin(WebchatConversation, WebchatConversation.id == exact_conversation_id)
             .filter(
                 or_(exact_conversation_id.is_not(None), exact_dispatch_id.is_not(None)),
@@ -608,8 +618,8 @@ def list_unified_operator_queue(
             sort=sort,
         )
         query = _ordered(query, created_column=Ticket.created_at, id_column=Ticket.id, sort=sort)
-        for ticket, conversation in query.limit(fetch_limit).all():
-            terminal = ticket.status not in _ACTIVE_TICKET
+        for ticket, conversation, ticket_status in query.limit(fetch_limit).all():
+            terminal = _enum_value(ticket_status) not in _ACTIVE_TICKET_VALUES
             item = {
                 "queue_id": f"ticket:{ticket.id}",
                 "case_key": _case_key(ticket.id),
@@ -620,7 +630,7 @@ def list_unified_operator_queue(
                 "country_code": country,
                 "channel_key": channel,
                 "state": "terminal" if terminal else "active",
-                "source_status": _enum_value(ticket.status),
+                "source_status": _safe_ticket_status(ticket_status),
                 "reopened": bool(ticket.reopen_count),
                 "priority": _priority(ticket),
                 "owner": _owner(ticket),
@@ -642,6 +652,7 @@ def list_unified_operator_queue(
     if source_type in {None, "dispatch"} and retry != "not_applicable":
         query = (
             db.query(OperationsDispatchOutboxRecord, Ticket)
+            .options(defer(Ticket.status))
             .outerjoin(Ticket, Ticket.id == OperationsDispatchOutboxRecord.ticket_id)
             .filter(
                 OperationsDispatchOutboxRecord.tenant_key == tenant,
