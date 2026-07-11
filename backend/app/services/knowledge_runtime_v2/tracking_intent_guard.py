@@ -88,19 +88,42 @@ def _customer_intent_text(value: str | None) -> str:
     return text
 
 
+def _contains_cjk(value: str) -> bool:
+    return any("\u3400" <= character <= "\u9fff" for character in value)
+
+
+def _contains_term(text: str, term: str) -> bool:
+    """Match Latin-script terms on token/phrase boundaries, not substrings.
+
+    CJK languages do not use whitespace word boundaries consistently, so their
+    explicit terms intentionally retain substring matching.  This prevents
+    short English status terms such as ``now`` from matching ``known``,
+    ``unknown`` or ``snow`` while preserving direct Chinese intent signals.
+    """
+
+    if _contains_cjk(term):
+        return term in text
+    escaped = re.escape(term).replace(r"\ ", r"\s+")
+    return re.search(rf"(?<!\w){escaped}(?!\w)", text, re.IGNORECASE) is not None
+
+
+def _contains_any_term(text: str, terms: set[str]) -> bool:
+    return any(_contains_term(text, term) for term in terms)
+
+
 def is_live_tracking_intent_guarded(value: str | None) -> bool:
     text = _customer_intent_text(value)
     if not text:
         return False
 
     original = text.upper()
-    has_tracking = any(term in text for term in _runtime.LIVE_TRACKING_TERMS)
-    has_status = any(term in text for term in _runtime.LIVE_STATUS_TERMS)
+    has_tracking = _contains_any_term(text, _runtime.LIVE_TRACKING_TERMS)
+    has_status = _contains_any_term(text, _runtime.LIVE_STATUS_TERMS)
     has_identifier = any(
         any(character.isdigit() for character in match.group(0))
         for match in _runtime.TRACKING_ID_RE.finditer(original)
     )
-    has_policy = any(term in text for term in _POLICY_TERMS)
+    has_policy = _contains_any_term(text, _POLICY_TERMS)
     has_current_location = any(pattern.search(text) for pattern in _CURRENT_LOCATION_PATTERNS)
 
     # Static policy, format and identifier-recognition guidance takes precedence
