@@ -33,6 +33,17 @@ def isolated_provider_registry(monkeypatch):
     yield
 
 
+def _rule(*, canary_percent=100, kill_switch=False):
+    return {
+        "primary_provider": "private_ai_runtime",
+        "fallback_providers": [],
+        "output_contract": "nexus_webchat_runtime_reply_v1",
+        "timeout_ms": 3000,
+        "kill_switch": kill_switch,
+        "canary_percent": canary_percent,
+    }
+
+
 def _mock_db(rule: dict):
     mock_db = Mock()
     mock_rule = Mock()
@@ -109,16 +120,7 @@ def _trusted_tracking_followup_request() -> ProviderRequest:
 
 @pytest.mark.asyncio
 async def test_provider_runtime_router_single_runtime_success_and_audit():
-    mock_db = _mock_db(
-        {
-            "primary_provider": "private_ai_runtime",
-            "fallback_providers": [],
-            "output_contract": "nexus_webchat_runtime_reply_v1",
-            "timeout_ms": 3000,
-            "kill_switch": False,
-            "canary_percent": 100,
-        }
-    )
+    mock_db = _mock_db(_rule())
     adapter = DummyAdapter("private_ai_runtime", _valid_result())
     ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
 
@@ -136,16 +138,7 @@ async def test_provider_runtime_router_single_runtime_success_and_audit():
 
 @pytest.mark.asyncio
 async def test_zero_percent_routes_to_control_without_calling_candidate():
-    mock_db = _mock_db(
-        {
-            "primary_provider": "private_ai_runtime",
-            "fallback_providers": [],
-            "output_contract": "nexus_webchat_runtime_reply_v1",
-            "timeout_ms": 3000,
-            "kill_switch": False,
-            "canary_percent": 0,
-        }
-    )
+    mock_db = _mock_db(_rule(canary_percent=0))
     adapter = DummyAdapter("private_ai_runtime", _valid_result())
     ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
 
@@ -162,16 +155,7 @@ async def test_zero_percent_routes_to_control_without_calling_candidate():
 @pytest.mark.asyncio
 async def test_environment_zero_percent_overrides_database_rule(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "0")
-    mock_db = _mock_db(
-        {
-            "primary_provider": "private_ai_runtime",
-            "fallback_providers": [],
-            "output_contract": "nexus_webchat_runtime_reply_v1",
-            "timeout_ms": 3000,
-            "kill_switch": False,
-            "canary_percent": 100,
-        }
-    )
+    mock_db = _mock_db(_rule(canary_percent=100))
     adapter = DummyAdapter("private_ai_runtime", _valid_result())
     ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
 
@@ -184,16 +168,7 @@ async def test_environment_zero_percent_overrides_database_rule(monkeypatch):
 @pytest.mark.asyncio
 async def test_shadow_mode_calls_candidate_but_never_returns_customer_output(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
-    mock_db = _mock_db(
-        {
-            "primary_provider": "private_ai_runtime",
-            "fallback_providers": [],
-            "output_contract": "nexus_webchat_runtime_reply_v1",
-            "timeout_ms": 3000,
-            "kill_switch": False,
-            "canary_percent": 100,
-        }
-    )
+    mock_db = _mock_db(_rule())
     adapter = DummyAdapter("private_ai_runtime", _valid_result())
     ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
 
@@ -204,7 +179,7 @@ async def test_shadow_mode_calls_candidate_but_never_returns_customer_output(mon
     assert result.structured_output is None
     assert adapter.calls == 1
     assert mock_db.audit_rows[-1]["operation"] == "shadow_generate"
-    assert mock_db.audit_rows[-1]["status"] == "shadow_ok"
+    assert mock_db.audit_rows[-1]["status"] == "ok"
     summary = json.loads(mock_db.audit_rows[-1]["safe_summary"])
     assert summary["traffic_selection"]["authoritative"] is False
 
@@ -212,16 +187,7 @@ async def test_shadow_mode_calls_candidate_but_never_returns_customer_output(mon
 @pytest.mark.asyncio
 async def test_kill_switch_overrides_full_canary_and_shadow(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "shadow")
-    mock_db = _mock_db(
-        {
-            "primary_provider": "private_ai_runtime",
-            "fallback_providers": [],
-            "output_contract": "nexus_webchat_runtime_reply_v1",
-            "timeout_ms": 3000,
-            "kill_switch": True,
-            "canary_percent": 100,
-        }
-    )
+    mock_db = _mock_db(_rule(kill_switch=True))
     adapter = DummyAdapter("private_ai_runtime", _valid_result())
     ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
 
@@ -234,39 +200,41 @@ async def test_kill_switch_overrides_full_canary_and_shadow(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_invalid_traffic_mode_fails_closed_without_provider_call(monkeypatch):
-    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "invalid")
-    mock_db = _mock_db(
-        {
-            "primary_provider": "private_ai_runtime",
-            "fallback_providers": [],
-            "output_contract": "nexus_webchat_runtime_reply_v1",
-            "timeout_ms": 3000,
-            "kill_switch": False,
-            "canary_percent": 100,
-        }
-    )
+@pytest.mark.parametrize(
+    ("environment", "value", "expected_error"),
+    [
+        ("PROVIDER_RUNTIME_TRAFFIC_MODE", "invalid", "provider_runtime_traffic_mode_invalid"),
+        ("PROVIDER_RUNTIME_CANARY_PERCENT", "invalid", "provider_runtime_canary_percent_invalid"),
+        ("PROVIDER_RUNTIME_KILL_SWITCH", "invalid", "provider_runtime_kill_switch_invalid"),
+    ],
+)
+async def test_invalid_traffic_configuration_fails_closed_without_provider_call(
+    monkeypatch,
+    environment,
+    value,
+    expected_error,
+):
+    monkeypatch.setenv(environment, value)
+    mock_db = _mock_db(_rule())
     adapter = DummyAdapter("private_ai_runtime", _valid_result())
     ProviderRegistry.register("private_ai_runtime", lambda db: adapter)
 
     result = await ProviderRuntimeRouter(mock_db).route(_request())
 
-    assert result.error_code == "provider_runtime_traffic_mode_invalid"
+    assert result.error_code == expected_error
     assert adapter.calls == 0
+    audit = mock_db.audit_rows[-1]
+    assert audit["operation"] == "traffic_select"
+    assert audit["status"] == "failed"
+    assert audit["error_code"] == expected_error
+    summary = json.loads(audit["safe_summary"])
+    assert summary["traffic_selection"]["configuration_errors"] == [expected_error]
+    assert summary["traffic_selection"]["execute_candidate"] is False
 
 
 @pytest.mark.asyncio
 async def test_provider_runtime_router_parse_reject_returns_no_customer_reply():
-    mock_db = _mock_db(
-        {
-            "primary_provider": "private_ai_runtime",
-            "fallback_providers": [],
-            "output_contract": "nexus_webchat_runtime_reply_v1",
-            "timeout_ms": 3000,
-            "kill_switch": False,
-            "canary_percent": 100,
-        }
-    )
+    mock_db = _mock_db(_rule())
     adapter = DummyAdapter(
         "private_ai_runtime",
         ProviderResult(
@@ -287,16 +255,7 @@ async def test_provider_runtime_router_parse_reject_returns_no_customer_reply():
 
 @pytest.mark.asyncio
 async def test_provider_runtime_router_accepts_trusted_tracking_followup_with_unrelated_locked_fact():
-    mock_db = _mock_db(
-        {
-            "primary_provider": "private_ai_runtime",
-            "fallback_providers": [],
-            "output_contract": "nexus_webchat_runtime_reply_v1",
-            "timeout_ms": 3000,
-            "kill_switch": False,
-            "canary_percent": 100,
-        }
-    )
+    mock_db = _mock_db(_rule())
     adapter = DummyAdapter(
         "private_ai_runtime",
         ProviderResult(
