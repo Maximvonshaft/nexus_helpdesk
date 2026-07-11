@@ -143,7 +143,7 @@ def test_invalid_canary_override_fails_closed(monkeypatch, value):
         effective_canary_percent(25)
 
 
-@pytest.mark.parametrize("value", [-1, 101, 1.5, "01", " 1 "])
+@pytest.mark.parametrize("value", [-1, 101, 1.5, "01", True])
 def test_invalid_database_or_direct_canary_value_fails_closed(monkeypatch, value):
     monkeypatch.delenv("PROVIDER_RUNTIME_CANARY_PERCENT", raising=False)
     with pytest.raises(ValueError, match="provider_runtime_canary_percent_invalid"):
