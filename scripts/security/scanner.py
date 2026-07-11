@@ -166,6 +166,28 @@ def apply_allowlist(findings: list[Finding], entries: list[AllowlistEntry]) -> t
     return remaining, len(findings) - len(remaining)
 
 
+def scan_secret_text(relative_path: str, text: str) -> list[Finding]:
+    """Scan decoded text and return only redacted, fingerprinted findings."""
+    findings: list[Finding] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if _is_placeholder(line):
+            continue
+        for rule, pattern in _PATTERNS:
+            match = pattern.search(line)
+            if match:
+                findings.append(
+                    Finding(
+                        rule,
+                        relative_path,
+                        line_no,
+                        _fingerprint(rule, relative_path, line_no, match.group(0)),
+                    )
+                )
+                if len(findings) >= MAX_FINDINGS:
+                    return findings
+    return findings
+
+
 def scan_secret_files(root: Path, relative_paths: Iterable[str]) -> list[Finding]:
     findings: list[Finding] = []
     for relative in sorted(set(relative_paths)):
@@ -177,15 +199,8 @@ def scan_secret_files(root: Path, relative_paths: Iterable[str]) -> list[Finding
         text = _read_text(path)
         if text is None:
             continue
-        for line_no, line in enumerate(text.splitlines(), start=1):
-            if _is_placeholder(line):
-                continue
-            for rule, pattern in _PATTERNS:
-                match = pattern.search(line)
-                if match:
-                    findings.append(Finding(rule, relative, line_no, _fingerprint(rule, relative, line_no, match.group(0))))
-                    if len(findings) >= MAX_FINDINGS:
-                        return findings
+        remaining = MAX_FINDINGS - len(findings)
+        findings.extend(scan_secret_text(relative, text)[:remaining])
     return findings
 
 
