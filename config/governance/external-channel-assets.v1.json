@@ -1,11 +1,13 @@
 {
   "schema": "nexus.external-channel-retirement.inventory.v1",
-  "inventory_version": "2026-07-12.3",
+  "inventory_version": "2026-07-12.4",
   "audited_main_sha": "e761bcfd9850451bcba7ffe679c4b83f87ec91bf",
   "discovery_tokens": [
     "ExternalChannel",
     "external_channel",
-    "EXTERNAL_CHANNEL"
+    "EXTERNAL_CHANNEL",
+    "externalChannel",
+    "external-channel"
   ],
   "production_roots": [
     ".github/workflows/",
