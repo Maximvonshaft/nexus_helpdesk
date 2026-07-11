@@ -1,41 +1,12 @@
 name: external-channel-retirement-gate
 
-# ExternalChannel is retired; this workflow prevents unclassified reintroduction.
+# ExternalChannel is retired; this lightweight full-tree scan runs for every main change
+# so a new reference cannot bypass the gate by entering an unanticipated directory.
 on:
   pull_request:
     branches: [main]
-    paths:
-      - '.github/workflows/**'
-      - 'backend/.env.example'
-      - 'backend/alembic/**'
-      - 'backend/app/**'
-      - 'backend/scripts/**'
-      - 'backend/tests/**'
-      - 'config/governance/external-channel-assets.v1.json'
-      - 'deploy/**'
-      - 'docs/**'
-      - 'frontend/**'
-      - 'scripts/**'
-      - 'webapp/src/**'
-      - '*.md'
-      - 'check_bridge.py'
   push:
     branches: [main]
-    paths:
-      - '.github/workflows/**'
-      - 'backend/.env.example'
-      - 'backend/alembic/**'
-      - 'backend/app/**'
-      - 'backend/scripts/**'
-      - 'backend/tests/**'
-      - 'config/governance/external-channel-assets.v1.json'
-      - 'deploy/**'
-      - 'docs/**'
-      - 'frontend/**'
-      - 'scripts/**'
-      - 'webapp/src/**'
-      - '*.md'
-      - 'check_bridge.py'
   workflow_dispatch:
 
 permissions:
