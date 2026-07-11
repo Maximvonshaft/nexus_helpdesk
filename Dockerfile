@@ -6,7 +6,7 @@ RUN npm ci
 COPY webapp/ ./
 RUN npm run build
 
-FROM docker.io/library/python:3.11-slim
+FROM docker.io/library/python:3.11-slim-bookworm
 
 ARG GIT_SHA=unknown
 ARG BUILD_TIME=unknown
@@ -27,12 +27,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
+# Keep packaging tools above known vulnerable releases before installing the
+# application lock. No network/debug utility is installed in the runtime image.
 COPY backend/requirements.txt /tmp/requirements.txt
-RUN pip install -r /tmp/requirements.txt || pip install -r /tmp/requirements.txt || pip install -r /tmp/requirements.txt
+RUN python -m pip install --upgrade \
+        "pip>=26.1.1" \
+        "setuptools>=82.0.0" \
+        "wheel>=0.46.2" \
+        "jaraco.context>=6.1.0" \
+    && python -m pip install -r /tmp/requirements.txt
 
 # Keep the runtime image deterministic. Do not COPY the whole repository because
 # that can bake local caches, VCS metadata, env files, uploads, or secrets into
@@ -55,7 +58,8 @@ WORKDIR /app/backend
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).read()" || exit 1
 
 USER appuser
 
