@@ -100,8 +100,10 @@ jobs:
             backend/tests/test_provider_runtime_output_contracts.py \
             backend/tests/test_provider_runtime_private_ai_runtime_adapter.py \
             backend/tests/test_provider_runtime_router.py \
+            backend/tests/test_provider_runtime_traffic_selection.py \
             backend/tests/test_provider_runtime_status.py \
             backend/tests/test_provider_runtime_token_leakage.py \
+            backend/tests/test_admin_provider_runtime_routing_api.py \
             backend/tests/test_webchat_runtime_ai_service.py \
             backend/tests/test_webchat_rate_limit_bucket.py \
             backend/tests/test_webchat_ai_turn_runtime.py \
@@ -110,80 +112,39 @@ jobs:
             backend/tests/test_speedaf_track_query.py \
             backend/tests/test_speedaf_tracking_fact_source.py
 
-      - name: Capture included-router structure
+      - name: Application route contract
         env:
           PYTHONPATH: backend
         run: |
           set -Eeuo pipefail
           python - <<'PY'
-          import json
-          from pathlib import Path
-          from app.api import admin_provider_runtime as provider_module
-          from app import main as main_module
+          from app.main import app
 
-          route_details = []
-          for route in main_module.app.routes:
-              raw = vars(route)
-              candidates = {}
-              for key in sorted(raw):
-                  value = raw[key]
-                  if key in {'router', 'routes', 'prefix', 'path', 'name'}:
-                      if hasattr(value, 'routes'):
-                          candidates[key] = {
-                              'type': f'{type(value).__module__}.{type(value).__name__}',
-                              'paths': [getattr(child, 'path', None) for child in value.routes],
-                          }
-                      elif isinstance(value, (str, int, float, bool)) or value is None:
-                          candidates[key] = value
-                      elif isinstance(value, (list, tuple)):
-                          candidates[key] = [getattr(child, 'path', None) for child in value]
-                      else:
-                          candidates[key] = f'{type(value).__module__}.{type(value).__name__}'
-              route_details.append({
-                  'type': f'{type(route).__module__}.{type(route).__name__}',
-                  'path': getattr(route, 'path', None),
-                  'name': getattr(route, 'name', None),
-                  'dict_keys': sorted(raw),
-                  'candidates': candidates,
-              })
+          def route_paths(routes):
+              for route in routes:
+                  path = getattr(route, 'path', None)
+                  if path:
+                      yield path
+                  original_router = getattr(route, 'original_router', None)
+                  if original_router is not None:
+                      yield from route_paths(getattr(original_router, 'routes', ()))
+                  nested_routes = getattr(route, 'routes', None)
+                  if nested_routes is not None:
+                      yield from route_paths(nested_routes)
 
-          snapshot = {
-              'route_details': route_details,
-              'source_paths': [getattr(route, 'path', '') for route in provider_module.router.routes],
-              'same_router_object': main_module.admin_provider_runtime_router is provider_module.router,
-              'main_router_paths': [getattr(route, 'path', '') for route in main_module.admin_provider_runtime_router.routes],
+          paths = list(route_paths(app.routes))
+          expected = {
+              '/api/admin/provider-runtime/status',
+              '/api/webchat/init',
           }
-          Path('/tmp/nexus-provider-routes.json').write_text(
-              json.dumps(snapshot, ensure_ascii=True, indent=2),
-              encoding='utf-8',
-          )
-          PY
-
-      - name: Upload bounded route diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: provider-runtime-route-diagnostics
-          path: /tmp/nexus-provider-routes.json
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Provider source status route declared
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          assert data['same_router_object'] is True
-          assert '/api/admin/provider-runtime/status' in data['source_paths']
-          assert '/api/admin/provider-runtime/status' in data['main_router_paths']
-          PY
-
-      - name: Included-router structure captured
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          assert any(item['type'] == 'fastapi.routing._IncludedRouter' for item in data['route_details'])
+          missing = sorted(expected.difference(paths))
+          retired = [
+              path for path in paths
+              if 'provider-credentials/codex' in path
+              or 'webchat-fast' in path
+              or 'fast-reply' in path
+          ]
+          assert not missing, missing
+          assert not retired, retired
+          print('application_route_contract_ok')
           PY
