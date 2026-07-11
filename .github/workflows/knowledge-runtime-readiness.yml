@@ -3,11 +3,41 @@ name: knowledge-runtime-readiness
 on:
   workflow_dispatch:
     inputs:
-      country_code:
-        description: 'Country code used by Speedaf UAT truth-routing readiness'
+      tenant:
+        description: 'Expected tenant scope; empty evaluates aggregate coverage'
         required: false
-        default: 'CH'
+        default: ''
         type: string
+      brand:
+        description: 'Expected brand scope; empty evaluates aggregate coverage'
+        required: false
+        default: ''
+        type: string
+      country:
+        description: 'Expected country scope; GLOBAL content can satisfy it'
+        required: false
+        default: ''
+        type: string
+      channel:
+        description: 'Expected channel scope; all-channel content can satisfy it'
+        required: false
+        default: ''
+        type: string
+      audience:
+        description: 'Expected audience scope; customer is the governed default'
+        required: true
+        default: 'customer'
+        type: string
+      freshness_days:
+        description: 'Maximum published-content age in days'
+        required: true
+        default: '90'
+        type: string
+      allow_degraded:
+        description: 'Return success for an explicitly accepted degraded state'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -18,27 +48,17 @@ jobs:
     timeout-minutes: 12
     env:
       PYTHONPATH: backend
-      APP_ENV: test
-      DATABASE_URL: sqlite:////tmp/knowledge-runtime-readiness.db
+      APP_ENV: production
+      DATABASE_URL: ${{ secrets.KNOWLEDGE_READINESS_DATABASE_URL || 'sqlite:////tmp/knowledge-readiness-unconfigured.db' }}
       AUTO_INIT_DB: "false"
       SEED_DEMO_DATA: "false"
       KNOWLEDGE_RUNTIME_VERSION: v2
       KNOWLEDGE_EMBEDDINGS_ENABLED: "true"
-      KNOWLEDGE_EMBEDDING_PROVIDER: deterministic_hash
-      WEBCHAT_TRACKING_FACT_LOOKUP_ENABLED: "true"
-      WEBCHAT_TRACKING_FACT_SOURCE: speedaf_api
-      WEBCHAT_TRACKING_FACT_REDACTION_ENABLED: "true"
-      WEBCHAT_KNOWLEDGE_NO_EVIDENCE_FALLBACK_ENABLED: "true"
-      SPEEDAF_MCP_ENABLED: ${{ secrets.SPEEDAF_UAT_MCP_ENABLED }}
-      SPEEDAF_MCP_BASE_URL: ${{ secrets.SPEEDAF_UAT_MCP_BASE_URL }}
-      SPEEDAF_MCP_APP_CODE: ${{ secrets.SPEEDAF_UAT_MCP_APP_CODE }}
-      SPEEDAF_MCP_SECRET_KEY: ${{ secrets.SPEEDAF_UAT_MCP_SECRET_KEY }}
-      SPEEDAF_MCP_CONTENT_TYPE: ${{ vars.SPEEDAF_UAT_MCP_CONTENT_TYPE || 'text/plain' }}
-      SPEEDAF_MCP_DATA_MODE: ${{ vars.SPEEDAF_UAT_MCP_DATA_MODE || 'string' }}
-      SPEEDAF_MCP_REQUIRE_SIGN: ${{ vars.SPEEDAF_UAT_MCP_REQUIRE_SIGN || 'false' }}
-      SPEEDAF_MCP_TEST_WAYBILL_CODE: ${{ secrets.SPEEDAF_UAT_TEST_WAYBILL_CODE }}
-      SPEEDAF_MCP_TEST_CALLER_ID: ${{ secrets.SPEEDAF_UAT_TEST_CALLER_ID }}
-      SPEEDAF_MCP_COUNTRY_CODE_DEFAULT: ${{ inputs.country_code }}
+      KNOWLEDGE_EMBEDDING_PROVIDER: ${{ vars.KNOWLEDGE_READINESS_EMBEDDING_PROVIDER || 'unconfigured' }}
+      KNOWLEDGE_EMBEDDING_MODEL: ${{ vars.KNOWLEDGE_READINESS_EMBEDDING_MODEL || '' }}
+      KNOWLEDGE_EMBEDDING_DIM: "384"
+      KNOWLEDGE_EMBEDDING_BASE_URL: ${{ secrets.KNOWLEDGE_READINESS_EMBEDDING_BASE_URL }}
+      KNOWLEDGE_EMBEDDING_API_KEY: ${{ secrets.KNOWLEDGE_READINESS_EMBEDDING_API_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -54,71 +74,96 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install -r backend/requirements.txt
 
-      - name: Prepare database
-        run: |
-          set -Eeuo pipefail
-          rm -f /tmp/knowledge-runtime-readiness.db
-          cd backend
-          alembic upgrade head
-
-      - name: Start backend
+      - name: Run customer-visible Knowledge readiness probe
         run: |
           set -Eeuo pipefail
           mkdir -p artifacts
-          cd backend
-          python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > ../artifacts/knowledge-runtime-server.log 2>&1 &
-          echo "$!" > ../artifacts/server.pid
-          for _ in $(seq 1 40); do
-            if curl -fsS http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
-              exit 0
-            fi
-            sleep 1
-          done
-          cat ../artifacts/knowledge-runtime-server.log
-          exit 1
-
-      - name: Run knowledge runtime readiness probe
-        run: |
-          set -Eeuo pipefail
-          if [ -z "${SPEEDAF_MCP_TEST_WAYBILL_CODE:-}" ] || [ -z "${SPEEDAF_MCP_TEST_CALLER_ID:-}" ]; then
-            echo "ERROR: configure SPEEDAF_UAT_TEST_WAYBILL_CODE and SPEEDAF_UAT_TEST_CALLER_ID as GitHub Secrets."
-            exit 2
+          args=(
+            --audience "${{ inputs.audience }}"
+            --freshness-days "${{ inputs.freshness_days }}"
+          )
+          if [ -n "${{ inputs.tenant }}" ]; then
+            args+=(--tenant "${{ inputs.tenant }}")
           fi
-          bash scripts/nexus_knowledge_runtime_v2_readiness_probe.sh | tee artifacts/knowledge-runtime-readiness.log
+          if [ -n "${{ inputs.brand }}" ]; then
+            args+=(--brand "${{ inputs.brand }}")
+          fi
+          if [ -n "${{ inputs.country }}" ]; then
+            args+=(--country "${{ inputs.country }}")
+          fi
+          if [ -n "${{ inputs.channel }}" ]; then
+            args+=(--channel "${{ inputs.channel }}")
+          fi
+          if [ "${{ inputs.allow_degraded }}" = "true" ]; then
+            args+=(--allow-degraded)
+          fi
+          bash scripts/nexus_knowledge_runtime_v2_readiness_probe.sh "${args[@]}" \
+            | tee artifacts/knowledge-runtime-readiness.json
 
-      - name: Assert readiness log is sanitized
+      - name: Assert readiness report is machine-readable bounded and redacted
         if: always()
         run: |
           set -Eeuo pipefail
-          REPORT="artifacts/knowledge-runtime-readiness.log"
-          test -f "$REPORT"
-          if [ -n "${SPEEDAF_MCP_TEST_CALLER_ID:-}" ] && grep -F "$SPEEDAF_MCP_TEST_CALLER_ID" "$REPORT" >/dev/null 2>&1; then
-            echo 'ERROR: readiness log contains callerID.'
+          REPORT="artifacts/knowledge-runtime-readiness.json"
+          test -s "$REPORT"
+          if [ "$(wc -c < "$REPORT")" -gt 32768 ]; then
+            echo 'ERROR: readiness report is not bounded.'
             exit 3
           fi
-          if [ -n "${SPEEDAF_MCP_TEST_WAYBILL_CODE:-}" ] && grep -F "$SPEEDAF_MCP_TEST_WAYBILL_CODE" "$REPORT" >/dev/null 2>&1; then
-            echo 'ERROR: readiness log contains waybill code.'
+          if [ -n "${DATABASE_URL:-}" ] && grep -F "$DATABASE_URL" "$REPORT" >/dev/null 2>&1; then
+            echo 'ERROR: readiness report contains database URL.'
             exit 3
           fi
-          if grep -E '${{ secrets.SPEEDAF_UAT_MCP_APP_CODE }}|${{ secrets.SPEEDAF_UAT_MCP_SECRET_KEY }}' "$REPORT" >/dev/null 2>&1; then
-            echo 'ERROR: readiness log contains sensitive material.'
+          if [ -n "${KNOWLEDGE_EMBEDDING_API_KEY:-}" ] && grep -F "$KNOWLEDGE_EMBEDDING_API_KEY" "$REPORT" >/dev/null 2>&1; then
+            echo 'ERROR: readiness report contains embedding credential.'
             exit 3
           fi
+          python - "$REPORT" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
 
-      - name: Stop backend
-        if: always()
-        run: |
-          set -Eeuo pipefail
-          if [ -f artifacts/server.pid ]; then
-            kill "$(cat artifacts/server.pid)" >/dev/null 2>&1 || true
-          fi
+          report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          required = {
+              "schema_version", "status", "ready", "evaluated_at", "reasons",
+              "counts", "coverage", "freshness", "gates", "metrics",
+          }
+          missing = sorted(required.difference(report))
+          if missing:
+              raise SystemExit(f"READINESS_REPORT_MISSING_FIELDS={missing}")
+          if report["schema_version"] != "nexus_knowledge_readiness_v2":
+              raise SystemExit("READINESS_REPORT_SCHEMA_MISMATCH")
+          if report["status"] not in {"ready", "degraded", "not_ready", "unavailable"}:
+              raise SystemExit("READINESS_REPORT_STATUS_INVALID")
 
-      - name: Upload readiness logs
+          forbidden_keys = {
+              "item_key", "title", "body", "query", "source_url", "api_key",
+              "secret_key", "password", "tracking_number", "waybill_code",
+              "caller_id", "provider_payload", "raw_payload", "chunk_text",
+          }
+
+          def walk(value):
+              if isinstance(value, dict):
+                  overlap = forbidden_keys.intersection(str(key).lower() for key in value)
+                  if overlap:
+                      raise SystemExit(f"READINESS_REPORT_FORBIDDEN_KEYS={sorted(overlap)}")
+                  for child in value.values():
+                      walk(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      walk(child)
+
+          walk(report)
+          for metric in report["metrics"]:
+              if set(metric.get("labels") or {}).difference({"status"}):
+                  raise SystemExit("READINESS_REPORT_HIGH_CARDINALITY_LABEL")
+          print("knowledge_readiness_report_contract_ok")
+          PY
+
+      - name: Upload readiness report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: knowledge-runtime-readiness
-          path: |
-            artifacts/knowledge-runtime-readiness.log
-            artifacts/knowledge-runtime-server.log
+          path: artifacts/knowledge-runtime-readiness.json
           if-no-files-found: warn
