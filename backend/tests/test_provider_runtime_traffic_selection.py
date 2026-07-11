@@ -164,11 +164,32 @@ def test_invalid_kill_switch_override_fails_closed(monkeypatch, value):
         effective_kill_switch(False)
 
 
+@pytest.mark.parametrize("value", ["false", 0, 1, None])
+def test_invalid_database_or_direct_kill_switch_value_fails_closed(monkeypatch, value):
+    monkeypatch.delenv("PROVIDER_RUNTIME_KILL_SWITCH", raising=False)
+    with pytest.raises(ValueError, match="provider_runtime_kill_switch_invalid"):
+        effective_kill_switch(value)
+    with pytest.raises(ValueError, match="provider_runtime_kill_switch_invalid"):
+        select_provider_traffic(
+            _request(),
+            canary_percent=25,
+            kill_switch=value,
+            configured_mode_value="canary",
+        )
+
+
 def test_safe_configuration_reports_invalid_database_default(monkeypatch):
     monkeypatch.delenv("PROVIDER_RUNTIME_CANARY_PERCENT", raising=False)
     summary = safe_traffic_configuration(default_canary_percent=101, default_kill_switch=False)
     assert summary["canary_percent"] is None
     assert summary["configuration_errors"] == ["provider_runtime_canary_percent_invalid"]
+
+
+def test_safe_configuration_reports_invalid_kill_switch_default(monkeypatch):
+    monkeypatch.delenv("PROVIDER_RUNTIME_KILL_SWITCH", raising=False)
+    summary = safe_traffic_configuration(default_canary_percent=25, default_kill_switch="false")
+    assert summary["kill_switch"] is None
+    assert summary["configuration_errors"] == ["provider_runtime_kill_switch_invalid"]
 
 
 def test_safe_configuration_reports_all_malformed_overrides(monkeypatch):
