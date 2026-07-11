@@ -110,6 +110,17 @@ jobs:
             backend/tests/test_speedaf_track_query.py \
             backend/tests/test_speedaf_tracking_fact_source.py
 
+      - name: Admin Provider module does not pre-import app main
+        env:
+          PYTHONPATH: backend
+        run: |
+          python - <<'PY'
+          import sys
+          from app.api import admin_provider_runtime
+          assert admin_provider_runtime.router.routes
+          assert 'app.main' not in sys.modules
+          PY
+
       - name: Capture application and source router contracts
         env:
           PYTHONPATH: backend
