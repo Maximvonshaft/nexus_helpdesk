@@ -1,0 +1,71 @@
+name: Agent Coordination Self Test
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-coordination-self-test-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  proposed-agent-coordination-self-test:
+    name: proposed-agent-coordination-self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact proposed head for tests only
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+
+      - name: Install pinned test dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check "pytest==8.3.5" "PyYAML==6.0.2"
+
+      - name: Compile proposed policy
+        run: |
+          set -Eeuo pipefail
+          python -m py_compile \
+            scripts/ci/agent_coordination_model.py \
+            scripts/ci/agent_coordination_core.py \
+            scripts/ci/agent_coordination_gate.py \
+            scripts/ci/agent_coordination_reclaim_adapter.py \
+            scripts/ci/agent_coordination_policy_gate.py \
+            scripts/ci/agent_coordination_path_policy.py \
+            scripts/ci/agent_coordination_open_pr_policy.py \
+            scripts/ci/agent_coordination_entrypoint.py
+
+      - name: Run proposed policy tests
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts/agent-coordination
+          python -m pytest -q \
+            scripts/ci/tests/test_agent_coordination*.py \
+            --junitxml=artifacts/agent-coordination/tests.xml
+
+      - name: Check proposed diff whitespace
+        run: |
+          set -Eeuo pipefail
+          git diff --check "${{ github.event.pull_request.base.sha }}"...HEAD
+
+      - name: Upload bounded self-test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: agent-coordination-self-test-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: artifacts/agent-coordination/tests.xml
+          if-no-files-found: warn
+          retention-days: 7

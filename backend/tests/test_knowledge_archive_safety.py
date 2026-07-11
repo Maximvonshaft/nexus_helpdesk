@@ -96,6 +96,52 @@ def test_xml_parser_rejects_doctype_depth_and_node_budgets() -> None:
         parse_bounded_xml(wide, limits=_limits(max_xml_nodes=32))
 
 
+def test_xml_parser_rejects_doctype_after_long_legal_prefix() -> None:
+    payload = (
+        b" " * 5000
+        + b"<?safe processing?>"
+        + b"<!-- harmless -->"
+        + b"<!DOCTYPE root [<!ENTITY x 'boom'>]><root>&x;</root>"
+    )
+    with pytest.raises(HTTPException, match="declarations"):
+        parse_bounded_xml(payload, limits=_limits(max_xml_bytes=16_384))
+
+
+def test_xml_parser_rejects_utf16_doctype_and_entity() -> None:
+    payload = (
+        '<?xml version="1.0" encoding="UTF-16"?>'
+        '<!DOCTYPE root [<!ENTITY x "boom">]>'
+        '<root>&x;</root>'
+    ).encode("utf-16")
+    with pytest.raises(HTTPException, match="declarations"):
+        parse_bounded_xml(payload, limits=_limits(max_xml_bytes=16_384))
+
+
+@pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be"])
+def test_xml_parser_rejects_utf16_endian_doctype(encoding: str) -> None:
+    text = '<!DOCTYPE root [<!ENTITY x "boom">]><root>&x;</root>'
+    prefix = b"\xff\xfe" if encoding == "utf-16-le" else b"\xfe\xff"
+    payload = prefix + text.encode(encoding)
+    with pytest.raises(HTTPException, match="declarations"):
+        parse_bounded_xml(payload, limits=_limits(max_xml_bytes=16_384))
+
+
+def test_xml_parser_fails_closed_for_case_invalid_declaration() -> None:
+    payload = b"<?safe processing?><!-- harmless --><!DoCtYpE root><root/>"
+    with pytest.raises(HTTPException, match="invalid"):
+        parse_bounded_xml(payload, limits=_limits(max_xml_bytes=16_384))
+
+
+def test_xml_parser_preserves_valid_utf8_and_utf16() -> None:
+    utf8 = b'<?xml version="1.0" encoding="UTF-8"?><root><child>safe</child></root>'
+    utf16 = (
+        '<?xml version="1.0" encoding="UTF-16"?>'
+        '<root><child>safe</child></root>'
+    ).encode("utf-16")
+    assert parse_bounded_xml(utf8, limits=_limits(max_xml_bytes=16_384)).tag == "root"
+    assert parse_bounded_xml(utf16, limits=_limits(max_xml_bytes=16_384)).tag == "root"
+
+
 def test_text_budget_fails_closed() -> None:
     assert enforce_extracted_text_budget("safe", limits=_limits()) == "safe"
     with pytest.raises(HTTPException, match="text"):
