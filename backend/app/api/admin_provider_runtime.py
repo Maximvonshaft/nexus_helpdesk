@@ -42,7 +42,9 @@ class WebchatRuntimeRoutingUpdate(BaseModel):
 @router.get("/status")
 def provider_runtime_status(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     ensure_can_manage_runtime(current_user, db)
-    return get_provider_runtime_status(db)
+    snapshot = get_provider_runtime_status(db)
+    snapshot["traffic_selection"] = safe_traffic_configuration()
+    return snapshot
 
 
 @router.get("/audit/recent")
