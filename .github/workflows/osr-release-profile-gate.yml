@@ -4,7 +4,13 @@ on:
   pull_request:
     paths:
       - "backend/app/services/nexus_osr/release_profiles.py"
+      - "backend/app/services/nexus_osr/business_readiness_service.py"
+      - "backend/app/api/osr_readiness.py"
+      - "backend/app/settings.py"
+      - "backend/app/main.py"
       - "backend/tests/test_nexus_osr_release_profiles.py"
+      - "backend/tests/test_nexus_osr_business_readiness.py"
+      - "backend/tests/test_production_settings_contract.py"
       - ".github/workflows/osr-release-profile-gate.yml"
   workflow_dispatch:
 
@@ -18,11 +24,13 @@ concurrency:
 jobs:
   release-profile-contract:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       PYTHONPATH: backend
       APP_ENV: test
       DATABASE_URL: sqlite:////tmp/osr-release-profile.db
+      AUTO_INIT_DB: "false"
+      SEED_DEMO_DATA: "false"
     steps:
       - name: Checkout immutable
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -39,13 +47,34 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           pip install -r backend/requirements.txt
-      - name: Compile contract
+      - name: Compile readiness authority
         run: |
           python -m py_compile \
             backend/app/services/nexus_osr/release_profiles.py \
-            backend/tests/test_nexus_osr_release_profiles.py
-      - name: Run profile tests
-        run: pytest -q backend/tests/test_nexus_osr_release_profiles.py
+            backend/app/services/nexus_osr/business_readiness_service.py \
+            backend/app/api/osr_readiness.py \
+            backend/app/settings.py \
+            backend/app/main.py \
+            backend/tests/test_nexus_osr_release_profiles.py \
+            backend/tests/test_nexus_osr_business_readiness.py
+      - name: Run profile and collector tests
+        run: |
+          pytest -q \
+            backend/tests/test_nexus_osr_release_profiles.py \
+            backend/tests/test_nexus_osr_business_readiness.py \
+            backend/tests/test_production_settings_contract.py
+      - name: Prove readiness identities are wired
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          main = Path('backend/app/main.py').read_text(encoding='utf-8')
+          settings = Path('backend/app/settings.py').read_text(encoding='utf-8')
+          assert 'app.include_router(osr_readiness_router)' in main
+          assert 'readiness_migration_identity_failed' in main
+          assert 'expected_migration_head' in main
+          assert 'NEXUS_OSR_RELEASE_PROFILE' in settings
+          assert 'EXPECTED_MIGRATION_HEAD' in settings
+          PY
       - name: Check exact-head whitespace
         if: github.event_name == 'pull_request'
         run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
