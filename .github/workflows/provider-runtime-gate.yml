@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - 'backend/app/services/provider_runtime/**'
+      - 'backend/app/services/webcall_ai_production/providers/provider_runtime_llm.py'
       - 'backend/app/services/webchat_runtime_ai_service.py'
       - 'backend/app/services/webchat_rate_limit.py'
       - 'backend/app/services/speedaf/**'
       - 'backend/app/api/admin_provider_runtime.py'
       - 'backend/tests/test_provider_runtime_*.py'
+      - 'backend/tests/test_webcall_ai_provider_runtime_llm.py'
       - 'backend/tests/test_webchat_runtime_ai_service.py'
       - 'backend/tests/test_webchat_rate_limit_bucket.py'
       - 'backend/tests/test_speedaf*.py'
@@ -104,6 +106,7 @@ jobs:
             backend/tests/test_provider_runtime_status.py \
             backend/tests/test_provider_runtime_token_leakage.py \
             backend/tests/test_admin_provider_runtime_routing_api.py \
+            backend/tests/test_webcall_ai_provider_runtime_llm.py \
             backend/tests/test_webchat_runtime_ai_service.py \
             backend/tests/test_webchat_rate_limit_bucket.py \
             backend/tests/test_webchat_ai_turn_runtime.py \
