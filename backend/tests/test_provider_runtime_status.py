@@ -305,3 +305,32 @@ def test_provider_runtime_status_treats_retrieval_as_independent_capability(
             "collection_alias": "nexus-knowledge-active",
         }
     )
+
+
+def test_provider_runtime_status_rejects_unverified_split_rag_runtime(
+    monkeypatch,
+):
+    _clear_env(monkeypatch)
+    _configure_ready_runtime(monkeypatch)
+    monkeypatch.setenv("PRIVATE_AI_RUNTIME_CHAT_MODE", "rag")
+    monkeypatch.setenv(
+        "PRIVATE_AI_RUNTIME_RAG_BASE_URL",
+        "http://other-runtime.internal:18081",
+    )
+
+    status = get_provider_runtime_status()
+
+    assert status["ok"] is False
+    private_ai = status["providers"][0]
+    assert private_ai["configured"] is False
+    assert private_ai["diagnostics"]["rag_runtime_isolated"] is True
+    assert (
+        private_ai["diagnostics"]["runtime_identity_configuration_valid"]
+        is False
+    )
+    assert (
+        "private_ai_runtime RAG endpoint is outside the verified Runtime identity"
+        in status["warnings"]
+    )
+    rendered = str(status)
+    assert "other-runtime.internal" not in rendered
