@@ -4,16 +4,18 @@
 
 ExternalChannel is a retired transport. Production configuration already rejects enablement, but compatibility code, historical persistence contracts, disabled settings, frontend labels, scripts, tests, migrations and reports remain in the repository.
 
-Work Item #572 owns the complete decommission. PR #597 delivers only the first non-destructive slice: an authoritative repository inventory and a permanent reintroduction gate. It does not authorize runtime removal, database mutation, deployment or production deletion.
+Work Item #572 owns the complete decommission. PR #597 delivers only the first non-destructive slice: an authoritative repository inventory and a reintroduction gate. It does not authorize runtime removal, database mutation, deployment or production deletion.
 
 ## Current authority
 
 The machine-readable authority is:
 
-- `config/governance/external-channel-assets.v1.json`
-- schema: `nexus.external-channel-retirement.inventory.v1`
-- checker: `scripts/ci/check_external_channel_retirement.py`
-- required check: `external-channel-retirement-gate`
+- inventory: `config/governance/external-channel-assets.v1.json`;
+- schema: `nexus.external-channel-retirement.inventory.v1`;
+- checker: `scripts/ci/check_external_channel_retirement.py`;
+- CI workflow/check: `external-channel-retirement-gate`.
+
+The workflow runs for every pull request to `main`, every push to `main`, and manual dispatch. The pull request creates the check but does not itself modify repository branch-protection settings. Repository administrators should add the check to the protected-branch required-check set when that policy is managed outside the repository.
 
 The inventory supports:
 
@@ -22,6 +24,20 @@ The inventory supports:
 - a controlled historical `glob` under an approved non-runtime root.
 
 Grouped `paths` are expanded into individual exact rules before evaluation. They do not weaken production-path enforcement.
+
+## Discovery contract
+
+The checker recognizes these naming variants:
+
+- `ExternalChannel`;
+- `external_channel`;
+- `EXTERNAL_CHANNEL`;
+- `externalChannel`;
+- `external-channel`.
+
+A regular tracked file is discovered when a marker appears in either its repository path or its non-binary contents. Path matching ensures that empty, binary or unusual-encoding assets with retired names still require classification.
+
+Git entries are read through `git ls-files -z --stage`. Only regular blobs (`100644`, `100755`) are scanned. Symlinks (`120000`) and gitlinks/submodules (`160000`) are excluded explicitly; malformed index data and unknown modes fail closed.
 
 ## Asset dispositions
 
@@ -61,16 +77,19 @@ The checker fails closed when:
 
 - JSON contains duplicate keys;
 - the schema, fields or identifiers are invalid;
+- Git index data is malformed or contains an unsupported mode;
 - an exact inventory path is no longer tracked;
-- an exact inventory path no longer contains a discovery marker;
-- a tracked marker-bearing file has no rule;
+- an exact inventory path no longer has a discovery marker in its path or contents;
+- a discovered tracked file has no rule;
 - a file matches multiple rules;
 - a wildcard can classify a production-capable root;
-- a historical wildcard matches no current marker-bearing file;
+- a historical wildcard matches no current discovered file;
 - a write surface is not exact or lacks the stop-new-writes control;
-- Git tracked-file enumeration or source reading fails.
+- Git tracked-file enumeration or regular-file reading fails.
 
 Success output contains only bounded counts, the audited main SHA, inventory version and a SHA-256 digest. It does not emit source contents, customer data, tracking/contact/address data, Provider payloads, tool payloads, credentials or endpoint values.
+
+The workflow is intentionally not path-filtered. A directory allowlist would let a new reference bypass the control by entering an unanticipated directory.
 
 ## Decommission phases
 
@@ -80,7 +99,7 @@ Delivered by PR #597:
 
 1. classify current repository assets;
 2. identify known write-capable surfaces;
-3. prevent new unclassified references;
+3. prevent new unclassified path or content references;
 4. establish exact-head CI evidence.
 
 No runtime behavior changes in this phase.
