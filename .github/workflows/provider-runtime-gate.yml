@@ -120,7 +120,13 @@ jobs:
           from pathlib import Path
           from app.main import app
 
-          routes = sorted(getattr(route, 'path', '') for route in app.routes)
+          routes = [
+              {
+                  'path': getattr(route, 'path', ''),
+                  'name': getattr(route, 'name', ''),
+              }
+              for route in app.routes
+          ]
           Path('/tmp/nexus-provider-routes.json').write_text(
               json.dumps(routes, ensure_ascii=True),
               encoding='utf-8',
@@ -128,46 +134,60 @@ jobs:
           print('application_routes_captured=' + str(len(routes)))
           PY
 
-      - name: Provider Admin route mounted
+      - name: Diagnostic - Provider endpoint name mounted
+        continue-on-error: true
         run: |
-          set -Eeuo pipefail
           python - <<'PY'
           import json
           from pathlib import Path
           routes = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          assert '/api/admin/provider-runtime/status' in routes, [path for path in routes if 'provider' in path.lower()]
-          print('provider_admin_route_ok')
+          assert any(item['name'] == 'provider_runtime_status' for item in routes)
           PY
 
-      - name: Public WebChat route mounted
+      - name: Diagnostic - Any Provider Runtime path mounted
+        continue-on-error: true
         run: |
-          set -Eeuo pipefail
           python - <<'PY'
           import json
           from pathlib import Path
           routes = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          assert '/api/webchat/init' in routes, [path for path in routes if 'webchat' in path.lower() and 'init' in path.lower()]
-          print('public_webchat_route_ok')
+          assert any('provider-runtime' in item['path'] for item in routes)
           PY
 
-      - name: Retired Provider credential routes absent
+      - name: Diagnostic - Exact Provider status path mounted
+        continue-on-error: true
         run: |
-          set -Eeuo pipefail
           python - <<'PY'
           import json
           from pathlib import Path
           routes = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          assert not any('provider-credentials/codex' in path for path in routes), [path for path in routes if 'provider-credentials' in path]
-          print('retired_provider_credential_routes_absent')
+          assert any(item['path'] == '/api/admin/provider-runtime/status' for item in routes)
           PY
 
-      - name: Retired fast reply routes absent
+      - name: Application route contract
         run: |
           set -Eeuo pipefail
           python - <<'PY'
           import json
           from pathlib import Path
           routes = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          assert not any('webchat-fast' in path or 'fast-reply' in path for path in routes), [path for path in routes if 'fast' in path.lower()]
-          print('retired_fast_reply_routes_absent')
+          paths = [item['path'] for item in routes]
+          expected = {
+              '/api/admin/provider-runtime/status',
+              '/api/webchat/init',
+          }
+          missing = sorted(expected.difference(paths))
+          retired = [
+              path
+              for path in paths
+              if 'provider-credentials/codex' in path
+              or 'webchat-fast' in path
+              or 'fast-reply' in path
+          ]
+          if missing or retired:
+              print('missing_expected_routes=' + repr(missing))
+              print('retired_routes_present=' + repr(retired))
+              print('provider_route_candidates=' + repr([item for item in routes if 'provider' in item['path'].lower() or 'provider' in item['name'].lower()]))
+              raise SystemExit(1)
+          print('application_route_contract_ok')
           PY
