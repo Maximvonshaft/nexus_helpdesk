@@ -70,6 +70,8 @@ def test_dataset_rejects_forbidden_raw_payload_fields() -> None:
         "contactDetails",
         "contact-value",
         "recipient_contact_record",
+        "contact_policy_summary_payload",
+        "customer_contact_policy_summary",
         "client_secret",
         "clientSecretValue",
         "password_value",

@@ -442,7 +442,7 @@ def _is_forbidden_key(value: str) -> bool:
         "authorization",
     }:
         return True
-    if "contact" in tokens and not {"policy", "summary"} <= tokens:
+    if "contact" in tokens and normalized != "contact_policy_summary":
         return True
     if {"api", "key"} <= tokens:
         return True
