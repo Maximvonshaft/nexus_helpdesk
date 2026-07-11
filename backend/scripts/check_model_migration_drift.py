@@ -12,10 +12,15 @@ import sys
 from sqlalchemy import CheckConstraint, UniqueConstraint, create_engine, inspect
 
 from app.db import Base
-from app.model_registry import REPRESENTATIVE_TABLES, register_all_models
+from app.model_registry import (
+    REPRESENTATIVE_TABLES,
+    declared_model_modules,
+    register_all_models,
+)
 from app.settings import get_settings
 
-REGISTERED_MODEL_MODULES = register_all_models()
+DECLARED_MODEL_MODULES = declared_model_modules()
+REGISTERED_MODEL_MODULES: tuple[str, ...] = ()
 
 IGNORED_TABLES_WITH_REASON = {
     "alembic_version": "Alembic bookkeeping table, not part of SQLAlchemy domain metadata.",
@@ -92,6 +97,16 @@ class Drift:
         return f"[{self.kind}] {self.name}: {self.detail}"
 
 
+def _register_model_metadata() -> tuple[str, ...]:
+    """Register required models and expose evidence for this attempt only."""
+
+    global REGISTERED_MODEL_MODULES
+    REGISTERED_MODEL_MODULES = ()
+    registered = tuple(register_all_models())
+    REGISTERED_MODEL_MODULES = registered
+    return registered
+
+
 def _column_signature(column_names) -> frozenset[str]:
     return frozenset(str(name) for name in (column_names or []) if name)
 
@@ -139,18 +154,47 @@ def _database_unique_contracts(inspector, table_name: str) -> tuple[set[str], se
 
 
 def _metadata_check_constraints(table) -> set[str]:
-    return {constraint.name for constraint in table.constraints if isinstance(constraint, CheckConstraint) and constraint.name}
+    return {
+        constraint.name
+        for constraint in table.constraints
+        if isinstance(constraint, CheckConstraint) and constraint.name
+    }
 
 
 def metadata_registration_drift() -> list[Drift]:
     metadata_tables = set(Base.metadata.tables)
+    declared = set(DECLARED_MODEL_MODULES)
     registered = set(REGISTERED_MODEL_MODULES)
     drift: list[Drift] = []
-    for module_name, table_name in REPRESENTATIVE_TABLES.items():
-        if module_name not in registered:
+
+    for module_name in sorted(declared - registered):
+        drift.append(Drift(
+            "missing_registered_model_module",
+            module_name,
+            "declared model module was not imported into the runtime metadata contract",
+        ))
+    for module_name in sorted(registered - declared):
+        drift.append(Drift(
+            "unexpected_registered_model_module",
+            module_name,
+            "model module was imported without an active registry declaration",
+        ))
+
+    for module_name in sorted(declared):
+        table_name = REPRESENTATIVE_TABLES.get(module_name)
+        if not table_name:
+            drift.append(Drift(
+                "missing_representative_table_declaration",
+                module_name,
+                "declared model module has no representative table contract",
+            ))
             continue
         if table_name not in metadata_tables:
-            drift.append(Drift("unregistered_model_table", module_name, f"expected representative table {table_name!r} in Base.metadata"))
+            drift.append(Drift(
+                "unregistered_model_table",
+                module_name,
+                f"expected representative table {table_name!r} in Base.metadata",
+            ))
     return drift
 
 
@@ -212,6 +256,7 @@ def _write_report(path: str | None, *, status: str, drift: list[Drift], error: s
     payload = {
         "schema": "nexus.model_migration_drift.v1",
         "status": status,
+        "declared_model_modules": list(DECLARED_MODEL_MODULES),
         "registered_model_modules": list(REGISTERED_MODEL_MODULES),
         "drift_count": len(drift),
         "drift": [asdict(item) for item in drift],
@@ -231,6 +276,19 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     _write_report(args.report_json, status="started", drift=[])
+    try:
+        _register_model_metadata()
+    except Exception as exc:
+        error_type = type(exc).__name__[:80]
+        _write_report(
+            args.report_json,
+            status="model_registry_error",
+            drift=[],
+            error=error_type,
+        )
+        print(f"ERROR: required model registration failed ({error_type})", file=sys.stderr)
+        return 3
+
     try:
         settings = get_settings()
         if not settings.is_postgres:
