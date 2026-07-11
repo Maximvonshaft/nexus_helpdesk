@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..services.permissions import ensure_can_manage_runtime
+from ..services.provider_runtime.traffic_selection import safe_traffic_configuration
 from ..services.provider_runtime_status import get_provider_runtime_status
 from .deps import get_current_user
 
@@ -161,5 +162,9 @@ def update_webchat_runtime_routing(
         "routing_rule": {
             **params,
             "fallback_providers": payload.fallback_providers,
+            "traffic_selection": safe_traffic_configuration(
+                default_canary_percent=payload.canary_percent,
+                default_kill_switch=payload.kill_switch,
+            ),
         },
     }
