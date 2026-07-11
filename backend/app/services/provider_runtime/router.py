@@ -13,6 +13,13 @@ from .health import ProviderRuntimeHealth
 from .output_contracts import OutputContracts
 from .registry import ProviderRegistry
 from .schemas import ProviderRequest, ProviderResult
+from .traffic_selection import (
+    ProviderTrafficPath,
+    ProviderTrafficSelection,
+    effective_canary_percent,
+    effective_kill_switch,
+    select_provider_traffic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +30,16 @@ class ProviderRuntimeRouter:
     def __init__(self, db: Session):
         self.db = db
 
-    def _write_audit(self, request: ProviderRequest, operation: str, status: str, provider: str, elapsed_ms: int, safe_summary: dict | None, error_code: str | None = None):
+    def _write_audit(
+        self,
+        request: ProviderRequest,
+        operation: str,
+        status: str,
+        provider: str,
+        elapsed_ms: int,
+        safe_summary: dict | None,
+        error_code: str | None = None,
+    ):
         try:
             self.db.execute(text("""
                 INSERT INTO provider_runtime_audit_logs
@@ -146,44 +162,116 @@ class ProviderRuntimeRouter:
         )
         fallbacks = [provider for provider in fallbacks if provider in _DIRECT_ENV_PROVIDERS]
 
-        if kill_switch:
-            self._write_audit(request, "generate", "skipped", primary_provider, 0, {"kill_switch": True}, "kill_switch_active")
-            return ProviderResult.unavailable("router", "kill_switch_active", 0)
+        try:
+            traffic = select_provider_traffic(
+                request,
+                canary_percent=canary_percent,
+                kill_switch=kill_switch,
+            )
+        except (TypeError, ValueError):
+            summary = {
+                "traffic_selection": {
+                    "schema_version": "nexus.provider_runtime.traffic_selection.v1",
+                    "configured_mode": "invalid",
+                    "execute_candidate": False,
+                    "authoritative": False,
+                    "reason": "provider_runtime_traffic_mode_invalid",
+                }
+            }
+            self._write_audit(
+                request,
+                "traffic_select",
+                "failed",
+                primary_provider,
+                0,
+                summary,
+                "provider_runtime_traffic_mode_invalid",
+            )
+            return _unavailable_with_traffic(
+                "provider_runtime_traffic_mode_invalid",
+                None,
+                summary=summary,
+            )
+
+        if traffic.path == ProviderTrafficPath.KILL_SWITCH:
+            self._write_audit(
+                request,
+                "traffic_select",
+                "skipped",
+                primary_provider,
+                0,
+                _summary_with_traffic({}, traffic),
+                "kill_switch_active",
+            )
+            return _unavailable_with_traffic("kill_switch_active", traffic)
+
+        if traffic.path == ProviderTrafficPath.CONTROL:
+            self._write_audit(
+                request,
+                "traffic_select",
+                "skipped",
+                primary_provider,
+                0,
+                _summary_with_traffic({}, traffic),
+                "provider_canary_control_path",
+            )
+            return _unavailable_with_traffic("provider_canary_control_path", traffic)
 
         request.output_contract = output_contract
         request.timeout_ms = timeout_ms
         providers_to_try = [primary_provider] + list(fallbacks)
         seen: set[str] = set()
         providers_to_try = [name for name in providers_to_try if name and not (name in seen or seen.add(name))]
+        shadow_only = traffic.path == ProviderTrafficPath.SHADOW_ONLY
+        operation = "shadow_generate" if shadow_only else "generate"
+        last_elapsed_ms = 0
 
         for provider_name in providers_to_try:
             health_decision = ProviderRuntimeHealth.should_skip(provider_name)
             if health_decision.skip:
                 self._write_audit(
                     request,
-                    "generate",
+                    operation,
                     "skipped",
                     provider_name,
                     0,
-                    {"provider_health": health_decision.safe_summary()},
+                    _summary_with_traffic({"provider_health": health_decision.safe_summary()}, traffic),
                     health_decision.reason or "provider_health_skip",
                 )
                 continue
 
             adapter = ProviderRegistry.get(provider_name, self.db)
             if not adapter:
-                self._write_audit(request, "generate", "failed", provider_name, 0, {}, "adapter_not_registered")
+                self._write_audit(
+                    request,
+                    operation,
+                    "failed",
+                    provider_name,
+                    0,
+                    _summary_with_traffic({}, traffic),
+                    "adapter_not_registered",
+                )
                 continue
 
             result = await adapter.generate(self.db, request)
+            last_elapsed_ms = result.elapsed_ms
             if not result.ok:
-                safe_summary = dict(result.raw_payload_safe_summary or {})
-                health_event = ProviderRuntimeHealth.record_failure(provider_name, result.error_code)
-                if health_event:
-                    safe_summary["provider_health"] = health_event
-                    result.raw_payload_safe_summary = safe_summary
-                self._write_audit(request, "generate", "failed", provider_name, result.elapsed_ms, safe_summary, result.error_code)
-                if not result.fallback_allowed:
+                safe_summary = _summary_with_traffic(dict(result.raw_payload_safe_summary or {}), traffic)
+                if not shadow_only:
+                    health_event = ProviderRuntimeHealth.record_failure(provider_name, result.error_code)
+                    if health_event:
+                        safe_summary["provider_health"] = health_event
+                result.raw_payload_safe_summary = safe_summary
+                self._write_audit(
+                    request,
+                    operation,
+                    "failed",
+                    provider_name,
+                    result.elapsed_ms,
+                    safe_summary,
+                    result.error_code,
+                )
+                if not shadow_only and not result.fallback_allowed:
                     return result
                 continue
 
@@ -202,23 +290,78 @@ class ProviderRuntimeRouter:
                         (request.metadata or {}).get("knowledge_context"),
                     )
                 result.structured_output = parsed
-                safe_summary = dict(result.raw_payload_safe_summary or {})
-                health_event = ProviderRuntimeHealth.record_success(provider_name)
-                if health_event:
-                    safe_summary["provider_health"] = health_event
-                    result.raw_payload_safe_summary = safe_summary
-                self._write_audit(request, "generate", "ok", provider_name, result.elapsed_ms, safe_summary)
+                safe_summary = _summary_with_traffic(dict(result.raw_payload_safe_summary or {}), traffic)
+                if not shadow_only:
+                    health_event = ProviderRuntimeHealth.record_success(provider_name)
+                    if health_event:
+                        safe_summary["provider_health"] = health_event
+                result.raw_payload_safe_summary = safe_summary
+                self._write_audit(
+                    request,
+                    operation,
+                    "shadow_ok" if shadow_only else "ok",
+                    provider_name,
+                    result.elapsed_ms,
+                    safe_summary,
+                )
+                if shadow_only:
+                    return _unavailable_with_traffic(
+                        "provider_shadow_completed",
+                        traffic,
+                        elapsed_ms=result.elapsed_ms,
+                        summary={"shadow_provider": provider_name, "shadow_result": "valid"},
+                    )
                 return result
             except Exception as exc:
-                safe_summary = {"parse_error": str(exc)[:500]}
-                health_event = ProviderRuntimeHealth.record_failure(provider_name, "parse_reject")
-                if health_event:
-                    safe_summary["provider_health"] = health_event
-                self._write_audit(request, "parse_reject", "failed", provider_name, result.elapsed_ms, safe_summary, "parse_reject")
+                safe_summary = _summary_with_traffic({"parse_error": str(exc)[:500]}, traffic)
+                if not shadow_only:
+                    health_event = ProviderRuntimeHealth.record_failure(provider_name, "parse_reject")
+                    if health_event:
+                        safe_summary["provider_health"] = health_event
+                self._write_audit(
+                    request,
+                    "shadow_parse_reject" if shadow_only else "parse_reject",
+                    "failed",
+                    provider_name,
+                    result.elapsed_ms,
+                    safe_summary,
+                    "parse_reject",
+                )
                 continue
 
-        self._write_audit(request, "generate", "failed", "router", 0, {}, "all_providers_failed")
-        return ProviderResult.unavailable("router", "all_providers_failed", 0)
+        error_code = "provider_shadow_failed" if shadow_only else "all_providers_failed"
+        self._write_audit(
+            request,
+            operation,
+            "failed",
+            "router",
+            last_elapsed_ms,
+            _summary_with_traffic({}, traffic),
+            error_code,
+        )
+        return _unavailable_with_traffic(error_code, traffic, elapsed_ms=last_elapsed_ms)
+
+
+def _summary_with_traffic(summary: dict | None, traffic: ProviderTrafficSelection) -> dict:
+    safe_summary = dict(summary or {})
+    safe_summary["traffic_selection"] = traffic.safe_summary()
+    return safe_summary
+
+
+def _unavailable_with_traffic(
+    error_code: str,
+    traffic: ProviderTrafficSelection | None,
+    *,
+    elapsed_ms: int = 0,
+    summary: dict | None = None,
+) -> ProviderResult:
+    result = ProviderResult.unavailable("router", error_code, elapsed_ms)
+    safe_summary = dict(summary or {})
+    safe_summary["unavailable"] = True
+    if traffic is not None:
+        safe_summary["traffic_selection"] = traffic.safe_summary()
+    result.raw_payload_safe_summary = safe_summary
+    return result
 
 
 def _apply_env_overrides(
@@ -241,9 +384,8 @@ def _apply_env_overrides(
     if env_contract:
         output_contract = env_contract
     timeout_ms = _int_env("PROVIDER_RUNTIME_TIMEOUT_MS", timeout_ms, minimum=500, maximum=120000)
-    canary_percent = _int_env("PROVIDER_RUNTIME_CANARY_PERCENT", canary_percent, minimum=0, maximum=100)
-    if os.getenv("PROVIDER_RUNTIME_KILL_SWITCH") is not None:
-        kill_switch = _env_bool("PROVIDER_RUNTIME_KILL_SWITCH", kill_switch)
+    canary_percent = effective_canary_percent(canary_percent)
+    kill_switch = effective_kill_switch(kill_switch)
     return primary_provider, fallbacks, output_contract, timeout_ms, kill_switch, canary_percent
 
 
@@ -260,13 +402,6 @@ def _coerce_fallbacks(value) -> list[str]:
         if isinstance(parsed, list):
             return [str(item) for item in parsed if item]
     return []
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
