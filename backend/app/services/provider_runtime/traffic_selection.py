@@ -11,6 +11,9 @@ from .schemas import ProviderRequest
 
 TRAFFIC_SELECTION_SCHEMA = "nexus.provider_runtime.traffic_selection.v1"
 TRAFFIC_MODE_ENV = "PROVIDER_RUNTIME_TRAFFIC_MODE"
+_TRAFFIC_MODE_INVALID = "provider_runtime_traffic_mode_invalid"
+_CANARY_PERCENT_INVALID = "provider_runtime_canary_percent_invalid"
+_KILL_SWITCH_INVALID = "provider_runtime_kill_switch_invalid"
 _VALID_CONFIGURED_MODES = frozenset({"canary", "control", "shadow"})
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
@@ -52,23 +55,23 @@ def configured_traffic_mode(value: str | None = None) -> str:
     raw = value if value is not None else os.getenv(TRAFFIC_MODE_ENV, "canary")
     mode = str(raw or "canary").strip().lower()
     if mode not in _VALID_CONFIGURED_MODES:
-        raise ValueError("provider_runtime_traffic_mode_invalid")
+        raise ValueError(_TRAFFIC_MODE_INVALID)
     return mode
 
 
 def _validated_canary_percent(value: Any) -> int:
     if isinstance(value, bool):
-        raise ValueError("provider_runtime_canary_percent_invalid")
+        raise ValueError(_CANARY_PERCENT_INVALID)
     try:
         percent = int(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError("provider_runtime_canary_percent_invalid") from exc
+        raise ValueError(_CANARY_PERCENT_INVALID) from exc
     if isinstance(value, float) and not value.is_integer():
-        raise ValueError("provider_runtime_canary_percent_invalid")
+        raise ValueError(_CANARY_PERCENT_INVALID)
     if isinstance(value, str) and value.strip() != str(percent):
-        raise ValueError("provider_runtime_canary_percent_invalid")
+        raise ValueError(_CANARY_PERCENT_INVALID)
     if not 0 <= percent <= 100:
-        raise ValueError("provider_runtime_canary_percent_invalid")
+        raise ValueError(_CANARY_PERCENT_INVALID)
     return percent
 
 
@@ -80,13 +83,15 @@ def effective_canary_percent(default: int) -> int:
 def effective_kill_switch(default: bool) -> bool:
     raw = os.getenv("PROVIDER_RUNTIME_KILL_SWITCH")
     if raw is None:
-        return bool(default)
+        if not isinstance(default, bool):
+            raise ValueError(_KILL_SWITCH_INVALID)
+        return default
     normalized = raw.strip().lower()
     if normalized in _TRUE_VALUES:
         return True
     if normalized in _FALSE_VALUES:
         return False
-    raise ValueError("provider_runtime_kill_switch_invalid")
+    raise ValueError(_KILL_SWITCH_INVALID)
 
 
 def safe_traffic_configuration(
@@ -97,19 +102,19 @@ def safe_traffic_configuration(
     errors: list[str] = []
     try:
         mode = configured_traffic_mode()
-    except ValueError as exc:
+    except ValueError:
         mode = "invalid"
-        errors.append(str(exc))
+        errors.append(_TRAFFIC_MODE_INVALID)
     try:
         canary_percent: int | None = effective_canary_percent(default_canary_percent)
-    except ValueError as exc:
+    except ValueError:
         canary_percent = None
-        errors.append(str(exc))
+        errors.append(_CANARY_PERCENT_INVALID)
     try:
         kill_switch: bool | None = effective_kill_switch(default_kill_switch)
-    except ValueError as exc:
+    except ValueError:
         kill_switch = None
-        errors.append(str(exc))
+        errors.append(_KILL_SWITCH_INVALID)
     return {
         "schema_version": TRAFFIC_SELECTION_SCHEMA,
         "configured_mode": mode,
@@ -145,6 +150,8 @@ def select_provider_traffic(
     configured_mode_value: str | None = None,
 ) -> ProviderTrafficSelection:
     percent = _validated_canary_percent(canary_percent)
+    if not isinstance(kill_switch, bool):
+        raise ValueError(_KILL_SWITCH_INVALID)
     mode = configured_traffic_mode(configured_mode_value)
 
     if kill_switch:
