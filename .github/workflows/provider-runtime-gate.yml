@@ -110,7 +110,7 @@ jobs:
             backend/tests/test_speedaf_track_query.py \
             backend/tests/test_speedaf_tracking_fact_source.py
 
-      - name: Capture application route contract
+      - name: Capture application and source router contracts
         env:
           PYTHONPATH: backend
         run: |
@@ -118,14 +118,46 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
+          from app.api.admin_provider_runtime import router as provider_router
           from app.main import app
 
-          routes = [getattr(route, 'path', '') for route in app.routes]
+          snapshot = {
+              'app_paths': [getattr(route, 'path', '') for route in app.routes],
+              'source_paths': [getattr(route, 'path', '') for route in provider_router.routes],
+          }
           Path('/tmp/nexus-provider-routes.json').write_text(
-              json.dumps(routes, ensure_ascii=True),
+              json.dumps(snapshot, ensure_ascii=True),
               encoding='utf-8',
           )
-          print('application_routes_captured=' + str(len(routes)))
+          print('application_routes_captured=' + str(len(snapshot['app_paths'])))
+          print('provider_source_routes_captured=' + str(len(snapshot['source_paths'])))
+          PY
+
+      - name: Provider source status route declared
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
+          assert '/api/admin/provider-runtime/status' in data['source_paths'], data['source_paths']
+          PY
+
+      - name: Any Provider Runtime path mounted
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
+          assert any('provider-runtime' in path for path in data['app_paths'])
+          PY
+
+      - name: Provider status suffix mounted
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
+          assert any(path.endswith('/provider-runtime/status') for path in data['app_paths'])
           PY
 
       - name: Exact Provider status path mounted
@@ -133,8 +165,8 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          routes = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          assert '/api/admin/provider-runtime/status' in routes, [path for path in routes if 'provider' in path.lower()]
+          data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
+          assert '/api/admin/provider-runtime/status' in data['app_paths']
           PY
 
       - name: Public WebChat init path mounted
@@ -142,8 +174,8 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          routes = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          assert '/api/webchat/init' in routes, [path for path in routes if 'webchat' in path.lower() and 'init' in path.lower()]
+          data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
+          assert '/api/webchat/init' in data['app_paths']
           PY
 
       - name: Retired Provider credential paths absent
@@ -151,8 +183,8 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          routes = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          assert not any('provider-credentials/codex' in path for path in routes), [path for path in routes if 'provider-credentials' in path]
+          data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
+          assert not any('provider-credentials/codex' in path for path in data['app_paths'])
           PY
 
       - name: Retired fast reply paths absent
@@ -160,8 +192,8 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          routes = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          assert not any('webchat-fast' in path or 'fast-reply' in path for path in routes), [path for path in routes if 'fast' in path.lower()]
+          data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
+          assert not any('webchat-fast' in path or 'fast-reply' in path for path in data['app_paths'])
           PY
 
       - name: Application route contract passed
