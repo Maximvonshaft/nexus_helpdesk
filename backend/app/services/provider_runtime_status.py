@@ -22,7 +22,11 @@ HUMAN_WEBCALL_ACTIVE_STATUSES = {"accepted", "active"}
 _DEFAULT_GENERATION_MODEL = "nexus-gemma4-e4b:latest"
 
 
-def _provider_capabilities(*, webchat_runtime_reply: bool, handoff_decision: bool = True) -> dict[str, bool]:
+def _provider_capabilities(
+    *,
+    webchat_runtime_reply: bool,
+    handoff_decision: bool = True,
+) -> dict[str, bool]:
     return {
         "webchat_runtime_reply": webchat_runtime_reply,
         "handoff_decision": handoff_decision,
@@ -78,7 +82,9 @@ def _private_ai_runtime_status_from_env() -> dict[str, Any]:
         "on",
     }
     base_url = os.environ.get("PRIVATE_AI_RUNTIME_BASE_URL", "").strip()
-    rag_base_url = (os.environ.get("PRIVATE_AI_RUNTIME_RAG_BASE_URL") or base_url).strip()
+    rag_base_url = (
+        os.environ.get("PRIVATE_AI_RUNTIME_RAG_BASE_URL") or base_url
+    ).strip()
     token_file = os.environ.get("PRIVATE_AI_RUNTIME_TOKEN_FILE", "").strip()
     inline_token = os.environ.get("PRIVATE_AI_RUNTIME_TOKEN", "").strip()
     direct_path = (
@@ -90,7 +96,10 @@ def _private_ai_runtime_status_from_env() -> dict[str, Any]:
         or "/api/chat"
     )
     capabilities_path = (
-        os.environ.get("PRIVATE_AI_RUNTIME_CAPABILITIES_PATH", "/v1/capabilities").strip()
+        os.environ.get(
+            "PRIVATE_AI_RUNTIME_CAPABILITIES_PATH",
+            "/v1/capabilities",
+        ).strip()
         or "/v1/capabilities"
     )
     chat_mode = (
@@ -98,35 +107,49 @@ def _private_ai_runtime_status_from_env() -> dict[str, Any]:
         or "direct"
     )
     request_shape = (
-        os.environ.get("PRIVATE_AI_RUNTIME_REQUEST_SHAPE", "ollama_chat").strip().lower()
+        os.environ.get(
+            "PRIVATE_AI_RUNTIME_REQUEST_SHAPE",
+            "ollama_chat",
+        ).strip().lower()
         or "ollama_chat"
     )
     generation_model = (
-        os.environ.get("PRIVATE_AI_RUNTIME_GENERATION_MODEL", _DEFAULT_GENERATION_MODEL).strip()
+        os.environ.get(
+            "PRIVATE_AI_RUNTIME_GENERATION_MODEL",
+            _DEFAULT_GENERATION_MODEL,
+        ).strip()
         or _DEFAULT_GENERATION_MODEL
     )
-    legacy_direct_model = os.environ.get("PRIVATE_AI_RUNTIME_DIRECT_MODEL", "").strip()
-    legacy_rag_model = os.environ.get("PRIVATE_AI_RUNTIME_RAG_MODEL", "").strip()
+    legacy_direct_model = os.environ.get(
+        "PRIVATE_AI_RUNTIME_DIRECT_MODEL",
+        "",
+    ).strip()
+    legacy_rag_model = os.environ.get(
+        "PRIVATE_AI_RUNTIME_RAG_MODEL",
+        "",
+    ).strip()
     legacy_model_configuration_valid = all(
         not value or value == generation_model
         for value in (legacy_direct_model, legacy_rag_model)
     )
-    app_env = (os.environ.get("APP_ENV") or "development").strip().lower()
-    inline_token_allowed = app_env in {"development", "test", "local"}
     capability_expectation = get_provider_runtime_capability_expectation_status()
     shape_mismatch = _known_endpoint_shape_mismatch(
         direct_path,
         request_shape,
         endpoint_kind="direct",
     ) or (
-        _known_endpoint_shape_mismatch(rag_path, request_shape, endpoint_kind="rag")
+        _known_endpoint_shape_mismatch(
+            rag_path,
+            request_shape,
+            endpoint_kind="rag",
+        )
         if chat_mode in {"rag", "auto"}
         else None
     )
     configured = bool(
         enabled
         and base_url
-        and (token_file or (inline_token and inline_token_allowed))
+        and token_file
         and legacy_model_configuration_valid
         and shape_mismatch is None
         and capability_expectation["status"] == "ready"
@@ -151,17 +174,26 @@ def _private_ai_runtime_status_from_env() -> dict[str, Any]:
         "legacy_model_configuration_valid": legacy_model_configuration_valid,
         "capability_expectation": capability_expectation,
         "timeout_seconds": (
-            os.environ.get("PRIVATE_AI_RUNTIME_TIMEOUT_SECONDS", "8").strip() or "8"
+            os.environ.get("PRIVATE_AI_RUNTIME_TIMEOUT_SECONDS", "8").strip()
+            or "8"
         ),
         "capability_timeout_seconds": (
-            os.environ.get("PRIVATE_AI_RUNTIME_CAPABILITY_TIMEOUT_SECONDS", "2").strip()
+            os.environ.get(
+                "PRIVATE_AI_RUNTIME_CAPABILITY_TIMEOUT_SECONDS",
+                "2",
+            ).strip()
             or "2"
         ),
         "shape_mismatch": shape_mismatch,
     }
 
 
-def _human_webcall_count(db: Session | None, statuses: set[str], *, stale: bool = False) -> int:
+def _human_webcall_count(
+    db: Session | None,
+    statuses: set[str],
+    *,
+    stale: bool = False,
+) -> int:
     if db is None:
         return 0
     query = db.query(WebchatVoiceSession).filter(
@@ -176,7 +208,9 @@ def _human_webcall_count(db: Session | None, statuses: set[str], *, stale: bool 
     return int(query.count())
 
 
-def get_human_webcall_runtime_status(db: Session | None = None) -> dict[str, Any]:
+def get_human_webcall_runtime_status(
+    db: Session | None = None,
+) -> dict[str, Any]:
     warnings: list[str] = []
     try:
         config = load_webchat_voice_runtime_config()
@@ -216,7 +250,9 @@ def get_human_webcall_runtime_status(db: Session | None = None) -> dict[str, Any
         ringing_session_count = 0
         stale_active_session_count = 0
         stale_ringing_session_count = 0
-        warnings.append(f"human_webcall status unavailable: {type(exc).__name__}")
+        warnings.append(
+            f"human_webcall status unavailable: {type(exc).__name__}"
+        )
 
     if not webchat_voice_enabled:
         readiness_verdict = "disabled"
@@ -277,19 +313,27 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
             ),
             diagnostics={
                 "primary_provider": private_ai_runtime["primary_provider"],
-                "base_url_configured": private_ai_runtime["base_url_configured"],
+                "base_url_configured": private_ai_runtime[
+                    "base_url_configured"
+                ],
                 "rag_base_url_configured": private_ai_runtime[
                     "rag_base_url_configured"
                 ],
-                "rag_runtime_isolated": private_ai_runtime["rag_runtime_isolated"],
-                "token_file_configured": private_ai_runtime["token_file_configured"],
+                "rag_runtime_isolated": private_ai_runtime[
+                    "rag_runtime_isolated"
+                ],
+                "token_file_configured": private_ai_runtime[
+                    "token_file_configured"
+                ],
                 "inline_token_configured": private_ai_runtime[
                     "inline_token_configured"
                 ],
                 "chat_mode": private_ai_runtime["chat_mode"],
                 "direct_path": private_ai_runtime["direct_path"],
                 "rag_path": private_ai_runtime["rag_path"],
-                "capabilities_path": private_ai_runtime["capabilities_path"],
+                "capabilities_path": private_ai_runtime[
+                    "capabilities_path"
+                ],
                 "request_shape": private_ai_runtime["request_shape"],
                 "generation_model": private_ai_runtime["generation_model"],
                 "legacy_model_configuration_valid": private_ai_runtime[
@@ -313,24 +357,37 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
     if not private_ai["diagnostics"]["base_url_configured"]:
         warnings.append("private_ai_runtime base URL is missing")
     if private_ai_runtime["primary_provider"] != "private_ai_runtime":
-        warnings.append("provider_runtime primary provider is not private_ai_runtime")
+        warnings.append(
+            "provider_runtime primary provider is not private_ai_runtime"
+        )
     if (
-        not private_ai["diagnostics"]["token_file_configured"]
-        and settings.app_env == "production"
+        private_ai["feature_enabled"]
+        and not private_ai["diagnostics"]["token_file_configured"]
     ):
         warnings.append("private_ai_runtime token file is missing")
-    if (
-        settings.app_env == "production"
-        and private_ai["diagnostics"]["inline_token_configured"]
-    ):
-        warnings.append("private_ai_runtime inline token is forbidden in production")
+    if private_ai["diagnostics"]["inline_token_configured"]:
+        if settings.app_env == "production":
+            warnings.append(
+                "private_ai_runtime inline token is forbidden in production"
+            )
+        elif not private_ai["diagnostics"]["token_file_configured"]:
+            warnings.append(
+                "private_ai_runtime inline token cannot satisfy capability verification"
+            )
     if private_ai_runtime["shape_mismatch"]:
-        warnings.append("private_ai_runtime endpoint and request shape are incompatible")
+        warnings.append(
+            "private_ai_runtime endpoint and request shape are incompatible"
+        )
     if not private_ai_runtime["legacy_model_configuration_valid"]:
-        warnings.append("private_ai_runtime legacy model configuration conflicts with generation model")
+        warnings.append(
+            "private_ai_runtime legacy model configuration conflicts with generation model"
+        )
     capability_expectation = private_ai_runtime["capability_expectation"]
     for reason_code in capability_expectation.get("reason_codes") or []:
-        warnings.append(f"private_ai_runtime capability expectation invalid: {reason_code}")
+        warnings.append(
+            "private_ai_runtime capability expectation invalid: "
+            f"{reason_code}"
+        )
 
     return {
         "ok": not warnings,
@@ -380,6 +437,9 @@ def _known_endpoint_shape_mismatch(
     normalized_path = _safe_path(path).rstrip("/") or "/"
     if normalized_path == "/api/chat" and request_shape != "ollama_chat":
         return "endpoint_request_shape_mismatch"
-    if normalized_path in {"/chat/direct", "/chat/rag"} and request_shape != "question":
+    if (
+        normalized_path in {"/chat/direct", "/chat/rag"}
+        and request_shape != "question"
+    ):
         return "endpoint_request_shape_mismatch"
     return None
