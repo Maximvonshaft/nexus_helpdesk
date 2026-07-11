@@ -1,0 +1,76 @@
+name: external-channel-retirement-gate
+
+# ExternalChannel is retired; this workflow prevents unclassified reintroduction.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'backend/.env.example'
+      - 'backend/alembic/**'
+      - 'backend/app/**'
+      - 'backend/scripts/**'
+      - 'backend/tests/**'
+      - 'config/governance/external-channel-assets.v1.json'
+      - 'deploy/**'
+      - 'docs/**'
+      - 'frontend/**'
+      - 'scripts/**'
+      - 'webapp/src/**'
+      - '*.md'
+      - 'check_bridge.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'backend/.env.example'
+      - 'backend/alembic/**'
+      - 'backend/app/**'
+      - 'backend/scripts/**'
+      - 'backend/tests/**'
+      - 'config/governance/external-channel-assets.v1.json'
+      - 'deploy/**'
+      - 'docs/**'
+      - 'frontend/**'
+      - 'scripts/**'
+      - 'webapp/src/**'
+      - '*.md'
+      - 'check_bridge.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: external-channel-retirement-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  external-channel-retirement-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile checker
+        run: |
+          set -Eeuo pipefail
+          python -m py_compile scripts/ci/check_external_channel_retirement.py
+
+      - name: Run focused retirement tests
+        run: |
+          set -Eeuo pipefail
+          python -m unittest -v scripts.ci.tests.test_check_external_channel_retirement
+
+      - name: Verify tracked repository inventory
+        run: |
+          set -Eeuo pipefail
+          python scripts/ci/check_external_channel_retirement.py \
+            --repo-root . \
+            --manifest config/governance/external-channel-assets.v1.json
