@@ -1,0 +1,41 @@
+{
+  "schema_version": "nexus_container_license_compliance_v1",
+  "entries": [
+    {
+      "package": "psycopg",
+      "version": "3.2.6",
+      "purl": "pkg:pypi/psycopg@3.2.6",
+      "license": "LGPL-3.0-only",
+      "owner": "open-source-compliance",
+      "expires_on": "2026-09-30",
+      "source": "https://github.com/psycopg/psycopg/tree/3.2.6",
+      "notice_path": "THIRD_PARTY_NOTICES.md",
+      "modified": false,
+      "replacement_supported": true,
+      "obligations": [
+        "retain_license_text",
+        "retain_copyright_notice",
+        "provide_upstream_source_reference",
+        "allow_component_replacement"
+      ]
+    },
+    {
+      "package": "psycopg-binary",
+      "version": "3.2.6",
+      "purl": "pkg:pypi/psycopg-binary@3.2.6",
+      "license": "LGPL-3.0-only",
+      "owner": "open-source-compliance",
+      "expires_on": "2026-09-30",
+      "source": "https://github.com/psycopg/psycopg/tree/3.2.6",
+      "notice_path": "THIRD_PARTY_NOTICES.md",
+      "modified": false,
+      "replacement_supported": true,
+      "obligations": [
+        "retain_license_text",
+        "retain_copyright_notice",
+        "provide_upstream_source_reference",
+        "allow_component_replacement"
+      ]
+    }
+  ]
+}
