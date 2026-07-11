@@ -159,7 +159,7 @@ class ProviderRuntimeRouter:
             output_contract = "nexus_webchat_runtime_reply_v1"
             timeout_ms = 10000
             kill_switch = False
-            canary_percent = 100
+            canary_percent = 0
         else:
             primary_provider = rule["primary_provider"]
             fallbacks = _coerce_fallbacks(rule["fallback_providers"])
