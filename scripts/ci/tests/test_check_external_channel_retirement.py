@@ -175,6 +175,22 @@ class ExternalChannelRetirementInventoryTests(unittest.TestCase):
 
         self.assertEqual(discovered, ("camel.ts", "hyphen.md"))
 
+    def test_discovery_covers_marker_in_path_without_marker_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nested = root / "backend" / "app"
+            nested.mkdir(parents=True)
+            marked_path = "backend/app/external_channel_stub.py"
+            (root / marked_path).write_text("pass\n", encoding="utf-8")
+
+            discovered = checker.discover_token_paths(
+                root,
+                (marked_path,),
+                checker.EXPECTED_DISCOVERY_TOKENS,
+            )
+
+        self.assertEqual(discovered, (marked_path,))
+
     def test_uncovered_reference_fails_closed(self) -> None:
         inventory = checker.parse_inventory(
             _payload(_rule(path="backend/app/legacy.py"))
