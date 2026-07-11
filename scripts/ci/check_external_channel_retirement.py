@@ -42,6 +42,7 @@ TOP_LEVEL_FIELDS = frozenset(
 RULE_FIELDS = frozenset(
     {
         "path",
+        "paths",
         "glob",
         "asset_type",
         "disposition",
@@ -185,14 +186,18 @@ def parse_inventory(payload: object) -> Inventory:
     raw_rules = _sequence(root["rules"], "inventory_rules_invalid")
     if not raw_rules or len(raw_rules) > MAX_RULES:
         raise InventoryError("inventory_rule_count_invalid")
-    rules = tuple(
-        _parse_rule(
-            value,
-            production_roots=production_roots,
-            historical_roots=historical_roots,
+    expanded_rules: list[InventoryRule] = []
+    for value in raw_rules:
+        expanded_rules.extend(
+            _parse_rules(
+                value,
+                production_roots=production_roots,
+                historical_roots=historical_roots,
+            )
         )
-        for value in raw_rules
-    )
+    if not expanded_rules or len(expanded_rules) > MAX_RULES:
+        raise InventoryError("inventory_rule_count_invalid")
+    rules = tuple(expanded_rules)
     identities: set[tuple[str, str]] = set()
     for rule in rules:
         if rule.identity in identities:
@@ -217,31 +222,51 @@ def parse_inventory(payload: object) -> Inventory:
     )
 
 
-def _parse_rule(
+def _parse_rules(
     payload: object,
     *,
     production_roots: Sequence[str],
     historical_roots: Sequence[str],
-) -> InventoryRule:
+) -> tuple[InventoryRule, ...]:
     row = _mapping(payload, "inventory_rule_invalid")
     _exact_keys(row, RULE_FIELDS, "inventory_rule_fields_invalid")
 
     raw_path = row["path"]
+    raw_paths = row["paths"]
     raw_glob = row["glob"]
-    if (raw_path is None) == (raw_glob is None):
+    if sum(value is not None for value in (raw_path, raw_paths, raw_glob)) != 1:
         raise InventoryError("inventory_rule_selector_invalid")
 
-    path = (
-        _relative_path(raw_path, "inventory_rule_path_invalid", allow_glob=False)
-        if raw_path is not None
-        else None
-    )
-    glob = (
-        _relative_path(raw_glob, "inventory_rule_glob_invalid", allow_glob=True)
-        if raw_glob is not None
-        else None
-    )
-    if glob is not None:
+    exact_paths: tuple[str, ...] = ()
+    glob: str | None = None
+    if raw_path is not None:
+        exact_paths = (
+            _relative_path(
+                raw_path,
+                "inventory_rule_path_invalid",
+                allow_glob=False,
+            ),
+        )
+    elif raw_paths is not None:
+        path_rows = _sequence(raw_paths, "inventory_rule_paths_invalid")
+        if not path_rows or len(path_rows) > MAX_RULES:
+            raise InventoryError("inventory_rule_paths_invalid")
+        exact_paths = tuple(
+            _relative_path(
+                item,
+                "inventory_rule_path_invalid",
+                allow_glob=False,
+            )
+            for item in path_rows
+        )
+        if len(exact_paths) != len(set(exact_paths)):
+            raise InventoryError("inventory_rule_paths_invalid")
+    else:
+        glob = _relative_path(
+            raw_glob,
+            "inventory_rule_glob_invalid",
+            allow_glob=True,
+        )
         static_prefix = _glob_static_prefix(glob)
         if not static_prefix:
             raise InventoryError("inventory_historical_glob_root_invalid", glob)
@@ -272,30 +297,47 @@ def _parse_rule(
         allow_empty=True,
     )
     if write_surface and (
-        path is None
+        not exact_paths
         or not stop_new_writes_required
         or "caller_migration" not in prerequisites
     ):
         raise InventoryError(
             "inventory_write_surface_control_invalid",
-            path or glob,
+            exact_paths[0] if exact_paths else glob,
         )
     if not write_surface and stop_new_writes_required:
         raise InventoryError(
             "inventory_write_surface_control_invalid",
-            path or glob,
+            exact_paths[0] if exact_paths else glob,
         )
 
-    return InventoryRule(
-        path=path,
-        glob=glob,
-        asset_type=asset_type,
-        disposition=disposition,
-        owner=owner,
-        rationale=rationale,
-        write_surface=write_surface,
-        stop_new_writes_required=stop_new_writes_required,
-        prerequisites=prerequisites,
+    if glob is not None:
+        return (
+            InventoryRule(
+                path=None,
+                glob=glob,
+                asset_type=asset_type,
+                disposition=disposition,
+                owner=owner,
+                rationale=rationale,
+                write_surface=write_surface,
+                stop_new_writes_required=stop_new_writes_required,
+                prerequisites=prerequisites,
+            ),
+        )
+    return tuple(
+        InventoryRule(
+            path=path,
+            glob=None,
+            asset_type=asset_type,
+            disposition=disposition,
+            owner=owner,
+            rationale=rationale,
+            write_surface=write_surface,
+            stop_new_writes_required=stop_new_writes_required,
+            prerequisites=prerequisites,
+        )
+        for path in exact_paths
     )
 
 
