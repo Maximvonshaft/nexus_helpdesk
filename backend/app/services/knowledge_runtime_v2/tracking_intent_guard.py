@@ -103,10 +103,11 @@ def is_live_tracking_intent_guarded(value: str | None) -> bool:
     has_policy = any(term in text for term in _POLICY_TERMS)
     has_current_location = any(pattern.search(text) for pattern in _CURRENT_LOCATION_PATTERNS)
 
-    # Static policy and FAQ guidance takes precedence over generic status
-    # vocabulary. Only concrete parcel evidence or an explicit current-location
-    # question may cross the Knowledge/Tracking Truth Layer boundary.
-    if has_policy and not has_identifier and not has_current_location:
+    # Static policy, format and identifier-recognition guidance takes precedence
+    # over generic tracking vocabulary. An identifier may be an example, so only
+    # explicit status or current-location intent may cross the Knowledge/Tracking
+    # Truth Layer boundary when policy language is present.
+    if has_policy and not has_current_location and (not has_identifier or not has_status):
         return False
 
     live_signal = (
