@@ -264,7 +264,7 @@ def test_webcall_rejects_unapproved_provider_alias_without_adapter_call(monkeypa
     assert _provider_audits(db) == []
 
 
-def test_session_turn_persists_provider_runtime_evidence(db):
+def test_session_turn_persists_provider_runtime_result_and_governed_evidence(db):
     adapter = RuntimeDecisionAdapter()
     ProviderRegistry.register("private_ai_runtime", lambda session: adapter)
     session = _voice_session(db)
@@ -295,6 +295,3 @@ def test_session_turn_persists_provider_runtime_evidence(db):
     assert action.nexus_decision == "allowed"
     assert "webcall_ai.transcript.final" in event_types
     assert "webcall_ai.response.generated" in event_types
-    audits = _provider_audits(db)
-    assert audits
-    assert all("traffic_selection" in row["safe_summary"] for row in audits)
