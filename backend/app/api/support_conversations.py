@@ -36,6 +36,7 @@ class SupportConversationReplyRequest(BaseModel):
     session_key: str = Field(min_length=1, max_length=200)
     body: str = Field(min_length=1, max_length=40000)
     has_fact_evidence: bool = False
+    evidence_reference_id: int | None = Field(default=None, ge=1)
     confirm_review: bool = False
 
 
@@ -457,6 +458,7 @@ def reply_support_conversation(
             current_user,
             body=payload.body,
             has_fact_evidence=payload.has_fact_evidence,
+            evidence_reference_id=payload.evidence_reference_id,
             confirm_review=payload.confirm_review,
             conversation_public_id=conversation.public_id,
         )
