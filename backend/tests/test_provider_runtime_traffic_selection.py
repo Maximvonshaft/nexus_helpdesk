@@ -143,11 +143,32 @@ def test_invalid_canary_override_fails_closed(monkeypatch, value):
         effective_canary_percent(25)
 
 
+@pytest.mark.parametrize("value", [-1, 101, 1.5, "01", " 1 "])
+def test_invalid_database_or_direct_canary_value_fails_closed(monkeypatch, value):
+    monkeypatch.delenv("PROVIDER_RUNTIME_CANARY_PERCENT", raising=False)
+    with pytest.raises(ValueError, match="provider_runtime_canary_percent_invalid"):
+        effective_canary_percent(value)
+    with pytest.raises(ValueError, match="provider_runtime_canary_percent_invalid"):
+        select_provider_traffic(
+            _request(),
+            canary_percent=value,
+            kill_switch=False,
+            configured_mode_value="canary",
+        )
+
+
 @pytest.mark.parametrize("value", ["maybe", "enabled", "2", ""])
 def test_invalid_kill_switch_override_fails_closed(monkeypatch, value):
     monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", value)
     with pytest.raises(ValueError, match="provider_runtime_kill_switch_invalid"):
         effective_kill_switch(False)
+
+
+def test_safe_configuration_reports_invalid_database_default(monkeypatch):
+    monkeypatch.delenv("PROVIDER_RUNTIME_CANARY_PERCENT", raising=False)
+    summary = safe_traffic_configuration(default_canary_percent=101, default_kill_switch=False)
+    assert summary["canary_percent"] is None
+    assert summary["configuration_errors"] == ["provider_runtime_canary_percent_invalid"]
 
 
 def test_safe_configuration_reports_all_malformed_overrides(monkeypatch):
