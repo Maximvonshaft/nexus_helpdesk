@@ -248,6 +248,7 @@ def _safe_escalation_payload(result: EscalationOrchestrationResult) -> dict[str,
         "escalation_action": _status_value(result.escalation.action),
         "queue_key": result.human_availability.queue_key,
         "queue_resolution": result.queue_resolution.as_safe_dict() if result.queue_resolution else None,
+        "operations_routing": result.operations_routing.as_safe_dict() if result.operations_routing else None,
     }
 
 
