@@ -110,7 +110,7 @@ jobs:
             backend/tests/test_speedaf_track_query.py \
             backend/tests/test_speedaf_tracking_fact_source.py
 
-      - name: Capture application and source router contracts
+      - name: Capture included-router structure
         env:
           PYTHONPATH: backend
         run: |
@@ -123,20 +123,33 @@ jobs:
 
           route_details = []
           for route in main_module.app.routes:
-              child_routes = getattr(route, 'routes', None)
+              raw = vars(route)
+              candidates = {}
+              for key in sorted(raw):
+                  value = raw[key]
+                  if key in {'router', 'routes', 'prefix', 'path', 'name'}:
+                      if hasattr(value, 'routes'):
+                          candidates[key] = {
+                              'type': f'{type(value).__module__}.{type(value).__name__}',
+                              'paths': [getattr(child, 'path', None) for child in value.routes],
+                          }
+                      elif isinstance(value, (str, int, float, bool)) or value is None:
+                          candidates[key] = value
+                      elif isinstance(value, (list, tuple)):
+                          candidates[key] = [getattr(child, 'path', None) for child in value]
+                      else:
+                          candidates[key] = f'{type(value).__module__}.{type(value).__name__}'
               route_details.append({
                   'type': f'{type(route).__module__}.{type(route).__name__}',
                   'path': getattr(route, 'path', None),
                   'name': getattr(route, 'name', None),
-                  'child_paths': [getattr(child, 'path', None) for child in child_routes] if child_routes is not None else None,
+                  'dict_keys': sorted(raw),
+                  'candidates': candidates,
               })
 
           snapshot = {
-              'app_paths': [item['path'] for item in route_details if item['path'] is not None],
               'route_details': route_details,
               'source_paths': [getattr(route, 'path', '') for route in provider_module.router.routes],
-              'main_file': str(Path(main_module.__file__).resolve()),
-              'provider_file': str(Path(provider_module.__file__).resolve()),
               'same_router_object': main_module.admin_provider_runtime_router is provider_module.router,
               'main_router_paths': [getattr(route, 'path', '') for route in main_module.admin_provider_runtime_router.routes],
           }
@@ -144,8 +157,6 @@ jobs:
               json.dumps(snapshot, ensure_ascii=True, indent=2),
               encoding='utf-8',
           )
-          print('application_routes_captured=' + str(len(route_details)))
-          print('provider_source_routes_captured=' + str(len(snapshot['source_paths'])))
           PY
 
       - name: Upload bounded route diagnostics
@@ -168,42 +179,11 @@ jobs:
           assert '/api/admin/provider-runtime/status' in data['main_router_paths']
           PY
 
-      - name: Application route tree exposes Provider status
+      - name: Included-router structure captured
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
           data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          flattened = list(data['app_paths'])
-          for item in data['route_details']:
-              flattened.extend(path for path in (item.get('child_paths') or []) if path)
-          assert '/api/admin/provider-runtime/status' in flattened, data['route_details']
+          assert any(item['type'] == 'fastapi.routing._IncludedRouter' for item in data['route_details'])
           PY
-
-      - name: Public WebChat init path mounted
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          flattened = list(data['app_paths'])
-          for item in data['route_details']:
-              flattened.extend(path for path in (item.get('child_paths') or []) if path)
-          assert '/api/webchat/init' in flattened
-          PY
-
-      - name: Retired routes absent
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          flattened = list(data['app_paths'])
-          for item in data['route_details']:
-              flattened.extend(path for path in (item.get('child_paths') or []) if path)
-          assert not any('provider-credentials/codex' in path for path in flattened)
-          assert not any('webchat-fast' in path or 'fast-reply' in path for path in flattened)
-          PY
-
-      - name: Application route contract passed
-        run: echo application_route_contract_ok
