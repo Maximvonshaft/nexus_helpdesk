@@ -431,11 +431,33 @@ def _is_forbidden_key(value: str) -> bool:
         return True
 
     tokens = _key_tokens(value)
-    if tokens & {"email", "phone", "address", "credential", "credentials"}:
+    if tokens & {
+        "email",
+        "phone",
+        "address",
+        "credential",
+        "credentials",
+        "secret",
+        "password",
+        "authorization",
+    }:
+        return True
+    if "contact" in tokens and not {"policy", "summary"} <= tokens:
         return True
     if {"api", "key"} <= tokens:
         return True
-    if "token" in tokens and tokens & {"access", "refresh", "credential", "auth"}:
+    if "token" in tokens and tokens & {
+        "access",
+        "refresh",
+        "credential",
+        "auth",
+        "authorization",
+        "bearer",
+        "session",
+        "identity",
+        "secret",
+        "value",
+    }:
         return True
     if "provider" in tokens and tokens & {"payload", "request", "response"}:
         return True
