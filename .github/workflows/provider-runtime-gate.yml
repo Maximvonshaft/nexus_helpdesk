@@ -129,12 +129,18 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          from app.api.admin_provider_runtime import router as provider_router
-          from app.main import app
+          from app.api import admin_provider_runtime as provider_module
+          from app import main as main_module
 
           snapshot = {
-              'app_paths': [getattr(route, 'path', '') for route in app.routes],
-              'source_paths': [getattr(route, 'path', '') for route in provider_router.routes],
+              'app_paths': [getattr(route, 'path', '') for route in main_module.app.routes],
+              'source_paths': [getattr(route, 'path', '') for route in provider_module.router.routes],
+              'main_file': str(Path(main_module.__file__).resolve()),
+              'provider_file': str(Path(provider_module.__file__).resolve()),
+              'expected_main_file': str(Path('backend/app/main.py').resolve()),
+              'expected_provider_file': str(Path('backend/app/api/admin_provider_runtime.py').resolve()),
+              'same_router_object': main_module.admin_provider_runtime_router is provider_module.router,
+              'main_router_paths': [getattr(route, 'path', '') for route in main_module.admin_provider_runtime_router.routes],
           }
           Path('/tmp/nexus-provider-routes.json').write_text(
               json.dumps(snapshot, ensure_ascii=True),
@@ -144,13 +150,33 @@ jobs:
           print('provider_source_routes_captured=' + str(len(snapshot['source_paths'])))
           PY
 
+      - name: Checkout application modules loaded
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
+          assert data['main_file'] == data['expected_main_file']
+          assert data['provider_file'] == data['expected_provider_file']
+          PY
+
+      - name: Main uses exact Provider router object
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
+          assert data['same_router_object'] is True
+          assert '/api/admin/provider-runtime/status' in data['main_router_paths']
+          PY
+
       - name: Provider source status route declared
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
           data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          assert '/api/admin/provider-runtime/status' in data['source_paths'], data['source_paths']
+          assert '/api/admin/provider-runtime/status' in data['source_paths']
           PY
 
       - name: Any Provider Runtime path mounted
@@ -160,15 +186,6 @@ jobs:
           from pathlib import Path
           data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
           assert any('provider-runtime' in path for path in data['app_paths'])
-          PY
-
-      - name: Provider status suffix mounted
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          data = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          assert any(path.endswith('/provider-runtime/status') for path in data['app_paths'])
           PY
 
       - name: Exact Provider status path mounted
