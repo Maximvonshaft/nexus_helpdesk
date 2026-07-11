@@ -1,0 +1,83 @@
+{
+  "schema": "nexus.osr.agent_coordination.snapshot.v1",
+  "now": "2026-07-10T12:30:00Z",
+  "repository": "Maximvonshaft/nexus_helpdesk",
+  "pull_request": {
+    "number": 101,
+    "state": "open",
+    "draft": true,
+    "body": "Closes #10\n\n- Agent Run ID: `run-target`\n\n## Coordination manifest\n```json\n{\"schema\":\"nexus.osr.coordination.manifest.v1\",\"work_item\":10,\"agent_run_id\":\"run-target\",\"dependency\":{\"mode\":\"independent\",\"stack_parent_pr\":null},\"write_paths\":[\"scripts/ci/**\"],\"contracts\":[\"agent-coordination-v1\"],\"database\":[],\"migrations\":[],\"generated_files\":[],\"workflows\":[]}\n```",
+    "head_sha": "head-target",
+    "head_ref": "agent/target",
+    "base_ref": "main",
+    "created_at": "2026-07-10T12:10:00Z",
+    "changed_files": ["scripts/ci/agent_coordination_gate.py"]
+  },
+  "work_item": {
+    "number": 10,
+    "state": "open",
+    "labels": ["osr-work-order"],
+    "body": "## Control\n- Parent Epic: #1\n- Lifecycle: In Review\n- Owner: @owner\n- Current PR: #101\n- Blocked by: none\n- Supersedes: none",
+    "comments": [
+      {
+        "body": "## AGENT_CLAIM\n- Run ID: `run-target`\n- Work Item: #10\n- Lease: 120 minutes from this comment timestamp",
+        "created_at": "2026-07-10T12:00:00Z"
+      },
+      {
+        "body": "## AGENT_HEARTBEAT\n- Run ID: `run-target`\n- Lease renewed: 120 minutes from this comment timestamp",
+        "created_at": "2026-07-10T12:20:00Z"
+      }
+    ]
+  },
+  "open_work_items": [
+    {
+      "number": 10,
+      "state": "open",
+      "labels": ["osr-work-order"],
+      "body": "## Control\n- Parent Epic: #1\n- Lifecycle: In Review\n- Owner: @owner\n- Current PR: #101\n- Blocked by: none\n- Supersedes: none",
+      "comments": []
+    },
+    {
+      "number": 20,
+      "state": "open",
+      "labels": ["osr-work-order"],
+      "body": "## Control\n- Parent Epic: #1\n- Lifecycle: In Review\n- Owner: @owner\n- Current PR: #202\n- Blocked by: none\n- Supersedes: none",
+      "comments": []
+    }
+  ],
+  "open_pull_requests": [
+    {
+      "number": 101,
+      "state": "open",
+      "draft": true,
+      "body": "Closes #10\n\n- Agent Run ID: `run-target`\n\n## Coordination manifest\n```json\n{\"schema\":\"nexus.osr.coordination.manifest.v1\",\"work_item\":10,\"agent_run_id\":\"run-target\",\"dependency\":{\"mode\":\"independent\",\"stack_parent_pr\":null},\"write_paths\":[\"scripts/ci/**\"],\"contracts\":[\"agent-coordination-v1\"],\"database\":[],\"migrations\":[],\"generated_files\":[],\"workflows\":[]}\n```",
+      "head_sha": "head-target",
+      "head_ref": "agent/target",
+      "base_ref": "main",
+      "created_at": "2026-07-10T12:10:00Z",
+      "changed_files": ["scripts/ci/agent_coordination_gate.py"]
+    },
+    {
+      "number": 202,
+      "state": "open",
+      "draft": true,
+      "body": "Closes #20\n\n- Agent Run ID: `run-other`\n\n## Coordination manifest\n```json\n{\"schema\":\"nexus.osr.coordination.manifest.v1\",\"work_item\":20,\"agent_run_id\":\"run-other\",\"dependency\":{\"mode\":\"independent\",\"stack_parent_pr\":null},\"write_paths\":[\"backend/other/**\"],\"contracts\":[\"other-contract\"],\"database\":[],\"migrations\":[],\"generated_files\":[],\"workflows\":[]}\n```",
+      "head_sha": "head-other",
+      "head_ref": "agent/parent",
+      "base_ref": "main",
+      "created_at": "2026-07-10T11:00:00Z",
+      "changed_files": ["backend/other/service.py"]
+    },
+    {
+      "number": 303,
+      "state": "open",
+      "draft": true,
+      "body": "Historical draft without a current Work Item authority",
+      "head_sha": "head-history",
+      "head_ref": "history/old",
+      "base_ref": "main",
+      "created_at": "2026-07-01T11:00:00Z",
+      "changed_files": ["scripts/ci/agent_coordination_gate.py"]
+    }
+  ]
+}
