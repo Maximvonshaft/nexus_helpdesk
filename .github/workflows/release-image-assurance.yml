@@ -7,6 +7,7 @@ on:
     paths:
       - "Dockerfile"
       - ".dockerignore"
+      - "THIRD_PARTY_NOTICES.md"
       - "backend/**"
       - "webapp/**"
       - "scripts/**"
@@ -28,12 +29,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      CANDIDATE_IMAGE: nexus-candidate:${{ github.sha }}
+      CANDIDATE_IMAGE: nexus-candidate:${{ github.event.pull_request.head.sha || github.sha }}
       ARTIFACT_DIR: artifacts/release-image
+      EXACT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Checkout immutable
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -50,11 +53,20 @@ jobs:
           python -m py_compile \
             scripts/security/release_image_assurance.py \
             scripts/security/sanitize_image_sbom.py \
+            scripts/security/finalize_image_sbom.py \
+            scripts/security/extract_installed_license_evidence.py \
+            scripts/security/verify_license_compliance.py \
+            scripts/security/bind_release_image_compliance.py \
+            scripts/security/validate_release_image_evidence.py \
             scripts/security/tests/test_release_image_assurance.py \
-            scripts/security/tests/test_sanitize_image_sbom.py
+            scripts/security/tests/test_sanitize_image_sbom.py \
+            scripts/security/tests/test_finalize_image_sbom.py \
+            scripts/security/tests/test_verify_license_compliance.py
           python -m unittest \
             scripts/security/tests/test_release_image_assurance.py \
-            scripts/security/tests/test_sanitize_image_sbom.py
+            scripts/security/tests/test_sanitize_image_sbom.py \
+            scripts/security/tests/test_finalize_image_sbom.py \
+            scripts/security/tests/test_verify_license_compliance.py
 
       - name: Build local candidate image only
         run: |
@@ -63,11 +75,11 @@ jobs:
           mkdir -p "${ARTIFACT_DIR}"
           docker build \
             --progress=plain \
-            --build-arg GIT_SHA="${GITHUB_SHA}" \
+            --build-arg GIT_SHA="${EXACT_SOURCE_SHA}" \
             --build-arg BUILD_TIME="1970-01-01T00:00:00Z" \
             --build-arg IMAGE_TAG="${CANDIDATE_IMAGE}" \
             --build-arg APP_VERSION="candidate" \
-            --build-arg FRONTEND_BUILD_SHA="${GITHUB_SHA}" \
+            --build-arg FRONTEND_BUILD_SHA="${EXACT_SOURCE_SHA}" \
             --tag "${CANDIDATE_IMAGE}" \
             --file Dockerfile . 2>&1 | tee "${ARTIFACT_DIR}/candidate-build.full.log"
           build_code=${PIPESTATUS[0]}
@@ -78,8 +90,7 @@ jobs:
             image_id="$(docker image inspect "${CANDIDATE_IMAGE}" --format '{{.Id}}')"
             test -n "${image_id}"
             printf '%s\n' "${image_id}" > "${ARTIFACT_DIR}/image-id.txt"
-            printf '%s\n' "${GITHUB_SHA}" > "${ARTIFACT_DIR}/source-sha.txt"
-            test "$(docker image inspect "${CANDIDATE_IMAGE}" --format '{{index .Config.Env 0}}' | sed -n '1p')" != ""
+            printf '%s\n' "${EXACT_SOURCE_SHA}" > "${ARTIFACT_DIR}/source-sha.txt"
           fi
           exit "${build_code}"
 
@@ -103,17 +114,21 @@ jobs:
           upload-artifact: false
 
       - name: Produce minimal PII-free application SBOM
-        id: sanitize_sbom
         shell: bash
         run: |
           set +e
           python scripts/security/sanitize_image_sbom.py \
             --input "${ARTIFACT_DIR}/image.raw.cdx.json" \
             --overrides config/security/container-license-metadata-overrides.json \
+            --output "${ARTIFACT_DIR}/image.preliminary.cdx.json"
+          preliminary_code=$?
+          python scripts/security/finalize_image_sbom.py \
+            --input "${ARTIFACT_DIR}/image.preliminary.cdx.json" \
+            --overrides config/security/container-license-metadata-overrides.json \
             --output "${ARTIFACT_DIR}/image.safe.cdx.json"
-          code=$?
-          printf '%s\n' "${code}" > "${ARTIFACT_DIR}/sbom-sanitization-exit-code"
-          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          final_code=$?
+          printf '%s\n' "${preliminary_code}" > "${ARTIFACT_DIR}/sbom-preliminary-exit-code"
+          printf '%s\n' "${final_code}" > "${ARTIFACT_DIR}/sbom-sanitization-exit-code"
           python - <<'PY'
           import hashlib, json
           from pathlib import Path
@@ -130,6 +145,19 @@ jobs:
               encoding='utf-8',
           )
           PY
+          exit 0
+
+      - name: Extract installed LGPL license evidence from candidate
+        shell: bash
+        run: |
+          set +e
+          docker run --rm --entrypoint python "${CANDIDATE_IMAGE}" \
+            /app/scripts/security/extract_installed_license_evidence.py \
+            --package psycopg \
+            --package psycopg-binary \
+            > "${ARTIFACT_DIR}/installed-license-evidence.json"
+          code=$?
+          printf '%s\n' "${code}" > "${ARTIFACT_DIR}/installed-license-evidence-exit-code"
           exit 0
 
       - name: Evaluate vulnerability and license policy
@@ -151,7 +179,7 @@ jobs:
           license_code=$?
           image_id="$(cat "${ARTIFACT_DIR}/image-id.txt")"
           python scripts/security/release_image_assurance.py manifest \
-            --source-sha "${GITHUB_SHA}" \
+            --source-sha "${EXACT_SOURCE_SHA}" \
             --image-id "${image_id}" \
             --sbom "${ARTIFACT_DIR}/image.safe.cdx.json" \
             --vulnerabilities "${ARTIFACT_DIR}/vulnerability-summary.json" \
@@ -166,15 +194,48 @@ jobs:
           echo "manifest_exit=${manifest_code}" >> "$GITHUB_OUTPUT"
           exit 0
 
+      - name: Verify exact LGPL compliance and bind candidate identity
+        id: compliance
+        shell: bash
+        run: |
+          set +e
+          python scripts/security/verify_license_compliance.py \
+            --compliance config/security/container-license-compliance.json \
+            --policy config/security/container-license-policy.json \
+            --sbom "${ARTIFACT_DIR}/image.safe.cdx.json" \
+            --installed "${ARTIFACT_DIR}/installed-license-evidence.json" \
+            --notice THIRD_PARTY_NOTICES.md \
+            --output "${ARTIFACT_DIR}/license-compliance-evidence.json" \
+            --today 2026-07-11
+          compliance_code=$?
+          image_id="$(cat "${ARTIFACT_DIR}/image-id.txt")"
+          python scripts/security/bind_release_image_compliance.py \
+            --source-sha "${EXACT_SOURCE_SHA}" \
+            --image-id "${image_id}" \
+            --manifest "${ARTIFACT_DIR}/release-image-manifest.json" \
+            --compliance "${ARTIFACT_DIR}/license-compliance-evidence.json" \
+            --installed "${ARTIFACT_DIR}/installed-license-evidence.json" \
+            --output "${ARTIFACT_DIR}/release-image-compliance-binding.json"
+          binding_code=$?
+          printf '%s\n' "${compliance_code}" > "${ARTIFACT_DIR}/license-compliance-exit-code"
+          printf '%s\n' "${binding_code}" > "${ARTIFACT_DIR}/compliance-binding-exit-code"
+          echo "compliance_exit=${compliance_code}" >> "$GITHUB_OUTPUT"
+          echo "binding_exit=${binding_code}" >> "$GITHUB_OUTPUT"
+          exit 0
+
       - name: Remove raw third-party metadata before evidence upload
         if: always()
         run: |
           set -Eeuo pipefail
-          rm -f "${ARTIFACT_DIR}/trivy.raw.json" "${ARTIFACT_DIR}/image.raw.cdx.json"
+          rm -f \
+            "${ARTIFACT_DIR}/trivy.raw.json" \
+            "${ARTIFACT_DIR}/image.raw.cdx.json" \
+            "${ARTIFACT_DIR}/image.preliminary.cdx.json" \
+            "${ARTIFACT_DIR}/image.preliminary.cdx.json.summary.json"
           test ! -e "${ARTIFACT_DIR}/trivy.raw.json"
           test ! -e "${ARTIFACT_DIR}/image.raw.cdx.json"
 
-      - name: Scan bounded evidence for secrets and customer PII
+      - name: Scan bounded free-text evidence
         id: artifact_scan
         shell: bash
         run: |
@@ -183,22 +244,35 @@ jobs:
             --root . \
             --output "${ARTIFACT_DIR}/artifact-scan.json" \
             "${ARTIFACT_DIR}/candidate-build-summary.txt" \
-            "${ARTIFACT_DIR}/image.safe.cdx.json" \
-            "${ARTIFACT_DIR}/image.safe.cdx.json.summary.json" \
-            "${ARTIFACT_DIR}/raw-evidence-digests.json" \
-            "${ARTIFACT_DIR}/vulnerability-summary.json" \
-            "${ARTIFACT_DIR}/license-summary.json" \
-            "${ARTIFACT_DIR}/release-image-manifest.json"
+            THIRD_PARTY_NOTICES.md
           code=$?
           printf '%s\n' "${code}" > "${ARTIFACT_DIR}/artifact-scan-exit-code"
           echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Attest bounded release-image manifest
-        if: github.event_name == 'workflow_dispatch' && steps.sanitize_sbom.outputs.exit_code == '0' && steps.policy.outputs.manifest_exit == '0' && steps.artifact_scan.outputs.exit_code == '0'
+      - name: Validate structured evidence schemas
+        id: structured_scan
+        shell: bash
+        run: |
+          set +e
+          python scripts/security/validate_release_image_evidence.py \
+            --sbom "${ARTIFACT_DIR}/image.safe.cdx.json" \
+            --sbom-summary "${ARTIFACT_DIR}/image.safe.cdx.json.summary.json" \
+            --raw-digests "${ARTIFACT_DIR}/raw-evidence-digests.json" \
+            --vulnerabilities "${ARTIFACT_DIR}/vulnerability-summary.json" \
+            --licenses "${ARTIFACT_DIR}/license-summary.json" \
+            --manifest "${ARTIFACT_DIR}/release-image-manifest.json" \
+            --output "${ARTIFACT_DIR}/structured-evidence-scan.json"
+          code=$?
+          printf '%s\n' "${code}" > "${ARTIFACT_DIR}/structured-evidence-scan-exit-code"
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Attest bounded release-image compliance binding
+        if: github.event_name == 'workflow_dispatch' && steps.policy.outputs.manifest_exit == '0' && steps.compliance.outputs.compliance_exit == '0' && steps.compliance.outputs.binding_exit == '0' && steps.artifact_scan.outputs.exit_code == '0' && steps.structured_scan.outputs.exit_code == '0'
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
-          subject-path: artifacts/release-image/release-image-manifest.json
+          subject-path: artifacts/release-image/release-image-compliance-binding.json
 
       - name: Upload bounded release-image evidence
         if: always()
@@ -215,10 +289,16 @@ jobs:
           set -Eeuo pipefail
           test "$(cat "${ARTIFACT_DIR}/build-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/sbom-sanitization-exit-code")" = "0"
+          test "$(cat "${ARTIFACT_DIR}/installed-license-evidence-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/vulnerability-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/license-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/manifest-exit-code")" = "0"
+          test "$(cat "${ARTIFACT_DIR}/license-compliance-exit-code")" = "0"
+          test "$(cat "${ARTIFACT_DIR}/compliance-binding-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/artifact-scan-exit-code")" = "0"
+          test "$(cat "${ARTIFACT_DIR}/structured-evidence-scan-exit-code")" = "0"
           test "$(jq -r '.status' "${ARTIFACT_DIR}/release-image-manifest.json")" = "pass"
-          test "$(jq -r '.image_pushed' "${ARTIFACT_DIR}/release-image-manifest.json")" = "false"
-          test "$(jq -r '.deployment_performed' "${ARTIFACT_DIR}/release-image-manifest.json")" = "false"
+          test "$(jq -r '.status' "${ARTIFACT_DIR}/license-compliance-evidence.json")" = "pass"
+          test "$(jq -r '.status' "${ARTIFACT_DIR}/release-image-compliance-binding.json")" = "pass"
+          test "$(jq -r '.image_pushed' "${ARTIFACT_DIR}/release-image-compliance-binding.json")" = "false"
+          test "$(jq -r '.deployment_performed' "${ARTIFACT_DIR}/release-image-compliance-binding.json")" = "false"
