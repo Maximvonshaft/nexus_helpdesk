@@ -1,0 +1,206 @@
+name: osr-recovery-qualification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/qualification/recovery/**"
+      - "docs/ops/nexus-osr-recovery-qualification.md"
+      - ".github/workflows/osr-recovery-qualification.yml"
+      - "backend/alembic/**"
+      - "backend/app/model_registry.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-backup-restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nexus
+          POSTGRES_PASSWORD: nexus
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nexus -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PYTHONPATH: backend
+      APP_ENV: test
+      AUTO_INIT_DB: "false"
+      SEED_DEMO_DATA: "false"
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: nexus
+      PGPASSWORD: nexus
+      SOURCE_DATABASE_URL: postgresql+psycopg://nexus:nexus@127.0.0.1:5432/nexus_source
+      RESTORE_DATABASE_URL: postgresql+psycopg://nexus:nexus@127.0.0.1:5432/nexus_restore
+      QUALIFICATION_MARKER: QUAL-RCV-001
+      RTO_TARGET_SECONDS: "120"
+      RPO_TARGET_SECONDS: "60"
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Python immutable
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install qualification dependencies
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r backend/requirements.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client
+          psql --version
+          pg_dump --version
+          pg_restore --version
+
+      - name: Compile and test bounded evidence builder
+        run: |
+          set -Eeuo pipefail
+          python -m py_compile \
+            scripts/qualification/recovery/build_recovery_evidence.py \
+            scripts/qualification/recovery/test_build_recovery_evidence.py
+          python -m unittest scripts/qualification/recovery/test_build_recovery_evidence.py
+
+      - name: Create isolated source and restore databases
+        run: |
+          set -Eeuo pipefail
+          psql -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DROP DATABASE IF EXISTS nexus_source;
+          DROP DATABASE IF EXISTS nexus_restore;
+          CREATE DATABASE nexus_source;
+          CREATE DATABASE nexus_restore;
+          SQL
+
+      - name: Upgrade source database and seed synthetic referential marker
+        env:
+          DATABASE_URL: ${{ env.SOURCE_DATABASE_URL }}
+        run: |
+          set -Eeuo pipefail
+          cd backend
+          alembic upgrade head
+          cd ..
+          psql -d nexus_source -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO markets (code, name, country_code, is_active, created_at, updated_at)
+          VALUES ('QUAL-RCV-001', 'Synthetic Recovery Qualification', 'ZZ', TRUE, clock_timestamp(), clock_timestamp());
+          INSERT INTO teams (name, team_type, market_id, is_active, created_at, updated_at)
+          SELECT 'Synthetic Recovery Team', 'qualification', id, TRUE, clock_timestamp(), clock_timestamp()
+          FROM markets WHERE code = 'QUAL-RCV-001';
+          SQL
+          psql -d nexus_source -Atc "SELECT clock_timestamp()" > marker-committed-at.txt
+
+      - name: Snapshot source schema and counts
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts/recovery
+          python scripts/qualification/recovery/build_recovery_evidence.py snapshot \
+            --database-url "${SOURCE_DATABASE_URL}" \
+            --marker-code "${QUALIFICATION_MARKER}" \
+            --output artifacts/recovery/source-snapshot.json
+
+      - name: Create exact custom-format backup
+        run: |
+          set -Eeuo pipefail
+          pg_dump \
+            --dbname="postgresql://nexus:nexus@127.0.0.1:5432/nexus_source" \
+            --format=custom \
+            --compress=9 \
+            --no-owner \
+            --no-privileges \
+            --file=qualification.backup
+          date -u +%Y-%m-%dT%H:%M:%S.%NZ > backup-completed-at.txt
+          python scripts/qualification/recovery/build_recovery_evidence.py digest \
+            --file qualification.backup > backup-sha256.txt
+          test -s qualification.backup
+          grep -Eq '^sha256:[0-9a-f]{64}$' backup-sha256.txt
+
+      - name: Restore into a fresh database
+        run: |
+          set -Eeuo pipefail
+          psql -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DROP DATABASE IF EXISTS nexus_restore;
+          CREATE DATABASE nexus_restore;
+          SQL
+          date -u +%Y-%m-%dT%H:%M:%S.%NZ > restore-started-at.txt
+          pg_restore \
+            --dbname="postgresql://nexus:nexus@127.0.0.1:5432/nexus_restore" \
+            --exit-on-error \
+            --no-owner \
+            --no-privileges \
+            qualification.backup
+          date -u +%Y-%m-%dT%H:%M:%S.%NZ > restore-completed-at.txt
+
+      - name: Snapshot restored schema and compare exact evidence
+        run: |
+          set -Eeuo pipefail
+          python scripts/qualification/recovery/build_recovery_evidence.py snapshot \
+            --database-url "${RESTORE_DATABASE_URL}" \
+            --marker-code "${QUALIFICATION_MARKER}" \
+            --output artifacts/recovery/restored-snapshot.json
+          python scripts/qualification/recovery/build_recovery_evidence.py compare \
+            --source artifacts/recovery/source-snapshot.json \
+            --restored artifacts/recovery/restored-snapshot.json \
+            --output artifacts/recovery/recovery-evidence.json \
+            --source-sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --backup-sha256 "$(cat backup-sha256.txt)" \
+            --marker-committed-at "$(cat marker-committed-at.txt)" \
+            --backup-completed-at "$(cat backup-completed-at.txt)" \
+            --restore-started-at "$(cat restore-started-at.txt)" \
+            --restore-completed-at "$(cat restore-completed-at.txt)" \
+            --rto-target-seconds "${RTO_TARGET_SECONDS}" \
+            --rpo-target-seconds "${RPO_TARGET_SECONDS}"
+          test "$(jq -r '.status' artifacts/recovery/recovery-evidence.json)" = "pass"
+          test "$(jq -r '.production_data_used' artifacts/recovery/recovery-evidence.json)" = "false"
+          test "$(jq -r '.production_mutation_performed' artifacts/recovery/recovery-evidence.json)" = "false"
+
+      - name: Scan bounded evidence for prohibited material
+        run: |
+          set -Eeuo pipefail
+          python scripts/security/scan_artifacts.py \
+            --root . \
+            --output artifacts/recovery/artifact-scan.json \
+            artifacts/recovery/source-snapshot.json \
+            artifacts/recovery/restored-snapshot.json \
+            artifacts/recovery/recovery-evidence.json
+          test "$(jq -r '.status' artifacts/recovery/artifact-scan.json)" = "pass"
+
+      - name: Remove backup bytes before artifact upload
+        if: always()
+        run: |
+          rm -f qualification.backup
+          test ! -e qualification.backup
+
+      - name: Upload bounded qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: osr-recovery-qualification
+          path: artifacts/recovery
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Check exact-head whitespace
+        if: github.event_name == 'pull_request'
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
