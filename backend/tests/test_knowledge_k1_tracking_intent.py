@@ -49,6 +49,7 @@ def test_static_tracking_policy_questions_remain_eligible_for_knowledge(query):
         "¿Dónde está mi paquete?",
         "Gdje je moj paket?",
         "What is the policy status for parcel CH120000005451?",
+        "Is parcel CH120000005451 currently delivered?",
     ],
 )
 def test_identifier_or_explicit_current_location_routes_to_tracking_truth(query):
@@ -64,6 +65,9 @@ def test_identifier_or_explicit_current_location_routes_to_tracking_truth(query)
         "Example waybill number",
         "Is CH120000005451 a valid tracking number format?",
         "CH120000005451 运单号格式对吗？",
+        "Is CH120000005451 a known tracking number format?",
+        "Is CH120000005451 an unknown waybill format?",
+        "Is CH120000005451 a snow-season tracking format example?",
     ],
 )
 def test_format_guidance_and_identifier_only_do_not_trigger_live_tracking(query):
