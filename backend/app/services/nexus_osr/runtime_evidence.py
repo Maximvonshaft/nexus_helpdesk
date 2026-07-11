@@ -713,7 +713,7 @@ def finalize_runtime_evidence(
     candidate = dict(snapshot) if isinstance(snapshot, Mapping) else unavailable_snapshot("payload_invalid")
     try:
         encoded = json.dumps(candidate, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
-    except (TypeError, ValueError, OverflowError):
+    except (TypeError, ValueError, OverflowError, RecursionError):
         candidate = unavailable_snapshot("payload_invalid")
         encoded = json.dumps(candidate, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
     if not valid_limit or len(encoded) > limit:

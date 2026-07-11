@@ -540,3 +540,22 @@ def test_cli_oversize_snapshot_artifact_metrics_stdout_and_exit_fail_closed(tmp_
     metric_text = metrics.read_text(encoding="utf-8")
     assert 'nexus_osr_runtime_evidence_state{state="unavailable"} 1' in metric_text
     assert 'nexus_osr_runtime_evidence_state{state="ready"} 1' not in metric_text
+
+
+def test_deep_snapshot_finalization_returns_bounded_unavailable_evidence() -> None:
+    nested: list[object] = []
+    current = nested
+    for _ in range(20_000):
+        child: list[object] = []
+        current.append(child)
+        current = child
+
+    final_snapshot, artifact_bytes = finalize_runtime_evidence(
+        {"state": "ready", "deep": nested}
+    )
+
+    assert len(artifact_bytes) <= MAX_ARTIFACT_BYTES
+    assert json.loads(artifact_bytes) == final_snapshot
+    assert final_snapshot["state"] == "unavailable"
+    assert final_snapshot["reason_codes"] == ["payload_invalid"]
+    assert 'nexus_osr_runtime_evidence_state{state="unavailable"} 1' in render_prometheus_metrics(final_snapshot)

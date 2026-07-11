@@ -31,7 +31,10 @@ def _load_json(path: Path) -> Any:
     if path.stat().st_size > MAX_INPUT_BYTES:
         raise ValueError("input_too_large")
     with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+        try:
+            return json.load(handle)
+        except RecursionError as exc:
+            raise ValueError("input_too_deep") from exc
 
 
 def _parse_now(value: str | None) -> datetime | None:

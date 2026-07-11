@@ -187,3 +187,77 @@ def test_cli_artifact_metrics_stdout_and_exit_share_invalid_probe_snapshot(tmp_p
     assert summary["artifact_bytes"] == len(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8"))
     assert 'nexus_osr_runtime_evidence_state{state="not_ready"} 1' in metric_text
     assert 'nexus_osr_runtime_evidence_state{state="ready"} 1' not in metric_text
+
+
+@pytest.mark.parametrize(
+    ("argument", "filename"),
+    [
+        ("--config", "config.json"),
+        ("--expected-identity", "expected.json"),
+        ("--observed-identity", "observed.json"),
+        ("--samples", "samples.json"),
+        ("--probe-fixtures", "probes.json"),
+    ],
+)
+def test_cli_deep_json_inputs_write_consistent_fail_closed_evidence(
+    tmp_path: Path,
+    argument: str,
+    filename: str,
+) -> None:
+    valid_files = {
+        "config.json": {"failure_budgets": [], "probes": []},
+        "expected.json": {},
+        "observed.json": {},
+        "samples.json": {},
+        "probes.json": [],
+    }
+    for name, payload in valid_files.items():
+        (tmp_path / name).write_text(json.dumps(payload), encoding="utf-8")
+    (tmp_path / filename).write_text("[" * 20_000 + "0" + "]" * 20_000, encoding="utf-8")
+
+    artifact = tmp_path / "artifact.json"
+    metrics = tmp_path / "metrics.prom"
+    command = [
+        sys.executable,
+        str(CLI),
+        "--config",
+        str(tmp_path / "config.json"),
+        "--expected-identity",
+        str(tmp_path / "expected.json"),
+        "--observed-identity",
+        str(tmp_path / "observed.json"),
+        "--samples",
+        str(tmp_path / "samples.json"),
+        "--probe-fixtures",
+        str(tmp_path / "probes.json"),
+        "--tenant",
+        "tenant-a",
+        "--artifact",
+        str(artifact),
+        "--metrics",
+        str(metrics),
+    ]
+    assert argument in command
+
+    completed = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "Traceback" not in completed.stderr
+    snapshot = json.loads(artifact.read_text(encoding="utf-8"))
+    summary = json.loads(completed.stdout)
+    metric_text = metrics.read_text(encoding="utf-8")
+    assert snapshot["state"] == "unavailable"
+    assert snapshot["reason_codes"] == ["payload_invalid"]
+    assert summary["state"] == snapshot["state"]
+    assert summary["reason_codes"] == snapshot["reason_codes"]
+    assert summary["artifact_bytes"] == len(
+        json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    assert 'nexus_osr_runtime_evidence_state{state="unavailable"} 1' in metric_text
+    assert 'nexus_osr_runtime_evidence_state{state="ready"} 1' not in metric_text
