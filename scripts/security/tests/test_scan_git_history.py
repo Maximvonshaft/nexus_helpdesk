@@ -125,6 +125,50 @@ class GitHistorySecretAssuranceTests(unittest.TestCase):
         self.assertEqual(report["findings_truncated"], False)
         self.assertLess(report["scanned_blob_count"], report["reachable_object_count"])
 
+    def test_same_finding_in_changed_blob_is_deduplicated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _init_repo(root)
+            path = root / "runtime.py"
+            path.write_text(
+                "TOKEN = " + json.dumps(_github_token()) + "\n",
+                encoding="utf-8",
+            )
+            _commit_all(root, "add token")
+            path.write_text(
+                "TOKEN = " + json.dumps(_github_token()) + "\n# unrelated\n",
+                encoding="utf-8",
+            )
+            _commit_all(root, "change unrelated content")
+
+            report = history.scan_repository_history(
+                root,
+                allowlist_path=root / "missing-allowlist.json",
+            )
+
+        self.assertEqual(report["finding_count"], 1)
+        self.assertEqual(len(report["findings"]), 1)
+
+    def test_history_counts_findings_beyond_stored_record_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _init_repo(root)
+            token = json.dumps(_github_token())
+            (root / "many.py").write_text(
+                "".join(f"TOKEN_{index} = {token}\n" for index in range(205)),
+                encoding="utf-8",
+            )
+            _commit_all(root, "add many findings")
+
+            report = history.scan_repository_history(
+                root,
+                allowlist_path=root / "missing-allowlist.json",
+            )
+
+        self.assertEqual(report["finding_count"], 205)
+        self.assertEqual(len(report["findings"]), history.MAX_STORED_FINDINGS)
+        self.assertTrue(report["findings_truncated"])
+
     def test_unknown_oversized_blob_makes_scan_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
