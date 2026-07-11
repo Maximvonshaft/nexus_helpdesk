@@ -57,7 +57,7 @@ class ProviderTrafficSelection:
 def configured_traffic_mode(value: str | None = None) -> str:
     if value is None:
         configured = os.getenv(TRAFFIC_MODE_ENV)
-        raw = "canary" if configured is None else configured
+        raw = "control" if configured is None else configured
     else:
         raw = value
     mode = str(raw).strip().lower()
@@ -112,7 +112,7 @@ def _append_unique(errors: list[str], error_code: str) -> None:
 
 def safe_traffic_configuration(
     *,
-    default_canary_percent: int = 100,
+    default_canary_percent: int = 0,
     default_kill_switch: bool = False,
 ) -> dict[str, Any]:
     errors: list[str] = []
