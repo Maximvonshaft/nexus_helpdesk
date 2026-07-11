@@ -134,8 +134,7 @@ jobs:
           print('application_routes_captured=' + str(len(routes)))
           PY
 
-      - name: Diagnostic - Provider endpoint name mounted
-        continue-on-error: true
+      - name: Provider endpoint name mounted
         run: |
           python - <<'PY'
           import json
@@ -144,8 +143,7 @@ jobs:
           assert any(item['name'] == 'provider_runtime_status' for item in routes)
           PY
 
-      - name: Diagnostic - Exact Provider status path mounted
-        continue-on-error: true
+      - name: Exact Provider status path mounted
         run: |
           python - <<'PY'
           import json
@@ -154,8 +152,7 @@ jobs:
           assert any(item['path'] == '/api/admin/provider-runtime/status' for item in routes)
           PY
 
-      - name: Diagnostic - Public WebChat init path mounted
-        continue-on-error: true
+      - name: Public WebChat init path mounted
         run: |
           python - <<'PY'
           import json
@@ -164,8 +161,7 @@ jobs:
           assert any(item['path'] == '/api/webchat/init' for item in routes)
           PY
 
-      - name: Diagnostic - Retired Provider credential paths absent
-        continue-on-error: true
+      - name: Retired Provider credential paths absent
         run: |
           python - <<'PY'
           import json
@@ -174,8 +170,7 @@ jobs:
           assert not any('provider-credentials/codex' in item['path'] for item in routes)
           PY
 
-      - name: Diagnostic - Retired fast reply paths absent
-        continue-on-error: true
+      - name: Retired fast reply paths absent
         run: |
           python - <<'PY'
           import json
@@ -184,29 +179,5 @@ jobs:
           assert not any('webchat-fast' in item['path'] or 'fast-reply' in item['path'] for item in routes)
           PY
 
-      - name: Application route contract
-        run: |
-          set -Eeuo pipefail
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          routes = json.loads(Path('/tmp/nexus-provider-routes.json').read_text(encoding='utf-8'))
-          paths = [item['path'] for item in routes]
-          expected = {
-              '/api/admin/provider-runtime/status',
-              '/api/webchat/init',
-          }
-          missing = sorted(expected.difference(paths))
-          retired = [
-              path
-              for path in paths
-              if 'provider-credentials/codex' in path
-              or 'webchat-fast' in path
-              or 'fast-reply' in path
-          ]
-          if missing or retired:
-              print('missing_expected_routes=' + repr(missing))
-              print('retired_routes_present=' + repr(retired))
-              raise SystemExit(1)
-          print('application_route_contract_ok')
-          PY
+      - name: Application route contract passed
+        run: echo application_route_contract_ok
