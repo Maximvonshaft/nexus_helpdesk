@@ -10,6 +10,14 @@ from app.api.admin_provider_runtime import (
 )
 
 
+def _db_with_routing_rows(rows):
+    db = Mock()
+    result = Mock()
+    result.mappings.return_value.all.return_value = list(rows)
+    db.execute.return_value = result
+    return db
+
+
 def test_admin_provider_runtime_routing_api_inserts_safe_default(monkeypatch):
     monkeypatch.setattr("app.api.admin_provider_runtime.ensure_can_manage_runtime", lambda current_user, db: None)
     db = Mock()
@@ -47,7 +55,7 @@ def test_admin_provider_runtime_status_exposes_effective_traffic_authority(monke
     monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "25")
     monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "false")
 
-    response = provider_runtime_status(db=Mock(), current_user=Mock())
+    response = provider_runtime_status(db=_db_with_routing_rows([]), current_user=Mock())
 
     assert response["ok"] is True
     traffic = response["traffic_selection"]
@@ -57,6 +65,7 @@ def test_admin_provider_runtime_status_exposes_effective_traffic_authority(monke
     assert traffic["kill_switch"] is False
     assert traffic["bucket_contract"] == "sha256(tenant,channel,session,scenario)%100"
     assert traffic["scope"] == "global_defaults_and_environment_overrides"
+    assert traffic["webchat_runtime_rules"] == []
 
 
 def test_admin_provider_runtime_status_reports_effective_database_rules(monkeypatch):
@@ -65,9 +74,7 @@ def test_admin_provider_runtime_status_reports_effective_database_rules(monkeypa
         "app.api.admin_provider_runtime.get_provider_runtime_status",
         lambda db: {"ok": True, "status": "ready"},
     )
-    db = Mock()
-    result = Mock()
-    result.mappings.return_value.all.return_value = [
+    db = _db_with_routing_rows([
         {
             "tenant_id": "tenant-a",
             "channel_key": "website",
@@ -77,8 +84,7 @@ def test_admin_provider_runtime_status_reports_effective_database_rules(monkeypa
             "enabled": True,
             "updated_at": datetime(2026, 7, 11, tzinfo=timezone.utc),
         }
-    ]
-    db.execute.return_value = result
+    ])
 
     response = provider_runtime_status(db=db, current_user=Mock())
 
@@ -99,7 +105,7 @@ def test_admin_provider_runtime_status_fails_closed_on_invalid_traffic_mode(monk
     )
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "invalid")
 
-    response = provider_runtime_status(db=Mock(), current_user=Mock())
+    response = provider_runtime_status(db=_db_with_routing_rows([]), current_user=Mock())
 
     assert response["ok"] is False
     assert response["status"] == "misconfigured"
