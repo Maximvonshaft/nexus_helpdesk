@@ -1,0 +1,48 @@
+name: connector-apply-release-readiness
+
+on:
+  push:
+    branches:
+      - audit/p1-release-readiness-549-20260711
+    paths:
+      - ".github/scripts/connector_apply_release_readiness.py"
+      - ".github/workflows/connector-apply-release-readiness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: audit/p1-release-readiness-549-20260711
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Apply exact integration
+        run: |
+          set -Eeuo pipefail
+          python .github/scripts/connector_apply_release_readiness.py
+          python -m py_compile \
+            backend/app/settings.py \
+            backend/app/main.py \
+            backend/app/api/osr_readiness.py \
+            backend/app/services/nexus_osr/release_profiles.py \
+            backend/app/services/nexus_osr/business_readiness_service.py \
+            backend/tests/test_nexus_osr_release_profiles.py \
+            backend/tests/test_nexus_osr_business_readiness.py
+          grep -q 'app.include_router(osr_readiness_router)' backend/app/main.py
+          grep -q 'readiness_migration_identity_failed' backend/app/main.py
+          git diff --check
+      - name: Commit integration
+        run: |
+          set -Eeuo pipefail
+          git config user.name "nexus-readiness-automation"
+          git config user.email "nexus-readiness-automation@users.noreply.github.com"
+          git add backend/app/settings.py backend/app/main.py
+          git commit -m "fix(readiness): enforce release and migration identity"
+          git push origin HEAD:audit/p1-release-readiness-549-20260711
