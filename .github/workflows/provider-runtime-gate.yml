@@ -93,12 +93,12 @@ jobs:
           cd backend
           python -m alembic upgrade head
 
-      - name: Provider Runtime targeted tests
+      - name: Execute Provider Runtime targeted tests
         env:
           PYTHONPATH: backend
         run: |
-          set -Eeuo pipefail
-          timeout 600 python -m pytest -q \
+          set +e
+          timeout 600 python -m pytest -q --tb=short --disable-warnings \
             backend/tests/test_provider_runtime_output_contracts.py \
             backend/tests/test_provider_runtime_private_ai_runtime_adapter.py \
             backend/tests/test_provider_runtime_router.py \
@@ -113,7 +113,32 @@ jobs:
             backend/tests/test_speedaf_client_contract.py \
             backend/tests/test_speedaf_status_map.py \
             backend/tests/test_speedaf_track_query.py \
-            backend/tests/test_speedaf_tracking_fact_source.py
+            backend/tests/test_speedaf_tracking_fact_source.py \
+            > /tmp/provider-runtime-targeted.log 2>&1
+          status=$?
+          set -e
+          printf '%s' "$status" > /tmp/provider-runtime-targeted-status
+          tail -n 200 /tmp/provider-runtime-targeted.log || true
+          exit 0
+
+      - name: Upload Provider Runtime targeted evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-runtime-targeted-evidence
+          path: |
+            /tmp/provider-runtime-targeted.log
+            /tmp/provider-runtime-targeted-status
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Require Provider Runtime targeted tests success
+        run: |
+          status=$(cat /tmp/provider-runtime-targeted-status)
+          if [ "$status" -ne 0 ]; then
+            echo "Provider Runtime targeted tests failed with exit code $status" >&2
+            exit "$status"
+          fi
 
       - name: Application route contract
         env:
