@@ -4,7 +4,10 @@ on:
   pull_request:
     paths:
       - "backend/app/services/nexus_osr/runtime_evidence.py"
+      - "backend/app/services/nexus_osr/runtime_evidence_transport.py"
       - "backend/tests/test_nexus_osr_runtime_evidence.py"
+      - "backend/tests/test_nexus_osr_runtime_evidence_probe_json.py"
+      - "backend/tests/test_nexus_osr_runtime_evidence_transport_status.py"
       - "backend/tests/fixtures/nexus_osr_runtime_evidence/**"
       - "backend/scripts/probe_nexus_osr_runtime_evidence.py"
       - "config/observability/nexus_osr_runtime_evidence.json"
@@ -30,13 +33,21 @@ jobs:
       - name: Install focused test dependency
         run: python -m pip install --disable-pip-version-check pytest
       - name: Compile runtime evidence code
-        run: python -m compileall backend/app/services/nexus_osr/runtime_evidence.py backend/scripts/probe_nexus_osr_runtime_evidence.py
+        run: |
+          python -m compileall \
+            backend/app/services/nexus_osr/runtime_evidence.py \
+            backend/app/services/nexus_osr/runtime_evidence_transport.py \
+            backend/scripts/probe_nexus_osr_runtime_evidence.py
       - name: Validate configuration and alert syntax
         run: |
           python -m json.tool config/observability/nexus_osr_runtime_evidence.json >/dev/null
           python -m json.tool deploy/observability/nexus-osr-runtime-alerts.yml >/dev/null
-      - name: Run focused contract, failure-injection and cardinality tests
-        run: PYTHONPATH=backend python -m pytest -q backend/tests/test_nexus_osr_runtime_evidence.py
+      - name: Run focused contract, transport, failure-injection and cardinality tests
+        run: |
+          PYTHONPATH=backend python -m pytest -q \
+            backend/tests/test_nexus_osr_runtime_evidence.py \
+            backend/tests/test_nexus_osr_runtime_evidence_probe_json.py \
+            backend/tests/test_nexus_osr_runtime_evidence_transport_status.py
       - name: Produce deterministic bounded synthetic evidence
         run: |
           mkdir -p artifacts
