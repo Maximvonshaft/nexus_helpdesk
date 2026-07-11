@@ -281,8 +281,6 @@ class Settings:
             raise RuntimeError("WEBCHAT_TRACKING_FACT_REDACTION_ENABLED must be true when tracking lookup is enabled")
         if self.nexus_osr_release_profile not in {"development", "shadow", "pilot", "full_osr"}:
             raise RuntimeError("NEXUS_OSR_RELEASE_PROFILE must be development, shadow, pilot, or full_osr")
-        if not self.nexus_osr_required_workers:
-            raise RuntimeError("NEXUS_OSR_REQUIRED_WORKERS must declare at least one worker")
         if self.worker_heartbeat_interval_seconds < 5 or self.worker_heartbeat_interval_seconds > 300:
             raise RuntimeError("WORKER_HEARTBEAT_INTERVAL_SECONDS must be between 5 and 300")
         if self.nexus_osr_worker_stale_seconds < 10 or self.nexus_osr_worker_stale_seconds > 3600:
