@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import PurePosixPath
 from xml.etree import ElementTree
+from xml.parsers import expat
 
 from fastapi import HTTPException
 
@@ -114,12 +115,44 @@ def archive_limits_for_upload(max_upload_bytes: int) -> KnowledgeArchiveLimits:
     )
 
 
+class _UnsafeXMLDeclaration(Exception):
+    """Internal signal raised by Expat declaration callbacks."""
+
+
+def _reject_unsafe_xml_declarations(xml_bytes: bytes) -> None:
+    """Reject DTD/entity features across the complete bounded XML byte stream.
+
+    Expat performs encoding-aware tokenization for UTF-8/UTF-16 and invokes the
+    declaration callbacks regardless of declaration offset. It builds no
+    application tree here; ElementTree remains the extraction parser after this
+    fail-closed preflight.
+    """
+
+    parser = expat.ParserCreate()
+
+    def reject(*_args) -> None:  # noqa: ANN002
+        raise _UnsafeXMLDeclaration
+
+    parser.StartDoctypeDeclHandler = reject
+    parser.EntityDeclHandler = reject
+    parser.UnparsedEntityDeclHandler = reject
+    parser.NotationDeclHandler = reject
+    parser.ExternalEntityRefHandler = reject
+    try:
+        parser.Parse(xml_bytes, True)
+    except _UnsafeXMLDeclaration as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Knowledge XML declarations are not supported",
+        ) from exc
+    except (expat.ExpatError, ValueError, OverflowError, RecursionError) as exc:
+        raise HTTPException(status_code=400, detail="Knowledge XML member is invalid") from exc
+
+
 def parse_bounded_xml(xml_bytes: bytes, *, limits: KnowledgeArchiveLimits):  # noqa: ANN201
     if len(xml_bytes) > limits.max_xml_bytes:
         raise HTTPException(status_code=400, detail="Knowledge XML member exceeds the parsing budget")
-    upper_prefix = xml_bytes[:4096].upper()
-    if b"<!DOCTYPE" in upper_prefix or b"<!ENTITY" in upper_prefix:
-        raise HTTPException(status_code=400, detail="Knowledge XML declarations are not supported")
+    _reject_unsafe_xml_declarations(xml_bytes)
     try:
         root = ElementTree.fromstring(xml_bytes)
     except (ElementTree.ParseError, RecursionError) as exc:
