@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Index, Integer, String, Text, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -67,3 +67,45 @@ class OperatorTask(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
     resolved_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime, nullable=True)
+
+
+class OperatorQueueScopeGrant(Base):
+    """Exact server-owned visibility scope for the live unified queue.
+
+    This table is authorization policy only. It intentionally stores no queue
+    item, customer payload or mutable workflow state.
+    """
+
+    __tablename__ = "operator_queue_scope_grants"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "tenant_key",
+            "country_code",
+            "channel_key",
+            name="uq_operator_queue_scope_grant",
+        ),
+        Index("ix_operator_queue_scope_grants_user_enabled", "user_id", "enabled"),
+        Index(
+            "ix_operator_queue_scope_grants_scope",
+            "tenant_key",
+            "country_code",
+            "channel_key",
+            "enabled",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    tenant_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    country_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    channel_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    granted_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime,
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )

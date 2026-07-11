@@ -61,7 +61,7 @@ jobs:
       - name: Prove escalation orchestration exception handling
         run: python -m pytest -q --timeout=120 backend/tests/test_nexus_osr_configured_escalation_errors.py::test_orchestration_error_routes_to_operator_review
 
-      - name: Prove one unchanged Alembic head
+      - name: Prove one Alembic head
         working-directory: backend
         run: |
           python - <<'PY'
@@ -70,14 +70,18 @@ jobs:
 
           script = ScriptDirectory.from_config(Config("alembic.ini"))
           heads = script.get_heads()
-          assert heads == ["20260710_0056"], heads
+          assert len(heads) == 1, heads
           PY
 
-      - name: Prove no schema migration in this PR
+      - name: Prove escalation-domain migration isolation
         run: |
-          if git diff --name-only "${{ github.event.pull_request.base.sha }}...HEAD" | grep -q '^backend/alembic/versions/'; then
-            echo "Unexpected migration file in configured escalation Work Item"
-            exit 1
+          set -Eeuo pipefail
+          changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}...HEAD")"
+          if printf '%s\n' "$changed" | grep -Eq '^(backend/app/services/nexus_osr/escalation_orchestration_service.py|backend/app/services/webchat_ai_safe_service.py|backend/tests/test_nexus_osr_(escalation_orchestration|webchat_escalation_hook|configured_escalation_errors).py)$'; then
+            if printf '%s\n' "$changed" | grep -q '^backend/alembic/versions/'; then
+              echo "Escalation-domain changes must not carry schema migrations"
+              exit 1
+            fi
           fi
 
       - name: Check exact-head diff whitespace

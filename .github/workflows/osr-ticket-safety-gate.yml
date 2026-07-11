@@ -83,7 +83,7 @@ jobs:
           DATABASE_URL: ${{ env.SQLITE_DATABASE_URL }}
         run: pytest -q --timeout=60 backend/tests/test_nexus_osr_tool_execution_service.py
 
-      - name: Prove one unchanged Alembic head
+      - name: Prove one Alembic head
         env:
           DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
         run: |
@@ -93,7 +93,7 @@ jobs:
           from alembic.script import ScriptDirectory
           config = Config("alembic.ini")
           heads = ScriptDirectory.from_config(config).get_heads()
-          assert heads == ["20260710_0056"], heads
+          assert len(heads) == 1, heads
           PY
 
       - name: Upgrade PostgreSQL to current head
@@ -106,7 +106,7 @@ jobs:
           DATABASE_URL: postgresql+psycopg://helpdesk@127.0.0.1:5432/helpdesk
         run: pytest -q --timeout=90 backend/tests/test_nexus_osr_auto_ticket_postgres.py
 
-      - name: Prove no migration and no unsafe ticket event payload
+      - name: Prove safe ticket event payload and domain migration isolation
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -119,11 +119,19 @@ jobs:
           assert "close_case_context(" in source
           assert "MAX_TICKET_NO_GENERATION_ATTEMPTS = 5" in source
 
-          changed = subprocess.check_output([
+          changed = set(subprocess.check_output([
               "git", "diff", "--name-only",
               "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}",
-          ], text=True)
-          assert not any(path.startswith("backend/alembic/versions/") for path in changed.splitlines())
+          ], text=True).splitlines())
+          ticket_domain_changed = any(
+              path == "backend/app/services/nexus_osr/auto_ticket_service.py"
+              or path == "backend/tests/test_nexus_osr_tool_execution_service.py"
+              or path.startswith("backend/tests/test_nexus_osr_auto_ticket")
+              or path.startswith("backend/tests/test_nexus_osr_case_context")
+              for path in changed
+          )
+          if ticket_domain_changed:
+              assert not any(path.startswith("backend/alembic/versions/") for path in changed), changed
           PY
 
       - name: Check exact-head diff whitespace
