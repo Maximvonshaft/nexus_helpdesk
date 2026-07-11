@@ -1,0 +1,38 @@
+{
+  "schema": "nexus.ai_runtime.capabilities.v1",
+  "runtime": {
+    "id": "nexus-private-ai-runtime",
+    "version": "2026.07.12.1"
+  },
+  "readiness": {
+    "state": "ready",
+    "reason_codes": []
+  },
+  "generation": {
+    "model": "nexus-gemma4-e4b:latest",
+    "structured_output": true,
+    "api_path": "/api/chat",
+    "request_contract": "ollama.chat.v1",
+    "response_contract": "nexus_webchat_runtime_reply_v1"
+  },
+  "retrieval": {
+    "enabled": true,
+    "backend": "qdrant",
+    "embedding_model": "qwen3-embedding",
+    "embedding_dimension": 1024,
+    "reranker_enabled": true,
+    "reranker_model": "qwen3-reranker",
+    "collection_alias": "nexus-knowledge-active"
+  },
+  "voice": {
+    "stt": {
+      "enabled": true,
+      "model": "faster-whisper-large-v3"
+    },
+    "tts": {
+      "enabled": true,
+      "model": "kokoro"
+    },
+    "live_voice": true
+  }
+}
