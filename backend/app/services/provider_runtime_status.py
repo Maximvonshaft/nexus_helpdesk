@@ -11,6 +11,7 @@ from ..utils.time import utc_now
 from ..voice_models import WebchatVoiceSession
 from ..webchat_voice_config import load_webchat_voice_runtime_config
 from .provider_runtime_capability_status import (
+    get_local_generation_configuration_status,
     get_provider_runtime_capability_expectation_status,
 )
 from .webcall_ai.demo_lab import get_demo_lab_status
@@ -133,6 +134,14 @@ def _private_ai_runtime_status_from_env() -> dict[str, Any]:
         for value in (legacy_direct_model, legacy_rag_model)
     )
     capability_expectation = get_provider_runtime_capability_expectation_status()
+    local_generation_configuration = get_local_generation_configuration_status(
+        generation_model=generation_model,
+        direct_path=direct_path,
+        rag_path=rag_path,
+        chat_mode=chat_mode,
+        request_shape=request_shape,
+        capability_expectation=capability_expectation,
+    )
     shape_mismatch = _known_endpoint_shape_mismatch(
         direct_path,
         request_shape,
@@ -153,6 +162,7 @@ def _private_ai_runtime_status_from_env() -> dict[str, Any]:
         and legacy_model_configuration_valid
         and shape_mismatch is None
         and capability_expectation["status"] == "ready"
+        and local_generation_configuration["status"] == "ready"
     )
     return {
         "primary_provider": primary_provider,
@@ -173,6 +183,7 @@ def _private_ai_runtime_status_from_env() -> dict[str, Any]:
         "generation_model": generation_model,
         "legacy_model_configuration_valid": legacy_model_configuration_valid,
         "capability_expectation": capability_expectation,
+        "local_generation_configuration": local_generation_configuration,
         "timeout_seconds": (
             os.environ.get("PRIVATE_AI_RUNTIME_TIMEOUT_SECONDS", "8").strip()
             or "8"
@@ -342,6 +353,9 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
                 "capability_expectation": private_ai_runtime[
                     "capability_expectation"
                 ],
+                "local_generation_configuration": private_ai_runtime[
+                    "local_generation_configuration"
+                ],
                 "timeout_seconds": private_ai_runtime["timeout_seconds"],
                 "capability_timeout_seconds": private_ai_runtime[
                     "capability_timeout_seconds"
@@ -388,6 +402,15 @@ def get_provider_runtime_status(db: Session | None = None) -> dict[str, Any]:
             "private_ai_runtime capability expectation invalid: "
             f"{reason_code}"
         )
+    local_generation_configuration = private_ai_runtime[
+        "local_generation_configuration"
+    ]
+    for reason_code in local_generation_configuration.get("reason_codes") or []:
+        if reason_code not in (capability_expectation.get("reason_codes") or []):
+            warnings.append(
+                "private_ai_runtime local generation configuration invalid: "
+                f"{reason_code}"
+            )
 
     return {
         "ok": not warnings,
