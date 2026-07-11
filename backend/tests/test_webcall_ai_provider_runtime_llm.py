@@ -58,10 +58,63 @@ class RuntimeDecisionAdapter(ProviderAdapter):
         )
 
 
+def _drop_provider_runtime_tables() -> None:
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS provider_runtime_audit_logs"))
+        conn.execute(text("DROP TABLE IF EXISTS provider_routing_rules"))
+
+
+def _create_provider_runtime_tables() -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE provider_routing_rules (
+                    id VARCHAR(36) PRIMARY KEY,
+                    tenant_id VARCHAR(36) NOT NULL,
+                    channel_key VARCHAR(100) NOT NULL,
+                    scenario VARCHAR(100) NOT NULL,
+                    primary_provider VARCHAR(100) NOT NULL,
+                    fallback_providers JSON,
+                    output_contract VARCHAR(100) NOT NULL,
+                    timeout_ms INTEGER NOT NULL,
+                    canary_percent INTEGER NOT NULL DEFAULT 0,
+                    kill_switch BOOLEAN NOT NULL DEFAULT 0,
+                    enabled BOOLEAN NOT NULL DEFAULT 1,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE provider_runtime_audit_logs (
+                    id VARCHAR(36) PRIMARY KEY,
+                    tenant_id VARCHAR(36) NOT NULL,
+                    provider VARCHAR(100) NOT NULL,
+                    request_id VARCHAR(100) NOT NULL,
+                    channel_key VARCHAR(100) NOT NULL,
+                    session_id VARCHAR(100),
+                    operation VARCHAR(50) NOT NULL,
+                    status VARCHAR(50) NOT NULL,
+                    safe_summary JSON,
+                    error_code VARCHAR(255),
+                    elapsed_ms INTEGER,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+
+
 @pytest.fixture(autouse=True)
 def clean_db_and_env(monkeypatch):
+    _drop_provider_runtime_tables()
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    _create_provider_runtime_tables()
     monkeypatch.setenv("WEBCALL_AI_PRODUCTION_ENABLED", "true")
     monkeypatch.setenv("WEBCALL_AI_AGENT_ENABLED", "true")
     monkeypatch.delenv("WEBCALL_AI_PROVIDER_PROFILE", raising=False)
@@ -78,6 +131,7 @@ def clean_db_and_env(monkeypatch):
     monkeypatch.setattr("app.services.provider_runtime.bootstrap_provider_runtime", lambda: None)
     get_webcall_ai_production_settings.cache_clear()
     yield
+    _drop_provider_runtime_tables()
     Base.metadata.drop_all(bind=engine)
     get_webcall_ai_production_settings.cache_clear()
 
