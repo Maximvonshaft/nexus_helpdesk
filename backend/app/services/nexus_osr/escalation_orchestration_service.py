@@ -27,6 +27,7 @@ from .runtime_decision_contract import (
     RuntimeToolAction,
     evaluate_runtime_decision,
 )
+from .whatsapp_routing_service import WhatsAppRoutingResult, route_ticket_to_whatsapp_group
 
 
 class EscalationOrchestrationAction(StrEnum):
@@ -49,6 +50,7 @@ class EscalationOrchestrationResult:
     audit_id: int | None = None
     event_payload: dict[str, Any] | None = None
     queue_resolution: QueueKeyResolution | None = None
+    operations_routing: WhatsAppRoutingResult | None = None
 
     @property
     def ticket(self) -> Ticket | None:
@@ -104,7 +106,7 @@ def evaluate_escalation_for_case(
         issue_type=resolved_issue,
         tenant_id=resolved_tenant,
     )
-    return evaluate_and_orchestrate_escalation(
+    result = evaluate_and_orchestrate_escalation(
         db,
         ticket=ticket,
         conversation=conversation,
@@ -117,6 +119,27 @@ def evaluate_escalation_for_case(
         trigger_message_id=trigger_message_id,
         ai_turn_id=ai_turn_id,
         queue_resolution=queue_resolution,
+    )
+    if result.ticket_result is None:
+        return result
+
+    # Ticket-producing escalation is the hand-off point between M2 and M6.
+    # Routing is exact-rule-only and creates a durable outbox row; it never
+    # accepts a message body or calls a provider transport directly.
+    routing = route_ticket_to_whatsapp_group(
+        db,
+        case_context=result.case_context,
+        ticket=result.ticket_result.ticket,
+        channel="whatsapp",
+        tenant_key=resolved_tenant,
+    )
+    payload = dict(result.event_payload or {})
+    payload["operations_routing"] = routing.as_safe_dict()
+    return replace(
+        result,
+        case_context=routing.case_context,
+        event_payload=_safe_payload(payload),
+        operations_routing=routing,
     )
 
 
