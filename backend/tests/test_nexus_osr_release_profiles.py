@@ -17,7 +17,18 @@ def _ready(reason: str = "capability.ready") -> CapabilityEvidence:
 
 def _full_ready(profile_name: ReleaseProfileName):
     profile = get_release_profile(profile_name)
-    return profile, {name: _ready(f"{name}.ready") for name in profile.capabilities}
+    evidence = {
+        name: (
+            CapabilityEvidence(
+                status=CapabilityStatus.NOT_CONFIGURED,
+                reason=f"{name}.disabled",
+            )
+            if mode == CapabilityMode.FORBIDDEN
+            else _ready(f"{name}.ready")
+        )
+        for name, mode in profile.capabilities.items()
+    }
+    return profile, evidence
 
 
 def test_profiles_are_versioned_and_full_osr_requires_every_capability() -> None:
