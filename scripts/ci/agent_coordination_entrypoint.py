@@ -6,14 +6,15 @@ from typing import Sequence
 
 import agent_coordination_policy_gate as final_policy
 import agent_coordination_path_policy as path_policy
+import agent_coordination_open_pr_policy as open_pr_policy
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the base gate without allowing lower adapters to replace policy."""
 
-    path_policy.install_path_policy()
+    open_pr_policy.install_open_pr_policy()
     final_policy.policy.gate.load_snapshot = final_policy.policy.load_snapshot_with_reclaim
-    final_policy.policy.gate.evaluate_snapshot = final_policy._evaluate_snapshot_policy
+    final_policy.policy.gate.evaluate_snapshot = open_pr_policy._evaluate_snapshot_policy
     return final_policy.policy.gate.main(argv)
 
 
