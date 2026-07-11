@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import Mock
 
 from app.api.admin_provider_runtime import (
@@ -55,6 +56,39 @@ def test_admin_provider_runtime_status_exposes_effective_traffic_authority(monke
     assert traffic["canary_percent"] == 25
     assert traffic["kill_switch"] is False
     assert traffic["bucket_contract"] == "sha256(tenant,channel,session,scenario)%100"
+    assert traffic["scope"] == "global_defaults_and_environment_overrides"
+
+
+def test_admin_provider_runtime_status_reports_effective_database_rules(monkeypatch):
+    monkeypatch.setattr("app.api.admin_provider_runtime.ensure_can_manage_runtime", lambda current_user, db: None)
+    monkeypatch.setattr(
+        "app.api.admin_provider_runtime.get_provider_runtime_status",
+        lambda db: {"ok": True, "status": "ready"},
+    )
+    db = Mock()
+    result = Mock()
+    result.mappings.return_value.all.return_value = [
+        {
+            "tenant_id": "tenant-a",
+            "channel_key": "website",
+            "primary_provider": "private_ai_runtime",
+            "canary_percent": 5,
+            "kill_switch": False,
+            "enabled": True,
+            "updated_at": datetime(2026, 7, 11, tzinfo=timezone.utc),
+        }
+    ]
+    db.execute.return_value = result
+
+    response = provider_runtime_status(db=db, current_user=Mock())
+
+    rules = response["traffic_selection"]["webchat_runtime_rules"]
+    assert len(rules) == 1
+    rule = rules[0]
+    assert rule["tenant_id"] == "tenant-a"
+    assert rule["database_canary_percent"] == 5
+    assert rule["effective_traffic_selection"]["canary_percent"] == 5
+    assert rule["effective_traffic_selection"]["configured_mode"] == "canary"
 
 
 def test_admin_provider_runtime_status_fails_closed_on_invalid_traffic_mode(monkeypatch):
