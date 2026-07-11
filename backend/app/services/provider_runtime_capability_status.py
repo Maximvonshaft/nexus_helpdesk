@@ -4,7 +4,6 @@ import os
 from typing import Any, Callable
 
 from .provider_runtime.runtime_capabilities import (
-    CAPABILITY_SCHEMA,
     CapabilityExpectationError,
     CapabilityProbeResult,
     RuntimeCapabilityExpectations,
@@ -73,7 +72,9 @@ def probe_provider_runtime_capabilities(
 
     base_url = (os.getenv("PRIVATE_AI_RUNTIME_BASE_URL") or "").strip()
     if not base_url:
-        return CapabilityProbeResult.not_ready("capability_endpoint_invalid").safe_summary()
+        return CapabilityProbeResult.not_ready(
+            "capability_endpoint_invalid"
+        ).safe_summary()
     token_file = (os.getenv("PRIVATE_AI_RUNTIME_TOKEN_FILE") or "").strip()
     if not token_file:
         return CapabilityProbeResult.not_ready("capability_token_missing").safe_summary()
@@ -86,9 +87,13 @@ def probe_provider_runtime_capabilities(
     try:
         timeout_seconds = float(timeout_raw)
     except ValueError:
-        return CapabilityProbeResult.not_ready("capability_expectation_invalid").safe_summary()
+        return CapabilityProbeResult.not_ready(
+            "capability_expectation_invalid"
+        ).safe_summary()
     if not 0.1 <= timeout_seconds <= 30.0:
-        return CapabilityProbeResult.not_ready("capability_expectation_invalid").safe_summary()
+        return CapabilityProbeResult.not_ready(
+            "capability_expectation_invalid"
+        ).safe_summary()
 
     try:
         result = probe_fn(
