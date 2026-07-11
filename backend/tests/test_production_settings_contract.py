@@ -27,6 +27,9 @@ def production_env(**overrides: str) -> dict[str, str]:
     key_name = 'SECRET' + '_KEY'
     env = {
         'APP_ENV': 'production',
+        'NEXUS_OSR_RELEASE_PROFILE': 'shadow',
+        'EXPECTED_MIGRATION_HEAD': '20260711_0058',
+        'OSR_ESCALATION_ORCHESTRATION_ENABLED': 'true',
         key_name: 'ci-value-for-production-settings-contract',
         'DATABASE_URL': 'postgresql+psycopg://helpdesk:helpdesk@db:5432/helpdesk',
         'ALLOWED_ORIGINS': 'https://example.test',
@@ -55,7 +58,7 @@ def production_env(**overrides: str) -> dict[str, str]:
     return env
 
 
-def test_production_settings_accept_hardened_contract(monkeypatch):
+def _frontend_exists(monkeypatch):
     real_exists = Path.exists
 
     def fake_exists(path):
@@ -65,6 +68,10 @@ def test_production_settings_accept_hardened_contract(monkeypatch):
 
     monkeypatch.setattr(Path, 'exists', fake_exists)
 
+
+def test_production_settings_accept_hardened_contract(monkeypatch):
+    _frontend_exists(monkeypatch)
+
     with patched_env(production_env()):
         settings = Settings()
     assert settings.app_env == 'production'
@@ -73,6 +80,9 @@ def test_production_settings_accept_hardened_contract(monkeypatch):
     assert settings.webchat_knowledge_reply_mode == 'ai_grounded'
     assert settings.webchat_ws_enabled is False
     assert settings.webchat_ws_broker == 'database'
+    assert settings.nexus_osr_release_profile == 'shadow'
+    assert settings.expected_migration_head == '20260711_0058'
+    assert settings.osr_escalation_orchestration_enabled is True
 
 
 @pytest.mark.parametrize(
@@ -91,6 +101,9 @@ def test_production_settings_accept_hardened_contract(monkeypatch):
         ('KNOWLEDGE_EMBEDDING_PROVIDER', 'deterministic_hash', 'real embedding provider'),
         ('WEBCHAT_WS_BROKER', 'memory', 'WEBCHAT_WS_BROKER=memory'),
         ('WHATSAPP_DISPATCH_MODE', 'bad-mode', 'WHATSAPP_DISPATCH_MODE'),
+        ('NEXUS_OSR_RELEASE_PROFILE', 'development', 'NEXUS_OSR_RELEASE_PROFILE=development'),
+        ('NEXUS_OSR_RELEASE_PROFILE', 'unknown', 'NEXUS_OSR_RELEASE_PROFILE'),
+        ('OSR_ESCALATION_ORCHESTRATION_ENABLED', 'false', 'OSR_ESCALATION_ORCHESTRATION_ENABLED'),
     ],
 )
 def test_production_settings_reject_unsafe_contract(key: str, value: str, expected_message: str):
@@ -108,6 +121,13 @@ def test_production_settings_reject_unsafe_contract(key: str, value: str, expect
             with pytest.raises(RuntimeError) as exc:
                 Settings()
     assert expected_message in str(exc.value)
+
+
+def test_production_requires_expected_migration_head(monkeypatch):
+    _frontend_exists(monkeypatch)
+    with patched_env(production_env(EXPECTED_MIGRATION_HEAD='')):
+        with pytest.raises(RuntimeError, match='EXPECTED_MIGRATION_HEAD'):
+            Settings()
 
 
 def test_native_whatsapp_dispatch_mode_requires_explicit_enable_and_token(monkeypatch):
