@@ -4,6 +4,9 @@ from app.services.provider_runtime.schemas import ProviderRequest
 from app.services.provider_runtime.traffic_selection import (
     ProviderTrafficPath,
     configured_traffic_mode,
+    effective_canary_percent,
+    effective_kill_switch,
+    safe_traffic_configuration,
     select_provider_traffic,
     stable_canary_bucket,
 )
@@ -131,3 +134,34 @@ def test_invalid_mode_fails_closed(monkeypatch):
     monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "unknown")
     with pytest.raises(ValueError, match="provider_runtime_traffic_mode_invalid"):
         configured_traffic_mode()
+
+
+@pytest.mark.parametrize("value", ["abc", "-1", "101", "1.5"])
+def test_invalid_canary_override_fails_closed(monkeypatch, value):
+    monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", value)
+    with pytest.raises(ValueError, match="provider_runtime_canary_percent_invalid"):
+        effective_canary_percent(25)
+
+
+@pytest.mark.parametrize("value", ["maybe", "enabled", "2", ""])
+def test_invalid_kill_switch_override_fails_closed(monkeypatch, value):
+    monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", value)
+    with pytest.raises(ValueError, match="provider_runtime_kill_switch_invalid"):
+        effective_kill_switch(False)
+
+
+def test_safe_configuration_reports_all_malformed_overrides(monkeypatch):
+    monkeypatch.setenv("PROVIDER_RUNTIME_TRAFFIC_MODE", "unknown")
+    monkeypatch.setenv("PROVIDER_RUNTIME_CANARY_PERCENT", "abc")
+    monkeypatch.setenv("PROVIDER_RUNTIME_KILL_SWITCH", "maybe")
+
+    summary = safe_traffic_configuration(default_canary_percent=25, default_kill_switch=False)
+
+    assert summary["configured_mode"] == "invalid"
+    assert summary["canary_percent"] is None
+    assert summary["kill_switch"] is None
+    assert summary["configuration_errors"] == [
+        "provider_runtime_traffic_mode_invalid",
+        "provider_runtime_canary_percent_invalid",
+        "provider_runtime_kill_switch_invalid",
+    ]
