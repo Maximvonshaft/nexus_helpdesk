@@ -14,6 +14,12 @@ from ..db import get_db
 from ..enums import ConversationState, TicketStatus
 from ..models import Ticket
 from ..services.permissions import CAP_TICKET_READ, ensure_capability
+from ..services.support_conversation_privacy import (
+    mask_support_contact,
+    mask_support_display_name,
+    safe_support_message_preview,
+    safe_support_tracking_reference,
+)
 from ..services.support_conversation_scope import apply_support_ticket_scope
 from ..services.support_memory_ledger import build_support_memory_ledger
 from ..services.webchat_ai_turn_service import AI_TURN_TYPING_STATUSES, ai_snapshot
@@ -241,6 +247,7 @@ def _conversation_out(
     ticket: Ticket,
     last_message: WebchatMessage | None = None,
     include_memory: bool = False,
+    include_sensitive: bool = False,
     current_user,
 ) -> dict[str, Any]:
     channel = _channel(conversation, ticket)
@@ -252,6 +259,24 @@ def _conversation_out(
         or bool(ticket.required_action)
         or getattr(conversation, "handoff_status", None) in {"requested", "accepted"}
     )
+    raw_display_name = (
+        conversation.visitor_name
+        or (ticket.customer.name if ticket.customer else None)
+        or conversation.visitor_ref
+        or ticket.ticket_no
+    )
+    raw_contact = (
+        conversation.visitor_phone
+        or conversation.visitor_email
+        or (ticket.customer.phone if ticket.customer else None)
+        or (ticket.customer.email if ticket.customer else None)
+    )
+    raw_latest_message = (
+        (last_message.body_text or last_message.body)
+        if last_message
+        else ticket.last_customer_message
+    )
+    tracking_reference = safe_support_tracking_reference(ticket.tracking_number)
     item: dict[str, Any] = {
         "session_key": _session_key(conversation, ticket),
         "conversation_id": conversation.public_id,
@@ -262,11 +287,21 @@ def _conversation_out(
         "title": ticket.title,
         "status": ticket_status,
         "conversation_state": state,
-        "display_name": conversation.visitor_name or ticket.customer.name if ticket.customer else conversation.visitor_name or conversation.visitor_ref or ticket.ticket_no,
-        "customer_contact": conversation.visitor_phone or conversation.visitor_email or (ticket.customer.phone if ticket.customer else None) or (ticket.customer.email if ticket.customer else None),
+        "display_name": (
+            raw_display_name
+            if include_sensitive
+            else mask_support_display_name(raw_display_name, fallback=ticket.ticket_no)
+        ),
+        "customer_contact": (
+            raw_contact if include_sensitive else mask_support_contact(raw_contact)
+        ),
         "updated_at": _iso(conversation.updated_at or ticket.updated_at),
         "last_seen_at": _iso(conversation.last_seen_at),
-        "latest_message": _clip((last_message.body_text or last_message.body) if last_message else ticket.last_customer_message, 220),
+        "latest_message": (
+            _clip(raw_latest_message, 220)
+            if include_sensitive
+            else safe_support_message_preview(raw_latest_message, limit=160)
+        ),
         "latest_author": _author(last_message.direction if last_message else None) if last_message else None,
         "needs_human": bool(needs_human),
         "required_action": ticket.required_action,
@@ -276,7 +311,9 @@ def _conversation_out(
         "ai_status": getattr(conversation, "active_ai_status", None),
         "ai_suspended": bool(getattr(conversation, "ai_suspended", False)),
         "tracking_number_present": bool(ticket.tracking_number),
-        "tracking_number": ticket.tracking_number,
+        "tracking_number": ticket.tracking_number if include_sensitive else None,
+        "tracking_reference": tracking_reference,
+        "pii_minimized": not include_sensitive,
         "can_force_takeover": bool(ticket.id),
         "can_accept": bool(handoff and handoff.status == "requested"),
         "can_release": bool(handoff and handoff.status == "accepted" and handoff.assigned_agent_id == current_user.id),
@@ -385,6 +422,7 @@ def get_support_conversation_detail(
         ticket=ticket,
         last_message=messages[-1] if messages else None,
         include_memory=True,
+        include_sensitive=True,
         current_user=current_user,
     )
     thread = admin_get_thread(db, ticket.id, current_user)

@@ -1745,6 +1745,8 @@ export interface SupportConversation {
   ai_suspended?: boolean
   tracking_number_present?: boolean
   tracking_number?: string | null
+  tracking_reference?: string | null
+  pii_minimized?: boolean
   can_force_takeover?: boolean
   can_accept?: boolean
   can_release?: boolean
