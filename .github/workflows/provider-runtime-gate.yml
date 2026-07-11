@@ -110,61 +110,34 @@ jobs:
             backend/tests/test_speedaf_track_query.py \
             backend/tests/test_speedaf_tracking_fact_source.py
 
-      - name: Application import for route gates
+      - name: Application route contract
         env:
           PYTHONPATH: backend
         run: |
           set -Eeuo pipefail
           python - <<'PY'
           from app.main import app
-          assert app is not None
-          print('application_import_ok')
-          PY
 
-      - name: Provider Admin route mounted
-        env:
-          PYTHONPATH: backend
-        run: |
-          set -Eeuo pipefail
-          python - <<'PY'
-          from app.main import app
           routes = sorted(getattr(route, 'path', '') for route in app.routes)
-          assert '/api/admin/provider-runtime/status' in routes, routes
-          print('provider_admin_route_ok')
-          PY
-
-      - name: Public WebChat route mounted
-        env:
-          PYTHONPATH: backend
-        run: |
-          set -Eeuo pipefail
-          python - <<'PY'
-          from app.main import app
-          routes = sorted(getattr(route, 'path', '') for route in app.routes)
-          assert '/api/webchat/init' in routes, routes
-          print('public_webchat_route_ok')
-          PY
-
-      - name: Retired Provider credential routes absent
-        env:
-          PYTHONPATH: backend
-        run: |
-          set -Eeuo pipefail
-          python - <<'PY'
-          from app.main import app
-          routes = sorted(getattr(route, 'path', '') for route in app.routes)
-          assert not any('provider-credentials/codex' in path for path in routes), routes
-          print('retired_provider_credential_routes_absent')
-          PY
-
-      - name: Retired fast reply routes absent
-        env:
-          PYTHONPATH: backend
-        run: |
-          set -Eeuo pipefail
-          python - <<'PY'
-          from app.main import app
-          routes = sorted(getattr(route, 'path', '') for route in app.routes)
-          assert not any('webchat-fast' in path or 'fast-reply' in path for path in routes), routes
-          print('retired_fast_reply_routes_absent')
+          expected = {
+              '/api/admin/provider-runtime/status',
+              '/api/webchat/init',
+          }
+          missing = sorted(expected.difference(routes))
+          if missing:
+              print('missing_expected_routes=' + repr(missing))
+              print('provider_route_candidates=' + repr([path for path in routes if 'provider' in path.lower()]))
+              print('webchat_init_candidates=' + repr([path for path in routes if 'webchat' in path.lower() and 'init' in path.lower()]))
+              raise SystemExit(1)
+          retired = [
+              path
+              for path in routes
+              if 'provider-credentials/codex' in path
+              or 'webchat-fast' in path
+              or 'fast-reply' in path
+          ]
+          if retired:
+              print('retired_routes_present=' + repr(retired))
+              raise SystemExit(1)
+          print('application_route_contract_ok')
           PY
