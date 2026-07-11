@@ -73,6 +73,12 @@ REQUIRED_INDEXES: dict[str, set[str]] = {
         "ix_operations_dispatch_outbox_due",
         "ix_operations_dispatch_outbox_lease",
     },
+    "operator_queue_scope_grants": {
+        "ix_operator_queue_scope_grants_user_id",
+        "ix_operator_queue_scope_grants_granted_by",
+        "ix_operator_queue_scope_grants_user_enabled",
+        "ix_operator_queue_scope_grants_scope",
+    },
 }
 
 

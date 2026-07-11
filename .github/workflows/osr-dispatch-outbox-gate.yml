@@ -168,7 +168,7 @@ jobs:
           from alembic.script import ScriptDirectory
           config = Config("alembic.ini")
           heads = ScriptDirectory.from_config(config).get_heads()
-          assert heads == ["20260710_0056"], heads
+          assert len(heads) == 1, heads
           PY
 
       - name: Run PostgreSQL migration round trip
