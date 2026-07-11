@@ -110,6 +110,17 @@ jobs:
             backend/tests/test_speedaf_track_query.py \
             backend/tests/test_speedaf_tracking_fact_source.py
 
+      - name: Application import for route gates
+        env:
+          PYTHONPATH: backend
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from app.main import app
+          assert app is not None
+          print('application_import_ok')
+          PY
+
       - name: Provider Admin route mounted
         env:
           PYTHONPATH: backend
