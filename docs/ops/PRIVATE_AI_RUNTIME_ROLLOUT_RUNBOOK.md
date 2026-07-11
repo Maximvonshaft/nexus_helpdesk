@@ -101,6 +101,12 @@ must include only bounded `traffic_selection` evidence: schema version,
 configured mode, percentage, bucket, selected path, authoritative flag and
 reason. No customer message, token or upstream payload belongs in this summary.
 
+Traffic configuration is fail-closed. Any unsupported mode, non-integer or
+out-of-range percentage, or kill-switch value outside `true/false`, `1/0`,
+`yes/no`, or `on/off` prevents the candidate call. The Router returns a bounded
+configuration error and Admin status becomes `misconfigured`; Nexus does not
+silently substitute a permissive default.
+
 For WebCall AI production providers:
 
 ```env
@@ -202,6 +208,7 @@ configured percentage.
 - Token is present only in a server-side file.
 - Browser network traces do not contain `47.87.143.41`, bearer tokens, or upstream WS query tokens.
 - Traffic mode, canary percentage and audit path describe the same effective behavior.
+- Invalid traffic configuration is `misconfigured` and performs no candidate call.
 - `0%` never sends an authoritative candidate request.
 - Shadow output never becomes customer-visible and never performs a side effect.
 - Kill switch suppresses every candidate call.
