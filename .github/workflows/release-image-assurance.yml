@@ -12,13 +12,12 @@ on:
       - "webapp/**"
       - "scripts/**"
       - "config/security/container-*.json"
+      - "deploy/docker-compose.server.yml"
       - ".github/workflows/release-image-assurance.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
-  id-token: write
-  attestations: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -26,6 +25,8 @@ concurrency:
 
 jobs:
   assure-candidate-image:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -93,6 +94,20 @@ jobs:
             printf '%s\n' "${EXACT_SOURCE_SHA}" > "${ARTIFACT_DIR}/source-sha.txt"
           fi
           exit "${build_code}"
+
+      - name: Verify candidate runtime imports and server configuration
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "${ARTIFACT_DIR}"
+          docker run --rm --entrypoint sh "${CANDIDATE_IMAGE}" -c \
+            'set -eu; python -c "import app.main, psycopg, cryptography, argon2"; gunicorn --check-config app.main:app' \
+            > "${ARTIFACT_DIR}/runtime-smoke.full.log" 2>&1
+          code=$?
+          tail -n 120 "${ARTIFACT_DIR}/runtime-smoke.full.log" > "${ARTIFACT_DIR}/runtime-smoke-summary.txt"
+          rm -f "${ARTIFACT_DIR}/runtime-smoke.full.log"
+          printf '%s\n' "${code}" > "${ARTIFACT_DIR}/runtime-smoke-exit-code"
+          exit 0
 
       - name: Scan candidate image with immutable Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
@@ -165,17 +180,19 @@ jobs:
         shell: bash
         run: |
           set +e
+          policy_date="$(date -u +%F)"
+          printf '%s\n' "${policy_date}" > "${ARTIFACT_DIR}/policy-evaluated-on.txt"
           python scripts/security/release_image_assurance.py vulnerabilities \
             --report "${ARTIFACT_DIR}/trivy.raw.json" \
             --exceptions config/security/container-vulnerability-exceptions.json \
             --output "${ARTIFACT_DIR}/vulnerability-summary.json" \
-            --today 2026-07-11
+            --today "${policy_date}"
           vuln_code=$?
           python scripts/security/release_image_assurance.py licenses \
             --sbom "${ARTIFACT_DIR}/image.safe.cdx.json" \
             --policy config/security/container-license-policy.json \
             --output "${ARTIFACT_DIR}/license-summary.json" \
-            --today 2026-07-11
+            --today "${policy_date}"
           license_code=$?
           image_id="$(cat "${ARTIFACT_DIR}/image-id.txt")"
           python scripts/security/release_image_assurance.py manifest \
@@ -199,6 +216,7 @@ jobs:
         shell: bash
         run: |
           set +e
+          policy_date="$(cat "${ARTIFACT_DIR}/policy-evaluated-on.txt")"
           python scripts/security/verify_license_compliance.py \
             --compliance config/security/container-license-compliance.json \
             --policy config/security/container-license-policy.json \
@@ -206,7 +224,7 @@ jobs:
             --installed "${ARTIFACT_DIR}/installed-license-evidence.json" \
             --notice THIRD_PARTY_NOTICES.md \
             --output "${ARTIFACT_DIR}/license-compliance-evidence.json" \
-            --today 2026-07-11
+            --today "${policy_date}"
           compliance_code=$?
           image_id="$(cat "${ARTIFACT_DIR}/image-id.txt")"
           python scripts/security/bind_release_image_compliance.py \
@@ -244,6 +262,7 @@ jobs:
             --root . \
             --output "${ARTIFACT_DIR}/artifact-scan.json" \
             "${ARTIFACT_DIR}/candidate-build-summary.txt" \
+            "${ARTIFACT_DIR}/runtime-smoke-summary.txt" \
             THIRD_PARTY_NOTICES.md
           code=$?
           printf '%s\n' "${code}" > "${ARTIFACT_DIR}/artifact-scan-exit-code"
@@ -268,12 +287,6 @@ jobs:
           echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Attest bounded release-image compliance binding
-        if: github.event_name == 'workflow_dispatch' && steps.policy.outputs.manifest_exit == '0' && steps.compliance.outputs.compliance_exit == '0' && steps.compliance.outputs.binding_exit == '0' && steps.artifact_scan.outputs.exit_code == '0' && steps.structured_scan.outputs.exit_code == '0'
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
-        with:
-          subject-path: artifacts/release-image/release-image-compliance-binding.json
-
       - name: Upload bounded release-image evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -288,6 +301,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           test "$(cat "${ARTIFACT_DIR}/build-exit-code")" = "0"
+          test "$(cat "${ARTIFACT_DIR}/runtime-smoke-exit-code")" = "0"
+          test "$(cat "${ARTIFACT_DIR}/sbom-preliminary-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/sbom-sanitization-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/installed-license-evidence-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/vulnerability-exit-code")" = "0"
@@ -302,3 +317,32 @@ jobs:
           test "$(jq -r '.status' "${ARTIFACT_DIR}/release-image-compliance-binding.json")" = "pass"
           test "$(jq -r '.image_pushed' "${ARTIFACT_DIR}/release-image-compliance-binding.json")" = "false"
           test "$(jq -r '.deployment_performed' "${ARTIFACT_DIR}/release-image-compliance-binding.json")" = "false"
+
+  attest-release-image:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: assure-candidate-image
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download bounded evidence from this workflow run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts/release-image
+          gh run download "${GITHUB_RUN_ID}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name release-image-assurance \
+            --dir artifacts/release-image
+          test -f artifacts/release-image/release-image-compliance-binding.json
+          test "$(jq -r '.status' artifacts/release-image/release-image-compliance-binding.json)" = "pass"
+
+      - name: Attest bounded release-image compliance binding
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
+        with:
+          subject-path: artifacts/release-image/release-image-compliance-binding.json
