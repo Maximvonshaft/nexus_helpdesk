@@ -6,7 +6,24 @@ RUN npm ci
 COPY webapp/ ./
 RUN npm run build
 
-FROM docker.io/library/python:3.11-slim-bookworm
+FROM docker.io/library/python:3.11-alpine3.22 AS python-wheel-builder
+WORKDIR /build
+COPY backend/requirements.txt /build/requirements.txt
+RUN apk add --no-cache --virtual .build-deps \
+        build-base \
+        cargo \
+        libffi-dev \
+        openssl-dev \
+    && python -m pip install --upgrade \
+        "pip>=26.1.1" \
+        "setuptools>=82.0.0" \
+        "wheel>=0.46.2" \
+        "jaraco.context>=6.1.0" \
+    && python -m pip wheel \
+        --wheel-dir /wheels \
+        --requirement /build/requirements.txt
+
+FROM docker.io/library/python:3.11-alpine3.22
 
 ARG GIT_SHA=unknown
 ARG BUILD_TIME=unknown
@@ -27,15 +44,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Keep packaging tools above known vulnerable releases before installing the
-# application lock. No network/debug utility is installed in the runtime image.
+# Install only the prebuilt candidate dependency set. Compilers, Cargo and
+# development headers remain in the discarded wheel-builder stage.
 COPY backend/requirements.txt /tmp/requirements.txt
-RUN python -m pip install --upgrade \
-        "pip>=26.1.1" \
-        "setuptools>=82.0.0" \
-        "wheel>=0.46.2" \
-        "jaraco.context>=6.1.0" \
-    && python -m pip install -r /tmp/requirements.txt
+COPY --from=python-wheel-builder /wheels /wheels
+RUN python -m pip install \
+        --no-index \
+        --find-links=/wheels \
+        --requirement /tmp/requirements.txt \
+    && rm -rf /wheels /tmp/requirements.txt
 
 # Keep the runtime image deterministic. Do not COPY the whole repository because
 # that can bake local caches, VCS metadata, env files, uploads, or secrets into
@@ -44,14 +61,12 @@ COPY backend/ /app/backend/
 COPY scripts/ /app/scripts/
 COPY --from=webapp-builder /build/frontend_dist /app/frontend_dist
 
-# Round B webchat widget static export
-# Keep embeddable public webchat files outside SPA fallback.
-RUN mkdir -p /app/frontend_dist/static/webchat \
-    && cp -r /app/backend/app/static/webchat/. /app/frontend_dist/static/webchat/
-
-RUN mkdir -p /app/backend/uploads \
-    && addgroup --system appgroup \
-    && adduser --system --ingroup appgroup --home /app --shell /usr/sbin/nologin appuser \
+# Round B webchat widget static export. Keep embeddable public files outside SPA
+# fallback while retaining the non-root runtime boundary.
+RUN mkdir -p /app/frontend_dist/static/webchat /app/backend/uploads \
+    && cp -r /app/backend/app/static/webchat/. /app/frontend_dist/static/webchat/ \
+    && addgroup -S appgroup \
+    && adduser -S -D -H -s /sbin/nologin -G appgroup appuser \
     && chown -R appuser:appgroup /app
 
 WORKDIR /app/backend
