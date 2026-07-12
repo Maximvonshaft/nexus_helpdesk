@@ -9,7 +9,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9._:-]{1,120}$")
+SAFE_RULE_RE = re.compile(r"^[a-z0-9_:.-]{2,80}$")
+SAFE_PATH_RE = re.compile(r"^artifacts/rc-test/[A-Za-z0-9._-]{1,120}$")
 SAFE_FINGERPRINT_RE = re.compile(r"^[a-f0-9]{16}$")
 MAX_FINDINGS = 10
 
@@ -39,8 +40,8 @@ def _safe_findings(report: dict[str, Any]) -> list[dict[str, str]]:
             isinstance(rule, str)
             and isinstance(path, str)
             and isinstance(fingerprint, str)
-            and SAFE_TOKEN_RE.fullmatch(rule)
-            and SAFE_TOKEN_RE.fullmatch(path)
+            and SAFE_RULE_RE.fullmatch(rule)
+            and SAFE_PATH_RE.fullmatch(path)
             and SAFE_FINGERPRINT_RE.fullmatch(fingerprint)
         ):
             output.append({"rule": rule, "path": path, "fingerprint": fingerprint})
