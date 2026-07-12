@@ -1,0 +1,73 @@
+name: apply-workspace-poll-draft-retention-663-temp
+
+on:
+  pull_request:
+    paths:
+      - .github/patches/workspace-poll-draft-retention-663.patch
+      - .github/patches/workspace-poll-draft-retention-663.patch.b64
+      - .github/workflows/apply-workspace-poll-draft-retention-663-temp.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-workspace-poll-draft-retention-663-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify base and apply exact patch
+        run: |
+          set -Eeuo pipefail
+          test "$(git merge-base HEAD origin/main)" = "ad149e0bc94161e9948cbf12e146a2df17be84a7"
+          base64 --decode .github/patches/workspace-poll-draft-retention-663.patch.b64 > "${RUNNER_TEMP}/workspace-poll-draft-retention-663.patch"
+          echo 'd1bd5ba64e9f0310604222259bc029da81979c8f65134a9c30d3c91a9d4f4185  '"${RUNNER_TEMP}/workspace-poll-draft-retention-663.patch" | sha256sum --check -
+          git apply --check "${RUNNER_TEMP}/workspace-poll-draft-retention-663.patch"
+          git apply "${RUNNER_TEMP}/workspace-poll-draft-retention-663.patch"
+
+      - name: Verify frontend
+        working-directory: webapp
+        run: |
+          set -Eeuo pipefail
+          npm ci --ignore-scripts
+          npm run typecheck
+          npm run lint
+          npm test
+          npm run build
+
+      - name: Verify exact diff and remove transfer files
+        run: |
+          set -Eeuo pipefail
+          git diff --check
+          rm -f \
+            .github/patches/workspace-poll-draft-retention-663.patch \
+            .github/patches/workspace-poll-draft-retention-663.patch.b64 \
+            .github/workflows/apply-workspace-poll-draft-retention-663-temp.yml
+          git add -A
+          test "$(git diff --cached --name-only | wc -l)" -eq 4
+          git diff --cached --name-only | sort | diff -u - <(printf '%s\n' \
+            webapp/e2e/operator-workspace.spec.ts \
+            webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx \
+            webapp/src/features/operator-workspace/operator-workspace.css \
+            webapp/tests/operator-workspace-contract.test.mjs | sort)
+          git diff --cached --check
+
+      - name: Commit verified implementation
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'nexus-osr-frontend-bot'
+          git config user.email 'nexus-osr-frontend-bot@users.noreply.github.com'
+          git commit -m 'fix(frontend): retain dirty reply when queue authority changes (#663)'
+          git push origin HEAD:${{ github.event.pull_request.head.ref || github.ref_name }}
