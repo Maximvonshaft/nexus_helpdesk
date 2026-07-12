@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from sqlalchemy import text
@@ -18,6 +19,7 @@ from .traffic_selection import (
     ProviderTrafficPath,
     ProviderTrafficSelection,
     effective_kill_switch,
+    persisted_traffic_configuration_errors,
     select_provider_traffic,
 )
 
@@ -168,6 +170,9 @@ class ProviderRuntimeRouter:
             kill_switch = rule["kill_switch"]
             canary_percent = 0 if rule["canary_percent"] is None else rule["canary_percent"]
 
+        persisted_canary_percent = canary_percent
+        persisted_kill_switch = kill_switch
+
         try:
             (
                 primary_provider,
@@ -185,11 +190,24 @@ class ProviderRuntimeRouter:
                 canary_percent,
             )
             fallbacks = [provider for provider in fallbacks if provider in _DIRECT_ENV_PROVIDERS]
+            persisted_errors = persisted_traffic_configuration_errors(
+                canary_percent=persisted_canary_percent,
+                kill_switch=persisted_kill_switch,
+            )
+            if persisted_errors and not kill_switch:
+                raise ValueError(persisted_errors[0])
             traffic = select_provider_traffic(
                 request,
                 canary_percent=canary_percent,
                 kill_switch=kill_switch,
             )
+            if persisted_errors:
+                traffic = replace(
+                    traffic,
+                    configuration_errors=tuple(
+                        dict.fromkeys((*traffic.configuration_errors, *persisted_errors))
+                    ),
+                )
         except (RuntimeError, TypeError, ValueError) as exc:
             error_code = _traffic_configuration_error_code(exc)
             summary = {
