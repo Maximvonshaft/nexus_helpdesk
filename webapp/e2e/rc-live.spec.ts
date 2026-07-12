@@ -1,14 +1,12 @@
 import { expect, test } from '@playwright/test'
 
-const adminUsername = process.env.RC_TEST_ADMIN_USERNAME
-const adminPassword = process.env.RC_TEST_ADMIN_PASSWORD
-const sourceSha = process.env.RC_SOURCE_SHA
-
-if (!adminUsername || !adminPassword || !sourceSha) {
-  throw new Error('RC live browser test requires RC_TEST_ADMIN_USERNAME, RC_TEST_ADMIN_PASSWORD and RC_SOURCE_SHA')
-}
+const adminUsername = process.env.RC_TEST_ADMIN_USERNAME || ''
+const adminPassword = process.env.RC_TEST_ADMIN_PASSWORD || ''
+const sourceSha = process.env.RC_SOURCE_SHA || ''
+const rcConfigured = Boolean(adminUsername && adminPassword && /^[0-9a-f]{40}$/.test(sourceSha))
 
 test.describe.configure({ mode: 'serial' })
+test.skip(!rcConfigured, 'RC live browser environment is not configured')
 
 test('RC public WebChat message is visible in the authenticated operator surface', async ({ page }) => {
   const message = `RC browser synthetic message ${sourceSha.slice(0, 12)}`
