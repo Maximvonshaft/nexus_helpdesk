@@ -13,6 +13,12 @@ MAX_INPUT_BYTES = 32 * 1024 * 1024
 MAX_FINDINGS = 200
 MAX_EXCEPTION_DAYS = 180
 _SAFE_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+:/@-]{0,199}$")
+_SAFE_PYTHON_PURL = re.compile(
+    r"^pkg:(?:pypi/[A-Za-z0-9._-]+|generic/python)@[A-Za-z0-9._+!-]{1,100}$"
+)
+_SAFE_NPM_PURL = re.compile(
+    r"^pkg:npm/(?:%40[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+@[A-Za-z0-9._+!~-]{1,120}(?:\?[A-Za-z0-9._~%=&+-]{1,300})?$"
+)
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 _SPDX_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
@@ -44,6 +50,15 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 def _safe_label(value: Any, *, fallback: str = "unknown", limit: int = 200) -> str:
     text = " ".join(str(value or "").strip().split())[:limit]
     return text if _SAFE_LABEL.fullmatch(text) else fallback
+
+
+def _safe_purl(value: Any) -> str:
+    text = str(value or "").strip()
+    if not (
+        _SAFE_PYTHON_PURL.fullmatch(text) or _SAFE_NPM_PURL.fullmatch(text)
+    ):
+        raise AssuranceError("license_component_purl_invalid")
+    return text
 
 
 def _parse_expiry(value: Any, *, today: date) -> date:
@@ -225,13 +240,19 @@ def _load_license_policy(path: Path, *, today: date) -> dict[str, Any]:
     for raw in entries:
         if not isinstance(raw, dict):
             raise AssuranceError("license_exception_invalid")
+        purl = _safe_purl(raw.get("purl"))
         key = (
+            purl,
             _safe_label(raw.get("package")),
             _safe_label(raw.get("version")),
             _safe_label(raw.get("license")),
         )
-        if "unknown" in key or key in result["exceptions"]:
+        if "unknown" in key[1:] or key in result["exceptions"]:
             raise AssuranceError("license_exception_key_invalid")
+        if key[3] in result["denied"]:
+            raise AssuranceError("license_exception_for_denied_license")
+        if key[3] not in result["review"]:
+            raise AssuranceError("license_exception_not_review_disposition")
         result["exceptions"][key] = {
             "reason": _reason(raw.get("reason")),
             "expires_on": _parse_expiry(raw.get("expires_on"), today=today).isoformat(),
@@ -255,9 +276,9 @@ def evaluate_licenses(sbom_path: Path, policy_path: Path, output_path: Path, *, 
     if not isinstance(sbom, dict) or str(sbom.get("bomFormat") or "").lower() != "cyclonedx":
         raise AssuranceError("cyclonedx_sbom_invalid")
     policy = _load_license_policy(policy_path, today=today)
-    exceptions: dict[tuple[str, str, str], dict[str, Any]] = policy["exceptions"]
+    exceptions: dict[tuple[str, str, str, str], dict[str, Any]] = policy["exceptions"]
     findings: list[dict[str, Any]] = []
-    applied: set[tuple[str, str, str]] = set()
+    applied: set[tuple[str, str, str, str]] = set()
     counts = {"components": 0, "allowed": 0, "review": 0, "denied": 0, "unknown": 0}
 
     components = sbom.get("components") or []
@@ -267,6 +288,7 @@ def evaluate_licenses(sbom_path: Path, policy_path: Path, output_path: Path, *, 
         if not isinstance(component, dict):
             continue
         counts["components"] += 1
+        purl = _safe_purl(component.get("purl"))
         package = _safe_label(component.get("name"))
         version = _safe_label(component.get("version"), fallback="unversioned")
         for license_id in _component_licenses(component):
@@ -277,12 +299,13 @@ def evaluate_licenses(sbom_path: Path, policy_path: Path, output_path: Path, *, 
             counts[disposition] = counts.get(disposition, 0) + 1
             if disposition == "allowed":
                 continue
-            key = (package, version, normalized)
-            if key in exceptions:
+            key = (purl, package, version, normalized)
+            if disposition != "denied" and key in exceptions:
                 applied.add(key)
                 continue
             findings.append(
                 {
+                    "purl": purl,
                     "package": package,
                     "version": version,
                     "license": normalized,
@@ -302,7 +325,7 @@ def evaluate_licenses(sbom_path: Path, policy_path: Path, output_path: Path, *, 
         "findings": findings[:MAX_FINDINGS],
         "findings_truncated": len(findings) > MAX_FINDINGS,
         "unused_exceptions": [
-            {"package": key[0], "version": key[1], "license": key[2]}
+            {"purl": key[0], "package": key[1], "version": key[2], "license": key[3]}
             for key in unused[:MAX_FINDINGS]
         ],
     }
