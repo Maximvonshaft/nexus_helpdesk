@@ -60,6 +60,13 @@ services:
       postgres-rc:
         condition: service_healthy
 
+  seed-rc:
+    <<: *rc_app
+    command: python /app/scripts/release/seed_rc_test_data.py
+    depends_on:
+      migrate-rc:
+        condition: service_completed_successfully
+
   app-rc:
     <<: *rc_app
     networks:
@@ -90,6 +97,8 @@ services:
     depends_on:
       postgres-rc:
         condition: service_healthy
+      seed-rc:
+        condition: service_completed_successfully
 
   worker-outbound-rc:
     <<: *rc_app
