@@ -349,6 +349,25 @@
   font-weight: 800;
 }
 
+.operator-selection-stale {
+  background: var(--nd-color-warning-bg);
+  border-bottom: 1px solid var(--nd-color-warning);
+  color: var(--nd-color-warning);
+  display: grid;
+  gap: var(--nd-space-1);
+  padding: var(--nd-space-3) var(--nd-space-5);
+}
+
+.operator-selection-stale strong,
+.operator-selection-stale p {
+  margin: 0;
+}
+
+.operator-selection-stale p {
+  font-size: var(--nd-font-size-sm);
+  line-height: var(--nd-line-height-body);
+}
+
 .operator-case-header h1 {
   font-size: var(--nd-font-size-2xl);
   letter-spacing: -.02em;

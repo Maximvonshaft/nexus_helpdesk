@@ -118,7 +118,6 @@ test('responsive structure keeps queue, case, communication and actions reachabl
 })
 
 
-
 test('workspace preserves scroll ownership, protects drafts, and transfers mobile focus', () => {
   assert.match(workspacePage, /useLayoutEffect/)
   assert.match(workspacePage, /isNearMessageBottom/)
@@ -130,4 +129,14 @@ test('workspace preserves scroll ownership, protects drafts, and transfers mobil
   assert.match(workspacePage, /focus\(\{ preventScroll: true \}\)/)
   assert.match(workspacePage, /tabIndex=\{-1\}/)
   assert.doesNotMatch(workspacePage, /messagesRef\.current\.scrollTop\s*=\s*messagesRef\.current\.scrollHeight/)
+})
+
+test('workspace keeps a dirty reply attached when polling removes the selected queue item', () => {
+  assert.match(workspacePage, /retainedSelectedItem/)
+  assert.match(workspacePage, /preserveMissingSelection/)
+  assert.match(workspacePage, /replyDraftDirty\s*&&\s*selectedQueueItemMissing/)
+  assert.match(workspacePage, /!replyDraftDirty/)
+  assert.match(workspacePage, /当前任务已离开队列，回复草稿仍已保留/)
+  assert.match(workspacePage, /selectionUnavailable/)
+  assert.match(workspacePage, /当前任务动作已暂停/)
 })
