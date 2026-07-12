@@ -68,7 +68,7 @@ jobs:
           CHECK_TEST_SEND: ${{ inputs.check_outbound_email_test_send }}
         run: |
           set -Eeuo pipefail
-          python - <<'PY'
+          python3 - <<'PY'
           import os
           import re
           from urllib.parse import urlsplit
@@ -155,6 +155,7 @@ jobs:
           python-version: "3.11"
 
       - name: Check healthz and readyz
+        id: health_ready
         env:
           SMOKE_BASE_URL: ${{ steps.target.outputs.base_url }}
           EXPECTED_READY_STATUS: ${{ steps.target.outputs.expected_status }}
@@ -163,7 +164,7 @@ jobs:
           set -Eeuo pipefail
           curl -fsS --max-time 8 "$SMOKE_BASE_URL/healthz" -o /tmp/healthz.json
           curl -fsS --max-time 8 "$SMOKE_BASE_URL/readyz" -o /tmp/readyz.json
-          python - <<'PY'
+          python3 - <<'PY'
           import json
           import os
           from pathlib import Path
@@ -182,13 +183,14 @@ jobs:
           PY
 
       - name: Check security headers on root
+        id: security_headers
         env:
           SMOKE_BASE_URL: ${{ steps.target.outputs.base_url }}
         shell: bash
         run: |
           set -Eeuo pipefail
           curl -fsSI --max-time 8 "$SMOKE_BASE_URL/" -o /tmp/root_headers.txt
-          python - <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
 
           raw = Path("/tmp/root_headers.txt").read_text(errors="ignore")
@@ -207,6 +209,7 @@ jobs:
           PY
 
       - name: Check WebChat assets
+        id: webchat_assets
         if: ${{ inputs.check_webchat_assets }}
         env:
           SMOKE_BASE_URL: ${{ steps.target.outputs.base_url }}
@@ -226,7 +229,8 @@ jobs:
           echo 'webchat_assets_ok'
 
       - name: Check optional CORS preflight
-        if: ${{ inputs.cors_origin != '' }}
+        id: cors_preflight
+        if: ${{ steps.target.outputs.cors_origin != '' }}
         env:
           SMOKE_BASE_URL: ${{ steps.target.outputs.base_url }}
           SMOKE_CORS_ORIGIN: ${{ steps.target.outputs.cors_origin }}
@@ -247,6 +251,7 @@ jobs:
           echo 'cors_preflight_ok'
 
       - name: Check optional metrics endpoint
+        id: metrics_check
         if: ${{ inputs.check_metrics }}
         env:
           SMOKE_BASE_URL: ${{ steps.target.outputs.base_url }}
@@ -266,6 +271,7 @@ jobs:
           echo 'metrics_endpoint_ok'
 
       - name: Run optional Outbound Email admin browser smoke
+        id: outbound_email_admin
         if: ${{ inputs.check_outbound_email_admin }}
         env:
           PLAYWRIGHT_BASE_URL: ${{ steps.target.outputs.base_url }}
@@ -285,6 +291,7 @@ jobs:
           npx playwright test e2e/outbound-email-admin-real.spec.ts
 
       - name: Run optional Outbound Email production test-send gate
+        id: outbound_email_send
         if: ${{ inputs.check_outbound_email_test_send && steps.target.outputs.test_send_authorized == 'true' }}
         env:
           NEXUS_BASE_URL: ${{ steps.target.outputs.base_url }}
@@ -310,28 +317,32 @@ jobs:
         if: always()
         env:
           SUMMARY_TARGET: ${{ steps.target.outputs.base_url }}
-          SUMMARY_WEBCHAT_ASSETS: ${{ inputs.check_webchat_assets }}
           SUMMARY_CORS_ORIGIN: ${{ steps.target.outputs.cors_origin }}
-          SUMMARY_METRICS: ${{ inputs.check_metrics }}
-          SUMMARY_EMAIL_ADMIN: ${{ inputs.check_outbound_email_admin }}
-          SUMMARY_EMAIL_SEND: ${{ inputs.check_outbound_email_test_send }}
+          SUMMARY_HEALTH_READY: ${{ steps.health_ready.outcome }}
+          SUMMARY_SECURITY_HEADERS: ${{ steps.security_headers.outcome }}
+          SUMMARY_WEBCHAT_ASSETS: ${{ steps.webchat_assets.outcome }}
+          SUMMARY_CORS: ${{ steps.cors_preflight.outcome }}
+          SUMMARY_METRICS: ${{ steps.metrics_check.outcome }}
+          SUMMARY_EMAIL_ADMIN: ${{ steps.outbound_email_admin.outcome }}
+          SUMMARY_EMAIL_SEND: ${{ steps.outbound_email_send.outcome }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          python - <<'PY'
+          python3 - <<'PY'
           import os
 
           lines = [
               "## Manual staging smoke summary",
               "",
               f"- Target: `{os.environ.get('SUMMARY_TARGET', '[validation-failed]')}`",
-              "- Health/ready: checked",
-              "- Security headers: checked",
-              f"- WebChat assets: `{os.environ.get('SUMMARY_WEBCHAT_ASSETS', 'false')}`",
+              f"- Health/ready: `{os.environ.get('SUMMARY_HEALTH_READY', 'not-run')}`",
+              f"- Security headers: `{os.environ.get('SUMMARY_SECURITY_HEADERS', 'not-run')}`",
+              f"- WebChat assets: `{os.environ.get('SUMMARY_WEBCHAT_ASSETS', 'not-run')}`",
               f"- CORS origin: `{os.environ.get('SUMMARY_CORS_ORIGIN', '')}`",
-              f"- Metrics check: `{os.environ.get('SUMMARY_METRICS', 'false')}`",
-              f"- Outbound Email admin browser smoke: `{os.environ.get('SUMMARY_EMAIL_ADMIN', 'false')}`",
-              f"- Outbound Email test-send gate: `{os.environ.get('SUMMARY_EMAIL_SEND', 'false')}`",
+              f"- CORS preflight: `{os.environ.get('SUMMARY_CORS', 'not-run')}`",
+              f"- Metrics check: `{os.environ.get('SUMMARY_METRICS', 'not-run')}`",
+              f"- Outbound Email admin browser smoke: `{os.environ.get('SUMMARY_EMAIL_ADMIN', 'not-run')}`",
+              f"- Outbound Email test-send gate: `{os.environ.get('SUMMARY_EMAIL_SEND', 'not-run')}`",
           ]
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
               handle.write("\n".join(lines) + "\n")
