@@ -34,18 +34,22 @@ jobs:
           from pathlib import Path
           path = Path('webapp/e2e/smoke.spec.ts')
           text = path.read_text(encoding='utf-8')
-          old = """test('login page renders', async ({ page }) => {
-            await page.goto('/login')
-            await expect(page.getByRole('heading', { name: '客服工作台' })).toBeVisible()
-            await expect(page.getByLabel('账号')).toBeVisible()
-            await expect(page.getByRole('button', { name: '登录' })).toBeVisible()
-          })"""
-          new = """test('login page renders', async ({ page }) => {
-            await page.goto('/login')
-            await expect(page.getByRole('heading', { level: 1, name: '进入运营工作台' })).toBeVisible()
-            await expect(page.getByLabel('账号')).toBeVisible()
-            await expect(page.getByRole('button', { name: '登录运营工作台' })).toBeVisible()
-          })"""
+          old = (
+              "test('login page renders', async ({ page }) => {\n"
+              "  await page.goto('/login')\n"
+              "  await expect(page.getByRole('heading', { name: '客服工作台' })).toBeVisible()\n"
+              "  await expect(page.getByLabel('账号')).toBeVisible()\n"
+              "  await expect(page.getByRole('button', { name: '登录' })).toBeVisible()\n"
+              "})"
+          )
+          new = (
+              "test('login page renders', async ({ page }) => {\n"
+              "  await page.goto('/login')\n"
+              "  await expect(page.getByRole('heading', { level: 1, name: '进入运营工作台' })).toBeVisible()\n"
+              "  await expect(page.getByLabel('账号')).toBeVisible()\n"
+              "  await expect(page.getByRole('button', { name: '登录运营工作台' })).toBeVisible()\n"
+              "})"
+          )
           if text.count(old) != 1:
               raise SystemExit(f'expected one legacy Login smoke block, found {text.count(old)}')
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
