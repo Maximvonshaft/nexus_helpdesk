@@ -7,7 +7,7 @@ import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from sqlalchemy import text
+from sqlalchemy import Boolean, text
 from sqlalchemy.orm import Session
 
 from .health import ProviderRuntimeHealth
@@ -140,14 +140,15 @@ class ProviderRuntimeRouter:
         from . import bootstrap_provider_runtime
 
         bootstrap_provider_runtime()
+        rule_statement = text(
+            """
+            SELECT primary_provider, fallback_providers, output_contract, timeout_ms, kill_switch, canary_percent
+            FROM provider_routing_rules
+            WHERE tenant_id = :tenant_id AND channel_key = :channel AND scenario = :scenario AND enabled = true
+            """
+        ).columns(kill_switch=Boolean())
         rule = self.db.execute(
-            text(
-                """
-                SELECT primary_provider, fallback_providers, output_contract, timeout_ms, kill_switch, canary_percent
-                FROM provider_routing_rules
-                WHERE tenant_id = :tenant_id AND channel_key = :channel AND scenario = :scenario AND enabled = true
-                """
-            ),
+            rule_statement,
             {
                 "tenant_id": request.tenant_id,
                 "channel": request.channel_key,
