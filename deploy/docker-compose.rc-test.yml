@@ -1,0 +1,129 @@
+name: ${COMPOSE_PROJECT_NAME:-nexus_rc_test}
+
+x-rc-app: &rc_app
+  image: ${RC_IMAGE_TAG:?set RC_IMAGE_TAG in deploy/.env.rc-test}
+  env_file:
+    - .env.rc-test
+  volumes:
+    - rc_uploads:/app/backend/uploads
+    - rc_upload_backups:/var/backups/nexusdesk/uploads
+  networks:
+    - rc
+  restart: "no"
+
+x-rc-worker-healthcheck: &rc_worker_healthcheck
+  test:
+    - CMD-SHELL
+    - >-
+      python -c "from pathlib import Path;
+      cmd=Path('/proc/1/cmdline').read_text(errors='replace');
+      assert 'scripts/run_worker.py' in cmd, cmd;
+      from sqlalchemy import text;
+      from app.db import SessionLocal;
+      db=SessionLocal();
+      db.execute(text('select 1'));
+      db.close();
+      print('rc-worker-ok')"
+  interval: 10s
+  timeout: 5s
+  retries: 12
+  start_period: 15s
+
+services:
+  postgres-rc:
+    image: pgvector/pgvector:pg16
+    env_file:
+      - .env.rc-test
+    volumes:
+      - rc_postgres:/var/lib/postgresql/data
+    networks:
+      - rc
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: "no"
+
+  migrate-rc:
+    <<: *rc_app
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        cd /app/backend &&
+        alembic upgrade head &&
+        alembic current
+    depends_on:
+      postgres-rc:
+        condition: service_healthy
+
+  app-rc:
+    <<: *rc_app
+    ports:
+      - "127.0.0.1:${RC_APP_PORT:-18083}:8080"
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        exec gunicorn app.main:app
+        -k uvicorn.workers.UvicornWorker
+        --workers "$${WEB_CONCURRENCY:-2}"
+        --timeout "$${WEB_TIMEOUT:-30}"
+        --bind 0.0.0.0:8080
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - http://127.0.0.1:8080/readyz
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      postgres-rc:
+        condition: service_healthy
+
+  worker-outbound-rc:
+    <<: *rc_app
+    command: python scripts/run_worker.py --worker-id worker-outbound-rc --queue outbound
+    healthcheck: *rc_worker_healthcheck
+    depends_on:
+      app-rc:
+        condition: service_healthy
+
+  worker-background-rc:
+    <<: *rc_app
+    command: python scripts/run_worker.py --worker-id worker-background-rc --queue background
+    healthcheck: *rc_worker_healthcheck
+    depends_on:
+      app-rc:
+        condition: service_healthy
+
+  worker-webchat-ai-rc:
+    <<: *rc_app
+    command: python scripts/run_worker.py --worker-id worker-webchat-ai-rc --queue webchat-ai
+    healthcheck: *rc_worker_healthcheck
+    depends_on:
+      app-rc:
+        condition: service_healthy
+
+  worker-handoff-snapshot-rc:
+    <<: *rc_app
+    command: python scripts/run_worker.py --worker-id worker-handoff-snapshot-rc --queue handoff-snapshot
+    healthcheck: *rc_worker_healthcheck
+    depends_on:
+      app-rc:
+        condition: service_healthy
+
+networks:
+  rc:
+    internal: true
+
+volumes:
+  rc_postgres:
+  rc_uploads:
+  rc_upload_backups:
