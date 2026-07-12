@@ -116,6 +116,24 @@ def test_existing_target_fails_without_overwrite_or_mixed_evidence(
     assert not list(backup_dir.parent.glob(f"{backup_dir.name}.tmp.*"))
 
 
+def test_dangling_symlink_target_fails_without_replacement(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path)
+    backup_parent = tmp_path / "backups"
+    backup_parent.mkdir()
+    backup_dir = backup_parent / "candidate"
+    missing_target = tmp_path / "missing-target"
+    backup_dir.symlink_to(missing_target)
+
+    completed = _run(repo, backup_dir)
+
+    assert completed.returncode == 2
+    assert "refusing existing backup target" in completed.stderr
+    assert backup_dir.is_symlink()
+    assert os.readlink(backup_dir) == str(missing_target)
+    assert not missing_target.exists()
+    assert not list(backup_parent.glob(f"{backup_dir.name}.tmp.*"))
+
+
 def test_symlinked_protected_source_fails_closed(tmp_path: Path) -> None:
     repo = _fake_repo(tmp_path)
     protected = repo / "deploy" / ".env.prod"
