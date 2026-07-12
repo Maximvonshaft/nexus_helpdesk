@@ -88,12 +88,25 @@ class ManifestValidationTests(unittest.TestCase):
 
 
 class TopologyContractTests(unittest.TestCase):
-    def test_app_healthcheck_uses_runtime_available_python_client(self):
+    @classmethod
+    def setUpClass(cls):
         root = Path(__file__).resolve().parents[3]
-        text = (root / "deploy" / "docker-compose.rc-test.yml").read_text(encoding="utf-8")
-        app_block = text.split("  app-rc:\n", 1)[1].split("\n  worker-outbound-rc:\n", 1)[0]
+        cls.text = (root / "deploy" / "docker-compose.rc-test.yml").read_text(encoding="utf-8")
+
+    def test_app_healthcheck_uses_runtime_available_python_client(self):
+        app_block = self.text.split("  app-rc:\n", 1)[1].split("\n  worker-outbound-rc:\n", 1)[0]
         self.assertNotIn("- curl\n", app_block)
         self.assertIn("urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=4).read()", app_block)
+
+    def test_loopback_gateway_exposes_internal_app_without_direct_app_port(self):
+        app_block = self.text.split("  app-rc:\n", 1)[1].split("\n  worker-outbound-rc:\n", 1)[0]
+        self.assertNotIn("    ports:\n", app_block)
+        self.assertIn("aliases:\n          - app", app_block)
+        self.assertIn("  nginx-rc:\n", self.text)
+        nginx_block = self.text.split("  nginx-rc:\n", 1)[1].split("\nnetworks:\n", 1)[0]
+        self.assertIn('127.0.0.1:${RC_APP_PORT:-18083}:80', nginx_block)
+        self.assertIn("      - rc\n      - edge", nginx_block)
+        self.assertNotIn("env_file:", nginx_block)
 
 
 if __name__ == "__main__":
