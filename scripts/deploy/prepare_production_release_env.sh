@@ -149,8 +149,9 @@ if (
     or "//" in image_name
     or ".." in image_name
     or "@" in image_name
+    or ":" in image_name.rsplit("/", 1)[-1]
 ):
-    fail("IMAGE_TAG contains an invalid OCI image name")
+    fail("IMAGE_TAG contains an invalid or pre-tagged OCI image name")
 
 updates = {key: values[key] for key in required_keys}
 if host_port_override:
