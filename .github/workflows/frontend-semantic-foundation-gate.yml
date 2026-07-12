@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/frontend-semantic-foundation-gate.yml
       - webapp/e2e/login-semantic.spec.ts
+      - webapp/e2e/smoke.spec.ts
       - webapp/src/a11y.css
       - webapp/src/components/ui/Badge.tsx
       - webapp/src/components/ui/Button.tsx
