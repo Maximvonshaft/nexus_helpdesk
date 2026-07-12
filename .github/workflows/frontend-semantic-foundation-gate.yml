@@ -1,0 +1,70 @@
+name: frontend-semantic-foundation-gate
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+    paths:
+      - ".github/workflows/frontend-semantic-foundation-gate.yml"
+      - "webapp/src/main.tsx"
+      - "webapp/src/styles/**"
+      - "webapp/src/styles.css"
+      - "webapp/src/a11y.css"
+      - "webapp/src/components/ui/**"
+      - "webapp/src/routes/login.tsx"
+      - "webapp/tests/frontend-semantic-foundation-contract.test.mjs"
+      - "webapp/e2e/smoke.spec.ts"
+      - "docs/superpowers/specs/2026-07-12-frontend-semantic-foundation-design.md"
+      - "docs/superpowers/plans/2026-07-12-frontend-semantic-foundation.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-semantic-foundation-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  semantic-foundation:
+    name: frontend-semantic-foundation-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact proposed head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node immutable
+        uses: actions/setup-node@04be95cf3511ea51ebf9f224ddfb99cc7ab87cd4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Run focused semantic contract
+        run: node --test webapp/tests/frontend-semantic-foundation-contract.test.mjs
+
+      - name: Install locked webapp dependencies
+        working-directory: webapp
+        run: npm ci
+
+      - name: Run webapp contract tests
+        working-directory: webapp
+        run: npm test
+
+      - name: Typecheck, lint and build
+        working-directory: webapp
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run build
+
+      - name: Run Login browser smoke
+        working-directory: webapp
+        run: npm run e2e -- --grep "login"
+
+      - name: Check exact diff whitespace
+        run: git diff --check "${{ github.event.pull_request.base.sha }}"...HEAD
