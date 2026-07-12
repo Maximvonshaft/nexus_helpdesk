@@ -1,0 +1,163 @@
+{
+  "schema": "nexus.frontend-product-foundation.v1",
+  "version": "frontend_product_foundation.v1",
+  "owner": "nexus_osr_product_design",
+  "product_job": "Help an authorized logistics operator identify the case, distinguish authoritative evidence from claims and recommendations, take the next governed action, understand the actual operational and customer outcome, and determine whether the case is blocked, under observation, repair-required, reopenable, or safely closed.",
+  "visual_thesis": "Dense calm logistics cockpit",
+  "signature": {
+    "key": "case_spine",
+    "label": "Case Spine",
+    "purpose": "Represent scope, evidence, decision, action, operational result, customer notification and closure or observation as one truthful case journey.",
+    "runtime_authorities": [585, 587, 526],
+    "implementation_authority": 525
+  },
+  "route_domains": [
+    {
+      "domain": "authentication",
+      "route": "/login",
+      "canonical": true,
+      "status": "current",
+      "job": "Establish operator identity"
+    },
+    {
+      "domain": "operator_work",
+      "route": "/workspace",
+      "canonical": true,
+      "status": "planned",
+      "job": "Open the scoped queue and complete the governed case journey"
+    },
+    {
+      "domain": "knowledge_and_sop",
+      "route": "/knowledge",
+      "canonical": true,
+      "status": "planned",
+      "job": "Govern customer Knowledge and internal operating guidance"
+    },
+    {
+      "domain": "channels",
+      "route": "/channels",
+      "canonical": true,
+      "status": "planned",
+      "job": "Manage channel and account configuration and health"
+    },
+    {
+      "domain": "runtime_and_audit",
+      "route": "/runtime",
+      "canonical": true,
+      "status": "planned",
+      "job": "Inspect technical readiness, debug, evaluation and bounded audit evidence"
+    },
+    {
+      "domain": "management",
+      "route": "/control-tower",
+      "canonical": true,
+      "status": "planned",
+      "job": "Review scoped workload, risk, outcomes and management drill-down"
+    },
+    {
+      "domain": "operator_work_compatibility",
+      "route": "/webchat",
+      "canonical": false,
+      "status": "transitional",
+      "job": "Preserve the current Support Console during canonical Workspace migration"
+    }
+  ],
+  "token_authority": {
+    "semantic_tokens_path": "webapp/src/styles/tokens.css",
+    "component_primitives_path": "webapp/src/components/ui",
+    "feature_raw_hex_policy": "prohibited_after_migration",
+    "legacy_sources": [
+      "webapp/src/styles.css",
+      "webapp/src/features/support-console/support-console.css"
+    ],
+    "migration_strategy": "staged_by_route_domain",
+    "big_bang_rewrite": false
+  },
+  "state_vocabulary": {
+    "source": [
+      "source_open",
+      "source_resolved",
+      "source_closed",
+      "source_cancelled"
+    ],
+    "ownership": [
+      "ownership_unassigned",
+      "ownership_assigned",
+      "ownership_handoff_requested",
+      "ownership_handoff_accepted",
+      "ownership_waiting_customer",
+      "ownership_waiting_operations"
+    ],
+    "evidence": [
+      "evidence_authoritative",
+      "evidence_stale",
+      "evidence_unavailable",
+      "evidence_contradictory",
+      "evidence_customer_claim",
+      "evidence_approved_knowledge",
+      "evidence_ai_recommendation"
+    ],
+    "action_and_outcome": [
+      "action_requested",
+      "action_accepted",
+      "action_technical_completed",
+      "action_operational_completed",
+      "customer_notified",
+      "business_result_confirmed",
+      "repair_required"
+    ],
+    "closure": [
+      "closure_blocked",
+      "closure_observation",
+      "closure_eligible",
+      "closure_safely_closed",
+      "closure_reopened"
+    ]
+  },
+  "terminology": {
+    "prohibited_operator_labels": [
+      "记忆证据",
+      "已结束"
+    ],
+    "prohibited_label_conditions": {
+      "已结束": "Prohibited when derived only from Ticket resolved or closed status",
+      "成功": "Prohibited when derived only from request acceptance, queueing, transport or local technical completion"
+    },
+    "false_success_sources": [
+      "http_200",
+      "job_queued",
+      "job_done",
+      "message_sent",
+      "dispatch_dispatched",
+      "ticket_closed"
+    ],
+    "preferred_evidence_labels": [
+      "案例证据",
+      "事实与依据",
+      "客户主张",
+      "知识与政策",
+      "AI 建议"
+    ]
+  },
+  "quality_floor": {
+    "wcag_level": "AA",
+    "normal_text_contrast_ratio": 4.5,
+    "large_text_contrast_ratio": 3.0,
+    "minimum_target_css_px": 44,
+    "reduced_motion_required": true,
+    "keyboard_journey_required": true,
+    "screen_reader_structure_required": true,
+    "slow_network_required": true,
+    "large_list_required": true,
+    "no_color_only_meaning": true,
+    "representative_viewports": [375, 768, 1024, 1440]
+  },
+  "downstream_work_items": [525, 564, 573],
+  "lifecycle": {
+    "status": "approved_contract",
+    "effective_from": "2026-07-12T00:00:00Z",
+    "review_due": "2027-01-12T00:00:00Z",
+    "runtime_activation": false,
+    "production_ui_migration_complete": false
+  }
+}
