@@ -17,6 +17,12 @@ _REQUIRED_OBLIGATIONS = {
     "allow_component_replacement",
 }
 _SAFE_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+:/@-]{0,199}$")
+_SAFE_PYTHON_PURL = re.compile(
+    r"^pkg:(?:pypi/[A-Za-z0-9._-]+|generic/python)@[A-Za-z0-9._+!-]{1,100}$"
+)
+_SAFE_NPM_PURL = re.compile(
+    r"^pkg:npm/(?:%40[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+@[A-Za-z0-9._+!~-]{1,120}(?:\?[A-Za-z0-9._~%=&+-]{1,300})?$"
+)
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
@@ -50,6 +56,15 @@ def _safe(value: object, *, label: str) -> str:
     return text
 
 
+def _safe_purl(value: object) -> str:
+    text = str(value or "").strip()
+    if not (
+        _SAFE_PYTHON_PURL.fullmatch(text) or _SAFE_NPM_PURL.fullmatch(text)
+    ):
+        raise ComplianceError("sbom_purl_invalid")
+    return text
+
+
 def _sbom_components(sbom: dict[str, Any]) -> dict[str, dict[str, Any]]:
     components = sbom.get("components")
     if not isinstance(components, list):
@@ -58,7 +73,7 @@ def _sbom_components(sbom: dict[str, Any]) -> dict[str, dict[str, Any]]:
     for component in components:
         if not isinstance(component, dict):
             raise ComplianceError("sbom_component_invalid")
-        purl = _safe(component.get("purl"), label="sbom_purl")
+        purl = _safe_purl(component.get("purl"))
         if purl in result:
             raise ComplianceError("sbom_purl_duplicate")
         result[purl] = component
@@ -165,7 +180,7 @@ def verify(
             raise ComplianceError("compliance_entry_keys_invalid")
         package = _safe(raw["package"], label="package")
         version = _safe(raw["version"], label="version")
-        purl = _safe(raw["purl"], label="purl")
+        purl = _safe_purl(raw["purl"])
         license_id = _safe(raw["license"], label="license")
         owner = _safe(raw["owner"], label="owner")
         expires = _expiry(raw["expires_on"], today=today)
