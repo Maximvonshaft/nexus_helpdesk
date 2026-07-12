@@ -40,6 +40,49 @@ def _read(path: Path) -> str:
     return value
 
 
+def _finalize_teardown_evidence(root: Path) -> None:
+    """Make the command transcript non-empty only after rollback is proven.
+
+    Docker Compose writes normal teardown progress to stderr on some versions.
+    The runner previously piped stdout into ``teardown.txt``, so a successful
+    teardown could leave an empty regular file. Do not treat an empty transcript
+    as proof by itself: normalize it only when the independent rollback receipt
+    proves that no candidate container, volume, or network remains.
+    """
+
+    teardown_path = root / "teardown.txt"
+    if teardown_path.is_symlink() or (teardown_path.exists() and not teardown_path.is_file()):
+        raise ValueError("teardown evidence path is not a regular file")
+    if teardown_path.is_file() and teardown_path.stat().st_size > 0:
+        return
+
+    rollback_path = root / "rollback-verification.json"
+    if not rollback_path.is_file() or rollback_path.is_symlink():
+        raise ValueError("teardown rollback proof unavailable")
+    try:
+        rollback = json.loads(rollback_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("teardown rollback proof invalid") from exc
+
+    if not isinstance(rollback, dict):
+        raise ValueError("teardown rollback proof invalid")
+    if rollback.get("schema") != "nexus.osr.rc-test-rollback-verification.v1":
+        raise ValueError("teardown rollback proof invalid")
+    if rollback.get("status") != "pass":
+        raise ValueError("teardown rollback proof invalid")
+    for field in ("remaining_containers", "remaining_volumes", "remaining_networks"):
+        if rollback.get(field) != 0:
+            raise ValueError("teardown rollback proof reports remaining resources")
+
+    teardown_path.write_text(
+        "RC_TEARDOWN_COMPLETED=true\n"
+        "remaining_containers=0\n"
+        "remaining_volumes=0\n"
+        "remaining_networks=0\n",
+        encoding="utf-8",
+    )
+
+
 def _reason_code(exc: Exception) -> str:
     message = str(exc)
     if message.startswith("missing regular evidence file:"):
@@ -48,6 +91,10 @@ def _reason_code(exc: Exception) -> str:
         return "empty_evidence_file"
     if message == "readiness migration revision mismatch":
         return "migration_revision_mismatch"
+    if message.startswith("teardown evidence"):
+        return "teardown_evidence_invalid"
+    if message.startswith("teardown rollback proof"):
+        return "teardown_rollback_proof_invalid"
     if isinstance(exc, json.JSONDecodeError):
         return "invalid_json_evidence"
     if isinstance(exc, FileNotFoundError):
@@ -84,6 +131,8 @@ def build_manifest(args: argparse.Namespace) -> None:
     nginx_digest = _read(root / "nginx-image-digest.txt")
     if ready.get("migration_revision") != args.migration_head:
         raise ValueError("readiness migration revision mismatch")
+
+    _finalize_teardown_evidence(root)
 
     evidence: dict[str, dict[str, object]] = {}
     for logical_name, filename in EVIDENCE_FILES.items():
