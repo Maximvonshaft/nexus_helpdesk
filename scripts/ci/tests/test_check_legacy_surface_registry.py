@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import copy
+import io
 import importlib.util
 import json
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -95,6 +97,33 @@ class LegacySurfaceRegistryTests(unittest.TestCase):
         self.assertGreaterEqual(result["disposition_match_counts"]["protected_history"], 2)
         self.assertGreaterEqual(result["disposition_match_counts"]["active_authority"], 2)
         self.assertNotIn("historical_evidence", result["disposition_match_counts"])
+
+    def test_external_channel_path_matching_is_case_insensitive(self):
+        path = "LOCAL_EXTERNAL_CHANNEL_READY_REPORT.md"
+        result = legacy.scan_registry(
+            self.registry,
+            [path],
+            read_text=lambda _path: "",
+        )
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["classification_complete"])
+        self.assertEqual(result["unowned_count"], 0)
+        self.assertEqual(result["owner_issue_match_counts"]["572"], 1)
+
+    def test_bounded_reader_never_requests_more_than_limit_plus_one(self):
+        read_sizes = []
+
+        class RecordingBytesIO(io.BytesIO):
+            def read(self, size=-1):
+                read_sizes.append(size)
+                return super().read(size)
+
+        stream = RecordingBytesIO(b"x" * 128)
+        with mock.patch.object(Path, "open", return_value=stream):
+            result = legacy._read_text_bounded(Path("/repo"), "large.txt", max_bytes=16)
+
+        self.assertIsNone(result)
+        self.assertEqual(read_sizes, [17])
 
     def test_scan_classifies_round_artifacts_and_release_identity_without_raw_content(self):
         contents = {
