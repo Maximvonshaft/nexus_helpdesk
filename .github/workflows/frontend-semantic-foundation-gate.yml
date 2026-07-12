@@ -85,7 +85,12 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set +e
-          git fetch --no-tags origin "${BASE_SHA}"
+          if test -f .git/shallow; then
+            git fetch --no-tags --prune --unshallow origin +refs/heads/main:refs/remotes/origin/main
+          else
+            git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          fi
+          test "$(git rev-parse refs/remotes/origin/main)" = "${BASE_SHA}"
           git diff --check "${BASE_SHA}"...HEAD > exact-diff-check.txt 2>&1
           status=$?
           cat exact-diff-check.txt
