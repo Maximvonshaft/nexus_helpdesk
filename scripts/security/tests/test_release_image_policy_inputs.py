@@ -15,6 +15,8 @@ from validate_release_image_policy_inputs import PolicyInputError, validate  # n
 
 
 class ReleaseImagePolicyInputTests(unittest.TestCase):
+    PURL = "pkg:pypi/sample@1"
+
     def _write(self, root: Path, name: str, payload) -> Path:
         path = root / name
         path.write_text(json.dumps(payload), encoding="utf-8")
@@ -32,7 +34,7 @@ class ReleaseImagePolicyInputTests(unittest.TestCase):
                         {
                             "name": "sample",
                             "version": "1",
-                            "purl": "pkg:pypi/sample@1",
+                            "purl": self.PURL,
                         }
                     ],
                 },
@@ -78,6 +80,32 @@ class ReleaseImagePolicyInputTests(unittest.TestCase):
             today=date(2026, 7, 12),
         )
 
+    def _review_exception(self, *, purl: str | None = None, owner: str = "open-source-owner"):
+        return {
+            "purl": purl or self.PURL,
+            "package": "sample",
+            "version": "1",
+            "license": "LGPL-3.0-only",
+            "owner": owner,
+            "expires_on": "2026-08-01",
+            "reason": "Exact review requires complete compliance and retained notice evidence.",
+        }
+
+    def _compliance_record(self, *, purl: str | None = None, owner: str = "open-source-owner"):
+        return {
+            "package": "sample",
+            "version": "1",
+            "purl": purl or self.PURL,
+            "license": "LGPL-3.0-only",
+            "owner": owner,
+            "expires_on": "2026-08-01",
+            "source": "https://example.invalid/sample/1",
+            "notice_path": "THIRD_PARTY_NOTICES.md",
+            "modified": False,
+            "replacement_supported": True,
+            "obligations": ["retain_license_text"],
+        }
+
     def test_valid_complete_inputs_pass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -112,31 +140,26 @@ class ReleaseImagePolicyInputTests(unittest.TestCase):
             with self.assertRaisesRegex(PolicyInputError, "sbom_components_empty"):
                 self._validate(inputs, root / "result.json")
 
+    def test_duplicate_sbom_purl_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs = self._valid_inputs(root)
+            payload = json.loads(inputs["sbom"].read_text())
+            payload["components"].append(
+                {"name": "other", "version": "1", "purl": self.PURL}
+            )
+            inputs["sbom"].write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(PolicyInputError, "sbom_component_purl_duplicate"):
+                self._validate(inputs, root / "result.json")
+
     def test_unaccountable_exception_owner_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             inputs = self._valid_inputs(root)
-            inputs["license_policy"] = self._write(
-                root,
-                "license-policy.json",
-                {
-                    "schema_version": "nexus_container_license_policy_v1",
-                    "allowed": ["MIT"],
-                    "denied": [],
-                    "review": ["LGPL-3.0-only"],
-                    "unknown_action": "review",
-                    "exceptions": [
-                        {
-                            "package": "sample",
-                            "version": "1",
-                            "license": "LGPL-3.0-only",
-                            "owner": "unassigned",
-                            "expires_on": "2026-08-01",
-                            "reason": "Temporary exact review for this candidate dependency.",
-                        }
-                    ],
-                },
-            )
+            policy = json.loads(inputs["license_policy"].read_text())
+            policy["exceptions"] = [self._review_exception(owner="unassigned")]
+            inputs["license_policy"].write_text(json.dumps(policy), encoding="utf-8")
 
             with self.assertRaisesRegex(
                 PolicyInputError, "exception_owner_unaccountable"
@@ -147,27 +170,17 @@ class ReleaseImagePolicyInputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             inputs = self._valid_inputs(root)
-            inputs["license_policy"] = self._write(
-                root,
-                "license-policy.json",
+            policy = json.loads(inputs["license_policy"].read_text())
+            forbidden = self._review_exception(purl="pkg:pypi/forbidden@1")
+            forbidden.update(
                 {
-                    "schema_version": "nexus_container_license_policy_v1",
-                    "allowed": ["MIT"],
-                    "denied": ["AGPL-3.0-only"],
-                    "review": ["LGPL-3.0-only"],
-                    "unknown_action": "review",
-                    "exceptions": [
-                        {
-                            "package": "forbidden",
-                            "version": "1",
-                            "license": "AGPL-3.0-only",
-                            "owner": "security-owner",
-                            "expires_on": "2026-08-01",
-                            "reason": "This forbidden component must never become releasable.",
-                        }
-                    ],
-                },
+                    "package": "forbidden",
+                    "license": "AGPL-3.0-only",
+                    "reason": "This forbidden component must never become releasable.",
+                }
             )
+            policy["exceptions"] = [forbidden]
+            inputs["license_policy"].write_text(json.dumps(policy), encoding="utf-8")
 
             with self.assertRaisesRegex(
                 PolicyInputError, "license_exception_for_denied_license"
@@ -178,27 +191,9 @@ class ReleaseImagePolicyInputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             inputs = self._valid_inputs(root)
-            inputs["license_policy"] = self._write(
-                root,
-                "license-policy.json",
-                {
-                    "schema_version": "nexus_container_license_policy_v1",
-                    "allowed": ["MIT"],
-                    "denied": [],
-                    "review": ["LGPL-3.0-only"],
-                    "unknown_action": "review",
-                    "exceptions": [
-                        {
-                            "package": "sample",
-                            "version": "1",
-                            "license": "LGPL-3.0-only",
-                            "owner": "open-source-owner",
-                            "expires_on": "2026-08-01",
-                            "reason": "Exact review requires complete compliance and retained notice evidence.",
-                        }
-                    ],
-                },
-            )
+            policy = json.loads(inputs["license_policy"].read_text())
+            policy["exceptions"] = [self._review_exception()]
+            inputs["license_policy"].write_text(json.dumps(policy), encoding="utf-8")
 
             with self.assertRaisesRegex(
                 PolicyInputError, "license_exception_compliance_missing"
@@ -209,48 +204,13 @@ class ReleaseImagePolicyInputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             inputs = self._valid_inputs(root)
-            inputs["license_policy"] = self._write(
-                root,
-                "license-policy.json",
-                {
-                    "schema_version": "nexus_container_license_policy_v1",
-                    "allowed": ["MIT"],
-                    "denied": [],
-                    "review": ["LGPL-3.0-only"],
-                    "unknown_action": "review",
-                    "exceptions": [
-                        {
-                            "package": "sample",
-                            "version": "1",
-                            "license": "LGPL-3.0-only",
-                            "owner": "open-source-owner",
-                            "expires_on": "2026-08-01",
-                            "reason": "Exact review requires complete compliance and retained notice evidence.",
-                        }
-                    ],
-                },
-            )
-            inputs["license_compliance"] = self._write(
-                root,
-                "license-compliance.json",
-                {
-                    "schema_version": "nexus_container_license_compliance_v1",
-                    "entries": [
-                        {
-                            "package": "sample",
-                            "version": "1",
-                            "purl": "pkg:pypi/sample@1",
-                            "license": "LGPL-3.0-only",
-                            "owner": "open-source-owner",
-                            "expires_on": "2026-08-01",
-                            "source": "https://example.invalid/sample/1",
-                            "notice_path": "THIRD_PARTY_NOTICES.md",
-                            "modified": False,
-                            "replacement_supported": True,
-                            "obligations": ["retain_license_text"],
-                        }
-                    ],
-                },
+            policy = json.loads(inputs["license_policy"].read_text())
+            policy["exceptions"] = [self._review_exception()]
+            inputs["license_policy"].write_text(json.dumps(policy), encoding="utf-8")
+            compliance = json.loads(inputs["license_compliance"].read_text())
+            compliance["entries"] = [self._compliance_record()]
+            inputs["license_compliance"].write_text(
+                json.dumps(compliance), encoding="utf-8"
             )
 
             output = root / "result.json"
@@ -258,6 +218,26 @@ class ReleaseImagePolicyInputTests(unittest.TestCase):
             self.assertEqual(
                 json.loads(output.read_text())["license_compliance_record_count"], 1
             )
+
+    def test_policy_and_compliance_same_tuple_different_purl_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs = self._valid_inputs(root)
+            policy = json.loads(inputs["license_policy"].read_text())
+            policy["exceptions"] = [self._review_exception()]
+            inputs["license_policy"].write_text(json.dumps(policy), encoding="utf-8")
+            compliance = json.loads(inputs["license_compliance"].read_text())
+            compliance["entries"] = [
+                self._compliance_record(purl="pkg:npm/sample@1")
+            ]
+            inputs["license_compliance"].write_text(
+                json.dumps(compliance), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(
+                PolicyInputError, "license_exception_compliance_missing"
+            ):
+                self._validate(inputs, root / "result.json")
 
     def test_expired_exception_fails_against_runtime_date(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
