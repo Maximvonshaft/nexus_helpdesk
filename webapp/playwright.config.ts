@@ -9,7 +9,9 @@ export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
+  // The RC journey is stateful and exact-head bound. A retry can create a
+  // second synthetic conversation and mask the first failing browser stage.
+  retries: rcBrowser ? 0 : (process.env.CI ? 1 : 0),
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL,
