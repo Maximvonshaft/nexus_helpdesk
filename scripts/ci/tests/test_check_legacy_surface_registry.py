@@ -68,6 +68,19 @@ class LegacySurfaceRegistryTests(unittest.TestCase):
         ):
             legacy.validate_registry(raw)
 
+    def test_reachable_git_history_does_not_use_a_tracked_file_placeholder(self):
+        self.assertNotIn(
+            "protected_reachable_git_history",
+            {item["id"] for item in self.registry["domains"]},
+        )
+        result = legacy.scan_registry(
+            self.registry,
+            [".gitignore"],
+            read_text=lambda _path: "",
+        )
+        self.assertNotIn("protected_history", result["disposition_match_counts"])
+        self.assertNotIn("565", result["owner_issue_match_counts"])
+
     def test_scan_classifies_protected_history_and_active_versioned_contracts(self):
         files = [
             "backend/alembic/versions/20260425_round_b_webchat.py",
