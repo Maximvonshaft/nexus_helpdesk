@@ -71,7 +71,13 @@ def _component_license_values(component: dict[str, Any]) -> set[str]:
         if not isinstance(entry, dict):
             continue
         if isinstance(entry.get("expression"), str):
-            values.update(token for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9.+-]*", entry["expression"]) if token not in {"AND", "OR", "WITH"})
+            values.update(
+                token
+                for token in re.findall(
+                    r"[A-Za-z0-9][A-Za-z0-9.+-]*", entry["expression"]
+                )
+                if token not in {"AND", "OR", "WITH"}
+            )
         info = entry.get("license")
         if isinstance(info, dict) and isinstance(info.get("id"), str):
             values.add(info["id"])
@@ -92,13 +98,23 @@ def verify(
     policy = _load(policy_path)
     sbom = _load(sbom_path)
     installed = _load(installed_path)
-    if not isinstance(compliance, dict) or compliance.get("schema_version") != "nexus_container_license_compliance_v1":
+    if (
+        not isinstance(compliance, dict)
+        or compliance.get("schema_version")
+        != "nexus_container_license_compliance_v1"
+    ):
         raise ComplianceError("compliance_schema_invalid")
-    if not isinstance(policy, dict) or policy.get("schema_version") != "nexus_container_license_policy_v1":
+    if (
+        not isinstance(policy, dict)
+        or policy.get("schema_version") != "nexus_container_license_policy_v1"
+    ):
         raise ComplianceError("policy_schema_invalid")
     if not isinstance(sbom, dict) or sbom.get("bomFormat") != "CycloneDX":
         raise ComplianceError("sbom_schema_invalid")
-    if not isinstance(installed, dict) or installed.get("schema_version") != "nexus_installed_license_evidence_v1":
+    if (
+        not isinstance(installed, dict)
+        or installed.get("schema_version") != "nexus_installed_license_evidence_v1"
+    ):
         raise ComplianceError("installed_evidence_schema_invalid")
 
     entries = compliance.get("entries")
@@ -108,7 +124,11 @@ def verify(
     if not isinstance(exceptions, list):
         raise ComplianceError("policy_exceptions_invalid")
     exception_map = {
-        (str(item.get("package")), str(item.get("version")), str(item.get("license"))): item
+        (
+            str(item.get("package")),
+            str(item.get("version")),
+            str(item.get("license")),
+        ): item
         for item in exceptions
         if isinstance(item, dict)
     }
@@ -129,8 +149,17 @@ def verify(
         if not isinstance(raw, dict):
             raise ComplianceError("compliance_entry_invalid")
         expected_keys = {
-            "package", "version", "purl", "license", "owner", "expires_on", "source",
-            "notice_path", "modified", "replacement_supported", "obligations",
+            "package",
+            "version",
+            "purl",
+            "license",
+            "owner",
+            "expires_on",
+            "source",
+            "notice_path",
+            "modified",
+            "replacement_supported",
+            "obligations",
         }
         if set(raw) != expected_keys:
             raise ComplianceError("compliance_entry_keys_invalid")
@@ -141,7 +170,7 @@ def verify(
         owner = _safe(raw["owner"], label="owner")
         expires = _expiry(raw["expires_on"], today=today)
         source = str(raw["source"] or "").strip()
-        if not source.startswith("https://"):
+        if not source.startswith("https://") or len(source) > 500:
             raise ComplianceError("compliance_source_invalid")
         if raw["notice_path"] != notice_path.name:
             raise ComplianceError("compliance_notice_path_invalid")
@@ -156,7 +185,11 @@ def verify(
         seen.add(key)
 
         component = sbom_by_purl.get(purl)
-        if component is None or component.get("name") != package or component.get("version") != version:
+        if (
+            component is None
+            or component.get("name") != package
+            or component.get("version") != version
+        ):
             raise ComplianceError("compliance_sbom_identity_mismatch")
         if license_id not in _component_license_values(component):
             raise ComplianceError("compliance_sbom_license_mismatch")
@@ -171,18 +204,29 @@ def verify(
             if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
                 raise ComplianceError("compliance_license_file_invalid")
             path = str(item["path"] or "")
-            if not path or len(path) > 300 or not _SHA256.fullmatch(str(item["sha256"] or "")):
+            if (
+                not path
+                or len(path) > 300
+                or not _SHA256.fullmatch(str(item["sha256"] or ""))
+            ):
                 raise ComplianceError("compliance_license_file_invalid")
-            if not any(token in path.lower() for token in ("license", "copying", "notice")):
+            if not any(
+                token in path.lower() for token in ("license", "copying", "notice")
+            ):
                 raise ComplianceError("compliance_license_file_name_invalid")
 
         exception = exception_map.get(key)
         if not isinstance(exception, dict):
             raise ComplianceError("compliance_policy_exception_missing")
-        if exception.get("owner") != owner or exception.get("expires_on") != expires.isoformat():
+        if (
+            exception.get("owner") != owner
+            or exception.get("expires_on") != expires.isoformat()
+        ):
             raise ComplianceError("compliance_policy_exception_mismatch")
         if purl not in notice or license_id not in notice:
             raise ComplianceError("compliance_notice_missing")
+        if source not in notice:
+            raise ComplianceError("compliance_notice_source_missing")
         checked.append(
             {
                 "package": package,
@@ -191,6 +235,7 @@ def verify(
                 "license": license_id,
                 "owner": owner,
                 "expires_on": expires.isoformat(),
+                "source": source,
                 "license_file_count": len(files),
                 "modified": False,
                 "replacement_supported": True,
@@ -203,7 +248,9 @@ def verify(
         "checked_count": len(checked),
         "components": checked,
     }
-    output_path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    output_path.write_text(
+        json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
     return 0
 
 
