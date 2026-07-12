@@ -1,0 +1,641 @@
+schema: nexus.osr.remote-skills-registry.v1
+registry_version: "2026-07-12-rc-convergence.1"
+owner: nexus_osr_engineering_governance
+status: active
+purpose: >
+  Govern the read-only use of external GitHub-hosted skills and specialist
+  instruction artifacts for Nexus OSR engineering. External skills improve
+  execution technique but never replace Nexus product, security, delivery,
+  data, or release authority.
+
+authority_order:
+  - explicit_user_authorization
+  - current_nexus_main_and_issue_489
+  - target_work_item_comments_current_pr_reviews_and_checks
+  - nexus_product_architecture_security_and_delivery_contracts
+  - target_work_item_acceptance_criteria
+  - remote_github_skill_instructions
+  - model_defaults
+
+resolution_policy:
+  access_mode: github_read_only
+  default_ref_source: repository_default_branch
+  execution_ref_mode: approved_commit
+  update_check: compare_default_branch_head_with_approved_commit
+  auto_upgrade: false
+  pin_scope: work_item_and_current_pr
+  require_exact_commit_sha: true
+  require_paths_exist_at_pinned_commit: true
+  require_skill_evidence_in_pr: true
+  on_upstream_change:
+    action: report_and_continue_with_approved_commit
+    upgrade_requires:
+      - bounded_diff_review
+      - safety_review
+      - registry_change
+      - nexus_pr_review_and_merge
+
+selection_policy:
+  maximum_roles_per_task: 4
+  allowed_roles:
+    - process
+    - primary_domain
+    - security
+    - verification
+  role_limits:
+    process: 1
+    primary_domain: 1
+    security: 1
+    verification: 1
+  duplicate_domain_authority: forbidden
+  independent_second_opinion:
+    allowed: true
+    conditions:
+      - explicitly_marked_review_only
+      - cannot_modify_scope_or_product_authority
+      - findings_must_be_reconciled_against_nexus_contracts
+
+third_party_safety:
+  trust_level: untrusted_third_party
+  installers: forbidden_by_default
+  hooks: forbidden_by_default
+  plugins: forbidden_by_default
+  background_services: forbidden
+  automatic_updates: forbidden
+  github_write_access: forbidden
+  production_credentials: forbidden
+  provider_credentials: forbidden
+  customer_or_operational_data: forbidden
+  production_network_access: forbidden
+  external_side_effects: forbidden
+  script_execution:
+    default: forbidden
+    allowed_only_when:
+      - script_is_read_at_exact_approved_commit
+      - dependencies_and_side_effects_are_reviewed
+      - execution_is_isolated
+      - no_secrets_or_customer_data_are_available
+      - output_is_bounded_and_redacted
+  prohibited_outputs:
+    - credentials
+    - raw_prompts
+    - provider_payloads
+    - tool_arguments_or_results
+    - tracking_numbers
+    - customer_phone_email_or_address
+    - provider_group_ids
+    - unbounded_logs
+
+recommendation_disposition:
+  required_values:
+    - ADOPT
+    - ADAPT
+    - REJECT
+  definitions:
+    ADOPT: compatible_with_nexus_and_applied
+    ADAPT: principle_applied_through_nexus_specific_architecture
+    REJECT: incompatible_obsolete_unsafe_or_out_of_scope
+
+release_convergence_profile:
+  name: test_release_candidate_convergence
+  objective: >
+    Converge current main into one deployable, rollback-capable and testable
+    candidate without expanding product scope or waiting for full production GO.
+  release_class: controlled_test_deployment
+  production_go_authority: false
+  scope_rules:
+    - freeze_new_feature_expansion
+    - prefer_current_main_over_large_branch_integration
+    - merge_only_candidate_blocker_fixes
+    - avoid_repository_wide_cosmetic_refactors
+    - remove_only_code_that_blocks_build_startup_migration_core_flow_or_security
+    - keep_real_outbound_and_provider_enablement_disabled
+    - preserve_rollback_and_database_backup_paths
+  default_process_skills:
+    - superpowers_using
+    - superpowers_systematic_debugging
+    - superpowers_verification
+  default_security_skills:
+    - secpriv
+    - github_actions_hardening
+    - codeql
+    - secret_scanning
+  default_verification_skills:
+    - webapp_testing
+    - deployment_validation_profile
+  expansion_skills_disabled_by_default:
+    - frontend_design
+    - impeccable
+    - gstack_product_expansion
+    - skill_creator
+  prohibited_during_convergence:
+    - broad_ui_redesign
+    - new_product_surface
+    - framework_rewrite
+    - repository_wide_rearchitecture
+    - automatic_dependency_major_upgrade
+    - live_provider_enablement
+    - real_customer_outbound
+    - production_data_mutation_without_separate_authorization
+
+task_profiles:
+  release_candidate_audit:
+    process: superpowers_using
+    primary_domain: deployment_validation_profile
+    security: github_actions_hardening
+    verification: superpowers_verification
+
+  backend_blocker_fix:
+    process: superpowers_systematic_debugging
+    primary_domain: fastapi_profile
+    security: secpriv
+    verification: superpowers_verification
+
+  database_or_migration_blocker:
+    process: superpowers_systematic_debugging
+    primary_domain: postgres_best_practices
+    security: secpriv
+    verification: deployment_validation_profile
+
+  frontend_blocker_fix:
+    process: superpowers_systematic_debugging
+    primary_domain: react_best_practices
+    security: web_design_guidelines
+    verification: webapp_testing
+
+  github_actions_or_supply_chain:
+    process: superpowers_systematic_debugging
+    primary_domain: github_actions_hardening
+    security: secret_scanning
+    verification: codeql
+
+  final_candidate_review:
+    process: superpowers_verification
+    primary_domain: deployment_validation_profile
+    security: secpriv
+    verification: gstack_release_review
+
+skills:
+  superpowers_using:
+    enabled: true
+    role: process
+    artifact_type: skill
+    repository: obra/superpowers
+    approved_commit: d884ae04edebef577e82ff7c4e143debd0bbec99
+    entrypoint: skills/using-superpowers/SKILL.md
+    additional_paths:
+      - skills/writing-plans/SKILL.md
+      - skills/executing-plans/SKILL.md
+    use_when:
+      - starting_a_nontrivial_engineering_task
+      - selecting_other_skills
+      - planning_a_bounded_candidate_fix
+    nexus_overrides:
+      - do_not_require_user_reapproval_when_work_item_already_defines_scope
+      - nexus_issue_claim_and_pr_governance_remains_authoritative
+      - do_not_create_a_second_task_tracking_system
+    execution_mode: instructions_only
+
+  superpowers_systematic_debugging:
+    enabled: true
+    role: process
+    artifact_type: skill
+    repository: obra/superpowers
+    approved_commit: d884ae04edebef577e82ff7c4e143debd0bbec99
+    entrypoint: skills/systematic-debugging/SKILL.md
+    use_when:
+      - test_failure
+      - runtime_failure
+      - migration_failure
+      - flaky_ci
+      - unexplained_behavior
+    required_sequence:
+      - reproduce
+      - gather_bounded_evidence
+      - trace_data_flow
+      - form_hypothesis
+      - run_minimal_experiment
+      - implement_smallest_coherent_fix
+      - verify_regression
+    execution_mode: instructions_only
+
+  superpowers_tdd:
+    enabled: true
+    role: process
+    artifact_type: skill
+    repository: obra/superpowers
+    approved_commit: d884ae04edebef577e82ff7c4e143debd0bbec99
+    entrypoint: skills/test-driven-development/SKILL.md
+    use_when:
+      - behavior_change
+      - regression_fix
+      - new_contract_required_for_candidate
+    convergence_constraint: >
+      Use focused RED-GREEN-REFACTOR for candidate blockers. Do not expand the
+      Work Item or create speculative abstractions.
+    execution_mode: instructions_only
+
+  superpowers_verification:
+    enabled: true
+    role: verification
+    artifact_type: skill
+    repository: obra/superpowers
+    approved_commit: d884ae04edebef577e82ff7c4e143debd0bbec99
+    entrypoint: skills/verification-before-completion/SKILL.md
+    use_when:
+      - before_claiming_completion
+      - before_marking_pr_ready
+      - before_candidate_selection
+      - after_reconciliation_with_current_main
+    nexus_overrides:
+      - green_ci_is_not_business_acceptance
+      - exact_head_and_runtime_evidence_are_required
+      - test_deployment_does_not_equal_production_go
+    execution_mode: instructions_only
+
+  skill_creator:
+    enabled: false
+    role: primary_domain
+    artifact_type: skill
+    repository: anthropics/skills
+    approved_commit: 9d2f1ae187231d8199c64b5b762e1bdf2244733d
+    entrypoint: skills/skill-creator/SKILL.md
+    use_when:
+      - creating_or_updating_nexus_osr_engineering_skill
+      - running_skill_baseline_and_evaluation
+    disabled_reason: not_part_of_release_candidate_convergence
+    execution_mode: instructions_and_reviewed_scripts
+
+  frontend_design:
+    enabled: false
+    role: primary_domain
+    artifact_type: skill
+    repository: anthropics/skills
+    approved_commit: 9d2f1ae187231d8199c64b5b762e1bdf2244733d
+    entrypoint: skills/frontend-design/SKILL.md
+    use_when:
+      - explicitly_authorized_new_or_reshaped_ui
+    prerequisites:
+      - read_webapp_PRODUCT_md
+      - read_webapp_DESIGN_md
+      - read_frontend_product_foundation_json
+    disabled_reason: >
+      Current convergence phase must implement existing Nexus frontend authority,
+      not create a new design direction.
+    execution_mode: instructions_only
+
+  webapp_testing:
+    enabled: true
+    role: verification
+    artifact_type: skill
+    repository: anthropics/skills
+    approved_commit: 9d2f1ae187231d8199c64b5b762e1bdf2244733d
+    entrypoint: skills/webapp-testing/SKILL.md
+    additional_paths:
+      - skills/webapp-testing/scripts/with_server.py
+    use_when:
+      - login_flow
+      - operator_workspace
+      - webchat_flow
+      - browser_regression
+      - keyboard_and_focus_validation
+      - degraded_state_validation
+    script_policy:
+      with_server_py:
+        execution: allowed_after_review
+        network: local_only
+        browser: chromium_headless
+    execution_mode: instructions_and_reviewed_scripts
+
+  postgres_best_practices:
+    enabled: true
+    role: primary_domain
+    artifact_type: skill
+    repository: supabase/agent-skills
+    approved_commit: 1ad9aaeb49caafd9e95c0a91116f71890eebbc53
+    entrypoint: skills/supabase-postgres-best-practices/SKILL.md
+    reference_globs:
+      - skills/supabase-postgres-best-practices/references/query-*.md
+      - skills/supabase-postgres-best-practices/references/conn-*.md
+      - skills/supabase-postgres-best-practices/references/security-*.md
+      - skills/supabase-postgres-best-practices/references/schema-*.md
+      - skills/supabase-postgres-best-practices/references/lock-*.md
+      - skills/supabase-postgres-best-practices/references/monitor-*.md
+    use_when:
+      - sqlalchemy_model_change
+      - alembic_migration
+      - tenant_ownership
+      - row_level_security
+      - query_or_index_change
+      - concurrency_or_locking
+      - connection_pooling
+    nexus_overrides:
+      - nexus_sqlalchemy_and_alembic_patterns_win
+      - postgres_is_production_authority
+      - sqlite_compatibility_is_preserved_where_repository_tests_require_it
+      - migration_requires_upgrade_downgrade_reupgrade_and_repair_evidence
+    execution_mode: instructions_and_references
+
+  secpriv:
+    enabled: true
+    role: security
+    artifact_type: skill
+    repository: facebookresearch/secpriv-skill
+    approved_commit: ded8427e5dee05323f5e495ade0499b12b188b0c
+    entrypoint: SKILL.md
+    use_when:
+      - authentication_or_authorization
+      - tenant_or_scope_boundary
+      - customer_or_employee_pii
+      - ticket_event_or_audit_payload
+      - knowledge_upload_or_parser
+      - provider_or_tool_data_flow
+      - logging_or_artifact_change
+    required_review_model:
+      - repository_context
+      - source_sink_and_transformation_flow
+      - security_and_privacy_assessment
+      - validator_and_false_positive_suppression
+      - standards_mapping
+    limitations:
+      - static_review_does_not_prove_runtime_enforcement
+      - cross_file_flows_require_explicit_repository_level_trace
+    execution_mode: instructions_only
+
+  react_best_practices:
+    enabled: true
+    role: primary_domain
+    artifact_type: skill
+    repository: vercel-labs/agent-skills
+    approved_commit: f8a72b9603728bb92a217a879b7e62e43ad76c81
+    entrypoint: skills/react-best-practices/SKILL.md
+    reference_globs:
+      - skills/react-best-practices/rules/async-*.md
+      - skills/react-best-practices/rules/bundle-*.md
+      - skills/react-best-practices/rules/client-*.md
+      - skills/react-best-practices/rules/rerender-*.md
+      - skills/react-best-practices/rules/rendering-*.md
+    use_when:
+      - react_component_change
+      - tanstack_query_change
+      - route_or_data_fetch_change
+      - large_list_performance
+      - bundle_or_rendering_regression
+    nexus_overrides:
+      - nexus_uses_react_vite_tanstack_not_nextjs
+      - ignore_nextjs_only_rules_unless_concept_generalizes
+      - do_not_replace_existing_state_or_routing_architecture_without_work_item_scope
+    execution_mode: instructions_and_references
+
+  web_design_guidelines:
+    enabled: true
+    role: security
+    artifact_type: skill
+    repository: vercel-labs/agent-skills
+    approved_commit: f8a72b9603728bb92a217a879b7e62e43ad76c81
+    entrypoint: skills/web-design-guidelines/SKILL.md
+    upstream_guideline_repository: vercel-labs/web-interface-guidelines
+    upstream_guideline_path: command.md
+    upstream_guideline_resolution: >
+      Resolve and pin the web-interface-guidelines commit for the Work Item.
+      Do not fetch mutable raw main without recording an exact SHA.
+    use_when:
+      - semantic_html
+      - accessibility
+      - keyboard_navigation
+      - forms
+      - focus_states
+      - responsive_interaction
+      - reduced_motion
+    execution_mode: instructions_and_references
+
+  github_actions_hardening:
+    enabled: true
+    role: primary_domain
+    artifact_type: skill
+    repository: github/awesome-copilot
+    approved_commit: 30472ecf0fe34cc561df958c08501ecc5ca80ea4
+    entrypoint: skills/github-actions-hardening/SKILL.md
+    reference_paths:
+      - skills/github-actions-hardening/references/triggers-and-privilege.md
+      - skills/github-actions-hardening/references/injection.md
+      - skills/github-actions-hardening/references/permissions-and-tokens.md
+      - skills/github-actions-hardening/references/supply-chain.md
+      - skills/github-actions-hardening/references/report-format.md
+    use_when:
+      - github_workflow_change
+      - pull_request_target
+      - workflow_run
+      - issue_comment_trigger
+      - github_token_permission
+      - action_reference_or_artifact_change
+    required_checks:
+      - trigger_trust_level
+      - expression_and_shell_injection
+      - privileged_trigger_untrusted_code
+      - least_privilege_permissions
+      - immutable_action_refs
+      - secret_output_artifact_and_cache_handling
+    execution_mode: instructions_and_references
+
+  codeql:
+    enabled: true
+    role: verification
+    artifact_type: skill
+    repository: github/awesome-copilot
+    approved_commit: 30472ecf0fe34cc561df958c08501ecc5ca80ea4
+    entrypoint: skills/codeql/SKILL.md
+    use_when:
+      - python_security_scan
+      - javascript_typescript_security_scan
+      - github_actions_scan
+      - sarif_or_code_scanning_configuration
+    nexus_defaults:
+      languages:
+        - python
+        - javascript-typescript
+        - actions
+      query_suite: security-extended
+      monorepo_categories:
+        - backend
+        - webapp
+        - github-actions
+    execution_mode: instructions_only
+
+  secret_scanning:
+    enabled: true
+    role: security
+    artifact_type: skill
+    repository: github/awesome-copilot
+    approved_commit: 30472ecf0fe34cc561df958c08501ecc5ca80ea4
+    entrypoint: skills/secret-scanning/SKILL.md
+    use_when:
+      - repository_history_or_exposure_review
+      - secret_scanning_configuration
+      - push_protection
+      - custom_secret_pattern
+      - credential_alert_remediation
+    nexus_requirements:
+      - rotate_before_history_cleanup_when_secret_is_active
+      - scan_git_history_issues_prs_comments_and_artifacts
+      - custom_patterns_may_cover_nexus_provider_and_speedaf_formats
+      - exclusions_require_documented_reason_and_review
+    execution_mode: instructions_only
+
+  impeccable:
+    enabled: false
+    role: primary_domain
+    artifact_type: skill
+    repository: pbakaus/impeccable
+    approved_commit: 630fc2682a5bd39b25a8e61f74b6b3f14f2b1e21
+    entrypoint: .agents/skills/impeccable/SKILL.md
+    allowed_commands_when_enabled:
+      - audit
+      - harden
+      - adapt
+      - polish
+      - optimize
+    forbidden_commands_during_convergence:
+      - init
+      - craft
+      - bolder
+      - delight
+      - animate
+      - overdrive
+    prerequisites:
+      - read_webapp_PRODUCT_md
+      - read_webapp_DESIGN_md
+    disabled_reason: >
+      Product and design authority already exists. Enable only for a bounded
+      final frontend hardening pass after the candidate flow is complete.
+    execution_mode: instructions_only
+
+  fastapi_profile:
+    enabled: true
+    role: primary_domain
+    artifact_type: agent_profile
+    repository: wshobson/agents
+    approved_commit: 2de74ac1c8f6669821dcef13153332c3168033c1
+    entrypoint: plugins/python-development/agents/fastapi-pro.md
+    optional_reference:
+      - plugins/api-scaffolding/skills/fastapi-templates/SKILL.md
+    use_when:
+      - fastapi_route_or_dependency
+      - pydantic_contract
+      - async_service_boundary
+      - api_error_handling
+    nexus_overrides:
+      - do_not_rescaffold_repository
+      - do_not_convert_sync_sqlalchemy_to_async_without_explicit_scope
+      - preserve_current_service_and_permission_boundaries
+      - use_as_review_guidance_not_architecture_authority
+    execution_mode: instructions_only
+
+  deployment_validation_profile:
+    enabled: true
+    role: primary_domain
+    artifact_type: agent_profile
+    repository: wshobson/agents
+    approved_commit: 2de74ac1c8f6669821dcef13153332c3168033c1
+    entrypoint: plugins/deployment-validation/agents/cloud-architect.md
+    use_when:
+      - docker_compose_candidate
+      - preflight
+      - migration_rehearsal
+      - smoke_test
+      - rollback_rehearsal
+      - exact_candidate_manifest
+    nexus_required_evidence:
+      - exact_main_sha
+      - alembic_head
+      - image_tag_or_digest
+      - configuration_fingerprint
+      - frontend_build_sha
+      - database_backup_location
+      - healthz_result
+      - readyz_result
+      - focused_browser_smoke
+      - rollback_command_and_result
+    nexus_overrides:
+      - controlled_test_deployment_is_not_production_go
+      - outbound_and_provider_enablement_remain_disabled
+      - current_deploy_runbook_and_compose_are_authoritative
+    execution_mode: instructions_only
+
+  gstack_release_review:
+    enabled: true
+    role: verification
+    artifact_type: skill_bundle
+    repository: garrytan/gstack
+    approved_commit: 7c9df1c568a9ea745508f679a329332b2c338063
+    entrypoints:
+      review: review/SKILL.md
+      investigate: investigate/SKILL.md
+      qa: qa/SKILL.md
+      cso: cso/SKILL.md
+    use_when:
+      - independent_final_candidate_second_opinion
+      - difficult_root_cause_investigation
+      - staging_browser_qa
+      - final_security_second_opinion
+    review_only: true
+    prohibited:
+      - setup
+      - team_mode
+      - auto_update
+      - land_and_deploy
+      - product_scope_expansion
+      - task_or_issue_system_replacement
+    execution_mode: instructions_only
+
+  gstack_product_expansion:
+    enabled: false
+    role: primary_domain
+    artifact_type: skill_bundle
+    repository: garrytan/gstack
+    approved_commit: 7c9df1c568a9ea745508f679a329332b2c338063
+    disabled_reason: current_release_convergence_requires_scope_freeze
+    prohibited_entrypoints:
+      - office-hours
+      - plan-ceo-review
+      - design-shotgun
+      - design-consultation
+
+pr_evidence_template:
+  heading: Remote Skill Evidence
+  required_fields:
+    - work_item
+    - candidate_or_pr_head_sha
+    - selected_roles
+    - repositories
+    - approved_commits
+    - entrypoints_and_references_read
+    - upstream_update_differences
+    - recommendations_adopted
+    - recommendations_adapted
+    - recommendations_rejected
+    - third_party_scripts_executed
+    - bounded_findings
+    - verification_commands_and_results
+    - unverified_items
+
+candidate_exit_gate:
+  required:
+    - exact_candidate_commit_recorded
+    - selected_skill_versions_recorded
+    - backend_ci_green
+    - webapp_build_green
+    - postgres_migration_gate_green
+    - security_assurance_green
+    - healthz_pass
+    - readyz_pass_for_test_release_profile
+    - core_browser_smoke_pass
+    - outbound_dispatch_disabled
+    - provider_candidate_traffic_zero_or_kill_switch_on
+    - backup_completed
+    - rollback_rehearsed_or_bounded_dry_run_accepted
+    - no_intentional_red_pr_in_candidate
+    - no_unresolved_candidate_blocking_review
+  interpretation:
+    test_deployable: all_required_candidate_gates_pass
+    production_ready: false_unless_issue_533_records_go
