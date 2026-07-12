@@ -78,6 +78,26 @@ class RcSeedContractTest(unittest.TestCase):
         self.assertIn("RC_SEED_FAILED reason=database_or_model_boundary", self.source)
         self.assertNotIn("traceback.print_exc", self.source)
 
+    def test_side_effect_proof_has_stable_bounded_failure_classes(self) -> None:
+        expected_codes = {
+            "EXIT_BACKEND_ROOT_MISSING": "20",
+            "EXIT_UNSAFE_ENVIRONMENT": "21",
+            "EXIT_DATABASE_INSPECTION": "22",
+            "EXIT_MISSING_TABLES": "23",
+            "EXIT_EXECUTION_RECORDS": "24",
+        }
+        for name, value in expected_codes.items():
+            self.assertIn(f"{name} = {value}", self.side_effect_source)
+        for reason in (
+            "backend_root_missing",
+            "unsafe_environment_controls",
+            "database_inspection_failed",
+            "missing_execution_tables",
+            "execution_records_detected",
+        ):
+            self.assertIn(f'"{reason}"', self.side_effect_source)
+        self.assertNotIn("traceback.print_exc", self.side_effect_source)
+
 
 if __name__ == "__main__":
     unittest.main()
