@@ -1,8 +1,8 @@
 # Nexus OSR Frontend Product Foundation — Design Specification
 
-**Work Item:** #613  
-**Frontend audit:** #611  
-**Baseline:** `main@6faeb50a65b64f84816833a924d3793a498eff96`  
+**Work Item:** #613
+**Frontend audit:** #611
+**Baseline:** `main@6fb8924d328b782467b93704575a0a06a9229d8c`
 **Status:** Approved implementation specification for an additive contract slice
 
 ## 1. Problem
