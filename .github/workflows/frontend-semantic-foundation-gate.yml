@@ -14,7 +14,10 @@ on:
       - webapp/src/components/ui/ConfirmDialog.tsx
       - webapp/src/components/ui/Field.tsx
       - webapp/src/components/ui/PageHeader.tsx
+      - webapp/src/hooks/useAuth.ts
       - webapp/src/main.tsx
+      - webapp/src/router.tsx
+      - webapp/src/routes/index.tsx
       - webapp/src/routes/login.tsx
       - webapp/src/styles/auth.css
       - webapp/src/styles/components.css
