@@ -383,11 +383,13 @@ test('canonical workspace renders the unified queue, Case Spine, and delivery tr
 
   await expect(page.getByTestId('operator-workspace')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Case Spine' })).toBeVisible()
-  await expect(page.getByRole('button', { name: /ticket:11/ })).toBeVisible()
-  await expect(page.getByText('SLA 即将超时')).toBeVisible()
-  await expect(page.getByText('客户主张')).toBeVisible()
-  await expect(page.getByText('等待发送')).toBeVisible()
-  await expect(page.getByText('尚不能判定安全结案')).toBeVisible()
+  const queueRow = page.getByRole('button', { name: /ticket:11/ })
+  const caseStatus = page.getByLabel('案例状态')
+  await expect(queueRow).toBeVisible()
+  await expect(caseStatus.getByText('SLA 即将超时')).toBeVisible()
+  await expect(page.locator('.operator-evidence').getByText('客户主张').first()).toBeVisible()
+  await expect(page.locator('.operator-message').getByText('等待发送')).toBeVisible()
+  await expect(page.locator('.operator-blocker').getByText('尚不能判定安全结案')).toBeVisible()
   await expect(page.getByText('当前案例没有可用会话')).toHaveCount(0)
 })
 
