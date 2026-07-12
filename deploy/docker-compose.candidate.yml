@@ -21,6 +21,8 @@ x-candidate-app: &candidate_app
     BUILD_TIME: ${BUILD_TIME:?set release BUILD_TIME}
     IMAGE_TAG: ${IMAGE_TAG:?set release IMAGE_TAG}
     APP_VERSION: ${APP_VERSION:?set release APP_VERSION}
+    EXPECTED_MIGRATION_HEAD: ${EXPECTED_MIGRATION_HEAD:?set expected Alembic Head}
+    READINESS_REQUIRE_RELEASE_METADATA: "true"
     FRONTEND_BUILD_SHA: ${FRONTEND_BUILD_SHA:?set release FRONTEND_BUILD_SHA}
   volumes: &candidate_app_volumes
     - /run/secrets:/run/secrets:ro
