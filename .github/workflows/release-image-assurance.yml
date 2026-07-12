@@ -297,17 +297,28 @@ jobs:
 
       - name: Remove raw third-party metadata before evidence upload
         if: always()
+        id: raw_cleanup
+        shell: bash
         run: |
-          set -Eeuo pipefail
-          rm -f \
-            "${ARTIFACT_DIR}/trivy.raw.json" \
-            "${ARTIFACT_DIR}/image.raw.cdx.json" \
-            "${ARTIFACT_DIR}/frontend.raw.cdx.json" \
-            "${ARTIFACT_DIR}/image.preliminary.cdx.json" \
+          set +e
+          mkdir -p "${ARTIFACT_DIR}"
+          cleanup_code=0
+          raw_files=(
+            "${ARTIFACT_DIR}/trivy.raw.json"
+            "${ARTIFACT_DIR}/image.raw.cdx.json"
+            "${ARTIFACT_DIR}/frontend.raw.cdx.json"
+            "${ARTIFACT_DIR}/image.preliminary.cdx.json"
             "${ARTIFACT_DIR}/image.preliminary.cdx.json.summary.json"
-          test ! -e "${ARTIFACT_DIR}/trivy.raw.json"
-          test ! -e "${ARTIFACT_DIR}/image.raw.cdx.json"
-          test ! -e "${ARTIFACT_DIR}/frontend.raw.cdx.json"
+          )
+          rm -f "${raw_files[@]}" || cleanup_code=1
+          for raw_path in "${raw_files[@]}"; do
+            if [ -e "${raw_path}" ]; then
+              cleanup_code=1
+            fi
+          done
+          printf '%s\n' "${cleanup_code}" > "${ARTIFACT_DIR}/raw-cleanup-exit-code"
+          echo "exit_code=${cleanup_code}" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Scan bounded free-text evidence
         if: always()
@@ -315,13 +326,18 @@ jobs:
         shell: bash
         run: |
           set +e
-          python scripts/security/scan_artifacts.py \
-            --root . \
-            --output "${ARTIFACT_DIR}/artifact-scan.json" \
-            "${ARTIFACT_DIR}/candidate-build-summary.txt" \
-            "${ARTIFACT_DIR}/runtime-smoke-summary.txt" \
-            THIRD_PARTY_NOTICES.md
-          code=$?
+          cleanup_code="$(cat "${ARTIFACT_DIR}/raw-cleanup-exit-code" 2>/dev/null || printf '1')"
+          if [ "${cleanup_code}" != "0" ]; then
+            code=1
+          else
+            python scripts/security/scan_artifacts.py \
+              --root . \
+              --output "${ARTIFACT_DIR}/artifact-scan.json" \
+              "${ARTIFACT_DIR}/candidate-build-summary.txt" \
+              "${ARTIFACT_DIR}/runtime-smoke-summary.txt" \
+              THIRD_PARTY_NOTICES.md
+            code=$?
+          fi
           printf '%s\n' "${code}" > "${ARTIFACT_DIR}/artifact-scan-exit-code"
           echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
           exit 0
@@ -332,21 +348,70 @@ jobs:
         shell: bash
         run: |
           set +e
-          python scripts/security/validate_release_image_evidence.py \
-            --sbom "${ARTIFACT_DIR}/image.safe.cdx.json" \
-            --sbom-summary "${ARTIFACT_DIR}/image.safe.cdx.json.summary.json" \
-            --raw-digests "${ARTIFACT_DIR}/raw-evidence-digests.json" \
-            --vulnerabilities "${ARTIFACT_DIR}/vulnerability-summary.json" \
-            --licenses "${ARTIFACT_DIR}/license-summary.json" \
-            --manifest "${ARTIFACT_DIR}/release-image-manifest.json" \
-            --output "${ARTIFACT_DIR}/structured-evidence-scan.json"
-          code=$?
-          printf '%s\n' "${code}" > "${ARTIFACT_DIR}/structured-evidence-scan-exit-code"
+          cleanup_code="$(cat "${ARTIFACT_DIR}/raw-cleanup-exit-code" 2>/dev/null || printf '1')"
+          if [ "${cleanup_code}" != "0" ]; then
+            rm -rf "${ARTIFACT_DIR}"
+            mkdir -p "${ARTIFACT_DIR}"
+            python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          root = Path(os.environ["ARTIFACT_DIR"])
+          quarantine = {
+              "schema_version": "nexus_release_image_quarantine_v1",
+              "status": "quarantined",
+              "reason": "raw_cleanup_not_clean",
+              "unsafe_artifacts_uploaded": False,
+          }
+          validation = {
+              "schema_version": "nexus_release_image_evidence_validation_v1",
+              "status": "fail",
+              "reason": "raw_cleanup_not_clean",
+          }
+          (root / "release-image-quarantine.json").write_text(
+              json.dumps(quarantine, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          (root / "structured-evidence-scan.json").write_text(
+              json.dumps(validation, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+            code=1
+          else
+            python scripts/security/validate_release_image_evidence.py \
+              --sbom "${ARTIFACT_DIR}/image.safe.cdx.json" \
+              --sbom-summary "${ARTIFACT_DIR}/image.safe.cdx.json.summary.json" \
+              --raw-digests "${ARTIFACT_DIR}/raw-evidence-digests.json" \
+              --vulnerabilities "${ARTIFACT_DIR}/vulnerability-summary.json" \
+              --licenses "${ARTIFACT_DIR}/license-summary.json" \
+              --manifest "${ARTIFACT_DIR}/release-image-manifest.json" \
+              --output "${ARTIFACT_DIR}/structured-evidence-scan.json"
+            code=$?
+          fi
+
+          upload_safe=false
+          if [ "${code}" = "0" ] \
+            && [ "$(jq -r '.status' "${ARTIFACT_DIR}/structured-evidence-scan.json" 2>/dev/null)" = "pass" ]; then
+            upload_safe=true
+          elif [ "${code}" != "0" ] \
+            && [ "$(jq -r '.status' "${ARTIFACT_DIR}/release-image-quarantine.json" 2>/dev/null)" = "quarantined" ] \
+            && [ "$(jq -r '.unsafe_artifacts_uploaded' "${ARTIFACT_DIR}/release-image-quarantine.json" 2>/dev/null)" = "false" ] \
+            && [ "$(jq -r '.status' "${ARTIFACT_DIR}/structured-evidence-scan.json" 2>/dev/null)" = "fail" ]; then
+            mapfile -t quarantine_files < <(
+              find "${ARTIFACT_DIR}" -maxdepth 1 -type f -printf '%f\n' | sort
+            )
+            if [ "${#quarantine_files[@]}" -eq 2 ] \
+              && [ "${quarantine_files[0]}" = "release-image-quarantine.json" ] \
+              && [ "${quarantine_files[1]}" = "structured-evidence-scan.json" ]; then
+              upload_safe=true
+            fi
+          fi
+
           echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          echo "upload_safe=${upload_safe}" >> "$GITHUB_OUTPUT"
           exit 0
 
       - name: Upload bounded release-image evidence
-        if: always()
+        if: ${{ always() && steps.structured_scan.outputs.upload_safe == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-image-assurance
@@ -369,8 +434,9 @@ jobs:
           test "$(cat "${ARTIFACT_DIR}/manifest-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/license-compliance-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/compliance-binding-exit-code")" = "0"
+          test "$(cat "${ARTIFACT_DIR}/raw-cleanup-exit-code")" = "0"
           test "$(cat "${ARTIFACT_DIR}/artifact-scan-exit-code")" = "0"
-          test "$(cat "${ARTIFACT_DIR}/structured-evidence-scan-exit-code")" = "0"
+          test "${{ steps.structured_scan.outputs.exit_code }}" = "0"
           test "$(jq -r '.status' "${ARTIFACT_DIR}/policy-input-validation.json")" = "pass"
           test "$(jq -r '.status' "${ARTIFACT_DIR}/release-image-manifest.json")" = "pass"
           test "$(jq -r '.status' "${ARTIFACT_DIR}/license-compliance-evidence.json")" = "pass"
