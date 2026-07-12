@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -11,6 +12,7 @@ MAX_BYTES = 2 * 1024 * 1024
 MAX_COMPONENTS = 2000
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+:/@%?&=!-]{0,499}$")
 _SAFE_COMPONENT_NAME = re.compile(
     r"^[A-Za-z0-9@][A-Za-z0-9._+:/@%?&=!-]{0,199}$"
@@ -69,6 +71,12 @@ def _load(path: Path) -> Any:
         raise EvidenceError(f"json_invalid:{path.name}") from exc
 
 
+def _digest(path: Path) -> str:
+    if not path.is_file() or path.stat().st_size > MAX_BYTES:
+        raise EvidenceError(f"digest_input_invalid:{path.name}")
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _exact(value: dict[str, Any], keys: set[str], label: str) -> None:
     if set(value) != keys:
         raise EvidenceError(f"{label}_keys_invalid")
@@ -90,9 +98,17 @@ def _safe_component_name(value: object) -> str:
 
 def _safe_purl(value: object) -> str:
     text = str(value or "").strip()
-    if not (_SAFE_PYTHON_PURL.fullmatch(text) or _SAFE_NPM_PURL.fullmatch(text)):
+    if not (
+        _SAFE_PYTHON_PURL.fullmatch(text) or _SAFE_NPM_PURL.fullmatch(text)
+    ):
         raise EvidenceError("purl_invalid")
     return text
+
+
+def _non_negative_int(value: object, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise EvidenceError(f"{label}_invalid")
+    return value
 
 
 def _walk_forbidden(value: object, *, depth: int = 0) -> None:
@@ -126,7 +142,11 @@ def validate_sbom(value: object) -> None:
         {"bomFormat", "specVersion", "version", "metadata", "components"},
         "sbom",
     )
-    if value["bomFormat"] != "CycloneDX" or value["specVersion"] != "1.6" or value["version"] != 1:
+    if (
+        value["bomFormat"] != "CycloneDX"
+        or value["specVersion"] != "1.6"
+        or value["version"] != 1
+    ):
         raise EvidenceError("sbom_identity_invalid")
     metadata = value["metadata"]
     if not isinstance(metadata, dict):
@@ -146,7 +166,11 @@ def validate_sbom(value: object) -> None:
         if name.endswith("sha256") and not _SHA256.fullmatch(value_text):
             raise EvidenceError("sbom_property_digest_invalid")
     components = value["components"]
-    if not isinstance(components, list) or not components or len(components) > MAX_COMPONENTS:
+    if (
+        not isinstance(components, list)
+        or not components
+        or len(components) > MAX_COMPONENTS
+    ):
         raise EvidenceError("sbom_components_invalid")
     seen: set[str] = set()
     for component in components:
@@ -174,9 +198,13 @@ def validate_sbom(value: object) -> None:
             if set(entry) == {"expression"}:
                 if not _SAFE_SPDX.fullmatch(str(entry["expression"] or "")):
                     raise EvidenceError("sbom_license_expression_invalid")
-            elif set(entry) == {"license"} and isinstance(entry["license"], dict):
+            elif set(entry) == {"license"} and isinstance(
+                entry["license"], dict
+            ):
                 _exact(entry["license"], {"id"}, "sbom_license")
-                if not _SAFE_SPDX.fullmatch(str(entry["license"]["id"] or "")):
+                if not _SAFE_SPDX.fullmatch(
+                    str(entry["license"]["id"] or "")
+                ):
                     raise EvidenceError("sbom_license_id_invalid")
             else:
                 raise EvidenceError("sbom_license_shape_invalid")
@@ -187,6 +215,45 @@ def validate_summary(value: object, schema: str, *, require_pass: bool = False) 
         raise EvidenceError(f"{schema}_invalid")
     if require_pass and value.get("status") != "pass":
         raise EvidenceError(f"{schema}_not_pass")
+    _walk_forbidden(value)
+
+
+def validate_policy_input(value: object) -> None:
+    if not isinstance(value, dict):
+        raise EvidenceError("policy_input_not_object")
+    _exact(
+        value,
+        {
+            "schema_version",
+            "status",
+            "evaluated_on",
+            "trivy_result_count",
+            "sbom_component_count",
+            "vulnerability_exception_count",
+            "license_exception_count",
+            "license_compliance_record_count",
+        },
+        "policy_input",
+    )
+    if (
+        value["schema_version"]
+        != "nexus_release_image_policy_input_validation_v1"
+        or value["status"] != "pass"
+        or not _DATE.fullmatch(str(value["evaluated_on"] or ""))
+    ):
+        raise EvidenceError("policy_input_identity_invalid")
+    _non_negative_int(value["trivy_result_count"], label="trivy_result_count")
+    if _non_negative_int(value["sbom_component_count"], label="sbom_component_count") < 1:
+        raise EvidenceError("sbom_component_count_invalid")
+    _non_negative_int(
+        value["vulnerability_exception_count"],
+        label="vulnerability_exception_count",
+    )
+    _non_negative_int(value["license_exception_count"], label="license_exception_count")
+    _non_negative_int(
+        value["license_compliance_record_count"],
+        label="license_compliance_record_count",
+    )
     _walk_forbidden(value)
 
 
@@ -234,27 +301,48 @@ def validate_manifest(value: object) -> None:
         "vulnerability_summary_sha256",
     }
     _exact(value, expected, "manifest")
-    if value["schema_version"] != "nexus_release_image_assurance_v1" or value["status"] != "pass":
+    if (
+        value["schema_version"] != "nexus_release_image_assurance_v1"
+        or value["status"] != "pass"
+    ):
         raise EvidenceError("manifest_schema_invalid")
-    if not _SHA40.fullmatch(str(value["source_sha"])) or not _SHA256.fullmatch(str(value["image_id"])):
+    if not _SHA40.fullmatch(str(value["source_sha"])) or not _SHA256.fullmatch(
+        str(value["image_id"])
+    ):
         raise EvidenceError("manifest_identity_invalid")
-    for key in ("license_summary_sha256", "sbom_sha256", "vulnerability_summary_sha256"):
+    for key in (
+        "license_summary_sha256",
+        "sbom_sha256",
+        "vulnerability_summary_sha256",
+    ):
         if not _SHA256.fullmatch(str(value[key])):
             raise EvidenceError("manifest_digest_invalid")
-    if value["image_pushed"] is not False or value["deployment_performed"] is not False:
+    if (
+        value["image_pushed"] is not False
+        or value["deployment_performed"] is not False
+    ):
         raise EvidenceError("manifest_external_effect_invalid")
     _walk_forbidden(value)
 
 
 def validate_installed_evidence(value: object) -> None:
-    if not isinstance(value, dict) or value.get("schema_version") != "nexus_installed_license_evidence_v1":
+    if (
+        not isinstance(value, dict)
+        or value.get("schema_version") != "nexus_installed_license_evidence_v1"
+    ):
         raise EvidenceError("installed_evidence_schema_invalid")
-    components = value.get("components")
+    _exact(value, {"schema_version", "components"}, "installed_evidence")
+    components = value["components"]
     if not isinstance(components, list) or not components or len(components) > 50:
         raise EvidenceError("installed_evidence_components_invalid")
     seen: set[str] = set()
     for component in components:
-        if not isinstance(component, dict) or set(component) != {"purl", "package", "version", "license_files"}:
+        if not isinstance(component, dict) or set(component) != {
+            "purl",
+            "package",
+            "version",
+            "license_files",
+        }:
             raise EvidenceError("installed_evidence_component_invalid")
         purl = _safe_purl(component["purl"])
         if purl in seen:
@@ -274,23 +362,121 @@ def validate_installed_evidence(value: object) -> None:
     _walk_forbidden(value)
 
 
-def validate_binding(value: object, *, manifest: dict[str, Any]) -> None:
-    if not isinstance(value, dict) or value.get("schema_version") != "nexus_release_image_compliance_binding_v1":
-        raise EvidenceError("binding_schema_invalid")
-    if value.get("status") != "pass":
-        raise EvidenceError("binding_not_pass")
-    if value.get("source_sha") != manifest.get("source_sha") or value.get("image_id") != manifest.get("image_id"):
-        raise EvidenceError("binding_identity_mismatch")
-    if value.get("image_pushed") is not False or value.get("deployment_performed") is not False:
-        raise EvidenceError("binding_external_effect_invalid")
-    for key in (
-        "base_manifest_sha256",
-        "policy_input_validation_sha256",
-        "license_compliance_sha256",
-        "installed_license_evidence_sha256",
+def validate_compliance(value: object) -> None:
+    if not isinstance(value, dict):
+        raise EvidenceError("compliance_not_object")
+    _exact(
+        value,
+        {"schema_version", "status", "checked_count", "components"},
+        "compliance",
+    )
+    if (
+        value["schema_version"]
+        != "nexus_container_license_compliance_evidence_v1"
+        or value["status"] != "pass"
     ):
-        if not _SHA256.fullmatch(str(value.get(key) or "")):
-            raise EvidenceError("binding_digest_invalid")
+        raise EvidenceError("compliance_identity_invalid")
+    checked_count = _non_negative_int(value["checked_count"], label="checked_count")
+    components = value["components"]
+    if (
+        not isinstance(components, list)
+        or not components
+        or len(components) != checked_count
+        or len(components) > 50
+    ):
+        raise EvidenceError("compliance_components_invalid")
+    seen: set[str] = set()
+    expected = {
+        "package",
+        "version",
+        "purl",
+        "license",
+        "owner",
+        "expires_on",
+        "source",
+        "license_file_count",
+        "modified",
+        "replacement_supported",
+    }
+    for component in components:
+        if not isinstance(component, dict) or set(component) != expected:
+            raise EvidenceError("compliance_component_invalid")
+        purl = _safe_purl(component["purl"])
+        if purl in seen:
+            raise EvidenceError("compliance_purl_duplicate")
+        seen.add(purl)
+        _safe(component["package"], limit=100)
+        _safe(component["version"], limit=120)
+        _safe(component["license"], limit=120)
+        _safe(component["owner"], limit=80)
+        if not _DATE.fullmatch(str(component["expires_on"] or "")):
+            raise EvidenceError("compliance_expiry_invalid")
+        source = str(component["source"] or "")
+        if not source.startswith("https://") or len(source) > 500:
+            raise EvidenceError("compliance_source_invalid")
+        count = _non_negative_int(
+            component["license_file_count"], label="license_file_count"
+        )
+        if count < 1 or count > 20:
+            raise EvidenceError("license_file_count_invalid")
+        if component["modified"] is not False or component["replacement_supported"] is not True:
+            raise EvidenceError("compliance_distribution_invalid")
+    _walk_forbidden(value)
+
+
+def validate_binding(
+    value: object,
+    *,
+    manifest: dict[str, Any],
+    manifest_path: Path,
+    policy_input_path: Path,
+    compliance_path: Path,
+    installed_path: Path,
+) -> None:
+    if not isinstance(value, dict):
+        raise EvidenceError("binding_not_object")
+    _exact(
+        value,
+        {
+            "schema_version",
+            "status",
+            "source_sha",
+            "image_id",
+            "evaluated_on",
+            "base_manifest_sha256",
+            "policy_input_validation_sha256",
+            "license_compliance_sha256",
+            "installed_license_evidence_sha256",
+            "image_pushed",
+            "deployment_performed",
+        },
+        "binding",
+    )
+    if (
+        value["schema_version"] != "nexus_release_image_compliance_binding_v1"
+        or value["status"] != "pass"
+        or not _DATE.fullmatch(str(value["evaluated_on"] or ""))
+    ):
+        raise EvidenceError("binding_schema_invalid")
+    if (
+        value["source_sha"] != manifest["source_sha"]
+        or value["image_id"] != manifest["image_id"]
+    ):
+        raise EvidenceError("binding_identity_mismatch")
+    if (
+        value["image_pushed"] is not False
+        or value["deployment_performed"] is not False
+    ):
+        raise EvidenceError("binding_external_effect_invalid")
+    expected_digests = {
+        "base_manifest_sha256": _digest(manifest_path),
+        "policy_input_validation_sha256": _digest(policy_input_path),
+        "license_compliance_sha256": _digest(compliance_path),
+        "installed_license_evidence_sha256": _digest(installed_path),
+    }
+    for key, expected in expected_digests.items():
+        if value.get(key) != expected:
+            raise EvidenceError(f"binding_digest_mismatch:{key}")
     _walk_forbidden(value)
 
 
@@ -350,6 +536,10 @@ def validate_evidence_set(
     output: Path,
 ) -> int:
     directory = output.parent
+    policy_input_path = directory / "policy-input-validation.json"
+    installed_path = directory / "installed-license-evidence.json"
+    compliance_path = directory / "license-compliance-evidence.json"
+    binding_path = directory / "release-image-compliance-binding.json"
     try:
         if not _zero_marker(directory, "raw-cleanup-exit-code"):
             raise EvidenceError("raw_cleanup_not_clean")
@@ -357,8 +547,16 @@ def validate_evidence_set(
             raise EvidenceError("artifact_scan_not_clean")
         sbom_value = _load(sbom)
         manifest_value = _load(manifest)
+        policy_input_value = _load(policy_input_path)
+        installed_value = _load(installed_path)
+        compliance_value = _load(compliance_path)
+        binding_value = _load(binding_path)
         validate_sbom(sbom_value)
-        validate_summary(_load(sbom_summary), "nexus_finalized_image_sbom_v1", require_pass=True)
+        validate_summary(
+            _load(sbom_summary),
+            "nexus_finalized_image_sbom_v1",
+            require_pass=True,
+        )
         validate_raw_digests(_load(raw_digests))
         validate_summary(
             _load(vulnerabilities),
@@ -371,23 +569,23 @@ def validate_evidence_set(
             require_pass=True,
         )
         validate_manifest(manifest_value)
-        validate_summary(
-            _load(directory / "policy-input-validation.json"),
-            "nexus_release_image_policy_input_validation_v1",
-            require_pass=True,
-        )
-        validate_installed_evidence(_load(directory / "installed-license-evidence.json"))
-        validate_summary(
-            _load(directory / "license-compliance-evidence.json"),
-            "nexus_container_license_compliance_evidence_v1",
-            require_pass=True,
-        )
+        validate_policy_input(policy_input_value)
+        validate_installed_evidence(installed_value)
+        validate_compliance(compliance_value)
         validate_binding(
-            _load(directory / "release-image-compliance-binding.json"),
+            binding_value,
             manifest=manifest_value,
+            manifest_path=manifest,
+            policy_input_path=policy_input_path,
+            compliance_path=compliance_path,
+            installed_path=installed_path,
         )
     except Exception as exc:
-        reason = str(exc)[:120] if isinstance(exc, EvidenceError) else f"unexpected_{type(exc).__name__}"
+        reason = (
+            str(exc)[:120]
+            if isinstance(exc, EvidenceError)
+            else f"unexpected_{type(exc).__name__}"
+        )
         _quarantine_artifacts(directory, reason=reason)
         return 1
     output.write_text(
