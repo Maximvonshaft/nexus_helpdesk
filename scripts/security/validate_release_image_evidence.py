@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -256,6 +257,93 @@ def validate_manifest(value: object) -> None:
     _walk_forbidden(value)
 
 
+def _artifact_scan_is_clean(directory: Path) -> bool:
+    marker = directory / "artifact-scan-exit-code"
+    if not marker.is_file() or marker.stat().st_size > 16:
+        return False
+    try:
+        return marker.read_text(encoding="utf-8").strip() == "0"
+    except (OSError, UnicodeError):
+        return False
+
+
+def _quarantine_artifacts(directory: Path, *, reason: str) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    for child in tuple(directory.iterdir()):
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink(missing_ok=True)
+    safe_reason = re.sub(r"[^A-Za-z0-9_.:-]", "_", reason)[:120]
+    payload = {
+        "schema_version": "nexus_release_image_quarantine_v1",
+        "status": "quarantined",
+        "reason": safe_reason or "validation_failed",
+        "unsafe_artifacts_uploaded": False,
+    }
+    directory.joinpath("release-image-quarantine.json").write_text(
+        json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    directory.joinpath("structured-evidence-scan.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "nexus_release_image_evidence_validation_v1",
+                "status": "fail",
+                "reason": safe_reason or "validation_failed",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def validate_evidence_set(
+    *,
+    sbom: Path,
+    sbom_summary: Path,
+    raw_digests: Path,
+    vulnerabilities: Path,
+    licenses: Path,
+    manifest: Path,
+    output: Path,
+) -> int:
+    directory = output.parent
+    try:
+        if not _artifact_scan_is_clean(directory):
+            raise EvidenceError("artifact_scan_not_clean")
+        validate_sbom(_load(sbom))
+        validate_summary(
+            _load(sbom_summary), "nexus_finalized_image_sbom_v1"
+        )
+        validate_raw_digests(_load(raw_digests))
+        validate_summary(
+            _load(vulnerabilities),
+            "nexus_container_vulnerability_assurance_v1",
+        )
+        validate_summary(
+            _load(licenses), "nexus_container_license_assurance_v1"
+        )
+        validate_manifest(_load(manifest))
+    except Exception as exc:  # Fail closed and quarantine before upload.
+        reason = (
+            str(exc)[:120]
+            if isinstance(exc, EvidenceError)
+            else f"unexpected_{type(exc).__name__}"
+        )
+        _quarantine_artifacts(directory, reason=reason)
+        return 1
+    payload = {
+        "schema_version": "nexus_release_image_evidence_validation_v1",
+        "status": "pass",
+        "validated_files": 6,
+    }
+    output.write_text(
+        json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sbom", type=Path, required=True)
@@ -266,39 +354,15 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    try:
-        validate_sbom(_load(args.sbom))
-        validate_summary(
-            _load(args.sbom_summary), "nexus_finalized_image_sbom_v1"
-        )
-        validate_raw_digests(_load(args.raw_digests))
-        validate_summary(
-            _load(args.vulnerabilities),
-            "nexus_container_vulnerability_assurance_v1",
-        )
-        validate_summary(
-            _load(args.licenses), "nexus_container_license_assurance_v1"
-        )
-        validate_manifest(_load(args.manifest))
-    except EvidenceError as exc:
-        payload = {
-            "schema_version": "nexus_release_image_evidence_validation_v1",
-            "status": "fail",
-            "reason": str(exc)[:120],
-        }
-        args.output.write_text(
-            json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        return 1
-    payload = {
-        "schema_version": "nexus_release_image_evidence_validation_v1",
-        "status": "pass",
-        "validated_files": 6,
-    }
-    args.output.write_text(
-        json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
+    return validate_evidence_set(
+        sbom=args.sbom,
+        sbom_summary=args.sbom_summary,
+        raw_digests=args.raw_digests,
+        vulnerabilities=args.vulnerabilities,
+        licenses=args.licenses,
+        manifest=args.manifest,
+        output=args.output,
     )
-    return 0
 
 
 if __name__ == "__main__":
