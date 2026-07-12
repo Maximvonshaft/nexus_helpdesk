@@ -1,12 +1,12 @@
 .sr-only {
-  position: absolute;
-  width: 1px;
+  border: 0;
   height: 1px;
-  padding: 0;
   margin: -1px;
   overflow: hidden;
+  padding: 0;
+  position: absolute;
   white-space: nowrap;
-  border: 0;
+  width: 1px;
 }
 
 button:focus-visible,
@@ -15,35 +15,49 @@ input:focus-visible,
 textarea:focus-visible,
 select:focus-visible,
 [role="button"]:focus-visible {
-  outline: 3px solid rgba(37, 99, 235, 0.72);
+  box-shadow: var(--nd-focus-ring);
+  outline: 2px solid var(--nd-color-accent);
   outline-offset: 3px;
-  box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.16);
 }
 
 .command-backdrop {
-  position: fixed;
+  background: color-mix(in srgb, var(--nd-color-ink) 42%, transparent);
   inset: 0;
-  z-index: 50;
-  background: rgba(15, 23, 42, .38);
+  position: fixed;
+  z-index: var(--nd-z-backdrop);
 }
 
 .command-card {
-  position: fixed;
   left: 50%;
+  position: fixed;
   top: 50%;
   transform: translate(-50%, -50%);
-  z-index: 51;
   width: min(680px, calc(100vw - 32px));
+  z-index: var(--nd-z-dialog);
 }
 
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+  }
+
   .button,
+  .nd-button,
+  .nd-control,
   .queue-card,
-  .command-item {
-    transition-duration: 0.01ms !important;
+  .command-item,
+  .auth-frame,
+  .auth-card,
+  .auth-sequence li {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
   }
 
   .button:hover,
+  .nd-button:hover,
   .queue-card:hover,
   .command-item:hover {
     transform: none !important;
