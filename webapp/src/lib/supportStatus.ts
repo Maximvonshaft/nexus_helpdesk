@@ -69,10 +69,7 @@ const REQUEST_FAILED = new Set([
 
 const VERIFIED_OUTCOME = new Set([
   'business_result_confirmed',
-  'completed',
-  'confirmed',
   'operational_completed',
-  'succeeded',
 ])
 
 function normalizeStatus(value: string | null | undefined): string {
@@ -132,14 +129,24 @@ export function controlledActionPresentation(
   message?: string | null,
 ): OperationalPresentation {
   const normalized = normalizeStatus(status)
-  const detail = String(message ?? '').trim() || null
+  const backendDetail = String(message ?? '').trim() || null
 
-  if (normalized === 'queued') return { tone: 'default', label: '请求已排队', detail }
-  if (normalized === 'submitted') return { tone: 'default', label: '请求已提交，等待确认', detail }
-  if (REQUEST_PENDING.has(normalized)) return { tone: 'warning', label: '请求处理中', detail }
-  if (REQUEST_FAILED.has(normalized)) return { tone: 'danger', label: '请求失败或需要修复', detail }
-  if (VERIFIED_OUTCOME.has(normalized)) return { tone: 'success', label: '结果已确认', detail }
-  return { tone: 'warning', label: '结果状态待确认', detail }
+  if (normalized === 'queued') {
+    return { tone: 'default', label: '请求已排队', detail: '请求已进入处理队列；这不代表运营结果已经完成。' }
+  }
+  if (normalized === 'submitted') {
+    return { tone: 'default', label: '请求已提交，等待确认', detail: '最终结果仍需人工或来源系统确认。' }
+  }
+  if (REQUEST_PENDING.has(normalized)) {
+    return { tone: 'warning', label: '请求处理中', detail: '请等待后端返回可验证的运营结果。' }
+  }
+  if (REQUEST_FAILED.has(normalized)) {
+    return { tone: 'danger', label: '请求失败或需要修复', detail: backendDetail }
+  }
+  if (VERIFIED_OUTCOME.has(normalized)) {
+    return { tone: 'success', label: '结果已确认', detail: backendDetail }
+  }
+  return { tone: 'warning', label: '结果状态待确认', detail: backendDetail }
 }
 
 export function runtimePresentation(input: RuntimePresentationInput): OperationalPresentation {
