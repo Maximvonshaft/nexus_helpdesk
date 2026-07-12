@@ -125,6 +125,7 @@ class ReleaseImageAssuranceTests(unittest.TestCase):
                             "installed_version": "1.0.0",
                             "reason": "Expired exception must never authorize a release.",
                             "expires_on": "2026-07-10",
+                            "owner": "security",
                         }
                     ],
                 },
@@ -144,6 +145,7 @@ class ReleaseImageAssuranceTests(unittest.TestCase):
                             "installed_version": "9.9.9",
                             "reason": "Specific temporary exception for a tracked advisory.",
                             "expires_on": "2026-08-01",
+                            "owner": "security",
                         }
                     ],
                 },
@@ -161,9 +163,24 @@ class ReleaseImageAssuranceTests(unittest.TestCase):
                 {
                     "bomFormat": "CycloneDX",
                     "components": [
-                        {"name": "allowed-lib", "version": "1", "licenses": [{"license": {"id": "MIT"}}]},
-                        {"name": "denied-lib", "version": "2", "licenses": [{"license": {"id": "AGPL-3.0-only"}}]},
-                        {"name": "unknown-lib", "version": "3", "licenses": []},
+                        {
+                            "name": "allowed-lib",
+                            "version": "1",
+                            "purl": "pkg:pypi/allowed-lib@1",
+                            "licenses": [{"license": {"id": "MIT"}}],
+                        },
+                        {
+                            "name": "denied-lib",
+                            "version": "2",
+                            "purl": "pkg:pypi/denied-lib@2",
+                            "licenses": [{"license": {"id": "AGPL-3.0-only"}}],
+                        },
+                        {
+                            "name": "unknown-lib",
+                            "version": "3",
+                            "purl": "pkg:pypi/unknown-lib@3",
+                            "licenses": [],
+                        },
                     ],
                 },
             )
@@ -188,9 +205,10 @@ class ReleaseImageAssuranceTests(unittest.TestCase):
             self.assertEqual(payload["unresolved_count"], 2)
             self.assertEqual({item["disposition"] for item in payload["findings"]}, {"denied", "review"})
 
-    def test_license_expression_and_exact_exception(self) -> None:
+    def test_license_expression_and_exact_purl_exception(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            purl = "pkg:pypi/mixed-lib@1.2.3"
             sbom = self._write(
                 root,
                 "sbom.json",
@@ -200,6 +218,7 @@ class ReleaseImageAssuranceTests(unittest.TestCase):
                         {
                             "name": "mixed-lib",
                             "version": "1.2.3",
+                            "purl": purl,
                             "licenses": [{"expression": "MIT OR GPL-3.0-only"}],
                         }
                     ],
@@ -216,10 +235,11 @@ class ReleaseImageAssuranceTests(unittest.TestCase):
                     "unknown_action": "review",
                     "exceptions": [
                         {
+                            "purl": purl,
                             "package": "mixed-lib",
                             "version": "1.2.3",
                             "license": "GPL-3.0-only",
-                            "reason": "Runtime distribution review approved for this exact package.",
+                            "reason": "Runtime distribution review approved for this exact component.",
                             "expires_on": "2026-08-01",
                             "owner": "legal",
                         }
@@ -230,6 +250,62 @@ class ReleaseImageAssuranceTests(unittest.TestCase):
 
             self.assertEqual(evaluate_licenses(sbom, policy, output, today=date(2026, 7, 11)), 0)
             self.assertEqual(json.loads(output.read_text())["applied_exception_count"], 1)
+
+    def test_same_name_version_license_across_ecosystems_requires_separate_exceptions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            python_purl = "pkg:pypi/shared-name@1.0.0"
+            npm_purl = "pkg:npm/shared-name@1.0.0"
+            sbom = self._write(
+                root,
+                "sbom.json",
+                {
+                    "bomFormat": "CycloneDX",
+                    "components": [
+                        {
+                            "name": "shared-name",
+                            "version": "1.0.0",
+                            "purl": python_purl,
+                            "licenses": [{"license": {"id": "LGPL-3.0-only"}}],
+                        },
+                        {
+                            "name": "shared-name",
+                            "version": "1.0.0",
+                            "purl": npm_purl,
+                            "licenses": [{"license": {"id": "LGPL-3.0-only"}}],
+                        },
+                    ],
+                },
+            )
+            policy = self._write(
+                root,
+                "policy.json",
+                {
+                    "schema_version": "nexus_container_license_policy_v1",
+                    "allowed": [],
+                    "denied": [],
+                    "review": ["LGPL-3.0-only"],
+                    "unknown_action": "review",
+                    "exceptions": [
+                        {
+                            "purl": python_purl,
+                            "package": "shared-name",
+                            "version": "1.0.0",
+                            "license": "LGPL-3.0-only",
+                            "reason": "Only the Python component has complete compliance evidence.",
+                            "expires_on": "2026-08-01",
+                            "owner": "legal",
+                        }
+                    ],
+                },
+            )
+            output = root / "licenses.json"
+
+            self.assertEqual(evaluate_licenses(sbom, policy, output, today=date(2026, 7, 11)), 1)
+            payload = json.loads(output.read_text())
+            self.assertEqual(payload["applied_exception_count"], 1)
+            self.assertEqual(payload["unresolved_count"], 1)
+            self.assertEqual(payload["findings"][0]["purl"], npm_purl)
 
     def test_manifest_binds_source_image_and_evidence_digests(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
