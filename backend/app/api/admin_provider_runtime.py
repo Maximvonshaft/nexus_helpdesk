@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import Boolean, text
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -53,17 +53,18 @@ def _database_configuration_errors(selection: dict[str, Any]) -> list[str]:
 
 def _traffic_routing_rules(db: Session) -> dict[str, Any]:
     try:
+        statement = text(
+            """
+            SELECT tenant_id, channel_key, primary_provider, canary_percent,
+                   kill_switch, enabled, updated_at
+            FROM provider_routing_rules
+            WHERE scenario = :scenario
+            ORDER BY tenant_id ASC, channel_key ASC
+            LIMIT 101
+            """
+        ).columns(kill_switch=Boolean(), enabled=Boolean())
         rows = db.execute(
-            text(
-                """
-                SELECT tenant_id, channel_key, primary_provider, canary_percent,
-                       kill_switch, enabled, updated_at
-                FROM provider_routing_rules
-                WHERE scenario = :scenario
-                ORDER BY tenant_id ASC, channel_key ASC
-                LIMIT 101
-                """
-            ),
+            statement,
             {"scenario": _WEBCHAT_RUNTIME_SCENARIO},
         ).mappings().all()
     except Exception:
