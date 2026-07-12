@@ -50,6 +50,23 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
+      - name: Setup Node immutable
+        uses: actions/setup-node@04be95cf3511ea51ebf9f224ddfb99cc7ab87cd4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Generate exact frontend CycloneDX from lockfile
+        working-directory: webapp
+        run: |
+          set -Eeuo pipefail
+          npm ci
+          mkdir -p ../artifacts/release-image
+          npm sbom --sbom-format=cyclonedx > ../artifacts/release-image/frontend.raw.cdx.json
+          test -s ../artifacts/release-image/frontend.raw.cdx.json
+          test "$(wc -c < ../artifacts/release-image/frontend.raw.cdx.json)" -le 33554432
+
       - name: Compile and unit-test assurance policy
         run: |
           set -Eeuo pipefail
@@ -69,7 +86,8 @@ jobs:
             scripts/security/tests/test_release_image_policy_inputs.py \
             scripts/security/tests/test_bind_release_image_compliance.py \
             scripts/security/tests/test_candidate_image_runtime_contract.py \
-            scripts/security/tests/test_alpine_image_sbom.py
+            scripts/security/tests/test_alpine_image_sbom.py \
+            scripts/security/tests/test_frontend_npm_sbom.py
           python -m unittest \
             scripts/security/tests/test_release_image_assurance.py \
             scripts/security/tests/test_sanitize_image_sbom.py \
@@ -78,7 +96,8 @@ jobs:
             scripts/security/tests/test_release_image_policy_inputs.py \
             scripts/security/tests/test_bind_release_image_compliance.py \
             scripts/security/tests/test_candidate_image_runtime_contract.py \
-            scripts/security/tests/test_alpine_image_sbom.py
+            scripts/security/tests/test_alpine_image_sbom.py \
+            scripts/security/tests/test_frontend_npm_sbom.py
 
       - name: Build local candidate image only
         run: |
@@ -141,12 +160,13 @@ jobs:
           output-file: artifacts/release-image/image.raw.cdx.json
           upload-artifact: false
 
-      - name: Produce minimal PII-free application SBOM
+      - name: Produce minimal PII-free shipped dependency SBOM
         shell: bash
         run: |
           set +e
           python scripts/security/sanitize_image_sbom.py \
             --input "${ARTIFACT_DIR}/image.raw.cdx.json" \
+            --frontend-input "${ARTIFACT_DIR}/frontend.raw.cdx.json" \
             --overrides config/security/container-license-metadata-overrides.json \
             --output "${ARTIFACT_DIR}/image.preliminary.cdx.json"
           preliminary_code=$?
@@ -164,9 +184,10 @@ jobs:
           def digest(path):
               return 'sha256:' + hashlib.sha256(path.read_bytes()).hexdigest()
           payload = {
-              'schema_version': 'nexus_raw_image_evidence_digests_v1',
+              'schema_version': 'nexus_raw_release_evidence_digests_v2',
               'trivy_report_sha256': digest(root / 'trivy.raw.json'),
               'raw_cyclonedx_sha256': digest(root / 'image.raw.cdx.json'),
+              'raw_frontend_cyclonedx_sha256': digest(root / 'frontend.raw.cdx.json'),
           }
           (root / 'raw-evidence-digests.json').write_text(
               json.dumps(payload, sort_keys=True, indent=2) + '\n',
@@ -281,10 +302,12 @@ jobs:
           rm -f \
             "${ARTIFACT_DIR}/trivy.raw.json" \
             "${ARTIFACT_DIR}/image.raw.cdx.json" \
+            "${ARTIFACT_DIR}/frontend.raw.cdx.json" \
             "${ARTIFACT_DIR}/image.preliminary.cdx.json" \
             "${ARTIFACT_DIR}/image.preliminary.cdx.json.summary.json"
           test ! -e "${ARTIFACT_DIR}/trivy.raw.json"
           test ! -e "${ARTIFACT_DIR}/image.raw.cdx.json"
+          test ! -e "${ARTIFACT_DIR}/frontend.raw.cdx.json"
 
       - name: Scan bounded free-text evidence
         id: artifact_scan
